@@ -283,12 +283,12 @@ Never claim a test, typecheck, or build passes without fresh command output from
 
 ### Mandatory branch workflow
 
-- Never implement task work directly on `master`. `master` is the integration branch.
+- Never implement task work directly on `main`. `main` is the integration branch.
 - Create one branch for one focused task. Do not combine unrelated work on the same branch.
-- Start from the latest `master`. If a remote exists, fetch and update it with fast-forward only before creating the branch.
+- Start from the latest `main`. If a remote exists, fetch and update it with fast-forward only before creating the branch.
 
   ```bash
-  git switch master
+  git switch main
   git pull --ff-only
   git switch -c feature/module-a-add-normalizer
   ```
@@ -316,7 +316,7 @@ Never claim a test, typecheck, or build passes without fresh command output from
   git commit -m "feature(module-a): add item normalizer"
   ```
 
-- Do not force-push, rebase a shared branch, amend a commit already handed to another person, or merge your own branch into `master` without the leader's instruction.
+- Do not force-push, rebase a shared branch, amend a commit already handed to another person, or merge your own branch into `main` without the leader's instruction.
 
 ## 13. Agent task protocol and handoff
 

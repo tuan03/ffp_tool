@@ -154,10 +154,10 @@ For orchestrator work, replace ownership with `src/modules/orchestrator`; requir
 
 ## 9. Git branch workflow
 
-Every task gets its own branch. Do not code directly on `master`.
+Every task gets its own branch. Do not code directly on `main`.
 
 ```bash
-git switch master
+git switch main
 git pull --ff-only
 git switch -c feature/module-a-add-normalizer
 ```
@@ -193,7 +193,7 @@ git add src/modules/module-a
 git commit -m "feature(module-a): add item normalizer"
 ```
 
-The leader reviews and decides when a branch merges into `master`.
+The leader reviews and decides when a branch merges into `main`.
 
 ## 10. Required verification before handoff
 
