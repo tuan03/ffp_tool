@@ -281,15 +281,53 @@ Never claim a test, typecheck, or build passes without fresh command output from
 - Keep diffs small and reviewable. Avoid whole-file reformatting.
 - Public contract changes require coordination with all consumers before merge.
 
+### Mandatory branch workflow
+
+- Never implement task work directly on `master`. `master` is the integration branch.
+- Create one branch for one focused task. Do not combine unrelated work on the same branch.
+- Start from the latest `master`. If a remote exists, fetch and update it with fast-forward only before creating the branch.
+
+  ```bash
+  git switch master
+  git pull --ff-only
+  git switch -c feature/module-a-add-normalizer
+  ```
+
+- Branch names use this exact pattern: `<type>/<scope>-<short-description>`.
+- `type` is one of: `feature`, `fix`, `refactor`, `test`, `docs`, `chore`.
+- `scope` is one of: `main`, `orchestrator`, `module-a`, `module-b`, `module-c`, `shared`, `tooling`.
+- `short-description` is lowercase kebab-case, begins with a verb, and describes one outcome.
+
+  ```text
+  feature/module-a-add-normalizer
+  fix/module-b-handle-empty-result
+  feature/main-add-workflow-page
+  test/orchestrator-cover-module-c-failure
+  docs/tooling-update-agent-handbook
+  ```
+
+- Do not use vague branch names such as `test`, `update`, `fix-bug`, `new-branch`, a personal name, or a date.
+- If an issue tracker ID is required, put it after the scope: `feature/module-a-FFP-123-add-normalizer`.
+- Before handoff, inspect `git status`, stage only task files, and make a focused commit. Commit subjects use `<type>(<scope>): <imperative summary>`.
+
+  ```bash
+  git status
+  git add src/modules/module-a
+  git commit -m "feature(module-a): add item normalizer"
+  ```
+
+- Do not force-push, rebase a shared branch, amend a commit already handed to another person, or merge your own branch into `master` without the leader's instruction.
+
 ## 13. Agent task protocol and handoff
 
 Every agent task states:
 
 1. Exact ownership scope and files/folders it may change.
-2. Expected behavior and acceptance criteria.
-3. Whether a public contract, route, environment setting, or dependency may change.
-4. Required tests and commands.
-5. Explicit files/folders that must not be changed.
+2. Branch name that follows the mandatory branch workflow.
+3. Expected behavior and acceptance criteria.
+4. Whether a public contract, route, environment setting, or dependency may change.
+5. Required tests and commands.
+6. Explicit files/folders that must not be changed.
 
 Before finishing, an agent self-reviews its diff for module-boundary violations, naming consistency, error handling, mock/real parity, and unintended shared-file edits.
 

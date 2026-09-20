@@ -152,7 +152,50 @@ For main-owner work, replace the ownership line with `src/app`, `src/config`, `s
 
 For orchestrator work, replace ownership with `src/modules/orchestrator`; require public module imports and module-specific `AppError` codes.
 
-## 9. Required verification before handoff
+## 9. Git branch workflow
+
+Every task gets its own branch. Do not code directly on `master`.
+
+```bash
+git switch master
+git pull --ff-only
+git switch -c feature/module-a-add-normalizer
+```
+
+If the repository has no remote yet, skip `git pull --ff-only`.
+
+Use this branch format:
+
+```text
+<type>/<scope>-<short-description>
+```
+
+| Part | Allowed values / rule |
+| --- | --- |
+| `type` | `feature`, `fix`, `refactor`, `test`, `docs`, `chore` |
+| `scope` | `main`, `orchestrator`, `module-a`, `module-b`, `module-c`, `shared`, `tooling` |
+| `short-description` | Lowercase kebab-case, one outcome, starts with a verb |
+
+Examples:
+
+```text
+feature/main-add-workflow-page
+feature/module-c-add-report-mock
+fix/module-b-handle-empty-result
+test/orchestrator-cover-module-a-error
+```
+
+Before handoff, commit only the focused task files:
+
+```bash
+git status
+git add src/modules/module-a
+git commit -m "feature(module-a): add item normalizer"
+```
+
+The leader reviews and decides when a branch merges into `master`.
+
+## 10. Required verification before handoff
 
 ```bash
 npm test
