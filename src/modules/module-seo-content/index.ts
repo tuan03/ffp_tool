@@ -1,5 +1,11 @@
-export { moduleBMockData } from "./mocks/data";
-export { runMockModuleB } from "./mocks/runner";
-export { getModuleBRunner } from "./runtime";
-export { runModuleB } from "./service";
-export type { ModuleBInput, ModuleBOutput } from "./types";
+export { seoContentMockData, seoContentMockInput } from "./mocks/data";
+export { runMockSeoContent } from "./mocks/runner";
+export { getSeoContentRunner } from "./runtime";
+export { runSeoContent } from "./service";
+export type {
+  SeoContentImageInput,
+  SeoContentImageOutput,
+  SeoContentInput,
+  SeoContentOutput,
+  SeoContentWebpAsset,
+} from "./types";
