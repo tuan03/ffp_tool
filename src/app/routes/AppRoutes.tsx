@@ -4,6 +4,7 @@ import { createBrowserRouter, Navigate, RouterProvider } from "react-router-dom"
 import { environment } from "../../config/environment";
 import { AppLayout } from "../../layouts/AppLayout";
 import { createPinterestPodRoutes, getPinterestPodClient } from "../../modules/pinterest-pod";
+import { createProductCrawlerRoutes, getProductCrawlerClient } from "../../modules/product-crawler";
 import type { WorkflowInput, WorkflowOutput } from "../../modules/orchestrator";
 import { HomePage } from "../../pages/home/HomePage";
 import { NotFoundPage } from "../../pages/not-found/NotFoundPage";
@@ -16,6 +17,8 @@ export function AppRoutes({ runWorkflow }: AppRoutesProps): React.JSX.Element {
   const router = useMemo(() => {
     const podClient = getPinterestPodClient(environment);
     const podRoutes = createPinterestPodRoutes(podClient);
+    const crawlerClient = getProductCrawlerClient(environment);
+    const crawlerRoutes = createProductCrawlerRoutes(crawlerClient);
 
     return createBrowserRouter([
       {
@@ -23,8 +26,9 @@ export function AppRoutes({ runWorkflow }: AppRoutesProps): React.JSX.Element {
         children: [
           {
             index: true,
-            element: <Navigate to="/pinterest-pod" replace />,
+            element: <Navigate to="/product-crawler" replace />,
           },
+          ...crawlerRoutes,
           ...podRoutes,
           {
             path: "workflow-demo",

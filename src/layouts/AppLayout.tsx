@@ -20,6 +20,19 @@ export function AppLayout(): React.JSX.Element {
 
             <nav className="flex items-center gap-2 text-xs font-medium">
               <NavLink
+                to="/product-crawler"
+                className={({ isActive }) =>
+                  `rounded-lg px-3 py-1.5 transition ${
+                    isActive
+                      ? "bg-slate-800 font-semibold text-cyan-300"
+                      : "text-slate-400 hover:bg-slate-800/60 hover:text-slate-200"
+                  }`
+                }
+              >
+                🛒 Amazon Crawler
+              </NavLink>
+
+              <NavLink
                 to="/pinterest-pod"
                 className={({ isActive }) =>
                   `rounded-lg px-3 py-1.5 transition ${
