@@ -157,11 +157,15 @@ export interface ShopifyProductVariantInput {
 export interface ShopifyProductInput {
   readonly title: string;
   readonly handle?: string;
+  readonly description?: string;
   readonly descriptionHtml?: string;
   readonly status?: "ACTIVE" | "ARCHIVED" | "DRAFT";
   readonly vendor?: string;
   readonly productType?: string;
   readonly tags?: readonly string[];
+  readonly onlineStoreUrl?: string;
+  readonly featuredImage?: ShopifyImage;
+  readonly images?: readonly ShopifyImage[];
   readonly productOptions?: readonly ShopifyProductOptionInput[];
   readonly variants?: readonly ShopifyProductVariantInput[];
   readonly seo?: ShopifySeoInput;
@@ -170,11 +174,15 @@ export interface ShopifyProductInput {
 export interface ShopifyProductUpdateInput {
   readonly title?: string;
   readonly handle?: string;
+  readonly description?: string;
   readonly descriptionHtml?: string;
   readonly status?: "ACTIVE" | "ARCHIVED" | "DRAFT";
   readonly vendor?: string;
   readonly productType?: string;
   readonly tags?: readonly string[];
+  readonly onlineStoreUrl?: string;
+  readonly featuredImage?: ShopifyImage;
+  readonly images?: readonly ShopifyImage[];
   readonly seo?: ShopifySeoInput;
 }
 

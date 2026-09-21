@@ -199,6 +199,86 @@ test("Module API mock runner executes products.update", async () => {
   assert.equal(response.data.product.title, "Updated Cotton T-Shirt");
 });
 
+test("Module API mock runner executes products.create and products.update with images, url, and description", async () => {
+  const createRes = await runMockModuleApi({
+    storeId: "store-101",
+    operation: "products.create",
+    mode: "apply",
+    payload: {
+      product: {
+        title: "Image Hoodie",
+        description: "Graphic hoodie with print",
+        onlineStoreUrl: "https://quickstart-demo.myshopify.com/products/image-hoodie",
+        featuredImage: {
+          id: "gid://shopify/ProductImage/9001",
+          url: "https://cdn.shopify.com/hoodie-front.jpg",
+          altText: "Front",
+          width: 800,
+          height: 800,
+        },
+        images: [
+          {
+            id: "gid://shopify/ProductImage/9001",
+            url: "https://cdn.shopify.com/hoodie-front.jpg",
+            altText: "Front",
+            width: 800,
+            height: 800,
+          },
+          {
+            id: "gid://shopify/ProductImage/9002",
+            url: "https://cdn.shopify.com/hoodie-back.jpg",
+            altText: "Back",
+            width: 800,
+            height: 800,
+          },
+        ],
+      },
+    },
+  });
+
+  assert.equal(createRes.success, true);
+  assert.equal(createRes.data.product.description, "Graphic hoodie with print");
+  assert.equal(createRes.data.product.onlineStoreUrl, "https://quickstart-demo.myshopify.com/products/image-hoodie");
+  assert.deepEqual(createRes.data.product.featuredImage, {
+    id: "gid://shopify/ProductImage/9001",
+    url: "https://cdn.shopify.com/hoodie-front.jpg",
+    altText: "Front",
+    width: 800,
+    height: 800,
+  });
+  assert.equal(createRes.data.product.images?.length, 2);
+
+  const updateRes = await runMockModuleApi({
+    storeId: "store-101",
+    operation: "products.update",
+    mode: "apply",
+    payload: {
+      id: "gid://shopify/Product/1001",
+      product: {
+        title: "Updated Cotton T-Shirt",
+        description: "Updated description text",
+        featuredImage: {
+          id: "gid://shopify/ProductImage/5002",
+          url: "https://cdn.shopify.com/s/files/1/0001/products/tshirt-back.jpg",
+          altText: "Updated Featured",
+          width: 1000,
+          height: 1000,
+        },
+      },
+    },
+  });
+
+  assert.equal(updateRes.success, true);
+  assert.equal(updateRes.data.product.description, "Updated description text");
+  assert.deepEqual(updateRes.data.product.featuredImage, {
+    id: "gid://shopify/ProductImage/5002",
+    url: "https://cdn.shopify.com/s/files/1/0001/products/tshirt-back.jpg",
+    altText: "Updated Featured",
+    width: 1000,
+    height: 1000,
+  });
+});
+
 test("Module API mock runner executes products.bulkUpdate", async () => {
   const response = await runMockModuleApi({
     storeId: "store-101",
@@ -757,6 +837,8 @@ test("Real service executes products.list response success", async () => {
               id: "gid://shopify/Product/1",
               title: "Product 1",
               handle: "product-1",
+              description: "Product 1 plain text description",
+              descriptionHtml: "<p>Product 1 plain text description</p>",
               status: "ACTIVE",
               tags: ["tag1"],
               onlineStoreUrl: "https://store-42.myshopify.com/products/product-1",
@@ -810,6 +892,7 @@ test("Real service executes products.list response success", async () => {
   assert.equal(response.operation, "products.list");
   assert.equal(response.data.products.length, 1);
   assert.equal(response.data.products[0].title, "Product 1");
+  assert.equal(response.data.products[0].description, "Product 1 plain text description");
   assert.equal(response.data.products[0].onlineStoreUrl, "https://store-42.myshopify.com/products/product-1");
   assert.deepEqual(response.data.products[0].featuredImage, {
     id: "gid://shopify/ProductImage/1",

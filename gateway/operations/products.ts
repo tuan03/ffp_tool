@@ -150,12 +150,12 @@ export interface RawProductNode {
 }
 
 function mapImageNode(node?: RawImageNode | null): ProductImageSummary | undefined {
-  if (!node || typeof node.url !== "string" || node.url === "") {
+  if (!node || typeof node.url !== "string" || node.url.trim() === "") {
     return undefined;
   }
   return {
     id: node.id ?? undefined,
-    url: node.url,
+    url: node.url.trim(),
     altText: node.altText ?? undefined,
     width: typeof node.width === "number" ? node.width : undefined,
     height: typeof node.height === "number" ? node.height : undefined,
@@ -176,7 +176,7 @@ export function mapProductNode(node: RawProductNode): ProductSummary {
   const featuredImage = mapImageNode(node.featuredImage);
   const images = node.images?.edges
     ? node.images.edges
-        .map((edge) => mapImageNode(edge.node))
+        .map((edge) => mapImageNode(edge?.node))
         .filter((img): img is ProductImageSummary => img !== undefined)
     : undefined;
 
