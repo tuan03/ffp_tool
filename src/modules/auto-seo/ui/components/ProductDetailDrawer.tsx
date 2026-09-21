@@ -2,8 +2,6 @@ import { useState } from "react";
 
 import type { ProductReviewDecision, ShopifyProductForAutoSeoUi } from "../../types";
 
-import { ProductDecisionBadge } from "./ProductDecisionBadge";
-
 export interface ProductDetailDrawerProps {
   product: ShopifyProductForAutoSeoUi | null;
   isOpen: boolean;
@@ -11,10 +9,10 @@ export interface ProductDetailDrawerProps {
   isLoading?: boolean;
   errorMessage?: string | null;
   onClose(): void;
-  onApprove(productId: string): void;
-  onMarkNeedsEdit(productId: string): void;
-  onMarkDraft(productId: string): void;
-  onSkip(productId: string): void;
+  onApprove?(productId: string): void;
+  onMarkNeedsEdit?(productId: string): void;
+  onMarkDraft?(productId: string): void;
+  onSkip?(productId: string): void;
   selectedImageIndex?: number;
   onSelectImageIndex?(index: number): void;
 }
@@ -22,14 +20,9 @@ export interface ProductDetailDrawerProps {
 export function ProductDetailDrawer({
   product,
   isOpen,
-  decision = "pending",
   isLoading = false,
   errorMessage = null,
   onClose,
-  onApprove,
-  onMarkNeedsEdit,
-  onMarkDraft,
-  onSkip,
   selectedImageIndex: controlledImageIndex,
   onSelectImageIndex,
 }: ProductDetailDrawerProps): React.JSX.Element | null {
@@ -86,7 +79,6 @@ export function ProductDetailDrawer({
             <h2 className="text-base font-bold text-slate-100 flex items-center gap-2">
               <span>🔍</span> Chi tiết sản phẩm (PDP)
             </h2>
-            <ProductDecisionBadge decision={decision} />
             {isLoading && (
               <span className="flex items-center gap-1.5 text-[11px] text-cyan-400 bg-cyan-950/60 px-2 py-0.5 rounded-md border border-cyan-800">
                 <span className="inline-block h-1.5 w-1.5 rounded-full bg-cyan-400 animate-pulse" />
@@ -423,41 +415,7 @@ export function ProductDetailDrawer({
         </div>
 
         {/* Drawer Action Footer */}
-        <div className="flex items-center justify-between border-t border-slate-800 px-6 py-4 bg-slate-950/90">
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => onApprove(product.id)}
-              className="rounded-lg bg-emerald-900/80 px-3 py-2 text-xs font-semibold text-emerald-200 border border-emerald-700 hover:bg-emerald-800 transition"
-            >
-              ✓ Duyệt sản phẩm
-            </button>
-
-            <button
-              type="button"
-              onClick={() => onMarkNeedsEdit(product.id)}
-              className="rounded-lg bg-amber-900/80 px-3 py-2 text-xs font-semibold text-amber-200 border border-amber-700 hover:bg-amber-800 transition"
-            >
-              ✎ Cần sửa
-            </button>
-
-            <button
-              type="button"
-              onClick={() => onMarkDraft(product.id)}
-              className="rounded-lg bg-purple-900/80 px-3 py-2 text-xs font-semibold text-purple-200 border border-purple-700 hover:bg-purple-800 transition"
-            >
-              Draft
-            </button>
-
-            <button
-              type="button"
-              onClick={() => onSkip(product.id)}
-              className="rounded-lg bg-rose-900/80 px-3 py-2 text-xs font-semibold text-rose-200 border border-rose-700 hover:bg-rose-800 transition"
-            >
-              ✕ Bỏ
-            </button>
-          </div>
-
+        <div className="flex items-center justify-end border-t border-slate-800 px-6 py-4 bg-slate-950/90">
           <button
             type="button"
             onClick={onClose}

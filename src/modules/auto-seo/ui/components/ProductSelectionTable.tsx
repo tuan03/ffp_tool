@@ -1,6 +1,5 @@
 import { useMemo, useState } from "react";
 
-import { ProductDecisionBadge } from "./ProductDecisionBadge";
 import { filterAutoSeoProducts } from "./product-filter";
 
 import type {
@@ -12,7 +11,7 @@ import type {
 export interface ProductSelectionTableProps {
   products: readonly ShopifyProductForAutoSeoUi[];
   selectedProductIds: readonly string[];
-  decisions: Record<string, ProductReviewDecision>;
+  decisions?: Record<string, ProductReviewDecision>;
   searchQuery?: string;
   onSearchQueryChange?(query: string): void;
   statusFilter?: ShopifyStatusFilter;
@@ -21,10 +20,10 @@ export interface ProductSelectionTableProps {
   onDecisionFilterChange?(decision: string): void;
   filteredProducts?: readonly ShopifyProductForAutoSeoUi[];
   onToggleSelect(productId: string): void;
-  onApprove(productId: string): void;
-  onEdit(product: ShopifyProductForAutoSeoUi): void;
-  onMarkDraft(productId: string): void;
-  onSkip(productId: string): void;
+  onApprove?(productId: string): void;
+  onEdit?(product: ShopifyProductForAutoSeoUi): void;
+  onMarkDraft?(productId: string): void;
+  onSkip?(productId: string): void;
   onOpenDetail(product: ShopifyProductForAutoSeoUi): void;
 }
 
@@ -32,22 +31,15 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
   const {
     products,
     selectedProductIds,
-    decisions,
     onToggleSelect,
-    onApprove,
-    onEdit,
-    onMarkDraft,
-    onSkip,
     onOpenDetail,
   } = props;
 
   const [internalSearchQuery, setInternalSearchQuery] = useState("");
   const [internalStatusFilter, setInternalStatusFilter] = useState<ShopifyStatusFilter>("all");
-  const [internalDecisionFilter, setInternalDecisionFilter] = useState<string>("all");
 
   const searchQuery = props.searchQuery !== undefined ? props.searchQuery : internalSearchQuery;
   const statusFilter = props.statusFilter !== undefined ? props.statusFilter : internalStatusFilter;
-  const decisionFilter = props.decisionFilter !== undefined ? props.decisionFilter : internalDecisionFilter;
 
   const handleSearchQueryChange = (query: string): void => {
     if (props.onSearchQueryChange) {
@@ -62,14 +54,6 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
       props.onStatusFilterChange(status);
     } else {
       setInternalStatusFilter(status);
-    }
-  };
-
-  const handleDecisionFilterChange = (decision: string): void => {
-    if (props.onDecisionFilterChange) {
-      props.onDecisionFilterChange(decision);
-    } else {
-      setInternalDecisionFilter(decision);
     }
   };
 
@@ -104,8 +88,8 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
     return filterAutoSeoProducts(products, {
       searchQuery,
       statusFilter,
-      decisionFilter,
-      decisions,
+      decisionFilter: props.decisionFilter ?? "all",
+      decisions: props.decisions ?? {},
       selectedProductIds,
     });
   }, [
@@ -113,8 +97,8 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
     products,
     searchQuery,
     statusFilter,
-    decisionFilter,
-    decisions,
+    props.decisionFilter,
+    props.decisions,
     selectedProductIds,
   ]);
 
@@ -139,19 +123,10 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
     { id: "ARCHIVED", label: `Archived (${statusCounts.ARCHIVED})` },
   ];
 
-  const decisionTabs: readonly { readonly id: string; readonly label: string }[] = [
-    { id: "all", label: "Tất cả" },
-    { id: "selected", label: `Đã chọn (${selectedProductIds.length})` },
-    { id: "approved", label: "Đã duyệt" },
-    { id: "needs_edit", label: "Cần sửa" },
-    { id: "mark_draft", label: "Draft" },
-    { id: "skipped", label: "Bỏ qua" },
-  ];
-
   return (
     <div className="rounded-xl border border-slate-800 bg-slate-900/60 shadow-xl overflow-hidden backdrop-blur-sm">
       {/* Table Filter Header */}
-      <div className="border-b border-slate-800 p-4 bg-slate-900/90 space-y-3">
+      <div className="border-b border-slate-800 p-4 bg-slate-900/90">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
           {/* Search Input */}
           <div className="relative flex-1 max-w-sm">
@@ -194,27 +169,6 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
             ))}
           </div>
         </div>
-
-        {/* Review Decision Filter Row */}
-        <div className="flex flex-wrap items-center gap-1.5 text-xs pt-2 border-t border-slate-800/60">
-          <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 mr-1">
-            Quyết định:
-          </span>
-          {decisionTabs.map((tab) => (
-            <button
-              key={tab.id}
-              type="button"
-              onClick={() => handleDecisionFilterChange(tab.id)}
-              className={`rounded-md px-2.5 py-1 transition ${
-                decisionFilter === tab.id
-                  ? "bg-cyan-950 border border-cyan-700 text-cyan-300 font-semibold"
-                  : "bg-slate-800/60 border border-slate-800 text-slate-400 hover:bg-slate-800 hover:text-slate-200"
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
       </div>
 
       {/* Table Data */}
@@ -231,21 +185,18 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
               <th scope="col" className="py-3.5 px-3 font-medium hidden md:table-cell">Product ID</th>
               <th scope="col" className="py-3.5 px-3 font-medium hidden lg:table-cell">Handle</th>
               <th scope="col" className="py-3.5 px-3 font-medium text-center">Status</th>
-              <th scope="col" className="py-3.5 px-3 font-medium text-center">Quyết định</th>
-              <th scope="col" className="py-3.5 px-3 font-medium text-right pr-4">Thao tác</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-800/60">
             {displayProducts.length === 0 ? (
               <tr>
-                <td colSpan={9} className="py-12 text-center text-slate-500 text-xs">
+                <td colSpan={7} className="py-12 text-center text-slate-500 text-xs">
                   Không có sản phẩm nào phù hợp với bộ lọc hiện tại.
                 </td>
               </tr>
             ) : (
               displayProducts.map((product, index) => {
               const isSelected = selectedProductIds.includes(product.id);
-              const decision = decisions[product.id] ?? "pending";
               const thumbnailUrl = product.featuredImage?.url ?? product.images?.[0]?.url;
               const thumbnailAlt =
                 product.featuredImage?.altText ?? product.images?.[0]?.altText ?? product.title;
@@ -350,63 +301,6 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
                     >
                       {upperStatus || "UNKNOWN"}
                     </span>
-                  </td>
-
-                  {/* Decision Badge */}
-                  <td className="py-3.5 px-3 text-center">
-                    <ProductDecisionBadge decision={decision} />
-                  </td>
-
-                  {/* Actions */}
-                  <td
-                    className="py-3.5 px-3 text-right pr-4"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <div className="flex items-center justify-end gap-1.5">
-                      {/* Duyệt Button */}
-                      <button
-                        type="button"
-                        onClick={() => onApprove(product.id)}
-                        className={`rounded-md px-2 py-1 text-xs font-semibold transition ${
-                          decision === "approved"
-                            ? "bg-emerald-900/70 text-emerald-300 border border-emerald-700"
-                            : "bg-slate-800 text-slate-300 hover:bg-emerald-950 hover:text-emerald-300 border border-slate-700 hover:border-emerald-800"
-                        }`}
-                        title="Duyệt và chọn cho Auto SEO"
-                      >
-                        ✓ Duyệt
-                      </button>
-
-                      {/* Sửa Button */}
-                      <button
-                        type="button"
-                        onClick={() => onEdit(product)}
-                        className="rounded-md bg-slate-800 px-2 py-1 text-xs font-medium text-slate-300 border border-slate-700 hover:bg-amber-950 hover:text-amber-300 hover:border-amber-800 transition"
-                        title="Mở chi tiết và đánh dấu cần sửa"
-                      >
-                        ✎ Sửa
-                      </button>
-
-                      {/* Draft Button */}
-                      <button
-                        type="button"
-                        onClick={() => onMarkDraft(product.id)}
-                        className="rounded-md bg-slate-800 px-2 py-1 text-xs font-medium text-slate-300 border border-slate-700 hover:bg-purple-950 hover:text-purple-300 hover:border-purple-800 transition"
-                        title="Đánh dấu chuyển Draft"
-                      >
-                        Draft
-                      </button>
-
-                      {/* Bỏ Button */}
-                      <button
-                        type="button"
-                        onClick={() => onSkip(product.id)}
-                        className="rounded-md bg-slate-800 px-2 py-1 text-xs font-medium text-slate-400 border border-slate-700 hover:bg-rose-950 hover:text-rose-300 hover:border-rose-800 transition"
-                        title="Bỏ qua sản phẩm này"
-                      >
-                        ✕ Bỏ
-                      </button>
-                    </div>
                   </td>
                 </tr>
               );

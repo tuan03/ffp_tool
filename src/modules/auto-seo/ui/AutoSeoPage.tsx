@@ -6,7 +6,6 @@ import { mapShopifyProductToAutoSeoCandidate } from "../shopify-adapter";
 import type {
   AutoSeoClient,
   AutoSeoOutput,
-  ProductReviewDecision,
   ShopifyProductForAutoSeoUi,
   ShopifyStatusFilter,
 } from "../types";
@@ -48,11 +47,9 @@ export function AutoSeoPage({
     }
     return [];
   });
-  const [decisions, setDecisions] = useState<Record<string, ProductReviewDecision>>({});
 
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<ShopifyStatusFilter>("all");
-  const [decisionFilter, setDecisionFilter] = useState<string>("all");
 
   const [isLoadingProducts, setIsLoadingProducts] = useState(false);
   const [isRunningAutoSeo, setIsRunningAutoSeo] = useState(false);
@@ -70,11 +67,11 @@ export function AutoSeoPage({
     return filterAutoSeoProducts(products, {
       searchQuery,
       statusFilter,
-      decisionFilter,
-      decisions,
+      decisionFilter: "all",
+      decisions: {},
       selectedProductIds,
     });
-  }, [products, searchQuery, statusFilter, decisionFilter, decisions, selectedProductIds]);
+  }, [products, searchQuery, statusFilter, selectedProductIds]);
 
   const handleLoadProducts = useCallback(async (): Promise<void> => {
     setIsLoadingProducts(true);
@@ -145,47 +142,6 @@ export function AutoSeoPage({
     },
     [activeClient],
   );
-
-  // Approve product
-  const handleApprove = (productId: string): void => {
-    setDecisions((curr) => ({
-      ...curr,
-      [productId]: "approved",
-    }));
-
-    setSelectedProductIds((curr) =>
-      curr.includes(productId) ? curr : [...curr, productId],
-    );
-  };
-
-  // Edit product
-  const handleEdit = (product: ShopifyProductForAutoSeoUi): void => {
-    setDecisions((curr) => ({
-      ...curr,
-      [product.id]: "needs_edit",
-    }));
-    void openProductDetail(product);
-  };
-
-  // Mark as draft
-  const handleMarkDraft = (productId: string): void => {
-    setDecisions((curr) => ({
-      ...curr,
-      [productId]: "mark_draft",
-    }));
-
-    setSelectedProductIds((curr) => curr.filter((id) => id !== productId));
-  };
-
-  // Skip product
-  const handleSkip = (productId: string): void => {
-    setDecisions((curr) => ({
-      ...curr,
-      [productId]: "skipped",
-    }));
-
-    setSelectedProductIds((curr) => curr.filter((id) => id !== productId));
-  };
 
   // Toggle selection
   const handleToggleSelect = (productId: string): void => {
@@ -310,19 +266,12 @@ export function AutoSeoPage({
       <ProductSelectionTable
         products={products}
         selectedProductIds={selectedProductIds}
-        decisions={decisions}
         searchQuery={searchQuery}
         onSearchQueryChange={setSearchQuery}
         statusFilter={statusFilter}
         onStatusFilterChange={setStatusFilter}
-        decisionFilter={decisionFilter}
-        onDecisionFilterChange={setDecisionFilter}
         filteredProducts={filteredProducts}
         onToggleSelect={handleToggleSelect}
-        onApprove={handleApprove}
-        onEdit={handleEdit}
-        onMarkDraft={handleMarkDraft}
-        onSkip={handleSkip}
         onOpenDetail={handleOpenDetail}
       />
 
@@ -330,7 +279,6 @@ export function AutoSeoPage({
       <ProductDetailDrawer
         product={activeProduct}
         isOpen={isDetailOpen}
-        decision={activeProduct ? decisions[activeProduct.id] : undefined}
         isLoading={isDetailLoading}
         errorMessage={detailErrorMessage}
         onClose={() => {
@@ -338,22 +286,6 @@ export function AutoSeoPage({
           setIsDetailOpen(false);
           setIsDetailLoading(false);
           setDetailErrorMessage(null);
-        }}
-        onApprove={(id) => {
-          handleApprove(id);
-          setIsDetailOpen(false);
-        }}
-        onMarkNeedsEdit={(id) => {
-          setDecisions((c) => ({ ...c, [id]: "needs_edit" }));
-          setIsDetailOpen(false);
-        }}
-        onMarkDraft={(id) => {
-          handleMarkDraft(id);
-          setIsDetailOpen(false);
-        }}
-        onSkip={(id) => {
-          handleSkip(id);
-          setIsDetailOpen(false);
         }}
       />
 

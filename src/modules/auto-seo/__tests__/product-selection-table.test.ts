@@ -122,20 +122,12 @@ interface ButtonProps {
   children?: React.ReactNode;
 }
 
-interface ActionButtons {
-  approveButton: React.ReactElement<ButtonProps>;
-  editButton: React.ReactElement<ButtonProps>;
-  draftButton: React.ReactElement<ButtonProps>;
-  skipButton: React.ReactElement<ButtonProps>;
-}
-
 interface TableRowElements {
   tr: React.ReactElement<{ onClick(): void; children: React.ReactNode[] }>;
   checkboxTd: React.ReactElement<CellProps>;
   checkboxLabel: React.ReactElement<LabelProps>;
   checkboxInput: React.ReactElement<InputProps>;
-  actionsTd: React.ReactElement<CellProps>;
-  actionButtons: ActionButtons;
+  cells: React.ReactElement[];
 }
 
 function assertElement<P>(node: unknown): React.ReactElement<P> {
@@ -153,28 +145,18 @@ function extractFirstRowElements(captured: React.ReactElement<{ children: React.
   const tbody = assertElement<{ children: React.ReactNode[] }>(tableChildren[1]);
   const rows = React.Children.toArray(tbody.props.children);
   const tr = assertElement<{ onClick(): void; children: React.ReactNode[] }>(rows[0]);
-  const cells = React.Children.toArray(tr.props.children);
+  const cells = React.Children.toArray(tr.props.children) as React.ReactElement[];
 
   const checkboxTd = assertElement<CellProps>(cells[0]);
   const checkboxLabel = assertElement<LabelProps>(checkboxTd.props.children);
   const checkboxInput = assertElement<InputProps>(checkboxLabel.props.children);
-  const actionsTd = assertElement<CellProps>(cells[8]);
-
-  const actionsDiv = assertElement<{ children: React.ReactNode[] }>(actionsTd.props.children);
-  const buttons = React.Children.toArray(actionsDiv.props.children);
-
-  const approveButton = assertElement<ButtonProps>(buttons[0]);
-  const editButton = assertElement<ButtonProps>(buttons[1]);
-  const draftButton = assertElement<ButtonProps>(buttons[2]);
-  const skipButton = assertElement<ButtonProps>(buttons[3]);
 
   return {
     tr,
     checkboxTd,
     checkboxLabel,
     checkboxInput,
-    actionsTd,
-    actionButtons: { approveButton, editButton, draftButton, skipButton },
+    cells,
   };
 }
 
@@ -259,57 +241,30 @@ test("ProductSelectionTable: row click triggers onOpenDetail while checkbox cell
   assert.equal(stopPropagationCalled, true, "checkboxTd.onClick must call stopPropagation");
 });
 
-test("ProductSelectionTable: actions cell click stops propagation to row", () => {
-  const openedProducts: ShopifyProductForAutoSeoUi[] = [];
-
-  const { captured } = renderTable({
+test("ProductSelectionTable: does NOT render 'Thao tác' or 'Quyết định' headers in the table", () => {
+  const { html } = renderTable({
     products: mockProducts,
     selectedProductIds: [],
-    onOpenDetail: (p) => openedProducts.push(p),
   });
 
-  const { actionsTd } = extractFirstRowElements(captured);
-
-  let stopPropagationCalled = false;
-  actionsTd.props.onClick?.({
-    stopPropagation: () => {
-      stopPropagationCalled = true;
-    },
-  });
-
-  assert.equal(stopPropagationCalled, true, "actionsTd.onClick must call stopPropagation");
-  assert.equal(openedProducts.length, 0, "Actions cell click must not open product detail");
+  assert.equal(html.includes(">Thao tác</th>"), false, "Table must NOT have Thao tác header");
+  assert.equal(html.includes(">Quyết định</th>"), false, "Table must NOT have Quyết định header");
 });
 
-test("ProductSelectionTable: action buttons (Duyệt, Sửa, Draft, Bỏ) call their respective callbacks", () => {
-  const approvedIds: string[] = [];
-  const editedProducts: ShopifyProductForAutoSeoUi[] = [];
-  const draftIds: string[] = [];
-  const skippedIds: string[] = [];
-
-  const { captured } = renderTable({
+test("ProductSelectionTable: rows contain exactly 7 cells without action buttons or decision badge", () => {
+  const { captured, html } = renderTable({
     products: mockProducts,
     selectedProductIds: [],
-    onApprove: (id) => approvedIds.push(id),
-    onEdit: (product) => editedProducts.push(product),
-    onMarkDraft: (id) => draftIds.push(id),
-    onSkip: (id) => skippedIds.push(id),
   });
 
-  const { actionButtons } = extractFirstRowElements(captured);
-
-  actionButtons.approveButton.props.onClick?.();
-  assert.deepEqual(approvedIds, ["gid://shopify/Product/101"]);
-
-  actionButtons.editButton.props.onClick?.();
-  assert.equal(editedProducts.length, 1);
-  assert.equal(editedProducts[0]?.id, "gid://shopify/Product/101");
-
-  actionButtons.draftButton.props.onClick?.();
-  assert.deepEqual(draftIds, ["gid://shopify/Product/101"]);
-
-  actionButtons.skipButton.props.onClick?.();
-  assert.deepEqual(skippedIds, ["gid://shopify/Product/101"]);
+  const { cells } = extractFirstRowElements(captured);
+  assert.equal(cells.length, 7, "Table row must contain exactly 7 columns (no decision or action columns)");
+  assert.equal(html.includes("✓ Duyệt"), false, "Must not contain Duyệt button");
+  assert.equal(html.includes("✎ Sửa"), false, "Must not contain Sửa button");
+  assert.equal(html.includes("Draft"), true, "Draft status tag remains for DRAFT products, but not action button");
+  assert.equal(html.includes("✕ Bỏ"), false, "Must not contain Bỏ button");
+  assert.equal(html.includes("Chờ duyệt"), false, "Must not contain Chờ duyệt badge");
+  assert.equal(html.includes("Đã duyệt"), false, "Must not contain Đã duyệt badge");
 });
 
 test("ProductSelectionTable: renders checked state matching selectedProductIds", () => {
@@ -328,18 +283,14 @@ test("ProductSelectionTable: renders checked state matching selectedProductIds",
   assert.equal(selectedRow.checkboxInput.props.checked, true);
 });
 
-test("ProductSelectionTable: filter tab reflects current selected products count", () => {
-  const { html: htmlZero } = renderTable({
+test("ProductSelectionTable: filter header does NOT render 'Quyết định:' filter row", () => {
+  const { html } = renderTable({
     products: mockProducts,
     selectedProductIds: [],
   });
-  assert.ok(htmlZero.includes("Đã chọn (0)"));
-
-  const { html: htmlTwo } = renderTable({
-    products: mockProducts,
-    selectedProductIds: ["gid://shopify/Product/101", "gid://shopify/Product/102"],
-  });
-  assert.ok(htmlTwo.includes("Đã chọn (2)"));
+  assert.equal(html.includes("Quyết định:"), false, "Filter header must NOT contain 'Quyết định:' row");
+  assert.equal(html.includes("Cần sửa"), false, "Must NOT contain 'Cần sửa' filter tab");
+  assert.equal(html.includes("Bỏ qua"), false, "Must NOT contain 'Bỏ qua' filter tab");
 });
 
 test("ProductSelectionTable: selection state transitions match user workflow requirements", () => {

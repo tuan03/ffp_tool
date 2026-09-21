@@ -447,3 +447,18 @@ test("ProductDetailDrawer: returns null when isOpen is false or product is null"
   });
   assert.equal(htmlNoProduct, "", "Must return null/empty when product is null");
 });
+
+test("ProductDetailDrawer: does NOT render decision badges or decision action buttons", () => {
+  const { html } = renderDrawer({
+    product: mockProductWithSeo,
+    isOpen: true,
+  });
+
+  assert.equal(html.includes("✓ Duyệt"), false, "Drawer must NOT render Duyệt button");
+  assert.equal(html.includes("✎ Cần sửa"), false, "Drawer must NOT render Cần sửa button");
+  assert.equal(html.includes("Draft"), false, "Drawer must NOT render Draft button");
+  assert.equal(html.includes("✕ Bỏ"), false, "Drawer must NOT render Bỏ button");
+  assert.equal(html.includes("Chờ duyệt"), false, "Drawer must NOT render Chờ duyệt badge");
+  assert.equal(html.includes("Đã duyệt"), false, "Drawer must NOT render Đã duyệt badge");
+  assert.ok(html.includes("Đóng"), "Drawer must render Close button");
+});
