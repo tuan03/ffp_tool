@@ -32,14 +32,10 @@ import type {
   ShopifyProductsListResponse,
   ShopifyProductsUpdateInput,
   ShopifyProductsUpdateResponse,
-  ShopifyStoresDisconnectInput,
-  ShopifyStoresDisconnectResponse,
   ShopifyStoresGetInput,
   ShopifyStoresGetResponse,
   ShopifyStoresListInput,
   ShopifyStoresListResponse,
-  ShopifyStoresRegisterInput,
-  ShopifyStoresRegisterResponse,
   ShopifyVariantsBulkUpdateInput,
   ShopifyVariantsBulkUpdateResponse,
   ShopifyVariantsUpdateInput,
@@ -75,10 +71,8 @@ const ALL_OPERATIONS: ReadonlySet<ShopifyOperation> = new Set([
   "collections.update",
   "collections.delete",
   "collections.updateMembership",
-  "stores.register",
   "stores.list",
   "stores.get",
-  "stores.disconnect",
 ]);
 
 function isShopifyReadOperation(operation: ShopifyOperation): boolean {
@@ -558,10 +552,8 @@ export async function runModuleApi(input: ShopifyCollectionsCreateInput): Promis
 export async function runModuleApi(input: ShopifyCollectionsUpdateInput): Promise<ShopifyCollectionsUpdateResponse>;
 export async function runModuleApi(input: ShopifyCollectionsDeleteInput): Promise<ShopifyCollectionsDeleteResponse>;
 export async function runModuleApi(input: ShopifyCollectionsUpdateMembershipInput): Promise<ShopifyCollectionsUpdateMembershipResponse>;
-export async function runModuleApi(input: ShopifyStoresRegisterInput): Promise<ShopifyStoresRegisterResponse>;
 export async function runModuleApi(input: ShopifyStoresListInput): Promise<ShopifyStoresListResponse>;
 export async function runModuleApi(input: ShopifyStoresGetInput): Promise<ShopifyStoresGetResponse>;
-export async function runModuleApi(input: ShopifyStoresDisconnectInput): Promise<ShopifyStoresDisconnectResponse>;
 export async function runModuleApi(input: ShopifyApiInput): Promise<ShopifyApiResponse>;
 export async function runModuleApi(input: ShopifyApiInput): Promise<ShopifyApiResponse> {
   return defaultRunner(input);

@@ -8,7 +8,8 @@
     "dev:mock": "vite --mode mock",
     "build": "tsc --noEmit -p tsconfig.json && vite build",
     "build:mock": "tsc --noEmit -p tsconfig.json && vite build --mode mock",
-    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.gateway.json",
+    "typecheck:gateway": "tsc --noEmit -p tsconfig.gateway.json",
     "test": "tsx --test src/modules/*/__tests__/*.test.ts gateway/__tests__/*.test.ts",
     "gateway:start": "tsx gateway/server.ts",
     "preview": "vite preview"

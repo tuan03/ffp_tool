@@ -43,7 +43,6 @@ export function startGatewayServer(port: number = 3001): http.Server {
   const staticToken = env.GATEWAY_ACCESS_TOKEN;
   const storeId = env.GATEWAY_STORE_ID || "capozen";
   const shopDomain = env.GATEWAY_SHOP_DOMAIN || "capozen.myshopify.com";
-  const niche = env.GATEWAY_STORE_NICHE;
 
   if ((clientId && clientSecret) || staticToken) {
     const proxyUrl = env.GATEWAY_PROXY_URL;
@@ -73,7 +72,6 @@ export function startGatewayServer(port: number = 3001): http.Server {
       apiVersion: "2026-07",
       auth,
       proxy,
-      niche,
     });
   }
 

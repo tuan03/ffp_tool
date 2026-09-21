@@ -32,14 +32,10 @@ import type {
   ShopifyProductsUpdateInput,
   ShopifyProductsUpdateResponse,
   ShopifyStoreSummary,
-  ShopifyStoresDisconnectInput,
-  ShopifyStoresDisconnectResponse,
   ShopifyStoresGetInput,
   ShopifyStoresGetResponse,
   ShopifyStoresListInput,
   ShopifyStoresListResponse,
-  ShopifyStoresRegisterInput,
-  ShopifyStoresRegisterResponse,
   ShopifyVariantsBulkUpdateInput,
   ShopifyVariantsBulkUpdateResponse,
   ShopifyVariantsUpdateInput,
@@ -57,8 +53,8 @@ const mockStores: ShopifyStoreSummary[] = [
     storeId: "capozen",
     shopDomain: "capozen.myshopify.com",
     apiVersion: "2026-07",
-    niche: "general",
     authType: "static",
+    connected: true,
   },
 ];
 
@@ -153,17 +149,22 @@ export async function runMockModuleApi(input: ShopifyCollectionsCreateInput): Pr
 export async function runMockModuleApi(input: ShopifyCollectionsUpdateInput): Promise<ShopifyCollectionsUpdateResponse>;
 export async function runMockModuleApi(input: ShopifyCollectionsDeleteInput): Promise<ShopifyCollectionsDeleteResponse>;
 export async function runMockModuleApi(input: ShopifyCollectionsUpdateMembershipInput): Promise<ShopifyCollectionsUpdateMembershipResponse>;
-export async function runMockModuleApi(input: ShopifyStoresRegisterInput): Promise<ShopifyStoresRegisterResponse>;
 export async function runMockModuleApi(input: ShopifyStoresListInput): Promise<ShopifyStoresListResponse>;
 export async function runMockModuleApi(input: ShopifyStoresGetInput): Promise<ShopifyStoresGetResponse>;
-export async function runMockModuleApi(input: ShopifyStoresDisconnectInput): Promise<ShopifyStoresDisconnectResponse>;
 export async function runMockModuleApi(input: ShopifyApiInput): Promise<ShopifyApiResponse>;
 export async function runMockModuleApi(input: ShopifyApiInput): Promise<ShopifyApiResponse> {
   if (!input || typeof input !== "object") {
     throw new ShopifyApiError("Input must be a valid object", "SHOPIFY_USER_ERROR");
   }
 
-  if (!input.storeId || input.storeId.trim() === "") {
+  const effectiveStoreId =
+    typeof input.storeId === "string" && input.storeId.trim() !== ""
+      ? input.storeId.trim()
+      : input.operation === "stores.list"
+      ? "system"
+      : "";
+
+  if (!effectiveStoreId) {
     throw new ShopifyApiError("Store ID is required", "SHOPIFY_USER_ERROR");
   }
 
@@ -364,6 +365,24 @@ export async function runMockModuleApi(input: ShopifyApiInput): Promise<ShopifyA
         throw new ShopifyApiError("Variant ID is required", "SHOPIFY_USER_ERROR");
       }
 
+      const rawVariant = (input.payload.variant && typeof input.payload.variant === "object"
+        ? input.payload.variant
+        : {}) as Record<string, unknown>;
+
+      if ("title" in rawVariant && rawVariant.title !== undefined) {
+        throw new ShopifyApiError(
+          "Updating variant title directly is not supported; variant titles are derived from optionValues",
+          "SHOPIFY_INVALID_INPUT",
+        );
+      }
+
+      if ("inventoryQuantity" in rawVariant && rawVariant.inventoryQuantity !== undefined) {
+        throw new ShopifyApiError(
+          "Updating inventoryQuantity via variants.update is not supported; use the Shopify Inventory API",
+          "SHOPIFY_INVALID_INPUT",
+        );
+      }
+
       let existingVariant: ShopifyProductVariant | undefined;
       for (const prod of shopifyMockProducts) {
         const found = prod.variants.find((v) => v.id === input.payload.id);
@@ -376,11 +395,11 @@ export async function runMockModuleApi(input: ShopifyApiInput): Promise<ShopifyA
       const updatedVariant: ShopifyProductVariant = {
         id: input.payload.id,
         productId: existingVariant?.productId ?? "gid://shopify/Product/1001",
-        title: input.payload.variant.title ?? existingVariant?.title ?? "Updated Variant Title",
+        title: existingVariant?.title ?? "Updated Variant Title",
         price: input.payload.variant.price ?? existingVariant?.price ?? "29.99",
         sku: input.payload.variant.sku ?? existingVariant?.sku,
         barcode: input.payload.variant.barcode ?? existingVariant?.barcode,
-        inventoryQuantity: input.payload.variant.inventoryQuantity ?? existingVariant?.inventoryQuantity,
+        inventoryQuantity: existingVariant?.inventoryQuantity,
       };
 
       return {
@@ -394,6 +413,26 @@ export async function runMockModuleApi(input: ShopifyApiInput): Promise<ShopifyA
     case "variants.bulkUpdate": {
       if (!input.payload.variants || !Array.isArray(input.payload.variants)) {
         throw new ShopifyApiError("Variants array is required", "SHOPIFY_USER_ERROR");
+      }
+
+      for (const item of input.payload.variants) {
+        const rawVariant = (item?.variant && typeof item.variant === "object"
+          ? item.variant
+          : {}) as Record<string, unknown>;
+
+        if ("title" in rawVariant && rawVariant.title !== undefined) {
+          throw new ShopifyApiError(
+            "Updating variant title directly is not supported; variant titles are derived from optionValues",
+            "SHOPIFY_INVALID_INPUT",
+          );
+        }
+
+        if ("inventoryQuantity" in rawVariant && rawVariant.inventoryQuantity !== undefined) {
+          throw new ShopifyApiError(
+            "Updating inventoryQuantity via variants.update is not supported; use the Shopify Inventory API",
+            "SHOPIFY_INVALID_INPUT",
+          );
+        }
       }
       return {
         storeId: input.storeId,
@@ -520,44 +559,15 @@ export async function runMockModuleApi(input: ShopifyApiInput): Promise<ShopifyA
       };
     }
 
-    case "stores.register": {
-      const { storeId, shopDomain, niche, apiVersion, authType } = input.payload;
-      const existingIdx = mockStores.findIndex((s) => s.storeId === storeId);
-      const summary: ShopifyStoreSummary = {
-        storeId,
-        shopDomain,
-        niche,
-        apiVersion: apiVersion ?? "2026-07",
-        authType: authType ?? "static",
-        proxyUrl: input.payload.proxyUrl,
-      };
-      if (existingIdx >= 0) {
-        mockStores[existingIdx] = summary;
-      } else {
-        mockStores.push(summary);
-      }
-      return {
-        storeId: input.storeId,
-        operation: "stores.register",
-        success: true,
-        data: {
-          store: summary,
-          registered: true,
-        },
-      };
-    }
-
     case "stores.list": {
-      const filtered = input.payload.niche
-        ? mockStores.filter((s) => s.niche === input.payload.niche)
-        : [...mockStores];
+      const stores = [...mockStores];
       return {
-        storeId: input.storeId,
+        storeId: input.storeId ?? "system",
         operation: "stores.list",
         success: true,
         data: {
-          stores: filtered,
-          total: filtered.length,
+          stores,
+          total: stores.length,
         },
       };
     }
@@ -565,28 +575,11 @@ export async function runMockModuleApi(input: ShopifyApiInput): Promise<ShopifyA
     case "stores.get": {
       const found = mockStores.find((s) => s.storeId === input.payload.targetStoreId);
       return {
-        storeId: input.storeId,
+        storeId: input.storeId ?? "system",
         operation: "stores.get",
         success: true,
         data: {
           store: found ? { ...found } : null,
-        },
-      };
-    }
-
-    case "stores.disconnect": {
-      const idx = mockStores.findIndex((s) => s.storeId === input.payload.targetStoreId);
-      const disconnected = idx >= 0;
-      if (disconnected) {
-        mockStores.splice(idx, 1);
-      }
-      return {
-        storeId: input.storeId,
-        operation: "stores.disconnect",
-        success: true,
-        data: {
-          storeId: input.payload.targetStoreId,
-          disconnected,
         },
       };
     }

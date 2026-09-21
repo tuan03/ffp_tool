@@ -150,6 +150,22 @@ export async function executeVariantsUpdate(
     throw new GatewayError("Variant patch object is required", "SHOPIFY_USER_ERROR", 400);
   }
 
+  if ("title" in variantPatch && variantPatch.title !== undefined) {
+    throw new GatewayError(
+      "Updating variant title directly is not supported; variant titles are derived from optionValues",
+      "SHOPIFY_INVALID_INPUT",
+      400,
+    );
+  }
+
+  if ("inventoryQuantity" in variantPatch && variantPatch.inventoryQuantity !== undefined) {
+    throw new GatewayError(
+      "Updating inventoryQuantity via variants.update is not supported; use the Shopify Inventory API",
+      "SHOPIFY_INVALID_INPUT",
+      400,
+    );
+  }
+
   if (mode === "preview") {
     const previewVariant: ProductVariantSummary = {
       id,
@@ -157,14 +173,12 @@ export async function executeVariantsUpdate(
         typeof variantPatch.productId === "string" && variantPatch.productId.trim() !== ""
           ? variantPatch.productId.trim()
           : "gid://shopify/Product/preview-1",
-      title: typeof variantPatch.title === "string" ? variantPatch.title : "Preview Variant",
+      title: "Preview Variant",
       price: typeof variantPatch.price === "string" ? variantPatch.price : "0.00",
       compareAtPrice:
         typeof variantPatch.compareAtPrice === "string" ? variantPatch.compareAtPrice : undefined,
       sku: typeof variantPatch.sku === "string" ? variantPatch.sku : undefined,
       barcode: typeof variantPatch.barcode === "string" ? variantPatch.barcode : undefined,
-      inventoryQuantity:
-        typeof variantPatch.inventoryQuantity === "number" ? variantPatch.inventoryQuantity : undefined,
     };
     return { variant: previewVariant };
   }
@@ -232,6 +246,21 @@ export async function executeVariantsBulkUpdate(
     }
     if (!item.variant || typeof item.variant !== "object") {
       throw new GatewayError(`Variant payload missing for item ${id}`, "SHOPIFY_USER_ERROR", 400);
+    }
+    const rawVariant = item.variant as Record<string, unknown>;
+    if ("title" in rawVariant && rawVariant.title !== undefined) {
+      throw new GatewayError(
+        "Updating variant title directly is not supported; variant titles are derived from optionValues",
+        "SHOPIFY_INVALID_INPUT",
+        400,
+      );
+    }
+    if ("inventoryQuantity" in rawVariant && rawVariant.inventoryQuantity !== undefined) {
+      throw new GatewayError(
+        "Updating inventoryQuantity via variants.update is not supported; use the Shopify Inventory API",
+        "SHOPIFY_INVALID_INPUT",
+        400,
+      );
     }
   }
 

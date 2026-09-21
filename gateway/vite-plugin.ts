@@ -57,8 +57,6 @@ export function shopifyGatewayDevPlugin(): Plugin {
             }
           : undefined;
 
-        const niche = env.GATEWAY_NICHE || undefined;
-
         stores.push({
           storeId,
           shopDomain,
@@ -69,7 +67,6 @@ export function shopifyGatewayDevPlugin(): Plugin {
             clientSecret,
           },
           proxy,
-          niche,
         });
       } else if (env.GATEWAY_STATIC_TOKEN || env.GATEWAY_ACCESS_TOKEN) {
         const staticToken = env.GATEWAY_STATIC_TOKEN || env.GATEWAY_ACCESS_TOKEN;
@@ -92,7 +89,6 @@ export function shopifyGatewayDevPlugin(): Plugin {
             staticToken,
           },
           proxy,
-          niche: env.GATEWAY_NICHE || undefined,
         });
       }
 

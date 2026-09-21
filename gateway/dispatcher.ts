@@ -24,10 +24,8 @@ import {
   executeVariantsUpdate,
 } from "./operations/variants-write";
 import {
-  executeStoresDisconnect,
   executeStoresGet,
   executeStoresList,
-  executeStoresRegister,
 } from "./operations/store-management";
 import type { ShopifyGraphqlClient } from "./shopify-graphql-client";
 import type { StoreRegistry } from "./store-registry";
@@ -47,10 +45,8 @@ const WRITE_OPERATIONS: ReadonlySet<string> = new Set([
 ]);
 
 const STORE_OPERATIONS: ReadonlySet<string> = new Set([
-  "stores.register",
   "stores.list",
   "stores.get",
-  "stores.disconnect",
 ]);
 
 export interface GatewayDispatcherOptions {
@@ -81,27 +77,51 @@ export class GatewayDispatcher {
     if (!request || typeof request !== "object") {
       throw new GatewayError("Invalid gateway request payload", "SHOPIFY_INVALID_INPUT", 400);
     }
-    if (!request.storeId || request.storeId.trim() === "") {
-      throw new GatewayError("storeId is required", "SHOPIFY_INVALID_INPUT", 400);
-    }
     if (!request.operation || request.operation.trim() === "") {
       throw new GatewayError("operation is required", "SHOPIFY_INVALID_INPUT", 400);
     }
 
-    // 0. Store Management Operations (store existence in registry not required beforehand)
+    if (request.operation === "stores.register" || request.operation === "stores.disconnect") {
+      throw new GatewayError(
+        "Store registration and disconnection must be executed via the Store Control Plane",
+        "SHOPIFY_PERMISSION_DENIED",
+        403,
+      );
+    }
+
+    const payloadTargetId =
+      request.payload && typeof request.payload === "object"
+        ? (request.payload as Record<string, unknown>).targetStoreId ||
+          (request.payload as Record<string, unknown>).storeId
+        : undefined;
+
+    const effectiveStoreId =
+      typeof request.storeId === "string" && request.storeId.trim() !== ""
+        ? request.storeId.trim()
+        : typeof payloadTargetId === "string" && (payloadTargetId as string).trim() !== ""
+        ? (payloadTargetId as string).trim()
+        : request.operation === "stores.list" || request.operation === "stores.get"
+        ? "system"
+        : "";
+
+    if (!effectiveStoreId) {
+      throw new GatewayError("storeId is required", "SHOPIFY_INVALID_INPUT", 400);
+    }
+
+    // 0. Store Management Operations (read-only safe summaries)
     if (STORE_OPERATIONS.has(request.operation)) {
-      const data = await this.executeStoreOperation(request.operation, request.payload, request.storeId);
+      const data = await this.executeStoreOperation(request.operation, request.payload, effectiveStoreId);
       return {
-        storeId: request.storeId,
+        storeId: effectiveStoreId,
         operation: request.operation,
         success: true,
         data,
       };
     }
 
-    const store = await this.storeRegistry.getStore(request.storeId);
+    const store = await this.storeRegistry.getStore(effectiveStoreId);
     if (!store) {
-      throw new GatewayError(`Store not found: ${request.storeId}`, "SHOPIFY_NOT_FOUND", 404);
+      throw new GatewayError(`Store not found: ${effectiveStoreId}`, "SHOPIFY_NOT_FOUND", 404);
     }
 
     const isWrite = WRITE_OPERATIONS.has(request.operation);
@@ -124,7 +144,7 @@ export class GatewayDispatcher {
     if (isWrite && mode === "preview") {
       const data = await this.executeWrite(store, request.operation, request.payload, "preview", requestId);
       return {
-        storeId: request.storeId,
+        storeId: effectiveStoreId,
         operation: request.operation,
         success: true,
         data,
@@ -164,7 +184,7 @@ export class GatewayDispatcher {
         }
         const data = await inFlight.promise;
         return {
-          storeId: request.storeId,
+          storeId: effectiveStoreId,
           operation: request.operation,
           success: true,
           data,
@@ -206,7 +226,7 @@ export class GatewayDispatcher {
           if (cached.state === "COMPLETED") {
             resolveInFlight(cached.responseData);
             return {
-              storeId: request.storeId,
+              storeId: effectiveStoreId,
               operation: request.operation,
               success: true,
               data: cached.responseData,
@@ -241,7 +261,7 @@ export class GatewayDispatcher {
 
         resolveInFlight(data);
         return {
-          storeId: request.storeId,
+          storeId: effectiveStoreId,
           operation: request.operation,
           success: true,
           data,
@@ -269,7 +289,7 @@ export class GatewayDispatcher {
     // 3. Read Operations
     const data = await this.executeRead(store, request.operation, request.payload, requestId);
     return {
-      storeId: request.storeId,
+      storeId: effectiveStoreId,
       operation: request.operation,
       success: true,
       data,
@@ -337,14 +357,10 @@ export class GatewayDispatcher {
     defaultStoreId: string,
   ): Promise<unknown> {
     switch (operation) {
-      case "stores.register":
-        return executeStoresRegister(this.storeRegistry, payload);
       case "stores.list":
         return executeStoresList(this.storeRegistry, payload);
       case "stores.get":
         return executeStoresGet(this.storeRegistry, payload, defaultStoreId);
-      case "stores.disconnect":
-        return executeStoresDisconnect(this.storeRegistry, payload, defaultStoreId);
       default:
         throw new GatewayError(`Unsupported store operation: ${operation}`, "NOT_IMPLEMENTED", 501);
     }

@@ -186,7 +186,7 @@ test("Module API mock runner executes variants.update", async () => {
       id: "gid://shopify/ProductVariant/2001",
       variant: {
         price: "29.99",
-        inventoryQuantity: 50,
+        sku: "TSHIRT-BLK-S-NEW",
       },
     },
   });
@@ -194,7 +194,53 @@ test("Module API mock runner executes variants.update", async () => {
   assert.equal(response.success, true);
   assert.equal(response.data.variant.id, "gid://shopify/ProductVariant/2001");
   assert.equal(response.data.variant.price, "29.99");
-  assert.equal(response.data.variant.inventoryQuantity, 50);
+  assert.equal(response.data.variant.sku, "TSHIRT-BLK-S-NEW");
+});
+
+test("Module API mock runner variants.update rejects deprecated title with SHOPIFY_INVALID_INPUT", async () => {
+  await assert.rejects(
+    async () => {
+      await runMockModuleApi({
+        storeId: "store-101",
+        operation: "variants.update",
+        mode: "apply",
+        payload: {
+          id: "gid://shopify/ProductVariant/2001",
+          variant: {
+            title: "New Title",
+          } as any,
+        },
+      });
+    },
+    (err: unknown) => {
+      assert(err instanceof ShopifyApiError);
+      assert.equal(err.code, "SHOPIFY_INVALID_INPUT");
+      return true;
+    },
+  );
+});
+
+test("Module API mock runner variants.update rejects deprecated inventoryQuantity with SHOPIFY_INVALID_INPUT", async () => {
+  await assert.rejects(
+    async () => {
+      await runMockModuleApi({
+        storeId: "store-101",
+        operation: "variants.update",
+        mode: "apply",
+        payload: {
+          id: "gid://shopify/ProductVariant/2001",
+          variant: {
+            inventoryQuantity: 50,
+          } as any,
+        },
+      });
+    },
+    (err: unknown) => {
+      assert(err instanceof ShopifyApiError);
+      assert.equal(err.code, "SHOPIFY_INVALID_INPUT");
+      return true;
+    },
+  );
 });
 
 test("Module API mock runner executes variants.bulkUpdate", async () => {

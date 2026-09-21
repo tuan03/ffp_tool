@@ -18,7 +18,6 @@ export interface StoreConfig {
   readonly apiVersion: string;
   readonly auth: StoreAuthConfig;
   readonly proxy?: StoreProxyConfig;
-  readonly niche?: string;
 }
 
 export type GatewayErrorCode =
@@ -33,7 +32,7 @@ export type GatewayErrorCode =
   | "SHOPIFY_UNKNOWN_WRITE_STATE";
 
 export interface GatewayRequest<TPayload = unknown> {
-  readonly storeId: string;
+  readonly storeId?: string;
   readonly operation: string;
   readonly payload: TPayload;
   readonly requestId?: string;
