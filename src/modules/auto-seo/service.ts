@@ -14,11 +14,6 @@ export async function runAutoSeo(
     warnings.push("Product list is empty.");
   }
 
-  const trimmedInputNiche = input.niche.trim();
-  if (trimmedInputNiche.length === 0) {
-    warnings.push("Input niche is empty or only whitespace.");
-  }
-
   const hasSelectedIds =
     Array.isArray(input.selectedProductIds) && input.selectedProductIds.length > 0;
   const hasSelectedHandles =
@@ -65,17 +60,13 @@ export async function runAutoSeo(
     (product) => {
       validateProduct(product, warnings);
 
-      const resolvedNiche = resolveNiche(product.niche, trimmedInputNiche);
-      if (resolvedNiche.length === 0) {
-        warnings.push(`Resolved niche is empty for product: ${product.productId}`);
-      }
-
       return {
         productId: product.productId,
         handle: product.handle.trim(),
-        niche: resolvedNiche,
         sourceTitle: product.title.trim(),
         sourceDescriptionHtml: product.descriptionHtml,
+        sourceSeoTitle: product.seoTitle ?? null,
+        sourceSeoDescription: product.seoDescription ?? null,
         images: product.images,
       };
     },
@@ -87,16 +78,6 @@ export async function runAutoSeo(
     seoContentInputs,
     warnings,
   };
-}
-
-function resolveNiche(
-  productNiche: string | undefined,
-  inputNiche: string,
-): string {
-  if (productNiche !== undefined && productNiche.trim().length > 0) {
-    return productNiche.trim();
-  }
-  return inputNiche;
 }
 
 function validateProduct(

@@ -10,14 +10,14 @@ export interface AutoSeoProductCandidate {
   readonly handle: string;
   readonly title: string;
   readonly descriptionHtml: string;
-  readonly niche?: string;
+  readonly seoTitle?: string | null;
+  readonly seoDescription?: string | null;
   readonly images: readonly AutoSeoProductImage[];
 }
 
 export interface AutoSeoSelectionInput {
   readonly workflowId: string;
   readonly products: readonly AutoSeoProductCandidate[];
-  readonly niche: string;
   readonly selectedProductIds?: readonly string[];
   readonly selectedHandles?: readonly string[];
 }
@@ -25,9 +25,10 @@ export interface AutoSeoSelectionInput {
 export interface SeoContentInputPayload {
   readonly productId: string;
   readonly handle: string;
-  readonly niche: string;
   readonly sourceTitle: string;
   readonly sourceDescriptionHtml: string;
+  readonly sourceSeoTitle?: string | null;
+  readonly sourceSeoDescription?: string | null;
   readonly images: readonly AutoSeoProductImage[];
 }
 
