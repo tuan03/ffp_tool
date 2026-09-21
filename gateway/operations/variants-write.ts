@@ -113,8 +113,19 @@ function buildVariantBulkInput(
   if (variantPatch.sku !== undefined) {
     input.inventoryItem = { sku: variantPatch.sku };
   }
-  if (variantPatch.optionValues !== undefined) {
-    input.optionValues = variantPatch.optionValues;
+  if (Array.isArray(variantPatch.optionValues)) {
+    input.optionValues = variantPatch.optionValues.map((ov: Record<string, unknown>) => {
+      const optVal: Record<string, unknown> = {};
+      if (typeof ov.optionName === "string") optVal.optionName = ov.optionName;
+      if (typeof ov.name === "string") {
+        optVal.name = ov.name;
+      } else if (typeof ov.value === "string") {
+        optVal.name = ov.value;
+      }
+      if (typeof ov.optionId === "string") optVal.optionId = ov.optionId;
+      if (typeof ov.id === "string") optVal.id = ov.id;
+      return optVal;
+    });
   }
   return input;
 }

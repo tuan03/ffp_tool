@@ -326,7 +326,7 @@ export async function executeCollectionsUpdateMembership(
 
     const sources = sourcesRaw.collection.sources || [];
     const conditionsSource =
-      sources.find((s) => s.__typename === "CollectionConditionsSource") ?? sources[0];
+      sources.find((s) => s.__typename === "CollectionConditionsSource");
 
     let collectionPatch: Record<string, unknown>;
 

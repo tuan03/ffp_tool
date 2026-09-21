@@ -135,6 +135,34 @@ export async function executeProductsCreate(
         ? productInput.handle.trim()
         : title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 
+    const previewVariants: ProductVariantSummary[] =
+      Array.isArray(productInput.variants) && productInput.variants.length > 0
+        ? (productInput.variants as readonly Record<string, unknown>[]).map((v, i) => ({
+            id: `gid://shopify/ProductVariant/preview-var-${i + 1}`,
+            productId: "gid://shopify/Product/preview-new",
+            title:
+              typeof v.title === "string"
+                ? v.title
+                : Array.isArray(v.optionValues)
+                ? (v.optionValues as Record<string, unknown>[])
+                    .map((ov) => (typeof ov.name === "string" ? ov.name : typeof ov.value === "string" ? ov.value : ""))
+                    .filter(Boolean)
+                    .join(" / ") || "Default Title"
+                : "Default Title",
+            price: typeof v.price === "string" ? v.price : "0.00",
+            compareAtPrice: typeof v.compareAtPrice === "string" ? v.compareAtPrice : undefined,
+            sku: typeof v.sku === "string" ? v.sku : undefined,
+            barcode: typeof v.barcode === "string" ? v.barcode : undefined,
+          }))
+        : [
+            {
+              id: "gid://shopify/ProductVariant/preview-var-1",
+              productId: "gid://shopify/Product/preview-new",
+              title: "Default Title",
+              price: "0.00",
+            },
+          ];
+
     const previewProduct: ProductSummary = {
       id: "gid://shopify/Product/preview-new",
       title,
@@ -148,14 +176,7 @@ export async function executeProductsCreate(
       vendor: typeof productInput.vendor === "string" ? productInput.vendor : undefined,
       productType: typeof productInput.productType === "string" ? productInput.productType : undefined,
       tags: Array.isArray(productInput.tags) ? (productInput.tags as string[]) : [],
-      variants: [
-        {
-          id: "gid://shopify/ProductVariant/preview-var-1",
-          productId: "gid://shopify/Product/preview-new",
-          title: "Default Title",
-          price: "0.00",
-        },
-      ],
+      variants: previewVariants,
       createdAt: now,
       updatedAt: now,
     };
@@ -181,6 +202,45 @@ export async function executeProductsCreate(
   }
   if (Array.isArray(productInput.tags)) {
     input.tags = productInput.tags;
+  }
+
+  if (Array.isArray(productInput.productOptions) && productInput.productOptions.length > 0) {
+    input.productOptions = (productInput.productOptions as readonly { name: string; values?: unknown[] }[]).map((opt) => ({
+      name: opt.name,
+      values: Array.isArray(opt.values)
+        ? opt.values.map((v) => (typeof v === "string" ? { name: v } : { name: (v as { name: string }).name }))
+        : [],
+    }));
+  } else if (Array.isArray(productInput.variants) && productInput.variants.length > 0) {
+    const optionMap = new Map<string, Set<string>>();
+    for (const v of productInput.variants as readonly Record<string, unknown>[]) {
+      if (Array.isArray(v.optionValues)) {
+        for (const ov of v.optionValues as readonly Record<string, unknown>[]) {
+          const optName =
+            typeof ov.optionName === "string" && ov.optionName.trim() !== ""
+              ? ov.optionName.trim()
+              : "Title";
+          const valName =
+            typeof ov.name === "string" && ov.name.trim() !== ""
+              ? ov.name.trim()
+              : typeof ov.value === "string" && ov.value.trim() !== ""
+              ? ov.value.trim()
+              : undefined;
+          if (valName) {
+            if (!optionMap.has(optName)) {
+              optionMap.set(optName, new Set());
+            }
+            optionMap.get(optName)!.add(valName);
+          }
+        }
+      }
+    }
+    if (optionMap.size > 0 && !(optionMap.size === 1 && optionMap.has("Title"))) {
+      input.productOptions = Array.from(optionMap.entries()).map(([name, valSet]) => ({
+        name,
+        values: Array.from(valSet).map((val) => ({ name: val })),
+      }));
+    }
   }
 
   interface ProductCreateResponse {
@@ -218,7 +278,18 @@ export async function executeProductsCreate(
       if (v.barcode !== undefined) vInput.barcode = v.barcode;
       if (v.sku !== undefined) vInput.inventoryItem = { sku: v.sku };
       if (Array.isArray(v.optionValues)) {
-        vInput.optionValues = v.optionValues;
+        vInput.optionValues = (v.optionValues as readonly Record<string, unknown>[]).map((ov) => {
+          const optVal: Record<string, unknown> = {};
+          if (typeof ov.optionName === "string") optVal.optionName = ov.optionName;
+          if (typeof ov.name === "string") {
+            optVal.name = ov.name;
+          } else if (typeof ov.value === "string") {
+            optVal.name = ov.value;
+          }
+          if (typeof ov.optionId === "string") optVal.optionId = ov.optionId;
+          if (typeof ov.id === "string") optVal.id = ov.id;
+          return optVal;
+        });
       } else if (typeof v.title === "string" && v.title.trim() !== "") {
         vInput.optionValues = [{ optionName: "Title", name: v.title.trim() }];
       }

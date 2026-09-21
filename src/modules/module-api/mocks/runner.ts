@@ -222,6 +222,33 @@ export async function runMockModuleApi(input: ShopifyApiInput): Promise<ShopifyA
         throw new ShopifyApiError("Product title is required", "SHOPIFY_USER_ERROR");
       }
       const now = new Date().toISOString();
+      const variants: ShopifyProductVariant[] =
+        Array.isArray(input.payload.product.variants) && input.payload.product.variants.length > 0
+          ? input.payload.product.variants.map((v, idx) => ({
+              id: `gid://shopify/ProductVariant/mock-var-${shopifyMockProducts.length + 1}-${idx + 1}`,
+              productId: `gid://shopify/Product/mock-created-${shopifyMockProducts.length + 1}`,
+              title:
+                v.title ??
+                (Array.isArray(v.optionValues)
+                  ? v.optionValues
+                      .map((ov: { readonly name?: string; readonly value?: string }) => ov.name ?? ov.value)
+                      .filter(Boolean)
+                      .join(" / ") || "Default Title"
+                  : "Default Title"),
+              price: v.price ?? "19.99",
+              compareAtPrice: v.compareAtPrice,
+              sku: v.sku,
+              barcode: v.barcode,
+            }))
+          : [
+              {
+                id: `gid://shopify/ProductVariant/mock-var-${shopifyMockProducts.length + 1}`,
+                productId: `gid://shopify/Product/mock-created-${shopifyMockProducts.length + 1}`,
+                title: "Default Title",
+                price: "19.99",
+              },
+            ];
+
       const newProduct: ShopifyProduct = {
         id: `gid://shopify/Product/mock-created-${shopifyMockProducts.length + 1}`,
         title: input.payload.product.title,
@@ -231,14 +258,7 @@ export async function runMockModuleApi(input: ShopifyApiInput): Promise<ShopifyA
         vendor: input.payload.product.vendor,
         productType: input.payload.product.productType,
         tags: input.payload.product.tags ? [...input.payload.product.tags] : [],
-        variants: [
-          {
-            id: `gid://shopify/ProductVariant/mock-var-${shopifyMockProducts.length + 1}`,
-            productId: `gid://shopify/Product/mock-created-${shopifyMockProducts.length + 1}`,
-            title: "Default Title",
-            price: "19.99",
-          },
-        ],
+        variants,
         createdAt: now,
         updatedAt: now,
       };
@@ -289,6 +309,9 @@ export async function runMockModuleApi(input: ShopifyApiInput): Promise<ShopifyA
         data: {
           updatedProductIds: input.payload.products.map((item) => item.id),
           count: input.payload.products.length,
+          successCount: input.payload.products.length,
+          failedCount: 0,
+          items: input.payload.products.map((item) => ({ id: item.id, ok: true })),
         },
       };
     }

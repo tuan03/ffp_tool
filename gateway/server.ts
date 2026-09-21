@@ -40,10 +40,12 @@ export function startGatewayServer(port: number = 3001): http.Server {
 
   const clientId = env.GATEWAY_CLIENT_ID;
   const clientSecret = env.GATEWAY_CLIENT_SECRET;
+  const staticToken = env.GATEWAY_ACCESS_TOKEN;
   const storeId = env.GATEWAY_STORE_ID || "capozen";
   const shopDomain = env.GATEWAY_SHOP_DOMAIN || "capozen.myshopify.com";
+  const niche = env.GATEWAY_STORE_NICHE;
 
-  if (clientId && clientSecret) {
+  if ((clientId && clientSecret) || staticToken) {
     const proxyUrl = env.GATEWAY_PROXY_URL;
     const proxy = proxyUrl
       ? {
@@ -54,16 +56,24 @@ export function startGatewayServer(port: number = 3001): http.Server {
         }
       : undefined;
 
+    const auth = clientId && clientSecret
+      ? ({
+          type: "client_credentials" as const,
+          clientId,
+          clientSecret,
+        })
+      : ({
+          type: "static" as const,
+          staticToken: staticToken!,
+        });
+
     stores.push({
       storeId,
       shopDomain,
       apiVersion: "2026-07",
-      auth: {
-        type: "client_credentials",
-        clientId,
-        clientSecret,
-      },
+      auth,
       proxy,
+      niche,
     });
   }
 

@@ -1836,4 +1836,192 @@ describe("Gateway: HTTP Server Handler & E2E Integration with module-api", () =>
     const badRes = await handler(badReq);
     assert.equal(badRes.status, 400);
   });
+
+  it("handles products.create with explicit productOptions and multi-option variants", async () => {
+    let capturedVariables: Record<string, unknown> | undefined;
+
+    const transport: HttpTransport = async (_url, init) => {
+      const body = JSON.parse(String(init?.body || "{}")) as { query: string; variables: Record<string, unknown> };
+      capturedVariables = body.variables;
+
+      if (body.query.includes("productCreate")) {
+        return createMockResponse({
+          data: {
+            productCreate: {
+              product: {
+                id: "gid://shopify/Product/multi-opt-1",
+                title: "Multi Option Hoodie",
+                handle: "multi-option-hoodie",
+                status: "ACTIVE",
+                tags: ["apparel"],
+                createdAt: "2026-01-01T00:00:00Z",
+                updatedAt: "2026-01-01T00:00:00Z",
+                variants: { edges: [] },
+              },
+              userErrors: [],
+            },
+          },
+        });
+      }
+
+      if (body.query.includes("productVariantsBulkCreate")) {
+        return createMockResponse({
+          data: {
+            productVariantsBulkCreate: {
+              productVariants: [
+                {
+                  id: "gid://shopify/ProductVariant/v-1",
+                  title: "S / Black",
+                  price: "49.99",
+                  inventoryItem: { sku: "HOODIE-S-BLK" },
+                },
+                {
+                  id: "gid://shopify/ProductVariant/v-2",
+                  title: "M / Black",
+                  price: "49.99",
+                  inventoryItem: { sku: "HOODIE-M-BLK" },
+                },
+              ],
+              userErrors: [],
+            },
+          },
+        });
+      }
+
+      return createMockResponse({});
+    };
+
+    const client = new ShopifyGraphqlClient({
+      tokenProvider: new StaticAccessTokenProvider(),
+      throttleManager: new InMemoryThrottleManager(),
+      baseTransport: transport,
+    });
+    const registry = new InMemoryStoreRegistry([
+      {
+        storeId: "store-opts",
+        shopDomain: "test.myshopify.com",
+        apiVersion: "2026-07",
+        auth: { type: "static", staticToken: "tok" },
+        niche: "pod-apparel",
+      },
+    ]);
+    const dispatcher = new GatewayDispatcher({ storeRegistry: registry, graphqlClient: client });
+
+    const store = await registry.getStore("store-opts");
+    assert.equal(store?.niche, "pod-apparel");
+
+    const result = await dispatcher.dispatch({
+      storeId: "store-opts",
+      operation: "products.create",
+      mode: "apply",
+      requestId: "req-opts-1",
+      payload: {
+        product: {
+          title: "Multi Option Hoodie",
+          productOptions: [
+            { name: "Size", values: ["S", "M"] },
+            { name: "Color", values: ["Black"] },
+          ],
+          variants: [
+            {
+              price: "49.99",
+              sku: "HOODIE-S-BLK",
+              optionValues: [
+                { optionName: "Size", name: "S" },
+                { optionName: "Color", name: "Black" },
+              ],
+            },
+            {
+              price: "49.99",
+              sku: "HOODIE-M-BLK",
+              optionValues: [
+                { optionName: "Size", name: "M" },
+                { optionName: "Color", name: "Black" },
+              ],
+            },
+          ],
+        },
+      },
+    });
+
+    assert.equal(result.success, true);
+    const data = result.data as { product: { id: string; variants: { id: string }[] } };
+    assert.equal(data.product.id, "gid://shopify/Product/multi-opt-1");
+    assert.equal(data.product.variants.length, 2);
+  });
+
+  it("handles collections.updateMembership cleanly without CollectionConditionsSource fallback", async () => {
+    let updateVariables: Record<string, unknown> | undefined;
+
+    const transport: HttpTransport = async (_url, init) => {
+      const body = JSON.parse(String(init?.body || "{}")) as { query: string; variables: Record<string, unknown> };
+
+      if (body.query.includes("GetCollectionSources")) {
+        return createMockResponse({
+          data: {
+            collection: {
+              id: "gid://shopify/Collection/subcol-1",
+              sources: [
+                {
+                  __typename: "CollectionSubCollectionsSource",
+                  id: "gid://shopify/CollectionSubCollectionsSource/1",
+                  title: "Subcollections",
+                },
+              ],
+            },
+          },
+        });
+      }
+
+      if (body.query.includes("CollectionUpdateMembership")) {
+        updateVariables = body.variables;
+        return createMockResponse({
+          data: {
+            collectionUpdate: {
+              collection: {
+                id: "gid://shopify/Collection/subcol-1",
+                productsCount: { count: 1 },
+              },
+              userErrors: [],
+            },
+          },
+        });
+      }
+
+      return createMockResponse({});
+    };
+
+    const client = new ShopifyGraphqlClient({
+      tokenProvider: new StaticAccessTokenProvider(),
+      throttleManager: new InMemoryThrottleManager(),
+      baseTransport: transport,
+    });
+    const registry = new InMemoryStoreRegistry([
+      {
+        storeId: "store-col",
+        shopDomain: "test.myshopify.com",
+        apiVersion: "2026-07",
+        auth: { type: "static", staticToken: "tok" },
+      },
+    ]);
+    const dispatcher = new GatewayDispatcher({ storeRegistry: registry, graphqlClient: client });
+
+    const result = await dispatcher.dispatch({
+      storeId: "store-col",
+      operation: "collections.updateMembership",
+      mode: "apply",
+      requestId: "req-col-mem-1",
+      payload: {
+        collectionId: "gid://shopify/Collection/subcol-1",
+        productIdsToAdd: ["gid://shopify/Product/prod-1"],
+      },
+    });
+
+    assert.equal(result.success, true);
+    // Verified that it used sourcesToCreate rather than corrupting sourcesToUpdate with CollectionSubCollectionsSource
+    assert.ok(updateVariables);
+    const colInput = (updateVariables as { collection: Record<string, unknown> }).collection;
+    assert.ok(colInput.sourcesToCreate);
+    assert.equal(colInput.sourcesToUpdate, undefined);
+  });
 });

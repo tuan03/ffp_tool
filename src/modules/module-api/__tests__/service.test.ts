@@ -1815,5 +1815,86 @@ test("Real service executes collections.get response success", async () => {
   assert.equal(response.data.collection?.title, "Summer Collection");
 });
 
+test("Real service propagates fields, retryable, and details into ShopifyApiError", async () => {
+  const { fetch: fakeFetch } = createFakeFetch(async () => {
+    return new Response(
+      JSON.stringify({
+        storeId: "store-42",
+        operation: "products.create",
+        success: false,
+        error: {
+          code: "SHOPIFY_USER_ERROR",
+          message: "Title cannot be blank",
+          fields: ["product", "title"],
+          retryable: false,
+          details: { fieldErrors: [{ field: "title", error: "blank" }] },
+        },
+      }),
+      { status: 400, headers: { "Content-Type": "application/json" } },
+    );
+  });
+
+  const runner = createModuleApiRunner(
+    { gatewayUrl: "https://gateway.example.com/api" },
+    { fetch: fakeFetch },
+  );
+
+  await assert.rejects(
+    async () => {
+      await runner({
+        storeId: "store-42",
+        operation: "products.create",
+        payload: {
+          product: { title: "" },
+        },
+      });
+    },
+    (err: unknown) => {
+      assert.ok(err instanceof ShopifyApiError);
+      assert.equal(err.code, "SHOPIFY_USER_ERROR");
+      assert.equal(err.message, "Title cannot be blank");
+      assert.deepEqual(err.fields, ["product", "title"]);
+      assert.equal(err.retryable, false);
+      assert.deepEqual(err.details, { fieldErrors: [{ field: "title", error: "blank" }] });
+      return true;
+    },
+  );
+});
+
+test("Mock runner supports custom variants in products.create", async () => {
+  const response = await runMockModuleApi({
+    storeId: "store-101",
+    operation: "products.create",
+    payload: {
+      product: {
+        title: "Multi-Variant T-Shirt",
+        productOptions: [{ name: "Size", values: ["S", "M", "L"] }],
+        variants: [
+          {
+            title: "S",
+            price: "19.99",
+            sku: "TSHIRT-S",
+            optionValues: [{ optionName: "Size", name: "S" }],
+          },
+          {
+            title: "M",
+            price: "21.99",
+            sku: "TSHIRT-M",
+            optionValues: [{ optionName: "Size", name: "M" }],
+          },
+        ],
+      },
+    },
+  });
+
+  assert.equal(response.success, true);
+  assert.equal(response.data.product.title, "Multi-Variant T-Shirt");
+  assert.equal(response.data.product.variants.length, 2);
+  assert.equal(response.data.product.variants[0]?.price, "19.99");
+  assert.equal(response.data.product.variants[0]?.sku, "TSHIRT-S");
+  assert.equal(response.data.product.variants[1]?.price, "21.99");
+  assert.equal(response.data.product.variants[1]?.sku, "TSHIRT-M");
+});
+
 
 

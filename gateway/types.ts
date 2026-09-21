@@ -18,6 +18,7 @@ export interface StoreConfig {
   readonly apiVersion: string;
   readonly auth: StoreAuthConfig;
   readonly proxy?: StoreProxyConfig;
+  readonly niche?: string;
 }
 
 export type GatewayErrorCode =

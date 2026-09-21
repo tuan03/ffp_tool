@@ -170,6 +170,9 @@ function sanitizeErrorMessage(message: unknown, fallback: string): string {
 interface ExtractedError {
   readonly code?: ShopifyApiErrorCode;
   readonly message?: string;
+  readonly fields?: readonly string[];
+  readonly retryable?: boolean;
+  readonly details?: unknown;
 }
 
 function extractErrorFromPayload(payload: unknown): ExtractedError {
@@ -180,6 +183,9 @@ function extractErrorFromPayload(payload: unknown): ExtractedError {
   const obj = payload as Record<string, unknown>;
   let code: ShopifyApiErrorCode | undefined;
   let message: string | undefined;
+  let fields: readonly string[] | undefined;
+  let retryable: boolean | undefined;
+  let details: unknown | undefined;
 
   if (obj.code !== undefined) {
     code = normalizeErrorCode(obj.code);
@@ -187,6 +193,18 @@ function extractErrorFromPayload(payload: unknown): ExtractedError {
 
   if (typeof obj.message === "string") {
     message = obj.message;
+  }
+
+  if (Array.isArray(obj.fields)) {
+    fields = obj.fields.map(String);
+  }
+
+  if (typeof obj.retryable === "boolean") {
+    retryable = obj.retryable;
+  }
+
+  if (obj.details !== undefined) {
+    details = obj.details;
   }
 
   if ("error" in obj && obj.error !== undefined && obj.error !== null) {
@@ -199,6 +217,15 @@ function extractErrorFromPayload(payload: unknown): ExtractedError {
       }
       if (typeof errObj.message === "string") {
         message = message ?? errObj.message;
+      }
+      if (Array.isArray(errObj.fields)) {
+        fields = fields ?? errObj.fields.map(String);
+      }
+      if (typeof errObj.retryable === "boolean") {
+        retryable = retryable ?? errObj.retryable;
+      }
+      if (errObj.details !== undefined) {
+        details = details ?? errObj.details;
       }
     }
   }
@@ -216,6 +243,15 @@ function extractErrorFromPayload(payload: unknown): ExtractedError {
         if (typeof itemObj.message === "string") {
           messages.push(itemObj.message);
         }
+        if (!fields && Array.isArray(itemObj.fields)) {
+          fields = itemObj.fields.map(String);
+        }
+        if (retryable === undefined && typeof itemObj.retryable === "boolean") {
+          retryable = itemObj.retryable;
+        }
+        if (details === undefined && itemObj.details !== undefined) {
+          details = itemObj.details;
+        }
       }
     }
     if (messages.length > 0) {
@@ -223,7 +259,7 @@ function extractErrorFromPayload(payload: unknown): ExtractedError {
     }
   }
 
-  return { code, message };
+  return { code, message, fields, retryable, details };
 }
 
 function mapStatusToErrorCode(
@@ -389,12 +425,18 @@ export function createModuleApiRunner(
     }
 
     if (!response.ok) {
-      const { code: bodyCode, message: bodyMessage } = extractErrorFromPayload(responseJson);
+      const {
+        code: bodyCode,
+        message: bodyMessage,
+        fields,
+        retryable,
+        details,
+      } = extractErrorFromPayload(responseJson);
       const errorCode = mapStatusToErrorCode(response.status, isRead, bodyCode);
       const fallbackMessage = `Shopify gateway request failed with status ${response.status}`;
       const errorMessage = sanitizeErrorMessage(bodyMessage, fallbackMessage);
 
-      throw new ShopifyApiError(errorMessage, errorCode, jsonParseError);
+      throw new ShopifyApiError(errorMessage, errorCode, jsonParseError, fields, retryable, details);
     }
 
     if (jsonParseError !== undefined) {
@@ -439,10 +481,16 @@ export function createModuleApiRunner(
       (Array.isArray(parsedObj.errors) && parsedObj.errors.length > 0);
 
     if (parsedObj.success === false || (!hasData && hasExplicitError)) {
-      const { code: bodyCode, message: bodyMessage } = extractErrorFromPayload(parsedObj);
+      const {
+        code: bodyCode,
+        message: bodyMessage,
+        fields,
+        retryable,
+        details,
+      } = extractErrorFromPayload(parsedObj);
       const errorCode = bodyCode ?? "SHOPIFY_USER_ERROR";
       const errorMessage = sanitizeErrorMessage(bodyMessage, "Shopify gateway operation failed");
-      throw new ShopifyApiError(errorMessage, errorCode);
+      throw new ShopifyApiError(errorMessage, errorCode, undefined, fields, retryable, details);
     }
 
     if (!hasData) {

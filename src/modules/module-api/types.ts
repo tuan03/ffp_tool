@@ -42,6 +42,9 @@ export class ShopifyApiError extends Error {
     message: string,
     public readonly code: ShopifyApiErrorCode,
     public readonly cause?: unknown,
+    public readonly fields?: readonly string[],
+    public readonly retryable?: boolean,
+    public readonly details?: unknown,
   ) {
     super(message, cause !== undefined ? { cause } : undefined);
     this.name = "ShopifyApiError";
@@ -90,8 +93,16 @@ export interface ShopifyCollection {
 }
 
 export interface ShopifyVariantOptionValueInput {
+  readonly optionName?: string;
   readonly name?: string;
-  readonly value: string;
+  readonly value?: string;
+  readonly optionId?: string;
+  readonly id?: string;
+}
+
+export interface ShopifyProductOptionInput {
+  readonly name: string;
+  readonly values?: readonly string[] | readonly { readonly name: string }[];
 }
 
 export interface ShopifyProductVariantInput {
@@ -111,6 +122,7 @@ export interface ShopifyProductInput {
   readonly vendor?: string;
   readonly productType?: string;
   readonly tags?: readonly string[];
+  readonly productOptions?: readonly ShopifyProductOptionInput[];
   readonly variants?: readonly ShopifyProductVariantInput[];
 }
 
