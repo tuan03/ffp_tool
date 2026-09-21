@@ -246,7 +246,9 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
               displayProducts.map((product, index) => {
               const isSelected = selectedProductIds.includes(product.id);
               const decision = decisions[product.id] ?? "pending";
-              const thumbnailUrl = product.images?.[0]?.url;
+              const thumbnailUrl = product.featuredImage?.url ?? product.images?.[0]?.url;
+              const thumbnailAlt =
+                product.featuredImage?.altText ?? product.images?.[0]?.altText ?? product.title;
               const upperStatus = (product.status ?? "").toUpperCase();
 
               return (
@@ -285,7 +287,7 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
                       <div className="h-12 w-12 overflow-hidden rounded-md border border-slate-700 bg-slate-800 shadow-xs">
                         <img
                           src={thumbnailUrl}
-                          alt={product.images?.[0]?.altText ?? product.title}
+                          alt={thumbnailAlt}
                           className="h-full w-full object-cover group-hover:scale-105 transition-transform duration-200"
                           loading="lazy"
                         />

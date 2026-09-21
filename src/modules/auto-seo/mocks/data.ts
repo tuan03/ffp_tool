@@ -64,6 +64,13 @@ export const mockShopifyProducts: readonly ShopifyProductForAutoSeoUi[] = [
       title: "Custom Music Album Rug | High Quality Floor Decor",
       description: "Transform your living space with our custom music album rug.",
     },
+    featuredImage: {
+      id: "gid://shopify/ProductImage/901",
+      url: "https://images.unsplash.com/photo-1600121848594-d8644e57abab?w=800&auto=format&fit=crop&q=80",
+      altText: "Custom Music Album Area Rug in Living Room",
+      width: 1000,
+      height: 1000,
+    },
     descriptionHtml:
       "<p>Bring your favorite musical masterpiece right onto your floor with our high-grade <strong>Custom Music Album Area Rug</strong>.</p><ul><li>Anti-slip latex backing</li><li>Plush microfiber velvet surface</li><li>Vibrant dye sublimation print</li></ul>",
     images: [
@@ -118,6 +125,13 @@ export const mockShopifyProducts: readonly ShopifyProductForAutoSeoUi[] = [
       title: "Personalized Family Blanket | Ultra Soft Fleece",
       description: "Keep warm with our custom personalized family name blanket.",
     },
+    featuredImage: {
+      id: "gid://shopify/ProductImage/903",
+      url: "https://images.unsplash.com/photo-1584100936595-c0654b55a2e2?w=800&auto=format&fit=crop&q=80",
+      altText: "Personalized Family Blanket draped on sofa",
+      width: 1000,
+      height: 1000,
+    },
     descriptionHtml:
       "<p>Wrap yourself and your loved ones in warmth with the ultra-soft <em>Personalized Family Blanket</em>.</p><p>Crafted from 100% premium anti-pilling flannel fleece.</p>",
     images: [
@@ -154,6 +168,13 @@ export const mockShopifyProducts: readonly ShopifyProductForAutoSeoUi[] = [
     vendor: "CHILLGEN",
     productType: "Rug",
     tags: ["vintage", "boho", "runner", "living-room"],
+    featuredImage: {
+      id: "gid://shopify/ProductImage/904",
+      url: "https://images.unsplash.com/photo-1513519245088-0e12902e5a38?w=800&auto=format&fit=crop&q=80",
+      altText: "Boho Medallion Floral Runner on hallway wood floor",
+      width: 1000,
+      height: 1000,
+    },
     descriptionHtml:
       "<p>Intricate bohemian medallion motif printed with archival fade-resistant pigment on textured woven chenille.</p>",
     images: [
@@ -190,6 +211,13 @@ export const mockShopifyProducts: readonly ShopifyProductForAutoSeoUi[] = [
     vendor: "CHILLGEN",
     productType: "Rug",
     tags: ["retro", "vinyl", "round-rug", "music"],
+    featuredImage: {
+      id: "gid://shopify/ProductImage/905",
+      url: "https://images.unsplash.com/photo-1539185441755-769473a23570?w=800&auto=format&fit=crop&q=80",
+      altText: "Retro Vinyl Record Round Area Rug in studio",
+      width: 1000,
+      height: 1000,
+    },
     descriptionHtml:
       "<p>Circular music lover's statement rug designed as an authentic classic LP vinyl record with custom song label text.</p>",
     images: [

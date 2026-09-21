@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { environment } from "../../../config/environment";
 import { getAutoSeoClient } from "../runtime";
+import { hydrateSelectedProducts } from "../service";
 import { mapShopifyProductToAutoSeoCandidate } from "../shopify-adapter";
 import type {
   AutoSeoClient,
@@ -59,6 +60,9 @@ export function AutoSeoPage({
 
   const [activeProduct, setActiveProduct] = useState<ShopifyProductForAutoSeoUi | null>(null);
   const [isDetailOpen, setIsDetailOpen] = useState(false);
+  const [isDetailLoading, setIsDetailLoading] = useState(false);
+  const [detailErrorMessage, setDetailErrorMessage] = useState<string | null>(null);
+  const activeDetailIdRef = useRef<string | null>(null);
 
   const [output, setOutput] = useState<AutoSeoOutput | null>(null);
 
@@ -103,6 +107,45 @@ export function AutoSeoPage({
     }
   }, [handleLoadProducts, initialProducts]);
 
+  // Open & hydrate product detail drawer
+  const openProductDetail = useCallback(
+    async (product: ShopifyProductForAutoSeoUi): Promise<void> => {
+      activeDetailIdRef.current = product.id;
+
+      const cached = activeClient.getCachedDetail?.(product.id);
+      if (cached) {
+        setActiveProduct(cached);
+        setIsDetailOpen(true);
+        setIsDetailLoading(false);
+        setDetailErrorMessage(null);
+        return;
+      }
+
+      setActiveProduct(product);
+      setIsDetailOpen(true);
+      setIsDetailLoading(true);
+      setDetailErrorMessage(null);
+
+      try {
+        const fullProduct = await activeClient.loadProductDetail(product.id);
+        if (activeDetailIdRef.current === product.id) {
+          setActiveProduct(fullProduct);
+        }
+      } catch (err) {
+        if (activeDetailIdRef.current === product.id) {
+          setDetailErrorMessage(
+            err instanceof Error ? err.message : "Không thể tải chi tiết sản phẩm từ Shopify.",
+          );
+        }
+      } finally {
+        if (activeDetailIdRef.current === product.id) {
+          setIsDetailLoading(false);
+        }
+      }
+    },
+    [activeClient],
+  );
+
   // Approve product
   const handleApprove = (productId: string): void => {
     setDecisions((curr) => ({
@@ -117,12 +160,11 @@ export function AutoSeoPage({
 
   // Edit product
   const handleEdit = (product: ShopifyProductForAutoSeoUi): void => {
-    setActiveProduct(product);
-    setIsDetailOpen(true);
     setDecisions((curr) => ({
       ...curr,
       [product.id]: "needs_edit",
     }));
+    void openProductDetail(product);
   };
 
   // Mark as draft
@@ -164,8 +206,7 @@ export function AutoSeoPage({
 
   // Open detail modal
   const handleOpenDetail = (product: ShopifyProductForAutoSeoUi): void => {
-    setActiveProduct(product);
-    setIsDetailOpen(true);
+    void openProductDetail(product);
   };
 
   // Run Auto SEO
@@ -193,7 +234,12 @@ export function AutoSeoPage({
     setErrorMessage(null);
 
     try {
-      const autoSeoProducts = products.map(mapShopifyProductToAutoSeoCandidate);
+      // TASK 5 & 6: Hydrate full product details for all selected products before running Auto SEO
+      const hydratedProducts = activeClient.hydrateSelectedProducts
+        ? await activeClient.hydrateSelectedProducts(targetSelectedIds, 5)
+        : await hydrateSelectedProducts(activeClient, targetSelectedIds, 5);
+
+      const autoSeoProducts = hydratedProducts.map(mapShopifyProductToAutoSeoCandidate);
       const result = await activeClient.runAutoSeo({
         workflowId: `auto_seo_${Date.now()}`,
         products: autoSeoProducts,
@@ -285,7 +331,14 @@ export function AutoSeoPage({
         product={activeProduct}
         isOpen={isDetailOpen}
         decision={activeProduct ? decisions[activeProduct.id] : undefined}
-        onClose={() => setIsDetailOpen(false)}
+        isLoading={isDetailLoading}
+        errorMessage={detailErrorMessage}
+        onClose={() => {
+          activeDetailIdRef.current = null;
+          setIsDetailOpen(false);
+          setIsDetailLoading(false);
+          setDetailErrorMessage(null);
+        }}
         onApprove={(id) => {
           handleApprove(id);
           setIsDetailOpen(false);

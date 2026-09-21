@@ -8,6 +8,8 @@ export interface ProductDetailDrawerProps {
   product: ShopifyProductForAutoSeoUi | null;
   isOpen: boolean;
   decision?: ProductReviewDecision;
+  isLoading?: boolean;
+  errorMessage?: string | null;
   onClose(): void;
   onApprove(productId: string): void;
   onMarkNeedsEdit(productId: string): void;
@@ -21,6 +23,8 @@ export function ProductDetailDrawer({
   product,
   isOpen,
   decision = "pending",
+  isLoading = false,
+  errorMessage = null,
   onClose,
   onApprove,
   onMarkNeedsEdit,
@@ -83,6 +87,12 @@ export function ProductDetailDrawer({
               <span>🔍</span> Chi tiết sản phẩm (PDP)
             </h2>
             <ProductDecisionBadge decision={decision} />
+            {isLoading && (
+              <span className="flex items-center gap-1.5 text-[11px] text-cyan-400 bg-cyan-950/60 px-2 py-0.5 rounded-md border border-cyan-800">
+                <span className="inline-block h-1.5 w-1.5 rounded-full bg-cyan-400 animate-pulse" />
+                Đang tải chi tiết...
+              </span>
+            )}
           </div>
 
           <button
@@ -94,6 +104,13 @@ export function ProductDetailDrawer({
             ✕
           </button>
         </div>
+
+        {errorMessage && (
+          <div className="mx-6 mt-4 rounded-xl border border-rose-800/80 bg-rose-950/40 p-3 text-xs text-rose-200 flex items-center gap-2">
+            <span>⚠️</span>
+            <span>{errorMessage}</span>
+          </div>
+        )}
 
         {/* Tab navigation */}
         <div className="flex border-b border-slate-800 px-6 bg-slate-900/50">
@@ -227,7 +244,9 @@ export function ProductDetailDrawer({
                   </div>
                 ) : (
                   <div className="rounded-xl border border-dashed border-slate-800 p-8 text-center text-xs text-slate-500">
-                    Không có hình ảnh nào được lưu trữ cho sản phẩm này.
+                    {isLoading
+                      ? "Đang tải hình ảnh sản phẩm từ Shopify..."
+                      : "Không có hình ảnh nào được lưu trữ cho sản phẩm này."}
                   </div>
                 )}
               </div>
@@ -358,7 +377,9 @@ export function ProductDetailDrawer({
                 </div>
               ) : (
                 <div className="rounded-xl border border-dashed border-slate-800 p-8 text-center text-xs text-slate-500">
-                  Không có biến thể nào được liệt kê.
+                  {isLoading
+                    ? "Đang tải danh sách biến thể từ Shopify..."
+                    : "Không có biến thể nào được liệt kê."}
                 </div>
               )}
             </div>
@@ -380,7 +401,11 @@ export function ProductDetailDrawer({
                 value={product.descriptionHtml ?? ""}
                 rows={14}
                 className="w-full rounded-xl border border-slate-800 bg-slate-950 p-4 font-mono text-xs text-slate-300 focus:outline-hidden resize-none leading-relaxed"
-                placeholder="Không có mã HTML mô tả sản phẩm..."
+                placeholder={
+                  isLoading
+                    ? "Đang tải mã HTML mô tả sản phẩm từ Shopify..."
+                    : "Không có mã HTML mô tả sản phẩm..."
+                }
               />
             </div>
           )}

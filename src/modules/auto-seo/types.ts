@@ -23,6 +23,7 @@ export interface ShopifyProductForAutoSeoUi {
   readonly vendor?: string;
   readonly productType?: string;
   readonly tags?: readonly string[];
+  readonly featuredImage?: ShopifyProductImage;
   readonly images?: readonly ShopifyProductImage[];
   readonly variants?: readonly ShopifyProductVariant[];
   readonly seo?: {
@@ -87,5 +88,14 @@ export interface AutoSeoOutput {
 
 export interface AutoSeoClient {
   loadProducts(): Promise<readonly ShopifyProductForAutoSeoUi[]>;
+  loadProductDetail(productId: string): Promise<ShopifyProductForAutoSeoUi>;
+  loadProductDetail(storeId: string, productId: string): Promise<ShopifyProductForAutoSeoUi>;
   runAutoSeo(input: AutoSeoSelectionInput): Promise<AutoSeoOutput>;
+  hydrateSelectedProducts?(
+    productIds: readonly string[],
+    concurrency?: number,
+  ): Promise<readonly ShopifyProductForAutoSeoUi[]>;
+  getCachedDetail?(productId: string): ShopifyProductForAutoSeoUi | undefined;
+  clearCache?(): void;
+  clearDetailCache?(): void;
 }

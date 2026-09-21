@@ -9,6 +9,8 @@ export {
 } from "./runtime";
 
 export {
+  hydrateSelectedProducts,
+  mapWithConcurrency,
   RealAutoSeoClient,
   realAutoSeoClient,
   runAutoSeo,

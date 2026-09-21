@@ -986,6 +986,8 @@ test("AutoSeoPage: binds toolbar counts and product selection table correctly", 
 test("AutoSeoPage: renders full page without crashing", () => {
   const dummyClient = {
     loadProducts: async () => mockProducts,
+    loadProductDetail: async (id: string) =>
+      mockProducts.find((p) => p.id === id) ?? mockProducts[0]!,
     runAutoSeo: async () => ({
       workflowId: "test",
       selectedCount: 0,
