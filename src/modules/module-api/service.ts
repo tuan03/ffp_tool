@@ -314,17 +314,6 @@ export function createModuleApiRunner(
       throw new ShopifyApiError("Input must be a valid object", "SHOPIFY_USER_ERROR");
     }
 
-    const effectiveStoreId =
-      typeof input.storeId === "string" && input.storeId.trim() !== ""
-        ? input.storeId.trim()
-        : input.operation === "stores.list"
-        ? "system"
-        : "";
-
-    if (!effectiveStoreId) {
-      throw new ShopifyApiError("Store ID is required", "SHOPIFY_USER_ERROR");
-    }
-
     if (!input.operation || typeof input.operation !== "string") {
       throw new ShopifyApiError("Operation is required", "SHOPIFY_USER_ERROR");
     }
@@ -336,8 +325,41 @@ export function createModuleApiRunner(
       );
     }
 
-    if (!input.payload || typeof input.payload !== "object") {
+    const effectivePayload =
+      input.payload !== undefined && input.payload !== null
+        ? input.payload
+        : input.operation === "stores.list"
+        ? {}
+        : undefined;
+
+    if (!effectivePayload || typeof effectivePayload !== "object") {
       throw new ShopifyApiError("Payload is required", "SHOPIFY_USER_ERROR");
+    }
+
+    if (input.operation === "stores.get") {
+      const p = effectivePayload as Record<string, unknown>;
+      const targetId = typeof p.targetStoreId === "string" ? p.targetStoreId.trim() : "";
+      if (!targetId) {
+        throw new ShopifyApiError("targetStoreId is required", "SHOPIFY_USER_ERROR");
+      }
+    }
+
+    const payloadTargetId =
+      effectivePayload && typeof effectivePayload === "object" && "targetStoreId" in effectivePayload
+        ? (effectivePayload as { targetStoreId?: string }).targetStoreId
+        : undefined;
+
+    const effectiveStoreId =
+      typeof input.storeId === "string" && input.storeId.trim() !== ""
+        ? input.storeId.trim()
+        : typeof payloadTargetId === "string" && payloadTargetId.trim() !== ""
+        ? payloadTargetId.trim()
+        : input.operation === "stores.list"
+        ? "system"
+        : "";
+
+    if (!effectiveStoreId) {
+      throw new ShopifyApiError("Store ID is required", "SHOPIFY_USER_ERROR");
     }
 
     const invokeFetch = (url: string, init?: RequestInit): Promise<Response> => {
@@ -356,10 +378,13 @@ export function createModuleApiRunner(
     const isRead = isShopifyReadOperation(input.operation);
 
     const requestBody: Record<string, unknown> = {
-      storeId: input.storeId,
       operation: input.operation,
-      payload: input.payload,
+      payload: effectivePayload,
     };
+
+    if (typeof input.storeId === "string" && input.storeId.trim() !== "") {
+      requestBody.storeId = input.storeId.trim();
+    }
 
     if (input.requestId !== undefined && input.requestId.trim() !== "") {
       requestBody.requestId = input.requestId;
@@ -522,7 +547,10 @@ export function createModuleApiRunner(
     }
 
     return {
-      storeId: typeof parsedObj.storeId === "string" ? parsedObj.storeId : input.storeId,
+      storeId:
+        typeof parsedObj.storeId === "string"
+          ? parsedObj.storeId
+          : input.storeId ?? effectiveStoreId,
       operation: input.operation,
       success: true,
       data: parsedObj.data,

@@ -25,18 +25,25 @@ export function normalizeShopDomain(rawDomain: string): string {
     throw new GatewayError("Shop domain cannot be empty", "SHOPIFY_INVALID_INPUT", 400);
   }
 
+  const handleRegex = /^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$/;
+
   // Handle https://admin.shopify.com/store/<store-slug>
-  const adminPattern = /^(?:https?:\/\/)?admin\.shopify\.com\/store\/([a-zA-Z0-9-]+)(?:[/?#].*)?$/i;
+  const adminPattern = /^(?:https?:\/\/)?admin\.shopify\.com(?::\d+)?\/store\/([a-zA-Z0-9-]+)(?:[/?#].*)?$/i;
   const adminMatch = trimmed.match(adminPattern);
   if (adminMatch) {
     const slug = adminMatch[1].toLowerCase();
-    if (slug) {
-      return `${slug}.myshopify.com`;
+    if (!handleRegex.test(slug)) {
+      throw new GatewayError(
+        `Invalid Shopify store handle in admin URL: "${slug}"`,
+        "SHOPIFY_INVALID_INPUT",
+        400,
+      );
     }
+    return `${slug}.myshopify.com`;
   }
 
   // Explicitly reject bare admin.shopify.com or admin.shopify.com/* without valid store slug
-  if (/^(?:https?:\/\/)?admin\.shopify\.com(?:\/.*)?$/i.test(trimmed)) {
+  if (/^(?:https?:\/\/)?admin\.shopify\.com(?::\d+)?(?:[/?#].*)?$/i.test(trimmed)) {
     throw new GatewayError(
       "admin.shopify.com cannot be used directly as a shop domain; provide the store handle or full store URL",
       "SHOPIFY_INVALID_INPUT",
@@ -51,8 +58,6 @@ export function normalizeShopDomain(rawDomain: string): string {
   normalized = normalized.replace(/[/?#].*$/, "");
   normalized = normalized.replace(/:\d+$/, "");
   normalized = normalized.toLowerCase();
-
-  const handleRegex = /^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$/;
 
   // If no dots, treat as subdomain/handle: e.g. "capozen" -> "capozen.myshopify.com"
   if (!normalized.includes(".")) {

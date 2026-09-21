@@ -1944,5 +1944,154 @@ test("Mock runner supports custom variants in products.create", async () => {
   assert.equal(response.data.product.variants[1]?.sku, "TSHIRT-M");
 });
 
+test("Mock runner executes stores.list without storeId and without payload", async () => {
+  const response = await runMockModuleApi({
+    operation: "stores.list",
+  });
+
+  assert.equal(response.success, true);
+  assert.equal(response.storeId, "system");
+  assert.ok(response.data.stores.length > 0);
+  assert.equal(response.data.stores[0].storeId, "capozen");
+  assert.equal((response.data.stores[0] as any).accessToken, undefined);
+  assert.equal((response.data.stores[0] as any).niche, undefined);
+});
+
+test("Mock runner executes stores.get without top-level storeId", async () => {
+  const response = await runMockModuleApi({
+    operation: "stores.get",
+    payload: { targetStoreId: "capozen" },
+  });
+
+  assert.equal(response.success, true);
+  assert.equal(response.storeId, "capozen");
+  assert.ok(response.data.store);
+  assert.equal(response.data.store?.storeId, "capozen");
+  assert.equal(response.data.store?.shopDomain, "capozen.myshopify.com");
+  assert.equal((response.data.store as any)?.accessToken, undefined);
+  assert.equal((response.data.store as any)?.niche, undefined);
+});
+
+test("Mock runner rejects stores.get when targetStoreId is empty or missing", async () => {
+  await assert.rejects(
+    async () => {
+      await runMockModuleApi({
+        operation: "stores.get",
+        payload: { targetStoreId: "   " },
+      });
+    },
+    (err: unknown) => {
+      assert.ok(err instanceof ShopifyApiError);
+      assert.equal(err.code, "SHOPIFY_USER_ERROR");
+      assert.equal(err.message, "targetStoreId is required");
+      return true;
+    },
+  );
+});
+
+test("Real service executes stores.list without storeId and without payload", async () => {
+  const { fetch: fakeFetch, requests } = createFakeFetch(async () => {
+    return new Response(
+      JSON.stringify({
+        storeId: "system",
+        operation: "stores.list",
+        success: true,
+        data: {
+          stores: [
+            {
+              storeId: "capozen",
+              shopDomain: "capozen.myshopify.com",
+              apiVersion: "2026-07",
+              authType: "static",
+              connected: true,
+            },
+          ],
+          total: 1,
+        },
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  });
+
+  const runner = createModuleApiRunner(
+    { gatewayUrl: "https://gateway.example.com/api" },
+    { fetch: fakeFetch },
+  );
+
+  const response = await runner({
+    operation: "stores.list",
+  });
+
+  assert.equal(response.success, true);
+  assert.equal(response.storeId, "system");
+  assert.equal(response.data.total, 1);
+  assert.equal(requests.length, 1);
+  const sentBody = JSON.parse(String(requests[0]?.init?.body));
+  assert.equal(sentBody.operation, "stores.list");
+  assert.deepEqual(sentBody.payload, {});
+  assert.equal(sentBody.storeId, undefined);
+});
+
+test("Real service executes stores.get without top-level storeId", async () => {
+  const { fetch: fakeFetch, requests } = createFakeFetch(async () => {
+    return new Response(
+      JSON.stringify({
+        storeId: "capozen",
+        operation: "stores.get",
+        success: true,
+        data: {
+          store: {
+            storeId: "capozen",
+            shopDomain: "capozen.myshopify.com",
+            apiVersion: "2026-07",
+            authType: "static",
+            connected: true,
+          },
+        },
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  });
+
+  const runner = createModuleApiRunner(
+    { gatewayUrl: "https://gateway.example.com/api" },
+    { fetch: fakeFetch },
+  );
+
+  const response = await runner({
+    operation: "stores.get",
+    payload: { targetStoreId: "capozen" },
+  });
+
+  assert.equal(response.success, true);
+  assert.equal(response.storeId, "capozen");
+  assert.equal(response.data.store?.storeId, "capozen");
+  assert.equal(requests.length, 1);
+  const sentBody = JSON.parse(String(requests[0]?.init?.body));
+  assert.equal(sentBody.operation, "stores.get");
+  assert.deepEqual(sentBody.payload, { targetStoreId: "capozen" });
+  assert.equal(sentBody.storeId, undefined);
+});
+
+test("Real service rejects stores.get when targetStoreId is empty", async () => {
+  const runner = createModuleApiRunner();
+
+  await assert.rejects(
+    async () => {
+      await runner({
+        operation: "stores.get",
+        payload: { targetStoreId: "" },
+      });
+    },
+    (err: unknown) => {
+      assert.ok(err instanceof ShopifyApiError);
+      assert.equal(err.code, "SHOPIFY_USER_ERROR");
+      assert.equal(err.message, "targetStoreId is required");
+      return true;
+    },
+  );
+});
+
+
 
 

@@ -53,13 +53,15 @@ export async function executeStoresGet(
       ? p.targetStoreId.trim()
       : typeof p.storeId === "string" && p.storeId.trim() !== ""
       ? p.storeId.trim()
-      : defaultStoreId;
+      : defaultStoreId && defaultStoreId !== "system"
+      ? defaultStoreId.trim()
+      : undefined;
 
-  if (!targetId || targetId.trim() === "") {
+  if (!targetId || targetId === "") {
     throw new GatewayError("targetStoreId is required", "SHOPIFY_INVALID_INPUT", 400);
   }
 
-  const store = await storeRegistry.getStore(targetId.trim());
+  const store = await storeRegistry.getStore(targetId);
   return {
     store: store ? toStoreSummary(store, true) : null,
   };

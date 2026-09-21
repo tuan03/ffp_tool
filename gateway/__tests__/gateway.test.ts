@@ -55,6 +55,7 @@ describe("Gateway: StoreRegistry", () => {
     assert.equal(normalizeShopDomain("https://capozen.myshopify.com"), "capozen.myshopify.com");
     assert.equal(normalizeShopDomain("http://capozen.myshopify.com/"), "capozen.myshopify.com");
     assert.equal(normalizeShopDomain("https://admin.shopify.com/store/capozen"), "capozen.myshopify.com");
+    assert.equal(normalizeShopDomain("https://admin.shopify.com:443/store/capozen"), "capozen.myshopify.com");
     assert.equal(normalizeShopDomain("admin.shopify.com/store/capozen/"), "capozen.myshopify.com");
     assert.equal(normalizeShopDomain("https://admin.shopify.com/store/capozen?param=value"), "capozen.myshopify.com");
   });
@@ -115,6 +116,24 @@ describe("Gateway: StoreRegistry", () => {
     });
 
     assert.throws(() => normalizeShopDomain("capozen..myshopify.com"), (err: unknown) => {
+      assert(err instanceof GatewayError);
+      assert.equal(err.code, "SHOPIFY_INVALID_INPUT");
+      return true;
+    });
+
+    assert.throws(() => normalizeShopDomain("https://admin.shopify.com/store/-invalid-"), (err: unknown) => {
+      assert(err instanceof GatewayError);
+      assert.equal(err.code, "SHOPIFY_INVALID_INPUT");
+      return true;
+    });
+
+    assert.throws(() => normalizeShopDomain("https://admin.shopify.com/store/invalid-"), (err: unknown) => {
+      assert(err instanceof GatewayError);
+      assert.equal(err.code, "SHOPIFY_INVALID_INPUT");
+      return true;
+    });
+
+    assert.throws(() => normalizeShopDomain("https://admin.shopify.com:443"), (err: unknown) => {
       assert(err instanceof GatewayError);
       assert.equal(err.code, "SHOPIFY_INVALID_INPUT");
       return true;
@@ -2387,12 +2406,14 @@ describe("Gateway: HTTP Server Handler & E2E Integration with module-api", () =>
     // 3. updateStoreCredentials
     const updateRes = await controlPlane.updateStoreCredentials({
       storeId: "capozen-store",
+      shopDomain: "updated-capozen",
       auth: {
         type: "static_access_token",
         accessToken: "shpat_new_secret_67890",
       },
     });
     assert.equal(updateRes.updated, true);
+    assert.equal(registry.getStore("capozen-store")?.shopDomain, "updated-capozen.myshopify.com");
     assert.equal(registry.getStore("capozen-store")?.auth.staticToken, "shpat_new_secret_67890");
 
     // 4. disconnectStore
@@ -2624,6 +2645,37 @@ describe("Gateway: HTTP Server Handler & E2E Integration with module-api", () =>
       assert.equal((getData.store as any).staticToken, undefined);
       assert.equal((getData.store as any).niche, undefined);
     }
+
+    // stores.get rejects when targetStoreId is empty or omitted
+    await assert.rejects(
+      async () => {
+        await dispatcher.dispatch({
+          operation: "stores.get",
+          payload: {},
+        });
+      },
+      (err: unknown) => {
+        assert(err instanceof GatewayError);
+        assert.equal(err.code, "SHOPIFY_INVALID_INPUT");
+        assert.equal(err.httpStatus, 400);
+        return true;
+      },
+    );
+
+    await assert.rejects(
+      async () => {
+        await dispatcher.dispatch({
+          operation: "stores.get",
+          payload: { targetStoreId: "   " },
+        });
+      },
+      (err: unknown) => {
+        assert(err instanceof GatewayError);
+        assert.equal(err.code, "SHOPIFY_INVALID_INPUT");
+        assert.equal(err.httpStatus, 400);
+        return true;
+      },
+    );
   });
 
   it("variants.update and variants.bulkUpdate reject deprecated title and inventoryQuantity with SHOPIFY_INVALID_INPUT", async () => {

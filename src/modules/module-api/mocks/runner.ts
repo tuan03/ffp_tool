@@ -157,9 +157,35 @@ export async function runMockModuleApi(input: ShopifyApiInput): Promise<ShopifyA
     throw new ShopifyApiError("Input must be a valid object", "SHOPIFY_USER_ERROR");
   }
 
+  const effectivePayload =
+    input.payload !== undefined && input.payload !== null
+      ? input.payload
+      : input.operation === "stores.list"
+      ? {}
+      : undefined;
+
+  if (!effectivePayload || typeof effectivePayload !== "object") {
+    throw new ShopifyApiError("Payload is required", "SHOPIFY_USER_ERROR");
+  }
+
+  if (input.operation === "stores.get") {
+    const p = effectivePayload as Record<string, unknown>;
+    const targetId = typeof p.targetStoreId === "string" ? p.targetStoreId.trim() : "";
+    if (!targetId) {
+      throw new ShopifyApiError("targetStoreId is required", "SHOPIFY_USER_ERROR");
+    }
+  }
+
+  const payloadTargetId =
+    effectivePayload && typeof effectivePayload === "object" && "targetStoreId" in effectivePayload
+      ? (effectivePayload as { targetStoreId?: string }).targetStoreId
+      : undefined;
+
   const effectiveStoreId =
     typeof input.storeId === "string" && input.storeId.trim() !== ""
       ? input.storeId.trim()
+      : typeof payloadTargetId === "string" && payloadTargetId.trim() !== ""
+      ? payloadTargetId.trim()
       : input.operation === "stores.list"
       ? "system"
       : "";
@@ -186,10 +212,6 @@ export async function runMockModuleApi(input: ShopifyApiInput): Promise<ShopifyA
 
   if (input.storeId === "simulate-unknown-state") {
     throw new ShopifyApiError("Simulated unknown write state", "SHOPIFY_UNKNOWN_WRITE_STATE");
-  }
-
-  if (!input.payload || typeof input.payload !== "object") {
-    throw new ShopifyApiError("Payload is required", "SHOPIFY_USER_ERROR");
   }
 
   switch (input.operation) {
@@ -573,9 +595,10 @@ export async function runMockModuleApi(input: ShopifyApiInput): Promise<ShopifyA
     }
 
     case "stores.get": {
-      const found = mockStores.find((s) => s.storeId === input.payload.targetStoreId);
+      const targetId = input.payload.targetStoreId.trim();
+      const found = mockStores.find((s) => s.storeId === targetId);
       return {
-        storeId: input.storeId ?? "system",
+        storeId: input.storeId ?? targetId,
         operation: "stores.get",
         success: true,
         data: {

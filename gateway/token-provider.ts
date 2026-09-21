@@ -71,17 +71,18 @@ export class ClientCredentialsTokenProvider implements TokenProvider {
       let bodyText = "";
       try {
         bodyText = await response.text();
+        if (bodyText.toLowerCase().includes("shop_not_permitted")) {
+          throw new GatewayError(
+            "Shopify store is not permitted for client app (shop_not_permitted)",
+            "SHOPIFY_AUTH_FAILED",
+            401,
+          );
+        }
+
         const json = JSON.parse(bodyText);
         if (json && typeof json === "object") {
           const errVal = (json.error || json.error_code || "") as string;
           const descVal = (json.error_description || json.message || "") as string;
-          if (errVal === "shop_not_permitted" || descVal.includes("shop_not_permitted")) {
-            throw new GatewayError(
-              "Shopify store is not permitted for client app (shop_not_permitted)",
-              "SHOPIFY_AUTH_FAILED",
-              401,
-            );
-          }
           if (errVal || descVal) {
             throw new GatewayError(
               `Shopify OAuth authentication failed: ${errVal || response.status}`,

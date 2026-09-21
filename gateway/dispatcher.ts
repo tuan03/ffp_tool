@@ -95,12 +95,24 @@ export class GatewayDispatcher {
           (request.payload as Record<string, unknown>).storeId
         : undefined;
 
+    if (request.operation === "stores.get") {
+      const targetId =
+        typeof payloadTargetId === "string" && (payloadTargetId as string).trim() !== ""
+          ? (payloadTargetId as string).trim()
+          : typeof request.storeId === "string" && request.storeId.trim() !== ""
+          ? request.storeId.trim()
+          : "";
+      if (!targetId) {
+        throw new GatewayError("targetStoreId is required", "SHOPIFY_INVALID_INPUT", 400);
+      }
+    }
+
     const effectiveStoreId =
       typeof request.storeId === "string" && request.storeId.trim() !== ""
         ? request.storeId.trim()
         : typeof payloadTargetId === "string" && (payloadTargetId as string).trim() !== ""
         ? (payloadTargetId as string).trim()
-        : request.operation === "stores.list" || request.operation === "stores.get"
+        : request.operation === "stores.list"
         ? "system"
         : "";
 

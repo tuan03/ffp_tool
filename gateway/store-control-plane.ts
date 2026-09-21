@@ -26,6 +26,7 @@ export interface RegisterStoreInput {
 
 export interface UpdateStoreCredentialsInput {
   readonly storeId: string;
+  readonly shopDomain?: string;
   readonly auth: StoreAuthInput;
   readonly proxy?: StoreProxyConfig;
   readonly apiVersion?: string;
@@ -195,7 +196,12 @@ export class StoreControlPlane {
     await this.verifyStoreCredentials(candidateConfig);
 
     // Persist to registry
-    await this.storeRegistry.registerStore(candidateConfig);
+    try {
+      await this.storeRegistry.registerStore(candidateConfig);
+    } catch (persistErr: unknown) {
+      this.tokenProvider.invalidate?.(storeId);
+      throw persistErr;
+    }
 
     return {
       store: toStoreSummary(candidateConfig, true),
@@ -223,6 +229,10 @@ export class StoreControlPlane {
       throw new GatewayError(`Store not found: ${storeId}`, "SHOPIFY_NOT_FOUND", 404);
     }
 
+    const shopDomain =
+      typeof input.shopDomain === "string" && input.shopDomain.trim() !== ""
+        ? normalizeShopDomain(input.shopDomain)
+        : existing.shopDomain;
     const storeAuth = mapAuthInputToStoreAuthConfig(input.auth);
     const apiVersion =
       typeof input.apiVersion === "string" && input.apiVersion.trim() !== ""
@@ -231,6 +241,7 @@ export class StoreControlPlane {
 
     const candidateConfig: StoreConfig = {
       ...existing,
+      shopDomain,
       apiVersion,
       auth: storeAuth,
       proxy: input.proxy !== undefined ? input.proxy : existing.proxy,
@@ -243,7 +254,12 @@ export class StoreControlPlane {
     await this.verifyStoreCredentials(candidateConfig);
 
     // Update in store registry
-    await this.storeRegistry.updateStore(candidateConfig);
+    try {
+      await this.storeRegistry.updateStore(candidateConfig);
+    } catch (persistErr: unknown) {
+      this.tokenProvider.invalidate?.(storeId);
+      throw persistErr;
+    }
 
     return {
       store: toStoreSummary(candidateConfig, true),
