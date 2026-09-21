@@ -13,8 +13,17 @@ export function CandidateCard({
 }: CandidateCardProps): React.JSX.Element {
   return (
     <div
+      role="button"
+      tabIndex={0}
+      aria-pressed={isSelected}
       onClick={() => onToggle(candidate.id)}
-      className={`group relative flex cursor-pointer flex-col overflow-hidden rounded-xl border transition-all duration-200 ${
+      onKeyDown={(e) => {
+        if (e.key === " " || e.key === "Enter") {
+          e.preventDefault();
+          onToggle(candidate.id);
+        }
+      }}
+      className={`group relative flex cursor-pointer flex-col overflow-hidden rounded-xl border transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-cyan-400 ${
         isSelected
           ? "border-cyan-400 bg-slate-800/95 shadow-lg shadow-cyan-500/15 ring-2 ring-cyan-400"
           : "border-slate-800 bg-slate-900/90 hover:border-slate-600 hover:bg-slate-800/80 shadow"
@@ -25,17 +34,26 @@ export function CandidateCard({
         <img
           src={candidate.image_url}
           alt={candidate.title}
+          onError={(e) => {
+            e.currentTarget.onerror = null;
+            e.currentTarget.src =
+              "data:image/svg+xml;charset=utf-8," +
+              encodeURIComponent(
+                `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300"><rect width="400" height="300" fill="#0f172a"/><text x="200" y="150" fill="#94a3b8" font-family="sans-serif" font-size="14" text-anchor="middle">${candidate.title.slice(0, 30)}</text></svg>`,
+              );
+          }}
           className="h-full w-full object-cover transition duration-300 group-hover:scale-105"
         />
 
         {/* Checkbox */}
-        <div className="absolute top-2.5 left-2.5 z-10 flex items-center justify-center">
+        <div
+          className="absolute top-2.5 left-2.5 z-10 flex items-center justify-center"
+          onClick={(e) => e.stopPropagation()}
+        >
           <input
             type="checkbox"
             checked={isSelected}
-            onChange={() => {
-              /* toggled by parent div click */
-            }}
+            onChange={() => onToggle(candidate.id)}
             aria-label={`Chọn mẫu ${candidate.title}`}
             className="h-5 w-5 rounded border-slate-600 bg-slate-900/80 text-cyan-500 accent-cyan-400 shadow focus:ring-0 cursor-pointer"
           />
@@ -75,19 +93,19 @@ export function CandidateCard({
           {candidate.title}
         </h3>
 
-        {/* 3 AI Vision Scores */}
+        {/* 3 AI Vision Scores matching wireframe */}
         <div className="grid grid-cols-3 gap-1.5 rounded-lg border border-slate-800 bg-slate-950/70 p-2 text-center text-[10px]">
           <div>
             <p className="text-slate-400">Điểm nét</p>
-            <p className="font-bold text-cyan-300">{candidate.image_score}</p>
+            <p className="font-bold text-cyan-300">{candidate.image_score}/100</p>
           </div>
           <div className="border-x border-slate-800">
             <p className="text-slate-400">Chuẩn in</p>
-            <p className="font-bold text-emerald-300">{candidate.printability_score}</p>
+            <p className="font-bold text-emerald-300">{candidate.printability_score}/100</p>
           </div>
           <div>
             <p className="text-slate-400">Độ phẳng</p>
-            <p className="font-bold text-amber-300">{candidate.flat_artwork_score}</p>
+            <p className="font-bold text-amber-300">{candidate.flat_artwork_score}/100</p>
           </div>
         </div>
 

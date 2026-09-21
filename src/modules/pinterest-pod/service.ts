@@ -127,57 +127,128 @@ export function packageDeliverablesForSeo(
 ): PinterestPodDeliverables {
   const deliverables = jobDetail.deliverables;
   const candidates = jobDetail.candidates ?? [];
+  const rows = deliverables?.comparison_rows ?? [];
 
-  const items: PodDeliverableItem[] = (deliverables?.comparison_rows ?? []).map((row, index) => {
-    const candidate = candidates[index] ?? {
-      id: `cand_pin_${101 + index}`,
-      title: row.product_label,
-      trend: "vintage boho rug",
-    };
+  const isRug = productType === "rug";
+  const widthPx = isRug ? 4000 : 10000;
+  const heightPx = isRug ? 6400 : 11000;
 
-    const cmyk = deliverables?.print_cmyk_images[index] ?? {
-      filename: `design_${String(index + 1).padStart(2, "0")}_cmyk_300dpi.jpg`,
-      url: row.final_print_url,
-    };
+  let items: PodDeliverableItem[] = [];
 
-    const isRug = productType === "rug";
-    const widthPx = isRug ? 4000 : 10000;
-    const heightPx = isRug ? 6400 : 11000;
+  if (rows.length > 0) {
+    items = rows.map((row, index) => {
+      // Robust candidate lookup: try matching by source_url, pin_id, title, or index
+      const matchedCandidate =
+        candidates.find(
+          (c) =>
+            c.image_url === row.source_url ||
+            c.pin_url === row.source_url ||
+            (c.pin_id && row.source_url.includes(c.pin_id)) ||
+            (c.title && row.product_label.toLowerCase().includes(c.title.toLowerCase())) ||
+            (c.title && c.title.toLowerCase().includes(row.product_label.toLowerCase())),
+        ) ??
+        candidates[index] ?? {
+          id: `cand_pin_${101 + index}`,
+          title: row.product_label,
+          trend: "vintage distressed rug",
+          query: "vintage rug",
+        };
 
-    const composedMockups = (deliverables?.lifestyle_mockups ?? [])
-      .filter((_, mIndex) => Math.floor(mIndex / 2) === index)
-      .map((mock, mIndex) => ({
+      const cmyk = deliverables?.print_cmyk_images[index] ?? {
+        filename: `design_${String(index + 1).padStart(2, "0")}_cmyk_300dpi.jpg`,
+        url: row.final_print_url,
+      };
+
+      // Derive standard RGB PNG URL conforming to CONTRACT_PINTEREST_POD_TO_SEO.md (rgbUrl: .../design_101_rgb_4k.png)
+      let rgbUrl: string;
+      if (cmyk.url.includes("cmyk_300dpi.jpg")) {
+        rgbUrl = cmyk.url.replace("cmyk_300dpi.jpg", "rgb_4k.png");
+      } else if (cmyk.url.startsWith("data:")) {
+        rgbUrl = cmyk.url.replace("B%E1%BA%A2N%20IN%20CMYK", "B%E1%BA%A2N%20IN%20RGB%204K");
+      } else {
+        rgbUrl = cmyk.url.replace(/\.jpe?g$/i, "_rgb_4k.png");
+      }
+
+      // Associate mockups: first check if row's ai_background_urls match specific lifestyle mockups
+      const allLifestyle = deliverables?.lifestyle_mockups ?? [];
+      let designMockups = allLifestyle.filter(
+        (mock) => row.ai_background_urls && row.ai_background_urls.includes(mock.url),
+      );
+
+      // If no direct URL match, distribute evenly across comparison rows
+      if (designMockups.length === 0 && allLifestyle.length > 0) {
+        const mockupsPerRow = Math.max(1, Math.floor(allLifestyle.length / rows.length));
+        const startIdx = index * mockupsPerRow;
+        designMockups = allLifestyle.slice(startIdx, startIdx + mockupsPerRow);
+      }
+
+      const composedMockups = designMockups.map((mock, mIndex) => ({
         referenceImageId: `ref_${String(mIndex + 1).padStart(2, "0")}`,
         mockupUrl: mock.url,
         detectedSceneType: mock.scene_type,
         detectedSceneDescription: mock.scene_description,
       }));
 
-    return {
-      designId: `design_${productType}_${101 + index}`,
-      sourceCandidateId: candidate.id,
-      productType,
-      originalPinTitle: candidate.title,
-      trendKeywords: [
-        candidate.trend,
-        `${productType} decor`,
-        "trending aesthetic",
-        "home makeover",
-      ],
-      printMaster: {
-        cmykUrl: cmyk.url,
-        rgbUrl: row.final_print_url,
-        widthPx,
-        heightPx,
-        dpi: 300,
-      },
-      cutoutProduct: {
-        transparentUrl: row.cutout_url ?? "",
-        whiteBgUrl: row.cutout_white_url ?? "",
-      },
-      composedMockups,
-    };
-  });
+      const trendKeywords: string[] = [
+        matchedCandidate.trend,
+        matchedCandidate.query ? `${matchedCandidate.query} trend` : `${productType} decor`,
+        `${productType} aesthetic`,
+        "trending home decor",
+        "pod print master",
+      ].filter((kw, i, arr): kw is string => Boolean(kw) && arr.indexOf(kw) === i);
+
+      return {
+        designId: `design_${productType}_${101 + index}`,
+        sourceCandidateId: matchedCandidate.id,
+        productType,
+        originalPinTitle: matchedCandidate.title,
+        trendKeywords,
+        printMaster: {
+          cmykUrl: cmyk.url,
+          rgbUrl,
+          widthPx,
+          heightPx,
+          dpi: 300,
+        },
+        cutoutProduct: {
+          transparentUrl: row.cutout_url ?? "",
+          whiteBgUrl: row.cutout_white_url ?? "",
+        },
+        composedMockups,
+      };
+    });
+  } else if (deliverables?.print_cmyk_images && deliverables.print_cmyk_images.length > 0) {
+    // Fallback if comparison_rows is missing but print images are present
+    items = deliverables.print_cmyk_images.map((cmyk, index) => {
+      const matchedCandidate = candidates[index] ?? {
+        id: `cand_pin_${101 + index}`,
+        title: `Design #${index + 1}`,
+        trend: "vintage distressed rug",
+      };
+
+      const rgbUrl = cmyk.url.replace("cmyk_300dpi.jpg", "rgb_4k.png");
+
+      return {
+        designId: `design_${productType}_${101 + index}`,
+        sourceCandidateId: matchedCandidate.id,
+        productType,
+        originalPinTitle: matchedCandidate.title,
+        trendKeywords: [matchedCandidate.trend, `${productType} decor`, "trending aesthetic"],
+        printMaster: {
+          cmykUrl: cmyk.url,
+          rgbUrl,
+          widthPx,
+          heightPx,
+          dpi: 300,
+        },
+        cutoutProduct: {
+          transparentUrl: deliverables.product_cutouts_white[index]?.url ?? "",
+          whiteBgUrl: deliverables.product_cutouts_white[index]?.url ?? "",
+        },
+        composedMockups: [],
+      };
+    });
+  }
 
   return {
     workflowId: jobDetail.jobId,

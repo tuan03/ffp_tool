@@ -27,20 +27,35 @@ export function ReferenceDropzone({
 
     const filesToProcess = Array.from(files).slice(0, remainingSlots);
 
-    filesToProcess.forEach((file) => {
-      const reader = new FileReader();
-      reader.onload = () => {
-        if (typeof reader.result === "string") {
-          const newImage: ReferenceImage = {
-            id: `ref_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-            url: reader.result,
-            name: file.name,
-          };
-          onChange([...images, newImage]);
+    Promise.all(
+      filesToProcess.map(
+        (file) =>
+          new Promise<ReferenceImage>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => {
+              if (typeof reader.result === "string") {
+                resolve({
+                  id: `ref_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+                  url: reader.result,
+                  name: file.name,
+                });
+              } else {
+                reject(new Error("Không thể đọc file ảnh"));
+              }
+            };
+            reader.onerror = () => reject(reader.error ?? new Error("Lỗi đọc file"));
+            reader.readAsDataURL(file);
+          }),
+      ),
+    )
+      .then((loadedImages) => {
+        if (loadedImages.length > 0) {
+          onChange([...images, ...loadedImages]);
         }
-      };
-      reader.readAsDataURL(file);
-    });
+      })
+      .catch((err) => {
+        console.error("Lỗi khi tải ảnh tham chiếu:", err);
+      });
   }
 
   function handleAddUrl(): void {

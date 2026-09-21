@@ -50,10 +50,12 @@ export function PinterestPodStudio({ client: injectedClient }: PinterestPodStudi
   // Current stage active pill
   const [currentStage, setCurrentStage] = useState<1 | 2 | 3>(1);
 
-  // Refs for scrolling to sections
+  // Refs for scrolling to sections and lifecycle safety
   const stage2Ref = useRef<HTMLDivElement | null>(null);
   const stage3Ref = useRef<HTMLDivElement | null>(null);
   const pollingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const isMountedRef = useRef(true);
+  const isPollingBusyRef = useRef(false);
 
   // Stop polling helper
   function stopPolling(): void {
@@ -65,15 +67,15 @@ export function PinterestPodStudio({ client: injectedClient }: PinterestPodStudi
 
   // Check auth status on mount
   useEffect(() => {
-    let isMounted = true;
+    isMountedRef.current = true;
     async function loadAuth(): Promise<void> {
       try {
         const res = await client.getAuthStatus();
-        if (isMounted) {
+        if (isMountedRef.current) {
           setAuthStatus(res);
         }
-      } catch (err) {
-        if (isMounted) {
+      } catch {
+        if (isMountedRef.current) {
           setAuthStatus({
             ok: false,
             logged_in: false,
@@ -85,7 +87,7 @@ export function PinterestPodStudio({ client: injectedClient }: PinterestPodStudi
     void loadAuth();
 
     return () => {
-      isMounted = false;
+      isMountedRef.current = false;
       stopPolling();
     };
   }, [client]);
@@ -96,19 +98,29 @@ export function PinterestPodStudio({ client: injectedClient }: PinterestPodStudi
     setErrorMessage(null);
     try {
       await client.launchLogin(600);
+      if (!isMountedRef.current) return;
       const updatedAuth = await client.getAuthStatus();
+      if (!isMountedRef.current) return;
       setAuthStatus(updatedAuth);
     } catch (err) {
+      if (!isMountedRef.current) return;
       setErrorMessage(err instanceof Error ? err.message : "Đăng nhập Pinterest thất bại");
     } finally {
-      setIsLoggingIn(false);
+      if (isMountedRef.current) {
+        setIsLoggingIn(false);
+      }
     }
   }
 
   // Poll job status
   async function pollJob(targetJobId: string): Promise<void> {
+    if (!isMountedRef.current || isPollingBusyRef.current) return;
+    isPollingBusyRef.current = true;
+
     try {
       const detail: JobDetailResponse = await client.getJobDetail(targetJobId);
+      if (!isMountedRef.current) return;
+
       setJobStatus(detail.status);
 
       if (detail.stepper) {
@@ -136,14 +148,18 @@ export function PinterestPodStudio({ client: injectedClient }: PinterestPodStudi
         setCurrentStage(2);
         stopPolling();
         setTimeout(() => {
-          stage2Ref.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+          if (isMountedRef.current) {
+            stage2Ref.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+          }
         }, 150);
       } else if (detail.status === "completed") {
         setCurrentStage(3);
         setIsProducing(false);
         stopPolling();
         setTimeout(() => {
-          stage3Ref.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+          if (isMountedRef.current) {
+            stage3Ref.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+          }
         }, 150);
       } else if (detail.status === "failed" || detail.status === "cancelled") {
         setIsProducing(false);
@@ -153,9 +169,12 @@ export function PinterestPodStudio({ client: injectedClient }: PinterestPodStudi
         }
       }
     } catch (err) {
+      if (!isMountedRef.current) return;
       setErrorMessage(err instanceof Error ? err.message : "Lỗi khi cập nhật trạng thái job");
       stopPolling();
       setIsProducing(false);
+    } finally {
+      isPollingBusyRef.current = false;
     }
   }
 
@@ -186,6 +205,7 @@ export function PinterestPodStudio({ client: injectedClient }: PinterestPodStudi
       });
 
       setJobId(created.jobId);
+      if (!isMountedRef.current) return;
       if (created.logs) {
         setLogs(created.logs);
       }
@@ -195,6 +215,7 @@ export function PinterestPodStudio({ client: injectedClient }: PinterestPodStudi
         void pollJob(created.jobId);
       }, 1500);
     } catch (err) {
+      if (!isMountedRef.current) return;
       setErrorMessage(err instanceof Error ? err.message : "Không thể khởi tạo job cào Pinterest");
       setJobStatus("idle");
     }
@@ -205,10 +226,12 @@ export function PinterestPodStudio({ client: injectedClient }: PinterestPodStudi
     if (!jobId) return;
     try {
       await client.cancelJob(jobId);
+      if (!isMountedRef.current) return;
       setJobStatus("cancelled");
       stopPolling();
       setIsProducing(false);
     } catch (err) {
+      if (!isMountedRef.current) return;
       setErrorMessage(err instanceof Error ? err.message : "Hủy job thất bại");
     }
   }
@@ -254,12 +277,14 @@ export function PinterestPodStudio({ client: injectedClient }: PinterestPodStudi
         jobId,
         selected_candidates: selectedCandidateIds,
       });
+      if (!isMountedRef.current) return;
 
       stopPolling();
       pollingTimerRef.current = setInterval(() => {
         void pollJob(jobId);
       }, 1500);
     } catch (err) {
+      if (!isMountedRef.current) return;
       setErrorMessage(err instanceof Error ? err.message : "Không thể gửi lệnh sản xuất");
       setIsProducing(false);
     }

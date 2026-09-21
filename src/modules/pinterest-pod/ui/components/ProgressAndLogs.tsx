@@ -141,7 +141,7 @@ export function ProgressAndLogs({
               <p className="italic text-slate-600">Chưa có log từ hệ thống.</p>
             ) : (
               logs.map((log, i) => (
-                <div key={i} className="flex gap-2">
+                <div key={`${i}-${log.slice(0, 30)}`} className="flex gap-2">
                   <span className="text-slate-500 select-none">&gt;</span>
                   <span
                     className={

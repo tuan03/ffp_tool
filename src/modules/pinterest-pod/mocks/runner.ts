@@ -1,15 +1,19 @@
 import type {
+  CandidateItem,
   CancelJobOutput,
   CreateJobInput,
   CreateJobOutput,
+  DeliverablesData,
   JobDetailResponse,
   PinterestAuthStatus,
   PinterestLaunchLoginOutput,
   PinterestPodClient,
   ProduceInput,
   ProduceOutput,
+  SummaryMetrics,
 } from "../types";
 import {
+  createMockSvgDataUri,
   initialMockAuthStatus,
   initialMockLogs,
   mockCandidates,
@@ -26,6 +30,106 @@ interface InMemoryMockJob {
   selectedCandidateIds: string[];
   logs: string[];
   referenceImageCount: number;
+}
+
+function buildMockDeliverablesForJob(job: InMemoryMockJob): {
+  deliverables: DeliverablesData;
+  summaryMetrics: SummaryMetrics;
+} {
+  const isBlanket = job.product === "blanket";
+  const dimText = isBlanket ? "10000x11000px - 300 DPI" : "4000x6400px - 300 DPI";
+  const prodLabel = isBlanket ? "Chăn Blanket" : "Thảm Rug";
+
+  const selectedCandidates =
+    job.selectedCandidateIds.length > 0
+      ? job.selectedCandidateIds
+          .map((id) => mockCandidates.find((c) => c.id === id))
+          .filter((c): c is CandidateItem => Boolean(c))
+      : mockCandidates.slice(0, 3);
+
+  const finalCandidates = selectedCandidates.length > 0 ? selectedCandidates : mockCandidates.slice(0, 3);
+
+  const print_cmyk_images = finalCandidates.map((cand, idx) => ({
+    filename: `design_${String(idx + 1).padStart(2, "0")}_cmyk_300dpi.jpg`,
+    url: createMockSvgDataUri(
+      `BẢN IN CMYK #${idx + 1}`,
+      `${prodLabel} ${dimText}`,
+      "#1e1b4b",
+      "#818cf8",
+    ),
+    download_url: createMockSvgDataUri(
+      `BẢN IN CMYK #${idx + 1}`,
+      `${prodLabel} ${dimText}`,
+      "#1e1b4b",
+      "#818cf8",
+    ),
+  }));
+
+  const product_cutouts_white = finalCandidates.map((cand, idx) => ({
+    filename: `design_${String(idx + 1).padStart(2, "0")}_white.jpg`,
+    url: createMockSvgDataUri(
+      `PHÔI CẮT NỀN TRẮNG #${idx + 1}`,
+      "Pure White Background #ffffff",
+      "#ffffff",
+      "#0284c7",
+    ),
+  }));
+
+  const lifestyle_mockups = finalCandidates.flatMap((cand, idx) => [
+    {
+      filename: `mockup_living_room_design_${String(idx + 1).padStart(2, "0")}.jpg`,
+      url: createMockSvgDataUri(
+        `MOCKUP PHÒNG KHÁCH AI #${idx + 1}`,
+        `Living room: ${cand.title.slice(0, 24)}`,
+        "#1a2238",
+        "#60a5fa",
+      ),
+      scene_type: "living_room",
+      scene_description: `Phòng khách hiện đại với sofa da bò nâu, bàn trà gỗ và ${prodLabel.toLowerCase()} phong cách ${cand.trend}.`,
+    },
+    {
+      filename: `mockup_bedroom_design_${String(idx + 1).padStart(2, "0")}.jpg`,
+      url: createMockSvgDataUri(
+        `MOCKUP PHÒNG NGỦ AI #${idx + 1}`,
+        `Bedroom: ${cand.title.slice(0, 24)}`,
+        "#2b1c2b",
+        "#f472b6",
+      ),
+      scene_type: "bedroom",
+      scene_description: `Phòng ngủ phong cách tối giản ấm cúng với sàn gỗ sồi và ${prodLabel.toLowerCase()}.`,
+    },
+  ]);
+
+  const comparison_rows = finalCandidates.map((cand, idx) => ({
+    index: idx + 1,
+    product_label: `Mẫu #${idx + 1}: ${cand.title}`,
+    source_url: cand.image_url,
+    cutout_url: createMockSvgDataUri("Phôi bóc tách", "Transparent Cutout PNG", "#111827", "#818cf8"),
+    cutout_white_url: product_cutouts_white[idx].url,
+    final_print_url: print_cmyk_images[idx].url,
+    ai_background_urls: [
+      lifestyle_mockups[idx * 2].url,
+      lifestyle_mockups[idx * 2 + 1].url,
+    ],
+  }));
+
+  const summaryMetrics: SummaryMetrics = {
+    rgb_4k_count: finalCandidates.length,
+    cmyk_count: finalCandidates.length,
+    lifestyle_mockup_count: lifestyle_mockups.length,
+    cutouts_count: finalCandidates.length,
+    mockups_count: lifestyle_mockups.length,
+  };
+
+  return {
+    deliverables: {
+      print_cmyk_images,
+      lifestyle_mockups,
+      product_cutouts_white,
+      comparison_rows,
+    },
+    summaryMetrics,
+  };
 }
 
 class MockPinterestPodClient implements PinterestPodClient {
@@ -147,16 +251,19 @@ class MockPinterestPodClient implements PinterestPodClient {
     }
 
     if (job.status === "producing") {
+      const isBlanket = job.product === "blanket";
+      const dim = isBlanket ? "10000x11000px" : "4000x6400px";
+
       if (job.pollCount >= 2) {
         job.status = "completed";
         job.logs.push(
           `[${now}] AI Vision: Bóc tách phôi nền trắng thành công.`,
-          `[${now}] Color Engine: Xuất file in CMYK 300 DPI (4000x6400px) chuẩn xưởng.`,
-          `[${now}] Lifestyle AI: Render thành công ${mockDeliverables.lifestyle_mockups.length} mockup phòng thực tế.`,
+          `[${now}] Color Engine: Xuất file in CMYK 300 DPI (${dim}) chuẩn xưởng.`,
+          `[${now}] Lifestyle AI: Render thành công mockup phòng thực tế.`,
           `[${now}] Hoàn thành toàn bộ quy trình sản xuất! Sẵn sàng bàn giao SEO.`,
         );
       } else {
-        job.logs.push(`[${now}] Đang tiến hành tạo file CMYK 300 DPI và render mockup AI phòng khách...`);
+        job.logs.push(`[${now}] Đang tiến hành tạo file CMYK 300 DPI (${dim}) và render mockup AI...`);
         return {
           ok: true,
           jobId: job.id,
@@ -165,7 +272,7 @@ class MockPinterestPodClient implements PinterestPodClient {
           stepper: {
             current_step: 3,
             percent: 75,
-            current_message: "Đang sản xuất file in CMYK 300 DPI & render phối cảnh mockup AI...",
+            current_message: `Đang sản xuất file in CMYK 300 DPI (${dim}) & render phối cảnh mockup AI...`,
           },
           logs: [...job.logs],
         };
@@ -173,6 +280,7 @@ class MockPinterestPodClient implements PinterestPodClient {
     }
 
     if (job.status === "completed") {
+      const { deliverables, summaryMetrics } = buildMockDeliverablesForJob(job);
       return {
         ok: true,
         jobId: job.id,
@@ -184,14 +292,10 @@ class MockPinterestPodClient implements PinterestPodClient {
           current_message: "Hoàn thành! Đã tạo đầy đủ mockup AI & file in CMYK chuẩn xưởng.",
         },
         logs: [...job.logs],
-        summaryMetrics: { ...mockSummaryMetrics },
-        summary_metrics: { ...mockSummaryMetrics },
-        deliverables: {
-          print_cmyk_images: [...mockDeliverables.print_cmyk_images],
-          lifestyle_mockups: [...mockDeliverables.lifestyle_mockups],
-          product_cutouts_white: [...mockDeliverables.product_cutouts_white],
-          comparison_rows: [...mockDeliverables.comparison_rows],
-        },
+        candidates: [...mockCandidates],
+        summaryMetrics,
+        summary_metrics: summaryMetrics,
+        deliverables,
       };
     }
 

@@ -23,7 +23,7 @@ export function SeoHandoffModal({ payload, onClose }: SeoHandoffModalProps): Rea
     a.href = url;
     a.download = `pinterest_pod_to_seo_${payload.workflowId}.json`;
     a.click();
-    URL.revokeObjectURL(url);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
   return (

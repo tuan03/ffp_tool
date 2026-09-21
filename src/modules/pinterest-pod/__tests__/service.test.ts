@@ -68,9 +68,9 @@ test("Mock client workflow: createJob -> poll ready_for_review -> produce -> com
   assert.equal(poll4.stepper?.current_step, 4);
   assert.equal(poll4.stepper?.percent, 100);
   assert.ok(poll4.deliverables !== undefined);
-  assert.equal(poll4.deliverables?.print_cmyk_images.length, 3);
-  assert.equal(poll4.deliverables?.lifestyle_mockups.length, 6);
-  assert.equal(poll4.deliverables?.comparison_rows.length, 3);
+  assert.equal(poll4.deliverables?.print_cmyk_images.length, 2);
+  assert.equal(poll4.deliverables?.lifestyle_mockups.length, 4);
+  assert.equal(poll4.deliverables?.comparison_rows.length, 2);
 });
 
 test("Mock client handles cancelJob", async () => {
@@ -117,6 +117,55 @@ test("packageDeliverablesForSeo formats deliverables conforming to CONTRACT_PINT
   assert.equal(seoPayloadBlanket.items[0].printMaster.widthPx, 10000);
   assert.equal(seoPayloadBlanket.items[0].printMaster.heightPx, 11000);
 
+  // Test RGB URL derivation conforming to CONTRACT_PINTEREST_POD_TO_SEO.md
+  assert.notEqual(item1.printMaster.rgbUrl, item1.printMaster.cmykUrl);
+  assert.ok(item1.printMaster.rgbUrl.includes("RGB"));
+
+  // Edge case: Non-contiguous candidate selection mapping (e.g. candidate 105 only selected)
+  const cand105 = mockCandidates.find((c) => c.id === "cand_pin_105");
+  assert.ok(cand105 !== undefined);
+
+  const selectiveJobDetail: JobDetailResponse = {
+    ok: true,
+    jobId: "wf_selective",
+    status: "completed",
+    candidates: mockCandidates, // all 6 candidates
+    deliverables: {
+      print_cmyk_images: [
+        { filename: "design_01_cmyk_300dpi.jpg", url: "/api/assets/wf_selective/design_01_cmyk_300dpi.jpg" },
+      ],
+      lifestyle_mockups: [
+        {
+          filename: "mock_01.jpg",
+          url: "/api/assets/wf_selective/mock_01.jpg",
+          scene_type: "living_room",
+          scene_description: "Retro living room",
+        },
+      ],
+      product_cutouts_white: [
+        { filename: "design_01_white.jpg", url: "/api/assets/wf_selective/design_01_white.jpg" },
+      ],
+      comparison_rows: [
+        {
+          index: 1,
+          product_label: `Mẫu #1: ${cand105.title}`,
+          source_url: cand105.image_url,
+          final_print_url: "/api/assets/wf_selective/design_01_cmyk_300dpi.jpg",
+          ai_background_urls: ["/api/assets/wf_selective/mock_01.jpg"],
+        },
+      ],
+    },
+  };
+
+  const selectivePayload = packageDeliverablesForSeo(selectiveJobDetail, "rug");
+  assert.equal(selectivePayload.totalProduced, 1);
+  assert.equal(selectivePayload.items.length, 1);
+  // Must correctly map to cand_pin_105, NOT cand_pin_101!
+  assert.equal(selectivePayload.items[0].sourceCandidateId, "cand_pin_105");
+  assert.equal(selectivePayload.items[0].originalPinTitle, cand105.title);
+  assert.equal(selectivePayload.items[0].composedMockups.length, 1);
+  assert.equal(selectivePayload.items[0].composedMockups[0].mockupUrl, "/api/assets/wf_selective/mock_01.jpg");
+
   // Edge case: Empty deliverables
   const emptyJobDetail: JobDetailResponse = {
     ok: true,
@@ -127,6 +176,48 @@ test("packageDeliverablesForSeo formats deliverables conforming to CONTRACT_PINT
   assert.equal(emptyPayload.totalProduced, 0);
   assert.equal(emptyPayload.items.length, 0);
   assert.equal(emptyPayload.productType, "custom");
+});
+
+test("Mock client dynamically adapts deliverables to selected candidate IDs and blanket product type", async () => {
+  const blanketJob = await mockPinterestPodClient.createJob({
+    niche: "retro 70s blanket",
+    product: "blanket",
+  });
+
+  // Poll until ready for review
+  await mockPinterestPodClient.getJobDetail(blanketJob.jobId);
+  const ready = await mockPinterestPodClient.getJobDetail(blanketJob.jobId);
+  assert.equal(ready.status, "ready_for_review");
+
+  // Select only 1 specific candidate: cand_pin_105
+  const produceRes = await mockPinterestPodClient.produce({
+    jobId: blanketJob.jobId,
+    selected_candidates: ["cand_pin_105"],
+  });
+  assert.equal(produceRes.ok, true);
+
+  // Poll through producing to completed
+  await mockPinterestPodClient.getJobDetail(blanketJob.jobId);
+  const completed = await mockPinterestPodClient.getJobDetail(blanketJob.jobId);
+  assert.equal(completed.status, "completed");
+
+  // Check that completed deliverables reflect exactly 1 candidate and blanket specs
+  assert.equal(completed.summaryMetrics?.cmyk_count, 1);
+  assert.equal(completed.summaryMetrics?.rgb_4k_count, 1);
+  assert.equal(completed.summaryMetrics?.lifestyle_mockup_count, 2);
+  assert.equal(completed.deliverables?.print_cmyk_images.length, 1);
+  assert.equal(completed.deliverables?.comparison_rows.length, 1);
+
+  // Verify blanket dimension in generated deliverables
+  const cmykSvgUrl = decodeURIComponent(completed.deliverables?.print_cmyk_images[0].url ?? "");
+  assert.match(cmykSvgUrl, /10000x11000px/);
+
+  // Package for SEO and verify blanket specs
+  const seoPayload = packageDeliverablesForSeo(completed, "blanket");
+  assert.equal(seoPayload.totalProduced, 1);
+  assert.equal(seoPayload.items[0].sourceCandidateId, "cand_pin_105");
+  assert.equal(seoPayload.items[0].printMaster.widthPx, 10000);
+  assert.equal(seoPayload.items[0].printMaster.heightPx, 11000);
 });
 
 test("getPinterestPodClient selects appropriate client based on environment", () => {

@@ -19,6 +19,7 @@ export function DeliverablesShowcase({
   const [activeTab, setActiveTab] = useState<TabKey>("cmyk");
   const [showSeoModal, setShowSeoModal] = useState(false);
   const [isZipping, setIsZipping] = useState(false);
+  const [zipMessage, setZipMessage] = useState<string | null>(null);
 
   const metrics: SummaryMetrics = summaryMetrics ?? {
     rgb_4k_count: deliverables.print_cmyk_images.length,
@@ -32,15 +33,49 @@ export function DeliverablesShowcase({
 
   function handleDownloadZip(): void {
     setIsZipping(true);
+    setZipMessage(null);
     setTimeout(() => {
       setIsZipping(false);
-      // Simulated zip notification
-      alert(`Đã chuẩn bị tải gói ZIP chứa ${deliverables.print_cmyk_images.length} bản in CMYK và ${deliverables.lifestyle_mockups.length} mockups AI.`);
-    }, 1000);
+      // Generate a mock manifest JSON blob representing the zip package contents
+      const manifest = {
+        package: "pinterest_pod_deliverables",
+        totalDesigns: totalProduced,
+        cmykPrints: deliverables.print_cmyk_images.map((i) => i.filename),
+        lifestyleMockups: deliverables.lifestyle_mockups.map((m) => m.filename),
+        cutouts: deliverables.product_cutouts_white.map((c) => c.filename),
+      };
+      const blob = new Blob([JSON.stringify(manifest, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `pod_deliverables_manifest_${Date.now()}.json`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+
+      setZipMessage(`✓ Đã bắt đầu tải gói ZIP thành phẩm (${totalProduced} bản in CMYK 300DPI, ${deliverables.lifestyle_mockups.length} mockups AI)!`);
+      setTimeout(() => setZipMessage(null), 5000);
+    }, 600);
   }
 
   return (
     <section className="flex flex-col gap-6 rounded-xl border border-slate-800 bg-slate-900/90 p-5 shadow-xl">
+      {/* Toast Notification */}
+      {zipMessage && (
+        <div className="flex items-center justify-between rounded-xl border border-cyan-800 bg-cyan-950/80 p-3 text-xs text-cyan-200 shadow">
+          <div className="flex items-center gap-2">
+            <span>📦</span>
+            <span>{zipMessage}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setZipMessage(null)}
+            className="text-cyan-400 hover:text-white"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex flex-col gap-1 border-b border-slate-800 pb-4">
         <div className="flex items-center justify-between">
@@ -57,36 +92,36 @@ export function DeliverablesShowcase({
         </p>
       </div>
 
-      {/* 5 Showcase Metrics Cards */}
+      {/* 5 Showcase Metrics Cards matching wireframe */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
         <div className="flex flex-col items-center justify-center rounded-xl border border-slate-800 bg-slate-950/70 p-3 text-center">
           <span className="text-2xl">🖨️</span>
-          <span className="text-lg font-bold text-cyan-300">{metrics.rgb_4k_count}</span>
-          <span className="text-[10px] text-slate-400 uppercase font-semibold">Bản in RGB 4K</span>
+          <span className="text-lg font-bold text-cyan-300">{metrics.rgb_4k_count} Bản in</span>
+          <span className="text-[10px] text-slate-400 uppercase font-semibold">RGB 4K Siêu Nét</span>
         </div>
 
         <div className="flex flex-col items-center justify-center rounded-xl border border-slate-800 bg-slate-950/70 p-3 text-center">
           <span className="text-2xl">🏭</span>
-          <span className="text-lg font-bold text-emerald-300">{metrics.cmyk_count}</span>
+          <span className="text-lg font-bold text-emerald-300">{metrics.cmyk_count} File in</span>
           <span className="text-[10px] text-slate-400 uppercase font-semibold">CMYK 300 DPI</span>
         </div>
 
         <div className="flex flex-col items-center justify-center rounded-xl border border-slate-800 bg-slate-950/70 p-3 text-center">
           <span className="text-2xl">🛋️</span>
-          <span className="text-lg font-bold text-indigo-300">{metrics.lifestyle_mockup_count}</span>
-          <span className="text-[10px] text-slate-400 uppercase font-semibold">Mockup Phòng AI</span>
+          <span className="text-lg font-bold text-indigo-300">{metrics.lifestyle_mockup_count} Mockup</span>
+          <span className="text-[10px] text-slate-400 uppercase font-semibold">Phòng Khách AI</span>
         </div>
 
         <div className="flex flex-col items-center justify-center rounded-xl border border-slate-800 bg-slate-950/70 p-3 text-center">
           <span className="text-2xl">✂️</span>
-          <span className="text-lg font-bold text-amber-300">{metrics.cutouts_count}</span>
-          <span className="text-[10px] text-slate-400 uppercase font-semibold">Phôi Cắt Nền Trắng</span>
+          <span className="text-lg font-bold text-amber-300">{metrics.cutouts_count} Phôi Cắt</span>
+          <span className="text-[10px] text-slate-400 uppercase font-semibold">Nền Trắng</span>
         </div>
 
         <div className="col-span-2 sm:col-span-1 flex flex-col items-center justify-center rounded-xl border border-slate-800 bg-slate-950/70 p-3 text-center">
           <span className="text-2xl">🖼️</span>
-          <span className="text-lg font-bold text-pink-300">{metrics.mockups_count}</span>
-          <span className="text-[10px] text-slate-400 uppercase font-semibold">Mockup Đa Góc</span>
+          <span className="text-lg font-bold text-pink-300">{metrics.mockups_count} Mockup</span>
+          <span className="text-[10px] text-slate-400 uppercase font-semibold">Đa Góc</span>
         </div>
       </div>
 
@@ -147,11 +182,23 @@ export function DeliverablesShowcase({
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3">
             {deliverables.print_cmyk_images.map((item, idx) => (
               <div
-                key={idx}
+                key={item.filename || `${item.url}-${idx}`}
                 className="flex flex-col overflow-hidden rounded-xl border border-slate-800 bg-slate-950 shadow"
               >
                 <div className="aspect-[4/3] w-full overflow-hidden bg-slate-900">
-                  <img src={item.url} alt={item.filename} className="h-full w-full object-cover" />
+                  <img
+                    src={item.url}
+                    alt={item.filename}
+                    onError={(e) => {
+                      e.currentTarget.onerror = null;
+                      e.currentTarget.src =
+                        "data:image/svg+xml;charset=utf-8," +
+                        encodeURIComponent(
+                          `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300"><rect width="400" height="300" fill="#0f172a"/><text x="200" y="150" fill="#38bdf8" font-family="sans-serif" font-size="14" text-anchor="middle">${item.filename}</text></svg>`,
+                        );
+                    }}
+                    className="h-full w-full object-cover"
+                  />
                 </div>
                 <div className="flex flex-col p-3 gap-2">
                   <p className="font-mono text-xs font-semibold text-slate-200 truncate" title={item.filename}>
@@ -178,11 +225,23 @@ export function DeliverablesShowcase({
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3">
             {deliverables.lifestyle_mockups.map((mockup, idx) => (
               <div
-                key={idx}
+                key={mockup.filename || `${mockup.url}-${idx}`}
                 className="flex flex-col overflow-hidden rounded-xl border border-slate-800 bg-slate-950 shadow"
               >
                 <div className="aspect-[4/3] w-full overflow-hidden bg-slate-900">
-                  <img src={mockup.url} alt={mockup.filename} className="h-full w-full object-cover" />
+                  <img
+                    src={mockup.url}
+                    alt={mockup.filename}
+                    onError={(e) => {
+                      e.currentTarget.onerror = null;
+                      e.currentTarget.src =
+                        "data:image/svg+xml;charset=utf-8," +
+                        encodeURIComponent(
+                          `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300"><rect width="400" height="300" fill="#0f172a"/><text x="200" y="150" fill="#a78bfa" font-family="sans-serif" font-size="14" text-anchor="middle">${mockup.filename}</text></svg>`,
+                        );
+                    }}
+                    className="h-full w-full object-cover"
+                  />
                 </div>
                 <div className="flex flex-col p-3 gap-1.5">
                   <div className="flex items-center justify-between">
@@ -211,13 +270,21 @@ export function DeliverablesShowcase({
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3">
             {deliverables.product_cutouts_white.map((cutout, idx) => (
               <div
-                key={idx}
+                key={cutout.filename || `${cutout.url}-${idx}`}
                 className="flex flex-col overflow-hidden rounded-xl border border-slate-800 bg-slate-950 shadow"
               >
                 <div className="aspect-[4/3] w-full overflow-hidden bg-white p-2">
                   <img
                     src={cutout.url}
                     alt={cutout.filename}
+                    onError={(e) => {
+                      e.currentTarget.onerror = null;
+                      e.currentTarget.src =
+                        "data:image/svg+xml;charset=utf-8," +
+                        encodeURIComponent(
+                          `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300"><rect width="400" height="300" fill="#f8fafc"/><text x="200" y="150" fill="#64748b" font-family="sans-serif" font-size="14" text-anchor="middle">${cutout.filename}</text></svg>`,
+                        );
+                    }}
                     className="h-full w-full object-contain"
                   />
                 </div>
