@@ -32,6 +32,10 @@ import type {
   ShopifyProductsListResponse,
   ShopifyProductsUpdateInput,
   ShopifyProductsUpdateResponse,
+  ShopifyStoresGetInput,
+  ShopifyStoresGetResponse,
+  ShopifyStoresListInput,
+  ShopifyStoresListResponse,
   ShopifyVariantsBulkUpdateInput,
   ShopifyVariantsBulkUpdateResponse,
   ShopifyVariantsUpdateInput,
@@ -47,6 +51,8 @@ const READ_OPERATIONS: ReadonlySet<ShopifyOperation> = new Set([
   "products.get",
   "collections.list",
   "collections.get",
+  "stores.list",
+  "stores.get",
 ]);
 
 const ALL_OPERATIONS: ReadonlySet<ShopifyOperation> = new Set([
@@ -65,6 +71,8 @@ const ALL_OPERATIONS: ReadonlySet<ShopifyOperation> = new Set([
   "collections.update",
   "collections.delete",
   "collections.updateMembership",
+  "stores.list",
+  "stores.get",
 ]);
 
 function isShopifyReadOperation(operation: ShopifyOperation): boolean {
@@ -77,6 +85,10 @@ const VALID_ERROR_CODES: ReadonlySet<string> = new Set([
   "SHOPIFY_USER_ERROR",
   "SHOPIFY_NETWORK_ERROR",
   "SHOPIFY_UNKNOWN_WRITE_STATE",
+  "SHOPIFY_INVALID_INPUT",
+  "SHOPIFY_NOT_FOUND",
+  "SHOPIFY_PERMISSION_DENIED",
+  "NOT_IMPLEMENTED",
 ]);
 
 function normalizeErrorCode(value: unknown): ShopifyApiErrorCode | undefined {
@@ -166,6 +178,9 @@ function sanitizeErrorMessage(message: unknown, fallback: string): string {
 interface ExtractedError {
   readonly code?: ShopifyApiErrorCode;
   readonly message?: string;
+  readonly fields?: readonly string[];
+  readonly retryable?: boolean;
+  readonly details?: unknown;
 }
 
 function extractErrorFromPayload(payload: unknown): ExtractedError {
@@ -176,6 +191,9 @@ function extractErrorFromPayload(payload: unknown): ExtractedError {
   const obj = payload as Record<string, unknown>;
   let code: ShopifyApiErrorCode | undefined;
   let message: string | undefined;
+  let fields: readonly string[] | undefined;
+  let retryable: boolean | undefined;
+  let details: unknown | undefined;
 
   if (obj.code !== undefined) {
     code = normalizeErrorCode(obj.code);
@@ -183,6 +201,18 @@ function extractErrorFromPayload(payload: unknown): ExtractedError {
 
   if (typeof obj.message === "string") {
     message = obj.message;
+  }
+
+  if (Array.isArray(obj.fields)) {
+    fields = obj.fields.map(String);
+  }
+
+  if (typeof obj.retryable === "boolean") {
+    retryable = obj.retryable;
+  }
+
+  if (obj.details !== undefined) {
+    details = obj.details;
   }
 
   if ("error" in obj && obj.error !== undefined && obj.error !== null) {
@@ -195,6 +225,15 @@ function extractErrorFromPayload(payload: unknown): ExtractedError {
       }
       if (typeof errObj.message === "string") {
         message = message ?? errObj.message;
+      }
+      if (Array.isArray(errObj.fields)) {
+        fields = fields ?? errObj.fields.map(String);
+      }
+      if (typeof errObj.retryable === "boolean") {
+        retryable = retryable ?? errObj.retryable;
+      }
+      if (errObj.details !== undefined) {
+        details = details ?? errObj.details;
       }
     }
   }
@@ -212,6 +251,15 @@ function extractErrorFromPayload(payload: unknown): ExtractedError {
         if (typeof itemObj.message === "string") {
           messages.push(itemObj.message);
         }
+        if (!fields && Array.isArray(itemObj.fields)) {
+          fields = itemObj.fields.map(String);
+        }
+        if (retryable === undefined && typeof itemObj.retryable === "boolean") {
+          retryable = itemObj.retryable;
+        }
+        if (details === undefined && itemObj.details !== undefined) {
+          details = itemObj.details;
+        }
       }
     }
     if (messages.length > 0) {
@@ -219,7 +267,7 @@ function extractErrorFromPayload(payload: unknown): ExtractedError {
     }
   }
 
-  return { code, message };
+  return { code, message, fields, retryable, details };
 }
 
 function mapStatusToErrorCode(
@@ -266,10 +314,6 @@ export function createModuleApiRunner(
       throw new ShopifyApiError("Input must be a valid object", "SHOPIFY_USER_ERROR");
     }
 
-    if (!input.storeId || input.storeId.trim() === "") {
-      throw new ShopifyApiError("Store ID is required", "SHOPIFY_USER_ERROR");
-    }
-
     if (!input.operation || typeof input.operation !== "string") {
       throw new ShopifyApiError("Operation is required", "SHOPIFY_USER_ERROR");
     }
@@ -281,8 +325,41 @@ export function createModuleApiRunner(
       );
     }
 
-    if (!input.payload || typeof input.payload !== "object") {
+    const effectivePayload =
+      input.payload !== undefined && input.payload !== null
+        ? input.payload
+        : input.operation === "stores.list"
+        ? {}
+        : undefined;
+
+    if (!effectivePayload || typeof effectivePayload !== "object") {
       throw new ShopifyApiError("Payload is required", "SHOPIFY_USER_ERROR");
+    }
+
+    if (input.operation === "stores.get") {
+      const p = effectivePayload as Record<string, unknown>;
+      const targetId = typeof p.targetStoreId === "string" ? p.targetStoreId.trim() : "";
+      if (!targetId) {
+        throw new ShopifyApiError("targetStoreId is required", "SHOPIFY_USER_ERROR");
+      }
+    }
+
+    const payloadTargetId =
+      effectivePayload && typeof effectivePayload === "object" && "targetStoreId" in effectivePayload
+        ? (effectivePayload as { targetStoreId?: string }).targetStoreId
+        : undefined;
+
+    const effectiveStoreId =
+      typeof input.storeId === "string" && input.storeId.trim() !== ""
+        ? input.storeId.trim()
+        : typeof payloadTargetId === "string" && payloadTargetId.trim() !== ""
+        ? payloadTargetId.trim()
+        : input.operation === "stores.list"
+        ? "system"
+        : "";
+
+    if (!effectiveStoreId) {
+      throw new ShopifyApiError("Store ID is required", "SHOPIFY_USER_ERROR");
     }
 
     const invokeFetch = (url: string, init?: RequestInit): Promise<Response> => {
@@ -301,10 +378,13 @@ export function createModuleApiRunner(
     const isRead = isShopifyReadOperation(input.operation);
 
     const requestBody: Record<string, unknown> = {
-      storeId: input.storeId,
       operation: input.operation,
-      payload: input.payload,
+      payload: effectivePayload,
     };
+
+    if (typeof input.storeId === "string" && input.storeId.trim() !== "") {
+      requestBody.storeId = input.storeId.trim();
+    }
 
     if (input.requestId !== undefined && input.requestId.trim() !== "") {
       requestBody.requestId = input.requestId;
@@ -385,12 +465,18 @@ export function createModuleApiRunner(
     }
 
     if (!response.ok) {
-      const { code: bodyCode, message: bodyMessage } = extractErrorFromPayload(responseJson);
+      const {
+        code: bodyCode,
+        message: bodyMessage,
+        fields,
+        retryable,
+        details,
+      } = extractErrorFromPayload(responseJson);
       const errorCode = mapStatusToErrorCode(response.status, isRead, bodyCode);
       const fallbackMessage = `Shopify gateway request failed with status ${response.status}`;
       const errorMessage = sanitizeErrorMessage(bodyMessage, fallbackMessage);
 
-      throw new ShopifyApiError(errorMessage, errorCode, jsonParseError);
+      throw new ShopifyApiError(errorMessage, errorCode, jsonParseError, fields, retryable, details);
     }
 
     if (jsonParseError !== undefined) {
@@ -435,10 +521,16 @@ export function createModuleApiRunner(
       (Array.isArray(parsedObj.errors) && parsedObj.errors.length > 0);
 
     if (parsedObj.success === false || (!hasData && hasExplicitError)) {
-      const { code: bodyCode, message: bodyMessage } = extractErrorFromPayload(parsedObj);
+      const {
+        code: bodyCode,
+        message: bodyMessage,
+        fields,
+        retryable,
+        details,
+      } = extractErrorFromPayload(parsedObj);
       const errorCode = bodyCode ?? "SHOPIFY_USER_ERROR";
       const errorMessage = sanitizeErrorMessage(bodyMessage, "Shopify gateway operation failed");
-      throw new ShopifyApiError(errorMessage, errorCode);
+      throw new ShopifyApiError(errorMessage, errorCode, undefined, fields, retryable, details);
     }
 
     if (!hasData) {
@@ -455,7 +547,10 @@ export function createModuleApiRunner(
     }
 
     return {
-      storeId: typeof parsedObj.storeId === "string" ? parsedObj.storeId : input.storeId,
+      storeId:
+        typeof parsedObj.storeId === "string"
+          ? parsedObj.storeId
+          : input.storeId ?? effectiveStoreId,
       operation: input.operation,
       success: true,
       data: parsedObj.data,
@@ -485,6 +580,8 @@ export async function runModuleApi(input: ShopifyCollectionsCreateInput): Promis
 export async function runModuleApi(input: ShopifyCollectionsUpdateInput): Promise<ShopifyCollectionsUpdateResponse>;
 export async function runModuleApi(input: ShopifyCollectionsDeleteInput): Promise<ShopifyCollectionsDeleteResponse>;
 export async function runModuleApi(input: ShopifyCollectionsUpdateMembershipInput): Promise<ShopifyCollectionsUpdateMembershipResponse>;
+export async function runModuleApi(input: ShopifyStoresListInput): Promise<ShopifyStoresListResponse>;
+export async function runModuleApi(input: ShopifyStoresGetInput): Promise<ShopifyStoresGetResponse>;
 export async function runModuleApi(input: ShopifyApiInput): Promise<ShopifyApiResponse>;
 export async function runModuleApi(input: ShopifyApiInput): Promise<ShopifyApiResponse> {
   return defaultRunner(input);

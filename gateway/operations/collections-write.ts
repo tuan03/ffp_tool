@@ -4,13 +4,17 @@ import type { CollectionSummary, StoreConfig } from "../types";
 import { mapCollectionNode, type RawCollectionNode } from "./collections";
 
 const COLLECTION_CREATE_MUTATION = `
-  mutation CollectionCreate($input: CollectionInput!) {
-    collectionCreate(input: $input) {
+  mutation CollectionCreate($collection: CollectionCreateInput!) {
+    collectionCreate(collection: $collection) {
       collection {
         id
         title
         handle
         descriptionHtml
+        seo {
+          title
+          description
+        }
         productsCount {
           count
         }
@@ -25,13 +29,17 @@ const COLLECTION_CREATE_MUTATION = `
 `;
 
 const COLLECTION_UPDATE_MUTATION = `
-  mutation CollectionUpdate($input: CollectionInput!) {
-    collectionUpdate(input: $input) {
+  mutation CollectionUpdate($collection: CollectionUpdateInput!) {
+    collectionUpdate(collection: $collection) {
       collection {
         id
         title
         handle
         descriptionHtml
+        seo {
+          title
+          description
+        }
         productsCount {
           count
         }
@@ -57,20 +65,22 @@ const COLLECTION_DELETE_MUTATION = `
   }
 `;
 
-const CHECK_COLLECTION_TYPE_QUERY = `
-  query CheckCollectionType($id: ID!) {
+const GET_COLLECTION_SOURCES_QUERY = `
+  query GetCollectionSources($id: ID!) {
     collection(id: $id) {
       id
-      ruleSet {
-        appliedDisjunctively
+      sources {
+        __typename
+        id
+        title
       }
     }
   }
 `;
 
 const COLLECTION_UPDATE_MEMBERSHIP_MUTATION = `
-  mutation CollectionUpdateMembership($id: ID!, $collection: CollectionUpdateInput!) {
-    collectionUpdate(id: $id, collection: $collection) {
+  mutation CollectionUpdateMembership($collection: CollectionUpdateInput!) {
+    collectionUpdate(collection: $collection) {
       collection {
         id
         productsCount {
@@ -118,6 +128,13 @@ export async function executeCollectionsCreate(
       title,
       handle,
       description: typeof collectionInput.description === "string" ? collectionInput.description : undefined,
+      seo:
+        collectionInput.seo && typeof collectionInput.seo === "object"
+          ? {
+              title: typeof (collectionInput.seo as Record<string, unknown>).title === "string" ? (collectionInput.seo as Record<string, unknown>).title as string : undefined,
+              description: typeof (collectionInput.seo as Record<string, unknown>).description === "string" ? (collectionInput.seo as Record<string, unknown>).description as string : undefined,
+            }
+          : undefined,
       productsCount: 0,
       updatedAt: now,
     };
@@ -131,6 +148,15 @@ export async function executeCollectionsCreate(
   if (typeof collectionInput.description === "string") {
     input.descriptionHtml = collectionInput.description;
   }
+  if (collectionInput.seo && typeof collectionInput.seo === "object") {
+    const seoObj = collectionInput.seo as Record<string, unknown>;
+    const seo: Record<string, unknown> = {};
+    if (typeof seoObj.title === "string") seo.title = seoObj.title;
+    if (typeof seoObj.description === "string") seo.description = seoObj.description;
+    if (Object.keys(seo).length > 0) {
+      input.seo = seo;
+    }
+  }
 
   interface CollectionCreateResponse {
     readonly collectionCreate: {
@@ -142,7 +168,7 @@ export async function executeCollectionsCreate(
   const raw = await client.query<CollectionCreateResponse>(
     store,
     COLLECTION_CREATE_MUTATION,
-    { input },
+    { collection: input },
     { isWrite: true, requestId },
   );
 
@@ -184,6 +210,13 @@ export async function executeCollectionsUpdate(
       title: typeof collectionPatch.title === "string" ? collectionPatch.title : "Preview Collection",
       handle: typeof collectionPatch.handle === "string" ? collectionPatch.handle : "preview-collection",
       description: typeof collectionPatch.description === "string" ? collectionPatch.description : undefined,
+      seo:
+        collectionPatch.seo && typeof collectionPatch.seo === "object"
+          ? {
+              title: typeof (collectionPatch.seo as Record<string, unknown>).title === "string" ? (collectionPatch.seo as Record<string, unknown>).title as string : undefined,
+              description: typeof (collectionPatch.seo as Record<string, unknown>).description === "string" ? (collectionPatch.seo as Record<string, unknown>).description as string : undefined,
+            }
+          : undefined,
       productsCount: 0,
       updatedAt: now,
     };
@@ -200,6 +233,15 @@ export async function executeCollectionsUpdate(
   if (typeof collectionPatch.description === "string") {
     input.descriptionHtml = collectionPatch.description;
   }
+  if (collectionPatch.seo && typeof collectionPatch.seo === "object") {
+    const seoObj = collectionPatch.seo as Record<string, unknown>;
+    const seo: Record<string, unknown> = {};
+    if (typeof seoObj.title === "string") seo.title = seoObj.title;
+    if (typeof seoObj.description === "string") seo.description = seoObj.description;
+    if (Object.keys(seo).length > 0) {
+      input.seo = seo;
+    }
+  }
 
   interface CollectionUpdateResponse {
     readonly collectionUpdate: {
@@ -211,7 +253,7 @@ export async function executeCollectionsUpdate(
   const raw = await client.query<CollectionUpdateResponse>(
     store,
     COLLECTION_UPDATE_MUTATION,
-    { input },
+    { collection: input },
     { isWrite: true, requestId },
   );
 
@@ -290,34 +332,30 @@ export async function executeCollectionsUpdateMembership(
     };
   }
 
-  // 1. Check if collection is smart/automated (has ruleSet)
-  interface CollectionTypeCheckResponse {
+  // 1. Query collection sources (Shopify 2026-07 multi-source collection model)
+  interface CollectionSourcesResponse {
     readonly collection: {
       readonly id: string;
-      readonly ruleSet?: { readonly appliedDisjunctively: boolean } | null;
+      readonly sources?: readonly {
+        readonly __typename: string;
+        readonly id: string;
+        readonly title: string;
+      }[] | null;
     } | null;
   }
 
-  const typeCheckRaw = await client.query<CollectionTypeCheckResponse>(
+  const sourcesRaw = await client.query<CollectionSourcesResponse>(
     store,
-    CHECK_COLLECTION_TYPE_QUERY,
+    GET_COLLECTION_SOURCES_QUERY,
     { id: collectionId },
     { isWrite: false },
   );
 
-  if (typeCheckRaw.collection?.ruleSet) {
-    throw new GatewayError(
-      "Cannot manually modify membership of an automated/smart collection",
-      "SHOPIFY_USER_ERROR",
-      400,
-      undefined,
-      undefined,
-      ["collectionId"],
-      false,
-    );
+  if (!sourcesRaw.collection) {
+    throw new GatewayError(`Collection not found: ${collectionId}`, "SHOPIFY_NOT_FOUND", 404);
   }
 
-  // 2. Perform collectionUpdate with inclusion selectionsToAdd / selectionsToRemove
+  // 2. Perform collectionUpdate with sourcesToUpdate (selectionsToAdd / selectionsToRemove)
   if (productIdsToAdd.length > 0 || productIdsToRemove.length > 0) {
     interface CollectionUpdateMembershipResponse {
       readonly collectionUpdate: {
@@ -326,19 +364,58 @@ export async function executeCollectionsUpdateMembership(
       };
     }
 
-    const collectionPatch: Record<string, unknown> = {
-      inclusions: {
-        ...(productIdsToAdd.length > 0 ? { selectionsToAdd: productIdsToAdd } : {}),
-        ...(productIdsToRemove.length > 0 ? { selectionsToRemove: productIdsToRemove } : {}),
-      },
-      ...(productIdsToAdd.length > 0 ? { selectionsToAdd: productIdsToAdd } : {}),
-      ...(productIdsToRemove.length > 0 ? { selectionsToRemove: productIdsToRemove } : {}),
-    };
+    const sources = sourcesRaw.collection.sources || [];
+    const conditionsSource =
+      sources.find((s) => s.__typename === "CollectionConditionsSource");
+
+    let collectionPatch: Record<string, unknown>;
+
+    if (conditionsSource) {
+      collectionPatch = {
+        id: collectionId,
+        sourcesToUpdate: [
+          {
+            condition: {
+              id: conditionsSource.id,
+              inclusion: {
+                ...(productIdsToAdd.length > 0
+                  ? { selectionsToAdd: productIdsToAdd.map((prodId) => ({ productId: prodId })) }
+                  : {}),
+                ...(productIdsToRemove.length > 0
+                  ? { selectionsToRemove: productIdsToRemove.map((prodId) => ({ productId: prodId })) }
+                  : {}),
+              },
+            },
+          },
+        ],
+      };
+    } else {
+      if (productIdsToAdd.length === 0) {
+        return {
+          collectionId,
+          addedCount: 0,
+          removedCount: 0,
+        };
+      }
+      collectionPatch = {
+        id: collectionId,
+        sourcesToCreate: [
+          {
+            source: {
+              title: "Default Source",
+              inclusion: {
+                selections: productIdsToAdd.map((prodId) => ({ productId: prodId })),
+              },
+            },
+          },
+        ],
+      };
+    }
 
     const raw = await client.query<CollectionUpdateMembershipResponse>(
       store,
       COLLECTION_UPDATE_MEMBERSHIP_MUTATION,
-      { id: collectionId, collection: collectionPatch },
+      { collection: collectionPatch },
       { isWrite: true, requestId },
     );
 

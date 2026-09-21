@@ -8,13 +8,17 @@ import {
   GatewayError,
   InMemoryStoreRegistry,
   InMemoryThrottleManager,
+  InMemoryIdempotencyStore,
   normalizeShopDomain,
   sanitizeErrorMessage,
   ShopifyGraphqlClient,
   StaticAccessTokenProvider,
   ClientCredentialsTokenProvider,
+  CompositeTokenProvider,
+  StoreControlPlane,
   type StoreConfig,
   type HttpTransport,
+  type IdempotencyStore,
 } from "../index";
 
 import { createModuleApiRunner } from "../../src/modules/module-api/service";
@@ -44,10 +48,130 @@ describe("Gateway: StoreRegistry", () => {
     assert.equal(unknown, undefined);
   });
 
-  it("normalizes domain correctly for diverse input formats", () => {
-    assert.equal(normalizeShopDomain("http://shop.myshopify.com/"), "shop.myshopify.com");
-    assert.equal(normalizeShopDomain("HTTPS://MY-SHOP.MYSHOPIFY.COM:443/admin"), "my-shop.myshopify.com");
-    assert.equal(normalizeShopDomain("custom-shop"), "custom-shop.myshopify.com");
+  it("normalizes domain correctly for all supported formats", () => {
+    assert.equal(normalizeShopDomain("capozen"), "capozen.myshopify.com");
+    assert.equal(normalizeShopDomain("CAPOZEN"), "capozen.myshopify.com");
+    assert.equal(normalizeShopDomain("capozen.myshopify.com"), "capozen.myshopify.com");
+    assert.equal(normalizeShopDomain("https://capozen.myshopify.com"), "capozen.myshopify.com");
+    assert.equal(normalizeShopDomain("http://capozen.myshopify.com/"), "capozen.myshopify.com");
+    assert.equal(normalizeShopDomain("https://admin.shopify.com/store/capozen"), "capozen.myshopify.com");
+    assert.equal(normalizeShopDomain("https://admin.shopify.com:443/store/capozen"), "capozen.myshopify.com");
+    assert.equal(normalizeShopDomain("admin.shopify.com/store/capozen/"), "capozen.myshopify.com");
+    assert.equal(normalizeShopDomain("https://admin.shopify.com/store/capozen?param=value"), "capozen.myshopify.com");
+  });
+
+  it("strictly rejects unsupported or ambiguous domains", () => {
+    assert.throws(() => normalizeShopDomain(""), (err: unknown) => {
+      assert(err instanceof GatewayError);
+      assert.equal(err.code, "SHOPIFY_INVALID_INPUT");
+      return true;
+    });
+
+    assert.throws(() => normalizeShopDomain("   "), (err: unknown) => {
+      assert(err instanceof GatewayError);
+      assert.equal(err.code, "SHOPIFY_INVALID_INPUT");
+      return true;
+    });
+
+    assert.throws(() => normalizeShopDomain("admin.shopify.com"), (err: unknown) => {
+      assert(err instanceof GatewayError);
+      assert.equal(err.code, "SHOPIFY_INVALID_INPUT");
+      return true;
+    });
+
+    assert.throws(() => normalizeShopDomain("https://admin.shopify.com"), (err: unknown) => {
+      assert(err instanceof GatewayError);
+      assert.equal(err.code, "SHOPIFY_INVALID_INPUT");
+      return true;
+    });
+
+    assert.throws(() => normalizeShopDomain("https://admin.shopify.com/store"), (err: unknown) => {
+      assert(err instanceof GatewayError);
+      assert.equal(err.code, "SHOPIFY_INVALID_INPUT");
+      return true;
+    });
+
+    assert.throws(() => normalizeShopDomain("https://admin.shopify.com/store/"), (err: unknown) => {
+      assert(err instanceof GatewayError);
+      assert.equal(err.code, "SHOPIFY_INVALID_INPUT");
+      return true;
+    });
+
+    assert.throws(() => normalizeShopDomain("example.com"), (err: unknown) => {
+      assert(err instanceof GatewayError);
+      assert.equal(err.code, "SHOPIFY_INVALID_INPUT");
+      return true;
+    });
+
+    assert.throws(() => normalizeShopDomain("https://customstore.org"), (err: unknown) => {
+      assert(err instanceof GatewayError);
+      assert.equal(err.code, "SHOPIFY_INVALID_INPUT");
+      return true;
+    });
+
+    assert.throws(() => normalizeShopDomain(".myshopify.com"), (err: unknown) => {
+      assert(err instanceof GatewayError);
+      assert.equal(err.code, "SHOPIFY_INVALID_INPUT");
+      return true;
+    });
+
+    assert.throws(() => normalizeShopDomain("capozen..myshopify.com"), (err: unknown) => {
+      assert(err instanceof GatewayError);
+      assert.equal(err.code, "SHOPIFY_INVALID_INPUT");
+      return true;
+    });
+
+    assert.throws(() => normalizeShopDomain("https://admin.shopify.com/store/-invalid-"), (err: unknown) => {
+      assert(err instanceof GatewayError);
+      assert.equal(err.code, "SHOPIFY_INVALID_INPUT");
+      return true;
+    });
+
+    assert.throws(() => normalizeShopDomain("https://admin.shopify.com/store/invalid-"), (err: unknown) => {
+      assert(err instanceof GatewayError);
+      assert.equal(err.code, "SHOPIFY_INVALID_INPUT");
+      return true;
+    });
+
+    assert.throws(() => normalizeShopDomain("https://admin.shopify.com:443"), (err: unknown) => {
+      assert(err instanceof GatewayError);
+      assert.equal(err.code, "SHOPIFY_INVALID_INPUT");
+      return true;
+    });
+  });
+
+  it("updates existing store in registry and throws on non-existent store", () => {
+    const registry = new InMemoryStoreRegistry();
+    registry.registerStore({
+      storeId: "store-update-target",
+      shopDomain: "old.myshopify.com",
+      apiVersion: "2026-07",
+      auth: { type: "static", staticToken: "tok-old" },
+    });
+
+    registry.updateStore({
+      storeId: "store-update-target",
+      shopDomain: "updated.myshopify.com",
+      apiVersion: "2026-07",
+      auth: { type: "static", staticToken: "tok-new" },
+    });
+
+    const updated = registry.getStore("store-update-target");
+    assert.equal(updated?.shopDomain, "updated.myshopify.com");
+    assert.equal(updated?.auth.staticToken, "tok-new");
+
+    assert.throws(() => {
+      registry.updateStore({
+        storeId: "non-existent-store",
+        shopDomain: "test.myshopify.com",
+        apiVersion: "2026-07",
+        auth: { type: "static", staticToken: "tok" },
+      });
+    }, (err: unknown) => {
+      assert(err instanceof GatewayError);
+      assert.equal(err.code, "SHOPIFY_NOT_FOUND");
+      return true;
+    });
   });
 
   it("enforces deep-freeze immutability so callers cannot corrupt stored credentials", () => {
@@ -325,7 +449,7 @@ describe("Gateway: Throttle Manager & GraphQL Client", () => {
 });
 
 describe("Gateway: Operations & Dispatcher", () => {
-  function setupGateway(mockGraphqlDataOrTransport: unknown) {
+  function setupGateway(mockGraphqlDataOrTransport: unknown, idempotencyStore?: IdempotencyStore) {
     const registry = new InMemoryStoreRegistry([
       {
         storeId: "store-test",
@@ -346,7 +470,7 @@ describe("Gateway: Operations & Dispatcher", () => {
       baseTransport: fakeTransport,
     });
 
-    return new GatewayDispatcher({ storeRegistry: registry, graphqlClient: client });
+    return new GatewayDispatcher({ storeRegistry: registry, graphqlClient: client, idempotencyStore });
   }
 
   it("executes connection.test successfully", async () => {
@@ -573,6 +697,7 @@ describe("Gateway: Operations & Dispatcher", () => {
     const createRes = await dispatcher.dispatch({
       storeId: "store-test",
       operation: "products.create",
+      mode: "apply",
       payload: {
         product: {
           title: "Created Hoodie",
@@ -592,6 +717,7 @@ describe("Gateway: Operations & Dispatcher", () => {
     const updateRes = await dispatcher.dispatch({
       storeId: "store-test",
       operation: "products.update",
+      mode: "apply",
       payload: {
         id: "gid://shopify/Product/100",
         product: { title: "Updated Hoodie" },
@@ -606,6 +732,7 @@ describe("Gateway: Operations & Dispatcher", () => {
     const bulkRes = await dispatcher.dispatch({
       storeId: "store-test",
       operation: "products.bulkUpdate",
+      mode: "apply",
       payload: {
         products: [
           { id: "gid://shopify/Product/100", product: { title: "Bulk Hoodie" } },
@@ -622,6 +749,7 @@ describe("Gateway: Operations & Dispatcher", () => {
     const deleteRes = await dispatcher.dispatch({
       storeId: "store-test",
       operation: "products.delete",
+      mode: "apply",
       payload: { id: "gid://shopify/Product/100" },
       requestId: "req-delete-1",
     });
@@ -676,6 +804,7 @@ describe("Gateway: Operations & Dispatcher", () => {
     const res = await dispatcher.dispatch({
       storeId: "store-test",
       operation: "variants.update",
+      mode: "apply",
       payload: {
         id: "gid://shopify/ProductVariant/555",
         variant: {
@@ -704,6 +833,7 @@ describe("Gateway: Operations & Dispatcher", () => {
     const bulkRes = await dispatcher.dispatch({
       storeId: "store-test",
       operation: "variants.bulkUpdate",
+      mode: "apply",
       payload: {
         variants: [
           {
@@ -773,29 +903,19 @@ describe("Gateway: Operations & Dispatcher", () => {
         });
       }
 
-      if (query.includes("CheckCollectionType")) {
+      if (query.includes("GetCollectionSources")) {
         return createMockResponse({
           data: {
             collection: {
               id: "gid://shopify/Collection/77",
-              ruleSet: null,
+              sources: [
+                {
+                  __typename: "CollectionConditionsSource",
+                  id: "gid://shopify/CollectionConditionsSource/1",
+                  title: "Default Source",
+                },
+              ],
             },
-          },
-        });
-      }
-
-      if (query.includes("collectionAddProducts")) {
-        return createMockResponse({
-          data: {
-            collectionAddProducts: { userErrors: [] },
-          },
-        });
-      }
-
-      if (query.includes("collectionRemoveProducts")) {
-        return createMockResponse({
-          data: {
-            collectionRemoveProducts: { userErrors: [] },
           },
         });
       }
@@ -807,6 +927,7 @@ describe("Gateway: Operations & Dispatcher", () => {
     const createRes = await dispatcher.dispatch({
       storeId: "store-test",
       operation: "collections.create",
+      mode: "apply",
       payload: {
         collection: {
           title: "Winter Collection",
@@ -823,6 +944,7 @@ describe("Gateway: Operations & Dispatcher", () => {
     const updateRes = await dispatcher.dispatch({
       storeId: "store-test",
       operation: "collections.update",
+      mode: "apply",
       payload: {
         id: "gid://shopify/Collection/77",
         collection: { title: "Winter 2026" },
@@ -837,6 +959,7 @@ describe("Gateway: Operations & Dispatcher", () => {
     const memberRes = await dispatcher.dispatch({
       storeId: "store-test",
       operation: "collections.updateMembership",
+      mode: "apply",
       payload: {
         collectionId: "gid://shopify/Collection/77",
         productIdsToAdd: ["gid://shopify/Product/1"],
@@ -853,6 +976,7 @@ describe("Gateway: Operations & Dispatcher", () => {
     const deleteRes = await dispatcher.dispatch({
       storeId: "store-test",
       operation: "collections.delete",
+      mode: "apply",
       payload: { id: "gid://shopify/Collection/77" },
       requestId: "req-col-4",
     });
@@ -1031,6 +1155,7 @@ describe("Gateway: Operations & Dispatcher", () => {
     await dispatcher.dispatch({
       storeId: "store-test",
       operation: "products.create",
+      mode: "apply",
       payload: { product: { title: "Op 1" } },
       requestId: "shared-req-id-1",
     });
@@ -1040,6 +1165,7 @@ describe("Gateway: Operations & Dispatcher", () => {
         dispatcher.dispatch({
           storeId: "store-test",
           operation: "products.delete",
+          mode: "apply",
           payload: { id: "gid://shopify/Product/op-1" },
           requestId: "shared-req-id-1",
         }),
@@ -1080,6 +1206,7 @@ describe("Gateway: Operations & Dispatcher", () => {
     const res1 = await dispatcher.dispatch({
       storeId: "store-test",
       operation: "products.create",
+      mode: "apply",
       payload,
       requestId: "req-unique-123",
     });
@@ -1090,6 +1217,7 @@ describe("Gateway: Operations & Dispatcher", () => {
     const res2 = await dispatcher.dispatch({
       storeId: "store-test",
       operation: "products.create",
+      mode: "apply",
       payload,
       requestId: "req-unique-123",
     });
@@ -1103,6 +1231,7 @@ describe("Gateway: Operations & Dispatcher", () => {
         dispatcher.dispatch({
           storeId: "store-test",
           operation: "products.create",
+          mode: "apply",
           payload: { product: { title: "Different Title" } },
           requestId: "req-unique-123",
         }),
@@ -1144,6 +1273,7 @@ describe("Gateway: Operations & Dispatcher", () => {
     const call1Promise = dispatcher.dispatch({
       storeId: "store-test",
       operation: "products.create",
+      mode: "apply",
       payload: { product: { title: "Product A" } },
       requestId: "concurrent-req-1",
     });
@@ -1154,6 +1284,7 @@ describe("Gateway: Operations & Dispatcher", () => {
         dispatcher.dispatch({
           storeId: "store-test",
           operation: "products.create",
+          mode: "apply",
           payload: { product: { title: "Product B" } },
           requestId: "concurrent-req-1",
         }),
@@ -1167,6 +1298,7 @@ describe("Gateway: Operations & Dispatcher", () => {
     const call3Promise = dispatcher.dispatch({
       storeId: "store-test",
       operation: "products.create",
+      mode: "apply",
       payload: { product: { title: "Product A" } },
       requestId: "concurrent-req-1",
     });
@@ -1181,9 +1313,10 @@ describe("Gateway: Operations & Dispatcher", () => {
   it("handles products.bulkUpdate partial failure without failing entire batch", async () => {
     const dispatcher = setupGateway(async (_url: string, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
-      const vars = body.variables as { input: { id: string; title: string } };
+      const vars = body.variables as { product?: { id: string; title: string }; input?: { id: string; title: string } };
+      const target = vars.product ?? vars.input ?? { id: "", title: "" };
 
-      if (vars.input.id === "gid://shopify/Product/fail") {
+      if (target.id === "gid://shopify/Product/fail") {
         return createMockResponse({
           data: {
             productUpdate: {
@@ -1198,8 +1331,8 @@ describe("Gateway: Operations & Dispatcher", () => {
         data: {
           productUpdate: {
             product: {
-              id: vars.input.id,
-              title: vars.input.title,
+              id: target.id,
+              title: target.title,
               handle: "updated-handle",
               status: "ACTIVE",
               tags: [],
@@ -1216,6 +1349,7 @@ describe("Gateway: Operations & Dispatcher", () => {
     const res = await dispatcher.dispatch({
       storeId: "store-test",
       operation: "products.bulkUpdate",
+      mode: "apply",
       payload: {
         products: [
           { id: "gid://shopify/Product/fail", product: { title: "Bad" } },
@@ -1239,18 +1373,15 @@ describe("Gateway: Operations & Dispatcher", () => {
     assert.equal(data.items[1].ok, true);
   });
 
-  it("rejects modifying membership of automated/smart collections with ruleSet", async () => {
+  it("rejects modifying membership when collection does not exist", async () => {
     const dispatcher = setupGateway(async (_url: string, init?: RequestInit) => {
       const parsed = JSON.parse(String(init?.body)) as Record<string, unknown>;
       const query = String(parsed.query);
 
-      if (query.includes("CheckCollectionType")) {
+      if (query.includes("GetCollectionSources")) {
         return createMockResponse({
           data: {
-            collection: {
-              id: "gid://shopify/Collection/smart-1",
-              ruleSet: { appliedDisjunctively: false },
-            },
+            collection: null,
           },
         });
       }
@@ -1262,17 +1393,17 @@ describe("Gateway: Operations & Dispatcher", () => {
         dispatcher.dispatch({
           storeId: "store-test",
           operation: "collections.updateMembership",
+          mode: "apply",
           payload: {
-            collectionId: "gid://shopify/Collection/smart-1",
+            collectionId: "gid://shopify/Collection/missing-1",
             productIdsToAdd: ["gid://shopify/Product/1"],
           },
-          requestId: "req-smart-col",
+          requestId: "req-missing-col",
         }),
       (err: unknown) =>
         err instanceof GatewayError &&
-        err.code === "SHOPIFY_USER_ERROR" &&
-        err.httpStatus === 400 &&
-        err.message.includes("automated/smart collection"),
+        err.code === "SHOPIFY_NOT_FOUND" &&
+        err.httpStatus === 404,
     );
   });
 
@@ -1361,6 +1492,7 @@ describe("Gateway: Operations & Dispatcher", () => {
     const res = await dispatcher.dispatch({
       storeId: "store-test",
       operation: "products.create",
+      mode: "apply",
       payload: {
         product: {
           title: "T-Shirt Matrix",
@@ -1428,6 +1560,7 @@ describe("Gateway: Operations & Dispatcher", () => {
         dispatcher.dispatch({
           storeId: "store-test",
           operation: "products.create",
+          mode: "apply",
           payload: {
             product: {
               title: "Reconcile Product",
@@ -1461,6 +1594,7 @@ describe("Gateway: Operations & Dispatcher", () => {
         dispatcher.dispatch({
           storeId: "store-test",
           operation: "products.create",
+          mode: "apply",
           payload: { product: { title: "Duplicate" } },
           requestId: "user-err-req",
         }),
@@ -1500,6 +1634,7 @@ describe("Gateway: Operations & Dispatcher", () => {
         dispatcher.dispatch({
           storeId: "store-test",
           operation: "products.create",
+          mode: "apply",
           payload: { product: { title: "Will Fail" } },
           requestId: "req-fail-net",
         }),
@@ -1509,6 +1644,143 @@ describe("Gateway: Operations & Dispatcher", () => {
         err.httpStatus === 500,
       "Network failure during write mutation must be mapped to SHOPIFY_UNKNOWN_WRITE_STATE",
     );
+  });
+
+  it("preserves idempotency state as RECONCILIATION_REQUIRED on SHOPIFY_UNKNOWN_WRITE_STATE and blocks retrying", async () => {
+    let callCount = 0;
+    const failingTransport: HttpTransport = async () => {
+      callCount++;
+      throw new Error("connection reset by peer");
+    };
+
+    const idempotencyStore = new InMemoryIdempotencyStore();
+    const dispatcher = setupGateway(failingTransport, idempotencyStore);
+
+    // First call: fails with UNKNOWN_WRITE_STATE
+    await assert.rejects(
+      async () =>
+        dispatcher.dispatch({
+          storeId: "store-test",
+          operation: "products.create",
+          mode: "apply",
+          payload: { product: { title: "Socket Drop Product" } },
+          requestId: "req-unknown-retry-1",
+        }),
+      (err: unknown) =>
+        err instanceof GatewayError &&
+        err.code === "SHOPIFY_UNKNOWN_WRITE_STATE",
+    );
+
+    // Verify record in idempotency store is NOT deleted, but transitioned to RECONCILIATION_REQUIRED
+    const record = await idempotencyStore.get("store-test:req-unknown-retry-1");
+    assert.ok(record, "Idempotency record must not be deleted on UNKNOWN_WRITE_STATE");
+    assert.equal(record?.state, "RECONCILIATION_REQUIRED");
+
+    // Second call: retry with same requestId MUST be rejected with 409 SHOPIFY_UNKNOWN_WRITE_STATE
+    await assert.rejects(
+      async () =>
+        dispatcher.dispatch({
+          storeId: "store-test",
+          operation: "products.create",
+          mode: "apply",
+          payload: { product: { title: "Socket Drop Product" } },
+          requestId: "req-unknown-retry-1",
+        }),
+      (err: unknown) =>
+        err instanceof GatewayError &&
+        err.code === "SHOPIFY_UNKNOWN_WRITE_STATE" &&
+        err.httpStatus === 409 &&
+        err.message.includes("requires manual reconciliation"),
+    );
+
+    // Ensure Shopify mutation was NOT called a second time
+    assert.equal(callCount, 1);
+  });
+
+  it("creates product with exactly 1 variant and applies custom price and sku via productVariantsBulkCreate", async () => {
+    let bulkCreateCalled = false;
+    let capturedVariants: unknown;
+
+    const dispatcher = setupGateway(async (_url: string, init?: RequestInit) => {
+      const parsed = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      const query = String(parsed.query);
+
+      if (query.includes("productCreate")) {
+        return createMockResponse({
+          data: {
+            productCreate: {
+              product: {
+                id: "gid://shopify/Product/single-var-prod",
+                title: "Single Variant Product",
+                handle: "single-variant-product",
+                status: "ACTIVE",
+                tags: [],
+                createdAt: "2026-09-21",
+                updatedAt: "2026-09-21",
+                variants: { edges: [] },
+              },
+              userErrors: [],
+            },
+          },
+        });
+      }
+
+      if (query.includes("ProductVariantsBulkCreate")) {
+        bulkCreateCalled = true;
+        capturedVariants = parsed.variables;
+        return createMockResponse({
+          data: {
+            productVariantsBulkCreate: {
+              productVariants: [
+                {
+                  id: "gid://shopify/ProductVariant/single-var-1",
+                  title: "Default Title",
+                  price: "49.99",
+                  compareAtPrice: "59.99",
+                  barcode: "BAR-1",
+                  inventoryQuantity: 5,
+                  inventoryItem: { sku: "SKU-SINGLE-1" },
+                },
+              ],
+              userErrors: [],
+            },
+          },
+        });
+      }
+
+      return createMockResponse({});
+    });
+
+    const res = await dispatcher.dispatch({
+      storeId: "store-test",
+      operation: "products.create",
+      mode: "apply",
+      payload: {
+        product: {
+          title: "Single Variant Product",
+          variants: [
+            {
+              price: "49.99",
+              compareAtPrice: "59.99",
+              sku: "SKU-SINGLE-1",
+              barcode: "BAR-1",
+            },
+          ],
+        },
+      },
+      requestId: "req-single-var-1",
+    });
+
+    assert.equal(res.success, true);
+    assert.equal(bulkCreateCalled, true);
+    const prod = (res.data as { product: { variants: { id: string; price: string; sku?: string }[] } }).product;
+    assert.equal(prod.variants.length, 1);
+    assert.equal(prod.variants[0].price, "49.99");
+    assert.equal(prod.variants[0].sku, "SKU-SINGLE-1");
+
+    // Ensure ProductVariantsBulkInput did NOT contain 'title'
+    const vars = capturedVariants as { variants: Record<string, unknown>[] };
+    assert.equal(vars.variants[0].title, undefined, "ProductVariantsBulkInput must not include title field");
   });
 });
 
@@ -1622,7 +1894,7 @@ describe("Gateway: HTTP Server Handler & E2E Integration with module-api", () =>
 
     assert.equal(result.success, true);
     assert.equal(result.operation, "products.list");
-    const data = result.data as { products: { title: string }[] };
+    const data = result.data as unknown as { products: { title: string }[] };
     assert.equal(data.products[0].title, "E2E Tested Product");
   });
 
@@ -1677,13 +1949,13 @@ describe("Gateway: HTTP Server Handler & E2E Integration with module-api", () =>
     const result = await runner({
       storeId: "store-e2e-write",
       operation: "products.create",
+      mode: "apply",
       payload: {
         product: {
           title: "E2E Created Product",
           tags: ["e2e"],
         },
       },
-      mode: "apply",
       requestId: "req-e2e-write-123",
     });
 
@@ -1713,4 +1985,843 @@ describe("Gateway: HTTP Server Handler & E2E Integration with module-api", () =>
     const badRes = await handler(badReq);
     assert.equal(badRes.status, 400);
   });
+
+  it("handles products.create with explicit productOptions and multi-option variants", async () => {
+    let capturedVariables: Record<string, unknown> | undefined;
+
+    const transport: HttpTransport = async (_url, init) => {
+      const body = JSON.parse(String(init?.body || "{}")) as { query: string; variables: Record<string, unknown> };
+      capturedVariables = body.variables;
+
+      if (body.query.includes("productCreate")) {
+        return createMockResponse({
+          data: {
+            productCreate: {
+              product: {
+                id: "gid://shopify/Product/multi-opt-1",
+                title: "Multi Option Hoodie",
+                handle: "multi-option-hoodie",
+                status: "ACTIVE",
+                tags: ["apparel"],
+                createdAt: "2026-01-01T00:00:00Z",
+                updatedAt: "2026-01-01T00:00:00Z",
+                variants: { edges: [] },
+              },
+              userErrors: [],
+            },
+          },
+        });
+      }
+
+      if (body.query.includes("productVariantsBulkCreate")) {
+        return createMockResponse({
+          data: {
+            productVariantsBulkCreate: {
+              productVariants: [
+                {
+                  id: "gid://shopify/ProductVariant/v-1",
+                  title: "S / Black",
+                  price: "49.99",
+                  inventoryItem: { sku: "HOODIE-S-BLK" },
+                },
+                {
+                  id: "gid://shopify/ProductVariant/v-2",
+                  title: "M / Black",
+                  price: "49.99",
+                  inventoryItem: { sku: "HOODIE-M-BLK" },
+                },
+              ],
+              userErrors: [],
+            },
+          },
+        });
+      }
+
+      return createMockResponse({});
+    };
+
+    const client = new ShopifyGraphqlClient({
+      tokenProvider: new StaticAccessTokenProvider(),
+      throttleManager: new InMemoryThrottleManager(),
+      baseTransport: transport,
+    });
+    const registry = new InMemoryStoreRegistry([
+      {
+        storeId: "store-opts",
+        shopDomain: "test.myshopify.com",
+        apiVersion: "2026-07",
+        auth: { type: "static", staticToken: "tok" },
+      },
+    ]);
+    const dispatcher = new GatewayDispatcher({ storeRegistry: registry, graphqlClient: client });
+
+    const store = await registry.getStore("store-opts");
+    assert.equal(store?.storeId, "store-opts");
+
+    const result = await dispatcher.dispatch({
+      storeId: "store-opts",
+      operation: "products.create",
+      mode: "apply",
+      requestId: "req-opts-1",
+      payload: {
+        product: {
+          title: "Multi Option Hoodie",
+          productOptions: [
+            { name: "Size", values: ["S", "M"] },
+            { name: "Color", values: ["Black"] },
+          ],
+          variants: [
+            {
+              price: "49.99",
+              sku: "HOODIE-S-BLK",
+              optionValues: [
+                { optionName: "Size", name: "S" },
+                { optionName: "Color", name: "Black" },
+              ],
+            },
+            {
+              price: "49.99",
+              sku: "HOODIE-M-BLK",
+              optionValues: [
+                { optionName: "Size", name: "M" },
+                { optionName: "Color", name: "Black" },
+              ],
+            },
+          ],
+        },
+      },
+    });
+
+    assert.equal(result.success, true);
+    const data = result.data as { product: { id: string; variants: { id: string }[] } };
+    assert.equal(data.product.id, "gid://shopify/Product/multi-opt-1");
+    assert.equal(data.product.variants.length, 2);
+  });
+
+  it("handles collections.updateMembership cleanly without CollectionConditionsSource fallback", async () => {
+    let updateVariables: Record<string, unknown> | undefined;
+
+    const transport: HttpTransport = async (_url, init) => {
+      const body = JSON.parse(String(init?.body || "{}")) as { query: string; variables: Record<string, unknown> };
+
+      if (body.query.includes("GetCollectionSources")) {
+        return createMockResponse({
+          data: {
+            collection: {
+              id: "gid://shopify/Collection/subcol-1",
+              sources: [
+                {
+                  __typename: "CollectionSubCollectionsSource",
+                  id: "gid://shopify/CollectionSubCollectionsSource/1",
+                  title: "Subcollections",
+                },
+              ],
+            },
+          },
+        });
+      }
+
+      if (body.query.includes("CollectionUpdateMembership")) {
+        updateVariables = body.variables;
+        return createMockResponse({
+          data: {
+            collectionUpdate: {
+              collection: {
+                id: "gid://shopify/Collection/subcol-1",
+                productsCount: { count: 1 },
+              },
+              userErrors: [],
+            },
+          },
+        });
+      }
+
+      return createMockResponse({});
+    };
+
+    const client = new ShopifyGraphqlClient({
+      tokenProvider: new StaticAccessTokenProvider(),
+      throttleManager: new InMemoryThrottleManager(),
+      baseTransport: transport,
+    });
+    const registry = new InMemoryStoreRegistry([
+      {
+        storeId: "store-col",
+        shopDomain: "test.myshopify.com",
+        apiVersion: "2026-07",
+        auth: { type: "static", staticToken: "tok" },
+      },
+    ]);
+    const dispatcher = new GatewayDispatcher({ storeRegistry: registry, graphqlClient: client });
+
+    const result = await dispatcher.dispatch({
+      storeId: "store-col",
+      operation: "collections.updateMembership",
+      mode: "apply",
+      requestId: "req-col-mem-1",
+      payload: {
+        collectionId: "gid://shopify/Collection/subcol-1",
+        productIdsToAdd: ["gid://shopify/Product/prod-1"],
+      },
+    });
+
+    assert.equal(result.success, true);
+    // Verified that it used sourcesToCreate rather than corrupting sourcesToUpdate with CollectionSubCollectionsSource
+    assert.ok(updateVariables);
+    const colInput = (updateVariables as { collection: Record<string, unknown> }).collection;
+    assert.ok(colInput.sourcesToCreate);
+    assert.equal(colInput.sourcesToUpdate, undefined);
+  });
+
+  it("strictly enforces mode 'preview' or 'apply' on write operations and rejects omitted/invalid mode with 400", async () => {
+    const registry = new InMemoryStoreRegistry([
+      {
+        storeId: "store-write-mode",
+        shopDomain: "test.myshopify.com",
+        apiVersion: "2026-07",
+        auth: { type: "static", staticToken: "tok" },
+      },
+    ]);
+    const dispatcher = new GatewayDispatcher({
+      storeRegistry: registry,
+      graphqlClient: {} as ShopifyGraphqlClient,
+    });
+
+    // Omitted mode
+    await assert.rejects(
+      async () => {
+        await dispatcher.dispatch({
+          storeId: "store-write-mode",
+          operation: "products.create",
+          requestId: "req-1",
+          payload: { product: { title: "Test" } },
+        } as any);
+      },
+      (err: GatewayError) => {
+        assert.equal(err.code, "SHOPIFY_INVALID_INPUT");
+        assert.equal(err.httpStatus, 400);
+        return true;
+      },
+    );
+
+    // Invalid mode
+    await assert.rejects(
+      async () => {
+        await dispatcher.dispatch({
+          storeId: "store-write-mode",
+          operation: "products.create",
+          mode: "invalid-mode" as any,
+          requestId: "req-1",
+          payload: { product: { title: "Test" } },
+        });
+      },
+      (err: GatewayError) => {
+        assert.equal(err.code, "SHOPIFY_INVALID_INPUT");
+        assert.equal(err.httpStatus, 400);
+        return true;
+      },
+    );
+  });
+
+  it("handles product and collection SEO fields in preview and apply modes", async () => {
+    let capturedProductInput: Record<string, unknown> | undefined;
+    let capturedCollectionInput: Record<string, unknown> | undefined;
+
+    const transport: HttpTransport = async (_url, init) => {
+      const body = JSON.parse(String(init?.body || "{}")) as { query: string; variables: Record<string, unknown> };
+      if (body.query.includes("ProductCreate")) {
+        capturedProductInput = body.variables.product as Record<string, unknown>;
+        return createMockResponse({
+          data: {
+            productCreate: {
+              product: {
+                id: "gid://shopify/Product/seo-prod-1",
+                title: "SEO Product",
+                handle: "seo-product",
+                status: "ACTIVE",
+                seo: { title: "Custom SEO Title", description: "Custom SEO Description" },
+                createdAt: "2026-09-21",
+                updatedAt: "2026-09-21",
+                variants: { edges: [] },
+              },
+              userErrors: [],
+            },
+          },
+        });
+      }
+      if (body.query.includes("CollectionCreate")) {
+        capturedCollectionInput = body.variables.collection as Record<string, unknown>;
+        return createMockResponse({
+          data: {
+            collectionCreate: {
+              collection: {
+                id: "gid://shopify/Collection/seo-col-1",
+                title: "SEO Collection",
+                handle: "seo-collection",
+                seo: { title: "Collection SEO Title", description: "Collection SEO Description" },
+                productsCount: { count: 0 },
+                updatedAt: "2026-09-21",
+              },
+              userErrors: [],
+            },
+          },
+        });
+      }
+      return createMockResponse({});
+    };
+
+    const client = new ShopifyGraphqlClient({
+      tokenProvider: new StaticAccessTokenProvider(),
+      throttleManager: new InMemoryThrottleManager(),
+      baseTransport: transport,
+    });
+    const registry = new InMemoryStoreRegistry([
+      {
+        storeId: "store-seo",
+        shopDomain: "seo.myshopify.com",
+        apiVersion: "2026-07",
+        auth: { type: "static", staticToken: "tok" },
+      },
+    ]);
+    const dispatcher = new GatewayDispatcher({ storeRegistry: registry, graphqlClient: client });
+
+    // Preview product SEO
+    const prodPreview = await dispatcher.dispatch({
+      storeId: "store-seo",
+      operation: "products.create",
+      mode: "preview",
+      payload: {
+        product: {
+          title: "SEO Product",
+          seo: { title: "Preview SEO Title", description: "Preview SEO Description" },
+        },
+      },
+    });
+    assert.equal(prodPreview.success, true);
+    assert.deepEqual((prodPreview.data as any).product.seo, {
+      title: "Preview SEO Title",
+      description: "Preview SEO Description",
+    });
+
+    // Apply product SEO
+    const prodApply = await dispatcher.dispatch({
+      storeId: "store-seo",
+      operation: "products.create",
+      mode: "apply",
+      requestId: "req-prod-seo-1",
+      payload: {
+        product: {
+          title: "SEO Product",
+          seo: { title: "Custom SEO Title", description: "Custom SEO Description" },
+        },
+      },
+    });
+    assert.equal(prodApply.success, true);
+    assert.deepEqual(capturedProductInput?.seo, {
+      title: "Custom SEO Title",
+      description: "Custom SEO Description",
+    });
+
+    // Apply collection SEO
+    const colApply = await dispatcher.dispatch({
+      storeId: "store-seo",
+      operation: "collections.create",
+      mode: "apply",
+      requestId: "req-col-seo-1",
+      payload: {
+        collection: {
+          title: "SEO Collection",
+          seo: { title: "Collection SEO Title", description: "Collection SEO Description" },
+        },
+      },
+    });
+    assert.equal(colApply.success, true);
+    assert.deepEqual(capturedCollectionInput?.seo, {
+      title: "Collection SEO Title",
+      description: "Collection SEO Description",
+    });
+  });
+
+  it("executes StoreControlPlane store onboarding with preflight verification and token cache invalidation", async () => {
+    let connectionQueryCount = 0;
+    const transport: HttpTransport = async (_url, init) => {
+      const body = JSON.parse(String(init?.body || "{}")) as { query?: string };
+      if (body.query?.includes("StoreConnectionTest")) {
+        connectionQueryCount++;
+        return createMockResponse({
+          data: {
+            shop: {
+              id: "gid://shopify/Shop/12345",
+              name: "Capozen Wellness",
+              myshopifyDomain: "capozen.myshopify.com",
+            },
+          },
+        });
+      }
+      return createMockResponse({});
+    };
+
+    const tokenProvider = new CompositeTokenProvider();
+    const throttleManager = new InMemoryThrottleManager();
+    const graphqlClient = new ShopifyGraphqlClient({ tokenProvider, throttleManager, baseTransport: transport });
+    const registry = new InMemoryStoreRegistry();
+    const controlPlane = new StoreControlPlane({ storeRegistry: registry, tokenProvider, graphqlClient });
+
+    // 1. registerStore with preflight
+    const regResult = await controlPlane.registerStore({
+      storeId: "capozen-store",
+      shopDomain: "capozen", // tests domain normalization
+      auth: {
+        type: "static_access_token",
+        accessToken: "shpat_secret_token_12345",
+      },
+    });
+
+    assert.equal(regResult.registered, true);
+    assert.equal(regResult.store.storeId, "capozen-store");
+    assert.equal(regResult.store.shopDomain, "capozen.myshopify.com");
+    assert.equal(regResult.store.authType, "static");
+    assert.equal(regResult.store.connected, true);
+    assert.equal((regResult.store as any).accessToken, undefined);
+    assert.equal((regResult.store as any).staticToken, undefined);
+    assert.equal((regResult.store as any).niche, undefined);
+    assert.equal(connectionQueryCount, 1);
+
+    // Verified in registry
+    const stored = registry.getStore("capozen-store");
+    assert.ok(stored);
+    assert.equal(stored.shopDomain, "capozen.myshopify.com");
+
+    // 2. listStores and getStore from control plane
+    const listRes = await controlPlane.listStores();
+    assert.equal(listRes.total, 1);
+    assert.equal(listRes.stores[0].storeId, "capozen-store");
+    assert.equal((listRes.stores[0] as any).accessToken, undefined);
+
+    const getRes = await controlPlane.getStore("capozen-store");
+    assert.ok(getRes.store);
+    assert.equal(getRes.store.storeId, "capozen-store");
+    assert.equal((getRes.store as any).accessToken, undefined);
+
+    // 3. updateStoreCredentials
+    const updateRes = await controlPlane.updateStoreCredentials({
+      storeId: "capozen-store",
+      shopDomain: "updated-capozen",
+      auth: {
+        type: "static_access_token",
+        accessToken: "shpat_new_secret_67890",
+      },
+    });
+    assert.equal(updateRes.updated, true);
+    assert.equal(registry.getStore("capozen-store")?.shopDomain, "updated-capozen.myshopify.com");
+    assert.equal(registry.getStore("capozen-store")?.auth.staticToken, "shpat_new_secret_67890");
+
+    // 4. disconnectStore
+    const disconnectRes = await controlPlane.disconnectStore("capozen-store");
+    assert.equal(disconnectRes.disconnected, true);
+    assert.equal(registry.hasStore("capozen-store"), false);
+  });
+
+  it("StoreControlPlane fails preflight when Shopify connection query fails and does NOT persist store", async () => {
+    const transport: HttpTransport = async () => {
+      return createMockResponse({
+        errors: [{ message: "Invalid API key or access token (unrecognized login or wrong password)" }],
+      }, 401);
+    };
+
+    const tokenProvider = new CompositeTokenProvider();
+    const throttleManager = new InMemoryThrottleManager();
+    const graphqlClient = new ShopifyGraphqlClient({ tokenProvider, throttleManager, baseTransport: transport });
+    const registry = new InMemoryStoreRegistry();
+    const controlPlane = new StoreControlPlane({ storeRegistry: registry, tokenProvider, graphqlClient });
+
+    await assert.rejects(
+      async () => {
+        await controlPlane.registerStore({
+          storeId: "bad-token-store",
+          shopDomain: "bad-store.myshopify.com",
+          auth: {
+            type: "static_access_token",
+            accessToken: "shpat_invalid_secret_token",
+          },
+        });
+      },
+      (err: unknown) => {
+        assert(err instanceof GatewayError);
+        assert.equal(err.code, "SHOPIFY_AUTH_FAILED");
+        // Verify secret token is NOT leaked in error message
+        assert.equal(err.message.includes("shpat_invalid_secret_token"), false);
+        return true;
+      },
+    );
+
+    // Verify store was NOT saved in registry
+    assert.equal(registry.hasStore("bad-token-store"), false);
+  });
+
+  it("StoreControlPlane handles client_credentials with shop_not_permitted cleanly", async () => {
+    const transport: HttpTransport = async (url) => {
+      if (url.includes("/admin/oauth/access_token")) {
+        return createMockResponse({
+          error: "shop_not_permitted",
+          error_description: "App is not installed on this shop",
+        }, 400);
+      }
+      return createMockResponse({});
+    };
+
+    const tokenProvider = new CompositeTokenProvider({ transport });
+    const throttleManager = new InMemoryThrottleManager();
+    const graphqlClient = new ShopifyGraphqlClient({ tokenProvider, throttleManager, baseTransport: transport });
+    const registry = new InMemoryStoreRegistry();
+    const controlPlane = new StoreControlPlane({ storeRegistry: registry, tokenProvider, graphqlClient });
+
+    await assert.rejects(
+      async () => {
+        await controlPlane.registerStore({
+          storeId: "not-permitted-store",
+          shopDomain: "unpermitted.myshopify.com",
+          auth: {
+            type: "client_credentials",
+            clientId: "some_client_id",
+            clientSecret: "some_client_secret_xyz",
+          },
+        });
+      },
+      (err: unknown) => {
+        assert(err instanceof GatewayError);
+        assert.equal(err.code, "SHOPIFY_AUTH_FAILED");
+        assert.equal(err.message.includes("shop_not_permitted"), true);
+        assert.equal(err.message.includes("some_client_secret_xyz"), false);
+        return true;
+      },
+    );
+
+    assert.equal(registry.hasStore("not-permitted-store"), false);
+  });
+
+  it("invalidates token cache on credential update and disconnect", async () => {
+    let tokenExchangeCount = 0;
+    let currentToken = "token_A";
+
+    const transport: HttpTransport = async (url, init) => {
+      if (url.includes("/admin/oauth/access_token")) {
+        tokenExchangeCount++;
+        const body = JSON.parse(String(init?.body || "{}")) as { client_secret: string };
+        currentToken = body.client_secret === "secret_b" ? "token_B" : "token_A";
+        return createMockResponse({
+          access_token: currentToken,
+          expires_in: 86400,
+        });
+      }
+      const body = JSON.parse(String(init?.body || "{}")) as { query?: string };
+      if (body.query?.includes("StoreConnectionTest")) {
+        return createMockResponse({
+          data: {
+            shop: { id: "gid://shopify/Shop/1", name: "Shop", myshopifyDomain: "shop.myshopify.com" },
+          },
+        });
+      }
+      return createMockResponse({});
+    };
+
+    const tokenProvider = new CompositeTokenProvider({ transport });
+    const throttleManager = new InMemoryThrottleManager();
+    const graphqlClient = new ShopifyGraphqlClient({ tokenProvider, throttleManager, baseTransport: transport });
+    const registry = new InMemoryStoreRegistry();
+    const controlPlane = new StoreControlPlane({ storeRegistry: registry, tokenProvider, graphqlClient });
+
+    // 1. Register with Secret A -> token A obtained
+    await controlPlane.registerStore({
+      storeId: "cached-store",
+      shopDomain: "shop.myshopify.com",
+      auth: {
+        type: "client_credentials",
+        clientId: "cid_a",
+        clientSecret: "secret_a",
+      },
+    });
+    assert.equal(tokenExchangeCount, 1);
+    assert.equal(currentToken, "token_A");
+
+    // 2. Second request to tokenProvider should use cache (count remains 1)
+    const storeConfig = registry.getStore("cached-store")!;
+    const token1 = await tokenProvider.getToken(storeConfig);
+    assert.equal(token1, "token_A");
+    assert.equal(tokenExchangeCount, 1);
+
+    // 3. Update credentials to Secret B -> invalidates cache
+    await controlPlane.updateStoreCredentials({
+      storeId: "cached-store",
+      auth: {
+        type: "client_credentials",
+        clientId: "cid_b",
+        clientSecret: "secret_b",
+      },
+    });
+    // Preflight exchanged token for secret_b
+    assert.equal(currentToken, "token_B");
+    assert.equal(tokenExchangeCount, 2);
+
+    // 4. Next token request gets token_B
+    const updatedConfig = registry.getStore("cached-store")!;
+    const token2 = await tokenProvider.getToken(updatedConfig);
+    assert.equal(token2, "token_B");
+
+    // 5. Disconnect invalidates cache
+    await controlPlane.disconnectStore("cached-store");
+  });
+
+  it("Data Plane rejects stores.register and stores.disconnect with 403, and allows stores.list without storeId", async () => {
+    const registry = new InMemoryStoreRegistry([
+      {
+        storeId: "existing-dp-store",
+        shopDomain: "existing.myshopify.com",
+        apiVersion: "2026-07",
+        auth: { type: "static", staticToken: "tok" },
+      },
+    ]);
+    const dispatcher = new GatewayDispatcher({
+      storeRegistry: registry,
+      graphqlClient: {} as ShopifyGraphqlClient,
+    });
+
+    // stores.register rejected on data plane
+    await assert.rejects(
+      async () => {
+        await dispatcher.dispatch({
+          operation: "stores.register",
+          payload: { storeId: "dp-store" },
+        });
+      },
+      (err: unknown) => {
+        assert(err instanceof GatewayError);
+        assert.equal(err.code, "SHOPIFY_PERMISSION_DENIED");
+        assert.equal(err.httpStatus, 403);
+        return true;
+      },
+    );
+
+    // stores.disconnect rejected on data plane
+    await assert.rejects(
+      async () => {
+        await dispatcher.dispatch({
+          operation: "stores.disconnect",
+          payload: { targetStoreId: "existing-dp-store" },
+        });
+      },
+      (err: unknown) => {
+        assert(err instanceof GatewayError);
+        assert.equal(err.code, "SHOPIFY_PERMISSION_DENIED");
+        assert.equal(err.httpStatus, 403);
+        return true;
+      },
+    );
+
+    // stores.list works without top-level storeId
+    const listRes = await dispatcher.dispatch({
+      operation: "stores.list",
+      payload: {},
+    });
+    assert.equal(listRes.success, true);
+    if (listRes.success) {
+      const listData = listRes.data as { stores: readonly { storeId: string }[]; total: number };
+      assert.equal(listData.total, 1);
+      assert.equal(listData.stores[0].storeId, "existing-dp-store");
+      assert.equal((listData.stores[0] as any).staticToken, undefined);
+      assert.equal((listData.stores[0] as any).niche, undefined);
+    }
+
+    // stores.get works
+    const getRes = await dispatcher.dispatch({
+      operation: "stores.get",
+      payload: { targetStoreId: "existing-dp-store" },
+    });
+    assert.equal(getRes.success, true);
+    if (getRes.success) {
+      const getData = getRes.data as { store: { storeId: string } | null };
+      assert.ok(getData.store);
+      assert.equal(getData.store.storeId, "existing-dp-store");
+      assert.equal((getData.store as any).staticToken, undefined);
+      assert.equal((getData.store as any).niche, undefined);
+    }
+
+    // stores.get rejects when targetStoreId is empty or omitted
+    await assert.rejects(
+      async () => {
+        await dispatcher.dispatch({
+          operation: "stores.get",
+          payload: {},
+        });
+      },
+      (err: unknown) => {
+        assert(err instanceof GatewayError);
+        assert.equal(err.code, "SHOPIFY_INVALID_INPUT");
+        assert.equal(err.httpStatus, 400);
+        return true;
+      },
+    );
+
+    await assert.rejects(
+      async () => {
+        await dispatcher.dispatch({
+          operation: "stores.get",
+          payload: { targetStoreId: "   " },
+        });
+      },
+      (err: unknown) => {
+        assert(err instanceof GatewayError);
+        assert.equal(err.code, "SHOPIFY_INVALID_INPUT");
+        assert.equal(err.httpStatus, 400);
+        return true;
+      },
+    );
+  });
+
+  it("variants.update and variants.bulkUpdate reject deprecated title and inventoryQuantity with SHOPIFY_INVALID_INPUT", async () => {
+    const registry = new InMemoryStoreRegistry([
+      {
+        storeId: "store-var-cleanup",
+        shopDomain: "test.myshopify.com",
+        apiVersion: "2026-07",
+        auth: { type: "static", staticToken: "tok" },
+      },
+    ]);
+    const dispatcher = new GatewayDispatcher({
+      storeRegistry: registry,
+      graphqlClient: {} as ShopifyGraphqlClient,
+    });
+
+    // 1. variants.update with title rejected
+    await assert.rejects(
+      async () => {
+        await dispatcher.dispatch({
+          storeId: "store-var-cleanup",
+          operation: "variants.update",
+          mode: "preview",
+          payload: {
+            id: "gid://shopify/ProductVariant/1",
+            variant: { title: "New Title" },
+          },
+        });
+      },
+      (err: unknown) => {
+        assert(err instanceof GatewayError);
+        assert.equal(err.code, "SHOPIFY_INVALID_INPUT");
+        return true;
+      },
+    );
+
+    // 2. variants.update with inventoryQuantity rejected
+    await assert.rejects(
+      async () => {
+        await dispatcher.dispatch({
+          storeId: "store-var-cleanup",
+          operation: "variants.update",
+          mode: "preview",
+          payload: {
+            id: "gid://shopify/ProductVariant/1",
+            variant: { inventoryQuantity: 10 },
+          },
+        });
+      },
+      (err: unknown) => {
+        assert(err instanceof GatewayError);
+        assert.equal(err.code, "SHOPIFY_INVALID_INPUT");
+        return true;
+      },
+    );
+
+    // 3. variants.bulkUpdate with title rejected
+    await assert.rejects(
+      async () => {
+        await dispatcher.dispatch({
+          storeId: "store-var-cleanup",
+          operation: "variants.bulkUpdate",
+          mode: "preview",
+          payload: {
+            variants: [{ id: "gid://shopify/ProductVariant/1", variant: { title: "Bad" } }],
+          },
+        });
+      },
+      (err: unknown) => {
+        assert(err instanceof GatewayError);
+        assert.equal(err.code, "SHOPIFY_INVALID_INPUT");
+        return true;
+      },
+    );
+
+    // 4. variants.bulkUpdate with inventoryQuantity rejected
+    await assert.rejects(
+      async () => {
+        await dispatcher.dispatch({
+          storeId: "store-var-cleanup",
+          operation: "variants.bulkUpdate",
+          mode: "preview",
+          payload: {
+            variants: [{ id: "gid://shopify/ProductVariant/1", variant: { inventoryQuantity: 5 } }],
+          },
+        });
+      },
+      (err: unknown) => {
+        assert(err instanceof GatewayError);
+        assert.equal(err.code, "SHOPIFY_INVALID_INPUT");
+        return true;
+      },
+    );
+  });
+
+  it("handles collections.updateMembership cleanly as no-op when !conditionsSource and productIdsToRemove requested without productIdsToAdd", async () => {
+    let callCount = 0;
+    const transport: HttpTransport = async (_url, init) => {
+      callCount++;
+      const body = JSON.parse(String(init?.body || "{}")) as { query: string };
+      if (body.query.includes("GetCollectionSources")) {
+        return createMockResponse({
+          data: {
+            collection: {
+              id: "gid://shopify/Collection/manual-1",
+              sources: [],
+            },
+          },
+        });
+      }
+      return createMockResponse({});
+    };
+
+    const client = new ShopifyGraphqlClient({
+      tokenProvider: new StaticAccessTokenProvider(),
+      throttleManager: new InMemoryThrottleManager(),
+      baseTransport: transport,
+    });
+    const registry = new InMemoryStoreRegistry([
+      {
+        storeId: "store-col-no-cond",
+        shopDomain: "test.myshopify.com",
+        apiVersion: "2026-07",
+        auth: { type: "static", staticToken: "tok" },
+      },
+    ]);
+    const dispatcher = new GatewayDispatcher({ storeRegistry: registry, graphqlClient: client });
+
+    const result = await dispatcher.dispatch({
+      storeId: "store-col-no-cond",
+      operation: "collections.updateMembership",
+      mode: "apply",
+      requestId: "req-col-mem-no-op",
+      payload: {
+        collectionId: "gid://shopify/Collection/manual-1",
+        productIdsToRemove: ["gid://shopify/Product/prod-to-remove"],
+      },
+    });
+
+    assert.equal(result.success, true);
+    const data = result.data as any;
+    assert.equal(data.collectionId, "gid://shopify/Collection/manual-1");
+    assert.equal(data.addedCount, 0);
+    assert.equal(data.removedCount, 0);
+    // Only 1 call to query sources; NO mutation call was made
+    assert.equal(callCount, 1);
+  });
 });
+

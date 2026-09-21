@@ -68,7 +68,39 @@ export class ClientCredentialsTokenProvider implements TokenProvider {
     }
 
     if (!response.ok) {
-      throw new GatewayError(`Shopify OAuth token exchange failed with status ${response.status}`, "SHOPIFY_AUTH_FAILED", 401);
+      let bodyText = "";
+      try {
+        bodyText = await response.text();
+        if (bodyText.toLowerCase().includes("shop_not_permitted")) {
+          throw new GatewayError(
+            "Shopify store is not permitted for client app (shop_not_permitted)",
+            "SHOPIFY_AUTH_FAILED",
+            401,
+          );
+        }
+
+        const json = JSON.parse(bodyText);
+        if (json && typeof json === "object") {
+          const errVal = (json.error || json.error_code || "") as string;
+          const descVal = (json.error_description || json.message || "") as string;
+          if (errVal || descVal) {
+            throw new GatewayError(
+              `Shopify OAuth authentication failed: ${errVal || response.status}`,
+              "SHOPIFY_AUTH_FAILED",
+              401,
+            );
+          }
+        }
+      } catch (err: unknown) {
+        if (err instanceof GatewayError) {
+          throw err;
+        }
+      }
+      throw new GatewayError(
+        `Shopify OAuth token exchange failed with status ${response.status}`,
+        "SHOPIFY_AUTH_FAILED",
+        401,
+      );
     }
 
     let body: unknown;

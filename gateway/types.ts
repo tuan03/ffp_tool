@@ -32,7 +32,7 @@ export type GatewayErrorCode =
   | "SHOPIFY_UNKNOWN_WRITE_STATE";
 
 export interface GatewayRequest<TPayload = unknown> {
-  readonly storeId: string;
+  readonly storeId?: string;
   readonly operation: string;
   readonly payload: TPayload;
   readonly requestId?: string;
@@ -129,6 +129,7 @@ export interface ProductSummary {
   readonly productType?: string;
   readonly tags: readonly string[];
   readonly variants: readonly ProductVariantSummary[];
+  readonly seo?: { readonly title?: string; readonly description?: string };
   readonly createdAt: string;
   readonly updatedAt: string;
 }
@@ -151,6 +152,7 @@ export interface CollectionSummary {
   readonly handle: string;
   readonly description?: string;
   readonly productsCount: number;
+  readonly seo?: { readonly title?: string; readonly description?: string };
   readonly updatedAt: string;
 }
 

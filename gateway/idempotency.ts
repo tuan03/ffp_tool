@@ -1,4 +1,6 @@
-export type IdempotencyState = "PENDING" | "COMPLETED";
+import { createHash } from "node:crypto";
+
+export type IdempotencyState = "PENDING" | "COMPLETED" | "RECONCILIATION_REQUIRED";
 
 export interface IdempotencyEntry {
   readonly state: IdempotencyState;
@@ -30,7 +32,8 @@ export function deterministicStringify(val: unknown): string {
 }
 
 export function calculateCanonicalHash(operation: string, payload: unknown): string {
-  return `${operation}:${deterministicStringify(payload)}`;
+  const canonical = `${operation}:${deterministicStringify(payload)}`;
+  return createHash("sha256").update(canonical).digest("hex");
 }
 
 export class InMemoryIdempotencyStore implements IdempotencyStore {

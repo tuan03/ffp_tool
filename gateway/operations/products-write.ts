@@ -4,8 +4,8 @@ import type { ProductSummary, ProductVariantSummary, StoreConfig } from "../type
 import { mapProductNode, type RawProductNode } from "./products";
 
 const PRODUCT_CREATE_MUTATION = `
-  mutation ProductCreate($input: ProductInput!) {
-    productCreate(input: $input) {
+  mutation ProductCreate($product: ProductCreateInput!) {
+    productCreate(product: $product) {
       product {
         id
         title
@@ -15,6 +15,10 @@ const PRODUCT_CREATE_MUTATION = `
         vendor
         productType
         tags
+        seo {
+          title
+          description
+        }
         createdAt
         updatedAt
         variants(first: 100) {
@@ -61,8 +65,8 @@ const PRODUCT_VARIANTS_BULK_CREATE_MUTATION = `
 `;
 
 const PRODUCT_UPDATE_MUTATION = `
-  mutation ProductUpdate($input: ProductInput!) {
-    productUpdate(input: $input) {
+  mutation ProductUpdate($product: ProductUpdateInput!) {
+    productUpdate(product: $product) {
       product {
         id
         title
@@ -72,6 +76,10 @@ const PRODUCT_UPDATE_MUTATION = `
         vendor
         productType
         tags
+        seo {
+          title
+          description
+        }
         createdAt
         updatedAt
         variants(first: 100) {
@@ -135,6 +143,34 @@ export async function executeProductsCreate(
         ? productInput.handle.trim()
         : title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 
+    const previewVariants: ProductVariantSummary[] =
+      Array.isArray(productInput.variants) && productInput.variants.length > 0
+        ? (productInput.variants as readonly Record<string, unknown>[]).map((v, i) => ({
+            id: `gid://shopify/ProductVariant/preview-var-${i + 1}`,
+            productId: "gid://shopify/Product/preview-new",
+            title:
+              typeof v.title === "string"
+                ? v.title
+                : Array.isArray(v.optionValues)
+                ? (v.optionValues as Record<string, unknown>[])
+                    .map((ov) => (typeof ov.name === "string" ? ov.name : typeof ov.value === "string" ? ov.value : ""))
+                    .filter(Boolean)
+                    .join(" / ") || "Default Title"
+                : "Default Title",
+            price: typeof v.price === "string" ? v.price : "0.00",
+            compareAtPrice: typeof v.compareAtPrice === "string" ? v.compareAtPrice : undefined,
+            sku: typeof v.sku === "string" ? v.sku : undefined,
+            barcode: typeof v.barcode === "string" ? v.barcode : undefined,
+          }))
+        : [
+            {
+              id: "gid://shopify/ProductVariant/preview-var-1",
+              productId: "gid://shopify/Product/preview-new",
+              title: "Default Title",
+              price: "0.00",
+            },
+          ];
+
     const previewProduct: ProductSummary = {
       id: "gid://shopify/Product/preview-new",
       title,
@@ -148,14 +184,14 @@ export async function executeProductsCreate(
       vendor: typeof productInput.vendor === "string" ? productInput.vendor : undefined,
       productType: typeof productInput.productType === "string" ? productInput.productType : undefined,
       tags: Array.isArray(productInput.tags) ? (productInput.tags as string[]) : [],
-      variants: [
-        {
-          id: "gid://shopify/ProductVariant/preview-var-1",
-          productId: "gid://shopify/Product/preview-new",
-          title: "Default Title",
-          price: "0.00",
-        },
-      ],
+      variants: previewVariants,
+      seo:
+        productInput.seo && typeof productInput.seo === "object"
+          ? {
+              title: typeof (productInput.seo as Record<string, unknown>).title === "string" ? (productInput.seo as Record<string, unknown>).title as string : undefined,
+              description: typeof (productInput.seo as Record<string, unknown>).description === "string" ? (productInput.seo as Record<string, unknown>).description as string : undefined,
+            }
+          : undefined,
       createdAt: now,
       updatedAt: now,
     };
@@ -182,6 +218,54 @@ export async function executeProductsCreate(
   if (Array.isArray(productInput.tags)) {
     input.tags = productInput.tags;
   }
+  if (productInput.seo && typeof productInput.seo === "object") {
+    const seoObj = productInput.seo as Record<string, unknown>;
+    const seo: Record<string, unknown> = {};
+    if (typeof seoObj.title === "string") seo.title = seoObj.title;
+    if (typeof seoObj.description === "string") seo.description = seoObj.description;
+    if (Object.keys(seo).length > 0) {
+      input.seo = seo;
+    }
+  }
+
+  if (Array.isArray(productInput.productOptions) && productInput.productOptions.length > 0) {
+    input.productOptions = (productInput.productOptions as readonly { name: string; values?: unknown[] }[]).map((opt) => ({
+      name: opt.name,
+      values: Array.isArray(opt.values)
+        ? opt.values.map((v) => (typeof v === "string" ? { name: v } : { name: (v as { name: string }).name }))
+        : [],
+    }));
+  } else if (Array.isArray(productInput.variants) && productInput.variants.length > 0) {
+    const optionMap = new Map<string, Set<string>>();
+    for (const v of productInput.variants as readonly Record<string, unknown>[]) {
+      if (Array.isArray(v.optionValues)) {
+        for (const ov of v.optionValues as readonly Record<string, unknown>[]) {
+          const optName =
+            typeof ov.optionName === "string" && ov.optionName.trim() !== ""
+              ? ov.optionName.trim()
+              : "Title";
+          const valName =
+            typeof ov.name === "string" && ov.name.trim() !== ""
+              ? ov.name.trim()
+              : typeof ov.value === "string" && ov.value.trim() !== ""
+              ? ov.value.trim()
+              : undefined;
+          if (valName) {
+            if (!optionMap.has(optName)) {
+              optionMap.set(optName, new Set());
+            }
+            optionMap.get(optName)!.add(valName);
+          }
+        }
+      }
+    }
+    if (optionMap.size > 0 && !(optionMap.size === 1 && optionMap.has("Title"))) {
+      input.productOptions = Array.from(optionMap.entries()).map(([name, valSet]) => ({
+        name,
+        values: Array.from(valSet).map((val) => ({ name: val })),
+      }));
+    }
+  }
 
   interface ProductCreateResponse {
     readonly productCreate: {
@@ -193,7 +277,7 @@ export async function executeProductsCreate(
   const raw = await client.query<ProductCreateResponse>(
     store,
     PRODUCT_CREATE_MUTATION,
-    { input },
+    { product: input },
     { isWrite: true, requestId },
   );
 
@@ -207,18 +291,32 @@ export async function executeProductsCreate(
 
   const product = mapProductNode(raw.productCreate.product);
 
-  // If public input contains multiple variants, create all variants via productVariantsBulkCreate
+  // If public input contains variants (>= 1), create variants via productVariantsBulkCreate
   // with strategy: REMOVE_STANDALONE_VARIANT so the initial default standalone variant is deleted
-  if (Array.isArray(productInput.variants) && productInput.variants.length > 1) {
+  if (Array.isArray(productInput.variants) && productInput.variants.length >= 1) {
     const allVariants = productInput.variants as readonly Record<string, unknown>[];
     const variantsInput = allVariants.map((v) => {
       const vInput: Record<string, unknown> = {};
-      if (v.title !== undefined) vInput.title = v.title;
       if (v.price !== undefined) vInput.price = v.price;
       if (v.compareAtPrice !== undefined) vInput.compareAtPrice = v.compareAtPrice;
       if (v.barcode !== undefined) vInput.barcode = v.barcode;
       if (v.sku !== undefined) vInput.inventoryItem = { sku: v.sku };
-      if (v.optionValues !== undefined) vInput.optionValues = v.optionValues;
+      if (Array.isArray(v.optionValues)) {
+        vInput.optionValues = (v.optionValues as readonly Record<string, unknown>[]).map((ov) => {
+          const optVal: Record<string, unknown> = {};
+          if (typeof ov.optionName === "string") optVal.optionName = ov.optionName;
+          if (typeof ov.name === "string") {
+            optVal.name = ov.name;
+          } else if (typeof ov.value === "string") {
+            optVal.name = ov.value;
+          }
+          if (typeof ov.optionId === "string") optVal.optionId = ov.optionId;
+          if (typeof ov.id === "string") optVal.id = ov.id;
+          return optVal;
+        });
+      } else if (typeof v.title === "string" && v.title.trim() !== "") {
+        vInput.optionValues = [{ optionName: "Title", name: v.title.trim() }];
+      }
       return vInput;
     });
 
@@ -321,6 +419,13 @@ export async function executeProductsUpdate(
       productType: typeof productPatch.productType === "string" ? productPatch.productType : undefined,
       tags: Array.isArray(productPatch.tags) ? (productPatch.tags as string[]) : [],
       variants: [],
+      seo:
+        productPatch.seo && typeof productPatch.seo === "object"
+          ? {
+              title: typeof (productPatch.seo as Record<string, unknown>).title === "string" ? (productPatch.seo as Record<string, unknown>).title as string : undefined,
+              description: typeof (productPatch.seo as Record<string, unknown>).description === "string" ? (productPatch.seo as Record<string, unknown>).description as string : undefined,
+            }
+          : undefined,
       createdAt: now,
       updatedAt: now,
     };
@@ -349,6 +454,15 @@ export async function executeProductsUpdate(
   if (Array.isArray(productPatch.tags)) {
     input.tags = productPatch.tags;
   }
+  if (productPatch.seo && typeof productPatch.seo === "object") {
+    const seoObj = productPatch.seo as Record<string, unknown>;
+    const seo: Record<string, unknown> = {};
+    if (typeof seoObj.title === "string") seo.title = seoObj.title;
+    if (typeof seoObj.description === "string") seo.description = seoObj.description;
+    if (Object.keys(seo).length > 0) {
+      input.seo = seo;
+    }
+  }
 
   interface ProductUpdateResponse {
     readonly productUpdate: {
@@ -360,7 +474,7 @@ export async function executeProductsUpdate(
   const raw = await client.query<ProductUpdateResponse>(
     store,
     PRODUCT_UPDATE_MUTATION,
-    { input },
+    { product: input },
     { isWrite: true, requestId },
   );
 

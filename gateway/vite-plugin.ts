@@ -47,6 +47,16 @@ export function shopifyGatewayDevPlugin(): Plugin {
       const shopDomain = env.GATEWAY_SHOP_DOMAIN || "capozen.myshopify.com";
 
       if (clientId && clientSecret) {
+        const proxyUrl = env.GATEWAY_PROXY_URL;
+        const proxy = proxyUrl
+          ? {
+              url: proxyUrl,
+              username: env.GATEWAY_PROXY_USERNAME || undefined,
+              password: env.GATEWAY_PROXY_PASSWORD || undefined,
+              failClosed: true,
+            }
+          : undefined;
+
         stores.push({
           storeId,
           shopDomain,
@@ -56,6 +66,29 @@ export function shopifyGatewayDevPlugin(): Plugin {
             clientId,
             clientSecret,
           },
+          proxy,
+        });
+      } else if (env.GATEWAY_STATIC_TOKEN || env.GATEWAY_ACCESS_TOKEN) {
+        const staticToken = env.GATEWAY_STATIC_TOKEN || env.GATEWAY_ACCESS_TOKEN;
+        const proxyUrl = env.GATEWAY_PROXY_URL;
+        const proxy = proxyUrl
+          ? {
+              url: proxyUrl,
+              username: env.GATEWAY_PROXY_USERNAME || undefined,
+              password: env.GATEWAY_PROXY_PASSWORD || undefined,
+              failClosed: true,
+            }
+          : undefined;
+
+        stores.push({
+          storeId,
+          shopDomain,
+          apiVersion: "2026-07",
+          auth: {
+            type: "static",
+            staticToken,
+          },
+          proxy,
         });
       }
 
