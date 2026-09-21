@@ -1,0 +1,477 @@
+import type {
+  ShopifyApiInput,
+  ShopifyApiResponse,
+  ShopifyCollection,
+  ShopifyCollectionsCreateInput,
+  ShopifyCollectionsCreateResponse,
+  ShopifyCollectionsDeleteInput,
+  ShopifyCollectionsDeleteResponse,
+  ShopifyCollectionsGetInput,
+  ShopifyCollectionsGetResponse,
+  ShopifyCollectionsListInput,
+  ShopifyCollectionsListResponse,
+  ShopifyCollectionsUpdateInput,
+  ShopifyCollectionsUpdateMembershipInput,
+  ShopifyCollectionsUpdateMembershipResponse,
+  ShopifyCollectionsUpdateResponse,
+  ShopifyConnectionTestInput,
+  ShopifyConnectionTestResponse,
+  ShopifyPageInfo,
+  ShopifyProduct,
+  ShopifyProductVariant,
+  ShopifyProductsBulkUpdateInput,
+  ShopifyProductsBulkUpdateResponse,
+  ShopifyProductsCreateInput,
+  ShopifyProductsCreateResponse,
+  ShopifyProductsDeleteInput,
+  ShopifyProductsDeleteResponse,
+  ShopifyProductsGetInput,
+  ShopifyProductsGetResponse,
+  ShopifyProductsListInput,
+  ShopifyProductsListResponse,
+  ShopifyProductsUpdateInput,
+  ShopifyProductsUpdateResponse,
+  ShopifyVariantsBulkUpdateInput,
+  ShopifyVariantsBulkUpdateResponse,
+  ShopifyVariantsUpdateInput,
+  ShopifyVariantsUpdateResponse,
+} from "../types";
+import { ShopifyApiError } from "../types";
+import {
+  shopifyMockCollections,
+  shopifyMockConnection,
+  shopifyMockProducts,
+} from "./data";
+
+function cloneVariant(variant: ShopifyProductVariant): ShopifyProductVariant {
+  return { ...variant };
+}
+
+function cloneProduct(product: ShopifyProduct): ShopifyProduct {
+  return {
+    ...product,
+    tags: [...product.tags],
+    variants: product.variants.map(cloneVariant),
+  };
+}
+
+function cloneCollection(collection: ShopifyCollection): ShopifyCollection {
+  return { ...collection };
+}
+
+function encodeCursor(index: number): string {
+  if (typeof btoa === "function") {
+    return btoa(`cursor:${index}`);
+  }
+  return `cursor-${index}`;
+}
+
+function decodeCursor(cursor?: string): number | null {
+  if (!cursor) {
+    return null;
+  }
+  if (cursor.startsWith("cursor-")) {
+    const parsed = Number.parseInt(cursor.slice(7), 10);
+    return Number.isNaN(parsed) ? null : parsed;
+  }
+  if (typeof atob === "function") {
+    try {
+      const decoded = atob(cursor);
+      if (decoded.startsWith("cursor:")) {
+        const parsed = Number.parseInt(decoded.slice(7), 10);
+        return Number.isNaN(parsed) ? null : parsed;
+      }
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+function paginateItems<T>(
+  items: readonly T[],
+  limitParam?: number,
+  cursorParam?: string,
+): { pageItems: T[]; pageInfo: ShopifyPageInfo } {
+  const limit = limitParam ?? 50;
+  if (limit <= 0) {
+    throw new ShopifyApiError("Limit must be greater than 0", "SHOPIFY_USER_ERROR");
+  }
+
+  const decoded = decodeCursor(cursorParam);
+  const startIndex = decoded !== null ? decoded + 1 : 0;
+  const pageItems = items.slice(startIndex, startIndex + limit);
+  const hasNextPage = startIndex + pageItems.length < items.length;
+  const hasPreviousPage = startIndex > 0;
+
+  return {
+    pageItems,
+    pageInfo: {
+      hasNextPage,
+      hasPreviousPage,
+      startCursor: pageItems.length > 0 ? encodeCursor(startIndex) : undefined,
+      endCursor: pageItems.length > 0 ? encodeCursor(startIndex + pageItems.length - 1) : undefined,
+    },
+  };
+}
+
+export async function runMockModuleApi(input: ShopifyConnectionTestInput): Promise<ShopifyConnectionTestResponse>;
+export async function runMockModuleApi(input: ShopifyProductsListInput): Promise<ShopifyProductsListResponse>;
+export async function runMockModuleApi(input: ShopifyProductsGetInput): Promise<ShopifyProductsGetResponse>;
+export async function runMockModuleApi(input: ShopifyProductsCreateInput): Promise<ShopifyProductsCreateResponse>;
+export async function runMockModuleApi(input: ShopifyProductsUpdateInput): Promise<ShopifyProductsUpdateResponse>;
+export async function runMockModuleApi(input: ShopifyProductsBulkUpdateInput): Promise<ShopifyProductsBulkUpdateResponse>;
+export async function runMockModuleApi(input: ShopifyProductsDeleteInput): Promise<ShopifyProductsDeleteResponse>;
+export async function runMockModuleApi(input: ShopifyVariantsUpdateInput): Promise<ShopifyVariantsUpdateResponse>;
+export async function runMockModuleApi(input: ShopifyVariantsBulkUpdateInput): Promise<ShopifyVariantsBulkUpdateResponse>;
+export async function runMockModuleApi(input: ShopifyCollectionsListInput): Promise<ShopifyCollectionsListResponse>;
+export async function runMockModuleApi(input: ShopifyCollectionsGetInput): Promise<ShopifyCollectionsGetResponse>;
+export async function runMockModuleApi(input: ShopifyCollectionsCreateInput): Promise<ShopifyCollectionsCreateResponse>;
+export async function runMockModuleApi(input: ShopifyCollectionsUpdateInput): Promise<ShopifyCollectionsUpdateResponse>;
+export async function runMockModuleApi(input: ShopifyCollectionsDeleteInput): Promise<ShopifyCollectionsDeleteResponse>;
+export async function runMockModuleApi(input: ShopifyCollectionsUpdateMembershipInput): Promise<ShopifyCollectionsUpdateMembershipResponse>;
+export async function runMockModuleApi(input: ShopifyApiInput): Promise<ShopifyApiResponse>;
+export async function runMockModuleApi(input: ShopifyApiInput): Promise<ShopifyApiResponse> {
+  if (!input || typeof input !== "object") {
+    throw new ShopifyApiError("Input must be a valid object", "SHOPIFY_USER_ERROR");
+  }
+
+  if (!input.storeId || input.storeId.trim() === "") {
+    throw new ShopifyApiError("Store ID is required", "SHOPIFY_USER_ERROR");
+  }
+
+  if (input.storeId === "simulate-user-error") {
+    throw new ShopifyApiError("Simulated Shopify user error", "SHOPIFY_USER_ERROR");
+  }
+
+  if (input.storeId === "simulate-auth-failure") {
+    throw new ShopifyApiError("Simulated Shopify authentication failure", "SHOPIFY_AUTH_FAILED");
+  }
+
+  if (input.storeId === "simulate-throttled") {
+    throw new ShopifyApiError("Simulated Shopify rate limit throttling", "SHOPIFY_THROTTLED");
+  }
+
+  if (input.storeId === "simulate-network-error") {
+    throw new ShopifyApiError("Simulated network connection error", "SHOPIFY_NETWORK_ERROR");
+  }
+
+  if (input.storeId === "simulate-unknown-state") {
+    throw new ShopifyApiError("Simulated unknown write state", "SHOPIFY_UNKNOWN_WRITE_STATE");
+  }
+
+  if (!input.payload || typeof input.payload !== "object") {
+    throw new ShopifyApiError("Payload is required", "SHOPIFY_USER_ERROR");
+  }
+
+  switch (input.operation) {
+    case "connection.test": {
+      return {
+        storeId: input.storeId,
+        operation: "connection.test",
+        success: true,
+        data: { ...shopifyMockConnection },
+      };
+    }
+
+    case "products.list": {
+      let filtered = shopifyMockProducts.map(cloneProduct);
+
+      if (input.payload.status) {
+        filtered = filtered.filter((product) => product.status === input.payload.status);
+      }
+
+      if (input.payload.query) {
+        const queryLower = input.payload.query.toLowerCase();
+        filtered = filtered.filter((product) =>
+          product.title.toLowerCase().includes(queryLower) ||
+          product.handle.toLowerCase().includes(queryLower),
+        );
+      }
+
+      const { pageItems, pageInfo } = paginateItems(filtered, input.payload.limit, input.payload.cursor);
+
+      return {
+        storeId: input.storeId,
+        operation: "products.list",
+        success: true,
+        data: {
+          products: pageItems,
+          pageInfo,
+        },
+      };
+    }
+
+    case "products.get": {
+      if (!input.payload.id || input.payload.id.trim() === "") {
+        throw new ShopifyApiError("Product ID is required", "SHOPIFY_USER_ERROR");
+      }
+      const found = shopifyMockProducts.find((p) => p.id === input.payload.id);
+      return {
+        storeId: input.storeId,
+        operation: "products.get",
+        success: true,
+        data: {
+          product: found ? cloneProduct(found) : null,
+        },
+      };
+    }
+
+    case "products.create": {
+      if (!input.payload.product?.title || input.payload.product.title.trim() === "") {
+        throw new ShopifyApiError("Product title is required", "SHOPIFY_USER_ERROR");
+      }
+      const now = new Date().toISOString();
+      const newProduct: ShopifyProduct = {
+        id: `gid://shopify/Product/mock-created-${shopifyMockProducts.length + 1}`,
+        title: input.payload.product.title,
+        handle: input.payload.product.handle ?? input.payload.product.title.toLowerCase().replace(/\s+/g, "-"),
+        descriptionHtml: input.payload.product.descriptionHtml,
+        status: input.payload.product.status ?? "DRAFT",
+        vendor: input.payload.product.vendor,
+        productType: input.payload.product.productType,
+        tags: input.payload.product.tags ? [...input.payload.product.tags] : [],
+        variants: [
+          {
+            id: `gid://shopify/ProductVariant/mock-var-${shopifyMockProducts.length + 1}`,
+            productId: `gid://shopify/Product/mock-created-${shopifyMockProducts.length + 1}`,
+            title: "Default Title",
+            price: "19.99",
+          },
+        ],
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      return {
+        storeId: input.storeId,
+        operation: "products.create",
+        success: true,
+        data: { product: newProduct },
+      };
+    }
+
+    case "products.update": {
+      if (!input.payload.id || input.payload.id.trim() === "") {
+        throw new ShopifyApiError("Product ID is required", "SHOPIFY_USER_ERROR");
+      }
+      const existing = shopifyMockProducts.find((p) => p.id === input.payload.id);
+      const updatedProduct: ShopifyProduct = {
+        id: input.payload.id,
+        title: input.payload.product.title ?? existing?.title ?? "Updated Product",
+        handle: input.payload.product.handle ?? existing?.handle ?? "updated-product",
+        descriptionHtml: input.payload.product.descriptionHtml ?? existing?.descriptionHtml,
+        status: input.payload.product.status ?? existing?.status ?? "ACTIVE",
+        vendor: input.payload.product.vendor ?? existing?.vendor,
+        productType: input.payload.product.productType ?? existing?.productType,
+        tags: input.payload.product.tags ? [...input.payload.product.tags] : (existing?.tags ? [...existing.tags] : []),
+        variants: existing ? existing.variants.map(cloneVariant) : [],
+        createdAt: existing?.createdAt ?? new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+
+      return {
+        storeId: input.storeId,
+        operation: "products.update",
+        success: true,
+        data: { product: updatedProduct },
+      };
+    }
+
+    case "products.bulkUpdate": {
+      if (!input.payload.products || !Array.isArray(input.payload.products)) {
+        throw new ShopifyApiError("Products array is required", "SHOPIFY_USER_ERROR");
+      }
+      return {
+        storeId: input.storeId,
+        operation: "products.bulkUpdate",
+        success: true,
+        data: {
+          updatedProductIds: input.payload.products.map((item) => item.id),
+          count: input.payload.products.length,
+        },
+      };
+    }
+
+    case "products.delete": {
+      if (!input.payload.id || input.payload.id.trim() === "") {
+        throw new ShopifyApiError("Product ID is required", "SHOPIFY_USER_ERROR");
+      }
+      return {
+        storeId: input.storeId,
+        operation: "products.delete",
+        success: true,
+        data: {
+          deletedProductId: input.payload.id,
+        },
+      };
+    }
+
+    case "variants.update": {
+      if (!input.payload.id || input.payload.id.trim() === "") {
+        throw new ShopifyApiError("Variant ID is required", "SHOPIFY_USER_ERROR");
+      }
+
+      let existingVariant: ShopifyProductVariant | undefined;
+      for (const prod of shopifyMockProducts) {
+        const found = prod.variants.find((v) => v.id === input.payload.id);
+        if (found) {
+          existingVariant = found;
+          break;
+        }
+      }
+
+      const updatedVariant: ShopifyProductVariant = {
+        id: input.payload.id,
+        productId: existingVariant?.productId ?? "gid://shopify/Product/1001",
+        title: input.payload.variant.title ?? existingVariant?.title ?? "Updated Variant Title",
+        price: input.payload.variant.price ?? existingVariant?.price ?? "29.99",
+        sku: input.payload.variant.sku ?? existingVariant?.sku,
+        barcode: input.payload.variant.barcode ?? existingVariant?.barcode,
+        inventoryQuantity: input.payload.variant.inventoryQuantity ?? existingVariant?.inventoryQuantity,
+      };
+
+      return {
+        storeId: input.storeId,
+        operation: "variants.update",
+        success: true,
+        data: { variant: updatedVariant },
+      };
+    }
+
+    case "variants.bulkUpdate": {
+      if (!input.payload.variants || !Array.isArray(input.payload.variants)) {
+        throw new ShopifyApiError("Variants array is required", "SHOPIFY_USER_ERROR");
+      }
+      return {
+        storeId: input.storeId,
+        operation: "variants.bulkUpdate",
+        success: true,
+        data: {
+          updatedVariantIds: input.payload.variants.map((item) => item.id),
+          count: input.payload.variants.length,
+        },
+      };
+    }
+
+    case "collections.list": {
+      let filtered = shopifyMockCollections.map(cloneCollection);
+
+      if (input.payload.query) {
+        const queryLower = input.payload.query.toLowerCase();
+        filtered = filtered.filter((collection) =>
+          collection.title.toLowerCase().includes(queryLower) ||
+          collection.handle.toLowerCase().includes(queryLower),
+        );
+      }
+
+      const { pageItems, pageInfo } = paginateItems(filtered, input.payload.limit, input.payload.cursor);
+
+      return {
+        storeId: input.storeId,
+        operation: "collections.list",
+        success: true,
+        data: {
+          collections: pageItems,
+          pageInfo,
+        },
+      };
+    }
+
+    case "collections.get": {
+      if (!input.payload.id || input.payload.id.trim() === "") {
+        throw new ShopifyApiError("Collection ID is required", "SHOPIFY_USER_ERROR");
+      }
+      const found = shopifyMockCollections.find((c) => c.id === input.payload.id);
+      return {
+        storeId: input.storeId,
+        operation: "collections.get",
+        success: true,
+        data: {
+          collection: found ? cloneCollection(found) : null,
+        },
+      };
+    }
+
+    case "collections.create": {
+      if (!input.payload.collection?.title || input.payload.collection.title.trim() === "") {
+        throw new ShopifyApiError("Collection title is required", "SHOPIFY_USER_ERROR");
+      }
+      const newCollection: ShopifyCollection = {
+        id: `gid://shopify/Collection/mock-created-${shopifyMockCollections.length + 1}`,
+        title: input.payload.collection.title,
+        handle: input.payload.collection.handle ?? input.payload.collection.title.toLowerCase().replace(/\s+/g, "-"),
+        description: input.payload.collection.description,
+        productsCount: 0,
+        updatedAt: new Date().toISOString(),
+      };
+
+      return {
+        storeId: input.storeId,
+        operation: "collections.create",
+        success: true,
+        data: { collection: newCollection },
+      };
+    }
+
+    case "collections.update": {
+      if (!input.payload.id || input.payload.id.trim() === "") {
+        throw new ShopifyApiError("Collection ID is required", "SHOPIFY_USER_ERROR");
+      }
+      const existing = shopifyMockCollections.find((c) => c.id === input.payload.id);
+      const updatedCollection: ShopifyCollection = {
+        id: input.payload.id,
+        title: input.payload.collection.title ?? existing?.title ?? "Updated Collection",
+        handle: input.payload.collection.handle ?? existing?.handle ?? "updated-collection",
+        description: input.payload.collection.description ?? existing?.description,
+        productsCount: existing?.productsCount ?? 0,
+        updatedAt: new Date().toISOString(),
+      };
+
+      return {
+        storeId: input.storeId,
+        operation: "collections.update",
+        success: true,
+        data: { collection: updatedCollection },
+      };
+    }
+
+    case "collections.delete": {
+      if (!input.payload.id || input.payload.id.trim() === "") {
+        throw new ShopifyApiError("Collection ID is required", "SHOPIFY_USER_ERROR");
+      }
+      return {
+        storeId: input.storeId,
+        operation: "collections.delete",
+        success: true,
+        data: {
+          deletedCollectionId: input.payload.id,
+        },
+      };
+    }
+
+    case "collections.updateMembership": {
+      if (!input.payload.collectionId || input.payload.collectionId.trim() === "") {
+        throw new ShopifyApiError("Collection ID is required", "SHOPIFY_USER_ERROR");
+      }
+      return {
+        storeId: input.storeId,
+        operation: "collections.updateMembership",
+        success: true,
+        data: {
+          collectionId: input.payload.collectionId,
+          addedCount: input.payload.productIdsToAdd?.length ?? 0,
+          removedCount: input.payload.productIdsToRemove?.length ?? 0,
+        },
+      };
+    }
+
+    default: {
+      const exhaustiveCheck: never = input;
+      throw new ShopifyApiError(
+        `Unsupported Shopify operation: ${(exhaustiveCheck as ShopifyApiInput).operation}`,
+        "SHOPIFY_USER_ERROR",
+      );
+    }
+  }
+}
