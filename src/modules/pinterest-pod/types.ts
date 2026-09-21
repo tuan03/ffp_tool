@@ -54,6 +54,10 @@ export interface PodCandidate {
   readonly trend?: string;
   readonly pin_url: string;
   readonly image_url: string;
+  readonly thumbnail_url?: string;
+  readonly local_filename?: string;
+  readonly local_path?: string;
+  readonly motifs?: readonly string[];
   readonly image_score: number;
   readonly printability_score: number;
   readonly flat_artwork_score: number;
@@ -117,6 +121,13 @@ export interface PodBackendDeliverables {
   readonly perspective_mockups?: readonly PodAssetInfo[];
   readonly comparison_rows?: readonly PodComparisonRow[];
   readonly comparison_matrix?: readonly PodComparisonRow[];
+  readonly report_url?: string;
+  readonly has_report?: boolean;
+  readonly rug_shape?: string;
+  readonly summary_metrics?: PodSummaryMetrics;
+  readonly print_spec?: Record<string, unknown>;
+  readonly storefront_spec?: Record<string, unknown>;
+  readonly standard_badge?: string;
 }
 
 /** Pinterest authentication status response */
@@ -136,7 +147,11 @@ export interface PinterestLaunchLoginPayload {
 export interface PinterestLaunchLoginResponse {
   readonly ok: boolean;
   readonly status_text: string;
+  readonly message?: string;
+  readonly status?: string;
   readonly logged_in?: boolean;
+  readonly pid?: number;
+  readonly error?: string;
 }
 
 /** Stage 1: Input parameters for Pinterest crawl & discovery */
@@ -164,6 +179,7 @@ export interface PinterestProductionInput {
   readonly jobId: string;
   readonly selected_candidates: readonly string[];
   readonly product?: PodProductType;
+  readonly niche?: string;
 }
 
 /** Stage 2: Output returned when production render is complete */
@@ -209,10 +225,23 @@ export interface PodJobStatusResponse {
   readonly stepper?: PodJobStepper;
   readonly logs?: readonly string[];
   readonly candidates?: readonly PodCandidate[];
+  readonly selected_candidates?: readonly string[];
   readonly summaryMetrics?: PodSummaryMetrics;
   readonly summary_metrics?: PodSummaryMetrics;
   readonly deliverables?: PodBackendDeliverables;
+  readonly reportUrl?: string;
+  readonly report_url?: string;
+  readonly rugShape?: string;
+  readonly rugShapeDecision?: Record<string, unknown>;
   readonly error?: string;
+  readonly message?: string;
+}
+
+/** Response structure when cancelling a POD job */
+export interface PodCancelJobResponse {
+  readonly ok: boolean;
+  readonly jobId?: string;
+  readonly status?: string;
   readonly message?: string;
 }
 
@@ -221,6 +250,8 @@ export interface PodPollOptions {
   readonly intervalMs?: number;
   readonly timeoutMs?: number;
   readonly onProgress?: (status: PodJobStatusResponse) => void;
+  readonly signal?: AbortSignal;
+  readonly baseUrl?: string;
 }
 
 /** Factory specification definition for print production */

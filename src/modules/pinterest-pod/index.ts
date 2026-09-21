@@ -26,6 +26,7 @@ export type { PinterestPodModuleRunner } from "./runtime";
 export {
   buildSeoDeliverables,
   cancelJob,
+  getAssetUrl,
   getAuthStatus,
   getJobStatus,
   launchLogin,
@@ -49,6 +50,7 @@ export type {
   PinterestProductionOutput,
   PodAssetInfo,
   PodBackendDeliverables,
+  PodCancelJobResponse,
   PodCandidate,
   PodComparisonRow,
   PodComposedMockupSpec,

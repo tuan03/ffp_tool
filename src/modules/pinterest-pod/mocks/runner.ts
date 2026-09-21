@@ -1,3 +1,4 @@
+import { AppError } from "../../../shared/errors";
 import type {
   PinterestAuthStatus,
   PinterestDiscoveryInput,
@@ -42,6 +43,10 @@ export async function runMockDiscovery(
   input: PinterestDiscoveryInput,
   options?: PodPollOptions,
 ): Promise<PinterestDiscoveryOutput> {
+  if (options?.signal?.aborted) {
+    throw new AppError("Polling Pinterest POD job was aborted", "PINTEREST_POD_JOB_ABORTED");
+  }
+
   const targetPoolSize = input.candidatePoolSize ?? 15;
   const slicedCandidates = cloneCandidates(mock15Candidates.slice(0, targetPoolSize));
   const effectiveJobId = `job_pod_${Date.now().toString(36)}`;
@@ -86,27 +91,88 @@ export async function runMockProduction(
   input: PinterestProductionInput,
   options?: PodPollOptions,
 ): Promise<PinterestProductionOutput> {
+  if (options?.signal?.aborted) {
+    throw new AppError("Polling Pinterest POD job was aborted", "PINTEREST_POD_JOB_ABORTED");
+  }
+
   const productType = input.product ?? "rug";
   const printStandard = FACTORY_PRINT_STANDARDS[productType];
-  const selectedIds = new Set(input.selected_candidates);
+  const selectedIds = input.selected_candidates ?? [];
 
-  const matchedItems = mockSeoDeliverables.items.filter((item) =>
-    selectedIds.size === 0 ? true : selectedIds.has(item.sourceCandidateId),
-  );
+  const candidateLookup = new Map<string, PodCandidate>();
+  for (const c of mock15Candidates) {
+    candidateLookup.set(c.id, c);
+  }
+  const seoItemsLookup = new Map<string, PodDeliverableItem>();
+  for (const it of mockSeoDeliverables.items) {
+    seoItemsLookup.set(it.sourceCandidateId, it);
+  }
 
-  const effectiveItems = (matchedItems.length > 0 ? matchedItems : mockSeoDeliverables.items).map(
-    (item) => ({
-      ...item,
+  const effectiveItems: PodDeliverableItem[] = (
+    selectedIds.length > 0 ? selectedIds : ["cand_pin_101", "cand_pin_102", "cand_pin_105"]
+  ).map((candId, idx) => {
+    const existingSeo = seoItemsLookup.get(candId);
+    if (existingSeo) {
+      return {
+        ...existingSeo,
+        productType,
+        printMaster: {
+          ...existingSeo.printMaster,
+          widthPx: printStandard.widthPx,
+          heightPx: printStandard.heightPx,
+          label: printStandard.label,
+          badge: printStandard.badge,
+        },
+      };
+    }
+
+    const cand = candidateLookup.get(candId);
+    const designId = `design_${productType}_${100 + idx + 1}`;
+    const originalPinTitle = cand?.title ?? `Design #${idx + 1}`;
+    const trendKeywords = cand?.trend
+      ? [cand.trend, cand.query ?? "", `${productType} aesthetic`].filter(Boolean)
+      : [`${productType} aesthetic`, "vintage trend", "lifestyle home"];
+
+    return {
+      designId,
+      sourceCandidateId: candId,
       productType,
+      originalPinTitle,
+      trendKeywords,
       printMaster: {
-        ...item.printMaster,
+        cmykUrl: `/api/pinterest-pod/assets/${input.jobId}/${designId}_cmyk_300dpi.jpg`,
+        rgbUrl: `/api/pinterest-pod/assets/${input.jobId}/${designId}_rgb_4k.png`,
+        localFilePath: `temp/pinterest_pod/${input.jobId}/${designId}_cmyk_300dpi.jpg`,
         widthPx: printStandard.widthPx,
         heightPx: printStandard.heightPx,
+        dpi: 300,
+        colorMode: "CMYK",
         label: printStandard.label,
         badge: printStandard.badge,
       },
-    }),
-  );
+      cutoutProduct: {
+        transparentUrl: `/api/pinterest-pod/assets/${input.jobId}/${designId}_cutout.png`,
+        whiteBgUrl: `/api/pinterest-pod/assets/${input.jobId}/${designId}_white.jpg`,
+        localFilePath: `temp/pinterest_pod/${input.jobId}/${designId}_white.jpg`,
+      },
+      composedMockups: [
+        {
+          referenceImageId: "ref_room_01",
+          mockupUrl: `/api/pinterest-pod/assets/${input.jobId}/mockup_room_01_${designId}.jpg`,
+          localFilePath: `temp/pinterest_pod/${input.jobId}/mockup_room_01_${designId}.jpg`,
+          detectedSceneType: "living_room",
+          detectedSceneDescription: "Modern spacious living room with natural sunlight and couch",
+        },
+        {
+          referenceImageId: "ref_room_02",
+          mockupUrl: `/api/pinterest-pod/assets/${input.jobId}/mockup_room_02_${designId}.jpg`,
+          localFilePath: `temp/pinterest_pod/${input.jobId}/mockup_room_02_${designId}.jpg`,
+          detectedSceneType: "bedroom",
+          detectedSceneDescription: "Cozy minimalist bedroom with hardwood flooring and bedding",
+        },
+      ],
+    };
+  });
 
   const seoDeliverables: PinterestPodDeliverables = {
     workflowId: input.jobId,

@@ -4,13 +4,16 @@ import test from "node:test";
 import { AppError } from "../../../shared/errors";
 import {
   buildSeoDeliverables,
+  cancelJob,
   cancelMockJob,
   FACTORY_PRINT_STANDARDS,
+  getAssetUrl,
   getDiscoveryRunner,
   getMockAuthStatus,
   getPinterestAuthRunner,
   getPinterestPodRunner,
   getProductionRunner,
+  launchLogin,
   launchMockLogin,
   mock15Candidates,
   mockPinterestAuthStatus,
@@ -21,6 +24,7 @@ import {
   runMockDiscovery,
   runMockProduction,
   runProduction,
+  startProductionJob,
   STOREFRONT_DISPLAY_STANDARD,
 } from "..";
 import type { PodJobStatusResponse } from "../types";
@@ -334,6 +338,154 @@ test("Service polling handles timeout by throwing AppError with PINTEREST_POD_PO
         return true;
       },
     );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("getAssetUrl constructs relative asset URLs conforming to contract", () => {
+  assert.equal(getAssetUrl("job_123", "cmyk.jpg"), "/api/pinterest-pod/assets/job_123/cmyk.jpg");
+  assert.equal(getAssetUrl("job 456", "room 01.jpg"), "/api/pinterest-pod/assets/job%20456/room%2001.jpg");
+});
+
+test("buildSeoDeliverables matches selected candidates accurately rather than relying on global candidate index", () => {
+  const status: PodJobStatusResponse = {
+    ok: true,
+    jobId: "job_wf_select",
+    status: "completed",
+    candidates: mock15Candidates,
+    deliverables: {
+      comparison_rows: [
+        {
+          index: 1,
+          product_label: "Design #1",
+          source_url: "/api/pinterest-pod/assets/job_wf_select/source_105.jpg",
+          cutout_url: "/api/pinterest-pod/assets/job_wf_select/design_105_cutout.png",
+          cutout_white_url: "/api/pinterest-pod/assets/job_wf_select/design_105_white.jpg",
+          final_print_url: "/api/pinterest-pod/assets/job_wf_select/design_105_cmyk_300dpi.jpg",
+          ai_background_urls: ["/api/pinterest-pod/assets/job_wf_select/mockup_room_01_design_105.jpg"],
+        },
+      ],
+    },
+  };
+
+  // User selected cand_pin_105 (index 4 in mock15Candidates)
+  const seo = buildSeoDeliverables(status, "rug", ["cand_pin_105"]);
+  assert.equal(seo.items.length, 1);
+  assert.equal(seo.items[0].sourceCandidateId, "cand_pin_105");
+  assert.equal(seo.items[0].originalPinTitle, mock15Candidates[4].title);
+  assert.ok(seo.items[0].printMaster.localFilePath?.includes("design_105_cmyk_300dpi.jpg"));
+  assert.ok(seo.items[0].cutoutProduct.localFilePath?.includes("design_105_white.jpg"));
+  assert.ok(seo.items[0].composedMockups[0].localFilePath?.includes("mockup_room_01_design_105.jpg"));
+});
+
+test("Stage 2 Mock Production supports arbitrary candidate selection from candidate pool", async () => {
+  const result = await runMockProduction({
+    jobId: "job_custom_cand34",
+    selected_candidates: ["cand_pin_103", "cand_pin_104"],
+    product: "rug",
+  });
+
+  assert.equal(result.seoDeliverables.items.length, 2);
+  assert.equal(result.seoDeliverables.items[0].sourceCandidateId, "cand_pin_103");
+  assert.equal(result.seoDeliverables.items[1].sourceCandidateId, "cand_pin_104");
+  assert.equal(result.seoDeliverables.items[0].originalPinTitle, mock15Candidates[2].title);
+  assert.equal(result.seoDeliverables.items[1].originalPinTitle, mock15Candidates[3].title);
+});
+
+test("Service polling aborts immediately when signal is triggered", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    new Response(
+      JSON.stringify({ ok: true, jobId: "job_abort_test", status: "running" }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(), 20);
+
+  try {
+    await assert.rejects(
+      async () => {
+        await pollDiscoveryJob("job_abort_test", {
+          intervalMs: 100,
+          timeoutMs: 5000,
+          signal: controller.signal,
+        });
+      },
+      (error: unknown) => {
+        assert.ok(error instanceof AppError);
+        assert.equal(error.code, "PINTEREST_POD_JOB_ABORTED");
+        return true;
+      },
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("startProductionJob sends product and returns production jobId", async () => {
+  const originalFetch = globalThis.fetch;
+  let capturedBody = "";
+  globalThis.fetch = async (_url, init) => {
+    capturedBody = (init?.body as string) || "";
+    return new Response(
+      JSON.stringify({ ok: true, jobId: "job_prod_new_99", status: "running" }),
+      { status: 201, headers: { "Content-Type": "application/json" } },
+    );
+  };
+
+  try {
+    const res = await startProductionJob({
+      jobId: "job_stage1_12",
+      selected_candidates: ["cand_pin_101"],
+      product: "blanket",
+    });
+
+    assert.equal(res.ok, true);
+    assert.equal(res.jobId, "job_prod_new_99");
+    assert.equal(res.status, "running");
+    assert.ok(capturedBody.includes('"product":"blanket"'));
+    assert.ok(capturedBody.includes('"jobId":"job_stage1_12"'));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("launchLogin normalizes response with fallback status_text and message", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    new Response(
+      JSON.stringify({ ok: true, status: "launched", pid: 1234, message: "Trình duyệt đã mở" }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+
+  try {
+    const res = await launchLogin({ timeout: 300 });
+    assert.equal(res.ok, true);
+    assert.equal(res.status_text, "Trình duyệt đã mở");
+    assert.equal(res.pid, 1234);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("cancelJob calls cancel endpoint and parses response", async () => {
+  const originalFetch = globalThis.fetch;
+  let requestedUrl = "";
+  globalThis.fetch = async (url) => {
+    requestedUrl = String(url);
+    return new Response(
+      JSON.stringify({ ok: true, jobId: "job_to_cancel", status: "cancelled" }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  };
+
+  try {
+    const res = await cancelJob("job_to_cancel");
+    assert.equal(res.ok, true);
+    assert.equal(res.status, "cancelled");
+    assert.ok(requestedUrl.includes("/api/pinterest-pod/jobs/job_to_cancel/cancel"));
   } finally {
     globalThis.fetch = originalFetch;
   }
