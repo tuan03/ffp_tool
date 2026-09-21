@@ -216,6 +216,18 @@ export async function runMockModuleApi(input: ShopifyApiInput): Promise<ShopifyA
     throw new ShopifyApiError("Simulated unknown write state", "SHOPIFY_UNKNOWN_WRITE_STATE");
   }
 
+  if (input.storeId === "simulate-partial-write") {
+    throw new ShopifyApiError(
+      "Simulated partial write",
+      "SHOPIFY_PARTIAL_WRITE",
+      undefined,
+      undefined,
+      false,
+      { createdProductId: "gid://shopify/Product/simulated-partial" },
+      true,
+    );
+  }
+
   switch (input.operation) {
     case "connection.test": {
       return {
@@ -227,7 +239,10 @@ export async function runMockModuleApi(input: ShopifyApiInput): Promise<ShopifyA
     }
 
     case "products.list": {
-      let filtered = shopifyMockProducts.map(cloneProduct);
+      let filtered = shopifyMockProducts.map((p) => ({
+        ...cloneProduct(p),
+        variants: [],
+      }));
 
       if (input.payload.status) {
         filtered = filtered.filter((product) => product.status === input.payload.status);

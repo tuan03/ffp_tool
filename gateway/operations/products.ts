@@ -41,15 +41,6 @@ const PRODUCTS_LIST_QUERY = `
           }
           createdAt
           updatedAt
-          variants(first: 10) {
-            edges {
-              node {
-                id
-                title
-                price
-              }
-            }
-          }
         }
       }
     }

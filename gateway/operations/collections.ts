@@ -51,11 +51,27 @@ const COLLECTIONS_GET_QUERY = `
   }
 `;
 
+function stripHtml(html: string): string {
+  return html
+    .replace(/<br\s*\/?>/gi, " ")
+    .replace(/<\/(p|div|li|h[1-6])>/gi, " ")
+    .replace(/<[^>]*>?/gm, "")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;|&apos;/g, "'")
+    .replace(/&nbsp;/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 export interface RawCollectionNode {
   readonly id: string;
   readonly title: string;
   readonly handle: string;
   readonly description?: string | null;
+  readonly descriptionHtml?: string | null;
   readonly seo?: { readonly title?: string | null; readonly description?: string | null } | null;
   readonly productsCount?: { readonly count?: number } | number | null;
   readonly updatedAt: string;
@@ -69,11 +85,18 @@ export function mapCollectionNode(node: RawCollectionNode): CollectionSummary {
     count = node.productsCount.count;
   }
 
+  const mappedDescription =
+    typeof node.description === "string" && node.description.trim() !== ""
+      ? node.description
+      : typeof node.descriptionHtml === "string" && node.descriptionHtml.trim() !== ""
+      ? stripHtml(node.descriptionHtml)
+      : undefined;
+
   return {
     id: node.id,
     title: node.title,
     handle: node.handle,
-    description: node.description ?? undefined,
+    description: mappedDescription,
     productsCount: count,
     seo:
       node.seo && (node.seo.title != null || node.seo.description != null)

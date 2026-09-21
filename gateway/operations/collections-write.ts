@@ -10,6 +10,7 @@ const COLLECTION_CREATE_MUTATION = `
         id
         title
         handle
+        description
         descriptionHtml
         seo {
           title
@@ -35,6 +36,7 @@ const COLLECTION_UPDATE_MUTATION = `
         id
         title
         handle
+        description
         descriptionHtml
         seo {
           title

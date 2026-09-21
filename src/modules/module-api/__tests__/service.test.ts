@@ -2345,6 +2345,108 @@ test("Real service rejects stores.get when targetStoreId is empty", async () => 
   );
 });
 
+test("Real service propagates reconciliationRequired into ShopifyApiError on partial write", async () => {
+  const { fetch: fakeFetch } = createFakeFetch(async () => {
+    return new Response(
+      JSON.stringify({
+        success: false,
+        error: {
+          code: "SHOPIFY_PARTIAL_WRITE",
+          message: "Product created but variant creation failed",
+          reconciliationRequired: true,
+          details: { createdProductId: "gid://shopify/Product/part-123" },
+        },
+      }),
+      { status: 409, headers: { "Content-Type": "application/json" } },
+    );
+  });
+
+  const runner = createModuleApiRunner(
+    { gatewayUrl: "https://gateway.example.com/api" },
+    { fetch: fakeFetch },
+  );
+
+  await assert.rejects(
+    async () => {
+      await runner({
+        storeId: "store-test",
+        operation: "products.create",
+        mode: "apply",
+        payload: { product: { title: "Partially Created Product" } },
+      });
+    },
+    (err: unknown) => {
+      assert.ok(err instanceof ShopifyApiError);
+      assert.equal(err.code, "SHOPIFY_PARTIAL_WRITE");
+      assert.equal(err.reconciliationRequired, true);
+      assert.deepEqual(err.details, { createdProductId: "gid://shopify/Product/part-123" });
+      return true;
+    },
+  );
+});
+
+test("Mock runner simulates partial write with SHOPIFY_PARTIAL_WRITE and reconciliationRequired", async () => {
+  const { runMockModuleApi } = await import("../mocks/runner");
+
+  await assert.rejects(
+    async () => {
+      await runMockModuleApi({
+        storeId: "simulate-partial-write",
+        operation: "products.create",
+        payload: { product: { title: "Simulated Product" } },
+      } as unknown as ShopifyApiInput);
+    },
+    (err: unknown) => {
+      assert.ok(err instanceof ShopifyApiError);
+      assert.equal(err.code, "SHOPIFY_PARTIAL_WRITE");
+      assert.equal(err.reconciliationRequired, true);
+      assert.deepEqual(err.details, { createdProductId: "gid://shopify/Product/simulated-partial" });
+      return true;
+    },
+  );
+});
+
+test("Real service forwards X-Gateway-Key header when gatewayAuthToken is configured", async () => {
+  const { fetch: fakeFetch, requests } = createFakeFetch(async () => {
+    return new Response(
+      JSON.stringify({
+        storeId: "store-auth-test",
+        operation: "connection.test",
+        success: true,
+        data: {
+          isConnected: true,
+          connected: true,
+          shopDomain: "store-auth.myshopify.com",
+          shopName: "Auth Store",
+          currencyCode: "USD",
+        },
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  });
+
+  const runner = createModuleApiRunner(
+    {
+      gatewayUrl: "https://gateway.example.com/api",
+      gatewayAuthToken: "gw-secret-token-123",
+    },
+    { fetch: fakeFetch },
+  );
+
+  const response = await runner({
+    storeId: "store-auth-test",
+    operation: "connection.test",
+    payload: {},
+  });
+
+  assert.equal(response.success, true);
+  assert.equal(requests.length, 1);
+  const headers = requests[0].init?.headers as Record<string, string>;
+  assert.equal(headers["X-Gateway-Key"], "gw-secret-token-123");
+});
+
+
+
 
 
 

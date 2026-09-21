@@ -48,6 +48,8 @@ export interface MutationUserErrorItem {
 }
 
 export class GatewayError extends Error {
+  public readonly reconciliationRequired: boolean;
+
   public constructor(
     message: string,
     public readonly code: GatewayErrorCode,
@@ -57,9 +59,13 @@ export class GatewayError extends Error {
     public readonly fields?: readonly string[],
     public readonly retryable: boolean = false,
     public readonly details?: Record<string, unknown>,
+    reconciliationRequired?: boolean,
   ) {
     super(sanitizeErrorMessage(message, "Shopify gateway error"));
     this.name = "GatewayError";
+    this.reconciliationRequired =
+      reconciliationRequired ??
+      (code === "SHOPIFY_UNKNOWN_WRITE_STATE" || code === "SHOPIFY_PARTIAL_WRITE");
   }
 }
 

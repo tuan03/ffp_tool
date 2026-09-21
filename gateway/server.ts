@@ -1,79 +1,46 @@
-import { existsSync, readFileSync } from "node:fs";
 import http from "node:http";
-import { resolve } from "node:path";
 
 import { GatewayDispatcher } from "./dispatcher";
-import { createGatewayHttpHandler } from "./http-server";
+import { createGatewayHttpHandler, isGatewayAuthorized, MAX_BODY_BYTES } from "./http-server";
 import { InMemoryIdempotencyStore } from "./idempotency";
 import { ShopifyGraphqlClient } from "./shopify-graphql-client";
 import { InMemoryStoreRegistry } from "./store-registry";
+import { loadBootstrappedStores, loadLocalEnv } from "./store-config-loader";
 import { InMemoryThrottleManager } from "./throttle-manager";
 import { CompositeTokenProvider } from "./token-provider";
-import type { StoreConfig } from "./types";
 
-function loadEnv(): Record<string, string> {
-  const env: Record<string, string> = { ...process.env } as Record<string, string>;
-  const envPath = resolve(process.cwd(), ".env.local");
-
-  if (existsSync(envPath)) {
-    const content = readFileSync(envPath, "utf-8");
-    for (const line of content.split("\n")) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith("#")) {
-        continue;
-      }
-      const eqIdx = trimmed.indexOf("=");
-      if (eqIdx > 0) {
-        const key = trimmed.slice(0, eqIdx).trim();
-        const val = trimmed.slice(eqIdx + 1).trim();
-        env[key] = val;
-      }
-    }
-  }
-
-  return env;
+export interface GatewayServerOptions {
+  readonly port?: number;
+  readonly host?: string;
+  readonly authToken?: string;
+  readonly maxBodyBytes?: number;
 }
 
-export function startGatewayServer(port: number = 3001): http.Server {
-  const env = loadEnv();
-  const stores: StoreConfig[] = [];
+export function startGatewayServer(
+  portOrOptions?: number | GatewayServerOptions,
+  hostParam?: string,
+): http.Server {
+  const options: GatewayServerOptions =
+    typeof portOrOptions === "object" && portOrOptions !== null
+      ? portOrOptions
+      : { port: portOrOptions, host: hostParam };
 
-  const clientId = env.GATEWAY_CLIENT_ID;
-  const clientSecret = env.GATEWAY_CLIENT_SECRET;
-  const staticToken = env.GATEWAY_ACCESS_TOKEN;
-  const storeId = env.GATEWAY_STORE_ID || "capozen";
-  const shopDomain = env.GATEWAY_SHOP_DOMAIN || "capozen.myshopify.com";
+  const env = loadLocalEnv();
+  const port = options.port ?? (Number(env.GATEWAY_PORT || process.env.GATEWAY_PORT) || 3001);
+  const host = options.host ?? env.GATEWAY_HOST ?? process.env.GATEWAY_HOST ?? "127.0.0.1";
+  const authToken = options.authToken ?? env.GATEWAY_AUTH_TOKEN ?? process.env.GATEWAY_AUTH_TOKEN;
+  const maxBodyBytes = options.maxBodyBytes && options.maxBodyBytes > 0 ? options.maxBodyBytes : MAX_BODY_BYTES;
 
-  if ((clientId && clientSecret) || staticToken) {
-    const proxyUrl = env.GATEWAY_PROXY_URL;
-    const proxy = proxyUrl
-      ? {
-          url: proxyUrl,
-          username: env.GATEWAY_PROXY_USERNAME || undefined,
-          password: env.GATEWAY_PROXY_PASSWORD || undefined,
-          failClosed: true,
-        }
-      : undefined;
-
-    const auth = clientId && clientSecret
-      ? ({
-          type: "client_credentials" as const,
-          clientId,
-          clientSecret,
-        })
-      : ({
-          type: "static" as const,
-          staticToken: staticToken!,
-        });
-
-    stores.push({
-      storeId,
-      shopDomain,
-      apiVersion: "2026-07",
-      auth,
-      proxy,
-    });
+  const isLocalHost =
+    host === "127.0.0.1" || host === "localhost" || host === "::1" || host === "[::1]";
+  const hasAuthToken = typeof authToken === "string" && authToken.trim().length > 0;
+  if (!isLocalHost && !hasAuthToken) {
+    throw new Error(
+      `Refusing to start gateway server on host '${host}' without GATEWAY_AUTH_TOKEN. Unauthenticated public exposure is prohibited.`,
+    );
   }
+
+  const stores = loadBootstrappedStores({ env });
 
   const storeRegistry = new InMemoryStoreRegistry(stores);
   const tokenProvider = new CompositeTokenProvider();
@@ -81,7 +48,7 @@ export function startGatewayServer(port: number = 3001): http.Server {
   const graphqlClient = new ShopifyGraphqlClient({ tokenProvider, throttleManager });
   const idempotencyStore = new InMemoryIdempotencyStore();
   const dispatcher = new GatewayDispatcher({ storeRegistry, graphqlClient, idempotencyStore });
-  const httpHandler = createGatewayHttpHandler(dispatcher);
+  const httpHandler = createGatewayHttpHandler(dispatcher, { authToken, maxBodyBytes });
 
   const server = http.createServer(async (req, res) => {
     const url = req.url || "/";
@@ -92,16 +59,81 @@ export function startGatewayServer(port: number = 3001): http.Server {
       return;
     }
 
-    if ((url === "/api/shopify" || url.startsWith("/api/shopify?")) && req.method === "POST") {
+    if (url === "/api/shopify" || url.startsWith("/api/shopify?")) {
+      if (req.method !== "POST") {
+        res.statusCode = 405;
+        res.setHeader("Content-Type", "application/json");
+        res.end(
+          JSON.stringify({
+            success: false,
+            error: { code: "SHOPIFY_INVALID_INPUT", message: "Method Not Allowed" },
+          }),
+        );
+        return;
+      }
+
+      if (authToken && !isGatewayAuthorized(req.headers, authToken)) {
+        res.statusCode = 401;
+        res.setHeader("Content-Type", "application/json");
+        res.end(
+          JSON.stringify({
+            success: false,
+            error: {
+              code: "SHOPIFY_AUTH_FAILED",
+              message: "Unauthorized: Invalid or missing Gateway authentication token",
+            },
+          }),
+        );
+        return;
+      }
+
       try {
+        const clHeader = req.headers["content-length"];
+        if (clHeader) {
+          const cl = Number.parseInt(clHeader, 10);
+          if (!Number.isNaN(cl) && cl > maxBodyBytes) {
+            req.destroy();
+            res.statusCode = 413;
+            res.setHeader("Content-Type", "application/json");
+            res.end(
+              JSON.stringify({
+                success: false,
+                error: {
+                  code: "SHOPIFY_INVALID_INPUT",
+                  message: `Payload Too Large: request body exceeds ${maxBodyBytes} bytes limit`,
+                },
+              }),
+            );
+            return;
+          }
+        }
+
         const chunks: Buffer[] = [];
+        let totalBytes = 0;
         for await (const chunk of req) {
-          chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+          const buf = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
+          totalBytes += buf.length;
+          if (totalBytes > maxBodyBytes) {
+            req.destroy();
+            res.statusCode = 413;
+            res.setHeader("Content-Type", "application/json");
+            res.end(
+              JSON.stringify({
+                success: false,
+                error: {
+                  code: "SHOPIFY_INVALID_INPUT",
+                  message: `Payload Too Large: request body exceeds ${maxBodyBytes} bytes limit`,
+                },
+              }),
+            );
+            return;
+          }
+          chunks.push(buf);
         }
         const body = Buffer.concat(chunks);
         const protocol = req.headers["x-forwarded-proto"] || "http";
-        const host = req.headers.host || `localhost:${port}`;
-        const webReq = new Request(`${protocol}://${host}${url}`, {
+        const reqHost = req.headers.host || `${host}:${port}`;
+        const webReq = new Request(`${protocol}://${reqHost}${url}`, {
           method: req.method,
           headers: req.headers as Record<string, string>,
           body,
@@ -132,8 +164,8 @@ export function startGatewayServer(port: number = 3001): http.Server {
     res.end(JSON.stringify({ error: "Not Found" }));
   });
 
-  server.listen(port, () => {
-    console.log(`[Shopify Gateway] Standalone server running on http://localhost:${port}/api/shopify`);
+  server.listen(port, host, () => {
+    console.log(`[Shopify Gateway] Standalone server running on http://${host}:${port}/api/shopify`);
   });
 
   return server;
@@ -141,5 +173,6 @@ export function startGatewayServer(port: number = 3001): http.Server {
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   const port = Number(process.env.GATEWAY_PORT) || 3001;
-  startGatewayServer(port);
+  const host = process.env.GATEWAY_HOST || "127.0.0.1";
+  startGatewayServer({ port, host });
 }

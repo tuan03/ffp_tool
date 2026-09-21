@@ -29,7 +29,8 @@ export type GatewayErrorCode =
   | "SHOPIFY_NOT_FOUND"
   | "SHOPIFY_INVALID_INPUT"
   | "NOT_IMPLEMENTED"
-  | "SHOPIFY_UNKNOWN_WRITE_STATE";
+  | "SHOPIFY_UNKNOWN_WRITE_STATE"
+  | "SHOPIFY_PARTIAL_WRITE";
 
 export interface GatewayRequest<TPayload = unknown> {
   readonly storeId?: string;
@@ -52,6 +53,7 @@ export interface GatewayErrorDetails {
   readonly retryAfterSeconds?: number;
   readonly fields?: readonly string[];
   readonly retryable?: boolean;
+  readonly reconciliationRequired?: boolean;
   readonly details?: Record<string, unknown>;
 }
 

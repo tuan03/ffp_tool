@@ -26,6 +26,7 @@ export type ShopifyApiErrorCode =
   | "SHOPIFY_INVALID_INPUT"
   | "SHOPIFY_NOT_FOUND"
   | "SHOPIFY_PERMISSION_DENIED"
+  | "SHOPIFY_PARTIAL_WRITE"
   | "NOT_IMPLEMENTED";
 
 export type ShopifyExecutionMode = "preview" | "apply";
@@ -47,6 +48,7 @@ export type ShopifyWriteExecution =
 export interface ModuleApiConfig {
   readonly gatewayUrl?: string;
   readonly timeoutMs?: number;
+  readonly gatewayAuthToken?: string;
 }
 
 export interface ModuleApiDependencies {
@@ -61,6 +63,7 @@ export class ShopifyApiError extends Error {
     public readonly fields?: readonly string[],
     public readonly retryable?: boolean,
     public readonly details?: unknown,
+    public readonly reconciliationRequired?: boolean,
   ) {
     super(message, cause !== undefined ? { cause } : undefined);
     this.name = "ShopifyApiError";
@@ -354,6 +357,8 @@ export interface ShopifyProductsBulkUpdateItemResult {
   readonly id: string;
   readonly ok: boolean;
   readonly error?: string;
+  readonly errorCode?: ShopifyApiErrorCode | string;
+  readonly reconciliationRequired?: boolean;
 }
 
 export interface ShopifyProductsBulkUpdateData {
@@ -361,6 +366,7 @@ export interface ShopifyProductsBulkUpdateData {
   readonly count: number;
   readonly successCount?: number;
   readonly failedCount?: number;
+  readonly reconciliationRequired?: boolean;
   readonly items?: readonly ShopifyProductsBulkUpdateItemResult[];
 }
 

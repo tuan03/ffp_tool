@@ -217,6 +217,7 @@ export class GatewayDispatcher {
         promise: inFlightPromise,
       });
 
+      let hasSetPending = false;
       try {
         // Check cached entry
         const cached = await this.idempotencyStore.get(idempotencyKey);
@@ -245,10 +246,48 @@ export class GatewayDispatcher {
             };
           }
           if (cached.state === "RECONCILIATION_REQUIRED") {
+            const createdProductId =
+              cached.responseData &&
+              typeof cached.responseData === "object" &&
+              "createdProductId" in (cached.responseData as Record<string, unknown>)
+                ? String((cached.responseData as Record<string, unknown>).createdProductId)
+                : cached.details && "createdProductId" in cached.details
+                ? String(cached.details.createdProductId)
+                : undefined;
+            const updatedProductId =
+              cached.responseData &&
+              typeof cached.responseData === "object" &&
+              "updatedProductId" in (cached.responseData as Record<string, unknown>)
+                ? String((cached.responseData as Record<string, unknown>).updatedProductId)
+                : cached.details && "updatedProductId" in cached.details
+                ? String(cached.details.updatedProductId)
+                : undefined;
+            const updatedProductIds =
+              cached.responseData &&
+              typeof cached.responseData === "object" &&
+              Array.isArray((cached.responseData as Record<string, unknown>).updatedProductIds)
+                ? ((cached.responseData as Record<string, unknown>).updatedProductIds as readonly string[])
+                : cached.details && Array.isArray(cached.details.updatedProductIds)
+                ? (cached.details.updatedProductIds as readonly string[])
+                : undefined;
+            const affectedProductId = createdProductId ?? updatedProductId;
+            const isPartial = Boolean(affectedProductId || (updatedProductIds && updatedProductIds.length > 0));
+
             throw new GatewayError(
-              `RequestId '${requestId}' is in an ambiguous write state on Shopify and requires manual reconciliation before retrying`,
-              "SHOPIFY_UNKNOWN_WRITE_STATE",
+              `RequestId '${requestId}' is in a reconciliation-required write state on Shopify and requires manual reconciliation before retrying`,
+              isPartial ? "SHOPIFY_PARTIAL_WRITE" : "SHOPIFY_UNKNOWN_WRITE_STATE",
               409,
+              undefined,
+              undefined,
+              undefined,
+              false,
+              {
+                ...(createdProductId ? { createdProductId } : {}),
+                ...(updatedProductId ? { updatedProductId } : {}),
+                ...(updatedProductIds ? { updatedProductIds } : {}),
+                reconciliationRequired: true,
+              },
+              true,
             );
           }
         }
@@ -260,16 +299,34 @@ export class GatewayDispatcher {
           payloadHash: canonicalHash,
           createdAtMs: Date.now(),
         });
+        hasSetPending = true;
 
         const data = await this.executeWrite(store, request.operation, request.payload, "apply", requestId);
 
-        await this.idempotencyStore.set(idempotencyKey, {
-          state: "COMPLETED",
-          operation: request.operation,
-          payloadHash: canonicalHash,
-          responseData: data,
-          createdAtMs: Date.now(),
-        });
+        const hasReconciliation =
+          data &&
+          typeof data === "object" &&
+          "reconciliationRequired" in (data as Record<string, unknown>) &&
+          (data as Record<string, unknown>).reconciliationRequired === true;
+
+        if (hasReconciliation) {
+          await this.idempotencyStore.set(idempotencyKey, {
+            state: "RECONCILIATION_REQUIRED",
+            operation: request.operation,
+            payloadHash: canonicalHash,
+            responseData: data,
+            details: { reconciliationRequired: true },
+            createdAtMs: Date.now(),
+          });
+        } else {
+          await this.idempotencyStore.set(idempotencyKey, {
+            state: "COMPLETED",
+            operation: request.operation,
+            payloadHash: canonicalHash,
+            responseData: data,
+            createdAtMs: Date.now(),
+          });
+        }
 
         resolveInFlight(data);
         return {
@@ -281,14 +338,44 @@ export class GatewayDispatcher {
       } catch (err: unknown) {
         const isUnknownWriteState =
           err instanceof GatewayError && err.code === "SHOPIFY_UNKNOWN_WRITE_STATE";
-        if (isUnknownWriteState) {
+        const isPartialWrite =
+          err instanceof GatewayError &&
+          (err.code === "SHOPIFY_PARTIAL_WRITE" ||
+            err.reconciliationRequired === true ||
+            Boolean(err.details?.reconciliationRequired));
+
+        if (isUnknownWriteState || isPartialWrite) {
+          const createdProductId =
+            err instanceof GatewayError && err.details?.createdProductId
+              ? String(err.details.createdProductId)
+              : undefined;
+          const updatedProductId =
+            err instanceof GatewayError && err.details?.updatedProductId
+              ? String(err.details.updatedProductId)
+              : undefined;
+          const updatedProductIds =
+            err instanceof GatewayError && Array.isArray(err.details?.updatedProductIds)
+              ? (err.details.updatedProductIds as readonly string[])
+              : undefined;
+
           await this.idempotencyStore.set(idempotencyKey, {
             state: "RECONCILIATION_REQUIRED",
             operation: request.operation,
             payloadHash: canonicalHash,
+            responseData: {
+              ...(createdProductId ? { createdProductId } : {}),
+              ...(updatedProductId ? { updatedProductId } : {}),
+              ...(updatedProductIds ? { updatedProductIds } : {}),
+            },
+            details: {
+              ...(createdProductId ? { createdProductId } : {}),
+              ...(updatedProductId ? { updatedProductId } : {}),
+              ...(updatedProductIds ? { updatedProductIds } : {}),
+              reconciliationRequired: true,
+            },
             createdAtMs: Date.now(),
           });
-        } else {
+        } else if (hasSetPending) {
           await this.idempotencyStore.delete(idempotencyKey);
         }
         rejectInFlight(err);
