@@ -148,17 +148,16 @@ export function ProductSelectionTable({
                   {/* Checkbox */}
                   <td
                     className="p-3.5 text-center"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onToggleSelect(product.id);
-                    }}
+                    onClick={(e) => e.stopPropagation()}
                   >
-                    <input
-                      type="checkbox"
-                      checked={isSelected}
-                      onChange={() => onToggleSelect(product.id)}
-                      className="h-4 w-4 rounded-sm border-slate-700 bg-slate-900 text-cyan-500 focus:ring-cyan-500 focus:ring-offset-slate-950 cursor-pointer"
-                    />
+                    <label className="inline-flex cursor-pointer items-center justify-center">
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        onChange={() => onToggleSelect(product.id)}
+                        className="h-4 w-4 rounded-sm border-slate-700 bg-slate-900 text-cyan-500 focus:ring-cyan-500 focus:ring-offset-slate-950 cursor-pointer"
+                      />
+                    </label>
                   </td>
 
                   {/* STT */}
