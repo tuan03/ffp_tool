@@ -175,9 +175,30 @@ export class MockProductCrawlerClient implements ProductCrawlerClient {
       };
     }
 
+    if (job.status === "failed") {
+      return {
+        ok: false,
+        jobId: job.id,
+        status: "failed",
+        stepper: {
+          currentStep: 2,
+          percent: 0,
+          currentMessage: "Quá trình cào dữ liệu gặp lỗi kết nối hoặc trang Amazon không khả dụng.",
+        },
+        summary: {
+          requestedInputs: job.input.inputs.length,
+          productsFound: 0,
+          productsCompleted: 0,
+          productsFailed: job.input.inputs.length,
+        },
+        logs: [...job.logs],
+        error: "Amazon product page returned 404 or inactive listing",
+      };
+    }
+
     // Step 4+ -> Completed or Partial
     const products = getFreshMockProducts();
-    const output = buildMockJobOutput(job.id, products);
+    const output = buildMockJobOutput(job.id, products, job.input.inputs.length);
     job.status = output.status;
     job.output = output;
     job.logs.push(`[${nowStr}] Successfully compiled ${products.length} products with ${output.statistics.finalVariants} variants.`);
@@ -214,6 +235,33 @@ export class MockProductCrawlerClient implements ProductCrawlerClient {
     return {
       ok: true,
       status: "cancelled",
+    };
+  }
+
+  public async retryJob(jobId: string, _itemIds?: string[]): Promise<ProductCrawlerCreateJobResponse> {
+    const existing = this.jobs.get(jobId);
+    if (!existing) {
+      throw new AppError(`Job with ID ${jobId} not found`, "PRODUCT_CRAWLER_JOB_NOT_FOUND");
+    }
+
+    const newJobId = `crawl_job_retry_${Date.now().toString(16).slice(-8)}`;
+    const nowStr = new Date().toLocaleTimeString();
+    const retriedJob: InMemoryJob = {
+      id: newJobId,
+      input: existing.input,
+      status: "queued",
+      pollCount: 0,
+      logs: [
+        `[${nowStr}] Retrying crawl job for ${existing.input.inputs.length} inputs (previous job: ${jobId})`,
+      ],
+      createdAt: Date.now(),
+    };
+    this.jobs.set(newJobId, retriedJob);
+
+    return {
+      ok: true,
+      jobId: newJobId,
+      status: "queued",
     };
   }
 }

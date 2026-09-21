@@ -12,7 +12,8 @@ import type {
 } from "./types";
 
 const ASIN_REGEX = /^[A-Z0-9]{10}$/i;
-const AMAZON_URL_REGEX = /amazon\.[a-z.]+(?:\/.*)?\/(?:dp|gp\/product)\/([A-Z0-9]{10})/i;
+const AMAZON_URL_REGEX =
+  /(?:amazon\.[a-z.]+|a\.co|amzn\.[a-z]+)(?:\/.*)?\/(?:dp|gp\/product|gp\/aw\/d|product|d|o\/ASIN|product-reviews)\/([A-Z0-9]{10})/i;
 
 export function parseInputLines(rawText: string): ParsedInputRow[] {
   const lines = rawText.split(/\r?\n/).map((l) => l.trim());
@@ -31,16 +32,18 @@ export function parseInputLines(rawText: string): ParsedInputRow[] {
         rows.push({
           raw: line,
           type: "url",
-          value: extractedAsin,
+          value: line,
+          extractedAsin,
           isValid: false,
-          error: "Trùng lặp với mục khác",
+          error: `Trùng lặp với mục khác (${extractedAsin})`,
         });
       } else {
         seenValues.add(extractedAsin);
         rows.push({
           raw: line,
           type: "url",
-          value: extractedAsin,
+          value: line,
+          extractedAsin,
           isValid: true,
         });
       }
@@ -54,8 +57,9 @@ export function parseInputLines(rawText: string): ParsedInputRow[] {
           raw: line,
           type: "asin",
           value: asin,
+          extractedAsin: asin,
           isValid: false,
-          error: "Trùng lặp với mục khác",
+          error: `Trùng lặp với mục khác (${asin})`,
         });
       } else {
         seenValues.add(asin);
@@ -63,6 +67,7 @@ export function parseInputLines(rawText: string): ParsedInputRow[] {
           raw: line,
           type: "asin",
           value: asin,
+          extractedAsin: asin,
           isValid: true,
         });
       }
@@ -239,6 +244,37 @@ export class RealProductCrawlerClient implements ProductCrawlerClient {
       throw new AppError(
         `Network error while cancelling job ${jobId}: ${(error as Error).message}`,
         "PRODUCT_CRAWLER_CANCEL_FAILED",
+        error,
+      );
+    }
+  }
+
+  public async retryJob(jobId: string, itemIds?: string[]): Promise<ProductCrawlerCreateJobResponse> {
+    try {
+      const response = await fetch(
+        `${this.baseUrl}/api/product-crawler/jobs/${encodeURIComponent(jobId)}/retry`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ itemIds: itemIds ?? [] }),
+        },
+      );
+
+      if (!response.ok) {
+        throw new AppError(
+          `Failed to retry job ${jobId}: HTTP ${response.status}`,
+          "PRODUCT_CRAWLER_API_ERROR",
+        );
+      }
+
+      return (await response.json()) as ProductCrawlerCreateJobResponse;
+    } catch (error) {
+      if (error instanceof AppError) {
+        throw error;
+      }
+      throw new AppError(
+        `Network error while retrying job ${jobId}: ${(error as Error).message}`,
+        "PRODUCT_CRAWLER_NETWORK_ERROR",
         error,
       );
     }

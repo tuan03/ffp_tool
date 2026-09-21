@@ -107,6 +107,11 @@ export function CrawlerProductDetailModal({
                       Tiêu đề sản phẩm
                     </h3>
                     <p className="text-sm font-medium text-slate-100">{product.title}</p>
+                    {product.sourceTitle && product.sourceTitle !== product.title && (
+                      <p className="text-xs text-slate-400 mt-1 italic">
+                        Tiêu đề gốc Amazon: {product.sourceTitle}
+                      </p>
+                    )}
                   </div>
 
                   {product.description && (
@@ -352,6 +357,84 @@ export function CrawlerProductDetailModal({
                                     </span>
                                   )}
                                 </div>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Surfaces */}
+                  {product.customization.surfaces && product.customization.surfaces.length > 0 && (
+                    <div>
+                      <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
+                        Bề mặt tùy biến (Customization Surfaces)
+                      </h4>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        {product.customization.surfaces.map((s, i) => (
+                          <div key={i} className="rounded-xl border border-slate-800 bg-slate-950 p-3 flex items-center gap-3">
+                            {s.previewUrl ? (
+                              <img
+                                src={s.previewUrl}
+                                alt={s.name}
+                                className="h-12 w-12 rounded-lg object-cover border border-slate-800"
+                              />
+                            ) : (
+                              <span className="flex h-12 w-12 items-center justify-center rounded-lg bg-slate-900 text-xs">
+                                🎨
+                              </span>
+                            )}
+                            <div>
+                              <span className="text-xs font-semibold text-slate-200 block">{s.name}</span>
+                              <span className="text-[11px] text-cyan-400">Bề mặt in / khắc laser</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Image inputs */}
+                  {product.customization.imageInputs && product.customization.imageInputs.length > 0 && (
+                    <div>
+                      <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
+                        Tải lên hình ảnh tùy biến (Image Uploads)
+                      </h4>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        {product.customization.imageInputs.map((imgIn) => (
+                          <div key={imgIn.id} className="rounded-xl border border-slate-800 bg-slate-950 p-3 space-y-1">
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs font-semibold text-slate-200">{imgIn.label}</span>
+                              {imgIn.required && (
+                                <span className="text-[10px] text-rose-400 font-semibold">Bắt buộc</span>
+                              )}
+                            </div>
+                            <span className="text-[11px] text-slate-400 block">Hỗ trợ PNG/JPG chuẩn nét cao</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Color groups */}
+                  {product.customization.colorGroups && product.customization.colorGroups.length > 0 && (
+                    <div>
+                      <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
+                        Bảng màu tùy chọn (Color Palettes)
+                      </h4>
+                      <div className="rounded-xl border border-slate-800 bg-slate-950 p-4">
+                        {product.customization.colorGroups.map((cg) => (
+                          <div key={cg.id} className="space-y-1.5">
+                            <span className="text-xs font-semibold text-slate-300">{cg.name}</span>
+                            <div className="flex flex-wrap gap-2 pt-1">
+                              {cg.colors.map((c, i) => (
+                                <span
+                                  key={i}
+                                  className="rounded bg-slate-800 px-2.5 py-1 text-xs text-slate-200 border border-slate-700 font-mono"
+                                >
+                                  {c}
+                                </span>
                               ))}
                             </div>
                           </div>

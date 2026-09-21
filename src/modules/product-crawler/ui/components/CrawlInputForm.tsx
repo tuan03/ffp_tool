@@ -1,8 +1,11 @@
 import { useState } from "react";
 
-import { defaultMockCrawlerOptions } from "../../mocks/data";
 import { parseInputLines } from "../../service";
-import type { ProductCrawlerJobInput, ProductCrawlerOptions } from "../../types";
+import {
+  DEFAULT_CRAWLER_OPTIONS,
+  type ProductCrawlerJobInput,
+  type ProductCrawlerOptions,
+} from "../../types";
 
 interface CrawlInputFormProps {
   isLoading: boolean;
@@ -15,7 +18,7 @@ export function CrawlInputForm({ isLoading, onSubmit }: CrawlInputFormProps): Re
   );
   const [crawlMode, setCrawlMode] = useState<"exact" | "group">("group");
   const [isAdvancedOpen, setIsAdvancedOpen] = useState(false);
-  const [options, setOptions] = useState<ProductCrawlerOptions>(defaultMockCrawlerOptions);
+  const [options, setOptions] = useState<ProductCrawlerOptions>(DEFAULT_CRAWLER_OPTIONS);
   const [showValidation, setShowValidation] = useState(false);
 
   const parsedRows = parseInputLines(rawText);
@@ -67,13 +70,28 @@ export function CrawlInputForm({ isLoading, onSubmit }: CrawlInputFormProps): Re
             </p>
           </div>
 
-          <button
-            type="button"
-            onClick={handleLoadSample}
-            className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-medium text-slate-300 transition hover:bg-slate-700 hover:text-white"
-          >
-            📋 Tải dữ liệu mẫu
-          </button>
+          <div className="flex items-center gap-2">
+            {rawText.trim() && (
+              <button
+                type="button"
+                onClick={() => {
+                  setRawText("");
+                  setShowValidation(false);
+                }}
+                className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-medium text-slate-400 transition hover:bg-slate-700 hover:text-white"
+              >
+                ✕ Xóa trắng
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={handleLoadSample}
+              className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-medium text-slate-300 transition hover:bg-slate-700 hover:text-white"
+            >
+              📋 Tải dữ liệu mẫu
+            </button>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 pt-5">
@@ -111,7 +129,7 @@ export function CrawlInputForm({ isLoading, onSubmit }: CrawlInputFormProps): Re
                 </div>
                 {validRows.length > 0 && (
                   <div className="text-emerald-400">
-                    ✓ Đã nhận diện {validRows.length} mục hợp lệ: {validRows.map((r) => r.value).join(", ")}
+                    ✓ Đã nhận diện {validRows.length} mục hợp lệ: {validRows.map((r) => r.extractedAsin || r.value).join(", ")}
                   </div>
                 )}
                 {invalidRows.length > 0 && (

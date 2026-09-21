@@ -1,11 +1,14 @@
 import { useMemo, useState } from "react";
 
 import { crawlerProductToListItem } from "../../service";
-import type { CrawlerProduct, ProductCrawlerFilter } from "../../types";
+import type { CrawlerError, CrawlerProduct, ProductCrawlerFilter } from "../../types";
 
 interface CrawlerProductTableProps {
   products: CrawlerProduct[];
   selectedIds: string[];
+  jobErrors?: CrawlerError[];
+  jobWarnings?: string[];
+  onRetryFailed?(failedIds?: string[]): void;
   onToggleSelect(id: string): void;
   onToggleSelectAll(filteredIds: string[]): void;
   onClearSelection(): void;
@@ -16,6 +19,9 @@ interface CrawlerProductTableProps {
 export function CrawlerProductTable({
   products,
   selectedIds,
+  jobErrors,
+  jobWarnings,
+  onRetryFailed,
   onToggleSelect,
   onToggleSelectAll,
   onClearSelection,
@@ -24,6 +30,7 @@ export function CrawlerProductTable({
 }: CrawlerProductTableProps): React.JSX.Element {
   const [searchQuery, setSearchQuery] = useState("");
   const [filter, setFilter] = useState<ProductCrawlerFilter>("all");
+  const [isOnlySelected, setIsOnlySelected] = useState(false);
 
   const listItems = useMemo(() => {
     return products.map((p) => ({
@@ -33,7 +40,11 @@ export function CrawlerProductTable({
   }, [products]);
 
   const filteredItems = useMemo(() => {
-    return listItems.filter(({ projected }) => {
+    return listItems.filter(({ raw, projected }) => {
+      if (isOnlySelected && !selectedIds.includes(raw.id)) {
+        return false;
+      }
+
       // Search filter
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
@@ -61,7 +72,7 @@ export function CrawlerProductTable({
           return true;
       }
     });
-  }, [listItems, searchQuery, filter]);
+  }, [listItems, searchQuery, filter, isOnlySelected, selectedIds]);
 
   const filteredIds = filteredItems.map((item) => item.raw.id);
   const isAllFilteredSelected =
@@ -73,6 +84,57 @@ export function CrawlerProductTable({
 
   return (
     <div className="space-y-4">
+      {/* Job-level Errors Alert Banner (Section 18) */}
+      {jobErrors && jobErrors.length > 0 && (
+        <div className="rounded-xl border border-rose-800/80 bg-rose-950/40 p-4 space-y-2.5">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 text-rose-300 font-bold text-xs">
+              <span>⚠️</span>
+              <span>Crawl Failed — Phát hiện {jobErrors.length} mục cào không thành công:</span>
+            </div>
+            {onRetryFailed && (
+              <button
+                type="button"
+                onClick={() =>
+                  onRetryFailed(
+                    jobErrors
+                      .map((e) => e.input || e.productId || "")
+                      .filter(Boolean),
+                  )
+                }
+                className="rounded-lg bg-rose-600 px-3 py-1 text-xs font-semibold text-white hover:bg-rose-500 transition shadow-sm"
+              >
+                ↻ Thử lại mục lỗi
+              </button>
+            )}
+          </div>
+          <div className="space-y-1.5">
+            {jobErrors.map((err, i) => (
+              <div
+                key={i}
+                className="flex flex-wrap items-center justify-between rounded-lg bg-rose-950/70 p-2.5 text-xs border border-rose-900/60"
+              >
+                <div className="flex items-center gap-2">
+                  <span className="font-mono font-bold text-rose-200">
+                    {err.input || err.productId || "ASIN"}
+                  </span>
+                  <span className="text-slate-300">— Lý do: {err.message}</span>
+                </div>
+                <span className="font-mono text-[10px] text-rose-400">Mã: {err.code}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Warnings banner */}
+      {jobWarnings && jobWarnings.length > 0 && (
+        <div className="rounded-xl border border-amber-800/60 bg-amber-950/30 p-3 text-xs text-amber-200 flex items-center gap-2">
+          <span>⚠️</span>
+          <span>{jobWarnings.join("; ")}</span>
+        </div>
+      )}
+
       {/* Top Results Metrics & Summary */}
       <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-slate-800 bg-slate-900/80 p-4">
         <div className="flex items-center gap-4 text-xs">
@@ -123,11 +185,15 @@ export function CrawlerProductTable({
             { id: "all", label: `Tất cả (${products.length})` },
             {
               id: "success",
-              label: `Hoàn hảo (${listItems.filter((i) => i.projected.status === "success").length})`,
+              label: `Thành công (${listItems.filter((i) => i.projected.status === "success").length})`,
             },
             {
               id: "partial",
-              label: `Có cảnh báo (${listItems.filter((i) => i.projected.status === "partial").length})`,
+              label: `Cần rà soát (${listItems.filter((i) => i.projected.status === "partial").length})`,
+            },
+            {
+              id: "has_warning",
+              label: `Có cảnh báo (${listItems.filter((i) => i.projected.warningCount > 0).length})`,
             },
             {
               id: "has_customization",
@@ -153,11 +219,19 @@ export function CrawlerProductTable({
           ))}
         </div>
 
-        {/* Selection Actions */}
+        {/* Selection Actions (Section 13) */}
         <div className="flex items-center gap-2 text-xs">
           <span className="text-slate-400">
             Đã chọn: <strong className="text-cyan-400 font-mono">{selectedIds.length}</strong> / {products.length}
           </span>
+
+          <button
+            type="button"
+            onClick={() => onToggleSelectAll(filteredIds)}
+            className="rounded border border-slate-700 bg-slate-800 px-2 py-1 text-slate-300 hover:bg-slate-700 transition"
+          >
+            Chọn tất cả
+          </button>
 
           {selectedIds.length > 0 && (
             <button
@@ -166,6 +240,20 @@ export function CrawlerProductTable({
               className="rounded border border-slate-700 bg-slate-800 px-2 py-1 text-slate-300 hover:bg-slate-700 transition"
             >
               Bỏ chọn
+            </button>
+          )}
+
+          {selectedIds.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setIsOnlySelected(!isOnlySelected)}
+              className={`rounded px-2 py-1 transition border ${
+                isOnlySelected
+                  ? "bg-cyan-950 border-cyan-700 text-cyan-300 font-semibold"
+                  : "border-slate-700 bg-slate-800 text-slate-300 hover:bg-slate-700"
+              }`}
+            >
+              {isOnlySelected ? "✓ Đang xem mục đã chọn" : "👁️ Xem mục đã chọn"}
             </button>
           )}
 

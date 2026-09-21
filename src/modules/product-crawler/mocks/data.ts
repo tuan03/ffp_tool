@@ -1,8 +1,9 @@
-import type {
-  CrawlerError,
-  CrawlerProduct,
-  ProductCrawlerJobOutput,
-  ProductCrawlerOptions,
+import {
+  DEFAULT_CRAWLER_OPTIONS,
+  type CrawlerError,
+  type CrawlerProduct,
+  type ProductCrawlerJobOutput,
+  type ProductCrawlerOptions,
 } from "../types";
 
 export function createMockSvgThumbnail(
@@ -24,16 +25,7 @@ export function createMockSvgThumbnail(
 }
 
 export const defaultMockCrawlerOptions: ProductCrawlerOptions = {
-  profileSlug: "default",
-  productThreads: 3,
-  variantThreads: 5,
-  urllibThreads: 10,
-  browserProfiles: 1,
-  browserTabs: 3,
-  headless: false,
-  amazonZip: "10001",
-  captchaTimeoutSeconds: 60,
-  maxMatrixVariants: 50,
+  ...DEFAULT_CRAWLER_OPTIONS,
 };
 
 export const mockProduct1Handbag: CrawlerProduct = {
@@ -572,7 +564,12 @@ export function getFreshMockProducts(): CrawlerProduct[] {
   return JSON.parse(JSON.stringify(mockSampleProducts));
 }
 
-export function buildMockJobOutput(jobId: string, products = getFreshMockProducts()): ProductCrawlerJobOutput {
+export function buildMockJobOutput(
+  jobId: string,
+  products = getFreshMockProducts(),
+  requestedCount = 4,
+  errors: CrawlerError[] = [],
+): ProductCrawlerJobOutput {
   const hasWarnings = products.some((p) => (p.warnings?.length ?? 0) > 0);
   const totalVariants = products.reduce((acc, p) => acc + p.variants.length, 0);
   const totalSourceVariants = products.reduce((acc, p) => acc + p.sourceVariants.length, 0);
@@ -580,18 +577,18 @@ export function buildMockJobOutput(jobId: string, products = getFreshMockProduct
   return {
     version: "2.0.0",
     jobId,
-    status: hasWarnings ? "partial" : "completed",
+    status: hasWarnings || errors.length > 0 ? "partial" : "completed",
     startedAt: new Date(Date.now() - 14500).toISOString(),
     completedAt: new Date().toISOString(),
     products,
-    errors: [],
+    errors,
     warnings: hasWarnings
-      ? ["Some items had customization extraction warnings; check individual product details."]
+      ? ["Một số sản phẩm có cảnh báo khi bóc tách tùy biến widget; vui lòng kiểm tra chi tiết sản phẩm."]
       : [],
     statistics: {
-      requestedInputs: 4,
-      acceptedInputs: 4,
-      rejectedInputs: 0,
+      requestedInputs: requestedCount,
+      acceptedInputs: requestedCount - errors.length,
+      rejectedInputs: errors.length,
       products: products.length,
       sourceVariants: totalSourceVariants,
       finalVariants: totalVariants,

@@ -16,6 +16,19 @@ export interface ProductCrawlerOptions {
   maxMatrixVariants?: number;
 }
 
+export const DEFAULT_CRAWLER_OPTIONS: ProductCrawlerOptions = {
+  profileSlug: "default",
+  productThreads: 3,
+  variantThreads: 5,
+  urllibThreads: 10,
+  browserProfiles: 1,
+  browserTabs: 3,
+  headless: false,
+  amazonZip: "10001",
+  captchaTimeoutSeconds: 60,
+  maxMatrixVariants: 50,
+};
+
 export interface ProductCrawlerJobInput {
   source: "amazon";
   inputs: ProductCrawlerInputItem[];
@@ -249,6 +262,7 @@ export interface ParsedInputRow {
   raw: string;
   type: "asin" | "url" | "invalid";
   value: string;
+  extractedAsin?: string;
   isValid: boolean;
   error?: string;
 }
@@ -270,5 +284,5 @@ export interface ProductCrawlerClient {
   startJob(input: ProductCrawlerJobInput): Promise<ProductCrawlerCreateJobResponse>;
   getJob(jobId: string): Promise<ProductCrawlerJobStatusResponse>;
   cancelJob(jobId: string): Promise<ProductCrawlerCancelResponse>;
-  retryJob?(jobId: string, itemIds?: string[]): Promise<ProductCrawlerCreateJobResponse>;
+  retryJob(jobId: string, itemIds?: string[]): Promise<ProductCrawlerCreateJobResponse>;
 }

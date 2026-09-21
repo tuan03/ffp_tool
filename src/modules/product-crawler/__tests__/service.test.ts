@@ -16,7 +16,7 @@ import {
   RealProductCrawlerClient,
   validateCrawlerInput,
 } from "../service";
-import type { ProductCrawlerJobInput } from "../types";
+import { DEFAULT_CRAWLER_OPTIONS, type ProductCrawlerJobInput } from "../types";
 
 test("parseInputLines correctly identifies ASINs, Amazon URLs, duplicates, and invalid inputs", () => {
   const rawText = `
@@ -24,39 +24,60 @@ test("parseInputLines correctly identifies ASINs, Amazon URLs, duplicates, and i
     https://www.amazon.com/dp/B08XY12345
     B0GQ33XWW7
     https://amazon.com/gp/product/B09PQ56789/ref=xyz
+    https://www.amazon.com/gp/aw/d/B07ZZ99881?ref_=chk_typ_imgToDp
+    https://www.amazon.co.jp/dp/B012345678?th=1
+    https://a.co/d/B087654321
     not-an-asin
-    
   `;
 
   const parsed = parseInputLines(rawText);
 
-  assert.equal(parsed.length, 5);
+  assert.equal(parsed.length, 8);
 
   // 1. Valid ASIN
   assert.equal(parsed[0]?.type, "asin");
   assert.equal(parsed[0]?.value, "B0GQ33XWW7");
+  assert.equal(parsed[0]?.extractedAsin, "B0GQ33XWW7");
   assert.equal(parsed[0]?.isValid, true);
 
   // 2. Valid URL
   assert.equal(parsed[1]?.type, "url");
-  assert.equal(parsed[1]?.value, "B08XY12345");
+  assert.equal(parsed[1]?.value, "https://www.amazon.com/dp/B08XY12345");
+  assert.equal(parsed[1]?.extractedAsin, "B08XY12345");
   assert.equal(parsed[1]?.isValid, true);
 
   // 3. Duplicate ASIN
   assert.equal(parsed[2]?.type, "asin");
   assert.equal(parsed[2]?.value, "B0GQ33XWW7");
+  assert.equal(parsed[2]?.extractedAsin, "B0GQ33XWW7");
   assert.equal(parsed[2]?.isValid, false);
   assert.ok(parsed[2]?.error?.includes("Trùng lặp"));
 
   // 4. Valid gp/product URL
   assert.equal(parsed[3]?.type, "url");
-  assert.equal(parsed[3]?.value, "B09PQ56789");
+  assert.equal(parsed[3]?.value, "https://amazon.com/gp/product/B09PQ56789/ref=xyz");
+  assert.equal(parsed[3]?.extractedAsin, "B09PQ56789");
   assert.equal(parsed[3]?.isValid, true);
 
-  // 5. Invalid string
-  assert.equal(parsed[4]?.type, "invalid");
-  assert.equal(parsed[4]?.isValid, false);
-  assert.ok(parsed[4]?.error?.includes("Không đúng định dạng"));
+  // 5. Valid mobile gp/aw/d URL
+  assert.equal(parsed[4]?.type, "url");
+  assert.equal(parsed[4]?.extractedAsin, "B07ZZ99881");
+  assert.equal(parsed[4]?.isValid, true);
+
+  // 6. Valid international amazon.co.jp URL with query param
+  assert.equal(parsed[5]?.type, "url");
+  assert.equal(parsed[5]?.extractedAsin, "B012345678");
+  assert.equal(parsed[5]?.isValid, true);
+
+  // 7. Valid a.co short URL
+  assert.equal(parsed[6]?.type, "url");
+  assert.equal(parsed[6]?.extractedAsin, "B087654321");
+  assert.equal(parsed[6]?.isValid, true);
+
+  // 8. Invalid string
+  assert.equal(parsed[7]?.type, "invalid");
+  assert.equal(parsed[7]?.isValid, false);
+  assert.ok(parsed[7]?.error?.includes("Không đúng định dạng"));
 });
 
 test("validateCrawlerInput validates mandatory fields and crawl modes", () => {
@@ -285,4 +306,53 @@ test("getProductCrawlerClient selects appropriate runner based on environment", 
 
   const prodClient = getProductCrawlerClient("production");
   assert.ok(prodClient instanceof RealProductCrawlerClient);
+});
+
+test("DEFAULT_CRAWLER_OPTIONS contains complete default options", () => {
+  assert.equal(DEFAULT_CRAWLER_OPTIONS.amazonZip, "10001");
+  assert.equal(DEFAULT_CRAWLER_OPTIONS.headless, false);
+  assert.equal(DEFAULT_CRAWLER_OPTIONS.productThreads, 3);
+  assert.equal(DEFAULT_CRAWLER_OPTIONS.variantThreads, 5);
+  assert.equal(DEFAULT_CRAWLER_OPTIONS.maxMatrixVariants, 50);
+});
+
+test("MockProductCrawlerClient supports retryJob and generates new job id", async () => {
+  const client = new MockProductCrawlerClient();
+  const createRes = await client.startJob({
+    source: "amazon",
+    inputs: [{ type: "asin", value: "B0GQ33XWW7" }],
+    crawlMode: "group",
+  });
+
+  const retryRes = await client.retryJob(createRes.jobId);
+  assert.equal(retryRes.ok, true);
+  assert.ok(retryRes.jobId.startsWith("crawl_job_retry_"));
+  assert.equal(retryRes.status, "queued");
+
+  // Non-existent job
+  await assert.rejects(
+    async () => {
+      await client.retryJob("invalid_job_id");
+    },
+    (err: unknown) => {
+      return err instanceof AppError && err.code === "PRODUCT_CRAWLER_JOB_NOT_FOUND";
+    },
+  );
+});
+
+test("RealProductCrawlerClient supports retryJob with API call", async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async () =>
+      new Response(JSON.stringify({ ok: true, jobId: "retried_job_1", status: "queued" }), {
+        status: 200,
+      });
+
+    const client = new RealProductCrawlerClient();
+    const res = await client.retryJob("orig_123", ["B0GQ33XWW7"]);
+    assert.equal(res.ok, true);
+    assert.equal(res.jobId, "retried_job_1");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });

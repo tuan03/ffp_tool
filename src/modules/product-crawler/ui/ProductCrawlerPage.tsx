@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { environment } from "../../../config/environment";
 import { getProductCrawlerClient } from "../runtime";
 import type {
+  CrawlerError,
   CrawlerProduct,
   ProductCrawlerClient,
   ProductCrawlerJobInput,
@@ -33,6 +34,8 @@ export function ProductCrawlerPage({ client }: ProductCrawlerPageProps): React.J
   const [logs, setLogs] = useState<string[]>([]);
   const [products, setProducts] = useState<CrawlerProduct[]>([]);
   const [selectedProductIds, setSelectedProductIds] = useState<string[]>([]);
+  const [jobErrors, setJobErrors] = useState<CrawlerError[]>([]);
+  const [jobWarnings, setJobWarnings] = useState<string[]>([]);
 
   const [selectedDetailProduct, setSelectedDetailProduct] = useState<CrawlerProduct | null>(null);
   const [isHandoffOpen, setIsHandoffOpen] = useState(false);
@@ -40,14 +43,18 @@ export function ProductCrawlerPage({ client }: ProductCrawlerPageProps): React.J
   const [isCancelling, setIsCancelling] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  // Polling ref to prevent race conditions
+  // Polling and transition timers ref to prevent race conditions
   const pollTimerRef = useRef<number | null>(null);
+  const stageTransitionTimerRef = useRef<number | null>(null);
 
-  // Clear polling on unmount
+  // Clear polling and timers on unmount
   useEffect(() => {
     return () => {
       if (pollTimerRef.current !== null) {
         window.clearTimeout(pollTimerRef.current);
+      }
+      if (stageTransitionTimerRef.current !== null) {
+        window.clearTimeout(stageTransitionTimerRef.current);
       }
     };
   }, []);
@@ -82,14 +89,28 @@ export function ProductCrawlerPage({ client }: ProductCrawlerPageProps): React.J
             // Default select all products
             setSelectedProductIds(response.output.products.map((p) => p.id));
           }
+          if (response.output?.errors) {
+            setJobErrors(response.output.errors);
+          }
+          if (response.output?.warnings) {
+            setJobWarnings(response.output.warnings);
+          }
           // Automatically transition to Stage 3 Results after a short pause
-          setTimeout(() => {
+          stageTransitionTimerRef.current = window.setTimeout(() => {
             setActiveStage(3);
+            stageTransitionTimerRef.current = null;
           }, 800);
           return;
         }
 
-        if (response.status === "failed" || response.status === "cancelled") {
+        if (response.status === "failed") {
+          if (response.error) {
+            setErrorMessage(response.error);
+          }
+          return;
+        }
+
+        if (response.status === "cancelled") {
           return;
         }
 
@@ -118,12 +139,35 @@ export function ProductCrawlerPage({ client }: ProductCrawlerPageProps): React.J
       setJobStatus(response.status);
       setProducts([]);
       setSelectedProductIds([]);
+      setJobErrors([]);
+      setJobWarnings([]);
       setLogs([
         `[${new Date().toLocaleTimeString()}] Bắt đầu phiên crawl ${response.jobId} (chế độ ${input.crawlMode}).`,
       ]);
       setActiveStage(2);
     } catch (err) {
       setErrorMessage((err as Error).message || "Không thể tạo phiên cào dữ liệu.");
+    } finally {
+      setIsStartingJob(false);
+    }
+  };
+
+  const handleRetryJob = async (failedItemIds?: string[]): Promise<void> => {
+    if (!jobId) return;
+    setIsStartingJob(true);
+    setErrorMessage(null);
+    try {
+      const response = await crawlerClient.retryJob(jobId, failedItemIds);
+      setJobId(response.jobId);
+      setJobStatus(response.status);
+      setJobErrors([]);
+      setJobWarnings([]);
+      setLogs([
+        `[${new Date().toLocaleTimeString()}] Bắt đầu phiên crawl lại ${response.jobId}.`,
+      ]);
+      setActiveStage(2);
+    } catch (err) {
+      setErrorMessage((err as Error).message || "Không thể thử lại phiên cào.");
     } finally {
       setIsStartingJob(false);
     }
@@ -149,6 +193,11 @@ export function ProductCrawlerPage({ client }: ProductCrawlerPageProps): React.J
   const handleResetNewJob = (): void => {
     if (pollTimerRef.current !== null) {
       window.clearTimeout(pollTimerRef.current);
+      pollTimerRef.current = null;
+    }
+    if (stageTransitionTimerRef.current !== null) {
+      window.clearTimeout(stageTransitionTimerRef.current);
+      stageTransitionTimerRef.current = null;
     }
     setJobId(null);
     setJobStatus("idle");
@@ -157,6 +206,8 @@ export function ProductCrawlerPage({ client }: ProductCrawlerPageProps): React.J
     setLogs([]);
     setProducts([]);
     setSelectedProductIds([]);
+    setJobErrors([]);
+    setJobWarnings([]);
     setErrorMessage(null);
     setActiveStage(1);
   };
@@ -297,7 +348,10 @@ export function ProductCrawlerPage({ client }: ProductCrawlerPageProps): React.J
           summary={summary}
           logs={logs}
           isCancelling={isCancelling}
+          errorMessage={errorMessage}
           onCancel={handleCancelJob}
+          onRetry={() => handleRetryJob()}
+          onBackToInput={() => setActiveStage(1)}
           onViewResults={products.length > 0 ? () => setActiveStage(3) : undefined}
         />
       )}
@@ -308,6 +362,9 @@ export function ProductCrawlerPage({ client }: ProductCrawlerPageProps): React.J
           <CrawlerProductTable
             products={products}
             selectedIds={selectedProductIds}
+            jobErrors={jobErrors}
+            jobWarnings={jobWarnings}
+            onRetryFailed={(failedIds) => handleRetryJob(failedIds)}
             onToggleSelect={handleToggleSelectProduct}
             onToggleSelectAll={handleToggleSelectAll}
             onClearSelection={handleClearSelection}

@@ -13,7 +13,10 @@ interface CrawlerRunPanelProps {
   summary?: ProductCrawlerSummary;
   logs: string[];
   isCancelling: boolean;
+  errorMessage?: string | null;
   onCancel(): void;
+  onRetry?(): void;
+  onBackToInput?(): void;
   onViewResults?(): void;
 }
 
@@ -32,7 +35,10 @@ export function CrawlerRunPanel({
   summary,
   logs,
   isCancelling,
+  errorMessage,
   onCancel,
+  onRetry,
+  onBackToInput,
   onViewResults,
 }: CrawlerRunPanelProps): React.JSX.Element {
   const [copied, setCopied] = useState(false);
@@ -52,7 +58,13 @@ export function CrawlerRunPanel({
   };
 
   const currentStep = stepper?.currentStep ?? (status === "queued" ? 1 : 2);
-  const percent = stepper?.percent ?? (status === "completed" || status === "partial" ? 100 : 25);
+  const percent =
+    stepper?.percent ??
+    (status === "completed" || status === "partial"
+      ? 100
+      : status === "failed" || status === "cancelled"
+        ? 0
+        : 25);
   const currentMessage =
     stepper?.currentMessage ??
     (status === "queued"
@@ -61,7 +73,9 @@ export function CrawlerRunPanel({
         ? "Đang tiến hành cào dữ liệu từ Amazon..."
         : status === "cancelled"
           ? "Phiên cào dữ liệu đã bị hủy."
-          : "Hoàn tất xử lý!");
+          : status === "failed"
+            ? errorMessage || "Tiến trình cào dữ liệu gặp lỗi thất bại."
+            : "Hoàn tất xử lý!");
 
   const isFinished = status === "completed" || status === "partial";
   const isRunning = status === "running" || status === "queued";
@@ -72,13 +86,25 @@ export function CrawlerRunPanel({
       <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-5 shadow-lg">
         <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-800 pb-4">
           <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-cyan-500/10 border border-cyan-500/30 text-cyan-400">
+            <div
+              className={`flex h-10 w-10 items-center justify-center rounded-lg border ${
+                isRunning
+                  ? "bg-cyan-500/10 border-cyan-500/30 text-cyan-400"
+                  : isFinished
+                    ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400"
+                    : status === "failed"
+                      ? "bg-rose-500/10 border-rose-500/30 text-rose-400"
+                      : "bg-amber-500/10 border-amber-500/30 text-amber-400"
+              }`}
+            >
               {isRunning ? (
                 <span className="inline-block h-5 w-5 animate-spin rounded-full border-2 border-cyan-400 border-t-transparent" />
               ) : isFinished ? (
-                <span className="text-emerald-400 text-lg">✓</span>
+                <span className="text-emerald-400 text-lg font-bold">✓</span>
+              ) : status === "failed" ? (
+                <span className="text-rose-400 text-lg font-bold">✕</span>
               ) : (
-                <span className="text-amber-400 text-lg">!</span>
+                <span className="text-amber-400 text-lg font-bold">!</span>
               )}
             </div>
 
@@ -95,7 +121,9 @@ export function CrawlerRunPanel({
                           ? "bg-cyan-950/70 border border-cyan-800 text-cyan-300 animate-pulse"
                           : status === "cancelled"
                             ? "bg-rose-950/70 border border-rose-800 text-rose-300"
-                            : "bg-slate-800 text-slate-300"
+                            : status === "failed"
+                              ? "bg-rose-950/70 border border-rose-700 text-rose-300 font-bold"
+                              : "bg-slate-800 text-slate-300"
                   }`}
                 >
                   <span
@@ -106,7 +134,7 @@ export function CrawlerRunPanel({
                           ? "bg-amber-400"
                           : status === "running"
                             ? "bg-cyan-400"
-                            : status === "cancelled"
+                            : status === "failed" || status === "cancelled"
                               ? "bg-rose-400"
                               : "bg-slate-400"
                     }`}
@@ -141,6 +169,39 @@ export function CrawlerRunPanel({
               </button>
             )}
 
+            {status === "failed" && (
+              <div className="flex items-center gap-2">
+                {onRetry && (
+                  <button
+                    type="button"
+                    onClick={onRetry}
+                    className="rounded-lg bg-gradient-to-r from-amber-500 to-orange-600 px-4 py-2 text-xs font-bold text-slate-950 shadow-md shadow-amber-500/20 hover:from-amber-400 hover:to-orange-500 transition"
+                  >
+                    ↻ Thử lại (Retry)
+                  </button>
+                )}
+                {onBackToInput && (
+                  <button
+                    type="button"
+                    onClick={onBackToInput}
+                    className="rounded-lg border border-slate-700 bg-slate-800 px-3.5 py-2 text-xs font-semibold text-slate-300 hover:bg-slate-700 hover:text-white transition"
+                  >
+                    ← Quay lại nhập nguồn
+                  </button>
+                )}
+              </div>
+            )}
+
+            {status === "cancelled" && onBackToInput && (
+              <button
+                type="button"
+                onClick={onBackToInput}
+                className="rounded-lg border border-slate-700 bg-slate-800 px-3.5 py-2 text-xs font-semibold text-slate-300 hover:bg-slate-700 hover:text-white transition"
+              >
+                ← Quay lại nhập nguồn
+              </button>
+            )}
+
             {isFinished && onViewResults && (
               <button
                 type="button"
@@ -152,6 +213,17 @@ export function CrawlerRunPanel({
             )}
           </div>
         </div>
+
+        {/* Failure message banner if failed */}
+        {status === "failed" && (
+          <div className="mt-4 rounded-lg border border-rose-800/80 bg-rose-950/40 p-3.5 text-xs text-rose-200 flex items-start gap-2.5">
+            <span className="text-base text-rose-400">⚠️</span>
+            <div>
+              <span className="font-bold text-rose-300 block">Tiến trình cào thất bại</span>
+              <span>{errorMessage || "Không thể kết nối đến máy chủ cào hoặc sản phẩm không tồn tại trên Amazon."}</span>
+            </div>
+          </div>
+        )}
 
         {/* Progress Bar */}
         <div className="mt-5 space-y-2">
@@ -168,8 +240,10 @@ export function CrawlerRunPanel({
                   : status === "partial"
                     ? "bg-gradient-to-r from-amber-500 to-emerald-400"
                     : status === "cancelled"
-                      ? "bg-rose-500"
-                      : "bg-gradient-to-r from-cyan-500 to-blue-500"
+                      ? "bg-slate-600"
+                      : status === "failed"
+                        ? "bg-rose-500"
+                        : "bg-gradient-to-r from-cyan-500 to-blue-500"
               }`}
               style={{ width: `${percent}%` }}
             />
@@ -179,8 +253,9 @@ export function CrawlerRunPanel({
         {/* 5-step Stepper list */}
         <div className="mt-6 grid grid-cols-1 md:grid-cols-5 gap-2">
           {STEPPER_LABELS.map((item) => {
-            const isPassed = currentStep > item.step || isFinished;
+            const isPassed = (currentStep > item.step || isFinished) && status !== "failed";
             const isCurrent = currentStep === item.step && isRunning;
+            const isFailedStep = currentStep === item.step && status === "failed";
 
             return (
               <div
@@ -190,7 +265,9 @@ export function CrawlerRunPanel({
                     ? "border-emerald-800/60 bg-emerald-950/20 text-emerald-300"
                     : isCurrent
                       ? "border-cyan-500 bg-cyan-950/40 text-cyan-200 shadow-sm shadow-cyan-500/20"
-                      : "border-slate-800 bg-slate-950/40 text-slate-500"
+                      : isFailedStep
+                        ? "border-rose-700 bg-rose-950/30 text-rose-300"
+                        : "border-slate-800 bg-slate-950/40 text-slate-500"
                 }`}
               >
                 <div className="flex items-center gap-1.5 mb-1">
@@ -200,10 +277,12 @@ export function CrawlerRunPanel({
                         ? "bg-emerald-500 text-slate-950"
                         : isCurrent
                           ? "bg-cyan-500 text-slate-950 animate-pulse"
-                          : "bg-slate-800 text-slate-400"
+                          : isFailedStep
+                            ? "bg-rose-500 text-white"
+                            : "bg-slate-800 text-slate-400"
                     }`}
                   >
-                    {isPassed ? "✓" : item.step}
+                    {isPassed ? "✓" : isFailedStep ? "✕" : item.step}
                   </span>
                   <span className="text-[11px] font-bold truncate">Bước {item.step}</span>
                 </div>

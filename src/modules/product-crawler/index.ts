@@ -1,22 +1,4 @@
 export {
-  buildMockJobOutput,
-  createMockSvgThumbnail,
-  defaultMockCrawlerOptions,
-  getFreshMockProducts,
-  mockCrawlerErrors,
-  mockProduct1Handbag,
-  mockProduct2Watch,
-  mockProduct3MugWarning,
-  mockProduct4Backpack,
-  mockSampleProducts,
-} from "./mocks/data";
-
-export {
-  MockProductCrawlerClient,
-  mockProductCrawlerClient,
-} from "./mocks/runner";
-
-export {
   createProductCrawlerRoutes,
   productCrawlerRoutes,
 } from "./routes";
@@ -33,6 +15,10 @@ export {
   RealProductCrawlerClient,
   validateCrawlerInput,
 } from "./service";
+
+export {
+  DEFAULT_CRAWLER_OPTIONS,
+} from "./types";
 
 export type {
   CrawlerDiagnostics,
