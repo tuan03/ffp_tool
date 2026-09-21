@@ -15,6 +15,7 @@ import {
   getPinterestPodClient,
   getPinterestPodRunner,
   getProductionRunner,
+  handoverToSeo,
   launchLogin,
   launchMockLogin,
   mock15Candidates,
@@ -730,6 +731,188 @@ test("Real client getStatus and deleteJob call respective endpoints with proper 
     const del = await realPinterestPodClient.deleteJob("job_del_test");
     assert.equal(del.ok, true);
     assert.ok(calls.some((c) => c.url.includes("/api/pinterest-pod/jobs/job_del_test/delete") && c.method === "POST"));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("buildSeoDeliverables filters composedMockups with approvedMockupUrls while keeping printMaster intact", () => {
+  const cand = { ...mockCandidates[0], id: "cand_001", image_url: "/api/assets/cand_001.jpg" };
+  const jobStatus: PodJobStatusResponse = {
+    ok: true,
+    jobId: "wf_approval_test",
+    status: "completed",
+    candidates: [cand],
+    deliverables: {
+      comparison_rows: [
+        {
+          index: 1,
+          product_label: "Vintage Rug",
+          source_url: "/api/assets/cand_001.jpg",
+          final_print_url: "/api/assets/wf_approval_test/design_01_cmyk_300dpi.jpg",
+          ai_background_urls: [
+            "/api/assets/wf_approval_test/mockup_room_1.jpg",
+            "/api/assets/wf_approval_test/mockup_room_2.jpg",
+            "/api/assets/wf_approval_test/mockup_room_3.jpg",
+          ],
+        },
+      ],
+    },
+  };
+
+  // Case 1: No approval filter passed (defaults to all mockups)
+  const allPayload = buildSeoDeliverables(jobStatus, "rug");
+  assert.equal(allPayload.items.length, 1);
+  assert.equal(allPayload.items[0].printMaster.dpi, 300);
+  assert.equal(allPayload.items[0].composedMockups.length, 3);
+
+  // Case 2: User only approved mockup_room_1 and mockup_room_3 (deselected mockup_room_2)
+  const approvedSet = new Set([
+    "/api/assets/wf_approval_test/mockup_room_1.jpg",
+    "/api/assets/wf_approval_test/mockup_room_3.jpg",
+  ]);
+  const filteredPayload = buildSeoDeliverables(jobStatus, "rug", undefined, approvedSet);
+  assert.equal(filteredPayload.items.length, 1);
+  assert.equal(filteredPayload.items[0].printMaster.dpi, 300);
+  assert.equal(filteredPayload.items[0].printMaster.colorMode, "CMYK");
+  assert.equal(filteredPayload.items[0].composedMockups.length, 2);
+  assert.equal(filteredPayload.items[0].composedMockups[0].mockupUrl, "/api/assets/wf_approval_test/mockup_room_1.jpg");
+  assert.equal(filteredPayload.items[0].composedMockups[1].mockupUrl, "/api/assets/wf_approval_test/mockup_room_3.jpg");
+
+  // Case 3: Matching by filename
+  const filenameApproved = new Set(["mockup_room_2.jpg"]);
+  const filenameFilteredPayload = buildSeoDeliverables(jobStatus, "rug", undefined, filenameApproved);
+  assert.equal(filenameFilteredPayload.items[0].composedMockups.length, 1);
+  assert.equal(filenameFilteredPayload.items[0].composedMockups[0].mockupUrl, "/api/assets/wf_approval_test/mockup_room_2.jpg");
+});
+
+test("Mock client handoverToSeo returns proper response with accurate counts", async () => {
+  const mockPayload = {
+    workflowId: "wf_test_handover",
+    success: true as const,
+    productType: "rug" as const,
+    totalProduced: 1,
+    items: [
+      {
+        designId: "design_rug_1",
+        sourceCandidateId: "cand_1",
+        productType: "rug" as const,
+        originalPinTitle: "Test Pin",
+        trendKeywords: ["trend"],
+        printMaster: {
+          cmykUrl: "/api/cmyk.jpg",
+          rgbUrl: "/api/rgb.png",
+          widthPx: 4000,
+          heightPx: 6400,
+          dpi: 300 as const,
+          colorMode: "CMYK" as const,
+          label: "4000 x 6400 px @ 300 DPI (CMYK)",
+          badge: "✓ Chuẩn in xưởng: 4000 x 6400 px @ 300 DPI (CMYK)",
+        },
+        cutoutProduct: {
+          transparentUrl: "/api/trans.png",
+          whiteBgUrl: "/api/white.jpg",
+        },
+        composedMockups: [
+          {
+            referenceImageId: "ref_1",
+            mockupUrl: "/api/mock_1.jpg",
+            detectedSceneType: "living_room",
+            detectedSceneDescription: "Living room",
+          },
+          {
+            referenceImageId: "ref_2",
+            mockupUrl: "/api/mock_2.jpg",
+            detectedSceneType: "bedroom",
+            detectedSceneDescription: "Bedroom",
+          },
+        ],
+      },
+    ],
+  };
+
+  const res = await mockPinterestPodClient.handoverToSeo(mockPayload);
+  assert.equal(res.success, true);
+  assert.equal(res.printMasterCount, 1);
+  assert.equal(res.approvedMockupCount, 2);
+  assert.match(res.message, /Bàn giao sang SEO thành công/);
+});
+
+test("Real client handoverToSeo and handoverToSeo function send POST to /api/pinterest-pod/handover-seo", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: { url: string; method?: string; body?: unknown }[] = [];
+
+  globalThis.fetch = async (url, init) => {
+    calls.push({
+      url: String(url),
+      method: init?.method ?? "GET",
+      body: init?.body ? JSON.parse(String(init.body)) : undefined,
+    });
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        success: true,
+        message: "Bàn giao sang SEO thành công: 1 file in xưởng và 2 mockup AI đã duyệt.",
+        receivedAt: 1726900000000,
+        printMasterCount: 1,
+        approvedMockupCount: 2,
+        savedPath: "data/pinterest_pod/output/wf_post_test/seo_handoff_payload.json",
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  };
+
+  try {
+    const payload = {
+      workflowId: "wf_post_test",
+      success: true as const,
+      productType: "rug" as const,
+      totalProduced: 1,
+      items: [
+        {
+          designId: "design_rug_1",
+          sourceCandidateId: "cand_1",
+          productType: "rug" as const,
+          originalPinTitle: "Test Rug",
+          trendKeywords: ["rug"],
+          printMaster: {
+            cmykUrl: "/api/cmyk.jpg",
+            rgbUrl: "/api/rgb.png",
+            widthPx: 4000,
+            heightPx: 6400,
+            dpi: 300 as const,
+            colorMode: "CMYK" as const,
+            label: "4000 x 6400 px @ 300 DPI (CMYK)",
+            badge: "✓ Chuẩn in xưởng: 4000 x 6400 px @ 300 DPI (CMYK)",
+          },
+          cutoutProduct: { transparentUrl: "", whiteBgUrl: "" },
+          composedMockups: [
+            {
+              referenceImageId: "ref_1",
+              mockupUrl: "/api/mock_1.jpg",
+              detectedSceneType: "living_room",
+              detectedSceneDescription: "Living room",
+            },
+          ],
+        },
+      ],
+    };
+
+    const res = await realPinterestPodClient.handoverToSeo(payload);
+    assert.equal(res.success, true);
+    assert.equal(res.printMasterCount, 1);
+    assert.equal(res.approvedMockupCount, 2);
+    assert.ok(
+      calls.some(
+        (c) =>
+          c.url.includes("/api/pinterest-pod/handover-seo") &&
+          c.method === "POST" &&
+          (c.body as { workflowId?: string })?.workflowId === "wf_post_test",
+      ),
+    );
+
+    const directRes = await handoverToSeo(payload);
+    assert.equal(directRes.success, true);
   } finally {
     globalThis.fetch = originalFetch;
   }

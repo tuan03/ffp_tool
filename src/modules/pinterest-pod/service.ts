@@ -27,6 +27,7 @@ import type {
   PodStatusResponse,
   ProduceInput,
   ProduceOutput,
+  SeoHandoverResponse,
 } from "./types";
 import { FACTORY_PRINT_STANDARDS } from "./types";
 
@@ -353,11 +354,24 @@ export function buildSeoDeliverables(
   jobStatus: PodJobStatusResponse,
   productType: PodProductType = "rug",
   selectedCandidateIds?: readonly string[],
+  approvedMockupUrls?: ReadonlySet<string> | readonly string[],
 ): PinterestPodDeliverables {
   const deliverables: PodBackendDeliverables = jobStatus.deliverables ?? {};
   const comparisonRows = deliverables.comparison_rows ?? deliverables.comparison_matrix ?? [];
   const printStandard = FACTORY_PRINT_STANDARDS[productType];
   const workflowId = jobStatus.jobId || jobStatus.job_id || "pod_production_completed";
+
+  const approvedSet = approvedMockupUrls
+    ? (approvedMockupUrls instanceof Set ? approvedMockupUrls : new Set(approvedMockupUrls))
+    : null;
+
+  const isMockupApproved = (url: string): boolean => {
+    if (!approvedSet) return true;
+    if (approvedSet.has(url)) return true;
+    const fname = extractFilename(url);
+    if (fname && approvedSet.has(fname)) return true;
+    return false;
+  };
 
   // Build multi-index candidate maps for robust lookup
   const candidatesById = new Map<string, PodCandidate>();
@@ -458,7 +472,7 @@ export function buildSeoDeliverables(
           ? `temp/pinterest_pod/${workflowId}/${transCutoutFilename}`
           : undefined;
 
-      const backgroundUrls = row.ai_background_urls ?? [];
+      const backgroundUrls = (row.ai_background_urls ?? []).filter(isMockupApproved);
       const composedMockups: PodComposedMockupSpec[] = backgroundUrls.map(
         (bgUrl, bgIdx) => {
           const matchedMockup = deliverables.lifestyle_mockups?.find((m) => m.url === bgUrl);
@@ -524,7 +538,9 @@ export function buildSeoDeliverables(
         ? deliverables.product_cutouts[idx]
         : undefined;
 
-      const mockups: PodComposedMockupSpec[] = (deliverables.lifestyle_mockups ?? []).map(
+      const mockups: PodComposedMockupSpec[] = (deliverables.lifestyle_mockups ?? [])
+        .filter((m) => isMockupApproved(m.url))
+        .map(
         (m, mIdx) => ({
           referenceImageId: `ref_room_0${mIdx + 1}`,
           mockupUrl: m.url,
@@ -748,6 +764,26 @@ export class RealPinterestPodClient implements PinterestPodClient {
       "PINTEREST_JOB_DELETE_FAILED",
     );
   }
+
+  public async handoverToSeo(payload: PinterestPodDeliverables): Promise<SeoHandoverResponse> {
+    return handoverToSeo(payload);
+  }
+}
+
+/** Hand over final deliverables to the SEO Module */
+export async function handoverToSeo(
+  payload: PinterestPodDeliverables,
+  customBaseUrl?: string,
+): Promise<SeoHandoverResponse> {
+  return requestJson<SeoHandoverResponse>(
+    "/api/pinterest-pod/handover-seo",
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+    "PINTEREST_POD_SEO_HANDOVER_FAILED",
+    customBaseUrl,
+  );
 }
 
 export const realPinterestPodClient = new RealPinterestPodClient();

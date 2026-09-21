@@ -1,7 +1,13 @@
-import { useState } from "react";
-import type { DeliverablesData, PinterestPodDeliverables, SummaryMetrics } from "../../types";
+import { useMemo, useState } from "react";
+import type {
+  DeliverablesData,
+  PinterestPodDeliverables,
+  SeoHandoverResponse,
+  SummaryMetrics,
+} from "../../types";
 import { ComparisonTable } from "./ComparisonTable";
 import type { LightboxImageItem } from "./ImageLightboxModal";
+import { buildProductGroups, type ProductGroup } from "./product-groups";
 import { SeoHandoffModal } from "./SeoHandoffModal";
 
 interface DeliverablesShowcaseProps {
@@ -20,6 +26,7 @@ export function DeliverablesShowcase({
   onPreviewImage,
 }: DeliverablesShowcaseProps): React.JSX.Element {
   const [activeTab, setActiveTab] = useState<TabKey>("cmyk");
+  const [mockupViewMode, setMockupViewMode] = useState<"by_product" | "all">("by_product");
   const [showSeoModal, setShowSeoModal] = useState(false);
   const [isZipping, setIsZipping] = useState(false);
   const [zipMessage, setZipMessage] = useState<string | null>(null);
@@ -28,6 +35,96 @@ export function DeliverablesShowcase({
   const lifestyleMockups = deliverables.lifestyle_mockups ?? [];
   const productCutoutsWhite = deliverables.product_cutouts_white ?? [];
   const comparisonRows = deliverables.comparison_rows ?? [];
+
+  // Group deliverables by product for product-centric display
+  const productGroups = useMemo(() => {
+    return buildProductGroups(deliverables, seoPayload);
+  }, [deliverables, seoPayload]);
+
+  // Track approved mockup URLs / filenames (100% pre-selected by default)
+  const [approvedMockupKeys, setApprovedMockupKeys] = useState<Set<string>>(() => {
+    const initial = new Set<string>();
+    for (const m of lifestyleMockups) {
+      if (m.url) initial.add(m.url);
+      if (m.filename) initial.add(m.filename);
+    }
+    return initial;
+  });
+
+  const [handoffToast, setHandoffToast] = useState<string | null>(null);
+  const [handoffResult, setHandoffResult] = useState<SeoHandoverResponse | null>(null);
+
+  const isMockupApproved = (url: string, filename?: string): boolean => {
+    if (approvedMockupKeys.has(url)) return true;
+    if (filename && approvedMockupKeys.has(filename)) return true;
+    return false;
+  };
+
+  const toggleMockupApproval = (url: string, filename?: string): void => {
+    setApprovedMockupKeys((prev) => {
+      const next = new Set(prev);
+      const isApproved = next.has(url) || (Boolean(filename) && next.has(filename!));
+      if (isApproved) {
+        next.delete(url);
+        if (filename) next.delete(filename);
+      } else {
+        next.add(url);
+        if (filename) next.add(filename);
+      }
+      return next;
+    });
+  };
+
+  const handleSelectAllMockups = (): void => {
+    const all = new Set<string>();
+    for (const m of lifestyleMockups) {
+      if (m.url) all.add(m.url);
+      if (m.filename) all.add(m.filename);
+    }
+    setApprovedMockupKeys(all);
+  };
+
+  const handleDeselectAllMockups = (): void => {
+    setApprovedMockupKeys(new Set());
+  };
+
+  const handleSelectProductMockups = (prod: ProductGroup): void => {
+    setApprovedMockupKeys((prev) => {
+      const next = new Set(prev);
+      for (const m of prod.mockups) {
+        if (m.url) next.add(m.url);
+        if (m.filename) next.add(m.filename);
+      }
+      return next;
+    });
+  };
+
+  const handleDeselectProductMockups = (prod: ProductGroup): void => {
+    setApprovedMockupKeys((prev) => {
+      const next = new Set(prev);
+      for (const m of prod.mockups) {
+        if (m.url) next.delete(m.url);
+        if (m.filename) next.delete(m.filename);
+      }
+      return next;
+    });
+  };
+
+  const approvedMockupCount = lifestyleMockups.filter((m) =>
+    isMockupApproved(m.url, m.filename),
+  ).length;
+
+  // Filtered SEO payload: compute only when modal is open to avoid unnecessary recalculations during tab browsing
+  const filteredSeoPayload: PinterestPodDeliverables | undefined = useMemo(() => {
+    if (!seoPayload || !showSeoModal) return undefined;
+    return {
+      ...seoPayload,
+      items: seoPayload.items.map((item) => ({
+        ...item,
+        composedMockups: item.composedMockups.filter((m) => isMockupApproved(m.mockupUrl)),
+      })),
+    };
+  }, [seoPayload, showSeoModal, approvedMockupKeys]);
 
   const metrics: SummaryMetrics = summaryMetrics ?? {
     rgb_4k_count: printCmykImages.length,
@@ -78,6 +175,23 @@ export function DeliverablesShowcase({
             type="button"
             onClick={() => setZipMessage(null)}
             className="text-cyan-400 hover:text-white"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
+      {/* SEO Handoff Toast Notification */}
+      {handoffToast && (
+        <div className="flex items-center justify-between rounded-xl border border-emerald-700 bg-emerald-950/90 p-3.5 text-xs text-emerald-200 shadow-lg animate-fade-in">
+          <div className="flex items-center gap-2">
+            <span className="text-base">✨</span>
+            <span className="font-semibold">{handoffToast}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setHandoffToast(null)}
+            className="text-emerald-400 hover:text-white ml-2"
           >
             ✕
           </button>
@@ -157,7 +271,7 @@ export function DeliverablesShowcase({
                 : "border-transparent text-slate-400 hover:text-slate-200"
             }`}
           >
-            🛋️ Mockup Phòng AI ({lifestyleMockups.length})
+            🛋️ Mockup Phòng AI ({approvedMockupCount}/{lifestyleMockups.length})
           </button>
 
           <button
@@ -210,6 +324,8 @@ export function DeliverablesShowcase({
                   <img
                     src={item.url}
                     alt={item.filename}
+                    loading="lazy"
+                    decoding="async"
                     onError={(e) => {
                       e.currentTarget.onerror = null;
                       e.currentTarget.src =
@@ -218,9 +334,9 @@ export function DeliverablesShowcase({
                           `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300"><rect width="400" height="300" fill="#0f172a"/><text x="200" y="150" fill="#38bdf8" font-family="sans-serif" font-size="14" text-anchor="middle">${item.filename}</text></svg>`,
                         );
                     }}
-                    className="h-full w-full object-cover transition duration-300 group-hover:scale-105"
+                    className="h-full w-full object-cover transition duration-200 group-hover:scale-105"
                   />
-                  <div className="absolute bottom-2 left-2 flex items-center gap-1 rounded bg-black/60 px-2 py-0.5 text-[10px] font-semibold text-cyan-300 backdrop-blur-xs opacity-0 group-hover:opacity-100 transition">
+                  <div className="absolute bottom-2 left-2 flex items-center gap-1 rounded bg-black/80 px-2 py-0.5 text-[10px] font-semibold text-cyan-300 opacity-0 group-hover:opacity-100 transition">
                     <span>🔍 Soi HD</span>
                   </div>
                 </div>
@@ -246,61 +362,398 @@ export function DeliverablesShowcase({
 
         {/* Tab 2: Lifestyle Mockups */}
         {activeTab === "mockups" && (
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3">
-            {lifestyleMockups.map((mockup, idx) => (
-              <div
-                key={mockup.filename || `${mockup.url}-${idx}`}
-                className="group flex flex-col overflow-hidden rounded-xl border border-slate-800 bg-slate-950 shadow transition hover:border-indigo-600/70"
-              >
-                <div
-                  className="relative aspect-[4/3] w-full overflow-hidden bg-slate-900 cursor-zoom-in"
-                  onClick={() =>
-                    onPreviewImage?.({
-                      url: mockup.url,
-                      title: mockup.filename,
-                      subtitle: mockup.scene_description,
-                      badge: mockup.scene_type,
-                      tags: [mockup.scene_type],
-                      downloadUrl: mockup.url,
-                    })
-                  }
+          <div className="flex flex-col gap-5">
+            {/* Approval Control Toolbar */}
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-800 bg-slate-950/70 p-3.5 shadow-inner">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs font-semibold text-slate-300">
+                  Duyệt ảnh mockup gửi sang SEO:
+                </span>
+                <span
+                  className={`rounded-full px-2.5 py-0.5 text-xs font-bold border ${
+                    approvedMockupCount > 0
+                      ? "bg-indigo-950/80 border-indigo-700/60 text-indigo-300"
+                      : "bg-rose-950/80 border-rose-800 text-rose-300"
+                  }`}
                 >
-                  <img
-                    src={mockup.url}
-                    alt={mockup.filename}
-                    onError={(e) => {
-                      e.currentTarget.onerror = null;
-                      e.currentTarget.src =
-                        "data:image/svg+xml;charset=utf-8," +
-                        encodeURIComponent(
-                          `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300"><rect width="400" height="300" fill="#0f172a"/><text x="200" y="150" fill="#a78bfa" font-family="sans-serif" font-size="14" text-anchor="middle">${mockup.filename}</text></svg>`,
-                        );
-                    }}
-                    className="h-full w-full object-cover transition duration-300 group-hover:scale-105"
-                  />
-                  <div className="absolute bottom-2 left-2 flex items-center gap-1 rounded bg-black/60 px-2 py-0.5 text-[10px] font-semibold text-indigo-300 backdrop-blur-xs opacity-0 group-hover:opacity-100 transition">
-                    <span>🔍 Soi Mockup</span>
-                  </div>
+                  {approvedMockupCount} / {lifestyleMockups.length} ảnh được phép
+                </span>
+                <span className="text-[11px] text-slate-400">
+                  (Mặc định đã duyệt tất cả — bạn có thể bật/tắt từng ảnh hoặc từng sản phẩm)
+                </span>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2.5">
+                {/* View Mode Switcher */}
+                <div className="flex items-center rounded-lg border border-slate-700 bg-slate-900 p-0.5 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setMockupViewMode("by_product")}
+                    className={`rounded-md px-2.5 py-1 font-semibold transition ${
+                      mockupViewMode === "by_product"
+                        ? "bg-indigo-600 text-white shadow"
+                        : "text-slate-400 hover:text-slate-200"
+                    }`}
+                  >
+                    📁 Theo từng sản phẩm ({productGroups.length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setMockupViewMode("all")}
+                    className={`rounded-md px-2.5 py-1 font-semibold transition ${
+                      mockupViewMode === "all"
+                        ? "bg-indigo-600 text-white shadow"
+                        : "text-slate-400 hover:text-slate-200"
+                    }`}
+                  >
+                    🖼️ Xem tất cả ({lifestyleMockups.length})
+                  </button>
                 </div>
-                <div className="flex flex-col p-3 gap-1.5">
-                  <div className="flex items-center justify-between">
-                    <span className="rounded-full bg-slate-800 px-2 py-0.5 text-[10px] font-semibold text-cyan-300 uppercase">
-                      {mockup.scene_type}
-                    </span>
-                    <a
-                      href={mockup.url}
-                      download={mockup.filename}
-                      className="text-xs text-cyan-400 hover:underline"
-                    >
-                      Tải ảnh ↓
-                    </a>
-                  </div>
-                  <p className="text-xs text-slate-300 line-clamp-2" title={mockup.scene_description}>
-                    {mockup.scene_description}
-                  </p>
+
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={handleSelectAllMockups}
+                    className="rounded-lg border border-indigo-700/50 bg-indigo-950/60 px-2.5 py-1 text-xs font-medium text-indigo-300 hover:bg-indigo-900/60 hover:text-white transition"
+                  >
+                    ✓ Chọn tất cả
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleDeselectAllMockups}
+                    className="rounded-lg border border-slate-700 bg-slate-800/80 px-2.5 py-1 text-xs font-medium text-slate-400 hover:bg-slate-700 hover:text-white transition"
+                  >
+                    ✕ Bỏ chọn tất cả
+                  </button>
                 </div>
               </div>
-            ))}
+            </div>
+
+            {/* View Mode: Grouped by Product */}
+            {mockupViewMode === "by_product" ? (
+              <div className="flex flex-col gap-5">
+                {productGroups.map((prod, prodIdx) => {
+                  const prodApprovedCount = prod.mockups.filter((m) =>
+                    isMockupApproved(m.url, m.filename),
+                  ).length;
+
+                  return (
+                    <div
+                      key={prod.id || prodIdx}
+                      style={{ contentVisibility: "auto", containIntrinsicSize: "0 280px" }}
+                      className="flex flex-col gap-3.5 rounded-2xl border border-slate-800 bg-slate-950/80 p-4 shadow-lg transition hover:border-slate-700"
+                    >
+                      {/* Product Header */}
+                      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800/80 pb-3">
+                        <div className="flex items-center gap-2.5">
+                          <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-indigo-900/60 border border-indigo-700/60 text-xs font-bold text-indigo-300">
+                            #{prodIdx + 1}
+                          </span>
+                          <div>
+                            <h4 className="text-sm font-bold text-slate-100 flex items-center gap-2">
+                              <span>{prod.title}</span>
+                              <span className="font-mono text-[11px] font-normal text-slate-400">
+                                ({prod.id})
+                              </span>
+                            </h4>
+                            <p className="text-[11px] text-emerald-400 font-medium">
+                              {prod.badge || `${prod.widthPx}x${prod.heightPx} @ 300 DPI (CMYK)`}
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <span
+                            className={`rounded-full px-2.5 py-0.5 text-xs font-bold border ${
+                              prodApprovedCount > 0
+                                ? "bg-indigo-950 border-indigo-700/60 text-indigo-300"
+                                : "bg-rose-950 border-rose-800 text-rose-300"
+                            }`}
+                          >
+                            {prodApprovedCount} / {prod.mockups.length} mockup đã chọn
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleSelectProductMockups(prod)}
+                            className="rounded border border-indigo-700/50 bg-indigo-950/60 px-2 py-0.5 text-[11px] font-medium text-indigo-300 hover:bg-indigo-900 hover:text-white transition"
+                          >
+                            ✓ Chọn hết SP này
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDeselectProductMockups(prod)}
+                            className="rounded border border-slate-700 bg-slate-800/60 px-2 py-0.5 text-[11px] font-medium text-slate-400 hover:bg-slate-700 hover:text-white transition"
+                          >
+                            ✕ Bỏ hết SP này
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Product Content: Left = Print Master, Right = Mockups */}
+                      <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
+                        {/* Left: Print Master Preview */}
+                        <div className="lg:col-span-1 flex flex-col gap-2 rounded-xl border border-emerald-900/40 bg-emerald-950/20 p-3 shadow-inner">
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-bold text-emerald-300 flex items-center gap-1">
+                              <span>🏭</span> Bản in xưởng
+                            </span>
+                            <span className="rounded bg-emerald-900/80 px-1.5 py-0.5 text-[9px] font-mono font-bold text-emerald-200">
+                              300 DPI
+                            </span>
+                          </div>
+
+                          <div
+                            className="relative aspect-[4/3] w-full overflow-hidden rounded-lg bg-slate-950 border border-slate-800 cursor-zoom-in group"
+                            onClick={() =>
+                              onPreviewImage?.({
+                                url: prod.rgbUrl || prod.cmykUrl,
+                                title: prod.title,
+                                subtitle: prod.label,
+                                badge: "CMYK 300 DPI",
+                                dpi: 300,
+                                colorMode: "CMYK",
+                              })
+                            }
+                          >
+                            <img
+                              src={prod.previewUrl || prod.rgbUrl || prod.cmykUrl}
+                              alt={prod.title}
+                              loading="lazy"
+                              decoding="async"
+                              className="h-full w-full object-cover transition duration-200 group-hover:scale-105"
+                            />
+                            <div className="absolute bottom-1.5 left-1.5 rounded bg-black/80 px-1.5 py-0.5 text-[9px] text-cyan-300">
+                              🔍 Soi bản in
+                            </div>
+                          </div>
+
+                          <div className="flex flex-col gap-0.5 text-[10px] text-slate-400">
+                            <p className="font-mono text-slate-300 truncate" title={prod.cmykFilename}>
+                              {prod.cmykFilename}
+                            </p>
+                            <span className="text-emerald-400 font-semibold">
+                              ✓ Sẵn sàng xuất xưởng
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Right: Mockups for this product */}
+                        <div className="lg:col-span-3 flex flex-col gap-2">
+                          <span className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+                            <span>🛋️</span> Phối cảnh phòng AI của sản phẩm ({prod.mockups.length} ảnh)
+                          </span>
+
+                          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+                            {prod.mockups.map((mockup, mIdx) => {
+                              const approved = isMockupApproved(mockup.url, mockup.filename);
+                              return (
+                                <div
+                                  key={mockup.filename || `${mockup.url}-${mIdx}`}
+                                  className={`group relative flex flex-col overflow-hidden rounded-xl border shadow transition ${
+                                    approved
+                                      ? "border-indigo-600/70 bg-slate-950 hover:border-indigo-500"
+                                      : "border-slate-800/80 bg-slate-950/50 opacity-55 hover:opacity-85"
+                                  }`}
+                                >
+                                  {/* Approval Toggle Badge Button */}
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      toggleMockupApproval(mockup.url, mockup.filename);
+                                    }}
+                                    className={`absolute top-2.5 right-2.5 z-20 flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-[11px] font-bold shadow-lg transition ${
+                                      approved
+                                        ? "bg-emerald-600/95 text-white hover:bg-emerald-500 shadow-emerald-950/50"
+                                        : "bg-slate-900/95 text-slate-400 border border-slate-700 hover:border-slate-500 hover:text-slate-200"
+                                    }`}
+                                    title={
+                                      approved
+                                        ? "Bấm để bỏ qua mockup này khi gửi sang SEO"
+                                        : "Bấm để cho phép gửi mockup này sang SEO"
+                                    }
+                                  >
+                                    <span>{approved ? "✓" : "✕"}</span>
+                                    <span>{approved ? "Đã duyệt" : "Bỏ qua"}</span>
+                                  </button>
+
+                                  <div
+                                    className="relative aspect-[4/3] w-full overflow-hidden bg-slate-900 cursor-zoom-in"
+                                    onClick={() =>
+                                      onPreviewImage?.({
+                                        url: mockup.url,
+                                        title: mockup.filename || `Mockup ${mockup.scene_type || ""}`.trim() || "Mockup",
+                                        subtitle: mockup.scene_description,
+                                        badge: mockup.scene_type,
+                                        tags: [mockup.scene_type],
+                                        downloadUrl: mockup.url,
+                                      })
+                                    }
+                                  >
+                                    <img
+                                      src={mockup.url}
+                                      alt={mockup.filename}
+                                      loading="lazy"
+                                      decoding="async"
+                                      onError={(e) => {
+                                        e.currentTarget.onerror = null;
+                                        e.currentTarget.src =
+                                          "data:image/svg+xml;charset=utf-8," +
+                                          encodeURIComponent(
+                                            `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300"><rect width="400" height="300" fill="#0f172a"/><text x="200" y="150" fill="#a78bfa" font-family="sans-serif" font-size="14" text-anchor="middle">${mockup.filename}</text></svg>`,
+                                          );
+                                      }}
+                                      className={`h-full w-full object-cover transition duration-200 group-hover:scale-105 ${
+                                        !approved ? "grayscale-[35%]" : ""
+                                      }`}
+                                    />
+                                    <div className="absolute bottom-2 left-2 flex items-center gap-1 rounded bg-black/80 px-2 py-0.5 text-[10px] font-semibold text-indigo-300 opacity-0 group-hover:opacity-100 transition">
+                                      <span>🔍 Soi Mockup</span>
+                                    </div>
+                                  </div>
+
+                                  <div className="flex flex-col p-3 gap-1.5">
+                                    <div className="flex items-center justify-between">
+                                      <div className="flex items-center gap-2">
+                                        <span className="rounded-full bg-slate-800 px-2 py-0.5 text-[10px] font-semibold text-cyan-300 uppercase">
+                                          {mockup.scene_type}
+                                        </span>
+                                        <span
+                                          className={`text-[10px] font-medium ${
+                                            approved ? "text-emerald-400" : "text-slate-500"
+                                          }`}
+                                        >
+                                          {approved ? "• Sẵn sàng SEO" : "• Đã loại bỏ"}
+                                        </span>
+                                      </div>
+                                      <a
+                                        href={mockup.url}
+                                        download={mockup.filename}
+                                        onClick={(e) => e.stopPropagation()}
+                                        className="text-xs text-cyan-400 hover:underline"
+                                      >
+                                        Tải ảnh ↓
+                                      </a>
+                                    </div>
+                                    <p
+                                      className="text-xs text-slate-300 line-clamp-2"
+                                      title={mockup.scene_description}
+                                    >
+                                      {mockup.scene_description}
+                                    </p>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              /* Flat Grid View */
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3">
+                {lifestyleMockups.map((mockup, idx) => {
+                  const approved = isMockupApproved(mockup.url, mockup.filename);
+                  return (
+                    <div
+                      key={mockup.filename || `${mockup.url}-${idx}`}
+                      className={`group relative flex flex-col overflow-hidden rounded-xl border shadow transition ${
+                        approved
+                          ? "border-indigo-600/70 bg-slate-950 hover:border-indigo-500"
+                          : "border-slate-800/80 bg-slate-950/50 opacity-60 hover:opacity-90"
+                      }`}
+                    >
+                      {/* Approval Toggle Badge Button */}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleMockupApproval(mockup.url, mockup.filename);
+                        }}
+                        className={`absolute top-2.5 right-2.5 z-20 flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-[11px] font-bold shadow-lg transition ${
+                          approved
+                            ? "bg-emerald-600/95 text-white hover:bg-emerald-500 shadow-emerald-950/50"
+                            : "bg-slate-900/95 text-slate-400 border border-slate-700 hover:border-slate-500 hover:text-slate-200"
+                        }`}
+                        title={
+                          approved
+                            ? "Bấm để bỏ qua mockup này khi gửi sang SEO"
+                            : "Bấm để cho phép gửi mockup này sang SEO"
+                        }
+                      >
+                        <span>{approved ? "✓" : "✕"}</span>
+                        <span>{approved ? "Đã duyệt" : "Bỏ qua"}</span>
+                      </button>
+
+                      <div
+                        className="relative aspect-[4/3] w-full overflow-hidden bg-slate-900 cursor-zoom-in"
+                        onClick={() =>
+                          onPreviewImage?.({
+                            url: mockup.url,
+                            title: mockup.filename || "AI Lifestyle Mockup",
+                            subtitle: mockup.scene_description,
+                            badge: mockup.scene_type,
+                            tags: [mockup.scene_type],
+                            downloadUrl: mockup.url,
+                          })
+                        }
+                      >
+                        <img
+                          src={mockup.url}
+                          alt={mockup.filename}
+                          loading="lazy"
+                          decoding="async"
+                          onError={(e) => {
+                            e.currentTarget.onerror = null;
+                            e.currentTarget.src =
+                              "data:image/svg+xml;charset=utf-8," +
+                              encodeURIComponent(
+                                `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300"><rect width="400" height="300" fill="#0f172a"/><text x="200" y="150" fill="#a78bfa" font-family="sans-serif" font-size="14" text-anchor="middle">${mockup.filename}</text></svg>`,
+                              );
+                          }}
+                          className={`h-full w-full object-cover transition duration-200 group-hover:scale-105 ${
+                            !approved ? "grayscale-[35%]" : ""
+                          }`}
+                        />
+                        <div className="absolute bottom-2 left-2 flex items-center gap-1 rounded bg-black/80 px-2 py-0.5 text-[10px] font-semibold text-indigo-300 opacity-0 group-hover:opacity-100 transition">
+                          <span>🔍 Soi Mockup</span>
+                        </div>
+                      </div>
+                      <div className="flex flex-col p-3 gap-1.5">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <span className="rounded-full bg-slate-800 px-2 py-0.5 text-[10px] font-semibold text-cyan-300 uppercase">
+                              {mockup.scene_type}
+                            </span>
+                            <span
+                              className={`text-[10px] font-medium ${
+                                approved ? "text-emerald-400" : "text-slate-500"
+                              }`}
+                            >
+                              {approved ? "• Sẵn sàng SEO" : "• Đã loại bỏ"}
+                            </span>
+                          </div>
+                          <a
+                            href={mockup.url}
+                            download={mockup.filename}
+                            onClick={(e) => e.stopPropagation()}
+                            className="text-xs text-cyan-400 hover:underline"
+                          >
+                            Tải ảnh ↓
+                          </a>
+                        </div>
+                        <p className="text-xs text-slate-300 line-clamp-2" title={mockup.scene_description}>
+                          {mockup.scene_description}
+                        </p>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         )}
 
@@ -381,22 +834,41 @@ export function DeliverablesShowcase({
             <span>{isZipping ? "Đang nén ZIP..." : "Tải toàn bộ file in ZIP ↓"}</span>
           </button>
 
-          {seoPayload && (
+          {(filteredSeoPayload || seoPayload) && (
             <button
               type="button"
-              onClick={() => setShowSeoModal(true)}
+              onClick={() => {
+                setHandoffResult(null);
+                setShowSeoModal(true);
+              }}
               className="flex-1 sm:flex-none flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 px-5 py-2.5 text-xs font-bold text-slate-950 shadow-lg shadow-emerald-500/25 transition hover:from-emerald-400 hover:to-teal-500 hover:shadow-emerald-500/40"
             >
               <span>✨</span>
-              <span>Bàn giao sang Module SEO + CONTENT</span>
+              <span>
+                {`Bàn giao sang SEO (${printCmykImages.length} file in + ${approvedMockupCount}/${lifestyleMockups.length} mockup) ➔`}
+              </span>
             </button>
           )}
         </div>
       </div>
 
       {/* SEO Handoff Modal */}
-      {showSeoModal && seoPayload && (
-        <SeoHandoffModal payload={seoPayload} onClose={() => setShowSeoModal(false)} />
+      {showSeoModal && (filteredSeoPayload || seoPayload) && (
+        <SeoHandoffModal
+          payload={filteredSeoPayload ?? seoPayload!}
+          deliverables={deliverables}
+          approvedMockupKeys={approvedMockupKeys}
+          onToggleMockup={toggleMockupApproval}
+          onSelectAllMockups={handleSelectAllMockups}
+          onDeselectAllMockups={handleDeselectAllMockups}
+          onPreviewImage={onPreviewImage}
+          handoffResult={handoffResult}
+          onHandoffSuccess={(res) => {
+            setHandoffResult(res);
+            setHandoffToast(res.message);
+          }}
+          onClose={() => setShowSeoModal(false)}
+        />
       )}
     </section>
   );

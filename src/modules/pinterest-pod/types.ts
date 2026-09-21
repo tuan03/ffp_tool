@@ -353,6 +353,16 @@ export interface PodStatusResponse {
   readonly presets?: Record<string, unknown>;
 }
 
+/** Response from handing over deliverables to the SEO Module */
+export interface SeoHandoverResponse {
+  readonly success: boolean;
+  readonly message: string;
+  readonly receivedAt?: number;
+  readonly printMasterCount?: number;
+  readonly approvedMockupCount?: number;
+  readonly savedPath?: string;
+}
+
 /** Pinterest Pod client interface for UI consumption */
 export interface PinterestPodClient {
   getAuthStatus(): Promise<PinterestAuthStatus>;
@@ -363,6 +373,7 @@ export interface PinterestPodClient {
   cancelJob(jobId: string): Promise<CancelJobOutput>;
   getStatus(): Promise<PodStatusResponse>;
   deleteJob(jobId: string): Promise<{ readonly ok: boolean; readonly message?: string }>;
+  handoverToSeo?(payload: PinterestPodDeliverables): Promise<SeoHandoverResponse>;
 }
 
 /** Factory specification definition for print production */

@@ -16,6 +16,7 @@ import logging
 import os
 import re
 import sys
+import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -249,6 +250,50 @@ class PinterestPodHandler(BaseHTTPRequestHandler):
                 self.send_json(res)
             except Exception as exc:
                 self.send_json({"ok": False, "message": str(exc)}, 500)
+            return
+
+        # Handover to SEO Module: POST /api/pinterest-pod/handover-seo or POST /api/seo/receive-deliverables
+        if path in {"/api/pinterest-pod/handover-seo", "/api/seo/receive-deliverables"}:
+            try:
+                workflow_id = payload.get("workflowId") or payload.get("jobId") or "latest"
+                handoff_dir = SERVER_ROOT / "data" / "pinterest_pod" / "output" / workflow_id
+                handoff_dir.mkdir(parents=True, exist_ok=True)
+                handoff_file = handoff_dir / "seo_handoff_payload.json"
+                with open(handoff_file, "w", encoding="utf-8") as f:
+                    json.dump(payload, f, ensure_ascii=False, indent=2)
+
+                # Also write a copy to seo_handoffs directory inside data
+                seo_inbox_dir = SERVER_ROOT / "data" / "seo_handoffs"
+                try:
+                    seo_inbox_dir.mkdir(parents=True, exist_ok=True)
+                    with open(seo_inbox_dir / f"{workflow_id}_seo_payload.json", "w", encoding="utf-8") as f:
+                        json.dump(payload, f, ensure_ascii=False, indent=2)
+                except Exception:
+                    pass
+
+                items = payload.get("items") or []
+                print_master_count = sum(1 for item in items if item.get("printMaster"))
+                approved_mockups_count = sum(len(item.get("composedMockups") or []) for item in items)
+
+                logger.info(
+                    "Handover to SEO received for workflow %s: %d print masters, %d approved mockups",
+                    workflow_id,
+                    print_master_count,
+                    approved_mockups_count,
+                )
+
+                self.send_json({
+                    "ok": True,
+                    "success": True,
+                    "message": f"Bàn giao sang SEO thành công: {print_master_count} file in xưởng (CMYK 300 DPI) và {approved_mockups_count} mockup AI đã duyệt.",
+                    "receivedAt": int(time.time() * 1000),
+                    "printMasterCount": print_master_count,
+                    "approvedMockupCount": approved_mockups_count,
+                    "savedPath": str(handoff_file),
+                })
+            except Exception as exc:
+                logger.exception("Error during SEO handover")
+                self.send_json({"ok": False, "success": False, "message": str(exc)}, 500)
             return
 
         self.send_json({"ok": False, "error": f"Endpoint not found: {path}"}, 404)

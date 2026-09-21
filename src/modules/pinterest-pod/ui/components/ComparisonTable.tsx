@@ -25,6 +25,7 @@ export function ComparisonTable({ rows, onPreviewImage }: ComparisonTableProps):
         {rows.map((row) => (
           <div
             key={row.index}
+            style={{ contentVisibility: "auto", containIntrinsicSize: "0 220px" }}
             className="flex flex-col gap-3 rounded-xl border border-slate-800 bg-slate-950/80 p-4 shadow"
           >
             <div className="flex items-center justify-between border-b border-slate-800 pb-2">
@@ -60,6 +61,8 @@ export function ComparisonTable({ rows, onPreviewImage }: ComparisonTableProps):
                   <img
                     src={row.source_url}
                     alt="Ảnh gốc Pinterest"
+                    loading="lazy"
+                    decoding="async"
                     onError={(e) => {
                       e.currentTarget.onerror = null;
                       e.currentTarget.src =
@@ -68,7 +71,7 @@ export function ComparisonTable({ rows, onPreviewImage }: ComparisonTableProps):
                           `<svg xmlns="http://www.w3.org/2000/svg" width="300" height="300" viewBox="0 0 300 300"><rect width="300" height="300" fill="#0f172a"/><text x="150" y="150" fill="#818cf8" font-family="sans-serif" font-size="12" text-anchor="middle">Ảnh gốc Pinterest</text></svg>`,
                         );
                     }}
-                    className="h-full w-full object-cover transition group-hover:scale-105"
+                    className="h-full w-full object-cover transition duration-200 group-hover:scale-105"
                   />
                 </div>
               </div>
@@ -98,6 +101,8 @@ export function ComparisonTable({ rows, onPreviewImage }: ComparisonTableProps):
                   <img
                     src={row.cutout_white_url ?? row.cutout_url ?? row.source_url}
                     alt="Phôi bóc tách"
+                    loading="lazy"
+                    decoding="async"
                     onError={(e) => {
                       e.currentTarget.onerror = null;
                       e.currentTarget.src =
@@ -106,7 +111,7 @@ export function ComparisonTable({ rows, onPreviewImage }: ComparisonTableProps):
                           `<svg xmlns="http://www.w3.org/2000/svg" width="300" height="300" viewBox="0 0 300 300"><rect width="300" height="300" fill="#ffffff"/><text x="150" y="150" fill="#475569" font-family="sans-serif" font-size="12" text-anchor="middle">Phôi bóc tách</text></svg>`,
                         );
                     }}
-                    className="h-full w-full object-contain transition group-hover:scale-105"
+                    className="h-full w-full object-contain transition duration-200 group-hover:scale-105"
                   />
                 </div>
               </div>
@@ -136,8 +141,10 @@ export function ComparisonTable({ rows, onPreviewImage }: ComparisonTableProps):
                 </div>
                 <div className="aspect-square w-full overflow-hidden rounded-md bg-slate-950">
                   <img
-                    src={row.final_print_url}
+                    src={row.cutout_white_url || row.source_url || row.final_print_url}
                     alt="File in CMYK 300DPI"
+                    loading="lazy"
+                    decoding="async"
                     onError={(e) => {
                       e.currentTarget.onerror = null;
                       e.currentTarget.src =
@@ -146,7 +153,7 @@ export function ComparisonTable({ rows, onPreviewImage }: ComparisonTableProps):
                           `<svg xmlns="http://www.w3.org/2000/svg" width="300" height="300" viewBox="0 0 300 300"><rect width="300" height="300" fill="#0f172a"/><text x="150" y="150" fill="#34d399" font-family="sans-serif" font-size="12" text-anchor="middle">File CMYK 300DPI</text></svg>`,
                         );
                     }}
-                    className="h-full w-full object-cover transition group-hover:scale-105"
+                    className="h-full w-full object-cover transition duration-200 group-hover:scale-105"
                   />
                 </div>
               </div>
@@ -177,6 +184,8 @@ export function ComparisonTable({ rows, onPreviewImage }: ComparisonTableProps):
                   <img
                     src={row.ai_background_urls[0] ?? row.final_print_url}
                     alt="Mockup phòng khách AI"
+                    loading="lazy"
+                    decoding="async"
                     onError={(e) => {
                       e.currentTarget.onerror = null;
                       e.currentTarget.src =
@@ -185,7 +194,7 @@ export function ComparisonTable({ rows, onPreviewImage }: ComparisonTableProps):
                           `<svg xmlns="http://www.w3.org/2000/svg" width="300" height="300" viewBox="0 0 300 300"><rect width="300" height="300" fill="#0f172a"/><text x="150" y="150" fill="#60a5fa" font-family="sans-serif" font-size="12" text-anchor="middle">Mockup AI</text></svg>`,
                         );
                     }}
-                    className="h-full w-full object-cover transition group-hover:scale-105"
+                    className="h-full w-full object-cover transition duration-200 group-hover:scale-105"
                   />
                 </div>
               </div>

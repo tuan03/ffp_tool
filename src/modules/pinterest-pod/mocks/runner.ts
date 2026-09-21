@@ -25,6 +25,7 @@ import type {
   PodStatusResponse,
   ProduceInput,
   ProduceOutput,
+  SeoHandoverResponse,
   SummaryMetrics,
 } from "../types";
 import { FACTORY_PRINT_STANDARDS } from "../types";
@@ -457,6 +458,22 @@ export class MockPinterestPodClient implements PinterestPodClient {
     return {
       ok: true,
       message: `Mock job ${jobId} deleted successfully.`,
+    };
+  }
+
+  public async handoverToSeo(payload: PinterestPodDeliverables): Promise<SeoHandoverResponse> {
+    const printMasterCount = payload.items.filter((it) => it.printMaster).length;
+    const approvedMockupCount = payload.items.reduce(
+      (acc, it) => acc + (it.composedMockups?.length ?? 0),
+      0,
+    );
+    return {
+      success: true,
+      message: `[MOCK] Bàn giao sang SEO thành công: ${printMasterCount} file in xưởng (CMYK 300 DPI) và ${approvedMockupCount} mockup AI đã duyệt.`,
+      receivedAt: Date.now(),
+      printMasterCount,
+      approvedMockupCount,
+      savedPath: `temp/pinterest_pod/${payload.workflowId}/seo_handoff_payload.json`,
     };
   }
 }
