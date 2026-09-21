@@ -39,12 +39,6 @@ export function AutoSeoPage({
     if (initialSelectedProductIds !== undefined) {
       return [...initialSelectedProductIds];
     }
-    if (initialProducts && initialProducts.length > 0) {
-      const activeIds = initialProducts
-        .filter((p) => p.status?.toUpperCase() === "ACTIVE")
-        .map((p) => p.id);
-      return activeIds.length > 0 ? activeIds : initialProducts.map((p) => p.id);
-    }
     return [];
   });
 
@@ -77,14 +71,7 @@ export function AutoSeoPage({
     try {
       const fetchedProducts = await activeClient.loadProducts();
       setProducts(fetchedProducts);
-
-      // Pre-select active products by default if none selected
-      if (fetchedProducts.length > 0) {
-        const activeIds = fetchedProducts
-          .filter((p) => p.status?.toUpperCase() === "ACTIVE")
-          .map((p) => p.id);
-        setSelectedProductIds(activeIds.length > 0 ? activeIds : fetchedProducts.map((p) => p.id));
-      }
+      setSelectedProductIds([]);
     } catch (err) {
       setErrorMessage(
         err instanceof Error ? err.message : "Không thể tải danh sách sản phẩm từ Shopify.",

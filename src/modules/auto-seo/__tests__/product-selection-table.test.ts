@@ -937,3 +937,36 @@ test("AutoSeoPage: renders full page without crashing", () => {
   assert.ok(html.includes("Auto SEO Product Selection"));
   assert.ok(html.includes("Quy trình chọn lọc"));
 });
+
+test("AutoSeoPage: defaults to empty selection when initialSelectedProductIds is not provided", () => {
+  let capturedTree: React.ReactElement<{ children: React.ReactNode[] }> | undefined;
+
+  function PageHarness(): React.JSX.Element {
+    const tree = AutoSeoPage({
+      initialProducts: mockProducts,
+    });
+    capturedTree = tree as React.ReactElement<{ children: React.ReactNode[] }>;
+    return tree;
+  }
+
+  renderToStaticMarkup(React.createElement(PageHarness));
+  if (capturedTree === undefined) {
+    throw new Error("Page must render");
+  }
+
+  const children = React.Children.toArray(capturedTree.props.children);
+  const toolbarElement = children.find(
+    (c): c is React.ReactElement<AutoSeoToolbarProps> =>
+      React.isValidElement(c) && typeof c.type === "function" && c.type.name === "AutoSeoToolbar",
+  );
+  assert.ok(toolbarElement, "AutoSeoToolbar must be rendered");
+  assert.equal(toolbarElement.props.totalProductsCount, 3);
+  assert.equal(toolbarElement.props.selectedCount, 0, "No products should be selected by default");
+
+  const tableElement = children.find(
+    (c): c is React.ReactElement<ProductSelectionTableProps> =>
+      React.isValidElement(c) && typeof c.type === "function" && c.type.name === "ProductSelectionTable",
+  );
+  assert.ok(tableElement, "ProductSelectionTable must be rendered");
+  assert.deepEqual(tableElement.props.selectedProductIds, [], "Selected product IDs array must be empty");
+});
