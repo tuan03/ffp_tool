@@ -35,6 +35,10 @@ const COLLECTIONS_GET_QUERY = `
       title
       handle
       description
+      seo {
+        title
+        description
+      }
       productsCount {
         count
       }
@@ -48,6 +52,7 @@ export interface RawCollectionNode {
   readonly title: string;
   readonly handle: string;
   readonly description?: string | null;
+  readonly seo?: { readonly title?: string | null; readonly description?: string | null } | null;
   readonly productsCount?: { readonly count?: number } | number | null;
   readonly updatedAt: string;
 }
@@ -66,6 +71,12 @@ export function mapCollectionNode(node: RawCollectionNode): CollectionSummary {
     handle: node.handle,
     description: node.description ?? undefined,
     productsCount: count,
+    seo: node.seo
+      ? {
+          title: node.seo.title ?? undefined,
+          description: node.seo.description ?? undefined,
+        }
+      : undefined,
     updatedAt: node.updatedAt,
   };
 }

@@ -27,6 +27,7 @@ function deepCloneAndFreeze<T>(obj: T): T {
 
 export interface StoreRegistry {
   getStore(storeId: string): Promise<StoreConfig | undefined> | StoreConfig | undefined;
+  listStores(): Promise<readonly StoreConfig[]> | readonly StoreConfig[];
   registerStore(config: StoreConfig): void;
   removeStore(storeId: string): void;
   hasStore(storeId: string): boolean;
@@ -69,6 +70,10 @@ export class InMemoryStoreRegistry implements StoreRegistry {
 
   public getStore(storeId: string): StoreConfig | undefined {
     return this.stores.get(storeId);
+  }
+
+  public listStores(): readonly StoreConfig[] {
+    return Array.from(this.stores.values());
   }
 
   public removeStore(storeId: string): void {

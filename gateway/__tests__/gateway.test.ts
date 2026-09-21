@@ -575,6 +575,7 @@ describe("Gateway: Operations & Dispatcher", () => {
     const createRes = await dispatcher.dispatch({
       storeId: "store-test",
       operation: "products.create",
+      mode: "apply",
       payload: {
         product: {
           title: "Created Hoodie",
@@ -594,6 +595,7 @@ describe("Gateway: Operations & Dispatcher", () => {
     const updateRes = await dispatcher.dispatch({
       storeId: "store-test",
       operation: "products.update",
+      mode: "apply",
       payload: {
         id: "gid://shopify/Product/100",
         product: { title: "Updated Hoodie" },
@@ -608,6 +610,7 @@ describe("Gateway: Operations & Dispatcher", () => {
     const bulkRes = await dispatcher.dispatch({
       storeId: "store-test",
       operation: "products.bulkUpdate",
+      mode: "apply",
       payload: {
         products: [
           { id: "gid://shopify/Product/100", product: { title: "Bulk Hoodie" } },
@@ -624,6 +627,7 @@ describe("Gateway: Operations & Dispatcher", () => {
     const deleteRes = await dispatcher.dispatch({
       storeId: "store-test",
       operation: "products.delete",
+      mode: "apply",
       payload: { id: "gid://shopify/Product/100" },
       requestId: "req-delete-1",
     });
@@ -678,6 +682,7 @@ describe("Gateway: Operations & Dispatcher", () => {
     const res = await dispatcher.dispatch({
       storeId: "store-test",
       operation: "variants.update",
+      mode: "apply",
       payload: {
         id: "gid://shopify/ProductVariant/555",
         variant: {
@@ -706,6 +711,7 @@ describe("Gateway: Operations & Dispatcher", () => {
     const bulkRes = await dispatcher.dispatch({
       storeId: "store-test",
       operation: "variants.bulkUpdate",
+      mode: "apply",
       payload: {
         variants: [
           {
@@ -799,6 +805,7 @@ describe("Gateway: Operations & Dispatcher", () => {
     const createRes = await dispatcher.dispatch({
       storeId: "store-test",
       operation: "collections.create",
+      mode: "apply",
       payload: {
         collection: {
           title: "Winter Collection",
@@ -815,6 +822,7 @@ describe("Gateway: Operations & Dispatcher", () => {
     const updateRes = await dispatcher.dispatch({
       storeId: "store-test",
       operation: "collections.update",
+      mode: "apply",
       payload: {
         id: "gid://shopify/Collection/77",
         collection: { title: "Winter 2026" },
@@ -829,6 +837,7 @@ describe("Gateway: Operations & Dispatcher", () => {
     const memberRes = await dispatcher.dispatch({
       storeId: "store-test",
       operation: "collections.updateMembership",
+      mode: "apply",
       payload: {
         collectionId: "gid://shopify/Collection/77",
         productIdsToAdd: ["gid://shopify/Product/1"],
@@ -845,6 +854,7 @@ describe("Gateway: Operations & Dispatcher", () => {
     const deleteRes = await dispatcher.dispatch({
       storeId: "store-test",
       operation: "collections.delete",
+      mode: "apply",
       payload: { id: "gid://shopify/Collection/77" },
       requestId: "req-col-4",
     });
@@ -1023,6 +1033,7 @@ describe("Gateway: Operations & Dispatcher", () => {
     await dispatcher.dispatch({
       storeId: "store-test",
       operation: "products.create",
+      mode: "apply",
       payload: { product: { title: "Op 1" } },
       requestId: "shared-req-id-1",
     });
@@ -1032,6 +1043,7 @@ describe("Gateway: Operations & Dispatcher", () => {
         dispatcher.dispatch({
           storeId: "store-test",
           operation: "products.delete",
+          mode: "apply",
           payload: { id: "gid://shopify/Product/op-1" },
           requestId: "shared-req-id-1",
         }),
@@ -1072,6 +1084,7 @@ describe("Gateway: Operations & Dispatcher", () => {
     const res1 = await dispatcher.dispatch({
       storeId: "store-test",
       operation: "products.create",
+      mode: "apply",
       payload,
       requestId: "req-unique-123",
     });
@@ -1082,6 +1095,7 @@ describe("Gateway: Operations & Dispatcher", () => {
     const res2 = await dispatcher.dispatch({
       storeId: "store-test",
       operation: "products.create",
+      mode: "apply",
       payload,
       requestId: "req-unique-123",
     });
@@ -1095,6 +1109,7 @@ describe("Gateway: Operations & Dispatcher", () => {
         dispatcher.dispatch({
           storeId: "store-test",
           operation: "products.create",
+          mode: "apply",
           payload: { product: { title: "Different Title" } },
           requestId: "req-unique-123",
         }),
@@ -1136,6 +1151,7 @@ describe("Gateway: Operations & Dispatcher", () => {
     const call1Promise = dispatcher.dispatch({
       storeId: "store-test",
       operation: "products.create",
+      mode: "apply",
       payload: { product: { title: "Product A" } },
       requestId: "concurrent-req-1",
     });
@@ -1146,6 +1162,7 @@ describe("Gateway: Operations & Dispatcher", () => {
         dispatcher.dispatch({
           storeId: "store-test",
           operation: "products.create",
+          mode: "apply",
           payload: { product: { title: "Product B" } },
           requestId: "concurrent-req-1",
         }),
@@ -1159,6 +1176,7 @@ describe("Gateway: Operations & Dispatcher", () => {
     const call3Promise = dispatcher.dispatch({
       storeId: "store-test",
       operation: "products.create",
+      mode: "apply",
       payload: { product: { title: "Product A" } },
       requestId: "concurrent-req-1",
     });
@@ -1209,6 +1227,7 @@ describe("Gateway: Operations & Dispatcher", () => {
     const res = await dispatcher.dispatch({
       storeId: "store-test",
       operation: "products.bulkUpdate",
+      mode: "apply",
       payload: {
         products: [
           { id: "gid://shopify/Product/fail", product: { title: "Bad" } },
@@ -1252,6 +1271,7 @@ describe("Gateway: Operations & Dispatcher", () => {
         dispatcher.dispatch({
           storeId: "store-test",
           operation: "collections.updateMembership",
+          mode: "apply",
           payload: {
             collectionId: "gid://shopify/Collection/missing-1",
             productIdsToAdd: ["gid://shopify/Product/1"],
@@ -1350,6 +1370,7 @@ describe("Gateway: Operations & Dispatcher", () => {
     const res = await dispatcher.dispatch({
       storeId: "store-test",
       operation: "products.create",
+      mode: "apply",
       payload: {
         product: {
           title: "T-Shirt Matrix",
@@ -1417,6 +1438,7 @@ describe("Gateway: Operations & Dispatcher", () => {
         dispatcher.dispatch({
           storeId: "store-test",
           operation: "products.create",
+          mode: "apply",
           payload: {
             product: {
               title: "Reconcile Product",
@@ -1450,6 +1472,7 @@ describe("Gateway: Operations & Dispatcher", () => {
         dispatcher.dispatch({
           storeId: "store-test",
           operation: "products.create",
+          mode: "apply",
           payload: { product: { title: "Duplicate" } },
           requestId: "user-err-req",
         }),
@@ -1489,6 +1512,7 @@ describe("Gateway: Operations & Dispatcher", () => {
         dispatcher.dispatch({
           storeId: "store-test",
           operation: "products.create",
+          mode: "apply",
           payload: { product: { title: "Will Fail" } },
           requestId: "req-fail-net",
         }),
@@ -1516,6 +1540,7 @@ describe("Gateway: Operations & Dispatcher", () => {
         dispatcher.dispatch({
           storeId: "store-test",
           operation: "products.create",
+          mode: "apply",
           payload: { product: { title: "Socket Drop Product" } },
           requestId: "req-unknown-retry-1",
         }),
@@ -1535,6 +1560,7 @@ describe("Gateway: Operations & Dispatcher", () => {
         dispatcher.dispatch({
           storeId: "store-test",
           operation: "products.create",
+          mode: "apply",
           payload: { product: { title: "Socket Drop Product" } },
           requestId: "req-unknown-retry-1",
         }),
@@ -1606,6 +1632,7 @@ describe("Gateway: Operations & Dispatcher", () => {
     const res = await dispatcher.dispatch({
       storeId: "store-test",
       operation: "products.create",
+      mode: "apply",
       payload: {
         product: {
           title: "Single Variant Product",
@@ -1800,6 +1827,7 @@ describe("Gateway: HTTP Server Handler & E2E Integration with module-api", () =>
     const result = await runner({
       storeId: "store-e2e-write",
       operation: "products.create",
+      mode: "apply",
       payload: {
         product: {
           title: "E2E Created Product",
@@ -2024,4 +2052,300 @@ describe("Gateway: HTTP Server Handler & E2E Integration with module-api", () =>
     assert.ok(colInput.sourcesToCreate);
     assert.equal(colInput.sourcesToUpdate, undefined);
   });
+
+  it("strictly enforces mode 'preview' or 'apply' on write operations and rejects omitted/invalid mode with 400", async () => {
+    const registry = new InMemoryStoreRegistry([
+      {
+        storeId: "store-write-mode",
+        shopDomain: "test.myshopify.com",
+        apiVersion: "2026-07",
+        auth: { type: "static", staticToken: "tok" },
+      },
+    ]);
+    const dispatcher = new GatewayDispatcher({
+      storeRegistry: registry,
+      graphqlClient: {} as ShopifyGraphqlClient,
+    });
+
+    // Omitted mode
+    await assert.rejects(
+      async () => {
+        await dispatcher.dispatch({
+          storeId: "store-write-mode",
+          operation: "products.create",
+          requestId: "req-1",
+          payload: { product: { title: "Test" } },
+        } as any);
+      },
+      (err: GatewayError) => {
+        assert.equal(err.code, "SHOPIFY_INVALID_INPUT");
+        assert.equal(err.httpStatus, 400);
+        return true;
+      },
+    );
+
+    // Invalid mode
+    await assert.rejects(
+      async () => {
+        await dispatcher.dispatch({
+          storeId: "store-write-mode",
+          operation: "products.create",
+          mode: "invalid-mode" as any,
+          requestId: "req-1",
+          payload: { product: { title: "Test" } },
+        });
+      },
+      (err: GatewayError) => {
+        assert.equal(err.code, "SHOPIFY_INVALID_INPUT");
+        assert.equal(err.httpStatus, 400);
+        return true;
+      },
+    );
+  });
+
+  it("handles product and collection SEO fields in preview and apply modes", async () => {
+    let capturedProductInput: Record<string, unknown> | undefined;
+    let capturedCollectionInput: Record<string, unknown> | undefined;
+
+    const transport: HttpTransport = async (_url, init) => {
+      const body = JSON.parse(String(init?.body || "{}")) as { query: string; variables: Record<string, unknown> };
+      if (body.query.includes("ProductCreate")) {
+        capturedProductInput = body.variables.product as Record<string, unknown>;
+        return createMockResponse({
+          data: {
+            productCreate: {
+              product: {
+                id: "gid://shopify/Product/seo-prod-1",
+                title: "SEO Product",
+                handle: "seo-product",
+                status: "ACTIVE",
+                seo: { title: "Custom SEO Title", description: "Custom SEO Description" },
+                createdAt: "2026-09-21",
+                updatedAt: "2026-09-21",
+                variants: { edges: [] },
+              },
+              userErrors: [],
+            },
+          },
+        });
+      }
+      if (body.query.includes("CollectionCreate")) {
+        capturedCollectionInput = body.variables.collection as Record<string, unknown>;
+        return createMockResponse({
+          data: {
+            collectionCreate: {
+              collection: {
+                id: "gid://shopify/Collection/seo-col-1",
+                title: "SEO Collection",
+                handle: "seo-collection",
+                seo: { title: "Collection SEO Title", description: "Collection SEO Description" },
+                productsCount: { count: 0 },
+                updatedAt: "2026-09-21",
+              },
+              userErrors: [],
+            },
+          },
+        });
+      }
+      return createMockResponse({});
+    };
+
+    const client = new ShopifyGraphqlClient({
+      tokenProvider: new StaticAccessTokenProvider(),
+      throttleManager: new InMemoryThrottleManager(),
+      baseTransport: transport,
+    });
+    const registry = new InMemoryStoreRegistry([
+      {
+        storeId: "store-seo",
+        shopDomain: "seo.myshopify.com",
+        apiVersion: "2026-07",
+        auth: { type: "static", staticToken: "tok" },
+      },
+    ]);
+    const dispatcher = new GatewayDispatcher({ storeRegistry: registry, graphqlClient: client });
+
+    // Preview product SEO
+    const prodPreview = await dispatcher.dispatch({
+      storeId: "store-seo",
+      operation: "products.create",
+      mode: "preview",
+      payload: {
+        product: {
+          title: "SEO Product",
+          seo: { title: "Preview SEO Title", description: "Preview SEO Description" },
+        },
+      },
+    });
+    assert.equal(prodPreview.success, true);
+    assert.deepEqual((prodPreview.data as any).product.seo, {
+      title: "Preview SEO Title",
+      description: "Preview SEO Description",
+    });
+
+    // Apply product SEO
+    const prodApply = await dispatcher.dispatch({
+      storeId: "store-seo",
+      operation: "products.create",
+      mode: "apply",
+      requestId: "req-prod-seo-1",
+      payload: {
+        product: {
+          title: "SEO Product",
+          seo: { title: "Custom SEO Title", description: "Custom SEO Description" },
+        },
+      },
+    });
+    assert.equal(prodApply.success, true);
+    assert.deepEqual(capturedProductInput?.seo, {
+      title: "Custom SEO Title",
+      description: "Custom SEO Description",
+    });
+
+    // Apply collection SEO
+    const colApply = await dispatcher.dispatch({
+      storeId: "store-seo",
+      operation: "collections.create",
+      mode: "apply",
+      requestId: "req-col-seo-1",
+      payload: {
+        collection: {
+          title: "SEO Collection",
+          seo: { title: "Collection SEO Title", description: "Collection SEO Description" },
+        },
+      },
+    });
+    assert.equal(colApply.success, true);
+    assert.deepEqual(capturedCollectionInput?.seo, {
+      title: "Collection SEO Title",
+      description: "Collection SEO Description",
+    });
+  });
+
+  it("executes store management CRUD (register, list, get, disconnect) without exposing credentials", async () => {
+    const registry = new InMemoryStoreRegistry();
+    const dispatcher = new GatewayDispatcher({
+      storeRegistry: registry,
+      graphqlClient: {} as ShopifyGraphqlClient,
+    });
+
+    // 1. stores.register
+    const regResult = await dispatcher.dispatch({
+      storeId: "system",
+      operation: "stores.register",
+      payload: {
+        storeId: "capozen-store",
+        shopDomain: "capozen.myshopify.com",
+        niche: "wellness",
+        staticToken: "shpat_secret_token_12345",
+      },
+    });
+    assert.equal(regResult.success, true);
+    const regData = regResult.data as any;
+    assert.equal(regData.registered, true);
+    assert.equal(regData.store.storeId, "capozen-store");
+    assert.equal(regData.store.shopDomain, "capozen.myshopify.com");
+    assert.equal(regData.store.niche, "wellness");
+    assert.equal(regData.store.authType, "static");
+    assert.equal((regData.store as any).staticToken, undefined, "Must NEVER expose tokens in summary");
+
+    // 2. stores.list
+    const listResult = await dispatcher.dispatch({
+      storeId: "system",
+      operation: "stores.list",
+      payload: {},
+    });
+    assert.equal(listResult.success, true);
+    const listData = listResult.data as any;
+    assert.equal(listData.total, 1);
+    assert.equal(listData.stores[0].storeId, "capozen-store");
+
+    // Filter by niche
+    const listFilterResult = await dispatcher.dispatch({
+      storeId: "system",
+      operation: "stores.list",
+      payload: { niche: "fashion" },
+    });
+    assert.equal((listFilterResult.data as any).total, 0);
+
+    // 3. stores.get
+    const getResult = await dispatcher.dispatch({
+      storeId: "system",
+      operation: "stores.get",
+      payload: { targetStoreId: "capozen-store" },
+    });
+    assert.equal(getResult.success, true);
+    assert.equal((getResult.data as any).store?.storeId, "capozen-store");
+
+    // 4. stores.disconnect
+    const disconnectResult = await dispatcher.dispatch({
+      storeId: "system",
+      operation: "stores.disconnect",
+      payload: { targetStoreId: "capozen-store" },
+    });
+    assert.equal(disconnectResult.success, true);
+    assert.equal((disconnectResult.data as any).disconnected, true);
+
+    // Confirm store removed
+    const getAfter = await dispatcher.dispatch({
+      storeId: "system",
+      operation: "stores.get",
+      payload: { targetStoreId: "capozen-store" },
+    });
+    assert.equal((getAfter.data as any).store, null);
+  });
+
+  it("handles collections.updateMembership cleanly as no-op when !conditionsSource and productIdsToRemove requested without productIdsToAdd", async () => {
+    let callCount = 0;
+    const transport: HttpTransport = async (_url, init) => {
+      callCount++;
+      const body = JSON.parse(String(init?.body || "{}")) as { query: string };
+      if (body.query.includes("GetCollectionSources")) {
+        return createMockResponse({
+          data: {
+            collection: {
+              id: "gid://shopify/Collection/manual-1",
+              sources: [],
+            },
+          },
+        });
+      }
+      return createMockResponse({});
+    };
+
+    const client = new ShopifyGraphqlClient({
+      tokenProvider: new StaticAccessTokenProvider(),
+      throttleManager: new InMemoryThrottleManager(),
+      baseTransport: transport,
+    });
+    const registry = new InMemoryStoreRegistry([
+      {
+        storeId: "store-col-no-cond",
+        shopDomain: "test.myshopify.com",
+        apiVersion: "2026-07",
+        auth: { type: "static", staticToken: "tok" },
+      },
+    ]);
+    const dispatcher = new GatewayDispatcher({ storeRegistry: registry, graphqlClient: client });
+
+    const result = await dispatcher.dispatch({
+      storeId: "store-col-no-cond",
+      operation: "collections.updateMembership",
+      mode: "apply",
+      requestId: "req-col-mem-no-op",
+      payload: {
+        collectionId: "gid://shopify/Collection/manual-1",
+        productIdsToRemove: ["gid://shopify/Product/prod-to-remove"],
+      },
+    });
+
+    assert.equal(result.success, true);
+    const data = result.data as any;
+    assert.equal(data.collectionId, "gid://shopify/Collection/manual-1");
+    assert.equal(data.addedCount, 0);
+    assert.equal(data.removedCount, 0);
+    // Only 1 call to query sources; NO mutation call was made
+    assert.equal(callCount, 1);
+  });
 });
+

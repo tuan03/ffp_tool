@@ -54,6 +54,10 @@ const PRODUCTS_GET_QUERY = `
       vendor
       productType
       tags
+      seo {
+        title
+        description
+      }
       createdAt
       updatedAt
       variants(first: 100) {
@@ -90,6 +94,7 @@ export interface RawProductNode {
   readonly vendor?: string | null;
   readonly productType?: string | null;
   readonly tags?: readonly string[] | null;
+  readonly seo?: { readonly title?: string | null; readonly description?: string | null } | null;
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly variants?: {
@@ -118,6 +123,12 @@ export function mapProductNode(node: RawProductNode): ProductSummary {
     productType: node.productType ?? undefined,
     tags: node.tags ?? [],
     variants,
+    seo: node.seo
+      ? {
+          title: node.seo.title ?? undefined,
+          description: node.seo.description ?? undefined,
+        }
+      : undefined,
     createdAt: node.createdAt,
     updatedAt: node.updatedAt,
   };

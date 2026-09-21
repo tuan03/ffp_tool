@@ -11,6 +11,10 @@ const COLLECTION_CREATE_MUTATION = `
         title
         handle
         descriptionHtml
+        seo {
+          title
+          description
+        }
         productsCount {
           count
         }
@@ -32,6 +36,10 @@ const COLLECTION_UPDATE_MUTATION = `
         title
         handle
         descriptionHtml
+        seo {
+          title
+          description
+        }
         productsCount {
           count
         }
@@ -120,6 +128,13 @@ export async function executeCollectionsCreate(
       title,
       handle,
       description: typeof collectionInput.description === "string" ? collectionInput.description : undefined,
+      seo:
+        collectionInput.seo && typeof collectionInput.seo === "object"
+          ? {
+              title: typeof (collectionInput.seo as Record<string, unknown>).title === "string" ? (collectionInput.seo as Record<string, unknown>).title as string : undefined,
+              description: typeof (collectionInput.seo as Record<string, unknown>).description === "string" ? (collectionInput.seo as Record<string, unknown>).description as string : undefined,
+            }
+          : undefined,
       productsCount: 0,
       updatedAt: now,
     };
@@ -132,6 +147,15 @@ export async function executeCollectionsCreate(
   }
   if (typeof collectionInput.description === "string") {
     input.descriptionHtml = collectionInput.description;
+  }
+  if (collectionInput.seo && typeof collectionInput.seo === "object") {
+    const seoObj = collectionInput.seo as Record<string, unknown>;
+    const seo: Record<string, unknown> = {};
+    if (typeof seoObj.title === "string") seo.title = seoObj.title;
+    if (typeof seoObj.description === "string") seo.description = seoObj.description;
+    if (Object.keys(seo).length > 0) {
+      input.seo = seo;
+    }
   }
 
   interface CollectionCreateResponse {
@@ -186,6 +210,13 @@ export async function executeCollectionsUpdate(
       title: typeof collectionPatch.title === "string" ? collectionPatch.title : "Preview Collection",
       handle: typeof collectionPatch.handle === "string" ? collectionPatch.handle : "preview-collection",
       description: typeof collectionPatch.description === "string" ? collectionPatch.description : undefined,
+      seo:
+        collectionPatch.seo && typeof collectionPatch.seo === "object"
+          ? {
+              title: typeof (collectionPatch.seo as Record<string, unknown>).title === "string" ? (collectionPatch.seo as Record<string, unknown>).title as string : undefined,
+              description: typeof (collectionPatch.seo as Record<string, unknown>).description === "string" ? (collectionPatch.seo as Record<string, unknown>).description as string : undefined,
+            }
+          : undefined,
       productsCount: 0,
       updatedAt: now,
     };
@@ -201,6 +232,15 @@ export async function executeCollectionsUpdate(
   }
   if (typeof collectionPatch.description === "string") {
     input.descriptionHtml = collectionPatch.description;
+  }
+  if (collectionPatch.seo && typeof collectionPatch.seo === "object") {
+    const seoObj = collectionPatch.seo as Record<string, unknown>;
+    const seo: Record<string, unknown> = {};
+    if (typeof seoObj.title === "string") seo.title = seoObj.title;
+    if (typeof seoObj.description === "string") seo.description = seoObj.description;
+    if (Object.keys(seo).length > 0) {
+      input.seo = seo;
+    }
   }
 
   interface CollectionUpdateResponse {
@@ -350,6 +390,13 @@ export async function executeCollectionsUpdateMembership(
         ],
       };
     } else {
+      if (productIdsToAdd.length === 0) {
+        return {
+          collectionId,
+          addedCount: 0,
+          removedCount: 0,
+        };
+      }
       collectionPatch = {
         id: collectionId,
         sourcesToCreate: [
@@ -357,9 +404,7 @@ export async function executeCollectionsUpdateMembership(
             source: {
               title: "Default Source",
               inclusion: {
-                ...(productIdsToAdd.length > 0
-                  ? { selections: productIdsToAdd.map((prodId) => ({ productId: prodId })) }
-                  : {}),
+                selections: productIdsToAdd.map((prodId) => ({ productId: prodId })),
               },
             },
           },

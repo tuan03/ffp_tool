@@ -32,6 +32,14 @@ import type {
   ShopifyProductsListResponse,
   ShopifyProductsUpdateInput,
   ShopifyProductsUpdateResponse,
+  ShopifyStoresDisconnectInput,
+  ShopifyStoresDisconnectResponse,
+  ShopifyStoresGetInput,
+  ShopifyStoresGetResponse,
+  ShopifyStoresListInput,
+  ShopifyStoresListResponse,
+  ShopifyStoresRegisterInput,
+  ShopifyStoresRegisterResponse,
   ShopifyVariantsBulkUpdateInput,
   ShopifyVariantsBulkUpdateResponse,
   ShopifyVariantsUpdateInput,
@@ -47,6 +55,8 @@ const READ_OPERATIONS: ReadonlySet<ShopifyOperation> = new Set([
   "products.get",
   "collections.list",
   "collections.get",
+  "stores.list",
+  "stores.get",
 ]);
 
 const ALL_OPERATIONS: ReadonlySet<ShopifyOperation> = new Set([
@@ -65,6 +75,10 @@ const ALL_OPERATIONS: ReadonlySet<ShopifyOperation> = new Set([
   "collections.update",
   "collections.delete",
   "collections.updateMembership",
+  "stores.register",
+  "stores.list",
+  "stores.get",
+  "stores.disconnect",
 ]);
 
 function isShopifyReadOperation(operation: ShopifyOperation): boolean {
@@ -306,7 +320,14 @@ export function createModuleApiRunner(
       throw new ShopifyApiError("Input must be a valid object", "SHOPIFY_USER_ERROR");
     }
 
-    if (!input.storeId || input.storeId.trim() === "") {
+    const effectiveStoreId =
+      typeof input.storeId === "string" && input.storeId.trim() !== ""
+        ? input.storeId.trim()
+        : input.operation === "stores.list"
+        ? "system"
+        : "";
+
+    if (!effectiveStoreId) {
       throw new ShopifyApiError("Store ID is required", "SHOPIFY_USER_ERROR");
     }
 
@@ -537,6 +558,10 @@ export async function runModuleApi(input: ShopifyCollectionsCreateInput): Promis
 export async function runModuleApi(input: ShopifyCollectionsUpdateInput): Promise<ShopifyCollectionsUpdateResponse>;
 export async function runModuleApi(input: ShopifyCollectionsDeleteInput): Promise<ShopifyCollectionsDeleteResponse>;
 export async function runModuleApi(input: ShopifyCollectionsUpdateMembershipInput): Promise<ShopifyCollectionsUpdateMembershipResponse>;
+export async function runModuleApi(input: ShopifyStoresRegisterInput): Promise<ShopifyStoresRegisterResponse>;
+export async function runModuleApi(input: ShopifyStoresListInput): Promise<ShopifyStoresListResponse>;
+export async function runModuleApi(input: ShopifyStoresGetInput): Promise<ShopifyStoresGetResponse>;
+export async function runModuleApi(input: ShopifyStoresDisconnectInput): Promise<ShopifyStoresDisconnectResponse>;
 export async function runModuleApi(input: ShopifyApiInput): Promise<ShopifyApiResponse>;
 export async function runModuleApi(input: ShopifyApiInput): Promise<ShopifyApiResponse> {
   return defaultRunner(input);

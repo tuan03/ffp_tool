@@ -109,6 +109,7 @@ test("Module API mock runner executes products.create", async () => {
   const response = await runMockModuleApi({
     storeId: "store-101",
     operation: "products.create",
+    mode: "apply",
     payload: {
       product: {
         title: "New Graphic Hoodie",
@@ -129,6 +130,7 @@ test("Module API mock runner executes products.update", async () => {
   const response = await runMockModuleApi({
     storeId: "store-101",
     operation: "products.update",
+    mode: "apply",
     payload: {
       id: "gid://shopify/Product/1001",
       product: {
@@ -146,6 +148,7 @@ test("Module API mock runner executes products.bulkUpdate", async () => {
   const response = await runMockModuleApi({
     storeId: "store-101",
     operation: "products.bulkUpdate",
+    mode: "apply",
     payload: {
       products: [
         { id: "gid://shopify/Product/1001", product: { title: "P1 Updated" } },
@@ -166,6 +169,7 @@ test("Module API mock runner executes products.delete", async () => {
   const response = await runMockModuleApi({
     storeId: "store-101",
     operation: "products.delete",
+    mode: "apply",
     payload: { id: "gid://shopify/Product/1001" },
   });
 
@@ -177,6 +181,7 @@ test("Module API mock runner executes variants.update", async () => {
   const response = await runMockModuleApi({
     storeId: "store-101",
     operation: "variants.update",
+    mode: "apply",
     payload: {
       id: "gid://shopify/ProductVariant/2001",
       variant: {
@@ -196,6 +201,7 @@ test("Module API mock runner executes variants.bulkUpdate", async () => {
   const response = await runMockModuleApi({
     storeId: "store-101",
     operation: "variants.bulkUpdate",
+    mode: "apply",
     payload: {
       variants: [
         { id: "gid://shopify/ProductVariant/2001", variant: { price: "27.50" } },
@@ -237,6 +243,7 @@ test("Module API mock runner executes collections.create, update, delete, and up
   const createResponse = await runMockModuleApi({
     storeId: "store-101",
     operation: "collections.create",
+    mode: "apply",
     payload: {
       collection: {
         title: "New Arrivals",
@@ -248,6 +255,7 @@ test("Module API mock runner executes collections.create, update, delete, and up
   const updateResponse = await runMockModuleApi({
     storeId: "store-101",
     operation: "collections.update",
+    mode: "apply",
     payload: {
       id: "gid://shopify/Collection/3001",
       collection: {
@@ -260,6 +268,7 @@ test("Module API mock runner executes collections.create, update, delete, and up
   const deleteResponse = await runMockModuleApi({
     storeId: "store-101",
     operation: "collections.delete",
+    mode: "apply",
     payload: { id: "gid://shopify/Collection/3001" },
   });
   assert.equal(deleteResponse.data.deletedCollectionId, "gid://shopify/Collection/3001");
@@ -267,6 +276,7 @@ test("Module API mock runner executes collections.create, update, delete, and up
   const membershipResponse = await runMockModuleApi({
     storeId: "store-101",
     operation: "collections.updateMembership",
+    mode: "apply",
     payload: {
       collectionId: "gid://shopify/Collection/3002",
       productIdsToAdd: ["gid://shopify/Product/1001"],
@@ -341,6 +351,7 @@ test("Module API mock runner simulates domain errors via storeId hooks", async (
       await runMockModuleApi({
         storeId: "simulate-unknown-state",
         operation: "products.delete",
+        mode: "apply",
         payload: { id: "gid://shopify/Product/1001" },
       });
     },
@@ -458,6 +469,7 @@ test("Module API mock runner variants.update preserves existing variant attribut
   const response = await runMockModuleApi({
     storeId: "store-101",
     operation: "variants.update",
+    mode: "apply",
     payload: {
       id: "gid://shopify/ProductVariant/2003",
       variant: { price: "18.50" },
@@ -495,6 +507,7 @@ test("Module API mock runner validates required input fields", async () => {
       await runMockModuleApi({
         storeId: "store-101",
         operation: "products.create",
+        mode: "apply",
         payload: { product: { title: "" } },
       });
     },
@@ -510,6 +523,7 @@ test("Module API mock runner validates required input fields", async () => {
       await runMockModuleApi({
         storeId: "store-101",
         operation: "collections.updateMembership",
+        mode: "apply",
         payload: { collectionId: "" },
       });
     },
@@ -562,6 +576,7 @@ test("Real service sends correct request body and headers to gateway", async () 
       JSON.stringify({
         storeId: "store-42",
         operation: "products.create",
+        mode: "apply",
         success: true,
         data: {
           product: {
@@ -876,9 +891,7 @@ test("Real service maps HTTP non-2xx status codes predictably", async () => {
   );
   await assert.rejects(
     async () => {
-      await userErr422Runner({
-        storeId: "s1",
-        operation: "products.create",
+      await userErr422Runner({ storeId: "s1", mode: "apply", operation: "products.create",
         payload: { product: { title: "Invalid" } },
       });
     },
@@ -912,9 +925,7 @@ test("Real service maps HTTP non-2xx status codes predictably", async () => {
   );
   await assert.rejects(
     async () => {
-      await serverErrWriteRunner({
-        storeId: "s1",
-        operation: "products.create",
+      await serverErrWriteRunner({ storeId: "s1", mode: "apply", operation: "products.create",
         payload: { product: { title: "Item" } },
       });
     },
@@ -932,9 +943,7 @@ test("Real service maps HTTP non-2xx status codes predictably", async () => {
   );
   await assert.rejects(
     async () => {
-      await server503WriteRunner({
-        storeId: "s1",
-        operation: "products.delete",
+      await server503WriteRunner({ storeId: "s1", mode: "apply", operation: "products.delete",
         payload: { id: "p-delete" },
       });
     },
@@ -998,9 +1007,7 @@ test("Real service handles malformed JSON response", async () => {
   // Write operation malformed JSON -> SHOPIFY_UNKNOWN_WRITE_STATE
   await assert.rejects(
     async () => {
-      await runner({
-        storeId: "s1",
-        operation: "variants.update",
+      await runner({ storeId: "s1", mode: "apply", operation: "variants.update",
         payload: { id: "v1", variant: { price: "12.00" } },
       });
     },
@@ -1056,16 +1063,16 @@ test("Real service maps ambiguous write network failure to SHOPIFY_UNKNOWN_WRITE
   );
 
   const writeInputs: ShopifyApiInput[] = [
-    { storeId: "s1", operation: "products.create", payload: { product: { title: "T" } } },
-    { storeId: "s1", operation: "products.update", payload: { id: "p1", product: { title: "T2" } } },
-    { storeId: "s1", operation: "products.bulkUpdate", payload: { products: [{ id: "p1", product: {} }] } },
-    { storeId: "s1", operation: "products.delete", payload: { id: "p1" } },
-    { storeId: "s1", operation: "variants.update", payload: { id: "v1", variant: {} } },
-    { storeId: "s1", operation: "variants.bulkUpdate", payload: { variants: [{ id: "v1", variant: {} }] } },
-    { storeId: "s1", operation: "collections.create", payload: { collection: { title: "C" } } },
-    { storeId: "s1", operation: "collections.update", payload: { id: "c1", collection: {} } },
-    { storeId: "s1", operation: "collections.delete", payload: { id: "c1" } },
-    { storeId: "s1", operation: "collections.updateMembership", payload: { collectionId: "c1" } },
+    { storeId: "s1", mode: "apply", operation: "products.create", payload: { product: { title: "T" } } },
+    { storeId: "s1", mode: "apply", operation: "products.update", payload: { id: "p1", product: { title: "T2" } } },
+    { storeId: "s1", mode: "apply", operation: "products.bulkUpdate", payload: { products: [{ id: "p1", product: {} }] } },
+    { storeId: "s1", mode: "apply", operation: "products.delete", payload: { id: "p1" } },
+    { storeId: "s1", mode: "apply", operation: "variants.update", payload: { id: "v1", variant: {} } },
+    { storeId: "s1", mode: "apply", operation: "variants.bulkUpdate", payload: { variants: [{ id: "v1", variant: {} }] } },
+    { storeId: "s1", mode: "apply", operation: "collections.create", payload: { collection: { title: "C" } } },
+    { storeId: "s1", mode: "apply", operation: "collections.update", payload: { id: "c1", collection: {} } },
+    { storeId: "s1", mode: "apply", operation: "collections.delete", payload: { id: "c1" } },
+    { storeId: "s1", mode: "apply", operation: "collections.updateMembership", payload: { collectionId: "c1" } },
   ];
 
   for (const writeInput of writeInputs) {
@@ -1092,6 +1099,7 @@ test("Real service forwards preview mode intact without changing to apply", asyn
       JSON.stringify({
         storeId: "store-42",
         operation: "products.create",
+        mode: "apply",
         success: true,
         data: {
           product: {
@@ -1134,6 +1142,7 @@ test("Real service forwards apply mode intact", async () => {
       JSON.stringify({
         storeId: "store-42",
         operation: "products.update",
+        mode: "apply",
         success: true,
         data: {
           product: {
@@ -1175,6 +1184,7 @@ test("Real service does not mutate input object", async () => {
       JSON.stringify({
         storeId: "store-42",
         operation: "products.create",
+        mode: "apply",
         success: true,
         data: {
           product: {
@@ -1374,6 +1384,7 @@ test("Real service handles timeouts predictably", async () => {
       await runner({
         storeId: "store-1",
         operation: "products.create",
+        mode: "apply",
         payload: { product: { title: "Timeout Product" } },
       });
     },
@@ -1468,9 +1479,7 @@ test("Real service preserves cause in ShopifyApiError for network errors, timeou
   // Write network error preserves cause
   await assert.rejects(
     async () => {
-      await runner({
-        storeId: "s1",
-        operation: "products.delete",
+      await runner({ storeId: "s1", mode: "apply", operation: "products.delete",
         payload: { id: "p1" },
       });
     },
@@ -1530,9 +1539,7 @@ test("Real service maps HTTP 408 Request Timeout to SHOPIFY_UNKNOWN_WRITE_STATE 
   // Write on 408
   await assert.rejects(
     async () => {
-      await runner({
-        storeId: "s1",
-        operation: "products.create",
+      await runner({ storeId: "s1", mode: "apply", operation: "products.create",
         payload: { product: { title: "Item" } },
       });
     },
@@ -1562,9 +1569,7 @@ test("Real service handles diverse gateway error response formats correctly", as
 
   await assert.rejects(
     async () => {
-      await errObjRunner({
-        storeId: "s1",
-        operation: "products.create",
+      await errObjRunner({ storeId: "s1", mode: "apply", operation: "products.create",
         payload: { product: { title: "T" } },
       });
     },
@@ -1594,9 +1599,7 @@ test("Real service handles diverse gateway error response formats correctly", as
 
   await assert.rejects(
     async () => {
-      await stringErrRunner({
-        storeId: "s1",
-        operation: "products.create",
+      await stringErrRunner({ storeId: "s1", mode: "apply", operation: "products.create",
         payload: { product: { title: "" } },
       });
     },
@@ -1650,9 +1653,7 @@ test("Real service handles diverse gateway error response formats correctly", as
 
   await assert.rejects(
     async () => {
-      await gqlErrRunner({
-        storeId: "s1",
-        operation: "variants.update",
+      await gqlErrRunner({ storeId: "s1", mode: "apply", operation: "variants.update",
         payload: { id: "v1", variant: { sku: "bad" } },
       });
     },
@@ -1706,9 +1707,7 @@ test("Real service validates that response data payload is an object", async () 
 
   await assert.rejects(
     async () => {
-      await nonObjectDataRunner({
-        storeId: "s1",
-        operation: "products.delete",
+      await nonObjectDataRunner({ storeId: "s1", mode: "apply", operation: "products.delete",
         payload: { id: "p1" },
       });
     },
@@ -1821,6 +1820,7 @@ test("Real service propagates fields, retryable, and details into ShopifyApiErro
       JSON.stringify({
         storeId: "store-42",
         operation: "products.create",
+        mode: "apply",
         success: false,
         error: {
           code: "SHOPIFY_USER_ERROR",
@@ -1844,6 +1844,7 @@ test("Real service propagates fields, retryable, and details into ShopifyApiErro
       await runner({
         storeId: "store-42",
         operation: "products.create",
+        mode: "apply",
         payload: {
           product: { title: "" },
         },
@@ -1865,6 +1866,7 @@ test("Mock runner supports custom variants in products.create", async () => {
   const response = await runMockModuleApi({
     storeId: "store-101",
     operation: "products.create",
+    mode: "apply",
     payload: {
       product: {
         title: "Multi-Variant T-Shirt",

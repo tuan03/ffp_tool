@@ -14,3 +14,4 @@ export * from "./operations/products-write";
 export * from "./operations/variants-write";
 export * from "./operations/collections";
 export * from "./operations/collections-write";
+export * from "./operations/store-management";

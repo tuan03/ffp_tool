@@ -130,6 +130,7 @@ export interface ProductSummary {
   readonly productType?: string;
   readonly tags: readonly string[];
   readonly variants: readonly ProductVariantSummary[];
+  readonly seo?: { readonly title?: string; readonly description?: string };
   readonly createdAt: string;
   readonly updatedAt: string;
 }
@@ -152,6 +153,7 @@ export interface CollectionSummary {
   readonly handle: string;
   readonly description?: string;
   readonly productsCount: number;
+  readonly seo?: { readonly title?: string; readonly description?: string };
   readonly updatedAt: string;
 }
 

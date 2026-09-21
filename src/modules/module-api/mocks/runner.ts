@@ -31,6 +31,15 @@ import type {
   ShopifyProductsListResponse,
   ShopifyProductsUpdateInput,
   ShopifyProductsUpdateResponse,
+  ShopifyStoreSummary,
+  ShopifyStoresDisconnectInput,
+  ShopifyStoresDisconnectResponse,
+  ShopifyStoresGetInput,
+  ShopifyStoresGetResponse,
+  ShopifyStoresListInput,
+  ShopifyStoresListResponse,
+  ShopifyStoresRegisterInput,
+  ShopifyStoresRegisterResponse,
   ShopifyVariantsBulkUpdateInput,
   ShopifyVariantsBulkUpdateResponse,
   ShopifyVariantsUpdateInput,
@@ -43,6 +52,16 @@ import {
   shopifyMockProducts,
 } from "./data";
 
+const mockStores: ShopifyStoreSummary[] = [
+  {
+    storeId: "capozen",
+    shopDomain: "capozen.myshopify.com",
+    apiVersion: "2026-07",
+    niche: "general",
+    authType: "static",
+  },
+];
+
 function cloneVariant(variant: ShopifyProductVariant): ShopifyProductVariant {
   return { ...variant };
 }
@@ -52,11 +71,15 @@ function cloneProduct(product: ShopifyProduct): ShopifyProduct {
     ...product,
     tags: [...product.tags],
     variants: product.variants.map(cloneVariant),
+    seo: product.seo ? { ...product.seo } : undefined,
   };
 }
 
 function cloneCollection(collection: ShopifyCollection): ShopifyCollection {
-  return { ...collection };
+  return {
+    ...collection,
+    seo: collection.seo ? { ...collection.seo } : undefined,
+  };
 }
 
 function encodeCursor(index: number): string {
@@ -130,6 +153,10 @@ export async function runMockModuleApi(input: ShopifyCollectionsCreateInput): Pr
 export async function runMockModuleApi(input: ShopifyCollectionsUpdateInput): Promise<ShopifyCollectionsUpdateResponse>;
 export async function runMockModuleApi(input: ShopifyCollectionsDeleteInput): Promise<ShopifyCollectionsDeleteResponse>;
 export async function runMockModuleApi(input: ShopifyCollectionsUpdateMembershipInput): Promise<ShopifyCollectionsUpdateMembershipResponse>;
+export async function runMockModuleApi(input: ShopifyStoresRegisterInput): Promise<ShopifyStoresRegisterResponse>;
+export async function runMockModuleApi(input: ShopifyStoresListInput): Promise<ShopifyStoresListResponse>;
+export async function runMockModuleApi(input: ShopifyStoresGetInput): Promise<ShopifyStoresGetResponse>;
+export async function runMockModuleApi(input: ShopifyStoresDisconnectInput): Promise<ShopifyStoresDisconnectResponse>;
 export async function runMockModuleApi(input: ShopifyApiInput): Promise<ShopifyApiResponse>;
 export async function runMockModuleApi(input: ShopifyApiInput): Promise<ShopifyApiResponse> {
   if (!input || typeof input !== "object") {
@@ -259,6 +286,7 @@ export async function runMockModuleApi(input: ShopifyApiInput): Promise<ShopifyA
         productType: input.payload.product.productType,
         tags: input.payload.product.tags ? [...input.payload.product.tags] : [],
         variants,
+        seo: input.payload.product.seo ? { ...input.payload.product.seo } : undefined,
         createdAt: now,
         updatedAt: now,
       };
@@ -286,6 +314,7 @@ export async function runMockModuleApi(input: ShopifyApiInput): Promise<ShopifyA
         productType: input.payload.product.productType ?? existing?.productType,
         tags: input.payload.product.tags ? [...input.payload.product.tags] : (existing?.tags ? [...existing.tags] : []),
         variants: existing ? existing.variants.map(cloneVariant) : [],
+        seo: input.payload.product.seo ? { ...input.payload.product.seo } : existing?.seo,
         createdAt: existing?.createdAt ?? new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };
@@ -425,6 +454,7 @@ export async function runMockModuleApi(input: ShopifyApiInput): Promise<ShopifyA
         title: input.payload.collection.title,
         handle: input.payload.collection.handle ?? input.payload.collection.title.toLowerCase().replace(/\s+/g, "-"),
         description: input.payload.collection.description,
+        seo: input.payload.collection.seo ? { ...input.payload.collection.seo } : undefined,
         productsCount: 0,
         updatedAt: new Date().toISOString(),
       };
@@ -447,6 +477,7 @@ export async function runMockModuleApi(input: ShopifyApiInput): Promise<ShopifyA
         title: input.payload.collection.title ?? existing?.title ?? "Updated Collection",
         handle: input.payload.collection.handle ?? existing?.handle ?? "updated-collection",
         description: input.payload.collection.description ?? existing?.description,
+        seo: input.payload.collection.seo ? { ...input.payload.collection.seo } : existing?.seo,
         productsCount: existing?.productsCount ?? 0,
         updatedAt: new Date().toISOString(),
       };
@@ -485,6 +516,77 @@ export async function runMockModuleApi(input: ShopifyApiInput): Promise<ShopifyA
           collectionId: input.payload.collectionId,
           addedCount: input.payload.productIdsToAdd?.length ?? 0,
           removedCount: input.payload.productIdsToRemove?.length ?? 0,
+        },
+      };
+    }
+
+    case "stores.register": {
+      const { storeId, shopDomain, niche, apiVersion, authType } = input.payload;
+      const existingIdx = mockStores.findIndex((s) => s.storeId === storeId);
+      const summary: ShopifyStoreSummary = {
+        storeId,
+        shopDomain,
+        niche,
+        apiVersion: apiVersion ?? "2026-07",
+        authType: authType ?? "static",
+        proxyUrl: input.payload.proxyUrl,
+      };
+      if (existingIdx >= 0) {
+        mockStores[existingIdx] = summary;
+      } else {
+        mockStores.push(summary);
+      }
+      return {
+        storeId: input.storeId,
+        operation: "stores.register",
+        success: true,
+        data: {
+          store: summary,
+          registered: true,
+        },
+      };
+    }
+
+    case "stores.list": {
+      const filtered = input.payload.niche
+        ? mockStores.filter((s) => s.niche === input.payload.niche)
+        : [...mockStores];
+      return {
+        storeId: input.storeId,
+        operation: "stores.list",
+        success: true,
+        data: {
+          stores: filtered,
+          total: filtered.length,
+        },
+      };
+    }
+
+    case "stores.get": {
+      const found = mockStores.find((s) => s.storeId === input.payload.targetStoreId);
+      return {
+        storeId: input.storeId,
+        operation: "stores.get",
+        success: true,
+        data: {
+          store: found ? { ...found } : null,
+        },
+      };
+    }
+
+    case "stores.disconnect": {
+      const idx = mockStores.findIndex((s) => s.storeId === input.payload.targetStoreId);
+      const disconnected = idx >= 0;
+      if (disconnected) {
+        mockStores.splice(idx, 1);
+      }
+      return {
+        storeId: input.storeId,
+        operation: "stores.disconnect",
+        success: true,
+        data: {
+          storeId: input.payload.targetStoreId,
+          disconnected,
         },
       };
     }

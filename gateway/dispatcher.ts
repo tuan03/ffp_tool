@@ -23,6 +23,12 @@ import {
   executeVariantsBulkUpdate,
   executeVariantsUpdate,
 } from "./operations/variants-write";
+import {
+  executeStoresDisconnect,
+  executeStoresGet,
+  executeStoresList,
+  executeStoresRegister,
+} from "./operations/store-management";
 import type { ShopifyGraphqlClient } from "./shopify-graphql-client";
 import type { StoreRegistry } from "./store-registry";
 import type { GatewayRequest, GatewayResponse, StoreConfig } from "./types";
@@ -38,6 +44,13 @@ const WRITE_OPERATIONS: ReadonlySet<string> = new Set([
   "collections.update",
   "collections.delete",
   "collections.updateMembership",
+]);
+
+const STORE_OPERATIONS: ReadonlySet<string> = new Set([
+  "stores.register",
+  "stores.list",
+  "stores.get",
+  "stores.disconnect",
 ]);
 
 export interface GatewayDispatcherOptions {
@@ -75,12 +88,32 @@ export class GatewayDispatcher {
       throw new GatewayError("operation is required", "SHOPIFY_INVALID_INPUT", 400);
     }
 
+    // 0. Store Management Operations (store existence in registry not required beforehand)
+    if (STORE_OPERATIONS.has(request.operation)) {
+      const data = await this.executeStoreOperation(request.operation, request.payload, request.storeId);
+      return {
+        storeId: request.storeId,
+        operation: request.operation,
+        success: true,
+        data,
+      };
+    }
+
     const store = await this.storeRegistry.getStore(request.storeId);
     if (!store) {
       throw new GatewayError(`Store not found: ${request.storeId}`, "SHOPIFY_NOT_FOUND", 404);
     }
 
     const isWrite = WRITE_OPERATIONS.has(request.operation);
+    if (isWrite) {
+      if (request.mode !== "preview" && request.mode !== "apply") {
+        throw new GatewayError(
+          "Write operations require an explicit mode: 'preview' or 'apply'",
+          "SHOPIFY_INVALID_INPUT",
+          400,
+        );
+      }
+    }
     const mode: "preview" | "apply" = request.mode === "preview" ? "preview" : "apply";
     const requestId =
       typeof request.requestId === "string" && request.requestId.trim() !== ""
@@ -295,6 +328,25 @@ export class GatewayDispatcher {
         return executeCollectionsUpdateMembership(store, this.graphqlClient, payload, mode, requestId);
       default:
         throw new GatewayError(`Unsupported write operation: ${operation}`, "NOT_IMPLEMENTED", 501);
+    }
+  }
+
+  private async executeStoreOperation(
+    operation: string,
+    payload: unknown,
+    defaultStoreId: string,
+  ): Promise<unknown> {
+    switch (operation) {
+      case "stores.register":
+        return executeStoresRegister(this.storeRegistry, payload);
+      case "stores.list":
+        return executeStoresList(this.storeRegistry, payload);
+      case "stores.get":
+        return executeStoresGet(this.storeRegistry, payload, defaultStoreId);
+      case "stores.disconnect":
+        return executeStoresDisconnect(this.storeRegistry, payload, defaultStoreId);
+      default:
+        throw new GatewayError(`Unsupported store operation: ${operation}`, "NOT_IMPLEMENTED", 501);
     }
   }
 }

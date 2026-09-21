@@ -15,6 +15,10 @@ const PRODUCT_CREATE_MUTATION = `
         vendor
         productType
         tags
+        seo {
+          title
+          description
+        }
         createdAt
         updatedAt
         variants(first: 100) {
@@ -72,6 +76,10 @@ const PRODUCT_UPDATE_MUTATION = `
         vendor
         productType
         tags
+        seo {
+          title
+          description
+        }
         createdAt
         updatedAt
         variants(first: 100) {
@@ -177,6 +185,13 @@ export async function executeProductsCreate(
       productType: typeof productInput.productType === "string" ? productInput.productType : undefined,
       tags: Array.isArray(productInput.tags) ? (productInput.tags as string[]) : [],
       variants: previewVariants,
+      seo:
+        productInput.seo && typeof productInput.seo === "object"
+          ? {
+              title: typeof (productInput.seo as Record<string, unknown>).title === "string" ? (productInput.seo as Record<string, unknown>).title as string : undefined,
+              description: typeof (productInput.seo as Record<string, unknown>).description === "string" ? (productInput.seo as Record<string, unknown>).description as string : undefined,
+            }
+          : undefined,
       createdAt: now,
       updatedAt: now,
     };
@@ -202,6 +217,15 @@ export async function executeProductsCreate(
   }
   if (Array.isArray(productInput.tags)) {
     input.tags = productInput.tags;
+  }
+  if (productInput.seo && typeof productInput.seo === "object") {
+    const seoObj = productInput.seo as Record<string, unknown>;
+    const seo: Record<string, unknown> = {};
+    if (typeof seoObj.title === "string") seo.title = seoObj.title;
+    if (typeof seoObj.description === "string") seo.description = seoObj.description;
+    if (Object.keys(seo).length > 0) {
+      input.seo = seo;
+    }
   }
 
   if (Array.isArray(productInput.productOptions) && productInput.productOptions.length > 0) {
@@ -395,6 +419,13 @@ export async function executeProductsUpdate(
       productType: typeof productPatch.productType === "string" ? productPatch.productType : undefined,
       tags: Array.isArray(productPatch.tags) ? (productPatch.tags as string[]) : [],
       variants: [],
+      seo:
+        productPatch.seo && typeof productPatch.seo === "object"
+          ? {
+              title: typeof (productPatch.seo as Record<string, unknown>).title === "string" ? (productPatch.seo as Record<string, unknown>).title as string : undefined,
+              description: typeof (productPatch.seo as Record<string, unknown>).description === "string" ? (productPatch.seo as Record<string, unknown>).description as string : undefined,
+            }
+          : undefined,
       createdAt: now,
       updatedAt: now,
     };
@@ -422,6 +453,15 @@ export async function executeProductsUpdate(
   }
   if (Array.isArray(productPatch.tags)) {
     input.tags = productPatch.tags;
+  }
+  if (productPatch.seo && typeof productPatch.seo === "object") {
+    const seoObj = productPatch.seo as Record<string, unknown>;
+    const seo: Record<string, unknown> = {};
+    if (typeof seoObj.title === "string") seo.title = seoObj.title;
+    if (typeof seoObj.description === "string") seo.description = seoObj.description;
+    if (Object.keys(seo).length > 0) {
+      input.seo = seo;
+    }
   }
 
   interface ProductUpdateResponse {
