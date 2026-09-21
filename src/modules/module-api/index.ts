@@ -48,6 +48,7 @@ export type {
   ShopifyConnectionTestResponse,
   ShopifyExecutionMode,
   ShopifyImage,
+  ShopifyImageInput,
   ShopifyOperation,
   ShopifyPageInfo,
   ShopifyProduct,

@@ -106,6 +106,14 @@ export interface ShopifyImage {
   readonly height?: number;
 }
 
+export interface ShopifyImageInput {
+  readonly id?: string;
+  readonly url?: string;
+  readonly altText?: string;
+  readonly width?: number;
+  readonly height?: number;
+}
+
 export interface ShopifyProduct {
   readonly id: string;
   readonly title: string;
@@ -121,6 +129,8 @@ export interface ShopifyProduct {
   readonly images?: readonly ShopifyImage[];
   readonly variants: readonly ShopifyProductVariant[];
   readonly seo?: ShopifySeo;
+  readonly hasMoreVariants?: boolean;
+  readonly hasMoreImages?: boolean;
   readonly createdAt: string;
   readonly updatedAt: string;
 }
@@ -145,7 +155,7 @@ export interface ShopifyVariantOptionValueInput {
 
 export interface ShopifyProductOptionInput {
   readonly name: string;
-  readonly values?: readonly string[] | readonly { readonly name: string }[];
+  readonly values?: readonly (string | { readonly name: string })[];
 }
 
 export interface ShopifyProductVariantInput {
@@ -154,6 +164,7 @@ export interface ShopifyProductVariantInput {
   readonly compareAtPrice?: string;
   readonly sku?: string;
   readonly barcode?: string;
+  readonly inventoryQuantity?: number;
   readonly optionValues?: readonly ShopifyVariantOptionValueInput[];
 }
 
@@ -166,9 +177,8 @@ export interface ShopifyProductInput {
   readonly vendor?: string;
   readonly productType?: string;
   readonly tags?: readonly string[];
-  readonly onlineStoreUrl?: string;
-  readonly featuredImage?: ShopifyImage;
-  readonly images?: readonly ShopifyImage[];
+  readonly featuredImage?: ShopifyImageInput;
+  readonly images?: readonly ShopifyImageInput[];
   readonly productOptions?: readonly ShopifyProductOptionInput[];
   readonly variants?: readonly ShopifyProductVariantInput[];
   readonly seo?: ShopifySeoInput;
@@ -183,9 +193,8 @@ export interface ShopifyProductUpdateInput {
   readonly vendor?: string;
   readonly productType?: string;
   readonly tags?: readonly string[];
-  readonly onlineStoreUrl?: string;
-  readonly featuredImage?: ShopifyImage;
-  readonly images?: readonly ShopifyImage[];
+  readonly featuredImage?: ShopifyImageInput;
+  readonly images?: readonly ShopifyImageInput[];
   readonly seo?: ShopifySeoInput;
 }
 

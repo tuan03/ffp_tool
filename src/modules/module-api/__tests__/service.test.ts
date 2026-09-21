@@ -208,7 +208,6 @@ test("Module API mock runner executes products.create and products.update with i
       product: {
         title: "Image Hoodie",
         description: "Graphic hoodie with print",
-        onlineStoreUrl: "https://quickstart-demo.myshopify.com/products/image-hoodie",
         featuredImage: {
           id: "gid://shopify/ProductImage/9001",
           url: "https://cdn.shopify.com/hoodie-front.jpg",
@@ -2444,6 +2443,90 @@ test("Real service forwards X-Gateway-Key header when gatewayAuthToken is config
   const headers = requests[0].init?.headers as Record<string, string>;
   assert.equal(headers["X-Gateway-Key"], "gw-secret-token-123");
 });
+
+test("Real service and mock runner expose hasMoreVariants and hasMoreImages on products.get", async () => {
+  // 1. Mock runner test
+  const mockGet = await runMockModuleApi({
+    storeId: "store-test",
+    operation: "products.get",
+    payload: { id: "gid://shopify/Product/1001" },
+  });
+  assert.equal(mockGet.success, true);
+  assert.equal(mockGet.data.product?.hasMoreVariants, false);
+  assert.equal(mockGet.data.product?.hasMoreImages, false);
+
+  // 2. Real service test
+  const { fetch: fakeFetch } = createFakeFetch(async () => {
+    return new Response(
+      JSON.stringify({
+        storeId: "store-test",
+        operation: "products.get",
+        success: true,
+        data: {
+          product: {
+            id: "gid://shopify/Product/999",
+            title: "Large Catalog Item",
+            handle: "large-catalog-item",
+            status: "ACTIVE",
+            tags: [],
+            variants: [],
+            hasMoreVariants: true,
+            hasMoreImages: true,
+            createdAt: "2026-09-01T00:00:00Z",
+            updatedAt: "2026-09-20T00:00:00Z",
+          },
+        },
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  });
+
+  const realRunner = createModuleApiRunner(
+    { gatewayUrl: "https://gateway.example.com/api" },
+    { fetch: fakeFetch },
+  );
+
+  const realGet = await realRunner({
+    storeId: "store-test",
+    operation: "products.get",
+    payload: { id: "gid://shopify/Product/999" },
+  });
+
+  assert.equal(realGet.success, true);
+  assert.equal(realGet.data.product?.hasMoreVariants, true);
+  assert.equal(realGet.data.product?.hasMoreImages, true);
+});
+
+test("Mock runner products.update merges altText of existing image by id without wiping other images", async () => {
+  const updateRes = await runMockModuleApi({
+    storeId: "store-test",
+    operation: "products.update",
+    mode: "apply",
+    payload: {
+      id: "gid://shopify/Product/1001",
+      product: {
+        images: [
+          {
+            id: "gid://shopify/ProductImage/5001",
+            altText: "New Front Alt",
+          },
+        ],
+      },
+    },
+  });
+
+  assert.equal(updateRes.success, true);
+  const images = updateRes.data.product.images;
+  assert.ok(images && images.length >= 2, "Must preserve existing images");
+  const img5001 = images.find((im) => im.id === "gid://shopify/ProductImage/5001");
+  assert.ok(img5001);
+  assert.equal(img5001.altText, "New Front Alt");
+  assert.ok(img5001.url.includes("tshirt-front.jpg"));
+  const img5002 = images.find((im) => im.id === "gid://shopify/ProductImage/5002");
+  assert.ok(img5002);
+  assert.equal(img5002.altText, "Classic Cotton T-Shirt back view");
+});
+
 
 
 
