@@ -1,18 +1,62 @@
 export {
   initialMockAuthStatus,
   initialMockLogs,
+  mock15Candidates,
   mockCandidates,
   mockDeliverables,
+  mockPinterestAuthStatus,
+  mockSeoDeliverables,
+  mockStage1DiscoveryOutput,
+  mockStage2ProductionOutput,
   mockSummaryMetrics,
 } from "./mocks/data";
-export { mockPinterestPodClient } from "./mocks/runner";
-export { createPinterestPodRoutes, pinterestPodRoutes } from "./routes";
-export { getPinterestPodClient } from "./runtime";
+
 export {
+  cancelMockJob,
+  getMockAuthStatus,
+  getMockJobStatus,
+  launchMockLogin,
+  MockPinterestPodClient,
+  mockPinterestPodClient,
+  runMockDiscovery,
+  runMockProduction,
+} from "./mocks/runner";
+
+export { createPinterestPodRoutes, pinterestPodRoutes } from "./routes";
+
+export {
+  getDiscoveryRunner,
+  getPinterestAuthRunner,
+  getPinterestPodClient,
+  getPinterestPodRunner,
+  getProductionRunner,
+} from "./runtime";
+export type { PinterestPodModuleRunner } from "./runtime";
+
+export {
+  buildSeoDeliverables,
+  cancelJob,
+  getAssetUrl,
+  getAuthStatus,
+  getJobStatus,
+  launchLogin,
   packageDeliverablesForSeo,
+  pollDiscoveryJob,
+  pollProductionJob,
   realPinterestPodClient,
   RealPinterestPodClient,
+  runDiscovery,
+  runProduction,
+  startDiscoveryJob,
+  startProductionJob,
 } from "./service";
+
+export {
+  FACTORY_PRINT_STANDARDS,
+  POD_SIZE_PRESETS,
+  STOREFRONT_DISPLAY_STANDARD,
+} from "./types";
+
 export type {
   CandidateItem,
   CancelJobOutput,
@@ -26,14 +70,36 @@ export type {
   JobDetailResponse,
   JobStatus,
   PinterestAuthStatus,
+  PinterestDiscoveryInput,
+  PinterestDiscoveryOutput,
   PinterestLaunchLoginOutput,
+  PinterestLaunchLoginPayload,
+  PinterestLaunchLoginResponse,
   PinterestPodClient,
   PinterestPodDeliverables,
+  PinterestProductionInput,
+  PinterestProductionOutput,
   PinterestProductType,
+  PodAssetInfo,
+  PodBackendDeliverables,
+  PodCancelJobResponse,
+  PodCandidate,
+  PodComparisonRow,
   PodComposedMockupSpec,
   PodCutoutSpec,
   PodDeliverableItem,
+  PodFactoryPrintStandard,
+  PodJobStatus,
+  PodJobStatusResponse,
+  PodJobStepper,
+  PodPollOptions,
   PodPrintMasterSpec,
+  PodProductType,
+  PodReferenceImage,
+  PodSizePresetItem,
+  PodStorefrontStandard,
+  PodSummaryMetrics,
+  PodWorkflowStage,
   ProduceInput,
   ProduceOutput,
   ReferenceImage,

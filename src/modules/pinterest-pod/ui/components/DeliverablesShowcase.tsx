@@ -21,15 +21,20 @@ export function DeliverablesShowcase({
   const [isZipping, setIsZipping] = useState(false);
   const [zipMessage, setZipMessage] = useState<string | null>(null);
 
+  const printCmykImages = deliverables.print_cmyk_images ?? [];
+  const lifestyleMockups = deliverables.lifestyle_mockups ?? [];
+  const productCutoutsWhite = deliverables.product_cutouts_white ?? [];
+  const comparisonRows = deliverables.comparison_rows ?? [];
+
   const metrics: SummaryMetrics = summaryMetrics ?? {
-    rgb_4k_count: deliverables.print_cmyk_images.length,
-    cmyk_count: deliverables.print_cmyk_images.length,
-    lifestyle_mockup_count: deliverables.lifestyle_mockups.length,
-    cutouts_count: deliverables.product_cutouts_white.length,
-    mockups_count: deliverables.lifestyle_mockups.length,
+    rgb_4k_count: printCmykImages.length,
+    cmyk_count: printCmykImages.length,
+    lifestyle_mockup_count: lifestyleMockups.length,
+    cutouts_count: productCutoutsWhite.length,
+    mockups_count: lifestyleMockups.length,
   };
 
-  const totalProduced = metrics.cmyk_count || deliverables.comparison_rows.length;
+  const totalProduced = metrics.cmyk_count || comparisonRows.length;
 
   function handleDownloadZip(): void {
     setIsZipping(true);
@@ -40,9 +45,9 @@ export function DeliverablesShowcase({
       const manifest = {
         package: "pinterest_pod_deliverables",
         totalDesigns: totalProduced,
-        cmykPrints: deliverables.print_cmyk_images.map((i) => i.filename),
-        lifestyleMockups: deliverables.lifestyle_mockups.map((m) => m.filename),
-        cutouts: deliverables.product_cutouts_white.map((c) => c.filename),
+        cmykPrints: printCmykImages.map((i) => i.filename),
+        lifestyleMockups: lifestyleMockups.map((m) => m.filename),
+        cutouts: productCutoutsWhite.map((c) => c.filename),
       };
       const blob = new Blob([JSON.stringify(manifest, null, 2)], { type: "application/json" });
       const url = URL.createObjectURL(blob);
@@ -52,7 +57,7 @@ export function DeliverablesShowcase({
       a.click();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
 
-      setZipMessage(`✓ Đã bắt đầu tải gói ZIP thành phẩm (${totalProduced} bản in CMYK 300DPI, ${deliverables.lifestyle_mockups.length} mockups AI)!`);
+      setZipMessage(`✓ Đã bắt đầu tải gói ZIP thành phẩm (${totalProduced} bản in CMYK 300DPI, ${lifestyleMockups.length} mockups AI)!`);
       setTimeout(() => setZipMessage(null), 5000);
     }, 600);
   }
@@ -137,7 +142,7 @@ export function DeliverablesShowcase({
                 : "border-transparent text-slate-400 hover:text-slate-200"
             }`}
           >
-            🖨️ Bản in CMYK ({deliverables.print_cmyk_images.length})
+            🖨️ Bản in CMYK ({printCmykImages.length})
           </button>
 
           <button
@@ -149,7 +154,7 @@ export function DeliverablesShowcase({
                 : "border-transparent text-slate-400 hover:text-slate-200"
             }`}
           >
-            🛋️ Mockup Phòng AI ({deliverables.lifestyle_mockups.length})
+            🛋️ Mockup Phòng AI ({lifestyleMockups.length})
           </button>
 
           <button
@@ -161,7 +166,7 @@ export function DeliverablesShowcase({
                 : "border-transparent text-slate-400 hover:text-slate-200"
             }`}
           >
-            ✂️ Phôi Cắt ({deliverables.product_cutouts_white.length})
+            ✂️ Phôi Cắt ({productCutoutsWhite.length})
           </button>
 
           <button
@@ -173,14 +178,14 @@ export function DeliverablesShowcase({
                 : "border-transparent text-slate-400 hover:text-slate-200"
             }`}
           >
-            🔄 Bảng So Sánh 4 Bước ({deliverables.comparison_rows.length})
+            🔄 Bảng So Sánh 4 Bước ({comparisonRows.length})
           </button>
         </div>
 
         {/* Tab 1: CMYK Print Images */}
         {activeTab === "cmyk" && (
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3">
-            {deliverables.print_cmyk_images.map((item, idx) => (
+            {printCmykImages.map((item, idx) => (
               <div
                 key={item.filename || `${item.url}-${idx}`}
                 className="flex flex-col overflow-hidden rounded-xl border border-slate-800 bg-slate-950 shadow"
@@ -223,7 +228,7 @@ export function DeliverablesShowcase({
         {/* Tab 2: Lifestyle Mockups */}
         {activeTab === "mockups" && (
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3">
-            {deliverables.lifestyle_mockups.map((mockup, idx) => (
+            {lifestyleMockups.map((mockup, idx) => (
               <div
                 key={mockup.filename || `${mockup.url}-${idx}`}
                 className="flex flex-col overflow-hidden rounded-xl border border-slate-800 bg-slate-950 shadow"
@@ -268,7 +273,7 @@ export function DeliverablesShowcase({
         {/* Tab 3: White Cutouts */}
         {activeTab === "cutouts" && (
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3">
-            {deliverables.product_cutouts_white.map((cutout, idx) => (
+            {productCutoutsWhite.map((cutout, idx) => (
               <div
                 key={cutout.filename || `${cutout.url}-${idx}`}
                 className="flex flex-col overflow-hidden rounded-xl border border-slate-800 bg-slate-950 shadow"
@@ -307,7 +312,7 @@ export function DeliverablesShowcase({
 
         {/* Tab 4: Comparison Table */}
         {activeTab === "comparison" && (
-          <ComparisonTable rows={deliverables.comparison_rows} />
+          <ComparisonTable rows={comparisonRows} />
         )}
       </div>
 

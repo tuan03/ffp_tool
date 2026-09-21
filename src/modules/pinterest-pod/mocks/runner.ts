@@ -1,3 +1,4 @@
+import { AppError } from "../../../shared/errors";
 import type {
   CandidateItem,
   CancelJobOutput,
@@ -6,18 +7,36 @@ import type {
   DeliverablesData,
   JobDetailResponse,
   PinterestAuthStatus,
+  PinterestDiscoveryInput,
+  PinterestDiscoveryOutput,
   PinterestLaunchLoginOutput,
+  PinterestLaunchLoginPayload,
+  PinterestLaunchLoginResponse,
   PinterestPodClient,
+  PinterestPodDeliverables,
+  PinterestProductionInput,
+  PinterestProductionOutput,
+  PodCancelJobResponse,
+  PodCandidate,
+  PodDeliverableItem,
+  PodJobStatusResponse,
+  PodPollOptions,
   ProduceInput,
   ProduceOutput,
   SummaryMetrics,
 } from "../types";
+import { FACTORY_PRINT_STANDARDS } from "../types";
 import {
   createMockSvgDataUri,
   initialMockAuthStatus,
   initialMockLogs,
+  mock15Candidates,
   mockCandidates,
   mockDeliverables,
+  mockPinterestAuthStatus,
+  mockSeoDeliverables,
+  mockStage1DiscoveryOutput,
+  mockStage2ProductionOutput,
   mockSummaryMetrics,
 } from "./data";
 
@@ -104,22 +123,39 @@ function buildMockDeliverablesForJob(job: InMemoryMockJob): {
     index: idx + 1,
     product_label: `Mẫu #${idx + 1}: ${cand.title}`,
     source_url: cand.image_url,
-    cutout_url: createMockSvgDataUri("Phôi bóc tách", "Transparent Cutout PNG", "#111827", "#818cf8"),
-    cutout_white_url: product_cutouts_white[idx].url,
-    final_print_url: print_cmyk_images[idx].url,
+    cutout_url: createMockSvgDataUri(
+      `Phôi bóc tách #${idx + 1}`,
+      "Transparent Cutout PNG",
+      "#111827",
+      "#818cf8",
+    ),
+    cutout_white_url: createMockSvgDataUri(
+      `Phôi nền trắng #${idx + 1}`,
+      "Pure #ffffff Background",
+      "#ffffff",
+      "#818cf8",
+    ),
+    final_print_url: createMockSvgDataUri(
+      `File CMYK #${idx + 1}`,
+      `${prodLabel} ${dimText}`,
+      "#1e1b4b",
+      "#818cf8",
+    ),
     ai_background_urls: [
-      lifestyle_mockups[idx * 2].url,
-      lifestyle_mockups[idx * 2 + 1].url,
+      createMockSvgDataUri(
+        `Mockup AI #${idx + 1}A`,
+        "Living Room",
+        "#1a2238",
+        "#60a5fa",
+      ),
+      createMockSvgDataUri(
+        `Mockup AI #${idx + 1}B`,
+        "Bedroom",
+        "#2b1c2b",
+        "#f472b6",
+      ),
     ],
   }));
-
-  const summaryMetrics: SummaryMetrics = {
-    rgb_4k_count: finalCandidates.length,
-    cmyk_count: finalCandidates.length,
-    lifestyle_mockup_count: lifestyle_mockups.length,
-    cutouts_count: finalCandidates.length,
-    mockups_count: lifestyle_mockups.length,
-  };
 
   return {
     deliverables: {
@@ -128,11 +164,17 @@ function buildMockDeliverablesForJob(job: InMemoryMockJob): {
       product_cutouts_white,
       comparison_rows,
     },
-    summaryMetrics,
+    summaryMetrics: {
+      rgb_4k_count: finalCandidates.length,
+      cmyk_count: print_cmyk_images.length,
+      lifestyle_mockup_count: lifestyle_mockups.length,
+      cutouts_count: product_cutouts_white.length,
+      mockups_count: lifestyle_mockups.length,
+    },
   };
 }
 
-class MockPinterestPodClient implements PinterestPodClient {
+export class MockPinterestPodClient implements PinterestPodClient {
   private authState: PinterestAuthStatus = { ...initialMockAuthStatus };
   private jobs = new Map<string, InMemoryMockJob>();
 
@@ -140,15 +182,16 @@ class MockPinterestPodClient implements PinterestPodClient {
     return { ...this.authState };
   }
 
-  public async launchLogin(_timeout = 600): Promise<PinterestLaunchLoginOutput> {
+  public async launchLogin(_timeout?: number): Promise<PinterestLaunchLoginOutput> {
     this.authState = {
       ok: true,
       logged_in: true,
       browser_logged_in: true,
-      status_text: "Pinterest: Đã đăng nhập",
+      status_text: "Pinterest: Đã đăng nhập (Phiên duyệt)",
     };
     return {
       ok: true,
+      status_text: "Pinterest: Đã đăng nhập (Phiên duyệt)",
       message: "Đăng nhập Pinterest thành công trên phiên trình duyệt.",
     };
   }
@@ -199,7 +242,7 @@ class MockPinterestPodClient implements PinterestPodClient {
         stepper: {
           current_step: 2,
           percent: 40,
-          current_message: "Đã quét & chấm điểm Vision AI (6 ứng viên). Mời bạn duyệt mẫu để sản xuất.",
+          current_message: `Đã quét & chấm điểm Vision AI (${mockCandidates.length} ứng viên). Mời bạn duyệt mẫu để sản xuất.`,
         },
         logs: [...initialMockLogs],
         candidates: [...mockCandidates],
@@ -359,3 +402,271 @@ class MockPinterestPodClient implements PinterestPodClient {
 }
 
 export const mockPinterestPodClient = new MockPinterestPodClient();
+
+/** Deterministically clone candidates to avoid mutating shared mock state */
+function cloneCandidates(candidates: readonly PodCandidate[]): PodCandidate[] {
+  return candidates.map((cand) => ({ ...cand }));
+}
+
+/** Deterministically clone SEO deliverables items */
+function cloneSeoItems(items: readonly PodDeliverableItem[]): PodDeliverableItem[] {
+  return items.map((item) => ({
+    ...item,
+    trendKeywords: [...item.trendKeywords],
+    printMaster: { ...item.printMaster },
+    cutoutProduct: { ...item.cutoutProduct },
+    composedMockups: item.composedMockups.map((m) => ({ ...m })),
+  }));
+}
+
+/** Run mock Pinterest Discovery (Stage 1) */
+export async function runMockDiscovery(
+  input: PinterestDiscoveryInput,
+  options?: PodPollOptions,
+): Promise<PinterestDiscoveryOutput> {
+  if (options?.signal?.aborted) {
+    throw new AppError("Polling Pinterest POD job was aborted", "PINTEREST_POD_JOB_ABORTED");
+  }
+
+  const targetPoolSize = input.candidatePoolSize ?? 15;
+  const slicedCandidates = cloneCandidates(mock15Candidates.slice(0, targetPoolSize));
+  const effectiveJobId = `job_pod_${Date.now().toString(36)}`;
+
+  if (options?.onProgress) {
+    options.onProgress({
+      ok: true,
+      jobId: effectiveJobId,
+      status: "running",
+      total_candidates: 0,
+      stepper: {
+        current_step: 1,
+        percent: 20,
+        current_message: `Đang quét từ khóa "${input.niche}" trên Pinterest...`,
+      },
+      logs: [`Khởi tạo job POD (crawl_and_review): ${input.niche}...`],
+    });
+  }
+
+  return {
+    ok: true,
+    jobId: effectiveJobId,
+    status: "ready_for_review",
+    total_candidates: slicedCandidates.length,
+    stepper: {
+      current_step: 2,
+      percent: 40,
+      current_message: `Đã quét & chấm điểm Vision AI (${slicedCandidates.length} ứng viên). Mời bạn duyệt mẫu để sản xuất.`,
+    },
+    logs: [
+      `Khởi tạo job POD (crawl_and_review): ${input.niche}...`,
+      `Pinterest Trends: Đã phát hiện 8 từ khóa hot cho "${input.niche}"...`,
+      `AI Vision: Đã chấm điểm chất lượng ${slicedCandidates.length} mẫu ứng viên.`,
+      "Sẵn sàng duyệt mẫu ứng viên.",
+    ],
+    candidates: slicedCandidates,
+  };
+}
+
+/** Run mock Pinterest Production (Stage 2) */
+export async function runMockProduction(
+  input: PinterestProductionInput,
+  options?: PodPollOptions,
+): Promise<PinterestProductionOutput> {
+  if (options?.signal?.aborted) {
+    throw new AppError("Polling Pinterest POD job was aborted", "PINTEREST_POD_JOB_ABORTED");
+  }
+
+  const productType = input.product ?? "rug";
+  const printStandard = FACTORY_PRINT_STANDARDS[productType];
+  const selectedIds = input.selected_candidates ?? [];
+
+  const candidateLookup = new Map<string, PodCandidate>();
+  for (const c of mock15Candidates) {
+    candidateLookup.set(c.id, c);
+  }
+  const seoItemsLookup = new Map<string, PodDeliverableItem>();
+  for (const it of mockSeoDeliverables.items) {
+    seoItemsLookup.set(it.sourceCandidateId, it);
+  }
+
+  const effectiveItems: PodDeliverableItem[] = (
+    selectedIds.length > 0 ? selectedIds : ["cand_pin_101", "cand_pin_102", "cand_pin_105"]
+  ).map((candId, idx) => {
+    const existingSeo = seoItemsLookup.get(candId);
+    if (existingSeo) {
+      return {
+        ...existingSeo,
+        productType,
+        printMaster: {
+          ...existingSeo.printMaster,
+          widthPx: printStandard.widthPx,
+          heightPx: printStandard.heightPx,
+          label: printStandard.label,
+          badge: printStandard.badge,
+        },
+      };
+    }
+
+    const cand = candidateLookup.get(candId);
+    const designId = `design_${productType}_${100 + idx + 1}`;
+    const originalPinTitle = cand?.title ?? `Design #${idx + 1}`;
+    const trendKeywords = cand?.trend
+      ? [cand.trend, cand.query ?? "", `${productType} aesthetic`].filter(Boolean)
+      : [`${productType} aesthetic`, "vintage trend", "lifestyle home"];
+
+    return {
+      designId,
+      sourceCandidateId: candId,
+      productType,
+      originalPinTitle,
+      trendKeywords,
+      printMaster: {
+        cmykUrl: `/api/pinterest-pod/assets/${input.jobId}/${designId}_cmyk_300dpi.jpg`,
+        rgbUrl: `/api/pinterest-pod/assets/${input.jobId}/${designId}_rgb_4k.png`,
+        localFilePath: `temp/pinterest_pod/${input.jobId}/${designId}_cmyk_300dpi.jpg`,
+        widthPx: printStandard.widthPx,
+        heightPx: printStandard.heightPx,
+        dpi: 300,
+        colorMode: "CMYK",
+        label: printStandard.label,
+        badge: printStandard.badge,
+      },
+      cutoutProduct: {
+        transparentUrl: `/api/pinterest-pod/assets/${input.jobId}/${designId}_cutout.png`,
+        whiteBgUrl: `/api/pinterest-pod/assets/${input.jobId}/${designId}_white.jpg`,
+        localFilePath: `temp/pinterest_pod/${input.jobId}/${designId}_white.jpg`,
+      },
+      composedMockups: [
+        {
+          referenceImageId: "ref_room_01",
+          mockupUrl: `/api/pinterest-pod/assets/${input.jobId}/mockup_room_01_${designId}.jpg`,
+          localFilePath: `temp/pinterest_pod/${input.jobId}/mockup_room_01_${designId}.jpg`,
+          detectedSceneType: "living_room",
+          detectedSceneDescription: "Modern spacious living room with natural sunlight and couch",
+        },
+        {
+          referenceImageId: "ref_room_02",
+          mockupUrl: `/api/pinterest-pod/assets/${input.jobId}/mockup_room_02_${designId}.jpg`,
+          localFilePath: `temp/pinterest_pod/${input.jobId}/mockup_room_02_${designId}.jpg`,
+          detectedSceneType: "bedroom",
+          detectedSceneDescription: "Cozy minimalist bedroom with hardwood flooring and bedding",
+        },
+      ],
+    };
+  });
+
+  const seoDeliverables: PinterestPodDeliverables = {
+    workflowId: input.jobId,
+    success: true,
+    productType,
+    totalProduced: effectiveItems.length,
+    items: cloneSeoItems(effectiveItems),
+  };
+
+  if (options?.onProgress) {
+    options.onProgress({
+      ok: true,
+      jobId: input.jobId,
+      status: "running",
+      stepper: {
+        current_step: 3,
+        percent: 75,
+        current_message: "Đang render mockup phòng và tạo file CMYK 300 DPI...",
+      },
+      logs: [`Bắt đầu sản xuất ${effectiveItems.length} mẫu đã chọn...`],
+    });
+  }
+
+  return {
+    ok: true,
+    jobId: input.jobId,
+    status: "completed",
+    stepper: {
+      current_step: 4,
+      percent: 100,
+      current_message: "Hoàn thành! Đã tạo đầy đủ mockup AI & file in CMYK xưởng.",
+    },
+    logs: [
+      `Khởi tạo sản xuất cho ${effectiveItems.length} mẫu ứng viên đã duyệt...`,
+      "Đang tách phôi nền trắng (#ffffff) và phôi trong suốt...",
+      `Đang chuyển hệ màu sang CMYK 300 DPI kích thước ${printStandard.widthPx}x${printStandard.heightPx}px...`,
+      "Đang render AI Lifestyle Mockups theo các ảnh phòng mẫu...",
+      "Hoàn thành toàn bộ quy trình sản xuất POD.",
+    ],
+    summaryMetrics: {
+      rgb_4k_count: effectiveItems.length,
+      cmyk_count: effectiveItems.length,
+      lifestyle_mockup_count: effectiveItems.length * 2,
+      cutouts_count: effectiveItems.length,
+      mockups_count: effectiveItems.length * 2,
+    },
+    deliverables: {
+      print_cmyk_images: (mockStage2ProductionOutput.deliverables.print_cmyk_images ?? []).map(
+        (img) => ({
+          ...img,
+          width_px: printStandard.widthPx,
+          height_px: printStandard.heightPx,
+        }),
+      ),
+      final_png_images: (mockStage2ProductionOutput.deliverables.final_png_images ?? []).map(
+        (img) => ({
+          ...img,
+          width_px: printStandard.widthPx,
+          height_px: printStandard.heightPx,
+        }),
+      ),
+      lifestyle_mockups: (mockStage2ProductionOutput.deliverables.lifestyle_mockups ?? []).map(
+        (m) => ({ ...m }),
+      ),
+      product_cutouts_white: (
+        mockStage2ProductionOutput.deliverables.product_cutouts_white ?? []
+      ).map((c) => ({ ...c })),
+      product_cutouts: (mockStage2ProductionOutput.deliverables.product_cutouts ?? []).map((c) => ({
+        ...c,
+      })),
+      comparison_rows: (mockStage2ProductionOutput.deliverables.comparison_rows ?? []).map((r) => ({
+        ...r,
+        ai_background_urls: [...r.ai_background_urls],
+      })),
+    },
+    seoDeliverables,
+  };
+}
+
+/** Get mock Pinterest auth status */
+export async function getMockAuthStatus(): Promise<PinterestAuthStatus> {
+  return { ...mockPinterestAuthStatus };
+}
+
+/** Mock launch login */
+export async function launchMockLogin(
+  _payload?: PinterestLaunchLoginPayload,
+): Promise<PinterestLaunchLoginResponse> {
+  return {
+    ok: true,
+    status_text: "Pinterest: Đã mở cửa sổ và ghi nhận đăng nhập thành công",
+    logged_in: true,
+  };
+}
+
+/** Mock cancel job */
+export async function cancelMockJob(jobId: string): Promise<PodCancelJobResponse> {
+  return {
+    ok: true,
+    jobId,
+    message: `Job ${jobId} đã được hủy thành công.`,
+  };
+}
+
+/** Mock get job status */
+export async function getMockJobStatus(jobId: string): Promise<PodJobStatusResponse> {
+  return {
+    ok: true,
+    jobId,
+    status: "ready_for_review",
+    total_candidates: mock15Candidates.length,
+    stepper: { ...mockStage1DiscoveryOutput.stepper },
+    logs: [...mockStage1DiscoveryOutput.logs],
+    candidates: cloneCandidates(mock15Candidates),
+  };
+}
