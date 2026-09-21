@@ -482,16 +482,38 @@ def check_oauth_token_valid(token_file: Path | None = None) -> tuple[bool, dict[
         return False, {}
 
 
+def resolve_browser_profile_dir() -> Path:
+    """Resolve browser profile directory, checking local module first, then fallback environments."""
+    local_profile = (ROOT / "pinterest" / ".pinterest_browser_profile").resolve()
+    if check_browser_profile_logged_in(local_profile):
+        return local_profile
+
+    fallback_candidates = [
+        Path("D:/CODE/Code_Clone/tool_shopify/pinterest/.pinterest_browser_profile"),
+        (ROOT.parent.parent.parent.parent / "tool_shopify" / "pinterest" / ".pinterest_browser_profile").resolve(),
+    ]
+    for cand in fallback_candidates:
+        if cand.exists() and check_browser_profile_logged_in(cand):
+            return cand.resolve()
+
+    return local_profile
+
+
 def get_pinterest_auth_status() -> dict[str, Any]:
     """Inspect browser profile and OAuth token status for Pinterest POD Studio."""
-    profile_dir = (ROOT / "pinterest" / ".pinterest_browser_profile").resolve()
+    profile_dir = resolve_browser_profile_dir()
     token_file = (ROOT / "pinterest" / ".pinterest_oauth_tokens.json").resolve()
     root_token_file = (ROOT / ".pinterest_oauth_tokens.json").resolve()
 
     browser_logged_in = check_browser_profile_logged_in(profile_dir)
     oauth_valid, token_data = check_oauth_token_valid(token_file)
-    is_logged_in = browser_logged_in or oauth_valid
-    status_text = "Pinterest: Đã đăng nhập" if is_logged_in else "Pinterest: Chưa đăng nhập"
+    is_logged_in = browser_logged_in
+    if browser_logged_in:
+        status_text = "Pinterest: Đã đăng nhập"
+    elif oauth_valid:
+        status_text = "Pinterest: Cần đăng nhập trình duyệt"
+    else:
+        status_text = "Pinterest: Chưa đăng nhập"
 
     return {
         "ok": True,
@@ -525,7 +547,7 @@ def launch_pinterest_login(timeout: int = 600) -> dict[str, Any]:
             "error": f"Không tìm thấy script đăng nhập tại {script}",
         }
 
-    profile_dir = (ROOT / "pinterest" / ".pinterest_browser_profile").resolve()
+    profile_dir = resolve_browser_profile_dir()
     profile_dir.mkdir(parents=True, exist_ok=True)
 
     cmd = [
