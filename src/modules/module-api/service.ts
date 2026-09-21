@@ -57,8 +57,16 @@ export async function runModuleApi(input: ShopifyCollectionsDeleteInput): Promis
 export async function runModuleApi(input: ShopifyCollectionsUpdateMembershipInput): Promise<ShopifyCollectionsUpdateMembershipResponse>;
 export async function runModuleApi(input: ShopifyApiInput): Promise<ShopifyApiResponse>;
 export async function runModuleApi(input: ShopifyApiInput): Promise<ShopifyApiResponse> {
+  if (!input || typeof input !== "object") {
+    throw new ShopifyApiError("Input must be a valid object", "SHOPIFY_USER_ERROR");
+  }
+
   if (!input.storeId || input.storeId.trim() === "") {
     throw new ShopifyApiError("Store ID is required", "SHOPIFY_USER_ERROR");
+  }
+
+  if (!input.payload || typeof input.payload !== "object") {
+    throw new ShopifyApiError("Payload is required", "SHOPIFY_USER_ERROR");
   }
 
   // Gateway client integration planned for Phase 2.

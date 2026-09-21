@@ -46,6 +46,7 @@ test("Module API mock runner executes connection.test", async () => {
   assert.equal(response.storeId, "store-101");
   assert.equal(response.operation, "connection.test");
   assert.equal(response.success, true);
+  assert.equal(response.data.isConnected, true);
   assert.equal(response.data.connected, true);
   assert.equal(response.data.currencyCode, "USD");
   assert.equal(response.data.shopDomain, "quickstart-demo.myshopify.com");
@@ -379,3 +380,156 @@ test("Module API real service fails predictably when unconfigured", async () => 
     },
   );
 });
+
+test("Module API mock runner handles products.list cursor-based pagination", async () => {
+  const page1 = await runMockModuleApi({
+    storeId: "store-101",
+    operation: "products.list",
+    payload: { limit: 2 },
+  });
+
+  assert.equal(page1.data.products.length, 2);
+  assert.equal(page1.data.pageInfo.hasNextPage, true);
+  assert.equal(page1.data.pageInfo.hasPreviousPage, false);
+  assert.ok(page1.data.pageInfo.startCursor);
+  assert.ok(page1.data.pageInfo.endCursor);
+
+  const page2 = await runMockModuleApi({
+    storeId: "store-101",
+    operation: "products.list",
+    payload: {
+      limit: 2,
+      cursor: page1.data.pageInfo.endCursor,
+    },
+  });
+
+  assert.equal(page2.data.products.length, 1);
+  assert.equal(page2.data.products[0]?.title, "Vintage Denim Jacket");
+  assert.equal(page2.data.pageInfo.hasNextPage, false);
+  assert.equal(page2.data.pageInfo.hasPreviousPage, true);
+
+  await assert.rejects(
+    async () => {
+      await runMockModuleApi({
+        storeId: "store-101",
+        operation: "products.list",
+        payload: { limit: 0 },
+      });
+    },
+    (error: unknown) => {
+      assert.ok(error instanceof ShopifyApiError);
+      assert.equal(error.code, "SHOPIFY_USER_ERROR");
+      return true;
+    },
+  );
+});
+
+test("Module API mock runner handles collections.list cursor-based pagination", async () => {
+  const page1 = await runMockModuleApi({
+    storeId: "store-101",
+    operation: "collections.list",
+    payload: { limit: 1 },
+  });
+
+  assert.equal(page1.data.collections.length, 1);
+  assert.equal(page1.data.pageInfo.hasNextPage, true);
+  assert.equal(page1.data.pageInfo.hasPreviousPage, false);
+  assert.ok(page1.data.pageInfo.endCursor);
+
+  const page2 = await runMockModuleApi({
+    storeId: "store-101",
+    operation: "collections.list",
+    payload: {
+      limit: 1,
+      cursor: page1.data.pageInfo.endCursor,
+    },
+  });
+
+  assert.equal(page2.data.collections.length, 1);
+  assert.equal(page2.data.collections[0]?.title, "Best Sellers");
+  assert.equal(page2.data.pageInfo.hasNextPage, false);
+  assert.equal(page2.data.pageInfo.hasPreviousPage, true);
+});
+
+test("Module API mock runner variants.update preserves existing variant attributes and correct productId", async () => {
+  const response = await runMockModuleApi({
+    storeId: "store-101",
+    operation: "variants.update",
+    payload: {
+      id: "gid://shopify/ProductVariant/2003",
+      variant: { price: "18.50" },
+    },
+  });
+
+  assert.equal(response.success, true);
+  assert.equal(response.data.variant.id, "gid://shopify/ProductVariant/2003");
+  assert.equal(response.data.variant.productId, "gid://shopify/Product/1002");
+  assert.equal(response.data.variant.title, "Default Title");
+  assert.equal(response.data.variant.sku, "MUG-WHT-12OZ");
+  assert.equal(response.data.variant.barcode, "123456789014");
+  assert.equal(response.data.variant.inventoryQuantity, 100);
+  assert.equal(response.data.variant.price, "18.50");
+});
+
+test("Module API mock runner validates required input fields", async () => {
+  await assert.rejects(
+    async () => {
+      await runMockModuleApi({
+        storeId: "store-101",
+        operation: "products.get",
+        payload: { id: "   " },
+      });
+    },
+    (error: unknown) => {
+      assert.ok(error instanceof ShopifyApiError);
+      assert.equal(error.code, "SHOPIFY_USER_ERROR");
+      return true;
+    },
+  );
+
+  await assert.rejects(
+    async () => {
+      await runMockModuleApi({
+        storeId: "store-101",
+        operation: "products.create",
+        payload: { product: { title: "" } },
+      });
+    },
+    (error: unknown) => {
+      assert.ok(error instanceof ShopifyApiError);
+      assert.equal(error.code, "SHOPIFY_USER_ERROR");
+      return true;
+    },
+  );
+
+  await assert.rejects(
+    async () => {
+      await runMockModuleApi({
+        storeId: "store-101",
+        operation: "collections.updateMembership",
+        payload: { collectionId: "" },
+      });
+    },
+    (error: unknown) => {
+      assert.ok(error instanceof ShopifyApiError);
+      assert.equal(error.code, "SHOPIFY_USER_ERROR");
+      return true;
+    },
+  );
+
+  await assert.rejects(
+    async () => {
+      await runMockModuleApi({
+        storeId: "simulate-user-error",
+        operation: "connection.test",
+        payload: {},
+      });
+    },
+    (error: unknown) => {
+      assert.ok(error instanceof ShopifyApiError);
+      assert.equal(error.code, "SHOPIFY_USER_ERROR");
+      return true;
+    },
+  );
+});
+

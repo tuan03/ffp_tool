@@ -5,6 +5,7 @@ import type {
 } from "../types";
 
 export const shopifyMockConnection: ShopifyConnectionTestData = {
+  isConnected: true,
   connected: true,
   shopDomain: "quickstart-demo.myshopify.com",
   shopName: "Quickstart Demo Store",

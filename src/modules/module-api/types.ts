@@ -129,6 +129,7 @@ export interface ShopifyConnectionTestPayload {
 }
 
 export interface ShopifyConnectionTestData {
+  readonly isConnected: boolean;
   readonly connected: boolean;
   readonly shopDomain: string;
   readonly shopName: string;
