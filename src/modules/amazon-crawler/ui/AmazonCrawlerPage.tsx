@@ -56,6 +56,18 @@ function optionLabel(options: Record<string, string>): string {
   return entries.length === 0 ? "Default" : entries.map(([name, value]) => `${name}: ${value}`).join(" · ");
 }
 
+function progressPhaseLabel(phase: AmazonCrawlerProgress["phase"]): string {
+  const labels: Record<AmazonCrawlerProgress["phase"], string> = {
+    queued: "Đang chờ",
+    product: "Sản phẩm / variant",
+    variant_matrix: "Quét variant matrix",
+    customization: "Amazon Customize",
+    captcha: "Chờ CAPTCHA",
+    export: "Xuất JSON",
+  };
+  return labels[phase];
+}
+
 export function AmazonCrawlerPage({ clearAmazonCrawlerCache, runAmazonCrawler }: AmazonCrawlerPageProps): React.JSX.Element {
   const [urlText, setUrlText] = useState("");
   const [settings, setSettings] = useState<AmazonCrawlerSettings>(DEFAULT_AMAZON_CRAWLER_SETTINGS);
@@ -107,7 +119,22 @@ export function AmazonCrawlerPage({ clearAmazonCrawlerCache, runAmazonCrawler }:
     setIsRunning(true);
     setError(null);
     setOutput(null);
-    setProgress({ phase: "queued", completed: 0, total: urls.length, message: "Đang tạo job..." });
+    setProgress({
+      phase: "queued",
+      completed: 0,
+      total: urls.length,
+      message: "Đang tạo job...",
+      items: urls.map((source) => ({
+        source,
+        asin: source,
+        phase: "queued",
+        status: "queued",
+        message: "Đang chờ xử lý.",
+        variantCompleted: 0,
+        variantTotal: 0,
+        activeVariants: [],
+      })),
+    });
     try {
       const crawlerOutput = await runAmazonCrawler({
         input: { ...settings, urls },
@@ -201,7 +228,7 @@ export function AmazonCrawlerPage({ clearAmazonCrawlerCache, runAmazonCrawler }:
           <NumberSetting label="Product threads" min={1} max={16} value={settings.productThreads} onChange={(value) => updateSetting("productThreads", value)} />
           <NumberSetting label="Variant threads" min={1} max={32} value={settings.variantThreads} onChange={(value) => updateSetting("variantThreads", value)} />
           <NumberSetting label="HTTP threads" min={1} max={64} value={settings.urllibThreads} onChange={(value) => updateSetting("urllibThreads", value)} />
-          <NumberSetting label="Browser profiles" min={1} max={8} value={settings.browserProfiles} onChange={(value) => updateSetting("browserProfiles", value)} />
+          <NumberSetting label="Direct browser profiles" min={1} max={8} value={settings.browserProfiles} onChange={(value) => updateSetting("browserProfiles", value)} />
           <NumberSetting label="Tabs / profile" min={1} max={12} value={settings.browserTabs} onChange={(value) => updateSetting("browserTabs", value)} />
           <NumberSetting label="CAPTCHA timeout (s)" min={30} max={900} value={settings.captchaTimeoutSeconds} onChange={(value) => updateSetting("captchaTimeoutSeconds", value)} />
           <NumberSetting label="Matrix cap" min={1} max={5000} value={settings.maxMatrixVariants} onChange={(value) => updateSetting("maxMatrixVariants", value)} />
@@ -219,9 +246,76 @@ export function AmazonCrawlerPage({ clearAmazonCrawlerCache, runAmazonCrawler }:
       {cacheMessage === null ? null : <p className="text-sm text-amber-200">{cacheMessage}</p>}
 
       {progress === null ? null : (
-        <div className={`rounded-xl border p-4 ${progress.phase === "captcha" ? "border-amber-400 bg-amber-950/30" : "border-slate-700 bg-slate-950/50"}`}>
-          <div className="flex justify-between text-sm"><span>{progress.message}</span><span>{progress.completed}/{progress.total}</span></div>
-          <div className="mt-2 h-2 overflow-hidden rounded bg-slate-800"><div className="h-full bg-cyan-400" style={{ width: `${progress.total > 0 ? Math.min(100, (progress.completed / progress.total) * 100) : 0}%` }} /></div>
+        <div className={`space-y-4 rounded-xl border p-4 ${progress.phase === "captcha" ? "border-amber-400 bg-amber-950/30" : "border-slate-700 bg-slate-950/50"}`}>
+          <div>
+            <div className="flex flex-wrap justify-between gap-2 text-sm">
+              <span>{progress.message}</span>
+              <strong>{progress.completed}/{progress.total} products</strong>
+            </div>
+            <div className="mt-2 h-2 overflow-hidden rounded bg-slate-800">
+              <div className="h-full bg-cyan-400 transition-[width]" style={{ width: `${progress.total > 0 ? Math.min(100, (progress.completed / progress.total) * 100) : 0}%` }} />
+            </div>
+            {progress.browserPool ? (
+              <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-400">
+                <span>Direct: {progress.browserPool.directActive} active · {progress.browserPool.directQueued} queued / {progress.browserPool.directProfiles * progress.browserPool.tabsPerProfile} slots</span>
+                <span>Proxy: {progress.browserPool.proxyActive} active · {progress.browserPool.proxyQueued} queued / {progress.browserPool.proxyProfiles * progress.browserPool.tabsPerProfile} fallback slots</span>
+              </div>
+            ) : null}
+          </div>
+          {(progress.items ?? []).length === 0 ? null : (
+            <div className="grid gap-3 lg:grid-cols-2">
+              {(progress.items ?? []).map((progressItem) => {
+                const variantPercent = progressItem.variantTotal > 0
+                  ? Math.min(100, (progressItem.variantCompleted / progressItem.variantTotal) * 100)
+                  : 0;
+                const statusStyle = progressItem.status === "completed"
+                  ? "border-emerald-800 bg-emerald-950/20"
+                  : progressItem.status === "failed"
+                    ? "border-rose-800 bg-rose-950/20"
+                    : progressItem.phase === "captcha"
+                      ? "border-amber-600 bg-amber-950/30"
+                      : "border-slate-700 bg-slate-900/60";
+                return (
+                  <article className={`min-w-0 rounded-lg border p-3 ${statusStyle}`} key={progressItem.source}>
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="truncate font-mono text-xs text-cyan-200" title={progressItem.source}>{progressItem.asin}</p>
+                        <p className="mt-1 text-xs font-semibold uppercase tracking-wide text-slate-400">{progressPhaseLabel(progressItem.phase)}</p>
+                      </div>
+                      <strong className="shrink-0 text-sm">
+                        {progressItem.variantTotal > 0 ? `${progressItem.variantCompleted}/${progressItem.variantTotal}` : progressItem.status}
+                      </strong>
+                    </div>
+                    <p className="mt-2 text-sm text-slate-200">{progressItem.message}</p>
+                    {progressItem.currentOptions === undefined ? null : (
+                      <p className="mt-1 text-xs text-slate-400">
+                        {optionLabel(progressItem.currentOptions)}{progressItem.currentAsin ? ` · ${progressItem.currentAsin}` : ""}
+                      </p>
+                    )}
+                    {progressItem.networkRoute === undefined ? null : (
+                      <p className="mt-1 text-xs text-cyan-300">
+                        Browser: {progressItem.networkRoute}{progressItem.browserProfile ? ` · ${progressItem.browserProfile}` : ""}
+                      </p>
+                    )}
+                    {progressItem.variantTotal > 0 ? (
+                      <div className="mt-2 h-1.5 overflow-hidden rounded bg-slate-800">
+                        <div className="h-full bg-violet-400 transition-[width]" style={{ width: `${variantPercent}%` }} />
+                      </div>
+                    ) : null}
+                    {(progressItem.activeVariants ?? []).length === 0 ? null : (
+                      <div className="mt-2 flex flex-wrap gap-1">
+                        {(progressItem.activeVariants ?? []).map((variant) => (
+                          <span className="rounded bg-slate-800 px-2 py-1 text-[11px] text-slate-300" key={variant.asin}>
+                            {optionLabel(variant.options)} · {variant.asin}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </article>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
       {error === null ? null : <p className="rounded-xl border border-rose-600 bg-rose-950/30 p-4 text-rose-200">{error}</p>}
@@ -314,7 +408,7 @@ export function AmazonCrawlerPage({ clearAmazonCrawlerCache, runAmazonCrawler }:
                     </div>
                   ) : null}
                   {activeTab === "source" ? (
-                    <div className="space-y-2">{selectedProduct.sourceVariants.map((variant) => <div key={variant.asin} className="rounded-lg border border-slate-800 p-3 text-sm"><div className="flex flex-wrap justify-between gap-2"><strong>{variant.asin}</strong><span>{moneyLabel(variant.price?.raw, variant.price?.amount)}{variant.priceInference.isInferred ? " · inferred" : ""}</span></div><p className="mt-1 text-slate-300">{optionLabel(variant.options)}</p>{variant.warnings.map((warning) => <p key={warning} className="mt-1 text-xs text-amber-300">⚠ {warning}</p>)}</div>)}</div>
+                    <div className="space-y-2">{selectedProduct.sourceVariants.map((variant) => <div key={variant.asin} className="rounded-lg border border-slate-800 p-3 text-sm"><div className="flex flex-wrap justify-between gap-2"><strong>{variant.asin}</strong><span>{moneyLabel(variant.price?.raw, variant.price?.amount)}{variant.priceInference.isInferred ? " · inferred" : ""}</span></div><p className="mt-1 text-slate-300">{optionLabel(variant.options)}</p>{variant.diagnostics ? <p className="mt-1 text-xs text-slate-500">Fetch: {variant.diagnostics.fetchMode} · {variant.diagnostics.attempts} attempts{variant.diagnostics.captchaEncountered ? " · CAPTCHA" : ""}</p> : null}{variant.warnings.map((warning) => <p key={warning} className="mt-1 text-xs text-amber-300">⚠ {warning}</p>)}{variant.diagnostics?.fetchTrace ? <details className="mt-2"><summary className="cursor-pointer text-xs font-semibold text-cyan-300">Fetch debug</summary><pre className="mt-2 max-h-72 overflow-auto rounded bg-slate-950 p-3 text-[11px] text-slate-300">{JSON.stringify(variant.diagnostics.fetchTrace, null, 2)}</pre></details> : null}</div>)}</div>
                   ) : null}
                   {activeTab === "final" ? (
                     <div className="max-h-[42rem] space-y-2 overflow-auto pr-1">{selectedProduct.variants.map((variant) => <div key={variant.id} className="rounded-lg border border-slate-800 p-3 text-sm"><div className="flex flex-wrap justify-between gap-2"><strong className="break-all">{variant.sku}</strong><span>{moneyLabel(variant.price?.raw, variant.price?.amount)}</span></div><p className="mt-1 text-slate-300">{optionLabel(variant.options)}</p><p className="mt-1 text-xs text-slate-500">Source: {variant.sourceAsin ?? "preset"} · Base: {variant.price && variant.surcharge ? `$${(variant.price.amount - variant.surcharge.amount).toFixed(2)}` : moneyLabel(variant.price?.raw, variant.price?.amount)} · Surcharge: {moneyLabel(variant.surcharge?.raw, variant.surcharge?.amount)}</p></div>)}</div>

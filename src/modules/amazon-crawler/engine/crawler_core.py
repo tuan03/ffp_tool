@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import concurrent.futures
+import contextlib
 import hashlib
 import html as html_module
 import http.cookiejar
@@ -43,10 +44,10 @@ class CrawlSettings:
     profile_slug: str = "default"
     apply_jeminise_preset: bool = False
     product_threads: int = 3
-    variant_threads: int = 4
-    urllib_threads: int = 8
-    browser_profiles: int = 3
-    browser_tabs: int = 3
+    variant_threads: int = 8
+    urllib_threads: int = 12
+    browser_profiles: int = 4
+    browser_tabs: int = 2
     headless: bool = False
     amazon_zip: str = "10001"
     captcha_timeout_seconds: int = 180
@@ -73,10 +74,10 @@ class CrawlSettings:
             profile_slug=profile,
             apply_jeminise_preset=bool(payload.get("applyJeminisePreset", False)),
             product_threads=bounded("productThreads", 3, 1, 16),
-            variant_threads=bounded("variantThreads", 4, 1, 32),
-            urllib_threads=bounded("urllibThreads", 8, 1, 64),
-            browser_profiles=bounded("browserProfiles", 3, 1, 8),
-            browser_tabs=bounded("browserTabs", 3, 1, 12),
+            variant_threads=bounded("variantThreads", 8, 1, 32),
+            urllib_threads=bounded("urllibThreads", 12, 1, 64),
+            browser_profiles=bounded("browserProfiles", 4, 1, 8),
+            browser_tabs=bounded("browserTabs", 2, 1, 12),
             headless=bool(payload.get("headless", False)),
             amazon_zip=zip_code,
             captcha_timeout_seconds=bounded("captchaTimeoutSeconds", 180, 30, 900),
@@ -197,7 +198,18 @@ def _json_or_none(value: str) -> Any | None:
 
 
 def _extract_customization(html: str) -> tuple[Any | None, list[str], str | None]:
-    if not re.search(r"customi[sz]|OptionChooserComponent|gc-", html, re.I):
+    has_structured_signal = bool(re.search(
+        r"gc:productInfo|customizationFormLink|gc-widget|sellerConfigComponents|"
+        r"OptionChooserComponent|customizationConfig",
+        html,
+        re.I,
+    ))
+    has_customize_action = bool(re.search(
+        r'<(?:button|input|a)\b[^>]*(?:id|name)=["\'][^"\']*customi[sz][^"\']*["\']',
+        html,
+        re.I,
+    ))
+    if not has_structured_signal and not has_customize_action:
         return None, [], None
     soup = BeautifulSoup(html, "html.parser")
     customization_state: dict[str, Any] = {}
@@ -213,9 +225,25 @@ def _extract_customization(html: str) -> tuple[Any | None, list[str], str | None
             link = str(body.get("customizationFormLink") or "").strip()
             if link:
                 form_url = urllib.parse.urljoin("https://www.amazon.com", html_module.unescape(link))
+    if form_url is None:
+        # Some Amazon responses contain gc:productInfo in a script that is not
+        # emitted as a valid a-state node. Recover the link from the raw source
+        # before treating the customizable product as missing its widget.
+        link_match = re.search(
+            r'["\']customizationFormLink["\']\s*:\s*["\']([^"\']+)',
+            html,
+            re.I,
+        )
+        if link_match:
+            raw_link = html_module.unescape(link_match.group(1)).replace(r"\/", "/")
+            try:
+                raw_link = bytes(raw_link, "utf-8").decode("unicode_escape")
+            except UnicodeDecodeError:
+                pass
+            form_url = urllib.parse.urljoin("https://www.amazon.com", raw_link)
     for script in soup.find_all("script"):
         text = script.string or script.get_text() or ""
-        if "OptionChooserComponent" not in text and "customization" not in text.casefold():
+        if not re.search(r"OptionChooserComponent|sellerConfigComponents|customizationConfig|gc-widget", text, re.I):
             continue
         stripped = text.strip()
         if stripped.startswith(("{", "[")):
@@ -224,13 +252,15 @@ def _extract_customization(html: str) -> tuple[Any | None, list[str], str | None
                 return parsed, [], form_url
             except json.JSONDecodeError:
                 pass
-        for marker in ("customizationConfig", "customization", "OptionChooserComponent"):
+        for marker in ("customizationConfig", "sellerConfigComponents", "OptionChooserComponent"):
             parsed = _balanced_json(text, marker)
             if parsed is not None:
                 return parsed, [], form_url
     if customization_state:
         warning = [] if form_url else ["Amazon customization state does not include a form URL."]
         return {"state": customization_state}, warning, form_url
+    if form_url:
+        return None, [], form_url
     return None, ["Amazon indicates customization, but its widget payload could not be parsed."], form_url
 
 
@@ -392,17 +422,32 @@ class HttpFetcher:
         self.zip_code = zip_code
         self.retries = retries
         self.assignments = assignments or [ProxyAssignment(index=0, name="profile-1")]
-        self._counter = 0
         self._lock = threading.Lock()
         self._session_cookies: dict[int, str] = {}
         self._session_failures: dict[int, float] = {}
         self._us_profile_applied: dict[int, bool] = {}
+        self._blocked_until: dict[int, float] = {}
+        self._assignment_slots = {
+            assignment.index: threading.BoundedSemaphore(1)
+            for assignment in self.assignments
+        }
+        self._thread_diagnostics = threading.local()
 
-    def _next_assignment(self) -> ProxyAssignment:
+    def last_diagnostics(self) -> list[dict[str, Any]]:
+        return deepcopy(getattr(self._thread_diagnostics, "attempts", []))
+
+    def _available_assignments(self) -> list[ProxyAssignment]:
         with self._lock:
-            assignment = self.assignments[self._counter % len(self.assignments)]
-            self._counter += 1
-        return assignment
+            now = time.monotonic()
+            return [
+                assignment
+                for assignment in self.assignments
+                if self._blocked_until.get(assignment.index, 0) <= now
+            ]
+
+    def _block_assignment(self, assignment: ProxyAssignment, seconds: int = 300) -> None:
+        with self._lock:
+            self._blocked_until[assignment.index] = time.monotonic() + seconds
 
     @staticmethod
     def _opener(assignment: ProxyAssignment, cookie_jar: http.cookiejar.CookieJar | None = None) -> urllib.request.OpenerDirector:
@@ -410,6 +455,10 @@ class HttpFetcher:
         proxy_url = assignment.urllib_url()
         if proxy_url:
             handlers.append(urllib.request.ProxyHandler({"http": proxy_url, "https": proxy_url}))
+        else:
+            # An explicit empty handler prevents HTTP_PROXY/HTTPS_PROXY from
+            # silently turning the primary "direct" route into another proxy.
+            handlers.append(urllib.request.ProxyHandler({}))
         if cookie_jar is not None:
             handlers.append(urllib.request.HTTPCookieProcessor(cookie_jar))
         return urllib.request.build_opener(*handlers)
@@ -474,36 +523,92 @@ class HttpFetcher:
 
     def fetch(self, url: str) -> tuple[str, int]:
         error: Exception | None = None
-        assignment = self._next_assignment()
-        cookie_header = self._bootstrap_us_cookie(assignment)
-        if self._us_profile_applied.get(assignment.index) is not True:
-            raise RuntimeError(
-                f"HTTP could not confirm Amazon US delivery ZIP {self.zip_code}; Playwright fallback is required."
-            )
         candidates = self._candidate_urls(url)
-        for attempt in range(1, self.retries + 1):
+        diagnostics: list[dict[str, Any]] = []
+        available_assignments = self._available_assignments()
+        if not available_assignments:
+            error = RuntimeError("All HTTP network routes are temporarily cooling down.")
+            diagnostics.append({
+                "attempt": 1,
+                "outcome": "all_profiles_cooling_down",
+                "error": "All HTTP network routes are temporarily cooling down after CAPTCHA or location failures.",
+                "durationMs": 0,
+            })
+            self._thread_diagnostics.attempts = diagnostics
+            raise HttpFetchError(f"HTTP fetch failed after 1 network attempt: {error}", diagnostics)
+        route_assignments = (
+            available_assignments
+            if len(available_assignments) > 1
+            else available_assignments * self.retries
+        )
+        for attempt, assignment in enumerate(route_assignments, start=1):
             candidate = candidates[(attempt - 1) % len(candidates)]
-            request = urllib.request.Request(candidate, headers={**DEFAULT_HEADERS, "Cookie": cookie_header})
-            try:
-                with self._opener(assignment).open(request, timeout=90) as response:
-                    body = response.read().decode("utf-8", errors="replace")
-                if html_is_captcha(body):
-                    raise RuntimeError("Amazon CAPTCHA/bot-check page detected.")
-                if html_is_location_blocked(body):
-                    raise RuntimeError(f"Amazon offer is blocked outside US ZIP {self.zip_code}.")
-                has_product_document = bool(re.search(r'id=["\'](?:productTitle|ppd|dp-container)["\']', body, re.I))
-                has_customize_document = "gc-widget" in body or "sellerConfigComponents" in body
-                if len(body) < 5_000 or not (has_product_document or has_customize_document):
-                    raise RuntimeError("Amazon response does not contain a usable product document.")
-                return body, attempt
-            except (urllib.error.URLError, TimeoutError, RuntimeError) as caught:
-                error = caught
-                if attempt < self.retries:
-                    time.sleep(0.25 * attempt)
-        raise RuntimeError(f"HTTP fetch failed: {error}")
+            started = time.monotonic()
+            trace: dict[str, Any] = {
+                "attempt": attempt,
+                "profile": assignment.name,
+                "proxyEnabled": assignment.is_enabled,
+                "candidate": attempt - 1 if attempt <= len(candidates) else (attempt - 1) % len(candidates),
+            }
+            slot = self._assignment_slots[assignment.index] if assignment.is_enabled else contextlib.nullcontext()
+            with slot:
+                try:
+                    cookie_header = self._bootstrap_us_cookie(assignment)
+                    if self._us_profile_applied.get(assignment.index) is not True:
+                        raise RuntimeError(
+                            f"HTTP could not confirm Amazon US delivery ZIP {self.zip_code} for this profile."
+                        )
+                    request = urllib.request.Request(candidate, headers={**DEFAULT_HEADERS, "Cookie": cookie_header})
+                    with self._opener(assignment).open(request, timeout=90) as response:
+                        body = response.read().decode("utf-8", errors="replace")
+                        trace["httpStatus"] = getattr(response, "status", None)
+                    if html_is_captcha(body):
+                        raise RuntimeError("Amazon CAPTCHA/bot-check page detected.")
+                    if html_is_location_blocked(body):
+                        raise RuntimeError(f"Amazon offer is blocked outside US ZIP {self.zip_code}.")
+                    has_product_document = bool(re.search(r'id=["\'](?:productTitle|ppd|dp-container)["\']', body, re.I))
+                    has_customize_document = "gc-widget" in body or "sellerConfigComponents" in body
+                    if len(body) < 5_000 or not (has_product_document or has_customize_document):
+                        raise RuntimeError("Amazon response does not contain a usable product document.")
+                    trace.update({"outcome": "success", "htmlBytes": len(body)})
+                    diagnostics.append(trace)
+                    self._thread_diagnostics.attempts = diagnostics
+                    return body, attempt
+                except (urllib.error.URLError, TimeoutError, RuntimeError) as caught:
+                    error = caught
+                    message = _exception_message(caught)
+                    outcome = "captcha" if "captcha" in message.casefold() else (
+                        "location" if "zip" in message.casefold() or "location" in message.casefold() else "error"
+                    )
+                    if outcome in {"captcha", "location"}:
+                        self._block_assignment(assignment)
+                    trace.update({"outcome": outcome, "error": message})
+                finally:
+                    trace["durationMs"] = round((time.monotonic() - started) * 1000)
+            diagnostics.append(trace)
+            self._thread_diagnostics.attempts = diagnostics
+            if attempt < len(route_assignments):
+                time.sleep(0.25 * attempt)
+        raise HttpFetchError(f"HTTP fetch failed after {len(diagnostics)} network attempts: {error}", diagnostics)
 
 
 ProgressCallback = Callable[[dict[str, Any]], None]
+
+
+class HttpFetchError(RuntimeError):
+    def __init__(self, message: str, diagnostics: list[dict[str, Any]]) -> None:
+        super().__init__(message)
+        self.diagnostics = diagnostics
+
+
+class CrawlFetchError(RuntimeError):
+    def __init__(self, message: str, diagnostics: dict[str, Any]) -> None:
+        super().__init__(message)
+        self.diagnostics = diagnostics
+
+
+def effective_product_threads(input_count: int, settings: CrawlSettings) -> int:
+    return min(input_count or 1, max(settings.product_threads, settings.browser_profiles))
 
 
 class AmazonCrawler:
@@ -511,6 +616,21 @@ class AmazonCrawler:
         self.root = root
         self.settings = settings
         self.progress = progress or (lambda _: None)
+        self._progress_lock = threading.Lock()
+        self._progress_items: dict[str, dict[str, Any]] = {}
+        self._progress_completed = 0
+        self._progress_total = 0
+        self._progress_phase = "queued"
+        self._progress_message = "Đang chờ xử lý."
+        self._browser_pool_state: dict[str, Any] = {
+            "directProfiles": settings.browser_profiles,
+            "proxyProfiles": 0,
+            "tabsPerProfile": settings.browser_tabs,
+            "directActive": 0,
+            "proxyActive": 0,
+            "directQueued": 0,
+            "proxyQueued": 0,
+        }
         self.cancel_event = cancel_event or threading.Event()
         proxy_assignments, self.proxy_warnings = resolve_proxy_assignments(root, settings.browser_profiles)
         self.fetcher = fetcher or HttpFetcher(zip_code=settings.amazon_zip, assignments=proxy_assignments)
@@ -522,10 +642,125 @@ class AmazonCrawler:
             captcha_timeout=settings.captcha_timeout_seconds, zip_code=settings.amazon_zip,
             proxy_assignments=proxy_assignments,
             on_captcha=self._captcha_progress,
+            on_activity=self._browser_activity,
+        )
+        self._browser_pool_state["directProfiles"] = int(
+            getattr(self.browser_pool, "profiles", settings.browser_profiles)
+        )
+        self._browser_pool_state["proxyProfiles"] = len(
+            getattr(self.browser_pool, "proxy_profile_indices", [])
+        )
+
+    def _initialize_progress(self, normalized_inputs: list[NormalizedInput]) -> None:
+        with self._progress_lock:
+            self._progress_completed = 0
+            self._progress_total = len(normalized_inputs)
+            self._progress_items = {
+                normalized.source: {
+                    "source": normalized.source,
+                    "asin": normalized.asin,
+                    "phase": "queued",
+                    "status": "queued",
+                    "message": "Đang chờ xử lý.",
+                    "variantCompleted": 0,
+                    "variantTotal": 0,
+                    "activeVariants": [],
+                }
+                for normalized in normalized_inputs
+            }
+
+    def _report_progress(
+        self,
+        *,
+        phase: str,
+        message: str,
+        source: str | None = None,
+        item_updates: dict[str, Any] | None = None,
+        completed: int | None = None,
+        total: int | None = None,
+        job_status: str | None = None,
+    ) -> None:
+        with self._progress_lock:
+            self._progress_phase = phase
+            self._progress_message = message
+            if completed is not None:
+                self._progress_completed = completed
+            if total is not None:
+                self._progress_total = total
+            if source is not None:
+                item = self._progress_items.setdefault(source, {
+                    "source": source,
+                    "asin": "",
+                    "phase": phase,
+                    "status": "running",
+                    "message": message,
+                    "variantCompleted": 0,
+                    "variantTotal": 0,
+                    "activeVariants": [],
+                })
+                item.update({"phase": phase, "message": message})
+                if item_updates:
+                    item.update(deepcopy(item_updates))
+            payload = {
+                "phase": phase,
+                "completed": self._progress_completed,
+                "total": self._progress_total,
+                "message": message,
+                "items": deepcopy(list(self._progress_items.values())),
+                "browserPool": deepcopy(self._browser_pool_state),
+            }
+            if source is not None:
+                payload["source"] = source
+            if job_status is not None:
+                payload["status"] = job_status
+        self.progress(payload)
+
+    def _browser_activity(self, activity: dict[str, Any]) -> None:
+        url = str(activity.pop("url", ""))
+        match = ASIN_RE.search(url)
+        requested_asin = match.group(1).upper() if match else None
+        source: str | None = None
+        item_updates: dict[str, Any] | None = None
+        with self._progress_lock:
+            self._browser_pool_state.update(deepcopy(activity))
+            if requested_asin:
+                source = next((
+                    item_source
+                    for item_source, item in self._progress_items.items()
+                    if item.get("asin") == requested_asin or item.get("currentAsin") == requested_asin
+                ), None)
+            if source and activity.get("networkRoute"):
+                item_updates = {
+                    "networkRoute": activity.get("networkRoute"),
+                    "browserProfile": activity.get("browserProfile"),
+                }
+            phase = self._progress_phase
+            message = self._progress_message
+        self._report_progress(
+            phase=phase,
+            message=message,
+            source=source,
+            item_updates=item_updates,
         )
 
     def _captcha_progress(self, url: str) -> None:
-        self.progress({"phase": "captcha", "completed": 0, "total": 1, "message": "Hãy giải CAPTCHA trong cửa sổ trình duyệt; job sẽ tự tiếp tục.", "source": url, "status": "waiting_captcha"})
+        match = ASIN_RE.search(url)
+        requested_asin = match.group(1).upper() if match else None
+        source: str | None = None
+        if requested_asin:
+            with self._progress_lock:
+                source = next((
+                    item_source
+                    for item_source, item in self._progress_items.items()
+                    if item.get("asin") == requested_asin or item.get("currentAsin") == requested_asin
+                ), None)
+        self._report_progress(
+            phase="captcha",
+            message="Hãy giải CAPTCHA trong cửa sổ trình duyệt; job sẽ tự tiếp tục.",
+            source=source,
+            item_updates={"status": "running"} if source else None,
+            job_status="waiting_captcha",
+        )
 
     def _check_cancelled(self) -> None:
         if self.cancel_event.is_set():
@@ -535,36 +770,137 @@ class AmazonCrawler:
         attempts = 0
         captcha = False
         location_fallback = False
+        http_trace: list[dict[str, Any]] = []
+        playwright_trace: list[dict[str, Any]] = []
         try:
             with self._http_slots:
                 html, attempts = self.fetcher.fetch(normalized.canonical_url)
+            read_http_trace = getattr(self.fetcher, "last_diagnostics", None)
+            if callable(read_http_trace):
+                http_trace = read_http_trace()
             parsed = parse_product_html(html, normalized.asin, normalized.canonical_url)
             return parsed, {
                 "fetchMode": "http", "attempts": attempts, "captchaEncountered": False,
                 "locationFallbackUsed": False, "amazonZip": self.settings.amazon_zip,
                 "usProfileApplied": True, "matrixSwept": False, "cacheHit": False,
+                "fetchTrace": {"http": http_trace, "playwright": []},
             }
         except Exception as http_error:
+            if not http_trace:
+                http_trace = deepcopy(getattr(http_error, "diagnostics", []))
             text = str(http_error).casefold()
             captcha = "captcha" in text
             location_fallback = "location" in text or "delivery zip" in text or "us zip" in text
             self._check_cancelled()
-            try:
-                html = self.browser_pool.fetch(normalized.canonical_url, cancel_event=self.cancel_event)
-                parsed = parse_product_html(html, normalized.asin, normalized.canonical_url)
-                return parsed, {
-                    "fetchMode": "playwright", "attempts": attempts + 1,
-                    "captchaEncountered": captcha, "locationFallbackUsed": location_fallback,
-                    "amazonZip": self.settings.amazon_zip, "usProfileApplied": True,
-                    "matrixSwept": False, "cacheHit": False,
-                }
-            except CaptchaTimeout:
-                raise
-            except Exception as browser_error:
-                raise RuntimeError(
-                    f"HTTP and Playwright fallback failed: {_exception_message(http_error)}; "
-                    f"Playwright {_exception_message(browser_error)}"
-                ) from browser_error
+            browser_error: Exception | None = None
+            proxy_fallback = getattr(self.browser_pool, "fetch_proxy_fallback", None)
+            has_proxy_fallback = bool(getattr(self.browser_pool, "proxy_profile_indices", [])) and callable(proxy_fallback)
+            parse_attempts = 2 if has_proxy_fallback else min(
+                2,
+                int(getattr(self.browser_pool, "profiles", self.settings.browser_profiles)),
+            )
+            for browser_attempt in range(1, parse_attempts + 1):
+                trace: dict[str, Any] = {"attempt": browser_attempt}
+                try:
+                    if browser_attempt > 1 and has_proxy_fallback:
+                        html = proxy_fallback(normalized.canonical_url, cancel_event=self.cancel_event)
+                    else:
+                        html = self.browser_pool.fetch(normalized.canonical_url, cancel_event=self.cancel_event)
+                    read_browser_trace = getattr(self.browser_pool, "last_diagnostics", None)
+                    if callable(read_browser_trace):
+                        trace["profiles"] = read_browser_trace()
+                    parsed = parse_product_html(html, normalized.asin, normalized.canonical_url)
+                    trace.update({"outcome": "success", "returnedAsin": parsed.get("asin"), "htmlBytes": len(html)})
+                    playwright_trace.append(trace)
+                    return parsed, {
+                        "fetchMode": "playwright", "attempts": len(http_trace) + browser_attempt,
+                        "captchaEncountered": captcha, "locationFallbackUsed": location_fallback,
+                        "amazonZip": self.settings.amazon_zip, "usProfileApplied": True,
+                        "matrixSwept": False, "cacheHit": False,
+                        "fetchTrace": {"http": http_trace, "playwright": playwright_trace},
+                    }
+                except CaptchaTimeout as caught:
+                    browser_error = caught
+                    read_browser_trace = getattr(self.browser_pool, "last_diagnostics", None)
+                    if callable(read_browser_trace):
+                        trace["profiles"] = read_browser_trace()
+                    trace.update({"outcome": "captcha", "error": _exception_message(caught)})
+                    playwright_trace.append(trace)
+                    break
+                except Exception as caught:
+                    browser_error = caught
+                    read_browser_trace = getattr(self.browser_pool, "last_diagnostics", None)
+                    if callable(read_browser_trace):
+                        trace["profiles"] = read_browser_trace()
+                    trace.update({"outcome": "error", "error": _exception_message(caught)})
+                    playwright_trace.append(trace)
+            diagnostics = {
+                "fetchMode": "failed",
+                "attempts": len(http_trace) + len(playwright_trace),
+                "captchaEncountered": captcha,
+                "locationFallbackUsed": location_fallback,
+                "amazonZip": self.settings.amazon_zip,
+                "usProfileApplied": False,
+                "matrixSwept": False,
+                "cacheHit": False,
+                "fetchTrace": {"http": http_trace, "playwright": playwright_trace},
+            }
+            raise CrawlFetchError(
+                f"HTTP and Playwright fallback failed: {_exception_message(http_error)}; "
+                f"Playwright {_exception_message(browser_error)}",
+                diagnostics,
+            ) from browser_error
+
+    @staticmethod
+    def _has_customization_entry(child: dict[str, Any]) -> bool:
+        return bool(child.get("customizationFormUrl"))
+
+    def _recover_customization_entry(
+        self,
+        *,
+        asin: str,
+        source: str,
+        options: dict[str, str],
+    ) -> tuple[dict[str, Any] | None, list[str]]:
+        url = f"https://www.amazon.com/dp/{asin}"
+        errors: list[str] = []
+        self._report_progress(
+            phase="customization",
+            message=f"Customize của {asin} bị thiếu payload; đang thử lại bằng proxy khác...",
+            source=source,
+            item_updates={"status": "running", "currentAsin": asin, "currentOptions": options},
+        )
+        try:
+            with self._http_slots:
+                html, _ = self.fetcher.fetch(url)
+            refreshed = parse_product_html(html, asin, url)
+            if refreshed.get("asin") != asin:
+                raise ValueError(f"Amazon returned {refreshed.get('asin') or 'an unknown ASIN'}.")
+            if self._has_customization_entry(refreshed):
+                return refreshed, []
+            errors.append("HTTP retry still omitted gc:productInfo or customizationFormLink")
+        except Exception as error:
+            errors.append(f"HTTP retry: {_exception_message(error)}")
+
+        self._report_progress(
+            phase="customization",
+            message=f"Proxy retry chưa có Customize cho {asin}; đang render bằng Playwright...",
+            source=source,
+            item_updates={"status": "running", "currentAsin": asin, "currentOptions": options},
+        )
+        try:
+            html = self.browser_pool.fetch(url, cancel_event=self.cancel_event)
+            refreshed = parse_product_html(html, asin, url)
+            if refreshed.get("asin") != asin:
+                raise ValueError(f"Amazon returned {refreshed.get('asin') or 'an unknown ASIN'}.")
+            if self._has_customization_entry(refreshed):
+                return refreshed, []
+            errors.append("Playwright response still omitted gc:productInfo or customizationFormLink")
+        except (InterruptedError, CaptchaTimeout):
+            raise
+        except Exception as error:
+            errors.append(f"Playwright retry: {_exception_message(error)}")
+        return None, errors
 
     def _crawl_family(self, normalized: NormalizedInput) -> dict[str, Any]:
         cache_key = f"{normalized.asin}:{self.settings.amazon_zip}:us-v1"
@@ -573,7 +909,24 @@ class AmazonCrawler:
             family = deepcopy(cached)
             family["diagnostics"]["cacheHit"] = True
             family["diagnostics"]["fetchMode"] = "cache"
+            cached_variants = len(family.get("sourceVariants", []))
+            self._report_progress(
+                phase="product",
+                message=f"Đã tải family {normalized.asin} từ cache ({cached_variants} variants).",
+                source=normalized.source,
+                item_updates={
+                    "status": "running",
+                    "variantCompleted": cached_variants,
+                    "variantTotal": cached_variants,
+                },
+            )
             return family
+        self._report_progress(
+            phase="product",
+            message=f"Đang tải trang Amazon {normalized.asin}...",
+            source=normalized.source,
+            item_updates={"status": "running", "currentAsin": normalized.asin},
+        )
         parent, diagnostics = self._fetch_parsed(normalized)
         parent_asin = parent["parentAsin"]
         asin_options: dict[str, dict[str, str]] = dict(parent["asinOptions"])
@@ -589,7 +942,17 @@ class AmazonCrawler:
         expected_count = max(expected_count, len(asin_options))
         sweep = getattr(self.browser_pool, "sweep_variant_matrix", None)
         if len(asin_options) < expected_count and callable(sweep):
-            self.progress({"phase": "variant_matrix", "completed": len(asin_options), "total": expected_count, "message": f"Đang quét variant matrix cho {parent_asin}...", "source": normalized.source})
+            self._report_progress(
+                phase="variant_matrix",
+                message=f"Đang quét variant matrix {len(asin_options)}/{expected_count} cho {parent_asin}...",
+                source=normalized.source,
+                item_updates={
+                    "status": "running",
+                    "variantCompleted": len(asin_options),
+                    "variantTotal": expected_count,
+                    "currentAsin": parent_asin,
+                },
+            )
             diagnostics["matrixSwept"] = True
             try:
                 for swept_html in sweep(normalized.canonical_url, cap=self.settings.max_matrix_variants, cancel_event=self.cancel_event):
@@ -615,21 +978,74 @@ class AmazonCrawler:
         is_capped = len(discovered_asins) > self.settings.max_matrix_variants
         discovered_asins = discovered_asins[:self.settings.max_matrix_variants]
         variants: list[dict[str, Any]] = []
+        variant_total = len(discovered_asins)
+        active_variants: dict[str, dict[str, str]] = {}
+        active_variants_lock = threading.Lock()
+
+        def active_variant_snapshot() -> list[dict[str, Any]]:
+            return [
+                {"asin": active_asin, "options": deepcopy(active_options)}
+                for active_asin, active_options in active_variants.items()
+            ]
 
         def crawl_child(asin: str) -> dict[str, Any]:
             self._check_cancelled()
             options = deepcopy(asin_options.get(asin, {}))
+            with active_variants_lock:
+                active_variants[asin] = options
+                active_snapshot = active_variant_snapshot()
+            option_text = " · ".join(f"{name}: {value}" for name, value in options.items()) or "Default"
+            self._report_progress(
+                phase="product",
+                message=f"Đang cào variant {asin} — {option_text}",
+                source=normalized.source,
+                item_updates={
+                    "status": "running",
+                    "variantTotal": variant_total,
+                    "currentAsin": asin,
+                    "currentOptions": options,
+                    "activeVariants": active_snapshot,
+                },
+            )
             if asin == parent["asin"]:
                 child = deepcopy(parent)
                 child_diagnostics = diagnostics
             else:
                 child, child_diagnostics = self._fetch_parsed(normalize_amazon_input(asin))
             warnings = list(child.get("customizationWarnings", []))
-            customization_complete = not warnings
             customization_raw = child.get("customizationRaw")
             form_url = child.get("customizationFormUrl")
+            if warnings and not self._has_customization_entry(child):
+                recovered_child, recovery_errors = self._recover_customization_entry(
+                    asin=asin,
+                    source=normalized.source,
+                    options=options,
+                )
+                if recovered_child is not None:
+                    customization_raw = recovered_child.get("customizationRaw")
+                    form_url = recovered_child.get("customizationFormUrl")
+                    warnings = list(recovered_child.get("customizationWarnings", []))
+                else:
+                    warnings = [
+                        "Amazon indicated customization but omitted its form payload after HTTP and Playwright retries: "
+                        + "; ".join(recovery_errors)
+                    ]
+            customization_complete = not warnings
             if form_url:
-                self.progress({"phase": "customization", "completed": 0, "total": 1, "message": f"Đang tải Amazon Customize cho {asin}...", "source": child["url"]})
+                with active_variants_lock:
+                    current_active_snapshot = active_variant_snapshot()
+                self._report_progress(
+                    phase="customization",
+                    message=f"Đang tải Amazon Customize cho {asin} — {option_text}",
+                    source=normalized.source,
+                    item_updates={
+                        "status": "running",
+                        "variantTotal": variant_total,
+                        "currentAsin": asin,
+                        "currentOptions": options,
+                        "activeVariants": current_active_snapshot,
+                    },
+                )
                 try:
                     with self._http_slots:
                         form_html, _ = self.fetcher.fetch(str(form_url))
@@ -669,21 +1085,53 @@ class AmazonCrawler:
                 "diagnostics": child_diagnostics,
             }
 
+        self._report_progress(
+            phase="product",
+            message=f"Đã tìm thấy {variant_total} variants; bắt đầu cào chi tiết.",
+            source=normalized.source,
+            item_updates={"status": "running", "variantCompleted": 0, "variantTotal": variant_total},
+        )
+        variant_completed = 0
         with concurrent.futures.ThreadPoolExecutor(max_workers=self.settings.variant_threads) as executor:
             futures = {executor.submit(crawl_child, asin): asin for asin in discovered_asins}
             for future in concurrent.futures.as_completed(futures):
                 asin = futures[future]
+                options = deepcopy(asin_options.get(asin, {}))
                 try:
                     variants.append(future.result())
                 except Exception as error:
+                    failed_diagnostics = deepcopy(getattr(error, "diagnostics", {
+                        "fetchMode": "failed", "attempts": 0, "captchaEncountered": False,
+                        "locationFallbackUsed": False, "amazonZip": self.settings.amazon_zip,
+                        "usProfileApplied": False, "matrixSwept": False, "cacheHit": False,
+                        "fetchTrace": {"http": [], "playwright": []},
+                    }))
                     variants.append({
                         "asin": asin, "url": f"https://www.amazon.com/dp/{asin}", "options": deepcopy(asin_options.get(asin, {})),
                         "price": None, "media": [],
                         "description": None, "bulletPoints": [], "categories": [], "productDetails": {},
                         "customizationRaw": None, "customization": None, "customizationFingerprint": None,
                         "priceInference": {"isInferred": False, "sourceAsins": []}, "warnings": [str(error)],
-                        "diagnostics": {"fetchMode": "mixed", "attempts": 0, "captchaEncountered": False, "locationFallbackUsed": False, "matrixSwept": False, "cacheHit": False},
+                        "diagnostics": failed_diagnostics,
                     })
+                variant_completed += 1
+                with active_variants_lock:
+                    active_variants.pop(asin, None)
+                    active_snapshot = active_variant_snapshot()
+                option_text = " · ".join(f"{name}: {value}" for name, value in options.items()) or "Default"
+                self._report_progress(
+                    phase="product",
+                    message=f"Đã cào variant {variant_completed}/{variant_total}: {option_text} ({asin})",
+                    source=normalized.source,
+                    item_updates={
+                        "status": "running",
+                        "variantCompleted": variant_completed,
+                        "variantTotal": variant_total,
+                        "currentAsin": asin,
+                        "currentOptions": options,
+                        "activeVariants": active_snapshot,
+                    },
+                )
         order = {asin: index for index, asin in enumerate(discovered_asins)}
         variants.sort(key=lambda item: order.get(item["asin"], len(order)))
         self._infer_consensus_prices(variants)
@@ -699,6 +1147,17 @@ class AmazonCrawler:
             family["variantMatrix"]["complete"] = False
         if family["variantMatrix"]["complete"] and family["customizationChecked"]:
             self.cache.save(cache_key, family)
+        self._report_progress(
+            phase="product",
+            message=f"Đã lấy đủ dữ liệu {variant_completed}/{variant_total} variants; đang tách sản phẩm.",
+            source=normalized.source,
+            item_updates={
+                "status": "running",
+                "variantCompleted": variant_completed,
+                "variantTotal": variant_total,
+                "activeVariants": [],
+            },
+        )
         return family
 
     @staticmethod
@@ -722,8 +1181,20 @@ class AmazonCrawler:
                     return name
         return candidates[0][0] if candidates else None
 
+    @staticmethod
+    def _source_variant_dimensions(source_variants: list[dict[str, Any]]) -> dict[str, list[str]]:
+        dimensions: dict[str, list[str]] = {}
+        for variant in source_variants:
+            for name, value in variant.get("options", {}).items():
+                clean_value = _clean_text(str(value))
+                if not clean_value:
+                    continue
+                values = dimensions.setdefault(name, [])
+                if clean_value.casefold() not in {existing.casefold() for existing in values}:
+                    values.append(clean_value)
+        return dimensions
+
     def _products_from_family(self, family: dict[str, Any]) -> list[dict[str, Any]]:
-        split_attribute = self._choose_split_attribute(family["variantMatrix"]["dimensions"])
         rebuilt_source_variants = deepcopy(family["sourceVariants"])
         for variant in rebuilt_source_variants:
             customization_raw = variant.get("customizationRaw")
@@ -733,6 +1204,8 @@ class AmazonCrawler:
             variant["customization"] = customization
             variant["customizationFingerprint"] = customization.get("fingerprint") if customization else None
             variant["warnings"] = sorted(set(variant.get("warnings", []) + customization_warnings))
+        actual_dimensions = self._source_variant_dimensions(rebuilt_source_variants)
+        split_attribute = self._choose_split_attribute(actual_dimensions)
         grouped: dict[str | None, list[dict[str, Any]]] = {}
         if split_attribute is None:
             grouped[None] = rebuilt_source_variants
@@ -788,15 +1261,21 @@ class AmazonCrawler:
             if not media_by_url:
                 for media in family.get("media", []):
                     media_by_url.setdefault(media["url"], media)
-            matrix = deepcopy(family["variantMatrix"])
+            remaining_dimensions = self._source_variant_dimensions(source_variants)
             if split_attribute:
-                matrix["dimensions"].pop(split_attribute, None)
+                remaining_dimensions.pop(split_attribute, None)
+            matrix = deepcopy(family["variantMatrix"])
+            matrix["dimensions"] = remaining_dimensions
             remaining_expected = 1
             for values in matrix["dimensions"].values():
                 remaining_expected *= max(1, len(values))
             matrix["expectedCount"] = remaining_expected
             matrix["discoveredCount"] = len(source_variants)
-            matrix["complete"] = bool(matrix["complete"] and len(source_variants) >= remaining_expected)
+            was_capped = (
+                family["variantMatrix"].get("complete") is False
+                and family["variantMatrix"].get("discoveredCount", 0) >= family["variantMatrix"].get("safetyCap", 500)
+            )
+            matrix["complete"] = bool(not was_capped and len(source_variants) >= remaining_expected)
             if not matrix["complete"]:
                 warnings.append(f"Variant matrix is incomplete (discovered {matrix['discoveredCount']} of {matrix['expectedCount']}, cap {matrix['safetyCap']}).")
             products.append({
@@ -808,8 +1287,9 @@ class AmazonCrawler:
                     key: deepcopy(variant.get(key))
                     for key in (
                         "asin", "url", "options", "price",
-                        "media", "customizationFingerprint", "priceInference", "warnings",
+                        "media", "customizationFingerprint", "priceInference", "warnings", "diagnostics",
                     )
+                    if key != "diagnostics" or variant.get("diagnostics") is not None
                 } for variant in source_variants],
                 "variants": final_variants, "variantMatrix": matrix, "customization": customization,
                 "splitContext": {"attribute": split_attribute, "value": split_value, "groupKey": group_key, "sourceAsins": source_asins},
@@ -836,26 +1316,49 @@ class AmazonCrawler:
         rejected_inputs = len(errors)
         products: list[dict[str, Any]] = []
         completed = 0
+        self._initialize_progress(normalized_inputs)
 
         def crawl_one(normalized: NormalizedInput) -> tuple[NormalizedInput, list[dict[str, Any]]]:
             self._check_cancelled()
             family = self._crawl_family(normalized)
             return normalized, self._products_from_family(family)
 
-        self.progress({"phase": "product", "completed": 0, "total": len(normalized_inputs), "message": "Đang cào Amazon products..."})
-        with concurrent.futures.ThreadPoolExecutor(max_workers=self.settings.product_threads) as executor:
+        product_worker_count = effective_product_threads(len(normalized_inputs), self.settings)
+        self._report_progress(
+            phase="product",
+            completed=0,
+            total=len(normalized_inputs),
+            message=(
+                f"Đang cào 0/{len(normalized_inputs)} Amazon products với "
+                f"{product_worker_count} product workers..."
+            ),
+        )
+        with concurrent.futures.ThreadPoolExecutor(max_workers=product_worker_count) as executor:
             futures = {executor.submit(crawl_one, normalized): normalized for normalized in normalized_inputs}
             for future in concurrent.futures.as_completed(futures):
                 normalized = futures[future]
+                item_status = "completed"
+                item_message = "Đã hoàn tất sản phẩm."
                 try:
                     _, family_products = future.result()
                     products.extend(family_products)
                 except InterruptedError:
                     self.cancel_event.set()
+                    item_status = "cancelled"
+                    item_message = "Đã dừng xử lý sản phẩm."
                 except Exception as error:
                     errors.append({"source": normalized.source, "code": "CRAWL_FAILED", "message": str(error), "retryable": True})
+                    item_status = "failed"
+                    item_message = f"Cào thất bại: {error}"
                 completed += 1
-                self.progress({"phase": "product", "completed": completed, "total": len(normalized_inputs), "message": f"Đã xử lý {completed}/{len(normalized_inputs)} products.", "source": normalized.source})
+                self._report_progress(
+                    phase="product",
+                    completed=completed,
+                    total=len(normalized_inputs),
+                    message=f"Đã xử lý {completed}/{len(normalized_inputs)} products.",
+                    source=normalized.source,
+                    item_updates={"status": item_status, "message": item_message, "activeVariants": []},
+                )
         products_by_id = {product["id"]: product for product in products}
         products = list(products_by_id.values())
         status = "cancelled" if self.cancel_event.is_set() else ("partial" if errors else "completed")
@@ -879,7 +1382,7 @@ class AmazonCrawler:
         return output
 
     def _write_export(self, output: dict[str, Any]) -> str:
-        self.progress({"phase": "export", "completed": 0, "total": 1, "message": "Đang ghi JSON export..."})
+        self._report_progress(phase="export", message="Đang ghi JSON export...")
         export_directory = self.root / "exports"
         export_directory.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")

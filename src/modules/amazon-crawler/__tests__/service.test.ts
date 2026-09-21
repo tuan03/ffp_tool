@@ -17,6 +17,25 @@ function jsonResponse(body: unknown, status = 200): Response {
 
 const input = { ...DEFAULT_AMAZON_CRAWLER_SETTINGS, urls: ["B0MOCK0001"] };
 
+test("default settings match the four-proxy concurrency profile", () => {
+  assert.deepEqual(
+    {
+      productThreads: DEFAULT_AMAZON_CRAWLER_SETTINGS.productThreads,
+      variantThreads: DEFAULT_AMAZON_CRAWLER_SETTINGS.variantThreads,
+      urllibThreads: DEFAULT_AMAZON_CRAWLER_SETTINGS.urllibThreads,
+      browserProfiles: DEFAULT_AMAZON_CRAWLER_SETTINGS.browserProfiles,
+      browserTabs: DEFAULT_AMAZON_CRAWLER_SETTINGS.browserTabs,
+    },
+    {
+      productThreads: 3,
+      variantThreads: 8,
+      urllibThreads: 12,
+      browserProfiles: 4,
+      browserTabs: 2,
+    },
+  );
+});
+
 test("real runner serializes input, polls progress, and returns partial output", async () => {
   const requests: Array<{ url: string; method: string }> = [];
   const progressMessages: string[] = [];

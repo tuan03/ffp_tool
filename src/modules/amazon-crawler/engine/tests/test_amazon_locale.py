@@ -44,9 +44,10 @@ class AmazonLocaleTests(unittest.TestCase):
             with patch.dict(os.environ, {"AMAZON_CRAWLER_PROXIES": ""}, clear=False):
                 assignments, warnings = resolve_proxy_assignments(root, 2)
         self.assertEqual(warnings, [])
-        self.assertEqual([assignment.name for assignment in assignments], ["us-one", "us-one"])
-        self.assertEqual(assignments[0].playwright_proxy(), {"server": "http://proxy.test:8080", "username": "user", "password": "secret"})
-        self.assertIn("user:secret@proxy.test:8080", assignments[0].urllib_url())
+        self.assertEqual([assignment.name for assignment in assignments], ["direct", "us-one", "us-one"])
+        self.assertFalse(assignments[0].is_enabled)
+        self.assertEqual(assignments[1].playwright_proxy(), {"server": "http://proxy.test:8080", "username": "user", "password": "secret"})
+        self.assertIn("user:secret@proxy.test:8080", assignments[1].urllib_url())
 
     def test_http_fetch_refuses_unconfirmed_us_session(self) -> None:
         fetcher = HttpFetcher(zip_code="10001", assignments=[ProxyAssignment(index=0, name="direct")])

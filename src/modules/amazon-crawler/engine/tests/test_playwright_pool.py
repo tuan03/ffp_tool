@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import tempfile
+import asyncio
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
 from engine.playwright_pool import CaptchaTimeout, PlaywrightPool, html_is_captcha, start_with_playwright_event_loop
+from engine.proxy_profiles import ProxyAssignment
 
 
 class FakeCaptchaPage:
@@ -14,56 +16,73 @@ class FakeCaptchaPage:
         self.index = 0
         self.was_brought_forward = False
 
-    def content(self) -> str:
+    async def content(self) -> str:
         return self.contents[min(self.index, len(self.contents) - 1)]
 
-    def bring_to_front(self) -> None:
+    async def bring_to_front(self) -> None:
         self.was_brought_forward = True
 
-    def wait_for_timeout(self, milliseconds: int) -> None:
+    async def wait_for_timeout(self, milliseconds: int) -> None:
         self.index += 1
+
+
+class FakeZipCaptchaPage(FakeCaptchaPage):
+    def __init__(self, contents: list[str]) -> None:
+        super().__init__(contents)
+        self.was_closed = False
+
+    async def goto(self, *args, **kwargs) -> None:
+        pass
+
+    async def wait_for_selector(self, *args, **kwargs) -> None:
+        pass
+
+    async def evaluate(self, *args, **kwargs):
+        return {"ok": True, "payload": {"isAddressUpdated": True}}
+
+    async def close(self) -> None:
+        self.was_closed = True
 
 
 class FakeContext:
     def __init__(self, page) -> None:
         self.page = page
         self.pages: list = []
+        self.was_closed = False
 
-    def new_page(self):
+    async def new_page(self):
         return self.page
 
-    def close(self) -> None:
-        pass
+    async def close(self) -> None:
+        self.was_closed = True
 
 
 class ClosedPage:
-    def goto(self, *args, **kwargs) -> None:
+    async def goto(self, *args, **kwargs) -> None:
         raise RuntimeError("Target page, context or browser has been closed")
 
-    def close(self) -> None:
+    async def close(self) -> None:
         pass
 
 
 class ReadyPage:
-    def goto(self, *args, **kwargs) -> None:
+    async def goto(self, *args, **kwargs) -> None:
         pass
 
-    def content(self) -> str:
+    async def content(self) -> str:
         return "<h1 id='productTitle'>Recovered</h1>"
 
-    def wait_for_timeout(self, milliseconds: int) -> None:
+    async def wait_for_selector(self, *args, **kwargs) -> None:
         pass
 
-    def close(self) -> None:
+    async def wait_for_timeout(self, milliseconds: int) -> None:
+        pass
+
+    async def close(self) -> None:
         pass
 
 
-class FakeRuntime:
-    def stop(self) -> None:
-        pass
-
-
-class PlaywrightPoolTests(unittest.TestCase):
+class PlaywrightPoolTests(unittest.IsolatedAsyncioTestCase):
     def make_pool(self, *, headless: bool, on_captcha=None) -> PlaywrightPool:
         return PlaywrightPool(
             profile_root=Path(tempfile.gettempdir()) / "ffp-playwright-test",
@@ -75,38 +94,188 @@ class PlaywrightPoolTests(unittest.TestCase):
             on_captcha=on_captcha,
         )
 
-    def test_detects_captcha_and_headless_fails_fast(self) -> None:
+    async def test_detects_captcha_and_headless_fails_fast(self) -> None:
         self.assertTrue(html_is_captcha('<form action="/errors/validateCaptcha">'))
         pool = self.make_pool(headless=True)
-        try:
-            with self.assertRaises(CaptchaTimeout):
-                pool._wait_for_captcha(FakeCaptchaPage(["Enter the characters you see below"]), "https://amazon.com", None)
-        finally:
-            pool.close()
+        with self.assertRaises(CaptchaTimeout):
+            await pool._wait_for_captcha(
+                FakeCaptchaPage(["Enter the characters you see below"]),
+                "https://amazon.com",
+                None,
+            )
 
-    def test_headed_mode_waits_for_manual_captcha_then_continues(self) -> None:
+    async def test_headed_mode_waits_for_manual_captcha_then_continues(self) -> None:
         notifications: list[str] = []
         page = FakeCaptchaPage(["Enter the characters you see below", "<h1 id='productTitle'>Ready</h1>"])
         pool = self.make_pool(headless=False, on_captcha=notifications.append)
-        try:
-            html = pool._wait_for_captcha(page, "https://amazon.com/dp/B012345678", None)
-        finally:
-            pool.close()
+        html = await pool._wait_for_captcha(page, "https://amazon.com/dp/B012345678", None)
         self.assertIn("productTitle", html)
         self.assertTrue(page.was_brought_forward)
         self.assertEqual(notifications, ["https://amazon.com/dp/B012345678"])
 
-    def test_closed_context_is_rebuilt_and_request_retried(self) -> None:
+    async def test_zip_setup_handles_homepage_captcha_before_location_request(self) -> None:
+        notifications: list[str] = []
+        page = FakeZipCaptchaPage([
+            "Enter the characters you see below",
+            "<html><body>Amazon home</body></html>",
+        ])
+        pool = self.make_pool(headless=False, on_captcha=notifications.append)
+
+        was_applied = await pool._set_amazon_zip(FakeContext(page))
+
+        self.assertTrue(was_applied)
+        self.assertTrue(page.was_brought_forward)
+        self.assertTrue(page.was_closed)
+        self.assertEqual(notifications, ["https://www.amazon.com/?language=en_US&currency=USD"])
+
+    async def test_profile_tab_capacity_runs_browser_work_in_parallel(self) -> None:
+        activity: list[dict] = []
+        pool = PlaywrightPool(
+            profile_root=Path(tempfile.gettempdir()) / "ffp-playwright-test",
+            profiles=4,
+            tabs_per_profile=2,
+            headless=True,
+            captcha_timeout=30,
+            zip_code="10001",
+            on_activity=lambda state: activity.append(dict(state)),
+        )
+        active = 0
+        maximum_active = 0
+
+        async def operation(_index, _context) -> str:
+            nonlocal active, maximum_active
+            active += 1
+            maximum_active = max(maximum_active, active)
+            await asyncio.sleep(0.02)
+            active -= 1
+            return "ok"
+
+        async def fake_context(index: int, *_args):
+            return object()
+
+        pool._ensure_context = fake_context
+        outputs = await asyncio.gather(*(pool._run_with_profile_slot(operation) for _ in range(9)))
+
+        self.assertEqual(outputs, ["ok"] * 9)
+        self.assertEqual(maximum_active, 8)
+        self.assertEqual(max(state["directActive"] for state in activity), 8)
+        self.assertEqual(max(state["directQueued"] for state in activity), 1)
+        self.assertTrue(all(state["proxyActive"] == 0 for state in activity))
+
+    async def test_closed_context_is_rebuilt_and_request_retried(self) -> None:
         pool = self.make_pool(headless=False)
-        pool._runtime = FakeRuntime()
         pool._contexts = [FakeContext(ClosedPage())]
-        pool._launch_context = lambda index: FakeContext(ReadyPage())
-        pool._set_amazon_zip = lambda context: True
-        try:
-            html = pool.fetch("https://amazon.com/dp/B012345678")
-        finally:
-            pool.close()
+        pool._us_profile_applied[0] = True
+
+        async def launch_context(index: int, *_args):
+            pool._us_profile_applied[index] = True
+            return FakeContext(ReadyPage())
+
+        pool._launch_context = launch_context
+        html, diagnostics = await pool._fetch_with_retries("https://amazon.com/dp/B012345678", None)
+
         self.assertIn("Recovered", html)
+        self.assertEqual(diagnostics[-1]["outcome"], "success")
+
+    async def test_us_zip_failure_rotates_to_the_next_browser_profile(self) -> None:
+        pool = PlaywrightPool(
+            profile_root=Path(tempfile.gettempdir()) / "ffp-playwright-test",
+            profiles=2,
+            tabs_per_profile=1,
+            headless=True,
+            captcha_timeout=30,
+            zip_code="10001",
+            proxy_assignments=[
+                ProxyAssignment(index=0, name="direct"),
+                ProxyAssignment(index=1, name="proxy-1", server="http://proxy.test:80"),
+            ],
+        )
+        routes: list[str] = []
+
+        async def fetch_once(_url: str, _cancel_event, *, route: str, allow_manual_captcha: bool):
+            routes.append(route)
+            if route == "direct":
+                error = RuntimeError("Unable to confirm Amazon US ZIP 10001 for browser profile 1.")
+                error.browser_profile_index = 0
+                raise error
+            return "<h1 id='productTitle'>Ready</h1>", pool.profiles
+
+        pool._fetch_once = fetch_once
+        html, diagnostics = await pool._fetch_with_retries("https://amazon.com/dp/B012345678", None)
+
+        self.assertIn("Ready", html)
+        self.assertEqual(routes, ["direct", "direct", "proxy"])
+        self.assertEqual([trace["profile"] for trace in diagnostics], ["direct-1", "direct-1", "proxy-1"])
+
+    async def test_successful_direct_browser_does_not_use_proxy_profile(self) -> None:
+        pool = PlaywrightPool(
+            profile_root=Path(tempfile.gettempdir()) / "ffp-playwright-test",
+            profiles=2,
+            tabs_per_profile=1,
+            headless=True,
+            captcha_timeout=30,
+            zip_code="10001",
+            proxy_assignments=[
+                ProxyAssignment(index=0, name="direct"),
+                ProxyAssignment(index=1, name="proxy-1", server="http://proxy.test:80"),
+            ],
+        )
+        used_routes: list[str] = []
+
+        async def fetch_once(_url: str, _cancel_event, *, route: str, allow_manual_captcha: bool):
+            used_routes.append(route)
+            return "<h1 id='productTitle'>Ready</h1>", 0
+
+        pool._fetch_once = fetch_once
+        _html, diagnostics = await pool._fetch_with_retries("https://amazon.com/dp/B012345678", None)
+
+        self.assertEqual(used_routes, ["direct"])
+        self.assertEqual(diagnostics[0]["profile"], "direct-1")
+        self.assertFalse(diagnostics[0]["proxyEnabled"])
+
+    async def test_headed_captcha_wait_is_allowed_only_after_proxy_fallbacks(self) -> None:
+        pool = PlaywrightPool(
+            profile_root=Path(tempfile.gettempdir()) / "ffp-playwright-test",
+            profiles=2,
+            tabs_per_profile=1,
+            headless=False,
+            captcha_timeout=30,
+            zip_code="10001",
+            proxy_assignments=[ProxyAssignment(index=0, name="proxy-1", server="http://proxy.test:80")],
+        )
+        attempts: list[tuple[str, bool]] = []
+
+        async def fetch_once(_url: str, _cancel_event, *, route: str, allow_manual_captcha: bool):
+            attempts.append((route, allow_manual_captcha))
+            error = CaptchaTimeout("captcha")
+            error.browser_profile_index = 0 if route == "direct" else pool.profiles
+            raise error
+
+        pool._fetch_once = fetch_once
+        with self.assertRaises(CaptchaTimeout):
+            await pool._fetch_with_retries("https://amazon.com/dp/B012345678", None)
+
+        self.assertEqual(attempts, [("direct", False), ("direct", False), ("proxy", True)])
+
+    async def test_close_closes_direct_and_proxy_contexts(self) -> None:
+        pool = PlaywrightPool(
+            profile_root=Path(tempfile.gettempdir()) / "ffp-playwright-test",
+            profiles=1,
+            tabs_per_profile=1,
+            headless=True,
+            captcha_timeout=30,
+            zip_code="10001",
+            proxy_assignments=[ProxyAssignment(index=0, name="proxy-1", server="http://proxy.test:80")],
+        )
+        direct_context = FakeContext(ReadyPage())
+        proxy_context = FakeContext(ReadyPage())
+        pool._contexts = [direct_context, proxy_context]
+
+        await pool._close_async()
+
+        self.assertTrue(direct_context.was_closed)
+        self.assertTrue(proxy_context.was_closed)
+        self.assertEqual(pool._contexts, [None, None])
 
     def test_windows_selector_policy_is_temporarily_replaced_for_playwright(self) -> None:
         class SelectorPolicy:

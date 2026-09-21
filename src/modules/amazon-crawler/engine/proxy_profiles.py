@@ -1,4 +1,4 @@
-"""Safe proxy profile loading and round-robin assignments."""
+"""Safe direct-first network and proxy fallback assignments."""
 
 from __future__ import annotations
 
@@ -91,17 +91,18 @@ def resolve_proxy_assignments(project_root: Path, requested_profiles: int) -> tu
             continue
         if server:
             enabled.append(profile)
-    assignments: list[ProxyAssignment] = []
+    # The machine's current connection is always the primary route. Configured
+    # profiles are fallbacks and do not replace the faster direct connection.
+    assignments: list[ProxyAssignment] = [ProxyAssignment(index=0, name="direct")]
     count = max(1, requested_profiles)
     for index in range(count):
         if not enabled or index >= len(enabled) and not should_rotate:
-            assignments.append(ProxyAssignment(index=index, name=f"profile-{index + 1}"))
-            continue
+            break
         profile = enabled[index % len(enabled)]
         proxy = profile.get("proxy") if isinstance(profile.get("proxy"), dict) else {}
         assignments.append(ProxyAssignment(
-            index=index,
-            name=str(profile.get("name") or f"profile-{index + 1}"),
+            index=index + 1,
+            name=str(profile.get("name") or f"proxy-{index + 1}"),
             server=str(proxy.get("server") or "").strip() or None,
             username=str(proxy.get("username") or "").strip() or None,
             password=str(proxy.get("password") or "") or None,

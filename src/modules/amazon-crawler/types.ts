@@ -33,12 +33,44 @@ export interface AmazonCrawlerInput extends AmazonCrawlerSettings {
   urls: readonly string[];
 }
 
+export interface AmazonCrawlerActiveVariant {
+  asin: string;
+  options: Record<string, string>;
+}
+
+export interface AmazonCrawlerProgressItem {
+  source: string;
+  asin: string;
+  phase: AmazonCrawlerProgress["phase"];
+  status: "queued" | "running" | "completed" | "failed" | "cancelled";
+  message: string;
+  variantCompleted: number;
+  variantTotal: number;
+  currentAsin?: string;
+  currentOptions?: Record<string, string>;
+  activeVariants?: AmazonCrawlerActiveVariant[];
+  networkRoute?: "direct" | "proxy";
+  browserProfile?: string;
+}
+
+export interface AmazonCrawlerBrowserPoolProgress {
+  directProfiles: number;
+  proxyProfiles: number;
+  tabsPerProfile: number;
+  directActive: number;
+  proxyActive: number;
+  directQueued: number;
+  proxyQueued: number;
+}
+
 export interface AmazonCrawlerProgress {
   phase: "queued" | "product" | "variant_matrix" | "customization" | "export" | "captcha";
   completed: number;
   total: number;
   message: string;
   source?: string;
+  items?: AmazonCrawlerProgressItem[];
+  browserPool?: AmazonCrawlerBrowserPoolProgress;
 }
 
 export interface AmazonCrawlerError {
@@ -69,6 +101,7 @@ export interface AmazonSourceVariant {
   customizationFingerprint: string | null;
   priceInference: PriceInference;
   warnings: string[];
+  diagnostics?: ProductDiagnostics;
 }
 
 export interface AmazonFinalVariant {
@@ -150,7 +183,7 @@ export interface SplitContext {
 }
 
 export interface ProductDiagnostics {
-  fetchMode: "http" | "playwright" | "cache" | "mixed";
+  fetchMode: "http" | "playwright" | "cache" | "mixed" | "failed";
   attempts: number;
   captchaEncountered: boolean;
   locationFallbackUsed: boolean;
@@ -158,6 +191,10 @@ export interface ProductDiagnostics {
   usProfileApplied?: boolean;
   matrixSwept: boolean;
   cacheHit: boolean;
+  fetchTrace?: {
+    http: Array<Record<string, unknown>>;
+    playwright: Array<Record<string, unknown>>;
+  };
 }
 
 export interface AmazonCrawlerProduct {
@@ -236,10 +273,10 @@ export const DEFAULT_AMAZON_CRAWLER_SETTINGS: AmazonCrawlerSettings = {
   profileSlug: "default",
   applyJeminisePreset: false,
   productThreads: 3,
-  variantThreads: 4,
-  urllibThreads: 8,
-  browserProfiles: 3,
-  browserTabs: 3,
+  variantThreads: 8,
+  urllibThreads: 12,
+  browserProfiles: 4,
+  browserTabs: 2,
   headless: false,
   amazonZip: "10001",
   captchaTimeoutSeconds: 180,
