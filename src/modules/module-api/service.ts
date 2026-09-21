@@ -88,6 +88,7 @@ const VALID_ERROR_CODES: ReadonlySet<string> = new Set([
   "SHOPIFY_INVALID_INPUT",
   "SHOPIFY_NOT_FOUND",
   "SHOPIFY_PERMISSION_DENIED",
+  "SHOPIFY_PARTIAL_WRITE",
   "NOT_IMPLEMENTED",
 ]);
 
@@ -130,6 +131,9 @@ function normalizeErrorCode(value: unknown): ShopifyApiErrorCode | undefined {
   }
   if (upper === "UNKNOWN_WRITE_STATE" || upper === "AMBIGUOUS_WRITE") {
     return "SHOPIFY_UNKNOWN_WRITE_STATE";
+  }
+  if (upper === "PARTIAL_WRITE" || upper === "SHOPIFY_PARTIAL_WRITE") {
+    return "SHOPIFY_PARTIAL_WRITE";
   }
   return undefined;
 }
@@ -181,6 +185,7 @@ interface ExtractedError {
   readonly fields?: readonly string[];
   readonly retryable?: boolean;
   readonly details?: unknown;
+  readonly reconciliationRequired?: boolean;
 }
 
 function extractErrorFromPayload(payload: unknown): ExtractedError {
@@ -194,6 +199,7 @@ function extractErrorFromPayload(payload: unknown): ExtractedError {
   let fields: readonly string[] | undefined;
   let retryable: boolean | undefined;
   let details: unknown | undefined;
+  let reconciliationRequired: boolean | undefined;
 
   if (obj.code !== undefined) {
     code = normalizeErrorCode(obj.code);
@@ -211,8 +217,18 @@ function extractErrorFromPayload(payload: unknown): ExtractedError {
     retryable = obj.retryable;
   }
 
+  if (typeof obj.reconciliationRequired === "boolean") {
+    reconciliationRequired = obj.reconciliationRequired;
+  }
+
   if (obj.details !== undefined) {
     details = obj.details;
+    if (reconciliationRequired === undefined && typeof obj.details === "object" && obj.details !== null) {
+      const d = obj.details as Record<string, unknown>;
+      if (typeof d.reconciliationRequired === "boolean") {
+        reconciliationRequired = d.reconciliationRequired;
+      }
+    }
   }
 
   if ("error" in obj && obj.error !== undefined && obj.error !== null) {
@@ -232,8 +248,17 @@ function extractErrorFromPayload(payload: unknown): ExtractedError {
       if (typeof errObj.retryable === "boolean") {
         retryable = retryable ?? errObj.retryable;
       }
+      if (typeof errObj.reconciliationRequired === "boolean") {
+        reconciliationRequired = reconciliationRequired ?? errObj.reconciliationRequired;
+      }
       if (errObj.details !== undefined) {
         details = details ?? errObj.details;
+        if (reconciliationRequired === undefined && typeof errObj.details === "object" && errObj.details !== null) {
+          const d = errObj.details as Record<string, unknown>;
+          if (typeof d.reconciliationRequired === "boolean") {
+            reconciliationRequired = d.reconciliationRequired;
+          }
+        }
       }
     }
   }
@@ -257,6 +282,9 @@ function extractErrorFromPayload(payload: unknown): ExtractedError {
         if (retryable === undefined && typeof itemObj.retryable === "boolean") {
           retryable = itemObj.retryable;
         }
+        if (reconciliationRequired === undefined && typeof itemObj.reconciliationRequired === "boolean") {
+          reconciliationRequired = itemObj.reconciliationRequired;
+        }
         if (details === undefined && itemObj.details !== undefined) {
           details = itemObj.details;
         }
@@ -267,7 +295,7 @@ function extractErrorFromPayload(payload: unknown): ExtractedError {
     }
   }
 
-  return { code, message, fields, retryable, details };
+  return { code, message, fields, retryable, details, reconciliationRequired };
 }
 
 function mapStatusToErrorCode(
@@ -403,6 +431,17 @@ export function createModuleApiRunner(
       headers["X-Request-Id"] = input.requestId;
     }
 
+    const authToken =
+      config?.gatewayAuthToken ??
+      (config as Record<string, unknown> | undefined)?.GATEWAY_AUTH_TOKEN as string | undefined ??
+      (dependencies as Record<string, unknown> | undefined)?.gatewayAuthToken as string | undefined ??
+      (dependencies as Record<string, unknown> | undefined)?.GATEWAY_AUTH_TOKEN as string | undefined ??
+      (typeof process !== "undefined" && process.env ? process.env.GATEWAY_AUTH_TOKEN : undefined);
+
+    if (authToken && typeof authToken === "string" && authToken.trim() !== "") {
+      headers["X-Gateway-Key"] = authToken.trim();
+    }
+
     let abortController: AbortController | undefined;
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
@@ -471,12 +510,16 @@ export function createModuleApiRunner(
         fields,
         retryable,
         details,
+        reconciliationRequired: bodyRecRequired,
       } = extractErrorFromPayload(responseJson);
       const errorCode = mapStatusToErrorCode(response.status, isRead, bodyCode);
       const fallbackMessage = `Shopify gateway request failed with status ${response.status}`;
       const errorMessage = sanitizeErrorMessage(bodyMessage, fallbackMessage);
+      const reconciliationRequired =
+        bodyRecRequired ??
+        (errorCode === "SHOPIFY_PARTIAL_WRITE" || errorCode === "SHOPIFY_UNKNOWN_WRITE_STATE" ? true : undefined);
 
-      throw new ShopifyApiError(errorMessage, errorCode, jsonParseError, fields, retryable, details);
+      throw new ShopifyApiError(errorMessage, errorCode, jsonParseError, fields, retryable, details, reconciliationRequired);
     }
 
     if (jsonParseError !== undefined) {

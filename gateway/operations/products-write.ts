@@ -1,20 +1,40 @@
 import { GatewayError, mapUserErrorsToGatewayError, type MutationUserErrorItem } from "../errors";
 import type { ShopifyGraphqlClient } from "../shopify-graphql-client";
-import type { ProductSummary, ProductVariantSummary, StoreConfig } from "../types";
+import type { GatewayErrorCode, ProductImageSummary, ProductSummary, ProductVariantSummary, StoreConfig } from "../types";
 import { mapProductNode, type RawProductNode } from "./products";
 
 const PRODUCT_CREATE_MUTATION = `
-  mutation ProductCreate($product: ProductCreateInput!) {
-    productCreate(product: $product) {
+  mutation ProductCreate($product: ProductCreateInput!, $media: [CreateMediaInput!]) {
+    productCreate(product: $product, media: $media) {
       product {
         id
         title
         handle
+        description
         descriptionHtml
         status
         vendor
         productType
         tags
+        onlineStoreUrl
+        featuredImage {
+          id
+          url
+          altText
+          width
+          height
+        }
+        images(first: 50) {
+          edges {
+            node {
+              id
+              url
+              altText
+              width
+              height
+            }
+          }
+        }
         seo {
           title
           description
@@ -71,11 +91,31 @@ const PRODUCT_UPDATE_MUTATION = `
         id
         title
         handle
+        description
         descriptionHtml
         status
         vendor
         productType
         tags
+        onlineStoreUrl
+        featuredImage {
+          id
+          url
+          altText
+          width
+          height
+        }
+        images(first: 50) {
+          edges {
+            node {
+              id
+              url
+              altText
+              width
+              height
+            }
+          }
+        }
         seo {
           title
           description
@@ -103,6 +143,20 @@ const PRODUCT_UPDATE_MUTATION = `
   }
 `;
 
+const PRODUCT_CREATE_MEDIA_MUTATION = `
+  mutation ProductCreateMedia($productId: ID!, $media: [CreateMediaInput!]!) {
+    productCreateMedia(productId: $productId, media: $media) {
+      media {
+        id
+      }
+      userErrors {
+        field
+        message
+      }
+    }
+  }
+`;
+
 const PRODUCT_DELETE_MUTATION = `
   mutation ProductDelete($input: ProductDeleteInput!) {
     productDelete(input: $input) {
@@ -114,6 +168,75 @@ const PRODUCT_DELETE_MUTATION = `
     }
   }
 `;
+
+export const FILE_UPDATE_MUTATION = `
+  mutation FileUpdate($files: [FileUpdateInput!]!) {
+    fileUpdate(files: $files) {
+      files {
+        id
+        alt
+      }
+      userErrors {
+        field
+        message
+      }
+    }
+  }
+`;
+
+export interface FileUpdateItem {
+  readonly id: string;
+  readonly alt?: string;
+}
+
+export interface CreateMediaInputItem {
+  readonly originalSource: string;
+  readonly mediaContentType: "IMAGE";
+  readonly alt?: string;
+}
+
+function extractMediaInputs(
+  featuredImage?: unknown,
+  images?: unknown,
+): readonly CreateMediaInputItem[] {
+  const mediaList: CreateMediaInputItem[] = [];
+  const seenUrls = new Set<string>();
+
+  const addMedia = (rawUrl?: unknown, rawAlt?: unknown) => {
+    if (typeof rawUrl !== "string") return;
+    const url = rawUrl.trim();
+    if (!url || seenUrls.has(url)) return;
+    const alt = typeof rawAlt === "string" && rawAlt.trim() ? rawAlt.trim() : undefined;
+    mediaList.push({
+      originalSource: url,
+      mediaContentType: "IMAGE",
+      ...(alt ? { alt } : {}),
+    });
+    seenUrls.add(url);
+  };
+
+  if (featuredImage && typeof featuredImage === "object") {
+    const feat = featuredImage as Record<string, unknown>;
+    const url = typeof feat.url === "string" ? feat.url : typeof feat.src === "string" ? feat.src : undefined;
+    const alt = typeof feat.altText === "string" ? feat.altText : typeof feat.alt === "string" ? feat.alt : undefined;
+    addMedia(url, alt);
+  }
+
+  if (Array.isArray(images)) {
+    for (const img of images) {
+      if (typeof img === "string") {
+        addMedia(img, undefined);
+      } else if (img && typeof img === "object") {
+        const imgObj = img as Record<string, unknown>;
+        const url = typeof imgObj.url === "string" ? imgObj.url : typeof imgObj.src === "string" ? imgObj.src : undefined;
+        const alt = typeof imgObj.altText === "string" ? imgObj.altText : typeof imgObj.alt === "string" ? imgObj.alt : undefined;
+        addMedia(url, alt);
+      }
+    }
+  }
+
+  return mediaList;
+}
 
 export async function executeProductsCreate(
   store: StoreConfig,
@@ -175,6 +298,8 @@ export async function executeProductsCreate(
       id: "gid://shopify/Product/preview-new",
       title,
       handle,
+      description:
+        typeof productInput.description === "string" ? productInput.description : undefined,
       descriptionHtml:
         typeof productInput.descriptionHtml === "string" ? productInput.descriptionHtml : undefined,
       status:
@@ -184,6 +309,41 @@ export async function executeProductsCreate(
       vendor: typeof productInput.vendor === "string" ? productInput.vendor : undefined,
       productType: typeof productInput.productType === "string" ? productInput.productType : undefined,
       tags: Array.isArray(productInput.tags) ? (productInput.tags as string[]) : [],
+      onlineStoreUrl:
+        typeof productInput.onlineStoreUrl === "string" ? productInput.onlineStoreUrl : undefined,
+      featuredImage:
+        productInput.featuredImage && typeof productInput.featuredImage === "object" && typeof (productInput.featuredImage as Record<string, unknown>).url === "string" && ((productInput.featuredImage as Record<string, unknown>).url as string).trim() !== ""
+          ? {
+              id: typeof (productInput.featuredImage as Record<string, unknown>).id === "string" ? (productInput.featuredImage as Record<string, unknown>).id as string : undefined,
+              url: ((productInput.featuredImage as Record<string, unknown>).url as string).trim(),
+              altText: typeof (productInput.featuredImage as Record<string, unknown>).altText === "string" ? (productInput.featuredImage as Record<string, unknown>).altText as string : undefined,
+              width: typeof (productInput.featuredImage as Record<string, unknown>).width === "number" ? (productInput.featuredImage as Record<string, unknown>).width as number : undefined,
+              height: typeof (productInput.featuredImage as Record<string, unknown>).height === "number" ? (productInput.featuredImage as Record<string, unknown>).height as number : undefined,
+            }
+          : undefined,
+      images: Array.isArray(productInput.images)
+        ? (productInput.images as readonly unknown[])
+            .map((img): ProductImageSummary | undefined => {
+              if (typeof img === "string" && img.trim() !== "") {
+                return { url: img.trim() };
+              }
+              if (img && typeof img === "object") {
+                const imgObj = img as Record<string, unknown>;
+                const url = typeof imgObj.url === "string" ? imgObj.url.trim() : typeof imgObj.src === "string" ? imgObj.src.trim() : "";
+                if (url) {
+                  return {
+                    id: typeof imgObj.id === "string" ? imgObj.id : typeof imgObj.id === "number" ? String(imgObj.id) : undefined,
+                    url,
+                    altText: typeof imgObj.altText === "string" ? imgObj.altText : typeof imgObj.alt === "string" ? imgObj.alt : undefined,
+                    width: typeof imgObj.width === "number" ? imgObj.width : undefined,
+                    height: typeof imgObj.height === "number" ? imgObj.height : undefined,
+                  };
+                }
+              }
+              return undefined;
+            })
+            .filter((img): img is ProductImageSummary => img !== undefined)
+        : undefined,
       variants: previewVariants,
       seo:
         productInput.seo && typeof productInput.seo === "object"
@@ -205,6 +365,8 @@ export async function executeProductsCreate(
   }
   if (typeof productInput.descriptionHtml === "string") {
     input.descriptionHtml = productInput.descriptionHtml;
+  } else if (typeof productInput.description === "string") {
+    input.descriptionHtml = productInput.description;
   }
   if (typeof productInput.status === "string" && productInput.status.trim() !== "") {
     input.status = productInput.status.trim();
@@ -274,10 +436,16 @@ export async function executeProductsCreate(
     };
   }
 
+  const mediaList = extractMediaInputs(productInput.featuredImage, productInput.images);
+  const createVariables: Record<string, unknown> = { product: input };
+  if (mediaList.length > 0) {
+    createVariables.media = mediaList;
+  }
+
   const raw = await client.query<ProductCreateResponse>(
     store,
     PRODUCT_CREATE_MUTATION,
-    { product: input },
+    createVariables,
     { isWrite: true, requestId },
   );
 
@@ -367,15 +535,17 @@ export async function executeProductsCreate(
       }
     } catch (err: unknown) {
       const errMsg = err instanceof Error ? err.message : String(err);
+      const fields = err instanceof GatewayError ? err.fields : undefined;
       throw new GatewayError(
         `Product created (${product.id}) but failed to create variants: ${errMsg}`,
-        "SHOPIFY_USER_ERROR",
-        400,
+        "SHOPIFY_PARTIAL_WRITE",
+        409,
         undefined,
-        undefined,
-        undefined,
+        err,
+        fields,
         false,
-        { createdProductId: product.id },
+        { createdProductId: product.id, reconciliationRequired: true },
+        true,
       );
     }
   }
@@ -409,6 +579,8 @@ export async function executeProductsUpdate(
       id,
       title: typeof productPatch.title === "string" ? productPatch.title : "Preview Product",
       handle: typeof productPatch.handle === "string" ? productPatch.handle : "preview-product",
+      description:
+        typeof productPatch.description === "string" ? productPatch.description : undefined,
       descriptionHtml:
         typeof productPatch.descriptionHtml === "string" ? productPatch.descriptionHtml : undefined,
       status:
@@ -418,6 +590,47 @@ export async function executeProductsUpdate(
       vendor: typeof productPatch.vendor === "string" ? productPatch.vendor : undefined,
       productType: typeof productPatch.productType === "string" ? productPatch.productType : undefined,
       tags: Array.isArray(productPatch.tags) ? (productPatch.tags as string[]) : [],
+      onlineStoreUrl:
+        typeof productPatch.onlineStoreUrl === "string" ? productPatch.onlineStoreUrl : undefined,
+      featuredImage:
+        productPatch.featuredImage && typeof productPatch.featuredImage === "object"
+          ? (() => {
+              const feat = productPatch.featuredImage as Record<string, unknown>;
+              const url = typeof feat.url === "string" ? feat.url.trim() : typeof feat.src === "string" ? feat.src.trim() : "";
+              const rawId = typeof feat.id === "string" && feat.id.trim() !== "" ? feat.id.trim() : typeof feat.id === "number" ? String(feat.id) : undefined;
+              if (!url && !rawId) return undefined;
+              return {
+                id: rawId,
+                url: url || "",
+                altText: typeof feat.altText === "string" ? feat.altText : typeof feat.alt === "string" ? feat.alt : undefined,
+                width: typeof feat.width === "number" ? feat.width : undefined,
+                height: typeof feat.height === "number" ? feat.height : undefined,
+              };
+            })()
+          : undefined,
+      images: Array.isArray(productPatch.images)
+        ? (productPatch.images as readonly unknown[])
+            .map((img): ProductImageSummary | undefined => {
+              if (typeof img === "string" && img.trim() !== "") {
+                return { url: img.trim() };
+              }
+              if (img && typeof img === "object") {
+                const imgObj = img as Record<string, unknown>;
+                const url = typeof imgObj.url === "string" ? imgObj.url.trim() : typeof imgObj.src === "string" ? imgObj.src.trim() : "";
+                const rawId = typeof imgObj.id === "string" && imgObj.id.trim() !== "" ? imgObj.id.trim() : typeof imgObj.id === "number" ? String(imgObj.id) : undefined;
+                if (!url && !rawId) return undefined;
+                return {
+                  id: rawId,
+                  url: url || "",
+                  altText: typeof imgObj.altText === "string" ? imgObj.altText : typeof imgObj.alt === "string" ? imgObj.alt : undefined,
+                  width: typeof imgObj.width === "number" ? imgObj.width : undefined,
+                  height: typeof imgObj.height === "number" ? imgObj.height : undefined,
+                };
+              }
+              return undefined;
+            })
+            .filter((img): img is ProductImageSummary => img !== undefined)
+        : undefined,
       variants: [],
       seo:
         productPatch.seo && typeof productPatch.seo === "object"
@@ -441,6 +654,8 @@ export async function executeProductsUpdate(
   }
   if (typeof productPatch.descriptionHtml === "string") {
     input.descriptionHtml = productPatch.descriptionHtml;
+  } else if (typeof productPatch.description === "string") {
+    input.descriptionHtml = productPatch.description;
   }
   if (typeof productPatch.status === "string") {
     input.status = productPatch.status;
@@ -486,13 +701,229 @@ export async function executeProductsUpdate(
     throw new GatewayError(`Failed to update product ${id}`, "SHOPIFY_USER_ERROR", 400);
   }
 
-  return { product: mapProductNode(raw.productUpdate.product) };
+  const fileUpdateList: FileUpdateItem[] = [];
+  const mediaList: CreateMediaInputItem[] = [];
+  const seenFileIds = new Set<string>();
+  const seenMediaUrls = new Set<string>();
+
+  const processImageEntry = (img: unknown) => {
+    if (!img) return;
+    if (typeof img === "string") {
+      const url = img.trim();
+      if (url && !seenMediaUrls.has(url)) {
+        seenMediaUrls.add(url);
+        mediaList.push({
+          originalSource: url,
+          mediaContentType: "IMAGE",
+        });
+      }
+      return;
+    }
+    if (typeof img === "object") {
+      const imgObj = img as Record<string, unknown>;
+      const rawId =
+        typeof imgObj.id === "string" && imgObj.id.trim() !== ""
+          ? imgObj.id.trim()
+          : typeof imgObj.id === "number"
+          ? String(imgObj.id)
+          : undefined;
+      const rawUrl =
+        typeof imgObj.url === "string" && imgObj.url.trim() !== ""
+          ? imgObj.url.trim()
+          : typeof imgObj.src === "string" && imgObj.src.trim() !== ""
+          ? imgObj.src.trim()
+          : undefined;
+      const rawAlt =
+        typeof imgObj.altText === "string"
+          ? imgObj.altText
+          : typeof imgObj.alt === "string"
+          ? imgObj.alt
+          : imgObj.altText === null || imgObj.alt === null
+          ? ""
+          : undefined;
+
+      if (rawId) {
+        // a) Existing images with id: Do NOT create new media. Update existing alt text using fileUpdate mutation
+        if (!seenFileIds.has(rawId)) {
+          seenFileIds.add(rawId);
+          if (rawAlt !== undefined) {
+            fileUpdateList.push({ id: rawId, alt: rawAlt });
+          }
+        }
+      } else if (rawUrl) {
+        // b) New images (having url but no existing id): Append as new media
+        if (!seenMediaUrls.has(rawUrl)) {
+          seenMediaUrls.add(rawUrl);
+          mediaList.push({
+            originalSource: rawUrl,
+            mediaContentType: "IMAGE",
+            ...(rawAlt !== undefined && rawAlt.trim() ? { alt: rawAlt.trim() } : {}),
+          });
+        }
+      }
+    }
+  };
+
+  processImageEntry(productPatch.featuredImage);
+  if (Array.isArray(productPatch.images)) {
+    for (const img of productPatch.images) {
+      processImageEntry(img);
+    }
+  }
+
+  let createdMediaRecords: readonly { readonly id: string }[] | undefined;
+
+  try {
+    if (fileUpdateList.length > 0) {
+      interface FileUpdateResponse {
+        readonly fileUpdate: {
+          readonly files: readonly { readonly id: string; readonly alt?: string | null }[] | null;
+          readonly userErrors: readonly MutationUserErrorItem[];
+        } | null;
+      }
+
+      const rawFileUpdate = await client.query<FileUpdateResponse>(
+        store,
+        FILE_UPDATE_MUTATION,
+        { files: fileUpdateList },
+        { isWrite: true, requestId: requestId ? `${requestId}:file-update` : undefined },
+      );
+
+      if (!rawFileUpdate.fileUpdate || (rawFileUpdate.fileUpdate.userErrors && rawFileUpdate.fileUpdate.userErrors.length > 0)) {
+        const userErrors = rawFileUpdate.fileUpdate?.userErrors ?? [];
+        const errMsg = userErrors.length > 0 ? userErrors.map((e) => e.message).join("; ") : "fileUpdate returned no data";
+        const fields = userErrors.flatMap((e) => (e.field ? [...e.field] : []));
+        throw new GatewayError(
+          `Product updated (${id}) but failed to update image files: ${errMsg}`,
+          "SHOPIFY_PARTIAL_WRITE",
+          409,
+          undefined,
+          undefined,
+          fields.length > 0 ? fields : undefined,
+          false,
+          { updatedProductId: id, reconciliationRequired: true },
+          true,
+        );
+      }
+    }
+
+    if (mediaList.length > 0) {
+      interface ProductCreateMediaResponse {
+        readonly productCreateMedia: {
+          readonly media: readonly { readonly id: string }[] | null;
+          readonly userErrors: readonly MutationUserErrorItem[];
+        } | null;
+      }
+
+      const rawMedia = await client.query<ProductCreateMediaResponse>(
+        store,
+        PRODUCT_CREATE_MEDIA_MUTATION,
+        { productId: id, media: mediaList },
+        { isWrite: true, requestId: requestId ? `${requestId}:media` : undefined },
+      );
+
+      if (!rawMedia.productCreateMedia || (rawMedia.productCreateMedia.userErrors && rawMedia.productCreateMedia.userErrors.length > 0)) {
+        const userErrors = rawMedia.productCreateMedia?.userErrors ?? [];
+        const errMsg = userErrors.length > 0 ? userErrors.map((e) => e.message).join("; ") : "productCreateMedia returned no data";
+        const fields = userErrors.flatMap((e) => (e.field ? [...e.field] : []));
+        throw new GatewayError(
+          `Product updated (${id}) but failed to create media: ${errMsg}`,
+          "SHOPIFY_PARTIAL_WRITE",
+          409,
+          undefined,
+          undefined,
+          fields.length > 0 ? fields : undefined,
+          false,
+          { updatedProductId: id, reconciliationRequired: true },
+          true,
+        );
+      }
+
+      createdMediaRecords = rawMedia.productCreateMedia.media ?? undefined;
+    }
+  } catch (err: unknown) {
+    if (err instanceof GatewayError && err.code === "SHOPIFY_PARTIAL_WRITE") {
+      throw err;
+    }
+    const errMsg = err instanceof Error ? err.message : String(err);
+    const fields = err instanceof GatewayError ? err.fields : undefined;
+    throw new GatewayError(
+      `Product updated (${id}) but failed to update media: ${errMsg}`,
+      "SHOPIFY_PARTIAL_WRITE",
+      409,
+      undefined,
+      err,
+      fields,
+      false,
+      { updatedProductId: id, reconciliationRequired: true },
+      true,
+    );
+  }
+
+  const mapped = mapProductNode(raw.productUpdate.product);
+  let updatedImages = mapped.images ? [...mapped.images] : [];
+  let updatedFeaturedImage = mapped.featuredImage;
+
+  if (fileUpdateList.length > 0) {
+    const altById = new Map<string, string | undefined>();
+    for (const item of fileUpdateList) {
+      altById.set(item.id, item.alt);
+      const parts = item.id.split("/");
+      const last = parts[parts.length - 1];
+      if (last && last !== item.id) {
+        altById.set(last, item.alt);
+      }
+    }
+
+    const resolveAlt = (targetId?: string, fallback?: string): string | undefined => {
+      if (!targetId) return fallback;
+      if (altById.has(targetId)) return altById.get(targetId);
+      const parts = targetId.split("/");
+      const last = parts[parts.length - 1];
+      if (last && altById.has(last)) return altById.get(last);
+      return fallback;
+    };
+
+    if (updatedFeaturedImage) {
+      updatedFeaturedImage = {
+        ...updatedFeaturedImage,
+        altText: resolveAlt(updatedFeaturedImage.id, updatedFeaturedImage.altText),
+      };
+    }
+
+    updatedImages = updatedImages.map((img) => ({
+      ...img,
+      altText: resolveAlt(img.id, img.altText),
+    }));
+  }
+
+  if (mediaList.length > 0) {
+    for (let i = 0; i < mediaList.length; i++) {
+      const m = mediaList[i];
+      const createdId = createdMediaRecords?.[i]?.id;
+      updatedImages.push({
+        id: createdId,
+        url: m.originalSource,
+        altText: m.alt,
+      });
+    }
+  }
+
+  return {
+    product: {
+      ...mapped,
+      featuredImage: updatedFeaturedImage,
+      images: updatedImages.length > 0 || mapped.images ? updatedImages : undefined,
+    },
+  };
 }
 
 export interface ProductBulkUpdateItemResult {
   readonly id: string;
   readonly ok: boolean;
   readonly error?: string;
+  readonly errorCode?: GatewayErrorCode;
+  readonly reconciliationRequired?: boolean;
 }
 
 export interface ProductsBulkUpdateResult {
@@ -500,6 +931,7 @@ export interface ProductsBulkUpdateResult {
   readonly failedCount: number;
   readonly updatedProductIds: readonly string[];
   readonly count: number;
+  readonly reconciliationRequired?: boolean;
   readonly items: readonly ProductBulkUpdateItemResult[];
 }
 
@@ -574,10 +1006,18 @@ export async function executeProductsBulkUpdate(
         };
       } catch (err: unknown) {
         const errorMsg = err instanceof Error ? err.message : String(err);
+        const isGatewayErr = err instanceof GatewayError;
+        const isUnknownWriteState = isGatewayErr && err.code === "SHOPIFY_UNKNOWN_WRITE_STATE";
+        const isPartialWrite = isGatewayErr && (err.code === "SHOPIFY_PARTIAL_WRITE" || err.reconciliationRequired);
+        const recRequired = isUnknownWriteState || isPartialWrite || (isGatewayErr && Boolean(err.details?.reconciliationRequired));
+        const errorCode = isGatewayErr ? err.code : undefined;
+
         return {
           id: String(item.id),
           ok: false,
           error: errorMsg,
+          errorCode,
+          reconciliationRequired: recRequired ? true : undefined,
         };
       }
     },
@@ -589,7 +1029,13 @@ export async function executeProductsBulkUpdate(
   let failedCount = 0;
 
   for (const res of results) {
-    items.push({ id: res.id, ok: res.ok, error: res.error });
+    items.push({
+      id: res.id,
+      ok: res.ok,
+      error: res.error,
+      errorCode: res.errorCode,
+      reconciliationRequired: res.reconciliationRequired,
+    });
     if (res.ok && res.updatedId) {
       updatedProductIds.push(res.updatedId);
       successCount += 1;
@@ -598,11 +1044,14 @@ export async function executeProductsBulkUpdate(
     }
   }
 
+  const hasReconciliationRequired = items.some((it) => it.reconciliationRequired === true);
+
   return {
     successCount,
     failedCount,
     updatedProductIds,
     count: updatedProductIds.length,
+    reconciliationRequired: hasReconciliationRequired ? true : undefined,
     items,
   };
 }

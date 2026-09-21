@@ -3,9 +3,22 @@ import test from "node:test";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
+import { AutoSeoPage } from "../ui/AutoSeoPage";
+import { AutoSeoToolbar } from "../ui/components/AutoSeoToolbar";
+import type { AutoSeoToolbarProps } from "../ui/components/AutoSeoToolbar";
+import {
+  clearVisibleProductsSelection,
+  filterAutoSeoProducts,
+  selectAllVisibleProducts,
+} from "../ui/components/product-filter";
 import { ProductSelectionTable } from "../ui/components/ProductSelectionTable";
+import type { ProductSelectionTableProps } from "../ui/components/ProductSelectionTable";
 
-import type { ShopifyProductForAutoSeoUi } from "../types";
+import type {
+  ProductReviewDecision,
+  ShopifyProductForAutoSeoUi,
+  ShopifyStatusFilter,
+} from "../types";
 
 const mockProducts: readonly ShopifyProductForAutoSeoUi[] = [
   {
@@ -43,6 +56,13 @@ function renderTable(props: {
   products: readonly ShopifyProductForAutoSeoUi[];
   selectedProductIds: readonly string[];
   decisions?: Record<string, "approved" | "needs_edit" | "mark_draft" | "skipped" | "pending">;
+  searchQuery?: string;
+  onSearchQueryChange?: (query: string) => void;
+  statusFilter?: ShopifyStatusFilter;
+  onStatusFilterChange?: (status: ShopifyStatusFilter) => void;
+  decisionFilter?: string;
+  onDecisionFilterChange?: (decision: string) => void;
+  filteredProducts?: readonly ShopifyProductForAutoSeoUi[];
   onToggleSelect?: (id: string) => void;
   onApprove?: (id: string) => void;
   onEdit?: (product: ShopifyProductForAutoSeoUi) => void;
@@ -56,7 +76,14 @@ function renderTable(props: {
     captured = ProductSelectionTable({
       products: props.products,
       selectedProductIds: props.selectedProductIds,
-      decisions: props.decisions ?? {},
+      decisions: (props.decisions ?? {}) as Record<string, ProductReviewDecision>,
+      searchQuery: props.searchQuery,
+      onSearchQueryChange: props.onSearchQueryChange,
+      statusFilter: props.statusFilter,
+      onStatusFilterChange: props.onStatusFilterChange,
+      decisionFilter: props.decisionFilter,
+      onDecisionFilterChange: props.onDecisionFilterChange,
+      filteredProducts: props.filteredProducts,
       onToggleSelect: props.onToggleSelect ?? (() => {}),
       onApprove: props.onApprove ?? (() => {}),
       onEdit: props.onEdit ?? (() => {}),
@@ -397,4 +424,577 @@ test("ProductSelectionTable: renders empty state when product list is empty", ()
   });
 
   assert.ok(html.includes("Chưa có sản phẩm nào được tải"));
+});
+
+test("ProductSelectionTable: status filter ACTIVE shows only ACTIVE products", () => {
+  const products: readonly ShopifyProductForAutoSeoUi[] = [
+    ...mockProducts,
+    {
+      id: "gid://shopify/Product/104",
+      title: "Vintage Denim Jacket",
+      handle: "vintage-denim-jacket",
+      status: "ARCHIVED",
+      images: [],
+    },
+  ];
+
+  const filtered = filterAutoSeoProducts(products, {
+    searchQuery: "",
+    statusFilter: "ACTIVE",
+    decisionFilter: "all",
+    decisions: {},
+    selectedProductIds: [],
+  });
+
+  assert.equal(filtered.length, 2);
+  assert.ok(filtered.every((p) => p.status === "ACTIVE"));
+  assert.deepEqual(
+    filtered.map((p) => p.id),
+    ["gid://shopify/Product/101", "gid://shopify/Product/102"],
+  );
+
+  const { html } = renderTable({
+    products,
+    selectedProductIds: [],
+    statusFilter: "ACTIVE",
+  });
+  assert.ok(html.includes("Eco Ceramic Mug"));
+  assert.ok(html.includes("Cotton T-Shirt"));
+  assert.ok(!html.includes("Handmade Bamboo Bowl"));
+  assert.ok(!html.includes("Vintage Denim Jacket"));
+});
+
+test("ProductSelectionTable: status filter DRAFT shows only DRAFT products", () => {
+  const products: readonly ShopifyProductForAutoSeoUi[] = [
+    ...mockProducts,
+    {
+      id: "gid://shopify/Product/104",
+      title: "Vintage Denim Jacket",
+      handle: "vintage-denim-jacket",
+      status: "ARCHIVED",
+      images: [],
+    },
+  ];
+
+  const filtered = filterAutoSeoProducts(products, {
+    searchQuery: "",
+    statusFilter: "DRAFT",
+    decisionFilter: "all",
+    decisions: {},
+    selectedProductIds: [],
+  });
+
+  assert.equal(filtered.length, 1);
+  assert.equal(filtered[0]?.id, "gid://shopify/Product/103");
+  assert.equal(filtered[0]?.status, "DRAFT");
+
+  const { html } = renderTable({
+    products,
+    selectedProductIds: [],
+    statusFilter: "DRAFT",
+  });
+  assert.ok(!html.includes("Eco Ceramic Mug"));
+  assert.ok(!html.includes("Cotton T-Shirt"));
+  assert.ok(html.includes("Handmade Bamboo Bowl"));
+  assert.ok(!html.includes("Vintage Denim Jacket"));
+});
+
+test("ProductSelectionTable: status filter ARCHIVED shows only ARCHIVED products", () => {
+  const products: readonly ShopifyProductForAutoSeoUi[] = [
+    ...mockProducts,
+    {
+      id: "gid://shopify/Product/104",
+      title: "Vintage Denim Jacket",
+      handle: "vintage-denim-jacket",
+      status: "ARCHIVED",
+      images: [],
+    },
+  ];
+
+  const filtered = filterAutoSeoProducts(products, {
+    searchQuery: "",
+    statusFilter: "ARCHIVED",
+    decisionFilter: "all",
+    decisions: {},
+    selectedProductIds: [],
+  });
+
+  assert.equal(filtered.length, 1);
+  assert.equal(filtered[0]?.id, "gid://shopify/Product/104");
+  assert.equal(filtered[0]?.status, "ARCHIVED");
+
+  const { html } = renderTable({
+    products,
+    selectedProductIds: [],
+    statusFilter: "ARCHIVED",
+  });
+  assert.ok(!html.includes("Eco Ceramic Mug"));
+  assert.ok(!html.includes("Cotton T-Shirt"));
+  assert.ok(!html.includes("Handmade Bamboo Bowl"));
+  assert.ok(html.includes("Vintage Denim Jacket"));
+});
+
+test("ProductSelectionTable: status + search filters combine correctly", () => {
+  const products: readonly ShopifyProductForAutoSeoUi[] = [
+    ...mockProducts,
+    {
+      id: "gid://shopify/Product/104",
+      title: "Eco Bamboo Straw",
+      handle: "eco-bamboo-straw",
+      status: "DRAFT",
+      images: [],
+    },
+  ];
+
+  // Search "eco" matches product 101 (ACTIVE) and 104 (DRAFT).
+  // With statusFilter ACTIVE, only 101 should remain.
+  const filtered = filterAutoSeoProducts(products, {
+    searchQuery: "eco",
+    statusFilter: "ACTIVE",
+    decisionFilter: "all",
+    decisions: {},
+    selectedProductIds: [],
+  });
+
+  assert.equal(filtered.length, 1);
+  assert.equal(filtered[0]?.id, "gid://shopify/Product/101");
+  assert.equal(filtered[0]?.title, "Eco Ceramic Mug");
+});
+
+test("ProductSelectionTable: status + decision filters combine correctly", () => {
+  const products: readonly ShopifyProductForAutoSeoUi[] = [
+    ...mockProducts,
+    {
+      id: "gid://shopify/Product/104",
+      title: "Vintage Denim Jacket",
+      handle: "vintage-denim-jacket",
+      status: "DRAFT",
+      images: [],
+    },
+  ];
+
+  const decisions: Record<string, ProductReviewDecision> = {
+    "gid://shopify/Product/101": "approved",
+    "gid://shopify/Product/102": "needs_edit",
+    "gid://shopify/Product/104": "approved",
+  };
+
+  // Status ACTIVE + Decision approved => only product 101 (product 104 is approved but DRAFT)
+  const filtered = filterAutoSeoProducts(products, {
+    searchQuery: "",
+    statusFilter: "ACTIVE",
+    decisionFilter: "approved",
+    decisions,
+    selectedProductIds: [],
+  });
+
+  assert.equal(filtered.length, 1);
+  assert.equal(filtered[0]?.id, "gid://shopify/Product/101");
+
+  // Status ACTIVE + Decision selected => only selected ACTIVE products
+  const filteredSelected = filterAutoSeoProducts(products, {
+    searchQuery: "",
+    statusFilter: "ACTIVE",
+    decisionFilter: "selected",
+    decisions,
+    selectedProductIds: ["gid://shopify/Product/102", "gid://shopify/Product/104"],
+  });
+
+  assert.equal(filteredSelected.length, 1);
+  assert.equal(filteredSelected[0]?.id, "gid://shopify/Product/102");
+});
+
+test("AutoSeo Selection: Select All with no filters selects all visible products", () => {
+  const products: readonly ShopifyProductForAutoSeoUi[] = mockProducts;
+  let selectedProductIds: string[] = [];
+
+  const filteredProducts = filterAutoSeoProducts(products, {
+    searchQuery: "",
+    statusFilter: "all",
+    decisionFilter: "all",
+    decisions: {},
+    selectedProductIds,
+  });
+
+  // Batch Select All semantics via selectAllVisibleProducts helper
+  selectedProductIds = selectAllVisibleProducts(selectedProductIds, filteredProducts);
+
+  assert.equal(selectedProductIds.length, 3);
+  assert.deepEqual(selectedProductIds, [
+    "gid://shopify/Product/101",
+    "gid://shopify/Product/102",
+    "gid://shopify/Product/103",
+  ]);
+});
+
+test("AutoSeo Selection: Select All under ACTIVE filter selects only ACTIVE visible products", () => {
+  const products: readonly ShopifyProductForAutoSeoUi[] = mockProducts;
+  let selectedProductIds: string[] = [];
+
+  const filteredProducts = filterAutoSeoProducts(products, {
+    searchQuery: "",
+    statusFilter: "ACTIVE",
+    decisionFilter: "all",
+    decisions: {},
+    selectedProductIds,
+  });
+
+  // Batch Select All semantics via selectAllVisibleProducts helper
+  selectedProductIds = selectAllVisibleProducts(selectedProductIds, filteredProducts);
+
+  assert.equal(selectedProductIds.length, 2);
+  assert.deepEqual(selectedProductIds, [
+    "gid://shopify/Product/101",
+    "gid://shopify/Product/102",
+  ]);
+  assert.ok(!selectedProductIds.includes("gid://shopify/Product/103"));
+});
+
+test("AutoSeo Selection: Select All preserves selections outside current filter", () => {
+  const products: readonly ShopifyProductForAutoSeoUi[] = mockProducts;
+  // Product 103 (DRAFT) is already selected
+  let selectedProductIds: string[] = ["gid://shopify/Product/103"];
+
+  // Filter to ACTIVE (displays 101 and 102)
+  const filteredProducts = filterAutoSeoProducts(products, {
+    searchQuery: "",
+    statusFilter: "ACTIVE",
+    decisionFilter: "all",
+    decisions: {},
+    selectedProductIds,
+  });
+
+  // Batch Select All semantics via selectAllVisibleProducts helper (union semantics)
+  selectedProductIds = selectAllVisibleProducts(selectedProductIds, filteredProducts);
+
+  // Both ACTIVE products (101, 102) plus the previously selected DRAFT product (103) are selected
+  assert.equal(selectedProductIds.length, 3);
+  assert.ok(selectedProductIds.includes("gid://shopify/Product/103"));
+  assert.ok(selectedProductIds.includes("gid://shopify/Product/101"));
+  assert.ok(selectedProductIds.includes("gid://shopify/Product/102"));
+});
+
+test("AutoSeo Selection: Clear Selection under ACTIVE filter removes only visible ACTIVE products", () => {
+  const products: readonly ShopifyProductForAutoSeoUi[] = mockProducts;
+  // Products 101 (ACTIVE) and 103 (DRAFT) are selected
+  let selectedProductIds: string[] = [
+    "gid://shopify/Product/101",
+    "gid://shopify/Product/103",
+  ];
+
+  // Filter to ACTIVE (displays 101, 102)
+  const filteredProducts = filterAutoSeoProducts(products, {
+    searchQuery: "",
+    statusFilter: "ACTIVE",
+    decisionFilter: "all",
+    decisions: {},
+    selectedProductIds,
+  });
+
+  // Batch Clear Selection semantics via clearVisibleProductsSelection helper
+  selectedProductIds = clearVisibleProductsSelection(selectedProductIds, filteredProducts);
+
+  // Product 101 (visible ACTIVE) is removed, product 103 (DRAFT) remains selected
+  assert.ok(!selectedProductIds.includes("gid://shopify/Product/101"));
+  assert.ok(selectedProductIds.includes("gid://shopify/Product/103"));
+});
+
+test("AutoSeo Selection: Clear Selection preserves selected DRAFT/ARCHIVED products outside filter", () => {
+  const products: readonly ShopifyProductForAutoSeoUi[] = [
+    ...mockProducts,
+    {
+      id: "gid://shopify/Product/104",
+      title: "Vintage Denim Jacket",
+      handle: "vintage-denim-jacket",
+      status: "ARCHIVED",
+      images: [],
+    },
+  ];
+
+  // 101 (ACTIVE), 103 (DRAFT), 104 (ARCHIVED) are selected
+  let selectedProductIds: string[] = [
+    "gid://shopify/Product/101",
+    "gid://shopify/Product/103",
+    "gid://shopify/Product/104",
+  ];
+
+  // Filter to ACTIVE
+  const filteredProducts = filterAutoSeoProducts(products, {
+    searchQuery: "",
+    statusFilter: "ACTIVE",
+    decisionFilter: "all",
+    decisions: {},
+    selectedProductIds,
+  });
+
+  // Clear Selection for visible ACTIVE products via clearVisibleProductsSelection helper
+  selectedProductIds = clearVisibleProductsSelection(selectedProductIds, filteredProducts);
+
+  // Product 101 removed, but 103 (DRAFT) and 104 (ARCHIVED) remain selected
+  assert.equal(selectedProductIds.length, 2);
+  assert.deepEqual(selectedProductIds, [
+    "gid://shopify/Product/103",
+    "gid://shopify/Product/104",
+  ]);
+});
+
+test("AutoSeo Selection: filtering to 'Đã chọn' then clearing visible products updates correctly", () => {
+  const products: readonly ShopifyProductForAutoSeoUi[] = mockProducts;
+  let selectedProductIds: string[] = [
+    "gid://shopify/Product/101",
+    "gid://shopify/Product/102",
+  ];
+
+  // Filter to "selected"
+  let filteredProducts = filterAutoSeoProducts(products, {
+    searchQuery: "",
+    statusFilter: "all",
+    decisionFilter: "selected",
+    decisions: {},
+    selectedProductIds,
+  });
+  assert.equal(filteredProducts.length, 2);
+
+  // Clear visible products via clearVisibleProductsSelection helper
+  selectedProductIds = clearVisibleProductsSelection(selectedProductIds, filteredProducts);
+  assert.equal(selectedProductIds.length, 0);
+
+  // Re-filtering with updated selection
+  filteredProducts = filterAutoSeoProducts(products, {
+    searchQuery: "",
+    statusFilter: "all",
+    decisionFilter: "selected",
+    decisions: {},
+    selectedProductIds,
+  });
+  assert.equal(filteredProducts.length, 0);
+});
+
+test("ProductSelectionTable & Toolbar: visible product count is correct", () => {
+  const products: readonly ShopifyProductForAutoSeoUi[] = [
+    ...mockProducts,
+    {
+      id: "gid://shopify/Product/104",
+      title: "Vintage Denim Jacket",
+      handle: "vintage-denim-jacket",
+      status: "ARCHIVED",
+      images: [],
+    },
+  ];
+
+  const { html: tableHtml } = renderTable({
+    products,
+    selectedProductIds: [],
+    statusFilter: "ACTIVE",
+  });
+  // 2 active out of 4 total products
+  assert.ok(tableHtml.includes("Hiển thị 2 / 4 sản phẩm"));
+
+  // AutoSeoToolbar rendering visible count
+  const toolbarHtml = renderToStaticMarkup(
+    React.createElement(AutoSeoToolbar, {
+      isLoadingProducts: false,
+      isRunningAutoSeo: false,
+      totalProductsCount: 4,
+      selectedCount: 2,
+      visibleProductsCount: 2,
+      onLoadProducts: () => {},
+      onSelectAll: () => {},
+      onClearSelection: () => {},
+      onRunAutoSeo: () => {},
+    }),
+  );
+  assert.ok(toolbarHtml.includes("Chọn tất cả (2)"));
+  assert.ok(toolbarHtml.includes("Bỏ chọn (2)"));
+});
+
+test("ProductSelectionTable: status filter counts reflect total loaded products before filter", () => {
+  const products: readonly ShopifyProductForAutoSeoUi[] = [
+    ...mockProducts,
+    {
+      id: "gid://shopify/Product/104",
+      title: "Vintage Denim Jacket",
+      handle: "vintage-denim-jacket",
+      status: "ARCHIVED",
+      images: [],
+    },
+  ];
+
+  // When filtered to ACTIVE, the status filter tabs still show counts across ALL products
+  const { html } = renderTable({
+    products,
+    selectedProductIds: [],
+    statusFilter: "ACTIVE",
+  });
+
+  assert.ok(html.includes("Tất cả (4)"));
+  assert.ok(html.includes("Active (2)"));
+  assert.ok(html.includes("Draft (1)"));
+  assert.ok(html.includes("Archived (1)"));
+});
+
+test("AutoSeoToolbar: disables both batch buttons when visibleProductsCount is 0 and enables when positive", () => {
+  const toolbarZero = AutoSeoToolbar({
+    isLoadingProducts: false,
+    isRunningAutoSeo: false,
+    totalProductsCount: 4,
+    selectedCount: 2,
+    visibleProductsCount: 0,
+    onLoadProducts: () => {},
+    onSelectAll: () => {},
+    onClearSelection: () => {},
+    onRunAutoSeo: () => {},
+  });
+
+  const zeroChildren = React.Children.toArray(toolbarZero.props.children);
+  const zeroActionsRow = zeroChildren[1] as React.ReactElement<{ children: React.ReactNode[] }>;
+  const zeroButtonGroup = React.Children.toArray(zeroActionsRow.props.children)[0] as React.ReactElement<{ children: React.ReactNode[] }>;
+  const zeroButtons = React.Children.toArray(zeroButtonGroup.props.children) as React.ReactElement<{ title?: string; disabled?: boolean }>[];
+
+  const selectAllZero = zeroButtons[1];
+  const clearZero = zeroButtons[2];
+  assert.equal(selectAllZero.props.disabled, true, "Select All must be disabled when visibleProductsCount is 0");
+  assert.equal(clearZero.props.disabled, true, "Clear Selection must be disabled when visibleProductsCount is 0");
+
+  const toolbarPositive = AutoSeoToolbar({
+    isLoadingProducts: false,
+    isRunningAutoSeo: false,
+    totalProductsCount: 4,
+    selectedCount: 0,
+    visibleProductsCount: 3,
+    onLoadProducts: () => {},
+    onSelectAll: () => {},
+    onClearSelection: () => {},
+    onRunAutoSeo: () => {},
+  });
+
+  const posChildren = React.Children.toArray(toolbarPositive.props.children);
+  const posActionsRow = posChildren[1] as React.ReactElement<{ children: React.ReactNode[] }>;
+  const posButtonGroup = React.Children.toArray(posActionsRow.props.children)[0] as React.ReactElement<{ children: React.ReactNode[] }>;
+  const posButtons = React.Children.toArray(posButtonGroup.props.children) as React.ReactElement<{ title?: string; disabled?: boolean }>[];
+
+  const selectAllPos = posButtons[1];
+  assert.equal(selectAllPos.props.disabled, false, "Select All must be enabled when visibleProductsCount > 0");
+
+  // Also verify HTML markup has the exact labels
+  const toolbarZeroHtml = renderToStaticMarkup(React.createElement(() => toolbarZero));
+  assert.ok(toolbarZeroHtml.includes("Chọn tất cả (0)"));
+  assert.ok(toolbarZeroHtml.includes("Bỏ chọn (0)"));
+});
+
+test("filterAutoSeoProducts: matches status case-insensitively ('active' matches 'ACTIVE')", () => {
+  const products: readonly ShopifyProductForAutoSeoUi[] = [
+    {
+      id: "gid://shopify/Product/201",
+      title: "Lowercase Active Product",
+      handle: "lowercase-active",
+      status: "active",
+    },
+    {
+      id: "gid://shopify/Product/202",
+      title: "Mixed Case Draft Product",
+      handle: "mixed-draft",
+      status: "Draft",
+    },
+  ];
+
+  const activeFiltered = filterAutoSeoProducts(products, {
+    searchQuery: "",
+    statusFilter: "ACTIVE",
+    decisionFilter: "all",
+    decisions: {},
+    selectedProductIds: [],
+  });
+  assert.equal(activeFiltered.length, 1);
+  assert.equal(activeFiltered[0]?.id, "gid://shopify/Product/201");
+
+  const draftFiltered = filterAutoSeoProducts(products, {
+    searchQuery: "",
+    statusFilter: "DRAFT",
+    decisionFilter: "all",
+    decisions: {},
+    selectedProductIds: [],
+  });
+  assert.equal(draftFiltered.length, 1);
+  assert.equal(draftFiltered[0]?.id, "gid://shopify/Product/202");
+});
+
+test("filterAutoSeoProducts: safely handles nullish or missing product properties without error", () => {
+  const products: readonly ShopifyProductForAutoSeoUi[] = [
+    {
+      id: "gid://shopify/Product/301",
+      title: undefined as unknown as string,
+      handle: undefined as unknown as string,
+      status: undefined,
+      tags: undefined,
+    },
+    {
+      id: "gid://shopify/Product/302",
+      title: "Valid Title",
+      handle: "valid-handle",
+      status: "ACTIVE",
+    },
+  ];
+
+  // Should not throw TypeError on search
+  const searched = filterAutoSeoProducts(products, {
+    searchQuery: "valid",
+    statusFilter: "all",
+    decisionFilter: "all",
+    decisions: {},
+    selectedProductIds: [],
+  });
+  assert.equal(searched.length, 1);
+  assert.equal(searched[0]?.id, "gid://shopify/Product/302");
+});
+
+test("AutoSeoPage: binds toolbar counts and product selection table correctly", () => {
+  let capturedTree: React.ReactElement<{ children: React.ReactNode[] }> | null = null;
+
+  function PageHarness(): React.JSX.Element {
+    const tree = AutoSeoPage({
+      initialProducts: mockProducts,
+      initialSelectedProductIds: ["gid://shopify/Product/103"],
+    });
+    capturedTree = tree as React.ReactElement<{ children: React.ReactNode[] }>;
+    return tree;
+  }
+
+  const html = renderToStaticMarkup(React.createElement(PageHarness));
+  assert.ok(html.includes("Auto SEO Product Selection"));
+
+  const children = React.Children.toArray(capturedTree!.props.children);
+  const toolbarElement = children.find(
+    (c): c is React.ReactElement<AutoSeoToolbarProps> =>
+      React.isValidElement(c) && typeof c.type === "function" && c.type.name === "AutoSeoToolbar",
+  );
+  assert.ok(toolbarElement, "AutoSeoToolbar must be rendered by AutoSeoPage");
+  assert.equal(toolbarElement.props.totalProductsCount, 3);
+  assert.equal(toolbarElement.props.selectedCount, 1);
+  assert.equal(toolbarElement.props.visibleProductsCount, 3);
+
+  const tableElement = children.find(
+    (c): c is React.ReactElement<ProductSelectionTableProps> =>
+      React.isValidElement(c) && typeof c.type === "function" && c.type.name === "ProductSelectionTable",
+  );
+  assert.ok(tableElement, "ProductSelectionTable must be rendered by AutoSeoPage");
+  assert.equal(tableElement.props.products.length, 3);
+  assert.equal(tableElement.props.statusFilter, "all");
+  assert.equal(tableElement.props.filteredProducts?.length, 3);
+});
+
+test("AutoSeoPage: renders full page without crashing", () => {
+  const dummyClient = {
+    loadProducts: async () => mockProducts,
+    runAutoSeo: async () => ({
+      workflowId: "test",
+      selectedCount: 0,
+      seoContentInputs: [],
+      warnings: [],
+    }),
+  };
+
+  const html = renderToStaticMarkup(React.createElement(AutoSeoPage, { client: dummyClient }));
+  assert.ok(html.includes("Auto SEO Product Selection"));
+  assert.ok(html.includes("Quy trình chọn lọc"));
 });

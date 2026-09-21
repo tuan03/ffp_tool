@@ -29,7 +29,8 @@ export type GatewayErrorCode =
   | "SHOPIFY_NOT_FOUND"
   | "SHOPIFY_INVALID_INPUT"
   | "NOT_IMPLEMENTED"
-  | "SHOPIFY_UNKNOWN_WRITE_STATE";
+  | "SHOPIFY_UNKNOWN_WRITE_STATE"
+  | "SHOPIFY_PARTIAL_WRITE";
 
 export interface GatewayRequest<TPayload = unknown> {
   readonly storeId?: string;
@@ -52,6 +53,7 @@ export interface GatewayErrorDetails {
   readonly retryAfterSeconds?: number;
   readonly fields?: readonly string[];
   readonly retryable?: boolean;
+  readonly reconciliationRequired?: boolean;
   readonly details?: Record<string, unknown>;
 }
 
@@ -122,22 +124,25 @@ export interface ProductVariantSummary {
 export interface ProductImageSummary {
   readonly id?: string;
   readonly url: string;
-  readonly altText?: string | null;
-  readonly width?: number | null;
-  readonly height?: number | null;
+  readonly altText?: string;
+  readonly width?: number;
+  readonly height?: number;
 }
 
 export interface ProductSummary {
   readonly id: string;
   readonly title: string;
   readonly handle: string;
+  readonly description?: string;
   readonly descriptionHtml?: string;
   readonly status: "ACTIVE" | "ARCHIVED" | "DRAFT";
   readonly vendor?: string;
   readonly productType?: string;
   readonly tags: readonly string[];
-  readonly variants: readonly ProductVariantSummary[];
+  readonly onlineStoreUrl?: string;
+  readonly featuredImage?: ProductImageSummary;
   readonly images?: readonly ProductImageSummary[];
+  readonly variants: readonly ProductVariantSummary[];
   readonly seo?: { readonly title?: string; readonly description?: string };
   readonly createdAt: string;
   readonly updatedAt: string;

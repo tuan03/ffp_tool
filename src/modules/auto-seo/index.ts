@@ -29,6 +29,7 @@ export type {
   ShopifyProductForAutoSeoUi,
   ShopifyProductImage,
   ShopifyProductVariant,
+  ShopifyStatusFilter,
 } from "./types";
 
 export { AutoSeoPage } from "./ui/AutoSeoPage";

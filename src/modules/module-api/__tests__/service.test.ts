@@ -65,6 +65,30 @@ test("Module API mock runner executes products.list with filtering", async () =>
   assert.equal(allResponse.success, true);
   assert.equal(allResponse.data.products.length, 3);
   assert.ok(allResponse.data.pageInfo);
+  assert.equal(allResponse.data.products[0]?.description, "Comfortable everyday 100% cotton t-shirt.");
+  assert.equal(
+    allResponse.data.products[0]?.onlineStoreUrl,
+    "https://quickstart-demo.myshopify.com/products/classic-cotton-t-shirt",
+  );
+  assert.deepEqual(allResponse.data.products[0]?.featuredImage, {
+    id: "gid://shopify/ProductImage/5001",
+    url: "https://cdn.shopify.com/s/files/1/0001/products/tshirt-front.jpg",
+    altText: "Classic Cotton T-Shirt front view",
+    width: 1000,
+    height: 1000,
+  });
+  assert.equal(allResponse.data.products[0]?.images?.length, 2);
+  assert.deepEqual(allResponse.data.products[0]?.images?.[0], {
+    id: "gid://shopify/ProductImage/5001",
+    url: "https://cdn.shopify.com/s/files/1/0001/products/tshirt-front.jpg",
+    altText: "Classic Cotton T-Shirt front view",
+    width: 1000,
+    height: 1000,
+  });
+  assert.deepEqual(allResponse.data.products[0]?.seo, {
+    title: "Classic Cotton T-Shirt | Acme Apparel",
+    description: "Comfortable everyday 100% cotton t-shirt for all seasons.",
+  });
 
   const activeResponse = await runMockModuleApi({
     storeId: "store-101",
@@ -95,6 +119,37 @@ test("Module API mock runner executes products.get", async () => {
   assert.equal(foundResponse.success, true);
   assert.notEqual(foundResponse.data.product, null);
   assert.equal(foundResponse.data.product?.title, "Classic Cotton T-Shirt");
+  assert.equal(foundResponse.data.product?.description, "Comfortable everyday 100% cotton t-shirt.");
+  assert.equal(
+    foundResponse.data.product?.onlineStoreUrl,
+    "https://quickstart-demo.myshopify.com/products/classic-cotton-t-shirt",
+  );
+  assert.deepEqual(foundResponse.data.product?.featuredImage, {
+    id: "gid://shopify/ProductImage/5001",
+    url: "https://cdn.shopify.com/s/files/1/0001/products/tshirt-front.jpg",
+    altText: "Classic Cotton T-Shirt front view",
+    width: 1000,
+    height: 1000,
+  });
+  assert.equal(foundResponse.data.product?.images?.length, 2);
+  assert.deepEqual(foundResponse.data.product?.images?.[0], {
+    id: "gid://shopify/ProductImage/5001",
+    url: "https://cdn.shopify.com/s/files/1/0001/products/tshirt-front.jpg",
+    altText: "Classic Cotton T-Shirt front view",
+    width: 1000,
+    height: 1000,
+  });
+  assert.deepEqual(foundResponse.data.product?.images?.[1], {
+    id: "gid://shopify/ProductImage/5002",
+    url: "https://cdn.shopify.com/s/files/1/0001/products/tshirt-back.jpg",
+    altText: "Classic Cotton T-Shirt back view",
+    width: 1000,
+    height: 1000,
+  });
+  assert.deepEqual(foundResponse.data.product?.seo, {
+    title: "Classic Cotton T-Shirt | Acme Apparel",
+    description: "Comfortable everyday 100% cotton t-shirt for all seasons.",
+  });
 
   const notFoundResponse = await runMockModuleApi({
     storeId: "store-101",
@@ -142,6 +197,86 @@ test("Module API mock runner executes products.update", async () => {
   assert.equal(response.success, true);
   assert.equal(response.data.product.id, "gid://shopify/Product/1001");
   assert.equal(response.data.product.title, "Updated Cotton T-Shirt");
+});
+
+test("Module API mock runner executes products.create and products.update with images, url, and description", async () => {
+  const createRes = await runMockModuleApi({
+    storeId: "store-101",
+    operation: "products.create",
+    mode: "apply",
+    payload: {
+      product: {
+        title: "Image Hoodie",
+        description: "Graphic hoodie with print",
+        onlineStoreUrl: "https://quickstart-demo.myshopify.com/products/image-hoodie",
+        featuredImage: {
+          id: "gid://shopify/ProductImage/9001",
+          url: "https://cdn.shopify.com/hoodie-front.jpg",
+          altText: "Front",
+          width: 800,
+          height: 800,
+        },
+        images: [
+          {
+            id: "gid://shopify/ProductImage/9001",
+            url: "https://cdn.shopify.com/hoodie-front.jpg",
+            altText: "Front",
+            width: 800,
+            height: 800,
+          },
+          {
+            id: "gid://shopify/ProductImage/9002",
+            url: "https://cdn.shopify.com/hoodie-back.jpg",
+            altText: "Back",
+            width: 800,
+            height: 800,
+          },
+        ],
+      },
+    },
+  });
+
+  assert.equal(createRes.success, true);
+  assert.equal(createRes.data.product.description, "Graphic hoodie with print");
+  assert.equal(createRes.data.product.onlineStoreUrl, "https://quickstart-demo.myshopify.com/products/image-hoodie");
+  assert.deepEqual(createRes.data.product.featuredImage, {
+    id: "gid://shopify/ProductImage/9001",
+    url: "https://cdn.shopify.com/hoodie-front.jpg",
+    altText: "Front",
+    width: 800,
+    height: 800,
+  });
+  assert.equal(createRes.data.product.images?.length, 2);
+
+  const updateRes = await runMockModuleApi({
+    storeId: "store-101",
+    operation: "products.update",
+    mode: "apply",
+    payload: {
+      id: "gid://shopify/Product/1001",
+      product: {
+        title: "Updated Cotton T-Shirt",
+        description: "Updated description text",
+        featuredImage: {
+          id: "gid://shopify/ProductImage/5002",
+          url: "https://cdn.shopify.com/s/files/1/0001/products/tshirt-back.jpg",
+          altText: "Updated Featured",
+          width: 1000,
+          height: 1000,
+        },
+      },
+    },
+  });
+
+  assert.equal(updateRes.success, true);
+  assert.equal(updateRes.data.product.description, "Updated description text");
+  assert.deepEqual(updateRes.data.product.featuredImage, {
+    id: "gid://shopify/ProductImage/5002",
+    url: "https://cdn.shopify.com/s/files/1/0001/products/tshirt-back.jpg",
+    altText: "Updated Featured",
+    width: 1000,
+    height: 1000,
+  });
 });
 
 test("Module API mock runner executes products.bulkUpdate", async () => {
@@ -273,6 +408,10 @@ test("Module API mock runner executes collections.list and collections.get", asy
 
   assert.equal(listResponse.success, true);
   assert.equal(listResponse.data.collections.length, 2);
+  assert.deepEqual(listResponse.data.collections[0]?.seo, {
+    title: "Summer Collection | Quickstart Demo Store",
+    description: "Curated summer essentials and warm-weather apparel.",
+  });
 
   const getResponse = await runMockModuleApi({
     storeId: "store-101",
@@ -283,6 +422,10 @@ test("Module API mock runner executes collections.list and collections.get", asy
   assert.equal(getResponse.success, true);
   assert.notEqual(getResponse.data.collection, null);
   assert.equal(getResponse.data.collection?.title, "Summer Collection");
+  assert.deepEqual(getResponse.data.collection?.seo, {
+    title: "Summer Collection | Quickstart Demo Store",
+    description: "Curated summer essentials and warm-weather apparel.",
+  });
 });
 
 test("Module API mock runner executes collections.create, update, delete, and updateMembership", async () => {
@@ -694,9 +837,32 @@ test("Real service executes products.list response success", async () => {
               id: "gid://shopify/Product/1",
               title: "Product 1",
               handle: "product-1",
+              description: "Product 1 plain text description",
+              descriptionHtml: "<p>Product 1 plain text description</p>",
               status: "ACTIVE",
               tags: ["tag1"],
+              onlineStoreUrl: "https://store-42.myshopify.com/products/product-1",
+              featuredImage: {
+                id: "gid://shopify/ProductImage/1",
+                url: "https://cdn.shopify.com/product-1.jpg",
+                altText: "Product 1 Alt",
+                width: 600,
+                height: 600,
+              },
+              images: [
+                {
+                  id: "gid://shopify/ProductImage/1",
+                  url: "https://cdn.shopify.com/product-1.jpg",
+                  altText: "Product 1 Alt",
+                  width: 600,
+                  height: 600,
+                },
+              ],
               variants: [],
+              seo: {
+                title: "Product 1 SEO Title",
+                description: "Product 1 SEO Description",
+              },
               createdAt: "2026-01-01T00:00:00Z",
               updatedAt: "2026-01-01T00:00:00Z",
             },
@@ -726,6 +892,27 @@ test("Real service executes products.list response success", async () => {
   assert.equal(response.operation, "products.list");
   assert.equal(response.data.products.length, 1);
   assert.equal(response.data.products[0].title, "Product 1");
+  assert.equal(response.data.products[0].description, "Product 1 plain text description");
+  assert.equal(response.data.products[0].onlineStoreUrl, "https://store-42.myshopify.com/products/product-1");
+  assert.deepEqual(response.data.products[0].featuredImage, {
+    id: "gid://shopify/ProductImage/1",
+    url: "https://cdn.shopify.com/product-1.jpg",
+    altText: "Product 1 Alt",
+    width: 600,
+    height: 600,
+  });
+  assert.equal(response.data.products[0].images?.length, 1);
+  assert.deepEqual(response.data.products[0].images?.[0], {
+    id: "gid://shopify/ProductImage/1",
+    url: "https://cdn.shopify.com/product-1.jpg",
+    altText: "Product 1 Alt",
+    width: 600,
+    height: 600,
+  });
+  assert.deepEqual(response.data.products[0].seo, {
+    title: "Product 1 SEO Title",
+    description: "Product 1 SEO Description",
+  });
   assert.equal(response.data.pageInfo.hasNextPage, false);
 });
 
@@ -741,9 +928,39 @@ test("Real service executes products.get response success", async () => {
             id: "gid://shopify/Product/1",
             title: "Product 1",
             handle: "product-1",
+            description: "Product 1 plain text description",
+            descriptionHtml: "<p>Product 1 plain text description</p>",
             status: "ACTIVE",
             tags: [],
+            onlineStoreUrl: "https://store-42.myshopify.com/products/product-1",
+            featuredImage: {
+              id: "gid://shopify/ProductImage/10",
+              url: "https://cdn.shopify.com/p1-featured.jpg",
+              altText: "Featured Image",
+              width: 800,
+              height: 800,
+            },
+            images: [
+              {
+                id: "gid://shopify/ProductImage/10",
+                url: "https://cdn.shopify.com/p1-featured.jpg",
+                altText: "Featured Image",
+                width: 800,
+                height: 800,
+              },
+              {
+                id: "gid://shopify/ProductImage/11",
+                url: "https://cdn.shopify.com/p1-extra.jpg",
+                altText: "Extra Image",
+                width: 800,
+                height: 800,
+              },
+            ],
             variants: [],
+            seo: {
+              title: "Product 1 SEO Title",
+              description: "Product 1 SEO Description",
+            },
             createdAt: "2026-01-01T00:00:00Z",
             updatedAt: "2026-01-01T00:00:00Z",
           },
@@ -767,6 +984,34 @@ test("Real service executes products.get response success", async () => {
   assert.equal(response.success, true);
   assert.equal(response.operation, "products.get");
   assert.equal(response.data.product?.id, "gid://shopify/Product/1");
+  assert.equal(response.data.product?.description, "Product 1 plain text description");
+  assert.equal(response.data.product?.onlineStoreUrl, "https://store-42.myshopify.com/products/product-1");
+  assert.deepEqual(response.data.product?.featuredImage, {
+    id: "gid://shopify/ProductImage/10",
+    url: "https://cdn.shopify.com/p1-featured.jpg",
+    altText: "Featured Image",
+    width: 800,
+    height: 800,
+  });
+  assert.equal(response.data.product?.images?.length, 2);
+  assert.deepEqual(response.data.product?.images?.[0], {
+    id: "gid://shopify/ProductImage/10",
+    url: "https://cdn.shopify.com/p1-featured.jpg",
+    altText: "Featured Image",
+    width: 800,
+    height: 800,
+  });
+  assert.deepEqual(response.data.product?.images?.[1], {
+    id: "gid://shopify/ProductImage/11",
+    url: "https://cdn.shopify.com/p1-extra.jpg",
+    altText: "Extra Image",
+    width: 800,
+    height: 800,
+  });
+  assert.deepEqual(response.data.product?.seo, {
+    title: "Product 1 SEO Title",
+    description: "Product 1 SEO Description",
+  });
 });
 
 test("Real service executes collections.list response success", async () => {
@@ -783,6 +1028,10 @@ test("Real service executes collections.list response success", async () => {
               title: "Summer Collection",
               handle: "summer",
               productsCount: 5,
+              seo: {
+                title: "Summer Collection SEO Title",
+                description: "Summer Collection SEO Description",
+              },
               updatedAt: "2026-01-01T00:00:00Z",
             },
           ],
@@ -811,6 +1060,10 @@ test("Real service executes collections.list response success", async () => {
   assert.equal(response.operation, "collections.list");
   assert.equal(response.data.collections.length, 1);
   assert.equal(response.data.collections[0].title, "Summer Collection");
+  assert.deepEqual(response.data.collections[0].seo, {
+    title: "Summer Collection SEO Title",
+    description: "Summer Collection SEO Description",
+  });
 });
 
 test("Real service executes connection.test success", async () => {
@@ -2091,6 +2344,108 @@ test("Real service rejects stores.get when targetStoreId is empty", async () => 
     },
   );
 });
+
+test("Real service propagates reconciliationRequired into ShopifyApiError on partial write", async () => {
+  const { fetch: fakeFetch } = createFakeFetch(async () => {
+    return new Response(
+      JSON.stringify({
+        success: false,
+        error: {
+          code: "SHOPIFY_PARTIAL_WRITE",
+          message: "Product created but variant creation failed",
+          reconciliationRequired: true,
+          details: { createdProductId: "gid://shopify/Product/part-123" },
+        },
+      }),
+      { status: 409, headers: { "Content-Type": "application/json" } },
+    );
+  });
+
+  const runner = createModuleApiRunner(
+    { gatewayUrl: "https://gateway.example.com/api" },
+    { fetch: fakeFetch },
+  );
+
+  await assert.rejects(
+    async () => {
+      await runner({
+        storeId: "store-test",
+        operation: "products.create",
+        mode: "apply",
+        payload: { product: { title: "Partially Created Product" } },
+      });
+    },
+    (err: unknown) => {
+      assert.ok(err instanceof ShopifyApiError);
+      assert.equal(err.code, "SHOPIFY_PARTIAL_WRITE");
+      assert.equal(err.reconciliationRequired, true);
+      assert.deepEqual(err.details, { createdProductId: "gid://shopify/Product/part-123" });
+      return true;
+    },
+  );
+});
+
+test("Mock runner simulates partial write with SHOPIFY_PARTIAL_WRITE and reconciliationRequired", async () => {
+  const { runMockModuleApi } = await import("../mocks/runner");
+
+  await assert.rejects(
+    async () => {
+      await runMockModuleApi({
+        storeId: "simulate-partial-write",
+        operation: "products.create",
+        payload: { product: { title: "Simulated Product" } },
+      } as unknown as ShopifyApiInput);
+    },
+    (err: unknown) => {
+      assert.ok(err instanceof ShopifyApiError);
+      assert.equal(err.code, "SHOPIFY_PARTIAL_WRITE");
+      assert.equal(err.reconciliationRequired, true);
+      assert.deepEqual(err.details, { createdProductId: "gid://shopify/Product/simulated-partial" });
+      return true;
+    },
+  );
+});
+
+test("Real service forwards X-Gateway-Key header when gatewayAuthToken is configured", async () => {
+  const { fetch: fakeFetch, requests } = createFakeFetch(async () => {
+    return new Response(
+      JSON.stringify({
+        storeId: "store-auth-test",
+        operation: "connection.test",
+        success: true,
+        data: {
+          isConnected: true,
+          connected: true,
+          shopDomain: "store-auth.myshopify.com",
+          shopName: "Auth Store",
+          currencyCode: "USD",
+        },
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  });
+
+  const runner = createModuleApiRunner(
+    {
+      gatewayUrl: "https://gateway.example.com/api",
+      gatewayAuthToken: "gw-secret-token-123",
+    },
+    { fetch: fakeFetch },
+  );
+
+  const response = await runner({
+    storeId: "store-auth-test",
+    operation: "connection.test",
+    payload: {},
+  });
+
+  assert.equal(response.success, true);
+  assert.equal(requests.length, 1);
+  const headers = requests[0].init?.headers as Record<string, string>;
+  assert.equal(headers["X-Gateway-Key"], "gw-secret-token-123");
+});
+
+
 
 
 

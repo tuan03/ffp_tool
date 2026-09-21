@@ -23,35 +23,24 @@ const PRODUCTS_LIST_QUERY = `
           id
           title
           handle
-          descriptionHtml
           status
           vendor
           productType
           tags
+          onlineStoreUrl
+          featuredImage {
+            id
+            url
+            altText
+            width
+            height
+          }
           seo {
             title
             description
           }
-          images(first: 50) {
-            nodes {
-              id
-              url
-              altText
-              width
-              height
-            }
-          }
           createdAt
           updatedAt
-          variants(first: 10) {
-            edges {
-              node {
-                id
-                title
-                price
-              }
-            }
-          }
         }
       }
     }
@@ -64,23 +53,34 @@ const PRODUCTS_GET_QUERY = `
       id
       title
       handle
+      description
       descriptionHtml
       status
       vendor
       productType
       tags
+      onlineStoreUrl
+      featuredImage {
+        id
+        url
+        altText
+        width
+        height
+      }
+      images(first: 50) {
+        edges {
+          node {
+            id
+            url
+            altText
+            width
+            height
+          }
+        }
+      }
       seo {
         title
         description
-      }
-      images(first: 100) {
-        nodes {
-          id
-          url
-          altText
-          width
-          height
-        }
       }
       createdAt
       updatedAt
@@ -110,8 +110,8 @@ export interface RawVariantNode {
 }
 
 export interface RawImageNode {
-  readonly id?: string;
-  readonly url: string;
+  readonly id?: string | null;
+  readonly url?: string | null;
   readonly altText?: string | null;
   readonly width?: number | null;
   readonly height?: number | null;
@@ -121,20 +121,36 @@ export interface RawProductNode {
   readonly id: string;
   readonly title: string;
   readonly handle: string;
+  readonly description?: string | null;
   readonly descriptionHtml?: string | null;
   readonly status: "ACTIVE" | "ARCHIVED" | "DRAFT";
   readonly vendor?: string | null;
   readonly productType?: string | null;
   readonly tags?: readonly string[] | null;
-  readonly seo?: { readonly title?: string | null; readonly description?: string | null } | null;
+  readonly onlineStoreUrl?: string | null;
+  readonly featuredImage?: RawImageNode | null;
   readonly images?: {
-    readonly nodes?: readonly RawImageNode[];
-  } | readonly RawImageNode[] | null;
+    readonly edges?: readonly { readonly node: RawImageNode }[];
+  } | null;
+  readonly seo?: { readonly title?: string | null; readonly description?: string | null } | null;
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly variants?: {
     readonly edges?: readonly { readonly node: RawVariantNode }[];
   } | null;
+}
+
+function mapImageNode(node?: RawImageNode | null): ProductImageSummary | undefined {
+  if (!node || typeof node.url !== "string" || node.url.trim() === "") {
+    return undefined;
+  }
+  return {
+    id: node.id ?? undefined,
+    url: node.url.trim(),
+    altText: node.altText ?? undefined,
+    width: typeof node.width === "number" ? node.width : undefined,
+    height: typeof node.height === "number" ? node.height : undefined,
+  };
 }
 
 export function mapProductNode(node: RawProductNode): ProductSummary {
@@ -148,40 +164,34 @@ export function mapProductNode(node: RawProductNode): ProductSummary {
     inventoryQuantity: vEdge.node.inventoryQuantity ?? undefined,
   }));
 
-  let rawImages: readonly RawImageNode[] | undefined;
-  if (Array.isArray(node.images)) {
-    rawImages = node.images;
-  } else if (node.images && "nodes" in node.images && Array.isArray(node.images.nodes)) {
-    rawImages = node.images.nodes;
-  }
-
-  const images: ProductImageSummary[] | undefined = rawImages
-    ? rawImages.map((img: RawImageNode) => ({
-        id: img.id,
-        url: img.url,
-        altText: img.altText ?? null,
-        width: img.width ?? null,
-        height: img.height ?? null,
-      }))
+  const featuredImage = mapImageNode(node.featuredImage);
+  const images = node.images?.edges
+    ? node.images.edges
+        .map((edge) => mapImageNode(edge?.node))
+        .filter((img): img is ProductImageSummary => img !== undefined)
     : undefined;
 
   return {
     id: node.id,
     title: node.title,
     handle: node.handle,
+    description: node.description ?? undefined,
     descriptionHtml: node.descriptionHtml ?? undefined,
     status: node.status,
     vendor: node.vendor ?? undefined,
     productType: node.productType ?? undefined,
     tags: node.tags ?? [],
-    variants,
+    onlineStoreUrl: node.onlineStoreUrl ?? undefined,
+    featuredImage,
     images,
-    seo: node.seo
-      ? {
-          title: node.seo.title ?? undefined,
-          description: node.seo.description ?? undefined,
-        }
-      : undefined,
+    variants,
+    seo:
+      node.seo && (node.seo.title != null || node.seo.description != null)
+        ? {
+            title: node.seo.title ?? undefined,
+            description: node.seo.description ?? undefined,
+          }
+        : undefined,
     createdAt: node.createdAt,
     updatedAt: node.updatedAt,
   };

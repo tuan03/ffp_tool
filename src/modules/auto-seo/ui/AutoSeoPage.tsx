@@ -7,22 +7,51 @@ import type {
   AutoSeoOutput,
   ProductReviewDecision,
   ShopifyProductForAutoSeoUi,
+  ShopifyStatusFilter,
 } from "../types";
 import { AutoSeoOutputPanel } from "./components/AutoSeoOutputPanel";
 import { AutoSeoToolbar } from "./components/AutoSeoToolbar";
+import {
+  clearVisibleProductsSelection,
+  filterAutoSeoProducts,
+  selectAllVisibleProducts,
+} from "./components/product-filter";
 import { ProductDetailDrawer } from "./components/ProductDetailDrawer";
 import { ProductSelectionTable } from "./components/ProductSelectionTable";
 
-interface AutoSeoPageProps {
+export interface AutoSeoPageProps {
   client?: AutoSeoClient;
+  initialProducts?: readonly ShopifyProductForAutoSeoUi[];
+  initialSelectedProductIds?: readonly string[];
 }
 
-export function AutoSeoPage({ client }: AutoSeoPageProps): React.JSX.Element {
+export function AutoSeoPage({
+  client,
+  initialProducts,
+  initialSelectedProductIds,
+}: AutoSeoPageProps): React.JSX.Element {
   const activeClient = useMemo(() => client ?? getAutoSeoClient(environment), [client, environment]);
 
-  const [products, setProducts] = useState<readonly ShopifyProductForAutoSeoUi[]>([]);
-  const [selectedProductIds, setSelectedProductIds] = useState<string[]>([]);
+  const [products, setProducts] = useState<readonly ShopifyProductForAutoSeoUi[]>(
+    () => initialProducts ?? [],
+  );
+  const [selectedProductIds, setSelectedProductIds] = useState<string[]>(() => {
+    if (initialSelectedProductIds !== undefined) {
+      return [...initialSelectedProductIds];
+    }
+    if (initialProducts && initialProducts.length > 0) {
+      const activeIds = initialProducts
+        .filter((p) => p.status?.toUpperCase() === "ACTIVE")
+        .map((p) => p.id);
+      return activeIds.length > 0 ? activeIds : initialProducts.map((p) => p.id);
+    }
+    return [];
+  });
   const [decisions, setDecisions] = useState<Record<string, ProductReviewDecision>>({});
+
+  const [searchQuery, setSearchQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<ShopifyStatusFilter>("all");
+  const [decisionFilter, setDecisionFilter] = useState<string>("all");
 
   const [isLoadingProducts, setIsLoadingProducts] = useState(false);
   const [isRunningAutoSeo, setIsRunningAutoSeo] = useState(false);
@@ -32,6 +61,16 @@ export function AutoSeoPage({ client }: AutoSeoPageProps): React.JSX.Element {
   const [isDetailOpen, setIsDetailOpen] = useState(false);
 
   const [output, setOutput] = useState<AutoSeoOutput | null>(null);
+
+  const filteredProducts = useMemo(() => {
+    return filterAutoSeoProducts(products, {
+      searchQuery,
+      statusFilter,
+      decisionFilter,
+      decisions,
+      selectedProductIds,
+    });
+  }, [products, searchQuery, statusFilter, decisionFilter, decisions, selectedProductIds]);
 
   const handleLoadProducts = useCallback(async (): Promise<void> => {
     setIsLoadingProducts(true);
@@ -44,7 +83,7 @@ export function AutoSeoPage({ client }: AutoSeoPageProps): React.JSX.Element {
       // Pre-select active products by default if none selected
       if (fetchedProducts.length > 0) {
         const activeIds = fetchedProducts
-          .filter((p) => p.status === "ACTIVE")
+          .filter((p) => p.status?.toUpperCase() === "ACTIVE")
           .map((p) => p.id);
         setSelectedProductIds(activeIds.length > 0 ? activeIds : fetchedProducts.map((p) => p.id));
       }
@@ -59,8 +98,10 @@ export function AutoSeoPage({ client }: AutoSeoPageProps): React.JSX.Element {
 
   // Load products on initial mount
   useEffect(() => {
-    void handleLoadProducts();
-  }, [handleLoadProducts]);
+    if (!initialProducts) {
+      void handleLoadProducts();
+    }
+  }, [handleLoadProducts, initialProducts]);
 
   // Approve product
   const handleApprove = (productId: string): void => {
@@ -111,15 +152,15 @@ export function AutoSeoPage({ client }: AutoSeoPageProps): React.JSX.Element {
     );
   };
 
-  // Select all
-  const handleSelectAll = (): void => {
-    setSelectedProductIds(products.map((p) => p.id));
-  };
+  // Select all currently visible / filtered products
+  const handleSelectAll = useCallback((): void => {
+    setSelectedProductIds((current) => selectAllVisibleProducts(current, filteredProducts));
+  }, [filteredProducts]);
 
-  // Clear selection
-  const handleClearSelection = (): void => {
-    setSelectedProductIds([]);
-  };
+  // Clear selection for currently visible / filtered products
+  const handleClearSelection = useCallback((): void => {
+    setSelectedProductIds((current) => clearVisibleProductsSelection(current, filteredProducts));
+  }, [filteredProducts]);
 
   // Open detail modal
   const handleOpenDetail = (product: ShopifyProductForAutoSeoUi): void => {
@@ -212,6 +253,7 @@ export function AutoSeoPage({ client }: AutoSeoPageProps): React.JSX.Element {
         isRunningAutoSeo={isRunningAutoSeo}
         totalProductsCount={products.length}
         selectedCount={selectedProductIds.length}
+        visibleProductsCount={filteredProducts.length}
         onLoadProducts={() => void handleLoadProducts()}
         onSelectAll={handleSelectAll}
         onClearSelection={handleClearSelection}
@@ -223,6 +265,13 @@ export function AutoSeoPage({ client }: AutoSeoPageProps): React.JSX.Element {
         products={products}
         selectedProductIds={selectedProductIds}
         decisions={decisions}
+        searchQuery={searchQuery}
+        onSearchQueryChange={setSearchQuery}
+        statusFilter={statusFilter}
+        onStatusFilterChange={setStatusFilter}
+        decisionFilter={decisionFilter}
+        onDecisionFilterChange={setDecisionFilter}
+        filteredProducts={filteredProducts}
         onToggleSelect={handleToggleSelect}
         onApprove={handleApprove}
         onEdit={handleEdit}

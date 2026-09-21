@@ -67,8 +67,9 @@ function cloneProduct(product: ShopifyProduct): ShopifyProduct {
     ...product,
     tags: [...product.tags],
     variants: product.variants.map(cloneVariant),
-    images: product.images ? product.images.map((img) => ({ ...img })) : undefined,
     seo: product.seo ? { ...product.seo } : undefined,
+    featuredImage: product.featuredImage ? { ...product.featuredImage } : undefined,
+    images: product.images ? product.images.map((img) => ({ ...img })) : undefined,
   };
 }
 
@@ -215,6 +216,18 @@ export async function runMockModuleApi(input: ShopifyApiInput): Promise<ShopifyA
     throw new ShopifyApiError("Simulated unknown write state", "SHOPIFY_UNKNOWN_WRITE_STATE");
   }
 
+  if (input.storeId === "simulate-partial-write") {
+    throw new ShopifyApiError(
+      "Simulated partial write",
+      "SHOPIFY_PARTIAL_WRITE",
+      undefined,
+      undefined,
+      false,
+      { createdProductId: "gid://shopify/Product/simulated-partial" },
+      true,
+    );
+  }
+
   switch (input.operation) {
     case "connection.test": {
       return {
@@ -226,7 +239,10 @@ export async function runMockModuleApi(input: ShopifyApiInput): Promise<ShopifyA
     }
 
     case "products.list": {
-      let filtered = shopifyMockProducts.map(cloneProduct);
+      let filtered = shopifyMockProducts.map((p) => ({
+        ...cloneProduct(p),
+        variants: [],
+      }));
 
       if (input.payload.status) {
         filtered = filtered.filter((product) => product.status === input.payload.status);
@@ -300,15 +316,38 @@ export async function runMockModuleApi(input: ShopifyApiInput): Promise<ShopifyA
               },
             ];
 
+      const description =
+        input.payload.product.description ??
+        (input.payload.product.descriptionHtml
+          ? input.payload.product.descriptionHtml.replace(/<[^>]*>/g, "").trim()
+          : undefined);
+      const onlineStoreUrl =
+        input.payload.product.onlineStoreUrl ??
+        `https://quickstart-demo.myshopify.com/products/${input.payload.product.handle ?? input.payload.product.title.toLowerCase().replace(/\s+/g, "-")}`;
+      const featuredImage = input.payload.product.featuredImage
+        ? { ...input.payload.product.featuredImage }
+        : input.payload.product.images?.[0]
+        ? { ...input.payload.product.images[0] }
+        : undefined;
+      const images = input.payload.product.images
+        ? input.payload.product.images.map((img) => ({ ...img }))
+        : input.payload.product.featuredImage
+        ? [{ ...input.payload.product.featuredImage }]
+        : undefined;
+
       const newProduct: ShopifyProduct = {
         id: `gid://shopify/Product/mock-created-${shopifyMockProducts.length + 1}`,
         title: input.payload.product.title,
         handle: input.payload.product.handle ?? input.payload.product.title.toLowerCase().replace(/\s+/g, "-"),
+        description,
         descriptionHtml: input.payload.product.descriptionHtml,
         status: input.payload.product.status ?? "DRAFT",
         vendor: input.payload.product.vendor,
         productType: input.payload.product.productType,
         tags: input.payload.product.tags ? [...input.payload.product.tags] : [],
+        onlineStoreUrl,
+        featuredImage,
+        images,
         variants,
         seo: input.payload.product.seo ? { ...input.payload.product.seo } : undefined,
         createdAt: now,
@@ -328,15 +367,36 @@ export async function runMockModuleApi(input: ShopifyApiInput): Promise<ShopifyA
         throw new ShopifyApiError("Product ID is required", "SHOPIFY_USER_ERROR");
       }
       const existing = shopifyMockProducts.find((p) => p.id === input.payload.id);
+      const description =
+        input.payload.product.description ??
+        (input.payload.product.descriptionHtml !== undefined
+          ? input.payload.product.descriptionHtml.replace(/<[^>]*>/g, "").trim()
+          : existing?.description);
+      const onlineStoreUrl = input.payload.product.onlineStoreUrl ?? existing?.onlineStoreUrl;
+      const featuredImage = input.payload.product.featuredImage
+        ? { ...input.payload.product.featuredImage }
+        : existing?.featuredImage
+        ? { ...existing.featuredImage }
+        : undefined;
+      const images = input.payload.product.images
+        ? input.payload.product.images.map((img) => ({ ...img }))
+        : existing?.images
+        ? existing.images.map((img) => ({ ...img }))
+        : undefined;
+
       const updatedProduct: ShopifyProduct = {
         id: input.payload.id,
         title: input.payload.product.title ?? existing?.title ?? "Updated Product",
         handle: input.payload.product.handle ?? existing?.handle ?? "updated-product",
+        description,
         descriptionHtml: input.payload.product.descriptionHtml ?? existing?.descriptionHtml,
         status: input.payload.product.status ?? existing?.status ?? "ACTIVE",
         vendor: input.payload.product.vendor ?? existing?.vendor,
         productType: input.payload.product.productType ?? existing?.productType,
         tags: input.payload.product.tags ? [...input.payload.product.tags] : (existing?.tags ? [...existing.tags] : []),
+        onlineStoreUrl,
+        featuredImage,
+        images,
         variants: existing ? existing.variants.map(cloneVariant) : [],
         seo: input.payload.product.seo ? { ...input.payload.product.seo } : existing?.seo,
         createdAt: existing?.createdAt ?? new Date().toISOString(),

@@ -1,11 +1,25 @@
-import { useState, useMemo } from "react";
-import type { ProductReviewDecision, ShopifyProductForAutoSeoUi } from "../../types";
-import { ProductDecisionBadge } from "./ProductDecisionBadge";
+import { useMemo, useState } from "react";
 
-interface ProductSelectionTableProps {
+import { ProductDecisionBadge } from "./ProductDecisionBadge";
+import { filterAutoSeoProducts } from "./product-filter";
+
+import type {
+  ProductReviewDecision,
+  ShopifyProductForAutoSeoUi,
+  ShopifyStatusFilter,
+} from "../../types";
+
+export interface ProductSelectionTableProps {
   products: readonly ShopifyProductForAutoSeoUi[];
   selectedProductIds: readonly string[];
   decisions: Record<string, ProductReviewDecision>;
+  searchQuery?: string;
+  onSearchQueryChange?(query: string): void;
+  statusFilter?: ShopifyStatusFilter;
+  onStatusFilterChange?(status: ShopifyStatusFilter): void;
+  decisionFilter?: string;
+  onDecisionFilterChange?(decision: string): void;
+  filteredProducts?: readonly ShopifyProductForAutoSeoUi[];
   onToggleSelect(productId: string): void;
   onApprove(productId: string): void;
   onEdit(product: ShopifyProductForAutoSeoUi): void;
@@ -14,39 +28,95 @@ interface ProductSelectionTableProps {
   onOpenDetail(product: ShopifyProductForAutoSeoUi): void;
 }
 
-export function ProductSelectionTable({
-  products,
-  selectedProductIds,
-  decisions,
-  onToggleSelect,
-  onApprove,
-  onEdit,
-  onMarkDraft,
-  onSkip,
-  onOpenDetail,
-}: ProductSelectionTableProps): React.JSX.Element {
-  const [searchQuery, setSearchQuery] = useState("");
-  const [decisionFilter, setDecisionFilter] = useState<string>("all");
+export function ProductSelectionTable(props: ProductSelectionTableProps): React.JSX.Element {
+  const {
+    products,
+    selectedProductIds,
+    decisions,
+    onToggleSelect,
+    onApprove,
+    onEdit,
+    onMarkDraft,
+    onSkip,
+    onOpenDetail,
+  } = props;
 
-  const filteredProducts = useMemo(() => {
-    return products.filter((product) => {
-      const q = searchQuery.toLowerCase().trim();
-      const matchesQuery =
-        !q ||
-        product.title.toLowerCase().includes(q) ||
-        product.handle.toLowerCase().includes(q) ||
-        product.id.toLowerCase().includes(q) ||
-        (product.tags && product.tags.some((t) => t.toLowerCase().includes(q)));
+  const [internalSearchQuery, setInternalSearchQuery] = useState("");
+  const [internalStatusFilter, setInternalStatusFilter] = useState<ShopifyStatusFilter>("all");
+  const [internalDecisionFilter, setInternalDecisionFilter] = useState<string>("all");
 
-      const decision = decisions[product.id] ?? "pending";
-      const matchesDecision =
-        decisionFilter === "all" ||
-        decisionFilter === decision ||
-        (decisionFilter === "selected" && selectedProductIds.includes(product.id));
+  const searchQuery = props.searchQuery !== undefined ? props.searchQuery : internalSearchQuery;
+  const statusFilter = props.statusFilter !== undefined ? props.statusFilter : internalStatusFilter;
+  const decisionFilter = props.decisionFilter !== undefined ? props.decisionFilter : internalDecisionFilter;
 
-      return matchesQuery && matchesDecision;
+  const handleSearchQueryChange = (query: string): void => {
+    if (props.onSearchQueryChange) {
+      props.onSearchQueryChange(query);
+    } else {
+      setInternalSearchQuery(query);
+    }
+  };
+
+  const handleStatusFilterChange = (status: ShopifyStatusFilter): void => {
+    if (props.onStatusFilterChange) {
+      props.onStatusFilterChange(status);
+    } else {
+      setInternalStatusFilter(status);
+    }
+  };
+
+  const handleDecisionFilterChange = (decision: string): void => {
+    if (props.onDecisionFilterChange) {
+      props.onDecisionFilterChange(decision);
+    } else {
+      setInternalDecisionFilter(decision);
+    }
+  };
+
+  const statusCounts = useMemo(() => {
+    let active = 0;
+    let draft = 0;
+    let archived = 0;
+
+    for (const product of products) {
+      const status = (product.status ?? "").toUpperCase();
+      if (status === "ACTIVE") {
+        active++;
+      } else if (status === "DRAFT") {
+        draft++;
+      } else if (status === "ARCHIVED") {
+        archived++;
+      }
+    }
+
+    return {
+      all: products.length,
+      ACTIVE: active,
+      DRAFT: draft,
+      ARCHIVED: archived,
+    };
+  }, [products]);
+
+  const displayProducts = useMemo(() => {
+    if (props.filteredProducts !== undefined) {
+      return props.filteredProducts;
+    }
+    return filterAutoSeoProducts(products, {
+      searchQuery,
+      statusFilter,
+      decisionFilter,
+      decisions,
+      selectedProductIds,
     });
-  }, [products, searchQuery, decisionFilter, decisions, selectedProductIds]);
+  }, [
+    props.filteredProducts,
+    products,
+    searchQuery,
+    statusFilter,
+    decisionFilter,
+    decisions,
+    selectedProductIds,
+  ]);
 
   if (products.length === 0) {
     return (
@@ -62,43 +132,79 @@ export function ProductSelectionTable({
     );
   }
 
+  const statusTabs: readonly { readonly id: ShopifyStatusFilter; readonly label: string }[] = [
+    { id: "all", label: `Tất cả (${statusCounts.all})` },
+    { id: "ACTIVE", label: `Active (${statusCounts.ACTIVE})` },
+    { id: "DRAFT", label: `Draft (${statusCounts.DRAFT})` },
+    { id: "ARCHIVED", label: `Archived (${statusCounts.ARCHIVED})` },
+  ];
+
+  const decisionTabs: readonly { readonly id: string; readonly label: string }[] = [
+    { id: "all", label: "Tất cả" },
+    { id: "selected", label: `Đã chọn (${selectedProductIds.length})` },
+    { id: "approved", label: "Đã duyệt" },
+    { id: "needs_edit", label: "Cần sửa" },
+    { id: "mark_draft", label: "Draft" },
+    { id: "skipped", label: "Bỏ qua" },
+  ];
+
   return (
     <div className="rounded-xl border border-slate-800 bg-slate-900/60 shadow-xl overflow-hidden backdrop-blur-sm">
       {/* Table Filter Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 p-4 bg-slate-900/90">
-        <div className="relative flex-1 max-w-sm">
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Tìm theo tiêu đề, handle, ID..."
-            className="w-full rounded-lg border border-slate-700 bg-slate-950/80 px-3 py-1.5 text-xs text-slate-100 placeholder-slate-500 focus:border-cyan-500 focus:outline-hidden"
-          />
-          {searchQuery && (
-            <button
-              type="button"
-              onClick={() => setSearchQuery("")}
-              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-slate-500 hover:text-slate-300"
-            >
-              ✕
-            </button>
-          )}
+      <div className="border-b border-slate-800 p-4 bg-slate-900/90 space-y-3">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+          {/* Search Input */}
+          <div className="relative flex-1 max-w-sm">
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => handleSearchQueryChange(e.target.value)}
+              placeholder="Tìm theo tiêu đề, handle, ID..."
+              className="w-full rounded-lg border border-slate-700 bg-slate-950/80 px-3 py-1.5 text-xs text-slate-100 placeholder-slate-500 focus:border-cyan-500 focus:outline-hidden"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => handleSearchQueryChange("")}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-slate-500 hover:text-slate-300"
+              >
+                ✕
+              </button>
+            )}
+          </div>
+
+          {/* Shopify Status Filter Group */}
+          <div className="flex flex-wrap items-center gap-1.5 text-xs">
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 mr-1">
+              Status:
+            </span>
+            {statusTabs.map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => handleStatusFilterChange(tab.id)}
+                className={`rounded-md px-2.5 py-1 transition ${
+                  statusFilter === tab.id
+                    ? "bg-cyan-950 border border-cyan-700 text-cyan-300 font-semibold"
+                    : "bg-slate-800/60 border border-slate-800 text-slate-400 hover:bg-slate-800 hover:text-slate-200"
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
         </div>
 
-        {/* Filter Tabs */}
-        <div className="flex flex-wrap items-center gap-1.5 text-xs">
-          {[
-            { id: "all", label: "Tất cả" },
-            { id: "selected", label: `Đã chọn (${selectedProductIds.length})` },
-            { id: "approved", label: "Đã duyệt" },
-            { id: "needs_edit", label: "Cần sửa" },
-            { id: "mark_draft", label: "Draft" },
-            { id: "skipped", label: "Bỏ qua" },
-          ].map((tab) => (
+        {/* Review Decision Filter Row */}
+        <div className="flex flex-wrap items-center gap-1.5 text-xs pt-2 border-t border-slate-800/60">
+          <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 mr-1">
+            Quyết định:
+          </span>
+          {decisionTabs.map((tab) => (
             <button
               key={tab.id}
               type="button"
-              onClick={() => setDecisionFilter(tab.id)}
+              onClick={() => handleDecisionFilterChange(tab.id)}
               className={`rounded-md px-2.5 py-1 transition ${
                 decisionFilter === tab.id
                   ? "bg-cyan-950 border border-cyan-700 text-cyan-300 font-semibold"
@@ -130,10 +236,18 @@ export function ProductSelectionTable({
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-800/60">
-            {filteredProducts.map((product, index) => {
+            {displayProducts.length === 0 ? (
+              <tr>
+                <td colSpan={9} className="py-12 text-center text-slate-500 text-xs">
+                  Không có sản phẩm nào phù hợp với bộ lọc hiện tại.
+                </td>
+              </tr>
+            ) : (
+              displayProducts.map((product, index) => {
               const isSelected = selectedProductIds.includes(product.id);
               const decision = decisions[product.id] ?? "pending";
               const thumbnailUrl = product.images?.[0]?.url;
+              const upperStatus = (product.status ?? "").toUpperCase();
 
               return (
                 <tr
@@ -223,14 +337,16 @@ export function ProductSelectionTable({
                   <td className="py-3.5 px-3 text-center">
                     <span
                       className={`inline-block rounded-md px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${
-                        product.status === "ACTIVE"
+                        upperStatus === "ACTIVE"
                           ? "bg-emerald-950/70 border border-emerald-800 text-emerald-300"
-                          : product.status === "DRAFT"
+                          : upperStatus === "DRAFT"
                             ? "bg-amber-950/70 border border-amber-800 text-amber-300"
-                            : "bg-slate-800 border border-slate-700 text-slate-400"
+                            : upperStatus === "ARCHIVED"
+                              ? "bg-purple-950/70 border border-purple-800 text-purple-300"
+                              : "bg-slate-800 border border-slate-700 text-slate-400"
                       }`}
                     >
-                      {product.status ?? "UNKNOWN"}
+                      {upperStatus || "UNKNOWN"}
                     </span>
                   </td>
 
@@ -292,14 +408,14 @@ export function ProductSelectionTable({
                   </td>
                 </tr>
               );
-            })}
+            }))}
           </tbody>
         </table>
       </div>
 
       {/* Footer Info */}
       <div className="flex items-center justify-between border-t border-slate-800 px-4 py-2.5 bg-slate-950/80 text-[11px] text-slate-500">
-        <span>Hiển thị {filteredProducts.length} / {products.length} sản phẩm</span>
+        <span>Hiển thị {displayProducts.length} / {products.length} sản phẩm</span>
         <span>Click hàng để xem chi tiết sản phẩm (PDP Drawer)</span>
       </div>
     </div>

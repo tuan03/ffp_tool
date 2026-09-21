@@ -26,6 +26,7 @@ export type ShopifyApiErrorCode =
   | "SHOPIFY_INVALID_INPUT"
   | "SHOPIFY_NOT_FOUND"
   | "SHOPIFY_PERMISSION_DENIED"
+  | "SHOPIFY_PARTIAL_WRITE"
   | "NOT_IMPLEMENTED";
 
 export type ShopifyExecutionMode = "preview" | "apply";
@@ -47,6 +48,7 @@ export type ShopifyWriteExecution =
 export interface ModuleApiConfig {
   readonly gatewayUrl?: string;
   readonly timeoutMs?: number;
+  readonly gatewayAuthToken?: string;
 }
 
 export interface ModuleApiDependencies {
@@ -61,6 +63,7 @@ export class ShopifyApiError extends Error {
     public readonly fields?: readonly string[],
     public readonly retryable?: boolean,
     public readonly details?: unknown,
+    public readonly reconciliationRequired?: boolean,
   ) {
     super(message, cause !== undefined ? { cause } : undefined);
     this.name = "ShopifyApiError";
@@ -84,14 +87,6 @@ export interface ShopifySeoInput {
   readonly description?: string;
 }
 
-export interface ShopifyProductImage {
-  readonly id?: string;
-  readonly url: string;
-  readonly altText?: string | null;
-  readonly width?: number | null;
-  readonly height?: number | null;
-}
-
 export interface ShopifyProductVariant {
   readonly id: string;
   readonly productId: string;
@@ -103,17 +98,28 @@ export interface ShopifyProductVariant {
   readonly inventoryQuantity?: number;
 }
 
+export interface ShopifyImage {
+  readonly id?: string;
+  readonly url: string;
+  readonly altText?: string;
+  readonly width?: number;
+  readonly height?: number;
+}
+
 export interface ShopifyProduct {
   readonly id: string;
   readonly title: string;
   readonly handle: string;
+  readonly description?: string;
   readonly descriptionHtml?: string;
   readonly status: "ACTIVE" | "ARCHIVED" | "DRAFT";
   readonly vendor?: string;
   readonly productType?: string;
   readonly tags: readonly string[];
+  readonly onlineStoreUrl?: string;
+  readonly featuredImage?: ShopifyImage;
+  readonly images?: readonly ShopifyImage[];
   readonly variants: readonly ShopifyProductVariant[];
-  readonly images?: readonly ShopifyProductImage[];
   readonly seo?: ShopifySeo;
   readonly createdAt: string;
   readonly updatedAt: string;
@@ -154,11 +160,15 @@ export interface ShopifyProductVariantInput {
 export interface ShopifyProductInput {
   readonly title: string;
   readonly handle?: string;
+  readonly description?: string;
   readonly descriptionHtml?: string;
   readonly status?: "ACTIVE" | "ARCHIVED" | "DRAFT";
   readonly vendor?: string;
   readonly productType?: string;
   readonly tags?: readonly string[];
+  readonly onlineStoreUrl?: string;
+  readonly featuredImage?: ShopifyImage;
+  readonly images?: readonly ShopifyImage[];
   readonly productOptions?: readonly ShopifyProductOptionInput[];
   readonly variants?: readonly ShopifyProductVariantInput[];
   readonly seo?: ShopifySeoInput;
@@ -167,11 +177,15 @@ export interface ShopifyProductInput {
 export interface ShopifyProductUpdateInput {
   readonly title?: string;
   readonly handle?: string;
+  readonly description?: string;
   readonly descriptionHtml?: string;
   readonly status?: "ACTIVE" | "ARCHIVED" | "DRAFT";
   readonly vendor?: string;
   readonly productType?: string;
   readonly tags?: readonly string[];
+  readonly onlineStoreUrl?: string;
+  readonly featuredImage?: ShopifyImage;
+  readonly images?: readonly ShopifyImage[];
   readonly seo?: ShopifySeoInput;
 }
 
@@ -343,6 +357,8 @@ export interface ShopifyProductsBulkUpdateItemResult {
   readonly id: string;
   readonly ok: boolean;
   readonly error?: string;
+  readonly errorCode?: ShopifyApiErrorCode | string;
+  readonly reconciliationRequired?: boolean;
 }
 
 export interface ShopifyProductsBulkUpdateData {
@@ -350,6 +366,7 @@ export interface ShopifyProductsBulkUpdateData {
   readonly count: number;
   readonly successCount?: number;
   readonly failedCount?: number;
+  readonly reconciliationRequired?: boolean;
   readonly items?: readonly ShopifyProductsBulkUpdateItemResult[];
 }
 

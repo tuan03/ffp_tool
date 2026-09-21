@@ -38,6 +38,12 @@ export type ProductReviewDecision =
   | "mark_draft"
   | "skipped";
 
+export type ShopifyStatusFilter =
+  | "all"
+  | "ACTIVE"
+  | "DRAFT"
+  | "ARCHIVED";
+
 export interface AutoSeoProductImage {
   readonly url?: string;
   readonly path?: string;

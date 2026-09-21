@@ -17,11 +17,36 @@ export const shopifyMockProducts: readonly ShopifyProduct[] = [
     id: "gid://shopify/Product/1001",
     title: "Classic Cotton T-Shirt",
     handle: "classic-cotton-t-shirt",
+    description: "Comfortable everyday 100% cotton t-shirt.",
     descriptionHtml: "<p>Comfortable everyday 100% cotton t-shirt.</p>",
     status: "ACTIVE",
     vendor: "Acme Apparel",
     productType: "Apparel",
     tags: ["t-shirt", "summer", "cotton"],
+    onlineStoreUrl: "https://quickstart-demo.myshopify.com/products/classic-cotton-t-shirt",
+    featuredImage: {
+      id: "gid://shopify/ProductImage/5001",
+      url: "https://cdn.shopify.com/s/files/1/0001/products/tshirt-front.jpg",
+      altText: "Classic Cotton T-Shirt front view",
+      width: 1000,
+      height: 1000,
+    },
+    images: [
+      {
+        id: "gid://shopify/ProductImage/5001",
+        url: "https://cdn.shopify.com/s/files/1/0001/products/tshirt-front.jpg",
+        altText: "Classic Cotton T-Shirt front view",
+        width: 1000,
+        height: 1000,
+      },
+      {
+        id: "gid://shopify/ProductImage/5002",
+        url: "https://cdn.shopify.com/s/files/1/0001/products/tshirt-back.jpg",
+        altText: "Classic Cotton T-Shirt back view",
+        width: 1000,
+        height: 1000,
+      },
+    ],
     variants: [
       {
         id: "gid://shopify/ProductVariant/2001",
@@ -42,18 +67,9 @@ export const shopifyMockProducts: readonly ShopifyProduct[] = [
         inventoryQuantity: 28,
       },
     ],
-    images: [
-      {
-        id: "gid://shopify/ProductImage/5001",
-        url: "https://images.example.com/tshirt-front.jpg",
-        altText: "Classic Cotton T-Shirt front",
-        width: 1000,
-        height: 1000,
-      },
-    ],
     seo: {
       title: "Classic Cotton T-Shirt | Acme Apparel",
-      description: "Comfortable everyday 100% cotton t-shirt.",
+      description: "Comfortable everyday 100% cotton t-shirt for all seasons.",
     },
     createdAt: "2025-01-10T08:00:00Z",
     updatedAt: "2025-01-15T12:30:00Z",
@@ -62,11 +78,29 @@ export const shopifyMockProducts: readonly ShopifyProduct[] = [
     id: "gid://shopify/Product/1002",
     title: "Ceramic Coffee Mug",
     handle: "ceramic-coffee-mug",
+    description: "Durable 12oz ceramic coffee mug.",
     descriptionHtml: "<p>Durable 12oz ceramic coffee mug.</p>",
     status: "ACTIVE",
     vendor: "Home Goods Co",
     productType: "Drinkware",
     tags: ["mug", "kitchen", "coffee"],
+    onlineStoreUrl: "https://quickstart-demo.myshopify.com/products/ceramic-coffee-mug",
+    featuredImage: {
+      id: "gid://shopify/ProductImage/5003",
+      url: "https://cdn.shopify.com/s/files/1/0001/products/mug.jpg",
+      altText: "Ceramic Coffee Mug",
+      width: 800,
+      height: 800,
+    },
+    images: [
+      {
+        id: "gid://shopify/ProductImage/5003",
+        url: "https://cdn.shopify.com/s/files/1/0001/products/mug.jpg",
+        altText: "Ceramic Coffee Mug",
+        width: 800,
+        height: 800,
+      },
+    ],
     variants: [
       {
         id: "gid://shopify/ProductVariant/2003",
@@ -78,18 +112,9 @@ export const shopifyMockProducts: readonly ShopifyProduct[] = [
         inventoryQuantity: 100,
       },
     ],
-    images: [
-      {
-        id: "gid://shopify/ProductImage/5002",
-        url: "https://images.example.com/mug.jpg",
-        altText: "Ceramic Coffee Mug White",
-        width: 800,
-        height: 800,
-      },
-    ],
     seo: {
-      title: "Ceramic Coffee Mug | Home Goods Co",
-      description: "Durable 12oz ceramic coffee mug.",
+      title: "Ceramic Coffee Mug - 12oz | Home Goods Co",
+      description: "Durable ceramic coffee mug designed for your morning coffee.",
     },
     createdAt: "2025-01-12T09:15:00Z",
     updatedAt: "2025-01-14T16:45:00Z",
@@ -98,11 +123,29 @@ export const shopifyMockProducts: readonly ShopifyProduct[] = [
     id: "gid://shopify/Product/1003",
     title: "Vintage Denim Jacket",
     handle: "vintage-denim-jacket",
+    description: "Rugged vintage-washed denim jacket.",
     descriptionHtml: "<p>Rugged vintage-washed denim jacket.</p>",
     status: "DRAFT",
     vendor: "Acme Apparel",
     productType: "Apparel",
     tags: ["jacket", "denim", "vintage"],
+    onlineStoreUrl: "https://quickstart-demo.myshopify.com/products/vintage-denim-jacket",
+    featuredImage: {
+      id: "gid://shopify/ProductImage/5004",
+      url: "https://cdn.shopify.com/s/files/1/0001/products/jacket.jpg",
+      altText: "Vintage Denim Jacket",
+      width: 1200,
+      height: 1500,
+    },
+    images: [
+      {
+        id: "gid://shopify/ProductImage/5004",
+        url: "https://cdn.shopify.com/s/files/1/0001/products/jacket.jpg",
+        altText: "Vintage Denim Jacket",
+        width: 1200,
+        height: 1500,
+      },
+    ],
     variants: [
       {
         id: "gid://shopify/ProductVariant/2004",
@@ -114,7 +157,10 @@ export const shopifyMockProducts: readonly ShopifyProduct[] = [
         inventoryQuantity: 15,
       },
     ],
-    images: [],
+    seo: {
+      title: "Vintage Denim Jacket | Acme Apparel",
+      description: "Rugged vintage-washed denim jacket with classic craftsmanship.",
+    },
     createdAt: "2025-01-14T11:00:00Z",
     updatedAt: "2025-01-16T15:10:00Z",
   },
@@ -127,6 +173,10 @@ export const shopifyMockCollections: readonly ShopifyCollection[] = [
     handle: "summer-collection",
     description: "Curated summer essentials and warm-weather apparel.",
     productsCount: 12,
+    seo: {
+      title: "Summer Collection | Quickstart Demo Store",
+      description: "Curated summer essentials and warm-weather apparel.",
+    },
     updatedAt: "2025-01-15T10:00:00Z",
   },
   {
@@ -135,6 +185,10 @@ export const shopifyMockCollections: readonly ShopifyCollection[] = [
     handle: "best-sellers",
     description: "Top performing and most popular products in store.",
     productsCount: 8,
+    seo: {
+      title: "Best Sellers | Quickstart Demo Store",
+      description: "Top performing and most popular products in store.",
+    },
     updatedAt: "2025-01-16T14:20:00Z",
   },
 ];

@@ -7,10 +7,10 @@ export interface GatewayStoreSummary {
   readonly shopDomain: string;
   readonly apiVersion?: string;
   readonly authType: "static" | "client_credentials";
-  readonly connected: boolean;
+  readonly connected?: boolean;
 }
 
-export function toStoreSummary(config: StoreConfig, connected = true): GatewayStoreSummary {
+export function toStoreSummary(config: StoreConfig, connected?: boolean): GatewayStoreSummary {
   return {
     storeId: config.storeId,
     shopDomain: config.shopDomain,
@@ -30,7 +30,7 @@ export async function executeStoresList(
   _payload?: unknown,
 ): Promise<{ stores: readonly GatewayStoreSummary[]; total: number }> {
   const allStores = await storeRegistry.listStores();
-  const summaries = allStores.map((s) => toStoreSummary(s, true));
+  const summaries = allStores.map((s) => toStoreSummary(s, undefined));
 
   return {
     stores: summaries,
@@ -63,6 +63,6 @@ export async function executeStoresGet(
 
   const store = await storeRegistry.getStore(targetId);
   return {
-    store: store ? toStoreSummary(store, true) : null,
+    store: store ? toStoreSummary(store, undefined) : null,
   };
 }

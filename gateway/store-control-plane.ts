@@ -116,6 +116,7 @@ export class StoreControlPlane {
   private readonly storeRegistry: StoreRegistry;
   private readonly tokenProvider: TokenProvider;
   private readonly graphqlClient: ShopifyGraphqlClient;
+  private readonly verifiedStoreIds = new Set<string>();
 
   public constructor(options: StoreControlPlaneOptions) {
     this.storeRegistry = options.storeRegistry;
@@ -203,6 +204,8 @@ export class StoreControlPlane {
       throw persistErr;
     }
 
+    this.verifiedStoreIds.add(candidateConfig.storeId);
+
     return {
       store: toStoreSummary(candidateConfig, true),
       registered: true,
@@ -261,6 +264,8 @@ export class StoreControlPlane {
       throw persistErr;
     }
 
+    this.verifiedStoreIds.add(candidateConfig.storeId);
+
     return {
       store: toStoreSummary(candidateConfig, true),
       updated: true,
@@ -275,6 +280,8 @@ export class StoreControlPlane {
     if (!trimmedId) {
       throw new GatewayError("storeId is required", "SHOPIFY_INVALID_INPUT", 400);
     }
+
+    this.verifiedStoreIds.delete(trimmedId);
 
     // Invalidate token cache before removal
     this.tokenProvider.invalidate?.(trimmedId);
@@ -304,7 +311,7 @@ export class StoreControlPlane {
 
     const store = await this.storeRegistry.getStore(trimmedId);
     return {
-      store: store ? toStoreSummary(store, true) : null,
+      store: store ? toStoreSummary(store, this.verifiedStoreIds.has(trimmedId) ? true : undefined) : null,
     };
   }
 
@@ -313,7 +320,9 @@ export class StoreControlPlane {
    */
   public async listStores(): Promise<{ stores: readonly GatewayStoreSummary[]; total: number }> {
     const all = await this.storeRegistry.listStores();
-    const summaries = all.map((s) => toStoreSummary(s, true));
+    const summaries = all.map((s) =>
+      toStoreSummary(s, this.verifiedStoreIds.has(s.storeId) ? true : undefined),
+    );
     return {
       stores: summaries,
       total: summaries.length,

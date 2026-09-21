@@ -28,14 +28,22 @@ export class ShopifyGraphqlClient {
     options?: { requestId?: string; timeoutMs?: number; isWrite?: boolean },
   ): Promise<TData> {
     const maxRetries = 2;
+    let maxAttempts = maxRetries;
+    let hasRetriedAuth = false;
 
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const isWrite = Boolean(options?.isWrite);
+    const defaultTimeoutMs = isWrite ? 60_000 : 30_000;
+    const effectiveTimeoutMs =
+      typeof options?.timeoutMs === "number" && options.timeoutMs > 0
+        ? options.timeoutMs
+        : defaultTimeoutMs;
+
+    for (let attempt = 0; attempt <= maxAttempts; attempt++) {
       const throttleStatus = this.throttleManager.check(store.storeId);
       if (throttleStatus.isThrottled) {
         const retryAfterSec = Math.ceil(throttleStatus.retryAfterMs / 1000);
-        if (attempt < maxRetries) {
-          const waitMs = Math.min(throttleStatus.retryAfterMs, 5000);
-          await new Promise((resolve) => setTimeout(resolve, waitMs));
+        if (attempt < maxAttempts && throttleStatus.retryAfterMs <= 30000) {
+          await new Promise((resolve) => setTimeout(resolve, throttleStatus.retryAfterMs));
           continue;
         }
         throw new GatewayError("Store is currently throttled", "SHOPIFY_THROTTLED", 429, retryAfterSec);
@@ -54,12 +62,8 @@ export class ShopifyGraphqlClient {
         headers["X-Request-Id"] = options.requestId;
       }
 
-      let abortController: AbortController | undefined;
-      let timeoutId: ReturnType<typeof setTimeout> | undefined;
-      if (options?.timeoutMs && options.timeoutMs > 0) {
-        abortController = new AbortController();
-        timeoutId = setTimeout(() => abortController?.abort(), options.timeoutMs);
-      }
+      const abortController = new AbortController();
+      const timeoutId = setTimeout(() => abortController.abort(), effectiveTimeoutMs);
 
       let response: Response;
       try {
@@ -67,16 +71,43 @@ export class ShopifyGraphqlClient {
           method: "POST",
           headers,
           body: JSON.stringify({ query: graphqlQuery, variables }),
-          signal: abortController?.signal,
+          signal: abortController.signal,
         });
       } catch (networkErr: unknown) {
-        if (options?.isWrite) {
+        if (abortController.signal.aborted || (networkErr instanceof Error && networkErr.name === "AbortError")) {
+          if (isWrite) {
+            throw new GatewayError(
+              `Shopify GraphQL write mutation timed out after ${effectiveTimeoutMs}ms; write state is unknown`,
+              "SHOPIFY_UNKNOWN_WRITE_STATE",
+              500,
+              undefined,
+              networkErr,
+              undefined,
+              false,
+              undefined,
+              true,
+            );
+          }
+          throw new GatewayError(
+            `Shopify GraphQL query timed out after ${effectiveTimeoutMs}ms`,
+            "SHOPIFY_NETWORK_ERROR",
+            504,
+            undefined,
+            networkErr,
+          );
+        }
+
+        if (isWrite) {
           throw new GatewayError(
             "Network request failed during write mutation; state is unknown",
             "SHOPIFY_UNKNOWN_WRITE_STATE",
             500,
             undefined,
             networkErr,
+            undefined,
+            false,
+            undefined,
+            true,
           );
         }
         throw new GatewayError(
@@ -87,11 +118,11 @@ export class ShopifyGraphqlClient {
           networkErr,
         );
       } finally {
-        if (timeoutId) clearTimeout(timeoutId);
+        clearTimeout(timeoutId);
       }
 
       if (
-        options?.isWrite &&
+        isWrite &&
         (response.status === 408 ||
           response.status === 499 ||
           response.status === 502 ||
@@ -101,6 +132,12 @@ export class ShopifyGraphqlClient {
           `Write request failed with status ${response.status}; write state is unknown`,
           "SHOPIFY_UNKNOWN_WRITE_STATE",
           response.status,
+          undefined,
+          undefined,
+          undefined,
+          false,
+          undefined,
+          true,
         );
       }
 
@@ -108,8 +145,9 @@ export class ShopifyGraphqlClient {
         const retryAfterHeader = response.headers.get("Retry-After");
         const retryAfterSec = retryAfterHeader ? Number.parseInt(retryAfterHeader, 10) || 2 : 2;
         this.throttleManager.recordHttp429(store.storeId, retryAfterSec);
-        if (attempt < maxRetries) {
-          await new Promise((resolve) => setTimeout(resolve, retryAfterSec * 1000));
+        const waitMs = retryAfterSec * 1000;
+        if (attempt < maxAttempts && waitMs <= 30000) {
+          await new Promise((resolve) => setTimeout(resolve, waitMs));
           continue;
         }
         throw new GatewayError(
@@ -121,6 +159,12 @@ export class ShopifyGraphqlClient {
       }
 
       if (response.status === 401) {
+        if (!hasRetriedAuth) {
+          hasRetriedAuth = true;
+          maxAttempts++;
+          this.tokenProvider.invalidate?.(store.storeId);
+          continue;
+        }
         throw new GatewayError("Invalid Shopify access token (HTTP 401)", "SHOPIFY_AUTH_FAILED", 401);
       }
       if (response.status === 403) {
@@ -143,9 +187,17 @@ export class ShopifyGraphqlClient {
         const mappedError = mapGraphqlErrorsToGatewayError(parsed.errors, parsed.extensions?.cost);
         if (mappedError.code === "SHOPIFY_THROTTLED") {
           this.throttleManager.recordThrottled(store.storeId, mappedError.retryAfterSeconds);
-          if (attempt < maxRetries) {
-            const waitMs = Math.min((mappedError.retryAfterSeconds ?? 1) * 1000, 5000);
+          const waitMs = (mappedError.retryAfterSeconds ?? 1) * 1000;
+          if (attempt < maxAttempts && waitMs <= 30000) {
             await new Promise((resolve) => setTimeout(resolve, waitMs));
+            continue;
+          }
+        }
+        if (mappedError.code === "SHOPIFY_AUTH_FAILED") {
+          if (!hasRetriedAuth) {
+            hasRetriedAuth = true;
+            maxAttempts++;
+            this.tokenProvider.invalidate?.(store.storeId);
             continue;
           }
         }
@@ -160,6 +212,10 @@ export class ShopifyGraphqlClient {
             response.status,
             undefined,
             jsonErr,
+            undefined,
+            false,
+            undefined,
+            true,
           );
         }
         throw new GatewayError(
@@ -179,6 +235,10 @@ export class ShopifyGraphqlClient {
             500,
             undefined,
             jsonErr,
+            undefined,
+            false,
+            undefined,
+            true,
           );
         }
         throw new GatewayError(
@@ -196,6 +256,12 @@ export class ShopifyGraphqlClient {
             "Shopify GraphQL write response missing data payload; write state is unknown",
             "SHOPIFY_UNKNOWN_WRITE_STATE",
             500,
+            undefined,
+            undefined,
+            undefined,
+            false,
+            undefined,
+            true,
           );
         }
         throw new GatewayError(

@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   createGatewayHttpHandler,
   createStoreTransport,
+  deterministicStringify,
   GatewayDispatcher,
   GatewayError,
   InMemoryStoreRegistry,
@@ -16,12 +17,10 @@ import {
   ClientCredentialsTokenProvider,
   CompositeTokenProvider,
   StoreControlPlane,
-  executeProductsGet,
-  executeProductsList,
-  mapProductNode,
   type StoreConfig,
   type HttpTransport,
   type IdempotencyStore,
+  type ProductSummary,
 } from "../index";
 
 import { createModuleApiRunner } from "../../src/modules/module-api/service";
@@ -522,6 +521,18 @@ describe("Gateway: Operations & Dispatcher", () => {
                 handle: "product-1",
                 status: "ACTIVE",
                 tags: ["pod"],
+                onlineStoreUrl: "https://store-test.myshopify.com/products/product-1",
+                featuredImage: {
+                  id: "gid://shopify/ProductImage/101",
+                  url: "https://cdn.shopify.com/products/img-1.jpg",
+                  altText: "Product 1 Image",
+                  width: 800,
+                  height: 800,
+                },
+                seo: {
+                  title: "Product 1 SEO Title",
+                  description: "Product 1 SEO Description",
+                },
                 createdAt: "2026-09-01",
                 updatedAt: "2026-09-20",
                 variants: { edges: [] },
@@ -539,9 +550,30 @@ describe("Gateway: Operations & Dispatcher", () => {
     });
 
     assert.equal(res.success, true);
-    const listData = res.data as { products: unknown[]; pageInfo: { hasNextPage: boolean } };
+    const listData = res.data as {
+      products: {
+        id: string;
+        title: string;
+        onlineStoreUrl?: string;
+        featuredImage?: { id?: string; url: string; altText?: string; width?: number; height?: number };
+        seo?: { title?: string; description?: string };
+      }[];
+      pageInfo: { hasNextPage: boolean };
+    };
     assert.equal(listData.products.length, 1);
     assert.equal(listData.pageInfo.hasNextPage, true);
+    assert.equal(listData.products[0].onlineStoreUrl, "https://store-test.myshopify.com/products/product-1");
+    assert.deepEqual(listData.products[0].featuredImage, {
+      id: "gid://shopify/ProductImage/101",
+      url: "https://cdn.shopify.com/products/img-1.jpg",
+      altText: "Product 1 Image",
+      width: 800,
+      height: 800,
+    });
+    assert.deepEqual(listData.products[0].seo, {
+      title: "Product 1 SEO Title",
+      description: "Product 1 SEO Description",
+    });
 
     // Rejects non-positive limit
     await assert.rejects(
@@ -562,8 +594,40 @@ describe("Gateway: Operations & Dispatcher", () => {
           id: "gid://shopify/Product/123",
           title: "Detailed Product",
           handle: "detailed-product",
+          description: "Detailed product description in plain text",
+          descriptionHtml: "<p>Detailed product description in plain text</p>",
           status: "ACTIVE",
           tags: ["pod"],
+          onlineStoreUrl: "https://store-test.myshopify.com/products/detailed-product",
+          featuredImage: {
+            id: "gid://shopify/ProductImage/201",
+            url: "https://cdn.shopify.com/products/detail-featured.jpg",
+            altText: "Detailed Product Featured",
+            width: 1000,
+            height: 1000,
+          },
+          images: {
+            edges: [
+              {
+                node: {
+                  id: "gid://shopify/ProductImage/201",
+                  url: "https://cdn.shopify.com/products/detail-featured.jpg",
+                  altText: "Detailed Product Featured",
+                  width: 1000,
+                  height: 1000,
+                },
+              },
+              {
+                node: {
+                  id: "gid://shopify/ProductImage/202",
+                  url: "https://cdn.shopify.com/products/detail-gallery.jpg",
+                  altText: "Detailed Product Gallery",
+                  width: 1000,
+                  height: 1000,
+                },
+              },
+            ],
+          },
           createdAt: "2026-09-01",
           updatedAt: "2026-09-20",
           variants: { edges: [] },
@@ -578,8 +642,40 @@ describe("Gateway: Operations & Dispatcher", () => {
     });
 
     assert.equal(res.success, true);
-    const data = res.data as { product: { title: string } };
+    const data = res.data as {
+      product: {
+        title: string;
+        description?: string;
+        onlineStoreUrl?: string;
+        featuredImage?: { id?: string; url: string; altText?: string; width?: number; height?: number };
+        images?: readonly { id?: string; url: string; altText?: string; width?: number; height?: number }[];
+      };
+    };
     assert.equal(data.product.title, "Detailed Product");
+    assert.equal(data.product.description, "Detailed product description in plain text");
+    assert.equal(data.product.onlineStoreUrl, "https://store-test.myshopify.com/products/detailed-product");
+    assert.deepEqual(data.product.featuredImage, {
+      id: "gid://shopify/ProductImage/201",
+      url: "https://cdn.shopify.com/products/detail-featured.jpg",
+      altText: "Detailed Product Featured",
+      width: 1000,
+      height: 1000,
+    });
+    assert.equal(data.product.images?.length, 2);
+    assert.deepEqual(data.product.images?.[0], {
+      id: "gid://shopify/ProductImage/201",
+      url: "https://cdn.shopify.com/products/detail-featured.jpg",
+      altText: "Detailed Product Featured",
+      width: 1000,
+      height: 1000,
+    });
+    assert.deepEqual(data.product.images?.[1], {
+      id: "gid://shopify/ProductImage/202",
+      url: "https://cdn.shopify.com/products/detail-gallery.jpg",
+      altText: "Detailed Product Gallery",
+      width: 1000,
+      height: 1000,
+    });
   });
 
   it("executes collections.list and collections.get", async () => {
@@ -594,6 +690,11 @@ describe("Gateway: Operations & Dispatcher", () => {
                 id: "gid://shopify/Collection/1",
                 title: "Summer Collection",
                 handle: "summer-collection",
+                description: "All summer designs",
+                seo: {
+                  title: "Summer Collection SEO Title",
+                  description: "Summer Collection SEO Description",
+                },
                 productsCount: { count: 42 },
                 updatedAt: "2026-09-21",
               },
@@ -605,6 +706,10 @@ describe("Gateway: Operations & Dispatcher", () => {
           title: "Summer Collection",
           handle: "summer-collection",
           description: "All summer designs",
+          seo: {
+            title: "Summer Collection SEO Title",
+            description: "Summer Collection SEO Description",
+          },
           productsCount: { count: 42 },
           updatedAt: "2026-09-21",
         },
@@ -618,9 +723,19 @@ describe("Gateway: Operations & Dispatcher", () => {
     });
 
     assert.equal(listRes.success, true);
-    const listData = listRes.data as { collections: { title: string; productsCount: number }[] };
+    const listData = listRes.data as {
+      collections: {
+        title: string;
+        productsCount: number;
+        seo?: { title?: string; description?: string };
+      }[];
+    };
     assert.equal(listData.collections[0].title, "Summer Collection");
     assert.equal(listData.collections[0].productsCount, 42);
+    assert.deepEqual(listData.collections[0].seo, {
+      title: "Summer Collection SEO Title",
+      description: "Summer Collection SEO Description",
+    });
 
     const getRes = await dispatcher.dispatch({
       storeId: "store-test",
@@ -628,9 +743,129 @@ describe("Gateway: Operations & Dispatcher", () => {
       payload: { id: "gid://shopify/Collection/1" },
     });
     assert.equal(getRes.success, true);
-    const getData = getRes.data as { collection: { title: string; description: string } };
+    const getData = getRes.data as {
+      collection: {
+        title: string;
+        description: string;
+        seo?: { title?: string; description?: string };
+      };
+    };
     assert.equal(getData.collection.title, "Summer Collection");
     assert.equal(getData.collection.description, "All summer designs");
+    assert.deepEqual(getData.collection.seo, {
+      title: "Summer Collection SEO Title",
+      description: "Summer Collection SEO Description",
+    });
+  });
+
+  it("normalizes unpopulated and sparse SEO fields in products.list and collections.list", async () => {
+    const dispatcher = setupGateway({
+      data: {
+        products: {
+          pageInfo: { hasNextPage: false, hasPreviousPage: false },
+          edges: [
+            {
+              cursor: "p1",
+              node: {
+                id: "gid://shopify/Product/1",
+                title: "No SEO Product",
+                handle: "no-seo-prod",
+                status: "ACTIVE",
+                tags: [],
+                seo: { title: null, description: null },
+                createdAt: "2026-09-01",
+                updatedAt: "2026-09-20",
+                variants: { edges: [] },
+              },
+            },
+            {
+              cursor: "p2",
+              node: {
+                id: "gid://shopify/Product/2",
+                title: "Partial Title Product",
+                handle: "partial-title-prod",
+                status: "ACTIVE",
+                tags: [],
+                seo: { title: "Custom SEO Title", description: null },
+                createdAt: "2026-09-01",
+                updatedAt: "2026-09-20",
+                variants: { edges: [] },
+              },
+            },
+            {
+              cursor: "p3",
+              node: {
+                id: "gid://shopify/Product/3",
+                title: "Null SEO Product",
+                handle: "null-seo-prod",
+                status: "ACTIVE",
+                tags: [],
+                seo: null,
+                createdAt: "2026-09-01",
+                updatedAt: "2026-09-20",
+                variants: { edges: [] },
+              },
+            },
+          ],
+        },
+        collections: {
+          pageInfo: { hasNextPage: false, hasPreviousPage: false },
+          edges: [
+            {
+              cursor: "c1",
+              node: {
+                id: "gid://shopify/Collection/1",
+                title: "No SEO Collection",
+                handle: "no-seo-col",
+                description: "desc",
+                seo: { title: null, description: null },
+                productsCount: { count: 10 },
+                updatedAt: "2026-09-21",
+              },
+            },
+            {
+              cursor: "c2",
+              node: {
+                id: "gid://shopify/Collection/2",
+                title: "Partial Description Collection",
+                handle: "partial-desc-col",
+                description: "desc",
+                seo: { title: null, description: "Only SEO Description" },
+                productsCount: { count: 5 },
+                updatedAt: "2026-09-21",
+              },
+            },
+          ],
+        },
+      },
+    });
+
+    const prodRes = await dispatcher.dispatch({
+      storeId: "store-test",
+      operation: "products.list",
+      payload: {},
+    });
+    assert.equal(prodRes.success, true);
+    const prodData = prodRes.data as { products: { id: string; seo?: { title?: string; description?: string } }[] };
+    assert.equal(prodData.products[0].seo, undefined);
+    assert.deepEqual(prodData.products[1].seo, {
+      title: "Custom SEO Title",
+      description: undefined,
+    });
+    assert.equal(prodData.products[2].seo, undefined);
+
+    const colRes = await dispatcher.dispatch({
+      storeId: "store-test",
+      operation: "collections.list",
+      payload: {},
+    });
+    assert.equal(colRes.success, true);
+    const colData = colRes.data as { collections: { id: string; seo?: { title?: string; description?: string } }[] };
+    assert.equal(colData.collections[0].seo, undefined);
+    assert.deepEqual(colData.collections[1].seo, {
+      title: undefined,
+      description: "Only SEO Description",
+    });
   });
 
   it("executes products.create, update, bulkUpdate, and delete with GraphQL mutations", async () => {
@@ -1574,7 +1809,8 @@ describe("Gateway: Operations & Dispatcher", () => {
         }),
       (err: unknown) =>
         err instanceof GatewayError &&
-        err.code === "SHOPIFY_USER_ERROR" &&
+        err.code === "SHOPIFY_PARTIAL_WRITE" &&
+        err.reconciliationRequired === true &&
         err.message.includes("Invalid variant price") &&
         (err.details as Record<string, unknown>)?.createdProductId === "gid://shopify/Product/reconcile-prod",
     );
@@ -2826,106 +3062,229 @@ describe("Gateway: HTTP Server Handler & E2E Integration with module-api", () =>
     // Only 1 call to query sources; NO mutation call was made
     assert.equal(callCount, 1);
   });
-});
 
-describe("Gateway: products.list and products.get field mapping (descriptionHtml, seo, images)", () => {
-  it("executeProductsList queries and maps descriptionHtml, seo, and images to simple array", async () => {
-    let capturedQuery = "";
-    const transport: HttpTransport = async (_url, init) => {
-      const body = JSON.parse(String(init?.body));
-      capturedQuery = body.query;
-      return createMockResponse({
-        data: {
-          products: {
-            pageInfo: { hasNextPage: false, hasPreviousPage: false, startCursor: null, endCursor: null },
-            edges: [
-              {
-                cursor: "cur-1",
-                node: {
-                  id: "gid://shopify/Product/1",
-                  title: "Test Rug",
-                  handle: "test-rug",
-                  descriptionHtml: "<p>Rug description</p>",
-                  status: "ACTIVE",
-                  seo: { title: "SEO Rug", description: "SEO Desc" },
-                  images: {
-                    nodes: [
-                      {
-                        id: "gid://shopify/ProductImage/101",
-                        url: "https://example.com/rug.jpg",
-                        altText: "Rug front",
-                        width: 1000,
-                        height: 1000,
-                      },
-                    ],
+  it("safely normalizes missing or malformed product image and url fields", async () => {
+    const registry = new InMemoryStoreRegistry([
+      {
+        storeId: "store-img-edge",
+        shopDomain: "store-img-edge.myshopify.com",
+        apiVersion: "2026-07",
+        auth: { type: "static", staticToken: "tok" },
+      },
+    ]);
+
+    const fakeTransport: HttpTransport = async (_url, init) => {
+      const body = JSON.parse(String(init?.body || "{}")) as { query: string };
+      if (body.query.includes("ProductsList")) {
+        return createMockResponse({
+          data: {
+            products: {
+              pageInfo: { hasNextPage: false, hasPreviousPage: false },
+              edges: [
+                {
+                  cursor: "cur_1",
+                  node: {
+                    id: "gid://shopify/Product/1",
+                    title: "Product Without Images",
+                    handle: "prod-no-img",
+                    status: "ACTIVE",
+                    tags: [],
+                    onlineStoreUrl: null,
+                    featuredImage: null,
+                    seo: null,
+                    createdAt: "2026-09-01",
+                    updatedAt: "2026-09-20",
+                    variants: { edges: [] },
                   },
-                  createdAt: "2026-01-01T00:00:00Z",
-                  updatedAt: "2026-01-02T00:00:00Z",
-                  variants: { edges: [] },
                 },
-              },
-            ],
+                {
+                  cursor: "cur_2",
+                  node: {
+                    id: "gid://shopify/Product/2",
+                    title: "Product With Empty Image URL",
+                    handle: "prod-empty-url",
+                    status: "ACTIVE",
+                    tags: [],
+                    onlineStoreUrl: "",
+                    featuredImage: { id: "img-bad", url: "", altText: "empty" },
+                    seo: null,
+                    createdAt: "2026-09-01",
+                    updatedAt: "2026-09-20",
+                    variants: { edges: [] },
+                  },
+                },
+              ],
+            },
           },
-        },
-      });
+        });
+      }
+      return createMockResponse({});
     };
 
     const client = new ShopifyGraphqlClient({
       tokenProvider: new StaticAccessTokenProvider(),
       throttleManager: new InMemoryThrottleManager(),
-      baseTransport: transport,
+      baseTransport: fakeTransport,
     });
-    const store: StoreConfig = {
-      storeId: "store-test",
-      shopDomain: "test.myshopify.com",
-      apiVersion: "2026-07",
-      auth: { type: "static", staticToken: "tok" },
-    };
+    const dispatcher = new GatewayDispatcher({ storeRegistry: registry, graphqlClient: client });
 
-    const result = await executeProductsList(store, client, { limit: 10 });
+    const listRes = await dispatcher.dispatch({
+      storeId: "store-img-edge",
+      operation: "products.list",
+      payload: {},
+    });
 
-    assert.ok(capturedQuery.includes("descriptionHtml"));
-    assert.ok(capturedQuery.includes("seo"));
-    assert.ok(capturedQuery.includes("images(first: 50)"));
-    assert.equal(result.products.length, 1);
-    const prod = result.products[0]!;
-    assert.equal(prod.id, "gid://shopify/Product/1");
-    assert.equal(prod.descriptionHtml, "<p>Rug description</p>");
-    assert.deepEqual(prod.seo, { title: "SEO Rug", description: "SEO Desc" });
-    assert.ok(Array.isArray(prod.images));
-    assert.equal(prod.images.length, 1);
-    assert.equal(prod.images[0]?.url, "https://example.com/rug.jpg");
-    assert.equal(prod.images[0]?.altText, "Rug front");
-    assert.equal(prod.images[0]?.width, 1000);
-    assert.equal(prod.images[0]?.height, 1000);
+    assert.equal(listRes.success, true);
+    const products = (listRes.data as { products: ProductSummary[] }).products;
+    assert.equal(products[0].onlineStoreUrl, undefined);
+    assert.equal(products[0].featuredImage, undefined);
+    assert.equal(products[0].images, undefined);
+
+    assert.equal(products[1].onlineStoreUrl, "");
+    assert.equal(products[1].featuredImage, undefined);
   });
 
-  it("executeProductsGet queries and maps images to simple array", async () => {
-    let capturedQuery = "";
-    const transport: HttpTransport = async (_url, init) => {
-      const body = JSON.parse(String(init?.body));
-      capturedQuery = body.query;
+  it("handles products.create and products.update preview with images, url, and description", async () => {
+    const registry = new InMemoryStoreRegistry([
+      {
+        storeId: "store-preview-img",
+        shopDomain: "store-preview-img.myshopify.com",
+        apiVersion: "2026-07",
+        auth: { type: "static", staticToken: "tok" },
+      },
+    ]);
+    const client = new ShopifyGraphqlClient({
+      tokenProvider: new StaticAccessTokenProvider(),
+      throttleManager: new InMemoryThrottleManager(),
+      baseTransport: async () => createMockResponse({}),
+    });
+    const dispatcher = new GatewayDispatcher({ storeRegistry: registry, graphqlClient: client });
+
+    const createPreview = await dispatcher.dispatch({
+      storeId: "store-preview-img",
+      operation: "products.create",
+      mode: "preview",
+      payload: {
+        product: {
+          title: "Preview With Images",
+          description: "Preview plain description",
+          onlineStoreUrl: "https://store.example.com/products/preview-with-images",
+          featuredImage: {
+            id: "gid://shopify/ProductImage/preview-1",
+            url: "https://cdn.shopify.com/preview-1.jpg",
+            altText: "Preview Image 1",
+            width: 800,
+            height: 800,
+          },
+          images: [
+            {
+              id: "gid://shopify/ProductImage/preview-1",
+              url: "https://cdn.shopify.com/preview-1.jpg",
+              altText: "Preview Image 1",
+              width: 800,
+              height: 800,
+            },
+          ],
+        },
+      },
+    });
+
+    assert.equal(createPreview.success, true);
+    const createdProduct = (createPreview.data as { product: ProductSummary }).product;
+    assert.equal(createdProduct.description, "Preview plain description");
+    assert.equal(createdProduct.onlineStoreUrl, "https://store.example.com/products/preview-with-images");
+    assert.deepEqual(createdProduct.featuredImage, {
+      id: "gid://shopify/ProductImage/preview-1",
+      url: "https://cdn.shopify.com/preview-1.jpg",
+      altText: "Preview Image 1",
+      width: 800,
+      height: 800,
+    });
+    assert.equal(createdProduct.images?.length, 1);
+
+    const updatePreview = await dispatcher.dispatch({
+      storeId: "store-preview-img",
+      operation: "products.update",
+      mode: "preview",
+      payload: {
+        id: "gid://shopify/Product/existing-1",
+        product: {
+          title: "Updated Preview",
+          description: "Updated plain description",
+          onlineStoreUrl: "https://store.example.com/products/updated-preview",
+          featuredImage: {
+            url: "https://cdn.shopify.com/updated-preview.jpg",
+          },
+        },
+      },
+    });
+
+    assert.equal(updatePreview.success, true);
+    const updatedProduct = (updatePreview.data as { product: ProductSummary }).product;
+    assert.equal(updatedProduct.description, "Updated plain description");
+    assert.equal(updatedProduct.onlineStoreUrl, "https://store.example.com/products/updated-preview");
+    assert.deepEqual(updatedProduct.featuredImage, {
+      id: undefined,
+      url: "https://cdn.shopify.com/updated-preview.jpg",
+      altText: undefined,
+      width: undefined,
+      height: undefined,
+    });
+  });
+
+  it("safely handles products.get with null edges, whitespace urls, and null dimensions", async () => {
+    const registry = new InMemoryStoreRegistry([
+      {
+        storeId: "store-edges",
+        shopDomain: "store-edges.myshopify.com",
+        apiVersion: "2026-07",
+        auth: { type: "static", staticToken: "tok" },
+      },
+    ]);
+    const fakeTransport: HttpTransport = async () => {
       return createMockResponse({
         data: {
           product: {
-            id: "gid://shopify/Product/2",
-            title: "Test Blanket",
-            handle: "test-blanket",
-            descriptionHtml: "<p>Blanket</p>",
+            id: "gid://shopify/Product/sparse-1",
+            title: "Sparse Product",
+            handle: "sparse-product",
+            description: null,
+            descriptionHtml: null,
             status: "ACTIVE",
+            tags: [],
+            onlineStoreUrl: null,
+            featuredImage: {
+              id: "gid://shopify/ProductImage/f1",
+              url: "  https://cdn.shopify.com/trimmed.jpg  ",
+              altText: null,
+              width: null,
+              height: null,
+            },
             images: {
-              nodes: [
+              edges: [
+                null,
                 {
-                  id: "gid://shopify/ProductImage/201",
-                  url: "https://example.com/blanket.jpg",
-                  altText: null,
-                  width: null,
-                  height: null,
+                  node: {
+                    id: "gid://shopify/ProductImage/i1",
+                    url: "   ",
+                    altText: "whitespace url",
+                    width: null,
+                    height: null,
+                  },
+                },
+                {
+                  node: {
+                    id: null,
+                    url: "https://cdn.shopify.com/valid.jpg",
+                    altText: "Valid Image",
+                    width: 1200,
+                    height: 1200,
+                  },
                 },
               ],
             },
-            createdAt: "2026-01-01T00:00:00Z",
-            updatedAt: "2026-01-02T00:00:00Z",
+            createdAt: "2026-09-01",
+            updatedAt: "2026-09-20",
             variants: { edges: [] },
           },
         },
@@ -2935,39 +3294,2321 @@ describe("Gateway: products.list and products.get field mapping (descriptionHtml
     const client = new ShopifyGraphqlClient({
       tokenProvider: new StaticAccessTokenProvider(),
       throttleManager: new InMemoryThrottleManager(),
-      baseTransport: transport,
+      baseTransport: fakeTransport,
     });
+    const dispatcher = new GatewayDispatcher({ storeRegistry: registry, graphqlClient: client });
+
+    const res = await dispatcher.dispatch({
+      storeId: "store-edges",
+      operation: "products.get",
+      payload: { id: "gid://shopify/Product/sparse-1" },
+    });
+
+    assert.equal(res.success, true);
+    const product = (res.data as { product: ProductSummary }).product;
+    assert.equal(product.description, undefined);
+    assert.equal(product.onlineStoreUrl, undefined);
+    assert.deepEqual(product.featuredImage, {
+      id: "gid://shopify/ProductImage/f1",
+      url: "https://cdn.shopify.com/trimmed.jpg",
+      altText: undefined,
+      width: undefined,
+      height: undefined,
+    });
+    // Whitespace url and null edge filtered out, valid image retained
+    assert.equal(product.images?.length, 1);
+    assert.deepEqual(product.images?.[0], {
+      id: undefined,
+      url: "https://cdn.shopify.com/valid.jpg",
+      altText: "Valid Image",
+      width: 1200,
+      height: 1200,
+    });
+  });
+
+  it("filters empty and whitespace URLs in preview and falls back description in write operations", async () => {
+    let capturedCreateVariables: Record<string, unknown> | undefined;
+    let capturedUpdateVariables: Record<string, unknown> | undefined;
+
+    const registry = new InMemoryStoreRegistry([
+      {
+        storeId: "store-write-fallback",
+        shopDomain: "store-write-fallback.myshopify.com",
+        apiVersion: "2026-07",
+        auth: { type: "static", staticToken: "tok" },
+      },
+    ]);
+
+    const fakeTransport: HttpTransport = async (_url, options) => {
+      const body = JSON.parse(options?.body as string) as { query: string; variables: Record<string, unknown> };
+      if (body.query.includes("productCreate")) {
+        capturedCreateVariables = body.variables;
+        return createMockResponse({
+          data: {
+            productCreate: {
+              product: {
+                id: "gid://shopify/Product/created-10",
+                title: "Created Product",
+                handle: "created-product",
+                description: "Plain text description",
+                descriptionHtml: "<p>Plain text description</p>",
+                status: "DRAFT",
+                tags: [],
+                onlineStoreUrl: "https://store.myshopify.com/products/created-product",
+                featuredImage: null,
+                images: { edges: [] },
+                createdAt: "2026-09-01",
+                updatedAt: "2026-09-20",
+                variants: { edges: [] },
+              },
+              userErrors: [],
+            },
+          },
+        });
+      }
+      if (body.query.includes("productUpdate")) {
+        capturedUpdateVariables = body.variables;
+        return createMockResponse({
+          data: {
+            productUpdate: {
+              product: {
+                id: "gid://shopify/Product/updated-10",
+                title: "Updated Product",
+                handle: "updated-product",
+                description: "Plain text updated description",
+                descriptionHtml: "<p>Plain text updated description</p>",
+                status: "ACTIVE",
+                tags: [],
+                onlineStoreUrl: "https://store.myshopify.com/products/updated-product",
+                featuredImage: null,
+                images: { edges: [] },
+                createdAt: "2026-09-01",
+                updatedAt: "2026-09-20",
+                variants: { edges: [] },
+              },
+              userErrors: [],
+            },
+          },
+        });
+      }
+      return createMockResponse({});
+    };
+
+    const client = new ShopifyGraphqlClient({
+      tokenProvider: new StaticAccessTokenProvider(),
+      throttleManager: new InMemoryThrottleManager(),
+      baseTransport: fakeTransport,
+    });
+    const dispatcher = new GatewayDispatcher({ storeRegistry: registry, graphqlClient: client });
+
+    // Preview mode: filters whitespace/empty URLs
+    const previewRes = await dispatcher.dispatch({
+      storeId: "store-write-fallback",
+      operation: "products.create",
+      mode: "preview",
+      payload: {
+        product: {
+          title: "Preview Filter Test",
+          featuredImage: { url: "   " },
+          images: [{ url: "" }, { url: "  " }, { url: "https://cdn.shopify.com/valid.jpg" }],
+        },
+      },
+    });
+    assert.equal(previewRes.success, true);
+    if (!previewRes.success) {
+      assert.fail("previewRes should succeed");
+    }
+    const previewProd = (previewRes.data as { product: ProductSummary }).product;
+    assert.equal(previewProd.featuredImage, undefined);
+    assert.equal(previewProd.images?.length, 1);
+    assert.equal(previewProd.images?.[0].url, "https://cdn.shopify.com/valid.jpg");
+
+    // Apply mode: description falls back to descriptionHtml when descriptionHtml omitted
+    await dispatcher.dispatch({
+      storeId: "store-write-fallback",
+      operation: "products.create",
+      mode: "apply",
+      requestId: "req-create-desc-fallback",
+      payload: {
+        product: {
+          title: "Created with description",
+          description: "Plain description fallback",
+        },
+      },
+    });
+    const createInput = (capturedCreateVariables?.product as Record<string, unknown>);
+    assert.equal(createInput.descriptionHtml, "Plain description fallback");
+
+    await dispatcher.dispatch({
+      storeId: "store-write-fallback",
+      operation: "products.update",
+      mode: "apply",
+      requestId: "req-update-desc-fallback",
+      payload: {
+        id: "gid://shopify/Product/updated-10",
+        product: {
+          description: "Updated description fallback",
+        },
+      },
+    });
+    const updateInput = (capturedUpdateVariables?.product as Record<string, unknown>);
+    assert.equal(updateInput.descriptionHtml, "Updated description fallback");
+  });
+
+  it("preserves idempotency state as RECONCILIATION_REQUIRED on products.create partial-write and blocks duplicate creation on retry", async () => {
+    let productCreateCalls = 0;
+
+    const fakeTransport: HttpTransport = async (_url, options) => {
+      const body = JSON.parse(options?.body as string) as { query: string; variables: Record<string, unknown> };
+      if (body.query.includes("productCreate(")) {
+        productCreateCalls++;
+        return createMockResponse({
+          data: {
+            productCreate: {
+              product: {
+                id: "gid://shopify/Product/partial-123",
+                title: "Partial Product",
+                handle: "partial-product",
+                status: "DRAFT",
+                variants: { edges: [] },
+                createdAt: "2026-09-01",
+                updatedAt: "2026-09-20",
+              },
+              userErrors: [],
+            },
+          },
+        });
+      }
+      if (body.query.includes("productVariantsBulkCreate")) {
+        return createMockResponse({
+          data: {
+            productVariantsBulkCreate: {
+              productVariants: null,
+              userErrors: [{ field: ["variants", "price"], message: "Invalid variant price" }],
+            },
+          },
+        });
+      }
+      return createMockResponse({});
+    };
+
+    const idempotencyStore = new InMemoryIdempotencyStore();
+    const registry = new InMemoryStoreRegistry([
+      {
+        storeId: "store-partial-test",
+        shopDomain: "test.myshopify.com",
+        apiVersion: "2026-07",
+        auth: { type: "static", staticToken: "tok" },
+      },
+    ]);
+    const client = new ShopifyGraphqlClient({
+      tokenProvider: new StaticAccessTokenProvider(),
+      throttleManager: new InMemoryThrottleManager(),
+      baseTransport: fakeTransport,
+    });
+    const dispatcher = new GatewayDispatcher({
+      storeRegistry: registry,
+      graphqlClient: client,
+      idempotencyStore,
+    });
+
+    // First call: partial write fails on step 2
+    await assert.rejects(
+      async () =>
+        dispatcher.dispatch({
+          storeId: "store-partial-test",
+          operation: "products.create",
+          mode: "apply",
+          requestId: "req-partial-write-1",
+          payload: {
+            product: {
+              title: "Partial Product",
+              variants: [{ price: "invalid-price" }],
+            },
+          },
+        }),
+      (err: unknown) => {
+        assert.ok(err instanceof GatewayError);
+        assert.equal(err.code, "SHOPIFY_PARTIAL_WRITE");
+        assert.equal(err.httpStatus, 409);
+        assert.equal(err.reconciliationRequired, true);
+        assert.equal(err.details?.createdProductId, "gid://shopify/Product/partial-123");
+        assert.equal(err.details?.reconciliationRequired, true);
+        return true;
+      },
+    );
+
+    // Verify idempotency store recorded RECONCILIATION_REQUIRED
+    const record = await idempotencyStore.get("store-partial-test:req-partial-write-1");
+    assert.ok(record, "Idempotency key must not be deleted on partial write");
+    assert.equal(record?.state, "RECONCILIATION_REQUIRED");
+
+    // Second call: retry with same requestId MUST be rejected with 409 SHOPIFY_PARTIAL_WRITE
+    await assert.rejects(
+      async () =>
+        dispatcher.dispatch({
+          storeId: "store-partial-test",
+          operation: "products.create",
+          mode: "apply",
+          requestId: "req-partial-write-1",
+          payload: {
+            product: {
+              title: "Partial Product",
+              variants: [{ price: "invalid-price" }],
+            },
+          },
+        }),
+      (err: unknown) => {
+        assert.ok(err instanceof GatewayError);
+        assert.equal(err.code, "SHOPIFY_PARTIAL_WRITE");
+        assert.equal(err.httpStatus, 409);
+        assert.equal(err.details?.createdProductId, "gid://shopify/Product/partial-123");
+        return true;
+      },
+    );
+
+    // Ensure productCreate was NOT called again (preventing duplicate product)
+    assert.equal(productCreateCalls, 1);
+  });
+
+  it("maps featuredImage and images into media input for products.create and products.update in apply mode", async () => {
+    let capturedCreateMedia: unknown;
+    let capturedUpdateMedia: unknown;
+
+    const fakeTransport: HttpTransport = async (_url, options) => {
+      const body = JSON.parse(options?.body as string) as { query: string; variables: Record<string, unknown> };
+      if (body.query.includes("productCreate(")) {
+        capturedCreateMedia = body.variables.media;
+        return createMockResponse({
+          data: {
+            productCreate: {
+              product: {
+                id: "gid://shopify/Product/media-prod",
+                title: "Media Product",
+                handle: "media-product",
+                status: "ACTIVE",
+                featuredImage: {
+                  id: "gid://shopify/ProductImage/feat-1",
+                  url: "https://example.com/feat.jpg",
+                  altText: "Main featured",
+                  width: 800,
+                  height: 600,
+                },
+                images: {
+                  edges: [
+                    {
+                      node: {
+                        id: "gid://shopify/ProductImage/feat-1",
+                        url: "https://example.com/feat.jpg",
+                        altText: "Main featured",
+                      },
+                    },
+                    {
+                      node: {
+                        id: "gid://shopify/ProductImage/extra-1",
+                        url: "https://example.com/extra.jpg",
+                        altText: "Extra shot",
+                      },
+                    },
+                  ],
+                },
+                variants: { edges: [] },
+                createdAt: "2026-09-01",
+                updatedAt: "2026-09-20",
+              },
+              userErrors: [],
+            },
+          },
+        });
+      }
+      if (body.query.includes("productUpdate(")) {
+        return createMockResponse({
+          data: {
+            productUpdate: {
+              product: {
+                id: "gid://shopify/Product/media-prod",
+                title: "Updated Media Product",
+                handle: "media-product",
+                status: "ACTIVE",
+                variants: { edges: [] },
+                createdAt: "2026-09-01",
+                updatedAt: "2026-09-20",
+              },
+              userErrors: [],
+            },
+          },
+        });
+      }
+      if (body.query.includes("productCreateMedia(")) {
+        capturedUpdateMedia = body.variables.media;
+        return createMockResponse({
+          data: {
+            productCreateMedia: {
+              media: [{ id: "gid://shopify/MediaImage/new-1" }],
+              userErrors: [],
+            },
+          },
+        });
+      }
+      return createMockResponse({});
+    };
+
+    const registry = new InMemoryStoreRegistry([
+      {
+        storeId: "store-media-test",
+        shopDomain: "media.myshopify.com",
+        apiVersion: "2026-07",
+        auth: { type: "static", staticToken: "tok" },
+      },
+    ]);
+    const client = new ShopifyGraphqlClient({
+      tokenProvider: new StaticAccessTokenProvider(),
+      throttleManager: new InMemoryThrottleManager(),
+      baseTransport: fakeTransport,
+    });
+    const dispatcher = new GatewayDispatcher({ storeRegistry: registry, graphqlClient: client });
+
+    // products.create in apply mode with featuredImage and images
+    const createRes = await dispatcher.dispatch({
+      storeId: "store-media-test",
+      operation: "products.create",
+      mode: "apply",
+      requestId: "req-media-create-1",
+      payload: {
+        product: {
+          title: "Media Product",
+          featuredImage: { url: "https://example.com/feat.jpg", altText: "Main featured" },
+          images: [
+            { url: "https://example.com/feat.jpg" }, // duplicate URL filtered
+            { url: "https://example.com/extra.jpg", altText: "Extra shot" },
+          ],
+        },
+      },
+    });
+
+    assert.equal(createRes.success, true);
+    assert.deepEqual(capturedCreateMedia, [
+      { originalSource: "https://example.com/feat.jpg", mediaContentType: "IMAGE", alt: "Main featured" },
+      { originalSource: "https://example.com/extra.jpg", mediaContentType: "IMAGE", alt: "Extra shot" },
+    ]);
+
+    // products.update in apply mode with featuredImage and images
+    const updateRes = await dispatcher.dispatch({
+      storeId: "store-media-test",
+      operation: "products.update",
+      mode: "apply",
+      requestId: "req-media-update-1",
+      payload: {
+        id: "gid://shopify/Product/media-prod",
+        product: {
+          title: "Updated Media Product",
+          featuredImage: { url: "https://example.com/update-feat.jpg", altText: "Updated main" },
+        },
+      },
+    });
+
+    assert.equal(updateRes.success, true);
+    assert.deepEqual(capturedUpdateMedia, [
+      { originalSource: "https://example.com/update-feat.jpg", mediaContentType: "IMAGE", alt: "Updated main" },
+    ]);
+  });
+
+  it("products.bulkUpdate preserves errorCode and reconciliationRequired on individual items and sets top-level awareness", async () => {
+    const fakeTransport: HttpTransport = async (_url, options) => {
+      const body = JSON.parse(options?.body as string) as { query: string; variables: Record<string, unknown> };
+      if (body.query.includes("productUpdate(")) {
+        const prodId = (body.variables.product as Record<string, unknown>).id;
+        if (prodId === "gid://shopify/Product/fail-timeout") {
+          throw new GatewayError("Write timeout", "SHOPIFY_UNKNOWN_WRITE_STATE", 500);
+        }
+        return createMockResponse({
+          data: {
+            productUpdate: {
+              product: {
+                id: prodId,
+                title: "Updated Bulk Product",
+                handle: "updated-bulk-product",
+                status: "ACTIVE",
+                variants: { edges: [] },
+                createdAt: "2026-09-01",
+                updatedAt: "2026-09-20",
+              },
+              userErrors: [],
+            },
+          },
+        });
+      }
+      return createMockResponse({});
+    };
+
+    const idempotencyStore = new InMemoryIdempotencyStore();
+    const registry = new InMemoryStoreRegistry([
+      {
+        storeId: "store-bulk-test",
+        shopDomain: "bulk.myshopify.com",
+        apiVersion: "2026-07",
+        auth: { type: "static", staticToken: "tok" },
+      },
+    ]);
+    const client = new ShopifyGraphqlClient({
+      tokenProvider: new StaticAccessTokenProvider(),
+      throttleManager: new InMemoryThrottleManager(),
+      baseTransport: fakeTransport,
+    });
+    const dispatcher = new GatewayDispatcher({
+      storeRegistry: registry,
+      graphqlClient: client,
+      idempotencyStore,
+    });
+
+    const bulkRes = await dispatcher.dispatch({
+      storeId: "store-bulk-test",
+      operation: "products.bulkUpdate",
+      mode: "apply",
+      requestId: "req-bulk-unknown-1",
+      payload: {
+        products: [
+          { id: "gid://shopify/Product/ok-1", product: { title: "OK Product" } },
+          { id: "gid://shopify/Product/fail-timeout", product: { title: "Timed out Product" } },
+        ],
+      },
+    });
+
+    assert.equal(bulkRes.success, true);
+    if (!bulkRes.success) {
+      assert.fail("bulkRes should succeed");
+    }
+
+    const data = bulkRes.data as {
+      successCount: number;
+      failedCount: number;
+      reconciliationRequired?: boolean;
+      items: readonly { id: string; ok: boolean; errorCode?: string; reconciliationRequired?: boolean }[];
+    };
+
+    assert.equal(data.successCount, 1);
+    assert.equal(data.failedCount, 1);
+    assert.equal(data.reconciliationRequired, true);
+
+    const okItem = data.items.find((i) => i.id === "gid://shopify/Product/ok-1");
+    assert.ok(okItem);
+    assert.equal(okItem.ok, true);
+
+    const failItem = data.items.find((i) => i.id === "gid://shopify/Product/fail-timeout");
+    assert.ok(failItem);
+    assert.equal(failItem.ok, false);
+    assert.equal(failItem.errorCode, "SHOPIFY_UNKNOWN_WRITE_STATE");
+    assert.equal(failItem.reconciliationRequired, true);
+
+    // Verify idempotency store recorded RECONCILIATION_REQUIRED
+    const record = await idempotencyStore.get("store-bulk-test:req-bulk-unknown-1");
+    assert.ok(record);
+    assert.equal(record?.state, "RECONCILIATION_REQUIRED");
+  });
+
+  it("stores.list and stores.get return connected: undefined for unverified stores in data plane", async () => {
+    const registry = new InMemoryStoreRegistry([
+      {
+        storeId: "unverified-store",
+        shopDomain: "unverified.myshopify.com",
+        apiVersion: "2026-07",
+        auth: { type: "static", staticToken: "tok" },
+      },
+    ]);
+    const dispatcher = new GatewayDispatcher({ storeRegistry: registry, graphqlClient: {} as any });
+
+    const listRes = await dispatcher.dispatch({
+      operation: "stores.list",
+      payload: {},
+    });
+    assert.equal(listRes.success, true);
+    if (listRes.success) {
+      const data = listRes.data as { stores: readonly { storeId: string; connected?: boolean }[] };
+      assert.equal(data.stores[0].connected, undefined);
+    }
+
+    const getRes = await dispatcher.dispatch({
+      operation: "stores.get",
+      payload: { targetStoreId: "unverified-store" },
+    });
+    assert.equal(getRes.success, true);
+    if (getRes.success) {
+      const data = getRes.data as { store: { storeId: string; connected?: boolean } | null };
+      assert.equal(data.store?.connected, undefined);
+    }
+  });
+
+  it("collections.create and collections.update map description properly from descriptionHtml or description", async () => {
+    const fakeTransport: HttpTransport = async (_url, options) => {
+      const body = JSON.parse(options?.body as string) as { query: string; variables: Record<string, unknown> };
+      if (body.query.includes("collectionCreate(")) {
+        return createMockResponse({
+          data: {
+            collectionCreate: {
+              collection: {
+                id: "gid://shopify/Collection/create-desc-1",
+                title: "Created Collection",
+                handle: "created-collection",
+                description: null,
+                descriptionHtml: "<p>Created HTML description</p>",
+                productsCount: { count: 0 },
+                updatedAt: "2026-09-20",
+              },
+              userErrors: [],
+            },
+          },
+        });
+      }
+      if (body.query.includes("collectionUpdate(")) {
+        return createMockResponse({
+          data: {
+            collectionUpdate: {
+              collection: {
+                id: "gid://shopify/Collection/update-desc-1",
+                title: "Updated Collection",
+                handle: "updated-collection",
+                description: "Plain text description",
+                descriptionHtml: "<p>Updated HTML description</p>",
+                productsCount: { count: 0 },
+                updatedAt: "2026-09-20",
+              },
+              userErrors: [],
+            },
+          },
+        });
+      }
+      return createMockResponse({});
+    };
+
+    const registry = new InMemoryStoreRegistry([
+      {
+        storeId: "store-collection-test",
+        shopDomain: "collection.myshopify.com",
+        apiVersion: "2026-07",
+        auth: { type: "static", staticToken: "tok" },
+      },
+    ]);
+    const client = new ShopifyGraphqlClient({
+      tokenProvider: new StaticAccessTokenProvider(),
+      throttleManager: new InMemoryThrottleManager(),
+      baseTransport: fakeTransport,
+    });
+    const dispatcher = new GatewayDispatcher({ storeRegistry: registry, graphqlClient: client });
+
+    const createRes = await dispatcher.dispatch({
+      storeId: "store-collection-test",
+      operation: "collections.create",
+      mode: "apply",
+      requestId: "req-col-desc-create",
+      payload: { collection: { title: "Created Collection" } },
+    });
+    assert.equal(createRes.success, true);
+    if (createRes.success) {
+      const data = createRes.data as { collection: { description?: string } };
+      assert.equal(data.collection.description, "Created HTML description");
+    }
+
+    const updateRes = await dispatcher.dispatch({
+      storeId: "store-collection-test",
+      operation: "collections.update",
+      mode: "apply",
+      requestId: "req-col-desc-update",
+      payload: { id: "gid://shopify/Collection/update-desc-1", collection: { title: "Updated Collection" } },
+    });
+    assert.equal(updateRes.success, true);
+    if (updateRes.success) {
+      const data = updateRes.data as { collection: { description?: string } };
+      assert.equal(data.collection.description, "Plain text description");
+    }
+  });
+
+  it("retains idempotency RECONCILIATION_REQUIRED even when a mismatched payload is submitted with same requestId", async () => {
+    let productCreateCalls = 0;
+
+    const fakeTransport: HttpTransport = async (_url, options) => {
+      const body = JSON.parse(options?.body as string) as { query: string; variables: Record<string, unknown> };
+      if (body.query.includes("productCreate(")) {
+        productCreateCalls++;
+        return createMockResponse({
+          data: {
+            productCreate: {
+              product: {
+                id: "gid://shopify/Product/rec-mismatch-prod",
+                title: "Mismatch Test Prod",
+                handle: "mismatch-test-prod",
+                status: "DRAFT",
+                variants: { edges: [] },
+                createdAt: "2026-09-01",
+                updatedAt: "2026-09-20",
+              },
+              userErrors: [],
+            },
+          },
+        });
+      }
+      if (body.query.includes("productVariantsBulkCreate")) {
+        return createMockResponse({
+          data: {
+            productVariantsBulkCreate: {
+              productVariants: null,
+              userErrors: [{ field: ["variants"], message: "Variant creation error" }],
+            },
+          },
+        });
+      }
+      return createMockResponse({});
+    };
+
+    const idempotencyStore = new InMemoryIdempotencyStore();
+    const registry = new InMemoryStoreRegistry([
+      {
+        storeId: "store-idemp-test",
+        shopDomain: "idemp.myshopify.com",
+        apiVersion: "2026-07",
+        auth: { type: "static", staticToken: "tok" },
+      },
+    ]);
+    const client = new ShopifyGraphqlClient({
+      tokenProvider: new StaticAccessTokenProvider(),
+      throttleManager: new InMemoryThrottleManager(),
+      baseTransport: fakeTransport,
+    });
+    const dispatcher = new GatewayDispatcher({
+      storeRegistry: registry,
+      graphqlClient: client,
+      idempotencyStore,
+    });
+
+    const initialPayload = {
+      product: {
+        title: "Mismatch Test Prod",
+        variants: [{ price: "25.00" }],
+      },
+    };
+
+    // 1. Initial call fails during variant creation -> partial write
+    await assert.rejects(
+      async () =>
+        dispatcher.dispatch({
+          storeId: "store-idemp-test",
+          operation: "products.create",
+          mode: "apply",
+          requestId: "req-rec-mismatch-1",
+          payload: initialPayload,
+        }),
+      (err: unknown) => {
+        assert.ok(err instanceof GatewayError);
+        assert.equal(err.code, "SHOPIFY_PARTIAL_WRITE");
+        assert.equal(err.reconciliationRequired, true);
+        assert.equal(err.details?.createdProductId, "gid://shopify/Product/rec-mismatch-prod");
+        return true;
+      },
+    );
+    assert.equal(productCreateCalls, 1);
+
+    // Verify idempotency store is RECONCILIATION_REQUIRED
+    const entryAfterFail = await idempotencyStore.get("store-idemp-test:req-rec-mismatch-1");
+    assert.ok(entryAfterFail);
+    assert.equal(entryAfterFail.state, "RECONCILIATION_REQUIRED");
+
+    // 2. Someone submits the SAME requestId with a DIFFERENT payload (e.g. attacker or client bug)
+    await assert.rejects(
+      async () =>
+        dispatcher.dispatch({
+          storeId: "store-idemp-test",
+          operation: "products.create",
+          mode: "apply",
+          requestId: "req-rec-mismatch-1",
+          payload: { product: { title: "Completely Different Payload" } },
+        }),
+      (err: unknown) => {
+        assert.ok(err instanceof GatewayError);
+        assert.equal(err.code, "SHOPIFY_USER_ERROR");
+        assert.equal(err.httpStatus, 409);
+        assert.ok(err.message.includes("different payload"));
+        return true;
+      },
+    );
+
+    // CRITICAL: The idempotency store must NOT have been deleted by the mismatched payload rejection!
+    const entryAfterMismatch = await idempotencyStore.get("store-idemp-test:req-rec-mismatch-1");
+    assert.ok(entryAfterMismatch, "Idempotency entry must NOT be deleted by mismatched payload call");
+    assert.equal(entryAfterMismatch.state, "RECONCILIATION_REQUIRED");
+
+    // 3. Retry with original payload must STILL be rejected with SHOPIFY_PARTIAL_WRITE, preventing duplicate creation
+    await assert.rejects(
+      async () =>
+        dispatcher.dispatch({
+          storeId: "store-idemp-test",
+          operation: "products.create",
+          mode: "apply",
+          requestId: "req-rec-mismatch-1",
+          payload: initialPayload,
+        }),
+      (err: unknown) => {
+        assert.ok(err instanceof GatewayError);
+        assert.equal(err.code, "SHOPIFY_PARTIAL_WRITE");
+        assert.equal(err.httpStatus, 409);
+        assert.equal(err.details?.createdProductId, "gid://shopify/Product/rec-mismatch-prod");
+        return true;
+      },
+    );
+
+    // Ensure productCreate was STILL called only once!
+    assert.equal(productCreateCalls, 1);
+  });
+
+  it("extracts media with string URLs, src fallbacks, and decodes multi-paragraph HTML descriptions", async () => {
+    let capturedMedia: unknown;
+
+    const fakeTransport: HttpTransport = async (_url, options) => {
+      const body = JSON.parse(options?.body as string) as { query: string; variables: Record<string, unknown> };
+      if (body.query.includes("productCreate(")) {
+        capturedMedia = body.variables.media;
+        return createMockResponse({
+          data: {
+            productCreate: {
+              product: {
+                id: "gid://shopify/Product/media-extra-prod",
+                title: "Media Extra Product",
+                handle: "media-extra-product",
+                status: "ACTIVE",
+                variants: { edges: [] },
+                createdAt: "2026-09-01",
+                updatedAt: "2026-09-20",
+              },
+              userErrors: [],
+            },
+          },
+        });
+      }
+      if (body.query.includes("collectionCreate(")) {
+        return createMockResponse({
+          data: {
+            collectionCreate: {
+              collection: {
+                id: "gid://shopify/Collection/html-desc-col",
+                title: "HTML Collection",
+                handle: "html-collection",
+                description: null,
+                descriptionHtml: "<p>First paragraph.</p><p>Second &amp; third paragraph with &quot;quotes&quot;.</p>",
+                productsCount: { count: 0 },
+                updatedAt: "2026-09-20",
+              },
+              userErrors: [],
+            },
+          },
+        });
+      }
+      return createMockResponse({});
+    };
+
+    const registry = new InMemoryStoreRegistry([
+      {
+        storeId: "store-media-robust-test",
+        shopDomain: "media-robust.myshopify.com",
+        apiVersion: "2026-07",
+        auth: { type: "static", staticToken: "tok" },
+      },
+    ]);
+    const client = new ShopifyGraphqlClient({
+      tokenProvider: new StaticAccessTokenProvider(),
+      throttleManager: new InMemoryThrottleManager(),
+      baseTransport: fakeTransport,
+    });
+    const dispatcher = new GatewayDispatcher({ storeRegistry: registry, graphqlClient: client });
+
+    // Test product create with featuredImage (src/alt) and images (string url + object src/alt)
+    await dispatcher.dispatch({
+      storeId: "store-media-robust-test",
+      operation: "products.create",
+      mode: "apply",
+      requestId: "req-media-robust",
+      payload: {
+        product: {
+          title: "Media Extra Product",
+          featuredImage: { src: "https://example.com/featured-src.png", alt: "Featured Alt" },
+          images: [
+            "https://example.com/string-url.png",
+            { src: "https://example.com/extra-src.png", alt: "Extra Alt" },
+          ],
+        },
+      },
+    });
+
+    assert.deepEqual(capturedMedia, [
+      { originalSource: "https://example.com/featured-src.png", mediaContentType: "IMAGE", alt: "Featured Alt" },
+      { originalSource: "https://example.com/string-url.png", mediaContentType: "IMAGE" },
+      { originalSource: "https://example.com/extra-src.png", mediaContentType: "IMAGE", alt: "Extra Alt" },
+    ]);
+
+    // Test collection description with HTML entities and paragraph spacing
+    const colRes = await dispatcher.dispatch({
+      storeId: "store-media-robust-test",
+      operation: "collections.create",
+      mode: "apply",
+      requestId: "req-col-html-desc",
+      payload: { collection: { title: "HTML Collection" } },
+    });
+    assert.equal(colRes.success, true);
+    if (colRes.success) {
+      const data = colRes.data as { collection: { description?: string } };
+      assert.equal(
+        data.collection.description,
+        'First paragraph. Second & third paragraph with "quotes".',
+      );
+    }
+  });
+
+  it("StoreControlPlane marks onboarded stores as connected: true in getStore and listStores", async () => {
+    const fakeTransport: HttpTransport = async (_url, options) => {
+      const body = JSON.parse(options?.body as string) as { query: string };
+      if (body.query.includes("StoreConnectionTest")) {
+        return createMockResponse({
+          data: {
+            shop: {
+              id: "gid://shopify/Shop/12345",
+              name: "Control Plane Verified Shop",
+              myshopifyDomain: "verified.myshopify.com",
+            },
+          },
+        });
+      }
+      return createMockResponse({});
+    };
+
+    const registry = new InMemoryStoreRegistry([]);
+    const tokenProvider = new CompositeTokenProvider();
+    const client = new ShopifyGraphqlClient({
+      tokenProvider,
+      throttleManager: new InMemoryThrottleManager(),
+      baseTransport: fakeTransport,
+    });
+    const controlPlane = new StoreControlPlane({
+      storeRegistry: registry,
+      tokenProvider,
+      graphqlClient: client,
+    });
+
+    // Onboard store
+    const regResult = await controlPlane.registerStore({
+      storeId: "verified-store-1",
+      shopDomain: "verified.myshopify.com",
+      auth: { type: "static_access_token", accessToken: "shpat_verified_token" },
+    });
+    assert.equal(regResult.store.connected, true);
+
+    // Check getStore
+    const getResult = await controlPlane.getStore("verified-store-1");
+    assert.ok(getResult.store);
+    assert.equal(getResult.store.connected, true);
+
+    // Check listStores
+    const listResult = await controlPlane.listStores();
+    assert.equal(listResult.stores.length, 1);
+    assert.equal(listResult.stores[0].connected, true);
+
+    // Disconnect
+    await controlPlane.disconnectStore("verified-store-1");
+    const getAfterDisconnect = await controlPlane.getStore("verified-store-1");
+    assert.equal(getAfterDisconnect.store, null);
+  });
+});
+
+describe("Gateway: Level 2 Hardening (Auth, Timeouts, Auto-Recovery, Idempotency Pruning)", () => {
+  it("verifies gateway auth token with X-Gateway-Key and Authorization Bearer header", async () => {
+    const registry = new InMemoryStoreRegistry([
+      {
+        storeId: "store-auth-test",
+        shopDomain: "store-auth-test.myshopify.com",
+        apiVersion: "2026-07",
+        auth: { type: "static", staticToken: "tok" },
+      },
+    ]);
+    const fakeTransport: HttpTransport = async () =>
+      createMockResponse({ data: { shop: { name: "Auth Test Store", currencyCode: "USD" } } });
+    const client = new ShopifyGraphqlClient({
+      tokenProvider: new StaticAccessTokenProvider(),
+      throttleManager: new InMemoryThrottleManager(),
+      baseTransport: fakeTransport,
+    });
+    const dispatcher = new GatewayDispatcher({ storeRegistry: registry, graphqlClient: client });
+    const handler = createGatewayHttpHandler(dispatcher, { authToken: "my-gateway-secret-key" });
+
+    // 1. Missing auth header -> 401 SHOPIFY_AUTH_FAILED
+    const reqNoAuth = new Request("http://localhost:8787/api/shopify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ storeId: "store-auth-test", operation: "connection.test", payload: {} }),
+    });
+    const resNoAuth = await handler(reqNoAuth);
+    assert.equal(resNoAuth.status, 401);
+    const bodyNoAuth = (await resNoAuth.json()) as { success: boolean; error: { code: string } };
+    assert.equal(bodyNoAuth.success, false);
+    assert.equal(bodyNoAuth.error.code, "SHOPIFY_AUTH_FAILED");
+
+    // 2. Mismatched auth header -> 401 SHOPIFY_AUTH_FAILED
+    const reqBadAuth = new Request("http://localhost:8787/api/shopify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Gateway-Key": "wrong-key" },
+      body: JSON.stringify({ storeId: "store-auth-test", operation: "connection.test", payload: {} }),
+    });
+    const resBadAuth = await handler(reqBadAuth);
+    assert.equal(resBadAuth.status, 401);
+
+    // 3. Valid X-Gateway-Key -> 200 OK
+    const reqValidKey = new Request("http://localhost:8787/api/shopify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Gateway-Key": "my-gateway-secret-key" },
+      body: JSON.stringify({ storeId: "store-auth-test", operation: "connection.test", payload: {} }),
+    });
+    const resValidKey = await handler(reqValidKey);
+    assert.equal(resValidKey.status, 200);
+
+    // 4. Valid Authorization: Bearer <token> -> 200 OK
+    const reqValidBearer = new Request("http://localhost:8787/api/shopify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer my-gateway-secret-key" },
+      body: JSON.stringify({ storeId: "store-auth-test", operation: "connection.test", payload: {} }),
+    });
+    const resValidBearer = await handler(reqValidBearer);
+    assert.equal(resValidBearer.status, 200);
+  });
+
+  it("enforces MAX_BODY_BYTES (5MB) and rejects payload too large with HTTP 413", async () => {
+    const registry = new InMemoryStoreRegistry();
+    const dispatcher = new GatewayDispatcher({ storeRegistry: registry, graphqlClient: {} as ShopifyGraphqlClient });
+    const handler = createGatewayHttpHandler(dispatcher, { maxBodyBytes: 1024 }); // 1KB limit for test
+
+    // Content-length header > limit
+    const reqHeaderOver = new Request("http://localhost:8787/api/shopify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Content-Length": "2048" },
+      body: JSON.stringify({ data: "short" }),
+    });
+    const resHeaderOver = await handler(reqHeaderOver);
+    assert.equal(resHeaderOver.status, 413);
+    const bodyHeaderOver = (await resHeaderOver.json()) as { success: boolean; error: { code: string } };
+    assert.equal(bodyHeaderOver.error.code, "SHOPIFY_INVALID_INPUT");
+
+    // Actual body > limit
+    const largeString = "x".repeat(2048);
+    const reqBodyOver = new Request("http://localhost:8787/api/shopify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ large: largeString }),
+    });
+    const resBodyOver = await handler(reqBodyOver);
+    assert.equal(resBodyOver.status, 413);
+  });
+
+  it("applies default timeouts and maps write mutation timeout to SHOPIFY_UNKNOWN_WRITE_STATE", async () => {
     const store: StoreConfig = {
-      storeId: "store-test",
-      shopDomain: "test.myshopify.com",
+      storeId: "store-timeout",
+      shopDomain: "store-timeout.myshopify.com",
       apiVersion: "2026-07",
       auth: { type: "static", staticToken: "tok" },
     };
 
-    const result = await executeProductsGet(store, client, { id: "gid://shopify/Product/2" });
+    // Hanging transport
+    const hangingTransport: HttpTransport = async (_url, init) => {
+      return new Promise<Response>((_resolve, reject) => {
+        if (init?.signal) {
+          init.signal.addEventListener("abort", () => {
+            const err = new Error("The operation was aborted");
+            err.name = "AbortError";
+            reject(err);
+          });
+        }
+      });
+    };
 
-    assert.ok(capturedQuery.includes("images(first: 100)"));
-    assert.ok(result.product !== null);
-    assert.ok(Array.isArray(result.product.images));
-    assert.equal(result.product.images.length, 1);
-    assert.equal(result.product.images[0]?.url, "https://example.com/blanket.jpg");
-    assert.equal(result.product.images[0]?.altText, null);
+    const client = new ShopifyGraphqlClient({
+      tokenProvider: new StaticAccessTokenProvider(),
+      throttleManager: new InMemoryThrottleManager(),
+      baseTransport: hangingTransport,
+    });
+
+    // Write mutation timeout -> SHOPIFY_UNKNOWN_WRITE_STATE with reconciliationRequired = true
+    await assert.rejects(
+      async () => {
+        await client.query(store, "mutation { productCreate { product { id } } }", {}, {
+          isWrite: true,
+          timeoutMs: 20, // override default for fast test
+        });
+      },
+      (err: unknown) => {
+        assert.ok(err instanceof GatewayError);
+        assert.equal(err.code, "SHOPIFY_UNKNOWN_WRITE_STATE");
+        assert.equal(err.reconciliationRequired, true);
+        return true;
+      },
+    );
+
+    // Read query timeout -> SHOPIFY_NETWORK_ERROR with httpStatus 504
+    await assert.rejects(
+      async () => {
+        await client.query(store, "query { products { edges { node { id } } } }", {}, {
+          isWrite: false,
+          timeoutMs: 20,
+        });
+      },
+      (err: unknown) => {
+        assert.ok(err instanceof GatewayError);
+        assert.equal(err.code, "SHOPIFY_NETWORK_ERROR");
+        assert.equal(err.httpStatus, 504);
+        return true;
+      },
+    );
   });
 
-  it("mapProductNode handles missing images and null seo", () => {
-    const node = {
-      id: "gid://shopify/Product/3",
-      title: "Simple",
-      handle: "simple",
-      status: "ACTIVE" as const,
-      createdAt: "2026-01-01T00:00:00Z",
-      updatedAt: "2026-01-02T00:00:00Z",
+  it("recovers automatically from Shopify HTTP 401 by invalidating token cache and retrying once", async () => {
+    let tokenFetchCount = 0;
+    let transportCallCount = 0;
+
+    const mockTokenProvider: CompositeTokenProvider = {
+      getToken: async () => {
+        tokenFetchCount++;
+        return `fresh-token-${tokenFetchCount}`;
+      },
+      invalidate: () => {
+        // cache invalidated
+      },
+    } as unknown as CompositeTokenProvider;
+
+    const fakeTransport: HttpTransport = async (_url, init) => {
+      transportCallCount++;
+      const headers = init?.headers as Record<string, string>;
+      if (headers["X-Shopify-Access-Token"] === "fresh-token-1") {
+        // First attempt returns 401 Unauthorized
+        return createMockResponse({ errors: "Unauthorized" }, 401);
+      }
+      // Retry with fresh-token-2 succeeds
+      return createMockResponse({
+        data: {
+          product: { id: "gid://shopify/Product/rec-1", title: "Recovered Product" },
+        },
+      });
     };
-    const summary = mapProductNode(node);
-    assert.equal(summary.images, undefined);
-    assert.equal(summary.seo, undefined);
-    assert.equal(summary.descriptionHtml, undefined);
+
+    const client = new ShopifyGraphqlClient({
+      tokenProvider: mockTokenProvider,
+      throttleManager: new InMemoryThrottleManager(),
+      baseTransport: fakeTransport,
+    });
+
+    const store: StoreConfig = {
+      storeId: "store-recovery",
+      shopDomain: "store-recovery.myshopify.com",
+      apiVersion: "2026-07",
+      auth: { type: "client_credentials", clientId: "cid", clientSecret: "csec" },
+    };
+
+    const result = await client.query<{ product: { id: string; title: string } }>(
+      store,
+      "query { product { id title } }",
+    );
+
+    assert.equal(result.product.title, "Recovered Product");
+    assert.equal(transportCallCount, 2);
+    assert.equal(tokenFetchCount, 2);
+  });
+
+  it("fails with SHOPIFY_AUTH_FAILED if retry after 401 also returns 401 (no infinite loop)", async () => {
+    let transportCallCount = 0;
+
+    const mockTokenProvider: CompositeTokenProvider = {
+      getToken: async () => "bad-token",
+      invalidate: () => {},
+    } as unknown as CompositeTokenProvider;
+
+    const fakeTransport: HttpTransport = async () => {
+      transportCallCount++;
+      return createMockResponse({ errors: "Unauthorized" }, 401);
+    };
+
+    const client = new ShopifyGraphqlClient({
+      tokenProvider: mockTokenProvider,
+      throttleManager: new InMemoryThrottleManager(),
+      baseTransport: fakeTransport,
+    });
+
+    const store: StoreConfig = {
+      storeId: "store-perm-401",
+      shopDomain: "store-perm-401.myshopify.com",
+      apiVersion: "2026-07",
+      auth: { type: "client_credentials", clientId: "cid", clientSecret: "csec" },
+    };
+
+    await assert.rejects(
+      async () => {
+        await client.query(store, "query { shop { name } }");
+      },
+      (err: unknown) => {
+        assert.ok(err instanceof GatewayError);
+        assert.equal(err.code, "SHOPIFY_AUTH_FAILED");
+        assert.equal(err.httpStatus, 401);
+        return true;
+      },
+    );
+
+    // Exactly 2 attempts: initial + 1 retry
+    assert.equal(transportCallCount, 2);
+  });
+
+  it("prunes expired entries from InMemoryIdempotencyStore to prevent memory leaks", async () => {
+    const store = new InMemoryIdempotencyStore({
+      defaultTtlMs: 20,
+      pruneIntervalMs: 0, // disable automatic interval for deterministic unit test
+      maxEntries: 2,
+    });
+
+    await store.set("k1", {
+      state: "COMPLETED",
+      operation: "products.create",
+      payloadHash: "hash1",
+      createdAtMs: Date.now(),
+    }, 10); // 10ms TTL
+
+    await store.set("k2", {
+      state: "COMPLETED",
+      operation: "products.create",
+      payloadHash: "hash2",
+      createdAtMs: Date.now(),
+    }, 100_000); // 100s TTL
+
+    // Wait 25ms for k1 to expire
+    await new Promise((r) => setTimeout(r, 25));
+
+    // Proactive pruneExpired removes k1
+    const pruned = store.pruneExpired();
+    assert.equal(pruned, 1);
+
+    // k1 is gone, k2 remains
+    assert.equal(await store.get("k1"), null);
+    const item2 = await store.get("k2");
+    assert.ok(item2);
+    assert.equal(item2.payloadHash, "hash2");
+
+    store.destroy();
+  });
+
+  it("aborts OAuth token exchange when request hangs and throws 504 timeout error", async () => {
+    const store: StoreConfig = {
+      storeId: "store-oauth-timeout",
+      shopDomain: "store-oauth-timeout.myshopify.com",
+      apiVersion: "2026-07",
+      auth: {
+        type: "client_credentials",
+        clientId: "cid",
+        clientSecret: "csec",
+      },
+    };
+
+    const hangingTransport: HttpTransport = async (_url, init) => {
+      return new Promise<Response>((_resolve, reject) => {
+        if (init?.signal) {
+          init.signal.addEventListener("abort", () => {
+            const abortErr = new Error("The operation was aborted");
+            abortErr.name = "AbortError";
+            reject(abortErr);
+          });
+        }
+      });
+    };
+
+    const provider = new ClientCredentialsTokenProvider({
+      transport: hangingTransport,
+      timeoutMs: 20,
+    });
+
+    await assert.rejects(
+      async () => {
+        await provider.getToken(store);
+      },
+      (err: unknown) => {
+        assert.ok(err instanceof GatewayError);
+        assert.equal(err.code, "SHOPIFY_NETWORK_ERROR");
+        assert.equal(err.httpStatus, 504);
+        return true;
+      },
+    );
+  });
+
+  it("recovers automatically when Shopify returns GraphQL UNAUTHORIZED error", async () => {
+    let callCount = 0;
+    const mockTokenProvider: CompositeTokenProvider = {
+      getToken: async () => {
+        callCount++;
+        return `token-${callCount}`;
+      },
+      invalidate: () => {},
+    } as unknown as CompositeTokenProvider;
+
+    const fakeTransport: HttpTransport = async (_url, init) => {
+      const headers = init?.headers as Record<string, string>;
+      if (headers["X-Shopify-Access-Token"] === "token-1") {
+        return createMockResponse({
+          errors: [{ message: "Unauthorized access", extensions: { code: "UNAUTHORIZED" } }],
+        });
+      }
+      return createMockResponse({
+        data: { shop: { name: "Recovered Shop" } },
+      });
+    };
+
+    const client = new ShopifyGraphqlClient({
+      tokenProvider: mockTokenProvider,
+      throttleManager: new InMemoryThrottleManager(),
+      baseTransport: fakeTransport,
+    });
+
+    const store: StoreConfig = {
+      storeId: "store-graphql-401",
+      shopDomain: "store-graphql-401.myshopify.com",
+      apiVersion: "2026-07",
+      auth: { type: "client_credentials", clientId: "cid", clientSecret: "csec" },
+    };
+
+    const result = await client.query<{ shop: { name: string } }>(store, "query { shop { name } }");
+    assert.equal(result.shop.name, "Recovered Shop");
+    assert.equal(callCount, 2);
+  });
+
+  it("allows unauthenticated access when authToken is not configured", async () => {
+    const registry = new InMemoryStoreRegistry([
+      {
+        storeId: "store-open",
+        shopDomain: "store-open.myshopify.com",
+        apiVersion: "2026-07",
+        auth: { type: "static", staticToken: "tok" },
+      },
+    ]);
+    const fakeTransport: HttpTransport = async () =>
+      createMockResponse({ data: { shop: { name: "Open Store", currencyCode: "USD" } } });
+    const client = new ShopifyGraphqlClient({
+      tokenProvider: new StaticAccessTokenProvider(),
+      throttleManager: new InMemoryThrottleManager(),
+      baseTransport: fakeTransport,
+    });
+    const dispatcher = new GatewayDispatcher({ storeRegistry: registry, graphqlClient: client });
+    const handler = createGatewayHttpHandler(dispatcher, {});
+
+    const req = new Request("http://localhost:8787/api/shopify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ storeId: "store-open", operation: "connection.test", payload: {} }),
+    });
+    const res = await handler(req);
+    assert.equal(res.status, 200);
+  });
+
+  it("binds startGatewayServer to 127.0.0.1 by default", async () => {
+    const { startGatewayServer } = await import("../server");
+    const server = startGatewayServer({ port: 3098 });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const addr = server.address() as import("node:net").AddressInfo;
+    assert.ok(addr);
+    assert.equal(addr.address, "127.0.0.1");
+    assert.equal(addr.port, 3098);
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+
+  it("rejects unauthenticated requests with 401 before body buffering even when payload exceeds maxBodyBytes", async () => {
+    const { startGatewayServer } = await import("../server");
+    const server = startGatewayServer({
+      port: 3105,
+      authToken: "secret-token-l2",
+      maxBodyBytes: 1024,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    try {
+      // Send an unauthenticated request with a 2048-byte body
+      const res = await fetch("http://127.0.0.1:3105/api/shopify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ large: "x".repeat(2048) }),
+      });
+      // MUST be 401 (not 413) because auth is evaluated immediately before buffering
+      assert.equal(res.status, 401);
+      const json = (await res.json()) as { error: { code: string } };
+      assert.equal(json.error.code, "SHOPIFY_AUTH_FAILED");
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it("rejects non-POST requests to /api/shopify with HTTP 405 Method Not Allowed in server", async () => {
+    const { startGatewayServer } = await import("../server");
+    const server = startGatewayServer({ port: 3106 });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    try {
+      const res = await fetch("http://127.0.0.1:3106/api/shopify", {
+        method: "GET",
+      });
+      assert.equal(res.status, 405);
+      const json = (await res.json()) as { error: { code: string } };
+      assert.equal(json.error.code, "SHOPIFY_INVALID_INPUT");
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it("ClientCredentialsTokenProvider deduplicates concurrent in-flight OAuth token exchange requests", async () => {
+    let exchangeCalls = 0;
+    const fakeTransport: HttpTransport = async () => {
+      exchangeCalls++;
+      await new Promise((r) => setTimeout(r, 20));
+      return createMockResponse({ access_token: "dedup-token", expires_in: 3600 });
+    };
+
+    const provider = new ClientCredentialsTokenProvider({
+      transport: fakeTransport,
+      clock: () => 1_000_000,
+    });
+
+    const store: StoreConfig = {
+      storeId: "store-dedup",
+      shopDomain: "dedup.myshopify.com",
+      apiVersion: "2026-07",
+      auth: { type: "client_credentials", clientId: "cid", clientSecret: "csec" },
+    };
+
+    // Run 5 concurrent getToken calls simultaneously
+    const tokens = await Promise.all([
+      provider.getToken(store),
+      provider.getToken(store),
+      provider.getToken(store),
+      provider.getToken(store),
+      provider.getToken(store),
+    ]);
+
+    assert.equal(exchangeCalls, 1);
+    for (const t of tokens) {
+      assert.equal(t, "dedup-token");
+    }
+  });
+
+  it("InMemoryIdempotencyStore evicts oldest entries when maxEntries is reached with unexpired entries", async () => {
+    const store = new InMemoryIdempotencyStore({
+      defaultTtlMs: 100_000,
+      pruneIntervalMs: 0,
+      maxEntries: 2,
+    });
+
+    await store.set("k1", { state: "COMPLETED", operation: "products.create", payloadHash: "h1", createdAtMs: 1 });
+    await store.set("k2", { state: "COMPLETED", operation: "products.create", payloadHash: "h2", createdAtMs: 2 });
+    assert.ok(await store.get("k1"));
+    assert.ok(await store.get("k2"));
+
+    // Adding k3 when maxEntries is 2 and none expired evicts oldest (k1)
+    await store.set("k3", { state: "COMPLETED", operation: "products.create", payloadHash: "h3", createdAtMs: 3 });
+    assert.equal(await store.get("k1"), null);
+    assert.ok(await store.get("k2"));
+    assert.ok(await store.get("k3"));
+
+    store.destroy();
+  });
+
+  it("deterministicStringify correctly handles undefined values in objects and arrays", () => {
+    const objWithUndef = { a: undefined, b: "hello", c: 42 };
+    const objWithoutUndef = { b: "hello", c: 42 };
+    assert.equal(deterministicStringify(objWithUndef), deterministicStringify(objWithoutUndef));
+
+    const arrWithUndef = [1, undefined, "test"];
+    assert.equal(deterministicStringify(arrWithUndef), '[1,null,"test"]');
+  });
+
+  it("write mutation failure retains reconciliationRequired: true across 500, JSON error, and missing data", async () => {
+    const store: StoreConfig = {
+      storeId: "store-write-rec",
+      shopDomain: "rec.myshopify.com",
+      apiVersion: "2026-07",
+      auth: { type: "static", staticToken: "tok" },
+    };
+
+    // 1. Non-ok response (500)
+    const client500 = new ShopifyGraphqlClient({
+      tokenProvider: new StaticAccessTokenProvider(),
+      throttleManager: new InMemoryThrottleManager(),
+      baseTransport: async () => createMockResponse("Internal Server Error", 500),
+    });
+
+    await assert.rejects(
+      async () => client500.query(store, "mutation { x }", {}, { isWrite: true }),
+      (err: unknown) => {
+        assert.ok(err instanceof GatewayError);
+        assert.equal(err.code, "SHOPIFY_UNKNOWN_WRITE_STATE");
+        assert.equal(err.reconciliationRequired, true);
+        return true;
+      },
+    );
+
+    // 2. Malformed JSON
+    const clientBadJson = new ShopifyGraphqlClient({
+      tokenProvider: new StaticAccessTokenProvider(),
+      throttleManager: new InMemoryThrottleManager(),
+      baseTransport: async () =>
+        new Response("not json", { status: 200, headers: { "Content-Type": "application/json" } }),
+    });
+
+    await assert.rejects(
+      async () => clientBadJson.query(store, "mutation { x }", {}, { isWrite: true }),
+      (err: unknown) => {
+        assert.ok(err instanceof GatewayError);
+        assert.equal(err.code, "SHOPIFY_UNKNOWN_WRITE_STATE");
+        assert.equal(err.reconciliationRequired, true);
+        return true;
+      },
+    );
+
+    // 3. Missing data payload
+    const clientNullData = new ShopifyGraphqlClient({
+      tokenProvider: new StaticAccessTokenProvider(),
+      throttleManager: new InMemoryThrottleManager(),
+      baseTransport: async () => createMockResponse({ data: null }, 200),
+    });
+
+    await assert.rejects(
+      async () => clientNullData.query(store, "mutation { x }", {}, { isWrite: true }),
+      (err: unknown) => {
+        assert.ok(err instanceof GatewayError);
+        assert.equal(err.code, "SHOPIFY_UNKNOWN_WRITE_STATE");
+        assert.equal(err.reconciliationRequired, true);
+        return true;
+      },
+    );
   });
 });
+
+describe("Gateway: Architectural & Operational Hardening (P1)", () => {
+  it("products.update with existing image id updates alt text via fileUpdate and does not create new media", async () => {
+    let capturedFileUpdate: unknown = null;
+    let capturedCreateMedia: unknown = null;
+
+    const fakeTransport: HttpTransport = async (_url, options) => {
+      const body = JSON.parse(options?.body as string) as { query: string; variables: Record<string, unknown> };
+      if (body.query.includes("productUpdate(")) {
+        return createMockResponse({
+          data: {
+            productUpdate: {
+              product: {
+                id: "gid://shopify/Product/seo-test-1",
+                title: "SEO Product",
+                handle: "seo-product",
+                status: "ACTIVE",
+                featuredImage: {
+                  id: "gid://shopify/ProductImage/img-1",
+                  url: "https://example.com/img1.jpg",
+                  altText: "Old Alt",
+                },
+                images: {
+                  edges: [
+                    {
+                      node: {
+                        id: "gid://shopify/ProductImage/img-1",
+                        url: "https://example.com/img1.jpg",
+                        altText: "Old Alt",
+                      },
+                    },
+                  ],
+                },
+                variants: { edges: [] },
+                createdAt: "2026-09-01",
+                updatedAt: "2026-09-20",
+              },
+              userErrors: [],
+            },
+          },
+        });
+      }
+      if (body.query.includes("fileUpdate(")) {
+        capturedFileUpdate = body.variables.files;
+        return createMockResponse({
+          data: {
+            fileUpdate: {
+              files: [{ id: "gid://shopify/ProductImage/img-1", alt: "Optimized SEO Alt" }],
+              userErrors: [],
+            },
+          },
+        });
+      }
+      if (body.query.includes("productCreateMedia(")) {
+        capturedCreateMedia = body.variables.media;
+        return createMockResponse({
+          data: {
+            productCreateMedia: {
+              media: [],
+              userErrors: [],
+            },
+          },
+        });
+      }
+      return createMockResponse({});
+    };
+
+    const registry = new InMemoryStoreRegistry([
+      {
+        storeId: "store-seo-test",
+        shopDomain: "seo.myshopify.com",
+        apiVersion: "2026-07",
+        auth: { type: "static", staticToken: "tok" },
+      },
+    ]);
+    const client = new ShopifyGraphqlClient({
+      tokenProvider: new StaticAccessTokenProvider(),
+      throttleManager: new InMemoryThrottleManager(),
+      baseTransport: fakeTransport,
+    });
+    const dispatcher = new GatewayDispatcher({ storeRegistry: registry, graphqlClient: client });
+
+    const res = await dispatcher.dispatch({
+      storeId: "store-seo-test",
+      operation: "products.update",
+      mode: "apply",
+      requestId: "req-seo-test-1",
+      payload: {
+        id: "gid://shopify/Product/seo-test-1",
+        product: {
+          title: "SEO Product",
+          images: [
+            {
+              id: "gid://shopify/ProductImage/img-1",
+              altText: "Optimized SEO Alt",
+            },
+          ],
+        },
+      },
+    });
+
+    assert.equal(res.success, true);
+    assert.deepEqual(capturedFileUpdate, [
+      { id: "gid://shopify/ProductImage/img-1", alt: "Optimized SEO Alt" },
+    ]);
+    assert.equal(capturedCreateMedia, null);
+  });
+
+  it("products.update with new image (url but no id) appends as new media via productCreateMedia", async () => {
+    let capturedFileUpdate: unknown = null;
+    let capturedCreateMedia: unknown = null;
+
+    const fakeTransport: HttpTransport = async (_url, options) => {
+      const body = JSON.parse(options?.body as string) as { query: string; variables: Record<string, unknown> };
+      if (body.query.includes("productUpdate(")) {
+        return createMockResponse({
+          data: {
+            productUpdate: {
+              product: {
+                id: "gid://shopify/Product/new-img-test",
+                title: "Product With New Image",
+                handle: "prod-new-img",
+                status: "ACTIVE",
+                variants: { edges: [] },
+                createdAt: "2026-09-01",
+                updatedAt: "2026-09-20",
+              },
+              userErrors: [],
+            },
+          },
+        });
+      }
+      if (body.query.includes("fileUpdate(")) {
+        capturedFileUpdate = body.variables.files;
+        return createMockResponse({ data: { fileUpdate: { files: [], userErrors: [] } } });
+      }
+      if (body.query.includes("productCreateMedia(")) {
+        capturedCreateMedia = body.variables.media;
+        return createMockResponse({
+          data: {
+            productCreateMedia: {
+              media: [{ id: "gid://shopify/MediaImage/new-99" }],
+              userErrors: [],
+            },
+          },
+        });
+      }
+      return createMockResponse({});
+    };
+
+    const registry = new InMemoryStoreRegistry([
+      {
+        storeId: "store-new-img",
+        shopDomain: "new-img.myshopify.com",
+        apiVersion: "2026-07",
+        auth: { type: "static", staticToken: "tok" },
+      },
+    ]);
+    const client = new ShopifyGraphqlClient({
+      tokenProvider: new StaticAccessTokenProvider(),
+      throttleManager: new InMemoryThrottleManager(),
+      baseTransport: fakeTransport,
+    });
+    const dispatcher = new GatewayDispatcher({ storeRegistry: registry, graphqlClient: client });
+
+    const res = await dispatcher.dispatch({
+      storeId: "store-new-img",
+      operation: "products.update",
+      mode: "apply",
+      requestId: "req-new-img-1",
+      payload: {
+        id: "gid://shopify/Product/new-img-test",
+        product: {
+          images: [
+            {
+              url: "https://example.com/new-photo.jpg",
+              altText: "New Image Alt",
+            },
+          ],
+        },
+      },
+    });
+
+    assert.equal(res.success, true);
+    assert.equal(capturedFileUpdate, null);
+    assert.deepEqual(capturedCreateMedia, [
+      {
+        originalSource: "https://example.com/new-photo.jpg",
+        mediaContentType: "IMAGE",
+        alt: "New Image Alt",
+      },
+    ]);
+  });
+
+  it("products.update throws SHOPIFY_PARTIAL_WRITE with reconciliationRequired: true if fileUpdate fails after product update", async () => {
+    const fakeTransport: HttpTransport = async (_url, options) => {
+      const body = JSON.parse(options?.body as string) as { query: string; variables: Record<string, unknown> };
+      if (body.query.includes("productUpdate(")) {
+        return createMockResponse({
+          data: {
+            productUpdate: {
+              product: {
+                id: "gid://shopify/Product/fail-file-update",
+                title: "Updated Title",
+                handle: "fail-file-update",
+                status: "ACTIVE",
+                variants: { edges: [] },
+                createdAt: "2026-09-01",
+                updatedAt: "2026-09-20",
+              },
+              userErrors: [],
+            },
+          },
+        });
+      }
+      if (body.query.includes("fileUpdate(")) {
+        return createMockResponse({
+          data: {
+            fileUpdate: {
+              files: null,
+              userErrors: [{ field: ["files", "0"], message: "File not found" }],
+            },
+          },
+        });
+      }
+      return createMockResponse({});
+    };
+
+    const idempotencyStore = new InMemoryIdempotencyStore();
+    const registry = new InMemoryStoreRegistry([
+      {
+        storeId: "store-partial-update",
+        shopDomain: "partial.myshopify.com",
+        apiVersion: "2026-07",
+        auth: { type: "static", staticToken: "tok" },
+      },
+    ]);
+    const client = new ShopifyGraphqlClient({
+      tokenProvider: new StaticAccessTokenProvider(),
+      throttleManager: new InMemoryThrottleManager(),
+      baseTransport: fakeTransport,
+    });
+    const dispatcher = new GatewayDispatcher({
+      storeRegistry: registry,
+      graphqlClient: client,
+      idempotencyStore,
+    });
+
+    await assert.rejects(
+      async () =>
+        dispatcher.dispatch({
+          storeId: "store-partial-update",
+          operation: "products.update",
+          mode: "apply",
+          requestId: "req-update-partial-file-1",
+          payload: {
+            id: "gid://shopify/Product/fail-file-update",
+            product: {
+              title: "Updated Title",
+              images: [{ id: "gid://shopify/ProductImage/nonexistent", altText: "New Alt" }],
+            },
+          },
+        }),
+      (err: unknown) => {
+        assert.ok(err instanceof GatewayError);
+        assert.equal(err.code, "SHOPIFY_PARTIAL_WRITE");
+        assert.equal(err.httpStatus, 409);
+        assert.equal(err.reconciliationRequired, true);
+        assert.equal(err.details?.updatedProductId, "gid://shopify/Product/fail-file-update");
+        return true;
+      },
+    );
+
+    // Retrying with the same requestId must ALSO return SHOPIFY_PARTIAL_WRITE
+    await assert.rejects(
+      async () =>
+        dispatcher.dispatch({
+          storeId: "store-partial-update",
+          operation: "products.update",
+          mode: "apply",
+          requestId: "req-update-partial-file-1",
+          payload: {
+            id: "gid://shopify/Product/fail-file-update",
+            product: {
+              title: "Updated Title",
+              images: [{ id: "gid://shopify/ProductImage/nonexistent", altText: "New Alt" }],
+            },
+          },
+        }),
+      (err: unknown) => {
+        assert.ok(err instanceof GatewayError);
+        assert.equal(err.code, "SHOPIFY_PARTIAL_WRITE");
+        assert.equal(err.httpStatus, 409);
+        assert.equal(err.reconciliationRequired, true);
+        return true;
+      },
+    );
+  });
+
+  it("products.update throws SHOPIFY_PARTIAL_WRITE with reconciliationRequired: true if productCreateMedia fails after product update", async () => {
+    const fakeTransport: HttpTransport = async (_url, options) => {
+      const body = JSON.parse(options?.body as string) as { query: string; variables: Record<string, unknown> };
+      if (body.query.includes("productUpdate(")) {
+        return createMockResponse({
+          data: {
+            productUpdate: {
+              product: {
+                id: "gid://shopify/Product/fail-media-create",
+                title: "Updated Title",
+                handle: "fail-media-create",
+                status: "ACTIVE",
+                variants: { edges: [] },
+                createdAt: "2026-09-01",
+                updatedAt: "2026-09-20",
+              },
+              userErrors: [],
+            },
+          },
+        });
+      }
+      if (body.query.includes("productCreateMedia(")) {
+        return createMockResponse({
+          data: {
+            productCreateMedia: {
+              media: null,
+              userErrors: [{ field: ["media", "0"], message: "Media URL inaccessible" }],
+            },
+          },
+        });
+      }
+      return createMockResponse({});
+    };
+
+    const registry = new InMemoryStoreRegistry([
+      {
+        storeId: "store-partial-media",
+        shopDomain: "partial-media.myshopify.com",
+        apiVersion: "2026-07",
+        auth: { type: "static", staticToken: "tok" },
+      },
+    ]);
+    const client = new ShopifyGraphqlClient({
+      tokenProvider: new StaticAccessTokenProvider(),
+      throttleManager: new InMemoryThrottleManager(),
+      baseTransport: fakeTransport,
+    });
+    const dispatcher = new GatewayDispatcher({ storeRegistry: registry, graphqlClient: client });
+
+    await assert.rejects(
+      async () =>
+        dispatcher.dispatch({
+          storeId: "store-partial-media",
+          operation: "products.update",
+          mode: "apply",
+          requestId: "req-partial-media-1",
+          payload: {
+            id: "gid://shopify/Product/fail-media-create",
+            product: {
+              title: "Updated Title",
+              images: [{ url: "https://example.com/bad.jpg", altText: "Bad Img" }],
+            },
+          },
+        }),
+      (err: unknown) => {
+        assert.ok(err instanceof GatewayError);
+        assert.equal(err.code, "SHOPIFY_PARTIAL_WRITE");
+        assert.equal(err.httpStatus, 409);
+        assert.equal(err.reconciliationRequired, true);
+        assert.equal(err.details?.updatedProductId, "gid://shopify/Product/fail-media-create");
+        return true;
+      },
+    );
+  });
+
+  it("startGatewayServer refuses to start on 0.0.0.0 or external host without GATEWAY_AUTH_TOKEN", async () => {
+    const { startGatewayServer } = await import("../server");
+    assert.throws(
+      () => {
+        startGatewayServer({ host: "0.0.0.0", port: 3190 });
+      },
+      (err: unknown) => {
+        assert.ok(err instanceof Error);
+        assert.match(err.message, /unauthenticated public exposure is prohibited/i);
+        return true;
+      },
+    );
+  });
+
+  it("startGatewayServer allows binding to 0.0.0.0 when authToken is provided", async () => {
+    const { startGatewayServer } = await import("../server");
+    const server = startGatewayServer({ host: "0.0.0.0", port: 3191, authToken: "safe-token" });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const addr = server.address() as import("node:net").AddressInfo;
+    assert.ok(addr);
+    assert.equal(addr.port, 3191);
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+
+  it("createStoreTransport caches ProxyAgent instances across calls for same proxy URL", async () => {
+    const { proxyAgentPool, clearProxyAgentPool } = await import("../proxy-transport");
+    clearProxyAgentPool();
+
+    const store1: StoreConfig = {
+      storeId: "store-proxy-cache-1",
+      shopDomain: "proxy-cache-1.myshopify.com",
+      apiVersion: "2026-07",
+      auth: { type: "static", staticToken: "tok" },
+      proxy: { url: "http://proxy.pool.internal:8080", failClosed: true },
+    };
+    const store2: StoreConfig = {
+      storeId: "store-proxy-cache-2",
+      shopDomain: "proxy-cache-2.myshopify.com",
+      apiVersion: "2026-07",
+      auth: { type: "static", staticToken: "tok" },
+      proxy: { url: "http://proxy.pool.internal:8080", failClosed: true },
+    };
+
+    createStoreTransport(store1);
+    const agent1 = proxyAgentPool.get("http://proxy.pool.internal:8080/");
+    assert.ok(agent1);
+
+    createStoreTransport(store2);
+    const agent2 = proxyAgentPool.get("http://proxy.pool.internal:8080/");
+    assert.equal(agent1, agent2, "ProxyAgent must be reused from connection pool");
+  });
+
+  it("createStoreTransport rejects unsupported proxy protocols with SHOPIFY_NETWORK_ERROR", () => {
+    const store: StoreConfig = {
+      storeId: "store-socks",
+      shopDomain: "socks.myshopify.com",
+      apiVersion: "2026-07",
+      auth: { type: "static", staticToken: "tok" },
+      proxy: { url: "socks5://10.0.0.1:1080" },
+    };
+
+    assert.throws(
+      () => createStoreTransport(store),
+      (err: unknown) => {
+        assert.ok(err instanceof GatewayError);
+        assert.equal(err.code, "SHOPIFY_NETWORK_ERROR");
+        assert.equal(err.httpStatus, 502);
+        assert.match(err.message, /only 'http:' and 'https:' are supported/i);
+        return true;
+      },
+    );
+  });
+
+  it("createStoreTransport rejects malformed proxy URLs with SHOPIFY_NETWORK_ERROR", () => {
+    const store: StoreConfig = {
+      storeId: "store-bad-url",
+      shopDomain: "bad-url.myshopify.com",
+      apiVersion: "2026-07",
+      auth: { type: "static", staticToken: "tok" },
+      proxy: { url: "::not-a-valid-url::" },
+    };
+
+    assert.throws(
+      () => createStoreTransport(store),
+      (err: unknown) => {
+        assert.ok(err instanceof GatewayError);
+        assert.equal(err.code, "SHOPIFY_NETWORK_ERROR");
+        assert.equal(err.httpStatus, 502);
+        assert.match(err.message, /invalid URL format/i);
+        return true;
+      },
+    );
+  });
+
+  it("ShopifyGraphqlClient immediately throws SHOPIFY_THROTTLED when wait exceeds 30000ms", async () => {
+    const throttle = new InMemoryThrottleManager();
+    const tokenProvider = new StaticAccessTokenProvider();
+    const transport: HttpTransport = async () => {
+      return createMockResponse({
+        errors: [{ message: "Throttled", extensions: { code: "THROTTLED" } }],
+        extensions: {
+          cost: {
+            requestedQueryCost: 5000,
+            actualQueryCost: 50,
+            throttleStatus: {
+              maximumAvailable: 1000,
+              currentlyAvailable: 0,
+              restoreRate: 50, // 5000 / 50 = 100 seconds
+            },
+          },
+        },
+      });
+    };
+
+    const client = new ShopifyGraphqlClient({
+      tokenProvider,
+      throttleManager: throttle,
+      baseTransport: transport,
+    });
+
+    const store: StoreConfig = {
+      storeId: "store-heavy-throttle",
+      shopDomain: "heavy.myshopify.com",
+      apiVersion: "2026-07",
+      auth: { type: "static", staticToken: "tok" },
+    };
+
+    const startTime = Date.now();
+    await assert.rejects(
+      async () => client.query(store, "{ shop { name } }"),
+      (err: unknown) => {
+        assert.ok(err instanceof GatewayError);
+        assert.equal(err.code, "SHOPIFY_THROTTLED");
+        assert.equal(err.retryAfterSeconds, 100);
+        return true;
+      },
+    );
+    const elapsed = Date.now() - startTime;
+    assert.ok(elapsed < 2000, `Expected immediate return without long sleep, elapsed: ${elapsed}ms`);
+  });
+
+  it("products.list query does not request variants selection while products.get does", async () => {
+    let capturedListQuery = "";
+    let capturedGetQuery = "";
+
+    const fakeTransport: HttpTransport = async (_url, options) => {
+      const body = JSON.parse(options?.body as string) as { query: string };
+      if (body.query.includes("ProductsList(")) {
+        capturedListQuery = body.query;
+        return createMockResponse({
+          data: {
+            products: {
+              pageInfo: { hasNextPage: false, hasPreviousPage: false },
+              edges: [],
+            },
+          },
+        });
+      }
+      if (body.query.includes("ProductsGet(")) {
+        capturedGetQuery = body.query;
+        return createMockResponse({
+          data: {
+            product: {
+              id: "gid://shopify/Product/1",
+              title: "P1",
+              handle: "p1",
+              status: "ACTIVE",
+              variants: {
+                edges: [{ node: { id: "gid://shopify/ProductVariant/v1", title: "V1", price: "10.00" } }],
+              },
+              createdAt: "2026-09-01",
+              updatedAt: "2026-09-20",
+            },
+          },
+        });
+      }
+      return createMockResponse({});
+    };
+
+    const registry = new InMemoryStoreRegistry([
+      {
+        storeId: "store-query-check",
+        shopDomain: "query.myshopify.com",
+        apiVersion: "2026-07",
+        auth: { type: "static", staticToken: "tok" },
+      },
+    ]);
+    const client = new ShopifyGraphqlClient({
+      tokenProvider: new StaticAccessTokenProvider(),
+      throttleManager: new InMemoryThrottleManager(),
+      baseTransport: fakeTransport,
+    });
+    const dispatcher = new GatewayDispatcher({ storeRegistry: registry, graphqlClient: client });
+
+    await dispatcher.dispatch({ storeId: "store-query-check", operation: "products.list", payload: {} });
+    assert.ok(!capturedListQuery.includes("variants("), "products.list query must not contain variants");
+
+    await dispatcher.dispatch({ storeId: "store-query-check", operation: "products.get", payload: { id: "gid://shopify/Product/1" } });
+    assert.ok(capturedGetQuery.includes("variants("), "products.get query must retain variants");
+  });
+
+  it("products.update with numeric image id and null altText handles ID correctly and clears alt", async () => {
+    let capturedFiles: unknown = null;
+    let createdMedia: unknown = null;
+
+    const fakeTransport: HttpTransport = async (_url, options) => {
+      const body = JSON.parse(options?.body as string) as { query: string; variables: Record<string, unknown> };
+      if (body.query.includes("productUpdate(")) {
+        return createMockResponse({
+          data: {
+            productUpdate: {
+              product: {
+                id: "gid://shopify/Product/100",
+                title: "Updated",
+                handle: "updated",
+                status: "ACTIVE",
+                featuredImage: {
+                  id: "gid://shopify/ProductImage/9999",
+                  url: "https://example.com/feat.jpg",
+                  altText: "Old Alt",
+                },
+                images: {
+                  edges: [
+                    {
+                      node: {
+                        id: "gid://shopify/ProductImage/9999",
+                        url: "https://example.com/feat.jpg",
+                        altText: "Old Alt",
+                      },
+                    },
+                  ],
+                },
+                variants: { edges: [] },
+                createdAt: "2026-09-01",
+                updatedAt: "2026-09-20",
+              },
+              userErrors: [],
+            },
+          },
+        });
+      }
+      if (body.query.includes("fileUpdate(")) {
+        capturedFiles = body.variables.files;
+        return createMockResponse({
+          data: {
+            fileUpdate: {
+              files: [{ id: "9999", alt: "" }],
+              userErrors: [],
+            },
+          },
+        });
+      }
+      if (body.query.includes("productCreateMedia(")) {
+        createdMedia = body.variables.media;
+        return createMockResponse({ data: { productCreateMedia: { media: [], userErrors: [] } } });
+      }
+      return createMockResponse({});
+    };
+
+    const registry = new InMemoryStoreRegistry([
+      {
+        storeId: "store-num-id",
+        shopDomain: "num-id.myshopify.com",
+        apiVersion: "2026-07",
+        auth: { type: "static", staticToken: "tok" },
+      },
+    ]);
+    const client = new ShopifyGraphqlClient({
+      tokenProvider: new StaticAccessTokenProvider(),
+      throttleManager: new InMemoryThrottleManager(),
+      baseTransport: fakeTransport,
+    });
+    const dispatcher = new GatewayDispatcher({ storeRegistry: registry, graphqlClient: client });
+
+    const res = await dispatcher.dispatch({
+      storeId: "store-num-id",
+      operation: "products.update",
+      mode: "apply",
+      requestId: "req-num-id",
+      payload: {
+        id: "gid://shopify/Product/100",
+        product: {
+          images: [
+            {
+              id: 9999 as unknown as string,
+              url: "https://example.com/feat.jpg",
+              altText: null as unknown as string,
+            },
+          ],
+        },
+      },
+    });
+
+    assert.equal(res.success, true);
+    assert.deepEqual(capturedFiles, [{ id: "9999", alt: "" }]);
+    assert.equal(createdMedia, null);
+    const prod = (res as { data: { product: ProductSummary } }).data.product;
+    assert.equal(prod.featuredImage?.altText, "");
+    assert.equal(prod.images?.[0]?.altText, "");
+  });
+
+  it("products.update throws SHOPIFY_PARTIAL_WRITE if fileUpdate or productCreateMedia returns null payload", async () => {
+    const fakeTransport: HttpTransport = async (_url, options) => {
+      const body = JSON.parse(options?.body as string) as { query: string };
+      if (body.query.includes("productUpdate(")) {
+        return createMockResponse({
+          data: {
+            productUpdate: {
+              product: {
+                id: "gid://shopify/Product/null-payload",
+                title: "Title",
+                handle: "handle",
+                status: "ACTIVE",
+                variants: { edges: [] },
+                createdAt: "2026-09-01",
+                updatedAt: "2026-09-20",
+              },
+              userErrors: [],
+            },
+          },
+        });
+      }
+      if (body.query.includes("fileUpdate(")) {
+        // Return null fileUpdate payload without userErrors
+        return createMockResponse({
+          data: { fileUpdate: null },
+        });
+      }
+      return createMockResponse({});
+    };
+
+    const registry = new InMemoryStoreRegistry([
+      {
+        storeId: "store-null-payload",
+        shopDomain: "null.myshopify.com",
+        apiVersion: "2026-07",
+        auth: { type: "static", staticToken: "tok" },
+      },
+    ]);
+    const client = new ShopifyGraphqlClient({
+      tokenProvider: new StaticAccessTokenProvider(),
+      throttleManager: new InMemoryThrottleManager(),
+      baseTransport: fakeTransport,
+    });
+    const dispatcher = new GatewayDispatcher({ storeRegistry: registry, graphqlClient: client });
+
+    await assert.rejects(
+      async () =>
+        dispatcher.dispatch({
+          storeId: "store-null-payload",
+          operation: "products.update",
+          mode: "apply",
+          requestId: "req-null-payload",
+          payload: {
+            id: "gid://shopify/Product/null-payload",
+            product: {
+              images: [{ id: "gid://shopify/MediaImage/1", altText: "New Alt" }],
+            },
+          },
+        }),
+      (err: unknown) => {
+        assert.ok(err instanceof GatewayError);
+        assert.equal(err.code, "SHOPIFY_PARTIAL_WRITE");
+        assert.equal(err.reconciliationRequired, true);
+        return true;
+      },
+    );
+  });
+
+  it("products.update in preview mode preserves existing image altText updates and string images", async () => {
+    const registry = new InMemoryStoreRegistry([
+      {
+        storeId: "store-preview-check",
+        shopDomain: "preview.myshopify.com",
+        apiVersion: "2026-07",
+        auth: { type: "static", staticToken: "tok" },
+      },
+    ]);
+    const client = new ShopifyGraphqlClient({
+      tokenProvider: new StaticAccessTokenProvider(),
+      throttleManager: new InMemoryThrottleManager(),
+    });
+    const dispatcher = new GatewayDispatcher({ storeRegistry: registry, graphqlClient: client });
+
+    const res = await dispatcher.dispatch({
+      storeId: "store-preview-check",
+      operation: "products.update",
+      mode: "preview",
+      payload: {
+        id: "gid://shopify/Product/preview-1",
+        product: {
+          featuredImage: { id: "gid://shopify/MediaImage/feat", altText: "Featured Alt" },
+          images: [
+            { id: "gid://shopify/MediaImage/1", altText: "Alt 1" },
+            "https://example.com/string-img.jpg",
+          ],
+        },
+      },
+    });
+
+    assert.equal(res.success, true);
+    const prod = (res as { data: { product: ProductSummary } }).data.product;
+    assert.ok(prod.featuredImage);
+    assert.equal(prod.featuredImage?.id, "gid://shopify/MediaImage/feat");
+    assert.equal(prod.featuredImage?.altText, "Featured Alt");
+    assert.equal(prod.images?.length, 2);
+    assert.equal(prod.images?.[0]?.id, "gid://shopify/MediaImage/1");
+    assert.equal(prod.images?.[0]?.altText, "Alt 1");
+    assert.equal(prod.images?.[1]?.url, "https://example.com/string-img.jpg");
+  });
+
+  it("startGatewayServer allows binding to ::1 without GATEWAY_AUTH_TOKEN", async () => {
+    const { startGatewayServer } = await import("../server");
+    const server = startGatewayServer({ host: "::1", port: 3192 });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const addr = server.address() as import("node:net").AddressInfo;
+    assert.ok(addr);
+    assert.equal(addr.port, 3192);
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+
+  it("createStoreTransport supports proxy with username only and preserves AbortError", async () => {
+    const store: StoreConfig = {
+      storeId: "store-proxy-user",
+      shopDomain: "proxy-user.myshopify.com",
+      apiVersion: "2026-07",
+      auth: { type: "static", staticToken: "tok" },
+      proxy: { url: "http://proxy.internal:8080", username: "token_user", failClosed: true },
+    };
+
+    let capturedInit: RequestInit | undefined;
+    const mockFetch: HttpTransport = async (_url, init) => {
+      capturedInit = init;
+      throw new DOMException("The operation was aborted.", "AbortError");
+    };
+
+    const transport = createStoreTransport(store, mockFetch);
+    const abortController = new AbortController();
+    abortController.abort();
+
+    await assert.rejects(
+      async () => transport("https://proxy-user.myshopify.com/api", { signal: abortController.signal }),
+      (err: unknown) => {
+        assert.ok(err instanceof Error);
+        assert.equal(err.name, "AbortError");
+        return true;
+      },
+    );
+
+    assert.ok((capturedInit as Record<string, unknown> | undefined)?.dispatcher);
+  });
+});
+
+
 
 

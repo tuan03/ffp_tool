@@ -1,8 +1,9 @@
-interface AutoSeoToolbarProps {
+export interface AutoSeoToolbarProps {
   isLoadingProducts: boolean;
   isRunningAutoSeo: boolean;
   totalProductsCount: number;
   selectedCount: number;
+  visibleProductsCount: number;
   onLoadProducts(): void;
   onSelectAll(): void;
   onClearSelection(): void;
@@ -14,6 +15,7 @@ export function AutoSeoToolbar({
   isRunningAutoSeo,
   totalProductsCount,
   selectedCount,
+  visibleProductsCount,
   onLoadProducts,
   onSelectAll,
   onClearSelection,
@@ -70,19 +72,21 @@ export function AutoSeoToolbar({
           <button
             type="button"
             onClick={onSelectAll}
-            disabled={totalProductsCount === 0}
-            className="rounded-lg bg-slate-800/70 px-3 py-2 text-xs font-medium text-slate-300 border border-slate-700/80 hover:bg-slate-800 hover:text-white transition disabled:opacity-40"
+            disabled={visibleProductsCount === 0}
+            className="rounded-lg bg-slate-800/70 px-3 py-2 text-xs font-medium text-slate-300 border border-slate-700/80 hover:bg-slate-800 hover:text-white transition disabled:opacity-40 disabled:cursor-not-allowed"
+            title="Chọn tất cả sản phẩm đang hiển thị"
           >
-            ☑ Chọn tất cả
+            ☑ Chọn tất cả ({visibleProductsCount})
           </button>
 
           <button
             type="button"
             onClick={onClearSelection}
-            disabled={selectedCount === 0}
-            className="rounded-lg bg-slate-800/70 px-3 py-2 text-xs font-medium text-slate-300 border border-slate-700/80 hover:bg-slate-800 hover:text-white transition disabled:opacity-40"
+            disabled={visibleProductsCount === 0 || selectedCount === 0}
+            className="rounded-lg bg-slate-800/70 px-3 py-2 text-xs font-medium text-slate-300 border border-slate-700/80 hover:bg-slate-800 hover:text-white transition disabled:opacity-40 disabled:cursor-not-allowed"
+            title="Bỏ chọn các sản phẩm đang hiển thị"
           >
-            ☐ Bỏ chọn
+            ☐ Bỏ chọn ({visibleProductsCount})
           </button>
         </div>
 
