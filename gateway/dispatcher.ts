@@ -1,24 +1,57 @@
 import { GatewayError } from "./errors";
+import { deterministicStringify, type IdempotencyStore, InMemoryIdempotencyStore } from "./idempotency";
 import { executeCollectionsGet, executeCollectionsList } from "./operations/collections";
+import {
+  executeCollectionsCreate,
+  executeCollectionsDelete,
+  executeCollectionsUpdate,
+  executeCollectionsUpdateMembership,
+} from "./operations/collections-write";
 import { executeConnectionTest } from "./operations/connection-test";
 import { executeProductsGet, executeProductsList } from "./operations/products";
-import { executeWriteNotImplemented } from "./operations/write-not-implemented";
+import {
+  executeProductsBulkUpdate,
+  executeProductsCreate,
+  executeProductsDelete,
+  executeProductsUpdate,
+} from "./operations/products-write";
+import {
+  executeVariantsBulkUpdate,
+  executeVariantsUpdate,
+} from "./operations/variants-write";
 import type { ShopifyGraphqlClient } from "./shopify-graphql-client";
 import type { StoreRegistry } from "./store-registry";
-import type { GatewayRequest, GatewayResponse } from "./types";
+import type { GatewayRequest, GatewayResponse, StoreConfig } from "./types";
+
+const WRITE_OPERATIONS: ReadonlySet<string> = new Set([
+  "products.create",
+  "products.update",
+  "products.bulkUpdate",
+  "products.delete",
+  "variants.update",
+  "variants.bulkUpdate",
+  "collections.create",
+  "collections.update",
+  "collections.delete",
+  "collections.updateMembership",
+]);
 
 export interface GatewayDispatcherOptions {
   readonly storeRegistry: StoreRegistry;
   readonly graphqlClient: ShopifyGraphqlClient;
+  readonly idempotencyStore?: IdempotencyStore;
 }
 
 export class GatewayDispatcher {
   private readonly storeRegistry: StoreRegistry;
   private readonly graphqlClient: ShopifyGraphqlClient;
+  private readonly idempotencyStore: IdempotencyStore;
+  private readonly inFlightWrites = new Map<string, Promise<unknown>>();
 
   public constructor(options: GatewayDispatcherOptions) {
     this.storeRegistry = options.storeRegistry;
     this.graphqlClient = options.graphqlClient;
+    this.idempotencyStore = options.idempotencyStore ?? new InMemoryIdempotencyStore();
   }
 
   public async dispatch(request: GatewayRequest): Promise<GatewayResponse> {
@@ -37,37 +70,73 @@ export class GatewayDispatcher {
       throw new GatewayError(`Store not found: ${request.storeId}`, "SHOPIFY_NOT_FOUND", 404);
     }
 
+    const isWrite = WRITE_OPERATIONS.has(request.operation);
+    const mode: "preview" | "apply" = request.mode === "preview" ? "preview" : "apply";
+    const requestId = typeof request.requestId === "string" && request.requestId.trim() !== ""
+      ? request.requestId.trim()
+      : undefined;
+
+    if (isWrite && requestId) {
+      const idempotencyKey = `${store.storeId}:${request.operation}:${requestId}`;
+      const payloadHash = deterministicStringify(request.payload);
+
+      const cached = await this.idempotencyStore.get(idempotencyKey);
+      if (cached) {
+        if (cached.payloadHash !== payloadHash) {
+          throw new GatewayError(
+            `RequestId '${requestId}' has already been used with a different payload`,
+            "SHOPIFY_USER_ERROR",
+            409,
+          );
+        }
+        return {
+          storeId: request.storeId,
+          operation: request.operation,
+          success: true,
+          data: cached.responseData,
+        };
+      }
+
+      const inFlight = this.inFlightWrites.get(idempotencyKey);
+      if (inFlight) {
+        const data = await inFlight;
+        return {
+          storeId: request.storeId,
+          operation: request.operation,
+          success: true,
+          data,
+        };
+      }
+
+      const execPromise = (async () => {
+        const data = await this.executeWrite(store, request.operation, request.payload, mode, requestId);
+        await this.idempotencyStore.set(idempotencyKey, {
+          payloadHash,
+          responseData: data,
+          createdAtMs: Date.now(),
+        });
+        return data;
+      })();
+
+      this.inFlightWrites.set(idempotencyKey, execPromise);
+      try {
+        const data = await execPromise;
+        return {
+          storeId: request.storeId,
+          operation: request.operation,
+          success: true,
+          data,
+        };
+      } finally {
+        this.inFlightWrites.delete(idempotencyKey);
+      }
+    }
+
     let data: unknown;
-    switch (request.operation) {
-      case "connection.test":
-        data = await executeConnectionTest(store, this.graphqlClient, request.payload);
-        break;
-      case "products.list":
-        data = await executeProductsList(store, this.graphqlClient, request.payload);
-        break;
-      case "products.get":
-        data = await executeProductsGet(store, this.graphqlClient, request.payload);
-        break;
-      case "collections.list":
-        data = await executeCollectionsList(store, this.graphqlClient, request.payload);
-        break;
-      case "collections.get":
-        data = await executeCollectionsGet(store, this.graphqlClient, request.payload);
-        break;
-      case "products.create":
-      case "products.update":
-      case "products.bulkUpdate":
-      case "products.delete":
-      case "variants.update":
-      case "variants.bulkUpdate":
-      case "collections.create":
-      case "collections.update":
-      case "collections.delete":
-      case "collections.updateMembership":
-        data = await executeWriteNotImplemented(request.operation);
-        break;
-      default:
-        throw new GatewayError(`Unsupported operation: ${request.operation}`, "SHOPIFY_INVALID_INPUT", 400);
+    if (isWrite) {
+      data = await this.executeWrite(store, request.operation, request.payload, mode, requestId);
+    } else {
+      data = await this.executeRead(store, request.operation, request.payload, requestId);
     }
 
     return {
@@ -76,5 +145,60 @@ export class GatewayDispatcher {
       success: true,
       data,
     };
+  }
+
+  private async executeRead(
+    store: StoreConfig,
+    operation: string,
+    payload: unknown,
+    requestId?: string,
+  ): Promise<unknown> {
+    switch (operation) {
+      case "connection.test":
+        return executeConnectionTest(store, this.graphqlClient, payload);
+      case "products.list":
+        return executeProductsList(store, this.graphqlClient, payload);
+      case "products.get":
+        return executeProductsGet(store, this.graphqlClient, payload);
+      case "collections.list":
+        return executeCollectionsList(store, this.graphqlClient, payload);
+      case "collections.get":
+        return executeCollectionsGet(store, this.graphqlClient, payload);
+      default:
+        throw new GatewayError(`Unsupported operation: ${operation}`, "SHOPIFY_INVALID_INPUT", 400);
+    }
+  }
+
+  private async executeWrite(
+    store: StoreConfig,
+    operation: string,
+    payload: unknown,
+    mode: "preview" | "apply",
+    requestId?: string,
+  ): Promise<unknown> {
+    switch (operation) {
+      case "products.create":
+        return executeProductsCreate(store, this.graphqlClient, payload, mode, requestId);
+      case "products.update":
+        return executeProductsUpdate(store, this.graphqlClient, payload, mode, requestId);
+      case "products.bulkUpdate":
+        return executeProductsBulkUpdate(store, this.graphqlClient, payload, mode, requestId);
+      case "products.delete":
+        return executeProductsDelete(store, this.graphqlClient, payload, mode, requestId);
+      case "variants.update":
+        return executeVariantsUpdate(store, this.graphqlClient, payload, mode, requestId);
+      case "variants.bulkUpdate":
+        return executeVariantsBulkUpdate(store, this.graphqlClient, payload, mode, requestId);
+      case "collections.create":
+        return executeCollectionsCreate(store, this.graphqlClient, payload, mode, requestId);
+      case "collections.update":
+        return executeCollectionsUpdate(store, this.graphqlClient, payload, mode, requestId);
+      case "collections.delete":
+        return executeCollectionsDelete(store, this.graphqlClient, payload, mode, requestId);
+      case "collections.updateMembership":
+        return executeCollectionsUpdateMembership(store, this.graphqlClient, payload, mode, requestId);
+      default:
+        throw new GatewayError(`Unsupported write operation: ${operation}`, "SHOPIFY_INVALID_INPUT", 400);
+    }
   }
 }

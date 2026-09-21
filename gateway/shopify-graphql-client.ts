@@ -25,7 +25,7 @@ export class ShopifyGraphqlClient {
     store: StoreConfig,
     graphqlQuery: string,
     variables?: Record<string, unknown>,
-    options?: { requestId?: string; timeoutMs?: number },
+    options?: { requestId?: string; timeoutMs?: number; isWrite?: boolean },
   ): Promise<TData> {
     const throttleStatus = this.throttleManager.check(store.storeId);
     if (throttleStatus.isThrottled) {
@@ -62,9 +62,26 @@ export class ShopifyGraphqlClient {
         signal: abortController?.signal,
       });
     } catch (networkErr: unknown) {
+      if (options?.isWrite) {
+        throw new GatewayError(
+          "Network request failed during write mutation; state is unknown",
+          "SHOPIFY_UNKNOWN_WRITE_STATE",
+          500,
+          undefined,
+          networkErr,
+        );
+      }
       throw new GatewayError("Network request to Shopify GraphQL failed", "SHOPIFY_NETWORK_ERROR", 502, undefined, networkErr);
     } finally {
       if (timeoutId) clearTimeout(timeoutId);
+    }
+
+    if (options?.isWrite && (response.status === 408 || response.status === 499 || response.status === 502 || response.status === 504)) {
+      throw new GatewayError(
+        `Write request failed with status ${response.status}; write state is unknown`,
+        "SHOPIFY_UNKNOWN_WRITE_STATE",
+        response.status,
+      );
     }
 
     if (response.status === 429) {
@@ -101,6 +118,15 @@ export class ShopifyGraphqlClient {
     }
 
     if (!response.ok) {
+      if (options?.isWrite) {
+        throw new GatewayError(
+          `Shopify write mutation failed with status ${response.status}; write state is unknown`,
+          "SHOPIFY_UNKNOWN_WRITE_STATE",
+          response.status,
+          undefined,
+          jsonErr,
+        );
+      }
       throw new GatewayError(
         `Shopify GraphQL endpoint failed with status ${response.status}`,
         "SHOPIFY_NETWORK_ERROR",
@@ -111,12 +137,20 @@ export class ShopifyGraphqlClient {
     }
 
     if (parsed === undefined) {
+      if (options?.isWrite) {
+        throw new GatewayError("Failed to parse GraphQL write response JSON; write state is unknown", "SHOPIFY_UNKNOWN_WRITE_STATE", 500, undefined, jsonErr);
+      }
       throw new GatewayError("Failed to parse GraphQL response JSON", "SHOPIFY_NETWORK_ERROR", 502, undefined, jsonErr);
     }
 
     if (parsed.data === undefined || parsed.data === null) {
+      if (options?.isWrite) {
+        throw new GatewayError("Shopify GraphQL write response missing data payload; write state is unknown", "SHOPIFY_UNKNOWN_WRITE_STATE", 500);
+      }
       throw new GatewayError("Shopify GraphQL response missing data payload", "SHOPIFY_NETWORK_ERROR", 502);
     }
+
+    return parsed.data;
 
     return parsed.data;
   }

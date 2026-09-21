@@ -76,7 +76,7 @@ const PRODUCTS_GET_QUERY = `
   }
 `;
 
-interface RawVariantNode {
+export interface RawVariantNode {
   readonly id: string;
   readonly title: string;
   readonly price: string;
@@ -85,7 +85,7 @@ interface RawVariantNode {
   readonly inventoryQuantity?: number | null;
 }
 
-interface RawProductNode {
+export interface RawProductNode {
   readonly id: string;
   readonly title: string;
   readonly handle: string;
@@ -101,7 +101,7 @@ interface RawProductNode {
   } | null;
 }
 
-function mapProductNode(node: RawProductNode): ProductSummary {
+export function mapProductNode(node: RawProductNode): ProductSummary {
   const variants: ProductVariantSummary[] = (node.variants?.edges ?? []).map((vEdge) => ({
     id: vEdge.node.id,
     productId: node.id,

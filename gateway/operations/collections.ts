@@ -43,7 +43,7 @@ const COLLECTIONS_GET_QUERY = `
   }
 `;
 
-interface RawCollectionNode {
+export interface RawCollectionNode {
   readonly id: string;
   readonly title: string;
   readonly handle: string;
@@ -52,7 +52,7 @@ interface RawCollectionNode {
   readonly updatedAt: string;
 }
 
-function mapCollectionNode(node: RawCollectionNode): CollectionSummary {
+export function mapCollectionNode(node: RawCollectionNode): CollectionSummary {
   let count = 0;
   if (typeof node.productsCount === "number") {
     count = node.productsCount;
