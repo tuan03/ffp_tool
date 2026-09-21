@@ -80,27 +80,38 @@ export class ShopifyGraphqlClient {
     if (response.status === 403) {
       throw new GatewayError("Forbidden Shopify access (HTTP 403)", "SHOPIFY_PERMISSION_DENIED", 403);
     }
-    if (!response.ok) {
-      throw new GatewayError(`Shopify GraphQL endpoint failed with status ${response.status}`, "SHOPIFY_NETWORK_ERROR", response.status);
-    }
-
-    let parsed: GraphQLResponse<TData>;
+    let parsed: GraphQLResponse<TData> | undefined;
+    let jsonErr: unknown;
     try {
       parsed = (await response.json()) as GraphQLResponse<TData>;
-    } catch (jsonErr: unknown) {
-      throw new GatewayError("Failed to parse GraphQL response JSON", "SHOPIFY_NETWORK_ERROR", 502, undefined, jsonErr);
+    } catch (err: unknown) {
+      jsonErr = err;
     }
 
-    if (parsed.extensions?.cost) {
+    if (parsed?.extensions?.cost) {
       this.throttleManager.recordCost(store.storeId, parsed.extensions.cost);
     }
 
-    if (parsed.errors && parsed.errors.length > 0) {
+    if (parsed?.errors && parsed.errors.length > 0) {
       const mappedError = mapGraphqlErrorsToGatewayError(parsed.errors, parsed.extensions?.cost);
       if (mappedError.code === "SHOPIFY_THROTTLED") {
         this.throttleManager.recordThrottled(store.storeId, mappedError.retryAfterSeconds);
       }
       throw mappedError;
+    }
+
+    if (!response.ok) {
+      throw new GatewayError(
+        `Shopify GraphQL endpoint failed with status ${response.status}`,
+        "SHOPIFY_NETWORK_ERROR",
+        response.status,
+        undefined,
+        jsonErr,
+      );
+    }
+
+    if (parsed === undefined) {
+      throw new GatewayError("Failed to parse GraphQL response JSON", "SHOPIFY_NETWORK_ERROR", 502, undefined, jsonErr);
     }
 
     if (parsed.data === undefined || parsed.data === null) {

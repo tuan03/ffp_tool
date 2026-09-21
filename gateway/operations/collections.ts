@@ -76,6 +76,9 @@ export async function executeCollectionsList(
   payload: unknown,
 ): Promise<CollectionListResult> {
   const p = (payload && typeof payload === "object" ? payload : {}) as Record<string, unknown>;
+  if (p.limit !== undefined && (typeof p.limit !== "number" || p.limit <= 0)) {
+    throw new GatewayError("Limit must be greater than 0", "SHOPIFY_USER_ERROR", 400);
+  }
   const first = typeof p.limit === "number" && p.limit > 0 ? Math.min(p.limit, 250) : 50;
   const after = typeof p.cursor === "string" && p.cursor.trim() !== "" ? p.cursor.trim() : undefined;
   const query = typeof p.query === "string" && p.query.trim() !== "" ? p.query.trim() : undefined;

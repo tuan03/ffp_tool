@@ -1,6 +1,30 @@
 import { GatewayError } from "./errors";
 import type { StoreConfig } from "./types";
 
+export function normalizeShopDomain(domain: string): string {
+  let normalized = domain.trim().toLowerCase();
+  normalized = normalized.replace(/^https?:\/\//, "");
+  normalized = normalized.replace(/\/.*$/, "");
+  normalized = normalized.replace(/:\d+$/, "");
+  if (!normalized.includes(".")) {
+    normalized = `${normalized}.myshopify.com`;
+  }
+  return normalized;
+}
+
+function deepCloneAndFreeze<T>(obj: T): T {
+  if (obj === null || typeof obj !== "object") {
+    return obj;
+  }
+  const copy = Array.isArray(obj) ? [...obj] : { ...(obj as Record<string, unknown>) };
+  for (const key of Object.keys(copy)) {
+    (copy as Record<string, unknown>)[key] = deepCloneAndFreeze(
+      (copy as Record<string, unknown>)[key],
+    );
+  }
+  return Object.freeze(copy) as T;
+}
+
 export interface StoreRegistry {
   getStore(storeId: string): Promise<StoreConfig | undefined> | StoreConfig | undefined;
   registerStore(config: StoreConfig): void;
@@ -20,13 +44,27 @@ export class InMemoryStoreRegistry implements StoreRegistry {
   }
 
   public registerStore(config: StoreConfig): void {
-    if (!config.storeId || config.storeId.trim() === "") {
+    if (!config || typeof config !== "object") {
+      throw new GatewayError("Store configuration must be an object", "SHOPIFY_INVALID_INPUT", 400);
+    }
+    const storeId = config.storeId?.trim();
+    if (!storeId) {
       throw new GatewayError("Store ID cannot be empty", "SHOPIFY_INVALID_INPUT", 400);
     }
-    if (!config.shopDomain || config.shopDomain.trim() === "") {
+    const shopDomain = config.shopDomain?.trim();
+    if (!shopDomain) {
       throw new GatewayError("Shop domain cannot be empty", "SHOPIFY_INVALID_INPUT", 400);
     }
-    this.stores.set(config.storeId, { ...config });
+    const apiVersion = config.apiVersion?.trim() || "2026-07";
+
+    const normalizedStore: StoreConfig = {
+      ...config,
+      storeId,
+      shopDomain: normalizeShopDomain(shopDomain),
+      apiVersion,
+    };
+
+    this.stores.set(storeId, deepCloneAndFreeze(normalizedStore));
   }
 
   public getStore(storeId: string): StoreConfig | undefined {
