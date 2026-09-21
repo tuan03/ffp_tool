@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   amazonCrawlerRoutes,
+  createAmazonCrawlerCacheClearer,
   createAmazonCrawlerRunner,
   DEFAULT_AMAZON_CRAWLER_SETTINGS,
   getAmazonCrawlerRunner,
@@ -112,6 +113,30 @@ test("mock runtime returns fresh contract data", async () => {
 });
 
 test("module exports route and stable input serialization", () => {
-  assert.equal(amazonCrawlerRoutes(async () => amazonCrawlerMockOutput)[0]?.path, "amazon-crawler");
+  assert.equal(amazonCrawlerRoutes(async () => amazonCrawlerMockOutput, async () => ({ removedFiles: 0, removedBytes: 0 }))[0]?.path, "amazon-crawler");
   assert.deepEqual(JSON.parse(serializeAmazonCrawlerInput(input)), input);
+});
+
+test("cache clearer sends DELETE and validates the engine response", async () => {
+  const requests: Array<{ url: string; method: string }> = [];
+  const clearCache = createAmazonCrawlerCacheClearer({
+    engineUrl: "http://engine.test/",
+    fetchImplementation: async (request, init) => {
+      requests.push({ url: String(request), method: init?.method ?? "GET" });
+      return jsonResponse({ removedFiles: 3, removedBytes: 2048 });
+    },
+  });
+  assert.deepEqual(await clearCache(), { removedFiles: 3, removedBytes: 2048 });
+  assert.deepEqual(requests, [{ url: "http://engine.test/api/amazon-crawler/cache", method: "DELETE" }]);
+});
+
+test("mock Customize contract omits raw and duplicate fields while exposing pricing migration", () => {
+  const product = amazonCrawlerMockOutput.products.find((candidate) => candidate.customization !== null);
+  assert.ok(product?.customization);
+  assert.equal(product.customization.optionGroups.some((group) => group.id === "gift-box"), false);
+  assert.equal(Object.hasOwn(product, "customizationRaw"), false);
+  assert.equal(Object.hasOwn(product.customization, "controls"), false);
+  assert.equal(Object.hasOwn(product.customization, "rules"), false);
+  assert.equal(product.customization.pricing.mode, "product_variants");
+  assert.equal(product.customization.pricing.paidOptionGroups[0]?.options[1]?.price.amount, 5);
 });

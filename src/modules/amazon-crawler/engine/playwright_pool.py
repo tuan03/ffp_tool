@@ -9,7 +9,9 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Callable
-from urllib.parse import urlparse
+
+from .amazon_locale import USER_AGENT, force_us_profile_url, html_is_location_blocked, playwright_us_cookies
+from .proxy_profiles import ProxyAssignment
 
 
 class PlaywrightUnavailable(RuntimeError):
@@ -22,7 +24,12 @@ class CaptchaTimeout(RuntimeError):
 
 def html_is_captcha(html: str) -> bool:
     lowered = html.casefold()
-    return "validatecaptcha" in lowered or "enter the characters you see below" in lowered or "captchacharacters" in lowered
+    markers = (
+        "validatecaptcha", "opfcaptcha.amazon.com", "enter the characters you see below", "captchacharacters",
+        "click the button below to continue shopping", "api-services-support@amazon.com",
+        "sorry, we just need to make sure you're not a robot", "robot check",
+    )
+    return bool(html) and any(marker in lowered for marker in markers)
 
 
 def start_with_playwright_event_loop(start: Callable[[], Any]) -> Any:
@@ -48,18 +55,22 @@ def start_with_playwright_event_loop(start: Callable[[], Any]) -> Any:
 
 
 class PlaywrightPool:
-    def __init__(self, *, profile_root: Path, profiles: int, tabs_per_profile: int, headless: bool, captcha_timeout: int, zip_code: str, proxies: list[str] | None = None, on_captcha: Callable[[str], None] | None = None) -> None:
+    def __init__(self, *, profile_root: Path, profiles: int, tabs_per_profile: int, headless: bool, captcha_timeout: int, zip_code: str, proxy_assignments: list[ProxyAssignment] | None = None, on_captcha: Callable[[str], None] | None = None) -> None:
         self.profile_root = profile_root
         self.profiles = max(1, profiles)
         self.tabs_per_profile = max(1, tabs_per_profile)
         self.headless = headless
         self.captcha_timeout = captcha_timeout
         self.zip_code = zip_code
-        self.proxies = proxies or []
+        self.proxy_assignments = list(proxy_assignments or [])[:self.profiles]
+        while len(self.proxy_assignments) < self.profiles:
+            index = len(self.proxy_assignments)
+            self.proxy_assignments.append(ProxyAssignment(index=index, name=f"profile-{index + 1}"))
         self.on_captcha = on_captcha
         self._lock = threading.Lock()
         self._runtime: Any = None
         self._contexts: list[Any] = []
+        self._us_profile_applied: dict[int, bool] = {}
         self._next_context = 0
         # The synchronous Playwright API is thread-affine. All browser work is
         # routed through one worker while HTTP and product work remain parallel.
@@ -71,35 +82,79 @@ class PlaywrightPool:
         profile.mkdir(parents=True, exist_ok=True)
         options: dict[str, Any] = {
             "headless": self.headless, "locale": "en-US", "timezone_id": "America/New_York",
-            "args": ["--disable-blink-features=AutomationControlled", "--no-default-browser-check"],
-            "viewport": {"width": 1440, "height": 1000},
+            "user_agent": USER_AGENT,
+            "args": ["--disable-blink-features=AutomationControlled", "--disable-dev-shm-usage", "--no-sandbox", "--no-default-browser-check"],
+            "viewport": {"width": 1365, "height": 900},
         }
-        if self.proxies:
-            parsed = urlparse(self.proxies[index % len(self.proxies)])
-            if parsed.hostname and parsed.port:
-                proxy: dict[str, str] = {"server": f"{parsed.scheme or 'http'}://{parsed.hostname}:{parsed.port}"}
-                if parsed.username:
-                    proxy["username"] = parsed.username
-                if parsed.password:
-                    proxy["password"] = parsed.password
-                options["proxy"] = proxy
-        context = self._runtime.chromium.launch_persistent_context(
-            str(profile), headless=self.headless, locale="en-US", timezone_id="America/New_York",
-            args=options["args"], viewport=options["viewport"],
-            **({"proxy": options["proxy"]} if "proxy" in options else {}),
-        )
+        proxy = self.proxy_assignments[index].playwright_proxy()
+        if proxy:
+            options["proxy"] = proxy
+        context = self._runtime.chromium.launch_persistent_context(str(profile), **options)
         try:
-            context.request.post(
-                "https://www.amazon.com/gp/delivery/ajax/address-change.html",
-                form={"locationType": "LOCATION_INPUT", "zipCode": self.zip_code, "storeContext": "generic", "pageType": "Gateway", "actionSource": "glow"},
-                headers={"Accept-Language": "en-US,en;q=0.9", "Referer": "https://www.amazon.com/"},
-                timeout=15_000,
-            )
+            context.add_cookies(playwright_us_cookies())
+            self._us_profile_applied[id(context)] = self._set_amazon_zip(context)
         except Exception:
-            # Amazon may reject the warm-up request; the page fallback still
-            # uses the persisted locale cookies from earlier successful runs.
-            pass
+            # Product fetch retries location setup when Amazon still returns a
+            # non-US offer page.
+            self._us_profile_applied[id(context)] = False
         return context
+
+    def _set_amazon_zip(self, context: Any) -> bool:
+        page = context.new_page()
+        timeout_ms = 15_000
+        try:
+            page.goto("https://www.amazon.com/?language=en_US&currency=USD", wait_until="commit", timeout=timeout_ms)
+            try:
+                page.wait_for_selector("body", state="attached", timeout=5_000)
+            except Exception:
+                pass
+            result = page.evaluate(
+                """async ({ zipCode, timeoutMs }) => {
+                    const body = new URLSearchParams({
+                        locationType: "LOCATION_INPUT", zipCode, storeContext: "generic",
+                        deviceType: "web", pageType: "Gateway", actionSource: "glow"
+                    });
+                    const controller = new AbortController();
+                    const timer = setTimeout(() => controller.abort(), timeoutMs);
+                    try {
+                        const response = await fetch("/gp/delivery/ajax/address-change.html", {
+                            method: "POST", credentials: "include",
+                            headers: {
+                                "content-type": "application/x-www-form-urlencoded;charset=UTF-8",
+                                "x-requested-with": "XMLHttpRequest"
+                            },
+                            body: body.toString(), signal: controller.signal
+                        });
+                        const text = await response.text();
+                        let payload = null;
+                        try { payload = JSON.parse(text); } catch {}
+                        return { ok: response.ok, status: response.status, text: text.slice(0, 300), payload };
+                    } finally { clearTimeout(timer); }
+                }""",
+                {"zipCode": self.zip_code, "timeoutMs": timeout_ms},
+            )
+            payload = result.get("payload") if isinstance(result, dict) else None
+            return bool(
+                isinstance(result, dict)
+                and result.get("ok")
+                and (not isinstance(payload, dict) or payload.get("isAddressUpdated") or payload.get("successful"))
+            )
+        finally:
+            page.close()
+
+    @staticmethod
+    def _load_product_page(page: Any, url: str) -> str:
+        page.goto(force_us_profile_url(url), wait_until="commit", timeout=60_000)
+        try:
+            page.wait_for_selector("#productTitle, #ppd, #dp-container", state="attached", timeout=15_000)
+        except Exception:
+            pass
+        try:
+            page.wait_for_selector("#landingImage, #imgBlkFront, #main-image, #altImages", state="attached", timeout=5_000)
+        except Exception:
+            pass
+        page.wait_for_timeout(250)
+        return page.content()
 
     def _ensure_started(self) -> None:
         with self._lock:
@@ -148,9 +203,22 @@ class PlaywrightPool:
         index, context = self._context()
         page: Any = None
         try:
+            if self._us_profile_applied.get(id(context)) is not True:
+                self._us_profile_applied[id(context)] = self._set_amazon_zip(context)
+            if self._us_profile_applied.get(id(context)) is not True:
+                raise RuntimeError(f"Unable to confirm Amazon US ZIP {self.zip_code} for browser profile {index + 1}.")
             page = context.new_page()
-            page.goto(url, wait_until="domcontentloaded", timeout=60_000)
-            return self._wait_for_captcha(page, url, cancel_event)
+            html = self._load_product_page(page, url)
+            html = self._wait_for_captcha(page, url, cancel_event)
+            if html_is_location_blocked(html):
+                if not self._set_amazon_zip(context):
+                    raise RuntimeError(f"Unable to switch Amazon profile to US ZIP {self.zip_code}.")
+                self._us_profile_applied[id(context)] = True
+                html = self._load_product_page(page, url)
+                html = self._wait_for_captcha(page, url, cancel_event)
+                if html_is_location_blocked(html):
+                    raise RuntimeError(f"Amazon still returned a location-blocked offer after applying US ZIP {self.zip_code}.")
+            return html
         except Exception as error:
             message = str(error).casefold()
             if "closed" in message or "target page" in message:
@@ -197,8 +265,19 @@ class PlaywrightPool:
         pages: list[str] = []
         seen_asins: set[str] = set()
         try:
-            page.goto(url, wait_until="domcontentloaded", timeout=60_000)
-            pages.append(self._wait_for_captcha(page, url, cancel_event))
+            if self._us_profile_applied.get(id(context)) is not True:
+                self._us_profile_applied[id(context)] = self._set_amazon_zip(context)
+            if self._us_profile_applied.get(id(context)) is not True:
+                raise RuntimeError(f"Unable to confirm Amazon US ZIP {self.zip_code} for variant matrix browser profile.")
+            html = self._load_product_page(page, url)
+            html = self._wait_for_captcha(page, url, cancel_event)
+            if html_is_location_blocked(html):
+                if not self._set_amazon_zip(context):
+                    raise RuntimeError(f"Unable to switch Amazon profile to US ZIP {self.zip_code}.")
+                self._us_profile_applied[id(context)] = True
+                html = self._load_product_page(page, url)
+                html = self._wait_for_captcha(page, url, cancel_event)
+            pages.append(html)
             selectors = [
                 "#twister li[data-asin]:not(.a-disabled)",
                 "#twister .a-button-toggle:not(.a-button-disabled)",
@@ -252,6 +331,7 @@ class PlaywrightPool:
                 except Exception:
                     pass
             self._contexts.clear()
+            self._us_profile_applied.clear()
             if self._runtime is not None:
                 try:
                     self._runtime.stop()

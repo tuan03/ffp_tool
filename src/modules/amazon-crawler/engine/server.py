@@ -14,6 +14,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
+from .cache import RawFamilyCache
 from .crawler_core import AmazonCrawler, CrawlSettings
 
 MODULE_ROOT = Path(__file__).resolve().parents[1]
@@ -61,6 +62,10 @@ class JobStore:
     def get(self, job_id: str) -> Job | None:
         with self._lock:
             return self._jobs.get(job_id)
+
+    def has_active_jobs(self) -> bool:
+        with self._lock:
+            return any(job.status in {"queued", "running", "waiting_captcha"} for job in self._jobs.values())
 
 
 jobs = JobStore()
@@ -137,6 +142,13 @@ def cancel_job(job_id: str) -> dict[str, str]:
             job.status = "cancelled"
             job.progress = {"phase": "product", "completed": job.progress.get("completed", 0), "total": job.progress.get("total", len(job.sources)), "message": "Đang dừng job an toàn..."}
     return {"jobId": job_id, "status": job.status}
+
+
+@app.delete("/api/amazon-crawler/cache")
+def clear_cache() -> dict[str, int]:
+    if jobs.has_active_jobs():
+        raise HTTPException(status_code=409, detail="Cannot clear cache while a crawler job is active.")
+    return RawFamilyCache(PROJECT_ROOT / ".runtime" / "cache").clear()
 
 
 @app.get("/api/amazon-crawler/exports/{filename}")

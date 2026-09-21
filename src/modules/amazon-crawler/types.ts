@@ -65,9 +65,6 @@ export interface AmazonSourceVariant {
   url: string;
   options: Record<string, string>;
   price: Money | null;
-  listPrice: Money | null;
-  availability: string | null;
-  isAvailable: boolean;
   media: ProductMedia[];
   customizationFingerprint: string | null;
   priceInference: PriceInference;
@@ -80,9 +77,7 @@ export interface AmazonFinalVariant {
   sourceAsin: string | null;
   options: Record<string, string>;
   price: Money | null;
-  listPrice: Money | null;
   surcharge: Money | null;
-  isAvailable: boolean;
   metadata: Record<string, unknown>;
 }
 
@@ -99,6 +94,8 @@ export interface CustomizationOption {
   label: string;
   price: Money;
   isAvailable: boolean;
+  overlayImage?: { url: string; width?: number | null; height?: number | null } | null;
+  thumbnailImage?: { url: string; width?: number | null; height?: number | null } | null;
 }
 
 export interface CustomizationControl {
@@ -110,12 +107,38 @@ export interface CustomizationControl {
   [key: string]: unknown;
 }
 
+export interface CustomizationPricingGroup {
+  id: string;
+  label: string;
+  required: boolean;
+  defaultOptionId: string;
+  options: CustomizationOption[];
+}
+
+export interface CustomizationPricing {
+  currencyCode: string;
+  mode: "product_variants";
+  paidOptionGroups: CustomizationPricingGroup[];
+}
+
 export interface NormalizedCustomization {
+  schemaVersion: number;
+  source: Record<string, string>;
+  product: { productImageUrl: string; previewSize: number };
   surfaces: unknown[];
-  controls: CustomizationControl[];
-  rules: unknown[];
+  optionGroups: CustomizationControl[];
+  textInputs: CustomizationControl[];
+  imageInputs: CustomizationControl[];
+  fontGroups: CustomizationControl[];
+  colorGroups: CustomizationControl[];
+  placements: unknown[];
+  conditionalRules: unknown[];
+  regexChoices: Record<string, unknown>;
+  controlOrder: Array<{ type: string; id: string }>;
+  componentParent: Record<string, string>;
+  componentTypes: Record<string, string>;
   assets: unknown[];
-  pricingGroups: CustomizationControl[];
+  pricing: CustomizationPricing;
   fingerprint: string;
 }
 
@@ -131,6 +154,8 @@ export interface ProductDiagnostics {
   attempts: number;
   captchaEncountered: boolean;
   locationFallbackUsed: boolean;
+  amazonZip?: string;
+  usProfileApplied?: boolean;
   matrixSwept: boolean;
   cacheHit: boolean;
 }
@@ -143,18 +168,12 @@ export interface AmazonCrawlerProduct {
   title: string;
   description: string | null;
   bulletPoints: string[];
-  brand: string | null;
-  seller: string | null;
   categories: string[];
   productDetails: Record<string, string>;
-  rating: string | null;
-  reviewCount: number | null;
-  availability: string | null;
   media: ProductMedia[];
   sourceVariants: AmazonSourceVariant[];
   variants: AmazonFinalVariant[];
   variantMatrix: VariantMatrix;
-  customizationRaw: unknown | null;
   customization: NormalizedCustomization | null;
   splitContext: SplitContext;
   preset: string | null;
@@ -204,13 +223,22 @@ export interface AmazonCrawlerRunner {
   (options: AmazonCrawlerRunOptions): Promise<AmazonCrawlerOutput>;
 }
 
+export interface AmazonCrawlerCacheClearResult {
+  removedFiles: number;
+  removedBytes: number;
+}
+
+export interface AmazonCrawlerCacheClearer {
+  (): Promise<AmazonCrawlerCacheClearResult>;
+}
+
 export const DEFAULT_AMAZON_CRAWLER_SETTINGS: AmazonCrawlerSettings = {
   profileSlug: "default",
   applyJeminisePreset: false,
   productThreads: 3,
   variantThreads: 4,
   urllibThreads: 8,
-  browserProfiles: 1,
+  browserProfiles: 3,
   browserTabs: 3,
   headless: false,
   amazonZip: "10001",

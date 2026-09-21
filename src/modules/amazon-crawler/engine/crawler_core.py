@@ -5,6 +5,7 @@ from __future__ import annotations
 import concurrent.futures
 import hashlib
 import html as html_module
+import http.cookiejar
 import json
 import os
 import re
@@ -18,13 +19,15 @@ from copy import deepcopy
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Iterable
+from typing import Any, Callable
 
 from bs4 import BeautifulSoup
 
+from .amazon_locale import AMAZON_ORIGIN, DEFAULT_HEADERS, force_us_profile_url, html_is_location_blocked
 from .cache import RawFamilyCache
 from .customization_converter import expand_paid_variants, normalize_customization, remove_option_choosers
 from .playwright_pool import CaptchaTimeout, PlaywrightPool, html_is_captcha
+from .proxy_profiles import ProxyAssignment, resolve_proxy_assignments
 from .variant_presets import PRESET_ID, build_jeminise_variants
 
 ASIN_RE = re.compile(r"(?<![A-Z0-9])([A-Z0-9]{10})(?![A-Z0-9])", re.I)
@@ -42,7 +45,7 @@ class CrawlSettings:
     product_threads: int = 3
     variant_threads: int = 4
     urllib_threads: int = 8
-    browser_profiles: int = 1
+    browser_profiles: int = 3
     browser_tabs: int = 3
     headless: bool = False
     amazon_zip: str = "10001"
@@ -72,7 +75,7 @@ class CrawlSettings:
             product_threads=bounded("productThreads", 3, 1, 16),
             variant_threads=bounded("variantThreads", 4, 1, 32),
             urllib_threads=bounded("urllibThreads", 8, 1, 64),
-            browser_profiles=bounded("browserProfiles", 1, 1, 8),
+            browser_profiles=bounded("browserProfiles", 3, 1, 8),
             browser_tabs=bounded("browserTabs", 3, 1, 12),
             headless=bool(payload.get("headless", False)),
             amazon_zip=zip_code,
@@ -287,7 +290,13 @@ def _extract_dimensions(html: str, current_asin: str) -> tuple[dict[str, list[st
                 options[label] = _clean_text(str(values[value_index]))
         asin_options.setdefault(asin, options)
     soup = BeautifulSoup(html, "html.parser")
-    for element in soup.select("[data-asin]"):
+    variant_selectors = (
+        "#twister [data-asin]",
+        "[id^='variation_'] [data-asin]",
+        "[id^='inline-twister-row-'] [data-asin]",
+        "#native_dropdown_selected_size_name [data-asin]",
+    )
+    for element in soup.select(", ".join(variant_selectors)):
         asin = str(element.get("data-asin") or "").upper()
         if not ASIN_RE.fullmatch(asin):
             continue
@@ -311,14 +320,13 @@ def parse_product_html(html: str, requested_asin: str, url: str) -> dict[str, An
     title = _clean_text(title_element.get_text(" ") if title_element else "")
     if not title:
         raise ValueError("Amazon HTML does not contain a product title.")
-    bullets = [_clean_text(element.get_text(" ")) for element in soup.select("#feature-bullets li span")]
+    bullet_nodes = soup.select("#feature-bullets li span.a-list-item, #productFactsDesktopExpander li")
+    bullets = list(dict.fromkeys(_clean_text(element.get_text(" ")) for element in bullet_nodes))
     bullets = [bullet for bullet in bullets if bullet]
-    description_element = soup.select_one("#productDescription")
+    description_element = soup.select_one("#productDescription, #aplus_feature_div, #aplus")
     description = _clean_text(description_element.get_text(" ")) if description_element else None
-    brand_element = soup.select_one("#bylineInfo")
-    brand = _clean_text(brand_element.get_text(" ")) if brand_element else None
-    seller_element = soup.select_one("#sellerProfileTriggerId") or soup.select_one("#merchant-info")
-    seller = _clean_text(seller_element.get_text(" ")) if seller_element else None
+    if not description and bullets:
+        description = " ".join(bullets)
     categories = [_clean_text(element.get_text(" ")) for element in soup.select("#wayfinding-breadcrumbs_container a")]
     categories = [category for category in categories if category]
     product_details: dict[str, str] = {}
@@ -333,15 +341,19 @@ def parse_product_html(html: str, requested_asin: str, url: str) -> dict[str, An
             key, value = text.split(":", 1)
             if _clean_text(key) and _clean_text(value):
                 product_details.setdefault(_clean_text(key), _clean_text(value))
-    rating_element = soup.select_one("#acrPopover") or soup.select_one("[data-hook='rating-out-of-text']")
-    rating = _clean_text(str(rating_element.get("title") or rating_element.get_text(" "))) if rating_element else None
-    review_element = soup.select_one("#acrCustomerReviewText")
-    review_digits = re.sub(r"[^0-9]", "", review_element.get_text(" ") if review_element else "")
-    review_count = int(review_digits) if review_digits else None
-    availability_element = soup.select_one("#availability span")
-    availability = _clean_text(availability_element.get_text(" ")) if availability_element else None
-    price_element = soup.select_one("#corePrice_feature_div .a-offscreen, #corePriceDisplay_desktop_feature_div .a-offscreen, .priceToPay .a-offscreen, #priceblock_ourprice")
-    list_price_element = soup.select_one(".basisPrice .a-offscreen, .a-text-price .a-offscreen")
+    def first_money(selectors: tuple[str, ...]) -> dict[str, Any] | None:
+        for selector in selectors:
+            for element in soup.select(selector):
+                parsed = _money(_clean_text(element.get_text(" ")))
+                if parsed is not None:
+                    return parsed
+        return None
+
+    price = first_money((
+        "#apex-pricetopay-accessibility-label", ".priceToPay .a-offscreen",
+        "#corePrice_feature_div .a-offscreen", "#corePriceDisplay_desktop_feature_div .a-offscreen",
+        "#priceblock_ourprice", "#price_inside_buybox", "#newBuyBoxPrice", "#tp_price_block_total_price_ww .a-offscreen",
+    ))
     images: list[dict[str, Any]] = []
     seen_urls: set[str] = set()
     for element in soup.select("#landingImage, #altImages img, img[data-old-hires]"):
@@ -366,11 +378,9 @@ def parse_product_html(html: str, requested_asin: str, url: str) -> dict[str, An
     return {
         "asin": canonical_asin, "parentAsin": _extract_parent_asin(html, canonical_asin),
         "url": f"https://www.amazon.com/dp/{canonical_asin}", "requestedUrl": url,
-        "title": title, "description": description, "bulletPoints": bullets, "brand": brand, "seller": seller,
-        "categories": categories, "productDetails": product_details, "rating": rating, "reviewCount": review_count,
-        "availability": availability, "isAvailable": bool(availability is None or "unavailable" not in availability.casefold()),
-        "price": _money(price_element.get_text(" ") if price_element else None),
-        "listPrice": _money(list_price_element.get_text(" ") if list_price_element else None),
+        "title": title, "description": description, "bulletPoints": bullets,
+        "categories": categories, "productDetails": product_details,
+        "price": price,
         "media": images, "dimensions": dimensions, "asinOptions": asin_options,
         "customizationRaw": customization_raw, "customizationWarnings": customization_warnings,
         "customizationFormUrl": customization_form_url,
@@ -378,37 +388,113 @@ def parse_product_html(html: str, requested_asin: str, url: str) -> dict[str, An
 
 
 class HttpFetcher:
-    def __init__(self, *, retries: int = 3, proxies: Iterable[str] = ()) -> None:
+    def __init__(self, *, zip_code: str = "10001", retries: int = 3, assignments: list[ProxyAssignment] | None = None) -> None:
+        self.zip_code = zip_code
         self.retries = retries
-        self.proxies = [proxy.strip() for proxy in proxies if proxy.strip()]
+        self.assignments = assignments or [ProxyAssignment(index=0, name="profile-1")]
         self._counter = 0
         self._lock = threading.Lock()
+        self._session_cookies: dict[int, str] = {}
+        self._session_failures: dict[int, float] = {}
+        self._us_profile_applied: dict[int, bool] = {}
 
-    def _opener(self) -> urllib.request.OpenerDirector:
-        if not self.proxies:
-            return urllib.request.build_opener()
+    def _next_assignment(self) -> ProxyAssignment:
         with self._lock:
-            proxy = self.proxies[self._counter % len(self.proxies)]
+            assignment = self.assignments[self._counter % len(self.assignments)]
             self._counter += 1
-        return urllib.request.build_opener(urllib.request.ProxyHandler({"http": proxy, "https": proxy}))
+        return assignment
+
+    @staticmethod
+    def _opener(assignment: ProxyAssignment, cookie_jar: http.cookiejar.CookieJar | None = None) -> urllib.request.OpenerDirector:
+        handlers: list[Any] = []
+        proxy_url = assignment.urllib_url()
+        if proxy_url:
+            handlers.append(urllib.request.ProxyHandler({"http": proxy_url, "https": proxy_url}))
+        if cookie_jar is not None:
+            handlers.append(urllib.request.HTTPCookieProcessor(cookie_jar))
+        return urllib.request.build_opener(*handlers)
+
+    def _bootstrap_us_cookie(self, assignment: ProxyAssignment) -> str:
+        with self._lock:
+            cached = self._session_cookies.get(assignment.index)
+            if cached:
+                return cached
+            failed_at = self._session_failures.get(assignment.index)
+            if failed_at and time.monotonic() - failed_at < 900:
+                return DEFAULT_HEADERS["Cookie"]
+            last_error: Exception | None = None
+            headers = {key: value for key, value in DEFAULT_HEADERS.items() if key != "Cookie"} | {
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+                "Sec-Fetch-Dest": "document", "Sec-Fetch-Mode": "navigate", "Sec-Fetch-Site": "none", "Sec-Fetch-User": "?1",
+            }
+            for attempt in range(3):
+                jar = http.cookiejar.CookieJar()
+                opener = self._opener(assignment, jar)
+                try:
+                    home_request = urllib.request.Request(f"{AMAZON_ORIGIN}/?language=en_US&currency=USD", headers=headers)
+                    with opener.open(home_request, timeout=12) as response:
+                        response.read()
+                    payload = urllib.parse.urlencode({
+                        "locationType": "LOCATION_INPUT", "zipCode": self.zip_code, "storeContext": "generic",
+                        "deviceType": "web", "pageType": "Gateway", "actionSource": "glow",
+                    }).encode("utf-8")
+                    location_headers = headers | {
+                        "Accept": "application/json, text/javascript, */*; q=0.01",
+                        "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+                        "Origin": AMAZON_ORIGIN, "Referer": f"{AMAZON_ORIGIN}/", "X-Requested-With": "XMLHttpRequest",
+                    }
+                    request = urllib.request.Request(f"{AMAZON_ORIGIN}/gp/delivery/ajax/address-change.html", data=payload, headers=location_headers)
+                    with opener.open(request, timeout=12) as response:
+                        result = json.loads(response.read().decode("utf-8", errors="replace"))
+                    if not result.get("isAddressUpdated") and not result.get("successful"):
+                        raise RuntimeError(f"Amazon rejected US ZIP {self.zip_code}: {result}")
+                    cookies = {cookie.name: cookie.value for cookie in jar if cookie.name not in {"i18n-prefs", "lc-main", "sp-cdn"}}
+                    cookies.update({"i18n-prefs": "USD", "lc-main": "en_US"})
+                    cookie_header = "; ".join(f"{name}={value}" for name, value in cookies.items())
+                    self._session_cookies[assignment.index] = cookie_header
+                    self._us_profile_applied[assignment.index] = True
+                    self._session_failures.pop(assignment.index, None)
+                    return cookie_header
+                except Exception as error:
+                    last_error = error
+                    time.sleep(0.7 * (attempt + 1))
+            self._session_failures[assignment.index] = time.monotonic()
+            self._us_profile_applied[assignment.index] = False
+            return DEFAULT_HEADERS["Cookie"]
+
+    @staticmethod
+    def _candidate_urls(url: str) -> list[str]:
+        canonical = force_us_profile_url(url)
+        parsed = urllib.parse.urlsplit(canonical)
+        query = dict(urllib.parse.parse_qsl(parsed.query, keep_blank_values=True))
+        query.update({"th": "1", "psc": "1", "language": "en_US", "currency": "USD"})
+        with_selection = urllib.parse.urlunsplit(parsed._replace(query=urllib.parse.urlencode(query)))
+        product_path = canonical.replace("/dp/", "/gp/product/")
+        return [canonical, with_selection, force_us_profile_url(product_path)]
 
     def fetch(self, url: str) -> tuple[str, int]:
         error: Exception | None = None
-        candidates = [url, f"{url}?th=1&psc=1", url.replace("/dp/", "/gp/product/")]
+        assignment = self._next_assignment()
+        cookie_header = self._bootstrap_us_cookie(assignment)
+        if self._us_profile_applied.get(assignment.index) is not True:
+            raise RuntimeError(
+                f"HTTP could not confirm Amazon US delivery ZIP {self.zip_code}; Playwright fallback is required."
+            )
+        candidates = self._candidate_urls(url)
         for attempt in range(1, self.retries + 1):
             candidate = candidates[(attempt - 1) % len(candidates)]
-            request = urllib.request.Request(candidate, headers={
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0 Safari/537.36",
-                "Accept-Language": "en-US,en;q=0.9", "Accept": "text/html,application/xhtml+xml",
-                "Cookie": "lc-main=en_US; i18n-prefs=USD",
-            })
+            request = urllib.request.Request(candidate, headers={**DEFAULT_HEADERS, "Cookie": cookie_header})
             try:
-                with self._opener().open(request, timeout=30) as response:
+                with self._opener(assignment).open(request, timeout=90) as response:
                     body = response.read().decode("utf-8", errors="replace")
-                if html_is_captcha(body) or "deliver to" in body.casefold() and "choose your location" in body.casefold():
-                    raise RuntimeError("Amazon returned CAPTCHA or a location interstitial.")
-                if len(body) < 5_000:
-                    raise RuntimeError("Amazon response is too small to contain product data.")
+                if html_is_captcha(body):
+                    raise RuntimeError("Amazon CAPTCHA/bot-check page detected.")
+                if html_is_location_blocked(body):
+                    raise RuntimeError(f"Amazon offer is blocked outside US ZIP {self.zip_code}.")
+                has_product_document = bool(re.search(r'id=["\'](?:productTitle|ppd|dp-container)["\']', body, re.I))
+                has_customize_document = "gc-widget" in body or "sellerConfigComponents" in body
+                if len(body) < 5_000 or not (has_product_document or has_customize_document):
+                    raise RuntimeError("Amazon response does not contain a usable product document.")
                 return body, attempt
             except (urllib.error.URLError, TimeoutError, RuntimeError) as caught:
                 error = caught
@@ -426,14 +512,15 @@ class AmazonCrawler:
         self.settings = settings
         self.progress = progress or (lambda _: None)
         self.cancel_event = cancel_event or threading.Event()
-        proxy_text = os.environ.get("AMAZON_CRAWLER_PROXIES", "")
-        self.fetcher = fetcher or HttpFetcher(proxies=re.split(r"[\r\n,;]+", proxy_text))
+        proxy_assignments, self.proxy_warnings = resolve_proxy_assignments(root, settings.browser_profiles)
+        self.fetcher = fetcher or HttpFetcher(zip_code=settings.amazon_zip, assignments=proxy_assignments)
         self._http_slots = threading.BoundedSemaphore(settings.urllib_threads)
         self.cache = RawFamilyCache(root / ".runtime" / "cache")
         self.browser_pool = browser_pool or PlaywrightPool(
             profile_root=root / ".runtime" / "browser-profiles", profiles=settings.browser_profiles,
             tabs_per_profile=settings.browser_tabs, headless=settings.headless,
-            captcha_timeout=settings.captcha_timeout_seconds, zip_code=settings.amazon_zip, proxies=self.fetcher.proxies,
+            captcha_timeout=settings.captcha_timeout_seconds, zip_code=settings.amazon_zip,
+            proxy_assignments=proxy_assignments,
             on_captcha=self._captcha_progress,
         )
 
@@ -452,16 +539,25 @@ class AmazonCrawler:
             with self._http_slots:
                 html, attempts = self.fetcher.fetch(normalized.canonical_url)
             parsed = parse_product_html(html, normalized.asin, normalized.canonical_url)
-            return parsed, {"fetchMode": "http", "attempts": attempts, "captchaEncountered": False, "locationFallbackUsed": False, "matrixSwept": False, "cacheHit": False}
+            return parsed, {
+                "fetchMode": "http", "attempts": attempts, "captchaEncountered": False,
+                "locationFallbackUsed": False, "amazonZip": self.settings.amazon_zip,
+                "usProfileApplied": True, "matrixSwept": False, "cacheHit": False,
+            }
         except Exception as http_error:
             text = str(http_error).casefold()
             captcha = "captcha" in text
-            location_fallback = "location" in text
+            location_fallback = "location" in text or "delivery zip" in text or "us zip" in text
             self._check_cancelled()
             try:
                 html = self.browser_pool.fetch(normalized.canonical_url, cancel_event=self.cancel_event)
                 parsed = parse_product_html(html, normalized.asin, normalized.canonical_url)
-                return parsed, {"fetchMode": "playwright", "attempts": attempts + 1, "captchaEncountered": captcha, "locationFallbackUsed": location_fallback, "matrixSwept": False, "cacheHit": False}
+                return parsed, {
+                    "fetchMode": "playwright", "attempts": attempts + 1,
+                    "captchaEncountered": captcha, "locationFallbackUsed": location_fallback,
+                    "amazonZip": self.settings.amazon_zip, "usProfileApplied": True,
+                    "matrixSwept": False, "cacheHit": False,
+                }
             except CaptchaTimeout:
                 raise
             except Exception as browser_error:
@@ -471,7 +567,8 @@ class AmazonCrawler:
                 ) from browser_error
 
     def _crawl_family(self, normalized: NormalizedInput) -> dict[str, Any]:
-        cached = self.cache.load(normalized.asin, require_customization=True)
+        cache_key = f"{normalized.asin}:{self.settings.amazon_zip}:us-v1"
+        cached = self.cache.load(cache_key, require_customization=True)
         if cached is not None:
             family = deepcopy(cached)
             family["diagnostics"]["cacheHit"] = True
@@ -480,7 +577,12 @@ class AmazonCrawler:
         parent, diagnostics = self._fetch_parsed(normalized)
         parent_asin = parent["parentAsin"]
         asin_options: dict[str, dict[str, str]] = dict(parent["asinOptions"])
-        asin_options.setdefault(parent_asin, {})
+        # parentAsin identifies the variation family and is often not a
+        # purchasable child. Adding it as a source variant makes Amazon redirect
+        # to the default child and contaminates that variant with another ASIN's
+        # price/media/customization. Only the ASIN actually rendered on the page
+        # is guaranteed to be a source variant.
+        asin_options.setdefault(parent["asin"], {})
         expected_count = 1
         for values in parent["dimensions"].values():
             expected_count *= max(1, len(values))
@@ -517,7 +619,7 @@ class AmazonCrawler:
         def crawl_child(asin: str) -> dict[str, Any]:
             self._check_cancelled()
             options = deepcopy(asin_options.get(asin, {}))
-            if asin == parent_asin:
+            if asin == parent["asin"]:
                 child = deepcopy(parent)
                 child_diagnostics = diagnostics
             else:
@@ -556,9 +658,10 @@ class AmazonCrawler:
             warnings.extend(custom_warnings)
             return {
                 "asin": asin, "url": f"https://www.amazon.com/dp/{asin}", "options": options,
-                "price": child.get("price"), "listPrice": child.get("listPrice"),
-                "availability": child.get("availability"), "isAvailable": child.get("isAvailable", True),
+                "price": child.get("price"),
                 "media": child.get("media", []),
+                "description": child.get("description"), "bulletPoints": child.get("bulletPoints", []),
+                "categories": child.get("categories", []), "productDetails": child.get("productDetails", {}),
                 "customizationRaw": customization_raw, "customization": normalized_customization,
                 "customizationFingerprint": normalized_customization.get("fingerprint") if normalized_customization else None,
                 "customizationComplete": customization_complete,
@@ -575,7 +678,8 @@ class AmazonCrawler:
                 except Exception as error:
                     variants.append({
                         "asin": asin, "url": f"https://www.amazon.com/dp/{asin}", "options": deepcopy(asin_options.get(asin, {})),
-                        "price": None, "listPrice": None, "availability": None, "isAvailable": False, "media": [],
+                        "price": None, "media": [],
+                        "description": None, "bulletPoints": [], "categories": [], "productDetails": {},
                         "customizationRaw": None, "customization": None, "customizationFingerprint": None,
                         "priceInference": {"isInferred": False, "sourceAsins": []}, "warnings": [str(error)],
                         "diagnostics": {"fetchMode": "mixed", "attempts": 0, "captchaEncountered": False, "locationFallbackUsed": False, "matrixSwept": False, "cacheHit": False},
@@ -586,9 +690,7 @@ class AmazonCrawler:
         family = {
             "parentAsin": parent_asin, "canonicalUrl": f"https://www.amazon.com/dp/{parent_asin}",
             "sourceTitle": parent["title"], "description": parent.get("description"), "bulletPoints": parent.get("bulletPoints", []),
-            "brand": parent.get("brand"), "seller": parent.get("seller"), "categories": parent.get("categories", []),
-            "productDetails": parent.get("productDetails", {}), "rating": parent.get("rating"), "reviewCount": parent.get("reviewCount"),
-            "availability": parent.get("availability"), "media": parent.get("media", []),
+            "categories": parent.get("categories", []), "productDetails": parent.get("productDetails", {}), "media": parent.get("media", []),
             "sourceVariants": variants,
             "variantMatrix": {"dimensions": parent["dimensions"], "expectedCount": expected_count, "discoveredCount": len(asin_options), "complete": not is_capped and len(asin_options) >= expected_count, "safetyCap": self.settings.max_matrix_variants},
             "customizationChecked": all(variant.get("customizationComplete") is True for variant in variants), "diagnostics": diagnostics,
@@ -596,7 +698,7 @@ class AmazonCrawler:
         if is_capped:
             family["variantMatrix"]["complete"] = False
         if family["variantMatrix"]["complete"] and family["customizationChecked"]:
-            self.cache.save(normalized.asin, family)
+            self.cache.save(cache_key, family)
         return family
 
     @staticmethod
@@ -622,11 +724,20 @@ class AmazonCrawler:
 
     def _products_from_family(self, family: dict[str, Any]) -> list[dict[str, Any]]:
         split_attribute = self._choose_split_attribute(family["variantMatrix"]["dimensions"])
+        rebuilt_source_variants = deepcopy(family["sourceVariants"])
+        for variant in rebuilt_source_variants:
+            customization_raw = variant.get("customizationRaw")
+            if customization_raw is None:
+                continue
+            customization, customization_warnings = normalize_customization(customization_raw)
+            variant["customization"] = customization
+            variant["customizationFingerprint"] = customization.get("fingerprint") if customization else None
+            variant["warnings"] = sorted(set(variant.get("warnings", []) + customization_warnings))
         grouped: dict[str | None, list[dict[str, Any]]] = {}
         if split_attribute is None:
-            grouped[None] = family["sourceVariants"]
+            grouped[None] = rebuilt_source_variants
         else:
-            for variant in family["sourceVariants"]:
+            for variant in rebuilt_source_variants:
                 value = variant.get("options", {}).get(split_attribute)
                 grouped.setdefault(value, []).append(variant)
         products: list[dict[str, Any]] = []
@@ -641,7 +752,10 @@ class AmazonCrawler:
             fingerprints = sorted({variant["customizationFingerprint"] for variant in source_variants if variant.get("customizationFingerprint")})
             representative = next((variant for variant in source_variants if variant.get("customization") is not None), source_variants[0])
             customization = deepcopy(representative.get("customization"))
-            customization_raw = deepcopy(representative.get("customizationRaw"))
+            description = next((variant.get("description") for variant in source_variants if variant.get("description")), family.get("description"))
+            bullet_points = next((variant.get("bulletPoints") for variant in source_variants if variant.get("bulletPoints")), family.get("bulletPoints", []))
+            categories = next((variant.get("categories") for variant in source_variants if variant.get("categories")), family.get("categories", []))
+            product_details = next((variant.get("productDetails") for variant in source_variants if variant.get("productDetails")), family.get("productDetails", {}))
             warnings = [warning for variant in source_variants for warning in variant.get("warnings", [])]
             if len(fingerprints) > 1:
                 warnings.append(f"Source variants have different customization configurations; representative {representative['asin']} was used. Fingerprints: {', '.join(fingerprints)}")
@@ -651,8 +765,8 @@ class AmazonCrawler:
                 base_variants.append({
                     "id": f"{variant['asin']}-{_stable_token(json.dumps(options, sort_keys=True), length=10)}",
                     "sku": variant["asin"], "sourceAsin": variant["asin"], "options": options,
-                    "price": deepcopy(variant.get("price")), "listPrice": deepcopy(variant.get("listPrice")),
-                    "surcharge": None, "isAvailable": bool(variant.get("isAvailable")),
+                    "price": deepcopy(variant.get("price")),
+                    "surcharge": None,
                     "metadata": {"priceInference": deepcopy(variant.get("priceInference"))},
                 })
             if self.settings.profile_slug == "jeminise" and self.settings.apply_jeminise_preset:
@@ -663,8 +777,17 @@ class AmazonCrawler:
                 final_variants = expand_paid_variants(base_variants, customization)
                 preset = None
             media_by_url: dict[str, dict[str, Any]] = {}
-            for media in family.get("media", []) + [entry for variant in source_variants for entry in variant.get("media", [])]:
-                media_by_url.setdefault(media["url"], media)
+            ordered_media_variants = [representative, *(variant for variant in source_variants if variant is not representative)]
+            for variant in ordered_media_variants:
+                for media in variant.get("media", []):
+                    media_by_url.setdefault(media["url"], media)
+            for media in family.get("media", []):
+                media_source_asin = media.get("sourceAsin")
+                if media_source_asin in source_asins:
+                    media_by_url.setdefault(media["url"], media)
+            if not media_by_url:
+                for media in family.get("media", []):
+                    media_by_url.setdefault(media["url"], media)
             matrix = deepcopy(family["variantMatrix"])
             if split_attribute:
                 matrix["dimensions"].pop(split_attribute, None)
@@ -678,13 +801,17 @@ class AmazonCrawler:
                 warnings.append(f"Variant matrix is incomplete (discovered {matrix['discoveredCount']} of {matrix['expectedCount']}, cap {matrix['safetyCap']}).")
             products.append({
                 "id": group_key, "parentAsin": family["parentAsin"], "canonicalUrl": family["canonicalUrl"],
-                "sourceTitle": family["sourceTitle"], "title": title, "description": family.get("description"),
-                "bulletPoints": deepcopy(family.get("bulletPoints", [])), "brand": family.get("brand"), "seller": family.get("seller"),
-                "categories": deepcopy(family.get("categories", [])), "productDetails": deepcopy(family.get("productDetails", {})),
-                "rating": family.get("rating"), "reviewCount": family.get("reviewCount"),
-                "availability": family.get("availability"), "media": list(media_by_url.values()),
-                "sourceVariants": deepcopy(source_variants), "variants": final_variants, "variantMatrix": matrix,
-                "customizationRaw": customization_raw, "customization": customization,
+                "sourceTitle": family["sourceTitle"], "title": title, "description": description,
+                "bulletPoints": deepcopy(bullet_points), "categories": deepcopy(categories),
+                "productDetails": deepcopy(product_details), "media": list(media_by_url.values()),
+                "sourceVariants": [{
+                    key: deepcopy(variant.get(key))
+                    for key in (
+                        "asin", "url", "options", "price",
+                        "media", "customizationFingerprint", "priceInference", "warnings",
+                    )
+                } for variant in source_variants],
+                "variants": final_variants, "variantMatrix": matrix, "customization": customization,
                 "splitContext": {"attribute": split_attribute, "value": split_value, "groupKey": group_key, "sourceAsins": source_asins},
                 "preset": preset, "warnings": sorted(set(warnings)), "diagnostics": deepcopy(family["diagnostics"]),
             })
@@ -737,7 +864,7 @@ class AmazonCrawler:
             "version": SCHEMA_VERSION, "jobId": job_id, "status": status,
             "startedAt": started_at, "completedAt": completed_at, "settings": self.settings.api_dict(),
             "products": products, "errors": errors,
-            "warnings": sorted({warning for product in products for warning in product.get("warnings", [])}),
+            "warnings": sorted(set(self.proxy_warnings) | {warning for product in products for warning in product.get("warnings", [])}),
             "statistics": {
                 "requestedInputs": len(sources), "acceptedInputs": len(normalized_inputs),
                 "rejectedInputs": rejected_inputs, "products": len(products),

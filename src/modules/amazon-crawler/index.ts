@@ -1,9 +1,11 @@
 export { amazonCrawlerRoutes } from "./routes";
-export { getAmazonCrawlerRunner } from "./runtime";
-export { AmazonCrawlerServiceError, createAmazonCrawlerRunner, serializeAmazonCrawlerInput } from "./service";
+export { getAmazonCrawlerCacheClearer, getAmazonCrawlerRunner } from "./runtime";
+export { AmazonCrawlerServiceError, createAmazonCrawlerCacheClearer, createAmazonCrawlerRunner, serializeAmazonCrawlerInput } from "./service";
 export { DEFAULT_AMAZON_CRAWLER_SETTINGS } from "./types";
 export type {
   AmazonCrawlerError,
+  AmazonCrawlerCacheClearer,
+  AmazonCrawlerCacheClearResult,
   AmazonCrawlerInput,
   AmazonCrawlerJobSnapshot,
   AmazonCrawlerJobStatus,
@@ -16,6 +18,8 @@ export type {
   AmazonCrawlerSettings,
   AmazonFinalVariant,
   AmazonSourceVariant,
+  CustomizationPricing,
+  CustomizationPricingGroup,
   Money,
   NormalizedCustomization,
 } from "./types";

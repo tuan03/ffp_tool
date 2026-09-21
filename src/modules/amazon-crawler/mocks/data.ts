@@ -6,7 +6,7 @@ const MOCK_SETTINGS: AmazonCrawlerSettings = {
   productThreads: 3,
   variantThreads: 4,
   urllibThreads: 8,
-  browserProfiles: 1,
+  browserProfiles: 3,
   browserTabs: 3,
   headless: false,
   amazonZip: "10001",
@@ -42,9 +42,7 @@ function createJeminiseMockVariants(): AmazonFinalVariant[] {
           sourceAsin: null,
           options: { "Choose type": beddingType.name, "Choose size": sizeName, "PILLOWCASES (Purchase SEPARATELY)": pillowName },
           price: { raw: `$${amount.toFixed(2)}`, amount, currency: "USD" },
-          listPrice: null,
           surcharge: null,
-          isAvailable: true,
           metadata: { preset: "jeminise_bedding_v2" },
         });
       }
@@ -55,10 +53,10 @@ function createJeminiseMockVariants(): AmazonFinalVariant[] {
 
 const regularMockProduct: AmazonCrawlerProduct = {
   id: "mock-regular", parentAsin: "B0MOCK1001", canonicalUrl: "https://www.amazon.com/dp/B0MOCK1001",
-  sourceTitle: "Amazon Ceramic Mug", title: "Amazon Ceramic Mug", description: null, bulletPoints: ["Amazon source data"], brand: "Mock Brand", seller: "Mock Seller", categories: ["Home & Kitchen", "Mugs"], productDetails: { Material: "Ceramic" }, rating: "4.7 out of 5 stars", reviewCount: 125, availability: "In Stock", media: [],
-  sourceVariants: [{ asin: "B0MOCK1001", url: "https://www.amazon.com/dp/B0MOCK1001", options: {}, price: { raw: "$14.99", amount: 14.99, currency: "USD" }, listPrice: null, availability: "In Stock", isAvailable: true, media: [], customizationFingerprint: null, priceInference: { isInferred: false, sourceAsins: [] }, warnings: [] }],
-  variants: [{ id: "B0MOCK1001-default", sku: "B0MOCK1001", sourceAsin: "B0MOCK1001", options: {}, price: { raw: "$14.99", amount: 14.99, currency: "USD" }, listPrice: null, surcharge: null, isAvailable: true, metadata: {} }],
-  variantMatrix: { dimensions: {}, expectedCount: 1, discoveredCount: 1, complete: true, safetyCap: 500 }, customizationRaw: null, customization: null,
+  sourceTitle: "Amazon Ceramic Mug", title: "Amazon Ceramic Mug", description: "Amazon source description", bulletPoints: ["Amazon source data"], categories: ["Home & Kitchen", "Mugs"], productDetails: { Material: "Ceramic" }, media: [],
+  sourceVariants: [{ asin: "B0MOCK1001", url: "https://www.amazon.com/dp/B0MOCK1001", options: {}, price: { raw: "$14.99", amount: 14.99, currency: "USD" }, media: [], customizationFingerprint: null, priceInference: { isInferred: false, sourceAsins: [] }, warnings: [] }],
+  variants: [{ id: "B0MOCK1001-default", sku: "B0MOCK1001", sourceAsin: "B0MOCK1001", options: {}, price: { raw: "$14.99", amount: 14.99, currency: "USD" }, surcharge: null, metadata: {} }],
+  variantMatrix: { dimensions: {}, expectedCount: 1, discoveredCount: 1, complete: true, safetyCap: 500 }, customization: null,
   splitContext: { attribute: null, value: null, groupKey: "mock-regular", sourceAsins: ["B0MOCK1001"] }, preset: null, warnings: [], diagnostics: mockDiagnostics(),
 };
 
@@ -105,13 +103,8 @@ export const amazonCrawlerMockOutput: AmazonCrawlerOutput = {
       title: "Personalized Bedding Set - Starry Night",
       description: "Amazon source description",
       bulletPoints: ["Soft microfiber", "Amazon Customize eligible"],
-      brand: "Mock Brand",
-      seller: "Mock Seller",
       categories: ["Home & Kitchen", "Bedding"],
       productDetails: { Material: "Microfiber" },
-      rating: "4.8 out of 5 stars",
-      reviewCount: 42,
-      availability: "In Stock",
       media: [{ url: "https://m.media-amazon.com/images/I/mock.jpg", kind: "image" }],
       sourceVariants: [
         {
@@ -119,9 +112,6 @@ export const amazonCrawlerMockOutput: AmazonCrawlerOutput = {
           url: "https://www.amazon.com/dp/B0MOCK0002",
           options: { Design: "Starry Night", Size: "Queen" },
           price: { raw: "$39.99", amount: 39.99, currency: "USD" },
-          listPrice: { raw: "$49.99", amount: 49.99, currency: "USD" },
-          availability: "In Stock",
-          isAvailable: true,
           media: [],
           customizationFingerprint: "mock-customization",
           priceInference: { isInferred: false, sourceAsins: [] },
@@ -135,9 +125,7 @@ export const amazonCrawlerMockOutput: AmazonCrawlerOutput = {
           sourceAsin: "B0MOCK0002",
           options: { Size: "Queen", "Gift Box": "None" },
           price: { raw: "$39.99", amount: 39.99, currency: "USD" },
-          listPrice: { raw: "$49.99", amount: 49.99, currency: "USD" },
           surcharge: { raw: "$0.00", amount: 0, currency: "USD" },
-          isAvailable: true,
           metadata: { customization: true },
         },
         {
@@ -146,9 +134,7 @@ export const amazonCrawlerMockOutput: AmazonCrawlerOutput = {
           sourceAsin: "B0MOCK0002",
           options: { Size: "Queen", "Gift Box": "Premium" },
           price: { raw: "$44.99", amount: 44.99, currency: "USD" },
-          listPrice: { raw: "$54.99", amount: 54.99, currency: "USD" },
           surcharge: { raw: "+$5.00", amount: 5, currency: "USD" },
-          isAvailable: true,
           metadata: { customization: true },
         },
       ],
@@ -159,24 +145,37 @@ export const amazonCrawlerMockOutput: AmazonCrawlerOutput = {
         complete: true,
         safetyCap: 500,
       },
-      customizationRaw: { version: "mock" },
       customization: {
+        schemaVersion: 1,
+        source: { asin: "B0MOCK0002", marketplaceId: "ATVPDKIKX0DER", merchantId: "", sku: "", sellerConfigVersion: "1" },
+        product: { productImageUrl: "https://m.media-amazon.com/images/I/mock.jpg", previewSize: 400 },
         surfaces: [],
-        controls: [{ id: "name", type: "TextInputComponent", label: "Name", required: true }],
-        rules: [],
+        optionGroups: [],
+        textInputs: [{ id: "name", type: "TextInputComponent", label: "Name", required: true }],
+        imageInputs: [],
+        fontGroups: [],
+        colorGroups: [],
+        placements: [],
+        conditionalRules: [],
+        regexChoices: {},
+        controlOrder: [{ type: "text", id: "name" }],
+        componentParent: {},
+        componentTypes: { name: "TextInputComponent", "gift-box": "OptionChooserComponent" },
         assets: [],
-        pricingGroups: [
-          {
+        pricing: {
+          currencyCode: "USD",
+          mode: "product_variants",
+          paidOptionGroups: [{
             id: "gift-box",
-            type: "OptionChooserComponent",
             label: "Gift Box",
             required: false,
+            defaultOptionId: "none",
             options: [
               { id: "none", label: "None", price: { raw: "$0.00", amount: 0, currency: "USD" }, isAvailable: true },
               { id: "premium", label: "Premium", price: { raw: "+$5.00", amount: 5, currency: "USD" }, isAvailable: true },
             ],
-          },
-        ],
+          }],
+        },
         fingerprint: "mock-customization",
       },
       splitContext: {

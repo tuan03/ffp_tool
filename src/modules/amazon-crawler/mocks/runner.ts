@@ -1,6 +1,10 @@
 import { amazonCrawlerMockOutput } from "./data";
 
-import type { AmazonCrawlerOutput, AmazonCrawlerRunOptions } from "../types";
+import type { AmazonCrawlerCacheClearResult, AmazonCrawlerOutput, AmazonCrawlerRunOptions } from "../types";
+
+export async function clearMockAmazonCrawlerCache(): Promise<AmazonCrawlerCacheClearResult> {
+  return { removedFiles: 0, removedBytes: 0 };
+}
 
 export async function runMockAmazonCrawler({
   input,

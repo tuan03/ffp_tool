@@ -1,0 +1,14 @@
+{
+  "rotateProfiles": true,
+  "profiles": [
+    {
+      "name": "us-proxy-1",
+      "enabled": false,
+      "proxy": {
+        "server": "http://proxy.example:8080",
+        "username": "replace-locally",
+        "password": "replace-locally"
+      }
+    }
+  ]
+}

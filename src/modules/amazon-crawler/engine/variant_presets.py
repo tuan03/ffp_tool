@@ -54,9 +54,7 @@ def build_jeminise_variants(source_id: str) -> list[dict[str, Any]]:
                     "sourceAsin": None,
                     "options": {TYPE_OPTION: bedding_type["name"], SIZE_OPTION: size_name, PILLOW_OPTION: pillow_name},
                     "price": {"raw": f"${amount:.2f}", "amount": float(amount), "currency": "USD"},
-                    "listPrice": None,
                     "surcharge": None,
-                    "isAvailable": True,
                     "metadata": {"preset": PRESET_ID, "inventoryPolicy": "DENY", "tracked": False, "requiresShipping": True},
                 })
     if len(variants) != 47:

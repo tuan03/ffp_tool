@@ -51,6 +51,9 @@ class ReadyPage:
     def content(self) -> str:
         return "<h1 id='productTitle'>Recovered</h1>"
 
+    def wait_for_timeout(self, milliseconds: int) -> None:
+        pass
+
     def close(self) -> None:
         pass
 
@@ -98,6 +101,7 @@ class PlaywrightPoolTests(unittest.TestCase):
         pool._runtime = FakeRuntime()
         pool._contexts = [FakeContext(ClosedPage())]
         pool._launch_context = lambda index: FakeContext(ReadyPage())
+        pool._set_amazon_zip = lambda context: True
         try:
             html = pool.fetch("https://amazon.com/dp/B012345678")
         finally:

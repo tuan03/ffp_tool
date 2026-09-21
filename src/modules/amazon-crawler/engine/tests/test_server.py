@@ -42,6 +42,19 @@ class ServerTests(unittest.TestCase):
             self.assertEqual(response.json(), {})
             self.assertEqual(self.client.get("/api/amazon-crawler/exports/not-allowed.json").status_code, 400)
 
+    def test_cache_clear_does_not_remove_exports(self) -> None:
+        with tempfile.TemporaryDirectory() as directory, patch.object(server, "PROJECT_ROOT", Path(directory)):
+            cache = server.RawFamilyCache(Path(directory) / ".runtime" / "cache")
+            cache.save("B012345678", {"variantMatrix": {"complete": True}})
+            exports = Path(directory) / "exports"
+            exports.mkdir()
+            export = exports / "amazon-crawl-keep.json"
+            export.write_text("{}", encoding="utf-8")
+            response = self.client.delete("/api/amazon-crawler/cache")
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json()["removedFiles"], 1)
+            self.assertTrue(export.is_file())
+
 
 if __name__ == "__main__":
     unittest.main()

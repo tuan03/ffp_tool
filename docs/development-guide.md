@@ -40,6 +40,16 @@ The engine listens on `http://127.0.0.1:8765` by default. Set
 credentials belong only in `.env.local` through `AMAZON_CRAWLER_PROXIES` and
 must never be committed.
 
+The crawler always canonicalizes Amazon requests to `amazon.com`, adds
+`language=en_US` and `currency=USD`, and establishes delivery ZIP `10001` (or
+the ZIP selected in Advanced Settings) before accepting product data. For
+multiple persistent browser/proxy profiles, copy
+`config/amazon-crawler-profiles.example.json` to the ignored local file
+`config/amazon-crawler-profiles.json`, enable the required profiles, and keep
+all proxy credentials only in that local file. `rotateProfiles` controls
+whether configured profiles repeat when the requested browser profile count is
+larger than the config list.
+
 Run the UI against mock data:
 
 ```bash

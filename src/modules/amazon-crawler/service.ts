@@ -1,5 +1,6 @@
 import type {
   AmazonCrawlerInput,
+  AmazonCrawlerCacheClearer,
   AmazonCrawlerJobSnapshot,
   AmazonCrawlerOutput,
   AmazonCrawlerRunOptions,
@@ -8,6 +9,13 @@ import type {
 
 interface JobCreatedResponse {
   jobId: string;
+}
+
+function readCacheClearResult(value: unknown): { removedFiles: number; removedBytes: number } {
+  if (!isRecord(value) || typeof value.removedFiles !== "number" || typeof value.removedBytes !== "number") {
+    throw new AmazonCrawlerServiceError("Engine returned an invalid cache response.", "INVALID_ENGINE_RESPONSE");
+  }
+  return { removedFiles: value.removedFiles, removedBytes: value.removedBytes };
 }
 
 interface AmazonCrawlerClientOptions {
@@ -147,4 +155,23 @@ export function createAmazonCrawlerRunner({
 
 export function serializeAmazonCrawlerInput(input: AmazonCrawlerInput): string {
   return JSON.stringify(input);
+}
+
+export function createAmazonCrawlerCacheClearer({
+  engineUrl,
+  fetchImplementation = fetch,
+}: AmazonCrawlerClientOptions): AmazonCrawlerCacheClearer {
+  const baseUrl = normalizeEngineUrl(engineUrl);
+  return async () => {
+    let response: Response;
+    try {
+      response = await fetchImplementation(`${baseUrl}/api/amazon-crawler/cache`, { method: "DELETE" });
+    } catch {
+      throw new AmazonCrawlerServiceError(
+        "Không kết nối được Amazon crawler engine. Hãy chạy npm run dev:engine.",
+        "ENGINE_OFFLINE",
+      );
+    }
+    return readCacheClearResult(await readJson(response));
+  };
 }

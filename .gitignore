@@ -8,3 +8,4 @@ dist/
 exports/
 src/modules/amazon-crawler/engine/__pycache__/
 src/modules/amazon-crawler/engine/tests/__pycache__/
+config/amazon-crawler-profiles.json
