@@ -3,3 +3,6 @@ export { runMockModuleA } from "./mocks/runner";
 export { getModuleARunner } from "./runtime";
 export { runModuleA } from "./service";
 export type { ModuleAInput, ModuleAOutput } from "./types";
+
+export * from "../pinterest-pod";
+
