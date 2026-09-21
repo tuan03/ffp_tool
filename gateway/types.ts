@@ -144,6 +144,8 @@ export interface ProductSummary {
   readonly images?: readonly ProductImageSummary[];
   readonly variants: readonly ProductVariantSummary[];
   readonly seo?: { readonly title?: string; readonly description?: string };
+  readonly hasMoreVariants?: boolean;
+  readonly hasMoreImages?: boolean;
   readonly createdAt: string;
   readonly updatedAt: string;
 }

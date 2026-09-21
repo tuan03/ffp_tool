@@ -68,6 +68,9 @@ const PRODUCTS_GET_QUERY = `
         height
       }
       images(first: 50) {
+        pageInfo {
+          hasNextPage
+        }
         edges {
           node {
             id
@@ -85,6 +88,9 @@ const PRODUCTS_GET_QUERY = `
       createdAt
       updatedAt
       variants(first: 100) {
+        pageInfo {
+          hasNextPage
+        }
         edges {
           node {
             id
@@ -130,12 +136,14 @@ export interface RawProductNode {
   readonly onlineStoreUrl?: string | null;
   readonly featuredImage?: RawImageNode | null;
   readonly images?: {
+    readonly pageInfo?: { readonly hasNextPage?: boolean | null } | null;
     readonly edges?: readonly { readonly node: RawImageNode }[];
   } | null;
   readonly seo?: { readonly title?: string | null; readonly description?: string | null } | null;
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly variants?: {
+    readonly pageInfo?: { readonly hasNextPage?: boolean | null } | null;
     readonly edges?: readonly { readonly node: RawVariantNode }[];
   } | null;
 }
@@ -171,6 +179,13 @@ export function mapProductNode(node: RawProductNode): ProductSummary {
         .filter((img): img is ProductImageSummary => img !== undefined)
     : undefined;
 
+  const hasMoreVariants = node.variants?.pageInfo?.hasNextPage !== undefined
+    ? Boolean(node.variants.pageInfo.hasNextPage)
+    : undefined;
+  const hasMoreImages = node.images?.pageInfo?.hasNextPage !== undefined
+    ? Boolean(node.images.pageInfo.hasNextPage)
+    : undefined;
+
   return {
     id: node.id,
     title: node.title,
@@ -192,6 +207,8 @@ export function mapProductNode(node: RawProductNode): ProductSummary {
             description: node.seo.description ?? undefined,
           }
         : undefined,
+    ...(hasMoreVariants !== undefined ? { hasMoreVariants } : {}),
+    ...(hasMoreImages !== undefined ? { hasMoreImages } : {}),
     createdAt: node.createdAt,
     updatedAt: node.updatedAt,
   };

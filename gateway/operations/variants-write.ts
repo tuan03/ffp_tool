@@ -272,12 +272,104 @@ export async function executeVariantsBulkUpdate(
     };
   }
 
+  interface VariantBulkTask {
+    readonly id: string;
+    readonly productId: string;
+    readonly variantInput: Record<string, unknown>;
+  }
+
+  const tasks: VariantBulkTask[] = [];
+  const resolvedCache = new Map<string, string>();
+  for (const item of variants) {
+    const id = String(item.id).trim();
+    const rawVariant = item.variant as Record<string, unknown>;
+    const explicitProdId =
+      typeof rawVariant.productId === "string" && rawVariant.productId.trim() !== ""
+        ? rawVariant.productId.trim()
+        : typeof item.productId === "string" && (item.productId as string).trim() !== ""
+        ? (item.productId as string).trim()
+        : undefined;
+
+    let productId: string;
+    if (explicitProdId) {
+      productId = explicitProdId;
+    } else if (resolvedCache.has(id)) {
+      productId = resolvedCache.get(id)!;
+    } else {
+      productId = await resolveParentProductId(store, client, id, undefined);
+      resolvedCache.set(id, productId);
+    }
+    const variantInput = buildVariantBulkInput(id, rawVariant);
+    tasks.push({ id, productId, variantInput });
+  }
+
+  // Group by productId to execute productVariantsBulkUpdate per product
+  const productGroups = new Map<string, VariantBulkTask[]>();
+  for (const task of tasks) {
+    let group = productGroups.get(task.productId);
+    if (!group) {
+      group = [];
+      productGroups.set(task.productId, group);
+    }
+    group.push(task);
+  }
+
   const updatedVariantIds: string[] = [];
-  for (let i = 0; i < variants.length; i++) {
-    const item = variants[i];
-    const childRequestId = requestId ? `${requestId}:var-${i}` : undefined;
-    const result = await executeVariantsUpdate(store, client, item, "apply", childRequestId);
-    updatedVariantIds.push(result.variant.id);
+  let groupIndex = 0;
+  for (const [productId, group] of productGroups.entries()) {
+    const childRequestId = requestId ? `${requestId}:prod-${groupIndex}` : undefined;
+    groupIndex++;
+
+    try {
+      const raw = await client.query<ProductVariantsBulkUpdateResponse>(
+        store,
+        PRODUCT_VARIANTS_BULK_UPDATE_MUTATION,
+        {
+          productId,
+          variants: group.map((g) => g.variantInput),
+        },
+        { isWrite: true, requestId: childRequestId },
+      );
+
+      if (!raw || !raw.productVariantsBulkUpdate) {
+        throw new GatewayError(
+          `Failed to update variants for product ${productId}: productVariantsBulkUpdate returned no data`,
+          "SHOPIFY_USER_ERROR",
+          400,
+        );
+      }
+
+      if (raw.productVariantsBulkUpdate.userErrors && raw.productVariantsBulkUpdate.userErrors.length > 0) {
+        throw mapUserErrorsToGatewayError(raw.productVariantsBulkUpdate.userErrors);
+      }
+
+      if (raw.productVariantsBulkUpdate.productVariants && raw.productVariantsBulkUpdate.productVariants.length > 0) {
+        for (const v of raw.productVariantsBulkUpdate.productVariants) {
+          updatedVariantIds.push(v.id);
+        }
+      } else {
+        for (const g of group) {
+          updatedVariantIds.push(g.id);
+        }
+      }
+    } catch (err: unknown) {
+      if (updatedVariantIds.length > 0) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        const fields = err instanceof GatewayError ? err.fields : undefined;
+        throw new GatewayError(
+          `Variants partially updated (${updatedVariantIds.length} succeeded), but failed for product ${productId}: ${errMsg}`,
+          "SHOPIFY_PARTIAL_WRITE",
+          409,
+          undefined,
+          err,
+          fields,
+          false,
+          { updatedVariantIds: [...updatedVariantIds], failedProductId: productId, reconciliationRequired: true },
+          true,
+        );
+      }
+      throw err;
+    }
   }
 
   return {

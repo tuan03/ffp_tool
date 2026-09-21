@@ -16,6 +16,7 @@ import type {
   ShopifyCollectionsUpdateResponse,
   ShopifyConnectionTestInput,
   ShopifyConnectionTestResponse,
+  ShopifyImage,
   ShopifyPageInfo,
   ShopifyProduct,
   ShopifyProductVariant,
@@ -65,6 +66,8 @@ function cloneVariant(variant: ShopifyProductVariant): ShopifyProductVariant {
 function cloneProduct(product: ShopifyProduct): ShopifyProduct {
   return {
     ...product,
+    hasMoreVariants: product.hasMoreVariants ?? false,
+    hasMoreImages: product.hasMoreImages ?? false,
     tags: [...product.tags],
     variants: product.variants.map(cloneVariant),
     seo: product.seo ? { ...product.seo } : undefined,
@@ -322,17 +325,34 @@ export async function runMockModuleApi(input: ShopifyApiInput): Promise<ShopifyA
           ? input.payload.product.descriptionHtml.replace(/<[^>]*>/g, "").trim()
           : undefined);
       const onlineStoreUrl =
-        input.payload.product.onlineStoreUrl ??
         `https://quickstart-demo.myshopify.com/products/${input.payload.product.handle ?? input.payload.product.title.toLowerCase().replace(/\s+/g, "-")}`;
-      const featuredImage = input.payload.product.featuredImage
-        ? { ...input.payload.product.featuredImage }
+      const featuredImage: ShopifyImage | undefined = input.payload.product.featuredImage
+        ? {
+            id: input.payload.product.featuredImage.id,
+            url: input.payload.product.featuredImage.url ?? "https://quickstart-demo.myshopify.com/cdn/shop/files/placeholder.jpg",
+            altText: input.payload.product.featuredImage.altText,
+            width: input.payload.product.featuredImage.width,
+            height: input.payload.product.featuredImage.height,
+          }
         : input.payload.product.images?.[0]
-        ? { ...input.payload.product.images[0] }
+        ? {
+            id: input.payload.product.images[0].id,
+            url: input.payload.product.images[0].url ?? "https://quickstart-demo.myshopify.com/cdn/shop/files/placeholder.jpg",
+            altText: input.payload.product.images[0].altText,
+            width: input.payload.product.images[0].width,
+            height: input.payload.product.images[0].height,
+          }
         : undefined;
-      const images = input.payload.product.images
-        ? input.payload.product.images.map((img) => ({ ...img }))
-        : input.payload.product.featuredImage
-        ? [{ ...input.payload.product.featuredImage }]
+      const images: readonly ShopifyImage[] | undefined = input.payload.product.images
+        ? input.payload.product.images.map((img, idx) => ({
+            id: img.id,
+            url: img.url ?? `https://quickstart-demo.myshopify.com/cdn/shop/files/image-${idx + 1}.jpg`,
+            altText: img.altText,
+            width: img.width,
+            height: img.height,
+          }))
+        : featuredImage
+        ? [featuredImage]
         : undefined;
 
       const newProduct: ShopifyProduct = {
@@ -350,6 +370,8 @@ export async function runMockModuleApi(input: ShopifyApiInput): Promise<ShopifyA
         images,
         variants,
         seo: input.payload.product.seo ? { ...input.payload.product.seo } : undefined,
+        hasMoreVariants: false,
+        hasMoreImages: false,
         createdAt: now,
         updatedAt: now,
       };
@@ -372,17 +394,68 @@ export async function runMockModuleApi(input: ShopifyApiInput): Promise<ShopifyA
         (input.payload.product.descriptionHtml !== undefined
           ? input.payload.product.descriptionHtml.replace(/<[^>]*>/g, "").trim()
           : existing?.description);
-      const onlineStoreUrl = input.payload.product.onlineStoreUrl ?? existing?.onlineStoreUrl;
-      const featuredImage = input.payload.product.featuredImage
-        ? { ...input.payload.product.featuredImage }
+      const onlineStoreUrl = existing?.onlineStoreUrl;
+      const featuredImage: ShopifyImage | undefined = input.payload.product.featuredImage
+        ? {
+            id: input.payload.product.featuredImage.id ?? existing?.featuredImage?.id,
+            url:
+              input.payload.product.featuredImage.url ??
+              existing?.featuredImage?.url ??
+              "https://quickstart-demo.myshopify.com/cdn/shop/files/placeholder.jpg",
+            altText:
+              input.payload.product.featuredImage.altText !== undefined
+                ? input.payload.product.featuredImage.altText
+                : existing?.featuredImage?.altText,
+            width: input.payload.product.featuredImage.width ?? existing?.featuredImage?.width,
+            height: input.payload.product.featuredImage.height ?? existing?.featuredImage?.height,
+          }
         : existing?.featuredImage
         ? { ...existing.featuredImage }
         : undefined;
-      const images = input.payload.product.images
-        ? input.payload.product.images.map((img) => ({ ...img }))
-        : existing?.images
-        ? existing.images.map((img) => ({ ...img }))
-        : undefined;
+
+      let images: ShopifyImage[] | undefined = existing?.images ? existing.images.map((img) => ({ ...img })) : undefined;
+      if (input.payload.product.images) {
+        if (!images) {
+          images = input.payload.product.images.map((img, idx) => ({
+            id: img.id,
+            url: img.url ?? `https://quickstart-demo.myshopify.com/cdn/shop/files/image-${idx + 1}.jpg`,
+            altText: img.altText,
+            width: img.width,
+            height: img.height,
+          }));
+        } else {
+          for (let i = 0; i < input.payload.product.images.length; i++) {
+            const incoming = input.payload.product.images[i];
+            if (incoming.id) {
+              const matchIdx = images.findIndex((im) => im.id === incoming.id);
+              if (matchIdx >= 0) {
+                const existingImg = images[matchIdx];
+                images[matchIdx] = {
+                  ...existingImg,
+                  altText: incoming.altText !== undefined ? incoming.altText : existingImg.altText,
+                  url: incoming.url ?? existingImg.url,
+                };
+              } else {
+                images.push({
+                  id: incoming.id,
+                  url: incoming.url ?? `https://quickstart-demo.myshopify.com/cdn/shop/files/image-${images.length + 1}.jpg`,
+                  altText: incoming.altText,
+                  width: incoming.width,
+                  height: incoming.height,
+                });
+              }
+            } else {
+              images.push({
+                id: incoming.id,
+                url: incoming.url ?? `https://quickstart-demo.myshopify.com/cdn/shop/files/image-${images.length + 1}.jpg`,
+                altText: incoming.altText,
+                width: incoming.width,
+                height: incoming.height,
+              });
+            }
+          }
+        }
+      }
 
       const updatedProduct: ShopifyProduct = {
         id: input.payload.id,
@@ -399,6 +472,8 @@ export async function runMockModuleApi(input: ShopifyApiInput): Promise<ShopifyA
         images,
         variants: existing ? existing.variants.map(cloneVariant) : [],
         seo: input.payload.product.seo ? { ...input.payload.product.seo } : existing?.seo,
+        hasMoreVariants: false,
+        hasMoreImages: false,
         createdAt: existing?.createdAt ?? new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };

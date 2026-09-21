@@ -69,16 +69,26 @@ src/
 ├── styles/              # Global Tailwind stylesheet
 ├── modules/
 │   ├── orchestrator/    # Coordinates the workflow
+│   ├── module-api/      # Module API contract, Shopify client service, mock runner, tests
 │   ├── module-a/        # Business module A
 │   ├── module-b/        # Business module B
 │   └── module-c/        # Business module C
 └── shared/              # Small cross-cutting contracts, errors, and utilities
+gateway/                 # Standalone Shopify GraphQL proxy gateway (Node.js/Vite server)
 ```
 
 The dependency direction is:
 
 ```text
-app → orchestrator → module-a / module-b / module-c → shared
+app / pages / layouts
+        ↓
+   orchestrator
+   ↙    ↓    ↘
+module-api module-a module-b module-c
+        ↓
+     gateway
+        ↓
+      shared
 ```
 
 Modules do not depend on each other. Consumers use only the module's public `index.ts`; importing a module's internal `service.ts`, `runtime.ts`, `mocks/`, or UI files is forbidden.
@@ -143,6 +153,8 @@ Examples:
 
 ```text
 feature/module-a-add-normalizer
+feature/module-api-add-runner
+feature/gateway-group-variants
 feature/main-add-workflow-page
 fix/module-b-handle-empty-result
 ```
