@@ -1,10 +1,12 @@
 import { runAutoSeo } from "../service";
 import type {
+  AutoSeoClient,
   AutoSeoOutput,
   AutoSeoProductCandidate,
   AutoSeoSelectionInput,
+  ShopifyProductForAutoSeoUi,
 } from "../types";
-import { autoSeoMockProducts } from "./data";
+import { autoSeoMockProducts, mockShopifyProducts } from "./data";
 
 function cloneMockProduct(
   product: AutoSeoProductCandidate,
@@ -31,3 +33,14 @@ export async function runMockAutoSeo(
   });
 }
 
+export class MockAutoSeoClient implements AutoSeoClient {
+  public async loadProducts(): Promise<readonly ShopifyProductForAutoSeoUi[]> {
+    return JSON.parse(JSON.stringify(mockShopifyProducts)) as ShopifyProductForAutoSeoUi[];
+  }
+
+  public async runAutoSeo(input: AutoSeoSelectionInput): Promise<AutoSeoOutput> {
+    return runAutoSeo(input);
+  }
+}
+
+export const mockAutoSeoClient = new MockAutoSeoClient();

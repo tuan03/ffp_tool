@@ -16,6 +16,9 @@ import {
   ClientCredentialsTokenProvider,
   CompositeTokenProvider,
   StoreControlPlane,
+  executeProductsGet,
+  executeProductsList,
+  mapProductNode,
   type StoreConfig,
   type HttpTransport,
   type IdempotencyStore,
@@ -2824,4 +2827,147 @@ describe("Gateway: HTTP Server Handler & E2E Integration with module-api", () =>
     assert.equal(callCount, 1);
   });
 });
+
+describe("Gateway: products.list and products.get field mapping (descriptionHtml, seo, images)", () => {
+  it("executeProductsList queries and maps descriptionHtml, seo, and images to simple array", async () => {
+    let capturedQuery = "";
+    const transport: HttpTransport = async (_url, init) => {
+      const body = JSON.parse(String(init?.body));
+      capturedQuery = body.query;
+      return createMockResponse({
+        data: {
+          products: {
+            pageInfo: { hasNextPage: false, hasPreviousPage: false, startCursor: null, endCursor: null },
+            edges: [
+              {
+                cursor: "cur-1",
+                node: {
+                  id: "gid://shopify/Product/1",
+                  title: "Test Rug",
+                  handle: "test-rug",
+                  descriptionHtml: "<p>Rug description</p>",
+                  status: "ACTIVE",
+                  seo: { title: "SEO Rug", description: "SEO Desc" },
+                  images: {
+                    nodes: [
+                      {
+                        id: "gid://shopify/ProductImage/101",
+                        url: "https://example.com/rug.jpg",
+                        altText: "Rug front",
+                        width: 1000,
+                        height: 1000,
+                      },
+                    ],
+                  },
+                  createdAt: "2026-01-01T00:00:00Z",
+                  updatedAt: "2026-01-02T00:00:00Z",
+                  variants: { edges: [] },
+                },
+              },
+            ],
+          },
+        },
+      });
+    };
+
+    const client = new ShopifyGraphqlClient({
+      tokenProvider: new StaticAccessTokenProvider(),
+      throttleManager: new InMemoryThrottleManager(),
+      baseTransport: transport,
+    });
+    const store: StoreConfig = {
+      storeId: "store-test",
+      shopDomain: "test.myshopify.com",
+      apiVersion: "2026-07",
+      auth: { type: "static", staticToken: "tok" },
+    };
+
+    const result = await executeProductsList(store, client, { limit: 10 });
+
+    assert.ok(capturedQuery.includes("descriptionHtml"));
+    assert.ok(capturedQuery.includes("seo"));
+    assert.ok(capturedQuery.includes("images(first: 50)"));
+    assert.equal(result.products.length, 1);
+    const prod = result.products[0]!;
+    assert.equal(prod.id, "gid://shopify/Product/1");
+    assert.equal(prod.descriptionHtml, "<p>Rug description</p>");
+    assert.deepEqual(prod.seo, { title: "SEO Rug", description: "SEO Desc" });
+    assert.ok(Array.isArray(prod.images));
+    assert.equal(prod.images.length, 1);
+    assert.equal(prod.images[0]?.url, "https://example.com/rug.jpg");
+    assert.equal(prod.images[0]?.altText, "Rug front");
+    assert.equal(prod.images[0]?.width, 1000);
+    assert.equal(prod.images[0]?.height, 1000);
+  });
+
+  it("executeProductsGet queries and maps images to simple array", async () => {
+    let capturedQuery = "";
+    const transport: HttpTransport = async (_url, init) => {
+      const body = JSON.parse(String(init?.body));
+      capturedQuery = body.query;
+      return createMockResponse({
+        data: {
+          product: {
+            id: "gid://shopify/Product/2",
+            title: "Test Blanket",
+            handle: "test-blanket",
+            descriptionHtml: "<p>Blanket</p>",
+            status: "ACTIVE",
+            images: {
+              nodes: [
+                {
+                  id: "gid://shopify/ProductImage/201",
+                  url: "https://example.com/blanket.jpg",
+                  altText: null,
+                  width: null,
+                  height: null,
+                },
+              ],
+            },
+            createdAt: "2026-01-01T00:00:00Z",
+            updatedAt: "2026-01-02T00:00:00Z",
+            variants: { edges: [] },
+          },
+        },
+      });
+    };
+
+    const client = new ShopifyGraphqlClient({
+      tokenProvider: new StaticAccessTokenProvider(),
+      throttleManager: new InMemoryThrottleManager(),
+      baseTransport: transport,
+    });
+    const store: StoreConfig = {
+      storeId: "store-test",
+      shopDomain: "test.myshopify.com",
+      apiVersion: "2026-07",
+      auth: { type: "static", staticToken: "tok" },
+    };
+
+    const result = await executeProductsGet(store, client, { id: "gid://shopify/Product/2" });
+
+    assert.ok(capturedQuery.includes("images(first: 100)"));
+    assert.ok(result.product !== null);
+    assert.ok(Array.isArray(result.product.images));
+    assert.equal(result.product.images.length, 1);
+    assert.equal(result.product.images[0]?.url, "https://example.com/blanket.jpg");
+    assert.equal(result.product.images[0]?.altText, null);
+  });
+
+  it("mapProductNode handles missing images and null seo", () => {
+    const node = {
+      id: "gid://shopify/Product/3",
+      title: "Simple",
+      handle: "simple",
+      status: "ACTIVE" as const,
+      createdAt: "2026-01-01T00:00:00Z",
+      updatedAt: "2026-01-02T00:00:00Z",
+    };
+    const summary = mapProductNode(node);
+    assert.equal(summary.images, undefined);
+    assert.equal(summary.seo, undefined);
+    assert.equal(summary.descriptionHtml, undefined);
+  });
+});
+
 

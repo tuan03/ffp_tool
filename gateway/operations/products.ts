@@ -1,6 +1,7 @@
 import { GatewayError } from "../errors";
 import type { ShopifyGraphqlClient } from "../shopify-graphql-client";
 import type {
+  ProductImageSummary,
   ProductListResult,
   ProductSummary,
   ProductVariantSummary,
@@ -22,10 +23,24 @@ const PRODUCTS_LIST_QUERY = `
           id
           title
           handle
+          descriptionHtml
           status
           vendor
           productType
           tags
+          seo {
+            title
+            description
+          }
+          images(first: 50) {
+            nodes {
+              id
+              url
+              altText
+              width
+              height
+            }
+          }
           createdAt
           updatedAt
           variants(first: 10) {
@@ -58,6 +73,15 @@ const PRODUCTS_GET_QUERY = `
         title
         description
       }
+      images(first: 100) {
+        nodes {
+          id
+          url
+          altText
+          width
+          height
+        }
+      }
       createdAt
       updatedAt
       variants(first: 100) {
@@ -85,6 +109,14 @@ export interface RawVariantNode {
   readonly inventoryQuantity?: number | null;
 }
 
+export interface RawImageNode {
+  readonly id?: string;
+  readonly url: string;
+  readonly altText?: string | null;
+  readonly width?: number | null;
+  readonly height?: number | null;
+}
+
 export interface RawProductNode {
   readonly id: string;
   readonly title: string;
@@ -95,6 +127,9 @@ export interface RawProductNode {
   readonly productType?: string | null;
   readonly tags?: readonly string[] | null;
   readonly seo?: { readonly title?: string | null; readonly description?: string | null } | null;
+  readonly images?: {
+    readonly nodes?: readonly RawImageNode[];
+  } | readonly RawImageNode[] | null;
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly variants?: {
@@ -113,6 +148,23 @@ export function mapProductNode(node: RawProductNode): ProductSummary {
     inventoryQuantity: vEdge.node.inventoryQuantity ?? undefined,
   }));
 
+  let rawImages: readonly RawImageNode[] | undefined;
+  if (Array.isArray(node.images)) {
+    rawImages = node.images;
+  } else if (node.images && "nodes" in node.images && Array.isArray(node.images.nodes)) {
+    rawImages = node.images.nodes;
+  }
+
+  const images: ProductImageSummary[] | undefined = rawImages
+    ? rawImages.map((img: RawImageNode) => ({
+        id: img.id,
+        url: img.url,
+        altText: img.altText ?? null,
+        width: img.width ?? null,
+        height: img.height ?? null,
+      }))
+    : undefined;
+
   return {
     id: node.id,
     title: node.title,
@@ -123,6 +175,7 @@ export function mapProductNode(node: RawProductNode): ProductSummary {
     productType: node.productType ?? undefined,
     tags: node.tags ?? [],
     variants,
+    images,
     seo: node.seo
       ? {
           title: node.seo.title ?? undefined,

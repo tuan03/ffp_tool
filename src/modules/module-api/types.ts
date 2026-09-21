@@ -84,6 +84,14 @@ export interface ShopifySeoInput {
   readonly description?: string;
 }
 
+export interface ShopifyProductImage {
+  readonly id?: string;
+  readonly url: string;
+  readonly altText?: string | null;
+  readonly width?: number | null;
+  readonly height?: number | null;
+}
+
 export interface ShopifyProductVariant {
   readonly id: string;
   readonly productId: string;
@@ -105,6 +113,7 @@ export interface ShopifyProduct {
   readonly productType?: string;
   readonly tags: readonly string[];
   readonly variants: readonly ShopifyProductVariant[];
+  readonly images?: readonly ShopifyProductImage[];
   readonly seo?: ShopifySeo;
   readonly createdAt: string;
   readonly updatedAt: string;

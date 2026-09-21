@@ -42,6 +42,19 @@ export const shopifyMockProducts: readonly ShopifyProduct[] = [
         inventoryQuantity: 28,
       },
     ],
+    images: [
+      {
+        id: "gid://shopify/ProductImage/5001",
+        url: "https://images.example.com/tshirt-front.jpg",
+        altText: "Classic Cotton T-Shirt front",
+        width: 1000,
+        height: 1000,
+      },
+    ],
+    seo: {
+      title: "Classic Cotton T-Shirt | Acme Apparel",
+      description: "Comfortable everyday 100% cotton t-shirt.",
+    },
     createdAt: "2025-01-10T08:00:00Z",
     updatedAt: "2025-01-15T12:30:00Z",
   },
@@ -65,6 +78,19 @@ export const shopifyMockProducts: readonly ShopifyProduct[] = [
         inventoryQuantity: 100,
       },
     ],
+    images: [
+      {
+        id: "gid://shopify/ProductImage/5002",
+        url: "https://images.example.com/mug.jpg",
+        altText: "Ceramic Coffee Mug White",
+        width: 800,
+        height: 800,
+      },
+    ],
+    seo: {
+      title: "Ceramic Coffee Mug | Home Goods Co",
+      description: "Durable 12oz ceramic coffee mug.",
+    },
     createdAt: "2025-01-12T09:15:00Z",
     updatedAt: "2025-01-14T16:45:00Z",
   },
@@ -88,6 +114,7 @@ export const shopifyMockProducts: readonly ShopifyProduct[] = [
         inventoryQuantity: 15,
       },
     ],
+    images: [],
     createdAt: "2025-01-14T11:00:00Z",
     updatedAt: "2025-01-16T15:10:00Z",
   },

@@ -9,9 +9,13 @@ function isAppEnvironment(value: string): value is AppEnvironment {
 }
 
 function getEnvironment(): AppEnvironment {
-  const configuredEnvironment = import.meta.env.VITE_APP_ENV ?? import.meta.env.MODE;
+  const configuredEnvironment =
+    import.meta.env?.VITE_APP_ENV ??
+    import.meta.env?.MODE ??
+    process.env.VITE_APP_ENV ??
+    process.env.NODE_ENV;
 
-  if (isAppEnvironment(configuredEnvironment)) {
+  if (typeof configuredEnvironment === "string" && isAppEnvironment(configuredEnvironment)) {
     return configuredEnvironment;
   }
 

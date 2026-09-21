@@ -119,6 +119,14 @@ export interface ProductVariantSummary {
   readonly inventoryQuantity?: number;
 }
 
+export interface ProductImageSummary {
+  readonly id?: string;
+  readonly url: string;
+  readonly altText?: string | null;
+  readonly width?: number | null;
+  readonly height?: number | null;
+}
+
 export interface ProductSummary {
   readonly id: string;
   readonly title: string;
@@ -129,6 +137,7 @@ export interface ProductSummary {
   readonly productType?: string;
   readonly tags: readonly string[];
   readonly variants: readonly ProductVariantSummary[];
+  readonly images?: readonly ProductImageSummary[];
   readonly seo?: { readonly title?: string; readonly description?: string };
   readonly createdAt: string;
   readonly updatedAt: string;

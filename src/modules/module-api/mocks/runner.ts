@@ -67,6 +67,7 @@ function cloneProduct(product: ShopifyProduct): ShopifyProduct {
     ...product,
     tags: [...product.tags],
     variants: product.variants.map(cloneVariant),
+    images: product.images ? product.images.map((img) => ({ ...img })) : undefined,
     seo: product.seo ? { ...product.seo } : undefined,
   };
 }

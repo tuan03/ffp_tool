@@ -1,3 +1,43 @@
+export interface ShopifyProductImage {
+  readonly id?: string;
+  readonly url: string;
+  readonly altText?: string | null;
+  readonly width?: number | null;
+  readonly height?: number | null;
+}
+
+export interface ShopifyProductVariant {
+  readonly id: string;
+  readonly title: string;
+  readonly price?: string;
+  readonly sku?: string;
+  readonly inventoryQuantity?: number;
+}
+
+export interface ShopifyProductForAutoSeoUi {
+  readonly id: string;
+  readonly title: string;
+  readonly handle: string;
+  readonly descriptionHtml?: string;
+  readonly status?: string;
+  readonly vendor?: string;
+  readonly productType?: string;
+  readonly tags?: readonly string[];
+  readonly images?: readonly ShopifyProductImage[];
+  readonly variants?: readonly ShopifyProductVariant[];
+  readonly seo?: {
+    readonly title?: string | null;
+    readonly description?: string | null;
+  };
+}
+
+export type ProductReviewDecision =
+  | "pending"
+  | "approved"
+  | "needs_edit"
+  | "mark_draft"
+  | "skipped";
+
 export interface AutoSeoProductImage {
   readonly url?: string;
   readonly path?: string;
@@ -37,4 +77,9 @@ export interface AutoSeoOutput {
   readonly selectedCount: number;
   readonly seoContentInputs: readonly SeoContentInputPayload[];
   readonly warnings: readonly string[];
+}
+
+export interface AutoSeoClient {
+  loadProducts(): Promise<readonly ShopifyProductForAutoSeoUi[]>;
+  runAutoSeo(input: AutoSeoSelectionInput): Promise<AutoSeoOutput>;
 }

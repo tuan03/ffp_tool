@@ -51,6 +51,7 @@ export type {
   ShopifyPageInfo,
   ShopifyProduct,
   ShopifyProductBulkUpdateItem,
+  ShopifyProductImage,
   ShopifyProductInput,
   ShopifyProductUpdateInput,
   ShopifyProductVariant,
