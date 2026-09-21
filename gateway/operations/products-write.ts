@@ -4,8 +4,8 @@ import type { ProductSummary, ProductVariantSummary, StoreConfig } from "../type
 import { mapProductNode, type RawProductNode } from "./products";
 
 const PRODUCT_CREATE_MUTATION = `
-  mutation ProductCreate($input: ProductInput!) {
-    productCreate(input: $input) {
+  mutation ProductCreate($product: ProductCreateInput!) {
+    productCreate(product: $product) {
       product {
         id
         title
@@ -61,8 +61,8 @@ const PRODUCT_VARIANTS_BULK_CREATE_MUTATION = `
 `;
 
 const PRODUCT_UPDATE_MUTATION = `
-  mutation ProductUpdate($input: ProductInput!) {
-    productUpdate(input: $input) {
+  mutation ProductUpdate($product: ProductUpdateInput!) {
+    productUpdate(product: $product) {
       product {
         id
         title
@@ -193,7 +193,7 @@ export async function executeProductsCreate(
   const raw = await client.query<ProductCreateResponse>(
     store,
     PRODUCT_CREATE_MUTATION,
-    { input },
+    { product: input },
     { isWrite: true, requestId },
   );
 
@@ -207,18 +207,21 @@ export async function executeProductsCreate(
 
   const product = mapProductNode(raw.productCreate.product);
 
-  // If public input contains multiple variants, create all variants via productVariantsBulkCreate
+  // If public input contains variants (>= 1), create variants via productVariantsBulkCreate
   // with strategy: REMOVE_STANDALONE_VARIANT so the initial default standalone variant is deleted
-  if (Array.isArray(productInput.variants) && productInput.variants.length > 1) {
+  if (Array.isArray(productInput.variants) && productInput.variants.length >= 1) {
     const allVariants = productInput.variants as readonly Record<string, unknown>[];
     const variantsInput = allVariants.map((v) => {
       const vInput: Record<string, unknown> = {};
-      if (v.title !== undefined) vInput.title = v.title;
       if (v.price !== undefined) vInput.price = v.price;
       if (v.compareAtPrice !== undefined) vInput.compareAtPrice = v.compareAtPrice;
       if (v.barcode !== undefined) vInput.barcode = v.barcode;
       if (v.sku !== undefined) vInput.inventoryItem = { sku: v.sku };
-      if (v.optionValues !== undefined) vInput.optionValues = v.optionValues;
+      if (Array.isArray(v.optionValues)) {
+        vInput.optionValues = v.optionValues;
+      } else if (typeof v.title === "string" && v.title.trim() !== "") {
+        vInput.optionValues = [{ optionName: "Title", name: v.title.trim() }];
+      }
       return vInput;
     });
 
@@ -360,7 +363,7 @@ export async function executeProductsUpdate(
   const raw = await client.query<ProductUpdateResponse>(
     store,
     PRODUCT_UPDATE_MUTATION,
-    { input },
+    { product: input },
     { isWrite: true, requestId },
   );
 

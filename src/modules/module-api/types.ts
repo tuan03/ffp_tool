@@ -20,7 +20,11 @@ export type ShopifyApiErrorCode =
   | "SHOPIFY_THROTTLED"
   | "SHOPIFY_USER_ERROR"
   | "SHOPIFY_NETWORK_ERROR"
-  | "SHOPIFY_UNKNOWN_WRITE_STATE";
+  | "SHOPIFY_UNKNOWN_WRITE_STATE"
+  | "SHOPIFY_INVALID_INPUT"
+  | "SHOPIFY_NOT_FOUND"
+  | "SHOPIFY_PERMISSION_DENIED"
+  | "NOT_IMPLEMENTED";
 
 export type ShopifyExecutionMode = "preview" | "apply";
 

@@ -1,4 +1,4 @@
-export type IdempotencyState = "PENDING" | "COMPLETED";
+export type IdempotencyState = "PENDING" | "COMPLETED" | "RECONCILIATION_REQUIRED";
 
 export interface IdempotencyEntry {
   readonly state: IdempotencyState;

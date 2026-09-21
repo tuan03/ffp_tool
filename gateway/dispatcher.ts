@@ -179,6 +179,13 @@ export class GatewayDispatcher {
               data: cached.responseData,
             };
           }
+          if (cached.state === "RECONCILIATION_REQUIRED") {
+            throw new GatewayError(
+              `RequestId '${requestId}' is in an ambiguous write state on Shopify and requires manual reconciliation before retrying`,
+              "SHOPIFY_UNKNOWN_WRITE_STATE",
+              409,
+            );
+          }
         }
 
         // Record PENDING state in IdempotencyStore
@@ -206,8 +213,19 @@ export class GatewayDispatcher {
           success: true,
           data,
         };
-      } catch (err) {
-        await this.idempotencyStore.delete(idempotencyKey);
+      } catch (err: unknown) {
+        const isUnknownWriteState =
+          err instanceof GatewayError && err.code === "SHOPIFY_UNKNOWN_WRITE_STATE";
+        if (isUnknownWriteState) {
+          await this.idempotencyStore.set(idempotencyKey, {
+            state: "RECONCILIATION_REQUIRED",
+            operation: request.operation,
+            payloadHash: canonicalHash,
+            createdAtMs: Date.now(),
+          });
+        } else {
+          await this.idempotencyStore.delete(idempotencyKey);
+        }
         rejectInFlight(err);
         throw err;
       } finally {

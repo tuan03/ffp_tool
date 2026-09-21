@@ -8,6 +8,7 @@ import {
   GatewayError,
   InMemoryStoreRegistry,
   InMemoryThrottleManager,
+  InMemoryIdempotencyStore,
   normalizeShopDomain,
   sanitizeErrorMessage,
   ShopifyGraphqlClient,
@@ -15,6 +16,7 @@ import {
   ClientCredentialsTokenProvider,
   type StoreConfig,
   type HttpTransport,
+  type IdempotencyStore,
 } from "../index";
 
 import { createModuleApiRunner } from "../../src/modules/module-api/service";
@@ -325,7 +327,7 @@ describe("Gateway: Throttle Manager & GraphQL Client", () => {
 });
 
 describe("Gateway: Operations & Dispatcher", () => {
-  function setupGateway(mockGraphqlDataOrTransport: unknown) {
+  function setupGateway(mockGraphqlDataOrTransport: unknown, idempotencyStore?: IdempotencyStore) {
     const registry = new InMemoryStoreRegistry([
       {
         storeId: "store-test",
@@ -346,7 +348,7 @@ describe("Gateway: Operations & Dispatcher", () => {
       baseTransport: fakeTransport,
     });
 
-    return new GatewayDispatcher({ storeRegistry: registry, graphqlClient: client });
+    return new GatewayDispatcher({ storeRegistry: registry, graphqlClient: client, idempotencyStore });
   }
 
   it("executes connection.test successfully", async () => {
@@ -773,29 +775,19 @@ describe("Gateway: Operations & Dispatcher", () => {
         });
       }
 
-      if (query.includes("CheckCollectionType")) {
+      if (query.includes("GetCollectionSources")) {
         return createMockResponse({
           data: {
             collection: {
               id: "gid://shopify/Collection/77",
-              ruleSet: null,
+              sources: [
+                {
+                  __typename: "CollectionConditionsSource",
+                  id: "gid://shopify/CollectionConditionsSource/1",
+                  title: "Default Source",
+                },
+              ],
             },
-          },
-        });
-      }
-
-      if (query.includes("collectionAddProducts")) {
-        return createMockResponse({
-          data: {
-            collectionAddProducts: { userErrors: [] },
-          },
-        });
-      }
-
-      if (query.includes("collectionRemoveProducts")) {
-        return createMockResponse({
-          data: {
-            collectionRemoveProducts: { userErrors: [] },
           },
         });
       }
@@ -1181,9 +1173,10 @@ describe("Gateway: Operations & Dispatcher", () => {
   it("handles products.bulkUpdate partial failure without failing entire batch", async () => {
     const dispatcher = setupGateway(async (_url: string, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
-      const vars = body.variables as { input: { id: string; title: string } };
+      const vars = body.variables as { product?: { id: string; title: string }; input?: { id: string; title: string } };
+      const target = vars.product ?? vars.input ?? { id: "", title: "" };
 
-      if (vars.input.id === "gid://shopify/Product/fail") {
+      if (target.id === "gid://shopify/Product/fail") {
         return createMockResponse({
           data: {
             productUpdate: {
@@ -1198,8 +1191,8 @@ describe("Gateway: Operations & Dispatcher", () => {
         data: {
           productUpdate: {
             product: {
-              id: vars.input.id,
-              title: vars.input.title,
+              id: target.id,
+              title: target.title,
               handle: "updated-handle",
               status: "ACTIVE",
               tags: [],
@@ -1239,18 +1232,15 @@ describe("Gateway: Operations & Dispatcher", () => {
     assert.equal(data.items[1].ok, true);
   });
 
-  it("rejects modifying membership of automated/smart collections with ruleSet", async () => {
+  it("rejects modifying membership when collection does not exist", async () => {
     const dispatcher = setupGateway(async (_url: string, init?: RequestInit) => {
       const parsed = JSON.parse(String(init?.body)) as Record<string, unknown>;
       const query = String(parsed.query);
 
-      if (query.includes("CheckCollectionType")) {
+      if (query.includes("GetCollectionSources")) {
         return createMockResponse({
           data: {
-            collection: {
-              id: "gid://shopify/Collection/smart-1",
-              ruleSet: { appliedDisjunctively: false },
-            },
+            collection: null,
           },
         });
       }
@@ -1263,16 +1253,15 @@ describe("Gateway: Operations & Dispatcher", () => {
           storeId: "store-test",
           operation: "collections.updateMembership",
           payload: {
-            collectionId: "gid://shopify/Collection/smart-1",
+            collectionId: "gid://shopify/Collection/missing-1",
             productIdsToAdd: ["gid://shopify/Product/1"],
           },
-          requestId: "req-smart-col",
+          requestId: "req-missing-col",
         }),
       (err: unknown) =>
         err instanceof GatewayError &&
-        err.code === "SHOPIFY_USER_ERROR" &&
-        err.httpStatus === 400 &&
-        err.message.includes("automated/smart collection"),
+        err.code === "SHOPIFY_NOT_FOUND" &&
+        err.httpStatus === 404,
     );
   });
 
@@ -1509,6 +1498,140 @@ describe("Gateway: Operations & Dispatcher", () => {
         err.httpStatus === 500,
       "Network failure during write mutation must be mapped to SHOPIFY_UNKNOWN_WRITE_STATE",
     );
+  });
+
+  it("preserves idempotency state as RECONCILIATION_REQUIRED on SHOPIFY_UNKNOWN_WRITE_STATE and blocks retrying", async () => {
+    let callCount = 0;
+    const failingTransport: HttpTransport = async () => {
+      callCount++;
+      throw new Error("connection reset by peer");
+    };
+
+    const idempotencyStore = new InMemoryIdempotencyStore();
+    const dispatcher = setupGateway(failingTransport, idempotencyStore);
+
+    // First call: fails with UNKNOWN_WRITE_STATE
+    await assert.rejects(
+      async () =>
+        dispatcher.dispatch({
+          storeId: "store-test",
+          operation: "products.create",
+          payload: { product: { title: "Socket Drop Product" } },
+          requestId: "req-unknown-retry-1",
+        }),
+      (err: unknown) =>
+        err instanceof GatewayError &&
+        err.code === "SHOPIFY_UNKNOWN_WRITE_STATE",
+    );
+
+    // Verify record in idempotency store is NOT deleted, but transitioned to RECONCILIATION_REQUIRED
+    const record = await idempotencyStore.get("store-test:req-unknown-retry-1");
+    assert.ok(record, "Idempotency record must not be deleted on UNKNOWN_WRITE_STATE");
+    assert.equal(record?.state, "RECONCILIATION_REQUIRED");
+
+    // Second call: retry with same requestId MUST be rejected with 409 SHOPIFY_UNKNOWN_WRITE_STATE
+    await assert.rejects(
+      async () =>
+        dispatcher.dispatch({
+          storeId: "store-test",
+          operation: "products.create",
+          payload: { product: { title: "Socket Drop Product" } },
+          requestId: "req-unknown-retry-1",
+        }),
+      (err: unknown) =>
+        err instanceof GatewayError &&
+        err.code === "SHOPIFY_UNKNOWN_WRITE_STATE" &&
+        err.httpStatus === 409 &&
+        err.message.includes("requires manual reconciliation"),
+    );
+
+    // Ensure Shopify mutation was NOT called a second time
+    assert.equal(callCount, 1);
+  });
+
+  it("creates product with exactly 1 variant and applies custom price and sku via productVariantsBulkCreate", async () => {
+    let bulkCreateCalled = false;
+    let capturedVariants: unknown;
+
+    const dispatcher = setupGateway(async (_url: string, init?: RequestInit) => {
+      const parsed = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      const query = String(parsed.query);
+
+      if (query.includes("productCreate")) {
+        return createMockResponse({
+          data: {
+            productCreate: {
+              product: {
+                id: "gid://shopify/Product/single-var-prod",
+                title: "Single Variant Product",
+                handle: "single-variant-product",
+                status: "ACTIVE",
+                tags: [],
+                createdAt: "2026-09-21",
+                updatedAt: "2026-09-21",
+                variants: { edges: [] },
+              },
+              userErrors: [],
+            },
+          },
+        });
+      }
+
+      if (query.includes("ProductVariantsBulkCreate")) {
+        bulkCreateCalled = true;
+        capturedVariants = parsed.variables;
+        return createMockResponse({
+          data: {
+            productVariantsBulkCreate: {
+              productVariants: [
+                {
+                  id: "gid://shopify/ProductVariant/single-var-1",
+                  title: "Default Title",
+                  price: "49.99",
+                  compareAtPrice: "59.99",
+                  barcode: "BAR-1",
+                  inventoryQuantity: 5,
+                  inventoryItem: { sku: "SKU-SINGLE-1" },
+                },
+              ],
+              userErrors: [],
+            },
+          },
+        });
+      }
+
+      return createMockResponse({});
+    });
+
+    const res = await dispatcher.dispatch({
+      storeId: "store-test",
+      operation: "products.create",
+      payload: {
+        product: {
+          title: "Single Variant Product",
+          variants: [
+            {
+              price: "49.99",
+              compareAtPrice: "59.99",
+              sku: "SKU-SINGLE-1",
+              barcode: "BAR-1",
+            },
+          ],
+        },
+      },
+      requestId: "req-single-var-1",
+    });
+
+    assert.equal(res.success, true);
+    assert.equal(bulkCreateCalled, true);
+    const prod = (res.data as { product: { variants: { id: string; price: string; sku?: string }[] } }).product;
+    assert.equal(prod.variants.length, 1);
+    assert.equal(prod.variants[0].price, "49.99");
+    assert.equal(prod.variants[0].sku, "SKU-SINGLE-1");
+
+    // Ensure ProductVariantsBulkInput did NOT contain 'title'
+    const vars = capturedVariants as { variants: Record<string, unknown>[] };
+    assert.equal(vars.variants[0].title, undefined, "ProductVariantsBulkInput must not include title field");
   });
 });
 

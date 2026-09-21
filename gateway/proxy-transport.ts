@@ -1,3 +1,4 @@
+import { ProxyAgent } from "undici";
 import { GatewayError, sanitizeErrorMessage } from "./errors";
 import type { HttpTransport, StoreConfig } from "./types";
 
@@ -10,25 +11,36 @@ export function createStoreTransport(
   baseTransport: HttpTransport = globalThis.fetch,
 ): HttpTransport {
   const proxy = store.proxy;
-  if (!proxy) {
+  if (!proxy || !proxy.url) {
     return baseTransport;
   }
 
   const failClosed = proxy.failClosed !== false;
 
+  let proxyUrl = proxy.url;
+  if (proxy.username && proxy.password) {
+    try {
+      const parsed = new URL(proxyUrl);
+      parsed.username = proxy.username;
+      parsed.password = proxy.password;
+      proxyUrl = parsed.toString();
+    } catch {
+      // ignore parsing error
+    }
+  }
+
+  const agent = new ProxyAgent(proxyUrl);
+
   return async (url: string, init?: RequestInit): Promise<Response> => {
     try {
-      const headers = new Headers(init?.headers);
-      if (proxy.username && proxy.password) {
-        const credentials = Buffer.from(`${proxy.username}:${proxy.password}`).toString("base64");
-        headers.set("Proxy-Authorization", `Basic ${credentials}`);
-      }
-      headers.set("X-Forwarded-Through-Proxy", proxy.url);
-
-      return await baseTransport(url, {
+      const requestInit = {
         ...init,
-        headers,
-      });
+        dispatcher: agent,
+      };
+
+      return await (baseTransport === globalThis.fetch
+        ? (globalThis.fetch(url, requestInit) as Promise<Response>)
+        : baseTransport(url, requestInit));
     } catch (proxyError: unknown) {
       if (failClosed) {
         const sanitizedErr = sanitizeErrorMessage(

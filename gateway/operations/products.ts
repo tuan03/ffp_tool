@@ -22,22 +22,18 @@ const PRODUCTS_LIST_QUERY = `
           id
           title
           handle
-          descriptionHtml
           status
           vendor
           productType
           tags
           createdAt
           updatedAt
-          variants(first: 100) {
+          variants(first: 10) {
             edges {
               node {
                 id
                 title
                 price
-                sku
-                barcode
-                inventoryQuantity
               }
             }
           }

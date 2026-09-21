@@ -77,6 +77,10 @@ const VALID_ERROR_CODES: ReadonlySet<string> = new Set([
   "SHOPIFY_USER_ERROR",
   "SHOPIFY_NETWORK_ERROR",
   "SHOPIFY_UNKNOWN_WRITE_STATE",
+  "SHOPIFY_INVALID_INPUT",
+  "SHOPIFY_NOT_FOUND",
+  "SHOPIFY_PERMISSION_DENIED",
+  "NOT_IMPLEMENTED",
 ]);
 
 function normalizeErrorCode(value: unknown): ShopifyApiErrorCode | undefined {
