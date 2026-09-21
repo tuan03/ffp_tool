@@ -8,7 +8,9 @@ with size variants, pricing, and print CMYK metafields.
 
 from __future__ import annotations
 
+import base64
 import copy
+import dataclasses
 import json
 import mimetypes
 import os
@@ -84,6 +86,71 @@ def natural_sort_key(s: Any) -> list[int | str]:
     """Sort strings naturally by human/numerical order (e.g. rug_001, rug_002, rug_010)."""
     name = s.name if isinstance(s, Path) else str(s or "")
     return [int(part) if part.isdigit() else part.lower() for part in re.split(r"(\d+)", name)]
+
+
+def save_room_template_images(items: list[Any], target_dir: Path) -> list[Path]:
+    """Decodes base64 data URLs, downloads HTTP URLs, or copies local image files into target_dir."""
+    target_dir.mkdir(parents=True, exist_ok=True)
+    saved_paths: list[Path] = []
+    for idx, item in enumerate(items, start=1):
+        url = ""
+        name = ""
+        if isinstance(item, dict):
+            url = str(item.get("url") or item.get("image_url") or item.get("local_path") or "")
+            name = str(item.get("name") or "")
+        elif isinstance(item, str):
+            url = item.strip()
+        elif isinstance(item, Path) and item.exists() and item.is_file():
+            dest = target_dir / item.name
+            if dest.resolve() != item.resolve():
+                shutil.copy2(item, dest)
+            saved_paths.append(dest)
+            continue
+
+        if not url:
+            continue
+
+        # 1. Check if it's an existing local path
+        try:
+            p = Path(url)
+            if p.exists() and p.is_file():
+                dest_name = name if name and "." in name else p.name
+                dest = target_dir / dest_name
+                if dest.resolve() != p.resolve():
+                    shutil.copy2(p, dest)
+                saved_paths.append(dest)
+                continue
+        except Exception:
+            pass
+
+        # 2. Check if it's a base64 Data URL (data:image/...)
+        if url.startswith("data:image/"):
+            try:
+                header, data = url.split(",", 1)
+                mime = header.split(";")[0].split(":")[1]
+                ext = ".png" if "png" in mime else ".jpg"
+                img_bytes = base64.b64decode(data)
+                dest_filename = f"room_template_{idx}{ext}"
+                dest = target_dir / dest_filename
+                dest.write_bytes(img_bytes)
+                saved_paths.append(dest)
+                continue
+            except Exception as e:
+                logger.warning("Failed to decode base64 room template #%d: %s", idx, e)
+
+        # 3. Check if it's an HTTP/HTTPS URL
+        if url.startswith(("http://", "https://")):
+            try:
+                dest = target_dir / f"room_template_{idx}.jpg"
+                req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
+                with urllib.request.urlopen(req, timeout=15) as resp:
+                    dest.write_bytes(resp.read())
+                saved_paths.append(dest)
+                continue
+            except Exception as e:
+                logger.warning("Failed to download remote room template #%d from %s: %s", idx, url, e)
+
+    return saved_paths
 
 
 # Standalone API URL (legacy optional)
@@ -1035,6 +1102,7 @@ def get_cached_asset_file(job_id: str, filename: str) -> tuple[Path, str]:
                 candidate_run_ids.append(rid2)
 
         search_subdirs = (
+            "room_templates",
             "lifestyle_mockups",
             "final_print",
             "mockups",
@@ -1209,6 +1277,24 @@ def _run_local_pipeline_worker(job_id: str, req_body: dict[str, Any], base_url: 
     except Exception:
         pass
 
+    # Resolve initial room templates if present
+    initial_rt: list[Path] = []
+    raw_refs = req_body.get("reference_images") or []
+    src_run_id = req_body.get("source_run_id")
+    src_dir = resolve_run_dir(src_run_id) if src_run_id else None
+    check_rt_dir = (src_dir or output_root) / "room_templates"
+    if raw_refs:
+        initial_rt = save_room_template_images(raw_refs, check_rt_dir)
+    elif check_rt_dir.exists():
+        initial_rt = [p for p in sorted(check_rt_dir.glob("*.*")) if p.is_file() and p.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}]
+
+    if initial_rt:
+        ai_background_variants = max(ai_background_variants, len(initial_rt))
+
+    task5_max_downloads = int(req_body.get("task5_max_downloads") or req_body.get("max_downloads") or 40)
+    task5_top_images = int(req_body.get("task5_top_images") or req_body.get("top_images") or req_body.get("candidatePoolSize") or 30)
+    task5_max_images_per_query = int(req_body.get("task5_max_images_per_query") or req_body.get("max_images_per_query") or 12)
+
     config = tt_cfg.PipelineConfig(
         target=target,
         output_root=output_root,
@@ -1219,9 +1305,13 @@ def _run_local_pipeline_worker(job_id: str, req_body: dict[str, Any], base_url: 
         artwork_image_size=artwork_size,
         task4_mockup_engine=mockup_engine,
         task4_variants_per_product=ai_background_variants,
+        task4_room_templates=tuple(initial_rt),
         remove_white_background=remove_white_background,
         export_cmyk=True,
         task5_token_path=token_path,
+        task5_max_downloads=task5_max_downloads,
+        task5_top_images=task5_top_images,
+        task5_max_images_per_query=task5_max_images_per_query,
     )
 
     def log_progress(msg: str) -> None:
@@ -1242,6 +1332,10 @@ def _run_local_pipeline_worker(job_id: str, req_body: dict[str, Any], base_url: 
 
         if stage == "crawl_and_review":
             review_pkg = tt_pipe.run_crawl_and_review_stage(config, progress=log_progress, cancel_event=cancel_event)
+            raw_refs = req_body.get("reference_images") or []
+            if raw_refs:
+                saved_templates = save_room_template_images(raw_refs, review_pkg.run_dir / "room_templates")
+                log_progress(f"Đã lưu {len(saved_templates)} ảnh phòng tham chiếu vào thư mục run.")
             candidates = [c.to_dict() if hasattr(c, "to_dict") else dict(c) for c in review_pkg.candidates]
             with JOB_CACHE_LOCK:
                 job = ACTIVE_JOBS.get(job_id, {})
@@ -1268,7 +1362,80 @@ def _run_local_pipeline_worker(job_id: str, req_body: dict[str, Any], base_url: 
             selected = req_body.get("selected_candidates") or []
             src_run_id = req_body.get("source_run_id")
             src_dir = resolve_run_dir(src_run_id) if src_run_id else None
-            result = tt_pipe.run_production_from_candidates(selected, config, run_dir=src_dir, progress=log_progress, cancel_event=cancel_event)
+
+            # Resolve candidate dictionaries from source run's candidate_review.json if strings/IDs were passed
+            if selected and src_dir and any(isinstance(c, str) for c in selected):
+                cr_file = src_dir / "candidate_review.json"
+                if cr_file.exists():
+                    try:
+                        cr_cands = json.loads(cr_file.read_text(encoding="utf-8")).get("candidates", [])
+                        c_map: dict[str, dict[str, Any]] = {}
+                        for c in cr_cands:
+                            if isinstance(c, dict):
+                                for k in ("image_id", "id", "candidate_id"):
+                                    v = c.get(k)
+                                    if v:
+                                        c_map[str(v)] = c
+                        resolved_list: list[Any] = []
+                        for item in selected:
+                            if isinstance(item, str) and item.strip() in c_map:
+                                resolved_list.append(c_map[item.strip()])
+                            else:
+                                resolved_list.append(item)
+                        selected = resolved_list
+                    except Exception:
+                        pass
+
+            # Fork selected candidates to a dedicated, isolated run directory
+            target_run_dir = None
+            if src_dir and hasattr(tt_pipe, "fork_selected_candidates_to_new_run"):
+                try:
+                    forked_cands, target_run_dir = tt_pipe.fork_selected_candidates_to_new_run(
+                        selected,
+                        source_run_dir=src_dir,
+                        output_root=output_root,
+                        config=config,
+                    )
+                    selected = forked_cands
+                    log_progress(f"Đã tạo thư mục sản xuất riêng: {target_run_dir.name} cho {len(selected)} mẫu đã chọn.")
+                except Exception as fork_err:
+                    log_progress(f"Cảnh báo: không thể fork thư mục riêng ({fork_err}), tiếp tục chạy trong {src_dir.name}")
+                    target_run_dir = src_dir
+            else:
+                target_run_dir = src_dir or output_root
+
+            # Setup room template images
+            raw_refs = req_body.get("reference_images") or []
+            prod_rt_dir = (target_run_dir or src_dir or output_root) / "room_templates"
+            saved_templates: list[Path] = []
+            if raw_refs:
+                saved_templates = save_room_template_images(raw_refs, prod_rt_dir)
+            elif src_dir and (src_dir / "room_templates").exists():
+                src_rt = src_dir / "room_templates"
+                src_templates = [p for p in sorted(src_rt.glob("*.*")) if p.is_file() and p.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}]
+                if target_run_dir and target_run_dir != src_dir:
+                    prod_rt_dir.mkdir(parents=True, exist_ok=True)
+                    copied_templates = []
+                    for st in src_templates:
+                        dest = prod_rt_dir / st.name
+                        shutil.copy2(st, dest)
+                        copied_templates.append(dest)
+                    saved_templates = copied_templates
+                else:
+                    saved_templates = src_templates
+            elif prod_rt_dir.exists():
+                saved_templates = [p for p in sorted(prod_rt_dir.glob("*.*")) if p.is_file() and p.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}]
+
+            if saved_templates:
+                updated_variants = max(config.task4_variants_per_product, len(saved_templates))
+                config = dataclasses.replace(
+                    config,
+                    task4_room_templates=tuple(saved_templates),
+                    task4_variants_per_product=updated_variants,
+                )
+                log_progress(f"Áp dụng {len(saved_templates)} ảnh phòng tham chiếu cho khâu render mockup AI ({updated_variants} biến thể/sản phẩm).")
+
+            result = tt_pipe.run_production_from_candidates(selected, config, run_dir=target_run_dir, progress=log_progress, cancel_event=cancel_event)
             loaded = load_standalone_run(result.run_dir.name, base_url)
             with JOB_CACHE_LOCK:
                 if loaded:
@@ -1276,17 +1443,25 @@ def _run_local_pipeline_worker(job_id: str, req_body: dict[str, Any], base_url: 
                     loaded["job_id"] = job_id
                     loaded["jobId"] = job_id
                     loaded["run_id"] = result.run_dir.name
+                    loaded["runId"] = result.run_dir.name
+                    loaded["source_run_id"] = src_run_id
+                    loaded["sourceRunId"] = src_run_id
+                    loaded["request"] = req_body
                     ACTIVE_JOBS[job_id] = loaded
                     save_job_manifest(job_id, loaded)
                 elif job_id in ACTIVE_JOBS:
                     ACTIVE_JOBS[job_id]["status"] = "completed"
                     ACTIVE_JOBS[job_id]["run_id"] = result.run_dir.name
+                    ACTIVE_JOBS[job_id]["runId"] = result.run_dir.name
+                    ACTIVE_JOBS[job_id]["source_run_id"] = src_run_id
+                    ACTIVE_JOBS[job_id]["request"] = req_body
                     ACTIVE_JOBS[job_id].setdefault("logs", []).append(f"Hoàn thành sản xuất (Run: {result.run_dir.name}).")
                     save_job_manifest(job_id, ACTIVE_JOBS[job_id])
             if req_body.get("notify_enabled", True):
+                total_items = len(selected)
                 send_windows_desktop_notification(
                     "Pinterest POD Studio - Hoàn tất",
-                    f"Đã xuất xong file in 4K & Mockup AI cho '{req_body.get('niche', 'POD')}'. Mời bạn kiểm tra thành phẩm!"
+                    f"Đã hoàn thành toàn bộ {total_items} sản phẩm: File in CMYK 300DPI & Mockup AI cho '{req_body.get('niche', 'POD')}'. Mời bạn kiểm tra thành phẩm!"
                 )
         else:
             result = tt_pipe.run_pipeline(config, progress=log_progress, cancel_event=cancel_event)
@@ -1359,27 +1534,75 @@ def produce_pod_job(payload: dict[str, Any], base_url: str, api_url: str = DEFAU
         or status_info.get("runId")
         or source_job_id
     )
+    src_dir = resolve_run_dir(real_run_id) if real_run_id else None
 
-    # Ensure each candidate has local_path resolved if possible
+    # Build candidate lookup dictionary from manifest and run folder
+    cand_lookup: dict[str, dict[str, Any]] = {}
+    known_candidates = (
+        status_info.get("candidates")
+        or (status_info.get("jobData") or {}).get("candidates")
+        or (status_info.get("output") or {}).get("candidates")
+        or []
+    )
+    for c in known_candidates:
+        if isinstance(c, dict):
+            for k in ("image_id", "id", "candidate_id"):
+                v = c.get(k)
+                if v:
+                    cand_lookup[str(v)] = c
+
+    if src_dir and (src_dir / "candidate_review.json").exists():
+        try:
+            cr_data = json.loads((src_dir / "candidate_review.json").read_text(encoding="utf-8"))
+            for c in cr_data.get("candidates", []):
+                if isinstance(c, dict):
+                    for k in ("image_id", "id", "candidate_id"):
+                        v = c.get(k)
+                        if v and str(v) not in cand_lookup:
+                            cand_lookup[str(v)] = c
+        except Exception:
+            pass
+
+    resolved_candidates: list[dict[str, Any]] = []
     for cand in selected_candidates:
-        if isinstance(cand, dict):
-            lp = cand.get("local_path") or cand.get("path") or cand.get("image_path")
-            if lp and not Path(lp).exists():
-                for cand_folder in (
-                    STANDALONE_OUTPUT_DIR / str(real_run_id),
-                    TEMP_DIR / source_job_id,
-                ):
-                    if cand_folder.exists():
-                        for sub in ("task5_crawl/downloaded_images", "dedupe/kept", "task5_crawl", ""):
-                            test_p = cand_folder / sub / Path(lp).name if sub else cand_folder / Path(lp).name
-                            if test_p.exists():
-                                cand["local_path"] = str(test_p.resolve())
-                                break
+        cand_dict: dict[str, Any] | None = None
+        if isinstance(cand, str):
+            cid = cand.strip()
+            if cid in cand_lookup:
+                cand_dict = copy.deepcopy(cand_lookup[cid])
+            elif src_dir:
+                for ext in (".jpg", ".png", ".jpeg", ".webp"):
+                    p = src_dir / "task5_crawl" / "downloaded_images" / f"{cid}{ext}"
+                    if p.exists():
+                        cand_dict = {"image_id": cid, "id": cid, "local_path": str(p), "query": payload.get("niche") or "rug"}
+                        break
+            if not cand_dict:
+                cand_dict = {"image_id": cid, "id": cid, "query": payload.get("niche") or "rug"}
+        elif isinstance(cand, dict):
+            cand_dict = copy.deepcopy(cand)
+            cid = str(cand_dict.get("image_id") or cand_dict.get("id") or cand_dict.get("candidate_id") or "").strip()
+            if cid and cid in cand_lookup:
+                for k, v in cand_lookup[cid].items():
+                    cand_dict.setdefault(k, v)
 
-    product = str(payload.get("product") or "rug").lower().strip()
+        if cand_dict:
+            # Ensure local_path exists on disk
+            lp = cand_dict.get("local_path") or cand_dict.get("path") or cand_dict.get("image_path")
+            if (not lp or not Path(lp).exists()) and src_dir:
+                fname = Path(lp).name if lp else f"{cand_dict.get('image_id', '')}.jpg"
+                for sub in ("task5_crawl/downloaded_images", "dedupe/kept", "task5_crawl", ""):
+                    test_p = src_dir / sub / fname if sub else src_dir / fname
+                    if test_p.exists():
+                        cand_dict["local_path"] = str(test_p.resolve())
+                        break
+            resolved_candidates.append(cand_dict)
+
+    selected_candidates = resolved_candidates
+
+    product = str(payload.get("product") or status_info.get("product") or (status_info.get("jobData") or {}).get("product") or "rug").lower().strip()
     if product not in {"rug", "blanket", "custom"}:
         product = "rug"
-    design_mode = str(payload.get("design_mode") or "ai-artwork").strip()
+    design_mode = str(payload.get("design_mode") or "direct_print").strip()
     artwork_image_size = str(payload.get("artwork_image_size") or payload.get("artwork_size") or DEFAULT_ARTWORK_IMAGE_SIZE).strip() or DEFAULT_ARTWORK_IMAGE_SIZE
     mockup_engine = "direct_ai"
     ai_background_variants = int(payload.get("ai_background_variants") or payload.get("room_angles") or 4)
@@ -1387,6 +1610,17 @@ def produce_pod_job(payload: dict[str, Any], base_url: str, api_url: str = DEFAU
     niche = str(payload.get("niche") or "").strip()
     if not niche and source_job_id:
         niche = status_info.get("niche") or (status_info.get("request") or {}).get("niche") or "Trend Design"
+
+    has_explicit_refs = "referenceImages" in payload or "reference_images" in payload
+    reference_images = payload.get("referenceImages") or payload.get("reference_images") or []
+    room_template_urls = payload.get("room_template_urls") or []
+    if not reference_images and not has_explicit_refs and real_run_id:
+        src_run_dir = resolve_run_dir(real_run_id)
+        if src_run_dir and (src_run_dir / "room_templates").is_dir():
+            reference_images = [str(f) for f in sorted((src_run_dir / "room_templates").glob("*.*")) if f.is_file() and f.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}]
+
+    if reference_images:
+        ai_background_variants = max(ai_background_variants, len(reference_images))
 
     print_spec = get_print_spec(product)
     req_body: dict[str, Any] = {
@@ -1405,6 +1639,8 @@ def produce_pod_job(payload: dict[str, Any], base_url: str, api_url: str = DEFAU
         "desired_output_count": len(selected_candidates),
         "dpi": print_spec["dpi"],
         "notify_enabled": bool(payload.get("notify_enabled", True)),
+        "reference_images": reference_images,
+        "room_template_urls": room_template_urls,
     }
     if product == "custom":
         req_body["width_px"] = print_spec["width_px"]
@@ -1466,8 +1702,12 @@ def create_pod_job(payload: dict[str, Any], base_url: str, api_url: str = DEFAUL
     desired_output_count = int(payload.get("desired_output_count") or 1)
     desired_output_count = max(1, min(10, desired_output_count))
 
+    ref_images = payload.get("referenceImages") or payload.get("reference_images") or []
     ai_background_variants = int(payload.get("ai_background_variants") or payload.get("room_angles") or 4)
-    ai_background_variants = max(1, min(5, ai_background_variants))
+    if ref_images:
+        ai_background_variants = max(ai_background_variants, len(ref_images))
+    else:
+        ai_background_variants = max(1, min(10, ai_background_variants))
 
     trend_region = str(payload.get("trend_region") or payload.get("region") or "US").strip()
     trend_type = str(payload.get("trend_type") or "growing").strip()
@@ -1499,6 +1739,11 @@ def create_pod_job(payload: dict[str, Any], base_url: str, api_url: str = DEFAUL
         "workflow_stage": workflow_stage,
         "dpi": print_spec["dpi"],
         "notify_enabled": bool(payload.get("notify_enabled", True)),
+        "reference_images": ref_images,
+        "room_template_urls": payload.get("room_template_urls") or [],
+        "task5_max_downloads": int(payload.get("max_downloads") or payload.get("task5_max_downloads") or 40),
+        "task5_top_images": int(payload.get("top_images") or payload.get("task5_top_images") or payload.get("candidatePoolSize") or 30),
+        "task5_max_images_per_query": int(payload.get("max_images_per_query") or payload.get("task5_max_images_per_query") or 12),
     }
     if product == "custom":
         req_body["width_px"] = print_spec["width_px"]
@@ -1508,6 +1753,9 @@ def create_pod_job(payload: dict[str, Any], base_url: str, api_url: str = DEFAUL
     local_job_id = f"job_{uuid.uuid4().hex[:10]}"
     cancel_event = threading.Event()
     initial_logs = [f"Khởi tạo job POD ({workflow_stage}): {niche} ({product})..."]
+    ref_count = len(req_body["reference_images"])
+    if ref_count > 0:
+        initial_logs.append(f"Đã nhận {ref_count} ảnh phòng tham chiếu cho khâu mockup.")
     initial_state = {
         "job_id": local_job_id,
         "status": "running",
@@ -2338,6 +2586,36 @@ def get_pod_job_status(job_id: str, base_url: str, api_url: str = DEFAULT_API_UR
         except Exception:
             pass
 
+    # Resolve room templates for frontend UI hydration
+    source_run_val = cached_job.get("request", {}).get("source_run_id") or (manifest.get("request", {}) if isinstance(manifest, dict) else {}).get("source_run_id")
+    resolved_room_templates = []
+    for cand_r_id in [run_id_val, source_run_val, job_id]:
+        if not cand_r_id:
+            continue
+        c_rdir = resolve_run_dir(cand_r_id)
+        if c_rdir and (c_rdir / "room_templates").is_dir():
+            for f in sorted((c_rdir / "room_templates").glob("*.*")):
+                if f.is_file() and f.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}:
+                    resolved_room_templates.append({
+                        "id": f"rt_{f.stem}",
+                        "url": f"{base_url.rstrip('/')}/api/pinterest-pod/assets/{job_id}/{f.name}",
+                        "name": f.name,
+                    })
+            if resolved_room_templates:
+                break
+
+    if not resolved_room_templates:
+        raw_rt = cached_job.get("request", {}).get("reference_images") or (manifest.get("request", {}) if isinstance(manifest, dict) else {}).get("reference_images") or []
+        for idx, itm in enumerate(raw_rt):
+            if isinstance(itm, dict):
+                resolved_room_templates.append(itm)
+            elif isinstance(itm, str) and itm.strip():
+                resolved_room_templates.append({
+                    "id": f"rt_{idx+1}",
+                    "url": itm if itm.startswith("http") or itm.startswith("data:") else f"{base_url.rstrip('/')}/api/pinterest-pod/assets/{job_id}/{Path(itm).name}",
+                    "name": Path(itm).name if not itm.startswith("data:") else f"Phòng Mẫu #{idx+1}",
+                })
+
     stepper = calculate_stepper_state(cached_job)
 
     return {
@@ -2360,6 +2638,10 @@ def get_pod_job_status(job_id: str, base_url: str, api_url: str = DEFAULT_API_UR
         "niche": cached_job.get("request", {}).get("niche") or cached_job.get("niche") or "",
         "product": product_name,
         "summaryMetrics": summary_metrics,
+        "roomTemplates": resolved_room_templates,
+        "room_templates": resolved_room_templates,
+        "referenceImages": resolved_room_templates,
+        "reference_images": resolved_room_templates,
         "reportUrl": report_url,
         "hasReport": has_report,
         "error": cached_job.get("error"),
@@ -2457,10 +2739,12 @@ def list_recent_jobs_and_runs() -> list[dict[str, Any]]:
                 try:
                     data = json.loads(manifest_file.read_text(encoding="utf-8"))
                     job_info = data.get("jobData") or data
-                    title_val = (job_info.get("request", {}) or {}).get("niche") or job_info.get("niche") or path.name
+                    is_prod_job = path.name.startswith("job_prod_") or (job_info.get("request", {}) or {}).get("workflow_stage") == "production"
+                    base_niche = (job_info.get("request", {}) or {}).get("niche") or job_info.get("niche") or path.name
+                    title_val = f"Sản xuất: {base_niche}" if is_prod_job else f"Quét Trend: {base_niche}"
                     product_val = (job_info.get("request", {}) or {}).get("product") or job_info.get("product") or "rug"
                     seen_ids.add(path.name)
-                    st_val = data.get("status") or "completed"
+                    st_val = job_info.get("status") or data.get("status") or "completed"
                     # Check if deliverables actually exist either in temp dir or linked run
                     if st_val != "completed":
                         has_local_deliv = any(path.glob("*_cmyk.jpg")) or any(path.glob("*_lifestyle*.png")) or any(path.glob("*_print*.png")) or any(path.glob("rug_*.*"))
@@ -2475,11 +2759,31 @@ def list_recent_jobs_and_runs() -> list[dict[str, Any]]:
                                         r_id = m.group(1)
                                         break
                             if r_id:
+                                seen_ids.add(str(r_id))
                                 r_dir = resolve_run_dir(r_id)
                                 if r_dir and (((r_dir / "final_print").exists() and any((r_dir / "final_print").iterdir())) or ((r_dir / "lifestyle_mockups").exists() and any((r_dir / "lifestyle_mockups").iterdir()))):
                                     st_val = "completed"
+                    else:
+                        r_id = data.get("runId") or job_info.get("run_id") or job_info.get("runId") or (job_info.get("output") or {}).get("run_id")
+                        if r_id:
+                            seen_ids.add(str(r_id))
 
                     cached_cands = job_info.get("candidates") or (job_info.get("output") or {}).get("candidates") or []
+                    thumbnails: list[str] = []
+                    for c in cached_cands[:4]:
+                        if isinstance(c, dict):
+                            u = c.get("image_url")
+                            if not u and c.get("image_id"):
+                                u = f"/api/pinterest-pod/assets/{path.name}/{c.get('image_id')}.jpg"
+                            if u:
+                                thumbnails.append(u)
+
+                    cmyk_files = [p.name for p in path.glob("*_cmyk.jpg")]
+                    mockup_files = [p.name for p in path.glob("*_lifestyle*.png")]
+                    if not thumbnails and (cmyk_files or mockup_files):
+                        for fn in (mockup_files[:4] or cmyk_files[:4]):
+                            thumbnails.append(f"/api/pinterest-pod/assets/{path.name}/{fn}")
+
                     items.append({
                         "type": "cached_job",
                         "id": path.name,
@@ -2492,6 +2796,9 @@ def list_recent_jobs_and_runs() -> list[dict[str, Any]]:
                         "product": product_val,
                         "productType": product_val,
                         "candidateCount": len(cached_cands) if isinstance(cached_cands, list) else 0,
+                        "cmykCount": len(cmyk_files),
+                        "mockupCount": len(mockup_files),
+                        "thumbnails": thumbnails,
                     })
                 except Exception:
                     pass
@@ -2548,19 +2855,45 @@ def list_recent_jobs_and_runs() -> list[dict[str, Any]]:
                 else:
                     run_status = "failed"
 
+                thumbnails: list[str] = []
+                if lifestyle_dir.exists():
+                    l_files = sorted([p.name for p in lifestyle_dir.glob("*.png") if p.is_file()])
+                    for fn in l_files[:4]:
+                        thumbnails.append(f"/api/pinterest-pod/assets/{run_dir.name}/{fn}")
+                if not thumbnails and final_dir.exists():
+                    f_files = sorted([p.name for p in final_dir.glob("*.*") if p.is_file()])
+                    for fn in f_files[:4]:
+                        thumbnails.append(f"/api/pinterest-pod/assets/{run_dir.name}/{fn}")
+                if not thumbnails and isinstance(candidates_list, list):
+                    for c in candidates_list[:4]:
+                        if isinstance(c, dict):
+                            u = c.get("image_url")
+                            if not u and c.get("image_id"):
+                                u = f"/api/pinterest-pod/assets/{run_dir.name}/{c.get('image_id')}.jpg"
+                            if u:
+                                thumbnails.append(u)
+
+                cmyk_count = len(list(final_dir.glob("*_cmyk.jpg"))) if final_dir.exists() else 0
+                mockup_count = len(list(lifestyle_dir.glob("*.png"))) if lifestyle_dir.exists() else 0
+
+                title_prefix = "Sản xuất: " if (has_final or has_lifestyle) else "Quét Trend: "
+                base_title = niche or run_dir.name
                 items.append({
                     "type": "standalone_run",
                     "id": run_dir.name,
                     "jobId": run_dir.name,
                     "job_id": run_dir.name,
-                    "title": niche or run_dir.name,
-                    "niche": niche or run_dir.name,
+                    "title": f"{title_prefix}{base_title}",
+                    "niche": base_title,
                     "product": product_type or "rug",
                     "productType": product_type or "rug",
                     "status": run_status,
                     "createdAt": run_dir.stat().st_mtime,
                     "hasManifest": manifest.exists(),
                     "candidateCount": cand_count,
+                    "cmykCount": cmyk_count,
+                    "mockupCount": mockup_count,
+                    "thumbnails": thumbnails,
                 })
         except Exception:
             pass

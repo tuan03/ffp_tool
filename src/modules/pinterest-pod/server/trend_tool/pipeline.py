@@ -607,6 +607,15 @@ def fork_selected_candidates_to_new_run(
 
         raw_src = str(item_dict.get("local_path") or "")
         src_path = Path(raw_src) if raw_src else None
+        if src_path and not src_path.is_absolute() and source_run_dir:
+            src_path = source_run_dir / src_path
+        if (not src_path or not src_path.exists()) and source_run_dir:
+            cand_fn = src_path.name if src_path else f"{item_dict.get('image_id')}.jpg"
+            for sub in ("task5_crawl/downloaded_images", "dedupe/kept", "task5_crawl", ""):
+                test_p = source_run_dir / sub / cand_fn
+                if test_p.exists() and test_p.is_file():
+                    src_path = test_p
+                    break
         new_local_path = ""
         if src_path and src_path.exists() and src_path.is_file():
             dest_img = crawl_img_dir / src_path.name
@@ -682,9 +691,27 @@ def run_production_from_candidates(
         run_dir = make_run_dir(config.output_root)
     log(progress, f"Production folder: {run_dir}")
 
+    # Build candidate review lookup if available
+    candidate_review_lookup: dict[str, dict[str, object]] = {}
+    if run_dir and (run_dir / "candidate_review.json").exists():
+        try:
+            cr_file = run_dir / "candidate_review.json"
+            cr_data = json.loads(cr_file.read_text(encoding="utf-8"))
+            for c in cr_data.get("candidates", []):
+                if isinstance(c, dict):
+                    for k in ("image_id", "id", "candidate_id"):
+                        v = c.get(k)
+                        if v and str(v) not in candidate_review_lookup:
+                            candidate_review_lookup[str(v)] = c
+        except Exception:
+            pass
+
     # Resolve candidate image paths and metadata
     resolved_sources: list[tuple[Path, str, dict[str, object]]] = []
     for item in selected_items:
+        if isinstance(item, (str, Path)) and str(item).strip() in candidate_review_lookup:
+            item = candidate_review_lookup[str(item).strip()]
+
         if isinstance(item, CandidateReviewItem) or (hasattr(item, "local_path") and hasattr(item, "image_id")):
             path = Path(str(getattr(item, "local_path")))
             keyword = str(getattr(item, "query", "") or getattr(item, "trend", "") or path.stem)
@@ -706,6 +733,19 @@ def run_production_from_candidates(
             meta = {"local_path": str(path)}
         else:
             continue
+
+        if (not path.exists() or not path.is_file()) and run_dir:
+            # Try finding by filename in task5_crawl or run_dir
+            for sub in ("task5_crawl/downloaded_images", "dedupe/kept", "task5_crawl", ""):
+                for cand_name in (path.name, f"{str(path.name)}.jpg", f"{str(path.name)}.png"):
+                    test_p = run_dir / sub / cand_name if sub else run_dir / cand_name
+                    if test_p.exists() and test_p.is_file():
+                        path = test_p
+                        meta["local_path"] = str(path)
+                        break
+                if path.exists() and path.is_file():
+                    break
+
         if path.exists() and path.is_file():
             resolved_sources.append((path, keyword, meta))
 
@@ -823,10 +863,16 @@ def run_production_from_candidates(
         design_source = source_path
         applied_design_mode = "direct"
 
-        if not is_direct_mode:
+        cand_is_direct = (
+            bool(meta.get("is_direct_printable", False))
+            or str(meta.get("classification", "")).strip().lower() in {"flat pattern", "digital pattern", "direct printable"}
+        )
+        should_redraw = (not is_direct_mode) and (not cand_is_direct)
+
+        if should_redraw:
             generated_path = run_dir / "generated_artwork" / f"{base}_gemini.png"
             generated_path.parent.mkdir(parents=True, exist_ok=True)
-            log(progress, f"[{index}/{len(resolved_sources)}] Generating flat artwork with Gemini from reference.")
+            log(progress, f"[{index}/{len(resolved_sources)}] Tái tạo tranh phẳng AI qua Gemini từ ảnh tham chiếu.")
             generation = generate_flat_artwork(
                 source_path,
                 generated_path,
@@ -840,6 +886,12 @@ def run_production_from_candidates(
             else:
                 log(progress, f"[{index}/{len(resolved_sources)}] Gemini redraw failed; using original image directly.")
                 design_source = source_path
+        else:
+            if not is_direct_mode and cand_is_direct:
+                log(progress, f"[{index}/{len(resolved_sources)}] Mẫu là hoa văn phẳng (Flat Pattern) -> Giữ nguyên 100% mẫu gốc chuẩn xưởng.")
+            else:
+                log(progress, f"[{index}/{len(resolved_sources)}] Chế độ In trực tiếp (Direct Print) -> Giữ nguyên 100% mẫu gốc chuẩn xưởng.")
+            design_source = source_path
 
         design_record = make_print_design(
             design_source,
@@ -939,12 +991,37 @@ def run_production_from_candidates(
             variants_per_product = max(1, config.task4_variants_per_product)
             blender_render = config.task4_mockup_engine == "blender_3d"
             direct_render = config.task4_mockup_engine == "direct_ai"
+
+            # Resolve room template images from config or run_dir
+            room_template_files: list[Path] = []
+            if hasattr(config, "task4_room_templates") and config.task4_room_templates:
+                for r_item in config.task4_room_templates:
+                    r_path = Path(r_item)
+                    if r_path.exists() and r_path.is_file():
+                        room_template_files.append(r_path)
+            if not room_template_files:
+                rt_dir = run_dir / "room_templates"
+                if rt_dir.exists() and rt_dir.is_dir():
+                    room_template_files = [p for p in sorted(rt_dir.glob("*.*")) if p.is_file() and p.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}]
+            variants_per_product = max(1, config.task4_variants_per_product)
+            if room_template_files:
+                variants_per_product = max(variants_per_product, len(room_template_files))
+            variants_per_product = max(1, min(10, variants_per_product))
+            if room_template_files:
+                log(progress, f"Đã nạp {len(room_template_files)} ảnh phòng tham chiếu -> Khởi hoạt chế độ ghép phòng AI Multimodal ({variants_per_product} biến thể/sản phẩm).")
+
             for p_idx, print_file in enumerate(source_prints, start=1):
                 cur_target = render_target_by_print.get(path_key(print_file), config.target)
                 for var_idx in range(1, variants_per_product + 1):
                     if cancel_event is not None and cancel_event.is_set():
                         raise PipelineCancelled("Production was stopped by the user.")
                     pose = template_pose_for_index(cur_target, var_idx)
+                    pose_label = getattr(pose, "name", getattr(pose, "scene", "lifestyle"))
+                    chosen_room = room_template_files[(var_idx - 1) % len(room_template_files)] if room_template_files else None
+                    if chosen_room:
+                        log(progress, f"[{p_idx}/{len(source_prints)}] Tạo mockup AI kết hợp Ảnh phòng tham chiếu {var_idx}/{variants_per_product} ({chosen_room.name}).")
+                    else:
+                        log(progress, f"[{p_idx}/{len(source_prints)}] Tạo mockup phòng khách AI biến thể {var_idx}/{variants_per_product} ({pose_label}).")
                     try:
                         if blender_render:
                             rec = build_blender_mockup(print_file, run_dir, cur_target, pose=pose, variant=var_idx, progress=progress)
@@ -960,6 +1037,7 @@ def run_production_from_candidates(
                                 quality_model=config.gemini_model,
                                 attempts=max(1, config.task4_quality_attempts),
                                 progress=progress,
+                                room_template=chosen_room,
                             )
                         else:
                             rec = build_template_mockup(

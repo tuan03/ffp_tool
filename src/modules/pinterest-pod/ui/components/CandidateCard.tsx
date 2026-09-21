@@ -4,12 +4,18 @@ interface CandidateCardProps {
   readonly candidate: CandidateItem;
   readonly isSelected: boolean;
   readonly onToggle: (id: string) => void;
+  readonly onPreview?: (candidate: CandidateItem) => void;
+  readonly onUseAsRoomTemplate?: (candidate: CandidateItem) => void;
+  readonly isRoomTemplate?: boolean;
 }
 
 export function CandidateCard({
   candidate,
   isSelected,
   onToggle,
+  onPreview,
+  onUseAsRoomTemplate,
+  isRoomTemplate = false,
 }: CandidateCardProps): React.JSX.Element {
   const candId = candidate.id || candidate.candidate_id || candidate.image_id || "";
 
@@ -26,7 +32,9 @@ export function CandidateCard({
         }
       }}
       className={`group relative flex cursor-pointer flex-col overflow-hidden rounded-xl border transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-cyan-400 ${
-        isSelected
+        isRoomTemplate
+          ? "border-purple-500 bg-purple-950/20 shadow-lg shadow-purple-500/15 ring-2 ring-purple-400"
+          : isSelected
           ? "border-cyan-400 bg-slate-800/95 shadow-lg shadow-cyan-500/15 ring-2 ring-cyan-400"
           : "border-slate-800 bg-slate-900/90 hover:border-slate-600 hover:bg-slate-800/80 shadow"
       }`}
@@ -63,6 +71,12 @@ export function CandidateCard({
 
         {/* Badges */}
         <div className="absolute top-2.5 right-2.5 z-10 flex flex-col items-end gap-1">
+          {isRoomTemplate && (
+            <span className="flex items-center gap-1 rounded-full border border-purple-400/80 bg-purple-600 px-2 py-0.5 text-[10px] font-bold text-white shadow">
+              <span>🛋️</span>
+              <span>Phòng Mẫu</span>
+            </span>
+          )}
           {candidate.recommended && (
             <span className="flex items-center gap-1 rounded-full border border-amber-500/50 bg-amber-500/90 px-2 py-0.5 text-[10px] font-bold text-slate-950 shadow">
               <span>⭐</span>
@@ -87,6 +101,43 @@ export function CandidateCard({
         >
           ↗
         </a>
+
+        {/* Action buttons: Soi HD & Đặt làm phòng mẫu */}
+        <div className="absolute bottom-2 left-2 flex items-center gap-1.5">
+          {onPreview && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onPreview(candidate);
+              }}
+              className="flex items-center gap-1 rounded-md bg-slate-900/80 px-2 py-1 text-[11px] font-medium text-slate-200 backdrop-blur-xs transition hover:bg-cyan-600 hover:text-white shadow"
+              title="Soi ảnh phóng to HD"
+            >
+              <span>🔍</span>
+              <span>Soi HD</span>
+            </button>
+          )}
+
+          {onUseAsRoomTemplate && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onUseAsRoomTemplate(candidate);
+              }}
+              className={`flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium backdrop-blur-xs transition shadow ${
+                isRoomTemplate
+                  ? "bg-purple-600 text-white font-semibold ring-1 ring-purple-300"
+                  : "bg-slate-900/80 text-slate-300 hover:bg-purple-600 hover:text-white"
+              }`}
+              title={isRoomTemplate ? "Bỏ dùng ảnh này làm phòng mẫu" : "Dùng ảnh này làm Phòng Mẫu tham chiếu"}
+            >
+              <span>🛋️</span>
+              <span>{isRoomTemplate ? "Phòng Mẫu ✓" : "Làm phòng"}</span>
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Content & Metrics */}

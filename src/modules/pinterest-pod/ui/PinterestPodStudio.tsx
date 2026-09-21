@@ -17,9 +17,11 @@ import type {
 import { CandidateReviewGrid } from "./components/CandidateReviewGrid";
 import { DeliverablesShowcase } from "./components/DeliverablesShowcase";
 import { HeaderBar } from "./components/HeaderBar";
+import { ImageLightboxModal, type LightboxImageItem } from "./components/ImageLightboxModal";
 import { InitForm } from "./components/InitForm";
 import { ProgressAndLogs } from "./components/ProgressAndLogs";
 import { RecentRunsAccordion } from "./components/RecentRunsAccordion";
+import { RoomTemplateManagerModal } from "./components/RoomTemplateManagerModal";
 
 interface PinterestPodStudioProps {
   readonly client?: PinterestPodClient;
@@ -36,6 +38,7 @@ export function PinterestPodStudio({ client: injectedClient }: PinterestPodStudi
   const [niche, setNiche] = useState("vintage distressed rug");
   const [product, setProduct] = useState<PinterestProductType>("rug");
   const [referenceImages, setReferenceImages] = useState<readonly ReferenceImage[]>([]);
+  const [aiBackgroundVariants, setAiBackgroundVariants] = useState(5);
 
   // Job State
   const [jobId, setJobId] = useState<string | null>(null);
@@ -55,6 +58,39 @@ export function PinterestPodStudio({ client: injectedClient }: PinterestPodStudi
 
   // Current stage active pill
   const [currentStage, setCurrentStage] = useState<1 | 2 | 3>(1);
+
+  // Lightbox preview state
+  const [previewImage, setPreviewImage] = useState<LightboxImageItem | null>(null);
+  const [isRoomManagerOpen, setIsRoomManagerOpen] = useState(false);
+
+  function handlePreviewCandidate(candidate: CandidateItem): void {
+    setPreviewImage({
+      url: candidate.image_url,
+      title: candidate.title,
+      subtitle: candidate.reason || `Mẫu ứng viên Pinterest (Score nét: ${candidate.image_score}/100, Chuẩn in: ${candidate.printability_score}/100)`,
+      badge: candidate.is_direct_printable ? "Chuẩn in trực tiếp" : candidate.recommended ? "Khuyên chọn" : undefined,
+      score: candidate.image_score,
+      printability: candidate.printability_score,
+      tags: candidate.is_direct_printable ? ["direct_print", "pinterest"] : ["pinterest"],
+      downloadUrl: candidate.image_url,
+    });
+  }
+
+  function handlePreviewThumbnail(url: string, title: string): void {
+    setPreviewImage({
+      url,
+      title,
+      subtitle: "Ảnh xem trước trong kho dữ liệu Run",
+      badge: "Run Asset",
+      downloadUrl: url,
+    });
+  }
+
+  function handleReuseNiche(reusedNiche: string, reusedProduct: PinterestProductType): void {
+    setNiche(reusedNiche);
+    setProduct(reusedProduct);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
 
   // Refs for scrolling to sections and lifecycle safety
   const stage2Ref = useRef<HTMLDivElement | null>(null);
@@ -141,24 +177,59 @@ export function PinterestPodStudio({ client: injectedClient }: PinterestPodStudi
         setSummaryMetrics(undefined);
       }
 
-      if (detail.status === "ready_for_review" || (detail.candidates && detail.candidates.length > 0)) {
-        setCurrentStage(2);
-        setTimeout(() => {
-          if (isMountedRef.current) {
-            stage2Ref.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-          }
-        }, 150);
-      } else if (detail.status === "completed" || detail.deliverables) {
+      // Hydrate room templates from backend
+      const loadedTemplates = detail.roomTemplates ?? detail.room_templates ?? detail.referenceImages ?? detail.reference_images;
+      if (loadedTemplates && loadedTemplates.length > 0) {
+        setReferenceImages(
+          loadedTemplates.map((rt: any, idx: number) => ({
+            id: rt.id || `rt_${idx + 1}`,
+            url: rt.url || (typeof rt === "string" ? rt : ""),
+            name: rt.name || (typeof rt === "string" ? rt.split("/").pop() : `Phòng Mẫu #${idx + 1}`),
+          })),
+        );
+      } else {
+        setReferenceImages([]);
+      }
+
+      if (detail.status === "running" || detail.status === "producing") {
+        stopPolling();
+        pollingTimerRef.current = setInterval(() => {
+          void pollJob(targetJobId);
+        }, 1500);
+        const isProdJob = targetJobId.startsWith("job_prod_") || (detail.stepper && detail.stepper.current_step >= 3);
+        if (isProdJob) {
+          setIsProducing(true);
+          setCurrentStage(3);
+          setTimeout(() => {
+            if (isMountedRef.current) {
+              stage3Ref.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+            }
+          }, 150);
+        } else {
+          setIsProducing(false);
+          setCurrentStage(1);
+        }
+      } else if (
+        detail.status === "completed" ||
+        (detail.deliverables && (detail.deliverables.print_cmyk_images?.length ?? 0) > 0)
+      ) {
         setCurrentStage(3);
+        setIsProducing(false);
+        stopPolling();
         setTimeout(() => {
           if (isMountedRef.current) {
             stage3Ref.current?.scrollIntoView({ behavior: "smooth", block: "start" });
           }
         }, 150);
-      } else if (detail.status === "running" || detail.status === "producing") {
-        pollingTimerRef.current = setInterval(() => {
-          void pollJob(targetJobId);
-        }, 1500);
+      } else if (detail.status === "ready_for_review" || (detail.candidates && detail.candidates.length > 0)) {
+        setCurrentStage(2);
+        setIsProducing(false);
+        stopPolling();
+        setTimeout(() => {
+          if (isMountedRef.current) {
+            stage2Ref.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+          }
+        }, 150);
       }
     } catch (err) {
       if (!isMountedRef.current) return;
@@ -188,6 +259,28 @@ export function PinterestPodStudio({ client: injectedClient }: PinterestPodStudi
       if (!isMountedRef.current) return;
       setErrorMessage(err instanceof Error ? err.message : "Xóa job thất bại");
     }
+  }
+
+  // Start a new job (reset active session)
+  function handleNewJob(): void {
+    stopPolling();
+    setJobId(null);
+    try {
+      localStorage.removeItem("pinterest_pod_active_job_id");
+    } catch {
+      // Ignore
+    }
+    setJobStatus("idle");
+    setCandidates([]);
+    setSelectedCandidateIds([]);
+    setDeliverables(undefined);
+    setSummaryMetrics(undefined);
+    setLogs([]);
+    setStepper(undefined);
+    setErrorMessage(null);
+    setIsProducing(false);
+    setCurrentStage(1);
+    window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
   // Check auth status & recent runs on mount, and restore active job if present
@@ -296,7 +389,25 @@ export function PinterestPodStudio({ client: injectedClient }: PinterestPodStudi
         setSummaryMetrics(detail.summaryMetrics ?? detail.summary_metrics);
       }
 
-      if (detail.status === "ready_for_review") {
+      // Hydrate room templates if present and local state is empty
+      const loadedTemplates = detail.roomTemplates ?? detail.room_templates ?? detail.referenceImages ?? detail.reference_images;
+      if (loadedTemplates && loadedTemplates.length > 0) {
+        setReferenceImages((prev) => {
+          if (prev.length > 0) return prev;
+          return loadedTemplates.map((rt: any, idx: number) => ({
+            id: rt.id || `rt_${idx + 1}`,
+            url: rt.url || (typeof rt === "string" ? rt : ""),
+            name: rt.name || (typeof rt === "string" ? rt.split("/").pop() : `Phòng Mẫu #${idx + 1}`),
+          }));
+        });
+      }
+
+      if (detail.status === "running" || detail.status === "producing") {
+        if (targetJobId.startsWith("job_prod_") || (detail.stepper && detail.stepper.current_step >= 3)) {
+          setIsProducing(true);
+          setCurrentStage(3);
+        }
+      } else if (detail.status === "ready_for_review") {
         setCurrentStage(2);
         stopPolling();
         void loadRecentRuns();
@@ -321,6 +432,7 @@ export function PinterestPodStudio({ client: injectedClient }: PinterestPodStudi
         void loadRecentRuns();
         if (detail.error) {
           setErrorMessage(detail.error);
+          window.scrollTo({ top: 0, behavior: "smooth" });
         }
       }
     } catch (err) {
@@ -357,6 +469,7 @@ export function PinterestPodStudio({ client: injectedClient }: PinterestPodStudi
         workflow_stage: "crawl_and_review",
         candidatePoolSize: 15,
         referenceImages,
+        ai_background_variants: Math.max(1, Math.min(10, Math.max(aiBackgroundVariants, referenceImages.length))),
       });
 
       setJobId(created.jobId);
@@ -423,6 +536,26 @@ export function PinterestPodStudio({ client: injectedClient }: PinterestPodStudi
     setSelectedCandidateIds([]);
   }
 
+  function handleRemoveRoomTemplate(id: string): void {
+    setReferenceImages((prev) => prev.filter((img) => img.id !== id));
+  }
+
+  function handleUseCandidateAsRoomTemplate(candidate: CandidateItem): void {
+    const candId = candidate.id || candidate.candidate_id || candidate.image_id || "";
+    setReferenceImages((prev) => {
+      const exists = prev.some((img) => img.id === candId || img.url === candidate.image_url);
+      if (exists) {
+        return prev.filter((img) => img.id !== candId && img.url !== candidate.image_url);
+      }
+      const newTemplate: ReferenceImage = {
+        id: candId,
+        url: candidate.image_url,
+        name: candidate.title ? candidate.title.slice(0, 30) : "Phòng Mẫu Pinterest",
+      };
+      return [...prev, newTemplate];
+    });
+  }
+
   // Produce Action (Stage 2 -> Stage 3)
   async function handleProduce(): Promise<void> {
     if (!jobId || selectedCandidateIds.length === 0) return;
@@ -430,22 +563,44 @@ export function PinterestPodStudio({ client: injectedClient }: PinterestPodStudi
     setIsProducing(true);
     setErrorMessage(null);
     setJobStatus("producing");
+    setCurrentStage(3);
+    setDeliverables(undefined);
+    setSummaryMetrics(undefined);
     setStepper({
       current_step: 3,
       percent: 60,
-      current_message: `Đang sản xuất file in CMYK và render mockup AI cho ${selectedCandidateIds.length} mẫu đã chọn...`,
+      current_message: `Đang chuẩn bị file in CMYK 300DPI và render mockup AI cho ${selectedCandidateIds.length} mẫu đã chọn...`,
     });
+    setTimeout(() => {
+      if (isMountedRef.current) {
+        stage3Ref.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+    }, 100);
 
     try {
-      await client.produce({
+      const produceRes = await client.produce({
         jobId,
         selected_candidates: selectedCandidateIds,
+        product,
+        niche,
+        design_mode: "direct_print",
+        referenceImages,
+        ai_background_variants: Math.max(1, Math.min(10, Math.max(aiBackgroundVariants, referenceImages.length))),
       });
       if (!isMountedRef.current) return;
 
+      const targetJobId = produceRes.jobId || jobId;
+      setJobId(targetJobId);
+      try {
+        localStorage.setItem("pinterest_pod_active_job_id", targetJobId);
+      } catch {
+        // Ignore
+      }
+      void loadRecentRuns();
+
       stopPolling();
       pollingTimerRef.current = setInterval(() => {
-        void pollJob(jobId);
+        void pollJob(targetJobId);
       }, 1500);
     } catch (err) {
       if (!isMountedRef.current) return;
@@ -457,13 +612,7 @@ export function PinterestPodStudio({ client: injectedClient }: PinterestPodStudi
   // Stage navigation from header pills
   function handleSelectStage(stage: 1 | 2 | 3): void {
     setCurrentStage(stage);
-    if (stage === 1) {
-      window.scrollTo({ top: 0, behavior: "smooth" });
-    } else if (stage === 2 && stage2Ref.current) {
-      stage2Ref.current.scrollIntoView({ behavior: "smooth", block: "start" });
-    } else if (stage === 3 && stage3Ref.current) {
-      stage3Ref.current.scrollIntoView({ behavior: "smooth", block: "start" });
-    }
+    window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
   // Packaged SEO payload when deliverables available
@@ -482,7 +631,13 @@ export function PinterestPodStudio({ client: injectedClient }: PinterestPodStudi
   }, [deliverables, jobId, candidates, product]);
 
   const hasStage2 = candidates.length > 0 || jobStatus === "ready_for_review";
-  const hasStage3 = deliverables !== undefined || jobStatus === "completed";
+  const hasDeliverables =
+    deliverables !== undefined &&
+    ((deliverables.print_cmyk_images?.length ?? 0) > 0 ||
+      (deliverables.lifestyle_mockups?.length ?? 0) > 0 ||
+      (deliverables.final_png_images?.length ?? 0) > 0);
+  const isProductionActive = isProducing || jobStatus === "producing";
+  const hasStage3 = hasDeliverables || isProductionActive;
 
   return (
     <div className="flex w-full flex-col gap-6 py-2">
@@ -510,47 +665,132 @@ export function PinterestPodStudio({ client: injectedClient }: PinterestPodStudi
         authStatus={authStatus}
         isLoggingIn={isLoggingIn}
         onLaunchLogin={() => void handleLaunchLogin()}
+        candidateCount={candidates.length}
+        isStage2Available={hasStage2}
+        isStage3Available={hasStage3}
+        isProducing={isProductionActive}
+        activeJobId={jobId}
+        recentRuns={recentRuns}
+        onLoadJob={(targetId) => void handleLoadJob(targetId)}
+        onNewJob={handleNewJob}
       />
 
-      {/* 2-Columns Layout: Form (Left) & Progress/Logs (Right) */}
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-12 items-start">
-        {/* Left Column: Form Khởi Tạo & Lịch Sử Job */}
-        <div className="lg:col-span-6 flex flex-col gap-6">
-          <InitForm
-            niche={niche}
-            onNicheChange={setNiche}
-            product={product}
-            onProductChange={setProduct}
-            referenceImages={referenceImages}
-            onReferenceImagesChange={setReferenceImages}
-            jobStatus={jobStatus}
-            onStartCrawl={() => void handleStartCrawl()}
-            onStopJob={() => void handleStopJob()}
-          />
+      {/* TAB 1: Quét Trend & Khởi tạo Job */}
+      {currentStage === 1 && (
+        <div className="flex flex-col gap-5 animate-in fade-in duration-200">
+          {/* Quick link banner if candidate review is already available */}
+          {hasStage2 && (
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 rounded-xl border border-amber-500/50 bg-amber-950/40 p-4 text-xs text-amber-200 shadow-md">
+              <div className="flex items-center gap-2.5">
+                <span className="text-lg">📌</span>
+                <div>
+                  <p className="font-bold text-amber-300">
+                    Đã có {candidates.length} mẫu ứng viên sẵn sàng duyệt trong job này!
+                  </p>
+                  <p className="text-[11px] text-amber-400/80">
+                    Bạn có thể chuyển ngay sang Bước 2 để lọc và chọn mẫu in xưởng.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => handleSelectStage(2)}
+                className="flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 px-4 py-2 font-bold text-slate-950 shadow-md transition hover:from-amber-400 hover:to-orange-400 cursor-pointer"
+              >
+                <span>Chuyển sang Bước 2: Duyệt mẫu</span>
+                <span>➔</span>
+              </button>
+            </div>
+          )}
 
-          <RecentRunsAccordion
-            recentRuns={recentRuns}
-            activeJobId={jobId}
-            onLoadJob={(targetId) => void handleLoadJob(targetId)}
-            onDeleteJob={(targetId) => void handleDeleteJob(targetId)}
-            isLoading={isLoadingRecent}
-            onRefresh={() => void loadRecentRuns()}
-          />
+          {/* 2-Columns Layout: Form (Left) & Progress/Logs (Right) */}
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-12 items-start">
+            {/* Left Column: Form Khởi Tạo & Lịch Sử Job */}
+            <div className="lg:col-span-6 flex flex-col gap-6">
+              <InitForm
+                niche={niche}
+                onNicheChange={setNiche}
+                product={product}
+                onProductChange={setProduct}
+                referenceImages={referenceImages}
+                onReferenceImagesChange={setReferenceImages}
+                aiBackgroundVariants={aiBackgroundVariants}
+                onAiBackgroundVariantsChange={setAiBackgroundVariants}
+                jobStatus={jobStatus}
+                onStartCrawl={() => void handleStartCrawl()}
+                onStopJob={() => void handleStopJob()}
+              />
+
+              <RecentRunsAccordion
+                recentRuns={recentRuns}
+                activeJobId={jobId}
+                onLoadJob={(targetId) => void handleLoadJob(targetId)}
+                onDeleteJob={(targetId) => void handleDeleteJob(targetId)}
+                isLoading={isLoadingRecent}
+                onRefresh={() => void loadRecentRuns()}
+                onPreviewThumbnail={handlePreviewThumbnail}
+                onReuseNiche={handleReuseNiche}
+              />
+            </div>
+
+            {/* Right Column: Tiến Độ & Live Logs */}
+            <div className="lg:col-span-6 flex flex-col gap-6">
+              <ProgressAndLogs
+                stepper={stepper}
+                logs={logs}
+                candidateCount={candidates.length}
+              />
+            </div>
+          </div>
         </div>
+      )}
 
-        {/* Right Column: Tiến Độ & Live Logs */}
-        <div className="lg:col-span-6 flex flex-col gap-6">
-          <ProgressAndLogs
-            stepper={stepper}
-            logs={logs}
-            candidateCount={candidates.length}
-          />
-        </div>
-      </div>
+      {/* TAB 2: Duyệt Ứng viên (Review) */}
+      {currentStage === 2 && (
+        <div ref={stage2Ref} className="flex flex-col gap-4 animate-in fade-in duration-200">
+          {/* Breadcrumb Context Bar */}
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-800 bg-slate-950/70 px-4 py-3 text-xs">
+            <div className="flex flex-wrap items-center gap-2 text-slate-400">
+              <button
+                type="button"
+                onClick={() => handleSelectStage(1)}
+                className="flex items-center gap-1 font-semibold text-cyan-400 hover:text-cyan-300 hover:underline cursor-pointer"
+              >
+                <span>←</span>
+                <span>Quay lại Bước 1</span>
+              </button>
+              <span>•</span>
+              <span>
+                Niche: <strong className="text-slate-100">&ldquo;{niche}&rdquo;</strong>
+              </span>
+              <span>•</span>
+              <span>
+                Sản phẩm: <strong className="text-slate-100 uppercase">{product}</strong>
+              </span>
+              <span>•</span>
+              <span>
+                Tổng số: <strong className="text-cyan-300">{candidates.length} mẫu</strong>
+              </span>
+              {jobId && (
+                <>
+                  <span>•</span>
+                  <code className="text-[10px] text-slate-400 font-mono">{jobId}</code>
+                </>
+              )}
+            </div>
 
-      {/* Stage 2: Candidate Review Grid */}
-      {hasStage2 && (
-        <div ref={stage2Ref} className="pt-2">
+            {hasDeliverables && (
+              <button
+                type="button"
+                onClick={() => handleSelectStage(3)}
+                className="flex items-center gap-1.5 rounded-lg border border-emerald-700/80 bg-emerald-950/60 px-3 py-1.5 font-semibold text-emerald-300 hover:bg-emerald-900/60 transition shadow-xs cursor-pointer"
+              >
+                <span>Xem Thành phẩm đã có</span>
+                <span>➔</span>
+              </button>
+            )}
+          </div>
+
           <CandidateReviewGrid
             candidates={candidates}
             selectedIds={selectedCandidateIds}
@@ -560,20 +800,130 @@ export function PinterestPodStudio({ client: injectedClient }: PinterestPodStudi
             onDeselectAll={handleDeselectAll}
             onProduce={() => void handleProduce()}
             isProducing={isProducing}
+            onPreviewCandidate={handlePreviewCandidate}
+            roomTemplates={referenceImages}
+            onRemoveRoomTemplate={handleRemoveRoomTemplate}
+            onUseCandidateAsRoomTemplate={handleUseCandidateAsRoomTemplate}
+            onOpenRoomManager={() => setIsRoomManagerOpen(true)}
           />
         </div>
       )}
 
-      {/* Stage 3: Deliverables Showcase */}
-      {hasStage3 && deliverables && (
-        <div ref={stage3Ref} className="pt-2">
-          <DeliverablesShowcase
-            deliverables={deliverables}
-            summaryMetrics={summaryMetrics}
-            seoPayload={seoPayload}
-          />
+      {/* TAB 3: Thành phẩm & Bàn giao */}
+      {currentStage === 3 && (
+        <div ref={stage3Ref} className="flex flex-col gap-4 animate-in fade-in duration-200">
+          {/* Breadcrumb Context Bar */}
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-800 bg-slate-950/70 px-4 py-3 text-xs">
+            <div className="flex flex-wrap items-center gap-2 text-slate-400">
+              {hasStage2 && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => handleSelectStage(2)}
+                    className="flex items-center gap-1 font-semibold text-amber-400 hover:text-amber-300 hover:underline cursor-pointer"
+                  >
+                    <span>←</span>
+                    <span>Xem lại Mẫu ứng viên ({candidates.length})</span>
+                  </button>
+                  <span>•</span>
+                </>
+              )}
+              <button
+                type="button"
+                onClick={() => handleSelectStage(1)}
+                className="flex items-center gap-1 font-semibold text-slate-400 hover:text-slate-200 hover:underline cursor-pointer"
+              >
+                <span>Bước 1: Quét Trend</span>
+              </button>
+              {jobId && (
+                <>
+                  <span>•</span>
+                  <code className="text-[10px] text-slate-400 font-mono">{jobId}</code>
+                </>
+              )}
+            </div>
+
+            <button
+              type="button"
+              onClick={() => handleSelectStage(1)}
+              className="flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 font-semibold text-slate-200 hover:bg-slate-700 hover:text-white transition shadow-xs cursor-pointer"
+            >
+              <span>🚀</span>
+              <span>Làm đợt mới</span>
+            </button>
+          </div>
+
+          {/* In-Progress producing banner */}
+          {isProductionActive && !hasDeliverables && (
+            <div className="flex flex-col gap-4 rounded-xl border border-amber-800/60 bg-amber-950/30 p-6 shadow-xl">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-500/20 text-amber-300 animate-pulse text-xl">
+                    🏭
+                  </div>
+                  <div>
+                    <h2 className="text-base font-bold text-amber-200">
+                      Đang sản xuất thành phẩm xưởng &amp; Mockup AI...
+                    </h2>
+                    <p className="text-xs text-amber-300/80">
+                      {stepper?.current_message || "Hệ thống đang chuẩn bị file in CMYK 300 DPI và tạo bối cảnh lifestyle..."}
+                    </p>
+                  </div>
+                </div>
+                <span className="rounded-full border border-amber-600/50 bg-amber-900/50 px-3 py-1 text-xs font-semibold text-amber-300">
+                  {stepper?.percent ?? 0}% hoàn tất
+                </span>
+              </div>
+
+              <div className="h-2 w-full overflow-hidden rounded-full bg-slate-800">
+                <div
+                  className="h-full bg-gradient-to-r from-amber-500 to-orange-500 transition-all duration-500"
+                  style={{ width: `${Math.max(5, stepper?.percent ?? 0)}%` }}
+                />
+              </div>
+
+              <p className="text-[11px] text-slate-400">
+                ⚡ Hệ thống đang xử lý độc lập ở chế độ chuẩn mẫu tham chiếu (Direct Print). Sau khi hoàn thành toàn bộ {selectedCandidateIds.length || candidates.length} sản phẩm, thông báo Windows sẽ tự động kích hoạt.
+              </p>
+            </div>
+          )}
+
+          {/* Failed banner */}
+          {jobStatus === "failed" && !hasDeliverables && (
+            <div className="flex flex-col gap-3 rounded-xl border border-rose-800 bg-rose-950/70 p-6 shadow-xl text-xs text-rose-200">
+              <div className="flex items-center gap-3">
+                <span className="text-2xl">❌</span>
+                <div>
+                  <h3 className="text-sm font-bold text-rose-100">Sản xuất thất bại</h3>
+                  <p className="text-rose-300/90 mt-0.5">{errorMessage || "Đã xảy ra lỗi trong quá trình xử lý pipeline."}</p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Completed Deliverables Showcase */}
+          {hasDeliverables && (
+            <DeliverablesShowcase
+              deliverables={deliverables}
+              summaryMetrics={summaryMetrics}
+              seoPayload={seoPayload}
+              onPreviewImage={setPreviewImage}
+            />
+          )}
         </div>
       )}
+
+      {/* HD Lightbox Zoom Modal */}
+      <ImageLightboxModal image={previewImage} onClose={() => setPreviewImage(null)} />
+
+      {/* Room Template Manager Popup Modal */}
+      <RoomTemplateManagerModal
+        isOpen={isRoomManagerOpen}
+        onClose={() => setIsRoomManagerOpen(false)}
+        images={referenceImages}
+        onChange={setReferenceImages}
+        onPreviewImage={handlePreviewThumbnail}
+      />
     </div>
   );
 }

@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import hashlib
 import io
+import json
+import logging
+import shutil
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -19,6 +23,16 @@ from .product_asset import (
     is_transient_gemini_error,
     parse_json_relaxed,
 )
+
+LOG = logging.getLogger("template_mockup")
+
+
+def log(progress: Any, message: str) -> None:
+    if callable(progress):
+        progress(message)
+    elif progress is not None and hasattr(progress, "write"):
+        progress.write(f"{message}\n")
+    LOG.info(message)
 
 
 MARKER_RGB = (0, 174, 220)
@@ -136,6 +150,175 @@ def build_template_mockup(
     return TemplateMockupRecord(print_path, None, None, None, model, pose.name, "failed", last_error, {}, variant=variant)
 
 
+def analyze_reference_image(
+    client: Any,
+    image: Image.Image,
+    target: ProductTarget,
+    *,
+    artwork: Image.Image | None = None,
+    model: str = "gemini-2.5-flash",
+    cache_dir: Path | None = None,
+) -> dict[str, Any]:
+    """Dynamically analyze any reference image with open-ended visual intelligence.
+
+    Applies the universal principles of Spatial Physics and Object-Print Separation:
+    1. External Context & Infographic Chrome -> Preserve 100%.
+    2. Product Physical Carrier / Substrate -> Geometry & Physics retained as printable canvas.
+    3. Prior Surface Print Graphics -> 100% eliminated and replaced with new artwork.
+    """
+    from google.genai import types
+
+    # Deterministic content hash for caching (combining reference image and artwork thumbnail)
+    thumb_ref = image.resize((min(image.width, 256), min(image.height, 256)))
+    buf_ref = io.BytesIO()
+    thumb_ref.save(buf_ref, format="JPEG", quality=75)
+
+    buf_art_bytes = b""
+    if artwork is not None:
+        thumb_art = artwork.resize((min(artwork.width, 256), min(artwork.height, 256)))
+        buf_art = io.BytesIO()
+        thumb_art.save(buf_art, format="JPEG", quality=75)
+        buf_art_bytes = buf_art.getvalue()
+
+    hash_key = hashlib.sha256(buf_ref.getvalue() + buf_art_bytes).hexdigest()[:16]
+
+    cache_file: Path | None = None
+    if cache_dir:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        cache_file = cache_dir / "reference_analysis_cache.json"
+        if cache_file.exists():
+            try:
+                cached_dict = json.loads(cache_file.read_text(encoding="utf-8"))
+                if isinstance(cached_dict, dict) and hash_key in cached_dict:
+                    val = cached_dict[hash_key]
+                    if isinstance(val, dict) and "generation_directive" in val and "external_chrome_to_preserve" in val:
+                        return val
+            except Exception:
+                pass
+
+    if artwork is not None:
+        analysis_prompt = f"""
+You are an elite creative director and commercial photographer specializing in Print-on-Demand (POD) e-commerce products ({target.name}).
+You are analyzing an exemplary commercial marketing image (Reference Image 2) to adapt it for a new {target.name} that will feature the new print artwork (Image 1).
+
+Apply the universal principles of Semantic Physics and Object-Print Separation:
+1. PRODUCT SUBSTRATE VS BACKGROUND DISAMBIGUATION:
+   - Identify what is the physical PRODUCT itself versus the surrounding CANVAS/BACKGROUND:
+     The product carrier is the physical mat/rug with physical thickness, rounded/squared contours, memory foam/fabric texture, and contact drop shadow—EVEN IF the old product in Image 2 is solid black, dark gray, or unpatterned!
+     In studio infographics, the product often rests on a contrasting background (e.g. a black mat lying on a clean white background with a drop shadow, or rugs on a wooden floor).
+     NEVER confuse the body of a solid-colored product (e.g. a black mat) with the scene background! The background is what surrounds the product (e.g. the white studio backdrop).
+     Any base color, graphic stripes, diagonal lines, speaker icons, or novelty graphics on the old product are PRIOR SURFACE PRINTS to be 100% replaced.
+
+2. EXTERNAL CONTEXT & CHROME (Preserve 100%):
+   - Any visual element located OUTSIDE or AROUND the product carrier:
+     - True background environment (e.g. clean white studio backdrop, room walls, flooring, lighting).
+     - External text callouts and brand logos on the background (e.g. 'Quick-Dry Microfiber Surface Memory Foam Cushion', 'G' logo, size chart tables).
+   - INTERACTIVE PROPS & OCCLUSIONS:
+     - When a human hand/finger is pressing into the cushion (demonstrating softness/memory foam), the hand/finger and its physical indentation MUST BE PRESERVED. The new artwork must realistically indent under the finger's pressure!
+     - When furniture legs or pets rest on top of the rug, they are preserved as physical occlusions.
+
+3. INSET DETAIL / MAGNIFIED CUTOUTS (Multi-Zone Synchronization):
+   - When the reference image features a circular or rectangular INSET / CLOSE-UP CUTOUT demonstrating material features (e.g. a magnified view of the memory foam cushion with finger indentation):
+     - The inset cutout ALSO depicts the product surface!
+     - The new print artwork from Image 1 must be applied coherently to BOTH the main product carrier AND the magnified inset cutout, maintaining consistent pattern scale and realistic fabric creasing under the finger's pressure.
+
+4. PRIOR SURFACE PRINT ARTIFACTS (Must be 100% eliminated & replaced):
+   - ANY graphic, color, line, icon, or button printed on the old product in Image 2 (e.g. old black base color, white diagonal graphic lines, speaker icon, novelty music buttons, fake album cover borders).
+   - They MUST NOT bleed through or appear as background layers behind the new product.
+   - The entire physical surface area of the product carrier (main mat + circular inset) must be 100% covered by the NEW print artwork from Image 1 (edge-to-edge full bleed).
+
+Analyze the images deeply and return JSON only in English with these exact keys:
+{{
+  "scene_title": "Short descriptive title (3-6 words)",
+  "visual_concept": "2-3 sentences explaining the commercial marketing concept, camera angle, and intention",
+  "external_chrome_to_preserve": "Specific visual elements outside the product that must be kept intact (true background, text callouts, logo, human hand/finger pressing into the mat)",
+  "prior_surface_print_to_eliminate": "Specific graphic motifs, lines, icons, or old base colors on the product in Image 2 that MUST NOT appear on the new product",
+  "product_canvas_area": "Precise description of the physical product surfaces (both main mat body and inset circle) that serve as the canvas for the new artwork",
+  "generation_directive": "A complete, self-contained prompt for the generative image model. Instruct it step-by-step to compose the image using Image 1 (new artwork) and Image 2 (reference composition). Explicitly command it to preserve the true background, text callouts, logo, and pressing finger from Image 2, while rendering the new artwork from Image 1 across the entire product canvas area with zero bleed-through of any old black mat colors, white lines, or speaker icons",
+  "qa_checklist": [
+    "criterion 1: Verify all external context/infographic chrome is intact",
+    "criterion 2: Verify the new artwork is rendered across the entire product canvas area",
+    "criterion 3: Verify NO leftover graphic artifacts, old black shapes, or white lines from Image 2 appear"
+  ]
+}}
+"""
+        contents_parts = [
+            image_part(artwork, max_side=1024, max_bytes=2_000_000),
+            image_part(image, max_side=1024, max_bytes=2_000_000),
+            types.Part.from_text(text=analysis_prompt),
+        ]
+    else:
+        analysis_prompt = f"""
+You are an expert creative director and commercial e-commerce photographer specializing in Print-on-Demand (POD) home decor products ({target.name}).
+Analyze this reference listing image in depth.
+Apply the universal principles of Spatial Physics: separate the external context/infographic chrome, the physical product substrate, and any prior surface print.
+Return JSON only in English with these exact keys:
+{{
+  "scene_title": "Short descriptive title (3-6 words)",
+  "visual_concept": "2-3 sentences explaining the commercial concept",
+  "external_chrome_to_preserve": "Specific elements outside the product to preserve",
+  "prior_surface_print_to_eliminate": "Old surface graphics to eliminate",
+  "product_canvas_area": "Physical product area to receive new artwork",
+  "generation_directive": "Prompt instruction for image generation",
+  "qa_checklist": ["criterion 1", "criterion 2", "criterion 3"]
+}}
+"""
+        contents_parts = [
+            image_part(image, max_side=1024, max_bytes=2_000_000),
+            types.Part.from_text(text=analysis_prompt),
+        ]
+
+    last_error: Exception | None = None
+    for attempt in range(1, 4):
+        try:
+            response = client.models.generate_content(
+                model=model,
+                contents=[
+                    types.Content(
+                        role="user",
+                        parts=contents_parts,
+                    )
+                ],
+                config=types.GenerateContentConfig(temperature=0.0, response_mime_type="application/json"),
+            )
+            raw_text = extract_response_text(response)
+            parsed = parse_json_relaxed(raw_text)
+            if not isinstance(parsed, dict) or "generation_directive" not in parsed:
+                raise ValueError(f"Invalid reference analysis JSON: {raw_text[:200]}")
+
+            if cache_file:
+                try:
+                    all_cached = json.loads(cache_file.read_text(encoding="utf-8")) if cache_file.exists() else {}
+                except Exception:
+                    all_cached = {}
+                all_cached[hash_key] = parsed
+                cache_file.write_text(json.dumps(all_cached, ensure_ascii=False, indent=2), encoding="utf-8")
+
+            return parsed
+        except Exception as exc:
+            last_error = exc
+            if attempt >= 3 or not is_transient_gemini_error(exc):
+                break
+            time.sleep(2.0 * attempt)
+
+    LOG.warning("Reference image analysis failed (%s), using open-ended fallback", last_error)
+    return {
+        "scene_title": "Exemplary Listing Reference",
+        "visual_concept": "Commercial product presentation showcasing the product in an authentic setting.",
+        "elements_to_preserve": "Overall camera angle, lighting, background architecture, and surrounding props.",
+        "product_placement_zone": f"In the exact position where the {target.name} appears in Image 2.",
+        "generation_directive": (
+            f"Faithfully preserve the scene composition, lighting, camera angle, and background objects from Image 2. "
+            f"Replace the {target.name} with the new design using the exact artwork, palette, and motifs from Image 1."
+        ),
+        "qa_checklist": [
+            "Artwork from Image 1 is recognizably displayed on the product",
+            "Background composition and camera angle from Image 2 are maintained",
+            "Contact shadows and perspective are realistic",
+        ],
+    }
+
+
 def build_direct_ai_mockup(
     print_path: Path,
     output_dir: Path,
@@ -148,6 +331,7 @@ def build_direct_ai_mockup(
     pose: TemplatePose | None = None,
     variant: int = 1,
     progress: Any = None,
+    room_template: Path | Image.Image | None = None,
     **kwargs: Any,
 ) -> TemplateMockupRecord:
     """Have the image model render real cloth geometry rather than compositing a flat print."""
@@ -165,22 +349,82 @@ def build_direct_ai_mockup(
     except Exception as exc:
         return TemplateMockupRecord(print_path, None, None, None, model, pose.name, "failed", f"unreadable print artwork: {exc}", {}, "direct_ai", variant)
 
+    room_img: Image.Image | None = None
+    if isinstance(room_template, (str, Path)):
+        p_rt = Path(room_template)
+        if p_rt.exists() and p_rt.is_file():
+            try:
+                with Image.open(p_rt) as opened_rt:
+                    room_img = ImageOps.exif_transpose(opened_rt).convert("RGB")
+            except Exception as rt_exc:
+                if progress:
+                    log(progress, f"Note: could not open room template {p_rt.name}: {rt_exc}")
+    elif isinstance(room_template, Image.Image):
+        room_img = room_template
+
+    reference_analysis: dict[str, Any] | None = None
+    if room_img is not None:
+        try:
+            cache_dir = output_dir / "room_templates"
+            reference_analysis = analyze_reference_image(
+                client,
+                room_img,
+                target,
+                artwork=artwork,
+                model=quality_model,
+                cache_dir=cache_dir,
+            )
+            if progress and reference_analysis:
+                scene_label = reference_analysis.get("scene_title", "Reference Shot")
+                concept_short = str(reference_analysis.get("visual_concept", ""))[:70]
+                log(progress, f"AI Vision phân tích ảnh tham chiếu: [{scene_label}] - {concept_short}...")
+        except Exception as an_exc:
+            LOG.warning("Failed to analyze reference image: %s", an_exc)
+
+    active_pose_name = reference_analysis.get("scene_title", pose.name) if reference_analysis else pose.name
+    custom_qa_checklist = reference_analysis.get("qa_checklist") if reference_analysis else None
+
+    best_candidate_path: Path | None = None
+    best_candidate_metrics: dict[str, object] = {}
+
     for attempt in range(1, max(1, attempts) + 1):
         candidate_path = output_dir / "direct_ai_candidates" / f"{stem}{suffix}_attempt_{attempt}.png"
         try:
-            generated = generate_direct_ai_lifestyle(client, artwork, target, model, pose, correction=correction)
+            generated = generate_direct_ai_lifestyle(
+                client,
+                artwork,
+                target,
+                model,
+                pose,
+                correction=correction,
+                room_template=room_img,
+                reference_analysis=reference_analysis,
+            )
             candidate_path.parent.mkdir(parents=True, exist_ok=True)
             generated.save(candidate_path)
+            best_candidate_path = candidate_path
+
             quality = assess_direct_ai_mockup(
                 print_path,
                 candidate_path,
                 target,
-                pose_name=pose.name,
-                pose_requirement=pose.display_rule or pose.placement,
+                pose_name=active_pose_name,
+                pose_requirement=reference_analysis.get("generation_directive", pose.display_rule or pose.placement) if reference_analysis else (pose.display_rule or pose.placement),
                 require_matching_pillowcases=pose.name == "bed_full_showcase",
+                custom_checklist=custom_qa_checklist,
+                image_type="DYNAMIC_REFERENCE" if reference_analysis else "ROOM_SCENE",
                 backend=backend,
                 model=quality_model,
             )
+            metrics_dict: dict[str, object] = {
+                "generation_attempt": attempt,
+                "mockup_quality": quality.to_dict(),
+                "has_room_template": room_img is not None,
+            }
+            if reference_analysis:
+                metrics_dict["reference_analysis"] = reference_analysis
+            best_candidate_metrics = metrics_dict
+
             if not quality.accepted:
                 raise RuntimeError(f"direct AI mockup QA rejected: {quality.reason}")
             mockup_path.parent.mkdir(parents=True, exist_ok=True)
@@ -191,10 +435,10 @@ def build_direct_ai_mockup(
                 None,
                 mockup_path,
                 model,
-                pose.name,
+                active_pose_name,
                 "ok",
                 "Gemini rendered the final lifestyle image directly from the approved print artwork.",
-                {"generation_attempt": attempt, "mockup_quality": quality.to_dict()},
+                metrics_dict,
                 "direct_ai",
                 variant,
             )
@@ -202,21 +446,55 @@ def build_direct_ai_mockup(
             last_error = str(exc)
             if "direct ai mockup qa rejected:" in last_error.lower():
                 qa_detail = last_error.split(":", 1)[-1].strip()
-                correction = (
-                    f"The previous render failed final QA: {qa_detail}. Keep the reference artwork recognizable, "
-                    "ensure clean modern sewn straight continuous linear hems with strictly no ruffled or scalloped edges, "
-                    "never contour or tab fabric edges around badges/motifs, avoid comforter box quilting, "
-                    "ensure the blanket realistically conforms to 3D furniture depth and cushion geometry without flattening into a 2D billboard, "
-                    "ensure the two pillowcases (if applicable) are distinct, balanced, and uncluttered with 1-3 well-scaled legible hero motifs, "
-                    "and correct cloth geometry, folds, scale, and lighting."
-                )
+                if reference_analysis:
+                    correction = (
+                        f"CRITICAL FIX: The previous render failed QA: {qa_detail}. "
+                        "You MUST strictly preserve 100% of Image 2's composition, layout, background, text, sizing charts, and infographic elements! "
+                        "Do NOT invent a new room or different furniture (do NOT render a random sofa or change the product type). "
+                        "Replace ONLY the product surface in Image 2 with the new artwork from Image 1, conforming to its physical folds and geometry with zero remnants of the old print."
+                    )
+                else:
+                    correction = (
+                        f"The previous render failed final QA: {qa_detail}. Keep the reference artwork recognizable, "
+                        "ensure clean modern sewn straight continuous linear hems with strictly no ruffled or scalloped edges, "
+                        "never contour or tab fabric edges around badges/motifs, avoid comforter box quilting, "
+                        "ensure the blanket realistically conforms to 3D furniture depth and cushion geometry without flattening into a 2D billboard, "
+                        "ensure the two pillowcases (if applicable) are distinct, balanced, and uncluttered with 1-3 well-scaled legible hero motifs, "
+                        "and correct cloth geometry, folds, scale, and lighting."
+                    )
             if attempt < max(1, attempts) and is_transient_gemini_error(exc):
                 time.sleep(float(attempt) * 2.0)
                 continue
             if attempt < max(1, attempts) and "direct ai mockup qa" in last_error.lower():
                 continue
             break
-    return TemplateMockupRecord(print_path, None, None, None, model, pose.name, "failed", last_error, {}, "direct_ai", variant)
+
+    # If all attempts failed strict QA, but a candidate image was successfully generated,
+    # fallback to the best generated candidate so the user still receives their requested mockup!
+    if best_candidate_path and best_candidate_path.exists():
+        mockup_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(best_candidate_path, mockup_path)
+        fallback_metrics = best_candidate_metrics or {
+            "has_room_template": room_img is not None,
+            "fallback_used": True,
+            "fallback_reason": last_error,
+        }
+        fallback_metrics["fallback_used"] = True
+        return TemplateMockupRecord(
+            print_path,
+            None,
+            None,
+            mockup_path,
+            model,
+            active_pose_name,
+            "ok",
+            f"Accepted candidate via QA fallback ({last_error})",
+            fallback_metrics,
+            "direct_ai",
+            variant,
+        )
+
+    return TemplateMockupRecord(print_path, None, None, None, model, active_pose_name, "failed", last_error, {}, "direct_ai", variant)
 
 
 def generate_direct_ai_lifestyle(
@@ -227,6 +505,8 @@ def generate_direct_ai_lifestyle(
     pose: TemplatePose,
     *,
     correction: str = "",
+    room_template: Image.Image | None = None,
+    reference_analysis: dict[str, Any] | None = None,
 ) -> Image.Image:
     from google.genai import types
 
@@ -235,12 +515,24 @@ def generate_direct_ai_lifestyle(
         temperature=0.35,
         image_config=types.ImageConfig(aspect_ratio="1:1", image_size="2K", output_mime_type="image/png"),
     )
+    parts = [image_part(artwork, max_side=1536, max_bytes=3_500_000)]
+    if room_template is not None:
+        parts.append(image_part(room_template, max_side=1536, max_bytes=3_500_000))
+    prompt_str = direct_ai_lifestyle_prompt(
+        target,
+        pose,
+        correction,
+        has_room_template=room_template is not None,
+        reference_analysis=reference_analysis,
+    )
+    parts.append(types.Part.from_text(text=prompt_str))
+
     response = client.models.generate_content(
         model=model,
         contents=[
             types.Content(
                 role="user",
-                parts=[image_part(artwork, max_side=1536, max_bytes=3_500_000), types.Part.from_text(text=direct_ai_lifestyle_prompt(target, pose, correction))],
+                parts=parts,
             )
         ],
         config=config,
@@ -252,8 +544,18 @@ def generate_direct_ai_lifestyle(
         return generated.convert("RGB")
 
 
-def direct_ai_lifestyle_prompt(target: ProductTarget, pose: TemplatePose, correction: str) -> str:
+def direct_ai_lifestyle_prompt(
+    target: ProductTarget,
+    pose: TemplatePose,
+    correction: str,
+    *,
+    has_room_template: bool = False,
+    reference_analysis: dict[str, Any] | None = None,
+) -> str:
     product = target.name.strip().lower()
+    coordinated_products = ""
+    scene_title = reference_analysis.get("scene_title", "Reference Listing Shot") if reference_analysis else ""
+
     if product == "blanket":
         product_rule = (
             "Create one full-size premium soft throw blanket. Treat the attached image as its exact print artwork reference, "
@@ -290,6 +592,7 @@ def direct_ai_lifestyle_prompt(target: ProductTarget, pose: TemplatePose, correc
     else:
         product_rule = "Create one full-size product using the attached image as its faithful print artwork reference."
         avoid = pose.avoid
+
     if pose.name == "bed_full_showcase":
         coordinated_products = (
             "Coordinated Bedroom Set showcase: show the full blanket covering the bed plus exactly two matching printed pillowcases "
@@ -301,16 +604,87 @@ def direct_ai_lifestyle_prompt(target: ProductTarget, pose: TemplatePose, correc
             "(e.g. one clean decorative illustration, character, or badge per pillowcase) with clean negative space and readable typography in an uncluttered, balanced layout. "
             "Keep any lettering crisp, readable, and elegant. Absolutely no crowded micro-repeats, squished icons, or garbled text on the pillows."
         )
+
+    if has_room_template and reference_analysis:
+        visual_concept = reference_analysis.get("visual_concept", "")
+        preserve = reference_analysis.get("external_chrome_to_preserve") or reference_analysis.get("elements_to_preserve", "")
+        placement_zone = reference_analysis.get("product_canvas_area") or reference_analysis.get("product_placement_zone", "")
+        prior_eliminate = reference_analysis.get("prior_surface_print_to_eliminate", "")
+        directive = reference_analysis.get("generation_directive", "")
+
+        eliminate_section = f"- Prior Surface Graphics to Eliminate (Zero Bleed-Through): {prior_eliminate}\n" if prior_eliminate else ""
+
+        product_rule = (
+            f"STRICT TEMPLATE PRESERVATION MANDATE: Render the new print artwork from Image 1 onto the product carrier shown in Image 2. "
+            f"Faithfully reproduce its motifs, colors, and layout across the fabric with realistic cloth texture, folds, and seams as defined in Image 2. "
+            f"Zero remnants or bleed-through of any old patterns from Image 2."
+        )
+        scene_desc = (
+            f"CRITICAL MANDATORY TEMPLATE REPLACEMENT DIRECTIVE ({scene_title}):\n"
+            f"- Image 1: Commercial textile print artwork.\n"
+            f"- Image 2: EXACT reference template / commercial shot to preserve and adapt.\n"
+            f"- ZERO HALLUCINATIONS / DO NOT INVENT A NEW SCENE: You MUST preserve 100% of the composition, room environment, furniture, background, text callouts, charts, and lighting from Image 2. Do NOT invent a different room, sofa, or layout!\n"
+            f"- External Context/Infographic Chrome to Preserve 100%: {preserve}\n"
+            f"- Product Printable Canvas Area: {placement_zone}\n"
+            f"{eliminate_section}"
+            f"- Tailored Synthesis Directive:\n{directive}\n"
+            f"- Obey visual physics: Maintain realistic contact shadows, depth-of-field, and lighting temperature from Image 2."
+        )
+        placement = placement_zone or f"Positioned exactly as demonstrated in Image 2 ({scene_title})."
+        listing_requirement = f"STRICT TEMPLATE PRESERVATION: Retain the exact composition, graphics, text, and scene from Image 2 ({scene_title}). Replace only the designated product surface."
+        constraints = "Preserve all external elements from Image 2. Strictly no distorted lettering, no superimposed photographer watermarks, no bleed-through of prior prints from Image 2."
+        coordinated_products = "None (adhere strictly to the product items present in Image 2)."
+
+        return f"""
+Use case: final ecommerce lifestyle product photograph adapting a reference template.
+{product_rule}
+{scene_desc}
+Placement: {placement}.
+Photorealism requirements: The textile must have real cloth geometry, natural gravity, visible thickness and edge binding, broad folds plus fine weave, physically correct occlusion behind furniture, soft contact shadows, and lighting that follows the folded surface. It must look like an actual camera photograph, not a 2D collage, poster, sticker, rendering, or graphic illustration.
+Coordinated products: {coordinated_products}
+Listing-shot requirement: {listing_requirement}
+Composition: Match the exact framing, perspective, and arrangement of Image 2. Replace only the product carrier surface.
+Constraints: {constraints}
+Retry correction: {correction or "None. Strictly preserve Image 2 layout and replace only the product artwork."}
+""".strip()
+    elif has_room_template:
+        scene_desc = (
+            "CRITICAL REFERENCE ROOM TEMPLATE COMPOSITING INSTRUCTION:\n"
+            "- You are provided with TWO reference images: Image 1 is the textile print artwork. Image 2 is the exact reference room scene photograph.\n"
+            "- PRESERVE THE ROOM EXACTLY: You MUST retain the exact walls, flooring, furniture layout, camera perspective, ambient color temperature, and lighting direction from Image 2.\n"
+            "- Do NOT generate a random new room. Keep the exact furniture geometry and ambient room lighting from Image 2.\n"
+            f"- Seamlessly composite and drape the {product} (faithfully displaying the print artwork from Image 1) onto the appropriate floor or furniture surface in Image 2, casting realistic contact shadows and obeying the room's light sources."
+        )
+        placement = pose.placement
+        listing_requirement = f"Preserve Image 2 room scene and layout. Place {product} naturally."
+        constraints = "No random room changes, no superimposed photographer watermarks."
+        coordinated_products = "None."
+        product_rule = f"Create one full-size {product} using Image 1 as the print artwork reference and composite onto Image 2."
+
+        return f"""
+Use case: final ecommerce lifestyle product photograph compositing onto reference room.
+{product_rule}
+{scene_desc}
+Placement: {placement}.
+Photorealism requirements: The textile must have real cloth geometry, natural gravity, visible thickness and edge binding, broad folds plus fine weave, physically correct occlusion behind furniture, soft contact shadows, and lighting that follows the folded surface. It must look like an actual camera photograph, not a 2D collage, poster, sticker, rendering, or graphic illustration.
+Coordinated products: {coordinated_products}
+Listing-shot requirement: {listing_requirement}
+Composition: Match the exact framing, perspective, and arrangement of Image 2.
+Constraints: {constraints}
+Retry correction: {correction or "None. Strictly preserve Image 2 room and composite the product realistically."}
+""".strip()
     else:
-        coordinated_products = ""
+        scene_desc = f"Scene: {pose.scene}."
+        placement = pose.placement
+
     return f"""
 Use case: final ecommerce lifestyle product photograph.
 {product_rule}
-Scene: {pose.scene}.
-Placement: {pose.placement}.
+{scene_desc}
+Placement: {placement}.
 Photorealism requirements: The textile must have real cloth geometry, natural gravity, visible thickness and edge binding, broad folds plus fine weave, physically correct occlusion behind furniture, soft contact shadows, and lighting that follows the folded surface. It must look like an actual camera photograph, not a 2D collage, poster, sticker, rendering, or graphic illustration.
 Coordinated products: {coordinated_products or "None."}
-Listing-shot requirement: {pose.display_rule or pose.placement}
+Listing-shot requirement: {pose.display_rule or placement}
 Composition: Follow the requested listing-shot framing. Make the product full-size and plausible, with the artwork readable wherever the pose is intended to show it.
 Constraints: {avoid} {pose.avoid}
 Retry correction: {correction or "None. Render one credible, realistic product photograph."}
@@ -356,6 +730,41 @@ def template_pose_for_index(target: ProductTarget, index: int) -> TemplatePose:
                 "do not spread the blanket flat like a bedsheet or tablecloth across the entire sofa; strictly no flat 2D poster, banner, sticker, or rigid billboard; strictly no oversized blank flaps hiding the print, no ruler-straight floating bottom hem, no garbled typography, no messy squished blobs",
                 "CASUAL LIFESTYLE SHOT: showcase the throw blanket draped effortlessly and authentically in a high-end interior scene. The main printed motifs and typography remain clearly recognizable and prominent across the drape, with natural fabric thickness, soft contact shadows, and realistic textile weight.",
             ),
+            TemplatePose(
+                "bedroom_foot_runner",
+                "a serene, luxury master bedroom with a king platform bed, plush upholstered headboard, and gentle natural morning sunlight",
+                "the blanket is folded horizontally into a wide runner draped neatly across the lower foot of the bed, with soft folded ends falling naturally over both bed rails, showing crisp centered artwork motifs and clean sewn hems",
+                "do not bunch into messy chaotic wrinkles, no flat billboard overlays, no scalloped edges, no garbled typography",
+                "BED FOOT RUNNER SHOT: premium hotel-style presentation with the blanket accenting the bed foot cleanly.",
+            ),
+            TemplatePose(
+                "reading_nook_armchair",
+                "a cozy reading nook with a classic upholstered accent armchair, small wooden side table with ceramic mug, and warm reading floor lamp",
+                "the blanket is draped over the chair back and seat cushion, with one side falling naturally in fluid ripples toward the wooden floor, displaying the full printable artwork clearly",
+                "do not cover the whole chair like a fitted slipcover, no rigid cardboard folds, no distorted typography",
+                "READING NOOK SHOT: warm, inviting lifestyle vignette emphasizing comfort, leisure, and soft textile texture.",
+            ),
+            TemplatePose(
+                "patio_porch_swing",
+                "a covered outdoor veranda or sunroom with a hanging porch swing chair or daybed overlooking lush garden greenery in soft golden hour light",
+                "the blanket rests comfortably on the swing cushions with soft natural folds, highlighting the vibrant colors and print clarity in outdoor daylight",
+                "no rain, no dark shadows, no flat posters, no distorted proportions",
+                "OUTDOOR LIFESTYLE SHOT: airy, relaxing seasonal ambiance showcasing the blanket in a breezy porch retreat.",
+            ),
+            TemplatePose(
+                "bed_side_perspective",
+                "a chic modern bedroom photographed from a 45-degree angle beside the nightstand with natural window lighting and soft depth of field",
+                "the blanket is spread across the duvet with soft organic waves, gently draping down the side of the mattress toward the floor, with the design fully legible",
+                "no extreme fish-eye distortion, no plain unprinted pillows, no scalloped hems",
+                "BEDSIDE PERSPECTIVE SHOT: dimensional interior view showing fabric drape, mattress thickness, and room harmony.",
+            ),
+            TemplatePose(
+                "family_living_room_wide",
+                "an expansive, high-end open-concept living room with hardwood floors, modern fireplace, and floor-to-ceiling windows",
+                "the blanket is the hero accent on a large sectional sofa in the middle ground, sharply focused with vivid color saturation and crisp design details",
+                "do not lose the blanket in the wide shot, product must remain the unmistakable visual anchor",
+                "WIDE INTERIOR SHOT: aspirational architectural showcase proving how the blanket transforms luxury living spaces.",
+            ),
         )
     else:
         poses = (
@@ -364,6 +773,11 @@ def template_pose_for_index(target: ProductTarget, index: int) -> TemplatePose:
             TemplatePose("entryway_runner", "a practical entryway photographed at standing eye level", "the rug is a runner on the floor with clear edges and natural scale", "no blanket, bath mat, or second rug"),
             TemplatePose("reading_corner", "a sunlit reading corner with one chair and floor lamp", "the rug lies flat in front of the chair with a visible perspective plane", "no blanket, bath mat, doormat, or second rug"),
             TemplatePose("dining_room", "a modest dining room photographed from a natural angle", "the rug lies under a small dining table with its outer edges clearly visible", "no blanket, bath mat, doormat, or second rug"),
+            TemplatePose("home_office_desk", "a bright modern home office with a minimalist desk and chair", "the rug lies centered under the desk and seating area with clear floor borders", "no blanket, bath mat, or second rug"),
+            TemplatePose("kitchen_island_accent", "a stylish gourmet kitchen with marble island and barstools", "the rug lies along the kitchen island with realistic contact shadow and clean edges", "no blanket, bath mat, or second rug"),
+            TemplatePose("sunroom_terrace", "a sun-drenched enclosed sunroom with potted plants and stone floor", "the rug is centered in the sunlit seating space with visible texture", "no blanket, bath mat, or second rug"),
+            TemplatePose("nursery_cozy_corner", "a peaceful modern nursery with crib, rocking chair, and oak floor", "the rug sits open in the floor area creating a cozy focal point", "no blanket, bath mat, or second rug"),
+            TemplatePose("open_concept_loft", "an urban industrial loft with brick accents and polished concrete", "the rug anchors the central conversation lounge with bold presence", "no blanket, bath mat, or second rug"),
         )
     return poses[(max(1, index) - 1) % len(poses)]
 

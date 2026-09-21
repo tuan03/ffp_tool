@@ -378,9 +378,16 @@ export class MockPinterestPodClient implements PinterestPodClient {
       job.status = "producing";
       job.pollCount = 0;
       job.selectedCandidateIds = [...input.selected_candidates];
+      const refCount = input.referenceImages?.length ?? job.referenceImageCount ?? 0;
+      job.referenceImageCount = refCount;
       job.logs.push(
         `[${now}] Nhận lệnh sản xuất cho ${input.selected_candidates.length} mẫu đã chọn: [${input.selected_candidates.join(", ")}].`,
       );
+      if (refCount > 0) {
+        job.logs.push(
+          `[${now}] Bối cảnh: Đã áp dụng ${refCount} ảnh phòng tham chiếu cho khâu render Mockup AI.`,
+        );
+      }
     }
 
     return {

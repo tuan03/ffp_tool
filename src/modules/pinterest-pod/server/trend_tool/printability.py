@@ -272,6 +272,8 @@ def assess_direct_ai_mockup(
     pose_name: str = "",
     pose_requirement: str = "",
     require_matching_pillowcases: bool = False,
+    image_type: str = "ROOM_SCENE",
+    custom_checklist: list[str] | None = None,
     backend: str,
     model: str,
 ) -> PrintabilityDecision:
@@ -288,6 +290,8 @@ def assess_direct_ai_mockup(
         "reference_height": reference.height,
         "mockup_width": mockup.width,
         "mockup_height": mockup.height,
+        "image_type": image_type,
+        "has_custom_checklist": bool(custom_checklist),
     }
     try:
         assessment = _vision_pair_assessment(
@@ -298,6 +302,8 @@ def assess_direct_ai_mockup(
                 pose_name=pose_name,
                 pose_requirement=pose_requirement,
                 require_matching_pillowcases=require_matching_pillowcases,
+                custom_checklist=custom_checklist,
+                image_type=image_type,
             ),
             backend=backend,
             model=model,
@@ -313,22 +319,48 @@ def assess_direct_ai_mockup(
     is_blanket = target.name == "blanket"
     is_rug = target.name == "rug"
 
-    accepted = (
-        _bool(assessment.get("artwork_identity_preserved"))
-        and _bool(assessment.get("product_type_correct"))
-        and (not is_rug or _bool(assessment.get("rug_shape_correct")))
-        and _bool(assessment.get("full_size_scale_plausible"))
-        and _bool(assessment.get("fabric_material_believable"))
-        and _bool(assessment.get("fold_geometry_consistent"))
-        and _bool(assessment.get("occlusion_and_contact_believable"))
-        and _bool(assessment.get("lighting_coherent"))
-        and not _bool(assessment.get("looks_like_flat_overlay"))
-        and not _bool(assessment.get("looks_like_wrong_product"))
-        and (not require_matching_pillowcases or (_bool(assessment.get("matching_pillowcases_present")) and pillowcases_clean))
-        and (not is_blanket or (clean_hems and no_quilting))
-        and typography_clean
-        and score >= 84
-    )
+    if custom_checklist:
+        # Fully dynamic evaluation based on the reference image's custom checklist
+        accepted = (
+            _bool(assessment.get("artwork_identity_preserved"))
+            and _bool(assessment.get("reference_concept_satisfied", True))
+            and typography_clean
+            and not _bool(assessment.get("looks_like_wrong_product"))
+            and score >= 75
+        )
+    else:
+        norm_type = (image_type or "ROOM_SCENE").upper()
+        if norm_type == "SIZE_CHART":
+            accepted = (
+                _bool(assessment.get("artwork_identity_preserved"))
+                and typography_clean
+                and not _bool(assessment.get("looks_like_wrong_product"))
+                and score >= 75
+            )
+        elif norm_type == "MATERIAL_DETAIL":
+            accepted = (
+                _bool(assessment.get("artwork_identity_preserved"))
+                and _bool(assessment.get("fabric_material_believable"))
+                and not _bool(assessment.get("looks_like_wrong_product"))
+                and score >= 75
+            )
+        else:
+            accepted = (
+                _bool(assessment.get("artwork_identity_preserved"))
+                and _bool(assessment.get("product_type_correct"))
+                and (not is_rug or _bool(assessment.get("rug_shape_correct")))
+                and _bool(assessment.get("full_size_scale_plausible"))
+                and _bool(assessment.get("fabric_material_believable"))
+                and _bool(assessment.get("fold_geometry_consistent"))
+                and _bool(assessment.get("occlusion_and_contact_believable"))
+                and _bool(assessment.get("lighting_coherent"))
+                and not _bool(assessment.get("looks_like_flat_overlay"))
+                and not _bool(assessment.get("looks_like_wrong_product"))
+                and (not require_matching_pillowcases or (_bool(assessment.get("matching_pillowcases_present")) and pillowcases_clean))
+                and (not is_blanket or (clean_hems and no_quilting))
+                and typography_clean
+                and score >= 84
+            )
     reason = str(assessment.get("reason") or "direct AI mockup passed artwork fidelity and realism QA.")
     if not accepted:
         reason = f"direct AI mockup rejected: {reason}"
@@ -465,7 +497,52 @@ def direct_ai_mockup_prompt(
     pose_name: str = "",
     pose_requirement: str = "",
     require_matching_pillowcases: bool = False,
+    custom_checklist: list[str] | None = None,
+    image_type: str = "ROOM_SCENE",
 ) -> str:
+    if custom_checklist:
+        type_intro = (
+            f"Compare REFERENCE_PRINT_ARTWORK with the DYNAMIC_AI_MOCKUP for a {target.name}.\n"
+            f"This commercial listing image adapts an exemplary reference composition ({pose_name})."
+        )
+        checklist_items = "\n".join(f"   - {item}" for item in custom_checklist)
+        criteria_section = f"""
+Evaluation criteria:
+1. Artwork and Motif Fidelity:
+   - 'artwork_identity_preserved': must be true if recognizable motifs, style, palette, and graphics from Image 1 are clearly present on the product surface or models.
+2. Dynamic Reference Verification Checklist (Tailored to this specific composition):
+{checklist_items}
+3. Product Plausibility:
+   - 'reference_concept_satisfied': must be true if the generated mockup faithfully preserves the key composition, framing, and concept of the reference shot.
+   - 'typography_crisp_and_legible': must be true if visible text/lettering/dimensions are crisp, legible, and ungarbled. If no text, set true.
+   - 'looks_like_wrong_product': must be FALSE unless the product depicted is completely unrelated.
+"""
+        return f"""
+{type_intro}
+Listing role: {pose_name or "a credible product showcase"}. {pose_requirement or "Show the product naturally and clearly."}
+
+{criteria_section}
+
+Return JSON only:
+{{
+  "artwork_identity_preserved": false,
+  "reference_concept_satisfied": false,
+  "typography_crisp_and_legible": false,
+  "looks_like_wrong_product": false,
+  "listing_realism_score": 0,
+  "reason": "short concrete reason"
+}}
+Use an integer score from 0 to 100. Be strict: 75+ means a credible commercial listing image adapting the reference concept.
+""".strip()
+
+    norm_type = (image_type or "ROOM_SCENE").upper()
+    if norm_type == "SIZE_CHART":
+        type_intro = f"Compare REFERENCE_PRINT_ARTWORK with the DIRECT_AI_SIZE_CHART / DIMENSION_GUIDE for a {target.name}.\nThis image is an e-commerce size guide diagram or dimension comparison infographic."
+    elif norm_type == "MATERIAL_DETAIL":
+        type_intro = f"Compare REFERENCE_PRINT_ARTWORK with the DIRECT_AI_MATERIAL_DETAIL_MOCKUP for a {target.name}.\nThis image is a macro close-up photograph showcasing fabric texture, material thickness, backing, and product tactile features."
+    else:
+        type_intro = f"Compare REFERENCE_PRINT_ARTWORK with the DIRECT_AI_LIFESTYLE_MOCKUP for a {target.name}.\nThe reference is a flat textile design. The mockup is allowed to bend, fold, crop, and repeat that design naturally across the product surface, but must preserve its recognizable motifs, palette, and visual identity."
+
     pillowcase_rule = (
         "This is a bedroom-set shot: require exactly two matching pillowcases using the same recognizable print identity as the blanket. "
         "The two pillowcases must be distinct, separate, and aesthetic, with motifs scaled naturally to pillow proportions without squishing or visual clutter. "
@@ -475,7 +552,7 @@ def direct_ai_mockup_prompt(
     )
     rug_shape_rule = (
         f"Required rug silhouette: {target.rug_shape}. Reject a different silhouette."
-        if target.name == "rug"
+        if target.name == "rug" and norm_type == "ROOM_SCENE"
         else "Rug silhouette is not applicable."
     )
     blanket_edge_rule = (
@@ -484,25 +561,22 @@ def direct_ai_mockup_prompt(
         else ""
     )
     return f"""
-Compare REFERENCE_PRINT_ARTWORK with the DIRECT_AI_LIFESTYLE_MOCKUP for a {target.name}.
-The reference is a flat textile design. The mockup is allowed to bend, fold, crop, and repeat that design naturally across the product surface, but must preserve its recognizable motifs, palette, and visual identity.
-Required listing pose: {pose_name or "a credible product showcase"}. {pose_requirement or "Show the product naturally and clearly."}
+{type_intro}
+Required listing role: {pose_name or "a credible product showcase"}. {pose_requirement or "Show the product naturally and clearly."}
 {pillowcase_rule}
 {rug_shape_rule}
 {blanket_edge_rule}
 
 Evaluation criteria:
-1. Pillowcase Quality (if required for bedroom set):
-   - 'matching_pillowcases_present': must be true if exactly two matching pillowcases are present on the bed.
-   - 'pillowcases_clean_and_uncluttered': must be true ONLY if motifs are scaled naturally to pillow proportions with 1-3 prominent hero motifs and clean margins. Must be FALSE if the pillows have tiny squished micro-repeats, crowded cluttered badges, deformed pillow shapes, or unreadable garbled text. (If matching pillowcases are not required, set true).
-2. Blanket Edges & Drape (for blankets):
-   - 'clean_straight_hems_no_scallops': must be true ONLY if the blanket perimeter hems (especially across the foot of the bed or sofa) are intact, continuous geometric lines without notched/concave cutouts. Must be FALSE if the hem has protruding tabs, contouring lobes around motifs/badges, sagging tongues drooping downward, wavy scallops, die-cut tabs at the bottom/sides, notched or concave cut-out hem corners, or ruffled frills. (If not blanket, set true).
-   - 'no_comforter_quilting_grids': must be true if the blanket is smooth unquilted fleece/woven textile. Must be FALSE if there are duvet/comforter box, grid, or diamond quilting stitches. (If not blanket, set true).
-3. Typography Fidelity:
-   - 'typography_crisp_and_legible': must be true if any visible lettering/slogans from the artwork are sharp, legible, and ungarbled. Must be FALSE if text is distorted, scrambled, or rendered as nonsense pseudo-characters. If reference has no text, set true.
-4. Overall Realism:
-   - Judge whether the final image is a credible ecommerce photograph: correct product type and full-size scale, realistic textile thickness/weave, natural soft folds without rigid cardboard lines, furniture occlusion, contact shadows, and coherent lighting.
-   - Reject artwork that was substituted with a different design, turned into a generic unrelated pattern, or appears as a flat overlay, poster, or sticker.
+1. Artwork and Motif Fidelity:
+   - 'artwork_identity_preserved': must be true if recognizable motifs, style, palette, and graphics from Image 1 are clearly present on the product surface or models.
+2. Typography Fidelity:
+   - 'typography_crisp_and_legible': must be true if visible text/lettering/dimensions are crisp, legible, and ungarbled. If no text, set true.
+3. Quality & Plausibility:
+   - For SIZE_CHART: Check that the infographic layout is clean, professional, and visually represents different product size tiers accurately.
+   - For MATERIAL_DETAIL: Check that the close-up fabric texture, fiber pile, and edge stitching look tactile, authentic, and high quality.
+   - For ROOM_SCENE: Check that the product integrates believably into the room with correct perspective, realistic contact shadows, and coherent lighting.
+   - 'looks_like_wrong_product': must be FALSE unless the product depicted is completely unrelated.
 
 Return JSON only:
 {{
@@ -525,7 +599,7 @@ Return JSON only:
   "listing_realism_score": 0,
   "reason": "short concrete reason"
 }}
-Use an integer score from 0 to 100. Be strict: 84 means a credible ecommerce listing image, not merely a pleasant AI illustration.
+Use an integer score from 0 to 100. Be strict: 84 means a credible ecommerce listing image, not merely an attractive AI picture.
 """.strip()
 
 

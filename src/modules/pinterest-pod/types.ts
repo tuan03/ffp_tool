@@ -129,6 +129,7 @@ export interface PodBackendDeliverables {
 
 export interface DeliverablesData {
   readonly print_cmyk_images?: readonly DeliverablePrintImage[];
+  readonly final_png_images?: readonly DeliverablePrintImage[];
   readonly lifestyle_mockups?: readonly DeliverableLifestyleMockup[];
   readonly product_cutouts_white?: readonly DeliverableCutout[];
   readonly comparison_rows?: readonly ComparisonRow[];
@@ -166,6 +167,7 @@ export interface PinterestDiscoveryInput {
   readonly workflow_stage?: PodWorkflowStage;
   readonly candidatePoolSize?: number;
   readonly referenceImages?: readonly PodReferenceImage[];
+  readonly ai_background_variants?: number;
 }
 export type CreateJobInput = PinterestDiscoveryInput;
 
@@ -194,6 +196,11 @@ export interface PinterestProductionInput {
   readonly selected_candidates: readonly string[];
   readonly product?: PodProductType;
   readonly niche?: string;
+  readonly candidates?: readonly PodCandidate[];
+  readonly design_mode?: "direct_print" | "ai-artwork" | string;
+  readonly referenceImages?: readonly ReferenceImage[];
+  readonly room_template_urls?: readonly string[];
+  readonly ai_background_variants?: number;
 }
 export type ProduceInput = PinterestProductionInput;
 
@@ -212,6 +219,9 @@ export interface PinterestProductionOutput {
 export interface ProduceOutput {
   readonly ok: boolean;
   readonly status: JobStatus;
+  readonly jobId?: string;
+  readonly job_id?: string;
+  readonly logs?: readonly string[];
 }
 
 /** Full response structure when polling /api/pinterest-pod/jobs/:jobId */
@@ -234,6 +244,10 @@ export interface PodJobStatusResponse {
   readonly rugShapeDecision?: Record<string, unknown>;
   readonly niche?: string;
   readonly product?: PinterestProductType;
+  readonly roomTemplates?: readonly ReferenceImage[];
+  readonly room_templates?: readonly ReferenceImage[];
+  readonly referenceImages?: readonly ReferenceImage[];
+  readonly reference_images?: readonly ReferenceImage[];
   readonly error?: string;
   readonly message?: string;
 }
@@ -321,6 +335,9 @@ export interface PodRecentRunItem {
   readonly productType?: string;
   readonly candidateCount?: number;
   readonly deliverableCount?: number;
+  readonly cmykCount?: number;
+  readonly mockupCount?: number;
+  readonly thumbnails?: readonly string[];
   readonly hasManifest?: boolean;
 }
 

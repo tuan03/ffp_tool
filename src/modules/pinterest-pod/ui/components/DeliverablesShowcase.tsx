@@ -1,12 +1,14 @@
 import { useState } from "react";
 import type { DeliverablesData, PinterestPodDeliverables, SummaryMetrics } from "../../types";
 import { ComparisonTable } from "./ComparisonTable";
+import type { LightboxImageItem } from "./ImageLightboxModal";
 import { SeoHandoffModal } from "./SeoHandoffModal";
 
 interface DeliverablesShowcaseProps {
   readonly deliverables: DeliverablesData;
   readonly summaryMetrics?: SummaryMetrics;
   readonly seoPayload?: PinterestPodDeliverables;
+  readonly onPreviewImage?: (item: LightboxImageItem) => void;
 }
 
 type TabKey = "cmyk" | "mockups" | "cutouts" | "comparison";
@@ -15,6 +17,7 @@ export function DeliverablesShowcase({
   deliverables,
   summaryMetrics,
   seoPayload,
+  onPreviewImage,
 }: DeliverablesShowcaseProps): React.JSX.Element {
   const [activeTab, setActiveTab] = useState<TabKey>("cmyk");
   const [showSeoModal, setShowSeoModal] = useState(false);
@@ -188,9 +191,22 @@ export function DeliverablesShowcase({
             {printCmykImages.map((item, idx) => (
               <div
                 key={item.filename || `${item.url}-${idx}`}
-                className="flex flex-col overflow-hidden rounded-xl border border-slate-800 bg-slate-950 shadow"
+                className="group flex flex-col overflow-hidden rounded-xl border border-slate-800 bg-slate-950 shadow transition hover:border-cyan-600/70"
               >
-                <div className="aspect-[4/3] w-full overflow-hidden bg-slate-900">
+                <div
+                  className="relative aspect-[4/3] w-full overflow-hidden bg-slate-900 cursor-zoom-in"
+                  onClick={() =>
+                    onPreviewImage?.({
+                      url: item.url,
+                      title: item.filename,
+                      subtitle: "File in chuẩn công nghiệp CMYK 300 DPI",
+                      badge: "CMYK 300 DPI",
+                      dpi: 300,
+                      colorMode: "CMYK",
+                      downloadUrl: item.download_url ?? item.url,
+                    })
+                  }
+                >
                   <img
                     src={item.url}
                     alt={item.filename}
@@ -202,8 +218,11 @@ export function DeliverablesShowcase({
                           `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300"><rect width="400" height="300" fill="#0f172a"/><text x="200" y="150" fill="#38bdf8" font-family="sans-serif" font-size="14" text-anchor="middle">${item.filename}</text></svg>`,
                         );
                     }}
-                    className="h-full w-full object-cover"
+                    className="h-full w-full object-cover transition duration-300 group-hover:scale-105"
                   />
+                  <div className="absolute bottom-2 left-2 flex items-center gap-1 rounded bg-black/60 px-2 py-0.5 text-[10px] font-semibold text-cyan-300 backdrop-blur-xs opacity-0 group-hover:opacity-100 transition">
+                    <span>🔍 Soi HD</span>
+                  </div>
                 </div>
                 <div className="flex flex-col p-3 gap-2">
                   <p className="font-mono text-xs font-semibold text-slate-200 truncate" title={item.filename}>
@@ -231,9 +250,21 @@ export function DeliverablesShowcase({
             {lifestyleMockups.map((mockup, idx) => (
               <div
                 key={mockup.filename || `${mockup.url}-${idx}`}
-                className="flex flex-col overflow-hidden rounded-xl border border-slate-800 bg-slate-950 shadow"
+                className="group flex flex-col overflow-hidden rounded-xl border border-slate-800 bg-slate-950 shadow transition hover:border-indigo-600/70"
               >
-                <div className="aspect-[4/3] w-full overflow-hidden bg-slate-900">
+                <div
+                  className="relative aspect-[4/3] w-full overflow-hidden bg-slate-900 cursor-zoom-in"
+                  onClick={() =>
+                    onPreviewImage?.({
+                      url: mockup.url,
+                      title: mockup.filename,
+                      subtitle: mockup.scene_description,
+                      badge: mockup.scene_type,
+                      tags: [mockup.scene_type],
+                      downloadUrl: mockup.url,
+                    })
+                  }
+                >
                   <img
                     src={mockup.url}
                     alt={mockup.filename}
@@ -245,8 +276,11 @@ export function DeliverablesShowcase({
                           `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300"><rect width="400" height="300" fill="#0f172a"/><text x="200" y="150" fill="#a78bfa" font-family="sans-serif" font-size="14" text-anchor="middle">${mockup.filename}</text></svg>`,
                         );
                     }}
-                    className="h-full w-full object-cover"
+                    className="h-full w-full object-cover transition duration-300 group-hover:scale-105"
                   />
+                  <div className="absolute bottom-2 left-2 flex items-center gap-1 rounded bg-black/60 px-2 py-0.5 text-[10px] font-semibold text-indigo-300 backdrop-blur-xs opacity-0 group-hover:opacity-100 transition">
+                    <span>🔍 Soi Mockup</span>
+                  </div>
                 </div>
                 <div className="flex flex-col p-3 gap-1.5">
                   <div className="flex items-center justify-between">
@@ -276,9 +310,20 @@ export function DeliverablesShowcase({
             {productCutoutsWhite.map((cutout, idx) => (
               <div
                 key={cutout.filename || `${cutout.url}-${idx}`}
-                className="flex flex-col overflow-hidden rounded-xl border border-slate-800 bg-slate-950 shadow"
+                className="group flex flex-col overflow-hidden rounded-xl border border-slate-800 bg-slate-950 shadow transition hover:border-slate-600"
               >
-                <div className="aspect-[4/3] w-full overflow-hidden bg-white p-2">
+                <div
+                  className="relative aspect-[4/3] w-full overflow-hidden bg-white p-2 cursor-zoom-in"
+                  onClick={() =>
+                    onPreviewImage?.({
+                      url: cutout.url,
+                      title: cutout.filename,
+                      subtitle: "Phôi bóc tách nền trắng (White Cutout)",
+                      badge: "Phôi Nền Trắng",
+                      downloadUrl: cutout.url,
+                    })
+                  }
+                >
                   <img
                     src={cutout.url}
                     alt={cutout.filename}
@@ -290,8 +335,11 @@ export function DeliverablesShowcase({
                           `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300"><rect width="400" height="300" fill="#f8fafc"/><text x="200" y="150" fill="#64748b" font-family="sans-serif" font-size="14" text-anchor="middle">${cutout.filename}</text></svg>`,
                         );
                     }}
-                    className="h-full w-full object-contain"
+                    className="h-full w-full object-contain transition duration-300 group-hover:scale-105"
                   />
+                  <div className="absolute bottom-2 left-2 flex items-center gap-1 rounded bg-black/60 px-2 py-0.5 text-[10px] font-semibold text-white backdrop-blur-xs opacity-0 group-hover:opacity-100 transition">
+                    <span>🔍 Soi Phôi</span>
+                  </div>
                 </div>
                 <div className="flex items-center justify-between p-3 text-xs">
                   <span className="font-mono text-slate-300 truncate" title={cutout.filename}>
@@ -312,7 +360,7 @@ export function DeliverablesShowcase({
 
         {/* Tab 4: Comparison Table */}
         {activeTab === "comparison" && (
-          <ComparisonTable rows={comparisonRows} />
+          <ComparisonTable rows={comparisonRows} onPreviewImage={onPreviewImage} />
         )}
       </div>
 

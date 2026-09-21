@@ -17,6 +17,8 @@ interface InitFormProps {
   readonly onProductChange: (product: PinterestProductType) => void;
   readonly referenceImages: readonly ReferenceImage[];
   readonly onReferenceImagesChange: (images: readonly ReferenceImage[]) => void;
+  readonly aiBackgroundVariants: number;
+  readonly onAiBackgroundVariantsChange: (count: number) => void;
   readonly jobStatus: JobStatus;
   readonly onStartCrawl: () => void;
   readonly onStopJob: () => void;
@@ -29,11 +31,14 @@ export function InitForm({
   onProductChange,
   referenceImages,
   onReferenceImagesChange,
+  aiBackgroundVariants,
+  onAiBackgroundVariantsChange,
   jobStatus,
   onStartCrawl,
   onStopJob,
 }: InitFormProps): React.JSX.Element {
   const isBusy = jobStatus === "running" || jobStatus === "producing";
+  const effectiveVariants = Math.max(1, Math.min(10, Math.max(aiBackgroundVariants, referenceImages.length)));
 
   return (
     <section className="flex flex-col gap-5 rounded-xl border border-slate-800 bg-slate-900/90 p-5 shadow-xl">
@@ -96,12 +101,43 @@ export function InitForm({
         </select>
       </div>
 
+      {/* Mockup AI Variants Count Slider */}
+      <div className="flex flex-col gap-1.5 rounded-lg border border-slate-800 bg-slate-950/60 p-3">
+        <div className="flex items-center justify-between">
+          <label htmlFor="variants-input" className="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
+            <span>🖼️ Số mockup AI / sản phẩm:</span>
+            <span className="text-cyan-400 font-bold">{effectiveVariants} ảnh</span>
+          </label>
+          <span className="text-[11px] text-slate-400">1 – 10 ảnh</span>
+        </div>
+        <div className="flex items-center gap-3 pt-1">
+          <input
+            id="variants-input"
+            type="range"
+            min={1}
+            max={10}
+            value={effectiveVariants}
+            onChange={(e) => onAiBackgroundVariantsChange(Number(e.target.value))}
+            disabled={isBusy}
+            className="flex-1 accent-cyan-400 h-2 bg-slate-700 rounded-lg cursor-pointer disabled:opacity-50"
+          />
+          <span className="w-8 text-center text-xs font-bold text-cyan-300 bg-slate-800 px-2 py-0.5 rounded border border-slate-700">
+            {effectiveVariants}
+          </span>
+        </div>
+        <p className="text-[11px] text-slate-400">
+          {referenceImages.length > 0
+            ? `✓ Tự động khớp tối thiểu ${referenceImages.length} ảnh phòng tham chiếu được nạp (tối đa 10).`
+            : "Hệ thống sẽ render ngẫu hứng qua 10 góc phòng & bối cảnh lifestyle cao cấp độc bản."}
+        </p>
+      </div>
+
       {/* Reference Images Dropzone */}
       <ReferenceDropzone
         images={referenceImages}
         onChange={onReferenceImagesChange}
         disabled={isBusy}
-        maxImages={5}
+        maxImages={10}
       />
 
       {/* Action Buttons */}

@@ -39,10 +39,10 @@ class PipelineConfig:
     gemini_model: str = "gemini-2.5-flash"
     task5_token_path: Path | None = None
     task5_provider: str = "pinterest-browser"
-    task5_max_images_per_query: int = 30
+    task5_max_images_per_query: int = 12
     task5_max_crawl_trends: int = 5
-    task5_max_downloads: int = 250
-    task5_top_images: int = 100
+    task5_max_downloads: int = 40
+    task5_top_images: int = 30
     task5_vision_mode: str = "auto"
     task5_crawl_purpose: str = "auto"
     task5_product_focus: str = "auto"
@@ -71,6 +71,7 @@ class PipelineConfig:
     task4_mockup_engine: str = "direct_ai"
     task4_background: str = ""
     task4_ai_limit: int = 5
+    task4_room_templates: tuple[Path, ...] = ()
     task4_variants_per_product: int = 5
     task4_quality_attempts: int = 3
     template_mockup_model: str = "gemini-3-pro-image"

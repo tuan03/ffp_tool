@@ -42,11 +42,11 @@ class Task5CrawlerConfig:
     package_path: Path
     output_dir: Path
     provider: str = "pinterest-browser"
-    max_images_per_query: int = 30
+    max_images_per_query: int = 12
     max_trends: int = 5
     max_queries_per_trend: int = 6
-    max_downloads: int = 250
-    top_images: int = 100
+    max_downloads: int = 40
+    top_images: int = 30
     vision_mode: str = "auto"
     crawl_purpose: str = "inspiration"
     product_focus: str = "auto"

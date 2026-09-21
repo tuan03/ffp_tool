@@ -58,15 +58,17 @@ $toast = [Windows.UI.Notifications.ToastNotification]::new($xml)
         pass
 
 
-def show_floating_desktop_card(title: str, message: str, url: str = "http://127.0.0.1:8765/#pinterest-pod", duration_sec: int = 10) -> None:
-    """Shows native Windows always-on-top popup with audio chime and auto-restore on OK."""
+def show_floating_desktop_card(title: str, message: str, url: str = "http://127.0.0.1:8765/#pinterest-pod", duration_sec: int = 7) -> None:
+    """Shows native Windows notification banner with audio chime and auto-dismiss."""
     play_chime()
     send_windows_toast(title, message)
 
     try:
-        formatted_message = f"{message}\n\n👉 Bấm OK để mở lại giao diện Pinterest POD (tự động đóng sau {duration_sec}s)"
-        # MB_OK (0x0) | MB_ICONINFORMATION (0x40) | MB_TOPMOST (0x40000) | MB_SETFOREGROUND (0x10000) | MB_SERVICE_NOTIFICATION (0x200000)
-        flags = 0x00000000 | 0x00000040 | 0x00040000 | 0x00010000 | 0x00200000
+        formatted_message = f"{message}\n\n👉 Bấm OK để xem chi tiết (tự đóng sau {duration_sec}s)"
+        is_error = any(w in title.lower() or w in message.lower() for w in ("lỗi", "thất bại", "error", "failed"))
+        icon_flag = 0x00000010 if is_error else 0x00000040
+        # MB_OK (0x0) | MB_ICON (0x10 or 0x40) | MB_TOPMOST (0x40000) | MB_SETFOREGROUND (0x10000) | MB_SERVICE_NOTIFICATION (0x200000)
+        flags = 0x00000000 | icon_flag | 0x00040000 | 0x00010000 | 0x00200000
         timeout_ms = max(3, duration_sec) * 1000
 
         res = ctypes.windll.user32.MessageBoxTimeoutW(
@@ -93,7 +95,7 @@ def main() -> int:
     parser.add_argument("--title", default="Pinterest POD Studio", help="Notification title")
     parser.add_argument("--message", default="Đã hoàn thành tác vụ!", help="Notification message")
     parser.add_argument("--url", default="http://127.0.0.1:8765/#pinterest-pod", help="URL to open")
-    parser.add_argument("--duration", type=int, default=10, help="Display duration in seconds")
+    parser.add_argument("--duration", type=int, default=7, help="Display duration in seconds")
     parser.add_argument("--delay", type=int, default=0, help="Delay in seconds before showing")
     args = parser.parse_args()
 
