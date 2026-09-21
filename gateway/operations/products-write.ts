@@ -40,7 +40,7 @@ const PRODUCT_CREATE_MUTATION = `
 
 const PRODUCT_VARIANTS_BULK_CREATE_MUTATION = `
   mutation ProductVariantsBulkCreate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
-    productVariantsBulkCreate(productId: $productId, variants: $variants) {
+    productVariantsBulkCreate(productId: $productId, variants: $variants, strategy: REMOVE_STANDALONE_VARIANT) {
       productVariants {
         id
         title
@@ -207,11 +207,13 @@ export async function executeProductsCreate(
 
   const product = mapProductNode(raw.productCreate.product);
 
-  // If public input contains multiple variants, create additional variants via productVariantsBulkCreate
+  // If public input contains multiple variants, create all variants via productVariantsBulkCreate
+  // with strategy: REMOVE_STANDALONE_VARIANT so the initial default standalone variant is deleted
   if (Array.isArray(productInput.variants) && productInput.variants.length > 1) {
-    const extraVariants = (productInput.variants as readonly Record<string, unknown>[]).slice(1);
-    const variantsInput = extraVariants.map((v) => {
+    const allVariants = productInput.variants as readonly Record<string, unknown>[];
+    const variantsInput = allVariants.map((v) => {
       const vInput: Record<string, unknown> = {};
+      if (v.title !== undefined) vInput.title = v.title;
       if (v.price !== undefined) vInput.price = v.price;
       if (v.compareAtPrice !== undefined) vInput.compareAtPrice = v.compareAtPrice;
       if (v.barcode !== undefined) vInput.barcode = v.barcode;
@@ -248,7 +250,7 @@ export async function executeProductsCreate(
       }
 
       if (extraRaw.productVariantsBulkCreate.productVariants) {
-        const mappedExtra: ProductVariantSummary[] = extraRaw.productVariantsBulkCreate.productVariants.map((node) => ({
+        const mappedVariants: ProductVariantSummary[] = extraRaw.productVariantsBulkCreate.productVariants.map((node) => ({
           id: node.id,
           productId: product.id,
           title: node.title,
@@ -261,14 +263,14 @@ export async function executeProductsCreate(
         return {
           product: {
             ...product,
-            variants: [...product.variants, ...mappedExtra],
+            variants: mappedVariants,
           },
         };
       }
     } catch (err: unknown) {
       const errMsg = err instanceof Error ? err.message : String(err);
       throw new GatewayError(
-        `Product created (${product.id}) but failed to create additional variants: ${errMsg}`,
+        `Product created (${product.id}) but failed to create variants: ${errMsg}`,
         "SHOPIFY_USER_ERROR",
         400,
         undefined,

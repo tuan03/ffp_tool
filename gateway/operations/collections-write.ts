@@ -68,20 +68,15 @@ const CHECK_COLLECTION_TYPE_QUERY = `
   }
 `;
 
-const COLLECTION_ADD_PRODUCTS_MUTATION = `
-  mutation CollectionAddProducts($id: ID!, $productIds: [ID!]!) {
-    collectionAddProducts(id: $id, productIds: $productIds) {
-      userErrors {
-        field
-        message
+const COLLECTION_UPDATE_MEMBERSHIP_MUTATION = `
+  mutation CollectionUpdateMembership($id: ID!, $collection: CollectionUpdateInput!) {
+    collectionUpdate(id: $id, collection: $collection) {
+      collection {
+        id
+        productsCount {
+          count
+        }
       }
-    }
-  }
-`;
-
-const COLLECTION_REMOVE_PRODUCTS_MUTATION = `
-  mutation CollectionRemoveProducts($id: ID!, $productIds: [ID!]!) {
-    collectionRemoveProducts(id: $id, productIds: $productIds) {
       userErrors {
         field
         message
@@ -322,39 +317,33 @@ export async function executeCollectionsUpdateMembership(
     );
   }
 
-  // 2. Perform Add Products if any
-  if (productIdsToAdd.length > 0) {
-    interface AddProductsResponse {
-      readonly collectionAddProducts: {
+  // 2. Perform collectionUpdate with inclusion selectionsToAdd / selectionsToRemove
+  if (productIdsToAdd.length > 0 || productIdsToRemove.length > 0) {
+    interface CollectionUpdateMembershipResponse {
+      readonly collectionUpdate: {
+        readonly collection: { readonly id: string; readonly productsCount?: { readonly count: number } } | null;
         readonly userErrors: readonly MutationUserErrorItem[];
       };
     }
-    const addRaw = await client.query<AddProductsResponse>(
-      store,
-      COLLECTION_ADD_PRODUCTS_MUTATION,
-      { id: collectionId, productIds: productIdsToAdd },
-      { isWrite: true, requestId: requestId ? `${requestId}:add` : undefined },
-    );
-    if (addRaw.collectionAddProducts.userErrors && addRaw.collectionAddProducts.userErrors.length > 0) {
-      throw mapUserErrorsToGatewayError(addRaw.collectionAddProducts.userErrors);
-    }
-  }
 
-  // 3. Perform Remove Products if any
-  if (productIdsToRemove.length > 0) {
-    interface RemoveProductsResponse {
-      readonly collectionRemoveProducts: {
-        readonly userErrors: readonly MutationUserErrorItem[];
-      };
-    }
-    const removeRaw = await client.query<RemoveProductsResponse>(
+    const collectionPatch: Record<string, unknown> = {
+      inclusions: {
+        ...(productIdsToAdd.length > 0 ? { selectionsToAdd: productIdsToAdd } : {}),
+        ...(productIdsToRemove.length > 0 ? { selectionsToRemove: productIdsToRemove } : {}),
+      },
+      ...(productIdsToAdd.length > 0 ? { selectionsToAdd: productIdsToAdd } : {}),
+      ...(productIdsToRemove.length > 0 ? { selectionsToRemove: productIdsToRemove } : {}),
+    };
+
+    const raw = await client.query<CollectionUpdateMembershipResponse>(
       store,
-      COLLECTION_REMOVE_PRODUCTS_MUTATION,
-      { id: collectionId, productIds: productIdsToRemove },
-      { isWrite: true, requestId: requestId ? `${requestId}:remove` : undefined },
+      COLLECTION_UPDATE_MEMBERSHIP_MUTATION,
+      { id: collectionId, collection: collectionPatch },
+      { isWrite: true, requestId },
     );
-    if (removeRaw.collectionRemoveProducts.userErrors && removeRaw.collectionRemoveProducts.userErrors.length > 0) {
-      throw mapUserErrorsToGatewayError(removeRaw.collectionRemoveProducts.userErrors);
+
+    if (raw.collectionUpdate.userErrors && raw.collectionUpdate.userErrors.length > 0) {
+      throw mapUserErrorsToGatewayError(raw.collectionUpdate.userErrors);
     }
   }
 

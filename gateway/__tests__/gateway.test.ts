@@ -924,6 +924,23 @@ describe("Gateway: Operations & Dispatcher", () => {
     assert.equal(callCount, 0, "Preview mode must NEVER send HTTP mutations to Shopify");
   });
 
+  it("rejects preview mode when storeId does not exist in store registry", async () => {
+    const dispatcher = setupGateway({});
+    await assert.rejects(
+      async () =>
+        dispatcher.dispatch({
+          storeId: "store-does-not-exist",
+          operation: "products.delete",
+          payload: { id: "gid://shopify/Product/1" },
+          mode: "preview",
+        }),
+      (err: unknown) =>
+        err instanceof GatewayError &&
+        err.code === "SHOPIFY_NOT_FOUND" &&
+        err.httpStatus === 404,
+    );
+  });
+
   it("ensures preview does not pollute IdempotencyStore so apply executes Shopify mutation", async () => {
     let shopifyMutationCalled = false;
     const dispatcher = setupGateway(async () => {
@@ -1305,13 +1322,31 @@ describe("Gateway: Operations & Dispatcher", () => {
             productVariantsBulkCreate: {
               productVariants: [
                 {
-                  id: "gid://shopify/ProductVariant/v-extra-1",
-                  title: "Red / XL",
-                  price: "40.00",
-                  compareAtPrice: "50.00",
-                  barcode: "222",
-                  inventoryQuantity: 5,
-                  inventoryItem: { sku: "SKU-EXTRA" },
+                  id: "gid://shopify/ProductVariant/v-s",
+                  title: "Small",
+                  price: "25.00",
+                  compareAtPrice: "30.00",
+                  barcode: "BAR-S",
+                  inventoryQuantity: 10,
+                  inventoryItem: { sku: "TSHIRT-S" },
+                },
+                {
+                  id: "gid://shopify/ProductVariant/v-m",
+                  title: "Medium",
+                  price: "25.00",
+                  compareAtPrice: "30.00",
+                  barcode: "BAR-M",
+                  inventoryQuantity: 15,
+                  inventoryItem: { sku: "TSHIRT-M" },
+                },
+                {
+                  id: "gid://shopify/ProductVariant/v-l",
+                  title: "Large",
+                  price: "28.00",
+                  compareAtPrice: "35.00",
+                  barcode: "BAR-L",
+                  inventoryQuantity: 20,
+                  inventoryItem: { sku: "TSHIRT-L" },
                 },
               ],
               userErrors: [],
@@ -1328,20 +1363,25 @@ describe("Gateway: Operations & Dispatcher", () => {
       operation: "products.create",
       payload: {
         product: {
-          title: "Multi Variant Hoodie",
+          title: "T-Shirt Matrix",
           variants: [
-            { price: "35.00", sku: "SKU-INIT" },
-            { price: "40.00", compareAtPrice: "50.00", sku: "SKU-EXTRA" },
+            { title: "Small", price: "25.00", compareAtPrice: "30.00", sku: "TSHIRT-S" },
+            { title: "Medium", price: "25.00", compareAtPrice: "30.00", sku: "TSHIRT-M" },
+            { title: "Large", price: "28.00", compareAtPrice: "35.00", sku: "TSHIRT-L" },
           ],
         },
       },
-      requestId: "req-multi-var-1",
+      requestId: "req-multi-var-3",
     });
 
     assert.equal(res.success, true);
     assert.equal(bulkCreateCalled, true);
-    const prod = (res.data as { product: { variants: unknown[] } }).product;
-    assert.equal(prod.variants.length, 2);
+    const prod = (res.data as { product: { variants: { id: string; title: string }[] } }).product;
+    // Exactly 3 variants returned, NOT 4
+    assert.equal(prod.variants.length, 3);
+    // Temporary standalone "Default Title" variant is completely deleted
+    assert.equal(prod.variants.some((v) => v.title === "Default Title"), false);
+    assert.deepEqual(prod.variants.map((v) => v.title), ["Small", "Medium", "Large"]);
   });
 
   it("returns createdProductId reconciliation info if additional variants creation fails", async () => {
