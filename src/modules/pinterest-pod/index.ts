@@ -38,7 +38,7 @@ export {
   startProductionJob,
 } from "./service";
 
-export { FACTORY_PRINT_STANDARDS, STOREFRONT_DISPLAY_STANDARD } from "./types";
+export { FACTORY_PRINT_STANDARDS, POD_SIZE_PRESETS, STOREFRONT_DISPLAY_STANDARD } from "./types";
 export type {
   PinterestAuthStatus,
   PinterestDiscoveryInput,
@@ -64,6 +64,7 @@ export type {
   PodPrintMasterSpec,
   PodProductType,
   PodReferenceImage,
+  PodSizePresetItem,
   PodStorefrontStandard,
   PodSummaryMetrics,
   PodWorkflowStage,

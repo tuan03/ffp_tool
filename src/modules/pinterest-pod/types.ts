@@ -317,3 +317,31 @@ export const STOREFRONT_DISPLAY_STANDARD: Readonly<PodStorefrontStandard> = {
   label: "1500 x 1500 px (White Background #ffffff, Fit Contain)",
   badge: "Shopify Storefront: 1500 x 1500 px (Fit Contain, #ffffff)",
 };
+
+/** Product size & pricing variant preset specification */
+export interface PodSizePresetItem {
+  readonly label: string;
+  readonly code: string;
+  readonly price: string;
+  readonly compareAtPrice: string;
+}
+
+/** Standard size and pricing presets for Rug and Blanket products */
+export const POD_SIZE_PRESETS: Readonly<
+  Record<"rug_rectangle" | "rug_round" | "blanket", readonly PodSizePresetItem[]>
+> = {
+  rug_rectangle: [
+    { label: '36" x 60"', code: "36X60", price: "69.99", compareAtPrice: "89.99" },
+    { label: '48" x 72"', code: "48X72", price: "99.99", compareAtPrice: "129.99" },
+    { label: '60" x 96"', code: "60X96", price: "149.99", compareAtPrice: "189.99" },
+  ],
+  rug_round: [
+    { label: '3 ft Round (36")', code: "3RND", price: "59.99", compareAtPrice: "79.99" },
+    { label: '4 ft Round (48")', code: "4RND", price: "89.99", compareAtPrice: "119.99" },
+  ],
+  blanket: [
+    { label: '50" x 60"', code: "50X60", price: "49.99", compareAtPrice: "69.99" },
+    { label: '60" x 80"', code: "60X80", price: "69.99", compareAtPrice: "89.99" },
+  ],
+};
+
