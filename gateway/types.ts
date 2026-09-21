@@ -119,15 +119,27 @@ export interface ProductVariantSummary {
   readonly inventoryQuantity?: number;
 }
 
+export interface ProductImageSummary {
+  readonly id?: string;
+  readonly url: string;
+  readonly altText?: string;
+  readonly width?: number;
+  readonly height?: number;
+}
+
 export interface ProductSummary {
   readonly id: string;
   readonly title: string;
   readonly handle: string;
+  readonly description?: string;
   readonly descriptionHtml?: string;
   readonly status: "ACTIVE" | "ARCHIVED" | "DRAFT";
   readonly vendor?: string;
   readonly productType?: string;
   readonly tags: readonly string[];
+  readonly onlineStoreUrl?: string;
+  readonly featuredImage?: ProductImageSummary;
+  readonly images?: readonly ProductImageSummary[];
   readonly variants: readonly ProductVariantSummary[];
   readonly seo?: { readonly title?: string; readonly description?: string };
   readonly createdAt: string;

@@ -19,6 +19,7 @@ import {
   type StoreConfig,
   type HttpTransport,
   type IdempotencyStore,
+  type ProductSummary,
 } from "../index";
 
 import { createModuleApiRunner } from "../../src/modules/module-api/service";
@@ -519,6 +520,14 @@ describe("Gateway: Operations & Dispatcher", () => {
                 handle: "product-1",
                 status: "ACTIVE",
                 tags: ["pod"],
+                onlineStoreUrl: "https://store-test.myshopify.com/products/product-1",
+                featuredImage: {
+                  id: "gid://shopify/ProductImage/101",
+                  url: "https://cdn.shopify.com/products/img-1.jpg",
+                  altText: "Product 1 Image",
+                  width: 800,
+                  height: 800,
+                },
                 seo: {
                   title: "Product 1 SEO Title",
                   description: "Product 1 SEO Description",
@@ -541,11 +550,25 @@ describe("Gateway: Operations & Dispatcher", () => {
 
     assert.equal(res.success, true);
     const listData = res.data as {
-      products: { id: string; title: string; seo?: { title?: string; description?: string } }[];
+      products: {
+        id: string;
+        title: string;
+        onlineStoreUrl?: string;
+        featuredImage?: { id?: string; url: string; altText?: string; width?: number; height?: number };
+        seo?: { title?: string; description?: string };
+      }[];
       pageInfo: { hasNextPage: boolean };
     };
     assert.equal(listData.products.length, 1);
     assert.equal(listData.pageInfo.hasNextPage, true);
+    assert.equal(listData.products[0].onlineStoreUrl, "https://store-test.myshopify.com/products/product-1");
+    assert.deepEqual(listData.products[0].featuredImage, {
+      id: "gid://shopify/ProductImage/101",
+      url: "https://cdn.shopify.com/products/img-1.jpg",
+      altText: "Product 1 Image",
+      width: 800,
+      height: 800,
+    });
     assert.deepEqual(listData.products[0].seo, {
       title: "Product 1 SEO Title",
       description: "Product 1 SEO Description",
@@ -570,8 +593,40 @@ describe("Gateway: Operations & Dispatcher", () => {
           id: "gid://shopify/Product/123",
           title: "Detailed Product",
           handle: "detailed-product",
+          description: "Detailed product description in plain text",
+          descriptionHtml: "<p>Detailed product description in plain text</p>",
           status: "ACTIVE",
           tags: ["pod"],
+          onlineStoreUrl: "https://store-test.myshopify.com/products/detailed-product",
+          featuredImage: {
+            id: "gid://shopify/ProductImage/201",
+            url: "https://cdn.shopify.com/products/detail-featured.jpg",
+            altText: "Detailed Product Featured",
+            width: 1000,
+            height: 1000,
+          },
+          images: {
+            edges: [
+              {
+                node: {
+                  id: "gid://shopify/ProductImage/201",
+                  url: "https://cdn.shopify.com/products/detail-featured.jpg",
+                  altText: "Detailed Product Featured",
+                  width: 1000,
+                  height: 1000,
+                },
+              },
+              {
+                node: {
+                  id: "gid://shopify/ProductImage/202",
+                  url: "https://cdn.shopify.com/products/detail-gallery.jpg",
+                  altText: "Detailed Product Gallery",
+                  width: 1000,
+                  height: 1000,
+                },
+              },
+            ],
+          },
           createdAt: "2026-09-01",
           updatedAt: "2026-09-20",
           variants: { edges: [] },
@@ -586,8 +641,40 @@ describe("Gateway: Operations & Dispatcher", () => {
     });
 
     assert.equal(res.success, true);
-    const data = res.data as { product: { title: string } };
+    const data = res.data as {
+      product: {
+        title: string;
+        description?: string;
+        onlineStoreUrl?: string;
+        featuredImage?: { id?: string; url: string; altText?: string; width?: number; height?: number };
+        images?: readonly { id?: string; url: string; altText?: string; width?: number; height?: number }[];
+      };
+    };
     assert.equal(data.product.title, "Detailed Product");
+    assert.equal(data.product.description, "Detailed product description in plain text");
+    assert.equal(data.product.onlineStoreUrl, "https://store-test.myshopify.com/products/detailed-product");
+    assert.deepEqual(data.product.featuredImage, {
+      id: "gid://shopify/ProductImage/201",
+      url: "https://cdn.shopify.com/products/detail-featured.jpg",
+      altText: "Detailed Product Featured",
+      width: 1000,
+      height: 1000,
+    });
+    assert.equal(data.product.images?.length, 2);
+    assert.deepEqual(data.product.images?.[0], {
+      id: "gid://shopify/ProductImage/201",
+      url: "https://cdn.shopify.com/products/detail-featured.jpg",
+      altText: "Detailed Product Featured",
+      width: 1000,
+      height: 1000,
+    });
+    assert.deepEqual(data.product.images?.[1], {
+      id: "gid://shopify/ProductImage/202",
+      url: "https://cdn.shopify.com/products/detail-gallery.jpg",
+      altText: "Detailed Product Gallery",
+      width: 1000,
+      height: 1000,
+    });
   });
 
   it("executes collections.list and collections.get", async () => {
@@ -2972,6 +3059,175 @@ describe("Gateway: HTTP Server Handler & E2E Integration with module-api", () =>
     assert.equal(data.removedCount, 0);
     // Only 1 call to query sources; NO mutation call was made
     assert.equal(callCount, 1);
+  });
+
+  it("safely normalizes missing or malformed product image and url fields", async () => {
+    const registry = new InMemoryStoreRegistry([
+      {
+        storeId: "store-img-edge",
+        shopDomain: "store-img-edge.myshopify.com",
+        apiVersion: "2026-07",
+        auth: { type: "static", staticToken: "tok" },
+      },
+    ]);
+
+    const fakeTransport: HttpTransport = async (_url, init) => {
+      const body = JSON.parse(String(init?.body || "{}")) as { query: string };
+      if (body.query.includes("ProductsList")) {
+        return createMockResponse({
+          data: {
+            products: {
+              pageInfo: { hasNextPage: false, hasPreviousPage: false },
+              edges: [
+                {
+                  cursor: "cur_1",
+                  node: {
+                    id: "gid://shopify/Product/1",
+                    title: "Product Without Images",
+                    handle: "prod-no-img",
+                    status: "ACTIVE",
+                    tags: [],
+                    onlineStoreUrl: null,
+                    featuredImage: null,
+                    seo: null,
+                    createdAt: "2026-09-01",
+                    updatedAt: "2026-09-20",
+                    variants: { edges: [] },
+                  },
+                },
+                {
+                  cursor: "cur_2",
+                  node: {
+                    id: "gid://shopify/Product/2",
+                    title: "Product With Empty Image URL",
+                    handle: "prod-empty-url",
+                    status: "ACTIVE",
+                    tags: [],
+                    onlineStoreUrl: "",
+                    featuredImage: { id: "img-bad", url: "", altText: "empty" },
+                    seo: null,
+                    createdAt: "2026-09-01",
+                    updatedAt: "2026-09-20",
+                    variants: { edges: [] },
+                  },
+                },
+              ],
+            },
+          },
+        });
+      }
+      return createMockResponse({});
+    };
+
+    const client = new ShopifyGraphqlClient({
+      tokenProvider: new StaticAccessTokenProvider(),
+      throttleManager: new InMemoryThrottleManager(),
+      baseTransport: fakeTransport,
+    });
+    const dispatcher = new GatewayDispatcher({ storeRegistry: registry, graphqlClient: client });
+
+    const listRes = await dispatcher.dispatch({
+      storeId: "store-img-edge",
+      operation: "products.list",
+      payload: {},
+    });
+
+    assert.equal(listRes.success, true);
+    const products = (listRes.data as { products: ProductSummary[] }).products;
+    assert.equal(products[0].onlineStoreUrl, undefined);
+    assert.equal(products[0].featuredImage, undefined);
+    assert.equal(products[0].images, undefined);
+
+    assert.equal(products[1].onlineStoreUrl, "");
+    assert.equal(products[1].featuredImage, undefined);
+  });
+
+  it("handles products.create and products.update preview with images, url, and description", async () => {
+    const registry = new InMemoryStoreRegistry([
+      {
+        storeId: "store-preview-img",
+        shopDomain: "store-preview-img.myshopify.com",
+        apiVersion: "2026-07",
+        auth: { type: "static", staticToken: "tok" },
+      },
+    ]);
+    const client = new ShopifyGraphqlClient({
+      tokenProvider: new StaticAccessTokenProvider(),
+      throttleManager: new InMemoryThrottleManager(),
+      baseTransport: async () => createMockResponse({}),
+    });
+    const dispatcher = new GatewayDispatcher({ storeRegistry: registry, graphqlClient: client });
+
+    const createPreview = await dispatcher.dispatch({
+      storeId: "store-preview-img",
+      operation: "products.create",
+      mode: "preview",
+      payload: {
+        product: {
+          title: "Preview With Images",
+          description: "Preview plain description",
+          onlineStoreUrl: "https://store.example.com/products/preview-with-images",
+          featuredImage: {
+            id: "gid://shopify/ProductImage/preview-1",
+            url: "https://cdn.shopify.com/preview-1.jpg",
+            altText: "Preview Image 1",
+            width: 800,
+            height: 800,
+          },
+          images: [
+            {
+              id: "gid://shopify/ProductImage/preview-1",
+              url: "https://cdn.shopify.com/preview-1.jpg",
+              altText: "Preview Image 1",
+              width: 800,
+              height: 800,
+            },
+          ],
+        },
+      },
+    });
+
+    assert.equal(createPreview.success, true);
+    const createdProduct = (createPreview.data as { product: ProductSummary }).product;
+    assert.equal(createdProduct.description, "Preview plain description");
+    assert.equal(createdProduct.onlineStoreUrl, "https://store.example.com/products/preview-with-images");
+    assert.deepEqual(createdProduct.featuredImage, {
+      id: "gid://shopify/ProductImage/preview-1",
+      url: "https://cdn.shopify.com/preview-1.jpg",
+      altText: "Preview Image 1",
+      width: 800,
+      height: 800,
+    });
+    assert.equal(createdProduct.images?.length, 1);
+
+    const updatePreview = await dispatcher.dispatch({
+      storeId: "store-preview-img",
+      operation: "products.update",
+      mode: "preview",
+      payload: {
+        id: "gid://shopify/Product/existing-1",
+        product: {
+          title: "Updated Preview",
+          description: "Updated plain description",
+          onlineStoreUrl: "https://store.example.com/products/updated-preview",
+          featuredImage: {
+            url: "https://cdn.shopify.com/updated-preview.jpg",
+          },
+        },
+      },
+    });
+
+    assert.equal(updatePreview.success, true);
+    const updatedProduct = (updatePreview.data as { product: ProductSummary }).product;
+    assert.equal(updatedProduct.description, "Updated plain description");
+    assert.equal(updatedProduct.onlineStoreUrl, "https://store.example.com/products/updated-preview");
+    assert.deepEqual(updatedProduct.featuredImage, {
+      id: undefined,
+      url: "https://cdn.shopify.com/updated-preview.jpg",
+      altText: undefined,
+      width: undefined,
+      height: undefined,
+    });
   });
 });
 

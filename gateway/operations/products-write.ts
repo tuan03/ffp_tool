@@ -1,6 +1,6 @@
 import { GatewayError, mapUserErrorsToGatewayError, type MutationUserErrorItem } from "../errors";
 import type { ShopifyGraphqlClient } from "../shopify-graphql-client";
-import type { ProductSummary, ProductVariantSummary, StoreConfig } from "../types";
+import type { ProductImageSummary, ProductSummary, ProductVariantSummary, StoreConfig } from "../types";
 import { mapProductNode, type RawProductNode } from "./products";
 
 const PRODUCT_CREATE_MUTATION = `
@@ -10,11 +10,31 @@ const PRODUCT_CREATE_MUTATION = `
         id
         title
         handle
+        description
         descriptionHtml
         status
         vendor
         productType
         tags
+        onlineStoreUrl
+        featuredImage {
+          id
+          url
+          altText
+          width
+          height
+        }
+        images(first: 50) {
+          edges {
+            node {
+              id
+              url
+              altText
+              width
+              height
+            }
+          }
+        }
         seo {
           title
           description
@@ -71,11 +91,31 @@ const PRODUCT_UPDATE_MUTATION = `
         id
         title
         handle
+        description
         descriptionHtml
         status
         vendor
         productType
         tags
+        onlineStoreUrl
+        featuredImage {
+          id
+          url
+          altText
+          width
+          height
+        }
+        images(first: 50) {
+          edges {
+            node {
+              id
+              url
+              altText
+              width
+              height
+            }
+          }
+        }
         seo {
           title
           description
@@ -175,6 +215,8 @@ export async function executeProductsCreate(
       id: "gid://shopify/Product/preview-new",
       title,
       handle,
+      description:
+        typeof productInput.description === "string" ? productInput.description : undefined,
       descriptionHtml:
         typeof productInput.descriptionHtml === "string" ? productInput.descriptionHtml : undefined,
       status:
@@ -184,6 +226,29 @@ export async function executeProductsCreate(
       vendor: typeof productInput.vendor === "string" ? productInput.vendor : undefined,
       productType: typeof productInput.productType === "string" ? productInput.productType : undefined,
       tags: Array.isArray(productInput.tags) ? (productInput.tags as string[]) : [],
+      onlineStoreUrl:
+        typeof productInput.onlineStoreUrl === "string" ? productInput.onlineStoreUrl : undefined,
+      featuredImage:
+        productInput.featuredImage && typeof productInput.featuredImage === "object" && typeof (productInput.featuredImage as Record<string, unknown>).url === "string"
+          ? {
+              id: typeof (productInput.featuredImage as Record<string, unknown>).id === "string" ? (productInput.featuredImage as Record<string, unknown>).id as string : undefined,
+              url: (productInput.featuredImage as Record<string, unknown>).url as string,
+              altText: typeof (productInput.featuredImage as Record<string, unknown>).altText === "string" ? (productInput.featuredImage as Record<string, unknown>).altText as string : undefined,
+              width: typeof (productInput.featuredImage as Record<string, unknown>).width === "number" ? (productInput.featuredImage as Record<string, unknown>).width as number : undefined,
+              height: typeof (productInput.featuredImage as Record<string, unknown>).height === "number" ? (productInput.featuredImage as Record<string, unknown>).height as number : undefined,
+            }
+          : undefined,
+      images: Array.isArray(productInput.images)
+        ? (productInput.images as readonly Record<string, unknown>[])
+            .filter((img) => img && typeof img.url === "string")
+            .map((img) => ({
+              id: typeof img.id === "string" ? img.id : undefined,
+              url: img.url as string,
+              altText: typeof img.altText === "string" ? img.altText : undefined,
+              width: typeof img.width === "number" ? img.width : undefined,
+              height: typeof img.height === "number" ? img.height : undefined,
+            }))
+        : undefined,
       variants: previewVariants,
       seo:
         productInput.seo && typeof productInput.seo === "object"
@@ -409,6 +474,8 @@ export async function executeProductsUpdate(
       id,
       title: typeof productPatch.title === "string" ? productPatch.title : "Preview Product",
       handle: typeof productPatch.handle === "string" ? productPatch.handle : "preview-product",
+      description:
+        typeof productPatch.description === "string" ? productPatch.description : undefined,
       descriptionHtml:
         typeof productPatch.descriptionHtml === "string" ? productPatch.descriptionHtml : undefined,
       status:
@@ -418,6 +485,29 @@ export async function executeProductsUpdate(
       vendor: typeof productPatch.vendor === "string" ? productPatch.vendor : undefined,
       productType: typeof productPatch.productType === "string" ? productPatch.productType : undefined,
       tags: Array.isArray(productPatch.tags) ? (productPatch.tags as string[]) : [],
+      onlineStoreUrl:
+        typeof productPatch.onlineStoreUrl === "string" ? productPatch.onlineStoreUrl : undefined,
+      featuredImage:
+        productPatch.featuredImage && typeof productPatch.featuredImage === "object" && typeof (productPatch.featuredImage as Record<string, unknown>).url === "string"
+          ? {
+              id: typeof (productPatch.featuredImage as Record<string, unknown>).id === "string" ? (productPatch.featuredImage as Record<string, unknown>).id as string : undefined,
+              url: (productPatch.featuredImage as Record<string, unknown>).url as string,
+              altText: typeof (productPatch.featuredImage as Record<string, unknown>).altText === "string" ? (productPatch.featuredImage as Record<string, unknown>).altText as string : undefined,
+              width: typeof (productPatch.featuredImage as Record<string, unknown>).width === "number" ? (productPatch.featuredImage as Record<string, unknown>).width as number : undefined,
+              height: typeof (productPatch.featuredImage as Record<string, unknown>).height === "number" ? (productPatch.featuredImage as Record<string, unknown>).height as number : undefined,
+            }
+          : undefined,
+      images: Array.isArray(productPatch.images)
+        ? (productPatch.images as readonly Record<string, unknown>[])
+            .filter((img) => img && typeof img.url === "string")
+            .map((img) => ({
+              id: typeof img.id === "string" ? img.id : undefined,
+              url: img.url as string,
+              altText: typeof img.altText === "string" ? img.altText : undefined,
+              width: typeof img.width === "number" ? img.width : undefined,
+              height: typeof img.height === "number" ? img.height : undefined,
+            }))
+        : undefined,
       variants: [],
       seo:
         productPatch.seo && typeof productPatch.seo === "object"

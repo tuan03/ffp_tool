@@ -68,6 +68,8 @@ function cloneProduct(product: ShopifyProduct): ShopifyProduct {
     tags: [...product.tags],
     variants: product.variants.map(cloneVariant),
     seo: product.seo ? { ...product.seo } : undefined,
+    featuredImage: product.featuredImage ? { ...product.featuredImage } : undefined,
+    images: product.images ? product.images.map((img) => ({ ...img })) : undefined,
   };
 }
 
@@ -331,11 +333,15 @@ export async function runMockModuleApi(input: ShopifyApiInput): Promise<ShopifyA
         id: input.payload.id,
         title: input.payload.product.title ?? existing?.title ?? "Updated Product",
         handle: input.payload.product.handle ?? existing?.handle ?? "updated-product",
+        description: existing?.description,
         descriptionHtml: input.payload.product.descriptionHtml ?? existing?.descriptionHtml,
         status: input.payload.product.status ?? existing?.status ?? "ACTIVE",
         vendor: input.payload.product.vendor ?? existing?.vendor,
         productType: input.payload.product.productType ?? existing?.productType,
         tags: input.payload.product.tags ? [...input.payload.product.tags] : (existing?.tags ? [...existing.tags] : []),
+        onlineStoreUrl: existing?.onlineStoreUrl,
+        featuredImage: existing?.featuredImage ? { ...existing.featuredImage } : undefined,
+        images: existing?.images ? existing.images.map((img) => ({ ...img })) : undefined,
         variants: existing ? existing.variants.map(cloneVariant) : [],
         seo: input.payload.product.seo ? { ...input.payload.product.seo } : existing?.seo,
         createdAt: existing?.createdAt ?? new Date().toISOString(),

@@ -95,15 +95,27 @@ export interface ShopifyProductVariant {
   readonly inventoryQuantity?: number;
 }
 
+export interface ShopifyImage {
+  readonly id?: string;
+  readonly url: string;
+  readonly altText?: string;
+  readonly width?: number;
+  readonly height?: number;
+}
+
 export interface ShopifyProduct {
   readonly id: string;
   readonly title: string;
   readonly handle: string;
+  readonly description?: string;
   readonly descriptionHtml?: string;
   readonly status: "ACTIVE" | "ARCHIVED" | "DRAFT";
   readonly vendor?: string;
   readonly productType?: string;
   readonly tags: readonly string[];
+  readonly onlineStoreUrl?: string;
+  readonly featuredImage?: ShopifyImage;
+  readonly images?: readonly ShopifyImage[];
   readonly variants: readonly ShopifyProductVariant[];
   readonly seo?: ShopifySeo;
   readonly createdAt: string;

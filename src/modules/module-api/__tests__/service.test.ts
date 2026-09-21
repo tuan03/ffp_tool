@@ -65,6 +65,26 @@ test("Module API mock runner executes products.list with filtering", async () =>
   assert.equal(allResponse.success, true);
   assert.equal(allResponse.data.products.length, 3);
   assert.ok(allResponse.data.pageInfo);
+  assert.equal(allResponse.data.products[0]?.description, "Comfortable everyday 100% cotton t-shirt.");
+  assert.equal(
+    allResponse.data.products[0]?.onlineStoreUrl,
+    "https://quickstart-demo.myshopify.com/products/classic-cotton-t-shirt",
+  );
+  assert.deepEqual(allResponse.data.products[0]?.featuredImage, {
+    id: "gid://shopify/ProductImage/5001",
+    url: "https://cdn.shopify.com/s/files/1/0001/products/tshirt-front.jpg",
+    altText: "Classic Cotton T-Shirt front view",
+    width: 1000,
+    height: 1000,
+  });
+  assert.equal(allResponse.data.products[0]?.images?.length, 2);
+  assert.deepEqual(allResponse.data.products[0]?.images?.[0], {
+    id: "gid://shopify/ProductImage/5001",
+    url: "https://cdn.shopify.com/s/files/1/0001/products/tshirt-front.jpg",
+    altText: "Classic Cotton T-Shirt front view",
+    width: 1000,
+    height: 1000,
+  });
   assert.deepEqual(allResponse.data.products[0]?.seo, {
     title: "Classic Cotton T-Shirt | Acme Apparel",
     description: "Comfortable everyday 100% cotton t-shirt for all seasons.",
@@ -99,6 +119,33 @@ test("Module API mock runner executes products.get", async () => {
   assert.equal(foundResponse.success, true);
   assert.notEqual(foundResponse.data.product, null);
   assert.equal(foundResponse.data.product?.title, "Classic Cotton T-Shirt");
+  assert.equal(foundResponse.data.product?.description, "Comfortable everyday 100% cotton t-shirt.");
+  assert.equal(
+    foundResponse.data.product?.onlineStoreUrl,
+    "https://quickstart-demo.myshopify.com/products/classic-cotton-t-shirt",
+  );
+  assert.deepEqual(foundResponse.data.product?.featuredImage, {
+    id: "gid://shopify/ProductImage/5001",
+    url: "https://cdn.shopify.com/s/files/1/0001/products/tshirt-front.jpg",
+    altText: "Classic Cotton T-Shirt front view",
+    width: 1000,
+    height: 1000,
+  });
+  assert.equal(foundResponse.data.product?.images?.length, 2);
+  assert.deepEqual(foundResponse.data.product?.images?.[0], {
+    id: "gid://shopify/ProductImage/5001",
+    url: "https://cdn.shopify.com/s/files/1/0001/products/tshirt-front.jpg",
+    altText: "Classic Cotton T-Shirt front view",
+    width: 1000,
+    height: 1000,
+  });
+  assert.deepEqual(foundResponse.data.product?.images?.[1], {
+    id: "gid://shopify/ProductImage/5002",
+    url: "https://cdn.shopify.com/s/files/1/0001/products/tshirt-back.jpg",
+    altText: "Classic Cotton T-Shirt back view",
+    width: 1000,
+    height: 1000,
+  });
   assert.deepEqual(foundResponse.data.product?.seo, {
     title: "Classic Cotton T-Shirt | Acme Apparel",
     description: "Comfortable everyday 100% cotton t-shirt for all seasons.",
@@ -712,6 +759,23 @@ test("Real service executes products.list response success", async () => {
               handle: "product-1",
               status: "ACTIVE",
               tags: ["tag1"],
+              onlineStoreUrl: "https://store-42.myshopify.com/products/product-1",
+              featuredImage: {
+                id: "gid://shopify/ProductImage/1",
+                url: "https://cdn.shopify.com/product-1.jpg",
+                altText: "Product 1 Alt",
+                width: 600,
+                height: 600,
+              },
+              images: [
+                {
+                  id: "gid://shopify/ProductImage/1",
+                  url: "https://cdn.shopify.com/product-1.jpg",
+                  altText: "Product 1 Alt",
+                  width: 600,
+                  height: 600,
+                },
+              ],
               variants: [],
               seo: {
                 title: "Product 1 SEO Title",
@@ -746,6 +810,22 @@ test("Real service executes products.list response success", async () => {
   assert.equal(response.operation, "products.list");
   assert.equal(response.data.products.length, 1);
   assert.equal(response.data.products[0].title, "Product 1");
+  assert.equal(response.data.products[0].onlineStoreUrl, "https://store-42.myshopify.com/products/product-1");
+  assert.deepEqual(response.data.products[0].featuredImage, {
+    id: "gid://shopify/ProductImage/1",
+    url: "https://cdn.shopify.com/product-1.jpg",
+    altText: "Product 1 Alt",
+    width: 600,
+    height: 600,
+  });
+  assert.equal(response.data.products[0].images?.length, 1);
+  assert.deepEqual(response.data.products[0].images?.[0], {
+    id: "gid://shopify/ProductImage/1",
+    url: "https://cdn.shopify.com/product-1.jpg",
+    altText: "Product 1 Alt",
+    width: 600,
+    height: 600,
+  });
   assert.deepEqual(response.data.products[0].seo, {
     title: "Product 1 SEO Title",
     description: "Product 1 SEO Description",
@@ -765,8 +845,34 @@ test("Real service executes products.get response success", async () => {
             id: "gid://shopify/Product/1",
             title: "Product 1",
             handle: "product-1",
+            description: "Product 1 plain text description",
+            descriptionHtml: "<p>Product 1 plain text description</p>",
             status: "ACTIVE",
             tags: [],
+            onlineStoreUrl: "https://store-42.myshopify.com/products/product-1",
+            featuredImage: {
+              id: "gid://shopify/ProductImage/10",
+              url: "https://cdn.shopify.com/p1-featured.jpg",
+              altText: "Featured Image",
+              width: 800,
+              height: 800,
+            },
+            images: [
+              {
+                id: "gid://shopify/ProductImage/10",
+                url: "https://cdn.shopify.com/p1-featured.jpg",
+                altText: "Featured Image",
+                width: 800,
+                height: 800,
+              },
+              {
+                id: "gid://shopify/ProductImage/11",
+                url: "https://cdn.shopify.com/p1-extra.jpg",
+                altText: "Extra Image",
+                width: 800,
+                height: 800,
+              },
+            ],
             variants: [],
             seo: {
               title: "Product 1 SEO Title",
@@ -795,6 +901,30 @@ test("Real service executes products.get response success", async () => {
   assert.equal(response.success, true);
   assert.equal(response.operation, "products.get");
   assert.equal(response.data.product?.id, "gid://shopify/Product/1");
+  assert.equal(response.data.product?.description, "Product 1 plain text description");
+  assert.equal(response.data.product?.onlineStoreUrl, "https://store-42.myshopify.com/products/product-1");
+  assert.deepEqual(response.data.product?.featuredImage, {
+    id: "gid://shopify/ProductImage/10",
+    url: "https://cdn.shopify.com/p1-featured.jpg",
+    altText: "Featured Image",
+    width: 800,
+    height: 800,
+  });
+  assert.equal(response.data.product?.images?.length, 2);
+  assert.deepEqual(response.data.product?.images?.[0], {
+    id: "gid://shopify/ProductImage/10",
+    url: "https://cdn.shopify.com/p1-featured.jpg",
+    altText: "Featured Image",
+    width: 800,
+    height: 800,
+  });
+  assert.deepEqual(response.data.product?.images?.[1], {
+    id: "gid://shopify/ProductImage/11",
+    url: "https://cdn.shopify.com/p1-extra.jpg",
+    altText: "Extra Image",
+    width: 800,
+    height: 800,
+  });
   assert.deepEqual(response.data.product?.seo, {
     title: "Product 1 SEO Title",
     description: "Product 1 SEO Description",
