@@ -84,12 +84,15 @@ export class ClientCredentialsTokenProvider implements TokenProvider {
       throw new GatewayError("Shopify OAuth response missing access_token", "SHOPIFY_AUTH_FAILED", 401);
     }
 
-    const expiresInSeconds = typeof tokenObj.expires_in === "number" ? tokenObj.expires_in : undefined;
-    const ttlMs = expiresInSeconds !== undefined ? expiresInSeconds * 1000 : this.defaultTtlMs;
+    const rawExpiresIn = typeof tokenObj.expires_in === "number" ? tokenObj.expires_in : undefined;
+    // Cache strictly according to actual expires_in returned by Shopify minus 5-minute safety buffer
+    const effectiveTtlMs = rawExpiresIn !== undefined
+      ? Math.max(60_000, rawExpiresIn * 1000 - this.safetyBufferMs)
+      : Math.max(60_000, this.defaultTtlMs - this.safetyBufferMs);
 
     this.cache.set(store.storeId, {
       token: accessToken,
-      expiresAtMs: now + ttlMs,
+      expiresAtMs: now + effectiveTtlMs,
     });
 
     return accessToken;
