@@ -1,9 +1,15 @@
 export { shopifyApiMockData } from "./mocks/data";
 export { runMockModuleApi } from "./mocks/runner";
 export { getModuleApiRunner } from "./runtime";
-export { runModuleApi } from "./service";
+export {
+  createModuleApiRunner,
+  DEFAULT_GATEWAY_URL,
+  runModuleApi,
+} from "./service";
 export { ShopifyApiError } from "./types";
 export type {
+  ModuleApiConfig,
+  ModuleApiDependencies,
   ModuleApiRunner,
   ShopifyApiErrorCode,
   ShopifyApiInput,
@@ -40,6 +46,7 @@ export type {
   ShopifyConnectionTestInput,
   ShopifyConnectionTestPayload,
   ShopifyConnectionTestResponse,
+  ShopifyExecutionMode,
   ShopifyOperation,
   ShopifyPageInfo,
   ShopifyProduct,

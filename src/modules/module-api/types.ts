@@ -22,13 +22,24 @@ export type ShopifyApiErrorCode =
   | "SHOPIFY_NETWORK_ERROR"
   | "SHOPIFY_UNKNOWN_WRITE_STATE";
 
+export type ShopifyExecutionMode = "preview" | "apply";
+
+export interface ModuleApiConfig {
+  readonly gatewayUrl?: string;
+  readonly timeoutMs?: number;
+}
+
+export interface ModuleApiDependencies {
+  readonly fetch?: typeof fetch;
+}
+
 export class ShopifyApiError extends Error {
   public constructor(
     message: string,
     public readonly code: ShopifyApiErrorCode,
     public readonly cause?: unknown,
   ) {
-    super(message);
+    super(message, cause !== undefined ? { cause } : undefined);
     this.name = "ShopifyApiError";
   }
 }
@@ -138,6 +149,7 @@ export interface ShopifyConnectionTestData {
 
 export interface ShopifyConnectionTestInput {
   readonly storeId: string;
+  readonly requestId?: string;
   readonly operation: "connection.test";
   readonly payload: ShopifyConnectionTestPayload;
 }
@@ -164,6 +176,7 @@ export interface ShopifyProductsListData {
 
 export interface ShopifyProductsListInput {
   readonly storeId: string;
+  readonly requestId?: string;
   readonly operation: "products.list";
   readonly payload: ShopifyProductsListPayload;
 }
@@ -186,6 +199,7 @@ export interface ShopifyProductsGetData {
 
 export interface ShopifyProductsGetInput {
   readonly storeId: string;
+  readonly requestId?: string;
   readonly operation: "products.get";
   readonly payload: ShopifyProductsGetPayload;
 }
@@ -208,6 +222,8 @@ export interface ShopifyProductsCreateData {
 
 export interface ShopifyProductsCreateInput {
   readonly storeId: string;
+  readonly requestId?: string;
+  readonly mode?: ShopifyExecutionMode;
   readonly operation: "products.create";
   readonly payload: ShopifyProductsCreatePayload;
 }
@@ -231,6 +247,8 @@ export interface ShopifyProductsUpdateData {
 
 export interface ShopifyProductsUpdateInput {
   readonly storeId: string;
+  readonly requestId?: string;
+  readonly mode?: ShopifyExecutionMode;
   readonly operation: "products.update";
   readonly payload: ShopifyProductsUpdatePayload;
 }
@@ -254,6 +272,8 @@ export interface ShopifyProductsBulkUpdateData {
 
 export interface ShopifyProductsBulkUpdateInput {
   readonly storeId: string;
+  readonly requestId?: string;
+  readonly mode?: ShopifyExecutionMode;
   readonly operation: "products.bulkUpdate";
   readonly payload: ShopifyProductsBulkUpdatePayload;
 }
@@ -276,6 +296,8 @@ export interface ShopifyProductsDeleteData {
 
 export interface ShopifyProductsDeleteInput {
   readonly storeId: string;
+  readonly requestId?: string;
+  readonly mode?: ShopifyExecutionMode;
   readonly operation: "products.delete";
   readonly payload: ShopifyProductsDeletePayload;
 }
@@ -299,6 +321,8 @@ export interface ShopifyVariantsUpdateData {
 
 export interface ShopifyVariantsUpdateInput {
   readonly storeId: string;
+  readonly requestId?: string;
+  readonly mode?: ShopifyExecutionMode;
   readonly operation: "variants.update";
   readonly payload: ShopifyVariantsUpdatePayload;
 }
@@ -322,6 +346,8 @@ export interface ShopifyVariantsBulkUpdateData {
 
 export interface ShopifyVariantsBulkUpdateInput {
   readonly storeId: string;
+  readonly requestId?: string;
+  readonly mode?: ShopifyExecutionMode;
   readonly operation: "variants.bulkUpdate";
   readonly payload: ShopifyVariantsBulkUpdatePayload;
 }
@@ -347,6 +373,7 @@ export interface ShopifyCollectionsListData {
 
 export interface ShopifyCollectionsListInput {
   readonly storeId: string;
+  readonly requestId?: string;
   readonly operation: "collections.list";
   readonly payload: ShopifyCollectionsListPayload;
 }
@@ -369,6 +396,7 @@ export interface ShopifyCollectionsGetData {
 
 export interface ShopifyCollectionsGetInput {
   readonly storeId: string;
+  readonly requestId?: string;
   readonly operation: "collections.get";
   readonly payload: ShopifyCollectionsGetPayload;
 }
@@ -391,6 +419,8 @@ export interface ShopifyCollectionsCreateData {
 
 export interface ShopifyCollectionsCreateInput {
   readonly storeId: string;
+  readonly requestId?: string;
+  readonly mode?: ShopifyExecutionMode;
   readonly operation: "collections.create";
   readonly payload: ShopifyCollectionsCreatePayload;
 }
@@ -414,6 +444,8 @@ export interface ShopifyCollectionsUpdateData {
 
 export interface ShopifyCollectionsUpdateInput {
   readonly storeId: string;
+  readonly requestId?: string;
+  readonly mode?: ShopifyExecutionMode;
   readonly operation: "collections.update";
   readonly payload: ShopifyCollectionsUpdatePayload;
 }
@@ -436,6 +468,8 @@ export interface ShopifyCollectionsDeleteData {
 
 export interface ShopifyCollectionsDeleteInput {
   readonly storeId: string;
+  readonly requestId?: string;
+  readonly mode?: ShopifyExecutionMode;
   readonly operation: "collections.delete";
   readonly payload: ShopifyCollectionsDeletePayload;
 }
@@ -462,6 +496,8 @@ export interface ShopifyCollectionsUpdateMembershipData {
 
 export interface ShopifyCollectionsUpdateMembershipInput {
   readonly storeId: string;
+  readonly requestId?: string;
+  readonly mode?: ShopifyExecutionMode;
   readonly operation: "collections.updateMembership";
   readonly payload: ShopifyCollectionsUpdateMembershipPayload;
 }
