@@ -2301,7 +2301,8 @@ def get_pod_job_status(job_id: str, base_url: str, api_url: str = DEFAULT_API_UR
     enriched_candidates = []
     for idx, cand in enumerate(raw_candidates):
         c_dict = dict(cand) if isinstance(cand, dict) else (cand.to_dict() if hasattr(cand, "to_dict") else {})
-        cand_id = str(c_dict.get("image_id") or c_dict.get("candidate_id") or f"cand_{idx+1}")
+        cand_id = str(c_dict.get("id") or c_dict.get("image_id") or c_dict.get("candidate_id") or f"cand_{idx+1}")
+        c_dict["id"] = cand_id
         c_dict["candidate_id"] = cand_id
         c_dict["image_id"] = cand_id
         lp = c_dict.get("local_path") or c_dict.get("path")
@@ -2478,6 +2479,7 @@ def list_recent_jobs_and_runs() -> list[dict[str, Any]]:
                                 if r_dir and (((r_dir / "final_print").exists() and any((r_dir / "final_print").iterdir())) or ((r_dir / "lifestyle_mockups").exists() and any((r_dir / "lifestyle_mockups").iterdir()))):
                                     st_val = "completed"
 
+                    cached_cands = job_info.get("candidates") or (job_info.get("output") or {}).get("candidates") or []
                     items.append({
                         "type": "cached_job",
                         "id": path.name,
@@ -2489,6 +2491,7 @@ def list_recent_jobs_and_runs() -> list[dict[str, Any]]:
                         "niche": title_val,
                         "product": product_val,
                         "productType": product_val,
+                        "candidateCount": len(cached_cands) if isinstance(cached_cands, list) else 0,
                     })
                 except Exception:
                     pass
@@ -2557,6 +2560,7 @@ def list_recent_jobs_and_runs() -> list[dict[str, Any]]:
                     "status": run_status,
                     "createdAt": run_dir.stat().st_mtime,
                     "hasManifest": manifest.exists(),
+                    "candidateCount": cand_count,
                 })
         except Exception:
             pass

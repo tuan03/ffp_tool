@@ -682,3 +682,56 @@ test("cancelJob calls cancel endpoint and parses response", async () => {
     globalThis.fetch = originalFetch;
   }
 });
+
+test("Mock client getStatus returns recent runs and deleteJob removes job", async () => {
+  const status = await mockPinterestPodClient.getStatus();
+  assert.equal(status.ok, true);
+  assert.ok(Array.isArray(status.recent));
+  assert.ok((status.recent?.length ?? 0) > 0);
+
+  const created = await mockPinterestPodClient.createJob({
+    niche: "nordic runner",
+    product: "rug",
+  });
+  const updatedStatus = await mockPinterestPodClient.getStatus();
+  assert.ok(updatedStatus.recent?.some((r) => r.jobId === created.jobId));
+
+  const deleteRes = await mockPinterestPodClient.deleteJob(created.jobId);
+  assert.equal(deleteRes.ok, true);
+
+  const postDeleteStatus = await mockPinterestPodClient.getStatus();
+  assert.equal(postDeleteStatus.recent?.some((r) => r.jobId === created.jobId), false);
+});
+
+test("Real client getStatus and deleteJob call respective endpoints with proper methods", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: { url: string; method?: string }[] = [];
+
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url: String(url), method: init?.method ?? "GET" });
+    if (String(url).includes("/status")) {
+      return new Response(
+        JSON.stringify({ ok: true, recent: [{ id: "job_recent_1", status: "ready_for_review" }] }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    return new Response(
+      JSON.stringify({ ok: true, message: "Deleted" }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  };
+
+  try {
+    const status = await realPinterestPodClient.getStatus();
+    assert.equal(status.ok, true);
+    assert.equal(status.recent?.[0].id, "job_recent_1");
+    assert.ok(calls.some((c) => c.url.includes("/api/pinterest-pod/status") && c.method === "GET"));
+
+    const del = await realPinterestPodClient.deleteJob("job_del_test");
+    assert.equal(del.ok, true);
+    assert.ok(calls.some((c) => c.url.includes("/api/pinterest-pod/jobs/job_del_test/delete") && c.method === "POST"));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+

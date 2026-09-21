@@ -11,16 +11,18 @@ export function CandidateCard({
   isSelected,
   onToggle,
 }: CandidateCardProps): React.JSX.Element {
+  const candId = candidate.id || candidate.candidate_id || candidate.image_id || "";
+
   return (
     <div
       role="button"
       tabIndex={0}
       aria-pressed={isSelected}
-      onClick={() => onToggle(candidate.id)}
+      onClick={() => onToggle(candId)}
       onKeyDown={(e) => {
         if (e.key === " " || e.key === "Enter") {
           e.preventDefault();
-          onToggle(candidate.id);
+          onToggle(candId);
         }
       }}
       className={`group relative flex cursor-pointer flex-col overflow-hidden rounded-xl border transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-cyan-400 ${
@@ -53,7 +55,7 @@ export function CandidateCard({
           <input
             type="checkbox"
             checked={isSelected}
-            onChange={() => onToggle(candidate.id)}
+            onChange={() => onToggle(candId)}
             aria-label={`Chọn mẫu ${candidate.title}`}
             className="h-5 w-5 rounded border-slate-600 bg-slate-900/80 text-cyan-500 accent-cyan-400 shadow focus:ring-0 cursor-pointer"
           />

@@ -23,6 +23,8 @@ import type {
   PodJobStatusResponse,
   PodPollOptions,
   PodProductType,
+  PodRecentRunItem,
+  PodStatusResponse,
   ProduceInput,
   ProduceOutput,
 } from "./types";
@@ -716,6 +718,24 @@ export class RealPinterestPodClient implements PinterestPodClient {
         method: "POST",
       },
       "PINTEREST_JOB_CANCEL_FAILED",
+    );
+  }
+
+  public async getStatus(): Promise<PodStatusResponse> {
+    return fetchJson<PodStatusResponse>(
+      "/api/pinterest-pod/status",
+      undefined,
+      "PINTEREST_STATUS_FETCH_FAILED",
+    );
+  }
+
+  public async deleteJob(jobId: string): Promise<{ readonly ok: boolean; readonly message?: string }> {
+    return fetchJson<{ readonly ok: boolean; readonly message?: string }>(
+      `/api/pinterest-pod/jobs/${encodeURIComponent(jobId)}/delete`,
+      {
+        method: "POST",
+      },
+      "PINTEREST_JOB_DELETE_FAILED",
     );
   }
 }

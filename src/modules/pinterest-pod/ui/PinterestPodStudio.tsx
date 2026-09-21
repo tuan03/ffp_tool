@@ -9,6 +9,7 @@ import type {
   PinterestAuthStatus,
   PinterestPodClient,
   PinterestProductType,
+  PodRecentRunItem,
   ReferenceImage,
   StepperState,
   SummaryMetrics,
@@ -18,6 +19,7 @@ import { DeliverablesShowcase } from "./components/DeliverablesShowcase";
 import { HeaderBar } from "./components/HeaderBar";
 import { InitForm } from "./components/InitForm";
 import { ProgressAndLogs } from "./components/ProgressAndLogs";
+import { RecentRunsAccordion } from "./components/RecentRunsAccordion";
 
 interface PinterestPodStudioProps {
   readonly client?: PinterestPodClient;
@@ -47,6 +49,10 @@ export function PinterestPodStudio({ client: injectedClient }: PinterestPodStudi
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isProducing, setIsProducing] = useState(false);
 
+  // Recent Runs State
+  const [recentRuns, setRecentRuns] = useState<readonly PodRecentRunItem[]>([]);
+  const [isLoadingRecent, setIsLoadingRecent] = useState(false);
+
   // Current stage active pill
   const [currentStage, setCurrentStage] = useState<1 | 2 | 3>(1);
 
@@ -65,10 +71,130 @@ export function PinterestPodStudio({ client: injectedClient }: PinterestPodStudi
     }
   }
 
-  // Check auth status on mount
+  // Load recent jobs and runs from server
+  async function loadRecentRuns(): Promise<readonly PodRecentRunItem[]> {
+    setIsLoadingRecent(true);
+    try {
+      const statusRes = await client.getStatus();
+      if (isMountedRef.current && statusRes.recent) {
+        setRecentRuns(statusRes.recent);
+        return statusRes.recent;
+      }
+    } catch {
+      // Ignore if offline
+    } finally {
+      if (isMountedRef.current) {
+        setIsLoadingRecent(false);
+      }
+    }
+    return [];
+  }
+
+  // Load existing job / run (e.g. from history or localStorage)
+  async function handleLoadJob(targetJobId: string): Promise<void> {
+    if (!targetJobId) return;
+    stopPolling();
+    setErrorMessage(null);
+    try {
+      const detail: JobDetailResponse = await client.getJobDetail(targetJobId);
+      if (!isMountedRef.current) return;
+
+      setJobId(targetJobId);
+      try {
+        localStorage.setItem("pinterest_pod_active_job_id", targetJobId);
+      } catch {
+        // Ignore localStorage errors
+      }
+      setJobStatus(detail.status);
+
+      if (detail.niche) {
+        setNiche(detail.niche);
+      }
+      if (detail.product) {
+        setProduct(detail.product);
+      }
+      if (detail.stepper) {
+        setStepper(detail.stepper);
+      }
+      if (detail.logs && detail.logs.length > 0) {
+        setLogs(detail.logs);
+      }
+      if (detail.candidates && detail.candidates.length > 0) {
+        const normalized = detail.candidates.map((c, idx) => ({
+          ...c,
+          id: c.id || c.candidate_id || c.image_id || `cand_${idx + 1}`,
+        }));
+        setCandidates(normalized);
+        setSelectedCandidateIds(normalized.filter((c) => c.recommended).map((c) => c.id));
+      } else {
+        setCandidates([]);
+        setSelectedCandidateIds([]);
+      }
+      if (detail.deliverables) {
+        setDeliverables(detail.deliverables);
+      } else {
+        setDeliverables(undefined);
+      }
+      if (detail.summaryMetrics || detail.summary_metrics) {
+        setSummaryMetrics(detail.summaryMetrics ?? detail.summary_metrics);
+      } else {
+        setSummaryMetrics(undefined);
+      }
+
+      if (detail.status === "ready_for_review" || (detail.candidates && detail.candidates.length > 0)) {
+        setCurrentStage(2);
+        setTimeout(() => {
+          if (isMountedRef.current) {
+            stage2Ref.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+          }
+        }, 150);
+      } else if (detail.status === "completed" || detail.deliverables) {
+        setCurrentStage(3);
+        setTimeout(() => {
+          if (isMountedRef.current) {
+            stage3Ref.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+          }
+        }, 150);
+      } else if (detail.status === "running" || detail.status === "producing") {
+        pollingTimerRef.current = setInterval(() => {
+          void pollJob(targetJobId);
+        }, 1500);
+      }
+    } catch (err) {
+      if (!isMountedRef.current) return;
+      setErrorMessage(err instanceof Error ? err.message : `Không thể tải dữ liệu job ${targetJobId}`);
+    }
+  }
+
+  // Delete existing job
+  async function handleDeleteJob(targetJobId: string): Promise<void> {
+    try {
+      await client.deleteJob(targetJobId);
+      if (jobId === targetJobId) {
+        setJobId(null);
+        try {
+          localStorage.removeItem("pinterest_pod_active_job_id");
+        } catch {
+          // Ignore
+        }
+        setCandidates([]);
+        setSelectedCandidateIds([]);
+        setDeliverables(undefined);
+        setJobStatus("idle");
+        setCurrentStage(1);
+      }
+      await loadRecentRuns();
+    } catch (err) {
+      if (!isMountedRef.current) return;
+      setErrorMessage(err instanceof Error ? err.message : "Xóa job thất bại");
+    }
+  }
+
+  // Check auth status & recent runs on mount, and restore active job if present
   useEffect(() => {
     isMountedRef.current = true;
-    async function loadAuth(): Promise<void> {
+
+    async function initialize(): Promise<void> {
       try {
         const res = await client.getAuthStatus();
         if (isMountedRef.current) {
@@ -83,8 +209,30 @@ export function PinterestPodStudio({ client: injectedClient }: PinterestPodStudi
           });
         }
       }
+
+      const runs = await loadRecentRuns();
+      if (!isMountedRef.current) return;
+
+      let savedJobId: string | null = null;
+      try {
+        savedJobId = localStorage.getItem("pinterest_pod_active_job_id");
+      } catch {
+        // Ignore
+      }
+
+      if (savedJobId) {
+        void handleLoadJob(savedJobId);
+      } else if (runs.length > 0) {
+        // Auto-load latest ready_for_review job (e.g. job_f4b23b5a86) if available
+        const preferred = runs.find((r) => r.status === "ready_for_review") || runs[0];
+        const targetId = preferred.jobId || preferred.job_id || preferred.id;
+        if (targetId) {
+          void handleLoadJob(targetId);
+        }
+      }
     }
-    void loadAuth();
+
+    void initialize();
 
     return () => {
       isMountedRef.current = false;
@@ -130,11 +278,15 @@ export function PinterestPodStudio({ client: injectedClient }: PinterestPodStudi
         setLogs(detail.logs);
       }
       if (detail.candidates && detail.candidates.length > 0) {
-        setCandidates(detail.candidates);
+        const normalized = detail.candidates.map((c, idx) => ({
+          ...c,
+          id: c.id || c.candidate_id || c.image_id || `cand_${idx + 1}`,
+        }));
+        setCandidates(normalized);
         // Pre-select recommended candidates by default if none selected yet
         setSelectedCandidateIds((prev) => {
           if (prev.length > 0) return prev;
-          return (detail.candidates ?? []).filter((c) => c.recommended).map((c) => c.id);
+          return normalized.filter((c) => c.recommended).map((c) => c.id);
         });
       }
       if (detail.deliverables) {
@@ -147,6 +299,7 @@ export function PinterestPodStudio({ client: injectedClient }: PinterestPodStudi
       if (detail.status === "ready_for_review") {
         setCurrentStage(2);
         stopPolling();
+        void loadRecentRuns();
         setTimeout(() => {
           if (isMountedRef.current) {
             stage2Ref.current?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -156,6 +309,7 @@ export function PinterestPodStudio({ client: injectedClient }: PinterestPodStudi
         setCurrentStage(3);
         setIsProducing(false);
         stopPolling();
+        void loadRecentRuns();
         setTimeout(() => {
           if (isMountedRef.current) {
             stage3Ref.current?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -164,6 +318,7 @@ export function PinterestPodStudio({ client: injectedClient }: PinterestPodStudi
       } else if (detail.status === "failed" || detail.status === "cancelled") {
         setIsProducing(false);
         stopPolling();
+        void loadRecentRuns();
         if (detail.error) {
           setErrorMessage(detail.error);
         }
@@ -205,6 +360,13 @@ export function PinterestPodStudio({ client: injectedClient }: PinterestPodStudi
       });
 
       setJobId(created.jobId);
+      try {
+        localStorage.setItem("pinterest_pod_active_job_id", created.jobId);
+      } catch {
+        // Ignore
+      }
+      void loadRecentRuns();
+
       if (!isMountedRef.current) return;
       if (created.logs) {
         setLogs(created.logs);
@@ -230,6 +392,7 @@ export function PinterestPodStudio({ client: injectedClient }: PinterestPodStudi
       setJobStatus("cancelled");
       stopPolling();
       setIsProducing(false);
+      void loadRecentRuns();
     } catch (err) {
       if (!isMountedRef.current) return;
       setErrorMessage(err instanceof Error ? err.message : "Hủy job thất bại");
@@ -238,20 +401,21 @@ export function PinterestPodStudio({ client: injectedClient }: PinterestPodStudi
 
   // Toggle candidate selection
   function handleToggleCandidate(id: string): void {
+    if (!id) return;
     setSelectedCandidateIds((prev) =>
       prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id],
     );
   }
 
   function handleSelectAll(): void {
-    setSelectedCandidateIds(candidates.map((c) => c.id));
+    setSelectedCandidateIds(candidates.map((c) => c.id || c.candidate_id || c.image_id || ""));
   }
 
   function handleSelectDirectPrintableOnly(): void {
     setSelectedCandidateIds(
       candidates
         .filter((c) => c.is_direct_printable || c.printability_score > 85)
-        .map((c) => c.id),
+        .map((c) => c.id || c.candidate_id || c.image_id || ""),
     );
   }
 
@@ -350,7 +514,7 @@ export function PinterestPodStudio({ client: injectedClient }: PinterestPodStudi
 
       {/* 2-Columns Layout: Form (Left) & Progress/Logs (Right) */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-12 items-start">
-        {/* Left Column: Form Khởi Tạo */}
+        {/* Left Column: Form Khởi Tạo & Lịch Sử Job */}
         <div className="lg:col-span-6 flex flex-col gap-6">
           <InitForm
             niche={niche}
@@ -362,6 +526,15 @@ export function PinterestPodStudio({ client: injectedClient }: PinterestPodStudi
             jobStatus={jobStatus}
             onStartCrawl={() => void handleStartCrawl()}
             onStopJob={() => void handleStopJob()}
+          />
+
+          <RecentRunsAccordion
+            recentRuns={recentRuns}
+            activeJobId={jobId}
+            onLoadJob={(targetId) => void handleLoadJob(targetId)}
+            onDeleteJob={(targetId) => void handleDeleteJob(targetId)}
+            isLoading={isLoadingRecent}
+            onRefresh={() => void loadRecentRuns()}
           />
         </div>
 

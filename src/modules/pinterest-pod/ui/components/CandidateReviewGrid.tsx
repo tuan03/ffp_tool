@@ -81,14 +81,17 @@ export function CandidateReviewGrid({
 
       {/* Grid of Candidates */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
-        {candidates.map((cand) => (
-          <CandidateCard
-            key={cand.id}
-            candidate={cand}
-            isSelected={selectedIds.includes(cand.id)}
-            onToggle={onToggleCandidate}
-          />
-        ))}
+        {candidates.map((cand, idx) => {
+          const candId = cand.id || cand.candidate_id || cand.image_id || `cand_${idx + 1}`;
+          return (
+            <CandidateCard
+              key={candId}
+              candidate={cand}
+              isSelected={selectedIds.includes(candId)}
+              onToggle={onToggleCandidate}
+            />
+          );
+        })}
       </div>
     </section>
   );
