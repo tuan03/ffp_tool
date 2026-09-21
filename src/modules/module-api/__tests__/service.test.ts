@@ -65,6 +65,10 @@ test("Module API mock runner executes products.list with filtering", async () =>
   assert.equal(allResponse.success, true);
   assert.equal(allResponse.data.products.length, 3);
   assert.ok(allResponse.data.pageInfo);
+  assert.deepEqual(allResponse.data.products[0]?.seo, {
+    title: "Classic Cotton T-Shirt | Acme Apparel",
+    description: "Comfortable everyday 100% cotton t-shirt for all seasons.",
+  });
 
   const activeResponse = await runMockModuleApi({
     storeId: "store-101",
@@ -273,6 +277,10 @@ test("Module API mock runner executes collections.list and collections.get", asy
 
   assert.equal(listResponse.success, true);
   assert.equal(listResponse.data.collections.length, 2);
+  assert.deepEqual(listResponse.data.collections[0]?.seo, {
+    title: "Summer Collection | Quickstart Demo Store",
+    description: "Curated summer essentials and warm-weather apparel.",
+  });
 
   const getResponse = await runMockModuleApi({
     storeId: "store-101",
@@ -283,6 +291,10 @@ test("Module API mock runner executes collections.list and collections.get", asy
   assert.equal(getResponse.success, true);
   assert.notEqual(getResponse.data.collection, null);
   assert.equal(getResponse.data.collection?.title, "Summer Collection");
+  assert.deepEqual(getResponse.data.collection?.seo, {
+    title: "Summer Collection | Quickstart Demo Store",
+    description: "Curated summer essentials and warm-weather apparel.",
+  });
 });
 
 test("Module API mock runner executes collections.create, update, delete, and updateMembership", async () => {
@@ -697,6 +709,10 @@ test("Real service executes products.list response success", async () => {
               status: "ACTIVE",
               tags: ["tag1"],
               variants: [],
+              seo: {
+                title: "Product 1 SEO Title",
+                description: "Product 1 SEO Description",
+              },
               createdAt: "2026-01-01T00:00:00Z",
               updatedAt: "2026-01-01T00:00:00Z",
             },
@@ -726,6 +742,10 @@ test("Real service executes products.list response success", async () => {
   assert.equal(response.operation, "products.list");
   assert.equal(response.data.products.length, 1);
   assert.equal(response.data.products[0].title, "Product 1");
+  assert.deepEqual(response.data.products[0].seo, {
+    title: "Product 1 SEO Title",
+    description: "Product 1 SEO Description",
+  });
   assert.equal(response.data.pageInfo.hasNextPage, false);
 });
 
@@ -783,6 +803,10 @@ test("Real service executes collections.list response success", async () => {
               title: "Summer Collection",
               handle: "summer",
               productsCount: 5,
+              seo: {
+                title: "Summer Collection SEO Title",
+                description: "Summer Collection SEO Description",
+              },
               updatedAt: "2026-01-01T00:00:00Z",
             },
           ],
@@ -811,6 +835,10 @@ test("Real service executes collections.list response success", async () => {
   assert.equal(response.operation, "collections.list");
   assert.equal(response.data.collections.length, 1);
   assert.equal(response.data.collections[0].title, "Summer Collection");
+  assert.deepEqual(response.data.collections[0].seo, {
+    title: "Summer Collection SEO Title",
+    description: "Summer Collection SEO Description",
+  });
 });
 
 test("Real service executes connection.test success", async () => {

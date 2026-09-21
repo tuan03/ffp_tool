@@ -26,6 +26,10 @@ const PRODUCTS_LIST_QUERY = `
           vendor
           productType
           tags
+          seo {
+            title
+            description
+          }
           createdAt
           updatedAt
           variants(first: 10) {

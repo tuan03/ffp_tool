@@ -18,6 +18,10 @@ const COLLECTIONS_LIST_QUERY = `
           title
           handle
           description
+          seo {
+            title
+            description
+          }
           productsCount {
             count
           }

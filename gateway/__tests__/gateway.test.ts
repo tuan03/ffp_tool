@@ -519,6 +519,10 @@ describe("Gateway: Operations & Dispatcher", () => {
                 handle: "product-1",
                 status: "ACTIVE",
                 tags: ["pod"],
+                seo: {
+                  title: "Product 1 SEO Title",
+                  description: "Product 1 SEO Description",
+                },
                 createdAt: "2026-09-01",
                 updatedAt: "2026-09-20",
                 variants: { edges: [] },
@@ -536,9 +540,16 @@ describe("Gateway: Operations & Dispatcher", () => {
     });
 
     assert.equal(res.success, true);
-    const listData = res.data as { products: unknown[]; pageInfo: { hasNextPage: boolean } };
+    const listData = res.data as {
+      products: { id: string; title: string; seo?: { title?: string; description?: string } }[];
+      pageInfo: { hasNextPage: boolean };
+    };
     assert.equal(listData.products.length, 1);
     assert.equal(listData.pageInfo.hasNextPage, true);
+    assert.deepEqual(listData.products[0].seo, {
+      title: "Product 1 SEO Title",
+      description: "Product 1 SEO Description",
+    });
 
     // Rejects non-positive limit
     await assert.rejects(
@@ -591,6 +602,11 @@ describe("Gateway: Operations & Dispatcher", () => {
                 id: "gid://shopify/Collection/1",
                 title: "Summer Collection",
                 handle: "summer-collection",
+                description: "All summer designs",
+                seo: {
+                  title: "Summer Collection SEO Title",
+                  description: "Summer Collection SEO Description",
+                },
                 productsCount: { count: 42 },
                 updatedAt: "2026-09-21",
               },
@@ -602,6 +618,10 @@ describe("Gateway: Operations & Dispatcher", () => {
           title: "Summer Collection",
           handle: "summer-collection",
           description: "All summer designs",
+          seo: {
+            title: "Summer Collection SEO Title",
+            description: "Summer Collection SEO Description",
+          },
           productsCount: { count: 42 },
           updatedAt: "2026-09-21",
         },
@@ -615,9 +635,19 @@ describe("Gateway: Operations & Dispatcher", () => {
     });
 
     assert.equal(listRes.success, true);
-    const listData = listRes.data as { collections: { title: string; productsCount: number }[] };
+    const listData = listRes.data as {
+      collections: {
+        title: string;
+        productsCount: number;
+        seo?: { title?: string; description?: string };
+      }[];
+    };
     assert.equal(listData.collections[0].title, "Summer Collection");
     assert.equal(listData.collections[0].productsCount, 42);
+    assert.deepEqual(listData.collections[0].seo, {
+      title: "Summer Collection SEO Title",
+      description: "Summer Collection SEO Description",
+    });
 
     const getRes = await dispatcher.dispatch({
       storeId: "store-test",
@@ -625,9 +655,19 @@ describe("Gateway: Operations & Dispatcher", () => {
       payload: { id: "gid://shopify/Collection/1" },
     });
     assert.equal(getRes.success, true);
-    const getData = getRes.data as { collection: { title: string; description: string } };
+    const getData = getRes.data as {
+      collection: {
+        title: string;
+        description: string;
+        seo?: { title?: string; description?: string };
+      };
+    };
     assert.equal(getData.collection.title, "Summer Collection");
     assert.equal(getData.collection.description, "All summer designs");
+    assert.deepEqual(getData.collection.seo, {
+      title: "Summer Collection SEO Title",
+      description: "Summer Collection SEO Description",
+    });
   });
 
   it("executes products.create, update, bulkUpdate, and delete with GraphQL mutations", async () => {

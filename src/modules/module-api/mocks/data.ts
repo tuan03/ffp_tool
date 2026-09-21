@@ -42,6 +42,10 @@ export const shopifyMockProducts: readonly ShopifyProduct[] = [
         inventoryQuantity: 28,
       },
     ],
+    seo: {
+      title: "Classic Cotton T-Shirt | Acme Apparel",
+      description: "Comfortable everyday 100% cotton t-shirt for all seasons.",
+    },
     createdAt: "2025-01-10T08:00:00Z",
     updatedAt: "2025-01-15T12:30:00Z",
   },
@@ -65,6 +69,10 @@ export const shopifyMockProducts: readonly ShopifyProduct[] = [
         inventoryQuantity: 100,
       },
     ],
+    seo: {
+      title: "Ceramic Coffee Mug - 12oz | Home Goods Co",
+      description: "Durable ceramic coffee mug designed for your morning coffee.",
+    },
     createdAt: "2025-01-12T09:15:00Z",
     updatedAt: "2025-01-14T16:45:00Z",
   },
@@ -88,6 +96,10 @@ export const shopifyMockProducts: readonly ShopifyProduct[] = [
         inventoryQuantity: 15,
       },
     ],
+    seo: {
+      title: "Vintage Denim Jacket | Acme Apparel",
+      description: "Rugged vintage-washed denim jacket with classic craftsmanship.",
+    },
     createdAt: "2025-01-14T11:00:00Z",
     updatedAt: "2025-01-16T15:10:00Z",
   },
@@ -100,6 +112,10 @@ export const shopifyMockCollections: readonly ShopifyCollection[] = [
     handle: "summer-collection",
     description: "Curated summer essentials and warm-weather apparel.",
     productsCount: 12,
+    seo: {
+      title: "Summer Collection | Quickstart Demo Store",
+      description: "Curated summer essentials and warm-weather apparel.",
+    },
     updatedAt: "2025-01-15T10:00:00Z",
   },
   {
@@ -108,6 +124,10 @@ export const shopifyMockCollections: readonly ShopifyCollection[] = [
     handle: "best-sellers",
     description: "Top performing and most popular products in store.",
     productsCount: 8,
+    seo: {
+      title: "Best Sellers | Quickstart Demo Store",
+      description: "Top performing and most popular products in store.",
+    },
     updatedAt: "2025-01-16T14:20:00Z",
   },
 ];
