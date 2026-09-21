@@ -42,6 +42,11 @@ export function sanitizeErrorMessage(message: unknown, fallback = "Shopify gatew
   return sanitized;
 }
 
+export interface MutationUserErrorItem {
+  readonly field?: readonly string[];
+  readonly message: string;
+}
+
 export class GatewayError extends Error {
   public constructor(
     message: string,
@@ -49,10 +54,27 @@ export class GatewayError extends Error {
     public readonly httpStatus: number,
     public readonly retryAfterSeconds?: number,
     public readonly cause?: unknown,
+    public readonly fields?: readonly string[],
+    public readonly retryable: boolean = false,
+    public readonly details?: Record<string, unknown>,
   ) {
     super(sanitizeErrorMessage(message, "Shopify gateway error"));
     this.name = "GatewayError";
   }
+}
+
+export function mapUserErrorsToGatewayError(userErrors: readonly MutationUserErrorItem[]): GatewayError {
+  const combinedMessage = userErrors.map((e) => e.message).join("; ");
+  const fields = userErrors.flatMap((e) => (e.field ? [...e.field] : []));
+  return new GatewayError(
+    combinedMessage,
+    "SHOPIFY_USER_ERROR",
+    400,
+    undefined,
+    undefined,
+    fields.length > 0 ? fields : undefined,
+    false,
+  );
 }
 
 export function mapGraphqlErrorsToGatewayError(

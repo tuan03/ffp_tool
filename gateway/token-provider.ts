@@ -43,7 +43,7 @@ export class ClientCredentialsTokenProvider implements TokenProvider {
 
     const cached = this.cache.get(store.storeId);
     const now = this.clock();
-    if (cached && cached.expiresAtMs - now > this.safetyBufferMs) {
+    if (cached && cached.expiresAtMs > now) {
       return cached.token;
     }
 

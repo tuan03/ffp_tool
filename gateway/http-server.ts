@@ -44,6 +44,9 @@ export function createGatewayHttpHandler(dispatcher: GatewayDispatcher): (reques
               code: err.code,
               message: err.message,
               retryAfterSeconds: err.retryAfterSeconds,
+              fields: err.fields,
+              retryable: err.retryable,
+              details: err.details,
             },
           }),
           {

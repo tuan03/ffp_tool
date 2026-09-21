@@ -50,6 +50,9 @@ export interface GatewayErrorDetails {
   readonly code: GatewayErrorCode;
   readonly message: string;
   readonly retryAfterSeconds?: number;
+  readonly fields?: readonly string[];
+  readonly retryable?: boolean;
+  readonly details?: Record<string, unknown>;
 }
 
 export interface GatewayErrorResponse {
@@ -110,6 +113,7 @@ export interface ProductVariantSummary {
   readonly productId: string;
   readonly title: string;
   readonly price: string;
+  readonly compareAtPrice?: string;
   readonly sku?: string;
   readonly barcode?: string;
   readonly inventoryQuantity?: number;

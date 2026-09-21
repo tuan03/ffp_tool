@@ -151,7 +151,5 @@ export class ShopifyGraphqlClient {
     }
 
     return parsed.data;
-
-    return parsed.data;
   }
 }

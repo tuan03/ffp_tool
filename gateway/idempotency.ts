@@ -1,12 +1,18 @@
+export type IdempotencyState = "PENDING" | "COMPLETED";
+
 export interface IdempotencyEntry {
+  readonly state: IdempotencyState;
+  readonly operation: string;
   readonly payloadHash: string;
-  readonly responseData: unknown;
+  readonly responseData?: unknown;
   readonly createdAtMs: number;
 }
 
 export interface IdempotencyStore {
   get(key: string): Promise<IdempotencyEntry | null>;
   set(key: string, entry: IdempotencyEntry, ttlMs?: number): Promise<void>;
+  delete(key: string): Promise<void>;
+  clear(): void;
 }
 
 export function deterministicStringify(val: unknown): string {
@@ -21,6 +27,10 @@ export function deterministicStringify(val: unknown): string {
     (k) => `${JSON.stringify(k)}:${deterministicStringify((val as Record<string, unknown>)[k])}`,
   );
   return `{${pairs.join(",")}}`;
+}
+
+export function calculateCanonicalHash(operation: string, payload: unknown): string {
+  return `${operation}:${deterministicStringify(payload)}`;
 }
 
 export class InMemoryIdempotencyStore implements IdempotencyStore {
@@ -49,6 +59,10 @@ export class InMemoryIdempotencyStore implements IdempotencyStore {
       entry,
       expiresAtMs: Date.now() + ttl,
     });
+  }
+
+  public async delete(key: string): Promise<void> {
+    this.store.delete(key);
   }
 
   public clear(): void {

@@ -1,14 +1,15 @@
-import { GatewayError } from "../errors";
+import { GatewayError, mapUserErrorsToGatewayError, type MutationUserErrorItem } from "../errors";
 import type { ShopifyGraphqlClient } from "../shopify-graphql-client";
 import type { ProductVariantSummary, StoreConfig } from "../types";
 
-const PRODUCT_VARIANT_UPDATE_MUTATION = `
-  mutation ProductVariantUpdate($input: ProductVariantInput!) {
-    productVariantUpdate(input: $input) {
-      productVariant {
+const PRODUCT_VARIANTS_BULK_UPDATE_MUTATION = `
+  mutation ProductVariantsBulkUpdate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+    productVariantsBulkUpdate(productId: $productId, variants: $variants) {
+      productVariants {
         id
         title
         price
+        compareAtPrice
         barcode
         inventoryQuantity
         inventoryItem {
@@ -26,19 +27,96 @@ const PRODUCT_VARIANT_UPDATE_MUTATION = `
   }
 `;
 
-interface MutationUserError {
-  readonly field?: readonly string[];
-  readonly message: string;
-}
+const RESOLVE_VARIANT_PRODUCT_QUERY = `
+  query ResolveVariantProduct($id: ID!) {
+    node(id: $id) {
+      ... on ProductVariant {
+        id
+        product {
+          id
+        }
+      }
+    }
+  }
+`;
 
-interface RawVariantUpdateNode {
+interface RawVariantBulkNode {
   readonly id: string;
   readonly title: string;
   readonly price: string;
+  readonly compareAtPrice?: string | null;
   readonly barcode?: string | null;
   readonly inventoryQuantity?: number | null;
   readonly inventoryItem?: { readonly sku?: string | null } | null;
   readonly product?: { readonly id?: string | null } | null;
+}
+
+interface ProductVariantsBulkUpdateResponse {
+  readonly productVariantsBulkUpdate: {
+    readonly productVariants: readonly RawVariantBulkNode[] | null;
+    readonly userErrors: readonly MutationUserErrorItem[];
+  };
+}
+
+async function resolveParentProductId(
+  store: StoreConfig,
+  client: ShopifyGraphqlClient,
+  variantId: string,
+  explicitProductId?: string,
+): Promise<string> {
+  if (explicitProductId && explicitProductId.trim() !== "") {
+    return explicitProductId.trim();
+  }
+
+  interface NodeQueryResponse {
+    readonly node: {
+      readonly id: string;
+      readonly product?: {
+        readonly id?: string | null;
+      } | null;
+    } | null;
+  }
+
+  const res = await client.query<NodeQueryResponse>(
+    store,
+    RESOLVE_VARIANT_PRODUCT_QUERY,
+    { id: variantId },
+    { isWrite: false },
+  );
+
+  const prodId = res?.node?.product?.id;
+  if (!prodId) {
+    throw new GatewayError(
+      `Could not resolve parent product ID for variant ${variantId}`,
+      "SHOPIFY_USER_ERROR",
+      400,
+    );
+  }
+
+  return prodId;
+}
+
+function buildVariantBulkInput(
+  variantId: string,
+  variantPatch: Record<string, unknown>,
+): Record<string, unknown> {
+  const input: Record<string, unknown> = { id: variantId };
+  if (variantPatch.price !== undefined) {
+    input.price = variantPatch.price;
+  }
+  if (variantPatch.compareAtPrice !== undefined) {
+    input.compareAtPrice = variantPatch.compareAtPrice;
+  }
+  if (variantPatch.barcode !== undefined) {
+    input.barcode = variantPatch.barcode;
+  }
+  if (variantPatch.sku !== undefined) {
+    input.inventoryItem = { sku: variantPatch.sku };
+  }
+  if (variantPatch.optionValues !== undefined) {
+    input.optionValues = variantPatch.optionValues;
+  }
+  return input;
 }
 
 export async function executeVariantsUpdate(
@@ -64,9 +142,14 @@ export async function executeVariantsUpdate(
   if (mode === "preview") {
     const previewVariant: ProductVariantSummary = {
       id,
-      productId: "gid://shopify/Product/preview-1",
+      productId:
+        typeof variantPatch.productId === "string" && variantPatch.productId.trim() !== ""
+          ? variantPatch.productId.trim()
+          : "gid://shopify/Product/preview-1",
       title: typeof variantPatch.title === "string" ? variantPatch.title : "Preview Variant",
       price: typeof variantPatch.price === "string" ? variantPatch.price : "0.00",
+      compareAtPrice:
+        typeof variantPatch.compareAtPrice === "string" ? variantPatch.compareAtPrice : undefined,
       sku: typeof variantPatch.sku === "string" ? variantPatch.sku : undefined,
       barcode: typeof variantPatch.barcode === "string" ? variantPatch.barcode : undefined,
       inventoryQuantity:
@@ -75,47 +158,38 @@ export async function executeVariantsUpdate(
     return { variant: previewVariant };
   }
 
-  const input: Record<string, unknown> = { id };
-  if (typeof variantPatch.price === "string") {
-    input.price = variantPatch.price;
-  }
-  if (typeof variantPatch.barcode === "string") {
-    input.barcode = variantPatch.barcode;
-  }
-  // Mapping top-level sku to inventoryItem { sku }
-  if (typeof variantPatch.sku === "string") {
-    input.inventoryItem = { sku: variantPatch.sku };
-  }
+  const explicitProdId =
+    typeof variantPatch.productId === "string" && variantPatch.productId.trim() !== ""
+      ? variantPatch.productId.trim()
+      : typeof p.productId === "string" && (p.productId as string).trim() !== ""
+      ? (p.productId as string).trim()
+      : undefined;
 
-  interface VariantUpdateResponse {
-    readonly productVariantUpdate: {
-      readonly productVariant: RawVariantUpdateNode | null;
-      readonly userErrors: readonly MutationUserError[];
-    };
-  }
+  const productId = await resolveParentProductId(store, client, id, explicitProdId);
+  const variantInput = buildVariantBulkInput(id, variantPatch);
 
-  const raw = await client.query<VariantUpdateResponse>(
+  const raw = await client.query<ProductVariantsBulkUpdateResponse>(
     store,
-    PRODUCT_VARIANT_UPDATE_MUTATION,
-    { input },
+    PRODUCT_VARIANTS_BULK_UPDATE_MUTATION,
+    { productId, variants: [variantInput] },
     { isWrite: true, requestId },
   );
 
-  if (raw.productVariantUpdate.userErrors && raw.productVariantUpdate.userErrors.length > 0) {
-    const errorMsg = raw.productVariantUpdate.userErrors.map((e) => e.message).join("; ");
-    throw new GatewayError(errorMsg, "SHOPIFY_USER_ERROR", 400);
+  if (raw.productVariantsBulkUpdate.userErrors && raw.productVariantsBulkUpdate.userErrors.length > 0) {
+    throw mapUserErrorsToGatewayError(raw.productVariantsBulkUpdate.userErrors);
   }
 
-  const node = raw.productVariantUpdate.productVariant;
+  const node = raw.productVariantsBulkUpdate.productVariants?.[0];
   if (!node) {
     throw new GatewayError(`Failed to update variant ${id}`, "SHOPIFY_USER_ERROR", 400);
   }
 
   const variant: ProductVariantSummary = {
     id: node.id,
-    productId: node.product?.id ?? "",
+    productId: node.product?.id ?? productId,
     title: node.title,
     price: node.price,
+    compareAtPrice: node.compareAtPrice ?? undefined,
     sku: node.inventoryItem?.sku ?? undefined,
     barcode: node.barcode ?? undefined,
     inventoryQuantity: node.inventoryQuantity ?? undefined,
@@ -159,8 +233,10 @@ export async function executeVariantsBulkUpdate(
   }
 
   const updatedVariantIds: string[] = [];
-  for (const item of variants) {
-    const result = await executeVariantsUpdate(store, client, item, "apply", requestId);
+  for (let i = 0; i < variants.length; i++) {
+    const item = variants[i];
+    const childRequestId = requestId ? `${requestId}:var-${i}` : undefined;
+    const result = await executeVariantsUpdate(store, client, item, "apply", childRequestId);
     updatedVariantIds.push(result.variant.id);
   }
 

@@ -56,6 +56,7 @@ export interface ShopifyProductVariant {
   readonly productId: string;
   readonly title: string;
   readonly price: string;
+  readonly compareAtPrice?: string;
   readonly sku?: string;
   readonly barcode?: string;
   readonly inventoryQuantity?: number;
@@ -84,6 +85,20 @@ export interface ShopifyCollection {
   readonly updatedAt: string;
 }
 
+export interface ShopifyVariantOptionValueInput {
+  readonly name?: string;
+  readonly value: string;
+}
+
+export interface ShopifyProductVariantInput {
+  readonly title?: string;
+  readonly price?: string;
+  readonly compareAtPrice?: string;
+  readonly sku?: string;
+  readonly barcode?: string;
+  readonly optionValues?: readonly ShopifyVariantOptionValueInput[];
+}
+
 export interface ShopifyProductInput {
   readonly title: string;
   readonly handle?: string;
@@ -92,6 +107,7 @@ export interface ShopifyProductInput {
   readonly vendor?: string;
   readonly productType?: string;
   readonly tags?: readonly string[];
+  readonly variants?: readonly ShopifyProductVariantInput[];
 }
 
 export interface ShopifyProductUpdateInput {
@@ -110,11 +126,14 @@ export interface ShopifyProductBulkUpdateItem {
 }
 
 export interface ShopifyVariantUpdateInput {
+  readonly productId?: string;
   readonly title?: string;
   readonly price?: string;
+  readonly compareAtPrice?: string;
   readonly sku?: string;
   readonly barcode?: string;
   readonly inventoryQuantity?: number;
+  readonly optionValues?: readonly ShopifyVariantOptionValueInput[];
 }
 
 export interface ShopifyVariantBulkUpdateItem {
@@ -265,9 +284,18 @@ export interface ShopifyProductsBulkUpdatePayload {
   readonly products: readonly ShopifyProductBulkUpdateItem[];
 }
 
+export interface ShopifyProductsBulkUpdateItemResult {
+  readonly id: string;
+  readonly ok: boolean;
+  readonly error?: string;
+}
+
 export interface ShopifyProductsBulkUpdateData {
   readonly updatedProductIds: readonly string[];
   readonly count: number;
+  readonly successCount?: number;
+  readonly failedCount?: number;
+  readonly items?: readonly ShopifyProductsBulkUpdateItemResult[];
 }
 
 export interface ShopifyProductsBulkUpdateInput {

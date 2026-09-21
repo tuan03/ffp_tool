@@ -1,6 +1,6 @@
-import { GatewayError } from "../errors";
+import { GatewayError, mapUserErrorsToGatewayError, type MutationUserErrorItem } from "../errors";
 import type { ShopifyGraphqlClient } from "../shopify-graphql-client";
-import type { ProductSummary, StoreConfig } from "../types";
+import type { ProductSummary, ProductVariantSummary, StoreConfig } from "../types";
 import { mapProductNode, type RawProductNode } from "./products";
 
 const PRODUCT_CREATE_MUTATION = `
@@ -28,6 +28,28 @@ const PRODUCT_CREATE_MUTATION = `
               inventoryQuantity
             }
           }
+        }
+      }
+      userErrors {
+        field
+        message
+      }
+    }
+  }
+`;
+
+const PRODUCT_VARIANTS_BULK_CREATE_MUTATION = `
+  mutation ProductVariantsBulkCreate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+    productVariantsBulkCreate(productId: $productId, variants: $variants) {
+      productVariants {
+        id
+        title
+        price
+        compareAtPrice
+        barcode
+        inventoryQuantity
+        inventoryItem {
+          sku
         }
       }
       userErrors {
@@ -84,11 +106,6 @@ const PRODUCT_DELETE_MUTATION = `
     }
   }
 `;
-
-interface MutationUserError {
-  readonly field?: readonly string[];
-  readonly message: string;
-}
 
 export async function executeProductsCreate(
   store: StoreConfig,
@@ -169,7 +186,7 @@ export async function executeProductsCreate(
   interface ProductCreateResponse {
     readonly productCreate: {
       readonly product: RawProductNode | null;
-      readonly userErrors: readonly MutationUserError[];
+      readonly userErrors: readonly MutationUserErrorItem[];
     };
   }
 
@@ -181,15 +198,89 @@ export async function executeProductsCreate(
   );
 
   if (raw.productCreate.userErrors && raw.productCreate.userErrors.length > 0) {
-    const errorMsg = raw.productCreate.userErrors.map((e) => e.message).join("; ");
-    throw new GatewayError(errorMsg, "SHOPIFY_USER_ERROR", 400);
+    throw mapUserErrorsToGatewayError(raw.productCreate.userErrors);
   }
 
   if (!raw.productCreate.product) {
     throw new GatewayError("Failed to create product; missing product data", "SHOPIFY_USER_ERROR", 400);
   }
 
-  return { product: mapProductNode(raw.productCreate.product) };
+  const product = mapProductNode(raw.productCreate.product);
+
+  // If public input contains multiple variants, create additional variants via productVariantsBulkCreate
+  if (Array.isArray(productInput.variants) && productInput.variants.length > 1) {
+    const extraVariants = (productInput.variants as readonly Record<string, unknown>[]).slice(1);
+    const variantsInput = extraVariants.map((v) => {
+      const vInput: Record<string, unknown> = {};
+      if (v.price !== undefined) vInput.price = v.price;
+      if (v.compareAtPrice !== undefined) vInput.compareAtPrice = v.compareAtPrice;
+      if (v.barcode !== undefined) vInput.barcode = v.barcode;
+      if (v.sku !== undefined) vInput.inventoryItem = { sku: v.sku };
+      if (v.optionValues !== undefined) vInput.optionValues = v.optionValues;
+      return vInput;
+    });
+
+    interface ProductVariantsBulkCreateResponse {
+      readonly productVariantsBulkCreate: {
+        readonly productVariants: readonly {
+          readonly id: string;
+          readonly title: string;
+          readonly price: string;
+          readonly compareAtPrice?: string | null;
+          readonly barcode?: string | null;
+          readonly inventoryQuantity?: number | null;
+          readonly inventoryItem?: { readonly sku?: string | null } | null;
+        }[] | null;
+        readonly userErrors: readonly MutationUserErrorItem[];
+      };
+    }
+
+    try {
+      const extraRaw = await client.query<ProductVariantsBulkCreateResponse>(
+        store,
+        PRODUCT_VARIANTS_BULK_CREATE_MUTATION,
+        { productId: product.id, variants: variantsInput },
+        { isWrite: true, requestId: requestId ? `${requestId}:variants` : undefined },
+      );
+
+      if (extraRaw.productVariantsBulkCreate.userErrors && extraRaw.productVariantsBulkCreate.userErrors.length > 0) {
+        throw mapUserErrorsToGatewayError(extraRaw.productVariantsBulkCreate.userErrors);
+      }
+
+      if (extraRaw.productVariantsBulkCreate.productVariants) {
+        const mappedExtra: ProductVariantSummary[] = extraRaw.productVariantsBulkCreate.productVariants.map((node) => ({
+          id: node.id,
+          productId: product.id,
+          title: node.title,
+          price: node.price,
+          compareAtPrice: node.compareAtPrice ?? undefined,
+          barcode: node.barcode ?? undefined,
+          sku: node.inventoryItem?.sku ?? undefined,
+          inventoryQuantity: node.inventoryQuantity ?? undefined,
+        }));
+        return {
+          product: {
+            ...product,
+            variants: [...product.variants, ...mappedExtra],
+          },
+        };
+      }
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      throw new GatewayError(
+        `Product created (${product.id}) but failed to create additional variants: ${errMsg}`,
+        "SHOPIFY_USER_ERROR",
+        400,
+        undefined,
+        undefined,
+        undefined,
+        false,
+        { createdProductId: product.id },
+      );
+    }
+  }
+
+  return { product };
 }
 
 export async function executeProductsUpdate(
@@ -260,7 +351,7 @@ export async function executeProductsUpdate(
   interface ProductUpdateResponse {
     readonly productUpdate: {
       readonly product: RawProductNode | null;
-      readonly userErrors: readonly MutationUserError[];
+      readonly userErrors: readonly MutationUserErrorItem[];
     };
   }
 
@@ -272,8 +363,7 @@ export async function executeProductsUpdate(
   );
 
   if (raw.productUpdate.userErrors && raw.productUpdate.userErrors.length > 0) {
-    const errorMsg = raw.productUpdate.userErrors.map((e) => e.message).join("; ");
-    throw new GatewayError(errorMsg, "SHOPIFY_USER_ERROR", 400);
+    throw mapUserErrorsToGatewayError(raw.productUpdate.userErrors);
   }
 
   if (!raw.productUpdate.product) {
@@ -283,13 +373,47 @@ export async function executeProductsUpdate(
   return { product: mapProductNode(raw.productUpdate.product) };
 }
 
+export interface ProductBulkUpdateItemResult {
+  readonly id: string;
+  readonly ok: boolean;
+  readonly error?: string;
+}
+
+export interface ProductsBulkUpdateResult {
+  readonly successCount: number;
+  readonly failedCount: number;
+  readonly updatedProductIds: readonly string[];
+  readonly count: number;
+  readonly items: readonly ProductBulkUpdateItemResult[];
+}
+
+async function runWithConcurrency<T, R>(
+  items: readonly T[],
+  limit: number,
+  fn: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let currentIndex = 0;
+
+  async function worker(): Promise<void> {
+    while (currentIndex < items.length) {
+      const idx = currentIndex++;
+      results[idx] = await fn(items[idx], idx);
+    }
+  }
+
+  const workers = Array.from({ length: Math.min(limit, items.length) }, () => worker());
+  await Promise.all(workers);
+  return results;
+}
+
 export async function executeProductsBulkUpdate(
   store: StoreConfig,
   client: ShopifyGraphqlClient,
   payload: unknown,
   mode: "preview" | "apply" = "apply",
   requestId?: string,
-): Promise<{ updatedProductIds: readonly string[]; count: number }> {
+): Promise<ProductsBulkUpdateResult> {
   const p = (payload && typeof payload === "object" ? payload : {}) as Record<string, unknown>;
   const products = p.products;
   if (!Array.isArray(products)) {
@@ -310,22 +434,60 @@ export async function executeProductsBulkUpdate(
   }
 
   if (mode === "preview") {
-    const updatedProductIds = products.map((item) => String(item.id));
+    const items = products.map((item) => ({ id: String(item.id), ok: true }));
     return {
-      updatedProductIds,
-      count: updatedProductIds.length,
+      successCount: items.length,
+      failedCount: 0,
+      updatedProductIds: items.map((i) => i.id),
+      count: items.length,
+      items,
     };
   }
 
+  const results = await runWithConcurrency(
+    products,
+    3,
+    async (item, index): Promise<ProductBulkUpdateItemResult & { readonly updatedId?: string }> => {
+      const childRequestId = requestId ? `${requestId}:item-${index}` : undefined;
+      try {
+        const result = await executeProductsUpdate(store, client, item, "apply", childRequestId);
+        return {
+          id: result.product.id,
+          ok: true,
+          updatedId: result.product.id,
+        };
+      } catch (err: unknown) {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        return {
+          id: String(item.id),
+          ok: false,
+          error: errorMsg,
+        };
+      }
+    },
+  );
+
   const updatedProductIds: string[] = [];
-  for (const item of products) {
-    const result = await executeProductsUpdate(store, client, item, "apply", requestId);
-    updatedProductIds.push(result.product.id);
+  const items: ProductBulkUpdateItemResult[] = [];
+  let successCount = 0;
+  let failedCount = 0;
+
+  for (const res of results) {
+    items.push({ id: res.id, ok: res.ok, error: res.error });
+    if (res.ok && res.updatedId) {
+      updatedProductIds.push(res.updatedId);
+      successCount += 1;
+    } else {
+      failedCount += 1;
+    }
   }
 
   return {
+    successCount,
+    failedCount,
     updatedProductIds,
     count: updatedProductIds.length,
+    items,
   };
 }
 
@@ -349,7 +511,7 @@ export async function executeProductsDelete(
   interface ProductDeleteResponse {
     readonly productDelete: {
       readonly deletedProductId: string | null;
-      readonly userErrors: readonly MutationUserError[];
+      readonly userErrors: readonly MutationUserErrorItem[];
     };
   }
 
@@ -361,8 +523,7 @@ export async function executeProductsDelete(
   );
 
   if (raw.productDelete.userErrors && raw.productDelete.userErrors.length > 0) {
-    const errorMsg = raw.productDelete.userErrors.map((e) => e.message).join("; ");
-    throw new GatewayError(errorMsg, "SHOPIFY_USER_ERROR", 400);
+    throw mapUserErrorsToGatewayError(raw.productDelete.userErrors);
   }
 
   return {

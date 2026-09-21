@@ -1,5 +1,9 @@
 import { GatewayError } from "./errors";
-import { deterministicStringify, type IdempotencyStore, InMemoryIdempotencyStore } from "./idempotency";
+import {
+  calculateCanonicalHash,
+  type IdempotencyStore,
+  InMemoryIdempotencyStore,
+} from "./idempotency";
 import { executeCollectionsGet, executeCollectionsList } from "./operations/collections";
 import {
   executeCollectionsCreate,
@@ -42,11 +46,17 @@ export interface GatewayDispatcherOptions {
   readonly idempotencyStore?: IdempotencyStore;
 }
 
+interface InFlightRecord {
+  readonly promise: Promise<unknown>;
+  readonly operation: string;
+  readonly canonicalHash: string;
+}
+
 export class GatewayDispatcher {
   private readonly storeRegistry: StoreRegistry;
   private readonly graphqlClient: ShopifyGraphqlClient;
   private readonly idempotencyStore: IdempotencyStore;
-  private readonly inFlightWrites = new Map<string, Promise<unknown>>();
+  private readonly inFlightWrites = new Map<string, InFlightRecord>();
 
   public constructor(options: GatewayDispatcherOptions) {
     this.storeRegistry = options.storeRegistry;
@@ -72,34 +82,54 @@ export class GatewayDispatcher {
 
     const isWrite = WRITE_OPERATIONS.has(request.operation);
     const mode: "preview" | "apply" = request.mode === "preview" ? "preview" : "apply";
-    const requestId = typeof request.requestId === "string" && request.requestId.trim() !== ""
-      ? request.requestId.trim()
-      : undefined;
+    const requestId =
+      typeof request.requestId === "string" && request.requestId.trim() !== ""
+        ? request.requestId.trim()
+        : undefined;
 
-    if (isWrite && requestId) {
-      const idempotencyKey = `${store.storeId}:${request.operation}:${requestId}`;
-      const payloadHash = deterministicStringify(request.payload);
+    // 1. Preview Mode: MUST NEVER write to IdempotencyStore or execute real mutation
+    if (isWrite && mode === "preview") {
+      const data = await this.executeWrite(store, request.operation, request.payload, "preview", requestId);
+      return {
+        storeId: request.storeId,
+        operation: request.operation,
+        success: true,
+        data,
+      };
+    }
 
-      const cached = await this.idempotencyStore.get(idempotencyKey);
-      if (cached) {
-        if (cached.payloadHash !== payloadHash) {
+    // 2. Apply Mode for Writes: MUST enforce requestId and check Idempotency
+    if (isWrite) {
+      if (!requestId) {
+        throw new GatewayError(
+          "requestId is required for write operations in apply mode",
+          "SHOPIFY_USER_ERROR",
+          400,
+        );
+      }
+
+      // Identity: storeId + requestId (operation stored separately in entry)
+      const idempotencyKey = `${store.storeId}:${requestId}`;
+      const canonicalHash = calculateCanonicalHash(request.operation, request.payload);
+
+      // Check in-flight concurrent requests first (synchronous check)
+      const inFlight = this.inFlightWrites.get(idempotencyKey);
+      if (inFlight) {
+        if (inFlight.operation !== request.operation) {
           throw new GatewayError(
-            `RequestId '${requestId}' has already been used with a different payload`,
+            `RequestId '${requestId}' is currently in-flight for operation '${inFlight.operation}'`,
             "SHOPIFY_USER_ERROR",
             409,
           );
         }
-        return {
-          storeId: request.storeId,
-          operation: request.operation,
-          success: true,
-          data: cached.responseData,
-        };
-      }
-
-      const inFlight = this.inFlightWrites.get(idempotencyKey);
-      if (inFlight) {
-        const data = await inFlight;
+        if (inFlight.canonicalHash !== canonicalHash) {
+          throw new GatewayError(
+            `RequestId '${requestId}' is currently in-flight with a different payload`,
+            "SHOPIFY_USER_ERROR",
+            409,
+          );
+        }
+        const data = await inFlight.promise;
         return {
           storeId: request.storeId,
           operation: request.operation,
@@ -108,37 +138,85 @@ export class GatewayDispatcher {
         };
       }
 
-      const execPromise = (async () => {
-        const data = await this.executeWrite(store, request.operation, request.payload, mode, requestId);
+      let resolveInFlight!: (val: unknown) => void;
+      let rejectInFlight!: (err: unknown) => void;
+      const inFlightPromise = new Promise<unknown>((resolve, reject) => {
+        resolveInFlight = resolve;
+        rejectInFlight = reject;
+      });
+      inFlightPromise.catch(() => {});
+
+      this.inFlightWrites.set(idempotencyKey, {
+        operation: request.operation,
+        canonicalHash,
+        promise: inFlightPromise,
+      });
+
+      try {
+        // Check cached entry
+        const cached = await this.idempotencyStore.get(idempotencyKey);
+        if (cached) {
+          if (cached.operation !== request.operation) {
+            throw new GatewayError(
+              `RequestId '${requestId}' was previously used for operation '${cached.operation}'`,
+              "SHOPIFY_USER_ERROR",
+              409,
+            );
+          }
+          if (cached.payloadHash !== canonicalHash) {
+            throw new GatewayError(
+              `RequestId '${requestId}' has already been used with a different payload`,
+              "SHOPIFY_USER_ERROR",
+              409,
+            );
+          }
+          if (cached.state === "COMPLETED") {
+            resolveInFlight(cached.responseData);
+            return {
+              storeId: request.storeId,
+              operation: request.operation,
+              success: true,
+              data: cached.responseData,
+            };
+          }
+        }
+
+        // Record PENDING state in IdempotencyStore
         await this.idempotencyStore.set(idempotencyKey, {
-          payloadHash,
+          state: "PENDING",
+          operation: request.operation,
+          payloadHash: canonicalHash,
+          createdAtMs: Date.now(),
+        });
+
+        const data = await this.executeWrite(store, request.operation, request.payload, "apply", requestId);
+
+        await this.idempotencyStore.set(idempotencyKey, {
+          state: "COMPLETED",
+          operation: request.operation,
+          payloadHash: canonicalHash,
           responseData: data,
           createdAtMs: Date.now(),
         });
-        return data;
-      })();
 
-      this.inFlightWrites.set(idempotencyKey, execPromise);
-      try {
-        const data = await execPromise;
+        resolveInFlight(data);
         return {
           storeId: request.storeId,
           operation: request.operation,
           success: true,
           data,
         };
+      } catch (err) {
+        await this.idempotencyStore.delete(idempotencyKey);
+        rejectInFlight(err);
+        throw err;
       } finally {
         this.inFlightWrites.delete(idempotencyKey);
       }
     }
 
-    let data: unknown;
-    if (isWrite) {
-      data = await this.executeWrite(store, request.operation, request.payload, mode, requestId);
-    } else {
-      data = await this.executeRead(store, request.operation, request.payload, requestId);
-    }
-
+    // 3. Read Operations
+    const data = await this.executeRead(store, request.operation, request.payload, requestId);
     return {
       storeId: request.storeId,
       operation: request.operation,
@@ -165,7 +243,7 @@ export class GatewayDispatcher {
       case "collections.get":
         return executeCollectionsGet(store, this.graphqlClient, payload);
       default:
-        throw new GatewayError(`Unsupported operation: ${operation}`, "SHOPIFY_INVALID_INPUT", 400);
+        throw new GatewayError(`Unsupported operation: ${operation}`, "NOT_IMPLEMENTED", 501);
     }
   }
 
@@ -198,7 +276,7 @@ export class GatewayDispatcher {
       case "collections.updateMembership":
         return executeCollectionsUpdateMembership(store, this.graphqlClient, payload, mode, requestId);
       default:
-        throw new GatewayError(`Unsupported write operation: ${operation}`, "SHOPIFY_INVALID_INPUT", 400);
+        throw new GatewayError(`Unsupported write operation: ${operation}`, "NOT_IMPLEMENTED", 501);
     }
   }
 }

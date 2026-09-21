@@ -1,4 +1,4 @@
-import { GatewayError } from "../errors";
+import { GatewayError, mapUserErrorsToGatewayError, type MutationUserErrorItem } from "../errors";
 import type { ShopifyGraphqlClient } from "../shopify-graphql-client";
 import type { CollectionSummary, StoreConfig } from "../types";
 import { mapCollectionNode, type RawCollectionNode } from "./collections";
@@ -57,6 +57,17 @@ const COLLECTION_DELETE_MUTATION = `
   }
 `;
 
+const CHECK_COLLECTION_TYPE_QUERY = `
+  query CheckCollectionType($id: ID!) {
+    collection(id: $id) {
+      id
+      ruleSet {
+        appliedDisjunctively
+      }
+    }
+  }
+`;
+
 const COLLECTION_ADD_PRODUCTS_MUTATION = `
   mutation CollectionAddProducts($id: ID!, $productIds: [ID!]!) {
     collectionAddProducts(id: $id, productIds: $productIds) {
@@ -78,11 +89,6 @@ const COLLECTION_REMOVE_PRODUCTS_MUTATION = `
     }
   }
 `;
-
-interface MutationUserError {
-  readonly field?: readonly string[];
-  readonly message: string;
-}
 
 export async function executeCollectionsCreate(
   store: StoreConfig,
@@ -134,7 +140,7 @@ export async function executeCollectionsCreate(
   interface CollectionCreateResponse {
     readonly collectionCreate: {
       readonly collection: RawCollectionNode | null;
-      readonly userErrors: readonly MutationUserError[];
+      readonly userErrors: readonly MutationUserErrorItem[];
     };
   }
 
@@ -146,8 +152,7 @@ export async function executeCollectionsCreate(
   );
 
   if (raw.collectionCreate.userErrors && raw.collectionCreate.userErrors.length > 0) {
-    const errorMsg = raw.collectionCreate.userErrors.map((e) => e.message).join("; ");
-    throw new GatewayError(errorMsg, "SHOPIFY_USER_ERROR", 400);
+    throw mapUserErrorsToGatewayError(raw.collectionCreate.userErrors);
   }
 
   if (!raw.collectionCreate.collection) {
@@ -204,7 +209,7 @@ export async function executeCollectionsUpdate(
   interface CollectionUpdateResponse {
     readonly collectionUpdate: {
       readonly collection: RawCollectionNode | null;
-      readonly userErrors: readonly MutationUserError[];
+      readonly userErrors: readonly MutationUserErrorItem[];
     };
   }
 
@@ -216,8 +221,7 @@ export async function executeCollectionsUpdate(
   );
 
   if (raw.collectionUpdate.userErrors && raw.collectionUpdate.userErrors.length > 0) {
-    const errorMsg = raw.collectionUpdate.userErrors.map((e) => e.message).join("; ");
-    throw new GatewayError(errorMsg, "SHOPIFY_USER_ERROR", 400);
+    throw mapUserErrorsToGatewayError(raw.collectionUpdate.userErrors);
   }
 
   if (!raw.collectionUpdate.collection) {
@@ -247,7 +251,7 @@ export async function executeCollectionsDelete(
   interface CollectionDeleteResponse {
     readonly collectionDelete: {
       readonly deletedCollectionId: string | null;
-      readonly userErrors: readonly MutationUserError[];
+      readonly userErrors: readonly MutationUserErrorItem[];
     };
   }
 
@@ -259,8 +263,7 @@ export async function executeCollectionsDelete(
   );
 
   if (raw.collectionDelete.userErrors && raw.collectionDelete.userErrors.length > 0) {
-    const errorMsg = raw.collectionDelete.userErrors.map((e) => e.message).join("; ");
-    throw new GatewayError(errorMsg, "SHOPIFY_USER_ERROR", 400);
+    throw mapUserErrorsToGatewayError(raw.collectionDelete.userErrors);
   }
 
   return {
@@ -292,39 +295,66 @@ export async function executeCollectionsUpdateMembership(
     };
   }
 
+  // 1. Check if collection is smart/automated (has ruleSet)
+  interface CollectionTypeCheckResponse {
+    readonly collection: {
+      readonly id: string;
+      readonly ruleSet?: { readonly appliedDisjunctively: boolean } | null;
+    } | null;
+  }
+
+  const typeCheckRaw = await client.query<CollectionTypeCheckResponse>(
+    store,
+    CHECK_COLLECTION_TYPE_QUERY,
+    { id: collectionId },
+    { isWrite: false },
+  );
+
+  if (typeCheckRaw.collection?.ruleSet) {
+    throw new GatewayError(
+      "Cannot manually modify membership of an automated/smart collection",
+      "SHOPIFY_USER_ERROR",
+      400,
+      undefined,
+      undefined,
+      ["collectionId"],
+      false,
+    );
+  }
+
+  // 2. Perform Add Products if any
   if (productIdsToAdd.length > 0) {
     interface AddProductsResponse {
       readonly collectionAddProducts: {
-        readonly userErrors: readonly MutationUserError[];
+        readonly userErrors: readonly MutationUserErrorItem[];
       };
     }
     const addRaw = await client.query<AddProductsResponse>(
       store,
       COLLECTION_ADD_PRODUCTS_MUTATION,
       { id: collectionId, productIds: productIdsToAdd },
-      { isWrite: true, requestId },
+      { isWrite: true, requestId: requestId ? `${requestId}:add` : undefined },
     );
     if (addRaw.collectionAddProducts.userErrors && addRaw.collectionAddProducts.userErrors.length > 0) {
-      const errorMsg = addRaw.collectionAddProducts.userErrors.map((e) => e.message).join("; ");
-      throw new GatewayError(errorMsg, "SHOPIFY_USER_ERROR", 400);
+      throw mapUserErrorsToGatewayError(addRaw.collectionAddProducts.userErrors);
     }
   }
 
+  // 3. Perform Remove Products if any
   if (productIdsToRemove.length > 0) {
     interface RemoveProductsResponse {
       readonly collectionRemoveProducts: {
-        readonly userErrors: readonly MutationUserError[];
+        readonly userErrors: readonly MutationUserErrorItem[];
       };
     }
     const removeRaw = await client.query<RemoveProductsResponse>(
       store,
       COLLECTION_REMOVE_PRODUCTS_MUTATION,
       { id: collectionId, productIds: productIdsToRemove },
-      { isWrite: true, requestId },
+      { isWrite: true, requestId: requestId ? `${requestId}:remove` : undefined },
     );
     if (removeRaw.collectionRemoveProducts.userErrors && removeRaw.collectionRemoveProducts.userErrors.length > 0) {
-      const errorMsg = removeRaw.collectionRemoveProducts.userErrors.map((e) => e.message).join("; ");
-      throw new GatewayError(errorMsg, "SHOPIFY_USER_ERROR", 400);
+      throw mapUserErrorsToGatewayError(removeRaw.collectionRemoveProducts.userErrors);
     }
   }
 
