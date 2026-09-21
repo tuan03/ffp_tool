@@ -127,12 +127,13 @@ export function mapProductNode(node: RawProductNode): ProductSummary {
     productType: node.productType ?? undefined,
     tags: node.tags ?? [],
     variants,
-    seo: node.seo
-      ? {
-          title: node.seo.title ?? undefined,
-          description: node.seo.description ?? undefined,
-        }
-      : undefined,
+    seo:
+      node.seo && (node.seo.title != null || node.seo.description != null)
+        ? {
+            title: node.seo.title ?? undefined,
+            description: node.seo.description ?? undefined,
+          }
+        : undefined,
     createdAt: node.createdAt,
     updatedAt: node.updatedAt,
   };

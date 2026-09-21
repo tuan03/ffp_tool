@@ -75,12 +75,13 @@ export function mapCollectionNode(node: RawCollectionNode): CollectionSummary {
     handle: node.handle,
     description: node.description ?? undefined,
     productsCount: count,
-    seo: node.seo
-      ? {
-          title: node.seo.title ?? undefined,
-          description: node.seo.description ?? undefined,
-        }
-      : undefined,
+    seo:
+      node.seo && (node.seo.title != null || node.seo.description != null)
+        ? {
+            title: node.seo.title ?? undefined,
+            description: node.seo.description ?? undefined,
+          }
+        : undefined,
     updatedAt: node.updatedAt,
   };
 }

@@ -99,6 +99,10 @@ test("Module API mock runner executes products.get", async () => {
   assert.equal(foundResponse.success, true);
   assert.notEqual(foundResponse.data.product, null);
   assert.equal(foundResponse.data.product?.title, "Classic Cotton T-Shirt");
+  assert.deepEqual(foundResponse.data.product?.seo, {
+    title: "Classic Cotton T-Shirt | Acme Apparel",
+    description: "Comfortable everyday 100% cotton t-shirt for all seasons.",
+  });
 
   const notFoundResponse = await runMockModuleApi({
     storeId: "store-101",
@@ -764,6 +768,10 @@ test("Real service executes products.get response success", async () => {
             status: "ACTIVE",
             tags: [],
             variants: [],
+            seo: {
+              title: "Product 1 SEO Title",
+              description: "Product 1 SEO Description",
+            },
             createdAt: "2026-01-01T00:00:00Z",
             updatedAt: "2026-01-01T00:00:00Z",
           },
@@ -787,6 +795,10 @@ test("Real service executes products.get response success", async () => {
   assert.equal(response.success, true);
   assert.equal(response.operation, "products.get");
   assert.equal(response.data.product?.id, "gid://shopify/Product/1");
+  assert.deepEqual(response.data.product?.seo, {
+    title: "Product 1 SEO Title",
+    description: "Product 1 SEO Description",
+  });
 });
 
 test("Real service executes collections.list response success", async () => {

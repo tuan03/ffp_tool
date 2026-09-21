@@ -670,6 +670,116 @@ describe("Gateway: Operations & Dispatcher", () => {
     });
   });
 
+  it("normalizes unpopulated and sparse SEO fields in products.list and collections.list", async () => {
+    const dispatcher = setupGateway({
+      data: {
+        products: {
+          pageInfo: { hasNextPage: false, hasPreviousPage: false },
+          edges: [
+            {
+              cursor: "p1",
+              node: {
+                id: "gid://shopify/Product/1",
+                title: "No SEO Product",
+                handle: "no-seo-prod",
+                status: "ACTIVE",
+                tags: [],
+                seo: { title: null, description: null },
+                createdAt: "2026-09-01",
+                updatedAt: "2026-09-20",
+                variants: { edges: [] },
+              },
+            },
+            {
+              cursor: "p2",
+              node: {
+                id: "gid://shopify/Product/2",
+                title: "Partial Title Product",
+                handle: "partial-title-prod",
+                status: "ACTIVE",
+                tags: [],
+                seo: { title: "Custom SEO Title", description: null },
+                createdAt: "2026-09-01",
+                updatedAt: "2026-09-20",
+                variants: { edges: [] },
+              },
+            },
+            {
+              cursor: "p3",
+              node: {
+                id: "gid://shopify/Product/3",
+                title: "Null SEO Product",
+                handle: "null-seo-prod",
+                status: "ACTIVE",
+                tags: [],
+                seo: null,
+                createdAt: "2026-09-01",
+                updatedAt: "2026-09-20",
+                variants: { edges: [] },
+              },
+            },
+          ],
+        },
+        collections: {
+          pageInfo: { hasNextPage: false, hasPreviousPage: false },
+          edges: [
+            {
+              cursor: "c1",
+              node: {
+                id: "gid://shopify/Collection/1",
+                title: "No SEO Collection",
+                handle: "no-seo-col",
+                description: "desc",
+                seo: { title: null, description: null },
+                productsCount: { count: 10 },
+                updatedAt: "2026-09-21",
+              },
+            },
+            {
+              cursor: "c2",
+              node: {
+                id: "gid://shopify/Collection/2",
+                title: "Partial Description Collection",
+                handle: "partial-desc-col",
+                description: "desc",
+                seo: { title: null, description: "Only SEO Description" },
+                productsCount: { count: 5 },
+                updatedAt: "2026-09-21",
+              },
+            },
+          ],
+        },
+      },
+    });
+
+    const prodRes = await dispatcher.dispatch({
+      storeId: "store-test",
+      operation: "products.list",
+      payload: {},
+    });
+    assert.equal(prodRes.success, true);
+    const prodData = prodRes.data as { products: { id: string; seo?: { title?: string; description?: string } }[] };
+    assert.equal(prodData.products[0].seo, undefined);
+    assert.deepEqual(prodData.products[1].seo, {
+      title: "Custom SEO Title",
+      description: undefined,
+    });
+    assert.equal(prodData.products[2].seo, undefined);
+
+    const colRes = await dispatcher.dispatch({
+      storeId: "store-test",
+      operation: "collections.list",
+      payload: {},
+    });
+    assert.equal(colRes.success, true);
+    const colData = colRes.data as { collections: { id: string; seo?: { title?: string; description?: string } }[] };
+    assert.equal(colData.collections[0].seo, undefined);
+    assert.deepEqual(colData.collections[1].seo, {
+      title: undefined,
+      description: "Only SEO Description",
+    });
+  });
+
   it("executes products.create, update, bulkUpdate, and delete with GraphQL mutations", async () => {
     let capturedBody: Record<string, unknown> | undefined;
     const dispatcher = setupGateway(async (_url: string, init?: RequestInit) => {
