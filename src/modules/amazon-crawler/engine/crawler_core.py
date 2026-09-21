@@ -144,6 +144,11 @@ def _stable_token(*values: str, length: int = 20) -> str:
     return hashlib.sha256("|".join(values).encode("utf-8")).hexdigest()[:length]
 
 
+def _exception_message(error: BaseException) -> str:
+    message = str(error).strip()
+    return message or type(error).__name__
+
+
 def _balanced_json(source: str, marker: str) -> Any | None:
     marker_index = source.find(marker)
     if marker_index < 0:
@@ -460,7 +465,10 @@ class AmazonCrawler:
             except CaptchaTimeout:
                 raise
             except Exception as browser_error:
-                raise RuntimeError(f"HTTP and Playwright fallback failed: {http_error}; {browser_error}") from browser_error
+                raise RuntimeError(
+                    f"HTTP and Playwright fallback failed: {_exception_message(http_error)}; "
+                    f"Playwright {_exception_message(browser_error)}"
+                ) from browser_error
 
     def _crawl_family(self, normalized: NormalizedInput) -> dict[str, Any]:
         cached = self.cache.load(normalized.asin, require_customization=True)
@@ -537,7 +545,10 @@ class AmazonCrawler:
                             raise ValueError("Customize form did not contain widget data after Playwright rendering.")
                         customization_raw = {"state": customization_raw, "widget": widget}
                     except Exception as browser_error:
-                        warnings.append(f"Customization form fetch failed: {http_error}; {browser_error}")
+                        warnings.append(
+                            f"Customization form fetch failed: {_exception_message(http_error)}; "
+                            f"Playwright {_exception_message(browser_error)}"
+                        )
                         customization_complete = False
             if child["asin"] != asin:
                 warnings.append(f"Requested child ASIN {asin}, but Amazon returned {child['asin']}.")

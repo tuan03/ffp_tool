@@ -3,8 +3,9 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
-from engine.playwright_pool import CaptchaTimeout, PlaywrightPool, html_is_captcha
+from engine.playwright_pool import CaptchaTimeout, PlaywrightPool, html_is_captcha, start_with_playwright_event_loop
 
 
 class FakeCaptchaPage:
@@ -102,6 +103,29 @@ class PlaywrightPoolTests(unittest.TestCase):
         finally:
             pool.close()
         self.assertIn("Recovered", html)
+
+    def test_windows_selector_policy_is_temporarily_replaced_for_playwright(self) -> None:
+        class SelectorPolicy:
+            pass
+
+        class ProactorPolicy:
+            pass
+
+        original_policy = SelectorPolicy()
+
+        with (
+            patch("engine.playwright_pool.sys.platform", "win32"),
+            patch("engine.playwright_pool.asyncio.WindowsSelectorEventLoopPolicy", SelectorPolicy, create=True),
+            patch("engine.playwright_pool.asyncio.WindowsProactorEventLoopPolicy", ProactorPolicy, create=True),
+            patch("engine.playwright_pool.asyncio.get_event_loop_policy", return_value=original_policy),
+            patch("engine.playwright_pool.asyncio.set_event_loop_policy") as set_policy,
+        ):
+            result = start_with_playwright_event_loop(lambda: "started")
+
+        self.assertEqual(result, "started")
+        policies = [call.args[0] for call in set_policy.call_args_list]
+        self.assertIsInstance(policies[0], ProactorPolicy)
+        self.assertIs(policies[1], original_policy)
 
 
 if __name__ == "__main__":

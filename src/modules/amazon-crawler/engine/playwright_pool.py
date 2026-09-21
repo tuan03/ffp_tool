@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -21,6 +23,28 @@ class CaptchaTimeout(RuntimeError):
 def html_is_captcha(html: str) -> bool:
     lowered = html.casefold()
     return "validatecaptcha" in lowered or "enter the characters you see below" in lowered or "captchacharacters" in lowered
+
+
+def start_with_playwright_event_loop(start: Callable[[], Any]) -> Any:
+    """Start Playwright with a subprocess-capable loop under Uvicorn reload.
+
+    Uvicorn selects WindowsSelectorEventLoopPolicy when reload is enabled. That
+    loop cannot create the Playwright driver subprocess and raises an empty
+    NotImplementedError. The already-running Uvicorn loop is unaffected while
+    this worker temporarily creates Playwright with a Proactor loop.
+    """
+    if sys.platform != "win32":
+        return start()
+    selector_policy_type = getattr(asyncio, "WindowsSelectorEventLoopPolicy", None)
+    proactor_policy_type = getattr(asyncio, "WindowsProactorEventLoopPolicy", None)
+    previous_policy = asyncio.get_event_loop_policy()
+    if selector_policy_type is None or proactor_policy_type is None or not isinstance(previous_policy, selector_policy_type):
+        return start()
+    asyncio.set_event_loop_policy(proactor_policy_type())
+    try:
+        return start()
+    finally:
+        asyncio.set_event_loop_policy(previous_policy)
 
 
 class PlaywrightPool:
@@ -84,7 +108,7 @@ class PlaywrightPool:
                     from playwright.sync_api import sync_playwright
                 except ImportError as error:
                     raise PlaywrightUnavailable("Playwright is not installed. Run pip install -r engine/requirements.txt.") from error
-                self._runtime = sync_playwright().start()
+                self._runtime = start_with_playwright_event_loop(lambda: sync_playwright().start())
             while len(self._contexts) < self.profiles:
                 self._contexts.append(self._launch_context(len(self._contexts)))
 
@@ -147,7 +171,7 @@ class PlaywrightPool:
     def fetch(self, url: str, *, cancel_event: threading.Event | None = None) -> str:
         if self._is_closed:
             raise RuntimeError("Playwright pool is closed.")
-        attempts = max(2, self.profiles) if self.headless else 2
+        attempts = max(3, self.profiles)
         last_error: Exception | None = None
         for attempt in range(attempts):
             try:
@@ -158,9 +182,13 @@ class PlaywrightPool:
                     raise
             except Exception as error:
                 last_error = error
-                is_closed_context = "closed" in str(error).casefold() or "target page" in str(error).casefold()
-                if not is_closed_context or attempt + 1 >= attempts:
+                message = str(error).casefold()
+                is_retryable = any(marker in message for marker in (
+                    "closed", "target page", "net::err_", "timeout", "connection", "navigation",
+                ))
+                if not is_retryable or attempt + 1 >= attempts:
                     raise
+                time.sleep(0.5 * (attempt + 1))
         raise CaptchaTimeout(f"All {attempts} headless browser profile attempts encountered CAPTCHA: {last_error}")
 
     def _sweep_internal(self, url: str, cap: int, cancel_event: threading.Event | None) -> list[str]:
