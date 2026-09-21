@@ -2,14 +2,18 @@ import { useMemo } from "react";
 import { createBrowserRouter, RouterProvider } from "react-router-dom";
 
 import { AppLayout } from "../../layouts/AppLayout";
-import type { WorkflowInput, WorkflowOutput } from "../../modules/orchestrator";
+import { amazonCrawlerRoutes } from "../../modules/amazon-crawler";
 import { HomePage } from "../../pages/home/HomePage";
 
+import type { AmazonCrawlerRunner } from "../../modules/amazon-crawler";
+import type { WorkflowInput, WorkflowOutput } from "../../modules/orchestrator";
+
 interface AppRoutesProps {
+  runAmazonCrawler: AmazonCrawlerRunner;
   runWorkflow(input: WorkflowInput): Promise<WorkflowOutput>;
 }
 
-export function AppRoutes({ runWorkflow }: AppRoutesProps): React.JSX.Element {
+export function AppRoutes({ runAmazonCrawler, runWorkflow }: AppRoutesProps): React.JSX.Element {
   const router = useMemo(
     () =>
       createBrowserRouter([
@@ -20,10 +24,15 @@ export function AppRoutes({ runWorkflow }: AppRoutesProps): React.JSX.Element {
               index: true,
               element: <HomePage runWorkflow={runWorkflow} />,
             },
+            ...amazonCrawlerRoutes(runAmazonCrawler),
+            {
+              path: "*",
+              element: <p className="mt-8 text-lg text-slate-300">Không tìm thấy trang.</p>,
+            },
           ],
         },
       ]),
-    [runWorkflow],
+    [runAmazonCrawler, runWorkflow],
   );
 
   return <RouterProvider router={router} />;
