@@ -3229,5 +3229,228 @@ describe("Gateway: HTTP Server Handler & E2E Integration with module-api", () =>
       height: undefined,
     });
   });
+
+  it("safely handles products.get with null edges, whitespace urls, and null dimensions", async () => {
+    const registry = new InMemoryStoreRegistry([
+      {
+        storeId: "store-edges",
+        shopDomain: "store-edges.myshopify.com",
+        apiVersion: "2026-07",
+        auth: { type: "static", staticToken: "tok" },
+      },
+    ]);
+    const fakeTransport: HttpTransport = async () => {
+      return createMockResponse({
+        data: {
+          product: {
+            id: "gid://shopify/Product/sparse-1",
+            title: "Sparse Product",
+            handle: "sparse-product",
+            description: null,
+            descriptionHtml: null,
+            status: "ACTIVE",
+            tags: [],
+            onlineStoreUrl: null,
+            featuredImage: {
+              id: "gid://shopify/ProductImage/f1",
+              url: "  https://cdn.shopify.com/trimmed.jpg  ",
+              altText: null,
+              width: null,
+              height: null,
+            },
+            images: {
+              edges: [
+                null,
+                {
+                  node: {
+                    id: "gid://shopify/ProductImage/i1",
+                    url: "   ",
+                    altText: "whitespace url",
+                    width: null,
+                    height: null,
+                  },
+                },
+                {
+                  node: {
+                    id: null,
+                    url: "https://cdn.shopify.com/valid.jpg",
+                    altText: "Valid Image",
+                    width: 1200,
+                    height: 1200,
+                  },
+                },
+              ],
+            },
+            createdAt: "2026-09-01",
+            updatedAt: "2026-09-20",
+            variants: { edges: [] },
+          },
+        },
+      });
+    };
+
+    const client = new ShopifyGraphqlClient({
+      tokenProvider: new StaticAccessTokenProvider(),
+      throttleManager: new InMemoryThrottleManager(),
+      baseTransport: fakeTransport,
+    });
+    const dispatcher = new GatewayDispatcher({ storeRegistry: registry, graphqlClient: client });
+
+    const res = await dispatcher.dispatch({
+      storeId: "store-edges",
+      operation: "products.get",
+      payload: { id: "gid://shopify/Product/sparse-1" },
+    });
+
+    assert.equal(res.success, true);
+    const product = (res.data as { product: ProductSummary }).product;
+    assert.equal(product.description, undefined);
+    assert.equal(product.onlineStoreUrl, undefined);
+    assert.deepEqual(product.featuredImage, {
+      id: "gid://shopify/ProductImage/f1",
+      url: "https://cdn.shopify.com/trimmed.jpg",
+      altText: undefined,
+      width: undefined,
+      height: undefined,
+    });
+    // Whitespace url and null edge filtered out, valid image retained
+    assert.equal(product.images?.length, 1);
+    assert.deepEqual(product.images?.[0], {
+      id: undefined,
+      url: "https://cdn.shopify.com/valid.jpg",
+      altText: "Valid Image",
+      width: 1200,
+      height: 1200,
+    });
+  });
+
+  it("filters empty and whitespace URLs in preview and falls back description in write operations", async () => {
+    let capturedCreateVariables: Record<string, unknown> | undefined;
+    let capturedUpdateVariables: Record<string, unknown> | undefined;
+
+    const registry = new InMemoryStoreRegistry([
+      {
+        storeId: "store-write-fallback",
+        shopDomain: "store-write-fallback.myshopify.com",
+        apiVersion: "2026-07",
+        auth: { type: "static", staticToken: "tok" },
+      },
+    ]);
+
+    const fakeTransport: HttpTransport = async (_url, options) => {
+      const body = JSON.parse(options?.body as string) as { query: string; variables: Record<string, unknown> };
+      if (body.query.includes("productCreate")) {
+        capturedCreateVariables = body.variables;
+        return createMockResponse({
+          data: {
+            productCreate: {
+              product: {
+                id: "gid://shopify/Product/created-10",
+                title: "Created Product",
+                handle: "created-product",
+                description: "Plain text description",
+                descriptionHtml: "<p>Plain text description</p>",
+                status: "DRAFT",
+                tags: [],
+                onlineStoreUrl: "https://store.myshopify.com/products/created-product",
+                featuredImage: null,
+                images: { edges: [] },
+                createdAt: "2026-09-01",
+                updatedAt: "2026-09-20",
+                variants: { edges: [] },
+              },
+              userErrors: [],
+            },
+          },
+        });
+      }
+      if (body.query.includes("productUpdate")) {
+        capturedUpdateVariables = body.variables;
+        return createMockResponse({
+          data: {
+            productUpdate: {
+              product: {
+                id: "gid://shopify/Product/updated-10",
+                title: "Updated Product",
+                handle: "updated-product",
+                description: "Plain text updated description",
+                descriptionHtml: "<p>Plain text updated description</p>",
+                status: "ACTIVE",
+                tags: [],
+                onlineStoreUrl: "https://store.myshopify.com/products/updated-product",
+                featuredImage: null,
+                images: { edges: [] },
+                createdAt: "2026-09-01",
+                updatedAt: "2026-09-20",
+                variants: { edges: [] },
+              },
+              userErrors: [],
+            },
+          },
+        });
+      }
+      return createMockResponse({});
+    };
+
+    const client = new ShopifyGraphqlClient({
+      tokenProvider: new StaticAccessTokenProvider(),
+      throttleManager: new InMemoryThrottleManager(),
+      baseTransport: fakeTransport,
+    });
+    const dispatcher = new GatewayDispatcher({ storeRegistry: registry, graphqlClient: client });
+
+    // Preview mode: filters whitespace/empty URLs
+    const previewRes = await dispatcher.dispatch({
+      storeId: "store-write-fallback",
+      operation: "products.create",
+      mode: "preview",
+      payload: {
+        product: {
+          title: "Preview Filter Test",
+          featuredImage: { url: "   " },
+          images: [{ url: "" }, { url: "  " }, { url: "https://cdn.shopify.com/valid.jpg" }],
+        },
+      },
+    });
+    assert.equal(previewRes.success, true);
+    if (!previewRes.success) {
+      assert.fail("previewRes should succeed");
+    }
+    const previewProd = (previewRes.data as { product: ProductSummary }).product;
+    assert.equal(previewProd.featuredImage, undefined);
+    assert.equal(previewProd.images?.length, 1);
+    assert.equal(previewProd.images?.[0].url, "https://cdn.shopify.com/valid.jpg");
+
+    // Apply mode: description falls back to descriptionHtml when descriptionHtml omitted
+    await dispatcher.dispatch({
+      storeId: "store-write-fallback",
+      operation: "products.create",
+      mode: "apply",
+      requestId: "req-create-desc-fallback",
+      payload: {
+        product: {
+          title: "Created with description",
+          description: "Plain description fallback",
+        },
+      },
+    });
+    const createInput = (capturedCreateVariables?.product as Record<string, unknown>);
+    assert.equal(createInput.descriptionHtml, "Plain description fallback");
+
+    await dispatcher.dispatch({
+      storeId: "store-write-fallback",
+      operation: "products.update",
+      mode: "apply",
+      requestId: "req-update-desc-fallback",
+      payload: {
+        id: "gid://shopify/Product/updated-10",
+        product: {
+          description: "Updated description fallback",
+        },
+      },
+    });
+    const updateInput = (capturedUpdateVariables?.product as Record<string, unknown>);
+    assert.equal(updateInput.descriptionHtml, "Updated description fallback");
+  });
 });
 
