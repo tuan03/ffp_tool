@@ -9,9 +9,9 @@ export type { ShopifyStatusFilter };
 export interface AutoSeoFilterCriteria {
   readonly searchQuery: string;
   readonly statusFilter: ShopifyStatusFilter;
-  readonly decisionFilter: string;
-  readonly decisions: Record<string, ProductReviewDecision>;
-  readonly selectedProductIds: readonly string[];
+  readonly decisionFilter?: string;
+  readonly decisions?: Record<string, ProductReviewDecision>;
+  readonly selectedProductIds?: readonly string[];
 }
 
 export function filterAutoSeoProducts(
@@ -21,7 +21,7 @@ export function filterAutoSeoProducts(
   const query = criteria.searchQuery.toLowerCase().trim();
   const targetStatus = criteria.statusFilter;
   const decisionFilter = criteria.decisionFilter;
-  const selectedIdSet = new Set(criteria.selectedProductIds);
+  const selectedIdSet = criteria.selectedProductIds ? new Set(criteria.selectedProductIds) : null;
 
   return products.filter((product) => {
     // 1. Search Query: matches title, handle, id, or tags
@@ -44,13 +44,13 @@ export function filterAutoSeoProducts(
       }
     }
 
-    // 3. Review Decision Filter
-    if (decisionFilter !== "all") {
+    // 3. Review Decision Filter (optional)
+    if (decisionFilter && decisionFilter !== "all") {
       if (decisionFilter === "selected") {
-        if (!selectedIdSet.has(product.id)) {
+        if (!selectedIdSet || !selectedIdSet.has(product.id)) {
           return false;
         }
-      } else {
+      } else if (criteria.decisions) {
         const decision = criteria.decisions[product.id] ?? "pending";
         if (decision !== decisionFilter) {
           return false;

@@ -1,18 +1,13 @@
 import { useState } from "react";
 
-import type { ProductReviewDecision, ShopifyProductForAutoSeoUi } from "../../types";
+import type { ShopifyProductForAutoSeoUi } from "../../types";
 
 export interface ProductDetailDrawerProps {
   product: ShopifyProductForAutoSeoUi | null;
   isOpen: boolean;
-  decision?: ProductReviewDecision;
   isLoading?: boolean;
   errorMessage?: string | null;
   onClose(): void;
-  onApprove?(productId: string): void;
-  onMarkNeedsEdit?(productId: string): void;
-  onMarkDraft?(productId: string): void;
-  onSkip?(productId: string): void;
   selectedImageIndex?: number;
   onSelectImageIndex?(index: number): void;
 }

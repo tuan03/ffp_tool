@@ -55,19 +55,12 @@ interface RenderResult {
 function renderTable(props: {
   products: readonly ShopifyProductForAutoSeoUi[];
   selectedProductIds: readonly string[];
-  decisions?: Record<string, "approved" | "needs_edit" | "mark_draft" | "skipped" | "pending">;
   searchQuery?: string;
   onSearchQueryChange?: (query: string) => void;
   statusFilter?: ShopifyStatusFilter;
   onStatusFilterChange?: (status: ShopifyStatusFilter) => void;
-  decisionFilter?: string;
-  onDecisionFilterChange?: (decision: string) => void;
   filteredProducts?: readonly ShopifyProductForAutoSeoUi[];
   onToggleSelect?: (id: string) => void;
-  onApprove?: (id: string) => void;
-  onEdit?: (product: ShopifyProductForAutoSeoUi) => void;
-  onMarkDraft?: (id: string) => void;
-  onSkip?: (id: string) => void;
   onOpenDetail?: (product: ShopifyProductForAutoSeoUi) => void;
 }): RenderResult {
   let captured: React.ReactElement<{ children: React.ReactNode[] }> | null = null;
@@ -76,19 +69,12 @@ function renderTable(props: {
     captured = ProductSelectionTable({
       products: props.products,
       selectedProductIds: props.selectedProductIds,
-      decisions: (props.decisions ?? {}) as Record<string, ProductReviewDecision>,
       searchQuery: props.searchQuery,
       onSearchQueryChange: props.onSearchQueryChange,
       statusFilter: props.statusFilter,
       onStatusFilterChange: props.onStatusFilterChange,
-      decisionFilter: props.decisionFilter,
-      onDecisionFilterChange: props.onDecisionFilterChange,
       filteredProducts: props.filteredProducts,
       onToggleSelect: props.onToggleSelect ?? (() => {}),
-      onApprove: props.onApprove ?? (() => {}),
-      onEdit: props.onEdit ?? (() => {}),
-      onMarkDraft: props.onMarkDraft ?? (() => {}),
-      onSkip: props.onSkip ?? (() => {}),
       onOpenDetail: props.onOpenDetail ?? (() => {}),
     }) as React.ReactElement<{ children: React.ReactNode[] }>;
     return captured;

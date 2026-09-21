@@ -360,10 +360,6 @@ test("8. opening ProductDetailDrawer hydrates product detail", async () => {
       isOpen: true,
       isLoading: true,
       onClose: () => {},
-      onApprove: () => {},
-      onMarkNeedsEdit: () => {},
-      onMarkDraft: () => {},
-      onSkip: () => {},
     }),
   );
   assert.ok(htmlLoading.includes("Đang tải chi tiết..."));
@@ -379,10 +375,6 @@ test("8. opening ProductDetailDrawer hydrates product detail", async () => {
       isOpen: true,
       isLoading: false,
       onClose: () => {},
-      onApprove: () => {},
-      onMarkNeedsEdit: () => {},
-      onMarkDraft: () => {},
-      onSkip: () => {},
     }),
   );
 
@@ -422,10 +414,6 @@ test("9. cached drawer detail does not fetch again", async () => {
       isOpen: true,
       isLoading: false,
       onClose: () => {},
-      onApprove: () => {},
-      onMarkNeedsEdit: () => {},
-      onMarkDraft: () => {},
-      onSkip: () => {},
     }),
   );
 
@@ -771,10 +759,6 @@ test("22. ProductDetailDrawer renders loading placeholders for images and varian
       isOpen: true,
       isLoading: true,
       onClose: () => {},
-      onApprove: () => {},
-      onMarkNeedsEdit: () => {},
-      onMarkDraft: () => {},
-      onSkip: () => {},
     }),
   );
 

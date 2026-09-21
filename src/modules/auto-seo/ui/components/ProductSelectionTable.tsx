@@ -3,7 +3,6 @@ import { useMemo, useState } from "react";
 import { filterAutoSeoProducts } from "./product-filter";
 
 import type {
-  ProductReviewDecision,
   ShopifyProductForAutoSeoUi,
   ShopifyStatusFilter,
 } from "../../types";
@@ -11,19 +10,12 @@ import type {
 export interface ProductSelectionTableProps {
   products: readonly ShopifyProductForAutoSeoUi[];
   selectedProductIds: readonly string[];
-  decisions?: Record<string, ProductReviewDecision>;
   searchQuery?: string;
   onSearchQueryChange?(query: string): void;
   statusFilter?: ShopifyStatusFilter;
   onStatusFilterChange?(status: ShopifyStatusFilter): void;
-  decisionFilter?: string;
-  onDecisionFilterChange?(decision: string): void;
   filteredProducts?: readonly ShopifyProductForAutoSeoUi[];
   onToggleSelect(productId: string): void;
-  onApprove?(productId: string): void;
-  onEdit?(product: ShopifyProductForAutoSeoUi): void;
-  onMarkDraft?(productId: string): void;
-  onSkip?(productId: string): void;
   onOpenDetail(product: ShopifyProductForAutoSeoUi): void;
 }
 
@@ -88,18 +80,12 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
     return filterAutoSeoProducts(products, {
       searchQuery,
       statusFilter,
-      decisionFilter: props.decisionFilter ?? "all",
-      decisions: props.decisions ?? {},
-      selectedProductIds,
     });
   }, [
     props.filteredProducts,
     products,
     searchQuery,
     statusFilter,
-    props.decisionFilter,
-    props.decisions,
-    selectedProductIds,
   ]);
 
   if (products.length === 0) {

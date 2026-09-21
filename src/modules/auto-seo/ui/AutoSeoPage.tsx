@@ -67,11 +67,8 @@ export function AutoSeoPage({
     return filterAutoSeoProducts(products, {
       searchQuery,
       statusFilter,
-      decisionFilter: "all",
-      decisions: {},
-      selectedProductIds,
     });
-  }, [products, searchQuery, statusFilter, selectedProductIds]);
+  }, [products, searchQuery, statusFilter]);
 
   const handleLoadProducts = useCallback(async (): Promise<void> => {
     setIsLoadingProducts(true);

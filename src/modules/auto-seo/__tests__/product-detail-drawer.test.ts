@@ -63,12 +63,9 @@ function renderDrawer(
     captured = ProductDetailDrawer({
       product: props.product,
       isOpen: props.isOpen ?? true,
-      decision: props.decision ?? "pending",
+      isLoading: props.isLoading,
+      errorMessage: props.errorMessage,
       onClose: props.onClose ?? (() => {}),
-      onApprove: props.onApprove ?? (() => {}),
-      onMarkNeedsEdit: props.onMarkNeedsEdit ?? (() => {}),
-      onMarkDraft: props.onMarkDraft ?? (() => {}),
-      onSkip: props.onSkip ?? (() => {}),
       selectedImageIndex: props.selectedImageIndex,
       onSelectImageIndex: props.onSelectImageIndex,
     });
@@ -372,10 +369,6 @@ test("ProductDetailDrawer: switching product resets selected image safely", () =
       product: currentProduct,
       isOpen: true,
       onClose: () => {},
-      onApprove: () => {},
-      onMarkNeedsEdit: () => {},
-      onMarkDraft: () => {},
-      onSkip: () => {},
     });
   }
 
@@ -403,10 +396,6 @@ test("ProductDetailDrawer: switching product resets selected image safely", () =
       product: productA,
       isOpen,
       onClose: () => {},
-      onApprove: () => {},
-      onMarkNeedsEdit: () => {},
-      onMarkDraft: () => {},
-      onSkip: () => {},
     });
   }
 
