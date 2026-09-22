@@ -23,8 +23,11 @@ import type {
   PodJobStatusResponse,
   PodPollOptions,
   PodProductType,
+  PodRecentRunItem,
+  PodStatusResponse,
   ProduceInput,
   ProduceOutput,
+  SeoHandoverResponse,
 } from "./types";
 import { FACTORY_PRINT_STANDARDS } from "./types";
 
@@ -165,6 +168,7 @@ export async function startDiscoveryJob(
         workflow_stage: input.workflow_stage ?? "crawl_and_review",
         candidatePoolSize: input.candidatePoolSize ?? 15,
         referenceImages: input.referenceImages ?? [],
+        ...(input.ai_background_variants ? { ai_background_variants: input.ai_background_variants } : {}),
       }),
       signal: options?.signal,
     },
@@ -317,6 +321,10 @@ export async function startProductionJob(
         selected_candidates: input.selected_candidates,
         ...(input.product ? { product: input.product } : {}),
         ...(input.niche ? { niche: input.niche } : {}),
+        ...(input.design_mode ? { design_mode: input.design_mode } : {}),
+        ...(input.referenceImages ? { referenceImages: input.referenceImages } : {}),
+        ...(input.room_template_urls ? { room_template_urls: input.room_template_urls } : {}),
+        ...(input.ai_background_variants ? { ai_background_variants: input.ai_background_variants } : {}),
       }),
       signal: options?.signal,
     },
@@ -346,11 +354,24 @@ export function buildSeoDeliverables(
   jobStatus: PodJobStatusResponse,
   productType: PodProductType = "rug",
   selectedCandidateIds?: readonly string[],
+  approvedMockupUrls?: ReadonlySet<string> | readonly string[],
 ): PinterestPodDeliverables {
   const deliverables: PodBackendDeliverables = jobStatus.deliverables ?? {};
   const comparisonRows = deliverables.comparison_rows ?? deliverables.comparison_matrix ?? [];
   const printStandard = FACTORY_PRINT_STANDARDS[productType];
   const workflowId = jobStatus.jobId || jobStatus.job_id || "pod_production_completed";
+
+  const approvedSet = approvedMockupUrls
+    ? (approvedMockupUrls instanceof Set ? approvedMockupUrls : new Set(approvedMockupUrls))
+    : null;
+
+  const isMockupApproved = (url: string): boolean => {
+    if (!approvedSet) return true;
+    if (approvedSet.has(url)) return true;
+    const fname = extractFilename(url);
+    if (fname && approvedSet.has(fname)) return true;
+    return false;
+  };
 
   // Build multi-index candidate maps for robust lookup
   const candidatesById = new Map<string, PodCandidate>();
@@ -451,7 +472,7 @@ export function buildSeoDeliverables(
           ? `temp/pinterest_pod/${workflowId}/${transCutoutFilename}`
           : undefined;
 
-      const backgroundUrls = row.ai_background_urls ?? [];
+      const backgroundUrls = (row.ai_background_urls ?? []).filter(isMockupApproved);
       const composedMockups: PodComposedMockupSpec[] = backgroundUrls.map(
         (bgUrl, bgIdx) => {
           const matchedMockup = deliverables.lifestyle_mockups?.find((m) => m.url === bgUrl);
@@ -517,7 +538,9 @@ export function buildSeoDeliverables(
         ? deliverables.product_cutouts[idx]
         : undefined;
 
-      const mockups: PodComposedMockupSpec[] = (deliverables.lifestyle_mockups ?? []).map(
+      const mockups: PodComposedMockupSpec[] = (deliverables.lifestyle_mockups ?? [])
+        .filter((m) => isMockupApproved(m.url))
+        .map(
         (m, mIdx) => ({
           referenceImageId: `ref_room_0${mIdx + 1}`,
           mockupUrl: m.url,
@@ -703,6 +726,11 @@ export class RealPinterestPodClient implements PinterestPodClient {
         body: JSON.stringify({
           jobId: input.jobId,
           selected_candidates: input.selected_candidates,
+          product: input.product,
+          niche: input.niche,
+          design_mode: input.design_mode ?? "direct_print",
+          ...(input.referenceImages ? { referenceImages: input.referenceImages } : {}),
+          ...(input.room_template_urls ? { room_template_urls: input.room_template_urls } : {}),
         }),
       },
       "PINTEREST_PRODUCE_FAILED",
@@ -718,6 +746,44 @@ export class RealPinterestPodClient implements PinterestPodClient {
       "PINTEREST_JOB_CANCEL_FAILED",
     );
   }
+
+  public async getStatus(): Promise<PodStatusResponse> {
+    return fetchJson<PodStatusResponse>(
+      "/api/pinterest-pod/status",
+      undefined,
+      "PINTEREST_STATUS_FETCH_FAILED",
+    );
+  }
+
+  public async deleteJob(jobId: string): Promise<{ readonly ok: boolean; readonly message?: string }> {
+    return fetchJson<{ readonly ok: boolean; readonly message?: string }>(
+      `/api/pinterest-pod/jobs/${encodeURIComponent(jobId)}/delete`,
+      {
+        method: "POST",
+      },
+      "PINTEREST_JOB_DELETE_FAILED",
+    );
+  }
+
+  public async handoverToSeo(payload: PinterestPodDeliverables): Promise<SeoHandoverResponse> {
+    return handoverToSeo(payload);
+  }
+}
+
+/** Hand over final deliverables to the SEO Module */
+export async function handoverToSeo(
+  payload: PinterestPodDeliverables,
+  customBaseUrl?: string,
+): Promise<SeoHandoverResponse> {
+  return requestJson<SeoHandoverResponse>(
+    "/api/pinterest-pod/handover-seo",
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+    "PINTEREST_POD_SEO_HANDOVER_FAILED",
+    customBaseUrl,
+  );
 }
 
 export const realPinterestPodClient = new RealPinterestPodClient();

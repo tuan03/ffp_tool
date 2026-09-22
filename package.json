@@ -10,6 +10,7 @@
     "build:mock": "tsc --noEmit -p tsconfig.json && vite build --mode mock",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "tsx --test src/modules/*/__tests__/*.test.ts",
+    "server:pod": "python src/modules/pinterest-pod/server/server.py",
     "preview": "vite preview"
   },
   "dependencies": {

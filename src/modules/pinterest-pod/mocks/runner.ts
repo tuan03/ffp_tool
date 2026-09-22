@@ -21,8 +21,11 @@ import type {
   PodDeliverableItem,
   PodJobStatusResponse,
   PodPollOptions,
+  PodRecentRunItem,
+  PodStatusResponse,
   ProduceInput,
   ProduceOutput,
+  SeoHandoverResponse,
   SummaryMetrics,
 } from "../types";
 import { FACTORY_PRINT_STANDARDS } from "../types";
@@ -49,6 +52,7 @@ interface InMemoryMockJob {
   selectedCandidateIds: string[];
   logs: string[];
   referenceImageCount: number;
+  createdAt: number;
 }
 
 function buildMockDeliverablesForJob(job: InMemoryMockJob): {
@@ -214,6 +218,7 @@ export class MockPinterestPodClient implements PinterestPodClient {
       selectedCandidateIds: [],
       logs: initialLogs,
       referenceImageCount: input.referenceImages?.length ?? 0,
+      createdAt: Date.now(),
     };
 
     this.jobs.set(jobId, newJob);
@@ -374,9 +379,16 @@ export class MockPinterestPodClient implements PinterestPodClient {
       job.status = "producing";
       job.pollCount = 0;
       job.selectedCandidateIds = [...input.selected_candidates];
+      const refCount = input.referenceImages?.length ?? job.referenceImageCount ?? 0;
+      job.referenceImageCount = refCount;
       job.logs.push(
         `[${now}] Nhận lệnh sản xuất cho ${input.selected_candidates.length} mẫu đã chọn: [${input.selected_candidates.join(", ")}].`,
       );
+      if (refCount > 0) {
+        job.logs.push(
+          `[${now}] Bối cảnh: Đã áp dụng ${refCount} ảnh phòng tham chiếu cho khâu render Mockup AI.`,
+        );
+      }
     }
 
     return {
@@ -397,6 +409,71 @@ export class MockPinterestPodClient implements PinterestPodClient {
     return {
       ok: true,
       status: "cancelled",
+    };
+  }
+
+  public async getStatus(): Promise<PodStatusResponse> {
+    const recent: PodRecentRunItem[] = [];
+    for (const [id, job] of this.jobs.entries()) {
+      recent.push({
+        type: "cached_job",
+        id,
+        jobId: id,
+        status: job.status,
+        createdAt: job.createdAt,
+        title: job.niche,
+        niche: job.niche,
+        product: job.product,
+        productType: job.product,
+        candidateCount: job.status === "ready_for_review" || job.status === "completed" ? mock15Candidates.length : 0,
+      });
+    }
+    // If no dynamic jobs created yet in mock, provide default mock history fixture
+    if (recent.length === 0) {
+      recent.push({
+        type: "cached_job",
+        id: "job_mock_rug_vintage",
+        jobId: "job_mock_rug_vintage",
+        status: "ready_for_review",
+        createdAt: Date.now() - 15 * 60 * 1000,
+        title: "vintage distressed rug",
+        niche: "vintage distressed rug",
+        product: "rug",
+        productType: "rug",
+        candidateCount: mock15Candidates.length,
+      });
+    }
+    return {
+      ok: true,
+      service: {
+        online: true,
+        port: 8765,
+      },
+      recent,
+    };
+  }
+
+  public async deleteJob(jobId: string): Promise<{ readonly ok: boolean; readonly message?: string }> {
+    this.jobs.delete(jobId);
+    return {
+      ok: true,
+      message: `Mock job ${jobId} deleted successfully.`,
+    };
+  }
+
+  public async handoverToSeo(payload: PinterestPodDeliverables): Promise<SeoHandoverResponse> {
+    const printMasterCount = payload.items.filter((it) => it.printMaster).length;
+    const approvedMockupCount = payload.items.reduce(
+      (acc, it) => acc + (it.composedMockups?.length ?? 0),
+      0,
+    );
+    return {
+      success: true,
+      message: `[MOCK] Bàn giao sang SEO thành công: ${printMasterCount} file in xưởng (CMYK 300 DPI) và ${approvedMockupCount} mockup AI đã duyệt.`,
+      receivedAt: Date.now(),
+      printMasterCount,
+      approvedMockupCount,
+      savedPath: `temp/pinterest_pod/${payload.workflowId}/seo_handoff_payload.json`,
     };
   }
 }
