@@ -21,10 +21,21 @@ import { clusterSemanticDuplicates } from "./semantic-duplicate-clusterer";
 import { EmptySeoConflictCorpus } from "./empty-seo-conflict-corpus";
 import { NoopBrandConflictPolicy, type BrandConflictPolicy } from "./brand-conflict-policy";
 import { LocalTfidfVectorizer } from "./local-tfidf-vectorizer";
-import type { SeoConflictCorpus, StoredEmbedding } from "./seo-conflict-corpus";
+import { cosineSimilarity } from "./cosine-similarity";
+import {
+  isSameProduct,
+  isEmbeddingCompatible,
+  type ExistingSeoTarget,
+  type SeoConflictCorpus,
+  type SeoConflictCorpusFile,
+  type SeoConflictLookup,
+  type SeoProductIdentity,
+  type StoredEmbedding,
+} from "./seo-conflict-corpus";
 import type { TextEmbeddingProvider } from "./text-embedding-provider";
 
 import type {
+  ConflictDetail,
   ConflictResult,
   KeywordCluster,
   ProductUnderstanding,
@@ -54,6 +65,25 @@ export interface KeywordConflictAnalyzer {
   analyze(input: KeywordConflictAnalysisInput): Promise<ConflictResult>;
 }
 
+export interface CatalogKeywordTarget {
+  readonly productKey: string;
+  readonly productId?: string;
+  readonly handle?: string;
+  readonly url?: string;
+  readonly title?: string;
+  readonly keyword: string;
+  readonly normalizedKeyword: string;
+  readonly rank: number;
+  readonly embedding?: StoredEmbedding;
+}
+
+import {
+  checkContextualConflict,
+  type ContextualConflictParams,
+} from "./contextual-conflict-evaluator";
+
+export { checkContextualConflict, type ContextualConflictParams };
+
 interface VectorSession {
   readonly providerId: string;
   readonly thresholds: ConflictThresholds;
@@ -61,6 +91,33 @@ interface VectorSession {
   readonly intentVector: readonly number[];
   readonly candidateQueryVectors: readonly (readonly number[])[];
   readonly candidateSimilarityVectors: readonly (readonly number[])[];
+  readonly catalogSimilarityVectors?: readonly (readonly number[])[];
+  readonly vectorSpaceId?: string;
+  readonly reusableAcrossRuns: boolean;
+}
+
+async function findCorpusConflicts(
+  corpus: SeoConflictCorpus,
+  lookup: SeoConflictLookup,
+): Promise<readonly ExistingSeoTarget[]> {
+  try {
+    return await corpus.findConflicts(lookup);
+  } catch (err) {
+    if (
+      err instanceof TypeError &&
+      (String(err.message).includes("toLowerCase") ||
+        String(err.message).includes("includes") ||
+        String(err.message).includes("indexOf") ||
+        String(err.message).includes("trim") ||
+        String(err.message).includes("startsWith"))
+    ) {
+      return await (corpus.findConflicts as (
+        kw: string,
+        vec?: StoredEmbedding | readonly number[],
+      ) => Promise<readonly ExistingSeoTarget[]>)(lookup.keyword, lookup.embedding);
+    }
+    throw err;
+  }
 }
 
 function recordConflict(
@@ -116,8 +173,9 @@ export class DefaultKeywordConflictAnalyzer implements KeywordConflictAnalyzer {
     readonly identityText: string;
     readonly intentText: string;
     readonly candidateKeywords: readonly string[];
+    readonly catalogKeywords?: readonly string[];
   }): Promise<VectorSession> {
-    const { identityText, intentText, candidateKeywords } = params;
+    const { identityText, intentText, candidateKeywords, catalogKeywords = [] } = params;
 
     if (this.primaryProvider && this.primaryProvider.providerId !== "local_tfidf") {
       try {
@@ -149,6 +207,8 @@ export class DefaultKeywordConflictAnalyzer implements KeywordConflictAnalyzer {
             intentVector: refDocVectors[1],
             candidateQueryVectors,
             candidateSimilarityVectors: candidateSimVectors,
+            vectorSpaceId: "vertex:text-embedding-004:SEMANTIC_SIMILARITY:768",
+            reusableAcrossRuns: true,
           };
         }
         throw new Error(
@@ -166,13 +226,14 @@ export class DefaultKeywordConflictAnalyzer implements KeywordConflictAnalyzer {
       }
     }
 
-    // Fallback: build deterministic local TF-IDF vectorizer session
+    // Fallback: build ONE deterministic local TF-IDF vectorizer session
+    // combining references, candidateKeywords, AND stored catalogKeywords in the exact same vocabulary space
     const localVectorizer = new LocalTfidfVectorizer({
       referenceTexts: [identityText, intentText],
-      candidateTexts: candidateKeywords,
+      candidateTexts: [...candidateKeywords, ...catalogKeywords],
     });
 
-    const [refVectors, queryVectors] = await Promise.all([
+    const [refVectors, queryVectors, catalogVectors] = await Promise.all([
       localVectorizer.embed([identityText, intentText], {
         taskType: "RETRIEVAL_DOCUMENT",
       }),
@@ -181,7 +242,14 @@ export class DefaultKeywordConflictAnalyzer implements KeywordConflictAnalyzer {
             taskType: "RETRIEVAL_QUERY",
           })
         : Promise.resolve([]),
+      catalogKeywords.length > 0
+        ? localVectorizer.embed(catalogKeywords, {
+            taskType: "SEMANTIC_SIMILARITY",
+          })
+        : Promise.resolve([]),
     ]);
+
+    const sessionVectorSpaceId = `local_tfidf_${Date.now()}_${Math.random().toString(36).slice(2)}`;
 
     return {
       providerId: "local_tfidf",
@@ -189,14 +257,31 @@ export class DefaultKeywordConflictAnalyzer implements KeywordConflictAnalyzer {
       identityVector: refVectors[0] ?? [],
       intentVector: refVectors[1] ?? [],
       candidateQueryVectors: queryVectors,
-      // For local TF-IDF, normalized vectors serve in the same space for pairwise similarity
       candidateSimilarityVectors: queryVectors,
+      catalogSimilarityVectors: catalogVectors,
+      vectorSpaceId: sessionVectorSpaceId,
+      reusableAcrossRuns: false,
     };
   }
 
   async analyze(input: KeywordConflictAnalysisInput): Promise<ConflictResult> {
     const conflictReasons: Record<string, string> = {};
     const discardedKeywords: string[] = [];
+    const conflictDetails: Record<string, ConflictDetail> = {};
+
+    const owner: SeoProductIdentity = {
+      productId: input.source.productId,
+      handle: input.source.handle,
+      url:
+        input.source.url ??
+        (input.source.handle ? `/products/${input.source.handle}` : undefined),
+    };
+
+    // Obtain single snapshot of corpus at the start for immutable snapshot consistency
+    const corpusSnapshot = await (this.corpus.getSnapshot
+      ? this.corpus.getSnapshot()
+      : Promise.resolve(undefined));
+    const corpusRevision = corpusSnapshot?.revision;
 
     // 1. Build Candidate Pool
     const allCandidates = buildKeywordCandidates(input.searchResearch);
@@ -220,6 +305,9 @@ export class DefaultKeywordConflictAnalyzer implements KeywordConflictAnalyzer {
         conflictReasons,
         relevanceScores: {},
         keywordClusters: [],
+        conflictDetails:
+          Object.keys(conflictDetails).length > 0 ? conflictDetails : undefined,
+        corpusRevision,
       };
     }
 
@@ -246,20 +334,81 @@ export class DefaultKeywordConflictAnalyzer implements KeywordConflictAnalyzer {
         conflictReasons,
         relevanceScores: {},
         keywordClusters: [],
+        conflictDetails:
+          Object.keys(conflictDetails).length > 0 ? conflictDetails : undefined,
+        corpusRevision,
       };
     }
 
     // 4. Precedence Rank 3 (Text Check): Existing URL Cannibalization in Corpus
     const nonCorpusCandidates: KeywordCandidate[] = [];
     for (const candidate of nonBrandCandidates) {
-      const conflicts = await this.corpus.findConflicts(candidate.keyword);
-      if (conflicts.length > 0) {
+      let exactConflict: ExistingSeoTarget | undefined;
+
+      if (corpusSnapshot) {
+        for (const product of corpusSnapshot.products) {
+          if (
+            owner &&
+            isSameProduct(owner, {
+              productId: product.productId,
+              handle: product.handle,
+              url: product.url,
+            })
+          ) {
+            continue;
+          }
+
+          const productUrl =
+            product.url ?? (product.handle ? `/products/${product.handle}` : "");
+
+          for (const kw of product.keywords) {
+            if (candidate.canonical === kw.normalizedKeyword) {
+              exactConflict = {
+                productKey: product.productKey,
+                productId: product.productId,
+                handle: product.handle,
+                url: productUrl,
+                title: product.title,
+                primaryKeyword: kw.keyword,
+                keyword: kw.keyword,
+                normalizedKeyword: kw.normalizedKeyword,
+                rank: kw.rank,
+                matchType: "exact",
+                similarity: 1.0,
+              };
+              break;
+            }
+          }
+          if (exactConflict) break;
+        }
+      } else {
+        const conflicts = await findCorpusConflicts(this.corpus, {
+          keyword: candidate.keyword,
+          normalizedKeyword: candidate.canonical,
+          owner,
+        });
+        if (conflicts.length > 0) {
+          exactConflict = conflicts[0];
+        }
+      }
+
+      if (exactConflict) {
         recordConflict(
           candidate.keyword,
           CONFLICT_REASON.EXISTING_URL_CANNIBALIZATION,
           conflictReasons,
           discardedKeywords,
         );
+        conflictDetails[candidate.keyword] = {
+          reason: CONFLICT_REASON.EXISTING_URL_CANNIBALIZATION,
+          conflictingProductKey: exactConflict.productKey,
+          conflictingHandle: exactConflict.handle,
+          conflictingUrl: exactConflict.url,
+          conflictingTitle: exactConflict.title,
+          conflictingKeyword: exactConflict.keyword ?? exactConflict.primaryKeyword,
+          matchType: "exact",
+          similarity: exactConflict.similarity ?? 1.0,
+        };
       } else {
         nonCorpusCandidates.push(candidate);
       }
@@ -272,7 +421,42 @@ export class DefaultKeywordConflictAnalyzer implements KeywordConflictAnalyzer {
         conflictReasons,
         relevanceScores: {},
         keywordClusters: [],
+        conflictDetails:
+          Object.keys(conflictDetails).length > 0 ? conflictDetails : undefined,
+        corpusRevision,
       };
+    }
+
+    // Collect all stored catalog keywords from other products in the corpus snapshot
+    const catalogTargets: CatalogKeywordTarget[] = [];
+    if (corpusSnapshot) {
+      for (const product of corpusSnapshot.products) {
+        if (
+          owner &&
+          isSameProduct(owner, {
+            productId: product.productId,
+            handle: product.handle,
+            url: product.url,
+          })
+        ) {
+          continue;
+        }
+        const productUrl =
+          product.url ?? (product.handle ? `/products/${product.handle}` : "");
+        for (const kw of product.keywords) {
+          catalogTargets.push({
+            productKey: product.productKey,
+            productId: product.productId,
+            handle: product.handle,
+            url: productUrl,
+            title: product.title,
+            keyword: kw.keyword,
+            normalizedKeyword: kw.normalizedKeyword,
+            rank: kw.rank,
+            embedding: kw.embedding,
+          });
+        }
+      }
     }
 
     // 5. Build Dual Reference Texts
@@ -284,10 +468,13 @@ export class DefaultKeywordConflictAnalyzer implements KeywordConflictAnalyzer {
 
     // 6. Create Vector Session (enforcing single vector space invariant)
     const candidateKeywords = nonCorpusCandidates.map((c) => c.keyword);
+    const catalogKeywords = catalogTargets.map((c) => c.keyword);
+
     const session = await this.createVectorSession({
       identityText: references.productIdentityText,
       intentText: references.shoppingIntentText,
       candidateKeywords,
+      catalogKeywords,
     });
 
     // 7. Precedence Rank 4, 5, 6: Category Conflict, Search Intent Mismatch, Semantic Drift
@@ -335,7 +522,7 @@ export class DefaultKeywordConflictAnalyzer implements KeywordConflictAnalyzer {
       recordConflict(kw, item.reason, conflictReasons, discardedKeywords);
     }
 
-    // 9. Precedence Rank 3 (Semantic Vector Check): Site-wide URL Cannibalization against Corpus Embeddings
+    // 9. Precedence Rank 3 (Semantic Vector Check): Site-wide URL Cannibalization against Catalog Keywords
     const afterCorpusVectorCheck: CandidateRelevanceEvaluation[] = [];
     for (let i = 0; i < clusterResult.approvedEvaluations.length; i++) {
       const evalItem = clusterResult.approvedEvaluations[i];
@@ -355,17 +542,104 @@ export class DefaultKeywordConflictAnalyzer implements KeywordConflictAnalyzer {
                 : "local_tfidf",
             taskType: "SEMANTIC_SIMILARITY",
             dimensions: vector.length,
+            vectorSpaceId: session.vectorSpaceId,
+            reusableAcrossRuns: session.reusableAcrossRuns,
           }
         : undefined;
 
-      const conflicts = await this.corpus.findConflicts(kw, storedEmbedding);
-      if (conflicts.length > 0) {
+      let topConflict: ExistingSeoTarget | undefined;
+
+      // Check against catalogTargets from snapshot in the current vector session
+      if (vector && catalogTargets.length > 0) {
+        for (let catIdx = 0; catIdx < catalogTargets.length; catIdx++) {
+          const catTarget = catalogTargets[catIdx];
+          let sim: number | undefined;
+
+          if (session.providerId === "local_tfidf" && session.catalogSimilarityVectors) {
+            const catVec = session.catalogSimilarityVectors[catIdx];
+            if (catVec && catVec.length > 0) {
+              sim = cosineSimilarity(vector, catVec);
+            }
+          } else if (
+            catTarget.embedding &&
+            isEmbeddingCompatible(storedEmbedding, catTarget.embedding)
+          ) {
+            sim = cosineSimilarity(vector, catTarget.embedding.values);
+          }
+
+          if (sim !== undefined) {
+            const isPrimary = catTarget.rank === 0;
+            let isConflict = false;
+
+            if (sim >= 0.90) {
+              isConflict = true;
+            } else if (sim >= 0.86) {
+              // Gray zone [0.86, 0.90)
+              if (isPrimary) {
+                isConflict = checkContextualConflict({
+                  candidateKeyword: kw,
+                  candidateCategory:
+                    input.productUnderstanding?.productCategory ?? input.source.niche,
+                  candidateTitle: input.source.title,
+                  catalogTitle: catTarget.title,
+                  catalogKeyword: catTarget.keyword,
+                });
+              }
+            }
+
+            if (isConflict && (!topConflict || sim > (topConflict.similarity ?? 0))) {
+              topConflict = {
+                productKey: catTarget.productKey,
+                productId: catTarget.productId,
+                handle: catTarget.handle,
+                url: catTarget.url ?? (catTarget.handle ? `/products/${catTarget.handle}` : ""),
+                title: catTarget.title,
+                primaryKeyword: catTarget.keyword,
+                keyword: catTarget.keyword,
+                normalizedKeyword: catTarget.normalizedKeyword,
+                rank: catTarget.rank,
+                matchType: "semantic",
+                similarity: Number(sim.toFixed(4)),
+              };
+            }
+          }
+        }
+      }
+
+      // Fallback to corpus.findConflicts if snapshot was absent or no conflict found yet
+      if (!topConflict) {
+        const legacyConflicts = await findCorpusConflicts(this.corpus, {
+          keyword: kw,
+          normalizedKeyword: evalItem.candidate.canonical,
+          owner,
+          embedding: storedEmbedding,
+          snapshot: corpusSnapshot,
+          productCategory:
+            input.productUnderstanding?.productCategory ?? input.source.niche,
+          productTitle: input.source.title,
+        });
+        if (legacyConflicts.length > 0) {
+          topConflict = legacyConflicts[0];
+        }
+      }
+
+      if (topConflict) {
         recordConflict(
           kw,
           CONFLICT_REASON.EXISTING_URL_CANNIBALIZATION,
           conflictReasons,
           discardedKeywords,
         );
+        conflictDetails[kw] = {
+          reason: CONFLICT_REASON.EXISTING_URL_CANNIBALIZATION,
+          conflictingProductKey: topConflict.productKey,
+          conflictingHandle: topConflict.handle,
+          conflictingUrl: topConflict.url,
+          conflictingTitle: topConflict.title,
+          conflictingKeyword: topConflict.keyword ?? topConflict.primaryKeyword,
+          matchType: topConflict.matchType ?? "semantic",
+          similarity: topConflict.similarity,
+        };
       } else {
         afterCorpusVectorCheck.push(evalItem);
       }
@@ -409,6 +683,9 @@ export class DefaultKeywordConflictAnalyzer implements KeywordConflictAnalyzer {
       conflictReasons,
       relevanceScores,
       keywordClusters,
+      conflictDetails:
+        Object.keys(conflictDetails).length > 0 ? conflictDetails : undefined,
+      corpusRevision,
     };
   }
 }

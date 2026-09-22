@@ -93,10 +93,32 @@ Thực nghiệm đo đạc trực tiếp với dự án Google Cloud `gemini-ima
 6. **Bổ sung siêu dữ liệu phục vụ Bước B5**:
    - Mở rộng `ConflictResult` với `relevanceScores` (bảng điểm liên quan cho từng từ khóa) và `keywordClusters` (danh sách phân cụm ngữ nghĩa theo đại diện), tạo đầu vào lý tưởng cho Stage B5 viết Content.
 
-### 4.2. Số liệu kiểm thử tự động
-- Toàn bộ **183/183 tests** trong test suite dự án đều vượt qua xuất sắc (`pass 183, fail 0`), trong đó có **29 tests chuyên sâu** bao phủ toàn diện Stage B4.
-- Kiểm tra TypeScript nghiêm ngặt (`npm run typecheck`): **0 lỗi** (strict mode, không dùng `any`).
-- Bản dựng chính (`npm run build`): Thành công trong 753ms.
-- Bản dựng môi trường mock (`npm run build:mock`): Thành công trong 624ms.
-- Giao diện trực quan `b1-visual-inspect.ts` đã được cập nhật hiển thị điểm `relevanceScore` trên từng huy hiệu từ khóa được duyệt và card phân cụm ngữ nghĩa `keywordClusters`.
+### 4.2. Phần Mở Rộng: Cross-Product Keyword Cannibalization Prevention & File-based Catalog Keyword Database
+Để ngăn chặn hiện tượng tự triệt tiêu từ khóa (cannibalization) giữa các sản phẩm khác nhau trên toàn site:
+1. **Cơ sở dữ liệu Danh mục File-based (`FileSeoConflictCorpus`)**:
+   - Lưu trữ dạng versioned JSON file (`SeoConflictCorpusFile`: `schemaVersion: 1`, `revision`, `updatedAt`, `products[]`).
+   - Ghi file nguyên tử (Atomic write): Ghi ra file tạm `.tmp` trong cùng thư mục -> `handle.sync()` (`fsync`) -> `fs.rename`.
+   - Cơ chế File Locking an toàn: Sử dụng lockfile nguyên tử với cờ `"wx"`, hỗ trợ phát hiện stale lock (>10s), backoff retry ngẫu nhiên và hàng đợi in-process queue tuần tự hóa an toàn trong cùng event loop.
+   - Kiểm soát tương tranh lạc quan (Optimistic Concurrency Control): Nhận `expectedRevision`, ném `CorpusRevisionConflictError` nếu snapshot bị sửa đổi bởi worker khác.
+   - Vòng đời sản phẩm an toàn: Thay thế toàn bộ claim set của sản phẩm (replace-not-append, giới hạn top keywords theo rank) để loại trừ triệt để "zombie/ghost keywords". Hỗ trợ `removeProduct` giải phóng quyền sở hữu từ khóa.
+   - Ngăn chặn tự xung đột (Self-Conflict Exclusion): Nhận diện sản phẩm sở hữu qua `productId`, `handle`, hoặc `url` (`isSameProduct`), cho phép rerun một sản phẩm nhiều lần trên cùng catalog mà không tự đánh dấu xung đột với chính nó.
+2. **Kiểm soát Xung đột Ngữ nghĩa Toàn site (Cross-Product Semantic Ownership)**:
+   - **Tier 1 (Exact Match)**: Đối chiếu normalized keyword với các sản phẩm khác trong snapshot.
+   - **Tier 2 (Dense Semantic Vector Match)**: So sánh cosine similarity giữa embedding của ứng viên với embedding của từ khóa catalog:
+     - Ngưỡng $\ge 0.90$: Xung đột ngữ nghĩa mạnh (`existing_url_cannibalization`).
+     - Vùng xám $[0.86, 0.90)$: Đánh giá bối cảnh (`contextual-conflict-evaluator.ts`) dựa trên ngành hàng (`category`) và ý định (`intent`). Cùng ngành/ý định -> xung đột; khác biệt rõ rệt -> duyệt (`approve/keep`).
+   - **Offline Vector Fallback (Shared Local TF-IDF Session)**: Khi không có Vertex dense embeddings, hệ thống trích xuất toàn bộ từ khóa thô từ catalog snapshot, kết hợp cùng `[identityReference, shoppingIntentReference]` và candidate keywords để xây dựng **MỘT session `LocalTfidfVectorizer` duy nhất**. Toàn bộ candidate và catalog keywords được vector hóa trong cùng vocabulary, IDF weights và L2 norm rồi so sánh cosine, bảo toàn nguyên tắc Vector-First ngay cả trong môi trường offline.
+3. **Snapshot Consistency & Lan truyền Revision (Transaction Flow)**:
+   - Lấy duy nhất 1 bản snapshot bất biến tại đầu hàm `analyze()`: `const corpusSnapshot = await corpus.getSnapshot()`.
+   - Cả bước Exact Check và Semantic Check đều thực thi trên cùng snapshot này trong bộ nhớ.
+   - `ConflictResult` trả về `corpusRevision: corpusSnapshot.revision`.
+   - Pipeline chuyển tiếp `corpusRevision` làm `expectedRevision` cho `registerProductKeywords(corpus, product, approvedKeywords, { expectedRevision })` sau khi hoàn tất B5/B6.
+   - Cung cấp helper `retryOnCorpusRevisionConflict` tự động reload catalog mới và chạy lại từ B4 nếu phát hiện tranh chấp ghi dữ liệu.
+
+### 4.3. Số liệu kiểm thử tự động & Nghiệm thu
+- Toàn bộ **202/202 tests** trong test suite dự án đều vượt qua xuất sắc (`pass 202, fail 0`), trong đó có **48 tests chuyên sâu** bao phủ toàn diện Stage B4 (từ Intra-Product matrix đến Cross-Product matrix AC $\rightarrow$ BC và race conditions).
+- Kiểm tra TypeScript nghiêm ngặt (`npm run typecheck`): **0 lỗi** (strict mode, không dùng `any`, không `ts-ignore`).
+- Bản dựng chính (`npm run build`): Thành công trong 785ms.
+- Bản dựng môi trường mock (`npm run build:mock`): Thành công trong 799ms.
+- **Nghiệm thu chính thức (Official Verdict)**: ChatGPT Web (Planner & Reviewer) đã chốt **`STAGE B4 — OFFICIALLY APPROVED ✅`** cho toàn bộ Intra-Product Engine và Cross-Product Catalog Extension. Hệ thống đã sẵn sàng 100% để bước sang Stage B5 (SEO Content Generation).
 

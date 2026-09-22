@@ -1,4 +1,12 @@
-import type { ExistingSeoTarget, SeoConflictCorpus } from "./seo-conflict-corpus";
+import type {
+  ExistingSeoTarget,
+  SeoConflictCorpus,
+  SeoConflictCorpusFile,
+  SeoConflictLookup,
+  SeoProductIdentity,
+  SeoProductKeywordRegistration,
+  StoredEmbedding,
+} from "./seo-conflict-corpus";
 
 /**
  * Default empty implementation of SeoConflictCorpus.
@@ -7,9 +15,27 @@ import type { ExistingSeoTarget, SeoConflictCorpus } from "./seo-conflict-corpus
  */
 export class EmptySeoConflictCorpus implements SeoConflictCorpus {
   async findConflicts(
-    _keyword: string,
-    _vector?: readonly number[],
+    _inputOrKeyword: SeoConflictLookup | string,
+    _vector?: StoredEmbedding | readonly number[],
   ): Promise<readonly ExistingSeoTarget[]> {
     return [];
+  }
+
+  async upsertProduct(
+    _registration: SeoProductKeywordRegistration,
+  ): Promise<{ revision: number }> {
+    return { revision: 0 };
+  }
+
+  async removeProduct(_identity: SeoProductIdentity): Promise<void> {}
+
+  async getSnapshot(): Promise<SeoConflictCorpusFile> {
+    return {
+      schemaVersion: 1,
+      normalizationVersion: 1,
+      revision: 0,
+      updatedAt: new Date(0).toISOString(),
+      products: [],
+    };
   }
 }

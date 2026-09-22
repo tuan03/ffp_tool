@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 
 import {
@@ -14,10 +17,19 @@ import {
   rankApprovedKeywords,
   DefaultKeywordConflictAnalyzer,
   EmptySeoConflictCorpus,
+  FileSeoConflictCorpus,
+  SeoConflictCorpusCorruptError,
+  CorpusRevisionConflictError,
+  CorpusLockTimeoutError,
   ListBrandConflictPolicy,
   isEmbeddingCompatible,
+  isSameProduct,
+  computeProductKey,
   type ExistingSeoTarget,
   type SeoConflictCorpus,
+  type SeoConflictLookup,
+  type SeoProductIdentity,
+  type SeoProductKeywordRegistration,
   type StoredEmbedding,
   type TextEmbeddingProvider,
   type EmbeddingOptions,
@@ -26,6 +38,8 @@ import {
 import {
   createB4ConflictControlStage,
   executeB4ConflictControl,
+  registerProductKeywords,
+  retryOnCorpusRevisionConflict,
 } from "../internal/stages/b4-conflict-control";
 import { createInitialContext, evolveContext } from "../internal/pipeline-context";
 import type { SeoPipelineContext } from "../internal/domain-types";
@@ -845,3 +859,960 @@ test("Corpus Vector Compatibility: accepts provider aliases ('vertex' and 'verte
     "Expected 'vertex' and 'vertex_ai' to be treated as compatible provider aliases",
   );
 });
+
+// ============================================================================
+// Group AC to BC: File-based Store Catalog SEO Conflict Corpus & Cross-Product Cannibalization
+// ============================================================================
+
+test("Corpus File: missing JSON file initializes empty corpus with schemaVersion 1", async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "seo-test-corpus-"));
+  const filePath = path.join(tmpDir, "conflict-corpus.json");
+
+  try {
+    const corpus = new FileSeoConflictCorpus({ filePath });
+    const snapshot = await corpus.getSnapshot();
+
+    assert.equal(snapshot.schemaVersion, 1);
+    assert.equal(snapshot.normalizationVersion, 1);
+    assert.equal(snapshot.revision, 0);
+    assert.deepEqual(snapshot.products, []);
+
+    const conflicts = await corpus.findConflicts("personalized music rug");
+    assert.deepEqual(conflicts, []);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test("Corpus File: save -> reload round-trip preserves products, keywords, ranks, and revision", async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "seo-test-corpus-"));
+  const filePath = path.join(tmpDir, "conflict-corpus.json");
+
+  try {
+    const corpus1 = new FileSeoConflictCorpus({ filePath });
+    const regResult = await corpus1.upsertProduct({
+      identity: {
+        productId: "prod_101",
+        handle: "personalized-music-player-rug",
+        url: "/products/personalized-music-player-rug",
+      },
+      title: "Personalized Music Player Rug",
+      approvedKeywords: [
+        "personalized music player rug",
+        "custom music carpet",
+        "spotify code rug",
+      ],
+    });
+
+    assert.equal(regResult.revision, 1);
+
+    // Instantiate a new corpus reader pointing to the same file
+    const corpus2 = new FileSeoConflictCorpus({ filePath });
+    const snapshot = await corpus2.getSnapshot();
+
+    assert.equal(snapshot.revision, 1);
+    assert.equal(snapshot.products.length, 1);
+    const prod = snapshot.products[0];
+    assert.equal(prod.productId, "prod_101");
+    assert.equal(prod.handle, "personalized-music-player-rug");
+    assert.equal(prod.title, "Personalized Music Player Rug");
+    assert.equal(prod.keywords.length, 3);
+    assert.equal(prod.keywords[0].rank, 0);
+    assert.equal(prod.keywords[0].keyword, "personalized music player rug");
+    assert.equal(prod.keywords[1].rank, 1);
+    assert.equal(prod.keywords[2].rank, 2);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test("Corpus File: corrupt JSON throws SeoConflictCorpusCorruptError and never silently resets", async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "seo-test-corpus-"));
+  const filePath = path.join(tmpDir, "corrupt-corpus.json");
+
+  try {
+    fs.writeFileSync(filePath, "{ invalid json: [corrupt... }", "utf-8");
+    const corpus = new FileSeoConflictCorpus({ filePath });
+
+    await assert.rejects(
+      async () => corpus.getSnapshot(),
+      SeoConflictCorpusCorruptError,
+      "Expected getSnapshot() to throw SeoConflictCorpusCorruptError on corrupt file",
+    );
+
+    await assert.rejects(
+      async () => corpus.findConflicts("music rug"),
+      SeoConflictCorpusCorruptError,
+      "Expected findConflicts() to throw on corrupt file",
+    );
+
+    await assert.rejects(
+      async () =>
+        corpus.upsertProduct({
+          identity: { handle: "test" },
+          approvedKeywords: ["test"],
+        }),
+      SeoConflictCorpusCorruptError,
+      "Expected upsertProduct() to throw on corrupt file",
+    );
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test("Cross-Product Conflict: exact keyword match across products triggers existing_url_cannibalization", async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "seo-test-corpus-"));
+  const filePath = path.join(tmpDir, "conflict-corpus.json");
+
+  try {
+    const corpus = new FileSeoConflictCorpus({ filePath });
+    // Product 1 registers keywords
+    await corpus.upsertProduct({
+      identity: {
+        productId: "prod_001",
+        handle: "personalized-music-player-rug",
+      },
+      title: "Personalized Music Player Rug",
+      approvedKeywords: ["personalized music player rug", "music album rug"],
+    });
+
+    // Product 2 tries to use Product 1's keyword
+    const analyzer = new DefaultKeywordConflictAnalyzer({ conflictCorpus: corpus });
+    const product2: SeoContentInput = {
+      title: "Custom Spotify Song Carpet",
+      handle: "custom-spotify-song-carpet",
+      niche: "custom music rug",
+      description: "Custom printed carpet with your favorite song code.",
+      images: [],
+    };
+
+    const result = await analyzer.analyze({
+      source: product2,
+      searchResearch: {
+        seedKeywords: [
+          "personalized music player rug", // Exact match with Product 1 -> cannibalization!
+          "custom spotify song carpet",    // Unique to Product 2
+        ],
+        suggestedQueries: [],
+        querySources: {},
+      },
+    });
+
+    assert.ok(result.discardedKeywords.includes("personalized music player rug"));
+    assert.equal(
+      result.conflictReasons["personalized music player rug"],
+      CONFLICT_REASON.EXISTING_URL_CANNIBALIZATION,
+    );
+    assert.ok(result.conflictDetails);
+    assert.equal(
+      result.conflictDetails["personalized music player rug"].conflictingHandle,
+      "personalized-music-player-rug",
+    );
+    assert.equal(
+      result.conflictDetails["personalized music player rug"].matchType,
+      "exact",
+    );
+    assert.ok(result.approvedKeywords.includes("custom spotify song carpet"));
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test("Cross-Product Conflict: dense semantic vector similarity detects cannibalization", async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "seo-test-corpus-"));
+  const filePath = path.join(tmpDir, "conflict-corpus.json");
+
+  try {
+    const corpus = new FileSeoConflictCorpus({ filePath });
+
+    // Store Product 1 with an embedding
+    const unitVectorA = [1, 0, 0];
+    await corpus.upsertProduct({
+      identity: { handle: "retro-music-rug" },
+      title: "Retro Music Rug",
+      approvedKeywords: [
+        {
+          keyword: "vintage vinyl record carpet",
+          rank: 0,
+          embedding: {
+            values: unitVectorA,
+            provider: "vertex_ai",
+            model: "text-embedding-004",
+            taskType: "SEMANTIC_SIMILARITY",
+            dimensions: 3,
+            vectorSpaceId: "vertex:text-embedding-004:SEMANTIC_SIMILARITY:768",
+            reusableAcrossRuns: true,
+          },
+        },
+      ],
+    });
+
+    // Product 2 looks up with very similar vector (cosine similarity ~ 0.999 >= 0.86 review threshold)
+    const unitVectorB = [0.999, 0.04, 0];
+    const conflicts = await corpus.findConflicts({
+      keyword: "retro vinyl disc rug",
+      owner: { handle: "new-turntable-mat" },
+      embedding: {
+        values: unitVectorB,
+        provider: "vertex_ai",
+        model: "text-embedding-004",
+        taskType: "SEMANTIC_SIMILARITY",
+        dimensions: 3,
+        vectorSpaceId: "vertex:text-embedding-004:SEMANTIC_SIMILARITY:768",
+        reusableAcrossRuns: true,
+      },
+    });
+
+    assert.equal(conflicts.length, 1);
+    assert.equal(conflicts[0].matchType, "semantic");
+    assert.equal(conflicts[0].handle, "retro-music-rug");
+    assert.ok(conflicts[0].similarity! >= 0.86);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test("Cross-Product Conflict: low similarity below threshold remains approved", async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "seo-test-corpus-"));
+  const filePath = path.join(tmpDir, "conflict-corpus.json");
+
+  try {
+    const corpus = new FileSeoConflictCorpus({ filePath });
+
+    await corpus.upsertProduct({
+      identity: { handle: "retro-music-rug" },
+      approvedKeywords: [
+        {
+          keyword: "vintage vinyl record carpet",
+          rank: 0,
+          embedding: {
+            values: [1, 0, 0],
+            provider: "vertex_ai",
+            model: "text-embedding-004",
+            taskType: "SEMANTIC_SIMILARITY",
+            dimensions: 3,
+            vectorSpaceId: "vertex:text-embedding-004:SEMANTIC_SIMILARITY:768",
+            reusableAcrossRuns: true,
+          },
+        },
+      ],
+    });
+
+    // Orthogonal / low similarity vector
+    const conflicts = await corpus.findConflicts({
+      keyword: "outdoor camping tent",
+      owner: { handle: "hiking-gear" },
+      embedding: {
+        values: [0, 1, 0],
+        provider: "vertex_ai",
+        model: "text-embedding-004",
+        taskType: "SEMANTIC_SIMILARITY",
+        dimensions: 3,
+        vectorSpaceId: "vertex:text-embedding-004:SEMANTIC_SIMILARITY:768",
+        reusableAcrossRuns: true,
+      },
+    });
+
+    assert.equal(conflicts.length, 0, "Orthogonal vector must not produce conflict");
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test("Self-Conflict Prevention: same productId does not cannibalize its own keywords on rerun", async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "seo-test-corpus-"));
+  const filePath = path.join(tmpDir, "conflict-corpus.json");
+
+  try {
+    const corpus = new FileSeoConflictCorpus({ filePath });
+    await corpus.upsertProduct({
+      identity: {
+        productId: "prod_music_99",
+        handle: "music-rug-v1",
+      },
+      title: "Music Rug",
+      approvedKeywords: ["personalized music player rug"],
+    });
+
+    // Lookup with identical productId (rerun of same product)
+    const conflicts = await corpus.findConflicts({
+      keyword: "personalized music player rug",
+      owner: { productId: "prod_music_99" },
+    });
+
+    assert.equal(
+      conflicts.length,
+      0,
+      "Lookup from same productId must be excluded from conflict check",
+    );
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test("Self-Conflict Prevention: same handle does not cannibalize its own keywords on rerun", async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "seo-test-corpus-"));
+  const filePath = path.join(tmpDir, "conflict-corpus.json");
+
+  try {
+    const corpus = new FileSeoConflictCorpus({ filePath });
+    await corpus.upsertProduct({
+      identity: { handle: "music-player-rug" },
+      approvedKeywords: ["personalized music player rug"],
+    });
+
+    const conflicts = await corpus.findConflicts({
+      keyword: "personalized music player rug",
+      owner: { handle: "music-player-rug" },
+    });
+
+    assert.equal(
+      conflicts.length,
+      0,
+      "Lookup from same handle must be excluded from conflict check",
+    );
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test("Corpus Upsert: replaces entire keyword claim set (never appends old zombie keywords)", async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "seo-test-corpus-"));
+  const filePath = path.join(tmpDir, "conflict-corpus.json");
+
+  try {
+    const corpus = new FileSeoConflictCorpus({ filePath });
+    const id = { handle: "music-rug" };
+
+    // First run registers Old A and Old B
+    await corpus.upsertProduct({
+      identity: id,
+      approvedKeywords: ["old keyword a", "old keyword b"],
+    });
+
+    let snapshot = await corpus.getSnapshot();
+    assert.deepEqual(
+      snapshot.products[0].keywords.map((k) => k.keyword),
+      ["old keyword a", "old keyword b"],
+    );
+
+    // Second run replaces with New C and New D
+    await corpus.upsertProduct({
+      identity: id,
+      approvedKeywords: ["new keyword c", "new keyword d"],
+    });
+
+    snapshot = await corpus.getSnapshot();
+    assert.equal(snapshot.products.length, 1);
+    assert.deepEqual(
+      snapshot.products[0].keywords.map((k) => k.keyword),
+      ["new keyword c", "new keyword d"],
+      "Upsert must replace, not append old keywords",
+    );
+
+    // Old A should no longer cause conflict for other products
+    const conflicts = await corpus.findConflicts({
+      keyword: "old keyword a",
+      owner: { handle: "other-product" },
+    });
+    assert.equal(conflicts.length, 0);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test("Corpus Remove: removeProduct releases keyword ownership", async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "seo-test-corpus-"));
+  const filePath = path.join(tmpDir, "conflict-corpus.json");
+
+  try {
+    const corpus = new FileSeoConflictCorpus({ filePath });
+    await corpus.upsertProduct({
+      identity: { handle: "deleted-item" },
+      approvedKeywords: ["unique deleted keyword"],
+    });
+
+    let conflicts = await corpus.findConflicts({
+      keyword: "unique deleted keyword",
+      owner: { handle: "other-product" },
+    });
+    assert.equal(conflicts.length, 1);
+
+    await corpus.removeProduct({ handle: "deleted-item" });
+
+    conflicts = await corpus.findConflicts({
+      keyword: "unique deleted keyword",
+      owner: { handle: "other-product" },
+    });
+    assert.equal(conflicts.length, 0, "Keyword should be released after product removal");
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test("Persistent Embedding Invariant: local TF-IDF embeddings with reusableAcrossRuns === false are never reused", () => {
+  const embeddingA: StoredEmbedding = {
+    values: [0.5, 0.5],
+    provider: "local_tfidf",
+    model: "local_tfidf",
+    taskType: "SEMANTIC_SIMILARITY",
+    dimensions: 2,
+    vectorSpaceId: "session_1",
+    reusableAcrossRuns: false,
+  };
+
+  const embeddingB: StoredEmbedding = {
+    values: [0.5, 0.5],
+    provider: "local_tfidf",
+    model: "local_tfidf",
+    taskType: "SEMANTIC_SIMILARITY",
+    dimensions: 2,
+    vectorSpaceId: "session_2",
+    reusableAcrossRuns: false,
+  };
+
+  assert.equal(
+    isEmbeddingCompatible(embeddingA, embeddingB),
+    false,
+    "Dynamic embeddings from different sessions with reusableAcrossRuns: false must never be compatible",
+  );
+});
+
+test("Deterministic Serialization: products sorted by productKey ASC and keywords sorted by rank ASC", async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "seo-test-corpus-"));
+  const filePath = path.join(tmpDir, "conflict-corpus.json");
+
+  try {
+    const corpus = new FileSeoConflictCorpus({ filePath });
+
+    // Insert out of alphabetical order: zebra -> apple -> mango
+    await corpus.upsertProduct({ identity: { handle: "zebra" }, approvedKeywords: ["z kw"] });
+    await corpus.upsertProduct({ identity: { handle: "apple" }, approvedKeywords: ["a kw"] });
+    await corpus.upsertProduct({ identity: { handle: "mango" }, approvedKeywords: ["m kw"] });
+
+    const rawFileContent = fs.readFileSync(filePath, "utf-8");
+    const parsed = JSON.parse(rawFileContent);
+
+    const keys = parsed.products.map((p: { productKey: string }) => p.productKey);
+    assert.deepEqual(keys, ["handle:apple", "handle:mango", "handle:zebra"]);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test("Optimistic Concurrency: rejects upsert when expectedRevision does not match current revision", async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "seo-test-corpus-"));
+  const filePath = path.join(tmpDir, "conflict-corpus.json");
+
+  try {
+    const corpus = new FileSeoConflictCorpus({ filePath });
+    // Write 1: revision becomes 1
+    await corpus.upsertProduct({ identity: { handle: "prod-1" }, approvedKeywords: ["kw1"] });
+
+    // Worker expects revision 0, but current is 1
+    await assert.rejects(
+      async () =>
+        corpus.upsertProduct({
+          identity: { handle: "prod-2" },
+          approvedKeywords: ["kw2"],
+          expectedRevision: 0,
+        }),
+      CorpusRevisionConflictError,
+      "Expected CorpusRevisionConflictError when expectedRevision differs from actual revision",
+    );
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test("Atomic Write & Lock: concurrent upserts serialize safely without corruption", async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "seo-test-corpus-"));
+  const filePath = path.join(tmpDir, "conflict-corpus.json");
+
+  try {
+    const corpus = new FileSeoConflictCorpus({ filePath });
+
+    // Run 5 concurrent writes simultaneously
+    const tasks = Array.from({ length: 5 }, (_, i) =>
+      corpus.upsertProduct({
+        identity: { handle: `concurrent-prod-${i}` },
+        approvedKeywords: [`keyword for ${i}`],
+      }),
+    );
+
+    const results = await Promise.all(tasks);
+    assert.equal(results.length, 5);
+
+    const snapshot = await corpus.getSnapshot();
+    assert.equal(snapshot.products.length, 5);
+    assert.equal(snapshot.revision, 5);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test("Cross-Product Integration: Product 1 ('Personalized Music Player Rug') vs Product 2 ('Custom Spotify Song Carpet')", async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "seo-test-corpus-"));
+  const filePath = path.join(tmpDir, "conflict-corpus.json");
+
+  try {
+    const corpus = new FileSeoConflictCorpus({ filePath });
+
+    // 1. Stage B4 on Product 1
+    const product1: SeoContentInput = {
+      title: "Personalized Music Player Rug",
+      handle: "personalized-music-player-rug",
+      niche: "music rug",
+      description: "Custom printed song album player mat for bedroom decoration.",
+      images: [],
+    };
+
+    const analyzer1 = new DefaultKeywordConflictAnalyzer({ conflictCorpus: corpus });
+    const result1 = await analyzer1.analyze({
+      source: product1,
+      searchResearch: {
+        seedKeywords: ["personalized music player rug", "music album player rug"],
+        suggestedQueries: ["custom song mat"],
+        querySources: {},
+      },
+    });
+
+    assert.ok(result1.approvedKeywords.includes("personalized music player rug"));
+
+    // 2. Register approved keywords of Product 1 into the Store Database
+    const regResult = await registerProductKeywords(
+      corpus,
+      product1,
+      result1.approvedKeywords,
+    );
+    assert.equal(regResult.revision, 1);
+
+    // 3. Stage B4 on Product 2 (Different Product in Catalog)
+    const product2: SeoContentInput = {
+      title: "Custom Spotify Song Carpet",
+      handle: "custom-spotify-song-carpet",
+      niche: "song carpet",
+      description: "Custom music player scannable soundwave carpet.",
+      images: [],
+    };
+
+    const analyzer2 = new DefaultKeywordConflictAnalyzer({ conflictCorpus: corpus });
+    const result2 = await analyzer2.analyze({
+      source: product2,
+      searchResearch: {
+        seedKeywords: [
+          "personalized music player rug", // Belongs to Product 1 -> must be discarded!
+          "custom spotify song carpet",    // Unique to Product 2 -> must be approved!
+        ],
+        suggestedQueries: ["spotify soundwave carpet"],
+        querySources: {},
+      },
+    });
+
+    // Verification: Cannibalized keyword was rejected with conflict details
+    assert.ok(result2.discardedKeywords.includes("personalized music player rug"));
+    assert.equal(
+      result2.conflictReasons["personalized music player rug"],
+      CONFLICT_REASON.EXISTING_URL_CANNIBALIZATION,
+    );
+    assert.ok(result2.conflictDetails);
+    assert.equal(
+      result2.conflictDetails["personalized music player rug"].conflictingHandle,
+      "personalized-music-player-rug",
+    );
+
+    // Verification: Product 2 unique keywords are approved
+    assert.ok(result2.approvedKeywords.includes("custom spotify song carpet"));
+    assert.ok(!result2.approvedKeywords.includes("personalized music player rug"));
+
+    // 4. Idempotent rerun: Product 1 reruns with the same corpus -> does NOT cannibalize itself!
+    const rerunResult1 = await analyzer1.analyze({
+      source: product1,
+      searchResearch: {
+        seedKeywords: ["personalized music player rug"],
+        suggestedQueries: [],
+        querySources: {},
+      },
+    });
+
+    assert.ok(
+      rerunResult1.approvedKeywords.includes("personalized music player rug"),
+      "Product 1 must not self-conflict with its own existing registration in corpus",
+    );
+    assert.ok(!rerunResult1.discardedKeywords.includes("personalized music player rug"));
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+// ============================================================================
+// Group AS: Shared Local TF-IDF Vectorization with Catalog Keywords
+// ============================================================================
+
+test("Group AS: Rebuilds one shared local vector space with corpus stored raw keywords for semantic fallback", async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "seo-test-corpus-"));
+  const filePath = path.join(tmpDir, "conflict-corpus.json");
+
+  try {
+    const corpus = new FileSeoConflictCorpus({ filePath });
+
+    // 1. Existing catalog product has registered keywords (raw text only, no persistent Vertex vectors)
+    await corpus.upsertProduct({
+      identity: { handle: "vintage-halloween-cat-tee", productId: "prod_cat_1" },
+      title: "Vintage Halloween Cat T-Shirt",
+      approvedKeywords: [
+        "vintage halloween cat tee", // rank 0 primary
+        "spooky kitten retro apparel", // rank 1 secondary
+      ],
+    });
+
+    // 2. Product 2 runs locally with LocalTfidfVectorizer (NO Vertex)
+    const product2: SeoContentInput = {
+      title: "Retro Spooky Kitty Autumn Shirt",
+      handle: "retro-spooky-kitty-autumn-shirt",
+      niche: "halloween apparel",
+      description: "Spooky kitten retro apparel for autumn lovers.",
+      images: [],
+    };
+
+    const analyzer = new DefaultKeywordConflictAnalyzer({
+      fallbackEmbeddingProvider: new LocalTfidfVectorizer(),
+      conflictCorpus: corpus,
+    });
+
+    const result = await analyzer.analyze({
+      source: product2,
+      productUnderstanding: {
+        ocrTexts: [],
+        detectedEntities: ["kitten", "halloween"],
+        dominantColors: ["black"],
+        visualStyle: "retro",
+        productCategory: "t-shirt",
+      },
+      searchResearch: {
+        seedKeywords: [
+          // Semantic match with Product 1's rank 0 ("vintage halloween cat tee") via synonym "retro" -> "vintage", "tee" -> "t-shirt"
+          "retro halloween cat t-shirt",
+          // Unique to Product 2
+          "autumn kitten pumpkin shirt",
+        ],
+        suggestedQueries: [],
+        querySources: {},
+      },
+    });
+
+    // Verify: "retro halloween cat t-shirt" is identified as existing URL cannibalization
+    // via shared local TF-IDF vectorization against the corpus snapshot!
+    assert.ok(
+      result.discardedKeywords.includes("retro halloween cat t-shirt"),
+      "Must discard semantic equivalent in local fallback mode",
+    );
+    assert.equal(
+      result.conflictReasons["retro halloween cat t-shirt"],
+      CONFLICT_REASON.EXISTING_URL_CANNIBALIZATION,
+    );
+    assert.ok(result.conflictDetails);
+    assert.equal(
+      result.conflictDetails["retro halloween cat t-shirt"].conflictingHandle,
+      "vintage-halloween-cat-tee",
+    );
+    assert.equal(
+      result.conflictDetails["retro halloween cat t-shirt"].matchType,
+      "semantic",
+    );
+
+    // Verify: Unique keyword is approved
+    assert.ok(result.approvedKeywords.includes("autumn kitten pumpkin shirt"));
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+// ============================================================================
+// Group AI: Gray-Zone Contextual Review (0.86 - 0.90)
+// ============================================================================
+
+test("Group AI: Gray-zone contextual review (0.86 - 0.90) conflicts on same category/intent but keeps on materially different intent", async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "seo-test-corpus-"));
+  const filePath = path.join(tmpDir, "conflict-corpus.json");
+
+  try {
+    const corpus = new FileSeoConflictCorpus({ filePath });
+
+    // Vector with length 1: [1, 0] for catalog primary keyword
+    const baseVec: StoredEmbedding = {
+      values: [1, 0],
+      provider: "vertex_ai",
+      model: "text-embedding-004",
+      taskType: "SEMANTIC_SIMILARITY",
+      dimensions: 2,
+    };
+
+    // Vector with cosine similarity exactly 0.87: [0.87, Math.sqrt(1 - 0.87*0.87)]
+    const sim087Vec: StoredEmbedding = {
+      values: [0.87, Math.sqrt(1 - 0.87 * 0.87)],
+      provider: "vertex_ai",
+      model: "text-embedding-004",
+      taskType: "SEMANTIC_SIMILARITY",
+      dimensions: 2,
+    };
+
+    // 1. Existing product in Catalog: "Personalized Music Player Rug"
+    await corpus.upsertProduct({
+      identity: { handle: "personalized-music-player-rug" },
+      title: "Personalized Music Player Rug",
+      approvedKeywords: [
+        {
+          keyword: "personalized music player rug",
+          rank: 0,
+          embedding: baseVec,
+        },
+      ],
+    });
+
+    // Fixture 1: similarity 0.87 + same category / intent ("rug", "music") -> CONFLICT!
+    const conflictsA = await corpus.findConflicts({
+      keyword: "custom song player mat",
+      embedding: sim087Vec,
+      productCategory: "rug",
+      productTitle: "Custom Song Player Mat",
+    });
+
+    assert.equal(
+      conflictsA.length,
+      1,
+      "similarity 0.87 + same category + same theme/intent must conflict",
+    );
+    assert.equal(conflictsA[0].handle, "personalized-music-player-rug");
+    assert.equal(conflictsA[0].matchType, "semantic");
+    assert.equal(conflictsA[0].similarity, 0.87);
+
+    // Fixture 2: similarity 0.87 + materially different search intent / category ("pin") -> KEEP / APPROVE!
+    const conflictsB = await corpus.findConflicts({
+      keyword: "music player enamel pin",
+      embedding: sim087Vec,
+      productCategory: "pin",
+      productTitle: "Music Player Enamel Pin Badge",
+    });
+
+    assert.equal(
+      conflictsB.length,
+      0,
+      "similarity 0.87 + materially different search intent must be kept (no conflict)",
+    );
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+// ============================================================================
+// Group BC: Pipeline Integration (B4 -> B5/B6 -> Registration)
+// ============================================================================
+
+test("Group BC: Pipeline integration carries corpusRevision from B4 through B5/B6 to registerProductKeywords", async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "seo-test-corpus-"));
+  const filePath = path.join(tmpDir, "conflict-corpus.json");
+
+  try {
+    const corpus = new FileSeoConflictCorpus({ filePath });
+
+    // Initial corpus at revision 0
+    const snapshot0 = await corpus.getSnapshot();
+    assert.equal(snapshot0.revision, 0);
+
+    const product: SeoContentInput = {
+      title: "Cute Highland Cow Ceramic Mug",
+      handle: "cute-highland-cow-ceramic-mug",
+      niche: "cow mug",
+      description: "Rustic farmhouse Scottish highland cow coffee cup.",
+      images: [{ url: "https://example.com/mug.jpg", alt: "Cow Mug" }],
+    };
+
+    // Stage B4 execution
+    const initialContext = createInitialContext(product);
+    const contextWithResearch = evolveContext(initialContext, {
+      searchResearch: {
+        seedKeywords: ["cute highland cow mug", "scottish cow coffee cup"],
+        suggestedQueries: [],
+        querySources: {},
+      },
+      productUnderstanding: {
+        ocrTexts: [],
+        detectedEntities: ["highland cow"],
+        dominantColors: ["brown"],
+        visualStyle: "rustic",
+        productCategory: "ceramic mug",
+      },
+    });
+
+    const b4Stage = createB4ConflictControlStage({ conflictCorpus: corpus });
+    const b4Context = await b4Stage.execute(contextWithResearch);
+
+    assert.ok(b4Context.conflictResult);
+    assert.equal(b4Context.conflictResult.corpusRevision, 0);
+    assert.ok(b4Context.conflictResult.approvedKeywords.length > 0);
+
+    // Mock Stage B5 / B6 completion
+    const b5b6Context = evolveContext(b4Context, {
+      contentResult: {
+        productTitle: "Cute Highland Cow Ceramic Mug",
+        productDescription: "Handcrafted coffee mug.",
+        productSeoTitle: "Cute Highland Cow Ceramic Mug | Coffee Cup",
+        productSeoDescription: "Scottish cow cup.",
+        productHandle: product.handle,
+      },
+    });
+
+    // Final Catalog Registration carrying the revision captured during B4
+    const regResult = await registerProductKeywords(
+      corpus,
+      b5b6Context.source,
+      b5b6Context.conflictResult!.approvedKeywords,
+      {
+        expectedRevision: b5b6Context.conflictResult!.corpusRevision,
+      },
+    );
+
+    assert.equal(regResult.revision, 1);
+
+    const snapshot1 = await corpus.getSnapshot();
+    assert.equal(snapshot1.revision, 1);
+    assert.equal(snapshot1.products.length, 1);
+    assert.equal(snapshot1.products[0].handle, "cute-highland-cow-ceramic-mug");
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+// ============================================================================
+// Group Race: Concurrent Writers & Optimistic Revision Conflict Retry
+// ============================================================================
+
+test("Race Condition: concurrent pipeline worker detects stale expectedRevision, retries from B4, and commits safely", async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "seo-test-corpus-"));
+  const filePath = path.join(tmpDir, "conflict-corpus.json");
+
+  try {
+    const corpus = new FileSeoConflictCorpus({ filePath });
+
+    // Seed product in database -> revision = 1
+    await corpus.upsertProduct({
+      identity: { handle: "seed-item" },
+      approvedKeywords: ["seed keyword"],
+    });
+
+    const baseSnapshot = await corpus.getSnapshot();
+    assert.equal(baseSnapshot.revision, 1);
+
+    // Worker A and Worker B both analyze at revision 1
+    const productA: SeoContentInput = {
+      title: "Worker A Sunflower Tote Bag",
+      handle: "worker-a-sunflower-tote-bag",
+      niche: "tote bag",
+      description: "Floral canvas tote bag.",
+      images: [],
+    };
+
+    const productB: SeoContentInput = {
+      title: "Worker B Daisy Tote Bag",
+      handle: "worker-b-daisy-tote-bag",
+      niche: "tote bag",
+      description: "Canvas shoulder bag with flowers.",
+      images: [],
+    };
+
+    const analyzerA = new DefaultKeywordConflictAnalyzer({ conflictCorpus: corpus });
+    const analyzerB = new DefaultKeywordConflictAnalyzer({ conflictCorpus: corpus });
+
+    // Both analyze simultaneously reading revision 1
+    const resultA = await analyzerA.analyze({
+      source: productA,
+      searchResearch: {
+        seedKeywords: ["sunflower canvas tote bag"],
+        suggestedQueries: [],
+        querySources: {},
+      },
+    });
+    assert.equal(resultA.corpusRevision, 1);
+
+    const resultB = await analyzerB.analyze({
+      source: productB,
+      searchResearch: {
+        seedKeywords: ["daisy floral shoulder bag"],
+        suggestedQueries: [],
+        querySources: {},
+      },
+    });
+    assert.equal(resultB.corpusRevision, 1);
+
+    // Worker A finishes and commits first -> revision becomes 2!
+    const commitA = await registerProductKeywords(
+      corpus,
+      productA,
+      resultA.approvedKeywords,
+      { expectedRevision: resultA.corpusRevision },
+    );
+    assert.equal(commitA.revision, 2);
+
+    // Worker B attempts to commit with stale expectedRevision (1), but actual is now 2
+    await assert.rejects(
+      async () =>
+        registerProductKeywords(
+          corpus,
+          productB,
+          resultB.approvedKeywords,
+          { expectedRevision: resultB.corpusRevision },
+        ),
+      CorpusRevisionConflictError,
+      "Worker B must fail on stale expectedRevision",
+    );
+
+    // Worker B retries using retryOnCorpusRevisionConflict
+    let retriesHappened = 0;
+    const retryCommit = await retryOnCorpusRevisionConflict(
+      async (attempt) => {
+        if (attempt === 0) {
+          // Attempt 0 uses the initial result with stale revision 1 -> triggers conflict
+          return registerProductKeywords(
+            corpus,
+            productB,
+            resultB.approvedKeywords,
+            { expectedRevision: resultB.corpusRevision },
+          );
+        }
+        // Attempt > 0: re-runs B4 with fresh corpus snapshot
+        const freshResultB = await analyzerB.analyze({
+          source: productB,
+          searchResearch: {
+            seedKeywords: ["daisy floral shoulder bag"],
+            suggestedQueries: [],
+            querySources: {},
+          },
+        });
+        return registerProductKeywords(
+          corpus,
+          productB,
+          freshResultB.approvedKeywords,
+          { expectedRevision: freshResultB.corpusRevision },
+        );
+      },
+      {
+        onRetry: () => {
+          retriesHappened++;
+        },
+      },
+    );
+
+    // Retry succeeded with revision 3!
+    assert.equal(retriesHappened, 1);
+    assert.equal(retryCommit.revision, 3);
+
+    const finalSnapshot = await corpus.getSnapshot();
+    assert.equal(finalSnapshot.revision, 3);
+    assert.equal(finalSnapshot.products.length, 3); // seed-item, worker-a, worker-b
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+

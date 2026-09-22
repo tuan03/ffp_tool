@@ -11,6 +11,8 @@ export interface SeoContentInput {
   readonly title: string;
   readonly description: string;
   readonly handle: string;
+  readonly productId?: string;
+  readonly url?: string;
 }
 
 export interface SeoContentWebpAsset {

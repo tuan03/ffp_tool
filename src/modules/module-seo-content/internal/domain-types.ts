@@ -31,6 +31,17 @@ export interface KeywordCluster {
   readonly members: readonly string[];
 }
 
+export interface ConflictDetail {
+  readonly reason: string;
+  readonly conflictingProductKey?: string;
+  readonly conflictingHandle?: string;
+  readonly conflictingUrl?: string;
+  readonly conflictingTitle?: string;
+  readonly conflictingKeyword?: string;
+  readonly matchType?: "exact" | "semantic";
+  readonly similarity?: number;
+}
+
 /** B4: Kết quả kiểm tra xung đột và trùng lặp từ khóa */
 export interface ConflictResult {
   readonly approvedKeywords: readonly string[];
@@ -38,6 +49,8 @@ export interface ConflictResult {
   readonly conflictReasons: Readonly<Record<string, string>>;
   readonly relevanceScores?: Readonly<Record<string, number>>;
   readonly keywordClusters?: readonly KeywordCluster[];
+  readonly conflictDetails?: Readonly<Record<string, ConflictDetail>>;
+  readonly corpusRevision?: number;
 }
 
 /** B5: Kết quả sáng tạo nội dung văn bản (Copywriting) */

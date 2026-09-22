@@ -56,9 +56,9 @@ Module **SEO + Content** được đóng gói độc lập theo đúng tiêu chu
 * **Contract đầu ra**: `context.searchResearch` (`seedKeywords`, `suggestedQueries`, `querySources`).
 
 ### 🟢 Stage B4 — Kiểm soát xung đột & Khử trùng lặp từ khóa (Conflict Control)
-* **Mục tiêu**: Lọc sạch từ khóa lệch ngành, khử trùng lặp ngữ nghĩa (cannibalization), chấm điểm tiềm năng và gom cụm từ khóa.
+* **Mục tiêu**: Lọc sạch từ khóa lệch ngành, khử trùng lặp ngữ nghĩa (cannibalization), chấm điểm tiềm năng, gom cụm từ khóa và bảo vệ quyền sở hữu từ khóa trên toàn bộ catalog sản phẩm (Cross-Product Keyword Cannibalization Prevention).
 * **Logic cốt lõi**:
-  * **Kiến trúc Vector-First Hybrid Conflict Engine**:
+  * **Kiến trúc Vector-First Hybrid Conflict Engine (Intra-Product)**:
     * **Primary Provider**: Google Vertex AI `text-embedding-004` (768 chiều). Nhúng tài liệu tham chiếu sản phẩm đa tầng (Dual Reference: Product Identity & Shopping Intent) và nhúng toàn bộ candidate queries.
     * **Fallback Provider**: `LocalTfidfVectorizer` (kết hợp unigram trọng số 2.0, bigram 2.5, char 3-gram 0.5, từ điển chuẩn hóa đồng nghĩa) đảm bảo offline unit test chạy độc lập.
     * **Single-Vector-Space Invariant**: 100% vector so sánh trong một phiên phải thuộc cùng một provider/model; nếu Primary lỗi thì fallback toàn bộ, không bao giờ lai tạp.
@@ -66,15 +66,23 @@ Module **SEO + Content** được đóng gói độc lập theo đúng tiêu chu
     * Sắp xếp ứng viên theo điểm liên quan, provenance và độ dài thương mại.
     * Ứng viên top 1 làm Leader của cụm; các ứng viên sau chỉ so sánh với Leader của các cụm hiện hữu (loại trừ lỗi over-merge lan truyền của DSU).
   * **Bộ lọc xung đột đa tầng có thứ bậc ưu tiên cố định (Deterministic Precedence)**:
-    1. `exact_duplicate`: Trùng chuỗi chính xác.
+    1. `exact_duplicate`: Trùng chuỗi chính xác trong cùng session.
     2. `brand_conflict`: Cấm nhãn hiệu bản quyền (Nike, Disney, v.v.).
-    3. `existing_url_cannibalization`: Tránh xung đột với sản phẩm/URL đã có trên site.
+    3. `existing_url_cannibalization`: Tránh xung đột với sản phẩm/URL đã có trên catalog toàn site.
     4. `category_conflict`: Loại trừ lệch ngành (ví dụ: gạt bỏ `rugby` khi sản phẩm là thảm `rug`).
     5. `search_intent_mismatch`: Loại bỏ từ khóa thông tin phi thương mại ("how to draw", "tutorial").
     6. `semantic_drift_irrelevant`: Loại bỏ từ khóa có điểm vector quá thấp (< 0.54).
     7. `semantic_duplicate`: Khử trùng lặp ngữ nghĩa nội bộ.
-  * **Làm giàu siêu dữ liệu cho B5**: Xuất kèm bảng điểm `relevanceScores` và danh sách phân cụm `keywordClusters`.
-* **Contract đầu ra**: `context.conflictResult` (`approvedKeywords`, `discardedKeywords`, `conflictReasons`, `relevanceScores`, `keywordClusters`).
+  * **Cơ sở dữ liệu Danh mục Toàn site (`FileSeoConflictCorpus`) & Cross-Product Cannibalization**:
+    * Quản lý quyền sở hữu từ khóa site-wide qua file JSON có versioning (`schemaVersion: 1`, `revision`, `updatedAt`).
+    * Ghi file nguyên tử (Atomic write qua temp file + `fsync` + `fs.rename`) và khóa file (`corpus-file-lock.ts`) chống race condition giữa các process.
+    * Hỗ trợ Optimistic Concurrency Control qua `expectedRevision` chống ghi đè dữ liệu cũ (`CorpusRevisionConflictError`).
+    * Replace-not-append claim set ngăn ngừa zombie/ghost keywords; `removeProduct` giải phóng quyền sở hữu từ khóa; `isSameProduct` chống tự xung đột khi rerun cùng sản phẩm.
+    * Đánh giá vùng xám ngữ cảnh (`contextual-conflict-evaluator.ts`): Độ tương đồng trong khoảng $[0.86, 0.90)$ đối với primary keyword được đối chiếu sâu về category và search intent.
+    * Local Fallback tái vector hóa: Khi offline (không có Vertex), trích xuất toàn bộ từ khóa catalog cùng candidate keywords vào **MỘT session `LocalTfidfVectorizer` duy nhất** để cosine similarity, bảo toàn nguyên tắc Vector-First.
+    * Snapshot Consistency & Lan truyền Revision: Lấy duy nhất 1 snapshot bất biến ở đầu `analyze()`, trả về `corpusRevision` để truyền tới `registerProductKeywords({ expectedRevision })`.
+  * **Làm giàu siêu dữ liệu cho B5**: Xuất kèm bảng điểm `relevanceScores`, danh sách phân cụm `keywordClusters` và `corpusRevision`.
+* **Contract đầu ra**: `context.conflictResult` (`approvedKeywords`, `discardedKeywords`, `conflictReasons`, `relevanceScores`, `keywordClusters`, `corpusRevision`).
 
 ### ⏳ Stage B5 & B6 — Kế hoạch tiếp theo
 * **B5 (SEO Content Generation)**: Sử dụng các từ khóa đã duyệt từ B4 (phân chia Primary/Focus Keyword cho Title & URL, Secondary Keywords cho Bullet Points & Description, Supporting Keywords cho Alt Text) để sinh bộ nội dung hoàn chỉnh.
@@ -109,15 +117,16 @@ Module **SEO + Content** được đóng gói độc lập theo đúng tiêu chu
 ## 5. Kết Quả Kiểm Thử & Nghiệm Thu
 
 ### 5.1. Kiểm thử tự động (Automated Verification)
-* **Unit Tests (`npm test`)**: **183/183 tests PASS 100%** (0 failed, 0 skipped, thời gian chạy ~3.5s).
+* **Unit Tests (`npm test`)**: **202/202 tests PASS 100%** (0 failed, 0 skipped, thời gian chạy ~3.6s).
   * Stage B1 Tests: 43 tests (Gemini Vision, OCR, Fallback, Payloads, Retries).
   * Stage B2 Tests: 33 tests (Shopping Context, Audience, Occasions, Buyer Intent Seeds).
   * Stage B3 Tests: 39 tests (Google Suggest Client, LRU Cache, Circuit Breaker, Normalizer, Collector).
-  * Stage B4 Tests: 29 tests (Vector Embedding, Cosine Sim, Duplicate Clustering, Category/Brand/Intent Guards, Regex Safety).
+  * Stage B4 Tests: 48 tests (Intra-product Vector Embedding, Clustering, Guards, cộng thêm Cross-Product File Catalog Database, Concurrency Lock, Stale Revision Retries, Gray-zone Contextual Evaluation, Shared Local TF-IDF Fallback).
   * Pipeline & Orchestrator Tests: 39 tests.
-* **Typecheck (`npm run typecheck`)**: **0 lỗi** (TypeScript strict mode, tuyệt đối không dùng `any`).
-* **Production Build (`npm run build`)**: Build thành công trong 607ms.
-* **Mock Build (`npm run build:mock`)**: Build thành công trong 596ms.
+* **Typecheck (`npm run typecheck`)**: **0 lỗi** (TypeScript strict mode, tuyệt đối không dùng `any`, không `ts-ignore`).
+* **Production Build (`npm run build`)**: Build thành công trong 785ms.
+* **Mock Build (`npm run build:mock`)**: Build thành công trong 799ms.
+* **Nghiệm thu 2-Agent (ChatGPT Web)**: Chốt **`STAGE B4 — OFFICIALLY APPROVED ✅`** (hoàn thành 100% B1, B2, B3, B4).
 
 ### 5.2. Kiểm thử trực quan thực tế (Visual Inspection qua `test.cmd`)
 Đã thực thi script `test.cmd` với sản phẩm mẫu:
