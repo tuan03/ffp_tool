@@ -76,6 +76,7 @@ export function createShopifyGatewayAdapter(
               compareAtPrice: v.compareAtPrice,
               sku: v.sku,
               barcode: v.barcode,
+              inventoryTracked: v.inventoryTracked ?? false,
               optionValues: v.optionValues?.map((ov) => ({
                 optionName: ov.optionName,
                 name: ov.name,
@@ -109,6 +110,7 @@ export function createShopifyGatewayAdapter(
             compareAtPrice: v.compareAtPrice,
             sku: v.sku,
             barcode: v.barcode,
+            inventoryTracked: v.inventoryTracked ?? false,
             optionValues: v.optionValues?.map((ov) => ({
               name: ov.name,
               optionName: ov.optionName,

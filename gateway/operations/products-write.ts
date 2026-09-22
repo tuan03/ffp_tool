@@ -525,7 +525,12 @@ export async function executeProductsCreate(
       if (v.price !== undefined) vInput.price = v.price;
       if (v.compareAtPrice !== undefined) vInput.compareAtPrice = v.compareAtPrice;
       if (v.barcode !== undefined) vInput.barcode = v.barcode;
-      if (v.sku !== undefined) vInput.inventoryItem = { sku: v.sku };
+      const isTracked = v.inventoryTracked === true;
+      vInput.inventoryItem = {
+        sku: typeof v.sku === "string" ? v.sku : undefined,
+        tracked: isTracked,
+      };
+      vInput.inventoryPolicy = isTracked ? "DENY" : "CONTINUE";
       if (Array.isArray(v.optionValues)) {
         vInput.optionValues = (v.optionValues as readonly Record<string, unknown>[]).map((ov) => {
           const optVal: Record<string, unknown> = {};

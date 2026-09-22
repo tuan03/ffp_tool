@@ -31,6 +31,7 @@ export interface ShopifyVariantInput {
   readonly compareAtPrice?: string;
   readonly sku?: string;
   readonly barcode?: string;
+  readonly inventoryTracked?: boolean;
   readonly optionValues?: readonly ShopifyVariantOptionValue[];
   readonly mediaUrl?: string;
 }
@@ -120,6 +121,7 @@ export interface CreateVariantItem {
   readonly compareAtPrice?: string;
   readonly sku?: string;
   readonly barcode?: string;
+  readonly inventoryTracked?: boolean;
   readonly optionValues?: readonly ShopifyVariantOptionValue[];
 }
 

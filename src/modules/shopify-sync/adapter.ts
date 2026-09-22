@@ -158,6 +158,7 @@ export function fromCustomizationNormalizerProduct(
         compareAtPrice: compareAtPriceStr,
         sku: typeof v.sku === "string" ? v.sku : undefined,
         barcode: typeof v.barcode === "string" ? v.barcode : undefined,
+        inventoryTracked: false, // Default to Inventory not tracked
         optionValues: optionValues.length > 0 ? optionValues : undefined,
       };
     });
