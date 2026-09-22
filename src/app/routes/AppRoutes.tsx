@@ -17,6 +17,7 @@ import { createProductCrawlerRoutes, getProductCrawlerClient } from "../../modul
 import type { WorkflowInput, WorkflowOutput } from "../../modules/orchestrator";
 import { HomePage } from "../../pages/home/HomePage";
 import { NotFoundPage } from "../../pages/not-found/NotFoundPage";
+import { SeoReviewPage } from "../../pages/seo-review";
 
 interface AppRoutesProps {
   clearAmazonCrawlerCache: AmazonCrawlerCacheClearer;
@@ -57,6 +58,10 @@ export function AppRoutes({
           ...distributedCrawlerRoutes,
           ...podRoutes,
           ...autoSeoRoutes,
+          {
+            path: "seo-review",
+            element: <SeoReviewPage />,
+          },
           {
             path: "workflow-demo",
             element: <HomePage runWorkflow={runWorkflow} />,
