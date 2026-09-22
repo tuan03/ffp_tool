@@ -519,6 +519,8 @@ describe("Gateway: Operations & Dispatcher", () => {
                 id: "gid://shopify/Product/1",
                 title: "Product 1",
                 handle: "product-1",
+                description: "Product 1 description",
+                descriptionHtml: "<p>Product 1 description</p>",
                 status: "ACTIVE",
                 tags: ["pod"],
                 onlineStoreUrl: "https://store-test.myshopify.com/products/product-1",
@@ -554,6 +556,8 @@ describe("Gateway: Operations & Dispatcher", () => {
       products: {
         id: string;
         title: string;
+        description?: string;
+        descriptionHtml?: string;
         onlineStoreUrl?: string;
         featuredImage?: { id?: string; url: string; altText?: string; width?: number; height?: number };
         seo?: { title?: string; description?: string };
@@ -562,6 +566,8 @@ describe("Gateway: Operations & Dispatcher", () => {
     };
     assert.equal(listData.products.length, 1);
     assert.equal(listData.pageInfo.hasNextPage, true);
+    assert.equal(listData.products[0].description, "Product 1 description");
+    assert.equal(listData.products[0].descriptionHtml, "<p>Product 1 description</p>");
     assert.equal(listData.products[0].onlineStoreUrl, "https://store-test.myshopify.com/products/product-1");
     assert.deepEqual(listData.products[0].featuredImage, {
       id: "gid://shopify/ProductImage/101",
@@ -5387,6 +5393,7 @@ describe("Gateway: Architectural & Operational Hardening (P1)", () => {
 
     await dispatcher.dispatch({ storeId: "store-query-check", operation: "products.list", payload: {} });
     assert.ok(!capturedListQuery.includes("variants("), "products.list query must not contain variants");
+    assert.ok(capturedListQuery.includes("descriptionHtml"), "products.list query must include descriptionHtml");
 
     await dispatcher.dispatch({ storeId: "store-query-check", operation: "products.get", payload: { id: "gid://shopify/Product/1" } });
     assert.ok(capturedGetQuery.includes("variants("), "products.get query must retain variants");
@@ -6053,6 +6060,268 @@ describe("Gateway: Architectural & Operational Hardening (P1)", () => {
     assert.equal(prod.images?.[0]?.altText, "");
     assert.equal(prod.hasMoreVariants, false);
     assert.equal(prod.hasMoreImages, false);
+  });
+
+  describe("Gateway: variants.bulkCreate, files.create, and metafields.set", () => {
+    function setupTestGateway(mockGraphqlDataOrTransport: unknown) {
+      const registry = new InMemoryStoreRegistry([
+        {
+          storeId: "store-test",
+          shopDomain: "store-test.myshopify.com",
+          apiVersion: "2026-07",
+          auth: { type: "static", staticToken: "shpat_mock_123" },
+        },
+      ]);
+
+      const fakeTransport: HttpTransport =
+        typeof mockGraphqlDataOrTransport === "function"
+          ? (mockGraphqlDataOrTransport as HttpTransport)
+          : async () => createMockResponse(mockGraphqlDataOrTransport);
+
+      const client = new ShopifyGraphqlClient({
+        tokenProvider: new StaticAccessTokenProvider(),
+        throttleManager: new InMemoryThrottleManager(),
+        baseTransport: fakeTransport,
+      });
+
+      return new GatewayDispatcher({ storeRegistry: registry, graphqlClient: client });
+    }
+
+    it("executes variants.bulkCreate in preview mode without calling Shopify", async () => {
+      let called = false;
+      const dispatcher = setupTestGateway(async () => {
+        called = true;
+        return createMockResponse({});
+      });
+
+      const res = await dispatcher.dispatch({
+        storeId: "store-test",
+        operation: "variants.bulkCreate",
+        mode: "preview",
+        payload: {
+          productId: "gid://shopify/Product/123",
+          variants: [
+            {
+              price: "29.99",
+              optionValues: [{ optionName: "Size", name: "Medium" }],
+            },
+          ],
+        },
+      });
+
+      assert.equal(called, false);
+      assert.equal(res.success, true);
+      const data = res.data as { createdCount: number; variants: readonly { title: string; price: string }[] };
+      assert.equal(data.createdCount, 1);
+      assert.equal(data.variants[0]?.title, "Medium");
+      assert.equal(data.variants[0]?.price, "29.99");
+    });
+
+    it("executes variants.bulkCreate in apply mode with productVariantsBulkCreate", async () => {
+      let requestPayload: unknown;
+      const dispatcher = setupTestGateway(async (_url: string, init?: RequestInit) => {
+        requestPayload = JSON.parse(init?.body as string);
+        return createMockResponse({
+          data: {
+            productVariantsBulkCreate: {
+              productVariants: [
+                {
+                  id: "gid://shopify/ProductVariant/v-created-1",
+                  title: "Medium",
+                  price: "29.99",
+                  compareAtPrice: "39.99",
+                  barcode: "123456",
+                  inventoryItem: { sku: "SKU-MED" },
+                },
+              ],
+              userErrors: [],
+            },
+          },
+        });
+      });
+
+      const res = await dispatcher.dispatch({
+        storeId: "store-test",
+        operation: "variants.bulkCreate",
+        mode: "apply",
+        requestId: "req-bulk-create-1",
+        payload: {
+          productId: "gid://shopify/Product/123",
+          variants: [
+            {
+              price: "29.99",
+              compareAtPrice: "39.99",
+              sku: "SKU-MED",
+              barcode: "123456",
+              optionValues: [{ optionName: "Size", name: "Medium" }],
+            },
+          ],
+        },
+      });
+
+      assert.equal(res.success, true);
+      const data = res.data as { createdCount: number; variants: readonly { id: string; sku?: string }[] };
+      assert.equal(data.createdCount, 1);
+      assert.equal(data.variants[0]?.id, "gid://shopify/ProductVariant/v-created-1");
+      assert.equal(data.variants[0]?.sku, "SKU-MED");
+      assert.ok(requestPayload);
+    });
+
+    it("executes files.create in preview mode without calling Shopify", async () => {
+      let called = false;
+      const dispatcher = setupTestGateway(async () => {
+        called = true;
+        return createMockResponse({});
+      });
+
+      const res = await dispatcher.dispatch({
+        storeId: "store-test",
+        operation: "files.create",
+        mode: "preview",
+        payload: {
+          originalSource: "https://example.com/asset.jpg",
+          filename: "custom-preview.jpg",
+          alt: "Custom Preview",
+        },
+      });
+
+      assert.equal(called, false);
+      assert.equal(res.success, true);
+      const data = res.data as { fileId: string; shopifyCdnUrl: string; fileStatus: string; alt?: string };
+      assert.equal(data.fileStatus, "READY");
+      assert.ok(data.shopifyCdnUrl.includes("custom-preview.jpg"));
+      assert.equal(data.alt, "Custom Preview");
+    });
+
+    it("executes files.create in apply mode with polling until READY", async () => {
+      let callCount = 0;
+      const dispatcher = setupTestGateway(async (_url: string, init?: RequestInit) => {
+        callCount += 1;
+        const body = JSON.parse(init?.body as string) as Record<string, string>;
+        if (callCount === 1) {
+          assert.ok(body.query.includes("fileCreate"));
+          return createMockResponse({
+            data: {
+              fileCreate: {
+                files: [
+                  {
+                    id: "gid://shopify/MediaImage/file-1",
+                    fileStatus: "PROCESSING",
+                    alt: "Alt 1",
+                  },
+                ],
+                userErrors: [],
+              },
+            },
+          });
+        }
+        assert.ok(body.query.includes("GetFileNode"));
+        return createMockResponse({
+          data: {
+            node: {
+              id: "gid://shopify/MediaImage/file-1",
+              fileStatus: "READY",
+              alt: "Alt 1",
+              image: {
+                url: "https://cdn.shopify.com/s/files/1/0000/0000/files/file-1.jpg",
+              },
+            },
+          },
+        });
+      });
+
+      const res = await dispatcher.dispatch({
+        storeId: "store-test",
+        operation: "files.create",
+        mode: "apply",
+        requestId: "req-file-create-1",
+        payload: {
+          originalSource: "https://example.com/asset.jpg",
+          filename: "file-1.jpg",
+          alt: "Alt 1",
+          pollIntervalMs: 1,
+          maxPollAttempts: 3,
+        },
+      });
+
+      assert.equal(res.success, true);
+      const data = res.data as { fileId: string; shopifyCdnUrl: string; fileStatus: string };
+      assert.equal(data.fileId, "gid://shopify/MediaImage/file-1");
+      assert.equal(data.fileStatus, "READY");
+      assert.equal(data.shopifyCdnUrl, "https://cdn.shopify.com/s/files/1/0000/0000/files/file-1.jpg");
+      assert.equal(callCount, 2);
+    });
+
+    it("executes metafields.set in preview mode without calling Shopify", async () => {
+      let called = false;
+      const dispatcher = setupTestGateway(async () => {
+        called = true;
+        return createMockResponse({});
+      });
+
+      const res = await dispatcher.dispatch({
+        storeId: "store-test",
+        operation: "metafields.set",
+        mode: "preview",
+        payload: {
+          ownerId: "gid://shopify/Product/123",
+          namespace: "custom",
+          key: "amazon_customizer",
+          value: "{\"test\":true}",
+          type: "json",
+        },
+      });
+
+      assert.equal(called, false);
+      assert.equal(res.success, true);
+      const data = res.data as { success: boolean; metafieldId?: string; metafields: readonly { key: string }[] };
+      assert.equal(data.success, true);
+      assert.equal(data.metafields[0]?.key, "amazon_customizer");
+    });
+
+    it("executes metafields.set in apply mode with metafieldsSet mutation", async () => {
+      let requestPayload: unknown;
+      const dispatcher = setupTestGateway(async (_url: string, init?: RequestInit) => {
+        requestPayload = JSON.parse(init?.body as string);
+        return createMockResponse({
+          data: {
+            metafieldsSet: {
+              metafields: [
+                {
+                  id: "gid://shopify/Metafield/mf-1",
+                  namespace: "custom",
+                  key: "amazon_customizer",
+                  type: "json",
+                  value: "{\"config\":1}",
+                  ownerType: "PRODUCT",
+                },
+              ],
+              userErrors: [],
+            },
+          },
+        });
+      });
+
+      const res = await dispatcher.dispatch({
+        storeId: "store-test",
+        operation: "metafields.set",
+        mode: "apply",
+        requestId: "req-meta-1",
+        payload: {
+          ownerId: "gid://shopify/Product/123",
+          namespace: "custom",
+          key: "amazon_customizer",
+          value: "{\"config\":1}",
+          type: "json",
+        },
+      });
+
+      assert.equal(res.success, true);
+      const data = res.data as { success: boolean; metafieldId?: string };
+      assert.equal(data.success, true);
+      assert.equal(data.metafieldId, "gid://shopify/Metafield/mf-1");
+      assert.ok(requestPayload);
+    });
   });
 });
 

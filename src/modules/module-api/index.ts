@@ -1,3 +1,9 @@
+export {
+  createShopifyGatewayAdapter,
+} from "./gateway-adapter";
+export type {
+  ShopifyGatewayAdapterOptions,
+} from "./gateway-adapter";
 export { shopifyApiMockData } from "./mocks/data";
 export { runMockModuleApi } from "./mocks/runner";
 export { getModuleApiRunner } from "./runtime";
@@ -47,8 +53,18 @@ export type {
   ShopifyConnectionTestPayload,
   ShopifyConnectionTestResponse,
   ShopifyExecutionMode,
+  ShopifyFilesCreateData,
+  ShopifyFilesCreateInput,
+  ShopifyFilesCreatePayload,
+  ShopifyFilesCreateResponse,
   ShopifyImage,
   ShopifyImageInput,
+  ShopifyMetafieldItemInput,
+  ShopifyMetafieldSummary,
+  ShopifyMetafieldsSetData,
+  ShopifyMetafieldsSetInput,
+  ShopifyMetafieldsSetPayload,
+  ShopifyMetafieldsSetResponse,
   ShopifyOperation,
   ShopifyPageInfo,
   ShopifyProduct,
@@ -93,6 +109,10 @@ export type {
   ShopifyStoresListResponse,
   ShopifyVariantBulkUpdateItem,
   ShopifyVariantUpdateInput,
+  ShopifyVariantsBulkCreateData,
+  ShopifyVariantsBulkCreateInput,
+  ShopifyVariantsBulkCreatePayload,
+  ShopifyVariantsBulkCreateResponse,
   ShopifyVariantsBulkUpdateData,
   ShopifyVariantsBulkUpdateInput,
   ShopifyVariantsBulkUpdatePayload,
@@ -103,3 +123,4 @@ export type {
   ShopifyVariantsUpdateResponse,
   ShopifyWriteExecution,
 } from "./types";
+

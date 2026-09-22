@@ -37,6 +37,12 @@ import type {
   ShopifyStoresGetResponse,
   ShopifyStoresListInput,
   ShopifyStoresListResponse,
+  ShopifyFilesCreateInput,
+  ShopifyFilesCreateResponse,
+  ShopifyMetafieldsSetInput,
+  ShopifyMetafieldsSetResponse,
+  ShopifyVariantsBulkCreateInput,
+  ShopifyVariantsBulkCreateResponse,
   ShopifyVariantsBulkUpdateInput,
   ShopifyVariantsBulkUpdateResponse,
   ShopifyVariantsUpdateInput,
@@ -148,6 +154,9 @@ export async function runMockModuleApi(input: ShopifyProductsBulkUpdateInput): P
 export async function runMockModuleApi(input: ShopifyProductsDeleteInput): Promise<ShopifyProductsDeleteResponse>;
 export async function runMockModuleApi(input: ShopifyVariantsUpdateInput): Promise<ShopifyVariantsUpdateResponse>;
 export async function runMockModuleApi(input: ShopifyVariantsBulkUpdateInput): Promise<ShopifyVariantsBulkUpdateResponse>;
+export async function runMockModuleApi(input: ShopifyVariantsBulkCreateInput): Promise<ShopifyVariantsBulkCreateResponse>;
+export async function runMockModuleApi(input: ShopifyFilesCreateInput): Promise<ShopifyFilesCreateResponse>;
+export async function runMockModuleApi(input: ShopifyMetafieldsSetInput): Promise<ShopifyMetafieldsSetResponse>;
 export async function runMockModuleApi(input: ShopifyCollectionsListInput): Promise<ShopifyCollectionsListResponse>;
 export async function runMockModuleApi(input: ShopifyCollectionsGetInput): Promise<ShopifyCollectionsGetResponse>;
 export async function runMockModuleApi(input: ShopifyCollectionsCreateInput): Promise<ShopifyCollectionsCreateResponse>;
@@ -599,6 +608,104 @@ export async function runMockModuleApi(input: ShopifyApiInput): Promise<ShopifyA
         data: {
           updatedVariantIds: input.payload.variants.map((item) => item.id),
           count: input.payload.variants.length,
+        },
+      };
+    }
+
+    case "variants.bulkCreate": {
+      if (!input.payload.productId || input.payload.productId.trim() === "") {
+        throw new ShopifyApiError("Product id is required", "SHOPIFY_USER_ERROR");
+      }
+      if (!input.payload.variants || !Array.isArray(input.payload.variants)) {
+        throw new ShopifyApiError("Variants array is required", "SHOPIFY_USER_ERROR");
+      }
+      const createdVariants: ShopifyProductVariant[] = input.payload.variants.map((v, idx) => {
+        const title =
+          typeof v.title === "string" && v.title.trim() !== ""
+            ? v.title.trim()
+            : Array.isArray(v.optionValues)
+            ? (v.optionValues as readonly Record<string, unknown>[])
+                .map((ov) => (typeof ov.name === "string" ? ov.name : typeof ov.value === "string" ? ov.value : ""))
+                .filter(Boolean)
+                .join(" / ") || "Default Title"
+            : "Default Title";
+
+        return {
+          id: `gid://shopify/ProductVariant/mock-${Date.now()}-${idx + 1}`,
+          productId: input.payload.productId,
+          title,
+          price: v.price ?? "19.99",
+          compareAtPrice: v.compareAtPrice,
+          sku: v.sku,
+          barcode: v.barcode,
+          inventoryQuantity: v.inventoryQuantity,
+        };
+      });
+
+      return {
+        storeId: input.storeId,
+        operation: "variants.bulkCreate",
+        success: true,
+        data: {
+          createdCount: createdVariants.length,
+          variants: createdVariants,
+        },
+      };
+    }
+
+    case "files.create": {
+      if (!input.payload.originalSource || input.payload.originalSource.trim() === "") {
+        throw new ShopifyApiError("originalSource is required", "SHOPIFY_USER_ERROR");
+      }
+      const filename = input.payload.filename || "mock-asset.jpg";
+      return {
+        storeId: input.storeId,
+        operation: "files.create",
+        success: true,
+        data: {
+          fileId: `gid://shopify/MediaImage/mock-${Date.now()}`,
+          shopifyCdnUrl: `https://cdn.shopify.com/s/files/1/0000/0000/files/${filename}`,
+          fileStatus: "READY",
+          alt: input.payload.alt,
+        },
+      };
+    }
+
+    case "metafields.set": {
+      let rawItems: readonly Record<string, unknown>[];
+      if (Array.isArray(input.payload.metafields)) {
+        rawItems = input.payload.metafields as readonly Record<string, unknown>[];
+      } else if (
+        input.payload.namespace !== undefined ||
+        input.payload.key !== undefined ||
+        input.payload.value !== undefined
+      ) {
+        rawItems = [input.payload as Record<string, unknown>];
+      } else {
+        throw new ShopifyApiError("metafields array or metafield object is required", "SHOPIFY_USER_ERROR");
+      }
+
+      if (rawItems.length === 0) {
+        throw new ShopifyApiError("metafields array cannot be empty", "SHOPIFY_USER_ERROR");
+      }
+
+      const summaries = rawItems.map((item, idx) => ({
+        id: `gid://shopify/Metafield/mock-${Date.now()}-${idx + 1}`,
+        namespace: String(item.namespace || "custom"),
+        key: String(item.key || "key"),
+        type: String(item.type || "json"),
+        value: String(item.value || ""),
+        ownerType: "PRODUCT",
+      }));
+
+      return {
+        storeId: input.storeId,
+        operation: "metafields.set",
+        success: true,
+        data: {
+          success: true,
+          metafieldId: summaries[0]?.id,
+          metafields: summaries,
         },
       };
     }

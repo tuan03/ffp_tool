@@ -20,9 +20,12 @@ import {
   executeProductsUpdate,
 } from "./operations/products-write";
 import {
+  executeVariantsBulkCreate,
   executeVariantsBulkUpdate,
   executeVariantsUpdate,
 } from "./operations/variants-write";
+import { executeFilesCreate } from "./operations/files-write";
+import { executeMetafieldsSet } from "./operations/metafields-write";
 import {
   executeStoresGet,
   executeStoresList,
@@ -38,6 +41,9 @@ const WRITE_OPERATIONS: ReadonlySet<string> = new Set([
   "products.delete",
   "variants.update",
   "variants.bulkUpdate",
+  "variants.bulkCreate",
+  "files.create",
+  "metafields.set",
   "collections.create",
   "collections.update",
   "collections.delete",
@@ -437,6 +443,12 @@ export class GatewayDispatcher {
         return executeVariantsUpdate(store, this.graphqlClient, payload, mode, requestId);
       case "variants.bulkUpdate":
         return executeVariantsBulkUpdate(store, this.graphqlClient, payload, mode, requestId);
+      case "variants.bulkCreate":
+        return executeVariantsBulkCreate(store, this.graphqlClient, payload, mode, requestId);
+      case "files.create":
+        return executeFilesCreate(store, this.graphqlClient, payload, mode, requestId);
+      case "metafields.set":
+        return executeMetafieldsSet(store, this.graphqlClient, payload, mode, requestId);
       case "collections.create":
         return executeCollectionsCreate(store, this.graphqlClient, payload, mode, requestId);
       case "collections.update":

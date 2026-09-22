@@ -377,3 +377,149 @@ export async function executeVariantsBulkUpdate(
     count: updatedVariantIds.length,
   };
 }
+
+export const PRODUCT_VARIANTS_BULK_CREATE_MUTATION = `
+  mutation ProductVariantsBulkCreate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+    productVariantsBulkCreate(productId: $productId, variants: $variants, strategy: REMOVE_STANDALONE_VARIANT) {
+      productVariants {
+        id
+        title
+        price
+        compareAtPrice
+        barcode
+        inventoryQuantity
+        inventoryItem {
+          sku
+        }
+      }
+      userErrors {
+        field
+        message
+      }
+    }
+  }
+`;
+
+export async function executeVariantsBulkCreate(
+  store: StoreConfig,
+  client: ShopifyGraphqlClient,
+  payload: unknown,
+  mode: "preview" | "apply" = "apply",
+  requestId?: string,
+): Promise<{ createdCount: number; variants: readonly ProductVariantSummary[] }> {
+  const p = (payload && typeof payload === "object" ? payload : {}) as Record<string, unknown>;
+  const productId = typeof p.productId === "string" ? p.productId.trim() : "";
+  if (!productId) {
+    throw new GatewayError("Product id is required", "SHOPIFY_USER_ERROR", 400);
+  }
+
+  const variants = p.variants;
+  if (!Array.isArray(variants)) {
+    throw new GatewayError("Variants array is required", "SHOPIFY_USER_ERROR", 400);
+  }
+
+  for (const item of variants) {
+    if (!item || typeof item !== "object") {
+      throw new GatewayError("Each variant item must be an object", "SHOPIFY_USER_ERROR", 400);
+    }
+  }
+
+  if (mode === "preview") {
+    const previewVariants: ProductVariantSummary[] = variants.map((item, index) => {
+      const raw = item as Record<string, unknown>;
+      const title =
+        typeof raw.title === "string" && raw.title.trim() !== ""
+          ? raw.title.trim()
+          : Array.isArray(raw.optionValues)
+          ? (raw.optionValues as readonly Record<string, unknown>[])
+              .map((ov) => (typeof ov.name === "string" ? ov.name : typeof ov.value === "string" ? ov.value : ""))
+              .filter(Boolean)
+              .join(" / ") || "Default Title"
+          : "Default Title";
+
+      return {
+        id: `gid://shopify/ProductVariant/preview-created-${index + 1}`,
+        productId,
+        title,
+        price: typeof raw.price === "string" ? raw.price : "0.00",
+        compareAtPrice: typeof raw.compareAtPrice === "string" ? raw.compareAtPrice : undefined,
+        sku: typeof raw.sku === "string" ? raw.sku : undefined,
+        barcode: typeof raw.barcode === "string" ? raw.barcode : undefined,
+      };
+    });
+
+    return {
+      createdCount: previewVariants.length,
+      variants: previewVariants,
+    };
+  }
+
+  const variantsInput = variants.map((item) => {
+    const raw = item as Record<string, unknown>;
+    const vInput: Record<string, unknown> = {};
+    if (raw.price !== undefined) vInput.price = raw.price;
+    if (raw.compareAtPrice !== undefined) vInput.compareAtPrice = raw.compareAtPrice;
+    if (raw.barcode !== undefined) vInput.barcode = raw.barcode;
+    if (raw.sku !== undefined) vInput.inventoryItem = { sku: raw.sku };
+    if (Array.isArray(raw.optionValues)) {
+      vInput.optionValues = (raw.optionValues as readonly Record<string, unknown>[]).map((ov) => {
+        const optVal: Record<string, unknown> = {};
+        if (typeof ov.optionName === "string") optVal.optionName = ov.optionName;
+        if (typeof ov.name === "string") {
+          optVal.name = ov.name;
+        } else if (typeof ov.value === "string") {
+          optVal.name = ov.value;
+        }
+        if (typeof ov.optionId === "string") optVal.optionId = ov.optionId;
+        if (typeof ov.id === "string") optVal.id = ov.id;
+        return optVal;
+      });
+    } else if (typeof raw.title === "string" && raw.title.trim() !== "") {
+      vInput.optionValues = [{ optionName: "Title", name: raw.title.trim() }];
+    }
+    return vInput;
+  });
+
+  interface ProductVariantsBulkCreateResponse {
+    readonly productVariantsBulkCreate: {
+      readonly productVariants: readonly {
+        readonly id: string;
+        readonly title: string;
+        readonly price: string;
+        readonly compareAtPrice?: string | null;
+        readonly barcode?: string | null;
+        readonly inventoryQuantity?: number | null;
+        readonly inventoryItem?: { readonly sku?: string | null } | null;
+      }[] | null;
+      readonly userErrors: readonly MutationUserErrorItem[];
+    };
+  }
+
+  const raw = await client.query<ProductVariantsBulkCreateResponse>(
+    store,
+    PRODUCT_VARIANTS_BULK_CREATE_MUTATION,
+    { productId, variants: variantsInput },
+    { isWrite: true, requestId },
+  );
+
+  if (raw.productVariantsBulkCreate.userErrors && raw.productVariantsBulkCreate.userErrors.length > 0) {
+    throw mapUserErrorsToGatewayError(raw.productVariantsBulkCreate.userErrors);
+  }
+
+  const mappedVariants: ProductVariantSummary[] = (raw.productVariantsBulkCreate.productVariants ?? []).map((node) => ({
+    id: node.id,
+    productId,
+    title: node.title,
+    price: node.price,
+    compareAtPrice: node.compareAtPrice ?? undefined,
+    barcode: node.barcode ?? undefined,
+    sku: node.inventoryItem?.sku ?? undefined,
+    inventoryQuantity: node.inventoryQuantity ?? undefined,
+  }));
+
+  return {
+    createdCount: mappedVariants.length,
+    variants: mappedVariants,
+  };
+}
+

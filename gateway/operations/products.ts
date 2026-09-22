@@ -23,6 +23,8 @@ const PRODUCTS_LIST_QUERY = `
           id
           title
           handle
+          description
+          descriptionHtml
           status
           vendor
           productType

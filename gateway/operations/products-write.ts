@@ -189,25 +189,28 @@ export interface FileUpdateItem {
 
 export interface CreateMediaInputItem {
   readonly originalSource: string;
-  readonly mediaContentType: "IMAGE";
+  readonly mediaContentType: "IMAGE" | "VIDEO";
   readonly alt?: string;
 }
 
 function extractMediaInputs(
   featuredImage?: unknown,
   images?: unknown,
+  media?: unknown,
 ): readonly CreateMediaInputItem[] {
   const mediaList: CreateMediaInputItem[] = [];
   const seenUrls = new Set<string>();
 
-  const addMedia = (rawUrl?: unknown, rawAlt?: unknown) => {
+  const addMedia = (rawUrl?: unknown, rawAlt?: unknown, rawContentType?: unknown) => {
     if (typeof rawUrl !== "string") return;
     const url = rawUrl.trim();
     if (!url || seenUrls.has(url)) return;
     const alt = typeof rawAlt === "string" && rawAlt.trim() ? rawAlt.trim() : undefined;
+    const mediaContentType =
+      rawContentType === "VIDEO" || rawContentType === "IMAGE" ? rawContentType : "IMAGE";
     mediaList.push({
       originalSource: url,
-      mediaContentType: "IMAGE",
+      mediaContentType,
       ...(alt ? { alt } : {}),
     });
     seenUrls.add(url);
@@ -226,9 +229,42 @@ function extractMediaInputs(
         addMedia(img, undefined);
       } else if (img && typeof img === "object") {
         const imgObj = img as Record<string, unknown>;
-        const url = typeof imgObj.url === "string" ? imgObj.url : typeof imgObj.src === "string" ? imgObj.src : undefined;
+        const url =
+          typeof imgObj.originalSource === "string"
+            ? imgObj.originalSource
+            : typeof imgObj.url === "string"
+            ? imgObj.url
+            : typeof imgObj.src === "string"
+            ? imgObj.src
+            : undefined;
         const alt = typeof imgObj.altText === "string" ? imgObj.altText : typeof imgObj.alt === "string" ? imgObj.alt : undefined;
         addMedia(url, alt);
+      }
+    }
+  }
+
+  if (Array.isArray(media)) {
+    for (const item of media) {
+      if (typeof item === "string") {
+        addMedia(item, undefined);
+      } else if (item && typeof item === "object") {
+        const itemObj = item as Record<string, unknown>;
+        const url =
+          typeof itemObj.originalSource === "string"
+            ? itemObj.originalSource
+            : typeof itemObj.url === "string"
+            ? itemObj.url
+            : typeof itemObj.src === "string"
+            ? itemObj.src
+            : undefined;
+        const alt =
+          typeof itemObj.alt === "string"
+            ? itemObj.alt
+            : typeof itemObj.altText === "string"
+            ? itemObj.altText
+            : undefined;
+        const contentType = itemObj.mediaContentType;
+        addMedia(url, alt, contentType);
       }
     }
   }
@@ -325,20 +361,35 @@ export async function executeProductsCreate(
               height: typeof (productInput.featuredImage as Record<string, unknown>).height === "number" ? (productInput.featuredImage as Record<string, unknown>).height as number : undefined,
             }
           : undefined,
-      images: Array.isArray(productInput.images)
-        ? (productInput.images as readonly unknown[])
+      images: Array.isArray(productInput.images) || Array.isArray(productInput.media)
+        ? [
+            ...(Array.isArray(productInput.images) ? (productInput.images as readonly unknown[]) : []),
+            ...(Array.isArray(productInput.media) ? (productInput.media as readonly unknown[]) : []),
+          ]
             .map((img): ProductImageSummary | undefined => {
               if (typeof img === "string" && img.trim() !== "") {
                 return { url: img.trim() };
               }
               if (img && typeof img === "object") {
                 const imgObj = img as Record<string, unknown>;
-                const url = typeof imgObj.url === "string" ? imgObj.url.trim() : typeof imgObj.src === "string" ? imgObj.src.trim() : "";
+                const url =
+                  typeof imgObj.originalSource === "string"
+                    ? imgObj.originalSource.trim()
+                    : typeof imgObj.url === "string"
+                    ? imgObj.url.trim()
+                    : typeof imgObj.src === "string"
+                    ? imgObj.src.trim()
+                    : "";
                 if (url) {
                   return {
                     id: typeof imgObj.id === "string" ? imgObj.id : typeof imgObj.id === "number" ? String(imgObj.id) : undefined,
                     url,
-                    altText: typeof imgObj.altText === "string" ? imgObj.altText : typeof imgObj.alt === "string" ? imgObj.alt : undefined,
+                    altText:
+                      typeof imgObj.altText === "string"
+                        ? imgObj.altText
+                        : typeof imgObj.alt === "string"
+                        ? imgObj.alt
+                        : undefined,
                     width: typeof imgObj.width === "number" ? imgObj.width : undefined,
                     height: typeof imgObj.height === "number" ? imgObj.height : undefined,
                   };
@@ -442,7 +493,7 @@ export async function executeProductsCreate(
     };
   }
 
-  const mediaList = extractMediaInputs(productInput.featuredImage, productInput.images);
+  const mediaList = extractMediaInputs(productInput.featuredImage, productInput.images, productInput.media);
   const createVariables: Record<string, unknown> = { product: input };
   if (mediaList.length > 0) {
     createVariables.media = mediaList;
@@ -720,7 +771,9 @@ export async function executeProductsUpdate(
           ? String(imgObj.id)
           : undefined;
       const rawUrl =
-        typeof imgObj.url === "string" && imgObj.url.trim() !== ""
+        typeof imgObj.originalSource === "string" && imgObj.originalSource.trim() !== ""
+          ? imgObj.originalSource.trim()
+          : typeof imgObj.url === "string" && imgObj.url.trim() !== ""
           ? imgObj.url.trim()
           : typeof imgObj.src === "string" && imgObj.src.trim() !== ""
           ? imgObj.src.trim()
@@ -760,6 +813,11 @@ export async function executeProductsUpdate(
   if (Array.isArray(productPatch.images)) {
     for (const img of productPatch.images) {
       processImageEntry(img);
+    }
+  }
+  if (Array.isArray(productPatch.media)) {
+    for (const item of productPatch.media) {
+      processImageEntry(item);
     }
   }
 

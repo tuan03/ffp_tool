@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   createModuleApiRunner,
+  createShopifyGatewayAdapter,
   DEFAULT_GATEWAY_URL,
   getModuleApiRunner,
   runMockModuleApi,
@@ -11,6 +12,7 @@ import {
   shopifyApiMockData,
 } from "..";
 import type { ModuleApiRunner, ShopifyApiInput, ShopifyApiResponse } from "..";
+import { syncSingleProduct } from "../../shopify-sync";
 
 test("Module API selects mock runner in mock environment", async () => {
   const runner = getModuleApiRunner("mock");
@@ -892,6 +894,7 @@ test("Real service executes products.list response success", async () => {
   assert.equal(response.data.products.length, 1);
   assert.equal(response.data.products[0].title, "Product 1");
   assert.equal(response.data.products[0].description, "Product 1 plain text description");
+  assert.equal(response.data.products[0].descriptionHtml, "<p>Product 1 plain text description</p>");
   assert.equal(response.data.products[0].onlineStoreUrl, "https://store-42.myshopify.com/products/product-1");
   assert.deepEqual(response.data.products[0].featuredImage, {
     id: "gid://shopify/ProductImage/1",
@@ -2526,6 +2529,224 @@ test("Mock runner products.update merges altText of existing image by id without
   assert.ok(img5002);
   assert.equal(img5002.altText, "Classic Cotton T-Shirt back view");
 });
+
+test("Mock runner executes variants.bulkCreate, files.create, and metafields.set", async () => {
+  // 1. variants.bulkCreate
+  const bulkCreateRes = await runMockModuleApi({
+    storeId: "store-test",
+    operation: "variants.bulkCreate",
+    mode: "apply",
+    requestId: "req-bc-1",
+    payload: {
+      productId: "gid://shopify/Product/1001",
+      variants: [
+        {
+          price: "39.99",
+          compareAtPrice: "49.99",
+          sku: "SKU-XL",
+          barcode: "998877",
+          optionValues: [{ optionName: "Size", name: "XL" }],
+        },
+      ],
+    },
+  });
+  assert.equal(bulkCreateRes.success, true);
+  assert.equal(bulkCreateRes.data.createdCount, 1);
+  assert.equal(bulkCreateRes.data.variants[0]?.title, "XL");
+  assert.equal(bulkCreateRes.data.variants[0]?.price, "39.99");
+  assert.equal(bulkCreateRes.data.variants[0]?.sku, "SKU-XL");
+
+  // 2. files.create
+  const fileRes = await runMockModuleApi({
+    storeId: "store-test",
+    operation: "files.create",
+    mode: "apply",
+    requestId: "req-fc-1",
+    payload: {
+      originalSource: "https://example.com/mock-image.png",
+      filename: "seo-friendly.png",
+      alt: "SEO Alt Text",
+    },
+  });
+  assert.equal(fileRes.success, true);
+  assert.equal(fileRes.data.fileStatus, "READY");
+  assert.ok(fileRes.data.shopifyCdnUrl.includes("seo-friendly.png"));
+  assert.equal(fileRes.data.alt, "SEO Alt Text");
+
+  // 3. metafields.set
+  const metaRes = await runMockModuleApi({
+    storeId: "store-test",
+    operation: "metafields.set",
+    mode: "apply",
+    requestId: "req-ms-1",
+    payload: {
+      productId: "gid://shopify/Product/1001",
+      namespace: "custom",
+      key: "amazon_customizer",
+      type: "json",
+      value: JSON.stringify({ customizer: "active" }),
+    },
+  });
+  assert.equal(metaRes.success, true);
+  assert.equal(metaRes.data.success, true);
+  assert.ok(metaRes.data.metafieldId);
+  assert.equal(metaRes.data.metafields[0]?.key, "amazon_customizer");
+});
+
+test("Real service client dispatches variants.bulkCreate, files.create, and metafields.set correctly", async () => {
+  const recordedRequests: unknown[] = [];
+  const fakeFetch = async (_url: string | URL | Request, init?: RequestInit): Promise<Response> => {
+    const body = JSON.parse(init?.body as string);
+    recordedRequests.push(body);
+    if (body.operation === "variants.bulkCreate") {
+      return new Response(
+        JSON.stringify({
+          storeId: "s1",
+          operation: "variants.bulkCreate",
+          success: true,
+          data: { createdCount: 2, variants: [] },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    if (body.operation === "files.create") {
+      return new Response(
+        JSON.stringify({
+          storeId: "s1",
+          operation: "files.create",
+          success: true,
+          data: { fileId: "fid-1", shopifyCdnUrl: "https://cdn.shopify.com/f1.jpg", fileStatus: "READY" },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    if (body.operation === "metafields.set") {
+      return new Response(
+        JSON.stringify({
+          storeId: "s1",
+          operation: "metafields.set",
+          success: true,
+          data: { success: true, metafieldId: "mid-1", metafields: [] },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    return new Response(JSON.stringify({ success: true, data: {} }), { status: 200 });
+  };
+
+  const runner = createModuleApiRunner(
+    { gatewayUrl: "https://gateway.example.com/api" },
+    { fetch: fakeFetch as typeof fetch },
+  );
+
+  const res1 = await runner({
+    storeId: "s1",
+    operation: "variants.bulkCreate",
+    mode: "apply",
+    requestId: "r1",
+    payload: { productId: "p1", variants: [] },
+  });
+  assert.equal(res1.data.createdCount, 2);
+
+  const res2 = await runner({
+    storeId: "s1",
+    operation: "files.create",
+    mode: "apply",
+    requestId: "r2",
+    payload: { originalSource: "https://example.com/src.jpg" },
+  });
+  assert.equal(res2.data.shopifyCdnUrl, "https://cdn.shopify.com/f1.jpg");
+
+  const res3 = await runner({
+    storeId: "s1",
+    operation: "metafields.set",
+    mode: "apply",
+    requestId: "r3",
+    payload: { ownerId: "p1", namespace: "custom", key: "k", value: "v" },
+  });
+  assert.equal(res3.data.success, true);
+  assert.equal(recordedRequests.length, 3);
+});
+
+test("createShopifyGatewayAdapter implements ShopifyGateway interface and works with syncSingleProduct", async () => {
+  const adapter = createShopifyGatewayAdapter("store-test", {
+    runner: runMockModuleApi,
+    mode: "apply",
+  });
+
+  // 1. Direct adapter method verification
+  const prod = await adapter.createProduct({
+    title: "Test Handbag",
+    descriptionHtml: "<p>Description</p>",
+    vendor: "FFP Store",
+    tags: ["leather", "bag"],
+    media: [{ originalSource: "https://example.com/bag.jpg", alt: "Leather Bag", mediaContentType: "IMAGE" }],
+  });
+  assert.ok(prod.productId);
+  assert.ok(prod.productHandle);
+
+  const vars = await adapter.createVariants(prod.productId, [
+    { price: "49.99", sku: "BAG-MED", optionValues: [{ optionName: "Size", name: "Medium" }] },
+  ]);
+  assert.equal(vars.createdCount, 1);
+
+  const file = await adapter.uploadFile({
+    originalSource: "https://example.com/cust.png",
+    filename: "cust-thumb.png",
+    alt: "Customizer Thumbnail",
+  });
+  assert.ok(file.fileId);
+  assert.ok(file.shopifyCdnUrl.includes("cust-thumb.png"));
+
+  const meta = await adapter.setProductMetafield({
+    productId: prod.productId,
+    namespace: "custom",
+    key: "amazon_customizer",
+    type: "json",
+    value: "{\"custom\":true}",
+  });
+  assert.equal(meta.success, true);
+
+  // 2. Integration with Rùa's syncSingleProduct workflow!
+  const syncResult = await syncSingleProduct(
+    {
+      id: "crawl-prod-001",
+      title: "Full Pipeline Bag",
+      descriptionHtml: "<p>Beautiful customized leather bag</p>",
+      vendor: "FFP",
+      productType: "Bag",
+      tags: ["customized"],
+      media: [{ originalSource: "https://example.com/main.jpg", alt: "Main Bag Image" }],
+      variants: [
+        { price: "79.99", sku: "PIPE-1", optionValues: [{ optionName: "Color", name: "Brown" }] },
+      ],
+      customization: {
+        hasCustomization: true,
+        rawConfig: {
+          previewImage: "https://example.com/amazon-raw.jpg",
+        },
+        assets: [
+          {
+            url: "https://example.com/amazon-raw.jpg",
+            friendlyFileName: "amazon-raw-clean.jpg",
+            alt: "Preview Image Clean",
+          },
+        ],
+      },
+    },
+    {
+      gateway: adapter,
+    },
+  );
+
+  assert.equal(syncResult.success, true);
+  assert.equal(syncResult.title, "Full Pipeline Bag");
+  assert.equal(syncResult.variantsCount, 1);
+  assert.equal(syncResult.assetsUploadedCount, 1);
+  assert.equal(syncResult.metafieldSet, true);
+  assert.ok(syncResult.productId);
+});
+
 
 
 
