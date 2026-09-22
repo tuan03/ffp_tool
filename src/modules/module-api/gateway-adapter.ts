@@ -64,6 +64,16 @@ export function createShopifyGatewayAdapter(
     ) {
       return (payload as { requestId: string }).requestId.trim();
     }
+    if (
+      Array.isArray(payload) &&
+      payload.length > 0 &&
+      payload[0] &&
+      typeof payload[0] === "object" &&
+      typeof (payload[0] as { requestId?: unknown }).requestId === "string" &&
+      (payload[0] as { requestId: string }).requestId.trim() !== ""
+    ) {
+      return (payload[0] as { requestId: string }).requestId.trim();
+    }
     if (options.getRequestId) {
       return options.getRequestId(op, payload);
     }
@@ -76,6 +86,13 @@ export function createShopifyGatewayAdapter(
   return {
     async createProduct(input: CreateProductInput): Promise<CreateProductOutput> {
       const requestId = resolveRequestId("product-create", input);
+      const inputWithCat = input as unknown as { categoryId?: unknown; category?: unknown };
+      const categoryId =
+        typeof inputWithCat.categoryId === "string" && inputWithCat.categoryId.trim() !== ""
+          ? inputWithCat.categoryId.trim()
+          : typeof inputWithCat.category === "string" && inputWithCat.category.trim() !== ""
+          ? inputWithCat.category.trim()
+          : undefined;
       const response = (await runner({
         storeId: cleanStoreId,
         operation: "products.create",
@@ -87,6 +104,7 @@ export function createShopifyGatewayAdapter(
             descriptionHtml: input.descriptionHtml,
             vendor: input.vendor,
             productType: input.productType,
+            ...(categoryId ? { categoryId } : {}),
             tags: input.tags,
             media: input.media?.map((m) => ({
               originalSource: m.originalSource,

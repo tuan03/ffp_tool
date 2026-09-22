@@ -19,7 +19,11 @@ export function shopifyGatewayDevPlugin(options?: ShopifyGatewayDevPluginOptions
     name: "shopify-gateway-dev",
     configureServer(server) {
       const env = loadLocalEnv();
-      const authToken = options?.authToken ?? env.GATEWAY_AUTH_TOKEN ?? process.env.GATEWAY_AUTH_TOKEN;
+      const rawAuthToken = options?.authToken ?? env.GATEWAY_AUTH_TOKEN ?? process.env.GATEWAY_AUTH_TOKEN;
+      const authToken =
+        typeof rawAuthToken === "string" && rawAuthToken.trim() !== ""
+          ? rawAuthToken.trim()
+          : undefined;
       const host = server?.config?.server?.host;
       assertHostSecurity(host, authToken, "vite dev server");
       const maxBodyBytes = options?.maxBodyBytes && options.maxBodyBytes > 0 ? options.maxBodyBytes : MAX_BODY_BYTES;

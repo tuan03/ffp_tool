@@ -3003,29 +3003,31 @@ test("Real service client dispatches files.bulkCreate successfully to Gateway wi
 });
 
 test("Test invariant: every ShopifyOperation union member is present in SUPPORTED_SHOPIFY_OPERATIONS", () => {
-  const allKnownOperations: readonly ShopifyOperation[] = [
-    "connection.test",
-    "products.list",
-    "products.get",
-    "products.create",
-    "products.update",
-    "products.bulkUpdate",
-    "products.delete",
-    "variants.update",
-    "variants.bulkUpdate",
-    "variants.bulkCreate",
-    "files.create",
-    "files.bulkCreate",
-    "metafields.set",
-    "collections.list",
-    "collections.get",
-    "collections.create",
-    "collections.update",
-    "collections.delete",
-    "collections.updateMembership",
-    "stores.list",
-    "stores.get",
-  ];
+  const operationsCoverage: Record<ShopifyOperation, true> = {
+    "connection.test": true,
+    "products.list": true,
+    "products.get": true,
+    "products.create": true,
+    "products.update": true,
+    "products.bulkUpdate": true,
+    "products.delete": true,
+    "variants.update": true,
+    "variants.bulkUpdate": true,
+    "variants.bulkCreate": true,
+    "files.create": true,
+    "files.bulkCreate": true,
+    "metafields.set": true,
+    "collections.list": true,
+    "collections.get": true,
+    "collections.create": true,
+    "collections.update": true,
+    "collections.delete": true,
+    "collections.updateMembership": true,
+    "stores.list": true,
+    "stores.get": true,
+  };
+
+  const allKnownOperations = Object.keys(operationsCoverage) as ShopifyOperation[];
 
   for (const op of allKnownOperations) {
     assert.ok(
@@ -3138,6 +3140,12 @@ test("createShopifyGatewayAdapter uses deterministic requestId and respects opti
   // 3c. Per-input requestId override
   await adapterWithReqId.createProduct({ title: "T", descriptionHtml: "<p>D</p>", requestId: "explicit-req-999" } as unknown as { title: string; descriptionHtml: string });
   assert.equal(capturedInputs[2]?.requestId, "explicit-req-999");
+
+  // 3d. Batch item requestId override on array input
+  await adapterWithReqId.uploadFilesBatch!([
+    { originalSource: "https://example.com/2.png", filename: "2.png", alt: "2", requestId: "batch-item-req-77" } as unknown as { originalSource: string; filename: string; alt: string },
+  ]);
+  assert.equal(capturedInputs[3]?.requestId, "batch-item-req-77");
 });
 
 test("Public contracts allow inventoryTracked on variants and categoryId on products", async () => {
@@ -3162,10 +3170,19 @@ test("Public contracts allow inventoryTracked on variants and categoryId on prod
         inventoryTracked: true,
       },
     ],
+    ...({ categoryId: "gid://shopify/TaxonomyCategory/123" } as unknown as Record<string, unknown>),
   });
 
-  const productPayload = capturedInput as unknown as { payload: { product: { variants: readonly { inventoryTracked?: boolean }[] } } };
+  const productPayload = capturedInput as unknown as {
+    payload: {
+      product: {
+        categoryId?: string;
+        variants: readonly { inventoryTracked?: boolean }[];
+      };
+    };
+  };
   assert.equal(productPayload.payload.product.variants[0]?.inventoryTracked, true);
+  assert.equal(productPayload.payload.product.categoryId, "gid://shopify/TaxonomyCategory/123");
 });
 
 

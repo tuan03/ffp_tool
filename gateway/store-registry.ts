@@ -184,7 +184,7 @@ export class InMemoryStoreRegistry implements StoreRegistry {
   }
 
   public getStore(storeId: string): StoreConfig | undefined {
-    return this.stores.get(storeId);
+    return this.stores.get(typeof storeId === "string" ? storeId.trim() : storeId);
   }
 
   public listStores(): readonly StoreConfig[] {
@@ -192,10 +192,10 @@ export class InMemoryStoreRegistry implements StoreRegistry {
   }
 
   public removeStore(storeId: string): void {
-    this.stores.delete(storeId);
+    this.stores.delete(typeof storeId === "string" ? storeId.trim() : storeId);
   }
 
   public hasStore(storeId: string): boolean {
-    return this.stores.has(storeId);
+    return this.stores.has(typeof storeId === "string" ? storeId.trim() : storeId);
   }
 }

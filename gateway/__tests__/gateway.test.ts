@@ -7031,11 +7031,12 @@ describe("Gateway: Architectural & Operational Hardening (P1)", () => {
       const origToken = process.env.GATEWAY_AUTH_TOKEN;
       delete process.env.GATEWAY_AUTH_TOKEN;
 
-      const invokeConfigureServer = (p: any, serverMock: unknown) => {
-        if (typeof p.configureServer === "function") {
-          p.configureServer(serverMock);
-        } else if (p.configureServer && typeof p.configureServer.handler === "function") {
-          p.configureServer.handler(serverMock);
+      const invokeConfigureServer = (p: unknown, serverMock: unknown) => {
+        const plugin = p as { configureServer?: ((s: unknown) => void) | { handler?: (s: unknown) => void } };
+        if (typeof plugin.configureServer === "function") {
+          plugin.configureServer(serverMock);
+        } else if (plugin.configureServer && typeof plugin.configureServer.handler === "function") {
+          plugin.configureServer.handler(serverMock);
         }
       };
 
@@ -7354,8 +7355,8 @@ describe("Gateway: Architectural & Operational Hardening (P1)", () => {
     });
 
     it("products.create and products.update map categoryId to category in GraphQL variables", async () => {
-      let capturedCreateVars: any = null;
-      let capturedUpdateVars: any = null;
+      let capturedCreateVars: { product?: { category?: string } } | null = null;
+      let capturedUpdateVars: { product?: { category?: string } } | null = null;
 
       const dispatcher = setupTestGateway(async (_url: string, init?: RequestInit) => {
         const body = JSON.parse(init?.body as string);
@@ -7397,7 +7398,10 @@ describe("Gateway: Architectural & Operational Hardening (P1)", () => {
           },
         },
       });
-      assert.equal(capturedCreateVars.product.category, "gid://shopify/TaxonomyCategory/aa-10");
+      assert.equal(
+        (capturedCreateVars as { product?: { category?: string } } | null)?.product?.category,
+        "gid://shopify/TaxonomyCategory/aa-10",
+      );
 
       // 2. products.update with categoryId
       await dispatcher.dispatch({
@@ -7412,7 +7416,10 @@ describe("Gateway: Architectural & Operational Hardening (P1)", () => {
           },
         },
       });
-      assert.equal(capturedUpdateVars.product.category, "gid://shopify/TaxonomyCategory/bb-20");
+      assert.equal(
+        (capturedUpdateVars as { product?: { category?: string } } | null)?.product?.category,
+        "gid://shopify/TaxonomyCategory/bb-20",
+      );
     });
 
     it("Gateway dispatcher normalizes storeId with whitespace safely", async () => {
@@ -7432,6 +7439,161 @@ describe("Gateway: Architectural & Operational Hardening (P1)", () => {
 
       assert.equal(res.success, true);
       assert.equal(res.storeId, "store-test");
+    });
+
+    it("storeRegistry normalizes storeId with leading/trailing whitespace in getStore, hasStore, and removeStore", () => {
+      const registry = new InMemoryStoreRegistry([
+        {
+          storeId: "my-shop",
+          shopDomain: "my-shop.myshopify.com",
+          apiVersion: "2026-07",
+          auth: { type: "static", staticToken: "tok" },
+        },
+      ]);
+
+      assert.equal(registry.hasStore("   my-shop   "), true);
+      const store = registry.getStore("   my-shop   ");
+      assert.ok(store);
+      assert.equal(store?.storeId, "my-shop");
+
+      registry.removeStore("   my-shop   ");
+      assert.equal(registry.hasStore("my-shop"), false);
+      assert.equal(registry.getStore("my-shop"), undefined);
+    });
+
+    it("files.bulkCreate with >250 files correctly splits node polling into chunks of 250", async () => {
+      const polledChunks: string[][] = [];
+      const totalFilesCount = 252;
+      const initialFiles = Array.from({ length: totalFilesCount }, (_, i) => ({
+        id: `gid://shopify/MediaImage/${1000 + i}`,
+        fileStatus: "PROCESSING",
+        url: null,
+      }));
+
+      const dispatcher = setupTestGateway(async (_url: string, init?: RequestInit) => {
+        const body = JSON.parse(init?.body as string);
+        if (body.query.includes("fileCreate(")) {
+          return createMockResponse({
+            data: {
+              fileCreate: {
+                files: initialFiles,
+                userErrors: [],
+              },
+            },
+          });
+        }
+        if (body.query.includes("GetFileNodes(")) {
+          const ids = body.variables.ids as string[];
+          polledChunks.push(ids);
+          return createMockResponse({
+            data: {
+              nodes: ids.map((id) => ({
+                id,
+                fileStatus: "READY",
+                alt: null,
+                image: { url: `https://cdn.shopify.com/files/${id.replace(/[^0-9]/g, "")}.jpg`, width: 100, height: 100 },
+              })),
+            },
+          });
+        }
+        return createMockResponse({});
+      });
+
+      const res = await dispatcher.dispatch({
+        storeId: "store-test",
+        operation: "files.bulkCreate",
+        mode: "apply",
+        requestId: "req-chunk-polling-test",
+        payload: {
+          pollIntervalMs: 0,
+          maxPollAttempts: 2,
+          files: Array.from({ length: totalFilesCount }, (_, i) => ({
+            originalSource: `https://example.com/asset-${i}.jpg`,
+          })),
+        },
+      });
+
+      assert.equal(res.success, true);
+      const data = res.data as { totalCount: number; successCount: number; failedCount: number };
+      assert.equal(data.totalCount, totalFilesCount);
+      assert.equal(data.successCount, totalFilesCount);
+      assert.equal(data.failedCount, 0);
+
+      // Verify that polling chunked the 252 IDs into chunks: [250 items, 2 items]
+      assert.equal(polledChunks.length, 2);
+      assert.equal(polledChunks[0]?.length, 250);
+      assert.equal(polledChunks[1]?.length, 2);
+    });
+
+    it("products.get with mixed media types (IMAGE, VIDEO, MODEL_3D, EXTERNAL_VIDEO) excludes non-image media and preserves image order", async () => {
+      const dispatcher = setupTestGateway(async (_url: string, init?: RequestInit) => {
+        const body = JSON.parse(init?.body as string);
+        if (body.query.includes("ProductsGet(")) {
+          return createMockResponse({
+            data: {
+              product: {
+                id: "gid://shopify/Product/mixed-media-1",
+                title: "Mixed Media Product",
+                handle: "mixed-media-product",
+                status: "ACTIVE",
+                media: {
+                  pageInfo: { hasNextPage: false, endCursor: null },
+                  nodes: [
+                    {
+                      id: "gid://shopify/MediaImage/img-1",
+                      alt: "Image 1",
+                      mediaContentType: "IMAGE",
+                      image: { url: "https://cdn.shopify.com/img-1.jpg", width: 800, height: 800 },
+                    },
+                    {
+                      id: "gid://shopify/Video/video-1",
+                      alt: "Product Demo Video",
+                      mediaContentType: "VIDEO",
+                      image: null,
+                    },
+                    {
+                      id: "gid://shopify/Model3d/model-1",
+                      alt: "3D AR Model",
+                      mediaContentType: "MODEL_3D",
+                      image: null,
+                    },
+                    {
+                      id: "gid://shopify/MediaImage/img-2",
+                      alt: "Image 2",
+                      mediaContentType: "IMAGE",
+                      image: { url: "https://cdn.shopify.com/img-2.jpg", width: 1000, height: 1000 },
+                    },
+                    {
+                      id: "gid://shopify/ExternalVideo/ext-vid-1",
+                      alt: "YouTube Review",
+                      mediaContentType: "EXTERNAL_VIDEO",
+                      image: null,
+                    },
+                  ],
+                },
+                variants: { edges: [] },
+                createdAt: "2026-09-01T00:00:00Z",
+                updatedAt: "2026-09-22T00:00:00Z",
+              },
+            },
+          });
+        }
+        return createMockResponse({});
+      });
+
+      const res = await dispatcher.dispatch({
+        storeId: "store-test",
+        operation: "products.get",
+        payload: { id: "gid://shopify/Product/mixed-media-1" },
+      });
+
+      assert.equal(res.success, true);
+      const product = (res.data as { product: { images: readonly { id?: string; url: string; altText?: string }[] } }).product;
+      assert.equal(product.images.length, 2);
+      assert.equal(product.images[0]?.id, "gid://shopify/MediaImage/img-1");
+      assert.equal(product.images[0]?.altText, "Image 1");
+      assert.equal(product.images[1]?.id, "gid://shopify/MediaImage/img-2");
+      assert.equal(product.images[1]?.altText, "Image 2");
     });
   });
 });
