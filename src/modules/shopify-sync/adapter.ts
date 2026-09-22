@@ -92,12 +92,14 @@ export function fromCustomizationNormalizerProduct(
   const title = product.title || product.sourceTitle || "Custom Product";
   const descriptionHtml = buildProductDescriptionHtml(product);
 
-  const media: ShopifyMediaInput[] = (product.media || []).map((item: ProductMediaItem) => ({
-    originalSource: item.url,
-    alt: item.alt || title,
-    mediaContentType: item.kind === "video" ? "VIDEO" : "IMAGE",
-    friendlyFileName: item.friendlyFileName,
-  }));
+  const media: ShopifyMediaInput[] = (product.media || [])
+    .filter((item: ProductMediaItem) => item.kind !== "video")
+    .map((item: ProductMediaItem) => ({
+      originalSource: item.url,
+      alt: item.alt || title,
+      mediaContentType: "IMAGE",
+      friendlyFileName: item.friendlyFileName,
+    }));
 
   const tags = new Set<string>();
   if (product.parentAsin) tags.add(`asin:${product.parentAsin}`);
@@ -143,8 +145,9 @@ export function fromCustomizationNormalizerProduct(
 
   const variants: ShopifyVariantInput[] = (product.variants || [])
     .filter(isRecord)
-    .map((v) => {
-      const priceStr = formatPrice(v.price, "0.00");
+    .flatMap((v) => {
+      const priceStr = formatPrice(v.price, "");
+      if (!priceStr) return [];
       const compareAtPriceStr = formatOptionalPrice(v.compareAtPrice);
       const optionValues: Array<{ name: string; optionName: string }> = [];
 
@@ -157,7 +160,7 @@ export function fromCustomizationNormalizerProduct(
         }
       }
 
-      return {
+      return [{
         title: typeof v.title === "string" ? v.title : undefined,
         price: priceStr,
         compareAtPrice: compareAtPriceStr,
@@ -165,7 +168,7 @@ export function fromCustomizationNormalizerProduct(
         barcode: typeof v.barcode === "string" ? v.barcode : undefined,
         inventoryTracked: false, // Default to Inventory not tracked
         optionValues: optionValues.length > 0 ? optionValues : undefined,
-      };
+      }];
     });
 
   const productType =
@@ -175,6 +178,7 @@ export function fromCustomizationNormalizerProduct(
 
   return {
     id: product.id,
+    sourceKey: typeof product.sourceKey === "string" ? product.sourceKey : product.id,
     title,
     descriptionHtml,
     vendor: "FFP Store",

@@ -2763,6 +2763,102 @@ test("createShopifyGatewayAdapter implements ShopifyGateway interface and works 
   assert.ok(syncResult.productId);
 });
 
+test("Shopify gateway adapter preserves manual tags and tracks only crawler-managed media", async () => {
+  const updatePayloads: ShopifyApiInput[] = [];
+  let getCount = 0;
+  const runner = (async (input: ShopifyApiInput): Promise<ShopifyApiResponse> => {
+    if (input.operation === "products.get") {
+      getCount += 1;
+      const isAfterUpdate = getCount > 1;
+      return {
+        storeId: "store-managed",
+        operation: "products.get",
+        success: true,
+        data: {
+          product: {
+            id: "gid://shopify/Product/managed",
+            title: "Managed product",
+            handle: "managed-product",
+            status: "ACTIVE",
+            tags: isAfterUpdate ? ["manual-tag", "new-crawler-tag"] : ["manual-tag", "old-crawler-tag"],
+            images: isAfterUpdate
+              ? [
+                  { id: "gid://shopify/MediaImage/manual", url: "https://cdn/manual.jpg" },
+                  { id: "gid://shopify/MediaImage/new", url: "https://cdn/new.jpg" },
+                ]
+              : [
+                  { id: "gid://shopify/MediaImage/manual", url: "https://cdn/manual.jpg" },
+                  { id: "gid://shopify/MediaImage/old", url: "https://cdn/old.jpg" },
+                ],
+            variants: [{
+              id: "gid://shopify/ProductVariant/new",
+              productId: "gid://shopify/Product/managed",
+              title: "Twin",
+              price: "29.95",
+            }],
+            createdAt: "2026-09-01T00:00:00Z",
+            updatedAt: "2026-09-22T00:00:00Z",
+          },
+        },
+      };
+    }
+    if (input.operation === "products.update") {
+      updatePayloads.push(input);
+      return {
+        storeId: "store-managed",
+        operation: "products.update",
+        success: true,
+        data: {
+          product: {
+            id: "gid://shopify/Product/managed",
+            title: "Managed product",
+            handle: "managed-product",
+            status: "ACTIVE",
+            tags: ["manual-tag", "new-crawler-tag"],
+            images: [{ id: "gid://shopify/MediaImage/new", url: "https://cdn/new.jpg" }],
+            variants: [{
+              id: "gid://shopify/ProductVariant/new",
+              productId: "gid://shopify/Product/managed",
+              title: "Twin",
+              price: "29.95",
+            }],
+            createdAt: "2026-09-01T00:00:00Z",
+            updatedAt: "2026-09-22T00:00:00Z",
+          },
+        },
+      };
+    }
+    throw new Error(`Unexpected operation ${input.operation}`);
+  }) as ModuleApiRunner;
+  const adapter = createShopifyGatewayAdapter("store-managed", { runner, mode: "apply" });
+
+  const updated = await adapter.updateProduct?.({
+    productId: "gid://shopify/Product/managed",
+    title: "Managed product",
+    descriptionHtml: "<p>Managed</p>",
+    tags: ["new-crawler-tag"],
+    media: [{ originalSource: "https://amazon/new.jpg", mediaContentType: "IMAGE" }],
+    variants: [{ price: "29.95", optionValues: [{ optionName: "Size", name: "Twin" }] }],
+    previousManagedResources: {
+      tags: ["old-crawler-tag"],
+      mediaIds: ["gid://shopify/MediaImage/old"],
+      variantIds: ["gid://shopify/ProductVariant/old"],
+    },
+  });
+
+  assert.ok(updated);
+  const updateInput = updatePayloads[0];
+  assert.ok(updateInput && updateInput.operation === "products.update");
+  assert.deepEqual(updateInput.payload.product.tags, ["manual-tag", "new-crawler-tag"]);
+  assert.deepEqual(updateInput.payload.product.mediaIdsToDelete, ["gid://shopify/MediaImage/old"]);
+  assert.deepEqual(updateInput.payload.product.variantIdsToManage, ["gid://shopify/ProductVariant/old"]);
+  assert.deepEqual(updated.managedResources, {
+    tags: ["new-crawler-tag"],
+    mediaIds: ["gid://shopify/MediaImage/new"],
+    variantIds: ["gid://shopify/ProductVariant/new"],
+  });
+});
+
 
 
 

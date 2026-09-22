@@ -14,6 +14,7 @@ export interface StoreProxyConfig {
 
 export interface StoreConfig {
   readonly storeId: string;
+  readonly throttleGroupId?: string;
   readonly shopDomain: string;
   readonly apiVersion: string;
   readonly auth: StoreAuthConfig;

@@ -15,7 +15,7 @@ from fastapi import FastAPI, Header, HTTPException, Request, WebSocket, WebSocke
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from . import PROTOCOL_VERSION
+from . import PROTOCOL_VERSION, SUPPORTED_PROTOCOL_VERSIONS
 from .coordinator_models import Base, create_database_engine, create_session_factory
 from .coordinator_store import CoordinatorStore
 from .protocol import HEARTBEAT_INTERVAL_SECONDS, LEASE_SECONDS, payload_checksum, require_message
@@ -232,6 +232,13 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
             raise HTTPException(status_code=404, detail="Crawl job was not found.")
         return result
 
+    @app.get("/api/v1/crawl-jobs/{job_id}/products")
+    def get_job_products(job_id: str) -> dict[str, Any]:
+        result = store.job_products(job_id)
+        if result is None:
+            raise HTTPException(status_code=404, detail="Crawl job was not found.")
+        return result
+
     @app.get("/api/v1/crawl-jobs/{job_id}/export")
     def export_results(job_id: str) -> JSONResponse:
         result = store.job_results(job_id)
@@ -250,6 +257,13 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
     @app.post("/api/v1/crawl-jobs/{job_id}/retry-failed")
     def retry_failed(job_id: str) -> dict[str, Any]:
         snapshot = store.retry_failed(job_id)
+        if snapshot is None:
+            raise HTTPException(status_code=404, detail="Crawl job was not found.")
+        return snapshot
+
+    @app.post("/api/v1/crawl-jobs/{job_id}/retry-failed-syncs")
+    def retry_failed_syncs(job_id: str) -> dict[str, Any]:
+        snapshot = store.retry_failed_syncs(job_id)
         if snapshot is None:
             raise HTTPException(status_code=404, detail="Crawl job was not found.")
         return snapshot
@@ -344,13 +358,157 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
             raise HTTPException(status_code=400, detail="Result job identity does not match the leased task.")
         return response
 
+    @app.put("/api/v1/worker/tasks/{task_id}/products/{product_key}")
+    async def upload_product(
+        task_id: str,
+        product_key: str,
+        request: Request,
+        x_client_id: str = Header(alias="X-Client-Id"),
+        x_lease_id: str = Header(alias="X-Lease-Id"),
+        x_result_checksum: str | None = Header(default=None, alias="X-Result-Checksum"),
+    ) -> dict[str, Any]:
+        try:
+            body = await read_request_body_limited(request, maximum_bytes=50 * 1024 * 1024)
+            if request.headers.get("content-encoding", "").casefold() == "gzip":
+                body = decompress_gzip_limited(body, maximum_bytes=50 * 1024 * 1024)
+            payload = json.loads(body)
+        except ResultPayloadTooLarge as error:
+            raise HTTPException(status_code=413, detail="Product payload exceeds 50 MB.") from error
+        except (OSError, EOFError, UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise HTTPException(status_code=400, detail="Product body must be valid JSON.") from error
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=400, detail="Product body must be a JSON object.")
+        identity = {"taskId": task_id, "clientId": x_client_id, "leaseId": x_lease_id}
+        if any(str(payload.get(name) or "") != expected for name, expected in identity.items()):
+            raise HTTPException(status_code=400, detail="Product envelope identity does not match route and headers.")
+        checksum = payload_checksum(payload)
+        if x_result_checksum and x_result_checksum != checksum:
+            raise HTTPException(status_code=400, detail="Product checksum does not match payload.")
+        response = store.accept_product(
+            task_id,
+            x_client_id,
+            x_lease_id,
+            product_key,
+            checksum,
+            payload,
+        )
+        if response["status"] == "missing":
+            raise HTTPException(status_code=404, detail="Crawler task was not found.")
+        if response["status"] in {"cancelled", "stale"}:
+            raise HTTPException(status_code=409, detail="Crawler task is cancelled or the lease is stale.")
+        if response["status"] == "invalid":
+            raise HTTPException(status_code=400, detail="Product envelope is invalid.")
+        return response
+
+    def require_pipeline_key(value: str | None) -> None:
+        expected = os.environ.get("SHOPIFY_PIPELINE_TOKEN", "").strip()
+        if expected and value != expected:
+            raise HTTPException(status_code=401, detail="Invalid pipeline worker key.")
+
+    @app.post("/api/v1/internal/product-pipeline/claim")
+    def claim_product_pipeline(
+        payload: dict[str, Any],
+        x_pipeline_key: str | None = Header(default=None, alias="X-Pipeline-Key"),
+    ) -> dict[str, Any]:
+        require_pipeline_key(x_pipeline_key)
+        worker_id = str(payload.get("workerId") or "").strip()
+        store_id = str(payload.get("storeId") or "").strip()
+        if not worker_id or not store_id:
+            raise HTTPException(status_code=422, detail="workerId and storeId are required.")
+        return {
+            "items": store.claim_product_items(
+                worker_id=worker_id,
+                store_id=store_id,
+                limit=int(payload.get("limit") or 1),
+            )
+        }
+
+    @app.post("/api/v1/internal/product-pipeline/{item_id}/syncing")
+    def mark_product_syncing(
+        item_id: str,
+        payload: dict[str, Any],
+        x_pipeline_key: str | None = Header(default=None, alias="X-Pipeline-Key"),
+    ) -> dict[str, Any]:
+        require_pipeline_key(x_pipeline_key)
+        normalized = payload.get("normalizedProduct")
+        if not isinstance(normalized, dict):
+            raise HTTPException(status_code=422, detail="normalizedProduct is required.")
+        updated = store.mark_product_syncing(
+            item_id,
+            worker_id=str(payload.get("workerId") or ""),
+            normalized_payload=normalized,
+            proxy_profile=str(payload.get("proxyProfile") or ""),
+        )
+        if not updated:
+            raise HTTPException(status_code=409, detail="Pipeline item claim is stale.")
+        return {"status": "syncing"}
+
+    @app.post("/api/v1/internal/product-pipeline/{item_id}/heartbeat")
+    def heartbeat_product_pipeline(
+        item_id: str,
+        payload: dict[str, Any],
+        x_pipeline_key: str | None = Header(default=None, alias="X-Pipeline-Key"),
+    ) -> dict[str, Any]:
+        require_pipeline_key(x_pipeline_key)
+        if not store.heartbeat_product_item(item_id, worker_id=str(payload.get("workerId") or "")):
+            raise HTTPException(status_code=409, detail="Pipeline item claim is stale.")
+        return {"status": "ok"}
+
+    @app.post("/api/v1/internal/product-pipeline/{item_id}/complete")
+    def complete_product_pipeline(
+        item_id: str,
+        payload: dict[str, Any],
+        x_pipeline_key: str | None = Header(default=None, alias="X-Pipeline-Key"),
+    ) -> dict[str, Any]:
+        require_pipeline_key(x_pipeline_key)
+        normalized = payload.get("normalizedProduct")
+        shopify_result = payload.get("shopify")
+        store_id = str(payload.get("storeId") or "").strip()
+        if not isinstance(normalized, dict) or not isinstance(shopify_result, dict) or not store_id:
+            raise HTTPException(status_code=422, detail="storeId, normalizedProduct and shopify are required.")
+        updated = store.complete_product_item(
+            item_id,
+            worker_id=str(payload.get("workerId") or ""),
+            store_id=store_id,
+            normalized_checksum=str(payload.get("normalizedChecksum") or ""),
+            normalized_payload=normalized,
+            shopify_result=shopify_result,
+        )
+        if not updated:
+            raise HTTPException(status_code=409, detail="Pipeline item claim is stale.")
+        return {"status": "completed"}
+
+    @app.post("/api/v1/internal/product-pipeline/{item_id}/fail")
+    def fail_product_pipeline(
+        item_id: str,
+        payload: dict[str, Any],
+        x_pipeline_key: str | None = Header(default=None, alias="X-Pipeline-Key"),
+    ) -> dict[str, Any]:
+        require_pipeline_key(x_pipeline_key)
+        error = payload.get("error") if isinstance(payload.get("error"), dict) else {"message": "Pipeline failed."}
+        store_id = str(payload.get("storeId") or "").strip()
+        if not store_id:
+            raise HTTPException(status_code=422, detail="storeId is required.")
+        status = store.fail_product_item(
+            item_id,
+            worker_id=str(payload.get("workerId") or ""),
+            store_id=store_id,
+            error=error,
+            retryable=bool(payload.get("retryable", False)),
+            reconciliation_required=bool(payload.get("reconciliationRequired", False)),
+            retry_after_seconds=int(payload["retryAfterSeconds"]) if payload.get("retryAfterSeconds") else None,
+        )
+        if status is None:
+            raise HTTPException(status_code=409, detail="Pipeline item claim is stale.")
+        return {"status": status}
+
     @app.websocket("/api/v1/worker/connect")
     async def worker_socket(websocket: WebSocket) -> None:
         await websocket.accept()
         client_id = ""
         try:
             hello = require_message(await asyncio.wait_for(websocket.receive_json(), timeout=15), "hello")
-            if str(hello.get("protocolVersion")) != PROTOCOL_VERSION:
+            if str(hello.get("protocolVersion")) not in SUPPORTED_PROTOCOL_VERSIONS:
                 await websocket.close(code=4002, reason="Unsupported protocol version.")
                 return
             client = await asyncio.to_thread(store.register_client, hello)

@@ -11,6 +11,14 @@ export interface ShopifySyncOptions {
   readonly gateway?: ShopifyGateway;
   readonly maxThrottleAttempts?: number;
   readonly throttleBaseDelayMs?: number;
+  readonly existingProductId?: string;
+  readonly existingManagedResources?: ShopifyManagedResources;
+}
+
+export interface ShopifyManagedResources {
+  readonly tags?: readonly string[];
+  readonly mediaIds?: readonly string[];
+  readonly variantIds?: readonly string[];
 }
 
 export interface ShopifyMediaInput {
@@ -62,6 +70,7 @@ export interface ShopifyProductCustomizerInput {
 
 export interface ShopifySyncProductInput {
   readonly id?: string;
+  readonly sourceKey?: string;
   readonly title: string;
   readonly descriptionHtml: string;
   readonly vendor?: string;
@@ -93,6 +102,8 @@ export interface ShopifySyncProductResult {
   readonly dryRun: boolean;
   readonly warnings: readonly string[];
   readonly error?: string;
+  readonly reconciliationRequired?: boolean;
+  readonly managedResources?: ShopifyManagedResources;
 }
 
 export interface ShopifySyncBatchOutput {
@@ -106,6 +117,7 @@ export interface ShopifySyncBatchOutput {
 
 export interface CreateProductInput {
   readonly title: string;
+  readonly status?: "ACTIVE" | "ARCHIVED" | "DRAFT";
   readonly descriptionHtml: string;
   readonly vendor?: string;
   readonly productType?: string;
@@ -118,7 +130,15 @@ export interface CreateProductOutput {
   readonly productId: string;
   readonly productHandle: string;
   readonly createdVariantsCount?: number;
+  readonly managedResources?: ShopifyManagedResources;
 }
+
+export interface UpdateProductInput extends CreateProductInput {
+  readonly productId: string;
+  readonly previousManagedResources?: ShopifyManagedResources;
+}
+
+export interface UpdateProductOutput extends CreateProductOutput {}
 
 export interface CreateVariantItem {
   readonly price: string;
@@ -147,8 +167,8 @@ export interface UploadFileOutput {
 
 export interface SetMetafieldInput {
   readonly productId: string;
-  readonly namespace: "custom";
-  readonly key: "amazon_customizer";
+  readonly namespace: string;
+  readonly key: string;
   readonly type: "json";
   readonly value: string;
 }
@@ -160,6 +180,7 @@ export interface SetMetafieldOutput {
 
 export interface ShopifyGateway {
   readonly createProduct: (input: CreateProductInput) => Promise<CreateProductOutput>;
+  readonly updateProduct?: (input: UpdateProductInput) => Promise<UpdateProductOutput>;
   readonly createVariants: (
     productId: string,
     variants: readonly CreateVariantItem[],

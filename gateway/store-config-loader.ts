@@ -401,5 +401,45 @@ export function loadBootstrappedStores(options?: StoreBootstrapOptions): StoreCo
     }
   }
 
+  const baseStores = Array.from(storesByStoreId.values());
+  const rawProxyConfigPath = env.SHOPIFY_PROXY_CONFIG || env.AMAZON_CRAWLER_PROXY_CONFIG;
+  const proxyConfigPath = rawProxyConfigPath ? resolve(cwd, rawProxyConfigPath) : undefined;
+  if (proxyConfigPath && existsSync(proxyConfigPath)) {
+    try {
+      const parsed = JSON.parse(readFileSync(proxyConfigPath, "utf-8")) as unknown;
+      const profiles = parsed && typeof parsed === "object" && Array.isArray((parsed as Record<string, unknown>).profiles)
+        ? (parsed as Record<string, unknown>).profiles as readonly unknown[]
+        : [];
+      for (const profile of profiles) {
+        if (!profile || typeof profile !== "object") continue;
+        const profileRecord = profile as Record<string, unknown>;
+        if (profileRecord.enabled === false || typeof profileRecord.name !== "string") continue;
+        const proxyRecord = profileRecord.proxy && typeof profileRecord.proxy === "object"
+          ? profileRecord.proxy as Record<string, unknown>
+          : undefined;
+        const server = typeof proxyRecord?.server === "string" ? proxyRecord.server.trim() : "";
+        if (!server) continue;
+        const safeProfileName = profileRecord.name.trim().toLowerCase().replace(/[^a-z0-9-]+/g, "-");
+        if (!safeProfileName) continue;
+        for (const store of baseStores) {
+          registerStore({
+            ...store,
+            storeId: `${store.storeId}--${safeProfileName}`,
+            throttleGroupId: store.throttleGroupId ?? store.storeId,
+            proxy: {
+              url: server,
+              username: typeof proxyRecord?.username === "string" ? proxyRecord.username : undefined,
+              password: typeof proxyRecord?.password === "string" ? proxyRecord.password : undefined,
+              failClosed: true,
+            },
+          });
+        }
+      }
+    } catch {
+      // Invalid local proxy configuration is surfaced by the pipeline worker,
+      // while the base gateway store remains available for explicit non-pipeline use.
+    }
+  }
+
   return Array.from(storesByStoreId.values());
 }

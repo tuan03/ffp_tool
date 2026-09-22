@@ -38,6 +38,14 @@ const PRODUCT_CREATE_MUTATION = `
             }
           }
         }
+        media(first: 50) {
+          nodes {
+            id
+            ... on MediaImage {
+              image { url altText width height }
+            }
+          }
+        }
         seo {
           title
           description
@@ -125,6 +133,14 @@ const PRODUCT_UPDATE_MUTATION = `
             }
           }
         }
+        media(first: 50) {
+          nodes {
+            id
+            ... on MediaImage {
+              image { url altText width height }
+            }
+          }
+        }
         seo {
           title
           description
@@ -163,6 +179,44 @@ const PRODUCT_DELETE_MUTATION = `
         field
         message
       }
+    }
+  }
+`;
+
+const PIPELINE_PRODUCT_STATE_QUERY = `
+  query PipelineProductState($id: ID!) {
+    node(id: $id) {
+      ... on Product {
+        media(first: 100) { nodes { id } }
+        variants(first: 250) { nodes { id } }
+      }
+    }
+  }
+`;
+
+const PRODUCT_MEDIA_DELETE_MUTATION = `
+  mutation ProductMediaDelete($productId: ID!, $mediaIds: [ID!]!) {
+    productDeleteMedia(productId: $productId, mediaIds: $mediaIds) {
+      deletedMediaIds
+      userErrors { field message }
+    }
+  }
+`;
+
+const PRODUCT_VARIANTS_BULK_UPDATE_FOR_SYNC = `
+  mutation ProductVariantsBulkUpdateForSync($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+    productVariantsBulkUpdate(productId: $productId, variants: $variants) {
+      productVariants { id title price compareAtPrice barcode inventoryItem { sku } }
+      userErrors { field message }
+    }
+  }
+`;
+
+const PRODUCT_VARIANTS_BULK_DELETE_FOR_SYNC = `
+  mutation ProductVariantsBulkDeleteForSync($productId: ID!, $variantsIds: [ID!]!) {
+    productVariantsBulkDelete(productId: $productId, variantsIds: $variantsIds) {
+      product { id }
+      userErrors { field message }
     }
   }
 `;
@@ -715,6 +769,37 @@ export async function executeProductsUpdate(
     return { product: previewProduct };
   }
 
+  const desiredVariants = Array.isArray(productPatch.variants)
+    ? productPatch.variants as readonly Record<string, unknown>[]
+    : undefined;
+  const requestedVariantIdsToManage = Array.isArray(productPatch.variantIdsToManage)
+    ? productPatch.variantIdsToManage.filter((value): value is string => typeof value === "string" && value.trim() !== "")
+    : undefined;
+  const requestedMediaIdsToDelete = Array.isArray(productPatch.mediaIdsToDelete)
+    ? productPatch.mediaIdsToDelete.filter((value): value is string => typeof value === "string" && value.trim() !== "")
+    : [];
+  const shouldReplaceMedia = productPatch.replaceMedia === true || requestedMediaIdsToDelete.length > 0;
+  let existingVariantIds: string[] = [];
+  let existingMediaIds: string[] = [];
+  if (desiredVariants !== undefined || shouldReplaceMedia) {
+    interface PipelineProductStateResponse {
+      readonly node: {
+        readonly media?: { readonly nodes?: readonly { readonly id: string }[] };
+        readonly variants?: { readonly nodes?: readonly { readonly id: string }[] };
+      } | null;
+    }
+    const state = await client.query<PipelineProductStateResponse>(
+      store,
+      PIPELINE_PRODUCT_STATE_QUERY,
+      { id },
+      { isWrite: false },
+    );
+    existingVariantIds = state.node?.variants?.nodes?.map((variant) => variant.id) ?? [];
+    existingMediaIds = requestedMediaIdsToDelete.length > 0
+      ? requestedMediaIdsToDelete
+      : state.node?.media?.nodes?.map((media) => media.id) ?? [];
+  }
+
   const input: Record<string, unknown> = { id };
   if (typeof productPatch.title === "string") {
     input.title = productPatch.title;
@@ -853,6 +938,39 @@ export async function executeProductsUpdate(
     throw new GatewayError(`Failed to update product ${id}`, "SHOPIFY_USER_ERROR", 400);
   }
 
+  if (shouldReplaceMedia && existingMediaIds.length > 0) {
+    interface ProductMediaDeleteResponse {
+      readonly productDeleteMedia: {
+        readonly deletedMediaIds?: readonly string[];
+        readonly userErrors: readonly MutationUserErrorItem[];
+      };
+    }
+    try {
+      const deleted = await client.query<ProductMediaDeleteResponse>(
+        store,
+        PRODUCT_MEDIA_DELETE_MUTATION,
+        { productId: id, mediaIds: existingMediaIds },
+        { isWrite: true, requestId: requestId ? `${requestId}:media-delete` : undefined },
+      );
+      if (deleted.productDeleteMedia.userErrors.length > 0) {
+        throw mapUserErrorsToGatewayError(deleted.productDeleteMedia.userErrors);
+      }
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new GatewayError(
+        `Product updated (${id}) but failed to replace product media: ${message}`,
+        "SHOPIFY_PARTIAL_WRITE",
+        409,
+        undefined,
+        error,
+        error instanceof GatewayError ? error.fields : undefined,
+        false,
+        { updatedProductId: id, reconciliationRequired: true },
+        true,
+      );
+    }
+  }
+
   if (fileUpdateList.length > 0) {
     interface FileUpdateResponse {
       readonly fileUpdate: {
@@ -898,6 +1016,142 @@ export async function executeProductsUpdate(
         undefined,
         err,
         fields,
+        false,
+        { updatedProductId: id, reconciliationRequired: true },
+        true,
+      );
+    }
+  }
+
+  let synchronizedVariants: ProductVariantSummary[] | undefined;
+  if (desiredVariants !== undefined) {
+    try {
+    const toVariantInput = (variant: Record<string, unknown>, variantId?: string): Record<string, unknown> => {
+      const value: Record<string, unknown> = {};
+      if (variantId) value.id = variantId;
+      if (variant.price !== undefined) value.price = variant.price;
+      if (variant.compareAtPrice !== undefined) value.compareAtPrice = variant.compareAtPrice;
+      if (variant.barcode !== undefined) value.barcode = variant.barcode;
+      value.inventoryItem = {
+        sku: typeof variant.sku === "string" ? variant.sku : undefined,
+        tracked: variant.inventoryTracked === true,
+      };
+      value.inventoryPolicy = variant.inventoryTracked === true ? "DENY" : "CONTINUE";
+      if (Array.isArray(variant.optionValues)) value.optionValues = variant.optionValues;
+      return value;
+    };
+    const managedExistingVariantIds = requestedVariantIdsToManage === undefined
+      ? existingVariantIds
+      : requestedVariantIdsToManage.filter((variantId) => existingVariantIds.includes(variantId));
+    const overlap = Math.min(managedExistingVariantIds.length, desiredVariants.length);
+    const synchronized: ProductVariantSummary[] = [];
+    if (overlap > 0) {
+      interface VariantUpdateResponse {
+        readonly productVariantsBulkUpdate: {
+          readonly productVariants: readonly {
+            readonly id: string;
+            readonly title: string;
+            readonly price: string;
+            readonly compareAtPrice?: string | null;
+            readonly barcode?: string | null;
+            readonly inventoryItem?: { readonly sku?: string | null } | null;
+          }[] | null;
+          readonly userErrors: readonly MutationUserErrorItem[];
+        };
+      }
+      const updated = await client.query<VariantUpdateResponse>(
+        store,
+        PRODUCT_VARIANTS_BULK_UPDATE_FOR_SYNC,
+        {
+          productId: id,
+          variants: desiredVariants.slice(0, overlap).map((variant, index) =>
+            toVariantInput(variant, managedExistingVariantIds[index])),
+        },
+        { isWrite: true, requestId: requestId ? `${requestId}:variants-update` : undefined },
+      );
+      if (updated.productVariantsBulkUpdate.userErrors.length > 0) {
+        throw mapUserErrorsToGatewayError(updated.productVariantsBulkUpdate.userErrors);
+      }
+      for (const variant of updated.productVariantsBulkUpdate.productVariants ?? []) {
+        synchronized.push({
+          id: variant.id,
+          productId: id,
+          title: variant.title,
+          price: variant.price,
+          compareAtPrice: variant.compareAtPrice ?? undefined,
+          barcode: variant.barcode ?? undefined,
+          sku: variant.inventoryItem?.sku ?? undefined,
+        });
+      }
+    }
+    if (desiredVariants.length > overlap) {
+      interface VariantCreateResponse {
+        readonly productVariantsBulkCreate: {
+          readonly productVariants: readonly {
+            readonly id: string;
+            readonly title: string;
+            readonly price: string;
+            readonly compareAtPrice?: string | null;
+            readonly barcode?: string | null;
+            readonly inventoryItem?: { readonly sku?: string | null } | null;
+          }[] | null;
+          readonly userErrors: readonly MutationUserErrorItem[];
+        };
+      }
+      const created = await client.query<VariantCreateResponse>(
+        store,
+        PRODUCT_VARIANTS_BULK_CREATE_MUTATION,
+        {
+          productId: id,
+          variants: desiredVariants.slice(overlap).map((variant) => toVariantInput(variant)),
+        },
+        { isWrite: true, requestId: requestId ? `${requestId}:variants-create` : undefined },
+      );
+      if (created.productVariantsBulkCreate.userErrors.length > 0) {
+        throw mapUserErrorsToGatewayError(created.productVariantsBulkCreate.userErrors);
+      }
+      for (const variant of created.productVariantsBulkCreate.productVariants ?? []) {
+        synchronized.push({
+          id: variant.id,
+          productId: id,
+          title: variant.title,
+          price: variant.price,
+          compareAtPrice: variant.compareAtPrice ?? undefined,
+          barcode: variant.barcode ?? undefined,
+          sku: variant.inventoryItem?.sku ?? undefined,
+        });
+      }
+    }
+    if (managedExistingVariantIds.length > desiredVariants.length) {
+      interface VariantDeleteResponse {
+        readonly productVariantsBulkDelete: {
+          readonly product?: { readonly id: string } | null;
+          readonly userErrors: readonly MutationUserErrorItem[];
+        };
+      }
+      const deleted = await client.query<VariantDeleteResponse>(
+        store,
+        PRODUCT_VARIANTS_BULK_DELETE_FOR_SYNC,
+        { productId: id, variantsIds: managedExistingVariantIds.slice(desiredVariants.length) },
+        { isWrite: true, requestId: requestId ? `${requestId}:variants-delete` : undefined },
+      );
+      if (deleted.productVariantsBulkDelete.userErrors.length > 0) {
+        throw mapUserErrorsToGatewayError(deleted.productVariantsBulkDelete.userErrors);
+      }
+    }
+    synchronizedVariants = synchronized;
+    } catch (error: unknown) {
+      if (error instanceof GatewayError && error.code === "SHOPIFY_PARTIAL_WRITE") {
+        throw error;
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      throw new GatewayError(
+        `Product updated (${id}) but failed to synchronize variants: ${message}`,
+        "SHOPIFY_PARTIAL_WRITE",
+        409,
+        undefined,
+        error,
+        error instanceof GatewayError ? error.fields : undefined,
         false,
         { updatedProductId: id, reconciliationRequired: true },
         true,
@@ -952,6 +1206,7 @@ export async function executeProductsUpdate(
   return {
     product: {
       ...mapped,
+      variants: synchronizedVariants ?? mapped.variants,
       featuredImage: updatedFeaturedImage,
       images: updatedImages.length > 0 || mapped.images ? updatedImages : undefined,
     },

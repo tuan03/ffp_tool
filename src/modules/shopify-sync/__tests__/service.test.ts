@@ -102,6 +102,26 @@ test("fromCustomizationNormalizerProduct adapts normalized crawl product into Sh
   assertStrict.equal(adaptedMoney.variants?.[0].compareAtPrice, "79.99");
 });
 
+test("fromCustomizationNormalizerProduct omits variants whose Amazon selling price is missing", () => {
+  const crawlProduct = {
+    id: "missing-price",
+    parentAsin: "B0MISSING01",
+    canonicalUrl: "https://amazon.com/dp/B0MISSING01",
+    title: "Missing price",
+    media: [],
+    variants: [
+      { id: "missing", price: null, options: { Size: "Twin" } },
+      { id: "priced", price: { amount: 29.95, currency: "USD" }, options: { Size: "Queen" } },
+    ],
+  } as unknown as CrawlProduct;
+
+  const adapted = fromCustomizationNormalizerProduct(crawlProduct);
+
+  assertStrict.equal(adapted.variants?.length, 1);
+  assertStrict.equal(adapted.variants?.[0].price, "29.95");
+  assertStrict.notEqual(adapted.variants?.[0].price, "0.00");
+});
+
 test("replaceUrlsInObject replaces all matched URLs recursively", () => {
   const replacements = new Map<string, string>([
     ["https://amazon.com/old-base.jpg", "https://cdn.shopify.com/s/files/new-base.jpg"],
@@ -188,10 +208,12 @@ test("syncSingleProduct fails gracefully when no gateway is provided in non-dry-
 
 test("syncSingleProduct coordinates the 4 operations through an injected ShopifyGateway", async () => {
   const operationsCalled: string[] = [];
+  let createdStatus: string | undefined;
 
   const fakeHiepGateway = {
-    async createProduct(input: { title: string }) {
+    async createProduct(input: { title: string; status?: string }) {
       operationsCalled.push(`createProduct:${input.title}`);
+      createdStatus = input.status;
       return { productId: "gid://shopify/Product/hiep-123", productHandle: "hiep-handle" };
     },
     async createVariants(productId: string, variants: readonly unknown[]) {
@@ -218,6 +240,7 @@ test("syncSingleProduct coordinates the 4 operations through an injected Shopify
   assertStrict.equal(result.productId, "gid://shopify/Product/hiep-123");
   assertStrict.equal(result.metafieldSet, true);
   assertStrict.equal(result.assetsUploadedCount, 2);
+  assertStrict.equal(createdStatus, "ACTIVE");
 
   assertStrict.ok(operationsCalled.some((op) => op.startsWith("createProduct")));
   assertStrict.ok(
@@ -225,6 +248,72 @@ test("syncSingleProduct coordinates the 4 operations through an injected Shopify
   );
   assertStrict.ok(operationsCalled.some((op) => op.startsWith("uploadFile")));
   assertStrict.ok(operationsCalled.includes("setMetafield:custom.amazon_customizer"));
+});
+
+test("syncSingleProduct updates the mapped Shopify product instead of creating a duplicate", async () => {
+  const operationsCalled: string[] = [];
+  const gateway: ShopifyGateway = {
+    async createProduct() {
+      throw new Error("createProduct must not run for an existing source key");
+    },
+    async updateProduct(input) {
+      operationsCalled.push(`update:${input.productId}`);
+      assertStrict.equal(input.status, undefined);
+      return {
+        productId: input.productId,
+        productHandle: "existing-product",
+        createdVariantsCount: input.variants?.length ?? 0,
+      };
+    },
+    async createVariants() {
+      throw new Error("createVariants must not run after an exact update");
+    },
+    async uploadFile(input) {
+      return {
+        fileId: `gid://shopify/File/${input.filename}`,
+        shopifyCdnUrl: `https://cdn.shopify.com/${input.filename}`,
+      };
+    },
+    async setProductMetafield(input) {
+      operationsCalled.push(`metafield:${input.key}`);
+      return { success: true };
+    },
+  };
+
+  const result = await syncSingleProduct(shopifySyncMockData.products[1], {
+    gateway,
+    existingProductId: "gid://shopify/Product/123",
+  });
+
+  assertStrict.equal(result.success, true);
+  assertStrict.deepEqual(operationsCalled, ["update:gid://shopify/Product/123"]);
+});
+
+test("syncSingleProduct fails when Shopify does not persist every requested variant", async () => {
+  const gateway: ShopifyGateway = {
+    async createProduct() {
+      return {
+        productId: "gid://shopify/Product/partial",
+        productHandle: "partial",
+        createdVariantsCount: 1,
+      };
+    },
+    async createVariants() {
+      return { createdCount: 0 };
+    },
+    async uploadFile() {
+      return { fileId: "unused", shopifyCdnUrl: "https://cdn.shopify.com/unused" };
+    },
+    async setProductMetafield() {
+      return { success: true };
+    },
+  };
+
+  const result = await syncSingleProduct(shopifySyncMockData.products[0], { gateway });
+
+  assertStrict.equal(result.success, false);
+  assertStrict.equal(result.reconciliationRequired, true);
+  assertStrict.match(result.error ?? "", /variants incomplete/i);
 });
 
 test("syncSingleProduct leverages uploadFilesBatch and deduplicates asset URLs", async () => {
@@ -281,6 +370,57 @@ test("syncSingleProduct leverages uploadFilesBatch and deduplicates asset URLs",
   assertStrict.equal(result.assetsUploadedCount, 2);
   assertStrict.ok(operationsCalled.some((op) => op.startsWith("uploadFilesBatch:2")));
   assertStrict.ok(!operationsCalled.some((op) => op.startsWith("uploadFile:")));
+});
+
+test("syncSingleProduct retries assets omitted from a partial batch response", async () => {
+  const individuallyUploaded: string[] = [];
+  const gateway = {
+    async createProduct() {
+      return { productId: "gid://shopify/Product/partial-assets", productHandle: "partial-assets" };
+    },
+    async createVariants(_productId: string, variants: readonly unknown[]) {
+      return { createdCount: variants.length };
+    },
+    async uploadFilesBatch(inputs: readonly { originalSource: string; filename: string }[]) {
+      const first = inputs[0];
+      return first
+        ? [{
+            fileId: "gid://shopify/MediaImage/batch-first",
+            shopifyCdnUrl: `https://cdn.shopify.com/files/${first.filename}`,
+            originalSource: first.originalSource,
+          }]
+        : [];
+    },
+    async uploadFile(input: { originalSource: string; filename: string }) {
+      individuallyUploaded.push(input.originalSource);
+      return {
+        fileId: "gid://shopify/MediaImage/retried",
+        shopifyCdnUrl: `https://cdn.shopify.com/files/${input.filename}`,
+      };
+    },
+    async setProductMetafield() {
+      return { success: true, metafieldId: "gid://shopify/Metafield/partial-assets" };
+    },
+  };
+  const product: ShopifySyncProductInput = {
+    ...shopifySyncMockData.products[0],
+    customization: {
+      ...shopifySyncMockData.products[0].customization,
+      hasCustomization: true,
+      assets: [
+        { url: "https://example.com/asset-1.png", friendlyFileName: "asset-1.png" },
+        { url: "https://example.com/asset-2.png", friendlyFileName: "asset-2.png" },
+      ],
+    },
+  };
+
+  const result = await syncSingleProduct(product, {
+    gateway: gateway as unknown as ShopifyGateway,
+  });
+
+  assertStrict.equal(result.success, true);
+  assertStrict.equal(result.assetsUploadedCount, 2);
+  assertStrict.deepEqual(individuallyUploaded, ["https://example.com/asset-2.png"]);
 });
 
 

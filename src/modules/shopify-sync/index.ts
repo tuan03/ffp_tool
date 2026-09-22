@@ -27,6 +27,7 @@ export type {
   ShopifyCredentials,
   ShopifyCustomizationAssetInput,
   ShopifyGateway,
+  ShopifyManagedResources,
   ShopifyMediaInput,
   ShopifyProductCustomizerInput,
   ShopifySyncBatchInput,
@@ -38,4 +39,6 @@ export type {
   ShopifyVariantOptionValue,
   UploadFileInput,
   UploadFileOutput,
+  UpdateProductInput,
+  UpdateProductOutput,
 } from "./types";

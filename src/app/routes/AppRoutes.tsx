@@ -5,17 +5,18 @@ import { AppLayout } from "../../layouts/AppLayout";
 import { amazonCrawlerRoutes } from "../../modules/amazon-crawler";
 import { HomePage } from "../../pages/home/HomePage";
 
-import type { AmazonCrawlerCacheClearer, AmazonCrawlerClientsLoader, AmazonCrawlerRunner } from "../../modules/amazon-crawler";
+import type { AmazonCrawlerCacheClearer, AmazonCrawlerClientsLoader, AmazonCrawlerRunner, AmazonCrawlerSyncRetrier } from "../../modules/amazon-crawler";
 import type { WorkflowInput, WorkflowOutput } from "../../modules/orchestrator";
 
 interface AppRoutesProps {
   clearAmazonCrawlerCache: AmazonCrawlerCacheClearer;
   loadAmazonCrawlerClients: AmazonCrawlerClientsLoader;
   runAmazonCrawler: AmazonCrawlerRunner;
+  retryAmazonCrawlerSyncs: AmazonCrawlerSyncRetrier;
   runWorkflow(input: WorkflowInput): Promise<WorkflowOutput>;
 }
 
-export function AppRoutes({ clearAmazonCrawlerCache, loadAmazonCrawlerClients, runAmazonCrawler, runWorkflow }: AppRoutesProps): React.JSX.Element {
+export function AppRoutes({ clearAmazonCrawlerCache, loadAmazonCrawlerClients, retryAmazonCrawlerSyncs, runAmazonCrawler, runWorkflow }: AppRoutesProps): React.JSX.Element {
   const router = useMemo(
     () =>
       createBrowserRouter([
@@ -26,7 +27,7 @@ export function AppRoutes({ clearAmazonCrawlerCache, loadAmazonCrawlerClients, r
               index: true,
               element: <HomePage runWorkflow={runWorkflow} />,
             },
-            ...amazonCrawlerRoutes(runAmazonCrawler, clearAmazonCrawlerCache, loadAmazonCrawlerClients),
+            ...amazonCrawlerRoutes(runAmazonCrawler, clearAmazonCrawlerCache, loadAmazonCrawlerClients, retryAmazonCrawlerSyncs),
             {
               path: "*",
               element: <p className="mt-8 text-lg text-slate-300">Không tìm thấy trang.</p>,
@@ -34,7 +35,7 @@ export function AppRoutes({ clearAmazonCrawlerCache, loadAmazonCrawlerClients, r
           ],
         },
       ]),
-    [clearAmazonCrawlerCache, loadAmazonCrawlerClients, runAmazonCrawler, runWorkflow],
+    [clearAmazonCrawlerCache, loadAmazonCrawlerClients, retryAmazonCrawlerSyncs, runAmazonCrawler, runWorkflow],
   );
 
   return <RouterProvider router={router} />;

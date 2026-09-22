@@ -64,13 +64,42 @@ export interface AmazonCrawlerBrowserPoolProgress {
 }
 
 export interface AmazonCrawlerProgress {
-  phase: "queued" | "product" | "variant_matrix" | "customization" | "export" | "captcha";
+  phase: "queued" | "product" | "variant_matrix" | "customization" | "normalization" | "shopify" | "export" | "captcha";
   completed: number;
   total: number;
   message: string;
   source?: string;
   items?: AmazonCrawlerProgressItem[];
   browserPool?: AmazonCrawlerBrowserPoolProgress;
+}
+
+export type ProductPipelineStatus =
+  | "received"
+  | "normalizing"
+  | "syncing"
+  | "retry_wait"
+  | "completed"
+  | "failed"
+  | "reconciliation_required"
+  | "cancelled";
+
+export interface ProductPipelineMetadata {
+  status: ProductPipelineStatus;
+  normalization: {
+    status: "pending" | "running" | "completed";
+    assetsNormalized: number;
+  };
+  shopify: {
+    storeId?: string;
+    productId?: string;
+    productHandle?: string;
+    adminUrl?: string;
+    attempts: number;
+    proxyProfile?: string | null;
+    warnings?: string[];
+    error?: string | null;
+    noOp?: boolean;
+  };
 }
 
 export interface AmazonCrawlerError {
@@ -199,6 +228,7 @@ export interface ProductDiagnostics {
 
 export interface AmazonCrawlerProduct {
   id: string;
+  sourceKey?: string;
   parentAsin: string;
   canonicalUrl: string;
   sourceTitle: string;
@@ -216,6 +246,7 @@ export interface AmazonCrawlerProduct {
   preset: string | null;
   warnings: string[];
   diagnostics: ProductDiagnostics;
+  pipeline?: ProductPipelineMetadata;
 }
 
 export interface AmazonCrawlerStatistics {
@@ -245,7 +276,19 @@ export interface AmazonCrawlerOutput {
 export interface AmazonCrawlerRunOptions {
   input: AmazonCrawlerInput;
   onProgress?: (progress: AmazonCrawlerProgress) => void;
+  onProducts?: (products: readonly AmazonCrawlerProduct[]) => void;
   signal?: AbortSignal;
+}
+
+export interface AmazonCrawlerSyncRetrier {
+  (
+    jobId: string,
+    options?: {
+      onProgress?: (progress: AmazonCrawlerProgress) => void;
+      onProducts?: (products: readonly AmazonCrawlerProduct[]) => void;
+      signal?: AbortSignal;
+    },
+  ): Promise<{ retried: number; output?: AmazonCrawlerOutput }>;
 }
 
 export interface AmazonCrawlerJobSnapshot {

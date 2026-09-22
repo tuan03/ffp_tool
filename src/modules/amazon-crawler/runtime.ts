@@ -1,8 +1,8 @@
 import { clearMockAmazonCrawlerCache, runMockAmazonCrawler } from "./mocks/runner";
-import { createAmazonCrawlerCacheClearer, createAmazonCrawlerClientsLoader, createAmazonCrawlerRunner } from "./service";
+import { createAmazonCrawlerCacheClearer, createAmazonCrawlerClientsLoader, createAmazonCrawlerRunner, createAmazonCrawlerSyncRetrier } from "./service";
 
 import type { AppEnvironment } from "../../shared/types";
-import type { AmazonCrawlerCacheClearer, AmazonCrawlerClientsLoader, AmazonCrawlerRunner } from "./types";
+import type { AmazonCrawlerCacheClearer, AmazonCrawlerClientsLoader, AmazonCrawlerRunner, AmazonCrawlerSyncRetrier } from "./types";
 
 export function getAmazonCrawlerRunner(environment: AppEnvironment, engineUrl: string): AmazonCrawlerRunner {
   return environment === "mock" ? runMockAmazonCrawler : createAmazonCrawlerRunner({ engineUrl });
@@ -16,4 +16,8 @@ export function getAmazonCrawlerClientsLoader(environment: AppEnvironment, engin
 
 export function getAmazonCrawlerCacheClearer(environment: AppEnvironment, engineUrl: string): AmazonCrawlerCacheClearer {
   return environment === "mock" ? clearMockAmazonCrawlerCache : createAmazonCrawlerCacheClearer({ engineUrl });
+}
+
+export function getAmazonCrawlerSyncRetrier(environment: AppEnvironment, engineUrl: string): AmazonCrawlerSyncRetrier {
+  return environment === "mock" ? async () => ({ retried: 0 }) : createAmazonCrawlerSyncRetrier({ engineUrl });
 }
