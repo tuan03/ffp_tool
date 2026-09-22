@@ -43,6 +43,21 @@ export function SeoReviewPage(): React.JSX.Element {
     onlyMockData: false,
   });
 
+  const [handoffBanner, setHandoffBanner] = useState<{ count: number; timestamp: number } | null>(() => {
+    if (typeof window !== "undefined" && window.sessionStorage) {
+      try {
+        const raw = window.sessionStorage.getItem("ffp_seo_review_handoff_banner");
+        if (raw) {
+          window.sessionStorage.removeItem("ffp_seo_review_handoff_banner");
+          return JSON.parse(raw) as { count: number; timestamp: number };
+        }
+      } catch {
+        // ignore
+      }
+    }
+    return null;
+  });
+
   // Persist review state to sessionStorage
   useEffect(() => {
     if (typeof window !== "undefined" && window.sessionStorage) {
@@ -322,6 +337,32 @@ export function SeoReviewPage(): React.JSX.Element {
           </div>
         </div>
       </div>
+
+      {/* Handover Success Banner */}
+      {handoffBanner ? (
+        <div className="flex items-center justify-between rounded-xl border border-emerald-500/40 bg-emerald-950/40 p-4 text-emerald-200 animate-fadeIn">
+          <div className="flex items-center gap-3">
+            <span className="flex h-9 w-9 items-center justify-center rounded-full bg-emerald-500/20 text-emerald-300 font-bold text-base shadow-sm">
+              ✓
+            </span>
+            <div>
+              <p className="font-semibold text-emerald-100">
+                Bàn giao từ Distributed Crawler thành công!
+              </p>
+              <p className="text-xs text-emerald-300/80">
+                Đã nạp và tối ưu hóa SEO cho {handoffBanner.count} sản phẩm mới. Dữ liệu đã sẵn sàng để review và phê duyệt.
+              </p>
+            </div>
+          </div>
+          <button
+            className="rounded-lg bg-emerald-900/50 hover:bg-emerald-800/60 px-3 py-1.5 text-xs font-semibold text-emerald-300 transition-colors"
+            type="button"
+            onClick={() => setHandoffBanner(null)}
+          >
+            ✕ Đóng
+          </button>
+        </div>
+      ) : null}
 
       {/* Batch Actions & Filters Toolbar */}
       <SeoBatchToolbar

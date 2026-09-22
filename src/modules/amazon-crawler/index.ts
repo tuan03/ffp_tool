@@ -8,6 +8,7 @@ export type {
   AmazonCrawlerCacheClearResult,
   AmazonCrawlerClientSummary,
   AmazonCrawlerClientsLoader,
+  AmazonCrawlerHandoverHandler,
   AmazonCrawlerInput,
   AmazonCrawlerJobSnapshot,
   AmazonCrawlerJobStatus,

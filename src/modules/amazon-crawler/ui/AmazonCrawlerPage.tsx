@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 
 import type {
   AmazonCrawlerCacheClearer,
   AmazonCrawlerClientSummary,
   AmazonCrawlerClientsLoader,
+  AmazonCrawlerHandoverHandler,
   AmazonCrawlerProgress,
   AmazonCrawlerRunner,
   AmazonCrawlerSettings,
@@ -28,6 +30,7 @@ interface AmazonCrawlerPageProps {
   clearAmazonCrawlerCache: AmazonCrawlerCacheClearer;
   loadAmazonCrawlerClients: AmazonCrawlerClientsLoader;
   runAmazonCrawler: AmazonCrawlerRunner;
+  onHandoverToSeo?: AmazonCrawlerHandoverHandler;
 }
 
 function NumberSetting({
@@ -80,7 +83,13 @@ function progressPhaseLabel(phase: AmazonCrawlerProgress["phase"]): string {
   return labels[phase];
 }
 
-export function AmazonCrawlerPage({ clearAmazonCrawlerCache, loadAmazonCrawlerClients, runAmazonCrawler }: AmazonCrawlerPageProps): React.JSX.Element {
+export function AmazonCrawlerPage({
+  clearAmazonCrawlerCache,
+  loadAmazonCrawlerClients,
+  runAmazonCrawler,
+  onHandoverToSeo,
+}: AmazonCrawlerPageProps): React.JSX.Element {
+  const navigate = useNavigate();
   const session = useAmazonCrawlerSession();
   const {
     urlText,
@@ -98,6 +107,8 @@ export function AmazonCrawlerPage({ clearAmazonCrawlerCache, loadAmazonCrawlerCl
 
   const [isClearingCache, setIsClearingCache] = useState(false);
   const [cacheMessage, setCacheMessage] = useState<string | null>(null);
+  const [isHandingOver, setIsHandingOver] = useState(false);
+  const [handoverError, setHandoverError] = useState<string | null>(null);
   const [clients, setClients] = useState<AmazonCrawlerClientSummary[]>([]);
   const [clientError, setClientError] = useState<string | null>(null);
   const [isLoadingClients, setIsLoadingClients] = useState(true);
@@ -175,6 +186,21 @@ export function AmazonCrawlerPage({ clearAmazonCrawlerCache, loadAmazonCrawlerCl
       setCacheMessage(caught instanceof Error ? `Không thể xóa cache: ${caught.message}` : "Không thể xóa cache.");
     } finally {
       setIsClearingCache(false);
+    }
+  }
+
+  async function handleHandover(): Promise<void> {
+    if (!output || output.products.length === 0 || !onHandoverToSeo) return;
+    setIsHandingOver(true);
+    setHandoverError(null);
+    try {
+      await onHandoverToSeo(output.products);
+      navigate("/seo-review");
+    } catch (caught: unknown) {
+      const msg = caught instanceof Error ? caught.message : String(caught);
+      setHandoverError(`Lỗi khi bàn giao sang SEO Review: ${msg}`);
+    } finally {
+      setIsHandingOver(false);
     }
   }
 
@@ -269,13 +295,38 @@ export function AmazonCrawlerPage({ clearAmazonCrawlerCache, loadAmazonCrawlerCl
         <button className="rounded-lg border border-rose-400 px-5 py-2 font-semibold text-rose-300 disabled:opacity-50" disabled={!isRunning} type="button" onClick={handleStop}>Stop</button>
         {output === null ? null : (
           <>
+            {onHandoverToSeo ? (
+              <button
+                className="flex items-center gap-2 rounded-lg bg-emerald-500 px-5 py-2 font-semibold text-slate-950 shadow-sm transition-colors hover:bg-emerald-400 disabled:opacity-50"
+                disabled={isRunning || isHandingOver || output.products.length === 0}
+                type="button"
+                onClick={() => void handleHandover()}
+              >
+                {isHandingOver ? (
+                  <>
+                    <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-slate-950 border-r-transparent" />
+                    <span>Đang xử lý SEO ({output.products.length} SP)...</span>
+                  </>
+                ) : (
+                  <>
+                    <span>✨ Bàn giao sang SEO Review ({output.products.length})</span>
+                  </>
+                )}
+              </button>
+            ) : null}
             <button className="rounded-lg border border-cyan-500 px-5 py-2 font-semibold text-cyan-300" type="button" onClick={handleDownload}>Tải JSON</button>
-            <button className="rounded-lg border border-slate-600 px-5 py-2 font-semibold text-slate-300 hover:border-rose-500 hover:text-rose-300 disabled:opacity-50" disabled={isRunning} type="button" onClick={resetCrawlerOutput}>Xóa kết quả</button>
+            <button className="rounded-lg border border-slate-600 px-5 py-2 font-semibold text-slate-300 hover:border-rose-500 hover:text-rose-300 disabled:opacity-50" disabled={isRunning || isHandingOver} type="button" onClick={resetCrawlerOutput}>Xóa kết quả</button>
           </>
         )}
         <button className="rounded-lg border border-amber-500 px-5 py-2 font-semibold text-amber-300 disabled:opacity-50" disabled={isRunning || isClearingCache} type="button" onClick={() => void handleClearCache()}>{isClearingCache ? "Đang xóa cache..." : "Xóa cache"}</button>
       </div>
       {cacheMessage === null ? null : <p className="text-sm text-amber-200">{cacheMessage}</p>}
+      {handoverError === null ? null : (
+        <div className="rounded-xl border border-rose-600 bg-rose-950/40 p-4 text-sm text-rose-200">
+          <p className="font-semibold text-rose-300">Không thể bàn giao sang SEO Review</p>
+          <p className="mt-1">{handoverError}</p>
+        </div>
+      )}
 
       {progress === null ? null : (
         <div className={`space-y-4 rounded-xl border p-4 ${progress.phase === "captcha" ? "border-amber-400 bg-amber-950/30" : "border-slate-700 bg-slate-950/50"}`}>
@@ -365,7 +416,20 @@ export function AmazonCrawlerPage({ clearAmazonCrawlerCache, loadAmazonCrawlerCl
           ) : (
             <div className="grid items-start gap-5 lg:grid-cols-[minmax(17rem,22rem)_minmax(0,1fr)]">
               <aside className="max-h-[70vh] space-y-2 overflow-auto rounded-xl border border-slate-700 bg-slate-950/40 p-3">
-                <h2 className="px-2 pb-2 text-sm font-semibold text-slate-200">Tất cả sản phẩm</h2>
+                <div className="flex items-center justify-between px-2 pb-2">
+                  <h2 className="text-sm font-semibold text-slate-200">Tất cả sản phẩm</h2>
+                  {onHandoverToSeo ? (
+                    <button
+                      className="rounded bg-emerald-500 hover:bg-emerald-400 px-2 py-1 text-xs font-semibold text-slate-950 disabled:opacity-50 transition-colors"
+                      disabled={isRunning || isHandingOver}
+                      type="button"
+                      onClick={() => void handleHandover()}
+                      title="Bàn giao toàn bộ sản phẩm sang SEO Review"
+                    >
+                      {isHandingOver ? "Đang xử lý..." : "Bàn giao SEO ➔"}
+                    </button>
+                  ) : null}
+                </div>
                 {output.products.map((product) => {
                   const isSelected = product.id === selectedProduct?.id;
                   return (

@@ -6,6 +6,14 @@ export {
 export {
   applyApprovedProductUpdates,
 } from "./auto-seo-approved-product-update";
+export {
+  handoverCrawlerToSeo,
+} from "./crawler-to-seo-pipeline";
+export type {
+  HandoverCrawlerToSeoDependencies,
+  HandoverCrawlerToSeoInput,
+  HandoverCrawlerToSeoResult,
+} from "./crawler-to-seo-pipeline";
 export type {
   ApplyApprovedProductUpdatesInput,
   ApplyApprovedProductUpdatesResult,

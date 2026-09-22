@@ -287,6 +287,10 @@ export interface AmazonCrawlerClientsLoader {
   (): Promise<AmazonCrawlerClientSummary[]>;
 }
 
+export type AmazonCrawlerHandoverHandler = (
+  products: readonly AmazonCrawlerProduct[],
+) => Promise<void> | void;
+
 export const DEFAULT_AMAZON_CRAWLER_SETTINGS: AmazonCrawlerSettings = {
   profileSlug: "default",
   applyJeminisePreset: false,
