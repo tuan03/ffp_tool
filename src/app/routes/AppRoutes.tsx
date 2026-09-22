@@ -48,7 +48,7 @@ export function AppRoutes({
         children: [
           {
             index: true,
-            element: <Navigate to="/product-crawler" replace />,
+            element: <Navigate to="/amazon-crawler" replace />,
           },
           ...crawlerRoutes,
           ...distributedCrawlerRoutes,
