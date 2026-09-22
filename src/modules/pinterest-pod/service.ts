@@ -27,6 +27,8 @@ import type {
   PodStatusResponse,
   ProduceInput,
   ProduceOutput,
+  SavePinterestTokenPayload,
+  SavePinterestTokenResponse,
   SeoHandoverResponse,
 } from "./types";
 import { FACTORY_PRINT_STANDARDS } from "./types";
@@ -143,6 +145,37 @@ export async function launchLogin(
     pid: raw.pid,
     error: raw.error,
   };
+}
+
+/** Save Pinterest OAuth token (manual access token or authorization code) */
+export async function saveOAuthToken(
+  payload: SavePinterestTokenPayload,
+  options?: { readonly baseUrl?: string; readonly signal?: AbortSignal },
+): Promise<SavePinterestTokenResponse> {
+  return requestJson<SavePinterestTokenResponse>(
+    "/api/pinterest-pod/oauth/save-token",
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+      signal: options?.signal,
+    },
+    "PINTEREST_POD_SAVE_TOKEN_FAILED",
+    options?.baseUrl,
+  );
+}
+
+/** Get Pinterest OAuth Authorize URL */
+export async function getOAuthAuthorizeUrl(
+  redirectUri?: string,
+  options?: { readonly baseUrl?: string; readonly signal?: AbortSignal },
+): Promise<{ readonly ok: boolean; readonly auth_url: string }> {
+  const query = redirectUri ? `?redirect_uri=${encodeURIComponent(redirectUri)}` : "";
+  return requestJson<{ readonly ok: boolean; readonly auth_url: string }>(
+    `/api/pinterest-pod/oauth/authorize-url${query}`,
+    { method: "GET", signal: options?.signal },
+    "PINTEREST_POD_GET_AUTH_URL_FAILED",
+    options?.baseUrl,
+  );
 }
 
 /** Submit Stage 1 discovery job */
@@ -691,6 +724,14 @@ export class RealPinterestPodClient implements PinterestPodClient {
       },
       "PINTEREST_LOGIN_LAUNCH_FAILED",
     );
+  }
+
+  public async saveOAuthToken(payload: SavePinterestTokenPayload): Promise<SavePinterestTokenResponse> {
+    return saveOAuthToken(payload);
+  }
+
+  public async getOAuthAuthorizeUrl(redirectUri?: string): Promise<{ readonly ok: boolean; readonly auth_url: string }> {
+    return getOAuthAuthorizeUrl(redirectUri);
   }
 
   public async createJob(input: CreateJobInput): Promise<CreateJobOutput> {

@@ -40,12 +40,15 @@ from pinterest_pod_bridge import (
     check_service_health,
     create_pod_job,
     delete_pod_job,
+    exchange_pinterest_oauth_code,
+    generate_pinterest_oauth_url,
     get_cached_asset_file,
     get_pinterest_auth_status,
     get_pod_job_status,
     launch_pinterest_login,
     list_recent_jobs_and_runs,
     produce_pod_job,
+    save_manual_pinterest_token,
     send_windows_desktop_notification,
 )
 
@@ -75,6 +78,15 @@ class PinterestPodHandler(BaseHTTPRequestHandler):
         self._send_cors_headers()
         self.end_headers()
 
+    def send_html(self, html_content: str, status: int = 200) -> None:
+        body = html_content.encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self._send_cors_headers()
+        self.end_headers()
+        self.wfile.write(body)
+
     def send_json(self, payload: Any, status: int = 200) -> None:
         body = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
         self.send_response(status)
@@ -93,6 +105,94 @@ class PinterestPodHandler(BaseHTTPRequestHandler):
         # Health check
         if path in {"/", "/health", "/api/pinterest-pod/health"}:
             self.send_json({"ok": True, "service": "pinterest-pod", "port": PORT, "status": "running"})
+            return
+
+        # OAuth Authorize URL: GET /api/pinterest-pod/oauth/authorize-url
+        if path in {"/api/pinterest-pod/oauth/authorize-url", "/api/pinterest-pod/oauth/url"}:
+            try:
+                query_params = urllib.parse.parse_qs(url_parts.query)
+                redirect_uri = (query_params.get("redirect_uri") or [""])[0].strip() or None
+                self.send_json(generate_pinterest_oauth_url(redirect_uri))
+            except Exception as exc:
+                self.send_json({"ok": False, "message": str(exc)}, 500)
+            return
+
+        # OAuth Callback: GET /api/pinterest-pod/oauth/callback or /api/v1/oauth/pinterest/callback
+        if path in {"/api/pinterest-pod/oauth/callback", "/api/v1/oauth/pinterest/callback"}:
+            query_params = urllib.parse.parse_qs(url_parts.query)
+            code = (query_params.get("code") or [""])[0].strip()
+            error = (query_params.get("error") or query_params.get("error_description") or [""])[0].strip()
+            if error:
+                html_err = f"""<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Lỗi Kết Nối Pinterest</title></head>
+<body style="font-family: sans-serif; background: #0f172a; color: #f87171; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0;">
+  <div style="background: #1e293b; padding: 32px; border-radius: 16px; border: 1px solid #ef4444; max-width: 480px; text-align: center;">
+    <h2>❌ Kết nối Pinterest thất bại</h2>
+    <p style="color: #cbd5e1;">Lỗi phản hồi: {error}</p>
+    <p style="color: #94a3b8; font-size: 13px;">Bạn có thể đóng cửa sổ này và thử lại từ FFP Tool.</p>
+  </div>
+</body>
+</html>"""
+                self.send_html(html_err, 400)
+                return
+
+            if not code:
+                html_nocode = """<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Thiếu Mã Code</title></head>
+<body style="font-family: sans-serif; background: #0f172a; color: #f59e0b; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0;">
+  <div style="background: #1e293b; padding: 32px; border-radius: 16px; border: 1px solid #f59e0b; max-width: 480px; text-align: center;">
+    <h2>⚠️ Không tìm thấy Authorization Code</h2>
+    <p style="color: #cbd5e1;">Vui lòng kiểm tra lại URL chuyển hướng của Pinterest Developer App.</p>
+  </div>
+</body>
+</html>"""
+                self.send_html(html_nocode, 400)
+                return
+
+            try:
+                host = self.headers.get("Host") or f"{HOST}:{PORT}"
+                current_callback_url = f"http://{host}{path}"
+                res = exchange_pinterest_oauth_code(code, redirect_uri=current_callback_url)
+                html_ok = """<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Kết Nối Pinterest Thành Công</title>
+  <script>
+    if (window.opener) {
+      window.opener.postMessage({ type: 'PINTEREST_OAUTH_SUCCESS' }, '*');
+    }
+    setTimeout(() => {
+      try { window.close(); } catch(e) {}
+    }, 2500);
+  </script>
+</head>
+<body style="font-family: sans-serif; background: #0f172a; color: #34d399; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0;">
+  <div style="background: #1e293b; padding: 36px; border-radius: 16px; border: 1px solid #10b981; max-width: 480px; text-align: center; box-shadow: 0 10px 25px rgba(0,0,0,0.5);">
+    <h2 style="margin-top: 0; color: #10b981;">✅ Kết Nối Pinterest Thành Công!</h2>
+    <p style="color: #e2e8f0; font-size: 15px;">Hệ thống đã nhận và lưu trữ API Token an toàn.</p>
+    <p style="color: #94a3b8; font-size: 13px;">Cửa sổ này sẽ tự động đóng sau vài giây...</p>
+    <button onclick="window.close()" style="margin-top: 12px; padding: 8px 20px; background: #10b981; color: #0f172a; border: none; border-radius: 8px; font-weight: bold; cursor: pointer;">Đóng Cửa Sổ</button>
+  </div>
+</body>
+</html>"""
+                self.send_html(html_ok, 200)
+            except Exception as exc:
+                logger.exception("Error exchanging Pinterest OAuth code on callback")
+                html_exchange_err = f"""<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Lỗi Trao Đổi Token</title></head>
+<body style="font-family: sans-serif; background: #0f172a; color: #f87171; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0;">
+  <div style="background: #1e293b; padding: 32px; border-radius: 16px; border: 1px solid #ef4444; max-width: 520px; text-align: center;">
+    <h2>❌ Trao đổi Access Token thất bại</h2>
+    <p style="color: #cbd5e1; font-size: 14px;">{exc}</p>
+    <p style="color: #94a3b8; font-size: 13px;">Gợi ý: Bạn có thể copy mã Code hoặc URL trên thanh địa chỉ và dán vào ô 'Dán Code Thủ Công' trên giao diện FFP Tool.</p>
+  </div>
+</body>
+</html>"""
+                self.send_html(html_exchange_err, 500)
             return
 
         # Asset serving: /api/pinterest-pod/assets/:jobId/:filename
@@ -241,6 +341,35 @@ class PinterestPodHandler(BaseHTTPRequestHandler):
             except Exception as exc:
                 logger.exception("Error launching Pinterest login")
                 self.send_json({"ok": False, "message": str(exc)}, 500)
+            return
+
+        # OAuth Save Token: POST /api/pinterest-pod/oauth/save-token
+        if path in {"/api/pinterest-pod/oauth/save-token", "/api/pinterest-pod/save-token"}:
+            try:
+                access_token = str(payload.get("access_token") or payload.get("token") or "").strip()
+                refresh_token = str(payload.get("refresh_token") or "").strip()
+                scopes = str(payload.get("scopes") or "").strip()
+                code = str(payload.get("code") or payload.get("url") or "").strip()
+                if code and not access_token:
+                    redirect_uri = str(payload.get("redirect_uri") or "").strip() or None
+                    res = exchange_pinterest_oauth_code(code, redirect_uri=redirect_uri)
+                else:
+                    res = save_manual_pinterest_token(access_token, refresh_token=refresh_token, scopes=scopes)
+                self.send_json(res)
+            except Exception as exc:
+                logger.warning("Error saving Pinterest token: %s", exc)
+                self.send_json({"ok": False, "message": str(exc)}, 400)
+            return
+
+        # OAuth Exchange Code: POST /api/pinterest-pod/oauth/exchange-code
+        if path in {"/api/pinterest-pod/oauth/exchange-code", "/api/pinterest-pod/exchange-code"}:
+            try:
+                code = str(payload.get("code") or payload.get("url") or "").strip()
+                redirect_uri = str(payload.get("redirect_uri") or "").strip() or None
+                res = exchange_pinterest_oauth_code(code, redirect_uri=redirect_uri)
+                self.send_json(res)
+            except Exception as exc:
+                self.send_json({"ok": False, "message": str(exc)}, 400)
             return
 
         # Auth status via POST fallback

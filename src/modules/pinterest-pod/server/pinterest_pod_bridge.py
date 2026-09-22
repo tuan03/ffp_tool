@@ -520,8 +520,49 @@ def check_browser_profile_logged_in(profile_dir: Path | None = None) -> bool:
     return False
 
 
+def refresh_pinterest_oauth_token(tokens: dict[str, Any], token_file: Path) -> tuple[bool, dict[str, Any]]:
+    """Refresh Pinterest OAuth access token using refresh_token."""
+    refresh_token = str(tokens.get("refresh_token") or "").strip()
+    app_id = str(os.getenv("PINTEREST_APP_ID") or "").strip()
+    app_secret = str(os.getenv("PINTEREST_APP_SECRET") or "").strip()
+    if not refresh_token or not app_id or not app_secret:
+        return False, tokens
+
+    auth = base64.b64encode(f"{app_id}:{app_secret}".encode("utf-8")).decode("ascii")
+    try:
+        req = urllib.request.Request(
+            "https://api.pinterest.com/v5/oauth/token",
+            data=urllib.parse.urlencode({
+                "grant_type": "refresh_token",
+                "refresh_token": refresh_token,
+            }).encode("utf-8"),
+            headers={
+                "Authorization": f"Basic {auth}",
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Accept": "application/json",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            new_payload = json.loads(resp.read().decode("utf-8"))
+            if isinstance(new_payload, dict) and new_payload.get("access_token"):
+                tokens.update(new_payload)
+                now = time.time()
+                if new_payload.get("expires_in"):
+                    tokens["access_token_expires_at"] = now + float(new_payload["expires_in"])
+                tokens["issued_at"] = now
+                token_file.parent.mkdir(parents=True, exist_ok=True)
+                token_file.write_text(json.dumps(tokens, ensure_ascii=False, indent=2), encoding="utf-8")
+                logger.info("Đã tự động gia hạn Pinterest OAuth access token thành công.")
+                return True, tokens
+    except Exception as exc:
+        logger.warning("Không thể tự động gia hạn Pinterest OAuth token: %s", exc)
+
+    return False, tokens
+
+
 def check_oauth_token_valid(token_file: Path | None = None) -> tuple[bool, dict[str, Any]]:
-    """Check if the Pinterest OAuth tokens file exists and has valid tokens."""
+    """Check if the Pinterest OAuth tokens file exists and has valid tokens, auto-refreshing if needed."""
     if token_file is not None:
         t_file = token_file if (token_file.exists() and token_file.is_file()) else None
     else:
@@ -535,18 +576,210 @@ def check_oauth_token_valid(token_file: Path | None = None) -> tuple[bool, dict[
                 t_file = cand
                 break
 
+    # If no file exists, check fallback environment variable
+    env_token = str(os.getenv("PINTEREST_ACCESS_TOKEN") or "").strip()
     if not t_file:
+        if env_token:
+            return True, {"access_token": env_token, "source": "env"}
         return False, {}
+
     try:
         data = json.loads(t_file.read_text(encoding="utf-8"))
         has_token = bool(data.get("access_token") or data.get("refresh_token"))
-        exp = data.get("refresh_token_expires_at") or data.get("access_token_expires_at")
-        is_expired = False
-        if exp and float(exp) < time.time():
-            is_expired = True
-        return (has_token and not is_expired), data
+        exp = data.get("access_token_expires_at")
+        
+        # Check if token is expired or close to expiry (within 300 seconds)
+        if exp and float(exp) < (time.time() + 300):
+            if data.get("refresh_token"):
+                refreshed, new_data = refresh_pinterest_oauth_token(data, t_file)
+                if refreshed:
+                    return True, new_data
+            if float(exp) < time.time():
+                # Expired and cannot refresh
+                if env_token:
+                    return True, {"access_token": env_token, "source": "env"}
+                return False, data
+
+        return has_token, data
     except Exception:
+        if env_token:
+            return True, {"access_token": env_token, "source": "env"}
         return False, {}
+
+
+def generate_pinterest_oauth_url(redirect_uri: str | None = None) -> dict[str, Any]:
+    """Generate official Pinterest OAuth authorization URL."""
+    app_id = str(os.getenv("PINTEREST_APP_ID") or "1595071").strip()
+    r_uri = str(redirect_uri or os.getenv("PINTEREST_REDIRECT_URI") or "http://localhost:8765/api/pinterest-pod/oauth/callback").strip()
+    scopes = str(os.getenv("PINTEREST_SCOPES") or "user_accounts:read,boards:read,pins:read,ads:read").strip()
+    
+    query = urllib.parse.urlencode({
+        "consumer_id": app_id,
+        "redirect_uri": r_uri,
+        "response_type": "code",
+        "scope": scopes,
+        "state": f"ffp_pod_{int(time.time())}",
+    })
+    auth_url = f"https://www.pinterest.com/oauth/?{query}"
+    return {
+        "ok": True,
+        "auth_url": auth_url,
+        "app_id": app_id,
+        "redirect_uri": r_uri,
+        "scopes": scopes,
+    }
+
+
+def extract_oauth_code_from_string(value: str) -> str:
+    """Extract code parameter from full redirect URL or raw code string."""
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if "code=" in text:
+        try:
+            parsed = urllib.parse.urlparse(text)
+            if parsed.query:
+                q = urllib.parse.parse_qs(parsed.query)
+                code_list = q.get("code")
+                if code_list and code_list[0]:
+                    return code_list[0].strip()
+        except Exception:
+            pass
+    return text
+
+
+def exchange_pinterest_oauth_code(code_or_url: str, redirect_uri: str | None = None) -> dict[str, Any]:
+    """Exchange authorization code for Pinterest access and refresh tokens."""
+    code = extract_oauth_code_from_string(code_or_url)
+    if not code:
+        raise ValueError("Mã code authorization không hợp lệ hoặc bị trống.")
+
+    app_id = str(os.getenv("PINTEREST_APP_ID") or "1595071").strip()
+    app_secret = str(os.getenv("PINTEREST_APP_SECRET") or "").strip()
+    r_uri = str(redirect_uri or os.getenv("PINTEREST_REDIRECT_URI") or "http://localhost:8765/api/pinterest-pod/oauth/callback").strip()
+
+    if not app_id or not app_secret:
+        raise ValueError("PINTEREST_APP_ID hoặc PINTEREST_APP_SECRET chưa được cấu hình trong .env.")
+
+    auth = base64.b64encode(f"{app_id}:{app_secret}".encode("utf-8")).decode("ascii")
+    post_data = urllib.parse.urlencode({
+        "grant_type": "authorization_code",
+        "code": code,
+        "redirect_uri": r_uri,
+        "continuous_refresh": "true",
+    }).encode("utf-8")
+
+    req = urllib.request.Request(
+        "https://api.pinterest.com/v5/oauth/token",
+        data=post_data,
+        headers={
+            "Authorization": f"Basic {auth}",
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Accept": "application/json",
+        },
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        err_body = exc.read().decode("utf-8", errors="ignore")
+        try:
+            parsed_err = json.loads(err_body)
+            msg = parsed_err.get("message") or parsed_err.get("error") or err_body
+        except Exception:
+            msg = err_body
+        raise RuntimeError(f"Pinterest OAuth token exchange failed ({exc.code}): {msg}") from exc
+    except Exception as exc:
+        raise RuntimeError(f"Lỗi kết nối tới máy chủ Pinterest OAuth: {exc}") from exc
+
+    if not isinstance(payload, dict) or not payload.get("access_token"):
+        raise RuntimeError("Phản hồi từ Pinterest không chứa access_token hợp lệ.")
+
+    now = time.time()
+    payload["issued_at"] = now
+    if payload.get("expires_in"):
+        payload["access_token_expires_at"] = now + float(payload["expires_in"])
+    if payload.get("refresh_token_expires_in"):
+        payload["refresh_token_expires_at"] = now + float(payload["refresh_token_expires_in"])
+
+    # Save to primary token file
+    target_file = (ROOT / "pinterest" / ".pinterest_oauth_tokens.json").resolve()
+    target_file.parent.mkdir(parents=True, exist_ok=True)
+    target_file.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    
+    # Also save to root token file for maximum compatibility
+    try:
+        (ROOT / ".pinterest_oauth_tokens.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+    logger.info("Đã lưu Pinterest OAuth token vào: %s", target_file)
+    return {
+        "ok": True,
+        "message": "Kết nối tài khoản Pinterest thành công!",
+        "saved_path": str(target_file),
+        "access_token_preview": payload.get("access_token", "")[:12] + "...",
+        "has_refresh_token": bool(payload.get("refresh_token")),
+        "expires_in_days": round(float(payload.get("expires_in", 0)) / 86400, 1),
+    }
+
+
+def save_manual_pinterest_token(access_token: str, refresh_token: str = "", scopes: str = "") -> dict[str, Any]:
+    """Validate and save manually provided Pinterest access token."""
+    token = str(access_token or "").strip()
+    if not token:
+        raise ValueError("Access Token không được để trống.")
+
+    # Validate token with Pinterest /v5/user_account
+    req = urllib.request.Request(
+        "https://api.pinterest.com/v5/user_account",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json",
+        },
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            account_data = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        err_body = exc.read().decode("utf-8", errors="ignore")
+        raise ValueError(f"Access Token không hợp lệ hoặc không có quyền ({exc.code}): {err_body}") from exc
+    except Exception as exc:
+        raise RuntimeError(f"Lỗi kiểm tra token với Pinterest API: {exc}") from exc
+
+    username = account_data.get("username") or account_data.get("id") or "pinterest_user"
+    now = time.time()
+    payload = {
+        "access_token": token,
+        "token_type": "bearer",
+        "scope": scopes or str(os.getenv("PINTEREST_SCOPES") or "user_accounts:read,boards:read,pins:read,ads:read"),
+        "issued_at": now,
+        "username": username,
+        "business_name": account_data.get("business_name"),
+    }
+    if refresh_token.strip():
+        payload["refresh_token"] = refresh_token.strip()
+
+    target_file = (ROOT / "pinterest" / ".pinterest_oauth_tokens.json").resolve()
+    target_file.parent.mkdir(parents=True, exist_ok=True)
+    target_file.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    try:
+        (ROOT / ".pinterest_oauth_tokens.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+    logger.info("Đã lưu token thủ công cho tài khoản @%s", username)
+    return {
+        "ok": True,
+        "message": f"Đã kết nối thành công tài khoản Pinterest @{username}",
+        "username": username,
+        "business_name": account_data.get("business_name"),
+        "saved_path": str(target_file),
+    }
 
 
 def resolve_browser_profile_dir() -> Path:
@@ -574,23 +807,38 @@ def get_pinterest_auth_status() -> dict[str, Any]:
 
     browser_logged_in = check_browser_profile_logged_in(profile_dir)
     oauth_valid, token_data = check_oauth_token_valid(token_file)
-    is_logged_in = browser_logged_in
-    if browser_logged_in:
-        status_text = "Pinterest: Đã đăng nhập"
+    is_fully_logged_in = bool(browser_logged_in and oauth_valid)
+
+    if is_fully_logged_in:
+        status_text = "Pinterest: Đã kết nối đầy đủ (API & Crawler)"
     elif oauth_valid:
-        status_text = "Pinterest: Cần đăng nhập trình duyệt"
+        status_text = "Pinterest: API OK (Chưa đăng nhập trình duyệt cào)"
+    elif browser_logged_in:
+        status_text = "Pinterest: Cần kết nối API Token để quét Trend"
     else:
-        status_text = "Pinterest: Chưa đăng nhập"
+        status_text = "Pinterest: Chưa kết nối"
+
+    oauth_info = generate_pinterest_oauth_url()
 
     return {
         "ok": True,
-        "logged_in": is_logged_in,
+        "logged_in": is_fully_logged_in,
         "browser_logged_in": browser_logged_in,
         "oauth_valid": oauth_valid,
         "status_text": status_text,
         "profile_dir": str(profile_dir),
         "profile_exists": profile_dir.exists(),
-        "oauth_file_exists": token_file.exists() or root_token_file.exists(),
+        "oauth_file_exists": token_file.exists() or root_token_file.exists() or bool(os.getenv("PINTEREST_ACCESS_TOKEN")),
+        "auth_url": oauth_info.get("auth_url"),
+        "redirect_uri": oauth_info.get("redirect_uri"),
+        "app_id_configured": bool(os.getenv("PINTEREST_APP_ID")),
+        "token_info": {
+            "has_access_token": bool(token_data.get("access_token")),
+            "has_refresh_token": bool(token_data.get("refresh_token")),
+            "expires_at": token_data.get("access_token_expires_at"),
+            "username": token_data.get("username"),
+            "source": token_data.get("source", "file"),
+        } if token_data else None,
     }
 
 
@@ -1694,6 +1942,14 @@ def create_pod_job(payload: dict[str, Any], base_url: str, api_url: str = DEFAUL
     niche = str(payload.get("niche") or "").strip()
     if not niche:
         raise ValueError("Vui lòng nhập Pinterest niche hoặc từ khóa xu hướng.")
+
+    # Validate Pinterest API OAuth token before launching pipeline
+    oauth_valid, _ = check_oauth_token_valid()
+    if not oauth_valid and not os.getenv("MOCK_PINTEREST") and not os.getenv("CI"):
+        raise ValueError(
+            "Chưa kết nối tài khoản Pinterest API hoặc Access Token đã hết hạn. "
+            "Vui lòng bấm nút 'Kết nối Pinterest' trên thanh tiêu đề để xác thực hoặc dán token hợp lệ trước khi quét."
+        )
 
     product = str(payload.get("product") or "rug").lower().strip()
     if product not in {"rug", "blanket", "custom"}:
