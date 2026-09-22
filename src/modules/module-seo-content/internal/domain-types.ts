@@ -74,6 +74,8 @@ export interface ContentGenerationMetadata {
   readonly corpusRevision?: number;
 }
 
+import type { ImageProcessingMetadata } from "./image-processing/image-processing-types";
+
 /** B6: Kết quả tối ưu hóa hình ảnh (WebP & Alt Text) */
 export interface ImageProcessingResult {
   readonly processedImages: readonly SeoContentImageOutput[];
@@ -89,6 +91,7 @@ export interface SeoPipelineContext {
   readonly contentResult?: ContentResult;
   readonly contentGenerationMetadata?: ContentGenerationMetadata;
   readonly imageResult?: ImageProcessingResult;
+  readonly imageProcessingMetadata?: ImageProcessingMetadata;
 }
 
 /** Interface đại diện cho một stage trong pipeline */
