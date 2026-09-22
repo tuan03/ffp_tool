@@ -1,5 +1,8 @@
 node_modules/
 dist/
+build/
+artifacts/
+Tool_crawer_New_update/
 .vite/
 .env.local
 .env.*.local
@@ -16,7 +19,15 @@ data/
 src/modules/pinterest-pod/server/.env
 .pinterest_oauth_tokens.json
 **/.*oauth*.json
-
-
-
 pinterest_oauth_tokens.json
+
+# Amazon Distributed Crawler Artifacts
+.runtime/
+exports/
+client-data/
+*.sqlite3
+*.sqlite3-shm
+*.sqlite3-wal
+installer-output/
+config/amazon-crawler-profiles.json
+config/amazon-crawler-agent.json

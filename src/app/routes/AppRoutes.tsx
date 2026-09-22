@@ -3,6 +3,12 @@ import { createBrowserRouter, Navigate, RouterProvider } from "react-router-dom"
 
 import { environment } from "../../config/environment";
 import { AppLayout } from "../../layouts/AppLayout";
+import { amazonCrawlerRoutes } from "../../modules/amazon-crawler";
+import type {
+  AmazonCrawlerCacheClearer,
+  AmazonCrawlerClientsLoader,
+  AmazonCrawlerRunner,
+} from "../../modules/amazon-crawler";
 import { createAutoSeoRoutes, getAutoSeoClient } from "../../modules/auto-seo";
 import { createPinterestPodRoutes, getPinterestPodClient } from "../../modules/pinterest-pod";
 import { createProductCrawlerRoutes, getProductCrawlerClient } from "../../modules/product-crawler";
@@ -11,10 +17,18 @@ import { HomePage } from "../../pages/home/HomePage";
 import { NotFoundPage } from "../../pages/not-found/NotFoundPage";
 
 interface AppRoutesProps {
+  clearAmazonCrawlerCache: AmazonCrawlerCacheClearer;
+  loadAmazonCrawlerClients: AmazonCrawlerClientsLoader;
+  runAmazonCrawler: AmazonCrawlerRunner;
   runWorkflow(input: WorkflowInput): Promise<WorkflowOutput>;
 }
 
-export function AppRoutes({ runWorkflow }: AppRoutesProps): React.JSX.Element {
+export function AppRoutes({
+  clearAmazonCrawlerCache,
+  loadAmazonCrawlerClients,
+  runAmazonCrawler,
+  runWorkflow,
+}: AppRoutesProps): React.JSX.Element {
   const router = useMemo(() => {
     const podClient = getPinterestPodClient(environment);
     const podRoutes = createPinterestPodRoutes(podClient);
@@ -22,6 +36,11 @@ export function AppRoutes({ runWorkflow }: AppRoutesProps): React.JSX.Element {
     const crawlerRoutes = createProductCrawlerRoutes(crawlerClient);
     const autoSeoClient = getAutoSeoClient(environment);
     const autoSeoRoutes = createAutoSeoRoutes(autoSeoClient);
+    const distributedCrawlerRoutes = amazonCrawlerRoutes(
+      runAmazonCrawler,
+      clearAmazonCrawlerCache,
+      loadAmazonCrawlerClients,
+    );
 
     return createBrowserRouter([
       {
@@ -32,6 +51,7 @@ export function AppRoutes({ runWorkflow }: AppRoutesProps): React.JSX.Element {
             element: <Navigate to="/product-crawler" replace />,
           },
           ...crawlerRoutes,
+          ...distributedCrawlerRoutes,
           ...podRoutes,
           ...autoSeoRoutes,
           {
@@ -45,7 +65,7 @@ export function AppRoutes({ runWorkflow }: AppRoutesProps): React.JSX.Element {
         ],
       },
     ]);
-  }, [runWorkflow]);
+  }, [clearAmazonCrawlerCache, loadAmazonCrawlerClients, runAmazonCrawler, runWorkflow]);
 
   return <RouterProvider router={router} />;
 }
