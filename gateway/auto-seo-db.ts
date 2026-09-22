@@ -47,7 +47,7 @@ export function initAutoSeoDbSchema(db: Database.Database): void {
       downstream_http_status INTEGER,
       downstream_error TEXT,
       downstream_sent_at TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
       CONSTRAINT uq_auto_seo_workflow_store_product UNIQUE (workflow_id, store_id, product_id)
     );
 

@@ -5,29 +5,20 @@ import type Database from "better-sqlite3";
 import { getAutoSeoDb } from "./auto-seo-db";
 import { calculateSha256, canonicalizeJson } from "./canonical-json";
 import { isGatewayAuthorized, MAX_BODY_BYTES } from "./http-server";
-import { loadLocalEnv } from "./store-config-loader";
+import { runSeoContent } from "./seo-content";
+import type {
+  AutoSeoProductPayload,
+  SeoContentInput,
+  SeoContentResult,
+  SeoContentRunner,
+} from "./seo-content";
 
-export interface AutoSeoProductPayload {
-  readonly id: string;
-  readonly title: string;
-  readonly handle: string;
-  readonly description?: string;
-  readonly descriptionHtml?: string;
-  readonly status?: string;
-  readonly vendor?: string;
-  readonly productType?: string;
-  readonly tags?: readonly string[];
-  readonly onlineStoreUrl?: string;
-  readonly featuredImage?: unknown;
-  readonly images?: readonly unknown[];
-  readonly variants?: readonly unknown[];
-  readonly seo?: unknown;
-  readonly hasMoreVariants?: boolean;
-  readonly hasMoreImages?: boolean;
-  readonly createdAt?: string;
-  readonly updatedAt?: string;
-  readonly [key: string]: unknown;
-}
+export type {
+  AutoSeoProductPayload,
+  SeoContentInput,
+  SeoContentResult,
+  SeoContentRunner,
+} from "./seo-content";
 
 export interface AutoSeoRunRequest {
   readonly workflowId: string;
@@ -47,8 +38,7 @@ export interface AutoSeoRunResult {
 
 export interface AutoSeoHandlerOptions {
   readonly db?: Database.Database;
-  readonly fetchFn?: typeof fetch;
-  readonly downstreamApiUrl?: string;
+  readonly seoContentRunner?: SeoContentRunner;
 }
 
 function formatIsoDateTime(dateStr?: string): string | null {
@@ -69,6 +59,16 @@ export class AutoSeoValidationError extends Error {
   ) {
     super(message);
     this.name = "AutoSeoValidationError";
+  }
+}
+
+export class AutoSeoStatusUpdateError extends Error {
+  public constructor(
+    message: string,
+    public readonly code: "AUTO_SEO_STATUS_UPDATE_FAILED" = "AUTO_SEO_STATUS_UPDATE_FAILED",
+  ) {
+    super(message);
+    this.name = "AutoSeoStatusUpdateError";
   }
 }
 
@@ -222,14 +222,7 @@ export async function handleAutoSeoRun(
 ): Promise<AutoSeoRunResult> {
   const request = validateAutoSeoRunInput(body);
   const db = options?.db ?? getAutoSeoDb();
-  const fetchFn = options?.fetchFn ?? fetch;
-
-  const localEnv = loadLocalEnv();
-  const downstreamUrl =
-    options?.downstreamApiUrl ??
-    process.env.SEO_CONTENT_API_URL ??
-    localEnv.SEO_CONTENT_API_URL ??
-    "https://httpbin.org/post";
+  const runner = options?.seoContentRunner ?? runSeoContent;
 
   // Execute backup in a single transaction
   const backupTx = db.transaction((req: AutoSeoRunRequest) => {
@@ -245,39 +238,41 @@ export async function handleAutoSeoRun(
     throw dbError;
   }
 
-  // Only after successful COMMIT may the system POST the same product snapshots to downstream API
+  // Only after successful COMMIT may the system hand off the same products to SEO content runner
   let downstreamStatus: "SENT" | "FAILED" = "FAILED";
-  let downstreamHttpStatus: number | null = null;
   let downstreamError: string | null = null;
 
   try {
-    const downstreamPayload = {
+    const seoResult = await runner({
       workflowId: request.workflowId,
       storeId: request.storeId,
       shopDomain: request.shopDomain,
       products: request.products,
-    };
-
-    const response = await fetchFn(downstreamUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(downstreamPayload),
     });
 
-    downstreamHttpStatus = response.status;
-
-    if (response.ok) {
+    if (seoResult && seoResult.success === true) {
       downstreamStatus = "SENT";
     } else {
       downstreamStatus = "FAILED";
-      const errorText = await response.text().catch(() => "");
-      downstreamError = `Downstream HTTP ${response.status}: ${errorText.slice(0, 500)}`;
+      downstreamError =
+        seoResult && typeof seoResult.message === "string" && seoResult.message
+          ? seoResult.message
+          : "SEO content generation failed";
     }
   } catch (err: unknown) {
     downstreamStatus = "FAILED";
-    downstreamError = err instanceof Error ? err.message : String(err);
+    if (err instanceof Error) {
+      downstreamError = err.message;
+    } else if (
+      typeof err === "object" &&
+      err !== null &&
+      "message" in err &&
+      typeof (err as { message: unknown }).message === "string"
+    ) {
+      downstreamError = (err as { message: string }).message;
+    } else {
+      downstreamError = String(err);
+    }
   }
 
   // Update backup rows with downstream status (failure does not roll back committed backups)
@@ -287,11 +282,14 @@ export async function handleAutoSeoRun(
       request.workflowId,
       backupIds,
       downstreamStatus,
-      downstreamHttpStatus,
+      null,
       downstreamError,
     );
-  } catch (updateErr) {
-    console.error("[AutoSeo] Failed to update downstream status in backups table:", updateErr);
+  } catch (updateErr: unknown) {
+    const message = updateErr instanceof Error ? updateErr.message : String(updateErr);
+    throw new AutoSeoStatusUpdateError(
+      `Failed to update downstream status in backups table: ${message}`,
+    );
   }
 
   return {
@@ -299,7 +297,7 @@ export async function handleAutoSeoRun(
     backedUpCount: backupIds.length,
     backupIds,
     downstreamStatus,
-    downstreamHttpStatus,
+    downstreamHttpStatus: null,
     downstreamError,
   };
 }
@@ -413,6 +411,18 @@ export async function handleAutoSeoHttpRequest(
   } catch (err: unknown) {
     if (err instanceof AutoSeoValidationError) {
       res.statusCode = 400;
+      res.setHeader("Content-Type", "application/json");
+      res.end(
+        JSON.stringify({
+          success: false,
+          error: { code: err.code, message: err.message },
+        }),
+      );
+      return;
+    }
+
+    if (err instanceof AutoSeoStatusUpdateError) {
+      res.statusCode = 500;
       res.setHeader("Content-Type", "application/json");
       res.end(
         JSON.stringify({
