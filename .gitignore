@@ -37,5 +37,9 @@ test.cmd
 b1-visual-preview.html
 branches-git.cmd
 remotes-git.cmd
-github-seo.cmd
+repo-seo-content.cmd
+log-git.cmd
+stash-git.cmd
+stash-apply-git.cmd
+stash-drop-git.cmd
 #=== [end] - module SEO Content - Lth Loi ===
