@@ -64,6 +64,11 @@ There is:
 
 Do **not** turn modules into separate npm packages or workspaces.
 
+### Runtime environment & external AI services
+
+- **Node.js runtime**: The application executes on a Node.js runtime, allowing standard Node.js libraries such as `fs` (`node:fs`, `node:path`, `Buffer`, `node:crypto`) to be used within business modules, runners, and scripts whenever needed.
+- **Gemini API**: The Gemini API (via Google Cloud ADC / Vertex AI, including Gemini 2.5 Flash Vision, Text-Embedding-004, and Gemini LLM) is officially authorized and available for use across the entire pipeline.
+
 ---
 
 # 3. Repository architecture
@@ -1369,6 +1374,8 @@ SEO + Content
       ↓
 SeoContentOutput
 ```
+
+> **Runtime & AI Capabilities**: The `module-seo-content` pipeline executes on a **Node.js runtime** (supporting local filesystem image ingestion via `node:fs` as well as remote URLs) and is authorized to leverage the **Gemini API via Google Cloud ADC** across all pipeline stages (Vision in B1, Vector Embeddings in B4, Content Generation in B5).
 
 ---
 

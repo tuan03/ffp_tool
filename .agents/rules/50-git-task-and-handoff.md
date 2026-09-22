@@ -65,6 +65,13 @@ Commit subject format:
 - Do not commit `dist/`, `node_modules/`, secrets, local environment files, or production data.
 - Stage only files belonging to the focused task.
 
+## Step-by-Step Commit Discipline (Kỷ luật Commit theo từng Bước)
+
+- Khi agent hoàn thành xong code và nghiệm thu xong một Bước (Step / Stage, ví dụ B1, B2, B3, B4...), agent **BẮT BUỘC phải tạo commit cho Bước đó trước khi chuyển sang Bước tiếp theo**.
+- Không được gom gộp code của nhiều Bước vào một commit lớn khi chưa commit từng bước riêng biệt.
+- Mỗi commit cho một Bước chỉ stage các file thuộc phạm vi Bước đó (source code, tests, fixtures, docs nghiệm thu tương ứng).
+- Định dạng commit theo từng bước: `<type>(module-seo): implement Stage B<X> - <Stage Name>`.
+
 ## Agent task contract
 
 Every coding task should establish:

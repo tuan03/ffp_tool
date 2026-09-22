@@ -5,3 +5,13 @@ dist/
 .env.*.local
 *.tsbuildinfo
 *zip
+
+#=== [start] Lth Loi ===
+.agents
+compress-src.cmd
+dev.cmd
+.compressignore
+PROJECT_CONTEXT.md
+test.cmd
+b1-visual-preview.html
+#=== [end] Lth Loi ===
