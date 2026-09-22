@@ -34,6 +34,8 @@ import {
   runMockProduction,
   runProduction,
   startProductionJob,
+  getOAuthAuthorizeUrl,
+  saveOAuthToken,
   STOREFRONT_DISPLAY_STANDARD,
 } from "..";
 import type { JobDetailResponse, PodJobStatusResponse } from "../types";
@@ -917,4 +919,100 @@ test("Real client handoverToSeo and handoverToSeo function send POST to /api/pin
     globalThis.fetch = originalFetch;
   }
 });
+
+// ==========================================
+// Tests for OAuth and Token Management API
+// ==========================================
+
+test("Mock client getOAuthAuthorizeUrl returns valid authorization URL", async () => {
+  const res = await mockPinterestPodClient.getOAuthAuthorizeUrl("http://localhost:8765/api/pinterest-pod/oauth/callback");
+  assert.equal(res.ok, true);
+  assert.ok(res.auth_url.includes("https://www.pinterest.com/oauth/"));
+  assert.ok(res.auth_url.includes("client_id=1595071"));
+  assert.equal(res.redirect_uri, "http://localhost:8765/api/pinterest-pod/oauth/callback");
+});
+
+test("Mock client saveOAuthToken simulates saving access token and updates auth status", async () => {
+  const res = await mockPinterestPodClient.saveOAuthToken({
+    access_token: "pina_test_token_12345",
+  });
+  assert.equal(res.ok, true);
+  assert.ok(res.message?.includes("thành công"));
+  assert.equal(res.username, "mock_pinterest_user");
+  assert.ok(typeof res.expires_at === "number");
+
+  const status = await mockPinterestPodClient.getAuthStatus();
+  assert.equal(status.ok, true);
+  assert.equal(status.oauth_valid, true);
+  assert.equal(status.token_info?.has_access_token, true);
+});
+
+test("Real client getOAuthAuthorizeUrl and saveOAuthToken call backend endpoints with proper payloads", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: { url: string; method?: string; body?: unknown }[] = [];
+
+  globalThis.fetch = async (url, init) => {
+    calls.push({
+      url: String(url),
+      method: init?.method ?? "GET",
+      body: init?.body ? JSON.parse(String(init.body)) : undefined,
+    });
+
+    if (String(url).includes("/oauth/authorize-url")) {
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          auth_url: "https://www.pinterest.com/oauth/?client_id=1595071&mock=true",
+          redirect_uri: "http://localhost:8765/api/pinterest-pod/oauth/callback",
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    if (String(url).includes("/oauth/save-token")) {
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          message: "Token hợp lệ và đã lưu thành công.",
+          username: "real_test_user",
+          expires_at: 1726950000,
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    return new Response(JSON.stringify({ ok: false }), { status: 404 });
+  };
+
+  try {
+    const authUrlRes = await realPinterestPodClient.getOAuthAuthorizeUrl();
+    assert.equal(authUrlRes.ok, true);
+    assert.ok(authUrlRes.auth_url.includes("https://www.pinterest.com/oauth/"));
+    assert.ok(calls.some((c) => c.url.includes("/api/pinterest-pod/oauth/authorize-url")));
+
+    const directAuthUrlRes = await getOAuthAuthorizeUrl();
+    assert.equal(directAuthUrlRes.ok, true);
+
+    const saveRes = await realPinterestPodClient.saveOAuthToken({
+      access_token: "pina_test_live_abc123",
+      refresh_token: "pinr_test_live_xyz789",
+    });
+    assert.equal(saveRes.ok, true);
+    assert.equal(saveRes.username, "real_test_user");
+    assert.ok(
+      calls.some(
+        (c) =>
+          c.url.includes("/api/pinterest-pod/oauth/save-token") &&
+          c.method === "POST" &&
+          (c.body as { access_token?: string })?.access_token === "pina_test_live_abc123",
+      ),
+    );
+
+    const directSaveRes = await saveOAuthToken({ access_token: "pina_direct_token" });
+    assert.equal(directSaveRes.ok, true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 

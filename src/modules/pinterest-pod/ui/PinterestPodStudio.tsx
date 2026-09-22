@@ -19,6 +19,7 @@ import { DeliverablesShowcase } from "./components/DeliverablesShowcase";
 import { HeaderBar } from "./components/HeaderBar";
 import { ImageLightboxModal, type LightboxImageItem } from "./components/ImageLightboxModal";
 import { InitForm } from "./components/InitForm";
+import { PinterestAuthModal } from "./components/PinterestAuthModal";
 import { ProgressAndLogs } from "./components/ProgressAndLogs";
 import { RecentRunsAccordion } from "./components/RecentRunsAccordion";
 import { RoomTemplateManagerModal } from "./components/RoomTemplateManagerModal";
@@ -62,6 +63,7 @@ export function PinterestPodStudio({ client: injectedClient }: PinterestPodStudi
   // Lightbox preview state
   const [previewImage, setPreviewImage] = useState<LightboxImageItem | null>(null);
   const [isRoomManagerOpen, setIsRoomManagerOpen] = useState(false);
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
 
   function handlePreviewCandidate(candidate: CandidateItem): void {
     setPreviewImage({
@@ -333,6 +335,17 @@ export function PinterestPodStudio({ client: injectedClient }: PinterestPodStudi
     };
   }, [client]);
 
+  async function refreshAuthStatus(): Promise<void> {
+    try {
+      const res = await client.getAuthStatus();
+      if (isMountedRef.current) {
+        setAuthStatus(res);
+      }
+    } catch {
+      // Ignore offline errors
+    }
+  }
+
   // Handle Pinterest login launch
   async function handleLaunchLogin(): Promise<void> {
     setIsLoggingIn(true);
@@ -340,9 +353,7 @@ export function PinterestPodStudio({ client: injectedClient }: PinterestPodStudi
     try {
       await client.launchLogin(600);
       if (!isMountedRef.current) return;
-      const updatedAuth = await client.getAuthStatus();
-      if (!isMountedRef.current) return;
-      setAuthStatus(updatedAuth);
+      await refreshAuthStatus();
     } catch (err) {
       if (!isMountedRef.current) return;
       setErrorMessage(err instanceof Error ? err.message : "Đăng nhập Pinterest thất bại");
@@ -665,6 +676,7 @@ export function PinterestPodStudio({ client: injectedClient }: PinterestPodStudi
         authStatus={authStatus}
         isLoggingIn={isLoggingIn}
         onLaunchLogin={() => void handleLaunchLogin()}
+        onOpenAuthModal={() => setIsAuthModalOpen(true)}
         candidateCount={candidates.length}
         isStage2Available={hasStage2}
         isStage3Available={hasStage3}
@@ -923,6 +935,17 @@ export function PinterestPodStudio({ client: injectedClient }: PinterestPodStudi
         images={referenceImages}
         onChange={setReferenceImages}
         onPreviewImage={handlePreviewThumbnail}
+      />
+
+      {/* Pinterest Auth & Token Management Modal */}
+      <PinterestAuthModal
+        isOpen={isAuthModalOpen}
+        onClose={() => setIsAuthModalOpen(false)}
+        authStatus={authStatus}
+        onRefreshStatus={refreshAuthStatus}
+        client={client}
+        isLoggingIn={isLoggingIn}
+        onLaunchBrowserLogin={() => void handleLaunchLogin()}
       />
     </div>
   );

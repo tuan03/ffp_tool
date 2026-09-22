@@ -135,12 +135,46 @@ export interface DeliverablesData {
   readonly comparison_rows?: readonly ComparisonRow[];
 }
 
+export interface PinterestTokenInfo {
+  readonly has_access_token: boolean;
+  readonly has_refresh_token: boolean;
+  readonly expires_at?: number;
+  readonly username?: string | null;
+  readonly source?: string;
+}
+
 /** Pinterest authentication status response */
 export interface PinterestAuthStatus {
   readonly ok: boolean;
   readonly logged_in: boolean;
   readonly browser_logged_in?: boolean;
+  readonly oauth_valid?: boolean;
   readonly status_text: string;
+  readonly profile_dir?: string;
+  readonly profile_exists?: boolean;
+  readonly oauth_file_exists?: boolean;
+  readonly auth_url?: string;
+  readonly redirect_uri?: string;
+  readonly app_id_configured?: boolean;
+  readonly token_info?: PinterestTokenInfo | null;
+}
+
+export interface SavePinterestTokenPayload {
+  readonly access_token?: string;
+  readonly refresh_token?: string;
+  readonly scopes?: string;
+  readonly code?: string;
+  readonly url?: string;
+  readonly redirect_uri?: string;
+}
+
+export interface SavePinterestTokenResponse {
+  readonly ok: boolean;
+  readonly message?: string;
+  readonly username?: string;
+  readonly business_name?: string;
+  readonly saved_path?: string;
+  readonly expires_at?: number;
 }
 
 /** Payload for launching Pinterest browser login */
@@ -367,6 +401,8 @@ export interface SeoHandoverResponse {
 export interface PinterestPodClient {
   getAuthStatus(): Promise<PinterestAuthStatus>;
   launchLogin(timeout?: number): Promise<PinterestLaunchLoginOutput>;
+  saveOAuthToken?(payload: SavePinterestTokenPayload): Promise<SavePinterestTokenResponse>;
+  getOAuthAuthorizeUrl?(redirectUri?: string): Promise<{ readonly ok: boolean; readonly auth_url: string }>;
   createJob(input: CreateJobInput): Promise<CreateJobOutput>;
   getJobDetail(jobId: string): Promise<JobDetailResponse>;
   produce(input: ProduceInput): Promise<ProduceOutput>;

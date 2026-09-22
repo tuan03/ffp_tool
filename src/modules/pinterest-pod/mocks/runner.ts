@@ -25,6 +25,8 @@ import type {
   PodStatusResponse,
   ProduceInput,
   ProduceOutput,
+  SavePinterestTokenPayload,
+  SavePinterestTokenResponse,
   SeoHandoverResponse,
   SummaryMetrics,
 } from "../types";
@@ -197,6 +199,38 @@ export class MockPinterestPodClient implements PinterestPodClient {
       ok: true,
       status_text: "Pinterest: Đã đăng nhập (Phiên duyệt)",
       message: "Đăng nhập Pinterest thành công trên phiên trình duyệt.",
+    };
+  }
+
+  public async saveOAuthToken(_payload: SavePinterestTokenPayload): Promise<SavePinterestTokenResponse> {
+    const mockExpires = Math.floor(Date.now() / 1000) + 2592000;
+    this.authState = {
+      ok: true,
+      logged_in: true,
+      browser_logged_in: true,
+      oauth_valid: true,
+      status_text: "Pinterest: Đã kết nối đầy đủ (API & Trình duyệt)",
+      token_info: {
+        has_access_token: true,
+        has_refresh_token: true,
+        username: "mock_pinterest_user",
+        expires_at: mockExpires,
+      },
+    };
+    return {
+      ok: true,
+      message: "Đã lưu token Pinterest giả lập thành công!",
+      username: "mock_pinterest_user",
+      expires_at: mockExpires,
+    };
+  }
+
+  public async getOAuthAuthorizeUrl(redirectUri?: string): Promise<{ readonly ok: boolean; readonly auth_url: string; readonly redirect_uri?: string }> {
+    const targetRedirect = redirectUri || "http://localhost:8765/api/pinterest-pod/oauth/callback";
+    return {
+      ok: true,
+      auth_url: `https://www.pinterest.com/oauth/?client_id=1595071&redirect_uri=${encodeURIComponent(targetRedirect)}&response_type=code&scope=boards:read,pins:read,user_accounts:read`,
+      redirect_uri: targetRedirect,
     };
   }
 

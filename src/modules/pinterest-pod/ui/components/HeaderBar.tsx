@@ -8,6 +8,7 @@ interface HeaderBarProps {
   readonly authStatus: PinterestAuthStatus | null;
   readonly isLoggingIn: boolean;
   readonly onLaunchLogin: () => void;
+  readonly onOpenAuthModal?: () => void;
   readonly candidateCount?: number;
   readonly isStage2Available?: boolean;
   readonly isStage3Available?: boolean;
@@ -24,6 +25,7 @@ export function HeaderBar({
   authStatus,
   isLoggingIn,
   onLaunchLogin,
+  onOpenAuthModal,
   candidateCount = 0,
   isStage2Available = false,
   isStage3Available = false,
@@ -273,42 +275,66 @@ export function HeaderBar({
         )}
       </div>
 
-      {/* Auth Status & Login Button */}
-      <div className="flex items-center gap-3">
-        <div
-          className={`flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-medium ${
-            isLoggedIn
-              ? "border-emerald-700/50 bg-emerald-950/60 text-emerald-300"
-              : "border-rose-700/50 bg-rose-950/60 text-rose-300"
-          }`}
-        >
-          <span className={`h-2 w-2 rounded-full ${isLoggedIn ? "bg-emerald-400 animate-pulse" : "bg-rose-400"}`} />
-          <span>{authStatus?.status_text ?? (isLoggedIn ? "Pinterest: Đã kết nối" : "Pinterest: Chưa đăng nhập")}</span>
-        </div>
-
+      {/* Auth Status & Login Buttons */}
+      <div className="flex items-center gap-2">
+        {/* OAuth API Status Indicator */}
         <button
           type="button"
-          onClick={onLaunchLogin}
-          disabled={isLoggingIn}
-          title={isLoggedIn ? "Mở lại trình duyệt để kiểm tra hoặc đăng nhập lại tài khoản Pinterest" : "Mở trình duyệt để đăng nhập Pinterest"}
-          className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold shadow transition disabled:opacity-50 ${
-            isLoggedIn
-              ? "bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white border border-slate-700"
-              : "bg-rose-600 text-white hover:bg-rose-500 shadow-rose-600/20"
+          onClick={onOpenAuthModal}
+          title={
+            authStatus?.oauth_valid
+              ? `API Token: Đã kết nối${authStatus?.token_info?.username ? ` (@${authStatus.token_info.username})` : ""} - Bấm để quản lý`
+              : "API Token: Chưa kết nối (Bắt buộc để quét Trends) - Bấm để kết nối"
+          }
+          className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium cursor-pointer transition hover:opacity-90 ${
+            authStatus?.oauth_valid
+              ? "border-emerald-700/50 bg-emerald-950/60 text-emerald-300"
+              : "border-rose-700/50 bg-rose-950/60 text-rose-300 animate-pulse"
           }`}
+        >
+          <span className={`h-2 w-2 rounded-full ${authStatus?.oauth_valid ? "bg-emerald-400" : "bg-rose-400"}`} />
+          <span>{authStatus?.oauth_valid ? "API Token OK" : "Thiếu Token API"}</span>
+        </button>
+
+        {/* Browser Profile Indicator */}
+        <button
+          type="button"
+          onClick={onOpenAuthModal}
+          title={
+            authStatus?.browser_logged_in
+              ? "Trình duyệt cào ảnh: Đã lưu session Playwright"
+              : "Trình duyệt cào ảnh: Chưa đăng nhập - Bấm để đăng nhập"
+          }
+          className={`hidden sm:flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium cursor-pointer transition hover:opacity-90 ${
+            authStatus?.browser_logged_in
+              ? "border-cyan-700/50 bg-cyan-950/60 text-cyan-300"
+              : "border-slate-700/60 bg-slate-800/60 text-slate-400"
+          }`}
+        >
+          <span className={`h-1.5 w-1.5 rounded-full ${authStatus?.browser_logged_in ? "bg-cyan-400" : "bg-slate-500"}`} />
+          <span>{authStatus?.browser_logged_in ? "Crawler OK" : "Crawler chưa login"}</span>
+        </button>
+
+        {/* Manage Auth Modal Trigger */}
+        <button
+          type="button"
+          onClick={onOpenAuthModal ?? onLaunchLogin}
+          disabled={isLoggingIn}
+          title="Mở bảng cấu hình xác thực Pinterest (1-Click OAuth, Token thủ công, Trình duyệt Playwright)"
+          className="flex items-center gap-1.5 rounded-xl border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-semibold text-slate-200 shadow transition hover:border-cyan-500 hover:bg-slate-700 hover:text-white cursor-pointer"
         >
           {isLoggingIn ? (
             <>
-              <svg className="h-3.5 w-3.5 animate-spin" viewBox="0 0 24 24" fill="none">
+              <svg className="h-3 w-3 animate-spin" viewBox="0 0 24 24" fill="none">
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
               </svg>
-              <span>Đang mở trình duyệt...</span>
+              <span>Đang mở...</span>
             </>
           ) : (
             <>
-              <span>{isLoggedIn ? "🔄" : "🔑"}</span>
-              <span>{isLoggedIn ? "Mở trình duyệt Pinterest" : "Đăng nhập Pinterest"}</span>
+              <span>🔑</span>
+              <span>Xác thực Pinterest</span>
             </>
           )}
         </button>
