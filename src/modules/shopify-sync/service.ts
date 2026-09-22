@@ -232,10 +232,21 @@ export async function syncSingleProduct(
         ...product.customization.rawConfig,
       };
 
-      const finalConfig = replaceUrlsInObject(baseConfig, replacements) as Record<
+      let finalConfig = replaceUrlsInObject(baseConfig, replacements) as Record<
         string,
         unknown
       >;
+
+      let serializedValue = JSON.stringify(finalConfig);
+
+      // Shopify Metafield JSON size limit is 131,072 bytes (128 KB).
+      // If the serialized config exceeds 120,000 bytes, prune redundant duplicate `assets`
+      // array because surfaces and optionGroups already contain direct Shopify CDN URLs.
+      if (serializedValue.length > 120000 && finalConfig.assets) {
+        const { assets: _discardedAssets, ...compactConfig } = finalConfig;
+        finalConfig = compactConfig;
+        serializedValue = JSON.stringify(finalConfig);
+      }
 
       // 4. Set Metafield custom.amazon_customizer
       try {
@@ -244,7 +255,7 @@ export async function syncSingleProduct(
           namespace: "custom",
           key: "amazon_customizer",
           type: "json",
-          value: JSON.stringify(finalConfig),
+          value: serializedValue,
         });
         metafieldSet = metaResult.success;
       } catch (metaError: unknown) {
