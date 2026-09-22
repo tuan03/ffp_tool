@@ -11,6 +11,8 @@ import {
   runShopifySync,
   shopifySyncMockData,
   syncSingleProduct,
+  type ShopifyGateway,
+  type ShopifySyncProductInput,
 } from "../index";
 import type { CrawlProduct } from "../../customization-normalizer";
 
@@ -256,10 +258,11 @@ test("syncSingleProduct leverages uploadFilesBatch and deduplicates asset URLs",
     },
   };
 
-  const customProd = {
+  const customProd: ShopifySyncProductInput = {
     ...shopifySyncMockData.products[0],
     customization: {
       ...shopifySyncMockData.products[0].customization,
+      hasCustomization: true,
       assets: [
         { url: "https://example.com/asset-1.png", friendlyFileName: "asset-1.png", alt: "A1" },
         { url: "https://example.com/asset-1.png", friendlyFileName: "asset-1-dup.png", alt: "A1-dup" },
@@ -268,7 +271,9 @@ test("syncSingleProduct leverages uploadFilesBatch and deduplicates asset URLs",
     },
   };
 
-  const result = await syncSingleProduct(customProd, { gateway: batchGateway });
+  const result = await syncSingleProduct(customProd, {
+    gateway: batchGateway as unknown as ShopifyGateway,
+  });
 
   assertStrict.equal(result.success, true);
   assertStrict.equal(result.productId, "gid://shopify/Product/batch-123");
