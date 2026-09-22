@@ -10,7 +10,7 @@ from datetime import timedelta
 from threading import Lock
 from typing import Any
 
-from sqlalchemy import func, select, text
+from sqlalchemy import delete, func, select, text
 from sqlalchemy.orm import selectinload
 
 from ..crawler_core import CrawlSettings, normalize_amazon_input
@@ -338,9 +338,10 @@ class CoordinatorStore:
             if str(payload.get("jobId") or "") != task.job_id:
                 return {"status": "invalid", "taskId": task.id, "reason": "job_identity"}
             products = payload.get("products") if isinstance(payload.get("products"), list) else []
+            retained_products: list[Any] = []
             for product in products:
                 if isinstance(product, dict) and product.get("id"):
-                    self._upsert_product_item(
+                    item, _created = self._upsert_product_item(
                         session,
                         task=task,
                         client_id=client_id,
@@ -348,9 +349,15 @@ class CoordinatorStore:
                         product=product,
                         checksum=str(product.get("productChecksum") or ""),
                     )
+                    if item.status != "completed":
+                        retained_products.append(product)
+                else:
+                    retained_products.append(product)
+            stored_payload = dict(payload)
+            stored_payload["products"] = retained_products
             session.add(TaskResult(
                 task_id=task.id, client_id=client_id, lease_id=lease_id,
-                checksum=checksum, payload=payload,
+                checksum=checksum, payload=stored_payload,
             ))
             task.status = "completed"
             task.completed_at = utc_now()
@@ -625,6 +632,25 @@ class CoordinatorStore:
                     link.shopify_product_handle = product_handle
                     link.normalized_checksum = normalized_checksum
                     link.managed_resources = dict(shopify_result.get("managedResources") or {})
+            # The normalized payload is the temporary public result. The raw
+            # crawler copy is no longer needed after Shopify confirms the write.
+            item.raw_payload = {}
+            task = session.get(CrawlTask, item.task_id)
+            if task is not None and task.result is not None:
+                result_payload = dict(task.result.payload or {})
+                products = result_payload.get("products")
+                if isinstance(products, list):
+                    result_payload["products"] = [
+                        product for product in products
+                        if not (
+                            isinstance(product, dict)
+                            and (
+                                _source_key(product) == item.source_key
+                                or str(product.get("id") or "") == item.product_id
+                            )
+                        )
+                    ]
+                    task.result.payload = result_payload
             item.normalized_payload = normalized_payload
             item.shopify_result = shopify_result
             item.status = "completed"
@@ -651,6 +677,39 @@ class CoordinatorStore:
             })
             self._refresh_job(session, item.job_id)
             return True
+
+    def cleanup_history(self, *, retention_minutes: int, now=None) -> dict[str, int]:
+        """Remove expired coordinator history while preserving Shopify mappings."""
+        retention = max(1, int(retention_minutes))
+        current_time = now or utc_now()
+        cutoff = current_time - timedelta(minutes=retention)
+        with self.sessions.begin() as session:
+            job_ids = list(session.scalars(select(CrawlJob.id).where(
+                CrawlJob.status.in_(["completed", "partial", "cancelled"]),
+                CrawlJob.completed_at.is_not(None),
+                CrawlJob.completed_at < cutoff,
+            )).all())
+            if job_ids:
+                task_ids = list(session.scalars(select(CrawlTask.id).where(
+                    CrawlTask.job_id.in_(job_ids),
+                )).all())
+                session.execute(delete(JobEvent).where(JobEvent.job_id.in_(job_ids)))
+                session.execute(delete(InvalidJobInput).where(InvalidJobInput.job_id.in_(job_ids)))
+                session.execute(delete(CrawlProductItem).where(CrawlProductItem.job_id.in_(job_ids)))
+                if task_ids:
+                    session.execute(delete(TaskResult).where(TaskResult.task_id.in_(task_ids)))
+                    session.execute(delete(TaskAttempt).where(TaskAttempt.task_id.in_(task_ids)))
+                session.execute(delete(CrawlTask).where(CrawlTask.job_id.in_(job_ids)))
+                session.execute(delete(CrawlJob).where(CrawlJob.id.in_(job_ids)))
+
+            operation_result = session.execute(delete(ShopifyOperationIdempotency).where(
+                ShopifyOperationIdempotency.state != "pending",
+                ShopifyOperationIdempotency.updated_at < cutoff,
+            ))
+            return {
+                "jobs": len(job_ids),
+                "idempotencyOperations": int(operation_result.rowcount or 0),
+            }
 
     def fail_product_item(
         self,

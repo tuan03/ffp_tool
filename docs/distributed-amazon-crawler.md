@@ -1,6 +1,6 @@
 # Distributed Amazon crawler
 
-The coordinator stores jobs and results; it never crawls Amazon. Windows agents connect outbound over WebSocket, lease one Amazon input at a time, crawl locally with the existing HTTP/Playwright fallback, and upload each completed input immediately. Results waiting for a connection are persisted in SQLite WAL on the client.
+The coordinator temporarily stores jobs and results; it never crawls Amazon. Windows agents connect outbound over WebSocket, lease one Amazon input at a time, crawl locally with the existing HTTP/Playwright fallback, and upload each completed input immediately. Results waiting for a connection are persisted in SQLite WAL on the client.
 
 ## Run the coordinator locally
 
@@ -19,6 +19,8 @@ This starts the React UI and coordinator together. The `/amazon-crawler` page no
 ```
 
 SQLite at `.runtime/coordinator.sqlite3` is used automatically for this local test. PostgreSQL remains the production target on the VPS.
+
+Completed product raw payloads are discarded as soon as Shopify confirms the sync. Normalized UI/export results remain available for 60 minutes after the whole job reaches a terminal state, then the coordinator deletes the job and its task, result, event, error, and idempotency history. Set `AMAZON_COORDINATOR_JOB_RETENTION_MINUTES` to change this window. The minimal `sourceKey` to Shopify product mapping is retained so a later crawl updates the existing Shopify product instead of creating a duplicate.
 
 PostgreSQL is the production database. Copy `deploy/amazon-crawler-coordinator/.env.example` to `.env` in that directory, replace the database password and CORS origin, then run:
 

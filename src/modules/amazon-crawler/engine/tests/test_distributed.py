@@ -6,6 +6,7 @@ import tempfile
 import unittest
 import asyncio
 import os
+from datetime import timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -20,10 +21,21 @@ from engine.distributed.client_agent import DistributedCrawlerAgent, progress_fo
 from engine.distributed.client_config import AgentConfig
 from engine.distributed.client_main import _configure_packaged_browser, _resolve_config_path
 from engine.distributed.client_tray import format_status, should_notify_captcha
-from engine.distributed.coordinator_models import Base, CrawlProductItem, CrawlTask, create_database_engine, create_session_factory
+from engine.distributed.coordinator_models import (
+    Base,
+    CrawlJob,
+    CrawlProductItem,
+    CrawlTask,
+    JobEvent,
+    ShopifyOperationIdempotency,
+    ShopifyProductLink,
+    TaskResult,
+    create_database_engine,
+    create_session_factory,
+)
 from engine.distributed.coordinator_server import ConnectionManager, create_coordinator_app, decompress_gzip_limited, read_request_body_limited
 from engine.distributed.coordinator_store import CoordinatorStore
-from engine.distributed.protocol import AgentLimits, hello_message, payload_checksum, settings_fingerprint
+from engine.distributed.protocol import AgentLimits, hello_message, payload_checksum, settings_fingerprint, utc_now
 from engine.proxy_profiles import resolve_proxy_assignments
 
 
@@ -992,6 +1004,127 @@ class CoordinatorStoreTests(unittest.TestCase):
 
         self.assertTrue(completed)
         self.assertEqual(second_claim["existingShopify"]["productId"], "gid://shopify/Product/123")
+
+    def test_completed_product_discards_raw_payload_but_keeps_temporary_normalized_result(self) -> None:
+        job = self.store.create_job({"urls": ["B0FR4MSS2H"]})
+        self.store.register_client(client_hello(slots=1))
+        lease = self.store.lease_tasks("client-a", 1)[0]
+        source_key = "amazon:B0FR4MSS2H:design:ocean"
+        product = {
+            "id": "product-ocean",
+            "sourceKey": source_key,
+            "parentAsin": "B0FR4MSS2H",
+            "title": "Ocean raw",
+        }
+        self.store.accept_product(
+            lease["taskId"], "client-a", lease["leaseId"], source_key, "checksum-1",
+            {"jobId": job["id"], "product": product, "productChecksum": "checksum-1"},
+        )
+        self.store.accept_result(
+            lease["taskId"], "client-a", lease["leaseId"], "result-checksum",
+            {"jobId": job["id"], "products": [product], "errors": [], "warnings": []},
+        )
+        claim = self.store.claim_product_items(worker_id="worker-1", store_id="store-1", limit=1)[0]
+        normalized = {**product, "title": "Ocean normalized"}
+
+        completed = self.store.complete_product_item(
+            claim["id"],
+            worker_id="worker-1",
+            store_id="store-1",
+            normalized_checksum="normalized-1",
+            normalized_payload=normalized,
+            shopify_result={
+                "productId": "gid://shopify/Product/123",
+                "productHandle": "ocean",
+                "managedResources": {"tags": [source_key]},
+            },
+        )
+
+        self.assertTrue(completed)
+        with self.sessions() as session:
+            item = session.get(CrawlProductItem, claim["id"])
+            task_result = session.get(TaskResult, lease["taskId"])
+            self.assertEqual(item.raw_payload, {})
+            self.assertEqual(item.normalized_payload, normalized)
+            self.assertEqual(task_result.payload["products"], [])
+        public_result = self.store.job_results(str(job["id"]))
+        self.assertEqual(public_result["products"][0]["title"], "Ocean normalized")
+
+    def test_late_task_result_does_not_restore_raw_product_after_streaming_sync(self) -> None:
+        job = self.store.create_job({"urls": ["B0FR4MSS2H"]})
+        self.store.register_client(client_hello(slots=1))
+        lease = self.store.lease_tasks("client-a", 1)[0]
+        source_key = "amazon:B0FR4MSS2H:design:ocean"
+        product = {"id": "product-ocean", "sourceKey": source_key, "title": "Ocean raw"}
+        self.store.accept_product(
+            lease["taskId"], "client-a", lease["leaseId"], source_key, "checksum-1",
+            {"jobId": job["id"], "product": product, "productChecksum": "checksum-1"},
+        )
+        claim = self.store.claim_product_items(worker_id="worker-1", store_id="store-1", limit=1)[0]
+        self.store.complete_product_item(
+            claim["id"],
+            worker_id="worker-1",
+            store_id="store-1",
+            normalized_checksum="normalized-1",
+            normalized_payload={**product, "title": "Ocean normalized"},
+            shopify_result={"productId": "gid://shopify/Product/123"},
+        )
+
+        accepted = self.store.accept_result(
+            lease["taskId"], "client-a", lease["leaseId"], "result-checksum",
+            {"jobId": job["id"], "products": [product], "errors": [], "warnings": []},
+        )
+
+        self.assertEqual(accepted["status"], "accepted")
+        with self.sessions() as session:
+            task_result = session.get(TaskResult, lease["taskId"])
+            item = session.get(CrawlProductItem, claim["id"])
+            self.assertEqual(task_result.payload["products"], [])
+            self.assertEqual(item.raw_payload, {})
+
+    def test_cleanup_history_removes_expired_job_data_but_keeps_shopify_mapping(self) -> None:
+        job = self.store.create_job({"urls": ["B0FR4MSS2H"]})
+        self.store.register_client(client_hello(slots=1))
+        lease = self.store.lease_tasks("client-a", 1)[0]
+        source_key = "amazon:B0FR4MSS2H:design:ocean"
+        product = {"id": "product-ocean", "sourceKey": source_key, "title": "Ocean"}
+        self.store.accept_product(
+            lease["taskId"], "client-a", lease["leaseId"], source_key, "checksum-1",
+            {"jobId": job["id"], "product": product, "productChecksum": "checksum-1"},
+        )
+        self.store.accept_result(
+            lease["taskId"], "client-a", lease["leaseId"], "result-checksum",
+            {"jobId": job["id"], "products": [product], "errors": [], "warnings": []},
+        )
+        claim = self.store.claim_product_items(worker_id="worker-1", store_id="store-1", limit=1)[0]
+        self.store.complete_product_item(
+            claim["id"],
+            worker_id="worker-1",
+            store_id="store-1",
+            normalized_checksum="normalized-1",
+            normalized_payload=product,
+            shopify_result={"productId": "gid://shopify/Product/123", "productHandle": "ocean"},
+        )
+        now = utc_now()
+        with self.sessions.begin() as session:
+            stored_job = session.get(CrawlJob, job["id"])
+            stored_job.completed_at = now - timedelta(minutes=61)
+            operation = session.scalar(select(ShopifyOperationIdempotency))
+            operation.updated_at = now - timedelta(minutes=61)
+
+        cleaned = self.store.cleanup_history(retention_minutes=60, now=now)
+
+        self.assertEqual(cleaned["jobs"], 1)
+        self.assertEqual(cleaned["idempotencyOperations"], 1)
+        with self.sessions() as session:
+            self.assertIsNone(session.get(CrawlJob, job["id"]))
+            self.assertEqual(session.scalars(select(CrawlTask)).all(), [])
+            self.assertEqual(session.scalars(select(TaskResult)).all(), [])
+            self.assertEqual(session.scalars(select(CrawlProductItem)).all(), [])
+            self.assertEqual(session.scalars(select(JobEvent)).all(), [])
+            links = session.scalars(select(ShopifyProductLink)).all()
+            self.assertEqual(len(links), 1)
+            self.assertEqual(links[0].source_key, source_key)
 
     def test_job_becomes_partial_only_after_product_pipeline_failure(self) -> None:
         job = self.store.create_job({"urls": ["B0FR4MSS2H"]})

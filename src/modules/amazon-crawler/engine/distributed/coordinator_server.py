@@ -25,6 +25,13 @@ class ResultPayloadTooLarge(ValueError):
     pass
 
 
+def positive_environment_integer(name: str, default: int) -> int:
+    try:
+        return max(1, int(os.environ.get(name, str(default))))
+    except ValueError:
+        return default
+
+
 def decompress_gzip_limited(payload: bytes, *, maximum_bytes: int) -> bytes:
     with gzip.GzipFile(fileobj=io.BytesIO(payload), mode="rb") as stream:
         decompressed = stream.read(maximum_bytes + 1)
@@ -160,6 +167,10 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
     sessions = create_session_factory(engine)
     store = CoordinatorStore(sessions)
     manager = ConnectionManager()
+    history_retention_minutes = positive_environment_integer(
+        "AMAZON_COORDINATOR_JOB_RETENTION_MINUTES",
+        60,
+    )
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -168,8 +179,16 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
         stop = asyncio.Event()
 
         async def reap_loop() -> None:
+            next_cleanup_at = 0.0
             while not stop.is_set():
                 await asyncio.to_thread(store.reap_expired)
+                loop_time = asyncio.get_running_loop().time()
+                if loop_time >= next_cleanup_at:
+                    await asyncio.to_thread(
+                        store.cleanup_history,
+                        retention_minutes=history_retention_minutes,
+                    )
+                    next_cleanup_at = loop_time + 60
                 try:
                     await asyncio.wait_for(stop.wait(), timeout=5)
                 except TimeoutError:
