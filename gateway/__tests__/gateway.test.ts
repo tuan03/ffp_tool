@@ -6322,6 +6322,445 @@ describe("Gateway: Architectural & Operational Hardening (P1)", () => {
       assert.equal(data.metafieldId, "gid://shopify/Metafield/mf-1");
       assert.ok(requestPayload);
     });
+
+    it("executes metafields.set in apply mode with batch metafields array", async () => {
+      let requestPayload: unknown;
+      const dispatcher = setupTestGateway(async (_url: string, init?: RequestInit) => {
+        requestPayload = JSON.parse(init?.body as string);
+        return createMockResponse({
+          data: {
+            metafieldsSet: {
+              metafields: [
+                {
+                  id: "gid://shopify/Metafield/mf-batch-1",
+                  namespace: "custom",
+                  key: "key1",
+                  type: "json",
+                  value: "{\"k\":1}",
+                  ownerType: "PRODUCT",
+                },
+                {
+                  id: "gid://shopify/Metafield/mf-batch-2",
+                  namespace: "custom",
+                  key: "key2",
+                  type: "json",
+                  value: "{\"k\":2}",
+                  ownerType: "PRODUCT",
+                },
+              ],
+              userErrors: [],
+            },
+          },
+        });
+      });
+
+      const res = await dispatcher.dispatch({
+        storeId: "store-test",
+        operation: "metafields.set",
+        mode: "apply",
+        requestId: "req-meta-batch",
+        payload: {
+          metafields: [
+            {
+              productId: "gid://shopify/Product/123",
+              namespace: "custom",
+              key: "key1",
+              value: "{\"k\":1}",
+            },
+            {
+              productId: "gid://shopify/Product/123",
+              namespace: "custom",
+              key: "key2",
+              value: "{\"k\":2}",
+            },
+          ],
+        },
+      });
+
+      assert.equal(res.success, true);
+      const data = res.data as { success: boolean; metafields: readonly { id: string; key: string }[] };
+      assert.equal(data.success, true);
+      assert.equal(data.metafields.length, 2);
+      assert.equal(data.metafields[0]?.id, "gid://shopify/Metafield/mf-batch-1");
+      assert.equal(data.metafields[1]?.id, "gid://shopify/Metafield/mf-batch-2");
+      assert.ok(requestPayload);
+    });
+
+    it("executes products.create preserving gallery photos sent via media array", async () => {
+      let requestPayload: { query: string; variables: { media?: unknown[]; product?: unknown } } | undefined;
+      const dispatcher = setupTestGateway(async (_url: string, init?: RequestInit) => {
+        requestPayload = JSON.parse(init?.body as string);
+        return createMockResponse({
+          data: {
+            productCreate: {
+              product: {
+                id: "gid://shopify/Product/media-prod-1",
+                title: "Media Product",
+                handle: "media-product",
+                tags: [],
+                createdAt: "2026-09-22T00:00:00Z",
+                updatedAt: "2026-09-22T00:00:00Z",
+              },
+              userErrors: [],
+            },
+          },
+        });
+      });
+
+      // 1. Preview mode preserves media in images
+      const previewRes = await dispatcher.dispatch({
+        storeId: "store-test",
+        operation: "products.create",
+        mode: "preview",
+        payload: {
+          product: {
+            title: "Media Product",
+            media: [
+              { originalSource: "https://example.com/photo1.jpg", alt: "Photo 1" },
+              { originalSource: "https://example.com/photo2.jpg", alt: "Photo 2" },
+            ],
+          },
+        },
+      });
+
+      assert.equal(previewRes.success, true);
+      const previewProd = (previewRes.data as { product: ProductSummary }).product;
+      assert.equal(previewProd.images?.length, 2);
+      assert.equal(previewProd.images?.[0]?.url, "https://example.com/photo1.jpg");
+      assert.equal(previewProd.images?.[0]?.altText, "Photo 1");
+
+      // 2. Apply mode sends media in mutation variables
+      const applyRes = await dispatcher.dispatch({
+        storeId: "store-test",
+        operation: "products.create",
+        mode: "apply",
+        requestId: "req-prod-media-1",
+        payload: {
+          product: {
+            title: "Media Product",
+            media: [
+              { originalSource: "https://example.com/photo1.jpg", alt: "Photo 1", mediaContentType: "IMAGE" },
+              { originalSource: "https://example.com/photo2.jpg", alt: "Photo 2", mediaContentType: "IMAGE" },
+            ],
+          },
+        },
+      });
+
+      assert.equal(applyRes.success, true);
+      assert.ok(requestPayload);
+      assert.ok(Array.isArray(requestPayload.variables.media));
+      assert.equal(requestPayload.variables.media.length, 2);
+      assert.deepEqual(requestPayload.variables.media[0], {
+        originalSource: "https://example.com/photo1.jpg",
+        mediaContentType: "IMAGE",
+        alt: "Photo 1",
+      });
+    });
+
+    it("rejects variants.bulkCreate when productId is missing", async () => {
+      const dispatcher = setupTestGateway({});
+      await assert.rejects(
+        async () => {
+          await dispatcher.dispatch({
+            storeId: "store-test",
+            operation: "variants.bulkCreate",
+            mode: "apply",
+            requestId: "req-err-1",
+            payload: {
+              productId: "",
+              variants: [{ price: "10.00" }],
+            },
+          });
+        },
+        (err: unknown) => {
+          assert.ok(err instanceof GatewayError);
+          assert.equal(err.code, "SHOPIFY_USER_ERROR");
+          assert.ok(err.message.includes("Product id is required"));
+          return true;
+        },
+      );
+    });
+
+    it("handles files.create failure when fileStatus is FAILED during polling", async () => {
+      let callCount = 0;
+      const dispatcher = setupTestGateway(async () => {
+        callCount++;
+        if (callCount === 1) {
+          return createMockResponse({
+            data: {
+              fileCreate: {
+                files: [{ id: "gid://shopify/MediaImage/fail-file-1", fileStatus: "PROCESSING" }],
+                userErrors: [],
+              },
+            },
+          });
+        }
+        return createMockResponse({
+          data: {
+            node: { id: "gid://shopify/MediaImage/fail-file-1", fileStatus: "FAILED" },
+          },
+        });
+      });
+
+      await assert.rejects(
+        async () => {
+          await dispatcher.dispatch({
+            storeId: "store-test",
+            operation: "files.create",
+            mode: "apply",
+            requestId: "req-file-fail",
+            payload: {
+              originalSource: "https://example.com/broken.jpg",
+              pollIntervalMs: 1,
+              maxPollAttempts: 3,
+            },
+          });
+        },
+        (err: unknown) => {
+          assert.ok(err instanceof GatewayError);
+          assert.equal(err.code, "SHOPIFY_USER_ERROR");
+          assert.ok(err.message.includes("File processing failed"));
+          return true;
+        },
+      );
+    });
+
+    it("handles files.create timeout when polling expires without URL", async () => {
+      const dispatcher = setupTestGateway(async (_url: string, init?: RequestInit) => {
+        const body = JSON.parse(init?.body as string) as Record<string, string>;
+        if (body.query.includes("fileCreate")) {
+          return createMockResponse({
+            data: {
+              fileCreate: {
+                files: [{ id: "gid://shopify/MediaImage/timeout-file-1", fileStatus: "PROCESSING" }],
+                userErrors: [],
+              },
+            },
+          });
+        }
+        return createMockResponse({
+          data: {
+            node: { id: "gid://shopify/MediaImage/timeout-file-1", fileStatus: "PROCESSING" },
+          },
+        });
+      });
+
+      await assert.rejects(
+        async () => {
+          await dispatcher.dispatch({
+            storeId: "store-test",
+            operation: "files.create",
+            mode: "apply",
+            requestId: "req-file-timeout",
+            payload: {
+              originalSource: "https://example.com/slow.jpg",
+              pollIntervalMs: 1,
+              maxPollAttempts: 2,
+            },
+          });
+        },
+        (err: unknown) => {
+          assert.ok(err instanceof GatewayError);
+          assert.equal(err.code, "SHOPIFY_USER_ERROR");
+          assert.ok(err.message.includes("timed out"));
+          return true;
+        },
+      );
+    });
+
+    it("fails files.create immediately when fileCreate returns FAILED without polling", async () => {
+      let callCount = 0;
+      const dispatcher = setupTestGateway(async () => {
+        callCount++;
+        return createMockResponse({
+          data: {
+            fileCreate: {
+              files: [{ id: "gid://shopify/MediaImage/fail-immediate", fileStatus: "FAILED" }],
+              userErrors: [],
+            },
+          },
+        });
+      });
+
+      await assert.rejects(
+        async () => {
+          await dispatcher.dispatch({
+            storeId: "store-test",
+            operation: "files.create",
+            mode: "apply",
+            requestId: "req-file-fail-imm",
+            payload: {
+              originalSource: "https://example.com/bad.jpg",
+              pollIntervalMs: 10,
+              maxPollAttempts: 5,
+            },
+          });
+        },
+        (err: unknown) => {
+          assert.ok(err instanceof GatewayError);
+          assert.equal(err.code, "SHOPIFY_USER_ERROR");
+          assert.ok(err.message.includes("File processing failed"));
+          return true;
+        },
+      );
+      assert.equal(callCount, 1);
+    });
+
+    it("handles files.create timeout when polling expires and status is still PROCESSING even if url exists", async () => {
+      const dispatcher = setupTestGateway(async (_url: string, init?: RequestInit) => {
+        const body = JSON.parse(init?.body as string) as Record<string, string>;
+        if (body.query.includes("fileCreate")) {
+          return createMockResponse({
+            data: {
+              fileCreate: {
+                files: [{ id: "gid://shopify/MediaImage/timeout-file-2", fileStatus: "PROCESSING" }],
+                userErrors: [],
+              },
+            },
+          });
+        }
+        return createMockResponse({
+          data: {
+            node: {
+              id: "gid://shopify/MediaImage/timeout-file-2",
+              fileStatus: "PROCESSING",
+              image: { url: "https://cdn.shopify.com/s/files/partial.jpg" },
+            },
+          },
+        });
+      });
+
+      await assert.rejects(
+        async () => {
+          await dispatcher.dispatch({
+            storeId: "store-test",
+            operation: "files.create",
+            mode: "apply",
+            requestId: "req-file-timeout-processing",
+            payload: {
+              originalSource: "https://example.com/slow-proc.jpg",
+              pollIntervalMs: 1,
+              maxPollAttempts: 2,
+            },
+          });
+        },
+        (err: unknown) => {
+          assert.ok(err instanceof GatewayError);
+          assert.equal(err.code, "SHOPIFY_USER_ERROR");
+          assert.ok(err.message.includes("timed out"));
+          return true;
+        },
+      );
+    });
+
+    it("executes variants.bulkCreate with empty variants array returning 0 without calling Shopify", async () => {
+      let callCount = 0;
+      const dispatcher = setupTestGateway(async () => {
+        callCount++;
+        return createMockResponse({});
+      });
+
+      const res = await dispatcher.dispatch({
+        storeId: "store-test",
+        operation: "variants.bulkCreate",
+        mode: "apply",
+        requestId: "req-bulk-empty",
+        payload: {
+          productId: "gid://shopify/Product/empty-vars",
+          variants: [],
+        },
+      });
+
+      assert.equal(callCount, 0);
+      assert.equal(res.success, true);
+      const data = res.data as { createdCount: number; variants: readonly unknown[] };
+      assert.equal(data.createdCount, 0);
+      assert.equal(data.variants.length, 0);
+    });
+
+    it("executes variants.bulkCreate defaulting optionValues to Title: Default Title when absent", async () => {
+      let requestPayload: { query: string; variables: { variants?: Record<string, unknown>[] } } | undefined;
+      const dispatcher = setupTestGateway(async (_url: string, init?: RequestInit) => {
+        requestPayload = JSON.parse(init?.body as string);
+        return createMockResponse({
+          data: {
+            productVariantsBulkCreate: {
+              productVariants: [
+                {
+                  id: "gid://shopify/ProductVariant/v-def-1",
+                  title: "Default Title",
+                  price: "15.00",
+                },
+              ],
+              userErrors: [],
+            },
+          },
+        });
+      });
+
+      const res = await dispatcher.dispatch({
+        storeId: "store-test",
+        operation: "variants.bulkCreate",
+        mode: "apply",
+        requestId: "req-bulk-def-title",
+        payload: {
+          productId: "gid://shopify/Product/p-def",
+          variants: [{ price: "15.00" }],
+        },
+      });
+
+      assert.equal(res.success, true);
+      assert.ok(requestPayload);
+      assert.deepEqual(requestPayload.variables.variants?.[0]?.optionValues, [
+        { optionName: "Title", name: "Default Title" },
+      ]);
+    });
+
+    it("executes metafields.set with top-level ownerId inheriting down to array items", async () => {
+      let requestPayload: { query: string; variables: { metafields?: Record<string, unknown>[] } } | undefined;
+      const dispatcher = setupTestGateway(async (_url: string, init?: RequestInit) => {
+        requestPayload = JSON.parse(init?.body as string);
+        return createMockResponse({
+          data: {
+            metafieldsSet: {
+              metafields: [
+                {
+                  id: "gid://shopify/Metafield/mf-inherited-1",
+                  namespace: "custom",
+                  key: "key_inherited",
+                  type: "json",
+                  value: "{\"test\":1}",
+                  ownerType: "PRODUCT",
+                },
+              ],
+              userErrors: [],
+            },
+          },
+        });
+      });
+
+      const res = await dispatcher.dispatch({
+        storeId: "store-test",
+        operation: "metafields.set",
+        mode: "apply",
+        requestId: "req-meta-top-owner",
+        payload: {
+          ownerId: "gid://shopify/Product/top-owner-1",
+          metafields: [
+            {
+              namespace: "custom",
+              key: "key_inherited",
+              value: { test: 1 },
+            },
+          ],
+        },
+      });
+
+      assert.equal(res.success, true);
+      assert.ok(requestPayload);
+      assert.equal(requestPayload.variables.metafields?.[0]?.ownerId, "gid://shopify/Product/top-owner-1");
+      assert.equal(requestPayload.variables.metafields?.[0]?.value, "{\"test\":1}");
+    });
   });
 });
 

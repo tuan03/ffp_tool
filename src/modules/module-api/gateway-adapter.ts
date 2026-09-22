@@ -41,6 +41,11 @@ export function createShopifyGatewayAdapter(
   storeId: string,
   optionsOrRunner?: ShopifyGatewayAdapterOptions | ModuleApiRunner,
 ): ShopifyGateway {
+  const cleanStoreId = typeof storeId === "string" ? storeId.trim() : "";
+  if (!cleanStoreId) {
+    throw new Error("storeId is required to create ShopifyGateway adapter");
+  }
+
   const options: ShopifyGatewayAdapterOptions =
     typeof optionsOrRunner === "function"
       ? { runner: optionsOrRunner }
@@ -55,7 +60,7 @@ export function createShopifyGatewayAdapter(
     async createProduct(input: CreateProductInput): Promise<CreateProductOutput> {
       const requestId = getRequestId("product-create");
       const response = (await runner({
-        storeId,
+        storeId: cleanStoreId,
         operation: "products.create",
         mode,
         requestId,
@@ -75,6 +80,10 @@ export function createShopifyGatewayAdapter(
         },
       })) as ShopifyProductsCreateResponse;
 
+      if (!response?.data?.product?.id) {
+        throw new Error("Failed to create product: missing product in response");
+      }
+
       return {
         productId: response.data.product.id,
         productHandle: response.data.product.handle,
@@ -85,9 +94,13 @@ export function createShopifyGatewayAdapter(
       productId: string,
       variants: readonly CreateVariantItem[],
     ): Promise<CreateVariantsOutput> {
+      if (!variants || variants.length === 0) {
+        return { createdCount: 0 };
+      }
+
       const requestId = getRequestId("variants-bulk-create");
       const response = (await runner({
-        storeId,
+        storeId: cleanStoreId,
         operation: "variants.bulkCreate",
         mode,
         requestId,
@@ -107,14 +120,14 @@ export function createShopifyGatewayAdapter(
       })) as ShopifyVariantsBulkCreateResponse;
 
       return {
-        createdCount: response.data.createdCount,
+        createdCount: response?.data?.createdCount ?? 0,
       };
     },
 
     async uploadFile(input: UploadFileInput): Promise<UploadFileOutput> {
       const requestId = getRequestId("files-create");
       const response = (await runner({
-        storeId,
+        storeId: cleanStoreId,
         operation: "files.create",
         mode,
         requestId,
@@ -126,6 +139,10 @@ export function createShopifyGatewayAdapter(
         },
       })) as ShopifyFilesCreateResponse;
 
+      if (!response?.data?.shopifyCdnUrl) {
+        throw new Error("Failed to upload file: missing shopifyCdnUrl in response");
+      }
+
       return {
         fileId: response.data.fileId,
         shopifyCdnUrl: response.data.shopifyCdnUrl,
@@ -135,7 +152,7 @@ export function createShopifyGatewayAdapter(
     async setProductMetafield(input: SetMetafieldInput): Promise<SetMetafieldOutput> {
       const requestId = getRequestId("metafields-set");
       const response = (await runner({
-        storeId,
+        storeId: cleanStoreId,
         operation: "metafields.set",
         mode,
         requestId,
@@ -150,8 +167,8 @@ export function createShopifyGatewayAdapter(
       })) as ShopifyMetafieldsSetResponse;
 
       return {
-        success: response.data.success,
-        metafieldId: response.data.metafieldId,
+        success: response?.data?.success ?? false,
+        metafieldId: response?.data?.metafieldId ?? response?.data?.metafields?.[0]?.id,
       };
     },
   };

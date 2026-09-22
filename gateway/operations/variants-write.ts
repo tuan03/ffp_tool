@@ -424,6 +424,13 @@ export async function executeVariantsBulkCreate(
     }
   }
 
+  if (variants.length === 0) {
+    return {
+      createdCount: 0,
+      variants: [],
+    };
+  }
+
   if (mode === "preview") {
     const previewVariants: ProductVariantSummary[] = variants.map((item, index) => {
       const raw = item as Record<string, unknown>;
@@ -476,6 +483,8 @@ export async function executeVariantsBulkCreate(
       });
     } else if (typeof raw.title === "string" && raw.title.trim() !== "") {
       vInput.optionValues = [{ optionName: "Title", name: raw.title.trim() }];
+    } else {
+      vInput.optionValues = [{ optionName: "Title", name: "Default Title" }];
     }
     return vInput;
   });

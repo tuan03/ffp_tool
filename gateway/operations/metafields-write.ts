@@ -82,6 +82,13 @@ export async function executeMetafieldsSet(
     throw new GatewayError("metafields array cannot be empty", "SHOPIFY_USER_ERROR", 400);
   }
 
+  const fallbackOwnerId =
+    typeof p.ownerId === "string" && p.ownerId.trim() !== ""
+      ? p.ownerId.trim()
+      : typeof p.productId === "string" && p.productId.trim() !== ""
+      ? p.productId.trim()
+      : "";
+
   const normalized: NormalizedMetafieldItem[] = rawItems.map((item, index) => {
     if (!item || typeof item !== "object") {
       throw new GatewayError(`Metafield at index ${index} must be an object`, "SHOPIFY_USER_ERROR", 400);
@@ -91,7 +98,7 @@ export async function executeMetafieldsSet(
         ? item.ownerId.trim()
         : typeof item.productId === "string" && item.productId.trim() !== ""
         ? item.productId.trim()
-        : "";
+        : fallbackOwnerId;
     if (!ownerId) {
       throw new GatewayError(`ownerId (or productId) is required at index ${index}`, "SHOPIFY_USER_ERROR", 400);
     }
@@ -103,8 +110,15 @@ export async function executeMetafieldsSet(
     if (!key) {
       throw new GatewayError(`key is required at index ${index}`, "SHOPIFY_USER_ERROR", 400);
     }
-    if (typeof item.value !== "string") {
-      throw new GatewayError(`value must be a string at index ${index}`, "SHOPIFY_USER_ERROR", 400);
+    let valStr: string;
+    if (typeof item.value === "string") {
+      valStr = item.value;
+    } else if (typeof item.value === "object" && item.value !== null) {
+      valStr = JSON.stringify(item.value);
+    } else if (item.value !== undefined && item.value !== null) {
+      valStr = String(item.value);
+    } else {
+      throw new GatewayError(`value is required at index ${index}`, "SHOPIFY_USER_ERROR", 400);
     }
     const type =
       typeof item.type === "string" && item.type.trim() !== ""
@@ -115,7 +129,7 @@ export async function executeMetafieldsSet(
       ownerId,
       namespace,
       key,
-      value: item.value,
+      value: valStr,
       type,
     };
   });

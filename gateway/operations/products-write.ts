@@ -799,9 +799,13 @@ export async function executeProductsUpdate(
         // b) New images (having url but no existing id): Append as new media in productUpdate
         if (!seenMediaUrls.has(rawUrl)) {
           seenMediaUrls.add(rawUrl);
+          const rawContentType =
+            imgObj.mediaContentType === "VIDEO" || imgObj.mediaContentType === "IMAGE"
+              ? imgObj.mediaContentType
+              : "IMAGE";
           mediaList.push({
             originalSource: rawUrl,
-            mediaContentType: "IMAGE",
+            mediaContentType: rawContentType,
             ...(rawAlt !== undefined && rawAlt.trim() ? { alt: rawAlt.trim() } : {}),
           });
         }
