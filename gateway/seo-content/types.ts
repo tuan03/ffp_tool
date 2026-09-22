@@ -31,8 +31,14 @@ export interface SeoContentResult {
   readonly success: boolean;
   readonly processedCount: number;
   readonly message?: string;
+  readonly seoOutputs?: readonly unknown[];
+}
+
+export interface GatewaySeoContentOptions {
+  readonly runner?: (input: any) => Promise<any>;
 }
 
 export type SeoContentRunner = (
   input: SeoContentInput,
+  options?: GatewaySeoContentOptions,
 ) => Promise<SeoContentResult>;

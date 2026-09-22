@@ -12,6 +12,17 @@ export type {
   CustomizationSeoItemResult,
   CustomizationSeoOptions,
 } from "./customization-adapter";
+export {
+  fromAutoSeoBatch,
+  fromAutoSeoProduct,
+  runAutoSeoPipeline,
+} from "./auto-seo-adapter";
+export type {
+  AutoSeoAdapterOptions,
+  AutoSeoBatchResult,
+  AutoSeoItemResult,
+  AutoSeoSourceProduct,
+} from "./auto-seo-adapter";
 export type {
   SeoContentImageInput,
   SeoContentImageOutput,

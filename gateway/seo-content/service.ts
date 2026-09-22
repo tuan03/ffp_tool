@@ -1,15 +1,27 @@
-import type { SeoContentInput, SeoContentResult } from "./types";
+import { runAutoSeoPipeline, runMockSeoContent } from "../../src/modules/seo-content";
+import type { GatewaySeoContentOptions, SeoContentInput, SeoContentResult } from "./types";
 
 /**
- * Temporary typed placeholder function for SEO Content generation.
- * Real SEO generation is not yet implemented.
+ * Executes the real SEO Content Pipeline (B1 -> B6) for products handed off by Auto SEO.
  */
 export async function runSeoContent(
   input: SeoContentInput,
+  options?: GatewaySeoContentOptions,
 ): Promise<SeoContentResult> {
+  const isTestOrMock = process.env.NODE_ENV === "test" || process.env.APP_ENV === "mock";
+  const defaultRunner = isTestOrMock ? runMockSeoContent : undefined;
+  const runner = options?.runner ?? defaultRunner;
+
+  const result = await runAutoSeoPipeline(input.products, {
+    ...(runner ? { runner } : {}),
+  });
+
+  const isSuccess = result.successful > 0 || result.total === 0;
+
   return {
-    success: true,
-    processedCount: input.products.length,
-    message: "SEO content generation placeholder executed successfully",
+    success: isSuccess,
+    processedCount: result.successful,
+    message: `Processed ${result.successful}/${result.total} products with SEO Content Pipeline B1-B6`,
+    seoOutputs: result.seoOutputs,
   };
 }
