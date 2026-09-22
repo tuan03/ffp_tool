@@ -18,7 +18,17 @@ import {
 import {
   fromCustomizationNormalizerProduct,
   syncSingleProduct,
+  type ShopifyManagedResources,
+  type ShopifySyncProductResult,
 } from "../src/modules/shopify-sync";
+import {
+  applySeoContentToCustomizationProduct,
+  CorpusRevisionConflictError,
+  createSeoContentPipelineSummary,
+  fromCustomizationProduct,
+  registerSeoContentKeywords,
+  runSeoContentDetailed,
+} from "../src/modules/seo-content";
 
 interface PipelineClaim {
   readonly id: string;
@@ -33,7 +43,7 @@ interface PipelineClaim {
     readonly productId: string;
     readonly productHandle?: string;
     readonly normalizedChecksum: string;
-    readonly managedResources?: Record<string, unknown>;
+    readonly managedResources?: ShopifyManagedResources;
   } | null;
 }
 
@@ -41,7 +51,30 @@ interface ClaimResponse {
   readonly items: readonly PipelineClaim[];
 }
 
-const env = loadLocalEnv();
+const env = {
+  ...loadLocalEnv("src/modules/seo-content"),
+  ...loadLocalEnv(),
+};
+const seoEnvironmentKeys = [
+  "AI_PROVIDER",
+  "AI_MAX_OUTPUT_TOKENS",
+  "GOOGLE_CLOUD_PROJECT",
+  "GOOGLE_CLOUD_LOCATION",
+  "GOOGLE_GENAI_USE_ENTERPRISE",
+  "GEMINI_ANALYSIS_MODEL",
+  "GEMINI_MODEL",
+  "SEO_SEARCH_PROVIDER",
+  "SEO_SEARCH_LANGUAGE",
+  "SEO_SEARCH_COUNTRY",
+  "SEO_EMBEDDING_PROVIDER",
+  "SEO_EMBEDDING_MODEL",
+  "SEO_CONFLICT_CORPUS_PATH",
+] as const;
+for (const key of seoEnvironmentKeys) {
+  if (env[key]) process.env[key] = env[key];
+}
+process.env.SEO_CONFLICT_CORPUS_PATH = process.env.SEO_CONFLICT_CORPUS_PATH
+  || ".runtime/seo-conflict-corpus.json";
 env.SHOPIFY_PROXY_CONFIG = env.SHOPIFY_PROXY_CONFIG || env.AMAZON_CRAWLER_PROXY_CONFIG || "config/amazon-crawler-profiles.json";
 process.env.SHOPIFY_PROXY_CONFIG = env.SHOPIFY_PROXY_CONFIG;
 const coordinatorUrl = (env.SHOPIFY_PIPELINE_COORDINATOR_URL || "http://127.0.0.1:8766").replace(/\/+$/, "");
@@ -144,13 +177,17 @@ async function failClaim(
   claim: PipelineClaim,
   workerId: string,
   error: unknown,
-  options?: { readonly retryable?: boolean; readonly reconciliationRequired?: boolean },
+  options?: {
+    readonly retryable?: boolean;
+    readonly reconciliationRequired?: boolean;
+    readonly phase?: "normalization" | "seo" | "shopify";
+  },
 ): Promise<void> {
   const message = error instanceof Error ? error.message : String(error);
   await postJson(`/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/fail`, {
     workerId,
     storeId,
-    error: { message },
+    error: { message, phase: options?.phase },
     retryable: options?.retryable ?? false,
     reconciliationRequired: options?.reconciliationRequired ?? false,
   });
@@ -168,7 +205,7 @@ async function processClaim(
 ): Promise<void> {
   const blockers = productBlockers(claim.product);
   if (blockers.length > 0) {
-    await failClaim(claim, workerId, new Error(blockers.join(" ")));
+    await failClaim(claim, workerId, new Error(blockers.join(" ")), { phase: "normalization" });
     return;
   }
 
@@ -176,75 +213,18 @@ async function processClaim(
   try {
     normalization = normalizeCustomizationProduct(claim.product);
   } catch (error: unknown) {
-    await failClaim(claim, workerId, error);
+    await failClaim(claim, workerId, error, { phase: "normalization" });
     return;
   }
-  const normalizedProduct: CrawlProduct = {
+  const baseNormalizedProduct: CrawlProduct = {
     ...normalization.normalizedProduct,
     sourceKey: claim.sourceKey,
   };
   const assetsNormalized = normalization.assetsNormalized;
-  const normalizedChecksum = checksum(normalizedProduct);
-  const runner = createModuleApiRunner({ gatewayUrl, timeoutMs: 180_000 });
-  let resolvedProduct: Awaited<ReturnType<typeof resolveShopifyProductForSync>>;
-  try {
-    resolvedProduct = await resolveShopifyProductForSync({
-      runner,
-      storeId: proxyStoreId,
-      sourceKey: claim.sourceKey,
-      mappedProductId: claim.existingShopify?.productId,
-    });
-  } catch (error: unknown) {
-    await failClaim(claim, workerId, error, { retryable: true });
-    return;
-  }
-  const reconciliationWarnings: string[] = [];
-  if (resolvedProduct.staleMappedProductId && resolvedProduct.match === "source_tag") {
-    reconciliationWarnings.push(
-      `Stored Shopify product ${resolvedProduct.staleMappedProductId} was missing; recovered source product as ${resolvedProduct.product?.id ?? "unknown"}.`,
-    );
-  } else if (resolvedProduct.staleMappedProductId && resolvedProduct.match === "none") {
-    reconciliationWarnings.push(
-      `Stored Shopify product ${resolvedProduct.staleMappedProductId} was missing; created a replacement product.`,
-    );
-  }
-
-  if (
-    claim.existingShopify?.normalizedChecksum === normalizedChecksum
-    && resolvedProduct.product
-  ) {
-    const resolvedId = resolvedProduct.product.id;
-    await postJson(`/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/complete`, {
-      workerId,
-      storeId,
-      normalizedChecksum,
-      normalizedProduct,
-      shopify: {
-        storeId,
-        productId: resolvedId,
-        productHandle: resolvedProduct.product.handle,
-        adminUrl: `https://admin.shopify.com/store/${shopAdminHandle}/products/${resolvedId.split("/").pop() ?? ""}`,
-        noOp: true,
-        attempts: claim.attempt,
-        proxyProfile,
-        warnings: reconciliationWarnings,
-        assetsNormalized,
-        managedResources: resolvedProduct.match === "mapping"
-          ? claim.existingShopify.managedResources ?? {}
-          : {
-              tags: resolvedProduct.product.tags,
-              mediaIds: resolvedProduct.product.images?.flatMap((media) => media.id ? [media.id] : []) ?? [],
-              variantIds: resolvedProduct.product.variants.map((variant) => variant.id),
-            },
-      },
-    });
-    return;
-  }
-
-  await postJson(`/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/syncing`, {
+  await postJson(`/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/seo`, {
     workerId,
-    normalizedProduct,
-    proxyProfile,
+    normalizedProduct: baseNormalizedProduct,
+    seo: { status: "running" },
   });
 
   const heartbeat = setInterval(() => {
@@ -255,58 +235,163 @@ async function processClaim(
   heartbeat.unref();
 
   try {
-    const reconciledProduct = resolvedProduct.product;
-    const existingProductId = reconciledProduct?.id;
-    const gateway = createShopifyGatewayAdapter(proxyStoreId, {
-      runner,
-      mode: "apply",
-      getRequestId: (operation) => `pipeline-${claim.id}-${operation}`,
-    });
-    const syncInput = fromCustomizationNormalizerProduct(normalizedProduct);
-    const existingManagedResources = resolvedProduct.match === "mapping"
-      ? claim.existingShopify?.managedResources
-      : (
-      reconciledProduct
-        ? {
-            tags: reconciledProduct.tags,
-            mediaIds: reconciledProduct.images?.flatMap((media) => media.id ? [media.id] : []) ?? [],
-            variantIds: reconciledProduct.variants.map((variant) => variant.id),
-          }
-        : undefined
-      );
-    const syncResult = await syncSingleProduct(syncInput, {
-      gateway,
-      existingProductId,
-      existingManagedResources,
-    });
-    if (!syncResult.success) {
-      if (isProxyOrNetworkFailure(syncResult.error || "")) {
-        proxyCooldownUntil.set(proxyStoreId, Date.now() + 30_000);
+    const runner = createModuleApiRunner({ gatewayUrl, timeoutMs: 180_000 });
+    const reconciliationWarnings: string[] = [];
+    let didResolveShopifyProduct = false;
+    let existingProductId: string | undefined;
+    let existingProductHandle: string | undefined;
+    let existingManagedResources: ShopifyManagedResources | undefined;
+    let lastSyncedChecksum: string | undefined;
+
+    for (let corpusAttempt = 0; corpusAttempt < 3; corpusAttempt += 1) {
+      const seoInput = fromCustomizationProduct(baseNormalizedProduct);
+      let seoExecution: Awaited<ReturnType<typeof runSeoContentDetailed>>;
+      try {
+        seoExecution = await runSeoContentDetailed(seoInput, { imageMode: "alt_only" });
+      } catch (error: unknown) {
+        await failClaim(claim, workerId, error, { retryable: true, phase: "seo" });
+        return;
       }
-      await failClaim(claim, workerId, new Error(syncResult.error || "Shopify sync failed."), {
-        retryable: !syncResult.reconciliationRequired,
-        reconciliationRequired: syncResult.reconciliationRequired,
+      const seoProduct = applySeoContentToCustomizationProduct(
+        baseNormalizedProduct,
+        seoExecution.output,
+      );
+      const finalChecksum = checksum(seoProduct);
+      const seoSummary = createSeoContentPipelineSummary(seoExecution);
+      await postJson(`/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/syncing`, {
+        workerId,
+        normalizedProduct: seoProduct,
+        proxyProfile,
+        seo: seoSummary,
+      });
+
+      if (!didResolveShopifyProduct) {
+        const resolvedProduct = await resolveShopifyProductForSync({
+          runner,
+          storeId: proxyStoreId,
+          sourceKey: claim.sourceKey,
+          mappedProductId: claim.existingShopify?.productId,
+        });
+        if (resolvedProduct.staleMappedProductId && resolvedProduct.match === "source_tag") {
+          reconciliationWarnings.push(
+            `Stored Shopify product ${resolvedProduct.staleMappedProductId} was missing; recovered source product as ${resolvedProduct.product?.id ?? "unknown"}.`,
+          );
+        } else if (resolvedProduct.staleMappedProductId && resolvedProduct.match === "none") {
+          reconciliationWarnings.push(
+            `Stored Shopify product ${resolvedProduct.staleMappedProductId} was missing; created a replacement product.`,
+          );
+        }
+        existingProductId = resolvedProduct.product?.id;
+        existingProductHandle = resolvedProduct.product?.handle;
+        existingManagedResources = resolvedProduct.match === "mapping"
+          ? claim.existingShopify?.managedResources
+          : resolvedProduct.product
+            ? {
+                tags: resolvedProduct.product.tags,
+                mediaIds: resolvedProduct.product.images?.flatMap((media) => media.id ? [media.id] : []) ?? [],
+                variantIds: resolvedProduct.product.variants.map((variant) => variant.id),
+              }
+            : undefined;
+        lastSyncedChecksum = existingProductId
+          ? claim.existingShopify?.normalizedChecksum
+          : undefined;
+        didResolveShopifyProduct = true;
+      }
+
+      let syncResult: ShopifySyncProductResult;
+      if (existingProductId && lastSyncedChecksum === finalChecksum) {
+        syncResult = {
+          success: true,
+          sourceId: seoProduct.id,
+          productId: existingProductId,
+          productHandle: existingProductHandle,
+          title: seoProduct.title || seoProduct.sourceTitle || "Custom Product",
+          variantsCount: Array.isArray(seoProduct.variants) ? seoProduct.variants.length : 0,
+          mediaCount: Array.isArray(seoProduct.media) ? seoProduct.media.length : 0,
+          assetsUploadedCount: 0,
+          metafieldSet: Boolean(seoProduct.customization),
+          dryRun: false,
+          warnings: [],
+          managedResources: existingManagedResources,
+        };
+      } else {
+        const gateway = createShopifyGatewayAdapter(proxyStoreId, {
+          runner,
+          mode: "apply",
+          getRequestId: (operation) => `pipeline-${claim.id}-${finalChecksum}-${operation}`,
+        });
+        syncResult = await syncSingleProduct(fromCustomizationNormalizerProduct(seoProduct), {
+          gateway,
+          existingProductId,
+          existingManagedResources,
+        });
+        if (!syncResult.success) {
+          if (isProxyOrNetworkFailure(syncResult.error || "")) {
+            proxyCooldownUntil.set(proxyStoreId, Date.now() + 30_000);
+          }
+          await failClaim(claim, workerId, new Error(syncResult.error || "Shopify sync failed."), {
+            retryable: !syncResult.reconciliationRequired,
+            reconciliationRequired: syncResult.reconciliationRequired,
+            phase: "shopify",
+          });
+          return;
+        }
+      }
+
+      if (syncResult.productId) {
+        await postJson(`/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/shopify-checkpoint`, {
+          workerId,
+          storeId,
+          normalizedChecksum: finalChecksum,
+          shopify: {
+            productId: syncResult.productId,
+            productHandle: syncResult.productHandle,
+            managedResources: syncResult.managedResources ?? existingManagedResources ?? {},
+          },
+        });
+      }
+      existingProductId = syncResult.productId ?? existingProductId;
+      existingProductHandle = syncResult.productHandle ?? existingProductHandle;
+      existingManagedResources = syncResult.managedResources ?? existingManagedResources;
+      lastSyncedChecksum = finalChecksum;
+      try {
+        await registerSeoContentKeywords(seoInput, seoExecution);
+      } catch (error: unknown) {
+        if (error instanceof CorpusRevisionConflictError && corpusAttempt < 2) {
+          reconciliationWarnings.push(
+            `SEO corpus revision changed; regenerated SEO content (attempt ${corpusAttempt + 2}/3).`,
+          );
+          continue;
+        }
+        await failClaim(claim, workerId, error, {
+          retryable: !(error instanceof CorpusRevisionConflictError),
+          phase: "seo",
+        });
+        return;
+      }
+
+      await postJson(`/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/complete`, {
+        workerId,
+        storeId,
+        normalizedChecksum: finalChecksum,
+        normalizedProduct: seoProduct,
+        shopify: {
+          ...syncResult,
+          seo: seoSummary,
+          noOp: lastSyncedChecksum === claim.existingShopify?.normalizedChecksum,
+          warnings: [...syncResult.warnings, ...reconciliationWarnings],
+          storeId,
+          adminUrl: existingProductId
+            ? `https://admin.shopify.com/store/${shopAdminHandle}/products/${existingProductId.split("/").pop() ?? ""}`
+            : undefined,
+          attempts: claim.attempt,
+          proxyProfile,
+          assetsNormalized,
+          managedResources: existingManagedResources ?? {},
+        },
       });
       return;
     }
-    await postJson(`/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/complete`, {
-      workerId,
-      storeId,
-      normalizedChecksum,
-      normalizedProduct,
-      shopify: {
-        ...syncResult,
-        warnings: [...syncResult.warnings, ...reconciliationWarnings],
-        storeId,
-        adminUrl: syncResult.productId
-          ? `https://admin.shopify.com/store/${shopAdminHandle}/products/${syncResult.productId.split("/").pop() ?? ""}`
-          : undefined,
-        attempts: claim.attempt,
-        proxyProfile,
-        assetsNormalized,
-        managedResources: syncResult.managedResources ?? {},
-      },
-    });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
     if (isProxyOrNetworkFailure(message)) {
@@ -316,6 +401,7 @@ async function processClaim(
     await failClaim(claim, workerId, error, {
       retryable: !reconciliationRequired,
       reconciliationRequired,
+      phase: "shopify",
     });
   } finally {
     clearInterval(heartbeat);

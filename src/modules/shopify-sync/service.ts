@@ -118,6 +118,8 @@ export async function syncSingleProduct(
     const productWriteInput = {
       title: product.title,
       descriptionHtml: product.descriptionHtml,
+      handle: product.handle,
+      seo: product.seo,
       vendor: product.vendor,
       productType: product.productType,
       tags: [

@@ -2836,6 +2836,8 @@ test("Shopify gateway adapter preserves manual tags and tracks only crawler-mana
   const updated = await adapter.updateProduct?.({
     productId: "gid://shopify/Product/managed",
     title: "Managed product",
+    handle: "managed-product-seo",
+    seo: { title: "Managed SEO title", description: "Managed SEO description" },
     descriptionHtml: "<p>Managed</p>",
     tags: ["new-crawler-tag"],
     media: [{ originalSource: "https://amazon/new.jpg", mediaContentType: "IMAGE" }],
@@ -2851,6 +2853,11 @@ test("Shopify gateway adapter preserves manual tags and tracks only crawler-mana
   const updateInput = updatePayloads[0];
   assert.ok(updateInput && updateInput.operation === "products.update");
   assert.deepEqual(updateInput.payload.product.tags, ["manual-tag", "new-crawler-tag"]);
+  assert.equal(updateInput.payload.product.handle, "managed-product-seo");
+  assert.deepEqual(updateInput.payload.product.seo, {
+    title: "Managed SEO title",
+    description: "Managed SEO description",
+  });
   assert.deepEqual(updateInput.payload.product.mediaIdsToDelete, ["gid://shopify/MediaImage/old"]);
   assert.deepEqual(updateInput.payload.product.variantIdsToManage, ["gid://shopify/ProductVariant/old"]);
   assert.deepEqual(updated.managedResources, {

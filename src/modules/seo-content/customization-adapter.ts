@@ -1,6 +1,7 @@
 import type { CrawlProduct, CustomizationNormalizerOutput } from "../customization-normalizer";
 import { runSeoContent } from "./service";
 import type {
+  SeoContentAltOnlyOutput,
   SeoContentImageInput,
   SeoContentInput,
   SeoContentOutput,
@@ -90,7 +91,12 @@ export function fromCustomizationProduct(
 
   if (Array.isArray(product.media)) {
     for (const item of product.media) {
-      if (item && typeof item.url === "string" && item.url.trim().length > 0) {
+      if (
+        item
+        && String(item.kind ?? "image").toLowerCase() !== "video"
+        && typeof item.url === "string"
+        && item.url.trim().length > 0
+      ) {
         const trimmedUrl = item.url.trim();
         if (!seenUrls.has(trimmedUrl)) {
           seenUrls.add(trimmedUrl);
@@ -114,6 +120,30 @@ export function fromCustomizationProduct(
     handle,
     ...(product.id ? { productId: product.id } : {}),
     ...(product.canonicalUrl ? { url: product.canonicalUrl } : {}),
+  };
+}
+
+export function applySeoContentToCustomizationProduct(
+  product: CrawlProduct,
+  seoOutput: SeoContentOutput | SeoContentAltOnlyOutput,
+): CrawlProduct {
+  const altBySourceUrl = new Map(
+    seoOutput.images.map((image) => [image.sourceUrl, image.alt] as const),
+  );
+  return {
+    ...product,
+    title: seoOutput.productTitle,
+    descriptionHtml: seoOutput.productDescription,
+    handle: seoOutput.productHandle,
+    seo: {
+      title: seoOutput.productSeoTitle,
+      description: seoOutput.productSeoDescription,
+    },
+    media: product.media?.map((media) => {
+      if (String(media.kind ?? "image").toLowerCase() === "video") return { ...media };
+      const alt = altBySourceUrl.get(media.url.trim());
+      return alt ? { ...media, alt } : { ...media };
+    }),
   };
 }
 

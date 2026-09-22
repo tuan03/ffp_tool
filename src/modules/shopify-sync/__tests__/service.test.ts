@@ -40,12 +40,20 @@ test("fromCustomizationNormalizerProduct adapts normalized crawl product into Sh
     canonicalUrl: "https://amazon.com/dp/B0GQ33XWW7",
     title: "Personalized Handbag - C01",
     description: "A great bag",
+    descriptionHtml: "<p>SEO description without re-escaping</p>",
+    handle: "seo-handbag-c01",
+    seo: { title: "SEO Handbag", description: "Personalized handbag SEO description" },
     bulletPoints: ["Feature 1"],
     media: [
       {
         url: "https://m.media-amazon.com/images/I/71xyz.jpg",
         alt: "Personalized Handbag - C01 - Image 1",
         friendlyFileName: "media-img-1.jpg",
+      },
+      {
+        url: "https://m.media-amazon.com/images/I/video.mp4",
+        kind: "VIDEO",
+        alt: "Product video",
       },
     ],
     variants: [
@@ -73,6 +81,12 @@ test("fromCustomizationNormalizerProduct adapts normalized crawl product into Sh
 
   assertStrict.equal(adapted.id, "prod-100");
   assertStrict.equal(adapted.title, "Personalized Handbag - C01");
+  assertStrict.equal(adapted.descriptionHtml, "<p>SEO description without re-escaping</p>");
+  assertStrict.equal(adapted.handle, "seo-handbag-c01");
+  assertStrict.deepEqual(adapted.seo, {
+    title: "SEO Handbag",
+    description: "Personalized handbag SEO description",
+  });
   assertStrict.ok(adapted.tags?.includes("has-customizer"));
   assertStrict.ok(adapted.tags?.includes("asin:B0GQ33XWW7"));
   assertStrict.equal(adapted.media?.length, 1);

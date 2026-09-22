@@ -20,6 +20,15 @@ export interface B6Dependencies {
   readonly processorOptions?: ImageProcessorOptions;
 }
 
+export function createB6ImageProcessingStage(
+  dependencies?: B6Dependencies,
+): SeoPipelineStage {
+  return {
+    name: "b6",
+    execute: (context) => executeB6ImageProcessing(context, dependencies),
+  };
+}
+
 /**
  * Maps the accumulated pipeline context into the focused ImageProcessingInput.
  */

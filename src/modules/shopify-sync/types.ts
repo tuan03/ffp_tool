@@ -4,6 +4,11 @@ export interface ShopifyCredentials {
   readonly apiVersion?: string;
 }
 
+export interface ShopifySeoInput {
+  readonly title: string;
+  readonly description: string;
+}
+
 export interface ShopifySyncOptions {
   readonly dryRun?: boolean;
   readonly credentials?: ShopifyCredentials;
@@ -73,6 +78,8 @@ export interface ShopifySyncProductInput {
   readonly sourceKey?: string;
   readonly title: string;
   readonly descriptionHtml: string;
+  readonly handle?: string;
+  readonly seo?: ShopifySeoInput;
   readonly vendor?: string;
   readonly productType?: string;
   readonly tags?: readonly string[];
@@ -117,6 +124,8 @@ export interface ShopifySyncBatchOutput {
 
 export interface CreateProductInput {
   readonly title: string;
+  readonly handle?: string;
+  readonly seo?: ShopifySeoInput;
   readonly status?: "ACTIVE" | "ARCHIVED" | "DRAFT";
   readonly descriptionHtml: string;
   readonly vendor?: string;

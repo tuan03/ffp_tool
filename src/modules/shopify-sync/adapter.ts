@@ -90,10 +90,15 @@ export function fromCustomizationNormalizerProduct(
   product: CrawlProduct,
 ): ShopifySyncProductInput {
   const title = product.title || product.sourceTitle || "Custom Product";
-  const descriptionHtml = buildProductDescriptionHtml(product);
+  const descriptionHtml = typeof product.descriptionHtml === "string"
+    ? product.descriptionHtml
+    : buildProductDescriptionHtml(product);
+  const seo = product.seo && typeof product.seo === "object"
+    ? product.seo as { readonly title?: unknown; readonly description?: unknown }
+    : undefined;
 
   const media: ShopifyMediaInput[] = (product.media || [])
-    .filter((item: ProductMediaItem) => item.kind !== "video")
+    .filter((item: ProductMediaItem) => String(item.kind ?? "image").toLowerCase() !== "video")
     .map((item: ProductMediaItem) => ({
       originalSource: item.url,
       alt: item.alt || title,
@@ -181,6 +186,10 @@ export function fromCustomizationNormalizerProduct(
     sourceKey: typeof product.sourceKey === "string" ? product.sourceKey : product.id,
     title,
     descriptionHtml,
+    handle: typeof product.handle === "string" ? product.handle : undefined,
+    seo: typeof seo?.title === "string" && typeof seo.description === "string"
+      ? { title: seo.title, description: seo.description }
+      : undefined,
     vendor: "FFP Store",
     productType,
     tags: Array.from(tags),

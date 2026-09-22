@@ -37,7 +37,9 @@ const DEFAULT_CONSTRAINTS: ContentConstraints = {
   preserveExistingHandle: true,
 };
 
-export function createDefaultB5Generator(): FallbackContentGenerator | HeuristicContentGenerator {
+export function createDefaultB5Generator(options?: {
+  readonly onFallback?: (reason: string, error?: unknown) => void;
+}): FallbackContentGenerator | HeuristicContentGenerator {
   const heuristic = new HeuristicContentGenerator();
   const projectId = process.env.GOOGLE_CLOUD_PROJECT;
 
@@ -45,7 +47,7 @@ export function createDefaultB5Generator(): FallbackContentGenerator | Heuristic
     try {
       const vertexSdk = new GoogleGenAIVertexContentGenerator({ projectId });
       const geminiGenerator = new GeminiSeoContentGenerator(vertexSdk);
-      return new FallbackContentGenerator(geminiGenerator, heuristic);
+      return new FallbackContentGenerator(geminiGenerator, heuristic, options?.onFallback);
     } catch {
       return heuristic;
     }
@@ -153,3 +155,12 @@ export const b5ContentGenerationStage: SeoPipelineStage = {
   name: "b5",
   execute: executeB5ContentGeneration,
 };
+
+export function createB5ContentGenerationStage(
+  options: B5ContentGenerationOptions = {},
+): SeoPipelineStage {
+  return {
+    name: "b5",
+    execute: (context) => executeB5ContentGeneration(context, options),
+  };
+}

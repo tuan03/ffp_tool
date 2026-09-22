@@ -64,7 +64,7 @@ export interface AmazonCrawlerBrowserPoolProgress {
 }
 
 export interface AmazonCrawlerProgress {
-  phase: "queued" | "product" | "variant_matrix" | "customization" | "normalization" | "shopify" | "export" | "captcha";
+  phase: "queued" | "product" | "variant_matrix" | "customization" | "normalization" | "seo" | "shopify" | "export" | "captcha";
   completed: number;
   total: number;
   message: string;
@@ -76,6 +76,7 @@ export interface AmazonCrawlerProgress {
 export type ProductPipelineStatus =
   | "received"
   | "normalizing"
+  | "seo"
   | "syncing"
   | "retry_wait"
   | "completed"
@@ -88,6 +89,14 @@ export interface ProductPipelineMetadata {
   normalization: {
     status: "pending" | "running" | "completed";
     assetsNormalized: number;
+  };
+  seo: {
+    status: "pending" | "running" | "completed" | "failed";
+    engine?: "gemini" | "heuristic" | "mixed";
+    fieldsApplied?: string[];
+    fallbackStages?: string[];
+    warnings?: string[];
+    error?: string | null;
   };
   shopify: {
     storeId?: string;
@@ -113,6 +122,7 @@ export interface ProductMedia {
   url: string;
   kind: "image" | "video";
   sourceAsin?: string;
+  alt?: string;
 }
 
 export interface PriceInference {
@@ -234,6 +244,12 @@ export interface AmazonCrawlerProduct {
   sourceTitle: string;
   title: string;
   description: string | null;
+  descriptionHtml?: string;
+  handle?: string;
+  seo?: {
+    title: string;
+    description: string;
+  };
   bulletPoints: string[];
   categories: string[];
   productDetails: Record<string, string>;

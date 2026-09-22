@@ -457,6 +457,54 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
             worker_id=str(payload.get("workerId") or ""),
             normalized_payload=normalized,
             proxy_profile=str(payload.get("proxyProfile") or ""),
+            seo_summary=payload.get("seo") if isinstance(payload.get("seo"), dict) else None,
+        )
+        if not updated:
+            raise HTTPException(status_code=409, detail="Pipeline item claim is stale.")
+        return {"status": "syncing"}
+
+    @app.post("/api/v1/internal/product-pipeline/{item_id}/seo")
+    def mark_product_seo(
+        item_id: str,
+        payload: dict[str, Any],
+        x_pipeline_key: str | None = Header(default=None, alias="X-Pipeline-Key"),
+    ) -> dict[str, Any]:
+        require_pipeline_key(x_pipeline_key)
+        normalized = payload.get("normalizedProduct")
+        seo_summary = payload.get("seo")
+        if not isinstance(normalized, dict) or not isinstance(seo_summary, dict):
+            raise HTTPException(status_code=422, detail="normalizedProduct and seo are required.")
+        updated = store.mark_product_seo(
+            item_id,
+            worker_id=str(payload.get("workerId") or ""),
+            normalized_payload=normalized,
+            seo_summary=seo_summary,
+        )
+        if not updated:
+            raise HTTPException(status_code=409, detail="Pipeline item claim is stale.")
+        return {"status": "seo"}
+
+    @app.post("/api/v1/internal/product-pipeline/{item_id}/shopify-checkpoint")
+    def checkpoint_shopify_product(
+        item_id: str,
+        payload: dict[str, Any],
+        x_pipeline_key: str | None = Header(default=None, alias="X-Pipeline-Key"),
+    ) -> dict[str, Any]:
+        require_pipeline_key(x_pipeline_key)
+        shopify_result = payload.get("shopify")
+        store_id = str(payload.get("storeId") or "").strip()
+        normalized_checksum = str(payload.get("normalizedChecksum") or "").strip()
+        if not isinstance(shopify_result, dict) or not store_id or not normalized_checksum:
+            raise HTTPException(
+                status_code=422,
+                detail="storeId, normalizedChecksum and shopify are required.",
+            )
+        updated = store.checkpoint_shopify_product(
+            item_id,
+            worker_id=str(payload.get("workerId") or ""),
+            store_id=store_id,
+            normalized_checksum=normalized_checksum,
+            shopify_result=shopify_result,
         )
         if not updated:
             raise HTTPException(status_code=409, detail="Pipeline item claim is stale.")

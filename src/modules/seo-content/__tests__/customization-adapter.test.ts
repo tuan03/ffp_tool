@@ -3,6 +3,7 @@ import test from "node:test";
 
 import type { CrawlProduct, CustomizationNormalizerOutput } from "../../customization-normalizer";
 import {
+  applySeoContentToCustomizationProduct,
   fromCustomizationBatch,
   fromCustomizationProduct,
   runCustomizationSeoPipeline,
@@ -56,6 +57,55 @@ test("fromCustomizationProduct: handles sparse product, falls back to default ni
   assert.equal(seoInput.images.length, 1);
   assert.equal(seoInput.images[0].url, "https://example.com/clock.png");
   assert.equal(seoInput.handle, "");
+});
+
+test("SEO adapter excludes video input and only applies SEO-owned product fields", () => {
+  const variants = [{ id: "variant-1", price: { amount: 29.95 } }];
+  const customization = { hasCustomization: true, textInputs: [{ id: "name" }] };
+  const product: CrawlProduct = {
+    ...sampleProductA,
+    sourceTitle: "Original Amazon title",
+    variants,
+    customization,
+    media: [
+      { url: " https://example.com/image.jpg ", kind: "image", alt: "Old alt", sourceAsin: "B09MUSIC01" },
+      { url: "https://example.com/image.jpg", kind: "image", alt: "Old duplicate alt", sourceAsin: "B09MUSIC02" },
+      { url: "https://example.com/video.mp4", kind: "video", alt: "Video alt", sourceAsin: "B09MUSIC01" },
+      { url: "https://example.com/video-uppercase.mp4", kind: "VIDEO", alt: "Upper video alt", sourceAsin: "B09MUSIC02" },
+    ],
+  };
+  const seoInput = fromCustomizationProduct(product);
+  assert.deepEqual(seoInput.images.map((image) => image.url), ["https://example.com/image.jpg"]);
+
+  const enriched = applySeoContentToCustomizationProduct(product, {
+    productTitle: "SEO product title",
+    productDescription: "<p>SEO description</p>",
+    productSeoTitle: "SEO meta title",
+    productSeoDescription: "SEO meta description",
+    productHandle: "seo-product-handle",
+    images: [{
+      sourceUrl: "https://example.com/image.jpg",
+      alt: "SEO image alt 1",
+      webp: { filename: "ignored.webp", data: Buffer.from("not-public") },
+    }],
+  });
+
+  assert.equal(enriched.title, "SEO product title");
+  assert.equal(enriched.descriptionHtml, "<p>SEO description</p>");
+  assert.equal(enriched.handle, "seo-product-handle");
+  assert.deepEqual(enriched.seo, { title: "SEO meta title", description: "SEO meta description" });
+  assert.equal(enriched.sourceTitle, "Original Amazon title");
+  assert.deepEqual(enriched.variants, variants);
+  assert.deepEqual(enriched.customization, customization);
+  assert.equal(enriched.media?.[0].alt, "SEO image alt 1");
+  assert.equal(enriched.media?.[0].url, " https://example.com/image.jpg ");
+  assert.equal(enriched.media?.[0].sourceAsin, "B09MUSIC01");
+  assert.equal(enriched.media?.[1].alt, "SEO image alt 1");
+  assert.equal(enriched.media?.[1].sourceAsin, "B09MUSIC02");
+  assert.equal(enriched.media?.[2].alt, "Video alt");
+  assert.equal(enriched.media?.[3].alt, "Upper video alt");
+  assert.equal("webp" in (enriched.media?.[0] ?? {}), false);
+  assert.equal(JSON.stringify(enriched).includes("not-public"), false);
 });
 
 test("fromCustomizationBatch: converts array and CustomizationNormalizerOutput", () => {

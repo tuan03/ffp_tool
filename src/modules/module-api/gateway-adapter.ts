@@ -152,6 +152,8 @@ export function createShopifyGatewayAdapter(
         payload: {
           product: {
             title: input.title,
+            handle: input.handle,
+            seo: input.seo,
             status: input.status,
             descriptionHtml: input.descriptionHtml,
             vendor: input.vendor,
@@ -226,6 +228,8 @@ export function createShopifyGatewayAdapter(
           id: input.productId,
           product: {
             title: input.title,
+            handle: input.handle,
+            seo: input.seo,
             descriptionHtml: input.descriptionHtml,
             vendor: input.vendor,
             productType: input.productType,

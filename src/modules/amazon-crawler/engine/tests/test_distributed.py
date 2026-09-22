@@ -1005,6 +1005,58 @@ class CoordinatorStoreTests(unittest.TestCase):
         self.assertTrue(completed)
         self.assertEqual(second_claim["existingShopify"]["productId"], "gid://shopify/Product/123")
 
+    def test_shopify_checkpoint_prevents_duplicate_create_when_corpus_commit_retries(self) -> None:
+        source_key = "amazon:B0FR4MSS2H:design:ocean"
+        product = {"id": "product-ocean", "sourceKey": source_key, "title": "Ocean"}
+        job = self.store.create_job({"urls": ["B0FR4MSS2H"]})
+        self.store.register_client(client_hello(slots=1))
+        lease = self.store.lease_tasks("client-a", 1)[0]
+        self.store.accept_product(
+            lease["taskId"], "client-a", lease["leaseId"], source_key, "checksum-1",
+            {"jobId": job["id"], "product": product, "productChecksum": "checksum-1"},
+        )
+        claim = self.store.claim_product_items(worker_id="worker-1", store_id="store-1", limit=1)[0]
+        self.assertTrue(self.store.mark_product_seo(
+            claim["id"],
+            worker_id="worker-1",
+            normalized_payload=product,
+            seo_summary={"status": "running"},
+        ))
+        self.assertTrue(self.store.mark_product_syncing(
+            claim["id"],
+            worker_id="worker-1",
+            normalized_payload={**product, "title": "Ocean SEO"},
+            proxy_profile="proxy-1",
+            seo_summary={"status": "completed", "engine": "heuristic"},
+        ))
+
+        self.assertTrue(self.store.checkpoint_shopify_product(
+            claim["id"],
+            worker_id="worker-1",
+            store_id="store-1",
+            normalized_checksum="seo-checksum-1",
+            shopify_result={
+                "productId": "gid://shopify/Product/123",
+                "productHandle": "ocean-seo",
+                "managedResources": {"tags": [source_key]},
+            },
+        ))
+        self.assertEqual(self.store.fail_product_item(
+            claim["id"],
+            worker_id="worker-1",
+            store_id="store-1",
+            error={"message": "Corpus revision changed.", "phase": "seo"},
+            retryable=True,
+            reconciliation_required=False,
+        ), "retry_wait")
+        with self.sessions.begin() as session:
+            item = session.get(CrawlProductItem, claim["id"])
+            item.next_attempt_at = utc_now() - timedelta(seconds=1)
+
+        retry_claim = self.store.claim_product_items(worker_id="worker-2", store_id="store-1", limit=1)[0]
+        self.assertEqual(retry_claim["existingShopify"]["productId"], "gid://shopify/Product/123")
+        self.assertEqual(retry_claim["existingShopify"]["normalizedChecksum"], "seo-checksum-1")
+
     def test_completed_product_discards_raw_payload_but_keeps_temporary_normalized_result(self) -> None:
         job = self.store.create_job({"urls": ["B0FR4MSS2H"]})
         self.store.register_client(client_hello(slots=1))
@@ -1179,6 +1231,44 @@ class CoordinatorStoreTests(unittest.TestCase):
         self.assertEqual(reconciliation_retry["retried"], 1)
         self.assertEqual(reconciliation_retry["status"], "running")
 
+    def test_seo_failure_is_public_and_does_not_advance_to_shopify(self) -> None:
+        job = self.store.create_job({"urls": ["B0FR4MSS2H"]})
+        self.store.register_client(client_hello(slots=1))
+        lease = self.store.lease_tasks("client-a", 1)[0]
+        product = {
+            "id": "product-ocean",
+            "sourceKey": "amazon:B0FR4MSS2H:design:ocean",
+            "title": "Ocean",
+        }
+        self.store.accept_product(
+            lease["taskId"], "client-a", lease["leaseId"], product["sourceKey"], "checksum-1",
+            {"jobId": job["id"], "product": product, "productChecksum": "checksum-1"},
+        )
+        claim = self.store.claim_product_items(worker_id="worker-1", store_id="store-1", limit=1)[0]
+        self.assertTrue(self.store.mark_product_seo(
+            claim["id"],
+            worker_id="worker-1",
+            normalized_payload=product,
+            seo_summary={"status": "running"},
+        ))
+
+        status = self.store.fail_product_item(
+            claim["id"],
+            worker_id="worker-1",
+            store_id="store-1",
+            error={"message": "SEO output validation failed.", "phase": "seo"},
+            retryable=True,
+            reconciliation_required=False,
+        )
+        public_product = self.store.job_products(str(job["id"]))["products"][0]
+
+        self.assertEqual(status, "retry_wait")
+        self.assertEqual(public_product["pipeline"]["status"], "retry_wait")
+        self.assertEqual(public_product["pipeline"]["seo"]["status"], "failed")
+        self.assertEqual(public_product["pipeline"]["seo"]["error"], "SEO output validation failed.")
+        self.assertIsNone(public_product["pipeline"]["shopify"].get("productId"))
+        self.assertEqual(self.store.get_job(str(job["id"]))["progress"]["phase"], "seo")
+
 
 class CoordinatorDatabaseTests(unittest.TestCase):
     def test_sqlite_database_parent_is_created_for_local_development(self) -> None:
@@ -1257,6 +1347,19 @@ class CoordinatorApiTests(unittest.TestCase):
                     json={"workerId": "shopify-worker-1", "storeId": "store-test", "limit": 1},
                 ).json()["items"][0]
                 self.assertEqual(claimed["sourceKey"], "amazon:UNKNOWN:none:none")
+                seo = client.post(
+                    f"/api/v1/internal/product-pipeline/{claimed['id']}/seo",
+                    json={
+                        "workerId": "shopify-worker-1",
+                        "normalizedProduct": {"id": "product-1", "title": "Amazon title"},
+                        "seo": {"status": "running"},
+                    },
+                )
+                self.assertEqual(seo.status_code, 200)
+                self.assertEqual(
+                    client.get(f"/api/v1/crawl-jobs/{job['id']}").json()["progress"]["phase"],
+                    "seo",
+                )
                 syncing = client.post(
                     f"/api/v1/internal/product-pipeline/{claimed['id']}/syncing",
                     json={
@@ -1266,6 +1369,20 @@ class CoordinatorApiTests(unittest.TestCase):
                     },
                 )
                 self.assertEqual(syncing.status_code, 200)
+                checkpoint = client.post(
+                    f"/api/v1/internal/product-pipeline/{claimed['id']}/shopify-checkpoint",
+                    json={
+                        "workerId": "shopify-worker-1",
+                        "storeId": "store-test",
+                        "normalizedChecksum": "normalized-checksum-1",
+                        "shopify": {
+                            "productId": "gid://shopify/Product/1",
+                            "productHandle": "amazon-title",
+                            "managedResources": {},
+                        },
+                    },
+                )
+                self.assertEqual(checkpoint.status_code, 200)
                 completed = client.post(
                     f"/api/v1/internal/product-pipeline/{claimed['id']}/complete",
                     json={
@@ -1276,6 +1393,16 @@ class CoordinatorApiTests(unittest.TestCase):
                         "shopify": {
                             "productId": "gid://shopify/Product/1",
                             "productHandle": "amazon-title",
+                            "seo": {
+                                "status": "completed",
+                                "engine": "heuristic",
+                                "fieldsApplied": ["title", "media.alt"],
+                                "fallbackStages": [],
+                                "warnings": [],
+                                "approvedKeywords": ["internal keyword"],
+                                "approvedEmbeddings": {"internal keyword": [0.1, 0.2]},
+                                "corpusRevision": 7,
+                            },
                             "warnings": [],
                         },
                     },
@@ -1288,6 +1415,11 @@ class CoordinatorApiTests(unittest.TestCase):
                 self.assertEqual(export.json()["jobId"], job["id"])
                 self.assertEqual(export.json()["statistics"]["products"], 1)
                 self.assertEqual(export.json()["products"][0]["pipeline"]["status"], "completed")
+                self.assertEqual(export.json()["products"][0]["pipeline"]["seo"]["status"], "completed")
+                self.assertEqual(export.json()["products"][0]["pipeline"]["seo"]["engine"], "heuristic")
+                self.assertNotIn("approvedKeywords", export.json()["products"][0]["pipeline"]["seo"])
+                self.assertNotIn("approvedEmbeddings", export.json()["products"][0]["pipeline"]["seo"])
+                self.assertNotIn("corpusRevision", export.json()["products"][0]["pipeline"]["seo"])
                 self.assertNotIn("taskResults", export.json())
 
     def test_cache_clear_requires_a_connected_client(self) -> None:

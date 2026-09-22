@@ -30,6 +30,7 @@ export type {
   ShopifyManagedResources,
   ShopifyMediaInput,
   ShopifyProductCustomizerInput,
+  ShopifySeoInput,
   ShopifySyncBatchInput,
   ShopifySyncBatchOutput,
   ShopifySyncOptions,

@@ -10,6 +10,7 @@ import type {
 import type {
   SearchSuggestionsCollector,
 } from "../search-suggestions/search-suggestions-collector";
+import type { GoogleSuggestClient } from "../search-suggestions/google-suggest-client";
 
 export interface B3SearchSuggestionsDependencies {
   readonly collector?: SearchSuggestionsCollector;
@@ -27,7 +28,10 @@ export interface B3SearchSuggestionsDependencies {
  * defaults safely to FallbackSearchSuggestionsCollector to preserve the zero-network
  * determinism invariant unless SEO_SEARCH_PROVIDER="google" is explicitly configured.
  */
-export function createDefaultSearchSuggestionsCollector(): SearchSuggestionsCollector {
+export function createDefaultSearchSuggestionsCollector(options?: {
+  readonly client?: GoogleSuggestClient;
+  readonly onPartialFailure?: (failedCount: number, totalCount: number) => void;
+}): SearchSuggestionsCollector {
   const env = typeof process !== "undefined" && process.env ? process.env : undefined;
 
   const provider = env?.SEO_SEARCH_PROVIDER?.toLowerCase();
@@ -36,7 +40,7 @@ export function createDefaultSearchSuggestionsCollector(): SearchSuggestionsColl
     provider === "offline" ||
     provider === "fallback";
 
-  if (isExplicitlyDisabled) {
+  if (isExplicitlyDisabled && !options?.client) {
     return new FallbackSearchSuggestionsCollector();
   }
 
@@ -54,13 +58,14 @@ export function createDefaultSearchSuggestionsCollector(): SearchSuggestionsColl
 
   const isTestEnvironment = env?.NODE_ENV === "test" || isTestRunner;
 
-  if (isTestEnvironment && provider !== "google") {
+  if (isTestEnvironment && provider !== "google" && !options?.client) {
     return new FallbackSearchSuggestionsCollector();
   }
 
-  const client = new UnofficialGoogleSuggestClient();
+  const client = options?.client ?? new UnofficialGoogleSuggestClient();
   return new GoogleSearchSuggestionsCollector({
     client,
+    onPartialFailure: options?.onPartialFailure,
   });
 }
 

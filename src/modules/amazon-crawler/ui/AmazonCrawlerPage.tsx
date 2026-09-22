@@ -68,6 +68,7 @@ function progressPhaseLabel(phase: AmazonCrawlerProgress["phase"]): string {
     variant_matrix: "Quét variant matrix",
     customization: "Amazon Customize",
     normalization: "Chuẩn hóa",
+    seo: "Tạo nội dung SEO",
     shopify: "Đẩy Shopify",
     captcha: "Chờ CAPTCHA",
     export: "Xuất JSON",
@@ -441,7 +442,7 @@ export function AmazonCrawlerPage({ clearAmazonCrawlerCache, loadAmazonCrawlerCl
                         <span className="mt-1 flex flex-wrap gap-1 text-[11px]">
                           {product.customization ? <span className="rounded bg-violet-900/60 px-1.5 py-0.5 text-violet-200">Customize</span> : null}
                           {product.preset ? <span className="rounded bg-cyan-900/60 px-1.5 py-0.5 text-cyan-200">{product.preset}</span> : null}
-                          {product.pipeline ? <span className={`rounded px-1.5 py-0.5 ${product.pipeline.status === "completed" ? "bg-emerald-900/60 text-emerald-200" : product.pipeline.status === "failed" || product.pipeline.status === "reconciliation_required" ? "bg-rose-900/60 text-rose-200" : "bg-blue-900/60 text-blue-200"}`}>Shopify: {product.pipeline.status}</span> : null}
+                          {product.pipeline ? <span className={`rounded px-1.5 py-0.5 ${product.pipeline.status === "completed" ? "bg-emerald-900/60 text-emerald-200" : product.pipeline.status === "failed" || product.pipeline.status === "reconciliation_required" ? "bg-rose-900/60 text-rose-200" : "bg-blue-900/60 text-blue-200"}`}>Pipeline: {product.pipeline.status}</span> : null}
                           {product.warnings.length ? <span className="rounded bg-amber-900/60 px-1.5 py-0.5 text-amber-200">{product.warnings.length} warning</span> : null}
                         </span>
                       </span>
@@ -477,11 +478,15 @@ export function AmazonCrawlerPage({ clearAmazonCrawlerCache, loadAmazonCrawlerCl
                         <div><dt className="text-slate-500">Matrix</dt><dd>{selectedProduct.variantMatrix.discoveredCount}/{selectedProduct.variantMatrix.expectedCount} · {selectedProduct.variantMatrix.complete ? "Complete" : "Incomplete"}</dd></div>
                         <div><dt className="text-slate-500">Preset</dt><dd>{selectedProduct.preset ?? "—"}</dd></div>
                         <div><dt className="text-slate-500">Pipeline</dt><dd>{selectedProduct.pipeline?.status ?? "Chưa nhận"}</dd></div>
+                        <div><dt className="text-slate-500">SEO</dt><dd>{selectedProduct.pipeline?.seo.status ?? "pending"}{selectedProduct.pipeline?.seo.engine ? ` · ${selectedProduct.pipeline.seo.engine}` : ""}</dd></div>
                         <div><dt className="text-slate-500">Proxy Shopify</dt><dd>{selectedProduct.pipeline?.shopify.proxyProfile ?? "—"}</dd></div>
                       </dl>
                       <a className="mt-4 inline-block text-sm font-semibold text-cyan-300 hover:text-cyan-200" href={selectedProduct.canonicalUrl} rel="noreferrer" target="_blank">Mở trên Amazon ↗</a>
                       {selectedProduct.pipeline?.shopify.adminUrl ? <a className="ml-4 mt-4 inline-block text-sm font-semibold text-emerald-300 hover:text-emerald-200" href={selectedProduct.pipeline.shopify.adminUrl} rel="noreferrer" target="_blank">Mở trên Shopify ↗</a> : null}
                       {selectedProduct.pipeline?.shopify.error ? <p className="mt-3 rounded-lg border border-rose-800 bg-rose-950/30 p-3 text-sm text-rose-200">Shopify: {selectedProduct.pipeline.shopify.error}</p> : null}
+                      {selectedProduct.pipeline?.seo.fallbackStages?.length ? <p className="mt-3 rounded-lg border border-amber-800 bg-amber-950/30 p-3 text-sm text-amber-200">SEO fallback: {selectedProduct.pipeline.seo.fallbackStages.join(", ")}</p> : null}
+                      {selectedProduct.pipeline?.seo.warnings?.map((warning) => <p key={warning} className="mt-3 rounded-lg border border-amber-800 bg-amber-950/30 p-3 text-sm text-amber-200">SEO: {warning}</p>)}
+                      {selectedProduct.pipeline?.seo.error ? <p className="mt-3 rounded-lg border border-rose-800 bg-rose-950/30 p-3 text-sm text-rose-200">SEO: {selectedProduct.pipeline.seo.error}</p> : null}
                     </div>
                   </div>
 

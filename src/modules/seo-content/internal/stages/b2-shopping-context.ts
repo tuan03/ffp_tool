@@ -27,7 +27,9 @@ export interface B2ShoppingContextDependencies {
  * falling back to HeuristicShoppingContextAnalyzer with an observability warning log.
  * If not configured, uses HeuristicShoppingContextAnalyzer directly.
  */
-export function createDefaultShoppingContextAnalyzer(): ShoppingContextAnalyzer {
+export function createDefaultShoppingContextAnalyzer(options?: {
+  readonly onFallback?: (error: unknown) => void;
+}): ShoppingContextAnalyzer {
   const env = typeof process !== "undefined" && process.env ? process.env : undefined;
   const projectId = env?.GOOGLE_CLOUD_PROJECT;
 
@@ -56,6 +58,7 @@ export function createDefaultShoppingContextAnalyzer(): ShoppingContextAnalyzer 
     primary: geminiAnalyzer,
     fallback: heuristicShoppingContextAnalyzer,
     onFallback: (error, input) => {
+      options?.onFallback?.(error);
       const errMsg = error instanceof Error ? error.message : String(error);
       const title = input.source.title || "untitled";
       console.warn(

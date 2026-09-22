@@ -206,6 +206,7 @@ test("Shopify sync retry resumes polling and returns the refreshed job output", 
         return jsonResponse({ products: [{ ...amazonCrawlerMockOutput.products[0], pipeline: {
           status: snapshotCount > 1 ? "completed" : "syncing",
           normalization: { status: "completed", assetsNormalized: 0 },
+          seo: { status: "completed", engine: "heuristic" },
           shopify: { attempts: 2 },
         } }] });
       }

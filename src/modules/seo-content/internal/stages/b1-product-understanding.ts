@@ -26,7 +26,9 @@ export interface B1ProductUnderstandingDependencies {
  * falling back to HeuristicProductImageAnalyzer with an observability warning log.
  * If not configured, uses HeuristicProductImageAnalyzer directly.
  */
-export function createDefaultProductImageAnalyzer(): ProductImageAnalyzer {
+export function createDefaultProductImageAnalyzer(options?: {
+  readonly onFallback?: (error: unknown) => void;
+}): ProductImageAnalyzer {
   const env = typeof process !== "undefined" && process.env ? process.env : undefined;
   const projectId = env?.GOOGLE_CLOUD_PROJECT;
 
@@ -55,6 +57,7 @@ export function createDefaultProductImageAnalyzer(): ProductImageAnalyzer {
     primary: geminiAnalyzer,
     fallback: heuristicProductImageAnalyzer,
     onFallback: (error, input) => {
+      options?.onFallback?.(error);
       const errMsg = error instanceof Error ? error.message : String(error);
       const target = input.image.url || input.image.localFilePath || "unknown";
       console.warn(
