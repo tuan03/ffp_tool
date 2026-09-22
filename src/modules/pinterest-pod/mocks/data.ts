@@ -1,0 +1,780 @@
+import type {
+  CandidateItem,
+  DeliverablesData,
+  PinterestAuthStatus,
+  PinterestDiscoveryOutput,
+  PinterestPodDeliverables,
+  PinterestProductionOutput,
+  PodCandidate,
+  SummaryMetrics,
+} from "../types";
+
+export const mockPinterestAuthStatus: PinterestAuthStatus = {
+  ok: true,
+  logged_in: true,
+  browser_logged_in: true,
+  status_text: "Pinterest: Đã đăng nhập",
+};
+
+export const initialMockAuthStatus: PinterestAuthStatus = mockPinterestAuthStatus;
+
+/** Helper to create safe inline SVG placeholder data URIs */
+export function createMockSvgDataUri(
+  title: string,
+  subtitle: string,
+  bgColor: string,
+  accentColor: string,
+): string {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="600" height="400" viewBox="0 0 600 400">
+    <defs>
+      <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stop-color="${bgColor}" />
+        <stop offset="100%" stop-color="#090d16" />
+      </linearGradient>
+      <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+        <path d="M 40 0 L 0 0 0 40" fill="none" stroke="${accentColor}" stroke-opacity="0.15" stroke-width="1" />
+      </pattern>
+    </defs>
+    <rect width="600" height="400" fill="url(#g)" />
+    <rect width="600" height="400" fill="url(#grid)" />
+    <circle cx="300" cy="180" r="90" fill="${accentColor}" fill-opacity="0.18" />
+    <rect x="230" y="110" width="140" height="140" rx="16" fill="none" stroke="${accentColor}" stroke-width="3" stroke-dasharray="6,4" />
+    <text x="300" y="270" fill="#f8fafc" font-family="system-ui, sans-serif" font-size="18" font-weight="700" text-anchor="middle">${title}</text>
+    <text x="300" y="300" fill="#94a3b8" font-family="system-ui, sans-serif" font-size="13" text-anchor="middle">${subtitle}</text>
+  </svg>`;
+
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+}
+
+export const mock15Candidates: readonly PodCandidate[] = [
+  {
+    id: "cand_pin_101",
+    image_id: "cand_pin_101",
+    pin_id: "84090656167812345",
+    title: "Washed Persian Medallion Rug in Earth Tones",
+    query: "vintage distressed rug",
+    trend: "vintage distressed rug",
+    pin_url: "https://pinterest.com/pin/84090656167812345",
+    image_url: "https://i.pinimg.com/originals/10/1a/bc/101abc_persian_medallion.jpg",
+    image_score: 96.0,
+    printability_score: 94.0,
+    flat_artwork_score: 92.5,
+    is_direct_printable: true,
+    recommended: true,
+    reason: "Hoa văn phẳng chuẩn, tương phản cao, in xưởng sắc nét.",
+  },
+  {
+    id: "cand_pin_102",
+    image_id: "cand_pin_102",
+    pin_id: "84090656167812346",
+    title: "Minimalist Abstract Beige Line Runner",
+    query: "vintage distressed rug",
+    trend: "japandi minimalist runner",
+    pin_url: "https://pinterest.com/pin/84090656167812346",
+    image_url: "https://i.pinimg.com/originals/10/2b/cd/102bcd_abstract_beige.jpg",
+    image_score: 94.5,
+    printability_score: 92.0,
+    flat_artwork_score: 90.0,
+    is_direct_printable: true,
+    recommended: true,
+    reason: "Đường nét hình học tối giản sạch sẽ, độ phân giải gốc cao.",
+  },
+  {
+    id: "cand_pin_103",
+    image_id: "cand_pin_103",
+    pin_id: "84090656167812347",
+    title: "Bohemian Distressed Terracotta Floral Area Rug",
+    query: "vintage distressed rug",
+    trend: "boho terracotta area rug",
+    pin_url: "https://pinterest.com/pin/84090656167812347",
+    image_url: "https://i.pinimg.com/originals/10/3c/de/103cde_boho_terracotta.jpg",
+    image_score: 93.0,
+    printability_score: 91.5,
+    flat_artwork_score: 89.0,
+    is_direct_printable: true,
+    recommended: true,
+    reason: "Gam màu đất nung vintage được săn đón mạnh trên Pinterest.",
+  },
+  {
+    id: "cand_pin_104",
+    image_id: "cand_pin_104",
+    pin_id: "84090656167812348",
+    title: "Nordic Geometric Wool Loom Woven Rug",
+    query: "vintage distressed rug",
+    trend: "nordic geometric loom rug",
+    pin_url: "https://pinterest.com/pin/84090656167812348",
+    image_url: "https://i.pinimg.com/originals/10/4d/ef/104def_nordic_geometric.jpg",
+    image_score: 91.0,
+    printability_score: 88.0,
+    flat_artwork_score: 87.0,
+    is_direct_printable: true,
+    recommended: false,
+    reason: "Chi tiết dệt dạng hạt sắc nét, phù hợp phối cảnh phòng khách hiện đại.",
+  },
+  {
+    id: "cand_pin_105",
+    image_id: "cand_pin_105",
+    pin_id: "84090656167812349",
+    title: "Faded Olive Green Oushak Vintage Carpet",
+    query: "vintage distressed rug",
+    trend: "faded olive oushak carpet",
+    pin_url: "https://pinterest.com/pin/84090656167812349",
+    image_url: "https://i.pinimg.com/originals/10/5e/fa/105efa_faded_olive_oushak.jpg",
+    image_score: 95.0,
+    printability_score: 93.5,
+    flat_artwork_score: 91.0,
+    is_direct_printable: true,
+    recommended: true,
+    reason: "Họa tiết Oushak cổ điển màu olive dịu mắt, chuyển sắc tự nhiên.",
+  },
+  {
+    id: "cand_pin_106",
+    image_id: "cand_pin_106",
+    pin_id: "84090656167812350",
+    title: "Rustic Farmhouse Botanical Block Print Rug",
+    query: "vintage distressed rug",
+    trend: "rustic farmhouse botanical rug",
+    pin_url: "https://pinterest.com/pin/84090656167812350",
+    image_url: "https://i.pinimg.com/originals/10/6f/ab/106fab_farmhouse_botanical.jpg",
+    image_score: 89.0,
+    printability_score: 86.0,
+    flat_artwork_score: 85.0,
+    is_direct_printable: true,
+    recommended: false,
+    reason: "Hoa văn in khắc gỗ đồng quê, dễ ứng dụng decor.",
+  },
+  {
+    id: "cand_pin_107",
+    image_id: "cand_pin_107",
+    pin_id: "84090656167812351",
+    title: "Antique Anatolian Wool Tribal Accent Rug",
+    query: "vintage distressed rug",
+    trend: "antique anatolian tribal rug",
+    pin_url: "https://pinterest.com/pin/84090656167812351",
+    image_url: "https://i.pinimg.com/originals/10/7a/bc/107abc_anatolian_tribal.jpg",
+    image_score: 88.5,
+    printability_score: 85.0,
+    flat_artwork_score: 84.0,
+    is_direct_printable: false,
+    recommended: false,
+    reason: "Độ tương phản tốt nhưng viền ảnh có góc nghiêng nhẹ, cần căn chỉnh góc phẳng.",
+  },
+  {
+    id: "cand_pin_108",
+    image_id: "cand_pin_108",
+    pin_id: "84090656167812352",
+    title: "Moroccan Beni Ourain Diamond Shag Rug",
+    query: "vintage distressed rug",
+    trend: "moroccan beni ourain diamond",
+    pin_url: "https://pinterest.com/pin/84090656167812352",
+    image_url: "https://i.pinimg.com/originals/10/8b/cd/108bcd_beni_ourain.jpg",
+    image_score: 92.0,
+    printability_score: 89.0,
+    flat_artwork_score: 88.0,
+    is_direct_printable: true,
+    recommended: false,
+    reason: "Mẫu kim cương đen trắng kinh điển của phong cách Bắc Âu.",
+  },
+  {
+    id: "cand_pin_109",
+    image_id: "cand_pin_109",
+    pin_id: "84090656167812353",
+    title: "Moody Dark Floral Baroque Oversized Rug",
+    query: "vintage distressed rug",
+    trend: "moody dark floral rug",
+    pin_url: "https://pinterest.com/pin/84090656167812353",
+    image_url: "https://i.pinimg.com/originals/10/9c/de/109cde_dark_baroque.jpg",
+    image_score: 94.0,
+    printability_score: 90.0,
+    flat_artwork_score: 91.5,
+    is_direct_printable: true,
+    recommended: true,
+    reason: "Phong cách hoa lá baroc nền đen kịch tính, độ chi tiết cao cấp.",
+  },
+  {
+    id: "cand_pin_110",
+    image_id: "cand_pin_110",
+    pin_id: "84090656167812354",
+    title: "Mid-Century Modern Bauhaus Curves Area Rug",
+    query: "vintage distressed rug",
+    trend: "bauhaus mid-century curves rug",
+    pin_url: "https://pinterest.com/pin/84090656167812354",
+    image_url: "https://i.pinimg.com/originals/11/0d/ef/110def_bauhaus_curves.jpg",
+    image_score: 90.5,
+    printability_score: 87.5,
+    flat_artwork_score: 86.0,
+    is_direct_printable: true,
+    recommended: false,
+    reason: "Mảng màu cong phong cách thập niên 60 hài hòa, màu sắc ấm áp.",
+  },
+  {
+    id: "cand_pin_111",
+    image_id: "cand_pin_111",
+    pin_id: "84090656167812355",
+    title: "Wabi-Sabi Neutral Textured Cotton Rug",
+    query: "vintage distressed rug",
+    trend: "wabi-sabi neutral cotton rug",
+    pin_url: "https://pinterest.com/pin/84090656167812355",
+    image_url: "https://i.pinimg.com/originals/11/1e/fa/111efa_wabi_sabi_neutral.jpg",
+    image_score: 87.0,
+    printability_score: 84.0,
+    flat_artwork_score: 82.0,
+    is_direct_printable: false,
+    recommended: false,
+    reason: "Bề mặt mộc mạc tự nhiên, thích hợp tone nhà kiểu Nhật Bản.",
+  },
+  {
+    id: "cand_pin_112",
+    image_id: "cand_pin_112",
+    pin_id: "84090656167812356",
+    title: "Traditional Turkish Kilim Flatweave Runner",
+    query: "vintage distressed rug",
+    trend: "traditional turkish kilim runner",
+    pin_url: "https://pinterest.com/pin/84090656167812356",
+    image_url: "https://i.pinimg.com/originals/11/2f/ab/112fab_turkish_kilim.jpg",
+    image_score: 91.5,
+    printability_score: 89.5,
+    flat_artwork_score: 90.0,
+    is_direct_printable: true,
+    recommended: false,
+    reason: "Họa tiết dệt Kilim đối xứng chuẩn mực, dễ tách viền in.",
+  },
+  {
+    id: "cand_pin_113",
+    image_id: "cand_pin_113",
+    pin_id: "84090656167812357",
+    title: "Coastal Seaside Striped Jute Style Rug",
+    query: "vintage distressed rug",
+    trend: "coastal striped jute rug",
+    pin_url: "https://pinterest.com/pin/84090656167812357",
+    image_url: "https://i.pinimg.com/originals/11/3a/bc/113abc_coastal_jute.jpg",
+    image_score: 86.5,
+    printability_score: 83.0,
+    flat_artwork_score: 81.0,
+    is_direct_printable: false,
+    recommended: false,
+    reason: "Phong cách sọc ven biển thư thái, độ phân giải ở mức khá.",
+  },
+  {
+    id: "cand_pin_114",
+    image_id: "cand_pin_114",
+    pin_id: "84090656167812358",
+    title: "Vintage Art Deco Sunburst Velvet Carpet",
+    query: "vintage distressed rug",
+    trend: "art deco sunburst rug",
+    pin_url: "https://pinterest.com/pin/84090656167812358",
+    image_url: "https://i.pinimg.com/originals/11/4b/cd/114bcd_art_deco_sunburst.jpg",
+    image_score: 93.5,
+    printability_score: 91.0,
+    flat_artwork_score: 89.5,
+    is_direct_printable: true,
+    recommended: true,
+    reason: "Họa tiết tia mặt trời Art Deco sang trọng, màu vàng ánh kim phối xanh lục.",
+  },
+  {
+    id: "cand_pin_115",
+    image_id: "cand_pin_115",
+    pin_id: "84090656167812359",
+    title: "Cottagecore Wildflower Meadow Tapestry Rug",
+    query: "vintage distressed rug",
+    trend: "cottagecore wildflower tapestry rug",
+    pin_url: "https://pinterest.com/pin/84090656167812359",
+    image_url: "https://i.pinimg.com/originals/11/5c/de/115cde_cottagecore_meadow.jpg",
+    image_score: 92.5,
+    printability_score: 90.0,
+    flat_artwork_score: 88.5,
+    is_direct_printable: true,
+    recommended: false,
+    reason: "Họa tiết hoa đồng nội phong cách châu Âu cổ, chi tiết hoa cỏ mịn màng.",
+  },
+];
+
+export const mockCandidates: readonly CandidateItem[] = mock15Candidates;
+
+export const mockSummaryMetrics: SummaryMetrics = {
+  rgb_4k_count: 3,
+  cmyk_count: 3,
+  lifestyle_mockup_count: 6,
+  cutouts_count: 3,
+  mockups_count: 6,
+};
+
+export const mockDeliverables: DeliverablesData = {
+  print_cmyk_images: [
+    {
+      filename: "design_01_cmyk_300dpi.jpg",
+      url: createMockSvgDataUri("BẢN IN CMYK #1", "4000x6400px - 300 DPI", "#1e1b4b", "#818cf8"),
+      download_url: createMockSvgDataUri("BẢN IN CMYK #1", "4000x6400px - 300 DPI", "#1e1b4b", "#818cf8"),
+    },
+    {
+      filename: "design_02_cmyk_300dpi.jpg",
+      url: createMockSvgDataUri("BẢN IN CMYK #2", "4000x6400px - 300 DPI", "#14251e", "#34d399"),
+      download_url: createMockSvgDataUri("BẢN IN CMYK #2", "4000x6400px - 300 DPI", "#14251e", "#34d399"),
+    },
+    {
+      filename: "design_03_cmyk_300dpi.jpg",
+      url: createMockSvgDataUri("BẢN IN CMYK #3", "4000x6400px - 300 DPI", "#1f2937", "#38bdf8"),
+      download_url: createMockSvgDataUri("BẢN IN CMYK #3", "4000x6400px - 300 DPI", "#1f2937", "#38bdf8"),
+    },
+  ],
+  lifestyle_mockups: [
+    {
+      filename: "mockup_living_room_design_01.jpg",
+      url: createMockSvgDataUri("MOCKUP PHÒNG KHÁCH AI #1", "Modern leather sofa with sunbeam", "#1a2238", "#60a5fa"),
+      scene_type: "living_room",
+      scene_description: "Phòng khách hiện đại với sofa da bò nâu, bàn trà gỗ tự nhiên và ánh sáng ban mai.",
+    },
+    {
+      filename: "mockup_bedroom_design_01.jpg",
+      url: createMockSvgDataUri("MOCKUP PHÒNG NGỦ AI #1", "Cozy minimalist bedroom with oak floor", "#2b1c2b", "#f472b6"),
+      scene_type: "bedroom",
+      scene_description: "Phòng ngủ phong cách tối giản ấm cúng với sàn gỗ sồi và chăn ga màu be.",
+    },
+    {
+      filename: "mockup_living_room_design_02.jpg",
+      url: createMockSvgDataUri("MOCKUP PHÒNG KHÁCH AI #2", "Boho chic studio with rattan furniture", "#132a1e", "#4ade80"),
+      scene_type: "living_room",
+      scene_description: "Căn hộ phong cách Boho mộc mạc với nội thất mây tre đan và cây xanh nhiệt đới.",
+    },
+    {
+      filename: "mockup_reading_nook_design_02.jpg",
+      url: createMockSvgDataUri("MOCKUP GÓC ĐỌC SÁCH AI #2", "Sunlit reading corner with velvet armchair", "#2d2315", "#facc15"),
+      scene_type: "reading_nook",
+      scene_description: "Góc đọc sách ngập tràn ánh nắng cùng ghế bành nhung vàng êm ái.",
+    },
+    {
+      filename: "mockup_living_room_design_03.jpg",
+      url: createMockSvgDataUri("MOCKUP PHÒNG KHÁCH AI #3", "Retro mid-century lounge space", "#1f2937", "#38bdf8"),
+      scene_type: "living_room",
+      scene_description: "Không gian phòng khách Mid-Century hiện đại với điểm nhấn sóng nước trẻ trung.",
+    },
+    {
+      filename: "mockup_dining_area_design_03.jpg",
+      url: createMockSvgDataUri("MOCKUP KHÔNG GIAN BẾP ĂN AI #3", "Nordic dining table with pendant lights", "#1e293b", "#a78bfa"),
+      scene_type: "dining_room",
+      scene_description: "Bàn ăn gia đình phong cách Bắc Âu thanh lịch dưới ánh đèn chùm ấm áp.",
+    },
+  ],
+  product_cutouts_white: [
+    {
+      filename: "design_01_white.jpg",
+      url: createMockSvgDataUri("PHÔI CẮT NỀN TRẮNG #1", "Pure White Background #ffffff", "#ffffff", "#0284c7"),
+    },
+    {
+      filename: "design_02_white.jpg",
+      url: createMockSvgDataUri("PHÔI CẮT NỀN TRẮNG #2", "Pure White Background #ffffff", "#ffffff", "#10b981"),
+    },
+    {
+      filename: "design_03_white.jpg",
+      url: createMockSvgDataUri("PHÔI CẮT NỀN TRẮNG #3", "Pure White Background #ffffff", "#ffffff", "#06b6d4"),
+    },
+  ],
+  comparison_rows: [
+    {
+      index: 1,
+      product_label: "Mẫu #1: Washed Persian Medallion",
+      source_url: createMockSvgDataUri("Ảnh gốc Pinterest", "Original Pin 84090656167812345", "#1e1b4b", "#818cf8"),
+      cutout_url: createMockSvgDataUri("Phôi bóc tách", "Transparent Cutout PNG", "#111827", "#818cf8"),
+      cutout_white_url: createMockSvgDataUri("Phôi nền trắng", "Pure #ffffff for eCommerce", "#ffffff", "#818cf8"),
+      final_print_url: createMockSvgDataUri("File CMYK 300DPI", "4000x6400px Print Master", "#1e1b4b", "#818cf8"),
+      ai_background_urls: [
+        createMockSvgDataUri("Mockup AI 1A", "Living Room", "#1a2238", "#60a5fa"),
+        createMockSvgDataUri("Mockup AI 1B", "Bedroom", "#2b1c2b", "#f472b6"),
+      ],
+    },
+    {
+      index: 2,
+      product_label: "Mẫu #2: Boho Moroccan Geometric",
+      source_url: createMockSvgDataUri("Ảnh gốc Pinterest", "Original Pin 84090656167812346", "#14251e", "#34d399"),
+      cutout_url: createMockSvgDataUri("Phôi bóc tách", "Transparent Cutout PNG", "#111827", "#34d399"),
+      cutout_white_url: createMockSvgDataUri("Phôi nền trắng", "Pure #ffffff for eCommerce", "#ffffff", "#34d399"),
+      final_print_url: createMockSvgDataUri("File CMYK 300DPI", "4000x6400px Print Master", "#14251e", "#34d399"),
+      ai_background_urls: [
+        createMockSvgDataUri("Mockup AI 2A", "Boho Studio", "#132a1e", "#4ade80"),
+        createMockSvgDataUri("Mockup AI 2B", "Reading Nook", "#2d2315", "#facc15"),
+      ],
+    },
+    {
+      index: 3,
+      product_label: "Mẫu #3: Retro 70s Wavy Checkered",
+      source_url: createMockSvgDataUri("Ảnh gốc Pinterest", "Original Pin 84090656167812349", "#1f2937", "#38bdf8"),
+      cutout_url: createMockSvgDataUri("Phôi bóc tách", "Transparent Cutout PNG", "#111827", "#38bdf8"),
+      cutout_white_url: createMockSvgDataUri("Phôi nền trắng", "Pure #ffffff for eCommerce", "#ffffff", "#38bdf8"),
+      final_print_url: createMockSvgDataUri("File CMYK 300DPI", "4000x6400px Print Master", "#1f2937", "#38bdf8"),
+      ai_background_urls: [
+        createMockSvgDataUri("Mockup AI 3A", "Mid-Century Lounge", "#1f2937", "#38bdf8"),
+        createMockSvgDataUri("Mockup AI 3B", "Dining Room", "#1e293b", "#a78bfa"),
+      ],
+    },
+  ],
+};
+
+export const initialMockLogs: readonly string[] = [
+  "[15:24:02] Bắt đầu cào Pinterest niche: vintage distressed rug...",
+  "[15:24:05] Pinterest Trends: Quét phát hiện 8 từ khóa hot theo thời gian thực.",
+  "[15:24:08] AI Vision: Lọc thành công 6 mẫu đạt chuẩn độ nét và tỷ lệ phẳng.",
+  "[15:24:12] Sẵn sàng duyệt mẫu ứng viên.",
+];
+
+export const mockStage1DiscoveryOutput: PinterestDiscoveryOutput = {
+  ok: true,
+  jobId: "job_pod_stage1_mock",
+  status: "ready_for_review",
+  total_candidates: 15,
+  stepper: {
+    current_step: 2,
+    percent: 40,
+    current_message: "Đã quét & chấm điểm Vision AI (15 ứng viên). Mời bạn duyệt mẫu để sản xuất.",
+  },
+  logs: [
+    "Khởi tạo job POD (crawl_and_review): vintage distressed rug...",
+    "Pinterest Trends: Đã phát hiện 8 từ khóa hot niche rug...",
+    "AI Vision: Đã chấm điểm chất lượng 15 mẫu ứng viên.",
+    "Sẵn sàng duyệt mẫu ứng viên.",
+  ],
+  candidates: mock15Candidates,
+};
+
+export const mockSeoDeliverables: PinterestPodDeliverables = {
+  workflowId: "job_pod_stage2_mock",
+  success: true,
+  productType: "rug",
+  totalProduced: 3,
+  items: [
+    {
+      designId: "design_rug_101",
+      sourceCandidateId: "cand_pin_101",
+      productType: "rug",
+      originalPinTitle: "Washed Persian Medallion Rug in Earth Tones",
+      trendKeywords: [
+        "vintage boho rug",
+        "persian aesthetic",
+        "distressed medallion rug",
+        "earth tone living room",
+        "moroccan washed runner",
+      ],
+      printMaster: {
+        cmykUrl: "/api/pinterest-pod/assets/job_pod_stage2_mock/design_101_cmyk_300dpi.jpg",
+        rgbUrl: "/api/pinterest-pod/assets/job_pod_stage2_mock/design_101_rgb_4k.png",
+        localFilePath: "temp/pinterest_pod/job_pod_stage2_mock/design_101_cmyk_300dpi.jpg",
+        widthPx: 4000,
+        heightPx: 6400,
+        dpi: 300,
+        colorMode: "CMYK",
+        label: "4000 x 6400 px @ 300 DPI (CMYK)",
+        badge: "✓ Chuẩn in xưởng: 4000 x 6400 px @ 300 DPI (CMYK)",
+      },
+      cutoutProduct: {
+        transparentUrl: "/api/pinterest-pod/assets/job_pod_stage2_mock/design_101_cutout.png",
+        whiteBgUrl: "/api/pinterest-pod/assets/job_pod_stage2_mock/design_101_white.jpg",
+        localFilePath: "temp/pinterest_pod/job_pod_stage2_mock/design_101_white.jpg",
+      },
+      composedMockups: [
+        {
+          referenceImageId: "ref_room_01",
+          mockupUrl: "/api/pinterest-pod/assets/job_pod_stage2_mock/mockup_room_01_design_101.jpg",
+          localFilePath: "temp/pinterest_pod/job_pod_stage2_mock/mockup_room_01_design_101.jpg",
+          detectedSceneType: "living_room",
+          detectedSceneDescription:
+            "Modern spacious living room with brown leather couch, coffee table and natural sunlight",
+        },
+        {
+          referenceImageId: "ref_room_02",
+          mockupUrl: "/api/pinterest-pod/assets/job_pod_stage2_mock/mockup_room_02_design_101.jpg",
+          localFilePath: "temp/pinterest_pod/job_pod_stage2_mock/mockup_room_02_design_101.jpg",
+          detectedSceneType: "bedroom",
+          detectedSceneDescription:
+            "Cozy minimalist bedroom with oak hardwood flooring and beige linen bedding",
+        },
+      ],
+    },
+    {
+      designId: "design_rug_102",
+      sourceCandidateId: "cand_pin_102",
+      productType: "rug",
+      originalPinTitle: "Minimalist Abstract Beige Line Runner",
+      trendKeywords: [
+        "minimalist rug",
+        "japandi home",
+        "beige geometric runner",
+        "neutral floor decor",
+      ],
+      printMaster: {
+        cmykUrl: "/api/pinterest-pod/assets/job_pod_stage2_mock/design_102_cmyk_300dpi.jpg",
+        rgbUrl: "/api/pinterest-pod/assets/job_pod_stage2_mock/design_102_rgb_4k.png",
+        localFilePath: "temp/pinterest_pod/job_pod_stage2_mock/design_102_cmyk_300dpi.jpg",
+        widthPx: 4000,
+        heightPx: 6400,
+        dpi: 300,
+        colorMode: "CMYK",
+        label: "4000 x 6400 px @ 300 DPI (CMYK)",
+        badge: "✓ Chuẩn in xưởng: 4000 x 6400 px @ 300 DPI (CMYK)",
+      },
+      cutoutProduct: {
+        transparentUrl: "/api/pinterest-pod/assets/job_pod_stage2_mock/design_102_cutout.png",
+        whiteBgUrl: "/api/pinterest-pod/assets/job_pod_stage2_mock/design_102_white.jpg",
+        localFilePath: "temp/pinterest_pod/job_pod_stage2_mock/design_102_white.jpg",
+      },
+      composedMockups: [
+        {
+          referenceImageId: "ref_room_01",
+          mockupUrl: "/api/pinterest-pod/assets/job_pod_stage2_mock/mockup_room_01_design_102.jpg",
+          localFilePath: "temp/pinterest_pod/job_pod_stage2_mock/mockup_room_01_design_102.jpg",
+          detectedSceneType: "living_room",
+          detectedSceneDescription:
+            "Modern spacious living room with brown leather couch, coffee table and natural sunlight",
+        },
+        {
+          referenceImageId: "ref_room_02",
+          mockupUrl: "/api/pinterest-pod/assets/job_pod_stage2_mock/mockup_room_02_design_102.jpg",
+          localFilePath: "temp/pinterest_pod/job_pod_stage2_mock/mockup_room_02_design_102.jpg",
+          detectedSceneType: "bedroom",
+          detectedSceneDescription:
+            "Cozy minimalist bedroom with oak hardwood flooring and beige linen bedding",
+        },
+      ],
+    },
+    {
+      designId: "design_rug_105",
+      sourceCandidateId: "cand_pin_105",
+      productType: "rug",
+      originalPinTitle: "Faded Olive Green Oushak Vintage Carpet",
+      trendKeywords: [
+        "faded olive carpet",
+        "oushak vintage rug",
+        "muted green home accent",
+        "traditional oriental rug",
+      ],
+      printMaster: {
+        cmykUrl: "/api/pinterest-pod/assets/job_pod_stage2_mock/design_105_cmyk_300dpi.jpg",
+        rgbUrl: "/api/pinterest-pod/assets/job_pod_stage2_mock/design_105_rgb_4k.png",
+        localFilePath: "temp/pinterest_pod/job_pod_stage2_mock/design_105_cmyk_300dpi.jpg",
+        widthPx: 4000,
+        heightPx: 6400,
+        dpi: 300,
+        colorMode: "CMYK",
+        label: "4000 x 6400 px @ 300 DPI (CMYK)",
+        badge: "✓ Chuẩn in xưởng: 4000 x 6400 px @ 300 DPI (CMYK)",
+      },
+      cutoutProduct: {
+        transparentUrl: "/api/pinterest-pod/assets/job_pod_stage2_mock/design_105_cutout.png",
+        whiteBgUrl: "/api/pinterest-pod/assets/job_pod_stage2_mock/design_105_white.jpg",
+        localFilePath: "temp/pinterest_pod/job_pod_stage2_mock/design_105_white.jpg",
+      },
+      composedMockups: [
+        {
+          referenceImageId: "ref_room_01",
+          mockupUrl: "/api/pinterest-pod/assets/job_pod_stage2_mock/mockup_room_01_design_105.jpg",
+          localFilePath: "temp/pinterest_pod/job_pod_stage2_mock/mockup_room_01_design_105.jpg",
+          detectedSceneType: "living_room",
+          detectedSceneDescription:
+            "Modern spacious living room with brown leather couch, coffee table and natural sunlight",
+        },
+        {
+          referenceImageId: "ref_room_02",
+          mockupUrl: "/api/pinterest-pod/assets/job_pod_stage2_mock/mockup_room_02_design_105.jpg",
+          localFilePath: "temp/pinterest_pod/job_pod_stage2_mock/mockup_room_02_design_105.jpg",
+          detectedSceneType: "bedroom",
+          detectedSceneDescription:
+            "Cozy minimalist bedroom with oak hardwood flooring and beige linen bedding",
+        },
+      ],
+    },
+  ],
+};
+
+export const mockStage2ProductionOutput: PinterestProductionOutput = {
+  ok: true,
+  jobId: "job_pod_stage2_mock",
+  status: "completed",
+  stepper: {
+    current_step: 4,
+    percent: 100,
+    current_message: "Hoàn thành! Đã tạo đầy đủ mockup AI & file in CMYK xưởng.",
+  },
+  logs: [
+    "Khởi tạo sản xuất cho 3 mẫu ứng viên đã duyệt...",
+    "Đang tách phôi nền trắng (#ffffff) và phôi trong suốt...",
+    "Đang chuyển hệ màu sang CMYK 300 DPI kích thước 4000x6400px...",
+    "Đang render AI Lifestyle Mockups theo các ảnh phòng mẫu...",
+    "Hoàn thành toàn bộ quy trình sản xuất POD.",
+  ],
+  summaryMetrics: {
+    rgb_4k_count: 3,
+    cmyk_count: 3,
+    lifestyle_mockup_count: 6,
+    cutouts_count: 3,
+    mockups_count: 6,
+  },
+  deliverables: {
+    print_cmyk_images: [
+      {
+        filename: "design_101_cmyk_300dpi.jpg",
+        url: "/api/pinterest-pod/assets/job_pod_stage2_mock/design_101_cmyk_300dpi.jpg",
+        download_url: "/api/pinterest-pod/assets/job_pod_stage2_mock/design_101_cmyk_300dpi.jpg",
+        width_px: 4000,
+        height_px: 6400,
+        dpi: 300,
+        color_mode: "CMYK",
+      },
+      {
+        filename: "design_102_cmyk_300dpi.jpg",
+        url: "/api/pinterest-pod/assets/job_pod_stage2_mock/design_102_cmyk_300dpi.jpg",
+        download_url: "/api/pinterest-pod/assets/job_pod_stage2_mock/design_102_cmyk_300dpi.jpg",
+        width_px: 4000,
+        height_px: 6400,
+        dpi: 300,
+        color_mode: "CMYK",
+      },
+      {
+        filename: "design_105_cmyk_300dpi.jpg",
+        url: "/api/pinterest-pod/assets/job_pod_stage2_mock/design_105_cmyk_300dpi.jpg",
+        download_url: "/api/pinterest-pod/assets/job_pod_stage2_mock/design_105_cmyk_300dpi.jpg",
+        width_px: 4000,
+        height_px: 6400,
+        dpi: 300,
+        color_mode: "CMYK",
+      },
+    ],
+    final_png_images: [
+      {
+        filename: "design_101_rgb_4k.png",
+        url: "/api/pinterest-pod/assets/job_pod_stage2_mock/design_101_rgb_4k.png",
+        download_url: "/api/pinterest-pod/assets/job_pod_stage2_mock/design_101_rgb_4k.png",
+        width_px: 4000,
+        height_px: 6400,
+        dpi: 300,
+        color_mode: "RGB",
+      },
+      {
+        filename: "design_102_rgb_4k.png",
+        url: "/api/pinterest-pod/assets/job_pod_stage2_mock/design_102_rgb_4k.png",
+        download_url: "/api/pinterest-pod/assets/job_pod_stage2_mock/design_102_rgb_4k.png",
+        width_px: 4000,
+        height_px: 6400,
+        dpi: 300,
+        color_mode: "RGB",
+      },
+      {
+        filename: "design_105_rgb_4k.png",
+        url: "/api/pinterest-pod/assets/job_pod_stage2_mock/design_105_rgb_4k.png",
+        download_url: "/api/pinterest-pod/assets/job_pod_stage2_mock/design_105_rgb_4k.png",
+        width_px: 4000,
+        height_px: 6400,
+        dpi: 300,
+        color_mode: "RGB",
+      },
+    ],
+    lifestyle_mockups: [
+      {
+        filename: "mockup_room_01_design_101.jpg",
+        url: "/api/pinterest-pod/assets/job_pod_stage2_mock/mockup_room_01_design_101.jpg",
+        scene_type: "living_room",
+        scene_description: "Modern spacious living room with brown leather couch and sunlight",
+        is_primary: true,
+      },
+      {
+        filename: "mockup_room_02_design_101.jpg",
+        url: "/api/pinterest-pod/assets/job_pod_stage2_mock/mockup_room_02_design_101.jpg",
+        scene_type: "bedroom",
+        scene_description: "Cozy minimalist bedroom with oak hardwood flooring and beige bedding",
+        is_primary: false,
+      },
+      {
+        filename: "mockup_room_01_design_102.jpg",
+        url: "/api/pinterest-pod/assets/job_pod_stage2_mock/mockup_room_01_design_102.jpg",
+        scene_type: "living_room",
+        scene_description: "Modern spacious living room with brown leather couch and sunlight",
+        is_primary: true,
+      },
+      {
+        filename: "mockup_room_02_design_102.jpg",
+        url: "/api/pinterest-pod/assets/job_pod_stage2_mock/mockup_room_02_design_102.jpg",
+        scene_type: "bedroom",
+        scene_description: "Cozy minimalist bedroom with oak hardwood flooring and beige bedding",
+        is_primary: false,
+      },
+      {
+        filename: "mockup_room_01_design_105.jpg",
+        url: "/api/pinterest-pod/assets/job_pod_stage2_mock/mockup_room_01_design_105.jpg",
+        scene_type: "living_room",
+        scene_description: "Modern spacious living room with brown leather couch and sunlight",
+        is_primary: true,
+      },
+      {
+        filename: "mockup_room_02_design_105.jpg",
+        url: "/api/pinterest-pod/assets/job_pod_stage2_mock/mockup_room_02_design_105.jpg",
+        scene_type: "bedroom",
+        scene_description: "Cozy minimalist bedroom with oak hardwood flooring and beige bedding",
+        is_primary: false,
+      },
+    ],
+    product_cutouts_white: [
+      {
+        filename: "design_101_white.jpg",
+        url: "/api/pinterest-pod/assets/job_pod_stage2_mock/design_101_white.jpg",
+      },
+      {
+        filename: "design_102_white.jpg",
+        url: "/api/pinterest-pod/assets/job_pod_stage2_mock/design_102_white.jpg",
+      },
+      {
+        filename: "design_105_white.jpg",
+        url: "/api/pinterest-pod/assets/job_pod_stage2_mock/design_105_white.jpg",
+      },
+    ],
+    product_cutouts: [
+      {
+        filename: "design_101_cutout.png",
+        url: "/api/pinterest-pod/assets/job_pod_stage2_mock/design_101_cutout.png",
+      },
+      {
+        filename: "design_102_cutout.png",
+        url: "/api/pinterest-pod/assets/job_pod_stage2_mock/design_102_cutout.png",
+      },
+      {
+        filename: "design_105_cutout.png",
+        url: "/api/pinterest-pod/assets/job_pod_stage2_mock/design_105_cutout.png",
+      },
+    ],
+    comparison_rows: [
+      {
+        index: 1,
+        product_label: "Design #1",
+        source_url: "https://i.pinimg.com/originals/10/1a/bc/101abc_persian_medallion.jpg",
+        cutout_url: "/api/pinterest-pod/assets/job_pod_stage2_mock/design_101_cutout.png",
+        cutout_white_url: "/api/pinterest-pod/assets/job_pod_stage2_mock/design_101_white.jpg",
+        final_print_url: "/api/pinterest-pod/assets/job_pod_stage2_mock/design_101_cmyk_300dpi.jpg",
+        ai_background_urls: [
+          "/api/pinterest-pod/assets/job_pod_stage2_mock/mockup_room_01_design_101.jpg",
+          "/api/pinterest-pod/assets/job_pod_stage2_mock/mockup_room_02_design_101.jpg",
+        ],
+      },
+      {
+        index: 2,
+        product_label: "Design #2",
+        source_url: "https://i.pinimg.com/originals/10/2b/cd/102bcd_abstract_beige.jpg",
+        cutout_url: "/api/pinterest-pod/assets/job_pod_stage2_mock/design_102_cutout.png",
+        cutout_white_url: "/api/pinterest-pod/assets/job_pod_stage2_mock/design_102_white.jpg",
+        final_print_url: "/api/pinterest-pod/assets/job_pod_stage2_mock/design_102_cmyk_300dpi.jpg",
+        ai_background_urls: [
+          "/api/pinterest-pod/assets/job_pod_stage2_mock/mockup_room_01_design_102.jpg",
+          "/api/pinterest-pod/assets/job_pod_stage2_mock/mockup_room_02_design_102.jpg",
+        ],
+      },
+      {
+        index: 3,
+        product_label: "Design #3",
+        source_url: "https://i.pinimg.com/originals/10/5e/fa/105efa_faded_olive_oushak.jpg",
+        cutout_url: "/api/pinterest-pod/assets/job_pod_stage2_mock/design_105_cutout.png",
+        cutout_white_url: "/api/pinterest-pod/assets/job_pod_stage2_mock/design_105_white.jpg",
+        final_print_url: "/api/pinterest-pod/assets/job_pod_stage2_mock/design_105_cmyk_300dpi.jpg",
+        ai_background_urls: [
+          "/api/pinterest-pod/assets/job_pod_stage2_mock/mockup_room_01_design_105.jpg",
+          "/api/pinterest-pod/assets/job_pod_stage2_mock/mockup_room_02_design_105.jpg",
+        ],
+      },
+    ],
+  },
+  seoDeliverables: mockSeoDeliverables,
+};

@@ -338,6 +338,42 @@ export async function runMockModuleApi(input: ShopifyApiInput): Promise<ShopifyA
           : undefined);
       const onlineStoreUrl =
         `https://quickstart-demo.myshopify.com/products/${input.payload.product.handle ?? input.payload.product.title.toLowerCase().replace(/\s+/g, "-")}`;
+      const mediaItems: ShopifyImage[] = [];
+      if (Array.isArray(input.payload.product.images)) {
+        for (let idx = 0; idx < input.payload.product.images.length; idx++) {
+          const img = input.payload.product.images[idx];
+          mediaItems.push({
+            id: img.id,
+            url: img.url ?? `https://quickstart-demo.myshopify.com/cdn/shop/files/image-${idx + 1}.jpg`,
+            altText: img.altText,
+            width: img.width,
+            height: img.height,
+          });
+        }
+      }
+      if (Array.isArray(input.payload.product.media)) {
+        for (let idx = 0; idx < input.payload.product.media.length; idx++) {
+          const m = input.payload.product.media[idx];
+          if (m && typeof m === "object") {
+            const mObj = m as Record<string, unknown>;
+            const url =
+              typeof mObj.originalSource === "string"
+                ? mObj.originalSource
+                : typeof mObj.url === "string"
+                ? mObj.url
+                : `https://quickstart-demo.myshopify.com/cdn/shop/files/media-${idx + 1}.jpg`;
+            const altText =
+              typeof mObj.alt === "string"
+                ? mObj.alt
+                : typeof mObj.altText === "string"
+                ? mObj.altText
+                : undefined;
+            const id = typeof mObj.id === "string" ? mObj.id : undefined;
+            mediaItems.push({ id, url, altText });
+          }
+        }
+      }
+
       const featuredImage: ShopifyImage | undefined = input.payload.product.featuredImage
         ? {
             id: input.payload.product.featuredImage.id,
@@ -346,26 +382,12 @@ export async function runMockModuleApi(input: ShopifyApiInput): Promise<ShopifyA
             width: input.payload.product.featuredImage.width,
             height: input.payload.product.featuredImage.height,
           }
-        : input.payload.product.images?.[0]
-        ? {
-            id: input.payload.product.images[0].id,
-            url: input.payload.product.images[0].url ?? "https://quickstart-demo.myshopify.com/cdn/shop/files/placeholder.jpg",
-            altText: input.payload.product.images[0].altText,
-            width: input.payload.product.images[0].width,
-            height: input.payload.product.images[0].height,
-          }
+        : mediaItems[0]
+        ? { ...mediaItems[0] }
         : undefined;
-      const images: readonly ShopifyImage[] | undefined = input.payload.product.images
-        ? input.payload.product.images.map((img, idx) => ({
-            id: img.id,
-            url: img.url ?? `https://quickstart-demo.myshopify.com/cdn/shop/files/image-${idx + 1}.jpg`,
-            altText: img.altText,
-            width: img.width,
-            height: img.height,
-          }))
-        : featuredImage
-        ? [featuredImage]
-        : undefined;
+
+      const images: readonly ShopifyImage[] | undefined =
+        mediaItems.length > 0 ? mediaItems : featuredImage ? [featuredImage] : undefined;
 
       const newProduct: ShopifyProduct = {
         id: `gid://shopify/Product/mock-created-${shopifyMockProducts.length + 1}`,
@@ -622,6 +644,22 @@ export async function runMockModuleApi(input: ShopifyApiInput): Promise<ShopifyA
       if (!input.payload.variants || !Array.isArray(input.payload.variants)) {
         throw new ShopifyApiError("Variants array is required", "SHOPIFY_USER_ERROR");
       }
+      for (const item of input.payload.variants) {
+        if (!item || typeof item !== "object") {
+          throw new ShopifyApiError("Each variant item must be an object", "SHOPIFY_USER_ERROR");
+        }
+      }
+      if (input.payload.variants.length === 0) {
+        return {
+          storeId: input.storeId,
+          operation: "variants.bulkCreate",
+          success: true,
+          data: {
+            createdCount: 0,
+            variants: [],
+          },
+        };
+      }
       const createdVariants: ShopifyProductVariant[] = input.payload.variants.map((v, idx) => {
         const title =
           typeof v.title === "string" && v.title.trim() !== ""
@@ -719,14 +757,55 @@ export async function runMockModuleApi(input: ShopifyApiInput): Promise<ShopifyA
         throw new ShopifyApiError("metafields array cannot be empty", "SHOPIFY_USER_ERROR");
       }
 
-      const summaries = rawItems.map((item, idx) => ({
-        id: `gid://shopify/Metafield/mock-${Date.now()}-${idx + 1}`,
-        namespace: String(item.namespace || "custom"),
-        key: String(item.key || "key"),
-        type: String(item.type || "json"),
-        value: String(item.value || ""),
-        ownerType: "PRODUCT",
-      }));
+      const fallbackOwnerId =
+        typeof input.payload.ownerId === "string" && input.payload.ownerId.trim() !== ""
+          ? input.payload.ownerId.trim()
+          : typeof input.payload.productId === "string" && input.payload.productId.trim() !== ""
+          ? input.payload.productId.trim()
+          : "";
+
+      const summaries = rawItems.map((item, idx) => {
+        if (!item || typeof item !== "object") {
+          throw new ShopifyApiError(`Metafield at index ${idx} must be an object`, "SHOPIFY_USER_ERROR");
+        }
+        const ownerId =
+          typeof item.ownerId === "string" && item.ownerId.trim() !== ""
+            ? item.ownerId.trim()
+            : typeof item.productId === "string" && item.productId.trim() !== ""
+            ? item.productId.trim()
+            : fallbackOwnerId;
+        if (!ownerId) {
+          throw new ShopifyApiError(`ownerId (or productId) is required at index ${idx}`, "SHOPIFY_USER_ERROR");
+        }
+        const namespace = typeof item.namespace === "string" ? item.namespace.trim() : "";
+        if (!namespace) {
+          throw new ShopifyApiError(`namespace is required at index ${idx}`, "SHOPIFY_USER_ERROR");
+        }
+        const key = typeof item.key === "string" ? item.key.trim() : "";
+        if (!key) {
+          throw new ShopifyApiError(`key is required at index ${idx}`, "SHOPIFY_USER_ERROR");
+        }
+        let valStr: string;
+        if (typeof item.value === "string") {
+          valStr = item.value;
+        } else if (typeof item.value === "object" && item.value !== null) {
+          valStr = JSON.stringify(item.value);
+        } else if (item.value !== undefined && item.value !== null) {
+          valStr = String(item.value);
+        } else {
+          throw new ShopifyApiError(`value is required at index ${idx}`, "SHOPIFY_USER_ERROR");
+        }
+        const type = typeof item.type === "string" && item.type.trim() !== "" ? item.type.trim() : "json";
+
+        return {
+          id: `gid://shopify/Metafield/mock-${Date.now()}-${idx + 1}`,
+          namespace,
+          key,
+          type,
+          value: valStr,
+          ownerType: "PRODUCT",
+        };
+      });
 
       return {
         storeId: input.storeId,

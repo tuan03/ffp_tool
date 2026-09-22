@@ -208,6 +208,14 @@ export async function executeFilesCreate(
   }
 
   let fileStatus = fileNode.fileStatus;
+  if (fileStatus === "FAILED") {
+    throw new GatewayError(
+      `File processing failed on Shopify for file ${fileNode.id}`,
+      "SHOPIFY_USER_ERROR",
+      400,
+    );
+  }
+
   let url = fileNode.image?.url ?? fileNode.url ?? undefined;
 
   if (fileStatus !== "READY" || !url) {
@@ -240,7 +248,7 @@ export async function executeFilesCreate(
     }
   }
 
-  if (!url) {
+  if (fileStatus !== "READY" || !url) {
     throw new GatewayError(
       `File processing timed out waiting for READY status for file ${fileNode.id}`,
       "SHOPIFY_USER_ERROR",
