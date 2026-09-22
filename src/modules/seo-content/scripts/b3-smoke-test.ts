@@ -9,7 +9,7 @@ import { createB3SearchSuggestionsStage } from "../internal/stages/b3-search-sug
  * Demonstrates real live Google Autocomplete search query expansion with provenance.
  *
  * Usage:
- *   npx tsx src/modules/module-seo-content/scripts/b3-smoke-test.ts
+ *   npx tsx src/modules/seo-content/scripts/b3-smoke-test.ts
  */
 async function main(): Promise<void> {
   console.log("=== [B3 Search Suggestions] Node.js Smoke Test ===");

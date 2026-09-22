@@ -7,7 +7,7 @@ import { createB2ShoppingContextStage } from "../internal/stages/b2-shopping-con
  * Demonstrates running B2 in a trusted Node.js runtime with real Gemini Vertex AI integration or fallback.
  *
  * Usage:
- *   npx tsx src/modules/module-seo-content/scripts/b2-smoke-test.ts
+ *   npx tsx src/modules/seo-content/scripts/b2-smoke-test.ts
  */
 async function main(): Promise<void> {
   console.log("=== [B2 Shopping Context] Node.js Smoke Test ===");

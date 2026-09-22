@@ -8,7 +8,7 @@ import { createB1ProductUnderstandingStage } from "../internal/stages/b1-product
  * Demonstrates running B1 in a trusted Node.js runtime with real Gemini Vertex AI integration.
  *
  * Usage:
- *   npx tsx src/modules/module-seo-content/scripts/b1-smoke-test.ts [image_path_or_url]
+ *   npx tsx src/modules/seo-content/scripts/b1-smoke-test.ts [image_path_or_url]
  */
 async function main(): Promise<void> {
   console.log("=== [B1 Product Understanding] Node.js Smoke Test ===");
