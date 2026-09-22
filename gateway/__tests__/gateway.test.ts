@@ -23,7 +23,7 @@ import {
   type ProductSummary,
 } from "../index";
 
-import { createModuleApiRunner } from "../../src/modules/module-api/service";
+import { createModuleApiRunner } from "../../src/modules/module-api";
 
 function createMockResponse(data: unknown, status = 200, headers: Record<string, string> = {}): Response {
   return new Response(JSON.stringify(data), {
