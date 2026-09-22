@@ -26,7 +26,7 @@ config/amazon-crawler-agent.json
 stores.local.json
 stores.config.json
 
-#=== [start] Lth Loi ===
+#=== [start] - module SEO Content - Lth Loi ===
 .agents
 compress-src.cmd
 dev.cmd
@@ -36,4 +36,4 @@ test.cmd
 b1-visual-preview.html
 branches-git.cmd
 remotes-git.cmd
-#=== [end] Lth Loi ===
+#=== [end] - module SEO Content - Lth Loi ===
