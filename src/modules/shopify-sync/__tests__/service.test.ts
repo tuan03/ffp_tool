@@ -4,7 +4,6 @@ import assertStrict from "node:assert/strict";
 
 import {
   buildProductDescriptionHtml,
-  createShopifyClient,
   fromCustomizationNormalizerProduct,
   getShopifySyncRunner,
   replaceUrlsInObject,
@@ -159,19 +158,12 @@ test("getShopifySyncRunner selects mock runner in mock environment and real runn
   assertStrict.equal(devRunner, runShopifySync);
 });
 
-test("createShopifyClient validates credentials and normalizes store domain", () => {
-  assertStrict.throws(
-    () => createShopifyClient({ shop: "", accessToken: "" }),
-    /shop domain is required|accessToken is required/,
-  );
+test("syncSingleProduct fails gracefully when no gateway is provided in non-dry-run mode", async () => {
+  const customProd = shopifySyncMockData.products[0];
+  const result = await syncSingleProduct(customProd, { dryRun: false });
 
-  const client = createShopifyClient({
-    shop: "my-test-store",
-    accessToken: "shpat_mock_token_123",
-  });
-
-  assertStrict.equal(client.shop, "my-test-store.myshopify.com");
-  assertStrict.equal(client.apiVersion, "2026-04");
+  assertStrict.equal(result.success, false);
+  assertStrict.ok(result.error?.includes("ShopifyGateway is required"));
 });
 
 test("syncSingleProduct coordinates the 4 operations through an injected ShopifyGateway", async () => {

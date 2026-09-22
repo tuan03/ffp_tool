@@ -1,6 +1,3 @@
-export { createShopifyClient, createShopifyGateway } from "./client";
-export type { ShopifyClient } from "./client";
-
 export {
   buildProductDescriptionHtml,
   fromCustomizationNormalizerBatch,

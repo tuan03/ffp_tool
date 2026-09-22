@@ -1,4 +1,3 @@
-import { createShopifyGateway } from "./client";
 import type {
   CreateProductInput,
   CreateProductOutput,
@@ -83,16 +82,11 @@ export async function syncSingleProduct(
 
   let gateway: ShopifyGateway;
 
-  try {
-    if (options.gateway) {
-      gateway = options.gateway;
-    } else if (dryRun) {
-      gateway = createDryRunGateway();
-    } else {
-      gateway = createShopifyGateway(options.credentials, options);
-    }
-  } catch (error: unknown) {
-    const msg = error instanceof Error ? error.message : String(error);
+  if (options.gateway) {
+    gateway = options.gateway;
+  } else if (dryRun) {
+    gateway = createDryRunGateway();
+  } else {
     return {
       success: false,
       sourceId: product.id,
@@ -101,9 +95,10 @@ export async function syncSingleProduct(
       mediaCount: product.media?.length || 0,
       assetsUploadedCount: 0,
       metafieldSet: false,
-      dryRun,
+      dryRun: false,
       warnings,
-      error: msg,
+      error:
+        "ShopifyGateway is required. Please provide a ShopifyGateway implementation via options.gateway.",
     };
   }
 
