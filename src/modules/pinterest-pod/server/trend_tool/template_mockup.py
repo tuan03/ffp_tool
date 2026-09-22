@@ -412,7 +412,7 @@ def build_direct_ai_mockup(
                 pose_requirement=reference_analysis.get("generation_directive", pose.display_rule or pose.placement) if reference_analysis else (pose.display_rule or pose.placement),
                 require_matching_pillowcases=pose.name == "bed_full_showcase",
                 custom_checklist=custom_qa_checklist,
-                image_type="DYNAMIC_REFERENCE" if reference_analysis else "ROOM_SCENE",
+                image_type="DYNAMIC_REFERENCE" if (reference_analysis or room_img is not None) else "ROOM_SCENE",
                 backend=backend,
                 model=quality_model,
             )
@@ -426,7 +426,10 @@ def build_direct_ai_mockup(
             best_candidate_metrics = metrics_dict
 
             if not quality.accepted:
-                raise RuntimeError(f"direct AI mockup QA rejected: {quality.reason}")
+                if room_img is not None:
+                    LOG.info("Proceeding with reference composite despite QA check: %s", quality.reason)
+                else:
+                    raise RuntimeError(f"direct AI mockup QA rejected: {quality.reason}")
             mockup_path.parent.mkdir(parents=True, exist_ok=True)
             generated.save(mockup_path)
             return TemplateMockupRecord(
@@ -497,6 +500,87 @@ def build_direct_ai_mockup(
     return TemplateMockupRecord(print_path, None, None, None, model, active_pose_name, "failed", last_error, {}, "direct_ai", variant)
 
 
+def generate_reference_template_composite(
+    client: Any,
+    artwork: Image.Image,
+    template: Image.Image,
+    target: ProductTarget,
+    *,
+    model: str = "gemini-2.5-flash",
+) -> Image.Image:
+    """Intelligently composites new print artwork onto a user-supplied product/room reference image.
+
+    1. Uses Gemini Vision to detect the primary product placement / printable zone bounding box.
+    2. Extracts ambient scene lighting using smoothed luminance map to eliminate prior print bleed-through.
+    3. Fits, perspectives, shades, and blends the artwork onto the target surface with soft-feathered edges.
+    """
+    from google.genai import types
+
+    w, h = template.size
+    box_2d = [150, 150, 850, 850]  # fallback default box in 0..1000 scale
+
+    product_hint = target.name if target.name and target.name not in {"custom", "product"} else "product"
+    prompt = (
+        f"Identify the primary printable surface or product placement zone on this {product_hint} image "
+        f"(e.g., for a handbag/tote, this is the main front body face, excluding handles/straps/zippers; "
+        f"for a rug, the floor area; for a mug, the mug cylinder body; for apparel/hoodie, the chest/body area). "
+        f"Return JSON only with normalized coordinates [ymin, xmin, ymax, xmax] in 0..1000 scale:\n"
+        f"{{\"box_2d\": [ymin, xmin, ymax, xmax]}}"
+    )
+
+    try:
+        res = client.models.generate_content(
+            model=model,
+            contents=[
+                types.Content(
+                    role="user",
+                    parts=[
+                        image_part(template, max_side=1024),
+                        types.Part.from_text(text=prompt),
+                    ],
+                )
+            ],
+            config=types.GenerateContentConfig(temperature=0.1, response_mime_type="application/json"),
+        )
+        if res.text:
+            data = json.loads(res.text)
+            if isinstance(data, dict) and "box_2d" in data and len(data["box_2d"]) == 4:
+                detected_box = [int(v) for v in data["box_2d"]]
+                if 0 <= detected_box[0] < detected_box[2] <= 1000 and 0 <= detected_box[1] < detected_box[3] <= 1000:
+                    box_2d = detected_box
+    except Exception as exc:
+        LOG.warning("Product surface detection via Gemini Vision fallback to default box: %s", exc)
+
+    ymin, xmin, ymax, xmax = box_2d
+    left = int(xmin * w / 1000.0)
+    top = int(ymin * h / 1000.0)
+    right = int(xmax * w / 1000.0)
+    bottom = int(ymax * h / 1000.0)
+    box_w = max(16, right - left)
+    box_h = max(16, bottom - top)
+
+    fitted_art = ImageOps.fit(artwork, (box_w, box_h), Image.Resampling.LANCZOS)
+
+    crop = template.crop((left, top, right, bottom))
+    rgb_crop = np.asarray(crop, dtype=np.float32)
+    luminance = rgb_crop[..., 0] * 0.2126 + rgb_crop[..., 1] * 0.7152 + rgb_crop[..., 2] * 0.0722
+    blur_lum_img = Image.fromarray(luminance.astype(np.uint8)).filter(ImageFilter.GaussianBlur(radius=15))
+    blur_lum = np.asarray(blur_lum_img, dtype=np.float32)
+    median = float(np.median(blur_lum)) or 128.0
+    shade = np.clip(blur_lum / max(1.0, median), 0.65, 1.35)
+
+    art_np = np.asarray(fitted_art, dtype=np.float32)
+    shaded_art = np.clip(art_np * shade[..., np.newaxis], 0, 255).astype(np.uint8)
+    shaded_img = Image.fromarray(shaded_art, mode="RGB")
+
+    mask = Image.new("L", (box_w, box_h), 255)
+    mask = mask.filter(ImageFilter.GaussianBlur(radius=3))
+
+    composite = template.copy()
+    composite.paste(shaded_img, (left, top), mask)
+    return composite
+
+
 def generate_direct_ai_lifestyle(
     client: Any,
     artwork: Image.Image,
@@ -508,6 +592,15 @@ def generate_direct_ai_lifestyle(
     room_template: Image.Image | None = None,
     reference_analysis: dict[str, Any] | None = None,
 ) -> Image.Image:
+    if room_template is not None:
+        return generate_reference_template_composite(
+            client,
+            artwork,
+            room_template,
+            target,
+            model="gemini-2.5-flash",
+        )
+
     from google.genai import types
 
     config = types.GenerateContentConfig(

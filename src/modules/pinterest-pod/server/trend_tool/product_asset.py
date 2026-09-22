@@ -31,7 +31,7 @@ class ProductAssetConfig:
     max_gemini_attempts: int = 3
     gemini_retry_delay_sec: float = 8.0
     reconstruct_rejected_assets: bool = True
-    reconstruction_model: str = "gemini-3-pro-image"
+    reconstruction_model: str = "imagen-3.0-generate-002"
 
 
 @dataclass(frozen=True)

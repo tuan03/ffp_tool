@@ -30,7 +30,7 @@ def generate_flat_artwork(
     target: ProductTarget,
     *,
     backend: str,
-    model: str = "gemini-3-pro-image",
+    model: str = "imagen-3.0-generate-002",
     image_size: str = "2K",
     attempts: int = 2,
     reference_brief: dict[str, object] | None = None,

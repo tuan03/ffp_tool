@@ -984,28 +984,31 @@ def run_production_from_candidates(
     # Mockups rendering
     mockups: list[Path] = []
     ai_background_final_records: list[dict[str, object]] = []
-    if final_pngs:
-        log(progress, "Rendering local product mockups.")
-        mockups.extend(make_product_mockups(final_pngs[0], mockup_dir, config.target, count=config.mockup_count))
 
-        if config.task4_mockup_engine in {"blender_3d", "direct_ai", "template_ai"} and config.task4_ai_limit > 0:
+    # Resolve room template images from config or run_dir
+    room_template_files: list[Path] = []
+    if hasattr(config, "task4_room_templates") and config.task4_room_templates:
+        for r_item in config.task4_room_templates:
+            r_path = Path(r_item)
+            if r_path.exists() and r_path.is_file():
+                room_template_files.append(r_path)
+    if not room_template_files:
+        rt_dir = run_dir / "room_templates"
+        if rt_dir.exists() and rt_dir.is_dir():
+            room_template_files = [p for p in sorted(rt_dir.glob("*.*")) if p.is_file() and p.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}]
+
+    if final_pngs:
+        # Only render default synthetic canvas mockups if no custom room templates are provided and AI mockups aren't configured
+        if not room_template_files and config.task4_mockup_engine not in {"direct_ai", "template_ai", "blender_3d"}:
+            log(progress, "Rendering local product mockups.")
+            mockups.extend(make_product_mockups(final_pngs[0], mockup_dir, config.target, count=config.mockup_count))
+
+        if (room_template_files or config.task4_mockup_engine in {"blender_3d", "direct_ai", "template_ai"}) and config.task4_ai_limit > 0:
             source_prints = final_pngs[: config.task4_ai_limit]
             variants_per_product = max(1, config.task4_variants_per_product)
             blender_render = config.task4_mockup_engine == "blender_3d"
-            direct_render = config.task4_mockup_engine == "direct_ai"
+            direct_render = config.task4_mockup_engine == "direct_ai" or bool(room_template_files)
 
-            # Resolve room template images from config or run_dir
-            room_template_files: list[Path] = []
-            if hasattr(config, "task4_room_templates") and config.task4_room_templates:
-                for r_item in config.task4_room_templates:
-                    r_path = Path(r_item)
-                    if r_path.exists() and r_path.is_file():
-                        room_template_files.append(r_path)
-            if not room_template_files:
-                rt_dir = run_dir / "room_templates"
-                if rt_dir.exists() and rt_dir.is_dir():
-                    room_template_files = [p for p in sorted(rt_dir.glob("*.*")) if p.is_file() and p.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}]
-            variants_per_product = max(1, config.task4_variants_per_product)
             if room_template_files:
                 variants_per_product = max(variants_per_product, len(room_template_files))
             variants_per_product = max(1, min(10, variants_per_product))

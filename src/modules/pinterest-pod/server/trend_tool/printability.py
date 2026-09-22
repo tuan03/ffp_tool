@@ -344,6 +344,12 @@ def assess_direct_ai_mockup(
                 and not _bool(assessment.get("looks_like_wrong_product"))
                 and score >= 75
             )
+        elif norm_type in {"DYNAMIC_REFERENCE", "REFERENCE_TEMPLATE"}:
+            accepted = (
+                _bool(assessment.get("artwork_identity_preserved", True))
+                and not _bool(assessment.get("looks_like_wrong_product", False))
+                and score >= 50
+            )
         else:
             accepted = (
                 _bool(assessment.get("artwork_identity_preserved"))

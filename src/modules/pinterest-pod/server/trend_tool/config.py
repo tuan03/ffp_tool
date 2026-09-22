@@ -75,7 +75,7 @@ class PipelineConfig:
     task4_room_templates: tuple[Path, ...] = ()
     task4_variants_per_product: int = 5
     task4_quality_attempts: int = 3
-    template_mockup_model: str = "gemini-3-pro-image"
+    template_mockup_model: str = "imagen-3.0-generate-002"
     task4_modes: tuple[str, ...] = ("flex",)
     task4_models: tuple[str, ...] = ("pro",)
     task4_final_integration: str = "on"
@@ -90,33 +90,30 @@ def infer_product_type(niche: str) -> str:
     """Automatically infer product type ('blanket', 'rug', or 'custom') from niche keywords:
     * If niche contains 'blanket', 'throw', 'quilt' -> 'blanket' (preset 10000x11000 px).
     * If niche contains 'rug', 'carpet', 'mat' -> 'rug' (preset 4000x6400 px).
-    * If niche contains 'custom' -> 'custom' (preset 4000x6400 px).
-    * Otherwise -> 'rug' (default 4000x6400 px).
+    * Otherwise -> 'custom' (universal 4000x4000 px).
     """
     lower = (niche or "").lower().strip()
     if any(kw in lower for kw in ("blanket", "throw", "quilt")):
         return "blanket"
     if any(kw in lower for kw in ("rug", "carpet", "mat")):
         return "rug"
-    if "custom" in lower:
-        return "custom"
-    return "rug"
+    return "custom"
 
 
 def product_preset(name: str) -> ProductTarget:
     normalized = (name or "").lower().strip()
     if normalized == "blanket":
         return ProductTarget(name="blanket", width_px=10000, height_px=11000)
-    if normalized == "custom":
-        return ProductTarget(name="custom", width_px=4000, height_px=6400, allow_custom_shape=True)
     if normalized == "rug":
         return ProductTarget(name="rug", width_px=4000, height_px=6400)
+    if normalized == "custom":
+        return ProductTarget(name="custom", width_px=4000, height_px=4000, allow_custom_shape=True)
     inferred = infer_product_type(normalized)
     if inferred == "blanket":
         return ProductTarget(name="blanket", width_px=10000, height_px=11000)
-    if inferred == "custom":
-        return ProductTarget(name="custom", width_px=4000, height_px=6400, allow_custom_shape=True)
-    return ProductTarget(name="rug", width_px=4000, height_px=6400)
+    if inferred == "rug":
+        return ProductTarget(name="rug", width_px=4000, height_px=6400)
+    return ProductTarget(name="custom", width_px=4000, height_px=4000, allow_custom_shape=True)
 
 
 def product_preset_from_niche(niche: str) -> ProductTarget:

@@ -179,12 +179,12 @@ POD_PRINT_SPECS: dict[str, dict[str, Any]] = {
     },
     "custom": {
         "width_px": 4000,
-        "height_px": 6400,
+        "height_px": 4000,
         "dpi": 300,
         "color_mode": "CMYK",
-        "aspect_ratio": "5:8",
-        "label": "4000 x 6400 px @ 300 DPI (CMYK)",
-        "badge": "✓ Chuẩn in xưởng: 4000 x 6400 px @ 300 DPI (CMYK)",
+        "aspect_ratio": "1:1",
+        "label": "4000 x 4000 px @ 300 DPI (CMYK)",
+        "badge": "✓ Chuẩn in xưởng: 4000 x 4000 px @ 300 DPI (CMYK)",
     },
 }
 
@@ -205,17 +205,14 @@ def infer_product_type_from_niche(niche: str) -> str:
     """Automatically infer product type from niche keyword:
     * If niche contains 'blanket', 'throw', 'quilt' -> 'blanket' (preset 10000x11000 px).
     * If niche contains 'rug', 'carpet', 'mat' -> 'rug' (preset 4000x6400 px).
-    * If niche contains 'custom' -> 'custom' (preset 4000x6400 px).
-    * Otherwise -> 'rug' (default 4000x6400 px).
+    * Otherwise -> 'custom' (universal 4000x4000 px).
     """
     lower = (niche or "").lower().strip()
     if any(kw in lower for kw in ("blanket", "throw", "quilt")):
         return "blanket"
     if any(kw in lower for kw in ("rug", "carpet", "mat")):
         return "rug"
-    if "custom" in lower:
-        return "custom"
-    return "rug"
+    return "custom"
 
 
 def get_print_spec(product_type: str) -> dict[str, Any]:
@@ -223,7 +220,7 @@ def get_print_spec(product_type: str) -> dict[str, Any]:
     if norm in POD_PRINT_SPECS:
         return copy.deepcopy(POD_PRINT_SPECS[norm])
     inferred = infer_product_type_from_niche(norm)
-    return copy.deepcopy(POD_PRINT_SPECS.get(inferred, POD_PRINT_SPECS["rug"]))
+    return copy.deepcopy(POD_PRINT_SPECS.get(inferred, POD_PRINT_SPECS["custom"]))
 
 
 def get_storefront_spec() -> dict[str, Any]:

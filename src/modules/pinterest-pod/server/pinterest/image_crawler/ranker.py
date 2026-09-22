@@ -53,6 +53,12 @@ def policy_reject_reason(candidate: ImageCandidate, vision: VisionResult, policy
         return "REJECT_LOW_TREND_RELEVANCE"
 
     if has_structured_analysis:
+        if vision.is_collage or getattr(vision, "is_multi_panel_or_swatch", False):
+            return "REJECT_COLLAGE"
+        if getattr(vision, "has_commercial_metadata_text", False):
+            return "REJECT_TEXT_BLOCK"
+        if hasattr(vision, "is_single_clean_artwork") and not vision.is_single_clean_artwork:
+            return "REJECT_NOT_SINGLE_PRODUCT"
         if product_policy.reject_collage and vision.is_collage:
             return "REJECT_COLLAGE"
         if product_policy.require_physical_product and not vision.is_physical_product:

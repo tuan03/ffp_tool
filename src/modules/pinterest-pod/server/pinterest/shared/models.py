@@ -109,6 +109,9 @@ class VisionResult:
     flat_artwork_score: float = 0.0
     printability_score: float = 0.0
     requires_extraction: bool = False
+    is_multi_panel_or_swatch: bool = False
+    has_commercial_metadata_text: bool = False
+    is_single_clean_artwork: bool = True
 
 
 @dataclass

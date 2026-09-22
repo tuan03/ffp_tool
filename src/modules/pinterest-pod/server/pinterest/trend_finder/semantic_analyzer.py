@@ -52,10 +52,8 @@ def build_smart_queries(trend: str) -> list[QuerySpec]:
         QuerySpec(query=f"{clean} surface pattern design", intent="surface_pattern", priority=1),
         QuerySpec(query=f"{clean} textile pattern flat", intent="textile_flat", priority=2),
         QuerySpec(query=f"{clean} seamless pattern vector", intent="seamless_vector", priority=3),
-        QuerySpec(query=f"{clean} rug design illustration", intent="rug_illustration", priority=4),
-        QuerySpec(query=f"{clean} blanket pattern design", intent="blanket_pattern", priority=5),
-        QuerySpec(query=f"{clean} pattern", intent="pattern", priority=6),
-        QuerySpec(query=clean, intent="trend_raw", priority=7),
+        QuerySpec(query=f"{clean} pattern", intent="pattern", priority=4),
+        QuerySpec(query=clean, intent="trend_raw", priority=5),
     ]
 
 
@@ -162,19 +160,19 @@ class GeminiSemanticAnalyzer:
             for item in candidates
         ]
         return f"""
-You are the visual trend intelligence layer for a Print-on-Demand (POD) Home Textiles tool (Rugs, Blankets, Throws, Surface Prints).
+You are the visual trend intelligence layer for a Universal Print-on-Demand (POD) product tool.
 
-Target product domain: Home Decor, Floor Coverings & Bedding Textiles (Rug & Blanket prints).
-Reference context / niche: {self.niche or "home decor textiles"}
+Target product domain: Print-on-Demand Surface Prints & Physical Merchandise.
+Reference context / niche: {self.niche or "POD graphic prints"}
 
 For each Pinterest trend candidate:
-1. Decide whether it provides strong visual, motif, or pattern inspiration for home textiles (rugs, blankets, surface pattern design).
+1. Decide whether it provides strong visual, motif, or pattern inspiration for POD surface pattern design and product printing.
 2. Classify relationship as one of:
    DIRECT_PRODUCT, DESIGN_INSPIRATION, CONTEXTUAL_USE, AUDIENCE_ADJACENT, IRRELEVANT.
 3. Score semantic_fit on 0..100:
    - visual_relevance: does the trend have rich aesthetic motifs, color palettes, textures, or repeat patterns?
-   - printability_potential: can these visual elements be translated into a flat 2D surface pattern or direct print for rugs/blankets?
-   - design_transferability: can this motif be printed onto large textiles (area rugs, fleece/sherpa blankets)?
+   - printability_potential: can these visual elements be translated into a flat 2D surface pattern or direct print for POD merchandise?
+   - design_transferability: can this motif be printed onto POD products (bags, textiles, apparel, home decor, accessories)?
 
 REJECT explicitly (set reject=true and relationship=IRRELEVANT):
 - Beauty, nails, hair, makeup, skincare, cosmetics, manicures.
@@ -340,7 +338,7 @@ Candidates:
             return "empty_trend_keyword"
         match = NON_TEXTILE_STOPWORDS_REGEX.search(text)
         if match:
-            return f"Matched non-home-textile stopword: '{match.group(0)}'"
+            return f"Matched non-printable stopword: '{match.group(0)}'"
         return ""
 
     def _item_from_raw(self, candidate: TrendCandidate, raw: dict[str, Any]) -> tuple[TrendPackageItem, bool]:

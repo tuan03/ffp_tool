@@ -115,6 +115,9 @@ class ProductVisionFilter:
             flat_artwork_score=0.80 if is_off else 0.0,
             printability_score=0.75 if is_off else 0.0,
             reject_reason_code="" if is_off else "VISION_UNAVAILABLE",
+            is_multi_panel_or_swatch=False,
+            has_commercial_metadata_text=False,
+            is_single_clean_artwork=is_off,
         )
 
     def _prompt(self, batch: list[ImageCandidate]) -> str:
@@ -154,6 +157,9 @@ Return only JSON:
       "is_physical_product": false,
       "is_floor_textile": false,
       "is_collage": false,
+      "is_multi_panel_or_swatch": false,
+      "has_commercial_metadata_text": false,
+      "is_single_clean_artwork": true,
       "is_doormat": false,
       "is_bath_mat": false,
       "is_wall_tapestry": false,
@@ -183,17 +189,20 @@ For inspiration mode:
 - product_role PRIMARY means the motif/artwork/pattern is the main subject.
 - product_visibility means motif/artwork clarity.
 - commercial_quality means print/ecommerce suitability.
+- is_multi_panel_or_swatch: MANDATORY true if the image is divided into multiple panels, grid tiles, swatch squares (e.g. 4, 9, 12, 20 pattern blocks), collage sheets, or multi-item showcases. If true, set is_collage=true, accepted=false, is_single_clean_artwork=false, flat_artwork_score=0.0, printability_score=0.0, reject_reason_code="REJECT_COLLAGE".
+- has_commercial_metadata_text: MANDATORY true if the image contains commercial text, file type labels (e.g. "AI/EPS/PNG/JPG"), dimension specs (e.g. "12x12 in", "300 DPI"), pack count headers (e.g. "20 SEAMLESS PATTERNS"), watermark, pricing, or web links. If true, set accepted=false, is_single_clean_artwork=false, printability_score=0.0, reject_reason_code="REJECT_TEXT_BLOCK".
+- is_single_clean_artwork: MUST BE true ONLY IF the entire image is a SINGLE, standalone, continuous printable artwork or pattern with ZERO multi-panel grids and ZERO commercial/spec text.
 - Use reject_reason_code for strong rejections:
   REJECT_HANDS_OR_NAILS (hands, nails, fingers, manicure),
   REJECT_PHONE_WALLPAPER (phone frame, lockscreen clock, battery, status bar),
   REJECT_3D_ROOM_SCENE (photo of 3D interior room with perspective tilt & furniture obscuring floor),
-  REJECT_TEXT_BLOCK (text quotes, word art, meme text),
+  REJECT_TEXT_BLOCK (text quotes, word art, meme text, file formats, specs),
   REJECT_WATERMARK (copyright stamps, watermark across art),
   REJECT_LOGO (brand logos),
   REJECT_BLURRY (low resolution or illegible),
-  REJECT_COLLAGE (multi-image grid/moodboard).
-- flat_artwork_score: 1.0 = completely flat 2D graphic, vector, top-down seamless repeat; 0.0 = angled 3D photo or room interior.
-- printability_score: 1.0 = ready for POD direct printing onto rug/blanket; 0.0 = cluttered, dirty, occluded.
+  REJECT_COLLAGE (multi-image grid, swatch sheet, moodboard).
+- flat_artwork_score: 1.0 = completely flat 2D graphic, vector, top-down seamless repeat; 0.0 = angled 3D photo, room interior, or multi-panel swatch.
+- printability_score: 1.0 = ready for POD direct printing; 0.0 = multi-tile collage, cluttered, dirty, occluded, or text-laden.
 - source_role: artwork_source can be printed directly; style_reference is only for palette/style; extraction_required needs foreground separation; reject is unusable.
 - A 3D room photo or angled lifestyle photo is NEVER artwork_source.
 
@@ -328,6 +337,30 @@ Image metadata:
                     source_role = "artwork_source"
                 else:
                     source_role = "unknown"
+            is_multi_panel_or_swatch = bool(item.get("is_multi_panel_or_swatch") or item.get("is_collage"))
+            has_commercial_metadata_text = bool(item.get("has_commercial_metadata_text"))
+            is_single_clean_artwork = bool(item.get("is_single_clean_artwork", True))
+
+            if is_multi_panel_or_swatch:
+                accepted = False
+                is_single_clean_artwork = False
+                flat_artwork_score = min(flat_artwork_score, 0.2)
+                printability_score = 0.0
+                source_role = "reject"
+                if not reject_reason_code:
+                    reject_reason_code = "REJECT_COLLAGE"
+            if has_commercial_metadata_text:
+                accepted = False
+                is_single_clean_artwork = False
+                printability_score = 0.0
+                source_role = "reject"
+                if not reject_reason_code:
+                    reject_reason_code = "REJECT_TEXT_BLOCK"
+            if not is_single_clean_artwork:
+                accepted = False
+                source_role = "reject"
+                printability_score = min(printability_score, 0.2)
+
             output[image_id] = VisionResult(
                 image_id=image_id,
                 accepted=accepted,
@@ -346,12 +379,12 @@ Image metadata:
                 is_single_product=bool(item.get("is_single_product")),
                 is_physical_product=bool(item.get("is_physical_product")),
                 is_floor_textile=bool(item.get("is_floor_textile")),
-                is_collage=bool(item.get("is_collage")),
+                is_collage=bool(item.get("is_collage") or is_multi_panel_or_swatch),
                 is_doormat=bool(item.get("is_doormat")),
                 is_bath_mat=bool(item.get("is_bath_mat")),
                 is_wall_tapestry=bool(item.get("is_wall_tapestry")),
                 motifs=[truncate_text(value, 60).lower() for value in motifs if str(value).strip()],
-                reject_reason_code=truncate_text(item.get("reject_reason_code"), 120).upper(),
+                reject_reason_code=truncate_text(reject_reason_code, 120).upper(),
                 source_role=source_role,
                 is_lifestyle_scene=is_lifestyle_scene,
                 foreground_coverage=foreground_coverage,
@@ -359,6 +392,9 @@ Image metadata:
                 flat_artwork_score=flat_artwork_score,
                 printability_score=printability_score,
                 requires_extraction=requires_extraction,
+                is_multi_panel_or_swatch=is_multi_panel_or_swatch,
+                has_commercial_metadata_text=has_commercial_metadata_text,
+                is_single_clean_artwork=is_single_clean_artwork,
             )
         return output
 
