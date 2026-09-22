@@ -47,20 +47,65 @@ function calculateThrottleDelayMs(
   return exponential + jitter;
 }
 
+function tryLoadEnvFile(): void {
+  try {
+    if (typeof process !== "undefined" && process.versions?.node) {
+      if (process.env.SHOPIFY_SHOP && process.env.SHOPIFY_ACCESS_TOKEN) {
+        return;
+      }
+      const nodeRequire = typeof require === "function" ? require : null;
+      if (nodeRequire) {
+        const fs = nodeRequire("node:fs");
+        const path = nodeRequire("node:path");
+        const candidatePaths = [
+          path.join(process.cwd(), ".env.shopify"),
+          path.join(process.cwd(), "..", "tool_sync_customize", ".env.shopify"),
+          path.join(process.cwd(), "..", "tool_shopify", "SHOPIFY_TOOL", ".env.shopify"),
+        ];
+        for (const candidate of candidatePaths) {
+          if (fs.existsSync(candidate)) {
+            const content = fs.readFileSync(candidate, "utf8");
+            for (const line of content.split(/\r?\n/)) {
+              const match = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/);
+              if (match && !process.env[match[1]]) {
+                let val = match[2].trim();
+                if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+                  val = val.slice(1, -1);
+                }
+                process.env[match[1]] = val;
+              }
+            }
+            if (process.env.SHOPIFY_SHOP && process.env.SHOPIFY_ACCESS_TOKEN) {
+              break;
+            }
+          }
+        }
+      }
+    }
+  } catch {
+    // Ignore in non-node environments
+  }
+}
+
 export function createShopifyClient(
   credentials?: ShopifyCredentials,
   options?: ShopifySyncOptions,
 ): ShopifyClient {
+  tryLoadEnvFile();
+
   const shop = normalizeShopDomain(
-    credentials?.shop ||
-      (typeof process !== "undefined" && process.env?.SHOPIFY_SHOP) ||
-      "",
+    credentials?.shop !== undefined
+      ? credentials.shop
+      : ((typeof process !== "undefined" && process.env?.SHOPIFY_SHOP) || ""),
   );
   const token =
-    credentials?.accessToken ||
-    (typeof process !== "undefined" && process.env?.SHOPIFY_ACCESS_TOKEN) ||
-    "";
-  const apiVersion = credentials?.apiVersion || "2026-04";
+    credentials?.accessToken !== undefined
+      ? credentials.accessToken
+      : ((typeof process !== "undefined" && process.env?.SHOPIFY_ACCESS_TOKEN) || "");
+  const apiVersion =
+    credentials?.apiVersion ||
+    (typeof process !== "undefined" && process.env?.SHOPIFY_API_VERSION) ||
+    "2026-04";
 
   if (!token) {
     throw new Error("Shopify accessToken is required.");
