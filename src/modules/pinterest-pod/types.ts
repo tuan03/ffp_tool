@@ -7,9 +7,10 @@ export type PodProductType = "rug" | "blanket" | "custom";
 export type PinterestProductType = PodProductType;
 
 /**
- * Automatically infers product type ('blanket' or 'rug') from niche keywords:
+ * Automatically infers product type ('blanket', 'rug', or 'custom') from niche keywords:
  * - If niche contains 'blanket', 'throw', 'quilt' -> 'blanket' (preset 10000x11000 px)
  * - If niche contains 'rug', 'carpet', 'mat' -> 'rug' (preset 4000x6400 px)
+ * - If niche contains 'custom' -> 'custom' (preset 4000x6400 px)
  * - Otherwise -> 'rug' (default 4000x6400 px)
  */
 export function inferProductTypeFromNiche(niche: string): PodProductType {
@@ -19,6 +20,9 @@ export function inferProductTypeFromNiche(niche: string): PodProductType {
   }
   if (lower.includes("rug") || lower.includes("carpet") || lower.includes("mat")) {
     return "rug";
+  }
+  if (lower.includes("custom")) {
+    return "custom";
   }
   return "rug";
 }

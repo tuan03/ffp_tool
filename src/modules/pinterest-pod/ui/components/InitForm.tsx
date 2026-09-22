@@ -38,9 +38,11 @@ export function InitForm({
   jobStatus,
   onStartCrawl,
   onStopJob,
+  product,
+  onProductChange,
 }: InitFormProps): React.JSX.Element {
   const isBusy = jobStatus === "running" || jobStatus === "producing";
-  const detectedProduct = inferProductTypeFromNiche(niche);
+  const detectedProduct = niche.trim() ? inferProductTypeFromNiche(niche) : (product ?? "rug");
   const expectedMockupCount = referenceImages.length > 0 ? referenceImages.length : 5;
 
   return (
@@ -66,6 +68,8 @@ export function InitForm({
             <span className="font-bold text-cyan-300">
               {detectedProduct === "blanket"
                 ? "Chăn (Blanket - 10000x11000px)"
+                : detectedProduct === "custom"
+                ? "Tùy biến (Custom - 4000x6400px)"
                 : "Thảm (Rug - 4000x6400px)"}
             </span>
           </div>
@@ -74,7 +78,11 @@ export function InitForm({
           id="niche-input"
           type="text"
           value={niche}
-          onChange={(e) => onNicheChange(e.target.value)}
+          onChange={(e) => {
+            const next = e.target.value;
+            onNicheChange(next);
+            onProductChange?.(inferProductTypeFromNiche(next));
+          }}
           placeholder="Ví dụ: vintage distressed rug, boho blanket, persian mat..."
           disabled={isBusy}
           className="rounded-lg border border-slate-700 bg-slate-950 px-3.5 py-2 text-sm text-slate-100 placeholder-slate-500 focus:border-cyan-400 focus:outline-none focus:ring-1 focus:ring-cyan-400 disabled:opacity-50"
@@ -88,7 +96,10 @@ export function InitForm({
               key={chip}
               type="button"
               disabled={isBusy}
-              onClick={() => onNicheChange(chip)}
+              onClick={() => {
+                onNicheChange(chip);
+                onProductChange?.(inferProductTypeFromNiche(chip));
+              }}
               className="rounded-full border border-slate-700 bg-slate-800/80 px-2.5 py-0.5 text-[11px] text-slate-300 transition hover:border-cyan-500 hover:bg-slate-700 hover:text-cyan-300 disabled:opacity-50"
             >
               {chip}

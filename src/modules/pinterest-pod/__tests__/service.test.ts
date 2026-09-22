@@ -1017,7 +1017,7 @@ test("Real client getOAuthAuthorizeUrl and saveOAuthToken call backend endpoints
   }
 });
 
-test("inferProductTypeFromNiche correctly infers blanket, rug, and default products", () => {
+test("inferProductTypeFromNiche correctly infers blanket, rug, custom, and default products", () => {
   // Blanket keywords: blanket, throw, quilt
   assert.equal(inferProductTypeFromNiche("cozy winter blanket"), "blanket");
   assert.equal(inferProductTypeFromNiche("chunky knit throw"), "blanket");
@@ -1029,6 +1029,10 @@ test("inferProductTypeFromNiche correctly infers blanket, rug, and default produ
   assert.equal(inferProductTypeFromNiche("moroccan living room carpet"), "rug");
   assert.equal(inferProductTypeFromNiche("boho door mat"), "rug");
   assert.equal(inferProductTypeFromNiche("PERSIAN RUG"), "rug");
+
+  // Custom keyword: custom
+  assert.equal(inferProductTypeFromNiche("custom wooden wall art"), "custom");
+  assert.equal(inferProductTypeFromNiche("CUSTOM PRINT DESIGN"), "custom");
 
   // Other niches default to rug
   assert.equal(inferProductTypeFromNiche("leather bag"), "rug");
@@ -1092,6 +1096,36 @@ test("RealPinterestPodClient.createJob infers product and forwards crawlCount pa
   }
 });
 
+test("RealPinterestPodClient.produce infers product and forwards ai_background_variants", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+
+  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input.toString();
+    const body = init?.body ? (JSON.parse(init.body.toString()) as Record<string, unknown>) : {};
+    calls.push({ url, body });
+    return new Response(
+      JSON.stringify({ ok: true, jobId: "job_prod_test", status: "producing" }),
+      { status: 201, headers: { "Content-Type": "application/json" } },
+    );
+  };
+
+  try {
+    const res = await realPinterestPodClient.produce({
+      jobId: "job_stage1_abc",
+      selected_candidates: ["cand_pin_101"],
+      niche: "cozy fleece blanket",
+      ai_background_variants: 3,
+    });
+    assert.equal(res.ok, true);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].body.product, "blanket");
+    assert.equal(calls[0].body.ai_background_variants, 3);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("MockPinterestPodClient.createJob infers product type when omitted", async () => {
   const blanketJob = await mockPinterestPodClient.createJob({
     niche: "luxury plush blanket",
@@ -1106,6 +1140,38 @@ test("MockPinterestPodClient.createJob infers product type when omitted", async 
   assert.equal(rugJob.ok, true);
   const rugDetail = await mockPinterestPodClient.getJobDetail(rugJob.jobId);
   assert.equal(rugDetail.product, "rug");
+});
+
+test("MockPinterestPodClient.produce with reference images determines mockup output count directly", async () => {
+  const job = await mockPinterestPodClient.createJob({
+    niche: "nordic style wool rug",
+  });
+
+  // Advance to ready_for_review
+  await mockPinterestPodClient.getJobDetail(job.jobId);
+  await mockPinterestPodClient.getJobDetail(job.jobId);
+
+  // Produce with 3 reference room images
+  const refImages = [
+    { id: "ref_1", url: "data:image/png;base64,room1", name: "Living Room 1" },
+    { id: "ref_2", url: "data:image/png;base64,room2", name: "Living Room 2" },
+    { id: "ref_3", url: "data:image/png;base64,room3", name: "Living Room 3" },
+  ];
+
+  await mockPinterestPodClient.produce({
+    jobId: job.jobId,
+    selected_candidates: ["cand_pin_101"],
+    referenceImages: refImages,
+  });
+
+  // Advance producing -> completed
+  await mockPinterestPodClient.getJobDetail(job.jobId);
+  const completed = await mockPinterestPodClient.getJobDetail(job.jobId);
+
+  assert.equal(completed.status, "completed");
+  // 1 candidate * 3 reference images = 3 mockups
+  assert.equal(completed.deliverables?.lifestyle_mockups?.length, 3);
+  assert.equal(completed.deliverables?.comparison_rows?.[0]?.ai_background_urls?.length, 3);
 });
 
 

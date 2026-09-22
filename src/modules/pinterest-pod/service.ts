@@ -354,6 +354,8 @@ export async function startProductionJob(
     readonly status: string;
   }
 
+  const product = input.product ?? (input.niche ? inferProductTypeFromNiche(input.niche) : undefined);
+
   const raw = await requestJson<ProduceRawResponse>(
     "/api/pinterest-pod/jobs/produce",
     {
@@ -361,12 +363,12 @@ export async function startProductionJob(
       body: JSON.stringify({
         jobId: input.jobId,
         selected_candidates: input.selected_candidates,
-        ...(input.product ? { product: input.product } : {}),
+        ...(product ? { product } : {}),
         ...(input.niche ? { niche: input.niche } : {}),
         ...(input.design_mode ? { design_mode: input.design_mode } : {}),
         ...(input.referenceImages ? { referenceImages: input.referenceImages } : {}),
         ...(input.room_template_urls ? { room_template_urls: input.room_template_urls } : {}),
-        ...(input.ai_background_variants ? { ai_background_variants: input.ai_background_variants } : {}),
+        ...(input.ai_background_variants !== undefined ? { ai_background_variants: input.ai_background_variants } : {}),
       }),
       signal: options?.signal,
     },
@@ -774,6 +776,7 @@ export class RealPinterestPodClient implements PinterestPodClient {
   }
 
   public async produce(input: ProduceInput): Promise<ProduceOutput> {
+    const product = input.product ?? (input.niche ? inferProductTypeFromNiche(input.niche) : undefined);
     return fetchJson<ProduceOutput>(
       "/api/pinterest-pod/jobs/produce",
       {
@@ -781,11 +784,12 @@ export class RealPinterestPodClient implements PinterestPodClient {
         body: JSON.stringify({
           jobId: input.jobId,
           selected_candidates: input.selected_candidates,
-          product: input.product,
-          niche: input.niche,
+          ...(product ? { product } : {}),
+          ...(input.niche ? { niche: input.niche } : {}),
           design_mode: input.design_mode ?? "direct_print",
           ...(input.referenceImages ? { referenceImages: input.referenceImages } : {}),
           ...(input.room_template_urls ? { room_template_urls: input.room_template_urls } : {}),
+          ...(input.ai_background_variants !== undefined ? { ai_background_variants: input.ai_background_variants } : {}),
         }),
       },
       "PINTEREST_PRODUCE_FAILED",

@@ -90,6 +90,7 @@ def infer_product_type(niche: str) -> str:
     """Automatically infer product type ('blanket', 'rug', or 'custom') from niche keywords:
     * If niche contains 'blanket', 'throw', 'quilt' -> 'blanket' (preset 10000x11000 px).
     * If niche contains 'rug', 'carpet', 'mat' -> 'rug' (preset 4000x6400 px).
+    * If niche contains 'custom' -> 'custom' (preset 4000x6400 px).
     * Otherwise -> 'rug' (default 4000x6400 px).
     """
     lower = (niche or "").lower().strip()
@@ -97,6 +98,8 @@ def infer_product_type(niche: str) -> str:
         return "blanket"
     if any(kw in lower for kw in ("rug", "carpet", "mat")):
         return "rug"
+    if "custom" in lower:
+        return "custom"
     return "rug"
 
 
@@ -111,6 +114,8 @@ def product_preset(name: str) -> ProductTarget:
     inferred = infer_product_type(normalized)
     if inferred == "blanket":
         return ProductTarget(name="blanket", width_px=10000, height_px=11000)
+    if inferred == "custom":
+        return ProductTarget(name="custom", width_px=4000, height_px=6400, allow_custom_shape=True)
     return ProductTarget(name="rug", width_px=4000, height_px=6400)
 
 

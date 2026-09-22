@@ -205,6 +205,7 @@ def infer_product_type_from_niche(niche: str) -> str:
     """Automatically infer product type from niche keyword:
     * If niche contains 'blanket', 'throw', 'quilt' -> 'blanket' (preset 10000x11000 px).
     * If niche contains 'rug', 'carpet', 'mat' -> 'rug' (preset 4000x6400 px).
+    * If niche contains 'custom' -> 'custom' (preset 4000x6400 px).
     * Otherwise -> 'rug' (default 4000x6400 px).
     """
     lower = (niche or "").lower().strip()
@@ -212,6 +213,8 @@ def infer_product_type_from_niche(niche: str) -> str:
         return "blanket"
     if any(kw in lower for kw in ("rug", "carpet", "mat")):
         return "rug"
+    if "custom" in lower:
+        return "custom"
     return "rug"
 
 
@@ -1558,13 +1561,26 @@ def _run_local_pipeline_worker(job_id: str, req_body: dict[str, Any], base_url: 
         initial_rt = [p for p in sorted(check_rt_dir.glob("*.*")) if p.is_file() and p.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}]
 
     if initial_rt:
-        ai_background_variants = len(initial_rt)
+        ai_background_variants = max(1, min(10, len(initial_rt)))
     else:
-        ai_background_variants = int(req_body.get("ai_background_variants") or req_body.get("room_angles") or 5)
+        try:
+            ai_background_variants = int(req_body.get("ai_background_variants") or req_body.get("room_angles") or 5)
+        except (ValueError, TypeError):
+            ai_background_variants = 5
+        ai_background_variants = max(1, min(10, ai_background_variants))
 
-    task5_max_downloads = int(req_body.get("task5_max_downloads") or req_body.get("candidatePoolSize") or req_body.get("max_downloads") or 40)
-    task5_top_images = int(req_body.get("task5_top_images") or req_body.get("candidatePoolSize") or req_body.get("top_images") or task5_max_downloads)
-    task5_max_images_per_query = int(req_body.get("task5_max_images_per_query") or req_body.get("max_images_per_query") or max(12, task5_max_downloads // 4))
+    try:
+        task5_max_downloads = int(req_body.get("task5_max_downloads") or req_body.get("candidatePoolSize") or req_body.get("max_downloads") or 40)
+    except (ValueError, TypeError):
+        task5_max_downloads = 40
+    try:
+        task5_top_images = int(req_body.get("task5_top_images") or req_body.get("candidatePoolSize") or req_body.get("top_images") or task5_max_downloads)
+    except (ValueError, TypeError):
+        task5_top_images = task5_max_downloads
+    try:
+        task5_max_images_per_query = int(req_body.get("task5_max_images_per_query") or req_body.get("max_images_per_query") or max(12, task5_max_downloads // 4))
+    except (ValueError, TypeError):
+        task5_max_images_per_query = max(12, task5_max_downloads // 4)
 
     gemini_model = str(
         req_body.get("gemini_model")
@@ -1909,9 +1925,12 @@ def produce_pod_job(payload: dict[str, Any], base_url: str, api_url: str = DEFAU
             reference_images = [str(f) for f in sorted((src_run_dir / "room_templates").glob("*.*")) if f.is_file() and f.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}]
 
     if reference_images:
-        ai_background_variants = len(reference_images)
+        ai_background_variants = max(1, min(10, len(reference_images)))
     else:
-        ai_background_variants = int(payload.get("ai_background_variants") or payload.get("room_angles") or 5)
+        try:
+            ai_background_variants = int(payload.get("ai_background_variants") or payload.get("room_angles") or 5)
+        except (ValueError, TypeError):
+            ai_background_variants = 5
         ai_background_variants = max(1, min(10, ai_background_variants))
 
     print_spec = get_print_spec(product)
@@ -2006,19 +2025,26 @@ def create_pod_job(payload: dict[str, Any], base_url: str, api_url: str = DEFAUL
 
     ref_images = payload.get("referenceImages") or payload.get("reference_images") or []
     if ref_images:
-        ai_background_variants = len(ref_images)
+        ai_background_variants = max(1, min(10, len(ref_images)))
     else:
-        ai_background_variants = int(payload.get("ai_background_variants") or payload.get("room_angles") or 5)
+        try:
+            ai_background_variants = int(payload.get("ai_background_variants") or payload.get("room_angles") or 5)
+        except (ValueError, TypeError):
+            ai_background_variants = 5
         ai_background_variants = max(1, min(10, ai_background_variants))
 
     # Pinterest crawl count slider: range 10-80, default 40
-    crawl_count = int(
+    raw_crawl = (
         payload.get("candidatePoolSize")
         or payload.get("task5_max_downloads")
         or payload.get("max_downloads")
         or payload.get("top_images")
         or 40
     )
+    try:
+        crawl_count = int(raw_crawl)
+    except (ValueError, TypeError):
+        crawl_count = 40
     crawl_count = max(10, min(80, crawl_count))
 
     trend_region = str(payload.get("trend_region") or payload.get("region") or "US").strip()
