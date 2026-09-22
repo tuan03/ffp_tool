@@ -110,8 +110,17 @@ function buildVariantBulkInput(
   if (variantPatch.barcode !== undefined) {
     input.barcode = variantPatch.barcode;
   }
-  if (variantPatch.sku !== undefined) {
-    input.inventoryItem = { sku: variantPatch.sku };
+  if (variantPatch.sku !== undefined || variantPatch.inventoryTracked !== undefined) {
+    const inv: Record<string, unknown> = {};
+    if (variantPatch.sku !== undefined) {
+      inv.sku = typeof variantPatch.sku === "string" ? variantPatch.sku : undefined;
+    }
+    if (variantPatch.inventoryTracked !== undefined) {
+      const isTracked = variantPatch.inventoryTracked === true;
+      inv.tracked = isTracked;
+      input.inventoryPolicy = isTracked ? "DENY" : "CONTINUE";
+    }
+    input.inventoryItem = inv;
   }
   if (Array.isArray(variantPatch.optionValues)) {
     input.optionValues = variantPatch.optionValues.map((ov: Record<string, unknown>) => {
@@ -467,7 +476,12 @@ export async function executeVariantsBulkCreate(
     if (raw.price !== undefined) vInput.price = raw.price;
     if (raw.compareAtPrice !== undefined) vInput.compareAtPrice = raw.compareAtPrice;
     if (raw.barcode !== undefined) vInput.barcode = raw.barcode;
-    if (raw.sku !== undefined) vInput.inventoryItem = { sku: raw.sku };
+    const isTracked = raw.inventoryTracked === true;
+    vInput.inventoryItem = {
+      sku: typeof raw.sku === "string" ? raw.sku : undefined,
+      tracked: isTracked,
+    };
+    vInput.inventoryPolicy = isTracked ? "DENY" : "CONTINUE";
     if (Array.isArray(raw.optionValues)) {
       vInput.optionValues = (raw.optionValues as readonly Record<string, unknown>[]).map((ov) => {
         const optVal: Record<string, unknown> = {};

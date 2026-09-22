@@ -10,6 +10,8 @@ Run once after cloning:
 
 ```bash
 npm install
+python -m pip install -r src/modules/amazon-crawler/engine/requirements.txt
+python -m playwright install chromium
 cp .env.example .env.local
 ```
 
@@ -19,11 +21,34 @@ PowerShell alternative:
 Copy-Item .env.example .env.local
 ```
 
-Run the UI in normal development mode. Hello World is available at `/`:
+Run the UI and local Amazon crawler engine together. The crawler is available at `/amazon-crawler`:
 
 ```bash
 npm run dev
 ```
+
+Run either process independently while debugging:
+
+```bash
+npm run dev:web
+npm run dev:engine
+```
+
+The engine listens on `http://127.0.0.1:8765` by default. Set
+`VITE_AMAZON_CRAWLER_ENGINE_URL` for the browser client and
+`AMAZON_CRAWLER_CORS_ORIGINS` for the explicit localhost allowlist. Proxy
+credentials belong only in `.env.local` through `AMAZON_CRAWLER_PROXIES` and
+must never be committed.
+
+The crawler always canonicalizes Amazon requests to `amazon.com`, adds
+`language=en_US` and `currency=USD`, and establishes delivery ZIP `10001` (or
+the ZIP selected in Advanced Settings) before accepting product data. For
+multiple persistent browser/proxy profiles, copy
+`config/amazon-crawler-profiles.example.json` to the ignored local file
+`config/amazon-crawler-profiles.json`, enable the required profiles, and keep
+all proxy credentials only in that local file. `rotateProfiles` controls
+whether configured profiles repeat when the requested browser profile count is
+larger than the config list.
 
 Run the UI against mock data:
 
