@@ -286,6 +286,17 @@ def candidates_from_hot_product_images(hot_images_path: Path) -> list[CandidateI
             output_path = hot_images_path.parent / path
             path = repo_path.resolve() if repo_path.exists() else output_path.resolve()
         if not path.exists():
+            # Robust fallback: search by filename in task5_crawl subdirectories
+            for cand_dir in (
+                hot_images_path.parent / "downloaded_images",
+                hot_images_path.parent,
+                hot_images_path.parent.parent / "task5_crawl" / "downloaded_images",
+            ):
+                cand_file = cand_dir / path.name
+                if cand_file.exists():
+                    path = cand_file
+                    break
+        if not path.exists():
             continue
         candidates.append(
             CandidateImage(

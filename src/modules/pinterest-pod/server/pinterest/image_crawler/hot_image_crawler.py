@@ -133,14 +133,21 @@ def build_candidates(
             continue
         candidate = downloader.result_to_candidate(result, trend)
         candidate = downloader.download(candidate)
-        if candidate.download_error:
+        has_file = bool(candidate.local_path and Path(candidate.local_path).is_file())
+        if candidate.download_error or not has_file:
             stats["download_failed"] += 1
-            LOG.warning("Image %d/%d download error (%s): %s", idx, target_count, candidate.image_id[:8], candidate.download_error)
+            LOG.warning(
+                "Image %d/%d download error (%s): %s",
+                idx,
+                target_count,
+                candidate.image_id[:8],
+                candidate.download_error or "File missing on disk",
+            )
         else:
             stats["downloaded"] += 1
             if idx % 3 == 0 or idx == target_count:
                 LOG.info("Downloaded %d/%d images (%s)", stats["downloaded"], target_count, candidate.image_id[:10])
-        downloaded.append(candidate)
+            downloaded.append(candidate)
 
     LOG.info("Download finished: %d succeeded, %d failed. Deduping...", stats["downloaded"], stats["download_failed"])
     kept, rejected = dedupe_candidates(downloaded, dhash_distance=dhash_distance)

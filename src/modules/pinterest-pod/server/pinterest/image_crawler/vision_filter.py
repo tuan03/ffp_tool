@@ -278,8 +278,11 @@ Image metadata:
             raise RuntimeError("Gemini Vision client is not configured.")
         from google.genai import types
 
-        parts: list[Any] = [types.Part.from_text(text=self._prompt(batch))]
-        for index, candidate in enumerate(batch, start=1):
+        valid_batch = [c for c in batch if c.local_path and Path(c.local_path).is_file()]
+        if not valid_batch:
+            return {}
+        parts: list[Any] = [types.Part.from_text(text=self._prompt(valid_batch))]
+        for index, candidate in enumerate(valid_batch, start=1):
             parts.append(types.Part.from_text(text=f"IMAGE {index}: {candidate.image_id}"))
             parts.append(
                 types.Part.from_bytes(
