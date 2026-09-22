@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { Pool, PoolConnection } from "mysql2/promise";
+import Database from "better-sqlite3";
 
+import { initAutoSeoDbSchema } from "../auto-seo-db";
 import { calculateSha256, canonicalizeJson } from "../canonical-json";
 import {
   AutoSeoValidationError,
@@ -9,6 +10,13 @@ import {
   type AutoSeoProductPayload,
   type AutoSeoRunRequest,
 } from "../auto-seo-handler";
+
+function createTestDb(): Database.Database {
+  const db = new Database(":memory:");
+  db.pragma("foreign_keys = ON");
+  initAutoSeoDbSchema(db);
+  return db;
+}
 
 function createMockProduct(overrides?: Partial<AutoSeoProductPayload>): AutoSeoProductPayload {
   return {
@@ -34,93 +42,6 @@ function createMockProduct(overrides?: Partial<AutoSeoProductPayload>): AutoSeoP
   };
 }
 
-interface ExecutedQuery {
-  sql: string;
-  values: unknown[];
-  order: number;
-}
-
-function createMockDbHarness(options?: {
-  failOnInsertIndex?: number;
-}) {
-  let sequence = 0;
-  const queries: ExecutedQuery[] = [];
-  const events: string[] = [];
-
-  let inTransaction = false;
-  let committed = false;
-  let rolledBack = false;
-  let released = false;
-  let insertCount = 0;
-
-  const mockConn: Partial<PoolConnection> = {
-    async beginTransaction() {
-      inTransaction = true;
-      events.push("beginTransaction");
-    },
-    async commit() {
-      committed = true;
-      inTransaction = false;
-      events.push("commit");
-    },
-    async rollback() {
-      rolledBack = true;
-      inTransaction = false;
-      events.push("rollback");
-    },
-    release() {
-      released = true;
-      events.push("release");
-    },
-    execute: (async (sql: unknown, values?: unknown) => {
-      const currentOrder = ++sequence;
-      const normalizedSql = typeof sql === "string" ? sql.trim() : "";
-      if (normalizedSql.toUpperCase().startsWith("INSERT")) {
-        insertCount++;
-        if (options?.failOnInsertIndex === insertCount) {
-          throw new Error(`Simulated database insert failure on row ${insertCount}`);
-        }
-      }
-      queries.push({
-        sql: normalizedSql,
-        values: Array.isArray(values) ? values : [],
-        order: currentOrder,
-      });
-      return [[] as unknown, [] as unknown];
-    }) as unknown as PoolConnection["execute"],
-  };
-
-  const poolQueries: ExecutedQuery[] = [];
-  const mockPool: Partial<Pool> = {
-    async getConnection() {
-      return mockConn as PoolConnection;
-    },
-    execute: (async (sql: unknown, values?: unknown) => {
-      const currentOrder = ++sequence;
-      poolQueries.push({
-        sql: typeof sql === "string" ? sql.trim() : "",
-        values: Array.isArray(values) ? values : [],
-        order: currentOrder,
-      });
-      return [[] as unknown, [] as unknown];
-    }) as unknown as Pool["execute"],
-  };
-
-  return {
-    mockPool: mockPool as Pool,
-    mockConn: mockConn as PoolConnection,
-    queries,
-    poolQueries,
-    events,
-    getInTransaction: () => inTransaction,
-    getCommitted: () => committed,
-    getRolledBack: () => rolledBack,
-    getReleased: () => released,
-    getInsertCount: () => insertCount,
-    getSequence: () => sequence,
-  };
-}
-
 function createMockFetch(status = 200, statusText = "OK") {
   const calls: Array<{ url: string; options?: RequestInit; callOrder: number }> = [];
   let callOrder = 0;
@@ -140,8 +61,27 @@ function createMockFetch(status = 200, statusText = "OK") {
   return { fetchFn: fetchFn as typeof fetch, calls, getCallOrder: () => callOrder };
 }
 
-test("1. one product -> one INSERT", async () => {
-  const db = createMockDbHarness();
+interface BackupRow {
+  id: number;
+  backup_id: string;
+  workflow_id: string;
+  store_id: string;
+  shop_domain: string;
+  product_id: string;
+  product_handle: string;
+  product_title: string;
+  shopify_updated_at: string | null;
+  snapshot_json: string;
+  snapshot_sha256: string;
+  downstream_status: "NOT_SENT" | "SENT" | "FAILED";
+  downstream_http_status: number | null;
+  downstream_error: string | null;
+  downstream_sent_at: string | null;
+  created_at: string;
+}
+
+test("1. one product -> one INSERT in SQLite", async () => {
+  const db = createTestDb();
   const mockFetch = createMockFetch();
 
   const req: AutoSeoRunRequest = {
@@ -152,19 +92,19 @@ test("1. one product -> one INSERT", async () => {
   };
 
   const res = await handleAutoSeoRun(req, {
-    pool: db.mockPool,
+    db,
     fetchFn: mockFetch.fetchFn,
   });
 
   assert.equal(res.backedUpCount, 1);
-  const insertQueries = db.queries.filter((q) => q.sql.toUpperCase().startsWith("INSERT"));
-  assert.equal(insertQueries.length, 1);
-  assert.equal(db.getCommitted(), true);
-  assert.equal(db.getRolledBack(), false);
+  const rows = db.prepare("SELECT * FROM auto_seo_product_backups").all() as BackupRow[];
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0]?.workflow_id, "wf-1");
+  assert.equal(rows[0]?.product_id, "prod-1");
 });
 
-test("2. 3 products -> 3 INSERTs", async () => {
-  const db = createMockDbHarness();
+test("2. 3 products -> 3 INSERTs in SQLite", async () => {
+  const db = createTestDb();
   const mockFetch = createMockFetch();
 
   const req: AutoSeoRunRequest = {
@@ -179,17 +119,17 @@ test("2. 3 products -> 3 INSERTs", async () => {
   };
 
   const res = await handleAutoSeoRun(req, {
-    pool: db.mockPool,
+    db,
     fetchFn: mockFetch.fetchFn,
   });
 
   assert.equal(res.backedUpCount, 3);
-  const insertQueries = db.queries.filter((q) => q.sql.toUpperCase().startsWith("INSERT"));
-  assert.equal(insertQueries.length, 3);
+  const rows = db.prepare("SELECT * FROM auto_seo_product_backups").all() as BackupRow[];
+  assert.equal(rows.length, 3);
 });
 
 test("3. same workflow_id across rows", async () => {
-  const db = createMockDbHarness();
+  const db = createTestDb();
   const mockFetch = createMockFetch();
 
   const req: AutoSeoRunRequest = {
@@ -203,19 +143,19 @@ test("3. same workflow_id across rows", async () => {
   };
 
   await handleAutoSeoRun(req, {
-    pool: db.mockPool,
+    db,
     fetchFn: mockFetch.fetchFn,
   });
 
-  const insertQueries = db.queries.filter((q) => q.sql.toUpperCase().startsWith("INSERT"));
-  for (const query of insertQueries) {
-    // column 2 in VALUES: workflow_id
-    assert.equal(query.values[1], "wf-consistent-123");
+  const rows = db.prepare("SELECT * FROM auto_seo_product_backups").all() as BackupRow[];
+  assert.equal(rows.length, 2);
+  for (const row of rows) {
+    assert.equal(row.workflow_id, "wf-consistent-123");
   }
 });
 
 test("4. each product gets own product_id", async () => {
-  const db = createMockDbHarness();
+  const db = createTestDb();
   const mockFetch = createMockFetch();
 
   const req: AutoSeoRunRequest = {
@@ -229,17 +169,17 @@ test("4. each product gets own product_id", async () => {
   };
 
   await handleAutoSeoRun(req, {
-    pool: db.mockPool,
+    db,
     fetchFn: mockFetch.fetchFn,
   });
 
-  const insertQueries = db.queries.filter((q) => q.sql.toUpperCase().startsWith("INSERT"));
-  assert.equal(insertQueries[0]?.values[4], "gid://shopify/Product/100");
-  assert.equal(insertQueries[1]?.values[4], "gid://shopify/Product/200");
+  const rows = db.prepare("SELECT * FROM auto_seo_product_backups ORDER BY id ASC").all() as BackupRow[];
+  assert.equal(rows[0]?.product_id, "gid://shopify/Product/100");
+  assert.equal(rows[1]?.product_id, "gid://shopify/Product/200");
 });
 
 test("5. snapshot_json contains exact full product object", async () => {
-  const db = createMockDbHarness();
+  const db = createTestDb();
   const mockFetch = createMockFetch();
 
   const product = createMockProduct({
@@ -258,12 +198,12 @@ test("5. snapshot_json contains exact full product object", async () => {
       shopDomain: "test.myshopify.com",
       products: [product],
     },
-    { pool: db.mockPool, fetchFn: mockFetch.fetchFn },
+    { db, fetchFn: mockFetch.fetchFn },
   );
 
-  const insertQueries = db.queries.filter((q) => q.sql.toUpperCase().startsWith("INSERT"));
-  const storedJson = insertQueries[0]?.values[8] as string;
-  const parsed = JSON.parse(storedJson);
+  const row = db.prepare("SELECT * FROM auto_seo_product_backups WHERE product_id = ?").get("prod-exact") as BackupRow;
+  assert.ok(row);
+  const parsed = JSON.parse(row.snapshot_json);
 
   assert.equal(parsed.id, "prod-exact");
   assert.equal(parsed.title, "Exact Title");
@@ -273,7 +213,7 @@ test("5. snapshot_json contains exact full product object", async () => {
 });
 
 test("6. SHA-256 generated from full canonical JSON", async () => {
-  const db = createMockDbHarness();
+  const db = createTestDb();
   const mockFetch = createMockFetch();
 
   const product = createMockProduct({ id: "prod-sha" });
@@ -287,19 +227,17 @@ test("6. SHA-256 generated from full canonical JSON", async () => {
       shopDomain: "test.myshopify.com",
       products: [product],
     },
-    { pool: db.mockPool, fetchFn: mockFetch.fetchFn },
+    { db, fetchFn: mockFetch.fetchFn },
   );
 
-  const insertQueries = db.queries.filter((q) => q.sql.toUpperCase().startsWith("INSERT"));
-  const storedJson = insertQueries[0]?.values[8] as string;
-  const storedSha = insertQueries[0]?.values[9] as string;
-
-  assert.equal(storedJson, expectedCanonical);
-  assert.equal(storedSha, expectedSha256);
+  const row = db.prepare("SELECT * FROM auto_seo_product_backups WHERE product_id = ?").get("prod-sha") as BackupRow;
+  assert.ok(row);
+  assert.equal(row.snapshot_json, expectedCanonical);
+  assert.equal(row.snapshot_sha256, expectedSha256);
 });
 
-test("7. duplicate product IDs rejected before DB transaction", async () => {
-  const db = createMockDbHarness();
+test("7. duplicate product IDs in request rejected before DB transaction", async () => {
+  const db = createTestDb();
   const mockFetch = createMockFetch();
 
   const req = {
@@ -314,7 +252,7 @@ test("7. duplicate product IDs rejected before DB transaction", async () => {
 
   await assert.rejects(
     async () => {
-      await handleAutoSeoRun(req, { pool: db.mockPool, fetchFn: mockFetch.fetchFn });
+      await handleAutoSeoRun(req, { db, fetchFn: mockFetch.fetchFn });
     },
     (err: unknown) => {
       assert.ok(err instanceof AutoSeoValidationError);
@@ -323,39 +261,64 @@ test("7. duplicate product IDs rejected before DB transaction", async () => {
     },
   );
 
-  assert.equal(db.events.length, 0);
+  const rows = db.prepare("SELECT * FROM auto_seo_product_backups").all();
+  assert.equal(rows.length, 0);
   assert.equal(mockFetch.calls.length, 0);
 });
 
-test("8. one INSERT failure -> ROLLBACK", async () => {
-  const db = createMockDbHarness({ failOnInsertIndex: 2 });
+test("8. one INSERT failure -> ROLLBACK of entire transaction", async () => {
+  const db = createTestDb();
   const mockFetch = createMockFetch();
 
+  // Pre-insert a row with workflow "wf-conflict", store "store-1", product "prod-fail"
+  db.prepare(`
+    INSERT INTO auto_seo_product_backups (
+      backup_id, workflow_id, store_id, shop_domain, product_id, product_handle,
+      product_title, snapshot_json, snapshot_sha256, downstream_status
+    ) VALUES ('b-existing', 'wf-conflict', 'store-1', 'test.myshopify.com', 'prod-fail', 'fail', 'Fail', '{}', 'hash', 'NOT_SENT')
+  `).run();
+
   const req = {
-    workflowId: "wf-rollback",
+    workflowId: "wf-conflict",
     storeId: "store-1",
     shopDomain: "test.myshopify.com",
     products: [
       createMockProduct({ id: "prod-ok" }),
-      createMockProduct({ id: "prod-fail" }),
+      createMockProduct({ id: "prod-fail" }), // Violates UNIQUE (workflow_id, store_id, product_id)
     ],
   };
 
   await assert.rejects(
     async () => {
-      await handleAutoSeoRun(req, { pool: db.mockPool, fetchFn: mockFetch.fetchFn });
+      await handleAutoSeoRun(req, { db, fetchFn: mockFetch.fetchFn });
     },
-    /Simulated database insert failure on row 2/,
+    (err: unknown) => {
+      assert.ok(err instanceof Error);
+      assert.match(err.message, /UNIQUE constraint failed/);
+      return true;
+    },
   );
 
-  assert.equal(db.getRolledBack(), true);
-  assert.equal(db.getCommitted(), false);
-  assert.equal(db.getReleased(), true);
+  // prod-ok MUST NOT be inserted because the transaction rolled back!
+  const okRow = db.prepare("SELECT * FROM auto_seo_product_backups WHERE product_id = ?").get("prod-ok");
+  assert.equal(okRow, undefined);
+
+  // Only the pre-existing row remains
+  const allRows = db.prepare("SELECT * FROM auto_seo_product_backups").all();
+  assert.equal(allRows.length, 1);
 });
 
 test("9. backup failure -> downstream call count 0", async () => {
-  const db = createMockDbHarness({ failOnInsertIndex: 1 });
+  const db = createTestDb();
   const mockFetch = createMockFetch();
+
+  // Pre-insert to cause unique constraint violation
+  db.prepare(`
+    INSERT INTO auto_seo_product_backups (
+      backup_id, workflow_id, store_id, shop_domain, product_id, product_handle,
+      product_title, snapshot_json, snapshot_sha256, downstream_status
+    ) VALUES ('b-existing', 'wf-fail-downstream', 'store-1', 'test.myshopify.com', 'prod-1', 'h', 't', '{}', 'hash', 'NOT_SENT')
+  `).run();
 
   const req = {
     workflowId: "wf-fail-downstream",
@@ -365,24 +328,23 @@ test("9. backup failure -> downstream call count 0", async () => {
   };
 
   await assert.rejects(async () => {
-    await handleAutoSeoRun(req, { pool: db.mockPool, fetchFn: mockFetch.fetchFn });
+    await handleAutoSeoRun(req, { db, fetchFn: mockFetch.fetchFn });
   });
 
   assert.equal(mockFetch.calls.length, 0);
 });
 
 test("10. downstream API occurs only AFTER COMMIT", async () => {
-  const db = createMockDbHarness();
-  const timeline: string[] = [];
-
-  const originalCommit = db.mockConn.commit.bind(db.mockConn);
-  db.mockConn.commit = async () => {
-    timeline.push("COMMIT");
-    await originalCommit();
-  };
+  const db = createTestDb();
+  let rowStatusDuringFetch: string | null = null;
+  let rowCountDuringFetch = 0;
 
   const fetchFn = async (): Promise<Response> => {
-    timeline.push("DOWNSTREAM_FETCH");
+    // When downstream is called, the database transaction has already committed!
+    const rows = db.prepare("SELECT * FROM auto_seo_product_backups WHERE workflow_id = ?").all("wf-order") as BackupRow[];
+    rowCountDuringFetch = rows.length;
+    rowStatusDuringFetch = rows[0]?.downstream_status ?? null;
+
     return {
       ok: true,
       status: 200,
@@ -398,14 +360,20 @@ test("10. downstream API occurs only AFTER COMMIT", async () => {
       shopDomain: "test.myshopify.com",
       products: [createMockProduct({ id: "prod-1" })],
     },
-    { pool: db.mockPool, fetchFn: fetchFn as typeof fetch },
+    { db, fetchFn: fetchFn as typeof fetch },
   );
 
-  assert.deepEqual(timeline, ["COMMIT", "DOWNSTREAM_FETCH"]);
+  // During downstream call, row was already committed with 'NOT_SENT'
+  assert.equal(rowCountDuringFetch, 1);
+  assert.equal(rowStatusDuringFetch, "NOT_SENT");
+
+  // After handleAutoSeoRun finishes, row is updated to 'SENT'
+  const finalRow = db.prepare("SELECT * FROM auto_seo_product_backups WHERE workflow_id = ?").get("wf-order") as BackupRow;
+  assert.equal(finalRow.downstream_status, "SENT");
 });
 
 test("11. downstream receives same products as backed up", async () => {
-  const db = createMockDbHarness();
+  const db = createTestDb();
   let receivedBody: unknown = null;
 
   const fetchFn = async (_url: RequestInfo | URL, options?: RequestInit): Promise<Response> => {
@@ -428,7 +396,7 @@ test("11. downstream receives same products as backed up", async () => {
       shopDomain: "shop.myshopify.com",
       products: [product1, product2],
     },
-    { pool: db.mockPool, fetchFn: fetchFn as typeof fetch },
+    { db, fetchFn: fetchFn as typeof fetch },
   );
 
   const payload = receivedBody as { workflowId: string; products: AutoSeoProductPayload[] };
@@ -438,8 +406,8 @@ test("11. downstream receives same products as backed up", async () => {
   assert.equal(payload.products[1]?.id, "p2");
 });
 
-test("12. downstream 2xx -> SENT", async () => {
-  const db = createMockDbHarness();
+test("12. downstream 2xx -> SENT and downstream_sent_at is set", async () => {
+  const db = createTestDb();
   const mockFetch = createMockFetch(200, "OK");
 
   const res = await handleAutoSeoRun(
@@ -449,20 +417,21 @@ test("12. downstream 2xx -> SENT", async () => {
       shopDomain: "test.myshopify.com",
       products: [createMockProduct({ id: "prod-1" })],
     },
-    { pool: db.mockPool, fetchFn: mockFetch.fetchFn },
+    { db, fetchFn: mockFetch.fetchFn },
   );
 
   assert.equal(res.downstreamStatus, "SENT");
   assert.equal(res.downstreamHttpStatus, 200);
 
-  const updateQuery = db.poolQueries.find((q) => q.sql.includes("UPDATE auto_seo_product_backups"));
-  assert.ok(updateQuery);
-  assert.equal(updateQuery.values[0], "SENT");
-  assert.equal(updateQuery.values[1], 200);
+  const row = db.prepare("SELECT * FROM auto_seo_product_backups WHERE workflow_id = ?").get("wf-sent") as BackupRow;
+  assert.ok(row);
+  assert.equal(row.downstream_status, "SENT");
+  assert.equal(row.downstream_http_status, 200);
+  assert.ok(typeof row.downstream_sent_at === "string" && row.downstream_sent_at.length > 0);
 });
 
-test("13. downstream failure -> FAILED and rows remain", async () => {
-  const db = createMockDbHarness();
+test("13. downstream failure -> FAILED and rows remain in DB", async () => {
+  const db = createTestDb();
   const mockFetch = createMockFetch(502, "Bad Gateway");
 
   const res = await handleAutoSeoRun(
@@ -472,24 +441,23 @@ test("13. downstream failure -> FAILED and rows remain", async () => {
       shopDomain: "test.myshopify.com",
       products: [createMockProduct({ id: "prod-1" })],
     },
-    { pool: db.mockPool, fetchFn: mockFetch.fetchFn },
+    { db, fetchFn: mockFetch.fetchFn },
   );
 
   assert.equal(res.downstreamStatus, "FAILED");
   assert.equal(res.downstreamHttpStatus, 502);
 
-  // DB transaction was NOT rolled back because downstream failed after COMMIT
-  assert.equal(db.getCommitted(), true);
-  assert.equal(db.getRolledBack(), false);
-
-  const updateQuery = db.poolQueries.find((q) => q.sql.includes("UPDATE auto_seo_product_backups"));
-  assert.ok(updateQuery);
-  assert.equal(updateQuery.values[0], "FAILED");
-  assert.equal(updateQuery.values[1], 502);
+  // Backup row remains in database
+  const row = db.prepare("SELECT * FROM auto_seo_product_backups WHERE workflow_id = ?").get("wf-failed-downstream") as BackupRow;
+  assert.ok(row);
+  assert.equal(row.downstream_status, "FAILED");
+  assert.equal(row.downstream_http_status, 502);
+  assert.ok(row.downstream_error?.includes("502"));
+  assert.ok(typeof row.downstream_sent_at === "string" && row.downstream_sent_at.length > 0);
 });
 
 test("14. hasMoreImages=true -> block before INSERT", async () => {
-  const db = createMockDbHarness();
+  const db = createTestDb();
   const mockFetch = createMockFetch();
 
   const req = {
@@ -501,7 +469,7 @@ test("14. hasMoreImages=true -> block before INSERT", async () => {
 
   await assert.rejects(
     async () => {
-      await handleAutoSeoRun(req, { pool: db.mockPool, fetchFn: mockFetch.fetchFn });
+      await handleAutoSeoRun(req, { db, fetchFn: mockFetch.fetchFn });
     },
     (err: unknown) => {
       assert.ok(err instanceof AutoSeoValidationError);
@@ -510,12 +478,13 @@ test("14. hasMoreImages=true -> block before INSERT", async () => {
     },
   );
 
-  assert.equal(db.events.length, 0);
+  const rows = db.prepare("SELECT * FROM auto_seo_product_backups").all();
+  assert.equal(rows.length, 0);
   assert.equal(mockFetch.calls.length, 0);
 });
 
 test("15. hasMoreVariants=true -> block before INSERT", async () => {
-  const db = createMockDbHarness();
+  const db = createTestDb();
   const mockFetch = createMockFetch();
 
   const req = {
@@ -527,7 +496,7 @@ test("15. hasMoreVariants=true -> block before INSERT", async () => {
 
   await assert.rejects(
     async () => {
-      await handleAutoSeoRun(req, { pool: db.mockPool, fetchFn: mockFetch.fetchFn });
+      await handleAutoSeoRun(req, { db, fetchFn: mockFetch.fetchFn });
     },
     (err: unknown) => {
       assert.ok(err instanceof AutoSeoValidationError);
@@ -536,6 +505,7 @@ test("15. hasMoreVariants=true -> block before INSERT", async () => {
     },
   );
 
-  assert.equal(db.events.length, 0);
+  const rows = db.prepare("SELECT * FROM auto_seo_product_backups").all();
+  assert.equal(rows.length, 0);
   assert.equal(mockFetch.calls.length, 0);
 });

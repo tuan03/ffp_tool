@@ -1,8 +1,8 @@
 import crypto from "node:crypto";
 import type http from "node:http";
-import type { Pool, PoolConnection } from "mysql2/promise";
+import type Database from "better-sqlite3";
 
-import { getAutoSeoDbPool } from "./auto-seo-db";
+import { getAutoSeoDb } from "./auto-seo-db";
 import { calculateSha256, canonicalizeJson } from "./canonical-json";
 import { isGatewayAuthorized, MAX_BODY_BYTES } from "./http-server";
 import { loadLocalEnv } from "./store-config-loader";
@@ -46,12 +46,12 @@ export interface AutoSeoRunResult {
 }
 
 export interface AutoSeoHandlerOptions {
-  readonly pool?: Pool;
+  readonly db?: Database.Database;
   readonly fetchFn?: typeof fetch;
   readonly downstreamApiUrl?: string;
 }
 
-function formatMySqlDateTime(dateStr?: string): string | null {
+function formatIsoDateTime(dateStr?: string): string | null {
   if (!dateStr) {
     return null;
   }
@@ -59,7 +59,7 @@ function formatMySqlDateTime(dateStr?: string): string | null {
   if (Number.isNaN(d.getTime())) {
     return null;
   }
-  return d.toISOString().slice(0, 19).replace("T", " ");
+  return d.toISOString();
 }
 
 export class AutoSeoValidationError extends Error {
@@ -132,14 +132,14 @@ export function validateAutoSeoRunInput(body: unknown): AutoSeoRunRequest {
   };
 }
 
-export async function executeAutoSeoBackup(
-  conn: PoolConnection,
+export function executeAutoSeoBackup(
+  db: Database.Database,
   request: AutoSeoRunRequest,
-): Promise<{ readonly backupIds: string[]; readonly productIds: string[] }> {
+): { readonly backupIds: string[]; readonly productIds: string[] } {
   const backupIds: string[] = [];
   const productIds: string[] = [];
 
-  const insertSql = `
+  const insertStmt = db.prepare(`
     INSERT INTO auto_seo_product_backups (
       backup_id,
       workflow_id,
@@ -153,15 +153,15 @@ export async function executeAutoSeoBackup(
       snapshot_sha256,
       downstream_status
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'NOT_SENT')
-  `;
+  `);
 
   for (const product of request.products) {
     const canonicalJson = canonicalizeJson(product);
     const sha256 = calculateSha256(canonicalJson);
     const backupId = crypto.randomUUID();
-    const formattedUpdatedAt = formatMySqlDateTime(product.updatedAt);
+    const formattedUpdatedAt = formatIsoDateTime(product.updatedAt);
 
-    await conn.execute(insertSql, [
+    insertStmt.run(
       backupId,
       request.workflowId,
       request.storeId,
@@ -172,7 +172,7 @@ export async function executeAutoSeoBackup(
       formattedUpdatedAt,
       canonicalJson,
       sha256,
-    ]);
+    );
 
     backupIds.push(backupId);
     productIds.push(product.id);
@@ -181,14 +181,14 @@ export async function executeAutoSeoBackup(
   return { backupIds, productIds };
 }
 
-export async function updateDownstreamStatus(
-  pool: Pool,
+export function updateDownstreamStatus(
+  db: Database.Database,
   workflowId: string,
   backupIds: readonly string[],
   status: "SENT" | "FAILED",
   httpStatus?: number | null,
   error?: string | null,
-): Promise<void> {
+): void {
   if (backupIds.length === 0) {
     return;
   }
@@ -199,18 +199,21 @@ export async function updateDownstreamStatus(
     SET downstream_status = ?,
         downstream_http_status = ?,
         downstream_error = ?,
-        downstream_sent_at = NOW(3)
+        downstream_sent_at = ?
     WHERE workflow_id = ? AND backup_id IN (${placeholders})
   `;
 
   const truncatedError = error ? error.slice(0, 1000) : null;
-  await pool.execute(updateSql, [
+  const sentAt = new Date().toISOString();
+  const stmt = db.prepare(updateSql);
+  stmt.run(
     status,
     httpStatus ?? null,
     truncatedError,
+    sentAt,
     workflowId,
     ...backupIds,
-  ]);
+  );
 }
 
 export async function handleAutoSeoRun(
@@ -218,7 +221,7 @@ export async function handleAutoSeoRun(
   options?: AutoSeoHandlerOptions,
 ): Promise<AutoSeoRunResult> {
   const request = validateAutoSeoRunInput(body);
-  const pool = options?.pool ?? getAutoSeoDbPool();
+  const db = options?.db ?? getAutoSeoDb();
   const fetchFn = options?.fetchFn ?? fetch;
 
   const localEnv = loadLocalEnv();
@@ -228,25 +231,18 @@ export async function handleAutoSeoRun(
     localEnv.SEO_CONTENT_API_URL ??
     "https://httpbin.org/post";
 
-  const conn = await pool.getConnection();
+  // Execute backup in a single transaction
+  const backupTx = db.transaction((req: AutoSeoRunRequest) => {
+    return executeAutoSeoBackup(db, req);
+  });
+
   let backupIds: string[] = [];
-
   try {
-    await conn.beginTransaction();
-
-    const backupResult = await executeAutoSeoBackup(conn, request);
-    backupIds = backupResult.backupIds;
-
-    await conn.commit();
+    const backupResult = backupTx(request);
+    backupIds = [...backupResult.backupIds];
   } catch (dbError) {
-    try {
-      await conn.rollback();
-    } catch {
-      // Ignore rollback failure if connection was lost
-    }
+    // Transaction rolled back automatically by better-sqlite3; stop here with no downstream call
     throw dbError;
-  } finally {
-    conn.release();
   }
 
   // Only after successful COMMIT may the system POST the same product snapshots to downstream API
@@ -286,8 +282,8 @@ export async function handleAutoSeoRun(
 
   // Update backup rows with downstream status (failure does not roll back committed backups)
   try {
-    await updateDownstreamStatus(
-      pool,
+    updateDownstreamStatus(
+      db,
       request.workflowId,
       backupIds,
       downstreamStatus,

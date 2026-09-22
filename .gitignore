@@ -4,8 +4,9 @@ build/
 artifacts/
 Tool_crawer_New_update/
 .vite/
-.env.local
-.env.*.local
+.env
+.env.*
+.env.shopify
 *.tsbuildinfo
 .DS_Store
 stores.local.json
@@ -24,10 +25,11 @@ src/modules/pinterest-pod/server/.env
 **/.*oauth*.json
 pinterest_oauth_tokens.json
 
-# Amazon Distributed Crawler Artifacts
+# Amazon Distributed Crawler & Local Data Artifacts
 .runtime/
 exports/
 client-data/
+.local-data/
 *.sqlite3
 *.sqlite3-shm
 *.sqlite3-wal

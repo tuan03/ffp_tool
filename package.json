@@ -14,9 +14,9 @@
     "build:mock": "tsc --noEmit -p tsconfig.json && vite build --mode mock",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.gateway.json",
     "typecheck:gateway": "tsc --noEmit -p tsconfig.gateway.json",
-    "test": "npm run test:tooling && npm run test:web && npm run test:engine",
+    "test": "npm run test:tooling && npm run test:web && npm run test:gateway && npm run test:engine",
     "test:tooling": "node --test scripts/*.test.mjs",
-    "test:web": "tsx --test src/config/__tests__/*.test.ts src/modules/*/__tests__/*.test.ts gateway/__tests__/*.test.ts",
+    "test:web": "tsx --test src/config/__tests__/*.test.ts src/modules/*/__tests__/*.test.ts",
     "test:gateway": "tsx --test gateway/__tests__/*.test.ts",
     "test:engine": "python -m unittest discover -s src/modules/amazon-crawler/engine/tests -t src/modules/amazon-crawler -p \"test_*.py\"",
     "test:distributed": "python -m unittest discover -s src/modules/amazon-crawler/engine/tests -t src/modules/amazon-crawler -p \"test_distributed.py\" -v --locals",
@@ -27,7 +27,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "mysql2": "^3.24.4",
+    "better-sqlite3": "^12.11.1",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "react-router-dom": "^7.18.4",
@@ -35,6 +35,7 @@
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.3",
+    "@types/better-sqlite3": "^9.6.0",
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",

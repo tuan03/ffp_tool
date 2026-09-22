@@ -8,6 +8,9 @@ export type ShopifyOperation =
   | "products.delete"
   | "variants.update"
   | "variants.bulkUpdate"
+  | "variants.bulkCreate"
+  | "files.create"
+  | "metafields.set"
   | "collections.list"
   | "collections.get"
   | "collections.create"
@@ -179,6 +182,7 @@ export interface ShopifyProductInput {
   readonly tags?: readonly string[];
   readonly featuredImage?: ShopifyImageInput;
   readonly images?: readonly ShopifyImageInput[];
+  readonly media?: readonly (ShopifyImageInput | { readonly originalSource?: string; readonly alt?: string; readonly mediaContentType?: "IMAGE" | "VIDEO" })[];
   readonly productOptions?: readonly ShopifyProductOptionInput[];
   readonly variants?: readonly ShopifyProductVariantInput[];
   readonly seo?: ShopifySeoInput;
@@ -468,6 +472,114 @@ export interface ShopifyVariantsBulkUpdateResponse {
   readonly data: ShopifyVariantsBulkUpdateData;
 }
 
+// 9b. variants.bulkCreate
+export interface ShopifyVariantsBulkCreatePayload {
+  readonly productId: string;
+  readonly variants: readonly ShopifyProductVariantInput[];
+}
+
+export interface ShopifyVariantsBulkCreateData {
+  readonly createdCount: number;
+  readonly variants: readonly ShopifyProductVariant[];
+}
+
+export interface ShopifyVariantsBulkCreateInput {
+  readonly storeId: string;
+  readonly requestId?: string;
+  readonly mode?: ShopifyExecutionMode;
+  readonly operation: "variants.bulkCreate";
+  readonly payload: ShopifyVariantsBulkCreatePayload;
+}
+
+export interface ShopifyVariantsBulkCreateResponse {
+  readonly storeId: string;
+  readonly operation: "variants.bulkCreate";
+  readonly success: true;
+  readonly data: ShopifyVariantsBulkCreateData;
+}
+
+// 9c. files.create
+export interface ShopifyFilesCreatePayload {
+  readonly originalSource: string;
+  readonly filename?: string;
+  readonly alt?: string;
+  readonly contentType?: "FILE" | "IMAGE";
+  readonly pollIntervalMs?: number;
+  readonly maxPollAttempts?: number;
+}
+
+export interface ShopifyFilesCreateData {
+  readonly fileId: string;
+  readonly shopifyCdnUrl: string;
+  readonly fileStatus: string;
+  readonly alt?: string;
+}
+
+export interface ShopifyFilesCreateInput {
+  readonly storeId: string;
+  readonly requestId?: string;
+  readonly mode?: ShopifyExecutionMode;
+  readonly operation: "files.create";
+  readonly payload: ShopifyFilesCreatePayload;
+}
+
+export interface ShopifyFilesCreateResponse {
+  readonly storeId: string;
+  readonly operation: "files.create";
+  readonly success: true;
+  readonly data: ShopifyFilesCreateData;
+}
+
+// 9d. metafields.set
+export interface ShopifyMetafieldItemInput {
+  readonly ownerId?: string;
+  readonly productId?: string;
+  readonly namespace: string;
+  readonly key: string;
+  readonly value: string;
+  readonly type?: string;
+}
+
+export interface ShopifyMetafieldsSetPayload {
+  readonly metafields?: readonly ShopifyMetafieldItemInput[];
+  readonly ownerId?: string;
+  readonly productId?: string;
+  readonly namespace?: string;
+  readonly key?: string;
+  readonly value?: string;
+  readonly type?: string;
+}
+
+export interface ShopifyMetafieldSummary {
+  readonly id: string;
+  readonly namespace: string;
+  readonly key: string;
+  readonly type: string;
+  readonly value: string;
+  readonly ownerType?: string;
+}
+
+export interface ShopifyMetafieldsSetData {
+  readonly success: boolean;
+  readonly metafieldId?: string;
+  readonly metafields: readonly ShopifyMetafieldSummary[];
+}
+
+export interface ShopifyMetafieldsSetInput {
+  readonly storeId: string;
+  readonly requestId?: string;
+  readonly mode?: ShopifyExecutionMode;
+  readonly operation: "metafields.set";
+  readonly payload: ShopifyMetafieldsSetPayload;
+}
+
+export interface ShopifyMetafieldsSetResponse {
+  readonly storeId: string;
+  readonly operation: "metafields.set";
+  readonly success: true;
+  readonly data: ShopifyMetafieldsSetData;
+}
+
 // 10. collections.list
 export interface ShopifyCollectionsListPayload {
   readonly limit?: number;
@@ -683,6 +795,9 @@ export type ShopifyApiInput =
   | ShopifyProductsDeleteInput
   | ShopifyVariantsUpdateInput
   | ShopifyVariantsBulkUpdateInput
+  | ShopifyVariantsBulkCreateInput
+  | ShopifyFilesCreateInput
+  | ShopifyMetafieldsSetInput
   | ShopifyCollectionsListInput
   | ShopifyCollectionsGetInput
   | ShopifyCollectionsCreateInput
@@ -702,6 +817,9 @@ export type ShopifyApiResponse =
   | ShopifyProductsDeleteResponse
   | ShopifyVariantsUpdateResponse
   | ShopifyVariantsBulkUpdateResponse
+  | ShopifyVariantsBulkCreateResponse
+  | ShopifyFilesCreateResponse
+  | ShopifyMetafieldsSetResponse
   | ShopifyCollectionsListResponse
   | ShopifyCollectionsGetResponse
   | ShopifyCollectionsCreateResponse
@@ -726,6 +844,9 @@ export interface ModuleApiRunner {
   (input: ShopifyProductsDeleteInput): Promise<ShopifyProductsDeleteResponse>;
   (input: ShopifyVariantsUpdateInput): Promise<ShopifyVariantsUpdateResponse>;
   (input: ShopifyVariantsBulkUpdateInput): Promise<ShopifyVariantsBulkUpdateResponse>;
+  (input: ShopifyVariantsBulkCreateInput): Promise<ShopifyVariantsBulkCreateResponse>;
+  (input: ShopifyFilesCreateInput): Promise<ShopifyFilesCreateResponse>;
+  (input: ShopifyMetafieldsSetInput): Promise<ShopifyMetafieldsSetResponse>;
   (input: ShopifyCollectionsListInput): Promise<ShopifyCollectionsListResponse>;
   (input: ShopifyCollectionsGetInput): Promise<ShopifyCollectionsGetResponse>;
   (input: ShopifyCollectionsCreateInput): Promise<ShopifyCollectionsCreateResponse>;

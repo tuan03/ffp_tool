@@ -19,7 +19,6 @@ export function AppLayout(): React.JSX.Element {
             </NavLink>
 
             <nav className="flex items-center gap-2 text-xs font-medium">
-
               <NavLink
                 to="/amazon-crawler"
                 className={({ isActive }) =>

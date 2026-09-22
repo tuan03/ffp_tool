@@ -1,60 +1,91 @@
-import mysql from "mysql2/promise";
-import type { Pool, PoolOptions } from "mysql2/promise";
+import fs from "node:fs";
+import path from "node:path";
+import Database from "better-sqlite3";
 
 import { loadLocalEnv } from "./store-config-loader";
 
-export interface AutoSeoDbConfig {
-  readonly host?: string;
-  readonly port?: number;
-  readonly user?: string;
-  readonly password?: string;
-  readonly database?: string;
+export interface AutoSeoDbOptions {
+  readonly dbPath?: string;
+  readonly memory?: boolean;
 }
 
-let activePool: Pool | null = null;
+let activeDb: Database.Database | null = null;
 
-export function resolveAutoSeoDbConfig(overrides?: AutoSeoDbConfig): PoolOptions {
-  const localEnv = loadLocalEnv();
-  const getEnv = (key: string): string | undefined => {
-    return process.env[key] ?? localEnv[key];
-  };
-
-  const host = overrides?.host ?? getEnv("AUTO_SEO_DB_HOST") ?? "127.0.0.1";
-  const portStr = overrides?.port ? String(overrides.port) : getEnv("AUTO_SEO_DB_PORT") ?? "3306";
-  const port = Number.parseInt(portStr, 10) || 3306;
-  const user = overrides?.user ?? getEnv("AUTO_SEO_DB_USER") ?? "root";
-  const password = overrides?.password ?? getEnv("AUTO_SEO_DB_PASSWORD") ?? "";
-  const database = overrides?.database ?? getEnv("AUTO_SEO_DB_NAME") ?? "dtb_seo_product";
-
-  return {
-    host,
-    port,
-    user,
-    password,
-    database,
-    waitForConnections: true,
-    connectionLimit: 10,
-    queueLimit: 0,
-    dateStrings: true,
-  };
-}
-
-export function getAutoSeoDbPool(config?: AutoSeoDbConfig): Pool {
-  if (activePool) {
-    return activePool;
+export function resolveAutoSeoDbPath(overrides?: AutoSeoDbOptions): string {
+  if (overrides?.memory) {
+    return ":memory:";
   }
-  const poolConfig = resolveAutoSeoDbConfig(config);
-  activePool = mysql.createPool(poolConfig);
-  return activePool;
+  if (overrides?.dbPath) {
+    return overrides.dbPath === ":memory:"
+      ? ":memory:"
+      : path.resolve(process.cwd(), overrides.dbPath);
+  }
+  const localEnv = loadLocalEnv();
+  const rawPath =
+    process.env.AUTO_SEO_DB_PATH ??
+    localEnv.AUTO_SEO_DB_PATH ??
+    ".local-data/auto-seo.sqlite3";
+
+  return rawPath === ":memory:" ? ":memory:" : path.resolve(process.cwd(), rawPath);
 }
 
-export function setAutoSeoDbPool(pool: Pool | null): void {
-  activePool = pool;
+export function initAutoSeoDbSchema(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS auto_seo_product_backups (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      backup_id TEXT NOT NULL UNIQUE,
+      workflow_id TEXT NOT NULL,
+      store_id TEXT NOT NULL,
+      shop_domain TEXT NOT NULL,
+      product_id TEXT NOT NULL,
+      product_handle TEXT NOT NULL,
+      product_title TEXT NOT NULL,
+      shopify_updated_at TEXT,
+      snapshot_json TEXT NOT NULL,
+      snapshot_sha256 TEXT NOT NULL,
+      downstream_status TEXT NOT NULL CHECK (downstream_status IN ('NOT_SENT', 'SENT', 'FAILED')),
+      downstream_http_status INTEGER,
+      downstream_error TEXT,
+      downstream_sent_at TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      CONSTRAINT uq_auto_seo_workflow_store_product UNIQUE (workflow_id, store_id, product_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_auto_seo_store_product
+    ON auto_seo_product_backups(store_id, product_id);
+
+    CREATE INDEX IF NOT EXISTS idx_auto_seo_created_at
+    ON auto_seo_product_backups(created_at);
+  `);
 }
 
-export async function closeAutoSeoDbPool(): Promise<void> {
-  if (activePool) {
-    await activePool.end();
-    activePool = null;
+export function getAutoSeoDb(options?: AutoSeoDbOptions): Database.Database {
+  if (activeDb) {
+    return activeDb;
+  }
+  const resolvedPath = resolveAutoSeoDbPath(options);
+  if (resolvedPath !== ":memory:") {
+    const dir = path.dirname(resolvedPath);
+    fs.mkdirSync(dir, { recursive: true });
+  }
+  const db = new Database(resolvedPath);
+  db.pragma("foreign_keys = ON");
+  db.pragma("busy_timeout = 5000");
+  if (resolvedPath !== ":memory:") {
+    db.pragma("journal_mode = WAL");
+  }
+  initAutoSeoDbSchema(db);
+  activeDb = db;
+  return activeDb;
+}
+
+export function setAutoSeoDb(db: Database.Database | null): void {
+  activeDb = db;
+}
+
+export function closeAutoSeoDb(): void {
+  if (activeDb) {
+    activeDb.close();
+    activeDb = null;
   }
 }
