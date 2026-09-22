@@ -19,6 +19,10 @@ import type {
   ShopifyCollectionsUpdateResponse,
   ShopifyConnectionTestInput,
   ShopifyConnectionTestResponse,
+  ShopifyFilesCreateInput,
+  ShopifyFilesCreateResponse,
+  ShopifyMetafieldsSetInput,
+  ShopifyMetafieldsSetResponse,
   ShopifyOperation,
   ShopifyProductsBulkUpdateInput,
   ShopifyProductsBulkUpdateResponse,
@@ -36,6 +40,8 @@ import type {
   ShopifyStoresGetResponse,
   ShopifyStoresListInput,
   ShopifyStoresListResponse,
+  ShopifyVariantsBulkCreateInput,
+  ShopifyVariantsBulkCreateResponse,
   ShopifyVariantsBulkUpdateInput,
   ShopifyVariantsBulkUpdateResponse,
   ShopifyVariantsUpdateInput,
@@ -65,6 +71,9 @@ const ALL_OPERATIONS: ReadonlySet<ShopifyOperation> = new Set([
   "products.delete",
   "variants.update",
   "variants.bulkUpdate",
+  "variants.bulkCreate",
+  "files.create",
+  "metafields.set",
   "collections.list",
   "collections.get",
   "collections.create",
@@ -617,6 +626,9 @@ export async function runModuleApi(input: ShopifyProductsBulkUpdateInput): Promi
 export async function runModuleApi(input: ShopifyProductsDeleteInput): Promise<ShopifyProductsDeleteResponse>;
 export async function runModuleApi(input: ShopifyVariantsUpdateInput): Promise<ShopifyVariantsUpdateResponse>;
 export async function runModuleApi(input: ShopifyVariantsBulkUpdateInput): Promise<ShopifyVariantsBulkUpdateResponse>;
+export async function runModuleApi(input: ShopifyVariantsBulkCreateInput): Promise<ShopifyVariantsBulkCreateResponse>;
+export async function runModuleApi(input: ShopifyFilesCreateInput): Promise<ShopifyFilesCreateResponse>;
+export async function runModuleApi(input: ShopifyMetafieldsSetInput): Promise<ShopifyMetafieldsSetResponse>;
 export async function runModuleApi(input: ShopifyCollectionsListInput): Promise<ShopifyCollectionsListResponse>;
 export async function runModuleApi(input: ShopifyCollectionsGetInput): Promise<ShopifyCollectionsGetResponse>;
 export async function runModuleApi(input: ShopifyCollectionsCreateInput): Promise<ShopifyCollectionsCreateResponse>;
