@@ -82,6 +82,18 @@ class ReadyPage:
         pass
 
 
+class DelayedCustomizationPage(ReadyPage):
+    def __init__(self, contents: list[str]) -> None:
+        self.contents = contents
+        self.index = 0
+
+    async def content(self) -> str:
+        return self.contents[min(self.index, len(self.contents) - 1)]
+
+    async def wait_for_timeout(self, milliseconds: int) -> None:
+        self.index += 1
+
+
 class PlaywrightPoolTests(unittest.IsolatedAsyncioTestCase):
     def make_pool(self, *, headless: bool, on_captcha=None) -> PlaywrightPool:
         return PlaywrightPool(
@@ -177,6 +189,35 @@ class PlaywrightPoolTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Recovered", html)
         self.assertEqual(diagnostics[-1]["outcome"], "success")
 
+    async def test_customization_loader_waits_until_dynamic_widget_is_present(self) -> None:
+        page = DelayedCustomizationPage([
+            "<html><body><div>Customize is loading</div></body></html>",
+            "<html><body><script>window.sellerConfigComponents = [];</script></body></html>",
+        ])
+
+        html = await PlaywrightPool._load_customization_page(
+            page,
+            "https://www.amazon.com/customize/B012345678",
+            markers=("sellerConfigComponents", "gc-widget"),
+            timeout_ms=5_000,
+        )
+
+        self.assertIn("sellerConfigComponents", html)
+        self.assertEqual(page.index, 1)
+
+    async def test_customization_loader_rejects_a_rendered_page_without_required_markers(self) -> None:
+        page = DelayedCustomizationPage([
+            "<html><body><div>Customize is still loading</div></body></html>",
+        ])
+
+        with self.assertRaisesRegex(RuntimeError, "Customize markers"):
+            await PlaywrightPool._load_customization_page(
+                page,
+                "https://www.amazon.com/customize/B012345678",
+                markers=("sellerConfigComponents", "gc-widget"),
+                timeout_ms=250,
+            )
+
     async def test_us_zip_failure_rotates_to_the_next_browser_profile(self) -> None:
         pool = PlaywrightPool(
             profile_root=Path(tempfile.gettempdir()) / "ffp-playwright-test",
@@ -206,6 +247,48 @@ class PlaywrightPoolTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Ready", html)
         self.assertEqual(routes, ["direct", "direct", "proxy"])
         self.assertEqual([trace["profile"] for trace in diagnostics], ["direct-1", "direct-1", "proxy-1"])
+
+    async def test_missing_customize_markers_rotate_through_direct_profiles_and_proxy(self) -> None:
+        pool = PlaywrightPool(
+            profile_root=Path(tempfile.gettempdir()) / "ffp-playwright-test",
+            profiles=2,
+            tabs_per_profile=1,
+            headless=True,
+            captcha_timeout=30,
+            zip_code="10001",
+            proxy_assignments=[
+                ProxyAssignment(index=0, name="direct"),
+                ProxyAssignment(index=1, name="proxy-1", server="http://proxy.test:80"),
+            ],
+        )
+        routes: list[str] = []
+
+        async def fetch_once(
+            _url: str,
+            _cancel_event,
+            *,
+            route: str,
+            allow_manual_captcha: bool,
+            customization_markers: tuple[str, ...],
+        ):
+            routes.append(route)
+            if route == "direct":
+                error = RuntimeError("Amazon Customize markers did not appear before the render timeout.")
+                error.browser_profile_index = len(routes) - 1
+                raise error
+            return "<script>sellerConfigComponents = [];</script>", pool.profiles
+
+        pool._fetch_once = fetch_once
+        html, diagnostics = await pool._fetch_with_retries(
+            "https://amazon.com/customize/B012345678",
+            None,
+            customization_markers=("sellerConfigComponents",),
+        )
+
+        self.assertIn("sellerConfigComponents", html)
+        self.assertEqual(routes, ["direct", "direct", "proxy"])
+        self.assertEqual([trace["outcome"] for trace in diagnostics], ["error", "error", "success"])
+        self.assertEqual(pool._blocked_until, {})
 
     async def test_successful_direct_browser_does_not_use_proxy_profile(self) -> None:
         pool = PlaywrightPool(
@@ -256,6 +339,19 @@ class PlaywrightPoolTests(unittest.IsolatedAsyncioTestCase):
             await pool._fetch_with_retries("https://amazon.com/dp/B012345678", None)
 
         self.assertEqual(attempts, [("direct", False), ("direct", False), ("proxy", True)])
+
+    async def test_exhausted_cooldown_routes_are_not_reported_as_captcha(self) -> None:
+        pool = self.make_pool(headless=False)
+
+        async def fetch_once(_url: str, _cancel_event, *, route: str, allow_manual_captcha: bool):
+            raise RuntimeError("All direct browser profiles are temporarily cooling down.")
+
+        pool._fetch_once = fetch_once
+
+        with self.assertRaisesRegex(RuntimeError, "All browser routes failed") as raised:
+            await pool._fetch_with_retries("https://amazon.com/dp/B012345678", None)
+
+        self.assertNotIsInstance(raised.exception, CaptchaTimeout)
 
     async def test_close_closes_direct_and_proxy_contexts(self) -> None:
         pool = PlaywrightPool(

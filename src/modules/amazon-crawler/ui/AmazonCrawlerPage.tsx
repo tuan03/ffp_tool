@@ -3,6 +3,8 @@ import { useEffect, useMemo, useState } from "react";
 import {
   DEFAULT_AMAZON_CRAWLER_SETTINGS,
   type AmazonCrawlerCacheClearer,
+  type AmazonCrawlerClientSummary,
+  type AmazonCrawlerClientsLoader,
   type AmazonCrawlerOutput,
   type AmazonCrawlerProgress,
   type AmazonCrawlerRunner,
@@ -13,6 +15,7 @@ import { firstProductMediaUrl, resolveSelectedProduct } from "./product-selectio
 
 interface AmazonCrawlerPageProps {
   clearAmazonCrawlerCache: AmazonCrawlerCacheClearer;
+  loadAmazonCrawlerClients: AmazonCrawlerClientsLoader;
   runAmazonCrawler: AmazonCrawlerRunner;
 }
 
@@ -68,7 +71,7 @@ function progressPhaseLabel(phase: AmazonCrawlerProgress["phase"]): string {
   return labels[phase];
 }
 
-export function AmazonCrawlerPage({ clearAmazonCrawlerCache, runAmazonCrawler }: AmazonCrawlerPageProps): React.JSX.Element {
+export function AmazonCrawlerPage({ clearAmazonCrawlerCache, loadAmazonCrawlerClients, runAmazonCrawler }: AmazonCrawlerPageProps): React.JSX.Element {
   const [urlText, setUrlText] = useState("");
   const [settings, setSettings] = useState<AmazonCrawlerSettings>(DEFAULT_AMAZON_CRAWLER_SETTINGS);
   const [isAdvancedOpen, setIsAdvancedOpen] = useState(false);
@@ -83,6 +86,9 @@ export function AmazonCrawlerPage({ clearAmazonCrawlerCache, runAmazonCrawler }:
   const [isBatchJsonOpen, setIsBatchJsonOpen] = useState(false);
   const [isClearingCache, setIsClearingCache] = useState(false);
   const [cacheMessage, setCacheMessage] = useState<string | null>(null);
+  const [clients, setClients] = useState<AmazonCrawlerClientSummary[]>([]);
+  const [clientError, setClientError] = useState<string | null>(null);
+  const [isLoadingClients, setIsLoadingClients] = useState(true);
 
   const urls = useMemo(
     () => urlText.split(/\r?\n/).map((url) => url.trim()).filter(Boolean),
@@ -100,6 +106,30 @@ export function AmazonCrawlerPage({ clearAmazonCrawlerCache, runAmazonCrawler }:
     setActiveTab("overview");
     setIsBatchJsonOpen(false);
   }, [output]);
+
+  useEffect(() => {
+    let isMounted = true;
+    async function refreshClients(): Promise<void> {
+      try {
+        const nextClients = await loadAmazonCrawlerClients();
+        if (!isMounted) return;
+        setClients(nextClients);
+        setClientError(null);
+      } catch (caught: unknown) {
+        if (!isMounted) return;
+        setClients([]);
+        setClientError(caught instanceof Error ? caught.message : "Không tải được danh sách client.");
+      } finally {
+        if (isMounted) setIsLoadingClients(false);
+      }
+    }
+    void refreshClients();
+    const intervalId = window.setInterval(() => void refreshClients(), 5_000);
+    return () => {
+      isMounted = false;
+      window.clearInterval(intervalId);
+    };
+  }, [loadAmazonCrawlerClients]);
 
   function handleSelectProduct(productId: string): void {
     const product = output?.products.find((candidate) => candidate.id === productId);
@@ -186,6 +216,35 @@ export function AmazonCrawlerPage({ clearAmazonCrawlerCache, runAmazonCrawler }:
         <h1 className="text-3xl font-bold tracking-tight">Amazon Crawler</h1>
         <p className="mt-2 text-sm text-slate-400">Cào Amazon family, tách product và xử lý Customize — không rewrite dữ liệu.</p>
       </div>
+
+      <section className="rounded-xl border border-slate-700 bg-slate-950/50 p-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h2 className="font-semibold text-slate-100">Crawler clients</h2>
+            <p className="text-xs text-slate-400">Tự cập nhật mỗi 5 giây · job chỉ được tạo khi có ít nhất một client online.</p>
+          </div>
+          <span className="rounded-full bg-slate-800 px-3 py-1 text-xs text-slate-200">
+            {clients.filter((client) => client.isConnected && ["online", "busy", "waiting_captcha"].includes(client.status)).length} online / {clients.length}
+          </span>
+        </div>
+        {isLoadingClients ? <p className="mt-3 text-sm text-slate-400">Đang kiểm tra client...</p> : null}
+        {clientError ? <p className="mt-3 text-sm text-rose-300">{clientError}</p> : null}
+        {!isLoadingClients && !clientError && clients.length === 0 ? <p className="mt-3 text-sm text-amber-300">Chưa có client. Hãy mở FFP Amazon Crawler Agent.</p> : null}
+        {clients.length > 0 ? (
+          <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+            {clients.map((client) => (
+              <article className="rounded-lg border border-slate-700 bg-slate-900/70 p-3" key={client.id}>
+                <div className="flex items-center justify-between gap-2">
+                  <strong className="truncate text-sm" title={client.displayName}>{client.displayName}</strong>
+                  <span className={`text-xs font-semibold ${!client.isConnected || client.status === "offline" ? "text-rose-300" : client.status === "waiting_captcha" ? "text-amber-300" : "text-emerald-300"}`}>{client.isConnected ? client.status : "offline"}</span>
+                </div>
+                <p className="mt-1 text-xs text-slate-400">{client.activeTasks} đang chạy · {client.availableSlots}/{client.maxConcurrentInputs} slot trống</p>
+                {client.leasedTasks === client.activeTasks ? null : <p className="mt-1 text-xs text-amber-300">{client.leasedTasks} lease trên server đang chờ đồng bộ</p>}
+              </article>
+            ))}
+          </div>
+        ) : null}
+      </section>
 
       <label className="grid gap-2 text-sm font-medium text-slate-200">
         Amazon URLs hoặc ASIN, mỗi dòng một giá trị

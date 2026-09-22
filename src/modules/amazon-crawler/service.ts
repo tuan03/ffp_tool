@@ -1,8 +1,11 @@
 import type {
   AmazonCrawlerInput,
   AmazonCrawlerCacheClearer,
+  AmazonCrawlerClientSummary,
+  AmazonCrawlerClientsLoader,
   AmazonCrawlerJobSnapshot,
   AmazonCrawlerOutput,
+  AmazonCrawlerProgress,
   AmazonCrawlerRunOptions,
   AmazonCrawlerRunner,
 } from "./types";
@@ -45,17 +48,65 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function readJobCreated(value: unknown): JobCreatedResponse {
-  if (!isRecord(value) || typeof value.jobId !== "string") {
+  if (!isRecord(value) || (typeof value.id !== "string" && typeof value.jobId !== "string")) {
     throw new AmazonCrawlerServiceError("Engine returned an invalid job response.", "INVALID_ENGINE_RESPONSE");
   }
-  return { jobId: value.jobId };
+  return { jobId: typeof value.id === "string" ? value.id : value.jobId as string };
 }
 
-function readSnapshot(value: unknown): AmazonCrawlerJobSnapshot {
-  if (!isRecord(value) || typeof value.jobId !== "string" || typeof value.status !== "string") {
+interface CoordinatorSnapshot {
+  id: string;
+  status: AmazonCrawlerJobSnapshot["status"];
+  progress: AmazonCrawlerProgress;
+}
+
+function readSnapshot(value: unknown): CoordinatorSnapshot {
+  if (!isRecord(value) || typeof value.id !== "string" || typeof value.status !== "string" || !isRecord(value.progress)) {
     throw new AmazonCrawlerServiceError("Engine returned an invalid job snapshot.", "INVALID_ENGINE_RESPONSE");
   }
-  return value as unknown as AmazonCrawlerJobSnapshot;
+  const completed = value.progress.completed;
+  const total = value.progress.total;
+  if (typeof completed !== "number" || typeof total !== "number") {
+    throw new AmazonCrawlerServiceError("Engine returned invalid job progress.", "INVALID_ENGINE_RESPONSE");
+  }
+  const status = value.status as CoordinatorSnapshot["status"];
+  const isTerminal = ["completed", "partial", "cancelled"].includes(status);
+  return {
+    id: value.id,
+    status,
+    progress: {
+      phase: typeof value.progress.phase === "string" ? value.progress.phase as AmazonCrawlerProgress["phase"] : (isTerminal ? "export" : "product"),
+      completed,
+      total,
+      message: typeof value.progress.message === "string"
+        ? value.progress.message
+        : (isTerminal ? `Đã xử lý ${completed}/${total} link.` : `Đang xử lý ${completed}/${total} link trên các client.`),
+      items: Array.isArray(value.progress.items) ? value.progress.items as AmazonCrawlerProgress["items"] : undefined,
+      browserPool: isRecord(value.progress.browserPool) ? value.progress.browserPool as unknown as AmazonCrawlerProgress["browserPool"] : undefined,
+    },
+  };
+}
+
+const AVAILABLE_CLIENT_STATUSES = new Set(["online", "busy", "waiting_captcha"]);
+
+function readClients(value: unknown): AmazonCrawlerClientSummary[] {
+  if (!Array.isArray(value)) throw new AmazonCrawlerServiceError("Coordinator returned an invalid client list.", "INVALID_ENGINE_RESPONSE");
+  return value.map((client) => {
+    if (!isRecord(client) || typeof client.id !== "string" || typeof client.displayName !== "string" || typeof client.status !== "string") {
+      throw new AmazonCrawlerServiceError("Coordinator returned an invalid client record.", "INVALID_ENGINE_RESPONSE");
+    }
+    return {
+      id: client.id,
+      displayName: client.displayName,
+      status: client.status as AmazonCrawlerClientSummary["status"],
+      isConnected: client.isConnected === true,
+      maxConcurrentInputs: typeof client.maxConcurrentInputs === "number" ? client.maxConcurrentInputs : 0,
+      activeTasks: typeof client.activeTasks === "number" ? client.activeTasks : 0,
+      leasedTasks: typeof client.leasedTasks === "number" ? client.leasedTasks : 0,
+      availableSlots: typeof client.availableSlots === "number" ? client.availableSlots : 0,
+      lastSeenAt: typeof client.lastSeenAt === "string" ? client.lastSeenAt : null,
+    };
+  });
 }
 
 async function readJson(response: Response): Promise<unknown> {
@@ -99,17 +150,25 @@ export function createAmazonCrawlerRunner({
     const cancelJob = (): void => {
       if (jobId === null || cancellationRequested) return;
       cancellationRequested = true;
-      void fetchImplementation(`${baseUrl}/api/amazon-crawler/jobs/${encodeURIComponent(jobId)}`, {
-        method: "DELETE",
+      void fetchImplementation(`${baseUrl}/api/v1/crawl-jobs/${encodeURIComponent(jobId)}/cancel`, {
+        method: "POST",
       }).catch(() => undefined);
     };
     signal?.addEventListener("abort", cancelJob, { once: true });
 
     try {
       if (signal?.aborted) throw new DOMException("The crawler job was cancelled.", "AbortError");
+      const clientsResponse = await fetchImplementation(`${baseUrl}/api/v1/clients`, { signal }).catch((error: unknown) => {
+        if (error instanceof DOMException && error.name === "AbortError") throw error;
+        throw new AmazonCrawlerServiceError("Không kết nối được coordinator. Hãy chạy npm run dev.", "COORDINATOR_OFFLINE");
+      });
+      const clients = readClients(await readJson(clientsResponse));
+      if (!clients.some((client) => client.isConnected && AVAILABLE_CLIENT_STATUSES.has(client.status))) {
+        throw new AmazonCrawlerServiceError("Chưa có máy crawler nào đang online. Hãy mở FFP Amazon Crawler Agent.", "NO_CLIENT_AVAILABLE");
+      }
       let createResponse: Response;
       try {
-        createResponse = await fetchImplementation(`${baseUrl}/api/amazon-crawler/jobs`, {
+        createResponse = await fetchImplementation(`${baseUrl}/api/v1/crawl-jobs`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(input),
@@ -118,8 +177,8 @@ export function createAmazonCrawlerRunner({
       } catch (error: unknown) {
         if (error instanceof DOMException && error.name === "AbortError") throw error;
         throw new AmazonCrawlerServiceError(
-          "Không kết nối được Amazon crawler engine. Hãy chạy npm run dev:engine.",
-          "ENGINE_OFFLINE",
+          "Không kết nối được coordinator. Hãy chạy npm run dev.",
+          "COORDINATOR_OFFLINE",
         );
       }
 
@@ -132,15 +191,15 @@ export function createAmazonCrawlerRunner({
           throw new DOMException("The crawler job was cancelled.", "AbortError");
         }
         const response = await fetchImplementation(
-          `${baseUrl}/api/amazon-crawler/jobs/${encodeURIComponent(jobId)}`,
+          `${baseUrl}/api/v1/crawl-jobs/${encodeURIComponent(jobId)}`,
           { signal },
         );
         const snapshot = readSnapshot(await readJson(response));
         onProgress?.(snapshot.progress);
 
-        if (snapshot.result !== null) return snapshot.result;
-        if (snapshot.status === "failed") {
-          throw new AmazonCrawlerServiceError(snapshot.error ?? "Amazon crawler job failed.", "JOB_FAILED");
+        if (snapshot.status === "completed" || snapshot.status === "partial") {
+          const resultResponse = await fetchImplementation(`${baseUrl}/api/v1/crawl-jobs/${encodeURIComponent(jobId)}/results`, { signal });
+          return await readJson(resultResponse) as AmazonCrawlerOutput;
         }
         if (snapshot.status === "cancelled") {
           throw new DOMException("The crawler job was cancelled.", "AbortError");
@@ -165,13 +224,29 @@ export function createAmazonCrawlerCacheClearer({
   return async () => {
     let response: Response;
     try {
-      response = await fetchImplementation(`${baseUrl}/api/amazon-crawler/cache`, { method: "DELETE" });
+      response = await fetchImplementation(`${baseUrl}/api/v1/clients/cache`, { method: "DELETE" });
     } catch {
       throw new AmazonCrawlerServiceError(
-        "Không kết nối được Amazon crawler engine. Hãy chạy npm run dev:engine.",
-        "ENGINE_OFFLINE",
+        "Không kết nối được coordinator. Hãy chạy npm run dev.",
+        "COORDINATOR_OFFLINE",
       );
     }
     return readCacheClearResult(await readJson(response));
+  };
+}
+
+export function createAmazonCrawlerClientsLoader({
+  engineUrl,
+  fetchImplementation = fetch,
+}: AmazonCrawlerClientOptions): AmazonCrawlerClientsLoader {
+  const baseUrl = normalizeEngineUrl(engineUrl);
+  return async () => {
+    try {
+      const response = await fetchImplementation(`${baseUrl}/api/v1/clients`);
+      return readClients(await readJson(response));
+    } catch (error: unknown) {
+      if (error instanceof AmazonCrawlerServiceError) throw error;
+      throw new AmazonCrawlerServiceError("Không kết nối được coordinator. Hãy chạy npm run dev.", "COORDINATOR_OFFLINE");
+    }
   };
 }

@@ -325,6 +325,32 @@ class PlaywrightPool:
         await page.wait_for_timeout(250)
         return await page.content()
 
+    @staticmethod
+    async def _load_customization_page(
+        page: Any,
+        url: str,
+        *,
+        markers: tuple[str, ...],
+        timeout_ms: int = 20_000,
+    ) -> str:
+        await page.goto(force_us_profile_url(url), wait_until="commit", timeout=60_000)
+        try:
+            await page.wait_for_selector("body", state="attached", timeout=10_000)
+        except Exception:
+            pass
+        attempts = max(1, timeout_ms // 250)
+        html = await page.content()
+        for _ in range(attempts):
+            if (
+                any(marker.casefold() in html.casefold() for marker in markers)
+                or html_is_captcha(html)
+                or html_is_location_blocked(html)
+            ):
+                return html
+            await page.wait_for_timeout(250)
+            html = await page.content()
+        raise RuntimeError("Amazon Customize markers did not appear before the render timeout.")
+
     async def _ensure_context(
         self,
         index: int,
@@ -519,13 +545,21 @@ class PlaywrightPool:
         *,
         route: str,
         allow_manual_captcha: bool,
+        customization_markers: tuple[str, ...] | None = None,
     ) -> tuple[str, int]:
         async def fetch_from_context(index: int, context: Any) -> tuple[str, int]:
             page: Any = None
             try:
                 await self._ensure_us_profile(index, context, cancel_event, allow_manual_captcha)
                 page = await context.new_page()
-                html = await self._load_product_page(page, url)
+                if customization_markers is None:
+                    html = await self._load_product_page(page, url)
+                else:
+                    html = await self._load_customization_page(
+                        page,
+                        url,
+                        markers=customization_markers,
+                    )
                 html = await self._wait_for_captcha(
                     page,
                     url,
@@ -540,7 +574,14 @@ class PlaywrightPool:
                     ):
                         raise RuntimeError(f"Unable to switch Amazon profile to US ZIP {self.zip_code}.")
                     self._us_profile_applied[index] = True
-                    html = await self._load_product_page(page, url)
+                    if customization_markers is None:
+                        html = await self._load_product_page(page, url)
+                    else:
+                        html = await self._load_customization_page(
+                            page,
+                            url,
+                            markers=customization_markers,
+                        )
                     html = await self._wait_for_captcha(
                         page,
                         url,
@@ -551,6 +592,11 @@ class PlaywrightPool:
                         raise RuntimeError(
                             f"Amazon still returned a location-blocked offer after applying US ZIP {self.zip_code}."
                         )
+                if customization_markers is not None and not any(
+                    marker.casefold() in html.casefold()
+                    for marker in customization_markers
+                ):
+                    raise RuntimeError("Amazon Customize markers did not appear after rendering the page.")
                 return html, index
             except Exception as error:
                 message = str(error).casefold()
@@ -577,6 +623,7 @@ class PlaywrightPool:
         url: str,
         cancel_event: threading.Event | None,
         prefer_proxy: bool = False,
+        customization_markers: tuple[str, ...] | None = None,
     ) -> tuple[str, list[dict[str, Any]]]:
         last_error: Exception | None = None
         diagnostics: list[dict[str, Any]] = []
@@ -594,12 +641,13 @@ class PlaywrightPool:
             is_last_route = attempt == len(routes)
             allow_manual_captcha = not self.headless and is_last_route
             try:
-                html, profile_index = await self._fetch_once(
-                    url,
-                    cancel_event,
-                    route=route,
-                    allow_manual_captcha=allow_manual_captcha,
-                )
+                fetch_options: dict[str, Any] = {
+                    "route": route,
+                    "allow_manual_captcha": allow_manual_captcha,
+                }
+                if customization_markers is not None:
+                    fetch_options["customization_markers"] = customization_markers
+                html, profile_index = await self._fetch_once(url, cancel_event, **fetch_options)
                 assignment = self.proxy_assignments[profile_index]
                 diagnostics.append({
                     "attempt": attempt,
@@ -625,18 +673,27 @@ class PlaywrightPool:
                 message = str(error).casefold()
                 if route == "direct" and "all direct browser profiles are temporarily cooling down" in message:
                     skip_remaining_direct = True
-                if isinstance(profile_index, int) and "closed" not in message and "target page" not in message:
+                should_cooldown_profile = (
+                    "closed" not in message
+                    and "target page" not in message
+                    and "customize markers" not in message
+                )
+                if isinstance(profile_index, int) and should_cooldown_profile:
                     self._block_profile(profile_index, error)
                 diagnostics.append(self._browser_error_trace(attempt, profile_index, error, "error"))
                 is_retryable = any(marker in message for marker in (
                     "closed", "target page", "net::err_", "timeout", "connection", "navigation",
                     "amazon us zip", "http_response_code_failure", "cooling down", "location",
+                    "customize markers",
                 ))
                 if not is_retryable or is_last_route:
                     setattr(error, "diagnostics", diagnostics)
                     raise
                 await asyncio.sleep(0.25 * attempt)
-        error = CaptchaTimeout(f"All browser routes encountered CAPTCHA: {last_error}")
+        if isinstance(last_error, CaptchaTimeout):
+            error: Exception = CaptchaTimeout(f"All browser routes encountered CAPTCHA: {last_error}")
+        else:
+            error = RuntimeError(f"All browser routes failed: {last_error}")
         setattr(error, "diagnostics", diagnostics)
         raise error
 
@@ -680,6 +737,53 @@ class PlaywrightPool:
 
     def fetch_proxy_fallback(self, url: str, *, cancel_event: threading.Event | None = None) -> str:
         return self.fetch(url, cancel_event=cancel_event, prefer_proxy=True)
+
+    def _fetch_customization(
+        self,
+        url: str,
+        *,
+        markers: tuple[str, ...],
+        cancel_event: threading.Event | None = None,
+    ) -> str:
+        if self._is_closed:
+            raise RuntimeError("Playwright pool is closed.")
+        try:
+            html, diagnostics = self._submit(
+                self._fetch_with_retries(
+                    url,
+                    cancel_event,
+                    customization_markers=markers,
+                )
+            )
+            self._thread_diagnostics.attempts = diagnostics
+            return html
+        except Exception as error:
+            self._thread_diagnostics.attempts = list(getattr(error, "diagnostics", []))
+            raise
+
+    def fetch_customization_entry(
+        self,
+        url: str,
+        *,
+        cancel_event: threading.Event | None = None,
+    ) -> str:
+        return self._fetch_customization(
+            url,
+            markers=("customizationFormLink", "gc:productInfo"),
+            cancel_event=cancel_event,
+        )
+
+    def fetch_customization_form(
+        self,
+        url: str,
+        *,
+        cancel_event: threading.Event | None = None,
+    ) -> str:
+        return self._fetch_customization(
+            url,
+            markers=("gc-widget", "sellerConfigComponents", "customizationConfig", "OptionChooserComponent"),
+            cancel_event=cancel_event,
+        )
 
     async def _sweep_variant_matrix_async(
         self,

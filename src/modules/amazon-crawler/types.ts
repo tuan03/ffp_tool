@@ -269,6 +269,24 @@ export interface AmazonCrawlerCacheClearer {
   (): Promise<AmazonCrawlerCacheClearResult>;
 }
 
+export type AmazonCrawlerClientStatus = "online" | "offline" | "busy" | "waiting_captcha" | "paused";
+
+export interface AmazonCrawlerClientSummary {
+  id: string;
+  displayName: string;
+  status: AmazonCrawlerClientStatus;
+  isConnected: boolean;
+  maxConcurrentInputs: number;
+  activeTasks: number;
+  leasedTasks: number;
+  availableSlots: number;
+  lastSeenAt: string | null;
+}
+
+export interface AmazonCrawlerClientsLoader {
+  (): Promise<AmazonCrawlerClientSummary[]>;
+}
+
 export const DEFAULT_AMAZON_CRAWLER_SETTINGS: AmazonCrawlerSettings = {
   profileSlug: "default",
   applyJeminisePreset: false,

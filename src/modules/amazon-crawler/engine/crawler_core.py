@@ -277,6 +277,39 @@ def _extract_parent_asin(html: str, current_asin: str) -> str:
     return current_asin
 
 
+def _extract_high_resolution_images(html: str, source_asin: str) -> list[dict[str, Any]]:
+    match = re.search(
+        r"[\"']colorImages[\"']\s*:\s*\{\s*[\"']initial[\"']\s*:\s*"
+        r"A\.\$\.parseJSON\(\s*(?P<quote>[\"'])(?P<payload>(?:\\.|(?!(?P=quote)).)*)\1\s*\)",
+        html,
+        re.DOTALL,
+    )
+    if match is None:
+        return []
+    payload = html_module.unescape(match.group("payload")).replace(r"\/", "/")
+    if match.group("quote") == '"':
+        try:
+            payload = json.loads(f'"{payload}"')
+        except json.JSONDecodeError:
+            return []
+    try:
+        entries = json.loads(payload)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(entries, list):
+        return []
+    images: list[dict[str, Any]] = []
+    seen_urls: set[str] = set()
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        image_url = str(entry.get("hiRes") or entry.get("large") or entry.get("thumb") or "").strip()
+        if image_url.startswith("http") and image_url not in seen_urls:
+            seen_urls.add(image_url)
+            images.append({"url": image_url, "kind": "image", "sourceAsin": source_asin})
+    return images
+
+
 def _extract_dimensions(html: str, current_asin: str) -> tuple[dict[str, list[str]], dict[str, dict[str, str]]]:
     labels_raw = _extract_json_map(html, "variationDisplayLabels")
     values_raw = _extract_json_map(html, "variationValues")
@@ -384,25 +417,21 @@ def parse_product_html(html: str, requested_asin: str, url: str) -> dict[str, An
         "#corePrice_feature_div .a-offscreen", "#corePriceDisplay_desktop_feature_div .a-offscreen",
         "#priceblock_ourprice", "#price_inside_buybox", "#newBuyBoxPrice", "#tp_price_block_total_price_ww .a-offscreen",
     ))
-    images: list[dict[str, Any]] = []
-    seen_urls: set[str] = set()
-    for element in soup.select("#landingImage, #altImages img, img[data-old-hires]"):
-        image_url = str(element.get("data-old-hires") or element.get("data-a-dynamic-image") or element.get("src") or "")
-        if image_url.startswith("{"):
-            try:
-                dynamic = json.loads(image_url)
-                image_url = next(iter(dynamic), "")
-            except json.JSONDecodeError:
-                image_url = ""
-        image_url = image_url.strip()
-        if image_url.startswith("http") and image_url not in seen_urls:
-            seen_urls.add(image_url)
-            images.append({"url": image_url, "kind": "image", "sourceAsin": canonical_asin})
-    for element in soup.select("video[src], video source[src]"):
-        video_url = str(element.get("src") or "").strip()
-        if video_url.startswith("http") and video_url not in seen_urls:
-            seen_urls.add(video_url)
-            images.append({"url": video_url, "kind": "video", "sourceAsin": canonical_asin})
+    images = _extract_high_resolution_images(html, canonical_asin)
+    if not images:
+        seen_urls: set[str] = set()
+        for element in soup.select("#landingImage, #altImages img, img[data-old-hires]"):
+            image_url = str(element.get("data-old-hires") or element.get("data-a-dynamic-image") or element.get("src") or "")
+            if image_url.startswith("{"):
+                try:
+                    dynamic = json.loads(image_url)
+                    image_url = next(iter(dynamic), "")
+                except json.JSONDecodeError:
+                    image_url = ""
+            image_url = image_url.strip()
+            if image_url.startswith("http") and image_url not in seen_urls:
+                seen_urls.add(image_url)
+                images.append({"url": image_url, "kind": "image", "sourceAsin": canonical_asin})
     dimensions, asin_options = _extract_dimensions(html, canonical_asin)
     customization_raw, customization_warnings, customization_form_url = _extract_customization(html)
     return {
@@ -593,6 +622,7 @@ class HttpFetcher:
 
 
 ProgressCallback = Callable[[dict[str, Any]], None]
+InputCompletionCallback = Callable[[dict[str, Any]], None]
 
 
 class HttpFetchError(RuntimeError):
@@ -612,7 +642,7 @@ def effective_product_threads(input_count: int, settings: CrawlSettings) -> int:
 
 
 class AmazonCrawler:
-    def __init__(self, *, root: Path, settings: CrawlSettings, progress: ProgressCallback | None = None, cancel_event: threading.Event | None = None, fetcher: HttpFetcher | None = None, browser_pool: PlaywrightPool | None = None) -> None:
+    def __init__(self, *, root: Path, settings: CrawlSettings, progress: ProgressCallback | None = None, cancel_event: threading.Event | None = None, fetcher: HttpFetcher | None = None, browser_pool: PlaywrightPool | None = None, proxy_config_path: Path | None = None) -> None:
         self.root = root
         self.settings = settings
         self.progress = progress or (lambda _: None)
@@ -632,7 +662,11 @@ class AmazonCrawler:
             "proxyQueued": 0,
         }
         self.cancel_event = cancel_event or threading.Event()
-        proxy_assignments, self.proxy_warnings = resolve_proxy_assignments(root, settings.browser_profiles)
+        proxy_assignments, self.proxy_warnings = resolve_proxy_assignments(
+            root,
+            settings.browser_profiles,
+            config_path=proxy_config_path,
+        )
         self.fetcher = fetcher or HttpFetcher(zip_code=settings.amazon_zip, assignments=proxy_assignments)
         self._http_slots = threading.BoundedSemaphore(settings.urllib_threads)
         self.cache = RawFamilyCache(root / ".runtime" / "cache")
@@ -889,7 +923,11 @@ class AmazonCrawler:
             item_updates={"status": "running", "currentAsin": asin, "currentOptions": options},
         )
         try:
-            html = self.browser_pool.fetch(url, cancel_event=self.cancel_event)
+            fetch_customization_entry = getattr(self.browser_pool, "fetch_customization_entry", None)
+            if callable(fetch_customization_entry):
+                html = fetch_customization_entry(url, cancel_event=self.cancel_event)
+            else:
+                html = self.browser_pool.fetch(url, cancel_event=self.cancel_event)
             refreshed = parse_product_html(html, asin, url)
             if refreshed.get("asin") != asin:
                 raise ValueError(f"Amazon returned {refreshed.get('asin') or 'an unknown ASIN'}.")
@@ -901,6 +939,91 @@ class AmazonCrawler:
         except Exception as error:
             errors.append(f"Playwright retry: {_exception_message(error)}")
         return None, errors
+
+    def _fetch_customization_form(
+        self,
+        *,
+        form_url: str,
+        customization_raw: Any,
+    ) -> tuple[Any, list[str], bool]:
+        warnings: list[str] = []
+        try:
+            with self._http_slots:
+                form_html, _ = self.fetcher.fetch(form_url)
+            widget, widget_warnings, _ = _extract_customization(form_html)
+            if widget is None:
+                raise ValueError("Customize form did not contain #gc-widget data.")
+            warnings.extend(widget_warnings)
+            return {"state": customization_raw, "widget": widget}, warnings, True
+        except Exception as http_error:
+            try:
+                fetch_customization_form = getattr(self.browser_pool, "fetch_customization_form", None)
+                if callable(fetch_customization_form):
+                    form_html = fetch_customization_form(form_url, cancel_event=self.cancel_event)
+                else:
+                    form_html = self.browser_pool.fetch(form_url, cancel_event=self.cancel_event)
+                widget, widget_warnings, _ = _extract_customization(form_html)
+                if widget is None:
+                    raise ValueError("Customize form did not contain widget data after Playwright rendering.")
+                warnings.extend(widget_warnings)
+                return {"state": customization_raw, "widget": widget}, warnings, True
+            except Exception as browser_error:
+                warnings.append(
+                    f"Customization form fetch failed: {_exception_message(http_error)}; "
+                    f"Playwright {_exception_message(browser_error)}"
+                )
+                return customization_raw, warnings, False
+
+    def _retry_family_customization(
+        self,
+        *,
+        variants: list[dict[str, Any]],
+        source: str,
+    ) -> None:
+        if not any(variant.get("customizationRaw") is not None for variant in variants):
+            return
+        candidates = [
+            variant
+            for variant in variants
+            if variant.get("customization") is None or variant.get("customizationComplete") is not True
+        ]
+        for variant in candidates:
+            asin = str(variant["asin"])
+            options = dict(variant.get("options") or {})
+            recovered, recovery_errors = self._recover_customization_entry(
+                asin=asin,
+                source=source,
+                options=options,
+            )
+            if recovered is None:
+                variant["customizationComplete"] = False
+                variant["warnings"] = [
+                    "Family contains Amazon Customize, but this child ASIN omitted its form payload after retries: "
+                    + "; ".join(recovery_errors)
+                ]
+                continue
+            customization_raw = recovered.get("customizationRaw")
+            warnings = list(recovered.get("customizationWarnings", []))
+            form_url = recovered.get("customizationFormUrl")
+            customization_complete = not warnings
+            if form_url:
+                customization_raw, form_warnings, form_complete = self._fetch_customization_form(
+                    form_url=str(form_url),
+                    customization_raw=customization_raw,
+                )
+                warnings.extend(form_warnings)
+                customization_complete = customization_complete and form_complete
+            customization, normalization_warnings = (
+                normalize_customization(customization_raw)
+                if customization_raw is not None
+                else (None, [])
+            )
+            warnings.extend(normalization_warnings)
+            variant["customizationRaw"] = customization_raw
+            variant["customization"] = customization
+            variant["customizationFingerprint"] = customization.get("fingerprint") if customization else None
+            variant["customizationComplete"] = customization_complete and customization is not None
+            variant["warnings"] = warnings
 
     def _crawl_family(self, normalized: NormalizedInput) -> dict[str, Any]:
         cache_key = f"{normalized.asin}:{self.settings.amazon_zip}:us-v1"
@@ -1046,28 +1169,12 @@ class AmazonCrawler:
                         "activeVariants": current_active_snapshot,
                     },
                 )
-                try:
-                    with self._http_slots:
-                        form_html, _ = self.fetcher.fetch(str(form_url))
-                    widget, widget_warnings, _ = _extract_customization(form_html)
-                    warnings.extend(widget_warnings)
-                    if widget is None:
-                        raise ValueError("Customize form did not contain #gc-widget data.")
-                    customization_raw = {"state": customization_raw, "widget": widget}
-                except Exception as http_error:
-                    try:
-                        form_html = self.browser_pool.fetch(str(form_url), cancel_event=self.cancel_event)
-                        widget, widget_warnings, _ = _extract_customization(form_html)
-                        warnings.extend(widget_warnings)
-                        if widget is None:
-                            raise ValueError("Customize form did not contain widget data after Playwright rendering.")
-                        customization_raw = {"state": customization_raw, "widget": widget}
-                    except Exception as browser_error:
-                        warnings.append(
-                            f"Customization form fetch failed: {_exception_message(http_error)}; "
-                            f"Playwright {_exception_message(browser_error)}"
-                        )
-                        customization_complete = False
+                customization_raw, form_warnings, form_complete = self._fetch_customization_form(
+                    form_url=str(form_url),
+                    customization_raw=customization_raw,
+                )
+                warnings.extend(form_warnings)
+                customization_complete = customization_complete and form_complete
             if child["asin"] != asin:
                 warnings.append(f"Requested child ASIN {asin}, but Amazon returned {child['asin']}.")
             normalized_customization, custom_warnings = normalize_customization(customization_raw) if customization_raw is not None else (None, [])
@@ -1134,6 +1241,7 @@ class AmazonCrawler:
                 )
         order = {asin: index for index, asin in enumerate(discovered_asins)}
         variants.sort(key=lambda item: order.get(item["asin"], len(order)))
+        self._retry_family_customization(variants=variants, source=normalized.source)
         self._infer_consensus_prices(variants)
         family = {
             "parentAsin": parent_asin, "canonicalUrl": f"https://www.amazon.com/dp/{parent_asin}",
@@ -1297,7 +1405,14 @@ class AmazonCrawler:
             })
         return products
 
-    def run(self, *, job_id: str, sources: list[str]) -> dict[str, Any]:
+    def run(
+        self,
+        *,
+        job_id: str,
+        sources: list[str],
+        on_input_complete: InputCompletionCallback | None = None,
+        write_export: bool = True,
+    ) -> dict[str, Any]:
         started_at = _now_iso()
         started_time = time.monotonic()
         errors: list[dict[str, Any]] = []
@@ -1334,11 +1449,13 @@ class AmazonCrawler:
             ),
         )
         with concurrent.futures.ThreadPoolExecutor(max_workers=product_worker_count) as executor:
-            futures = {executor.submit(crawl_one, normalized): normalized for normalized in normalized_inputs}
+            futures = {executor.submit(crawl_one, normalized): (normalized, time.monotonic()) for normalized in normalized_inputs}
             for future in concurrent.futures.as_completed(futures):
-                normalized = futures[future]
+                normalized, input_started_time = futures[future]
                 item_status = "completed"
                 item_message = "Đã hoàn tất sản phẩm."
+                family_products: list[dict[str, Any]] = []
+                input_errors: list[dict[str, Any]] = []
                 try:
                     _, family_products = future.result()
                     products.extend(family_products)
@@ -1347,7 +1464,9 @@ class AmazonCrawler:
                     item_status = "cancelled"
                     item_message = "Đã dừng xử lý sản phẩm."
                 except Exception as error:
-                    errors.append({"source": normalized.source, "code": "CRAWL_FAILED", "message": str(error), "retryable": True})
+                    input_error = {"source": normalized.source, "code": "CRAWL_FAILED", "message": str(error), "retryable": True}
+                    errors.append(input_error)
+                    input_errors.append(input_error)
                     item_status = "failed"
                     item_message = f"Cào thất bại: {error}"
                 completed += 1
@@ -1359,6 +1478,21 @@ class AmazonCrawler:
                     source=normalized.source,
                     item_updates={"status": item_status, "message": item_message, "activeVariants": []},
                 )
+                if on_input_complete is not None:
+                    on_input_complete({
+                        "source": normalized.source,
+                        "asin": normalized.asin,
+                        "status": item_status,
+                        "products": deepcopy(family_products),
+                        "errors": deepcopy(input_errors),
+                        "warnings": sorted({
+                            warning
+                            for product in family_products
+                            for warning in product.get("warnings", [])
+                        }),
+                        "completedAt": _now_iso(),
+                        "durationMs": round((time.monotonic() - input_started_time) * 1000),
+                    })
         products_by_id = {product["id"]: product for product in products}
         products = list(products_by_id.values())
         status = "cancelled" if self.cancel_event.is_set() else ("partial" if errors else "completed")
@@ -1377,7 +1511,7 @@ class AmazonCrawler:
             },
             "exportFilename": None,
         }
-        if status != "cancelled":
+        if status != "cancelled" and write_export:
             output["exportFilename"] = self._write_export(output)
         return output
 

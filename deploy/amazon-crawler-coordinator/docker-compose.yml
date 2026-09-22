@@ -1,0 +1,32 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-ffp_crawler}
+      POSTGRES_USER: ${POSTGRES_USER:-ffp_crawler}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - crawler-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ffp_crawler} -d ${POSTGRES_DB:-ffp_crawler}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  coordinator:
+    build:
+      context: ../..
+      dockerfile: deploy/amazon-crawler-coordinator/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      AMAZON_COORDINATOR_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-ffp_crawler}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-ffp_crawler}
+      AMAZON_COORDINATOR_CORS_ORIGINS: ${AMAZON_COORDINATOR_CORS_ORIGINS:-https://app.example.com}
+    ports:
+      - "127.0.0.1:${COORDINATOR_PORT:-8766}:8766"
+
+volumes:
+  crawler-postgres:

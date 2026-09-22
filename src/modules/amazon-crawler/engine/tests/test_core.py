@@ -59,6 +59,23 @@ class FakeBrowser:
         pass
 
 
+class CustomizationAwareBrowser(FakeBrowser):
+    def __init__(self, entry_html_by_asin: dict[str, str], form_html: str) -> None:
+        super().__init__(form_html)
+        self.entry_html_by_asin = entry_html_by_asin
+        self.entry_calls: list[str] = []
+        self.form_calls: list[str] = []
+
+    def fetch_customization_entry(self, url: str, *, cancel_event: threading.Event | None = None) -> str:
+        self.entry_calls.append(url)
+        asin = url.rstrip("/").rsplit("/", 1)[-1]
+        return self.entry_html_by_asin[asin]
+
+    def fetch_customization_form(self, url: str, *, cancel_event: threading.Event | None = None) -> str:
+        self.form_calls.append(url)
+        return self.html
+
+
 class FailingFetcher:
     def fetch(self, url: str) -> tuple[str, int]:
         raise RuntimeError("Amazon returned CAPTCHA or a location interstitial.")
@@ -179,6 +196,37 @@ class ParentFamilyCrawler(AmazonCrawler):
         })
 
 
+class PartiallyDetectedCustomizeFamilyCrawler(AmazonCrawler):
+    def _fetch_parsed(self, normalized: NormalizedInput) -> tuple[dict, dict]:
+        first_asin = "B012345678"
+        second_asin = "B012345679"
+        has_customize = normalized.asin == first_asin
+        return ({
+            "asin": normalized.asin,
+            "parentAsin": "B0PARENT00",
+            "url": normalized.canonical_url,
+            "title": "Custom family",
+            "description": None,
+            "bulletPoints": [],
+            "categories": [],
+            "productDetails": {},
+            "price": {"raw": "$20.00", "amount": 20.0, "currency": "USD"},
+            "media": [],
+            "dimensions": {"Design": ["Ocean", "Forest"]},
+            "asinOptions": {
+                first_asin: {"Design": "Ocean"},
+                second_asin: {"Design": "Forest"},
+            },
+            "customizationRaw": {"state": {"gc:productInfo": {}}} if has_customize else None,
+            "customizationWarnings": [],
+            "customizationFormUrl": f"https://www.amazon.com/customize/{normalized.asin}" if has_customize else None,
+        }, {
+            "fetchMode": "playwright", "attempts": 1, "captchaEncountered": False,
+            "locationFallbackUsed": False, "amazonZip": "10001", "usProfileApplied": True,
+            "matrixSwept": False, "cacheHit": False,
+        })
+
+
 def source_variant(asin: str, design: str, size: str, customization: dict | None = None) -> dict:
     return {
         "asin": asin, "url": f"https://www.amazon.com/dp/{asin}", "options": {"Design": design, "Size": size},
@@ -223,6 +271,34 @@ class CoreTests(unittest.TestCase):
         self.assertIsNotNone(parsed["customizationRaw"])
         for field in ("brand", "seller", "rating", "reviewCount", "availability", "isAvailable"):
             self.assertNotIn(field, parsed)
+
+    def test_media_prefers_amazon_image_block_high_resolution_urls(self) -> None:
+        html = """<html><body><input id='ASIN' value='B012345678'><h1 id='productTitle'>Images</h1>
+        <img id='landingImage' src='https://m.media-amazon.com/images/I/main-thumb._AC_US100_.jpg'>
+        <div id='altImages'><img src='https://m.media-amazon.com/images/I/alt-thumb._AC_US100_.jpg'></div>
+        <script>
+        var data = {'colorImages': {'initial': A.$.parseJSON('[{"hiRes":"https://m.media-amazon.com/images/I/main-hires._AC_SL1500_.jpg","thumb":"https://m.media-amazon.com/images/I/main-thumb._AC_US100_.jpg","large":"https://m.media-amazon.com/images/I/main-large._AC_.jpg"},{"hiRes":null,"thumb":"https://m.media-amazon.com/images/I/alt-thumb._AC_US100_.jpg","large":"https://m.media-amazon.com/images/I/alt-large._AC_.jpg"} ]')}};
+        </script></body></html>"""
+
+        parsed = parse_product_html(html, "B012345678", "https://www.amazon.com/dp/B012345678")
+
+        self.assertEqual([media["url"] for media in parsed["media"]], [
+            "https://m.media-amazon.com/images/I/main-hires._AC_SL1500_.jpg",
+            "https://m.media-amazon.com/images/I/alt-large._AC_.jpg",
+        ])
+
+    def test_media_excludes_product_videos(self) -> None:
+        html = """<html><body><input id='ASIN' value='B012345678'><h1 id='productTitle'>Images only</h1>
+        <img id='landingImage' src='https://m.media-amazon.com/images/I/product.jpg'>
+        <video src='https://m.media-amazon.com/images/S/product-video.mp4'></video>
+        <video><source src='https://m.media-amazon.com/images/S/second-video.mp4'></video>
+        </body></html>"""
+
+        parsed = parse_product_html(html, "B012345678", "https://www.amazon.com/dp/B012345678")
+
+        self.assertEqual([media["url"] for media in parsed["media"]], [
+            "https://m.media-amazon.com/images/I/product.jpg",
+        ])
 
     def test_parses_description_and_bullets_from_new_product_facts_layout(self) -> None:
         html = """<html><body><input id='ASIN' value='B012345678'><h1 id='productTitle'>Facts</h1>
@@ -300,6 +376,29 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(recovered["customizationFormUrl"], "https://www.amazon.com/customize/B012345678")
         self.assertEqual(len(fetcher.calls), 1)
         self.assertEqual(browser.calls, ["https://www.amazon.com/dp/B012345678"])
+
+    def test_customize_family_rechecks_child_whose_first_snapshot_has_no_customize_marker(self) -> None:
+        second_entry_html = CUSTOMIZABLE_ENTRY_HTML.replace("B012345678", "B012345679")
+        widget_html = """<html><body><script type='application/json'>
+        {"sellerConfigComponents":[{"componentType":"TextInputComponent","id":"name","label":"Name"}]}
+        </script></body></html>"""
+        browser = CustomizationAwareBrowser({"B012345679": second_entry_html}, widget_html)
+        fetcher = StaticFetcher(MISSING_CUSTOMIZATION_PAYLOAD_HTML)
+
+        with tempfile.TemporaryDirectory() as directory:
+            crawler = PartiallyDetectedCustomizeFamilyCrawler(
+                root=Path(directory),
+                settings=CrawlSettings(variant_threads=1),
+                fetcher=fetcher,
+                browser_pool=browser,
+            )
+            family = crawler._crawl_family(normalize_amazon_input("B012345678"))
+
+        variants = {variant["asin"]: variant for variant in family["sourceVariants"]}
+        self.assertIsNotNone(variants["B012345679"]["customization"])
+        self.assertTrue(variants["B012345679"]["customizationComplete"])
+        self.assertEqual(browser.entry_calls, ["https://www.amazon.com/dp/B012345679"])
+        self.assertIn("https://www.amazon.com/customize/B012345679", browser.form_calls)
 
     def test_http_failure_uses_playwright_fallback(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -627,6 +726,22 @@ class CoreTests(unittest.TestCase):
             raw = json.loads(next(Path(directory).glob("*.json")).read_text(encoding="utf-8"))
             self.assertEqual(raw["schemaVersion"], CACHE_SCHEMA_VERSION)
 
+    def test_cache_invalidates_media_from_pre_hires_schema(self) -> None:
+        family = {
+            "variantMatrix": {"complete": True},
+            "customizationChecked": True,
+            "media": [{"url": "https://m.media-amazon.com/video.mp4", "kind": "video"}],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            cache = RawFamilyCache(Path(directory))
+            cache.save("B012345678", family)
+            cache_path = next(Path(directory).glob("*.json"))
+            raw = json.loads(cache_path.read_text(encoding="utf-8"))
+            raw["schemaVersion"] = 6
+            cache_path.write_text(json.dumps(raw), encoding="utf-8")
+
+            self.assertIsNone(cache.load("B012345678", require_customization=True))
+
     def test_cache_clear_removes_only_family_cache_files(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             cache_directory = Path(directory)
@@ -686,6 +801,33 @@ class CoreTests(unittest.TestCase):
             self.assertIsNone(output["exportFilename"])
             self.assertFalse((root / "exports").exists())
         self.assertEqual(output["status"], "cancelled")
+
+    def test_distributed_mode_reports_each_input_without_writing_export(self) -> None:
+        family = {
+            "parentAsin": "B012345678", "canonicalUrl": "https://www.amazon.com/dp/B012345678", "sourceTitle": "Bedding",
+            "description": None, "bulletPoints": [], "media": [],
+            "sourceVariants": [source_variant("B012345678", "Ocean", "Twin")],
+            "variantMatrix": {"dimensions": {"Design": ["Ocean"], "Size": ["Twin"]}, "expectedCount": 1, "discoveredCount": 1, "complete": True, "safetyCap": 500},
+            "diagnostics": {"fetchMode": "http", "attempts": 1, "captchaEncountered": False, "locationFallbackUsed": False, "matrixSwept": False, "cacheHit": False},
+        }
+        callbacks: list[dict[str, object]] = []
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            crawler = FixtureCrawler(family, root=root, settings=CrawlSettings(), browser_pool=FakeBrowser(PRODUCT_HTML))
+
+            output = crawler.run(
+                job_id="distributed-job",
+                sources=["B012345678"],
+                on_input_complete=callbacks.append,
+                write_export=False,
+            )
+
+            self.assertFalse((root / "exports").exists())
+        self.assertIsNone(output["exportFilename"])
+        self.assertEqual(len(callbacks), 1)
+        self.assertEqual(callbacks[0]["asin"], "B012345678")
+        self.assertEqual(callbacks[0]["status"], "completed")
+        self.assertEqual(len(callbacks[0]["products"]), 1)
 
 
 if __name__ == "__main__":

@@ -54,9 +54,13 @@ def _from_environment() -> list[dict[str, Any]]:
     return [{"name": f"env-profile-{index + 1}", "enabled": True, "proxy": {"server": value}} for index, value in enumerate(values)]
 
 
-def load_proxy_profiles(project_root: Path) -> tuple[list[dict[str, Any]], bool, list[str]]:
-    configured_path = os.environ.get("AMAZON_CRAWLER_PROXY_CONFIG")
-    path = Path(configured_path) if configured_path else project_root / "config" / "amazon-crawler-profiles.json"
+def load_proxy_profiles(
+    project_root: Path,
+    *,
+    config_path: Path | None = None,
+) -> tuple[list[dict[str, Any]], bool, list[str]]:
+    environment_path = os.environ.get("AMAZON_CRAWLER_PROXY_CONFIG")
+    path = Path(environment_path) if environment_path else config_path or project_root / "config" / "amazon-crawler-profiles.json"
     warnings: list[str] = []
     profiles: list[dict[str, Any]] = []
     should_rotate = False
@@ -78,8 +82,13 @@ def load_proxy_profiles(project_root: Path) -> tuple[list[dict[str, Any]], bool,
     return profiles, should_rotate, warnings
 
 
-def resolve_proxy_assignments(project_root: Path, requested_profiles: int) -> tuple[list[ProxyAssignment], list[str]]:
-    profiles, should_rotate, warnings = load_proxy_profiles(project_root)
+def resolve_proxy_assignments(
+    project_root: Path,
+    requested_profiles: int,
+    *,
+    config_path: Path | None = None,
+) -> tuple[list[ProxyAssignment], list[str]]:
+    profiles, should_rotate, warnings = load_proxy_profiles(project_root, config_path=config_path)
     enabled: list[dict[str, Any]] = []
     for index, profile in enumerate(profiles):
         proxy = profile.get("proxy") if isinstance(profile.get("proxy"), dict) else {}

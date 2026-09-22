@@ -5,16 +5,17 @@ import { AppLayout } from "../../layouts/AppLayout";
 import { amazonCrawlerRoutes } from "../../modules/amazon-crawler";
 import { HomePage } from "../../pages/home/HomePage";
 
-import type { AmazonCrawlerCacheClearer, AmazonCrawlerRunner } from "../../modules/amazon-crawler";
+import type { AmazonCrawlerCacheClearer, AmazonCrawlerClientsLoader, AmazonCrawlerRunner } from "../../modules/amazon-crawler";
 import type { WorkflowInput, WorkflowOutput } from "../../modules/orchestrator";
 
 interface AppRoutesProps {
   clearAmazonCrawlerCache: AmazonCrawlerCacheClearer;
+  loadAmazonCrawlerClients: AmazonCrawlerClientsLoader;
   runAmazonCrawler: AmazonCrawlerRunner;
   runWorkflow(input: WorkflowInput): Promise<WorkflowOutput>;
 }
 
-export function AppRoutes({ clearAmazonCrawlerCache, runAmazonCrawler, runWorkflow }: AppRoutesProps): React.JSX.Element {
+export function AppRoutes({ clearAmazonCrawlerCache, loadAmazonCrawlerClients, runAmazonCrawler, runWorkflow }: AppRoutesProps): React.JSX.Element {
   const router = useMemo(
     () =>
       createBrowserRouter([
@@ -25,7 +26,7 @@ export function AppRoutes({ clearAmazonCrawlerCache, runAmazonCrawler, runWorkfl
               index: true,
               element: <HomePage runWorkflow={runWorkflow} />,
             },
-            ...amazonCrawlerRoutes(runAmazonCrawler, clearAmazonCrawlerCache),
+            ...amazonCrawlerRoutes(runAmazonCrawler, clearAmazonCrawlerCache, loadAmazonCrawlerClients),
             {
               path: "*",
               element: <p className="mt-8 text-lg text-slate-300">Không tìm thấy trang.</p>,
@@ -33,7 +34,7 @@ export function AppRoutes({ clearAmazonCrawlerCache, runAmazonCrawler, runWorkfl
           ],
         },
       ]),
-    [clearAmazonCrawlerCache, runAmazonCrawler, runWorkflow],
+    [clearAmazonCrawlerCache, loadAmazonCrawlerClients, runAmazonCrawler, runWorkflow],
   );
 
   return <RouterProvider router={router} />;
