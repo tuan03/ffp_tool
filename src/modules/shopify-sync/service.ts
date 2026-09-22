@@ -103,7 +103,7 @@ export async function syncSingleProduct(
   }
 
   try {
-    // 1. Create Product & Media Gallery
+    // 1. Create Product & Media Gallery & Options/Variants
     const createdProduct = await gateway.createProduct({
       title: product.title,
       descriptionHtml: product.descriptionHtml,
@@ -111,16 +111,23 @@ export async function syncSingleProduct(
       productType: product.productType,
       tags: product.tags,
       media: product.media,
+      variants: product.variants,
     });
 
-    // 2. Create Variants
-    let variantsCount = 0;
-    if (product.variants && product.variants.length > 0) {
-      const variantResult = await gateway.createVariants(
-        createdProduct.productId,
-        product.variants,
-      );
-      variantsCount = variantResult.createdCount;
+    // 2. Create Variants (if not already bulk-created by createProduct)
+    let variantsCount = createdProduct.createdVariantsCount ?? 0;
+    if (variantsCount === 0 && product.variants && product.variants.length > 0) {
+      try {
+        const variantResult = await gateway.createVariants(
+          createdProduct.productId,
+          product.variants,
+        );
+        variantsCount = variantResult.createdCount;
+      } catch (varErr: unknown) {
+        // If variants were already established or failed standalone, report cleanly
+        const varErrDetail = varErr instanceof Error ? varErr.message : String(varErr);
+        warnings.push(`Variants creation note: ${varErrDetail}`);
+      }
     }
 
     // 3. Process Customization if present

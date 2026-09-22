@@ -106,11 +106,13 @@ export interface CreateProductInput {
   readonly productType?: string;
   readonly tags?: readonly string[];
   readonly media?: readonly ShopifyMediaInput[];
+  readonly variants?: readonly CreateVariantItem[];
 }
 
 export interface CreateProductOutput {
   readonly productId: string;
   readonly productHandle: string;
+  readonly createdVariantsCount?: number;
 }
 
 export interface CreateVariantItem {

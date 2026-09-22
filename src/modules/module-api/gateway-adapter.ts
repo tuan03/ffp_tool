@@ -71,6 +71,16 @@ export function createShopifyGatewayAdapter(
               alt: m.alt,
               mediaContentType: m.mediaContentType ?? "IMAGE",
             })),
+            variants: input.variants?.map((v) => ({
+              price: v.price,
+              compareAtPrice: v.compareAtPrice,
+              sku: v.sku,
+              barcode: v.barcode,
+              optionValues: v.optionValues?.map((ov) => ({
+                optionName: ov.optionName,
+                name: ov.name,
+              })),
+            })),
           },
         },
       })) as ShopifyProductsCreateResponse;
@@ -78,6 +88,7 @@ export function createShopifyGatewayAdapter(
       return {
         productId: response.data.product.id,
         productHandle: response.data.product.handle,
+        createdVariantsCount: response.data.product.variants?.length,
       };
     },
 
