@@ -1,4 +1,5 @@
 import type { SeoContentImageOutput, SeoContentInput } from "../types";
+import type { StoredEmbedding } from "./conflict-control/seo-conflict-corpus";
 
 export type SeoStageName = "b1" | "b2" | "b3" | "b4" | "b5" | "b6";
 
@@ -51,6 +52,7 @@ export interface ConflictResult {
   readonly keywordClusters?: readonly KeywordCluster[];
   readonly conflictDetails?: Readonly<Record<string, ConflictDetail>>;
   readonly corpusRevision?: number;
+  readonly approvedEmbeddings?: Readonly<Record<string, StoredEmbedding>>;
 }
 
 /** B5: Kết quả sáng tạo nội dung văn bản (Copywriting) */

@@ -163,7 +163,10 @@ function normalizeIdentifier(value: string | undefined): string | undefined {
 
 /**
  * Checks if two product identities refer to the same catalog product.
- * Returns true if ANY stable identifier (productId, handle, or url) matches.
+ * Evaluates identifiers hierarchically:
+ * 1. If both have productId, they match if and only if productIds match (different productIds never match).
+ * 2. If productId is unavailable on at least one, checks handles (different handles never match).
+ * 3. If handle is unavailable on at least one, checks URLs.
  */
 export function isSameProduct(
   a: SeoProductIdentity | undefined,
@@ -172,19 +175,24 @@ export function isSameProduct(
   if (!a || !b) {
     return false;
   }
-  if (a.productId && b.productId && a.productId.trim() === b.productId.trim()) {
-    return true;
+  const idA = a.productId ? a.productId.trim() : undefined;
+  const idB = b.productId ? b.productId.trim() : undefined;
+  if (idA && idB) {
+    return idA === idB;
   }
+
   const normHandleA = normalizeIdentifier(a.handle);
   const normHandleB = normalizeIdentifier(b.handle);
-  if (normHandleA && normHandleB && normHandleA === normHandleB) {
-    return true;
+  if (normHandleA && normHandleB) {
+    return normHandleA === normHandleB;
   }
+
   const normUrlA = normalizeIdentifier(a.url);
   const normUrlB = normalizeIdentifier(b.url);
-  if (normUrlA && normUrlB && normUrlA === normUrlB) {
-    return true;
+  if (normUrlA && normUrlB) {
+    return normUrlA === normUrlB;
   }
+
   return false;
 }
 

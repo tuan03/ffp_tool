@@ -1815,4 +1815,374 @@ test("Race Condition: concurrent pipeline worker detects stale expectedRevision,
   }
 });
 
+// ============================================================================
+// Group Audit: Invariant Verification, Edge Cases & Robustness Fixes
+// ============================================================================
+
+test("Audit: isSameProduct hierarchy prevents cross-product collisions when productIds differ", () => {
+  // Case 1: Different productIds with identical handle MUST NOT MATCH (prevents catalog overwrite)
+  assert.equal(
+    isSameProduct(
+      { productId: "prod_101", handle: "classic-mug" },
+      { productId: "prod_102", handle: "classic-mug" },
+    ),
+    false,
+    "Different productIds must never match even if handles are identical",
+  );
+
+  // Case 2: Matching productIds match even if handle was updated
+  assert.equal(
+    isSameProduct(
+      { productId: "prod_101", handle: "classic-mug-old" },
+      { productId: "prod_101", handle: "classic-mug-new" },
+    ),
+    true,
+    "Same productId must match even if handle changed",
+  );
+
+  // Case 3: One missing productId falls back to handle comparison
+  assert.equal(
+    isSameProduct(
+      { handle: "classic-mug" },
+      { productId: "prod_101", handle: "classic-mug" },
+    ),
+    true,
+    "Matching handle when one lacks productId must match",
+  );
+
+  // Case 4: Different handles without productIds do not match
+  assert.equal(
+    isSameProduct(
+      { handle: "classic-mug" },
+      { handle: "classic-cup" },
+    ),
+    false,
+  );
+
+  // Case 5: URL normalization matches trailing slashes and casing
+  assert.equal(
+    isSameProduct(
+      { url: "/products/classic-mug/" },
+      { url: "products/classic-mug" },
+    ),
+    true,
+  );
+
+  // Case 6: Undefined guards
+  assert.equal(isSameProduct(undefined, { handle: "mug" }), false);
+  assert.equal(isSameProduct({ handle: "mug" }, undefined), false);
+});
+
+test("Audit: computeProductKey generates stable, deterministic keys with correct priority", () => {
+  assert.equal(
+    computeProductKey({ productId: "12345", handle: "my-handle", url: "/my-url" }),
+    "id:12345",
+  );
+  assert.equal(
+    computeProductKey({ handle: "/my-handle/", url: "/my-url" }),
+    "handle:my-handle",
+  );
+  assert.equal(
+    computeProductKey({ url: "/products/cool-shirt/" }),
+    "url:products/cool-shirt",
+  );
+  assert.ok(
+    computeProductKey({}).startsWith("unknown:"),
+  );
+});
+
+test("Audit: isEmbeddingCompatible enforces strict vector space and dimension invariants", () => {
+  const baseVertex: StoredEmbedding = {
+    values: [0.1, 0.2, 0.3],
+    provider: "vertex_ai",
+    model: "text-embedding-004",
+    taskType: "SEMANTIC_SIMILARITY",
+    dimensions: 3,
+    vectorSpaceId: "vertex:text-embedding-004:SEMANTIC_SIMILARITY:3",
+    reusableAcrossRuns: true,
+  };
+
+  // Provider alias: vertex vs vertex_ai
+  const aliasVertex: StoredEmbedding = {
+    ...baseVertex,
+    provider: "vertex",
+  };
+  assert.equal(isEmbeddingCompatible(baseVertex, aliasVertex), true);
+
+  // Dimension mismatch
+  const diffDims: StoredEmbedding = {
+    ...baseVertex,
+    dimensions: 2,
+    values: [0.1, 0.2],
+  };
+  assert.equal(isEmbeddingCompatible(baseVertex, diffDims), false);
+
+  // Model mismatch
+  const diffModel: StoredEmbedding = {
+    ...baseVertex,
+    model: "text-embedding-005",
+  };
+  assert.equal(isEmbeddingCompatible(baseVertex, diffModel), false);
+
+  // Ephemeral vectors with different vectorSpaceId cannot be reused across runs
+  const ephemeralA: StoredEmbedding = {
+    values: [0.1, 0.2],
+    provider: "local_tfidf",
+    model: "local_tfidf",
+    taskType: "SEMANTIC_SIMILARITY",
+    dimensions: 2,
+    vectorSpaceId: "session_1",
+    reusableAcrossRuns: false,
+  };
+  const ephemeralB: StoredEmbedding = {
+    ...ephemeralA,
+    vectorSpaceId: "session_2",
+  };
+  assert.equal(isEmbeddingCompatible(ephemeralA, ephemeralB), false);
+
+  // Ephemeral vectors in same session match
+  const ephemeralSame: StoredEmbedding = {
+    ...ephemeralA,
+  };
+  assert.equal(isEmbeddingCompatible(ephemeralA, ephemeralSame), true);
+
+  // Undefined guards
+  assert.equal(isEmbeddingCompatible(undefined, baseVertex), false);
+  assert.equal(isEmbeddingCompatible(baseVertex, undefined), false);
+});
+
+test("Audit: FileSeoConflictCorpus handles corrupt files, empty files, and invalid schemas safely", async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "seo-test-corpus-"));
+  const corruptFile = path.join(tmpDir, "corrupt.json");
+  const emptyFile = path.join(tmpDir, "empty.json");
+  const invalidSchemaFile = path.join(tmpDir, "invalid-schema.json");
+
+  try {
+    // 1. Corrupt JSON syntax
+    fs.writeFileSync(corruptFile, "{ invalid json content !!!");
+    const corpusCorrupt = new FileSeoConflictCorpus({ filePath: corruptFile });
+    await assert.rejects(
+      async () => corpusCorrupt.getSnapshot(),
+      SeoConflictCorpusCorruptError,
+      "Corrupt JSON must throw SeoConflictCorpusCorruptError",
+    );
+
+    // 2. Invalid schema (schemaVersion != 1 or products is not array)
+    fs.writeFileSync(invalidSchemaFile, JSON.stringify({ schemaVersion: 99, products: "none" }));
+    const corpusInvalidSchema = new FileSeoConflictCorpus({ filePath: invalidSchemaFile });
+    await assert.rejects(
+      async () => corpusInvalidSchema.getSnapshot(),
+      SeoConflictCorpusCorruptError,
+      "Invalid schema structure must throw SeoConflictCorpusCorruptError",
+    );
+
+    // 3. 0-byte empty file initializes clean empty corpus without crashing
+    fs.writeFileSync(emptyFile, "   \n");
+    const corpusEmpty = new FileSeoConflictCorpus({ filePath: emptyFile });
+    const emptySnapshot = await corpusEmpty.getSnapshot();
+    assert.equal(emptySnapshot.revision, 0);
+    assert.equal(emptySnapshot.products.length, 0);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test("Audit: withFileLock throws CorpusLockTimeoutError when lock is held longer than timeoutMs", async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "seo-test-corpus-"));
+  const targetFile = path.join(tmpDir, "corpus.json");
+  const lockFile = `${targetFile}.lock`;
+
+  try {
+    // Simulate another process holding the lock file
+    fs.writeFileSync(lockFile, "locked");
+
+    const corpus = new FileSeoConflictCorpus({
+      filePath: targetFile,
+      lockTimeoutMs: 150, // Short timeout for test
+    });
+
+    await assert.rejects(
+      async () =>
+        corpus.upsertProduct({
+          identity: { handle: "test-lock" },
+          approvedKeywords: ["lock kw"],
+        }),
+      CorpusLockTimeoutError,
+      "Exceeding lock timeout must reject with CorpusLockTimeoutError",
+    );
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test("Audit: FileSeoConflictCorpus removeProduct releases keyword ownership and updates revision", async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "seo-test-corpus-"));
+  const filePath = path.join(tmpDir, "conflict-corpus.json");
+
+  try {
+    const corpus = new FileSeoConflictCorpus({ filePath });
+
+    // Seed product in corpus
+    await corpus.upsertProduct({
+      identity: { productId: "prod_to_remove", handle: "to-remove-handle" },
+      title: "Product To Remove",
+      approvedKeywords: ["keyword claimed by product to remove"],
+    });
+
+    // Verify conflict is found before removal
+    const conflictsBefore = await corpus.findConflicts({
+      keyword: "keyword claimed by product to remove",
+      owner: { productId: "other_prod" },
+    });
+    assert.equal(conflictsBefore.length, 1);
+
+    // Remove product
+    await corpus.removeProduct({ productId: "prod_to_remove" });
+
+    // Verify conflict is gone after removal
+    const conflictsAfter = await corpus.findConflicts({
+      keyword: "keyword claimed by product to remove",
+      owner: { productId: "other_prod" },
+    });
+    assert.equal(conflictsAfter.length, 0);
+
+    const snapshot = await corpus.getSnapshot();
+    assert.equal(snapshot.products.length, 0);
+    assert.equal(snapshot.revision, 2);
+
+    // Idempotent: removing non-existent product does not change revision
+    await corpus.removeProduct({ productId: "prod_to_remove" });
+    const snapshot2 = await corpus.getSnapshot();
+    assert.equal(snapshot2.revision, 2);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test("Audit: findConflicts falls back to synonym-aware Token Jaccard when stored embeddings are incompatible", async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "seo-test-corpus-"));
+  const filePath = path.join(tmpDir, "conflict-corpus.json");
+
+  try {
+    const corpus = new FileSeoConflictCorpus({ filePath });
+
+    // Catalog has a 768-d Vertex AI embedding
+    const vertexEmb: StoredEmbedding = {
+      values: new Array(768).fill(0.1),
+      provider: "vertex_ai",
+      model: "text-embedding-004",
+      taskType: "SEMANTIC_SIMILARITY",
+      dimensions: 768,
+      vectorSpaceId: "vertex:text-embedding-004:SEMANTIC_SIMILARITY:768",
+      reusableAcrossRuns: true,
+    };
+
+    await corpus.upsertProduct({
+      identity: { handle: "vintage-music-rug", productId: "cat_prod_1" },
+      title: "Vintage Music Player Rug",
+      approvedKeywords: [
+        {
+          keyword: "vintage music player rug",
+          rank: 0,
+          embedding: vertexEmb,
+        },
+      ],
+    });
+
+    // Lookup keyword comes from local TF-IDF (dimensions 50, local_tfidf provider)
+    // "retro" maps to "vintage" in domain synonym map
+    const localEmb: StoredEmbedding = {
+      values: new Array(50).fill(0.2),
+      provider: "local_tfidf",
+      model: "local_tfidf",
+      taskType: "SEMANTIC_SIMILARITY",
+      dimensions: 50,
+      vectorSpaceId: "local_session_abc",
+      reusableAcrossRuns: false,
+    };
+
+    // Since embeddings are incompatible (vertex_ai 768d vs local_tfidf 50d),
+    // Tier 2 cannot run, so it must fall back to Tier 2b (Token Jaccard with synonym canonicalization).
+    // "retro music player rug" -> synonym tokens: vintage, music, player, rug (100% jaccard with catalog)
+    const conflicts = await corpus.findConflicts({
+      keyword: "retro music player rug",
+      embedding: localEmb,
+      owner: { productId: "new_prod_2" },
+    });
+
+    assert.equal(conflicts.length, 1, "Must detect cannibalization via fallback synonym Token Jaccard");
+    assert.equal(conflicts[0].handle, "vintage-music-rug");
+    assert.equal(conflicts[0].matchType, "semantic");
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test("Audit: ConflictResult returns approvedEmbeddings and registerProductKeywords persists them", async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "seo-test-corpus-"));
+  const filePath = path.join(tmpDir, "conflict-corpus.json");
+
+  try {
+    const corpus = new FileSeoConflictCorpus({ filePath });
+
+    // Custom provider simulating persistent Vertex AI embeddings
+    const fakeVertexProvider: TextEmbeddingProvider = {
+      providerId: "vertex_ai",
+      async embed(texts: readonly string[], options?: EmbeddingOptions): Promise<readonly (readonly number[])[]> {
+        return texts.map(() => [0.8, 0.6]); // 2D unit vector for simplicity
+      },
+    };
+
+    const analyzer = new DefaultKeywordConflictAnalyzer({
+      primaryEmbeddingProvider: fakeVertexProvider,
+      conflictCorpus: corpus,
+    });
+
+    const product: SeoContentInput = {
+      title: "Handmade Ceramic Cat Planter",
+      handle: "handmade-ceramic-cat-planter",
+      niche: "cat planter",
+      description: "Cute succulent planter shaped like a cat.",
+      images: [],
+    };
+
+    const result = await analyzer.analyze({
+      source: product,
+      searchResearch: {
+        seedKeywords: ["ceramic cat planter pot"],
+        suggestedQueries: [],
+        querySources: {},
+      },
+    });
+
+    assert.ok(result.approvedKeywords.includes("ceramic cat planter pot"));
+    assert.ok(result.approvedEmbeddings, "approvedEmbeddings must be populated");
+    const emb = result.approvedEmbeddings["ceramic cat planter pot"];
+    assert.ok(emb);
+    assert.equal(emb.provider, "vertex_ai");
+    assert.equal(emb.reusableAcrossRuns, true);
+
+    // Register into catalog using { conflictResult: result }
+    const reg = await registerProductKeywords(
+      corpus,
+      product,
+      result.approvedKeywords,
+      { conflictResult: result },
+    );
+    assert.equal(reg.revision, 1);
+
+    // Verify snapshot has persisted the embedding!
+    const snapshot = await corpus.getSnapshot();
+    assert.equal(snapshot.products.length, 1);
+    const storedKw = snapshot.products[0].keywords[0];
+    assert.equal(storedKw.keyword, "ceramic cat planter pot");
+    assert.ok(storedKw.embedding, "Embedding must be persisted to disk in corpus JSON");
+    assert.equal(storedKw.embedding.provider, "vertex_ai");
+    assert.deepEqual(storedKw.embedding.values, [0.8, 0.6]);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+
 

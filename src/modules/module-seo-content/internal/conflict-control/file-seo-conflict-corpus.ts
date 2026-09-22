@@ -3,6 +3,7 @@ import path from "node:path";
 
 import { canonicalizeKeyword } from "./keyword-candidate";
 import { cosineSimilarity } from "./cosine-similarity";
+import { extractCanonicalTokens } from "./local-tfidf-vectorizer";
 import { checkContextualConflict } from "./contextual-conflict-evaluator";
 import {
   computeProductKey,
@@ -74,6 +75,16 @@ export class FileSeoConflictCorpus implements SeoConflictCorpus {
   private async readCorpusFile(): Promise<SeoConflictCorpusFile> {
     try {
       const content = await fs.readFile(this.filePath, "utf-8");
+      if (content.trim().length === 0) {
+        return {
+          schemaVersion: 1,
+          normalizationVersion: 1,
+          revision: 0,
+          updatedAt: new Date(0).toISOString(),
+          products: [],
+        };
+      }
+
       let parsed: unknown;
       try {
         parsed = JSON.parse(content);
@@ -112,6 +123,7 @@ export class FileSeoConflictCorpus implements SeoConflictCorpus {
   /**
    * Writes the corpus file atomically using a temp file in the same directory,
    * with fsync before renaming to avoid partial/corrupted writes.
+   * Cleans up temporary file if write or rename fails.
    */
   private async writeCorpusFile(corpus: SeoConflictCorpusFile): Promise<void> {
     const dir = path.dirname(this.filePath);
@@ -124,23 +136,30 @@ export class FileSeoConflictCorpus implements SeoConflictCorpus {
 
     const serialized = JSON.stringify(corpus, null, 2) + "\n";
 
-    const handle = await fs.open(tempPath, "w");
+    let handle: fs.FileHandle | undefined;
     try {
+      handle = await fs.open(tempPath, "w");
       await handle.writeFile(serialized, "utf-8");
       await handle.sync();
-    } finally {
       await handle.close();
+      handle = undefined;
+      await fs.rename(tempPath, this.filePath);
+    } catch (err) {
+      if (handle) {
+        await handle.close().catch(() => {});
+      }
+      await fs.unlink(tempPath).catch(() => {});
+      throw err;
     }
-
-    await fs.rename(tempPath, this.filePath);
   }
 
   /**
-   * Calculates Token Jaccard overlap between two canonical keyword phrases.
+   * Calculates Token Jaccard overlap between two canonical keyword phrases,
+   * applying domain synonym canonicalization.
    */
   private computeTokenJaccard(canonicalA: string, canonicalB: string): number {
-    const tokensA = new Set(canonicalA.split(/\s+/).filter(Boolean));
-    const tokensB = new Set(canonicalB.split(/\s+/).filter(Boolean));
+    const tokensA = new Set(extractCanonicalTokens(canonicalA));
+    const tokensB = new Set(extractCanonicalTokens(canonicalB));
     if (tokensA.size === 0 || tokensB.size === 0) return 0;
 
     let intersection = 0;
@@ -229,9 +248,12 @@ export class FileSeoConflictCorpus implements SeoConflictCorpus {
           continue;
         }
 
+        let canCompareDense = false;
+
         // Tier 2: Semantic Vector Match (if both have compatible embeddings)
         if (lookup.embedding && kw.embedding) {
           if (isEmbeddingCompatible(lookup.embedding, kw.embedding)) {
+            canCompareDense = true;
             const sim = cosineSimilarity(
               lookup.embedding.values,
               kw.embedding.values,
@@ -279,8 +301,8 @@ export class FileSeoConflictCorpus implements SeoConflictCorpus {
           }
         }
 
-        // Tier 2b: Fallback Token Jaccard match when dense vectors are not available
-        if (!lookup.embedding || !kw.embedding) {
+        // Tier 2b: Fallback Token Jaccard match when dense vectors are not available or incompatible
+        if (!canCompareDense) {
           const jaccard = this.computeTokenJaccard(
             normCandidate,
             kw.normalizedKeyword,

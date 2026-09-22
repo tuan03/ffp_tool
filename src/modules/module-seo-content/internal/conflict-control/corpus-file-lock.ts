@@ -33,14 +33,15 @@ export async function withFileLock<T>(
   timeoutMs: number,
   operation: () => Promise<T>,
 ): Promise<T> {
-  return enqueueInProcess(filePath, async () => {
-    const lockPath = `${filePath}.lock`;
-    const staleTimeoutMs = 10000;
+  const normalizedPath = path.resolve(filePath);
+  return enqueueInProcess(normalizedPath, async () => {
+    const lockPath = `${normalizedPath}.lock`;
+    const staleTimeoutMs = Math.max(1000, Math.min(10000, timeoutMs));
     const startTime = Date.now();
     let lockHandle: fs.FileHandle | undefined;
 
     // Ensure parent directory exists before locking
-    await fs.mkdir(path.dirname(filePath), { recursive: true });
+    await fs.mkdir(path.dirname(normalizedPath), { recursive: true });
 
     while (Date.now() - startTime < timeoutMs) {
       try {

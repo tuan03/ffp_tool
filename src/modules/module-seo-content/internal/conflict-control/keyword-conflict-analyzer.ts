@@ -571,10 +571,16 @@ export class DefaultKeywordConflictAnalyzer implements KeywordConflictAnalyzer {
             const isPrimary = catTarget.rank === 0;
             let isConflict = false;
 
-            if (sim >= 0.90) {
+            const strongThreshold = session.thresholds.duplicateStrong;
+            const reviewThreshold =
+              session.providerId === "local_tfidf"
+                ? session.thresholds.duplicateReview
+                : (this.denseThresholds?.duplicateReview ?? 0.86);
+
+            if (sim >= strongThreshold) {
               isConflict = true;
-            } else if (sim >= 0.86) {
-              // Gray zone [0.86, 0.90)
+            } else if (sim >= reviewThreshold) {
+              // Gray zone [reviewThreshold, strongThreshold)
               if (isPrimary) {
                 isConflict = checkContextualConflict({
                   candidateKeyword: kw,
@@ -677,6 +683,28 @@ export class DefaultKeywordConflictAnalyzer implements KeywordConflictAnalyzer {
         members: c.members,
       }));
 
+    const approvedEmbeddings: Record<string, StoredEmbedding> = {};
+    for (const kw of approvedKeywords) {
+      const candIdx = nonCorpusCandidates.findIndex((c) => c.keyword === kw);
+      if (candIdx >= 0) {
+        const vec = session.candidateSimilarityVectors[candIdx];
+        if (vec && vec.length > 0) {
+          approvedEmbeddings[kw] = {
+            values: vec,
+            provider: session.providerId,
+            model:
+              session.providerId === "vertex" || session.providerId === "vertex_ai"
+                ? "text-embedding-004"
+                : "local_tfidf",
+            taskType: "SEMANTIC_SIMILARITY",
+            dimensions: vec.length,
+            vectorSpaceId: session.vectorSpaceId,
+            reusableAcrossRuns: session.reusableAcrossRuns,
+          };
+        }
+      }
+    }
+
     return {
       approvedKeywords,
       discardedKeywords,
@@ -686,6 +714,8 @@ export class DefaultKeywordConflictAnalyzer implements KeywordConflictAnalyzer {
       conflictDetails:
         Object.keys(conflictDetails).length > 0 ? conflictDetails : undefined,
       corpusRevision,
+      approvedEmbeddings:
+        Object.keys(approvedEmbeddings).length > 0 ? approvedEmbeddings : undefined,
     };
   }
 }

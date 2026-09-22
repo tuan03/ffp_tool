@@ -151,6 +151,7 @@ export interface RegisterProductKeywordsOptions {
   readonly title?: string;
   readonly expectedRevision?: number;
   readonly embeddings?: Readonly<Record<string, StoredEmbedding>>;
+  readonly conflictResult?: ConflictResult;
 }
 
 /**
@@ -173,17 +174,22 @@ export async function registerProductKeywords(
     url: product.url ?? (product.handle ? `/products/${product.handle}` : undefined),
   };
 
+  const embeddingsMap =
+    options?.embeddings ?? options?.conflictResult?.approvedEmbeddings;
+  const expectedRevision =
+    options?.expectedRevision ?? options?.conflictResult?.corpusRevision;
+
   const registeredKeywords = approvedKeywords.map((kw, rank) => ({
     keyword: kw,
     rank,
-    embedding: options?.embeddings?.[kw],
+    embedding: embeddingsMap?.[kw],
   }));
 
   return corpus.upsertProduct({
     identity,
     title: options?.title ?? product.title,
     approvedKeywords: registeredKeywords,
-    expectedRevision: options?.expectedRevision,
+    expectedRevision,
   });
 }
 

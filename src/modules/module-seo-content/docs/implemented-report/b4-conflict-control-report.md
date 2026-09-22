@@ -116,9 +116,23 @@ Thực nghiệm đo đạc trực tiếp với dự án Google Cloud `gemini-ima
    - Cung cấp helper `retryOnCorpusRevisionConflict` tự động reload catalog mới và chạy lại từ B4 nếu phát hiện tranh chấp ghi dữ liệu.
 
 ### 4.3. Số liệu kiểm thử tự động & Nghiệm thu
-- Toàn bộ **202/202 tests** trong test suite dự án đều vượt qua xuất sắc (`pass 202, fail 0`), trong đó có **48 tests chuyên sâu** bao phủ toàn diện Stage B4 (từ Intra-Product matrix đến Cross-Product matrix AC $\rightarrow$ BC và race conditions).
+- Toàn bộ **210/210 tests** trong test suite dự án đều vượt qua xuất sắc (`pass 210, fail 0`), trong đó có **56 tests chuyên sâu** bao phủ toàn diện Stage B4 (từ Intra-Product matrix đến Cross-Product matrix AC $\rightarrow$ BC, race conditions, và Group Audit Invariant Verification).
 - Kiểm tra TypeScript nghiêm ngặt (`npm run typecheck`): **0 lỗi** (strict mode, không dùng `any`, không `ts-ignore`).
-- Bản dựng chính (`npm run build`): Thành công trong 785ms.
-- Bản dựng môi trường mock (`npm run build:mock`): Thành công trong 799ms.
+- Bản dựng chính (`npm run build`): Thành công trong 985ms.
+- Bản dựng môi trường mock (`npm run build:mock`): Thành công trong 637ms.
 - **Nghiệm thu chính thức (Official Verdict)**: ChatGPT Web (Planner & Reviewer) đã chốt **`STAGE B4 — OFFICIALLY APPROVED ✅`** cho toàn bộ Intra-Product Engine và Cross-Product Catalog Extension. Hệ thống đã sẵn sàng 100% để bước sang Stage B5 (SEO Content Generation).
+
+### 4.4. Kiểm toán Độc lập Bổ sung (Audit Fixes & Deep Verification)
+1. **Khắc phục lỗi nhận diện sản phẩm trong `isSameProduct`**:
+   - Khóa chặt phân cấp định danh: Nếu cả hai sản phẩm đều có `productId` thì so sánh strictly theo `productId`. Hai sản phẩm có ID khác nhau tuyệt đối không bao giờ được coi là cùng một sản phẩm dù có trùng handle (ngăn chặn triệt để nguy cơ ghi đè mất dữ liệu sản phẩm khác trong database hoặc bỏ qua xung đột cannibalization).
+2. **Khắc phục lỗi bỏ sót xung đột trong Tier 2b (`FileSeoConflictCorpus`)**:
+   - Khi embedding của ứng viên và từ khóa catalog không tương thích (ví dụ một bên là Vertex 768 chiều, một bên là Local TF-IDF), hệ thống tự động kích hoạt Tier 2b Token Jaccard với từ điển đồng nghĩa (`extractCanonicalTokens`) thay vì bỏ qua hoàn toàn.
+3. **Lan truyền Embedding Tái sử dụng qua `ConflictResult.approvedEmbeddings`**:
+   - Bổ sung `approvedEmbeddings` vào `ConflictResult`, cho phép `registerProductKeywords` tự động tiếp nhận và lưu trữ vector Vertex AI vào đĩa JSON, giúp các lần chạy sau tái sử dụng trực tiếp mà không cần gọi lại API Vertex AI.
+4. **Hiệu chuẩn Ngưỡng Catalog Step 9 theo Session**:
+   - Sử dụng `session.thresholds.duplicateStrong` và `duplicateReview` thay cho giá trị cố định, giúp nhận diện chính xác xung đột chéo catalog ở cả chế độ Vertex AI (ngưỡng 0.90 / 0.86) lẫn Local TF-IDF (ngưỡng 0.72 / 0.62).
+5. **Gia cố An toàn I/O & File Locking**:
+   - Chuẩn hóa đường dẫn tuyệt đối `path.resolve` cho hàng đợi in-process queue và lockfile.
+   - Tự động dọn dẹp file `.tmp` nếu tiến trình ghi hoặc đổi tên gặp sự cố.
+   - Xử lý an toàn file 0-byte khởi tạo corpus sạch thay vì ném lỗi cú pháp JSON.
 

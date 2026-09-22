@@ -111,21 +111,25 @@ Module **SEO + Content** được đóng gói độc lập theo đúng tiêu chu
 | 4 | **Lệch Alias Provider ID giữa Vertex AI và Corpus** | `VertexTextEmbeddingProvider` dùng `providerId = "vertex"` trong khi analyzer kiểm tra `"vertex_ai"`, làm metadata vector bị gán nhầm thành `"local_tfidf"`. | Chuẩn hóa `providerId = "vertex_ai"` và cập nhật `isEmbeddingCompatible` chấp nhận tương thích chéo giữa 2 alias. |
 | 5 | **Thiếu Guard kiểm tra số lượng vector batch** | `createVectorSession` không kiểm tra số lượng vector trả về từ API có khớp với số lượng keywords yêu cầu hay không. | Bổ sung assertion kiểm tra độ dài mảng vector, tự động kích hoạt fallback tất định nếu có mất mát dữ liệu batch. |
 | 6 | **Rò rỉ dấu câu trong chuẩn hóa từ khóa** | Từ khóa chứa dấu phẩy/chấm cuối chuỗi (`"vintage tee,"`) bị trôi qua bước khử trùng lặp chính xác. | Nâng cấp `canonicalizeKeyword` tự động cắt tỉa toàn bộ dấu câu đầu và cuối chuỗi. |
+| 7 | **Xung đột ID sản phẩm trong `isSameProduct`** | Khi hai sản phẩm khác nhau có `productId` khác nhau nhưng trùng `handle`, code cũ duyệt qua `handle` và trả về `true` $\rightarrow$ Nguy cơ ghi đè mất dữ liệu catalog hoặc bỏ qua xung đột cannibalization. | Chuẩn hóa phân cấp: so sánh strictly theo `productId` nếu cả hai đều có ID. Hai ID khác nhau tuyệt đối không thể là cùng sản phẩm. |
+| 8 | **Bỏ sót xung đột khi embedding không tương thích** | Trong `FileSeoConflictCorpus`, điều kiện `if (!lookup.embedding || !kw.embedding)` không bao quát trường hợp cả hai đều có embedding nhưng không tương thích nhau (ví dụ Vertex 768d vs Local 50d) $\rightarrow$ Bỏ sót cả Tier 2 lẫn Tier 2b. | Bổ sung cờ `canCompareDense`: kích hoạt Tier 2b Token Jaccard với synonym map (`extractCanonicalTokens`) khi không thể so sánh vector dày. |
+| 9 | **Thất thoát Embedding khi đăng ký Catalog** | `ConflictResult` không lưu trữ vector đã tính toán ở B4 $\rightarrow$ `registerProductKeywords` phải lưu embedding rỗng vào đĩa. | Mở rộng `ConflictResult.approvedEmbeddings` và tích hợp tự động vào `registerProductKeywords({ conflictResult })`. |
+| 10 | **Cố định ngưỡng Step 9 cho Local TF-IDF** | Step 9 dùng cố định 0.90 / 0.86 khiến vector thưa cục bộ (TF-IDF) không bao giờ chạm tới ngưỡng xung đột. | Sử dụng `session.thresholds.duplicateStrong` (0.72 cho local sparse, 0.90 cho dense). |
 
 ---
 
 ## 5. Kết Quả Kiểm Thử & Nghiệm Thu
 
 ### 5.1. Kiểm thử tự động (Automated Verification)
-* **Unit Tests (`npm test`)**: **202/202 tests PASS 100%** (0 failed, 0 skipped, thời gian chạy ~3.6s).
+* **Unit Tests (`npm test`)**: **210/210 tests PASS 100%** (0 failed, 0 skipped, thời gian chạy ~3.8s).
   * Stage B1 Tests: 43 tests (Gemini Vision, OCR, Fallback, Payloads, Retries).
   * Stage B2 Tests: 33 tests (Shopping Context, Audience, Occasions, Buyer Intent Seeds).
   * Stage B3 Tests: 39 tests (Google Suggest Client, LRU Cache, Circuit Breaker, Normalizer, Collector).
-  * Stage B4 Tests: 48 tests (Intra-product Vector Embedding, Clustering, Guards, cộng thêm Cross-Product File Catalog Database, Concurrency Lock, Stale Revision Retries, Gray-zone Contextual Evaluation, Shared Local TF-IDF Fallback).
+  * Stage B4 Tests: 56 tests (Intra-product Vector Embedding, Clustering, Guards, cộng thêm Cross-Product File Catalog Database, Concurrency Lock, Stale Revision Retries, Gray-zone Contextual Evaluation, Shared Local TF-IDF Fallback, và Group Audit Invariant Verification).
   * Pipeline & Orchestrator Tests: 39 tests.
 * **Typecheck (`npm run typecheck`)**: **0 lỗi** (TypeScript strict mode, tuyệt đối không dùng `any`, không `ts-ignore`).
-* **Production Build (`npm run build`)**: Build thành công trong 785ms.
-* **Mock Build (`npm run build:mock`)**: Build thành công trong 799ms.
+* **Production Build (`npm run build`)**: Build thành công trong 985ms.
+* **Mock Build (`npm run build:mock`)**: Build thành công trong 637ms.
 * **Nghiệm thu 2-Agent (ChatGPT Web)**: Chốt **`STAGE B4 — OFFICIALLY APPROVED ✅`** (hoàn thành 100% B1, B2, B3, B4).
 
 ### 5.2. Kiểm thử trực quan thực tế (Visual Inspection qua `test.cmd`)
