@@ -56,6 +56,36 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function formatPrice(value: unknown, defaultVal = "0.00"): string {
+  if (value == null) return defaultVal;
+  if (typeof value === "number") return Number.isFinite(value) ? value.toFixed(2) : defaultVal;
+  if (typeof value === "string") {
+    const cleaned = value.replace(/[^0-9.]/g, "");
+    return cleaned ? Number(cleaned).toFixed(2) : defaultVal;
+  }
+  if (typeof value === "object") {
+    const obj = value as Record<string, unknown>;
+    if (typeof obj.amount === "number") {
+      return Number.isFinite(obj.amount) ? obj.amount.toFixed(2) : defaultVal;
+    }
+    if (typeof obj.amount === "string") {
+      const cleaned = obj.amount.replace(/[^0-9.]/g, "");
+      if (cleaned) return Number(cleaned).toFixed(2);
+    }
+    if (typeof obj.raw === "string") {
+      const cleaned = obj.raw.replace(/[^0-9.]/g, "");
+      if (cleaned) return Number(cleaned).toFixed(2);
+    }
+  }
+  return defaultVal;
+}
+
+function formatOptionalPrice(value: unknown): string | undefined {
+  if (value == null) return undefined;
+  const price = formatPrice(value, "");
+  return price && price !== "0.00" ? price : undefined;
+}
+
 export function fromCustomizationNormalizerProduct(
   product: CrawlProduct,
 ): ShopifySyncProductInput {
@@ -65,7 +95,7 @@ export function fromCustomizationNormalizerProduct(
   const media: ShopifyMediaInput[] = (product.media || []).map((item: ProductMediaItem) => ({
     originalSource: item.url,
     alt: item.alt || title,
-    mediaContentType: "IMAGE",
+    mediaContentType: item.kind === "video" ? "VIDEO" : "IMAGE",
     friendlyFileName: item.friendlyFileName,
   }));
 
@@ -109,7 +139,8 @@ export function fromCustomizationNormalizerProduct(
   const variants: ShopifyVariantInput[] = (product.variants || [])
     .filter(isRecord)
     .map((v) => {
-      const priceStr = v.price != null ? String(v.price) : "0.00";
+      const priceStr = formatPrice(v.price, "0.00");
+      const compareAtPriceStr = formatOptionalPrice(v.compareAtPrice);
       const optionValues: Array<{ name: string; optionName: string }> = [];
 
       if (isRecord(v.options)) {
@@ -124,19 +155,24 @@ export function fromCustomizationNormalizerProduct(
       return {
         title: typeof v.title === "string" ? v.title : undefined,
         price: priceStr,
-        compareAtPrice: v.compareAtPrice != null ? String(v.compareAtPrice) : undefined,
+        compareAtPrice: compareAtPriceStr,
         sku: typeof v.sku === "string" ? v.sku : undefined,
         barcode: typeof v.barcode === "string" ? v.barcode : undefined,
         optionValues: optionValues.length > 0 ? optionValues : undefined,
       };
     });
 
+  const productType =
+    product.categories && product.categories.length > 0
+      ? String(product.categories[product.categories.length - 1])
+      : "Custom Product";
+
   return {
     id: product.id,
     title,
     descriptionHtml,
     vendor: "FFP Store",
-    productType: "Custom Handbag",
+    productType,
     tags: Array.from(tags),
     media,
     variants: variants.length > 0 ? variants : undefined,
