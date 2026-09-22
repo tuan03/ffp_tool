@@ -25,7 +25,7 @@ export const shopifyMockProducts: readonly ShopifyProduct[] = [
     tags: ["t-shirt", "summer", "cotton"],
     onlineStoreUrl: "https://quickstart-demo.myshopify.com/products/classic-cotton-t-shirt",
     featuredImage: {
-      id: "gid://shopify/ProductImage/5001",
+      id: "gid://shopify/MediaImage/5001",
       url: "https://cdn.shopify.com/s/files/1/0001/products/tshirt-front.jpg",
       altText: "Classic Cotton T-Shirt front view",
       width: 1000,
@@ -33,14 +33,14 @@ export const shopifyMockProducts: readonly ShopifyProduct[] = [
     },
     images: [
       {
-        id: "gid://shopify/ProductImage/5001",
+        id: "gid://shopify/MediaImage/5001",
         url: "https://cdn.shopify.com/s/files/1/0001/products/tshirt-front.jpg",
         altText: "Classic Cotton T-Shirt front view",
         width: 1000,
         height: 1000,
       },
       {
-        id: "gid://shopify/ProductImage/5002",
+        id: "gid://shopify/MediaImage/5002",
         url: "https://cdn.shopify.com/s/files/1/0001/products/tshirt-back.jpg",
         altText: "Classic Cotton T-Shirt back view",
         width: 1000,
@@ -86,7 +86,7 @@ export const shopifyMockProducts: readonly ShopifyProduct[] = [
     tags: ["mug", "kitchen", "coffee"],
     onlineStoreUrl: "https://quickstart-demo.myshopify.com/products/ceramic-coffee-mug",
     featuredImage: {
-      id: "gid://shopify/ProductImage/5003",
+      id: "gid://shopify/MediaImage/5003",
       url: "https://cdn.shopify.com/s/files/1/0001/products/mug.jpg",
       altText: "Ceramic Coffee Mug",
       width: 800,
@@ -94,7 +94,7 @@ export const shopifyMockProducts: readonly ShopifyProduct[] = [
     },
     images: [
       {
-        id: "gid://shopify/ProductImage/5003",
+        id: "gid://shopify/MediaImage/5003",
         url: "https://cdn.shopify.com/s/files/1/0001/products/mug.jpg",
         altText: "Ceramic Coffee Mug",
         width: 800,
@@ -131,7 +131,7 @@ export const shopifyMockProducts: readonly ShopifyProduct[] = [
     tags: ["jacket", "denim", "vintage"],
     onlineStoreUrl: "https://quickstart-demo.myshopify.com/products/vintage-denim-jacket",
     featuredImage: {
-      id: "gid://shopify/ProductImage/5004",
+      id: "gid://shopify/MediaImage/5004",
       url: "https://cdn.shopify.com/s/files/1/0001/products/jacket.jpg",
       altText: "Vintage Denim Jacket",
       width: 1200,
@@ -139,7 +139,7 @@ export const shopifyMockProducts: readonly ShopifyProduct[] = [
     },
     images: [
       {
-        id: "gid://shopify/ProductImage/5004",
+        id: "gid://shopify/MediaImage/5004",
         url: "https://cdn.shopify.com/s/files/1/0001/products/jacket.jpg",
         altText: "Vintage Denim Jacket",
         width: 1200,

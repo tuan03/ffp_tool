@@ -1,7 +1,7 @@
 import type { Plugin } from "vite";
 
 import { GatewayDispatcher } from "./dispatcher";
-import { createGatewayHttpHandler, isGatewayAuthorized, MAX_BODY_BYTES } from "./http-server";
+import { assertHostSecurity, createGatewayHttpHandler, isGatewayAuthorized, MAX_BODY_BYTES } from "./http-server";
 import { InMemoryIdempotencyStore } from "./idempotency";
 import { ShopifyGraphqlClient } from "./shopify-graphql-client";
 import { InMemoryStoreRegistry } from "./store-registry";
@@ -20,6 +20,8 @@ export function shopifyGatewayDevPlugin(options?: ShopifyGatewayDevPluginOptions
     configureServer(server) {
       const env = loadLocalEnv();
       const authToken = options?.authToken ?? env.GATEWAY_AUTH_TOKEN ?? process.env.GATEWAY_AUTH_TOKEN;
+      const host = server?.config?.server?.host;
+      assertHostSecurity(host, authToken, "vite dev server");
       const maxBodyBytes = options?.maxBodyBytes && options.maxBodyBytes > 0 ? options.maxBodyBytes : MAX_BODY_BYTES;
 
       const stores = loadBootstrappedStores({ env });

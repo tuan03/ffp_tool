@@ -434,6 +434,9 @@ export async function executeProductsCreate(
   if (typeof productInput.productType === "string") {
     input.productType = productInput.productType;
   }
+  if (typeof productInput.categoryId === "string" && productInput.categoryId.trim() !== "") {
+    input.category = productInput.categoryId.trim();
+  }
   if (Array.isArray(productInput.tags)) {
     input.tags = productInput.tags;
   }
@@ -735,6 +738,9 @@ export async function executeProductsUpdate(
   }
   if (typeof productPatch.productType === "string") {
     input.productType = productPatch.productType;
+  }
+  if (typeof productPatch.categoryId === "string" && productPatch.categoryId.trim() !== "") {
+    input.category = productPatch.categoryId.trim();
   }
   if (Array.isArray(productPatch.tags)) {
     input.tags = productPatch.tags;

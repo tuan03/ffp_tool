@@ -24,6 +24,8 @@ import {
 } from "../index";
 
 import { createModuleApiRunner } from "../../src/modules/module-api";
+import { shopifyGatewayDevPlugin } from "../vite-plugin";
+import { isLocalHost } from "../http-server";
 
 function createMockResponse(data: unknown, status = 200, headers: Record<string, string> = {}): Response {
   return new Response(JSON.stringify(data), {
@@ -6889,6 +6891,547 @@ describe("Gateway: Architectural & Operational Hardening (P1)", () => {
       assert.ok(requestPayload);
       assert.equal(requestPayload.variables.metafields?.[0]?.ownerId, "gid://shopify/Product/top-owner-1");
       assert.equal(requestPayload.variables.metafields?.[0]?.value, "{\"test\":1}");
+    });
+  });
+
+  describe("Gateway Hardening: Polling, Security, MediaImage, Metafields, Category, StoreId", () => {
+    function setupTestGateway(mockGraphqlDataOrTransport: unknown) {
+      const registry = new InMemoryStoreRegistry([
+        {
+          storeId: "store-test",
+          shopDomain: "store-test.myshopify.com",
+          apiVersion: "2026-07",
+          auth: { type: "static", staticToken: "shpat_mock_123" },
+        },
+      ]);
+
+      const fakeTransport: HttpTransport =
+        typeof mockGraphqlDataOrTransport === "function"
+          ? (mockGraphqlDataOrTransport as HttpTransport)
+          : async () => createMockResponse(mockGraphqlDataOrTransport);
+
+      const client = new ShopifyGraphqlClient({
+        tokenProvider: new StaticAccessTokenProvider(),
+        throttleManager: new InMemoryThrottleManager(),
+        baseTransport: fakeTransport,
+      });
+
+      return new GatewayDispatcher({ storeRegistry: registry, graphqlClient: client });
+    }
+
+    it("files.bulkCreate continues polling when file has temporary shopifyCdnUrl but status is PROCESSING", async () => {
+      let callCount = 0;
+      const dispatcher = setupTestGateway(async (_url: string, init?: RequestInit) => {
+        callCount++;
+        const body = JSON.parse(init?.body as string);
+        if (callCount === 1) {
+          // Mutation response: returns file node with temporary cdn url but PROCESSING status
+          return createMockResponse({
+            data: {
+              fileCreate: {
+                files: [
+                  {
+                    id: "gid://shopify/MediaImage/temp-url-file",
+                    fileStatus: "PROCESSING",
+                    image: { url: "https://cdn.shopify.com/temp-processing.jpg" },
+                  },
+                ],
+                userErrors: [],
+              },
+            },
+          });
+        }
+        // Poll response: returns READY status and final cdn url
+        assert.ok(body.query.includes("nodes(ids: $ids)"));
+        return createMockResponse({
+          data: {
+            nodes: [
+              {
+                id: "gid://shopify/MediaImage/temp-url-file",
+                fileStatus: "READY",
+                image: { url: "https://cdn.shopify.com/final-ready.jpg" },
+              },
+            ],
+          },
+        });
+      });
+
+      const res = await dispatcher.dispatch({
+        storeId: "store-test",
+        operation: "files.bulkCreate",
+        mode: "apply",
+        requestId: "req-poll-temp-url",
+        payload: {
+          files: [{ originalSource: "https://example.com/asset.jpg" }],
+          pollIntervalMs: 5,
+          maxPollAttempts: 3,
+        },
+      });
+
+      assert.equal(res.success, true);
+      const data = res.data as { files: readonly { fileStatus: string; shopifyCdnUrl?: string }[]; successCount: number };
+      assert.equal(data.successCount, 1);
+      assert.equal(data.files[0]?.fileStatus, "READY");
+      assert.equal(data.files[0]?.shopifyCdnUrl, "https://cdn.shopify.com/final-ready.jpg");
+      assert.ok(callCount >= 2, "Must have polled despite temporary shopifyCdnUrl");
+    });
+
+    it("files.bulkCreate times out when polling expires and status is still PROCESSING even with shopifyCdnUrl", async () => {
+      const dispatcher = setupTestGateway(async (_url: string, init?: RequestInit) => {
+        const body = JSON.parse(init?.body as string);
+        if (body.query.includes("fileCreate(")) {
+          return createMockResponse({
+            data: {
+              fileCreate: {
+                files: [
+                  {
+                    id: "gid://shopify/MediaImage/stuck-file",
+                    fileStatus: "PROCESSING",
+                    image: { url: "https://cdn.shopify.com/stuck-temp.jpg" },
+                  },
+                ],
+                userErrors: [],
+              },
+            },
+          });
+        }
+        return createMockResponse({
+          data: {
+            nodes: [
+              {
+                id: "gid://shopify/MediaImage/stuck-file",
+                fileStatus: "PROCESSING",
+                image: { url: "https://cdn.shopify.com/stuck-temp.jpg" },
+              },
+            ],
+          },
+        });
+      });
+
+      const res = await dispatcher.dispatch({
+        storeId: "store-test",
+        operation: "files.bulkCreate",
+        mode: "apply",
+        requestId: "req-poll-timeout",
+        payload: {
+          files: [{ originalSource: "https://example.com/asset.jpg" }],
+          pollIntervalMs: 5,
+          maxPollAttempts: 2,
+        },
+      });
+
+      assert.equal(res.success, true);
+      const data = res.data as { files: readonly { fileStatus: string }[]; failedCount: number };
+      assert.equal(data.failedCount, 1);
+      assert.equal(data.files[0]?.fileStatus, "TIMED_OUT");
+    });
+
+    it("Vite dev server plugin refuses startup on 0.0.0.0, true, or LAN host without GATEWAY_AUTH_TOKEN", () => {
+      const plugin = shopifyGatewayDevPlugin();
+      const origToken = process.env.GATEWAY_AUTH_TOKEN;
+      delete process.env.GATEWAY_AUTH_TOKEN;
+
+      const invokeConfigureServer = (p: any, serverMock: unknown) => {
+        if (typeof p.configureServer === "function") {
+          p.configureServer(serverMock);
+        } else if (p.configureServer && typeof p.configureServer.handler === "function") {
+          p.configureServer.handler(serverMock);
+        }
+      };
+
+      try {
+        // 1. host = "0.0.0.0"
+        assert.throws(
+          () => {
+            invokeConfigureServer(plugin, {
+              config: { server: { host: "0.0.0.0" } },
+              middlewares: { use: () => {} },
+            });
+          },
+          {
+            message: /Refusing to start vite dev server on host '0\.0\.0\.0' without GATEWAY_AUTH_TOKEN/,
+          },
+        );
+
+        // 2. host = true (Vite shorthand for 0.0.0.0)
+        assert.throws(
+          () => {
+            invokeConfigureServer(plugin, {
+              config: { server: { host: true } },
+              middlewares: { use: () => {} },
+            });
+          },
+          {
+            message: /Refusing to start vite dev server on host '0\.0\.0\.0' without GATEWAY_AUTH_TOKEN/,
+          },
+        );
+
+        // 3. host = LAN IP "192.168.1.50"
+        assert.throws(
+          () => {
+            invokeConfigureServer(plugin, {
+              config: { server: { host: "192.168.1.50" } },
+              middlewares: { use: () => {} },
+            });
+          },
+          {
+            message: /Refusing to start vite dev server on host '192\.168\.1\.50' without GATEWAY_AUTH_TOKEN/,
+          },
+        );
+
+        // 4. Localhost allowed without token
+        assert.doesNotThrow(() => {
+          invokeConfigureServer(plugin, {
+            config: { server: { host: "localhost" } },
+            middlewares: { use: () => {} },
+          });
+        });
+        assert.doesNotThrow(() => {
+          invokeConfigureServer(plugin, {
+            config: { server: { host: "127.0.0.1" } },
+            middlewares: { use: () => {} },
+          });
+        });
+        assert.doesNotThrow(() => {
+          invokeConfigureServer(plugin, {
+            config: { server: { host: undefined } },
+            middlewares: { use: () => {} },
+          });
+        });
+      } finally {
+        if (origToken !== undefined) {
+          process.env.GATEWAY_AUTH_TOKEN = origToken;
+        }
+      }
+
+      // 5. Explicit authToken in options allows non-local host
+      const securePlugin = shopifyGatewayDevPlugin({ authToken: "sec-token-123" });
+      assert.doesNotThrow(() => {
+        invokeConfigureServer(securePlugin, {
+          config: { server: { host: "0.0.0.0" } },
+          middlewares: { use: () => {} },
+        });
+      });
+    });
+
+    it("isLocalHost correctly classifies local and non-local hostnames", () => {
+      assert.equal(isLocalHost(undefined), true);
+      assert.equal(isLocalHost(false), true);
+      assert.equal(isLocalHost("127.0.0.1"), true);
+      assert.equal(isLocalHost("localhost"), true);
+      assert.equal(isLocalHost("::1"), true);
+      assert.equal(isLocalHost("[::1]"), true);
+      assert.equal(isLocalHost(true), false);
+      assert.equal(isLocalHost("0.0.0.0"), false);
+      assert.equal(isLocalHost("192.168.1.1"), false);
+      assert.equal(isLocalHost("example.com"), false);
+    });
+
+    it("products.get queries media(first: 50) and maps MediaImage nodes while excluding non-image media", async () => {
+      let capturedQuery = "";
+      const dispatcher = setupTestGateway(async (_url: string, init?: RequestInit) => {
+        const body = JSON.parse(init?.body as string);
+        capturedQuery = body.query;
+        return createMockResponse({
+          data: {
+            product: {
+              id: "gid://shopify/Product/media-prod-1",
+              title: "Media Product",
+              handle: "media-product",
+              status: "ACTIVE",
+              featuredImage: {
+                id: "gid://shopify/ProductImage/feat-1",
+                url: "https://example.com/featured.jpg",
+                altText: "Feat Alt",
+              },
+              media: {
+                pageInfo: { hasNextPage: false, endCursor: "cursor-1" },
+                nodes: [
+                  {
+                    id: "gid://shopify/MediaImage/img-node-101",
+                    alt: "Photo 1",
+                    mediaContentType: "IMAGE",
+                    image: {
+                      url: "https://example.com/photo-1.jpg",
+                      width: 1200,
+                      height: 1200,
+                    },
+                  },
+                  {
+                    id: "gid://shopify/Video/video-node-202",
+                    alt: "Promo Video",
+                    mediaContentType: "VIDEO",
+                    image: null,
+                  },
+                  {
+                    id: "gid://shopify/Model3d/model-node-303",
+                    alt: "3D Model",
+                    mediaContentType: "MODEL_3D",
+                    image: null,
+                  },
+                ],
+              },
+              variants: { edges: [] },
+              createdAt: "2026-09-01",
+              updatedAt: "2026-09-22",
+            },
+          },
+        });
+      });
+
+      const res = await dispatcher.dispatch({
+        storeId: "store-test",
+        operation: "products.get",
+        payload: { id: "gid://shopify/Product/media-prod-1" },
+      });
+
+      assert.equal(res.success, true);
+      assert.ok(capturedQuery.includes("media(first: 50)"), "PRODUCTS_GET_QUERY must query media(first: 50)");
+      const product = (res.data as { product: ProductSummary }).product;
+      assert.ok(product.images);
+      assert.equal(product.images.length, 1, "Non-image media (video, 3d model) must be filtered out");
+      assert.equal(product.images[0]?.id, "gid://shopify/MediaImage/img-node-101", "ID must be MediaImage GID");
+      assert.equal(product.images[0]?.url, "https://example.com/photo-1.jpg");
+      assert.equal(product.images[0]?.altText, "Photo 1");
+    });
+
+    it("products.update forwards MediaImage.id to fileUpdate mutation", async () => {
+      let capturedFilesUpdate: unknown = null;
+      const dispatcher = setupTestGateway(async (_url: string, init?: RequestInit) => {
+        const body = JSON.parse(init?.body as string);
+        if (body.query.includes("productUpdate(")) {
+          return createMockResponse({
+            data: {
+              productUpdate: {
+                product: {
+                  id: "gid://shopify/Product/up-1",
+                  title: "Updated",
+                  handle: "updated",
+                  status: "ACTIVE",
+                  variants: { edges: [] },
+                  createdAt: "2026-09-01",
+                  updatedAt: "2026-09-22",
+                },
+                userErrors: [],
+              },
+            },
+          });
+        }
+        if (body.query.includes("fileUpdate(")) {
+          capturedFilesUpdate = body.variables.files;
+          return createMockResponse({
+            data: {
+              fileUpdate: {
+                files: [{ id: "gid://shopify/MediaImage/img-node-101", alt: "Updated Alt Text" }],
+                userErrors: [],
+              },
+            },
+          });
+        }
+        return createMockResponse({});
+      });
+
+      const res = await dispatcher.dispatch({
+        storeId: "store-test",
+        operation: "products.update",
+        mode: "apply",
+        requestId: "req-update-media",
+        payload: {
+          id: "gid://shopify/Product/up-1",
+          product: {
+            images: [
+              {
+                id: "gid://shopify/MediaImage/img-node-101",
+                altText: "Updated Alt Text",
+              },
+            ],
+          },
+        },
+      });
+
+      assert.equal(res.success, true);
+      assert.deepEqual(capturedFilesUpdate, [
+        { id: "gid://shopify/MediaImage/img-node-101", alt: "Updated Alt Text" },
+      ]);
+    });
+
+    it("metafields.set enforces UTF-8 byte length safety and rejects values exceeding 128KB limit", async () => {
+      const dispatcher = setupTestGateway(async (_url: string, init?: RequestInit) => {
+        return createMockResponse({
+          data: {
+            metafieldsSet: {
+              metafields: [{ id: "gid://shopify/Metafield/mf-1", namespace: "custom", key: "k", type: "json", value: "{}" }],
+              userErrors: [],
+            },
+          },
+        });
+      });
+
+      // 1. Valid ASCII string
+      const validAscii = "A".repeat(1000);
+      const resAscii = await dispatcher.dispatch({
+        storeId: "store-test",
+        operation: "metafields.set",
+        mode: "preview",
+        payload: {
+          productId: "gid://shopify/Product/1",
+          namespace: "custom",
+          key: "k",
+          value: validAscii,
+        },
+      });
+      assert.equal(resAscii.success, true);
+
+      // 2. Valid Vietnamese diacritics string
+      const validVietnamese = "Sản phẩm áo thun cao cấp cho mùa hè tươi mát!";
+      const resVi = await dispatcher.dispatch({
+        storeId: "store-test",
+        operation: "metafields.set",
+        mode: "preview",
+        payload: {
+          productId: "gid://shopify/Product/1",
+          namespace: "custom",
+          key: "k",
+          value: validVietnamese,
+        },
+      });
+      assert.equal(resVi.success, true);
+
+      // 3. ASCII exceeding 131072 bytes (128KB limit)
+      const oversizedAscii = "x".repeat(131073);
+      await assert.rejects(
+        async () => {
+          await dispatcher.dispatch({
+            storeId: "store-test",
+            operation: "metafields.set",
+            mode: "apply",
+            requestId: "req-mf-large",
+            payload: {
+              productId: "gid://shopify/Product/1",
+              namespace: "custom",
+              key: "k",
+              value: oversizedAscii,
+            },
+          });
+        },
+        (err: unknown) => {
+          assert.ok(err instanceof GatewayError);
+          assert.equal(err.code, "SHOPIFY_INVALID_INPUT");
+          assert.equal(err.httpStatus, 400);
+          assert.equal(err.message, "Metafield value exceeds Shopify 128KB UTF-8 byte limit");
+          return true;
+        },
+      );
+
+      // 4. Multibyte string (emoji or Vietnamese characters) where character length < 128K but UTF-8 bytes > 131072
+      // Each "ế" is 3 bytes in UTF-8. 45000 characters = 135,000 bytes > 131,072 bytes!
+      const oversizedMultiByte = "ế".repeat(45000);
+      assert.ok(oversizedMultiByte.length < 131072, "Char length is under 128K");
+      assert.ok(Buffer.byteLength(oversizedMultiByte, "utf8") > 131072, "Byte length exceeds 128KB limit");
+
+      await assert.rejects(
+        async () => {
+          await dispatcher.dispatch({
+            storeId: "store-test",
+            operation: "metafields.set",
+            mode: "preview",
+            payload: {
+              productId: "gid://shopify/Product/1",
+              namespace: "custom",
+              key: "k",
+              value: oversizedMultiByte,
+            },
+          });
+        },
+        (err: unknown) => {
+          assert.ok(err instanceof GatewayError);
+          assert.equal(err.code, "SHOPIFY_INVALID_INPUT");
+          assert.equal(err.httpStatus, 400);
+          assert.equal(err.message, "Metafield value exceeds Shopify 128KB UTF-8 byte limit");
+          return true;
+        },
+      );
+    });
+
+    it("products.create and products.update map categoryId to category in GraphQL variables", async () => {
+      let capturedCreateVars: any = null;
+      let capturedUpdateVars: any = null;
+
+      const dispatcher = setupTestGateway(async (_url: string, init?: RequestInit) => {
+        const body = JSON.parse(init?.body as string);
+        if (body.query.includes("productCreate(")) {
+          capturedCreateVars = body.variables;
+          return createMockResponse({
+            data: {
+              productCreate: {
+                product: { id: "gid://shopify/Product/cat-1", title: "P1", handle: "p1", status: "ACTIVE", variants: { edges: [] }, createdAt: "2026-09-01", updatedAt: "2026-09-22" },
+                userErrors: [],
+              },
+            },
+          });
+        }
+        if (body.query.includes("productUpdate(")) {
+          capturedUpdateVars = body.variables;
+          return createMockResponse({
+            data: {
+              productUpdate: {
+                product: { id: "gid://shopify/Product/cat-1", title: "P1", handle: "p1", status: "ACTIVE", variants: { edges: [] }, createdAt: "2026-09-01", updatedAt: "2026-09-22" },
+                userErrors: [],
+              },
+            },
+          });
+        }
+        return createMockResponse({});
+      });
+
+      // 1. products.create with categoryId
+      await dispatcher.dispatch({
+        storeId: "store-test",
+        operation: "products.create",
+        mode: "apply",
+        requestId: "req-cat-create",
+        payload: {
+          product: {
+            title: "T-Shirt",
+            categoryId: "gid://shopify/TaxonomyCategory/aa-10",
+          },
+        },
+      });
+      assert.equal(capturedCreateVars.product.category, "gid://shopify/TaxonomyCategory/aa-10");
+
+      // 2. products.update with categoryId
+      await dispatcher.dispatch({
+        storeId: "store-test",
+        operation: "products.update",
+        mode: "apply",
+        requestId: "req-cat-update",
+        payload: {
+          id: "gid://shopify/Product/cat-1",
+          product: {
+            categoryId: "gid://shopify/TaxonomyCategory/bb-20",
+          },
+        },
+      });
+      assert.equal(capturedUpdateVars.product.category, "gid://shopify/TaxonomyCategory/bb-20");
+    });
+
+    it("Gateway dispatcher normalizes storeId with whitespace safely", async () => {
+      const dispatcher = setupTestGateway(async () => {
+        return createMockResponse({
+          data: {
+            shop: { myshopifyDomain: "quickstart-demo.myshopify.com", name: "Quickstart Demo Store", currencyCode: "USD" },
+          },
+        });
+      });
+
+      const res = await dispatcher.dispatch({
+        storeId: "   store-test   ",
+        operation: "connection.test",
+        payload: {},
+      });
+
+      assert.equal(res.success, true);
+      assert.equal(res.storeId, "store-test");
     });
   });
 });

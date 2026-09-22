@@ -75,6 +75,7 @@ const ALL_OPERATIONS: ReadonlySet<ShopifyOperation> = new Set([
   "variants.bulkUpdate",
   "variants.bulkCreate",
   "files.create",
+  "files.bulkCreate",
   "metafields.set",
   "collections.list",
   "collections.get",
@@ -85,6 +86,8 @@ const ALL_OPERATIONS: ReadonlySet<ShopifyOperation> = new Set([
   "stores.list",
   "stores.get",
 ]);
+
+export const SUPPORTED_SHOPIFY_OPERATIONS: ReadonlySet<ShopifyOperation> = ALL_OPERATIONS;
 
 function isShopifyReadOperation(operation: ShopifyOperation): boolean {
   return READ_OPERATIONS.has(operation);
@@ -602,9 +605,9 @@ export function createModuleApiRunner(
 
     return {
       storeId:
-        typeof parsedObj.storeId === "string"
-          ? parsedObj.storeId
-          : input.storeId ?? effectiveStoreId,
+        typeof parsedObj.storeId === "string" && parsedObj.storeId.trim() !== ""
+          ? parsedObj.storeId.trim()
+          : effectiveStoreId,
       operation: input.operation,
       success: true,
       data: parsedObj.data,

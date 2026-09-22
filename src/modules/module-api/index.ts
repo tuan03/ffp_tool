@@ -11,6 +11,7 @@ export {
   createModuleApiRunner,
   DEFAULT_GATEWAY_URL,
   runModuleApi,
+  SUPPORTED_SHOPIFY_OPERATIONS,
 } from "./service";
 export { ShopifyApiError } from "./types";
 export type {

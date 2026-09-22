@@ -69,17 +69,22 @@ const PRODUCTS_GET_QUERY = `
         width
         height
       }
-      images(first: 50) {
+      media(first: 50) {
         pageInfo {
           hasNextPage
+          endCursor
         }
-        edges {
-          node {
+        nodes {
+          id
+          alt
+          mediaContentType
+          ... on MediaImage {
             id
-            url
-            altText
-            width
-            height
+            image {
+              url
+              width
+              height
+            }
           }
         }
       }
@@ -125,6 +130,17 @@ export interface RawImageNode {
   readonly height?: number | null;
 }
 
+export interface RawMediaNode {
+  readonly id: string;
+  readonly alt?: string | null;
+  readonly mediaContentType: string;
+  readonly image?: {
+    readonly url?: string | null;
+    readonly width?: number | null;
+    readonly height?: number | null;
+  } | null;
+}
+
 export interface RawProductNode {
   readonly id: string;
   readonly title: string;
@@ -137,6 +153,10 @@ export interface RawProductNode {
   readonly tags?: readonly string[] | null;
   readonly onlineStoreUrl?: string | null;
   readonly featuredImage?: RawImageNode | null;
+  readonly media?: {
+    readonly pageInfo?: { readonly hasNextPage?: boolean | null; readonly endCursor?: string | null } | null;
+    readonly nodes?: readonly (RawMediaNode | null)[] | null;
+  } | null;
   readonly images?: {
     readonly pageInfo?: { readonly hasNextPage?: boolean | null } | null;
     readonly edges?: readonly { readonly node: RawImageNode }[];
@@ -175,17 +195,43 @@ export function mapProductNode(node: RawProductNode): ProductSummary {
   }));
 
   const featuredImage = mapImageNode(node.featuredImage);
-  const images = node.images?.edges
-    ? node.images.edges
-        .map((edge) => mapImageNode(edge?.node))
-        .filter((img): img is ProductImageSummary => img !== undefined)
-    : undefined;
+
+  let images: ProductImageSummary[] | undefined;
+  let hasMoreImages: boolean | undefined;
+
+  if (node.media) {
+    hasMoreImages = node.media.pageInfo?.hasNextPage !== undefined
+      ? Boolean(node.media.pageInfo.hasNextPage)
+      : undefined;
+    const mediaNodes = Array.isArray(node.media.nodes) ? node.media.nodes : [];
+    images = mediaNodes
+      .filter((m): m is RawMediaNode & { image: { url: string } } => {
+        return (
+          m !== null &&
+          typeof m === "object" &&
+          m.mediaContentType === "IMAGE" &&
+          typeof m.image?.url === "string" &&
+          m.image.url.trim() !== ""
+        );
+      })
+      .map((m) => ({
+        id: m.id,
+        url: m.image.url.trim(),
+        altText: typeof m.alt === "string" ? m.alt : undefined,
+        width: typeof m.image.width === "number" ? m.image.width : undefined,
+        height: typeof m.image.height === "number" ? m.image.height : undefined,
+      }));
+  } else if (node.images?.edges) {
+    hasMoreImages = node.images.pageInfo?.hasNextPage !== undefined
+      ? Boolean(node.images.pageInfo.hasNextPage)
+      : undefined;
+    images = node.images.edges
+      .map((edge) => mapImageNode(edge?.node))
+      .filter((img): img is ProductImageSummary => img !== undefined);
+  }
 
   const hasMoreVariants = node.variants?.pageInfo?.hasNextPage !== undefined
     ? Boolean(node.variants.pageInfo.hasNextPage)
-    : undefined;
-  const hasMoreImages = node.images?.pageInfo?.hasNextPage !== undefined
-    ? Boolean(node.images.pageInfo.hasNextPage)
     : undefined;
 
   return {
