@@ -39,7 +39,10 @@ const DEFAULT_CONSTRAINTS: ContentConstraints = {
 
 export function createDefaultB5Generator(): FallbackContentGenerator | HeuristicContentGenerator {
   const heuristic = new HeuristicContentGenerator();
-  const projectId = process.env.GOOGLE_CLOUD_PROJECT;
+  const projectId =
+    typeof process !== "undefined" && process.env
+      ? process.env.GOOGLE_CLOUD_PROJECT
+      : undefined;
 
   if (projectId) {
     try {

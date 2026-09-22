@@ -52,11 +52,23 @@ export class FileSeoConflictCorpus implements SeoConflictCorpus {
   private readonly maxRegisteredKeywords: number;
 
   constructor(config?: FileSeoConflictCorpusConfig) {
+    const isBrowser =
+      typeof window !== "undefined" && typeof window.document !== "undefined";
+
+    const isNode =
+      !isBrowser &&
+      typeof process !== "undefined" &&
+      typeof process.cwd === "function" &&
+      typeof path !== "undefined" &&
+      typeof path.resolve === "function";
+
     this.filePath =
       config?.filePath ??
       (typeof process !== "undefined" && process.env?.SEO_CONFLICT_CORPUS_PATH
         ? process.env.SEO_CONFLICT_CORPUS_PATH
-        : path.resolve(process.cwd(), "data/seo-content/conflict-corpus.json"));
+        : isNode
+          ? path.resolve(process.cwd(), "data/seo-content/conflict-corpus.json")
+          : "data/seo-content/conflict-corpus.json");
 
     this.thresholds = config?.thresholds ?? DEFAULT_CATALOG_CONFLICT_THRESHOLDS;
     this.lockTimeoutMs = config?.lockTimeoutMs ?? 5000;
