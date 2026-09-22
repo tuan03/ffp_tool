@@ -115,7 +115,7 @@ export function AutoSeoOutputPanel({ output, onClearOutput }: AutoSeoOutputPanel
                   <th className="py-2.5 px-3 text-center w-12">STT</th>
                   <th className="py-2.5 px-3">Product ID</th>
                   <th className="py-2.5 px-3">Handle</th>
-                  <th className="py-2.5 px-3">Niche</th>
+                  <th className="py-2.5 px-3">SEO Title</th>
                   <th className="py-2.5 px-3">Tiêu đề gốc</th>
                   <th className="py-2.5 px-3 text-center">Số ảnh</th>
                 </tr>
@@ -128,7 +128,9 @@ export function AutoSeoOutputPanel({ output, onClearOutput }: AutoSeoOutputPanel
                       {item.productId.replace("gid://shopify/Product/", "prod:")}
                     </td>
                     <td className="py-2.5 px-3 text-cyan-400 truncate max-w-[150px]">{item.handle}</td>
-                    <td className="py-2.5 px-3 font-sans text-amber-300">{item.niche}</td>
+                    <td className="py-2.5 px-3 font-sans text-cyan-300 truncate max-w-[150px]" title={item.sourceSeoTitle ?? ""}>
+                      {item.sourceSeoTitle ?? "—"}
+                    </td>
                     <td className="py-2.5 px-3 font-sans text-slate-200 max-w-xs truncate">{item.sourceTitle}</td>
                     <td className="py-2.5 px-3 text-center text-slate-300 font-sans">
                       <span className="inline-block rounded-full bg-slate-800 px-2 py-0.5 text-[10px] font-semibold">

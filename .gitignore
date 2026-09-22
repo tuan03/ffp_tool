@@ -7,6 +7,9 @@ Tool_crawer_New_update/
 .env.local
 .env.*.local
 *.tsbuildinfo
+.DS_Store
+stores.local.json
+stores.config.json
 
 # Python & Local Server Artifacts
 __pycache__/

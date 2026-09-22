@@ -9,7 +9,9 @@ import type {
   AmazonCrawlerClientsLoader,
   AmazonCrawlerRunner,
 } from "../../modules/amazon-crawler";
-import { createAutoSeoRoutes, getAutoSeoClient } from "../../modules/auto-seo";
+import { createAutoSeoRoutes } from "../../modules/auto-seo";
+import { getModuleApiRunner } from "../../modules/module-api";
+import { createAutoSeoModuleApiClient } from "../../modules/orchestrator";
 import { createPinterestPodRoutes, getPinterestPodClient } from "../../modules/pinterest-pod";
 import { createProductCrawlerRoutes, getProductCrawlerClient } from "../../modules/product-crawler";
 import type { WorkflowInput, WorkflowOutput } from "../../modules/orchestrator";
@@ -34,7 +36,8 @@ export function AppRoutes({
     const podRoutes = createPinterestPodRoutes(podClient);
     const crawlerClient = getProductCrawlerClient(environment);
     const crawlerRoutes = createProductCrawlerRoutes(crawlerClient);
-    const autoSeoClient = getAutoSeoClient(environment);
+    const moduleApiRunner = getModuleApiRunner(environment);
+    const autoSeoClient = createAutoSeoModuleApiClient(moduleApiRunner);
     const autoSeoRoutes = createAutoSeoRoutes(autoSeoClient);
     const distributedCrawlerRoutes = amazonCrawlerRoutes(
       runAmazonCrawler,

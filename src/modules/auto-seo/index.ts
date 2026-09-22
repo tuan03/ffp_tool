@@ -1,15 +1,15 @@
 export {
-  autoSeoRoutes,
   createAutoSeoRoutes,
 } from "./routes";
 
 export {
   getAutoSeoClient,
+  getAutoSeoRunner,
 } from "./runtime";
 
 export {
-  RealAutoSeoClient,
-  realAutoSeoClient,
+  hydrateSelectedProducts,
+  mapWithConcurrency,
   runAutoSeo,
 } from "./service";
 
@@ -18,16 +18,19 @@ export {
 } from "./shopify-adapter";
 
 export type {
+  AutoSeoBackupRequest,
+  AutoSeoBackupResponse,
   AutoSeoClient,
-  AutoSeoContentInput,
   AutoSeoOutput,
   AutoSeoProductCandidate,
   AutoSeoProductImage,
-  AutoSeoWorkflowInput,
+  AutoSeoSelectionInput,
   ProductReviewDecision,
+  SeoContentInputPayload,
   ShopifyProductForAutoSeoUi,
   ShopifyProductImage,
   ShopifyProductVariant,
+  ShopifyStatusFilter,
 } from "./types";
 
 export { AutoSeoPage } from "./ui/AutoSeoPage";

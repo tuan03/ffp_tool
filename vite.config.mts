@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { defineConfig, type Plugin } from "vite";
+import { shopifyGatewayDevPlugin } from "./gateway/vite-plugin";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -85,10 +86,10 @@ function pinterestPodBackendPlugin(): Plugin {
 }
 
 export default defineConfig({
-  plugins: [react(), tailwindcss(), pinterestPodBackendPlugin()],
+  plugins: [react(), tailwindcss(), pinterestPodBackendPlugin(), shopifyGatewayDevPlugin()],
   server: {
     proxy: {
-      "/api": {
+      "^/api/(?!shopify)": {
         target: process.env.VITE_API_URL || "http://127.0.0.1:8765",
         changeOrigin: true,
       },

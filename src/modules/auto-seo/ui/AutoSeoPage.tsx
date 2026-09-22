@@ -1,29 +1,47 @@
-import { useCallback, useEffect, useState } from "react";
-import { environment } from "../../../config/environment";
-import { getAutoSeoClient } from "../runtime";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AppError } from "../../../shared/errors/app-error";
 import { mapShopifyProductToAutoSeoCandidate } from "../shopify-adapter";
 import type {
   AutoSeoClient,
   AutoSeoOutput,
-  ProductReviewDecision,
   ShopifyProductForAutoSeoUi,
+  ShopifyStatusFilter,
 } from "../types";
 import { AutoSeoOutputPanel } from "./components/AutoSeoOutputPanel";
 import { AutoSeoToolbar } from "./components/AutoSeoToolbar";
+import {
+  clearVisibleProductsSelection,
+  filterAutoSeoProducts,
+  selectAllVisibleProducts,
+} from "./components/product-filter";
 import { ProductDetailDrawer } from "./components/ProductDetailDrawer";
 import { ProductSelectionTable } from "./components/ProductSelectionTable";
 
-interface AutoSeoPageProps {
-  client?: AutoSeoClient;
+export interface AutoSeoPageProps {
+  client: AutoSeoClient;
+  initialProducts?: readonly ShopifyProductForAutoSeoUi[];
+  initialSelectedProductIds?: readonly string[];
 }
 
-export function AutoSeoPage({ client }: AutoSeoPageProps): React.JSX.Element {
-  const activeClient = client ?? getAutoSeoClient(environment);
+export function AutoSeoPage({
+  client,
+  initialProducts,
+  initialSelectedProductIds,
+}: AutoSeoPageProps): React.JSX.Element {
+  const activeClient = client;
 
-  const [niche, setNiche] = useState("custom rug");
-  const [products, setProducts] = useState<readonly ShopifyProductForAutoSeoUi[]>([]);
-  const [selectedProductIds, setSelectedProductIds] = useState<string[]>([]);
-  const [decisions, setDecisions] = useState<Record<string, ProductReviewDecision>>({});
+  const [products, setProducts] = useState<readonly ShopifyProductForAutoSeoUi[]>(
+    () => initialProducts ?? [],
+  );
+  const [selectedProductIds, setSelectedProductIds] = useState<string[]>(() => {
+    if (initialSelectedProductIds !== undefined) {
+      return [...initialSelectedProductIds];
+    }
+    return [];
+  });
+
+  const [searchQuery, setSearchQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<ShopifyStatusFilter>("all");
 
   const [isLoadingProducts, setIsLoadingProducts] = useState(false);
   const [isRunningAutoSeo, setIsRunningAutoSeo] = useState(false);
@@ -31,8 +49,18 @@ export function AutoSeoPage({ client }: AutoSeoPageProps): React.JSX.Element {
 
   const [activeProduct, setActiveProduct] = useState<ShopifyProductForAutoSeoUi | null>(null);
   const [isDetailOpen, setIsDetailOpen] = useState(false);
+  const [isDetailLoading, setIsDetailLoading] = useState(false);
+  const [detailErrorMessage, setDetailErrorMessage] = useState<string | null>(null);
+  const activeDetailIdRef = useRef<string | null>(null);
 
   const [output, setOutput] = useState<AutoSeoOutput | null>(null);
+
+  const filteredProducts = useMemo(() => {
+    return filterAutoSeoProducts(products, {
+      searchQuery,
+      statusFilter,
+    });
+  }, [products, searchQuery, statusFilter]);
 
   const handleLoadProducts = useCallback(async (): Promise<void> => {
     setIsLoadingProducts(true);
@@ -41,14 +69,7 @@ export function AutoSeoPage({ client }: AutoSeoPageProps): React.JSX.Element {
     try {
       const fetchedProducts = await activeClient.loadProducts();
       setProducts(fetchedProducts);
-
-      // Pre-select active products by default if none selected
-      if (fetchedProducts.length > 0) {
-        const activeIds = fetchedProducts
-          .filter((p) => p.status === "ACTIVE")
-          .map((p) => p.id);
-        setSelectedProductIds(activeIds.length > 0 ? activeIds : fetchedProducts.map((p) => p.id));
-      }
+      setSelectedProductIds([]);
     } catch (err) {
       setErrorMessage(
         err instanceof Error ? err.message : "Không thể tải danh sách sản phẩm từ Shopify.",
@@ -60,50 +81,49 @@ export function AutoSeoPage({ client }: AutoSeoPageProps): React.JSX.Element {
 
   // Load products on initial mount
   useEffect(() => {
-    void handleLoadProducts();
-  }, [handleLoadProducts]);
+    if (!initialProducts) {
+      void handleLoadProducts();
+    }
+  }, [handleLoadProducts, initialProducts]);
 
-  // Approve product
-  const handleApprove = (productId: string): void => {
-    setDecisions((curr) => ({
-      ...curr,
-      [productId]: "approved",
-    }));
+  // Open & hydrate product detail drawer
+  const openProductDetail = useCallback(
+    async (product: ShopifyProductForAutoSeoUi): Promise<void> => {
+      activeDetailIdRef.current = product.id;
 
-    setSelectedProductIds((curr) =>
-      curr.includes(productId) ? curr : [...curr, productId],
-    );
-  };
+      const cached = activeClient.getCachedDetail?.(product.id);
+      if (cached) {
+        setActiveProduct(cached);
+        setIsDetailOpen(true);
+        setIsDetailLoading(false);
+        setDetailErrorMessage(null);
+        return;
+      }
 
-  // Edit product
-  const handleEdit = (product: ShopifyProductForAutoSeoUi): void => {
-    setActiveProduct(product);
-    setIsDetailOpen(true);
-    setDecisions((curr) => ({
-      ...curr,
-      [product.id]: "needs_edit",
-    }));
-  };
+      setActiveProduct(product);
+      setIsDetailOpen(true);
+      setIsDetailLoading(true);
+      setDetailErrorMessage(null);
 
-  // Mark as draft
-  const handleMarkDraft = (productId: string): void => {
-    setDecisions((curr) => ({
-      ...curr,
-      [productId]: "mark_draft",
-    }));
-
-    setSelectedProductIds((curr) => curr.filter((id) => id !== productId));
-  };
-
-  // Skip product
-  const handleSkip = (productId: string): void => {
-    setDecisions((curr) => ({
-      ...curr,
-      [productId]: "skipped",
-    }));
-
-    setSelectedProductIds((curr) => curr.filter((id) => id !== productId));
-  };
+      try {
+        const fullProduct = await activeClient.loadProductDetail(product.id);
+        if (activeDetailIdRef.current === product.id) {
+          setActiveProduct(fullProduct);
+        }
+      } catch (err) {
+        if (activeDetailIdRef.current === product.id) {
+          setDetailErrorMessage(
+            err instanceof Error ? err.message : "Không thể tải chi tiết sản phẩm từ Shopify.",
+          );
+        }
+      } finally {
+        if (activeDetailIdRef.current === product.id) {
+          setIsDetailLoading(false);
+        }
+      }
+    },
+    [activeClient],
+  );
 
   // Toggle selection
   const handleToggleSelect = (productId: string): void => {
@@ -112,58 +132,62 @@ export function AutoSeoPage({ client }: AutoSeoPageProps): React.JSX.Element {
     );
   };
 
-  // Select all
-  const handleSelectAll = (): void => {
-    setSelectedProductIds(products.map((p) => p.id));
-  };
+  // Select all currently visible / filtered products
+  const handleSelectAll = useCallback((): void => {
+    setSelectedProductIds((current) => selectAllVisibleProducts(current, filteredProducts));
+  }, [filteredProducts]);
 
-  // Clear selection
-  const handleClearSelection = (): void => {
-    setSelectedProductIds([]);
-  };
+  // Clear selection for currently visible / filtered products
+  const handleClearSelection = useCallback((): void => {
+    setSelectedProductIds((current) => clearVisibleProductsSelection(current, filteredProducts));
+  }, [filteredProducts]);
 
   // Open detail modal
   const handleOpenDetail = (product: ShopifyProductForAutoSeoUi): void => {
-    setActiveProduct(product);
-    setIsDetailOpen(true);
+    void openProductDetail(product);
   };
 
   // Run Auto SEO
   const handleRunAutoSeo = async (): Promise<void> => {
-    if (!niche.trim()) {
-      setErrorMessage("Vui lòng nhập Niche trước khi chạy Auto SEO.");
+    if (products.length === 0 || selectedProductIds.length === 0) {
       return;
-    }
-
-    if (products.length === 0) {
-      setErrorMessage("Chưa có sản phẩm nào được tải để xử lý.");
-      return;
-    }
-
-    let targetSelectedIds = selectedProductIds;
-
-    // If no products selected, prompt user
-    if (targetSelectedIds.length === 0) {
-      const confirmAll = window.confirm(
-        "Bạn chưa chọn sản phẩm nào. Bạn có muốn chạy Auto SEO cho TẤT CẢ sản phẩm không?",
-      );
-      if (!confirmAll) {
-        return;
-      }
-      targetSelectedIds = products.map((p) => p.id);
-      setSelectedProductIds(targetSelectedIds);
     }
 
     setIsRunningAutoSeo(true);
     setErrorMessage(null);
 
     try {
-      const autoSeoProducts = products.map(mapShopifyProductToAutoSeoCandidate);
+      const hydratedProducts = await activeClient.hydrateSelectedProductsFresh(
+        selectedProductIds,
+        5,
+      );
+
+      const workflowId = `auto_seo_${Date.now()}`;
+
+      const storeInfo = await activeClient.getStoreInfo();
+      if (!storeInfo) {
+        throw new AppError("Không thể xác định thông tin cửa hàng Shopify.", "AUTO_SEO_STORE_INFO_UNAVAILABLE");
+      }
+
+      const backupResult = await activeClient.runAutoSeoBackup({
+        workflowId,
+        storeId: storeInfo.storeId,
+        shopDomain: storeInfo.shopDomain,
+        products: hydratedProducts,
+      });
+
+      if (backupResult.downstreamStatus !== "SENT") {
+        throw new AppError(
+          `Auto SEO backup succeeded, but downstream handoff failed: ${backupResult.downstreamError || "Unknown downstream error"}`,
+          "AUTO_SEO_DOWNSTREAM_FAILED",
+        );
+      }
+
+      const autoSeoProducts = hydratedProducts.map(mapShopifyProductToAutoSeoCandidate);
       const result = await activeClient.runAutoSeo({
-        workflowId: `auto_seo_${Date.now()}`,
-        niche: niche.trim(),
+        workflowId,
         products: autoSeoProducts,
-        selectedProductIds: targetSelectedIds,
+        selectedProductIds,
       });
 
       setOutput(result);
@@ -213,14 +237,13 @@ export function AutoSeoPage({ client }: AutoSeoPageProps): React.JSX.Element {
         </div>
       )}
 
-      {/* Toolbar: Niche, Presets & Actions */}
+      {/* Toolbar: Actions & Batch Controls */}
       <AutoSeoToolbar
-        niche={niche}
-        onNicheChange={setNiche}
         isLoadingProducts={isLoadingProducts}
         isRunningAutoSeo={isRunningAutoSeo}
         totalProductsCount={products.length}
         selectedCount={selectedProductIds.length}
+        visibleProductsCount={filteredProducts.length}
         onLoadProducts={() => void handleLoadProducts()}
         onSelectAll={handleSelectAll}
         onClearSelection={handleClearSelection}
@@ -231,12 +254,12 @@ export function AutoSeoPage({ client }: AutoSeoPageProps): React.JSX.Element {
       <ProductSelectionTable
         products={products}
         selectedProductIds={selectedProductIds}
-        decisions={decisions}
+        searchQuery={searchQuery}
+        onSearchQueryChange={setSearchQuery}
+        statusFilter={statusFilter}
+        onStatusFilterChange={setStatusFilter}
+        filteredProducts={filteredProducts}
         onToggleSelect={handleToggleSelect}
-        onApprove={handleApprove}
-        onEdit={handleEdit}
-        onMarkDraft={handleMarkDraft}
-        onSkip={handleSkip}
         onOpenDetail={handleOpenDetail}
       />
 
@@ -244,23 +267,13 @@ export function AutoSeoPage({ client }: AutoSeoPageProps): React.JSX.Element {
       <ProductDetailDrawer
         product={activeProduct}
         isOpen={isDetailOpen}
-        decision={activeProduct ? decisions[activeProduct.id] : undefined}
-        onClose={() => setIsDetailOpen(false)}
-        onApprove={(id) => {
-          handleApprove(id);
+        isLoading={isDetailLoading}
+        errorMessage={detailErrorMessage}
+        onClose={() => {
+          activeDetailIdRef.current = null;
           setIsDetailOpen(false);
-        }}
-        onMarkNeedsEdit={(id) => {
-          setDecisions((c) => ({ ...c, [id]: "needs_edit" }));
-          setIsDetailOpen(false);
-        }}
-        onMarkDraft={(id) => {
-          handleMarkDraft(id);
-          setIsDetailOpen(false);
-        }}
-        onSkip={(id) => {
-          handleSkip(id);
-          setIsDetailOpen(false);
+          setIsDetailLoading(false);
+          setDetailErrorMessage(null);
         }}
       />
 

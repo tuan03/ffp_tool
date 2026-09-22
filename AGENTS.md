@@ -24,16 +24,20 @@ src/
 ├── styles/              # Global styles only
 ├── modules/
 │   ├── orchestrator/    # Workflow coordination and cross-module errors
+│   ├── module-api/      # Module API contract, Shopify client service, mock runner, tests
 │   ├── module-a/        # Module A contract, real logic, mock logic, tests
 │   ├── module-b/        # Module B contract, real logic, mock logic, tests
 │   └── module-c/        # Module C contract, real logic, mock logic, tests
 └── shared/              # Small, genuinely cross-cutting types, errors, utilities, constants
+gateway/                 # Standalone Shopify GraphQL proxy gateway (Node.js/Vite server)
 ```
 
 | Owner | Primary folders | Owns |
 | --- | --- | --- |
 | Main owner | `src/app`, `src/config`, `src/layouts`, `src/pages`, `src/styles` | App composition, providers, routing, environment wiring, application UI |
 | Orchestrator owner | `src/modules/orchestrator` | Workflow ordering, aggregation, dependency injection, cross-module errors |
+| Module API owner | `src/modules/module-api` | Module API contract, Shopify client service, mock runner, tests |
+| Gateway owner | `gateway/` | Standalone Shopify GraphQL proxy gateway, store registry, auth, throttling, idempotency |
 | Module A owner | `src/modules/module-a` | Module A contract, real service, mocks, UI, tests |
 | Module B owner | `src/modules/module-b` | Module B contract, real service, mocks, UI, tests |
 | Module C owner | `src/modules/module-c` | Module C contract, real service, mocks, UI, tests |
@@ -53,7 +57,9 @@ app / pages / layouts
         ↓
    orchestrator
    ↙    ↓    ↘
-module-a module-b module-c
+module-api module-a module-b module-c
+        ↓
+     gateway
         ↓
       shared
 ```
@@ -295,7 +301,7 @@ Never claim a test, typecheck, or build passes without fresh command output from
 
 - Branch names use this exact pattern: `<type>/<scope>-<short-description>`.
 - `type` is one of: `feature`, `fix`, `refactor`, `test`, `docs`, `chore`.
-- `scope` is one of: `main`, `orchestrator`, `module-a`, `module-b`, `module-c`, `shared`, `tooling`.
+- `scope` is one of: `main`, `orchestrator`, `module-api`, `gateway`, `module-a`, `module-b`, `module-c`, `shared`, `tooling`.
 - `short-description` is lowercase kebab-case, begins with a verb, and describes one outcome.
 
   ```text
