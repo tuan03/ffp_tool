@@ -18,7 +18,7 @@ Hệ thống được thiết kế theo chuẩn **Đường dẫn tương đối
   ```
 * **Lợi ích**:
   - Khi render thẻ `<img>`: `<img src="/api/pinterest-pod/assets/job_123/mockup.jpg" />`.
-  - Không hardcode domain hay port `http://127.0.0.1:8765`, giúp giao diện chạy ở bất kỳ cổng nào (5173, 3000, production) đều không bị gãy link hay lỗi CORS (do Vite proxy đảm nhiệm).
+  - Không hardcode domain hay port `http://127.0.0.1:8768`, giúp giao diện chạy ở bất kỳ cổng nào (5173, 3000, production) đều không bị gãy link hay lỗi CORS (do Vite proxy đảm nhiệm).
 
 ### 1.2. Đường dẫn file tương đối trên Ổ đĩa (Local File Path)
 * Dành cho các module cùng dự án muốn đọc/ghi trực tiếp file trên ổ đĩa (Node.js `fs` hoặc Python) mà không cần tốn thời gian tải qua HTTP:

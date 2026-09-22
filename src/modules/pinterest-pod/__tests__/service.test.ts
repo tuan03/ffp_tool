@@ -279,7 +279,7 @@ test("RealPinterestPodClient wraps fetch errors into AppError with appropriate c
     );
 
     globalThis.fetch = async () => {
-      throw new Error("ECONNREFUSED 127.0.0.1:8765");
+      throw new Error("ECONNREFUSED 127.0.0.1:8768");
     };
 
     await assert.rejects(
@@ -925,11 +925,11 @@ test("Real client handoverToSeo and handoverToSeo function send POST to /api/pin
 // ==========================================
 
 test("Mock client getOAuthAuthorizeUrl returns valid authorization URL", async () => {
-  const res = await mockPinterestPodClient.getOAuthAuthorizeUrl("http://localhost:8765/api/pinterest-pod/oauth/callback");
+  const res = await mockPinterestPodClient.getOAuthAuthorizeUrl("http://localhost:8768/api/pinterest-pod/oauth/callback");
   assert.equal(res.ok, true);
   assert.ok(res.auth_url.includes("https://www.pinterest.com/oauth/"));
   assert.ok(res.auth_url.includes("client_id=1595071"));
-  assert.equal(res.redirect_uri, "http://localhost:8765/api/pinterest-pod/oauth/callback");
+  assert.equal(res.redirect_uri, "http://localhost:8768/api/pinterest-pod/oauth/callback");
 });
 
 test("Mock client saveOAuthToken simulates saving access token and updates auth status", async () => {
@@ -963,7 +963,7 @@ test("Real client getOAuthAuthorizeUrl and saveOAuthToken call backend endpoints
         JSON.stringify({
           ok: true,
           auth_url: "https://www.pinterest.com/oauth/?client_id=1595071&mock=true",
-          redirect_uri: "http://localhost:8765/api/pinterest-pod/oauth/callback",
+          redirect_uri: "http://localhost:8768/api/pinterest-pod/oauth/callback",
         }),
         { status: 200, headers: { "Content-Type": "application/json" } },
       );

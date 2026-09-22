@@ -610,7 +610,7 @@ def check_oauth_token_valid(token_file: Path | None = None) -> tuple[bool, dict[
 def generate_pinterest_oauth_url(redirect_uri: str | None = None) -> dict[str, Any]:
     """Generate official Pinterest OAuth authorization URL."""
     app_id = str(os.getenv("PINTEREST_APP_ID") or "1595071").strip()
-    r_uri = str(redirect_uri or os.getenv("PINTEREST_REDIRECT_URI") or "http://localhost:8765/api/pinterest-pod/oauth/callback").strip()
+    r_uri = str(redirect_uri or os.getenv("PINTEREST_REDIRECT_URI") or "http://localhost:8768/api/pinterest-pod/oauth/callback").strip()
     scopes = str(os.getenv("PINTEREST_SCOPES") or "user_accounts:read,boards:read,pins:read,ads:read").strip()
     
     query = urllib.parse.urlencode({
@@ -656,7 +656,7 @@ def exchange_pinterest_oauth_code(code_or_url: str, redirect_uri: str | None = N
 
     app_id = str(os.getenv("PINTEREST_APP_ID") or "1595071").strip()
     app_secret = str(os.getenv("PINTEREST_APP_SECRET") or "").strip()
-    r_uri = str(redirect_uri or os.getenv("PINTEREST_REDIRECT_URI") or "http://localhost:8765/api/pinterest-pod/oauth/callback").strip()
+    r_uri = str(redirect_uri or os.getenv("PINTEREST_REDIRECT_URI") or "http://localhost:8768/api/pinterest-pod/oauth/callback").strip()
 
     if not app_id or not app_secret:
         raise ValueError("PINTEREST_APP_ID hoặc PINTEREST_APP_SECRET chưa được cấu hình trong .env.")

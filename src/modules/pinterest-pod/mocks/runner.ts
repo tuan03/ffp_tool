@@ -226,7 +226,7 @@ export class MockPinterestPodClient implements PinterestPodClient {
   }
 
   public async getOAuthAuthorizeUrl(redirectUri?: string): Promise<{ readonly ok: boolean; readonly auth_url: string; readonly redirect_uri?: string }> {
-    const targetRedirect = redirectUri || "http://localhost:8765/api/pinterest-pod/oauth/callback";
+    const targetRedirect = redirectUri || "http://localhost:8768/api/pinterest-pod/oauth/callback";
     return {
       ok: true,
       auth_url: `https://www.pinterest.com/oauth/?client_id=1595071&redirect_uri=${encodeURIComponent(targetRedirect)}&response_type=code&scope=boards:read,pins:read,user_accounts:read`,
@@ -481,7 +481,7 @@ export class MockPinterestPodClient implements PinterestPodClient {
       ok: true,
       service: {
         online: true,
-        port: 8765,
+        port: 8768,
       },
       recent,
     };

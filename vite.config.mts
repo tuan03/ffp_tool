@@ -40,7 +40,7 @@ function pinterestPodBackendPlugin(): Plugin {
         return;
       }
 
-      const port = 8765;
+      const port = 8768;
       const isRunning = await isPortListening(port);
       if (isRunning) {
         console.log(`\x1b[36m[pinterest-pod]\x1b[0m Python backend is already running on port ${port}.`);
@@ -89,6 +89,10 @@ export default defineConfig({
   plugins: [react(), tailwindcss(), pinterestPodBackendPlugin(), shopifyGatewayDevPlugin()],
   server: {
     proxy: {
+      "/api/pinterest-pod": {
+        target: process.env.VITE_PINTEREST_POD_API_URL || "http://127.0.0.1:8768",
+        changeOrigin: true,
+      },
       "^/api/(?!shopify)": {
         target: process.env.VITE_API_URL || "http://127.0.0.1:8765",
         changeOrigin: true,
