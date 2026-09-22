@@ -10,6 +10,7 @@ export type ShopifyOperation =
   | "variants.bulkUpdate"
   | "variants.bulkCreate"
   | "files.create"
+  | "files.bulkCreate"
   | "metafields.set"
   | "collections.list"
   | "collections.get"
@@ -530,6 +531,51 @@ export interface ShopifyFilesCreateResponse {
   readonly data: ShopifyFilesCreateData;
 }
 
+// 9c-2. files.bulkCreate
+export interface ShopifyFileBulkCreateItemInput {
+  readonly originalSource: string;
+  readonly filename?: string;
+  readonly alt?: string;
+  readonly contentType?: "FILE" | "IMAGE";
+}
+
+export interface ShopifyFilesBulkCreatePayload {
+  readonly files: readonly ShopifyFileBulkCreateItemInput[];
+  readonly pollIntervalMs?: number;
+  readonly maxPollAttempts?: number;
+}
+
+export interface ShopifyFilesBulkCreateItemData {
+  readonly originalSource: string;
+  readonly fileId?: string;
+  readonly shopifyCdnUrl?: string;
+  readonly fileStatus: string;
+  readonly alt?: string;
+  readonly error?: string;
+}
+
+export interface ShopifyFilesBulkCreateData {
+  readonly files: readonly ShopifyFilesBulkCreateItemData[];
+  readonly totalCount: number;
+  readonly successCount: number;
+  readonly failedCount: number;
+}
+
+export interface ShopifyFilesBulkCreateInput {
+  readonly storeId: string;
+  readonly requestId?: string;
+  readonly mode?: ShopifyExecutionMode;
+  readonly operation: "files.bulkCreate";
+  readonly payload: ShopifyFilesBulkCreatePayload;
+}
+
+export interface ShopifyFilesBulkCreateResponse {
+  readonly storeId: string;
+  readonly operation: "files.bulkCreate";
+  readonly success: true;
+  readonly data: ShopifyFilesBulkCreateData;
+}
+
 // 9d. metafields.set
 export interface ShopifyMetafieldItemInput {
   readonly ownerId?: string;
@@ -797,6 +843,7 @@ export type ShopifyApiInput =
   | ShopifyVariantsBulkUpdateInput
   | ShopifyVariantsBulkCreateInput
   | ShopifyFilesCreateInput
+  | ShopifyFilesBulkCreateInput
   | ShopifyMetafieldsSetInput
   | ShopifyCollectionsListInput
   | ShopifyCollectionsGetInput
@@ -819,6 +866,7 @@ export type ShopifyApiResponse =
   | ShopifyVariantsBulkUpdateResponse
   | ShopifyVariantsBulkCreateResponse
   | ShopifyFilesCreateResponse
+  | ShopifyFilesBulkCreateResponse
   | ShopifyMetafieldsSetResponse
   | ShopifyCollectionsListResponse
   | ShopifyCollectionsGetResponse
@@ -846,6 +894,7 @@ export interface ModuleApiRunner {
   (input: ShopifyVariantsBulkUpdateInput): Promise<ShopifyVariantsBulkUpdateResponse>;
   (input: ShopifyVariantsBulkCreateInput): Promise<ShopifyVariantsBulkCreateResponse>;
   (input: ShopifyFilesCreateInput): Promise<ShopifyFilesCreateResponse>;
+  (input: ShopifyFilesBulkCreateInput): Promise<ShopifyFilesBulkCreateResponse>;
   (input: ShopifyMetafieldsSetInput): Promise<ShopifyMetafieldsSetResponse>;
   (input: ShopifyCollectionsListInput): Promise<ShopifyCollectionsListResponse>;
   (input: ShopifyCollectionsGetInput): Promise<ShopifyCollectionsGetResponse>;

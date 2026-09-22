@@ -26,6 +26,9 @@ src/modules/pinterest-pod/server/.env
 pinterest_oauth_tokens.json
 
 # Amazon Distributed Crawler & Local Data Artifacts
+*zip
+
+# Crawler & Gateway runtime/data
 .runtime/
 exports/
 client-data/
@@ -36,3 +39,15 @@ client-data/
 installer-output/
 config/amazon-crawler-profiles.json
 config/amazon-crawler-agent.json
+
+#=== [start] - module SEO Content - Lth Loi ===
+.agents
+compress-src.cmd
+dev.cmd
+.compressignore
+PROJECT_CONTEXT.md
+test.cmd
+b1-visual-preview.html
+branches-git.cmd
+remotes-git.cmd
+#=== [end] - module SEO Content - Lth Loi ===

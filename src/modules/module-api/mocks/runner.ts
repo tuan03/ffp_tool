@@ -39,6 +39,8 @@ import type {
   ShopifyStoresListResponse,
   ShopifyFilesCreateInput,
   ShopifyFilesCreateResponse,
+  ShopifyFilesBulkCreateInput,
+  ShopifyFilesBulkCreateResponse,
   ShopifyMetafieldsSetInput,
   ShopifyMetafieldsSetResponse,
   ShopifyVariantsBulkCreateInput,
@@ -156,6 +158,7 @@ export async function runMockModuleApi(input: ShopifyVariantsUpdateInput): Promi
 export async function runMockModuleApi(input: ShopifyVariantsBulkUpdateInput): Promise<ShopifyVariantsBulkUpdateResponse>;
 export async function runMockModuleApi(input: ShopifyVariantsBulkCreateInput): Promise<ShopifyVariantsBulkCreateResponse>;
 export async function runMockModuleApi(input: ShopifyFilesCreateInput): Promise<ShopifyFilesCreateResponse>;
+export async function runMockModuleApi(input: ShopifyFilesBulkCreateInput): Promise<ShopifyFilesBulkCreateResponse>;
 export async function runMockModuleApi(input: ShopifyMetafieldsSetInput): Promise<ShopifyMetafieldsSetResponse>;
 export async function runMockModuleApi(input: ShopifyCollectionsListInput): Promise<ShopifyCollectionsListResponse>;
 export async function runMockModuleApi(input: ShopifyCollectionsGetInput): Promise<ShopifyCollectionsGetResponse>;
@@ -705,6 +708,33 @@ export async function runMockModuleApi(input: ShopifyApiInput): Promise<ShopifyA
           shopifyCdnUrl: `https://cdn.shopify.com/s/files/1/0000/0000/files/${filename}`,
           fileStatus: "READY",
           alt: input.payload.alt,
+        },
+      };
+    }
+
+    case "files.bulkCreate": {
+      if (!Array.isArray(input.payload.files) || input.payload.files.length === 0) {
+        throw new ShopifyApiError("files array is required and must not be empty", "SHOPIFY_USER_ERROR");
+      }
+      const mockFiles = input.payload.files.map((f, idx) => {
+        const filename = f.filename || `mock-asset-${idx + 1}.jpg`;
+        return {
+          originalSource: f.originalSource,
+          fileId: `gid://shopify/MediaImage/mock-${Date.now()}-${idx + 1}`,
+          shopifyCdnUrl: `https://cdn.shopify.com/s/files/1/0000/0000/files/${filename}`,
+          fileStatus: "READY",
+          alt: f.alt,
+        };
+      });
+      return {
+        storeId: input.storeId,
+        operation: "files.bulkCreate",
+        success: true,
+        data: {
+          files: mockFiles,
+          totalCount: mockFiles.length,
+          successCount: mockFiles.length,
+          failedCount: 0,
         },
       };
     }
