@@ -52,6 +52,10 @@ export interface ShopifyProductCustomizerInput {
   readonly optionGroups?: readonly Record<string, unknown>[];
   readonly pricing?: Record<string, unknown>;
   readonly textInputs?: readonly Record<string, unknown>[];
+  readonly surfaces?: readonly Record<string, unknown>[];
+  readonly placements?: readonly Record<string, unknown>[];
+  readonly product?: Record<string, unknown>;
+  readonly controlOrder?: readonly Record<string, unknown>[];
   readonly formUrl?: string | null;
   readonly [key: string]: unknown;
 }

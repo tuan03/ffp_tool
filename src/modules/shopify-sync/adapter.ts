@@ -127,11 +127,16 @@ export function fromCustomizationNormalizerProduct(
     );
 
     customizerInput = {
+      ...(rawCustomization as Record<string, unknown>),
       hasCustomization: true,
       assets,
       optionGroups: rawCustomization.optionGroups as readonly Record<string, unknown>[] | undefined,
       pricing: rawCustomization.pricing as Record<string, unknown> | undefined,
       textInputs: rawCustomization.textInputs as readonly Record<string, unknown>[] | undefined,
+      surfaces: rawCustomization.surfaces as readonly Record<string, unknown>[] | undefined,
+      placements: rawCustomization.placements as readonly Record<string, unknown>[] | undefined,
+      product: rawCustomization.product as Record<string, unknown> | undefined,
+      controlOrder: rawCustomization.controlOrder as readonly Record<string, unknown>[] | undefined,
       formUrl: rawCustomization.formUrl,
     };
   }

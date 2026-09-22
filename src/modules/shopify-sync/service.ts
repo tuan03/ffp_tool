@@ -158,11 +158,16 @@ export async function syncSingleProduct(
 
       // Reconstruct customizer config replacing old Amazon URLs with Shopify CDN URLs
       const baseConfig: Record<string, unknown> = {
+        ...product.customization,
         hasCustomization: true,
         assets: product.customization.assets,
         optionGroups: product.customization.optionGroups,
         pricing: product.customization.pricing,
         textInputs: product.customization.textInputs,
+        surfaces: product.customization.surfaces,
+        placements: product.customization.placements,
+        product: product.customization.product,
+        controlOrder: product.customization.controlOrder,
         formUrl: product.customization.formUrl,
         ...product.customization.rawConfig,
       };
