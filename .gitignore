@@ -1,8 +1,9 @@
 node_modules/
 dist/
 .vite/
-.env.local
-.env.*.local
+.env
+.env.*
+.env.shopify
 *.tsbuildinfo
 .DS_Store
 stores.local.json
