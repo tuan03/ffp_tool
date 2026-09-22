@@ -23,6 +23,21 @@ export type {
   AutoSeoItemResult,
   AutoSeoSourceProduct,
 } from "./auto-seo-adapter";
+export {
+  fromPinterestPodBatch,
+  fromPinterestPodItem,
+  runPinterestPodSeoPipeline,
+} from "./pinterest-pod-adapter";
+export type {
+  PinterestPodAdapterOptions,
+  PinterestPodDeliverables,
+  PinterestPodSeoBatchResult,
+  PinterestPodSeoItemResult,
+  PodComposedMockupSpec,
+  PodCutoutSpec,
+  PodDeliverableItem,
+  PodPrintMasterSpec,
+} from "./pinterest-pod-adapter";
 export type {
   SeoContentImageInput,
   SeoContentImageOutput,
