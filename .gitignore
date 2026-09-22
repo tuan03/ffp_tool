@@ -18,3 +18,5 @@ src/modules/pinterest-pod/server/.env
 **/.*oauth*.json
 
 
+
+pinterest_oauth_tokens.json

@@ -110,16 +110,33 @@ def main() -> int:
 
     deadline = time.time() + max(30, args.timeout)
     with sync_playwright() as playwright:
-        context = playwright.chromium.launch_persistent_context(
-            user_data_dir=str(profile_dir),
-            headless=False,
-            viewport={"width": 1366, "height": 900},
-            locale=env("PINTEREST_LOCALE", "en-US"),
-            args=[
-                "--disable-blink-features=AutomationControlled",
-                "--disable-dev-shm-usage",
-            ],
-        )
+        channels_to_try = [None, "chrome", "msedge"]
+        context = None
+        last_exc = None
+        for channel in channels_to_try:
+            try:
+                launch_args = {
+                    "user_data_dir": str(profile_dir),
+                    "headless": False,
+                    "viewport": {"width": 1366, "height": 900},
+                    "locale": env("PINTEREST_LOCALE", "en-US"),
+                    "args": [
+                        "--disable-blink-features=AutomationControlled",
+                        "--disable-dev-shm-usage",
+                    ],
+                }
+                if channel:
+                    launch_args["channel"] = channel
+                context = playwright.chromium.launch_persistent_context(**launch_args)
+                break
+            except Exception as exc:
+                last_exc = exc
+                continue
+
+        if context is None:
+            if last_exc:
+                raise last_exc
+            raise RuntimeError("Failed to launch any browser context")
         page = context.pages[0] if context.pages else context.new_page()
         try:
             page.goto(args.url, wait_until="domcontentloaded", timeout=45_000)

@@ -263,24 +263,37 @@ class PinterestBrowserProvider(DiscoveryProvider):
             try:
                 if self._playwright is None:
                     self._playwright = sync_playwright().start()
-                self._context = self._playwright.chromium.launch_persistent_context(
-                    user_data_dir=str(self.user_data_dir),
-                    headless=self.headless,
-                    viewport={"width": 1366, "height": 900},
-                    user_agent=(
-                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                        "AppleWebKit/537.36 (KHTML, like Gecko) "
-                        "Chrome/126.0.0.0 Safari/537.36"
-                    ),
-                    locale=env("PINTEREST_LOCALE", "en-US"),
-                    args=[
-                        "--disable-blink-features=AutomationControlled",
-                        "--disable-dev-shm-usage",
-                        "--disable-quic",
-                        "--disable-http3",
-                    ],
-                )
-                return self._context
+                channels_to_try = [None, "chrome", "msedge"]
+                last_launch_exc = None
+                for channel in channels_to_try:
+                    try:
+                        launch_kwargs = {
+                            "user_data_dir": str(self.user_data_dir),
+                            "headless": self.headless,
+                            "viewport": {"width": 1366, "height": 900},
+                            "user_agent": (
+                                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                                "Chrome/126.0.0.0 Safari/537.36"
+                            ),
+                            "locale": env("PINTEREST_LOCALE", "en-US"),
+                            "args": [
+                                "--disable-blink-features=AutomationControlled",
+                                "--disable-dev-shm-usage",
+                                "--disable-quic",
+                                "--disable-http3",
+                            ],
+                        }
+                        if channel:
+                            launch_kwargs["channel"] = channel
+                        self._context = self._playwright.chromium.launch_persistent_context(**launch_kwargs)
+                        return self._context
+                    except Exception as exc:
+                        last_launch_exc = exc
+                        continue
+
+                if last_launch_exc:
+                    raise last_launch_exc
             except Exception as exc:
                 LOG.warning("Failed to launch Pinterest browser context (attempt %d/2): %s", attempt + 1, exc)
                 self.close()
