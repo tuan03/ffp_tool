@@ -21,6 +21,8 @@ import type {
   ShopifyConnectionTestResponse,
   ShopifyFilesCreateInput,
   ShopifyFilesCreateResponse,
+  ShopifyFilesBulkCreateInput,
+  ShopifyFilesBulkCreateResponse,
   ShopifyMetafieldsSetInput,
   ShopifyMetafieldsSetResponse,
   ShopifyOperation,
@@ -628,6 +630,7 @@ export async function runModuleApi(input: ShopifyVariantsUpdateInput): Promise<S
 export async function runModuleApi(input: ShopifyVariantsBulkUpdateInput): Promise<ShopifyVariantsBulkUpdateResponse>;
 export async function runModuleApi(input: ShopifyVariantsBulkCreateInput): Promise<ShopifyVariantsBulkCreateResponse>;
 export async function runModuleApi(input: ShopifyFilesCreateInput): Promise<ShopifyFilesCreateResponse>;
+export async function runModuleApi(input: ShopifyFilesBulkCreateInput): Promise<ShopifyFilesBulkCreateResponse>;
 export async function runModuleApi(input: ShopifyMetafieldsSetInput): Promise<ShopifyMetafieldsSetResponse>;
 export async function runModuleApi(input: ShopifyCollectionsListInput): Promise<ShopifyCollectionsListResponse>;
 export async function runModuleApi(input: ShopifyCollectionsGetInput): Promise<ShopifyCollectionsGetResponse>;

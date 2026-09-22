@@ -11,6 +11,8 @@ import {
   runShopifySync,
   shopifySyncMockData,
   syncSingleProduct,
+  type ShopifyGateway,
+  type ShopifySyncProductInput,
 } from "../index";
 import type { CrawlProduct } from "../../customization-normalizer";
 
@@ -224,4 +226,61 @@ test("syncSingleProduct coordinates the 4 operations through an injected Shopify
   assertStrict.ok(operationsCalled.some((op) => op.startsWith("uploadFile")));
   assertStrict.ok(operationsCalled.includes("setMetafield:custom.amazon_customizer"));
 });
+
+test("syncSingleProduct leverages uploadFilesBatch and deduplicates asset URLs", async () => {
+  const operationsCalled: string[] = [];
+  let batchInputsCount = 0;
+
+  const batchGateway = {
+    async createProduct(input: { title: string }) {
+      operationsCalled.push(`createProduct:${input.title}`);
+      return { productId: "gid://shopify/Product/batch-123", productHandle: "batch-handle" };
+    },
+    async createVariants(productId: string, variants: readonly unknown[]) {
+      operationsCalled.push(`createVariants:${productId}:${variants.length}`);
+      return { createdCount: variants.length };
+    },
+    async uploadFile(_input: { filename: string }) {
+      throw new Error("uploadFile should not be called when uploadFilesBatch is provided");
+    },
+    async uploadFilesBatch(inputs: readonly { originalSource: string; filename: string }[]) {
+      operationsCalled.push(`uploadFilesBatch:${inputs.length}`);
+      batchInputsCount = inputs.length;
+      return inputs.map((item, idx) => ({
+        fileId: `gid://shopify/MediaImage/batch-${idx + 1}`,
+        shopifyCdnUrl: `https://cdn.shopify.com/files/${item.filename}`,
+        originalSource: item.originalSource,
+      }));
+    },
+    async setProductMetafield(input: { namespace: string; key: string }) {
+      operationsCalled.push(`setMetafield:${input.namespace}.${input.key}`);
+      return { success: true, metafieldId: "gid://shopify/Metafield/batch-m1" };
+    },
+  };
+
+  const customProd: ShopifySyncProductInput = {
+    ...shopifySyncMockData.products[0],
+    customization: {
+      ...shopifySyncMockData.products[0].customization,
+      hasCustomization: true,
+      assets: [
+        { url: "https://example.com/asset-1.png", friendlyFileName: "asset-1.png", alt: "A1" },
+        { url: "https://example.com/asset-1.png", friendlyFileName: "asset-1-dup.png", alt: "A1-dup" },
+        { url: "https://example.com/asset-2.png", friendlyFileName: "asset-2.png", alt: "A2" },
+      ],
+    },
+  };
+
+  const result = await syncSingleProduct(customProd, {
+    gateway: batchGateway as unknown as ShopifyGateway,
+  });
+
+  assertStrict.equal(result.success, true);
+  assertStrict.equal(result.productId, "gid://shopify/Product/batch-123");
+  assertStrict.equal(batchInputsCount, 2);
+  assertStrict.equal(result.assetsUploadedCount, 2);
+  assertStrict.ok(operationsCalled.some((op) => op.startsWith("uploadFilesBatch:2")));
+  assertStrict.ok(!operationsCalled.some((op) => op.startsWith("uploadFile:")));
+});
+
 

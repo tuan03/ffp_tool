@@ -6252,6 +6252,135 @@ describe("Gateway: Architectural & Operational Hardening (P1)", () => {
       assert.equal(callCount, 2);
     });
 
+    it("executes files.bulkCreate in preview mode without calling Shopify", async () => {
+      let called = false;
+      const dispatcher = setupTestGateway(async () => {
+        called = true;
+        return createMockResponse({});
+      });
+
+      const res = await dispatcher.dispatch({
+        storeId: "store-test",
+        operation: "files.bulkCreate",
+        mode: "preview",
+        payload: {
+          files: [
+            {
+              originalSource: "https://example.com/asset-1.jpg",
+              filename: "preview-1.jpg",
+              alt: "Preview 1",
+            },
+            {
+              originalSource: "https://example.com/asset-2.jpg",
+              filename: "preview-2.jpg",
+              alt: "Preview 2",
+            },
+          ],
+        },
+      });
+
+      assert.equal(called, false);
+      assert.equal(res.success, true);
+      const data = res.data as {
+        files: readonly { originalSource: string; shopifyCdnUrl: string; fileStatus: string; alt?: string }[];
+        totalCount: number;
+        successCount: number;
+        failedCount: number;
+      };
+      assert.equal(data.totalCount, 2);
+      assert.equal(data.successCount, 2);
+      assert.equal(data.failedCount, 0);
+      assert.equal(data.files[0].fileStatus, "READY");
+      assert.ok(data.files[0].shopifyCdnUrl.includes("preview-1.jpg"));
+      assert.equal(data.files[1].originalSource, "https://example.com/asset-2.jpg");
+    });
+
+    it("executes files.bulkCreate in apply mode with batch polling until READY", async () => {
+      let callCount = 0;
+      const dispatcher = setupTestGateway(async (_url: string, init?: RequestInit) => {
+        callCount += 1;
+        const body = JSON.parse(init?.body as string) as Record<string, string>;
+        if (callCount === 1) {
+          assert.ok(body.query.includes("fileCreate"));
+          return createMockResponse({
+            data: {
+              fileCreate: {
+                files: [
+                  {
+                    id: "gid://shopify/MediaImage/file-b1",
+                    fileStatus: "PROCESSING",
+                    alt: "Alt B1",
+                  },
+                  {
+                    id: "gid://shopify/MediaImage/file-b2",
+                    fileStatus: "READY",
+                    alt: "Alt B2",
+                    image: {
+                      url: "https://cdn.shopify.com/s/files/1/0000/0000/files/file-b2.jpg",
+                    },
+                  },
+                ],
+                userErrors: [],
+              },
+            },
+          });
+        }
+        assert.ok(body.query.includes("GetFileNodes"));
+        return createMockResponse({
+          data: {
+            nodes: [
+              {
+                id: "gid://shopify/MediaImage/file-b1",
+                fileStatus: "READY",
+                alt: "Alt B1",
+                image: {
+                  url: "https://cdn.shopify.com/s/files/1/0000/0000/files/file-b1.jpg",
+                },
+              },
+            ],
+          },
+        });
+      });
+
+      const res = await dispatcher.dispatch({
+        storeId: "store-test",
+        operation: "files.bulkCreate",
+        mode: "apply",
+        requestId: "req-file-bulk-create-1",
+        payload: {
+          files: [
+            {
+              originalSource: "https://example.com/asset-b1.jpg",
+              filename: "file-b1.jpg",
+              alt: "Alt B1",
+            },
+            {
+              originalSource: "https://example.com/asset-b2.jpg",
+              filename: "file-b2.jpg",
+              alt: "Alt B2",
+            },
+          ],
+          pollIntervalMs: 1,
+          maxPollAttempts: 3,
+        },
+      });
+
+      assert.equal(res.success, true);
+      const data = res.data as {
+        files: readonly { originalSource: string; fileId: string; shopifyCdnUrl: string; fileStatus: string }[];
+        totalCount: number;
+        successCount: number;
+        failedCount: number;
+      };
+      assert.equal(data.totalCount, 2);
+      assert.equal(data.successCount, 2);
+      assert.equal(data.failedCount, 0);
+      assert.equal(data.files[0].fileId, "gid://shopify/MediaImage/file-b1");
+      assert.equal(data.files[0].shopifyCdnUrl, "https://cdn.shopify.com/s/files/1/0000/0000/files/file-b1.jpg");
+      assert.equal(data.files[1].shopifyCdnUrl, "https://cdn.shopify.com/s/files/1/0000/0000/files/file-b2.jpg");
+      assert.equal(callCount, 2);
+    });
+
     it("executes metafields.set in preview mode without calling Shopify", async () => {
       let called = false;
       const dispatcher = setupTestGateway(async () => {

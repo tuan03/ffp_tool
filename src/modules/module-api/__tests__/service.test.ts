@@ -2698,6 +2698,22 @@ test("createShopifyGatewayAdapter implements ShopifyGateway interface and works 
   assert.ok(file.fileId);
   assert.ok(file.shopifyCdnUrl.includes("cust-thumb.png"));
 
+  const batchFiles = await adapter.uploadFilesBatch!([
+    {
+      originalSource: "https://example.com/batch-1.png",
+      filename: "batch-1.png",
+      alt: "Batch 1",
+    },
+    {
+      originalSource: "https://example.com/batch-2.png",
+      filename: "batch-2.png",
+      alt: "Batch 2",
+    },
+  ]);
+  assert.equal(batchFiles.length, 2);
+  assert.ok(batchFiles[0].shopifyCdnUrl.includes("batch-1.png"));
+  assert.equal(batchFiles[0].originalSource, "https://example.com/batch-1.png");
+
   const meta = await adapter.setProductMetafield({
     productId: prod.productId,
     namespace: "custom",
