@@ -1,0 +1,13 @@
+{
+  "serverUrl": "https://crawler.example.com",
+  "displayName": "",
+  "maxConcurrentInputs": 4,
+  "limits": {
+    "productThreads": 4,
+    "variantThreads": 8,
+    "urllibThreads": 12,
+    "browserProfiles": 4,
+    "browserTabs": 2,
+    "headless": false
+  }
+}
