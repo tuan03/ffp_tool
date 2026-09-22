@@ -3,7 +3,7 @@ import type {
   CustomizationAsset,
   CustomizationNormalizerOutput,
   ProductMediaItem,
-} from "../customization-normalizer/types";
+} from "../customization-normalizer";
 import type {
   ShopifyCustomizationAssetInput,
   ShopifyMediaInput,
