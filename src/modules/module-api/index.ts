@@ -1,7 +1,10 @@
 export {
   createShopifyGatewayAdapter,
+  resolveShopifyProductForSync,
 } from "./gateway-adapter";
 export type {
+  ResolvedShopifyProductForSync,
+  ResolveShopifyProductForSyncInput,
   ShopifyGatewayAdapterOptions,
 } from "./gateway-adapter";
 export { shopifyApiMockData } from "./mocks/data";

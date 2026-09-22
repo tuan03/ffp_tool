@@ -6,6 +6,7 @@ import {
   createShopifyGatewayAdapter,
   DEFAULT_GATEWAY_URL,
   getModuleApiRunner,
+  resolveShopifyProductForSync,
   runMockModuleApi,
   runModuleApi,
   ShopifyApiError,
@@ -3046,6 +3047,77 @@ test("createShopifyGatewayAdapter validates storeId and handles empty variants",
   const adapter = createShopifyGatewayAdapter("store-test", runMockModuleApi);
   const vars = await adapter.createVariants("gid://shopify/Product/123", []);
   assert.equal(vars.createdCount, 0);
+});
+
+test("resolveShopifyProductForSync recovers a stale mapping from the stable source tag", async () => {
+  const calls: ShopifyApiInput[] = [];
+  const recoveredProduct = {
+    ...shopifyApiMockData.products[0],
+    id: "gid://shopify/Product/recovered",
+    tags: ["ffp-source:amazon:B0TEST:color:blue"],
+  };
+  const runner = (async (input: ShopifyApiInput) => {
+    calls.push(input);
+    if (input.operation === "products.get") {
+      const id = (input.payload as { id?: string }).id;
+      return {
+        success: true,
+        storeId: input.storeId,
+        operation: input.operation,
+        data: { product: id === recoveredProduct.id ? recoveredProduct : null },
+      };
+    }
+    if (input.operation === "products.list") {
+      return {
+        success: true,
+        storeId: input.storeId,
+        operation: input.operation,
+        data: {
+          products: [recoveredProduct],
+          pageInfo: { hasNextPage: false, hasPreviousPage: false },
+        },
+      };
+    }
+    throw new Error(`Unexpected operation ${input.operation}`);
+  }) as ModuleApiRunner;
+
+  const resolved = await resolveShopifyProductForSync({
+    runner,
+    storeId: "capozen",
+    sourceKey: "amazon:B0TEST:color:blue",
+    mappedProductId: "gid://shopify/Product/deleted",
+  });
+
+  assert.equal(resolved.match, "source_tag");
+  assert.equal(resolved.product?.id, "gid://shopify/Product/recovered");
+  assert.equal(resolved.staleMappedProductId, "gid://shopify/Product/deleted");
+  assert.deepEqual(calls.map((call) => call.operation), [
+    "products.get",
+    "products.list",
+    "products.get",
+  ]);
+});
+
+test("resolveShopifyProductForSync returns no product when a stale mapping has no source-tag match", async () => {
+  const runner = (async (input: ShopifyApiInput) => ({
+    success: true,
+    storeId: input.storeId,
+    operation: input.operation,
+    data: input.operation === "products.list"
+      ? { products: [], pageInfo: { hasNextPage: false, hasPreviousPage: false } }
+      : { product: null },
+  })) as ModuleApiRunner;
+
+  const resolved = await resolveShopifyProductForSync({
+    runner,
+    storeId: "capozen",
+    sourceKey: "amazon:B0TEST:color:missing",
+    mappedProductId: "gid://shopify/Product/deleted",
+  });
+
+  assert.equal(resolved.match, "none");
+  assert.equal(resolved.product, undefined);
+  assert.equal(resolved.staleMappedProductId, "gid://shopify/Product/deleted");
 });
 
 

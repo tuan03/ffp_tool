@@ -13,10 +13,7 @@ import {
 import {
   createShopifyGatewayAdapter,
   createModuleApiRunner,
-  type ModuleApiRunner,
-  type ShopifyProduct,
-  type ShopifyProductsListResponse,
-  type ShopifyProductsGetResponse,
+  resolveShopifyProductForSync,
 } from "../src/modules/module-api";
 import {
   fromCustomizationNormalizerProduct,
@@ -159,38 +156,6 @@ async function failClaim(
   });
 }
 
-function sourceTag(sourceKey: string): string {
-  return `ffp-source:${sourceKey}`;
-}
-
-function escapeShopifySearch(value: string): string {
-  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-}
-
-async function findExistingProduct(
-  runner: ModuleApiRunner,
-  proxyStoreId: string,
-  sourceKey: string,
-): Promise<ShopifyProduct | undefined> {
-  const tag = sourceTag(sourceKey);
-  const response = await runner({
-    storeId: proxyStoreId,
-    operation: "products.list",
-    payload: {
-      limit: 10,
-      query: `tag:"${escapeShopifySearch(tag)}"`,
-    },
-  }) as ShopifyProductsListResponse;
-  const candidate = response.data.products.find((product) => product.tags.includes(tag));
-  if (!candidate) return undefined;
-  const detail = await runner({
-    storeId: proxyStoreId,
-    operation: "products.get",
-    payload: { id: candidate.id },
-  }) as ShopifyProductsGetResponse;
-  return detail.data.product ?? candidate;
-}
-
 function isProxyOrNetworkFailure(message: string): boolean {
   return /proxy|network|fetch failed|socket|connect|econn|etimedout|timeout|tunnell?/i.test(message);
 }
@@ -220,7 +185,35 @@ async function processClaim(
   };
   const assetsNormalized = normalization.assetsNormalized;
   const normalizedChecksum = checksum(normalizedProduct);
-  if (claim.existingShopify?.normalizedChecksum === normalizedChecksum) {
+  const runner = createModuleApiRunner({ gatewayUrl, timeoutMs: 180_000 });
+  let resolvedProduct: Awaited<ReturnType<typeof resolveShopifyProductForSync>>;
+  try {
+    resolvedProduct = await resolveShopifyProductForSync({
+      runner,
+      storeId: proxyStoreId,
+      sourceKey: claim.sourceKey,
+      mappedProductId: claim.existingShopify?.productId,
+    });
+  } catch (error: unknown) {
+    await failClaim(claim, workerId, error, { retryable: true });
+    return;
+  }
+  const reconciliationWarnings: string[] = [];
+  if (resolvedProduct.staleMappedProductId && resolvedProduct.match === "source_tag") {
+    reconciliationWarnings.push(
+      `Stored Shopify product ${resolvedProduct.staleMappedProductId} was missing; recovered source product as ${resolvedProduct.product?.id ?? "unknown"}.`,
+    );
+  } else if (resolvedProduct.staleMappedProductId && resolvedProduct.match === "none") {
+    reconciliationWarnings.push(
+      `Stored Shopify product ${resolvedProduct.staleMappedProductId} was missing; created a replacement product.`,
+    );
+  }
+
+  if (
+    claim.existingShopify?.normalizedChecksum === normalizedChecksum
+    && resolvedProduct.product
+  ) {
+    const resolvedId = resolvedProduct.product.id;
     await postJson(`/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/complete`, {
       workerId,
       storeId,
@@ -228,15 +221,21 @@ async function processClaim(
       normalizedProduct,
       shopify: {
         storeId,
-        productId: claim.existingShopify.productId,
-        productHandle: claim.existingShopify.productHandle,
-        adminUrl: `https://admin.shopify.com/store/${shopAdminHandle}/products/${claim.existingShopify.productId.split("/").pop() ?? ""}`,
+        productId: resolvedId,
+        productHandle: resolvedProduct.product.handle,
+        adminUrl: `https://admin.shopify.com/store/${shopAdminHandle}/products/${resolvedId.split("/").pop() ?? ""}`,
         noOp: true,
         attempts: claim.attempt,
         proxyProfile,
-        warnings: [],
+        warnings: reconciliationWarnings,
         assetsNormalized,
-        managedResources: claim.existingShopify.managedResources ?? {},
+        managedResources: resolvedProduct.match === "mapping"
+          ? claim.existingShopify.managedResources ?? {}
+          : {
+              tags: resolvedProduct.product.tags,
+              mediaIds: resolvedProduct.product.images?.flatMap((media) => media.id ? [media.id] : []) ?? [],
+              variantIds: resolvedProduct.product.variants.map((variant) => variant.id),
+            },
       },
     });
     return;
@@ -256,18 +255,17 @@ async function processClaim(
   heartbeat.unref();
 
   try {
-    const runner = createModuleApiRunner({ gatewayUrl, timeoutMs: 180_000 });
-    const reconciledProduct = claim.existingShopify
-      ? undefined
-      : await findExistingProduct(runner, proxyStoreId, claim.sourceKey);
-    const existingProductId = claim.existingShopify?.productId ?? reconciledProduct?.id;
+    const reconciledProduct = resolvedProduct.product;
+    const existingProductId = reconciledProduct?.id;
     const gateway = createShopifyGatewayAdapter(proxyStoreId, {
       runner,
       mode: "apply",
       getRequestId: (operation) => `pipeline-${claim.id}-${operation}`,
     });
     const syncInput = fromCustomizationNormalizerProduct(normalizedProduct);
-    const existingManagedResources = claim.existingShopify?.managedResources ?? (
+    const existingManagedResources = resolvedProduct.match === "mapping"
+      ? claim.existingShopify?.managedResources
+      : (
       reconciledProduct
         ? {
             tags: reconciledProduct.tags,
@@ -275,7 +273,7 @@ async function processClaim(
             variantIds: reconciledProduct.variants.map((variant) => variant.id),
           }
         : undefined
-    );
+      );
     const syncResult = await syncSingleProduct(syncInput, {
       gateway,
       existingProductId,
@@ -298,6 +296,7 @@ async function processClaim(
       normalizedProduct,
       shopify: {
         ...syncResult,
+        warnings: [...syncResult.warnings, ...reconciliationWarnings],
         storeId,
         adminUrl: syncResult.productId
           ? `https://admin.shopify.com/store/${shopAdminHandle}/products/${syncResult.productId.split("/").pop() ?? ""}`
