@@ -1,4 +1,5 @@
 import type {
+  AutoSeoItemResult,
   CustomizationSeoItemResult,
   SeoContentImageOutput,
   SeoContentOutput,
@@ -182,6 +183,36 @@ export function adaptCustomizationItemToViewModel(
     productId: item.productId,
     asin: item.asin,
     niche: item.sourceProduct.categories?.[0] || "Custom Product",
+    defaultStatus: item.success ? "completed" : "failed",
+    isStatusReal: true,
+  };
+
+  if (!item.success) {
+    return {
+      ...adaptSeoOutputToViewModel(undefined, options),
+      rejectionReason: item.error || "SEO Content processing failed",
+    };
+  }
+
+  return adaptSeoOutputToViewModel(item.seoOutput, options);
+}
+
+/**
+ * Adapts AutoSeoItemResult (from auto-seo-adapter) to SeoProductUiViewModel.
+ */
+export function adaptAutoSeoItemToViewModel(
+  item: AutoSeoItemResult,
+): SeoProductUiViewModel {
+  const sourceProduct = item.sourceProduct;
+  const firstTag = Array.isArray(sourceProduct.tags) && typeof sourceProduct.tags[0] === "string"
+    ? sourceProduct.tags[0]
+    : undefined;
+  const niche = firstTag || sourceProduct.productType || "Shopify Product";
+
+  const options: AdaptSeoOutputOptions = {
+    id: item.productId || `item-${Date.now()}`,
+    productId: item.productId,
+    niche,
     defaultStatus: item.success ? "completed" : "failed",
     isStatusReal: true,
   };

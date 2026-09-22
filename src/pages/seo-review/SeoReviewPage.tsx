@@ -47,13 +47,17 @@ export function SeoReviewPage(): React.JSX.Element {
     onlyMockData: false,
   });
 
-  const [handoffBanner, setHandoffBanner] = useState<{ count: number; timestamp: number } | null>(() => {
+  const [handoffBanner, setHandoffBanner] = useState<{
+    count: number;
+    timestamp: number;
+    source?: string;
+  } | null>(() => {
     if (typeof window !== "undefined" && window.sessionStorage) {
       try {
         const raw = window.sessionStorage.getItem("ffp_seo_review_handoff_banner");
         if (raw) {
           window.sessionStorage.removeItem("ffp_seo_review_handoff_banner");
-          return JSON.parse(raw) as { count: number; timestamp: number };
+          return JSON.parse(raw) as { count: number; timestamp: number; source?: string };
         }
       } catch {
         // ignore
@@ -355,7 +359,7 @@ export function SeoReviewPage(): React.JSX.Element {
             </span>
             <div>
               <p className="font-semibold text-emerald-100">
-                Bàn giao từ Distributed Crawler thành công!
+                Bàn giao từ {handoffBanner.source || "Distributed Crawler"} thành công!
               </p>
               <p className="text-xs text-emerald-300/80">
                 Đã nạp và tối ưu hóa SEO cho {handoffBanner.count} sản phẩm mới. Dữ liệu đã sẵn sàng để review và phê duyệt.

@@ -14,6 +14,15 @@ export type {
   HandoverCrawlerToSeoInput,
   HandoverCrawlerToSeoResult,
 } from "./crawler-to-seo-pipeline";
+export {
+  handoverAutoSeoToSeo,
+} from "./auto-seo-to-seo-pipeline";
+export type {
+  AutoSeoSourceProduct,
+  HandoverAutoSeoToSeoDependencies,
+  HandoverAutoSeoToSeoInput,
+  HandoverAutoSeoToSeoResult,
+} from "./auto-seo-to-seo-pipeline";
 export type {
   ApplyApprovedProductUpdatesInput,
   ApplyApprovedProductUpdatesResult,

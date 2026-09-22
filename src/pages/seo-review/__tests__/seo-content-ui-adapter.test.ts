@@ -1,8 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { CustomizationSeoItemResult, SeoContentOutput } from "../../../modules/seo-content";
+import type {
+  AutoSeoItemResult,
+  CustomizationSeoItemResult,
+  SeoContentOutput,
+} from "../../../modules/seo-content";
 import {
+  adaptAutoSeoItemToViewModel,
   adaptCustomizationItemToViewModel,
   adaptSeoOutputToViewModel,
   getDisplayValue,
@@ -185,4 +190,88 @@ test("getInitialSampleViewModels: returns diverse sample items for immediate UI 
   // Check that at least one item has mock fields flagged
   const hasMockItem = samples.some((s) => s.productDescription.source === "mock" || s.seoDescription.source === "mock");
   assert.ok(hasMockItem);
+});
+
+test("adaptAutoSeoItemToViewModel: successfully adapts AutoSeoItemResult to SeoProductUiViewModel", () => {
+  const successItem: AutoSeoItemResult = {
+    productId: "gid://shopify/Product/123456",
+    handle: "gothic-wall-art",
+    sourceProduct: {
+      id: "gid://shopify/Product/123456",
+      title: "Gothic Wall Art Print",
+      handle: "gothic-wall-art",
+      productType: "Home Décor",
+      tags: ["Wall Art", "Gothic"],
+      images: [
+        {
+          id: "img-1",
+          url: "https://example.com/art.jpg",
+          altText: "Gothic wall art preview",
+        },
+      ],
+    },
+    seoInput: {
+      title: "Gothic Wall Art Print",
+      description: "Beautiful gothic canvas",
+      niche: "Home Décor",
+      handle: "gothic-wall-art",
+      images: [],
+    },
+    seoOutput: {
+      productTitle: "Enchanted Gothic Wall Art Canvas Print",
+      productDescription: "<p>Premium gothic wall decor</p>",
+      productSeoTitle: "Gothic Wall Art Canvas | Dark Fantasy Decor",
+      productSeoDescription: "Shop high-quality gothic wall art canvas prints online.",
+      productHandle: "enchanted-gothic-wall-art",
+      images: [
+        {
+          sourceUrl: "https://example.com/art.jpg",
+          alt: "Enchanted Gothic Wall Art Canvas Print",
+          webp: {
+            url: "https://cdn.example.com/art.webp",
+            filename: "art.webp",
+          },
+        },
+      ],
+    },
+    success: true,
+  };
+
+  const vm = adaptAutoSeoItemToViewModel(successItem);
+  assert.equal(vm.productId, "gid://shopify/Product/123456");
+  assert.equal(vm.productTitle.value, "Enchanted Gothic Wall Art Canvas Print");
+  assert.equal(vm.productTitle.source, "real");
+  assert.equal(vm.seoStatus.value, "completed");
+  assert.equal(vm.seoStatus.source, "real");
+  assert.equal(vm.sourceNiche, "Wall Art");
+  assert.equal(vm.handle.value, "enchanted-gothic-wall-art");
+  assert.equal(vm.images.length, 1);
+  assert.equal(vm.images[0].previewUrl.value, "https://example.com/art.jpg");
+  assert.equal(vm.images[0].webpUrl.value, "https://cdn.example.com/art.webp");
+});
+
+test("adaptAutoSeoItemToViewModel: handles failed AutoSeoItemResult and records rejectionReason", () => {
+  const failedItem: AutoSeoItemResult = {
+    productId: "gid://shopify/Product/999999",
+    handle: "failed-product",
+    sourceProduct: {
+      id: "gid://shopify/Product/999999",
+      title: "Failed Product",
+      handle: "failed-product",
+    },
+    seoInput: {
+      title: "Failed Product",
+      description: "",
+      niche: "General",
+      handle: "failed-product",
+      images: [],
+    },
+    success: false,
+    error: "SEO Content Generation timed out after 30s",
+  };
+
+  const vm = adaptAutoSeoItemToViewModel(failedItem);
+  assert.equal(vm.productId, "gid://shopify/Product/999999");
+  assert.equal(vm.seoStatus.value, "failed");
+  assert.equal(vm.rejectionReason, "SEO Content Generation timed out after 30s");
 });

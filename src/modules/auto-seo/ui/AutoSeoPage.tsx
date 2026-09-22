@@ -3,6 +3,7 @@ import { AppError } from "../../../shared/errors/app-error";
 import { mapShopifyProductToAutoSeoCandidate } from "../shopify-adapter";
 import type {
   AutoSeoClient,
+  AutoSeoHandoverHandler,
   AutoSeoOutput,
   ShopifyProductForAutoSeoUi,
   ShopifyStatusFilter,
@@ -21,13 +22,22 @@ export interface AutoSeoPageProps {
   client: AutoSeoClient;
   initialProducts?: readonly ShopifyProductForAutoSeoUi[];
   initialSelectedProductIds?: readonly string[];
+  onHandoverToSeo?: AutoSeoHandoverHandler;
+  navigate?: (path: string) => void;
 }
 
 export function AutoSeoPage({
   client,
   initialProducts,
   initialSelectedProductIds,
+  onHandoverToSeo,
+  navigate: customNavigate,
 }: AutoSeoPageProps): React.JSX.Element {
+  const navigate = customNavigate ?? ((path: string) => {
+    if (typeof window !== "undefined") {
+      window.location.assign(path);
+    }
+  });
   const activeClient = client;
 
   const [products, setProducts] = useState<readonly ShopifyProductForAutoSeoUi[]>(
@@ -54,6 +64,8 @@ export function AutoSeoPage({
   const activeDetailIdRef = useRef<string | null>(null);
 
   const [output, setOutput] = useState<AutoSeoOutput | null>(null);
+  const [lastHydratedProducts, setLastHydratedProducts] = useState<readonly ShopifyProductForAutoSeoUi[]>([]);
+  const [isSendingToSeo, setIsSendingToSeo] = useState(false);
 
   const filteredProducts = useMemo(() => {
     return filterAutoSeoProducts(products, {
@@ -191,12 +203,38 @@ export function AutoSeoPage({
       });
 
       setOutput(result);
+      setLastHydratedProducts(hydratedProducts);
+
+      if (onHandoverToSeo) {
+        await onHandoverToSeo(hydratedProducts);
+        navigate("/seo-review");
+      }
     } catch (err) {
       setErrorMessage(
         err instanceof Error ? err.message : "Đã xảy ra lỗi khi chạy Auto SEO.",
       );
     } finally {
       setIsRunningAutoSeo(false);
+    }
+  };
+
+  const handleSendToSeo = async (): Promise<void> => {
+    if (!onHandoverToSeo || lastHydratedProducts.length === 0) {
+      return;
+    }
+
+    setIsSendingToSeo(true);
+    setErrorMessage(null);
+
+    try {
+      await onHandoverToSeo(lastHydratedProducts);
+      navigate("/seo-review");
+    } catch (err) {
+      setErrorMessage(
+        err instanceof Error ? err.message : "Đã xảy ra lỗi khi bàn giao sang SEO Content.",
+      );
+    } finally {
+      setIsSendingToSeo(false);
     }
   };
 
@@ -281,6 +319,8 @@ export function AutoSeoPage({
       <AutoSeoOutputPanel
         output={output}
         onClearOutput={() => setOutput(null)}
+        onSendToSeoContent={onHandoverToSeo && lastHydratedProducts.length > 0 ? () => void handleSendToSeo() : undefined}
+        isSendingToSeo={isSendingToSeo}
       />
     </div>
   );

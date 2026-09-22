@@ -1,5 +1,6 @@
 export { SeoReviewPage } from "./SeoReviewPage";
 export {
+  adaptAutoSeoItemToViewModel,
   adaptCustomizationItemToViewModel,
   adaptSeoOutputToViewModel,
   getDisplayValue,

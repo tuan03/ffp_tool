@@ -135,3 +135,7 @@ export interface AutoSeoClient {
   clearCache?(): void;
   clearDetailCache?(): void;
 }
+
+export type AutoSeoHandoverHandler = (
+  products: readonly ShopifyProductForAutoSeoUi[],
+) => Promise<void>;
