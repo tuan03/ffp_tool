@@ -21,6 +21,7 @@ import type {
   PodDeliverableItem,
   PodJobStatusResponse,
   PodPollOptions,
+  PodProductType,
   PodRecentRunItem,
   PodStatusResponse,
   ProduceInput,
@@ -30,7 +31,7 @@ import type {
   SeoHandoverResponse,
   SummaryMetrics,
 } from "../types";
-import { FACTORY_PRINT_STANDARDS } from "../types";
+import { FACTORY_PRINT_STANDARDS, inferProductTypeFromNiche } from "../types";
 import {
   createMockSvgDataUri,
   initialMockAuthStatus,
@@ -48,7 +49,7 @@ import {
 interface InMemoryMockJob {
   id: string;
   niche: string;
-  product: string;
+  product: PodProductType;
   status: JobDetailResponse["status"];
   pollCount: number;
   selectedCandidateIds: string[];
@@ -243,10 +244,11 @@ export class MockPinterestPodClient implements PinterestPodClient {
       `[${now}] Bắt đầu quét xu hướng Pinterest niche "${input.niche}"...`,
     ];
 
+    const effectiveProduct = input.product ?? inferProductTypeFromNiche(input.niche);
     const newJob: InMemoryMockJob = {
       id: jobId,
       niche: input.niche,
-      product: input.product,
+      product: effectiveProduct,
       status: "running",
       pollCount: 0,
       selectedCandidateIds: [],
@@ -305,6 +307,8 @@ export class MockPinterestPodClient implements PinterestPodClient {
           jobId: job.id,
           job_id: job.id,
           status: "running",
+          niche: job.niche,
+          product: job.product,
           stepper: {
             current_step: 1,
             percent: 25,
@@ -321,6 +325,8 @@ export class MockPinterestPodClient implements PinterestPodClient {
         jobId: job.id,
         job_id: job.id,
         status: "ready_for_review",
+        niche: job.niche,
+        product: job.product,
         total_candidates: mockCandidates.length,
         stepper: {
           current_step: 2,
@@ -351,6 +357,8 @@ export class MockPinterestPodClient implements PinterestPodClient {
           jobId: job.id,
           job_id: job.id,
           status: "producing",
+          niche: job.niche,
+          product: job.product,
           stepper: {
             current_step: 3,
             percent: 75,
@@ -368,6 +376,8 @@ export class MockPinterestPodClient implements PinterestPodClient {
         jobId: job.id,
         job_id: job.id,
         status: "completed",
+        niche: job.niche,
+        product: job.product,
         stepper: {
           current_step: 4,
           percent: 100,
@@ -387,6 +397,8 @@ export class MockPinterestPodClient implements PinterestPodClient {
         jobId: job.id,
         job_id: job.id,
         status: "cancelled",
+        niche: job.niche,
+        product: job.product,
         stepper: {
           current_step: 1,
           percent: 0,
@@ -539,7 +551,7 @@ export async function runMockDiscovery(
     throw new AppError("Polling Pinterest POD job was aborted", "PINTEREST_POD_JOB_ABORTED");
   }
 
-  const targetPoolSize = input.candidatePoolSize ?? 15;
+  const targetPoolSize = input.candidatePoolSize ?? input.task5_max_downloads ?? input.top_images ?? 15;
   const slicedCandidates = cloneCandidates(mock15Candidates.slice(0, targetPoolSize));
   const effectiveJobId = `job_pod_${Date.now().toString(36)}`;
 

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { packageDeliverablesForSeo, realPinterestPodClient } from "../service";
+import { inferProductTypeFromNiche, packageDeliverablesForSeo, realPinterestPodClient } from "../service";
 import type {
   CandidateItem,
   DeliverablesData,
@@ -38,8 +38,8 @@ export function PinterestPodStudio({ client: injectedClient }: PinterestPodStudi
   // Form State
   const [niche, setNiche] = useState("vintage distressed rug");
   const [product, setProduct] = useState<PinterestProductType>("rug");
+  const [crawlCount, setCrawlCount] = useState(40);
   const [referenceImages, setReferenceImages] = useState<readonly ReferenceImage[]>([]);
-  const [aiBackgroundVariants, setAiBackgroundVariants] = useState(5);
 
   // Job State
   const [jobId, setJobId] = useState<string | null>(null);
@@ -88,9 +88,9 @@ export function PinterestPodStudio({ client: injectedClient }: PinterestPodStudi
     });
   }
 
-  function handleReuseNiche(reusedNiche: string, reusedProduct: PinterestProductType): void {
+  function handleReuseNiche(reusedNiche: string, reusedProduct?: PinterestProductType): void {
     setNiche(reusedNiche);
-    setProduct(reusedProduct);
+    setProduct(reusedProduct ?? inferProductTypeFromNiche(reusedNiche));
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
@@ -473,14 +473,20 @@ export function PinterestPodStudio({ client: injectedClient }: PinterestPodStudi
       current_message: `Đang quét từ khóa và cào ảnh niche "${niche}"...`,
     });
 
+    const effectiveProduct = inferProductTypeFromNiche(niche);
+    setProduct(effectiveProduct);
+    const effectiveVariants = referenceImages.length > 0 ? referenceImages.length : 5;
+
     try {
       const created = await client.createJob({
         niche: niche.trim(),
-        product,
+        product: effectiveProduct,
         workflow_stage: "crawl_and_review",
-        candidatePoolSize: 15,
+        candidatePoolSize: crawlCount,
+        task5_max_downloads: crawlCount,
+        top_images: crawlCount,
         referenceImages,
-        ai_background_variants: Math.max(1, Math.min(10, Math.max(aiBackgroundVariants, referenceImages.length))),
+        ai_background_variants: effectiveVariants,
       });
 
       setJobId(created.jobId);
@@ -588,6 +594,7 @@ export function PinterestPodStudio({ client: injectedClient }: PinterestPodStudi
       }
     }, 100);
 
+    const effectiveVariants = referenceImages.length > 0 ? referenceImages.length : 5;
     try {
       const produceRes = await client.produce({
         jobId,
@@ -596,7 +603,7 @@ export function PinterestPodStudio({ client: injectedClient }: PinterestPodStudi
         niche,
         design_mode: "direct_print",
         referenceImages,
-        ai_background_variants: Math.max(1, Math.min(10, Math.max(aiBackgroundVariants, referenceImages.length))),
+        ai_background_variants: effectiveVariants,
       });
       if (!isMountedRef.current) return;
 
@@ -721,13 +728,16 @@ export function PinterestPodStudio({ client: injectedClient }: PinterestPodStudi
             <div className="lg:col-span-6 flex flex-col gap-6">
               <InitForm
                 niche={niche}
-                onNicheChange={setNiche}
+                onNicheChange={(val) => {
+                  setNiche(val);
+                  setProduct(inferProductTypeFromNiche(val));
+                }}
+                crawlCount={crawlCount}
+                onCrawlCountChange={setCrawlCount}
                 product={product}
                 onProductChange={setProduct}
                 referenceImages={referenceImages}
                 onReferenceImagesChange={setReferenceImages}
-                aiBackgroundVariants={aiBackgroundVariants}
-                onAiBackgroundVariantsChange={setAiBackgroundVariants}
                 jobStatus={jobStatus}
                 onStartCrawl={() => void handleStartCrawl()}
                 onStopJob={() => void handleStopJob()}

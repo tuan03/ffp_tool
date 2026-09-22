@@ -6,6 +6,23 @@ export type { AppEnvironment };
 export type PodProductType = "rug" | "blanket" | "custom";
 export type PinterestProductType = PodProductType;
 
+/**
+ * Automatically infers product type ('blanket' or 'rug') from niche keywords:
+ * - If niche contains 'blanket', 'throw', 'quilt' -> 'blanket' (preset 10000x11000 px)
+ * - If niche contains 'rug', 'carpet', 'mat' -> 'rug' (preset 4000x6400 px)
+ * - Otherwise -> 'rug' (default 4000x6400 px)
+ */
+export function inferProductTypeFromNiche(niche: string): PodProductType {
+  const lower = (niche ?? "").toLowerCase().trim();
+  if (lower.includes("blanket") || lower.includes("throw") || lower.includes("quilt")) {
+    return "blanket";
+  }
+  if (lower.includes("rug") || lower.includes("carpet") || lower.includes("mat")) {
+    return "rug";
+  }
+  return "rug";
+}
+
 /** Workflow stage for job execution */
 export type PodWorkflowStage = "crawl_and_review" | "full_pipeline" | "produce" | "full";
 export type WorkflowStage = PodWorkflowStage;
@@ -197,9 +214,11 @@ export type PinterestLaunchLoginOutput = PinterestLaunchLoginResponse;
 /** Stage 1: Input parameters for Pinterest crawl & discovery */
 export interface PinterestDiscoveryInput {
   readonly niche: string;
-  readonly product: PodProductType;
+  readonly product?: PodProductType;
   readonly workflow_stage?: PodWorkflowStage;
   readonly candidatePoolSize?: number;
+  readonly task5_max_downloads?: number;
+  readonly top_images?: number;
   readonly referenceImages?: readonly PodReferenceImage[];
   readonly ai_background_variants?: number;
 }

@@ -33,6 +33,8 @@ import {
   runMockDiscovery,
   runMockProduction,
   runProduction,
+  inferProductTypeFromNiche,
+  startDiscoveryJob,
   startProductionJob,
   getOAuthAuthorizeUrl,
   saveOAuthToken,
@@ -1013,6 +1015,97 @@ test("Real client getOAuthAuthorizeUrl and saveOAuthToken call backend endpoints
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test("inferProductTypeFromNiche correctly infers blanket, rug, and default products", () => {
+  // Blanket keywords: blanket, throw, quilt
+  assert.equal(inferProductTypeFromNiche("cozy winter blanket"), "blanket");
+  assert.equal(inferProductTypeFromNiche("chunky knit throw"), "blanket");
+  assert.equal(inferProductTypeFromNiche("vintage patchwork quilt"), "blanket");
+  assert.equal(inferProductTypeFromNiche("BLANKET FLEECE"), "blanket");
+
+  // Rug keywords: rug, carpet, mat
+  assert.equal(inferProductTypeFromNiche("vintage distressed rug"), "rug");
+  assert.equal(inferProductTypeFromNiche("moroccan living room carpet"), "rug");
+  assert.equal(inferProductTypeFromNiche("boho door mat"), "rug");
+  assert.equal(inferProductTypeFromNiche("PERSIAN RUG"), "rug");
+
+  // Other niches default to rug
+  assert.equal(inferProductTypeFromNiche("leather bag"), "rug");
+  assert.equal(inferProductTypeFromNiche("table wood aesthetic"), "rug");
+  assert.equal(inferProductTypeFromNiche("abstract wall art"), "rug");
+  assert.equal(inferProductTypeFromNiche(""), "rug");
+});
+
+test("RealPinterestPodClient.createJob infers product and forwards crawlCount parameters", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+
+  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input.toString();
+    const body = init?.body ? (JSON.parse(init.body.toString()) as Record<string, unknown>) : {};
+    calls.push({ url, body });
+    return new Response(
+      JSON.stringify({ ok: true, jobId: "job_test_123", status: "running" }),
+      { status: 201, headers: { "Content-Type": "application/json" } },
+    );
+  };
+
+  try {
+    // 1. When product is omitted, infer blanket from niche
+    const res1 = await realPinterestPodClient.createJob({
+      niche: "retro 70s accent blanket",
+      candidatePoolSize: 55,
+    });
+    assert.equal(res1.ok, true);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].body.product, "blanket");
+    assert.equal(calls[0].body.candidatePoolSize, 55);
+    assert.equal(calls[0].body.task5_max_downloads, 55);
+    assert.equal(calls[0].body.top_images, 55);
+
+    // 2. When product is omitted and niche is rug
+    const res2 = await realPinterestPodClient.createJob({
+      niche: "boho runner rug",
+      candidatePoolSize: 30,
+    });
+    assert.equal(res2.ok, true);
+    assert.equal(calls.length, 2);
+    assert.equal(calls[1].body.product, "rug");
+    assert.equal(calls[1].body.candidatePoolSize, 30);
+    assert.equal(calls[1].body.task5_max_downloads, 30);
+    assert.equal(calls[1].body.top_images, 30);
+
+    // 3. startDiscoveryJob function also infers product and passes poolSize
+    const res3 = await startDiscoveryJob({
+      niche: "warm cozy throw",
+      candidatePoolSize: 60,
+    });
+    assert.equal(res3.ok, true);
+    assert.equal(calls.length, 3);
+    assert.equal(calls[2].body.product, "blanket");
+    assert.equal(calls[2].body.candidatePoolSize, 60);
+    assert.equal(calls[2].body.task5_max_downloads, 60);
+    assert.equal(calls[2].body.top_images, 60);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("MockPinterestPodClient.createJob infers product type when omitted", async () => {
+  const blanketJob = await mockPinterestPodClient.createJob({
+    niche: "luxury plush blanket",
+  });
+  assert.equal(blanketJob.ok, true);
+  const blanketDetail = await mockPinterestPodClient.getJobDetail(blanketJob.jobId);
+  assert.equal(blanketDetail.product, "blanket");
+
+  const rugJob = await mockPinterestPodClient.createJob({
+    niche: "persian traditional rug",
+  });
+  assert.equal(rugJob.ok, true);
+  const rugDetail = await mockPinterestPodClient.getJobDetail(rugJob.jobId);
+  assert.equal(rugDetail.product, "rug");
 });
 
 
