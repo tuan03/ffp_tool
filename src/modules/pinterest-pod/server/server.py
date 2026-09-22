@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Standalone Pinterest POD Studio Backend Server.
 
-Dedicated lightweight HTTP service on port 8765 providing:
+Dedicated lightweight HTTP service on port 8768 providing:
 - Pinterest Trends discovery & AI scoring
 - CMYK 300 DPI high-resolution rendering
 - AI lifestyle mockup placement
@@ -58,7 +58,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("pinterest_pod_server")
 
-PORT = int(os.getenv("UI_PORT", "8765"))
+PORT = int(os.getenv("PINTEREST_POD_PORT", "8768"))
 HOST = os.getenv("HOST", "127.0.0.1")
 
 

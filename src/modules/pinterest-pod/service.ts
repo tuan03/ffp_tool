@@ -43,8 +43,10 @@ function getBaseUrl(customBaseUrl?: string): string {
   if (typeof window !== "undefined") {
     return "";
   }
-  const envUrl = typeof process !== "undefined" ? process.env?.VITE_BACKEND_URL : undefined;
-  return envUrl ? envUrl.replace(/\/+$/, "") : "http://127.0.0.1:8765";
+  const envUrl = typeof process !== "undefined"
+    ? (process.env?.VITE_PINTEREST_POD_API_URL || process.env?.VITE_BACKEND_URL)
+    : undefined;
+  return envUrl ? envUrl.replace(/\/+$/, "") : "http://127.0.0.1:8768";
 }
 
 /** Build standard relative asset URL conforming to CONTRACT_MAIN_TO_PINTEREST_POD */

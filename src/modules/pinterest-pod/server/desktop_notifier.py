@@ -58,7 +58,7 @@ $toast = [Windows.UI.Notifications.ToastNotification]::new($xml)
         pass
 
 
-def show_floating_desktop_card(title: str, message: str, url: str = "http://127.0.0.1:8765/#pinterest-pod", duration_sec: int = 7) -> None:
+def show_floating_desktop_card(title: str, message: str, url: str = "http://127.0.0.1:8768/#pinterest-pod", duration_sec: int = 7) -> None:
     """Shows native Windows notification banner with audio chime and auto-dismiss."""
     play_chime()
     send_windows_toast(title, message)
@@ -94,7 +94,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Desktop Notifier")
     parser.add_argument("--title", default="Pinterest POD Studio", help="Notification title")
     parser.add_argument("--message", default="Đã hoàn thành tác vụ!", help="Notification message")
-    parser.add_argument("--url", default="http://127.0.0.1:8765/#pinterest-pod", help="URL to open")
+    parser.add_argument("--url", default="http://127.0.0.1:8768/#pinterest-pod", help="URL to open")
     parser.add_argument("--duration", type=int, default=7, help="Display duration in seconds")
     parser.add_argument("--delay", type=int, default=0, help="Delay in seconds before showing")
     args = parser.parse_args()

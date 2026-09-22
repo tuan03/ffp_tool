@@ -3,6 +3,7 @@ from __future__ import annotations
 import dataclasses
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime
+import gc
 import json
 from pathlib import Path
 import re
@@ -307,6 +308,7 @@ def run_pipeline(
         if config.export_cmyk:
             log(progress, f"[{index}/{len(kept)}] Exporting CMYK JPG.")
             final_images.append(export_cmyk_jpg(final_png, final_dir / f"{base}_{config.target.width_px}x{config.target.height_px}_{config.target.dpi}dpi_cmyk.jpg", config.target.dpi))
+        gc.collect()
 
     mockups: list[Path] = []
     task4_results = []
@@ -1070,6 +1072,9 @@ def run_production_from_candidates(
                             })
                     except Exception as mock_exc:
                         log(progress, f"Mockup view {var_idx} skipped: {mock_exc}")
+
+        # Explicit garbage collection after each candidate to keep memory usage minimal on low-RAM VPS
+        gc.collect()
 
     # Merge newly produced records into existing stage_manifest if present
     if existing_manifest and isinstance(existing_manifest, dict):

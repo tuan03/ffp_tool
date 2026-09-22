@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import gc
 from pathlib import Path
 
 from PIL import Image, ImageFilter, ImageOps
+
+# Disable decompression bomb limit for high-DPI factory production (e.g., 10000x11000 blanket)
+Image.MAX_IMAGE_PIXELS = None
 
 from .config import ProductTarget
 
@@ -17,6 +21,8 @@ def enhance_image(source: Path, destination: Path, min_long_edge: int) -> Path:
             image = image.resize(new_size, Image.Resampling.LANCZOS)
         image = image.filter(ImageFilter.UnsharpMask(radius=1.6, percent=120, threshold=3))
         image.save(destination)
+        del image
+    gc.collect()
     return destination
 
 
@@ -30,7 +36,10 @@ def fit_to_target(source: Path, destination: Path, target: ProductTarget, mode: 
             fitted = contain_on_canvas(image, (target.width_px, target.height_px))
         else:
             fitted = ImageOps.fit(image, (target.width_px, target.height_px), Image.Resampling.LANCZOS, centering=(0.5, 0.5))
+        del image
         fitted.save(destination, dpi=(target.dpi, target.dpi))
+        del fitted
+    gc.collect()
     return destination
 
 
@@ -55,6 +64,9 @@ def remove_near_white_background(source: Path, destination: Path, threshold: int
                 else:
                     pixels[x, y] = (red, green, blue, alpha)
         rgba.save(destination)
+        del pixels
+        del rgba
+    gc.collect()
     return destination
 
 
@@ -66,7 +78,11 @@ def export_cmyk_jpg(source: Path, destination: Path, dpi: int) -> Path:
             flattened.paste(image, mask=image.getchannel("A"))
         else:
             flattened.paste(image.convert("RGB"))
+        del image
         cmyk = flattened.convert("CMYK")
+        del flattened
         cmyk.save(destination, quality=95, dpi=(dpi, dpi))
+        del cmyk
+    gc.collect()
     return destination
 
