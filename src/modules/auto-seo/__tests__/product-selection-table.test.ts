@@ -4,6 +4,7 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { AutoSeoPage } from "../ui/AutoSeoPage";
+import { MockAutoSeoClient } from "../mocks/runner";
 import { AutoSeoToolbar } from "../ui/components/AutoSeoToolbar";
 import type { AutoSeoToolbarProps } from "../ui/components/AutoSeoToolbar";
 import {
@@ -890,6 +891,7 @@ test("AutoSeoPage: binds toolbar counts and product selection table correctly", 
 
   function PageHarness(): React.JSX.Element {
     const tree = AutoSeoPage({
+      client: new MockAutoSeoClient(),
       initialProducts: mockProducts,
       initialSelectedProductIds: ["gid://shopify/Product/103"],
     });
@@ -921,17 +923,7 @@ test("AutoSeoPage: binds toolbar counts and product selection table correctly", 
 });
 
 test("AutoSeoPage: renders full page without crashing", () => {
-  const dummyClient = {
-    loadProducts: async () => mockProducts,
-    loadProductDetail: async (id: string) =>
-      mockProducts.find((p) => p.id === id) ?? mockProducts[0]!,
-    runAutoSeo: async () => ({
-      workflowId: "test",
-      selectedCount: 0,
-      seoContentInputs: [],
-      warnings: [],
-    }),
-  };
+  const dummyClient = new MockAutoSeoClient();
 
   const html = renderToStaticMarkup(React.createElement(AutoSeoPage, { client: dummyClient }));
   assert.ok(html.includes("Auto SEO Product Selection"));
@@ -943,6 +935,7 @@ test("AutoSeoPage: defaults to empty selection when initialSelectedProductIds is
 
   function PageHarness(): React.JSX.Element {
     const tree = AutoSeoPage({
+      client: new MockAutoSeoClient(),
       initialProducts: mockProducts,
     });
     capturedTree = tree as React.ReactElement<{ children: React.ReactNode[] }>;

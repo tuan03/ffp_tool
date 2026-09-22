@@ -1,6 +1,7 @@
+import { AppError } from "../../shared/errors/app-error";
 import type { AppEnvironment } from "../../shared/types";
 import { MockAutoSeoClient, runMockAutoSeo } from "./mocks/runner";
-import { RealAutoSeoClient, runAutoSeo } from "./service";
+import { runAutoSeo } from "./service";
 import type { AutoSeoClient } from "./types";
 
 export function getAutoSeoRunner(
@@ -14,5 +15,9 @@ export function getAutoSeoClient(environment: AppEnvironment): AutoSeoClient {
     return new MockAutoSeoClient();
   }
 
-  return new RealAutoSeoClient();
+  throw new AppError(
+    "Direct AutoSeoClient construction is deprecated in development/production. " +
+      "Use createAutoSeoModuleApiClient(getModuleApiRunner(environment)) from orchestrator instead.",
+    "AUTO_SEO_LOAD_FAILED",
+  );
 }

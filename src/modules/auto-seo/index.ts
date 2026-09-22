@@ -1,5 +1,4 @@
 export {
-  autoSeoRoutes,
   createAutoSeoRoutes,
 } from "./routes";
 
@@ -11,8 +10,6 @@ export {
 export {
   hydrateSelectedProducts,
   mapWithConcurrency,
-  RealAutoSeoClient,
-  realAutoSeoClient,
   runAutoSeo,
 } from "./service";
 
@@ -21,6 +18,8 @@ export {
 } from "./shopify-adapter";
 
 export type {
+  AutoSeoBackupRequest,
+  AutoSeoBackupResponse,
   AutoSeoClient,
   AutoSeoOutput,
   AutoSeoProductCandidate,

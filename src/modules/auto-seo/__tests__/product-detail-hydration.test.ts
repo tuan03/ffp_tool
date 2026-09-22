@@ -8,116 +8,69 @@ import {
   hydrateSelectedProducts,
   mapShopifyProductToAutoSeoCandidate,
   mapWithConcurrency,
-  RealAutoSeoClient,
   runAutoSeo,
 } from "..";
 import { MockAutoSeoClient } from "../mocks/runner";
 import type {
   AutoSeoClient,
-  AutoSeoSelectionInput,
   ShopifyProductForAutoSeoUi,
 } from "../types";
-import { AutoSeoPage } from "../ui/AutoSeoPage";
 import { ProductDetailDrawer } from "../ui/components/ProductDetailDrawer";
 
-function createFakeGateway(options?: {
+function createTestAutoSeoClient(options?: {
   readonly getProductDetail?: (productId: string) => ShopifyProductForAutoSeoUi | null;
   readonly delayMs?: number;
   readonly failProductId?: string;
-}) {
-  const calls: { operation: string; payload: Record<string, unknown> }[] = [];
+}): AutoSeoClient & { getCallIds: () => string[]; getMaxActive: () => number } {
+  const detailCache = new Map<string, ShopifyProductForAutoSeoUi>();
+  const callIds: string[] = [];
   let currentActive = 0;
   let maxActive = 0;
 
-  const fakeFetch: typeof fetch = async (_input, init) => {
-    currentActive++;
-    if (currentActive > maxActive) {
-      maxActive = currentActive;
-    }
-
-    if (options?.delayMs) {
-      await new Promise((resolve) => setTimeout(resolve, options.delayMs));
-    }
-
-    try {
-      const body = JSON.parse(String(init?.body)) as {
-        operation: string;
-        storeId?: string;
-        payload?: Record<string, unknown>;
-      };
-
-      calls.push({ operation: body.operation, payload: body.payload ?? {} });
-
-      if (body.operation === "stores.list") {
-        return new Response(
-          JSON.stringify({
-            success: true,
-            data: { stores: [{ storeId: "store-test-1" }], total: 1 },
-          }),
-          { status: 200, headers: { "Content-Type": "application/json" } },
-        );
+  const client: AutoSeoClient & { getCallIds: () => string[]; getMaxActive: () => number } = {
+    getCallIds: () => callIds,
+    getMaxActive: () => maxActive,
+    getCachedDetail: (id: string) => detailCache.get(id),
+    clearDetailCache: () => detailCache.clear(),
+    clearCache: () => detailCache.clear(),
+    loadProducts: async () => [],
+    loadProductDetail: async (id: string) => {
+      currentActive++;
+      if (currentActive > maxActive) {
+        maxActive = currentActive;
       }
-
-      if (body.operation === "products.list") {
-        return new Response(
-          JSON.stringify({
-            success: true,
-            data: {
-              products: [
-                {
-                  id: "gid://shopify/Product/cat-1",
-                  title: "Catalog Product 1",
-                  handle: "cat-product-1",
-                  status: "ACTIVE",
-                  featuredImage: {
-                    url: "https://cdn.example.com/thumb-cat-1.jpg",
-                    altText: "Catalog Thumbnail 1",
-                  },
-                  seo: { title: "Catalog SEO Title", description: "Catalog SEO Desc" },
-                },
-              ],
-              pageInfo: { hasNextPage: false },
-            },
-          }),
-          { status: 200, headers: { "Content-Type": "application/json" } },
-        );
+      if (options?.delayMs) {
+        await new Promise((r) => setTimeout(r, options.delayMs));
       }
-
-      if (body.operation === "products.get") {
-        const productId = String(body.payload?.id ?? "");
-
-        if (options?.failProductId && productId === options.failProductId) {
-          return new Response(
-            JSON.stringify({
-              success: false,
-              error: { message: `Simulated gateway error for ${productId}` },
-            }),
-            { status: 200, headers: { "Content-Type": "application/json" } },
-          );
+      try {
+        callIds.push(id);
+        if (options?.failProductId && id === options.failProductId) {
+          throw new AppError(`Simulated failure for ${id}`, "AUTO_SEO_LOAD_FAILED");
         }
-
+        const cached = detailCache.get(id);
+        if (cached) return cached;
         const product = options?.getProductDetail
-          ? options.getProductDetail(productId)
+          ? options.getProductDetail(id)
           : {
-              id: productId,
-              title: `Full Title for ${productId}`,
-              handle: `handle-${productId.replace(/\W+/g, "-")}`,
+              id,
+              title: `Full Title for ${id}`,
+              handle: `handle-${id.replace(/\W+/g, "-")}`,
               status: "ACTIVE",
-              descriptionHtml: `<p>Full description for ${productId}</p>`,
+              descriptionHtml: `<p>Full description for ${id}</p>`,
               seo: {
-                title: `SEO Title for ${productId}`,
-                description: `SEO Description for ${productId}`,
+                title: `SEO Title for ${id}`,
+                description: `SEO Description for ${id}`,
               },
               images: [
                 {
                   id: "img-1",
-                  url: `https://cdn.example.com/${productId}-1.jpg`,
-                  altText: `Alt text 1 for ${productId}`,
+                  url: `https://cdn.example.com/${id}-1.jpg`,
+                  altText: `Alt text 1 for ${id}`,
                 },
                 {
                   id: "img-2",
-                  url: `https://cdn.example.com/${productId}-2.jpg`,
-                  altText: `Alt text 2 for ${productId}`,
+                  url: `https://cdn.example.com/${id}-2.jpg`,
+                  altText: `Alt text 2 for ${id}`,
                 },
               ],
               variants: [
@@ -129,206 +82,40 @@ function createFakeGateway(options?: {
                 },
               ],
             };
-
-        return new Response(
-          JSON.stringify({
-            success: true,
-            data: { product },
-          }),
-          { status: 200, headers: { "Content-Type": "application/json" } },
-        );
+        if (!product) {
+          throw new AppError(`Product not found: ${id}`, "AUTO_SEO_LOAD_FAILED");
+        }
+        detailCache.set(id, product);
+        return product;
+      } finally {
+        currentActive--;
       }
-
-      return new Response("Not Found", { status: 404 });
-    } finally {
-      currentActive--;
-    }
+    },
+    runAutoSeo: async (input) => runAutoSeo(input),
+    getStoreInfo: async () => ({ storeId: "store-test", shopDomain: "test.myshopify.com" }),
+    runAutoSeoBackup: async (req) => ({
+      workflowId: req.workflowId,
+      backedUpCount: req.products.length,
+      backupIds: req.products.map((_, i) => `b-${i}`),
+      downstreamStatus: "SENT",
+      downstreamHttpStatus: 200,
+    }),
+    hydrateSelectedProductsFresh: async (ids, concurrency = 5) => {
+      const unique = Array.from(new Set(ids));
+      const map = new Map<string, ShopifyProductForAutoSeoUi>();
+      await mapWithConcurrency(unique, concurrency, async (id) => {
+        const p = await client.loadProductDetail(id);
+        map.set(id, p);
+      });
+      return ids.map((id) => map.get(id)!);
+    },
   };
 
-  return {
-    fakeFetch,
-    getCalls: () => calls,
-    getMaxActive: () => maxActive,
-  };
+  return client;
 }
 
-// 1. loadProducts uses products.list
-test("1. loadProducts uses products.list", async () => {
-  const { fakeFetch, getCalls } = createFakeGateway();
-  const client = new RealAutoSeoClient("http://gateway.test", fakeFetch);
-
-  const products = await client.loadProducts();
-
-  assert.equal(products.length, 1);
-  assert.equal(products[0]?.id, "gid://shopify/Product/cat-1");
-
-  const calls = getCalls();
-  assert.equal(calls.length, 2);
-  assert.equal(calls[0]?.operation, "stores.list");
-  assert.equal(calls[1]?.operation, "products.list");
-  assert.equal((calls[1]?.payload as { limit?: number }).limit, 250);
-});
-
-// 2. loadProducts still paginates all catalog pages
-test("2. loadProducts still paginates all catalog pages", async () => {
-  const calls: string[] = [];
-  const fakeFetch: typeof fetch = async (_input, init) => {
-    const body = JSON.parse(String(init?.body)) as {
-      operation: string;
-      payload?: { cursor?: string };
-    };
-    calls.push(body.operation);
-
-    if (body.operation === "stores.list") {
-      return new Response(
-        JSON.stringify({
-          success: true,
-          data: { stores: [{ storeId: "store-1" }] },
-        }),
-        { status: 200, headers: { "Content-Type": "application/json" } },
-      );
-    }
-    if (body.operation === "products.list") {
-      if (!body.payload?.cursor) {
-        return new Response(
-          JSON.stringify({
-            success: true,
-            data: {
-              products: [{ id: "p1", title: "Page 1 Item", handle: "p1" }],
-              pageInfo: { hasNextPage: true, endCursor: "cursor_page_1" },
-            },
-          }),
-          { status: 200, headers: { "Content-Type": "application/json" } },
-        );
-      }
-      return new Response(
-        JSON.stringify({
-          success: true,
-          data: {
-            products: [{ id: "p2", title: "Page 2 Item", handle: "p2" }],
-            pageInfo: { hasNextPage: false, endCursor: "cursor_page_2" },
-          },
-        }),
-        { status: 200, headers: { "Content-Type": "application/json" } },
-      );
-    }
-    return new Response("Not Found", { status: 404 });
-  };
-
-  const client = new RealAutoSeoClient("http://gateway.test", fakeFetch);
-  const products = await client.loadProducts();
-
-  assert.equal(products.length, 2);
-  assert.equal(products[0]?.id, "p1");
-  assert.equal(products[1]?.id, "p2");
-  assert.deepEqual(calls, ["stores.list", "products.list", "products.list"]);
-});
-
-// 3. loadProductDetail calls products.get with correct product id
-test("3. loadProductDetail calls products.get with correct product id", async () => {
-  const { fakeFetch, getCalls } = createFakeGateway();
-  const client = new RealAutoSeoClient("http://gateway.test", fakeFetch);
-
-  const product = await client.loadProductDetail("gid://shopify/Product/12345");
-
-  assert.equal(product.id, "gid://shopify/Product/12345");
-  const calls = getCalls();
-  assert.equal(calls.length, 2); // stores.list then products.get
-  assert.equal(calls[0]?.operation, "stores.list");
-  assert.equal(calls[1]?.operation, "products.get");
-  assert.equal((calls[1]?.payload as { id?: string }).id, "gid://shopify/Product/12345");
-});
-
-// 4. loadProductDetail returns descriptionHtml
-test("4. loadProductDetail returns descriptionHtml", async () => {
-  const { fakeFetch } = createFakeGateway({
-    getProductDetail: (id) => ({
-      id,
-      title: "Detailed Mug",
-      handle: "detailed-mug",
-      descriptionHtml: "<p>Rich descriptive text about ceramic mug</p>",
-    }),
-  });
-  const client = new RealAutoSeoClient("http://gateway.test", fakeFetch);
-
-  const detail = await client.loadProductDetail("gid://shopify/Product/detail-mug");
-
-  assert.equal(detail.descriptionHtml, "<p>Rich descriptive text about ceramic mug</p>");
-});
-
-// 5. loadProductDetail returns images + altText
-test("5. loadProductDetail returns images + altText", async () => {
-  const { fakeFetch } = createFakeGateway({
-    getProductDetail: (id) => ({
-      id,
-      title: "Detailed Mug",
-      handle: "detailed-mug",
-      images: [
-        {
-          id: "img-1",
-          url: "https://example.com/mug-front.jpg",
-          altText: "Ceramic Mug Front View",
-        },
-        {
-          id: "img-2",
-          url: "https://example.com/mug-back.jpg",
-          altText: "Ceramic Mug Back View",
-        },
-      ],
-    }),
-  });
-  const client = new RealAutoSeoClient("http://gateway.test", fakeFetch);
-
-  const detail = await client.loadProductDetail("gid://shopify/Product/detail-mug");
-
-  assert.equal(detail.images?.length, 2);
-  assert.equal(detail.images?.[0]?.url, "https://example.com/mug-front.jpg");
-  assert.equal(detail.images?.[0]?.altText, "Ceramic Mug Front View");
-  assert.equal(detail.images?.[1]?.url, "https://example.com/mug-back.jpg");
-  assert.equal(detail.images?.[1]?.altText, "Ceramic Mug Back View");
-});
-
-// 6. loadProductDetail returns variants
-test("6. loadProductDetail returns variants", async () => {
-  const { fakeFetch } = createFakeGateway({
-    getProductDetail: (id) => ({
-      id,
-      title: "Mug With Sizes",
-      handle: "mug-sizes",
-      variants: [
-        { id: "var-11oz", title: "11 oz", price: "14.99", sku: "MUG-11" },
-        { id: "var-15oz", title: "15 oz", price: "18.99", sku: "MUG-15" },
-      ],
-    }),
-  });
-  const client = new RealAutoSeoClient("http://gateway.test", fakeFetch);
-
-  const detail = await client.loadProductDetail("gid://shopify/Product/detail-variants");
-
-  assert.equal(detail.variants?.length, 2);
-  assert.equal(detail.variants?.[0]?.id, "var-11oz");
-  assert.equal(detail.variants?.[0]?.title, "11 oz");
-  assert.equal(detail.variants?.[1]?.id, "var-15oz");
-  assert.equal(detail.variants?.[1]?.price, "18.99");
-});
-
-// 7. repeated detail request for same product uses cache
-test("7. repeated detail request for same product uses cache", async () => {
-  const { fakeFetch, getCalls } = createFakeGateway();
-  const client = new RealAutoSeoClient("http://gateway.test", fakeFetch);
-
-  const firstCall = await client.loadProductDetail("gid://shopify/Product/cached-item");
-  const secondCall = await client.loadProductDetail("gid://shopify/Product/cached-item");
-
-  assert.equal(firstCall.id, "gid://shopify/Product/cached-item");
-  assert.equal(secondCall.id, "gid://shopify/Product/cached-item");
-
-  const getCallsCount = getCalls().filter((c) => c.operation === "products.get").length;
-  assert.equal(getCallsCount, 1, "products.get must be called only once due to cache");
-});
-
-// 8. opening ProductDetailDrawer hydrates product detail
-test("8. opening ProductDetailDrawer hydrates product detail", async () => {
+// 1. opening ProductDetailDrawer hydrates product detail
+test("1. opening ProductDetailDrawer hydrates product detail", async () => {
   const hydratedCalls: string[] = [];
   const fakeClient: AutoSeoClient = {
     loadProducts: async () => [],
@@ -344,13 +131,20 @@ test("8. opening ProductDetailDrawer hydrates product detail", async () => {
     },
     runAutoSeo: async (input) => runAutoSeo(input),
     getCachedDetail: () => undefined,
+    getStoreInfo: async () => ({ storeId: "store-1", shopDomain: "test.myshopify.com" }),
+    runAutoSeoBackup: async (req) => ({
+      workflowId: req.workflowId,
+      backedUpCount: req.products.length,
+      backupIds: [],
+      downstreamStatus: "SENT",
+    }),
+    hydrateSelectedProductsFresh: async () => [],
   };
 
   const catalogProduct: ShopifyProductForAutoSeoUi = {
     id: "gid://shopify/Product/catalog-p1",
     title: "Catalog Only Title",
     handle: "cat-p1",
-    // No descriptionHtml or images in catalog
   };
 
   // Render ProductDetailDrawer with loading state
@@ -382,8 +176,8 @@ test("8. opening ProductDetailDrawer hydrates product detail", async () => {
   assert.ok(htmlHydrated.includes("Hydrated Image"));
 });
 
-// 9. cached drawer detail does not fetch again
-test("9. cached drawer detail does not fetch again", async () => {
+// 2. cached drawer detail does not fetch again
+test("2. cached drawer detail does not fetch again", async () => {
   const cachedProduct: ShopifyProductForAutoSeoUi = {
     id: "gid://shopify/Product/cached-p1",
     title: "Cached Full Product",
@@ -395,12 +189,20 @@ test("9. cached drawer detail does not fetch again", async () => {
   let fetchCount = 0;
   const fakeClient: AutoSeoClient = {
     loadProducts: async () => [cachedProduct],
-    loadProductDetail: async (id: string) => {
+    loadProductDetail: async () => {
       fetchCount++;
       return cachedProduct;
     },
     runAutoSeo: async (input) => runAutoSeo(input),
     getCachedDetail: (id) => (id === cachedProduct.id ? cachedProduct : undefined),
+    getStoreInfo: async () => ({ storeId: "store-1", shopDomain: "test.myshopify.com" }),
+    runAutoSeoBackup: async (req) => ({
+      workflowId: req.workflowId,
+      backedUpCount: req.products.length,
+      backupIds: [],
+      downstreamStatus: "SENT",
+    }),
+    hydrateSelectedProductsFresh: async () => [],
   };
 
   // Verify getCachedDetail returns the product
@@ -422,15 +224,13 @@ test("9. cached drawer detail does not fetch again", async () => {
   assert.ok(!html.includes("Đang tải chi tiết..."));
 });
 
-// 10. run Auto SEO hydrates selected products before mapping
-test("10. run Auto SEO hydrates selected products before mapping", async () => {
-  const { fakeFetch } = createFakeGateway();
-  const client = new RealAutoSeoClient("http://gateway.test", fakeFetch);
-
+// 3. run Auto SEO hydrates selected products before mapping
+test("3. run Auto SEO hydrates selected products before mapping", async () => {
+  const client = createTestAutoSeoClient();
   const selectedIds = ["gid://shopify/Product/p1", "gid://shopify/Product/p2"];
 
   // Hydrate selected products
-  const hydrated = await client.hydrateSelectedProducts(selectedIds);
+  const hydrated = await hydrateSelectedProducts(client, selectedIds);
 
   // Map to candidates
   const candidates = hydrated.map(mapShopifyProductToAutoSeoCandidate);
@@ -445,18 +245,16 @@ test("10. run Auto SEO hydrates selected products before mapping", async () => {
   assert.equal(candidates[1]?.productId, "gid://shopify/Product/p2");
 });
 
-// 11. multiple selected products produce full AutoSeoProductCandidate values
-test("11. multiple selected products produce full AutoSeoProductCandidate values", async () => {
-  const { fakeFetch } = createFakeGateway();
-  const client = new RealAutoSeoClient("http://gateway.test", fakeFetch);
-
+// 4. multiple selected products produce full AutoSeoProductCandidate values
+test("4. multiple selected products produce full AutoSeoProductCandidate values", async () => {
+  const client = createTestAutoSeoClient();
   const selectedIds = [
     "gid://shopify/Product/100",
     "gid://shopify/Product/200",
     "gid://shopify/Product/300",
   ];
 
-  const hydrated = await client.hydrateSelectedProducts(selectedIds);
+  const hydrated = await hydrateSelectedProducts(client, selectedIds);
   const candidates = hydrated.map(mapShopifyProductToAutoSeoCandidate);
 
   assert.equal(candidates.length, 3);
@@ -473,9 +271,9 @@ test("11. multiple selected products produce full AutoSeoProductCandidate values
   }
 });
 
-// 12. SeoContent payload contains real sourceDescriptionHtml
-test("12. SeoContent payload contains real sourceDescriptionHtml", async () => {
-  const { fakeFetch } = createFakeGateway({
+// 5. SeoContent payload contains real sourceDescriptionHtml
+test("5. SeoContent payload contains real sourceDescriptionHtml", async () => {
+  const client = createTestAutoSeoClient({
     getProductDetail: (id) => ({
       id,
       title: "Real Product",
@@ -484,9 +282,8 @@ test("12. SeoContent payload contains real sourceDescriptionHtml", async () => {
       images: [{ url: "https://example.com/item.jpg" }],
     }),
   });
-  const client = new RealAutoSeoClient("http://gateway.test", fakeFetch);
 
-  const hydrated = await client.hydrateSelectedProducts(["gid://shopify/Product/real-1"]);
+  const hydrated = await hydrateSelectedProducts(client, ["gid://shopify/Product/real-1"]);
   const candidates = hydrated.map(mapShopifyProductToAutoSeoCandidate);
 
   const result = await client.runAutoSeo({
@@ -502,9 +299,9 @@ test("12. SeoContent payload contains real sourceDescriptionHtml", async () => {
   );
 });
 
-// 13. SeoContent payload contains sourceSeoTitle/sourceSeoDescription
-test("13. SeoContent payload contains sourceSeoTitle/sourceSeoDescription", async () => {
-  const { fakeFetch } = createFakeGateway({
+// 6. SeoContent payload contains sourceSeoTitle/sourceSeoDescription
+test("6. SeoContent payload contains sourceSeoTitle/sourceSeoDescription", async () => {
+  const client = createTestAutoSeoClient({
     getProductDetail: (id) => ({
       id,
       title: "SEO Target Product",
@@ -517,9 +314,8 @@ test("13. SeoContent payload contains sourceSeoTitle/sourceSeoDescription", asyn
       images: [],
     }),
   });
-  const client = new RealAutoSeoClient("http://gateway.test", fakeFetch);
 
-  const hydrated = await client.hydrateSelectedProducts(["gid://shopify/Product/seo-p"]);
+  const hydrated = await hydrateSelectedProducts(client, ["gid://shopify/Product/seo-p"]);
   const candidates = hydrated.map(mapShopifyProductToAutoSeoCandidate);
 
   const result = await client.runAutoSeo({
@@ -535,9 +331,9 @@ test("13. SeoContent payload contains sourceSeoTitle/sourceSeoDescription", asyn
   );
 });
 
-// 14. SeoContent payload contains all returned images/altText
-test("14. SeoContent payload contains all returned images/altText", async () => {
-  const { fakeFetch } = createFakeGateway({
+// 7. SeoContent payload contains all returned images/altText
+test("7. SeoContent payload contains all returned images/altText", async () => {
+  const client = createTestAutoSeoClient({
     getProductDetail: (id) => ({
       id,
       title: "Multi-Image Product",
@@ -550,9 +346,8 @@ test("14. SeoContent payload contains all returned images/altText", async () => 
       ],
     }),
   });
-  const client = new RealAutoSeoClient("http://gateway.test", fakeFetch);
 
-  const hydrated = await client.hydrateSelectedProducts(["gid://shopify/Product/multi-img-p"]);
+  const hydrated = await hydrateSelectedProducts(client, ["gid://shopify/Product/multi-img-p"]);
   const candidates = hydrated.map(mapShopifyProductToAutoSeoCandidate);
 
   const result = await client.runAutoSeo({
@@ -575,16 +370,15 @@ test("14. SeoContent payload contains all returned images/altText", async () => 
   assert.equal(payloadImages[2]?.position, 3);
 });
 
-// 15. hydration failure does NOT silently substitute empty product detail
-test("15. hydration failure does NOT silently substitute empty product detail", async () => {
-  const { fakeFetch } = createFakeGateway({
+// 8. hydration failure does NOT silently substitute empty product detail
+test("8. hydration failure does NOT silently substitute empty product detail", async () => {
+  const client = createTestAutoSeoClient({
     failProductId: "gid://shopify/Product/broken-500",
   });
-  const client = new RealAutoSeoClient("http://gateway.test", fakeFetch);
 
   await assert.rejects(
     async () => {
-      await client.hydrateSelectedProducts([
+      await hydrateSelectedProducts(client, [
         "gid://shopify/Product/good-1",
         "gid://shopify/Product/broken-500",
       ]);
@@ -601,10 +395,9 @@ test("15. hydration failure does NOT silently substitute empty product detail", 
   );
 });
 
-// 16. duplicate selected IDs do not cause duplicate products.get requests
-test("16. duplicate selected IDs do not cause duplicate products.get requests", async () => {
-  const { fakeFetch, getCalls } = createFakeGateway();
-  const client = new RealAutoSeoClient("http://gateway.test", fakeFetch);
+// 9. duplicate selected IDs do not cause duplicate products.get requests
+test("9. duplicate selected IDs do not cause duplicate products.get requests", async () => {
+  const client = createTestAutoSeoClient();
 
   const duplicateSelectedIds = [
     "gid://shopify/Product/item-A",
@@ -614,45 +407,43 @@ test("16. duplicate selected IDs do not cause duplicate products.get requests", 
     "gid://shopify/Product/item-A",
   ];
 
-  const hydrated = await client.hydrateSelectedProducts(duplicateSelectedIds);
+  const hydrated = await hydrateSelectedProducts(client, duplicateSelectedIds);
 
   // Output preserves the duplicate count for selection mapping
   assert.equal(hydrated.length, 5);
 
-  const productsGetCalls = getCalls().filter((c) => c.operation === "products.get");
+  const detailCalls = client.getCallIds();
   assert.equal(
-    productsGetCalls.length,
+    detailCalls.length,
     2,
     "Only 2 unique products.get requests should be sent for 2 unique IDs",
   );
 });
 
-// 17. bounded concurrency is respected
-test("17. bounded concurrency is respected", async () => {
-  const { fakeFetch, getMaxActive } = createFakeGateway({
+// 10. bounded concurrency is respected
+test("10. bounded concurrency is respected", async () => {
+  const client = createTestAutoSeoClient({
     delayMs: 15,
   });
-  const client = new RealAutoSeoClient("http://gateway.test", fakeFetch);
 
   const tenProductIds = Array.from(
     { length: 10 },
     (_, i) => `gid://shopify/Product/batch-${i + 1}`,
   );
 
-  const hydrated = await client.hydrateSelectedProducts(tenProductIds, 3);
+  const hydrated = await hydrateSelectedProducts(client, tenProductIds, 3);
 
   assert.equal(hydrated.length, 10);
-  const maxActiveCalls = getMaxActive();
+  const maxActiveCalls = client.getMaxActive();
   assert.ok(
     maxActiveCalls <= 3,
     `Max active concurrency was ${maxActiveCalls}, must be <= 3`,
   );
 });
 
-// 18. final hydrated product order matches selected product order
-test("18. final hydrated product order matches selected product order", async () => {
-  const { fakeFetch } = createFakeGateway();
-  const client = new RealAutoSeoClient("http://gateway.test", fakeFetch);
+// 11. final hydrated product order matches selected product order
+test("11. final hydrated product order matches selected product order", async () => {
+  const client = createTestAutoSeoClient();
 
   const orderedIds = [
     "gid://shopify/Product/zebra",
@@ -661,7 +452,7 @@ test("18. final hydrated product order matches selected product order", async ()
     "gid://shopify/Product/banana",
   ];
 
-  const hydrated = await client.hydrateSelectedProducts(orderedIds);
+  const hydrated = await hydrateSelectedProducts(client, orderedIds);
 
   assert.equal(hydrated.length, 4);
   assert.equal(hydrated[0]?.id, "gid://shopify/Product/zebra");
@@ -670,8 +461,8 @@ test("18. final hydrated product order matches selected product order", async ()
   assert.equal(hydrated[3]?.id, "gid://shopify/Product/banana");
 });
 
-// Additional test: MockAutoSeoClient hydration and detail caching
-test("19. MockAutoSeoClient supports loadProductDetail and hydrateSelectedProducts with caching", async () => {
+// 12. MockAutoSeoClient supports loadProductDetail and hydrateSelectedProducts with caching
+test("12. MockAutoSeoClient supports loadProductDetail and hydrateSelectedProducts with caching", async () => {
   const mockClient = new MockAutoSeoClient();
 
   const products = await mockClient.loadProducts();
@@ -694,8 +485,8 @@ test("19. MockAutoSeoClient supports loadProductDetail and hydrateSelectedProduc
   assert.equal(hydrated[1]?.id, products[1]!.id);
 });
 
-// 20. MockAutoSeoClient supports loadProductDetail with storeId overload
-test("20. MockAutoSeoClient supports loadProductDetail with storeId overload", async () => {
+// 13. MockAutoSeoClient supports loadProductDetail with storeId overload
+test("13. MockAutoSeoClient supports loadProductDetail with storeId overload", async () => {
   const mockClient = new MockAutoSeoClient();
   const products = await mockClient.loadProducts();
   const firstId = products[0]!.id;
@@ -715,8 +506,8 @@ test("20. MockAutoSeoClient supports loadProductDetail with storeId overload", a
   assert.notEqual(freshCached?.title, "Mutated In Test");
 });
 
-// 21. mapWithConcurrency halts remaining workers immediately on error
-test("21. mapWithConcurrency halts remaining workers immediately on error", async () => {
+// 14. mapWithConcurrency halts remaining workers immediately on error
+test("14. mapWithConcurrency halts remaining workers immediately on error", async () => {
   const executedIndices: number[] = [];
   const items = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
 
@@ -745,8 +536,8 @@ test("21. mapWithConcurrency halts remaining workers immediately on error", asyn
   );
 });
 
-// 22. ProductDetailDrawer renders loading placeholders for images and variants
-test("22. ProductDetailDrawer renders loading placeholders for images and variants when isLoading is true", () => {
+// 15. ProductDetailDrawer renders loading placeholders for images and variants
+test("15. ProductDetailDrawer renders loading placeholders for images and variants when isLoading is true", () => {
   const catalogProduct: ShopifyProductForAutoSeoUi = {
     id: "gid://shopify/Product/test-p",
     title: "Test Product",
@@ -765,4 +556,3 @@ test("22. ProductDetailDrawer renders loading placeholders for images and varian
   assert.ok(html.includes("Đang tải hình ảnh sản phẩm từ Shopify..."));
   assert.ok(html.includes("Đang tải chi tiết..."));
 });
-

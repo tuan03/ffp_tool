@@ -5,7 +5,6 @@ import { AppError } from "../../../shared/errors/app-error";
 import { getAutoSeoClient, getAutoSeoRunner, mapShopifyProductToAutoSeoCandidate, runAutoSeo } from "..";
 import { autoSeoMockProducts } from "../mocks/data";
 import { MockAutoSeoClient, runMockAutoSeo } from "../mocks/runner";
-import { RealAutoSeoClient } from "../service";
 import type {
   AutoSeoProductCandidate,
   AutoSeoProductImage,
@@ -61,17 +60,22 @@ const sampleProducts: readonly AutoSeoProductCandidate[] = [
   },
 ];
 
-test("1. runAutoSeo selects all products when no selection is provided", async () => {
+test("1. runAutoSeo throws AUTO_SEO_NO_SELECTION when no selection is provided", async () => {
   const input: AutoSeoSelectionInput = {
-    workflowId: "wf-select-all",
+    workflowId: "wf-no-selection",
     products: sampleProducts,
   };
 
-  const output = await runAutoSeo(input);
-
-  assert.equal(output.workflowId, "wf-select-all");
-  assert.equal(output.selectedCount, 3);
-  assert.equal(output.seoContentInputs.length, 3);
+  await assert.rejects(
+    async () => {
+      await runAutoSeo(input);
+    },
+    (err: unknown) => {
+      assert.ok(err instanceof AppError);
+      assert.equal(err.code, "AUTO_SEO_NO_SELECTION");
+      return true;
+    },
+  );
 });
 
 test("2. runAutoSeo selects one product by productId", async () => {
@@ -156,6 +160,7 @@ test("6. runAutoSeo preserves descriptionHtml exactly without stripping, sanitiz
   const input: AutoSeoSelectionInput = {
     workflowId: "wf-preserve-html",
     products: [productWithRawHtml],
+    selectedProductIds: [productWithRawHtml.productId],
   };
 
   const output = await runAutoSeo(input);
@@ -203,6 +208,7 @@ test("9. Empty product list returns selectedCount 0 and warning", async () => {
   const input: AutoSeoSelectionInput = {
     workflowId: "wf-empty-products",
     products: [],
+    selectedProductIds: ["gid://shopify/Product/9999"],
   };
 
   const output = await runAutoSeo(input);
@@ -227,6 +233,7 @@ test("10. runAutoSeo maps seoTitle to sourceSeoTitle", async () => {
   const output = await runAutoSeo({
     workflowId: "wf-seo-title",
     products: [product],
+    selectedProductIds: [product.productId],
   });
 
   assert.equal(output.seoContentInputs[0]?.sourceSeoTitle, "Custom Shopify SEO Title");
@@ -246,6 +253,7 @@ test("11. runAutoSeo maps seoDescription to sourceSeoDescription", async () => {
   const output = await runAutoSeo({
     workflowId: "wf-seo-desc",
     products: [product],
+    selectedProductIds: [product.productId],
   });
 
   assert.equal(
@@ -277,6 +285,7 @@ test("12. missing seoTitle/seoDescription maps to null or undefined consistently
   const output = await runAutoSeo({
     workflowId: "wf-null-undefined-seo",
     products: [productWithUndefinedSeo, productWithNullSeo],
+    selectedProductIds: [productWithUndefinedSeo.productId, productWithNullSeo.productId],
   });
 
   assert.equal(output.seoContentInputs[0]?.sourceSeoTitle, null);
@@ -300,6 +309,7 @@ test("13. output does not include niche", async () => {
   const output = await runAutoSeo({
     workflowId: "wf-no-niche",
     products: [product],
+    selectedProductIds: [product.productId],
   });
 
   const rawItem = output.seoContentInputs[0] as unknown as Record<string, unknown>;
@@ -323,6 +333,7 @@ test("13. output does not include niche", async () => {
   const outputWithLingering = await runAutoSeo({
     workflowId: "wf-lingering-niche",
     products: [productWithLingeringNiche],
+    selectedProductIds: [productWithLingeringNiche.productId],
     ...({ niche: "storewide-niche" } as object),
   });
 
@@ -379,6 +390,11 @@ test("16. Mock runner returns AutoSeoOutput using deterministic mock data", asyn
   const output = await runMockAutoSeo({
     workflowId: "mock-wf",
     products: [],
+    selectedProductIds: [
+      "gid://shopify/Product/100001",
+      "gid://shopify/Product/100002",
+      "gid://shopify/Product/100003",
+    ],
   });
 
   assert.equal(output.workflowId, "mock-wf");
@@ -401,6 +417,23 @@ test("16. Mock runner returns AutoSeoOutput using deterministic mock data", asyn
   );
 });
 
+test("16b. Mock runner rejects empty selection with AUTO_SEO_NO_SELECTION", async () => {
+  await assert.rejects(
+    async () => {
+      await runMockAutoSeo({
+        workflowId: "mock-wf-empty",
+        products: [],
+        selectedProductIds: [],
+      });
+    },
+    (err: unknown) => {
+      assert.ok(err instanceof AppError);
+      assert.equal(err.code, "AUTO_SEO_NO_SELECTION");
+      return true;
+    },
+  );
+});
+
 test("17. getAutoSeoRunner selects mock or real runner based on environment", async () => {
   const mockRunner = getAutoSeoRunner("mock");
   const devRunner = getAutoSeoRunner("development");
@@ -415,6 +448,7 @@ test("18. Mock runner returns isolated copies that do not mutate fixtures", asyn
   const firstOutput = await runMockAutoSeo({
     workflowId: "mock-wf-isolated-1",
     products: [],
+    selectedProductIds: ["gid://shopify/Product/100001"],
   });
 
   const firstInput = firstOutput.seoContentInputs[0];
@@ -428,6 +462,7 @@ test("18. Mock runner returns isolated copies that do not mutate fixtures", asyn
   const secondOutput = await runMockAutoSeo({
     workflowId: "mock-wf-isolated-2",
     products: [],
+    selectedProductIds: ["gid://shopify/Product/100001"],
   });
 
   // Verify second output and the source fixture are unaffected
@@ -508,187 +543,33 @@ test("21. MockAutoSeoClient returns deep copies and runs workflow properly witho
   assert.equal("niche" in rawItem, false);
 });
 
-test("22. RealAutoSeoClient handles network failure with AppError", async () => {
-  const realClient = new RealAutoSeoClient("http://invalid-test-domain-12345.xyz");
 
-  await assert.rejects(
-    async () => {
-      await realClient.loadProducts();
-    },
-    (err: unknown) => {
-      assert.ok(err instanceof AppError);
-      assert.equal(err.code, "AUTO_SEO_LOAD_FAILED");
-      return true;
-    },
-  );
-});
-
-test("23. getAutoSeoClient selects correct client instance based on environment", () => {
+test("22. getAutoSeoClient selects MockAutoSeoClient for mock and throws deprecation for dev/prod", () => {
   const mockClient = getAutoSeoClient("mock");
   assert.ok(mockClient instanceof MockAutoSeoClient);
 
-  const devClient = getAutoSeoClient("development");
-  assert.ok(devClient instanceof RealAutoSeoClient);
-
-  const prodClient = getAutoSeoClient("production");
-  assert.ok(prodClient instanceof RealAutoSeoClient);
-});
-
-test("24. RealAutoSeoClient.loadProducts resolves storeId then loads products with limit 250", async () => {
-  const calls: { url: string; body: unknown }[] = [];
-
-  const fakeFetch: typeof fetch = async (input, init) => {
-    const url = String(input);
-    const body = JSON.parse(String(init?.body));
-    calls.push({ url, body });
-
-    if (body.operation === "stores.list") {
-      return new Response(
-        JSON.stringify({
-          storeId: "system",
-          operation: "stores.list",
-          success: true,
-          data: {
-            stores: [{ storeId: "store-auto-1", shopDomain: "store1.myshopify.com" }],
-            total: 1,
-          },
-        }),
-        { status: 200, headers: { "Content-Type": "application/json" } },
-      );
-    }
-
-    if (body.operation === "products.list") {
-      assert.equal(body.storeId, "store-auto-1");
-      assert.equal(body.payload.limit, 250);
-
-      return new Response(
-        JSON.stringify({
-          storeId: "store-auto-1",
-          operation: "products.list",
-          success: true,
-          data: {
-            products: [
-              {
-                id: "gid://shopify/Product/123",
-                title: "Auto SEO Product",
-                handle: "auto-seo-product",
-                descriptionHtml: "<p>Description</p>",
-                status: "ACTIVE",
-                images: [
-                  {
-                    id: "gid://shopify/ProductImage/1",
-                    url: "https://example.com/img.jpg",
-                    altText: "Image Alt",
-                    width: 500,
-                    height: 500,
-                  },
-                ],
-                seo: {
-                  title: "SEO Title",
-                  description: "SEO Description",
-                },
-              },
-            ],
-            pageInfo: { hasNextPage: false, hasPreviousPage: false },
-          },
-        }),
-        { status: 200, headers: { "Content-Type": "application/json" } },
-      );
-    }
-
-    return new Response("Not Found", { status: 404 });
-  };
-
-  const client = new RealAutoSeoClient("http://gateway.test", fakeFetch);
-  const products = await client.loadProducts();
-
-  assert.equal(calls.length, 2);
-  assert.equal(calls[0]?.url, "http://gateway.test/api/shopify");
-  assert.deepEqual(calls[0]?.body, { operation: "stores.list", payload: {} });
-  assert.equal(calls[1]?.url, "http://gateway.test/api/shopify");
-  assert.deepEqual(calls[1]?.body, {
-    storeId: "store-auto-1",
-    operation: "products.list",
-    payload: { limit: 250 },
-  });
-
-  assert.equal(products.length, 1);
-  assert.equal(products[0]?.id, "gid://shopify/Product/123");
-  assert.equal(products[0]?.images?.[0]?.altText, "Image Alt");
-});
-
-test("25. RealAutoSeoClient.loadProducts throws AUTO_SEO_LOAD_FAILED when no store available", async () => {
-  const fakeFetch: typeof fetch = async () => {
-    return new Response(
-      JSON.stringify({
-        operation: "stores.list",
-        success: true,
-        data: {
-          stores: [],
-          total: 0,
-        },
-      }),
-      { status: 200, headers: { "Content-Type": "application/json" } },
-    );
-  };
-
-  const client = new RealAutoSeoClient("http://gateway.test", fakeFetch);
-
-  await assert.rejects(
-    async () => {
-      await client.loadProducts();
-    },
-    (err: unknown) => {
+  assert.throws(
+    () => getAutoSeoClient("development"),
+    (err) => {
       assert.ok(err instanceof AppError);
       assert.equal(err.code, "AUTO_SEO_LOAD_FAILED");
-      assert.match(err.message, /No available Shopify store found/);
+      assert.match(err.message, /Direct AutoSeoClient construction is deprecated/);
+      return true;
+    },
+  );
+
+  assert.throws(
+    () => getAutoSeoClient("production"),
+    (err) => {
+      assert.ok(err instanceof AppError);
+      assert.equal(err.code, "AUTO_SEO_LOAD_FAILED");
+      assert.match(err.message, /Direct AutoSeoClient construction is deprecated/);
       return true;
     },
   );
 });
 
-test("26. RealAutoSeoClient.loadProducts throws AUTO_SEO_LOAD_FAILED on HTTP failure", async () => {
-  const fakeFetchStoresErr: typeof fetch = async () => {
-    return new Response("Internal Server Error", { status: 500 });
-  };
-  const client1 = new RealAutoSeoClient("http://gateway.test", fakeFetchStoresErr);
-  await assert.rejects(
-    async () => {
-      await client1.loadProducts();
-    },
-    (err: unknown) => {
-      assert.ok(err instanceof AppError);
-      assert.equal(err.code, "AUTO_SEO_LOAD_FAILED");
-      return true;
-    },
-  );
-
-  const fakeFetchProductsErr: typeof fetch = async (input, init) => {
-    const body = JSON.parse(String(init?.body));
-    if (body.operation === "stores.list") {
-      return new Response(
-        JSON.stringify({
-          data: { stores: [{ storeId: "store-1" }] },
-        }),
-        { status: 200, headers: { "Content-Type": "application/json" } },
-      );
-    }
-    return new Response("Service Unavailable", { status: 503 });
-  };
-  const client2 = new RealAutoSeoClient("http://gateway.test", fakeFetchProductsErr);
-  await assert.rejects(
-    async () => {
-      await client2.loadProducts();
-    },
-    (err: unknown) => {
-      assert.ok(err instanceof AppError);
-      assert.equal(err.code, "AUTO_SEO_LOAD_FAILED");
-      return true;
-    },
-  );
-});
-
-test("27. mapShopifyProductToAutoSeoCandidate maps null image altText/width/height cleanly", () => {
+test("23. mapShopifyProductToAutoSeoCandidate maps null image altText/width/height cleanly", () => {
   const shopifyProduct: ShopifyProductForAutoSeoUi = {
     id: "gid://shopify/Product/9999",
     handle: "null-image-fields",
@@ -718,485 +599,3 @@ test("27. mapShopifyProductToAutoSeoCandidate maps null image altText/width/heig
   assert.equal(candidate.images[0]?.altText, undefined);
   assert.equal(candidate.images[0]?.position, 1);
 });
-
-test("28. RealAutoSeoClient.loadProducts throws AUTO_SEO_LOAD_FAILED when stores.list returns success: false", async () => {
-  const fakeFetch: typeof fetch = async () => {
-    return new Response(
-      JSON.stringify({
-        success: false,
-        error: { code: "SHOPIFY_AUTH_FAILED", message: "Gateway credentials invalid" },
-      }),
-      { status: 200, headers: { "Content-Type": "application/json" } },
-    );
-  };
-
-  const client = new RealAutoSeoClient("http://gateway.test", fakeFetch);
-
-  await assert.rejects(
-    async () => {
-      await client.loadProducts();
-    },
-    (err: unknown) => {
-      assert.ok(err instanceof AppError);
-      assert.equal(err.code, "AUTO_SEO_LOAD_FAILED");
-      assert.match(err.message, /Gateway credentials invalid/);
-      return true;
-    },
-  );
-});
-
-test("29. RealAutoSeoClient.loadProducts throws AUTO_SEO_LOAD_FAILED when products.list returns success: false", async () => {
-  const fakeFetch: typeof fetch = async (input, init) => {
-    const body = JSON.parse(String(init?.body));
-    if (body.operation === "stores.list") {
-      return new Response(
-        JSON.stringify({
-          success: true,
-          data: { stores: [{ storeId: "store-test" }] },
-        }),
-        { status: 200, headers: { "Content-Type": "application/json" } },
-      );
-    }
-    return new Response(
-      JSON.stringify({
-        success: false,
-        error: { code: "SHOPIFY_THROTTLED", message: "API call limit exceeded" },
-      }),
-      { status: 200, headers: { "Content-Type": "application/json" } },
-    );
-  };
-
-  const client = new RealAutoSeoClient("http://gateway.test", fakeFetch);
-
-  await assert.rejects(
-    async () => {
-      await client.loadProducts();
-    },
-    (err: unknown) => {
-      assert.ok(err instanceof AppError);
-      assert.equal(err.code, "AUTO_SEO_LOAD_FAILED");
-      assert.match(err.message, /API call limit exceeded/);
-      return true;
-    },
-  );
-});
-
-test("30. RealAutoSeoClient.loadProducts: one-page products.list returns normally", async () => {
-  const fakeFetch: typeof fetch = async (input, init) => {
-    const body = JSON.parse(String(init?.body));
-    if (body.operation === "stores.list") {
-      return new Response(
-        JSON.stringify({
-          success: true,
-          data: { stores: [{ storeId: "store-1" }] },
-        }),
-        { status: 200, headers: { "Content-Type": "application/json" } },
-      );
-    }
-    if (body.operation === "products.list") {
-      return new Response(
-        JSON.stringify({
-          success: true,
-          data: {
-            products: [
-              { id: "gid://shopify/Product/1", title: "P1", handle: "p1" },
-              { id: "gid://shopify/Product/2", title: "P2", handle: "p2" },
-            ],
-            pageInfo: { hasNextPage: false },
-          },
-        }),
-        { status: 200, headers: { "Content-Type": "application/json" } },
-      );
-    }
-    return new Response("Not Found", { status: 404 });
-  };
-
-  const client = new RealAutoSeoClient("http://gateway.test", fakeFetch);
-  const products = await client.loadProducts();
-
-  assert.equal(products.length, 2);
-  assert.equal(products[0]?.id, "gid://shopify/Product/1");
-  assert.equal(products[1]?.id, "gid://shopify/Product/2");
-});
-
-test("31. RealAutoSeoClient.loadProducts: two-page response combines both pages", async () => {
-  const fakeFetch: typeof fetch = async (input, init) => {
-    const body = JSON.parse(String(init?.body));
-    if (body.operation === "stores.list") {
-      return new Response(
-        JSON.stringify({
-          success: true,
-          data: { stores: [{ storeId: "store-1" }] },
-        }),
-        { status: 200, headers: { "Content-Type": "application/json" } },
-      );
-    }
-    if (body.operation === "products.list") {
-      if (!body.payload?.cursor) {
-        return new Response(
-          JSON.stringify({
-            success: true,
-            data: {
-              products: [
-                { id: "gid://shopify/Product/1", title: "Page 1 Item", handle: "p1" },
-              ],
-              pageInfo: { hasNextPage: true, endCursor: "cursor_p1" },
-            },
-          }),
-          { status: 200, headers: { "Content-Type": "application/json" } },
-        );
-      }
-      return new Response(
-        JSON.stringify({
-          success: true,
-          data: {
-            products: [
-              { id: "gid://shopify/Product/2", title: "Page 2 Item", handle: "p2" },
-            ],
-            pageInfo: { hasNextPage: false, endCursor: "cursor_p2" },
-          },
-        }),
-        { status: 200, headers: { "Content-Type": "application/json" } },
-      );
-    }
-    return new Response("Not Found", { status: 404 });
-  };
-
-  const client = new RealAutoSeoClient("http://gateway.test", fakeFetch);
-  const products = await client.loadProducts();
-
-  assert.equal(products.length, 2);
-  assert.equal(products[0]?.id, "gid://shopify/Product/1");
-  assert.equal(products[0]?.title, "Page 1 Item");
-  assert.equal(products[1]?.id, "gid://shopify/Product/2");
-  assert.equal(products[1]?.title, "Page 2 Item");
-});
-
-test("32. RealAutoSeoClient.loadProducts: second request sends cursor from first page endCursor", async () => {
-  const calls: { operation: string; payload: unknown }[] = [];
-
-  const fakeFetch: typeof fetch = async (input, init) => {
-    const body = JSON.parse(String(init?.body));
-    calls.push({ operation: body.operation, payload: body.payload });
-
-    if (body.operation === "stores.list") {
-      return new Response(
-        JSON.stringify({
-          success: true,
-          data: { stores: [{ storeId: "store-1" }] },
-        }),
-        { status: 200, headers: { "Content-Type": "application/json" } },
-      );
-    }
-    if (body.operation === "products.list") {
-      if (!body.payload?.cursor) {
-        return new Response(
-          JSON.stringify({
-            success: true,
-            data: {
-              products: [{ id: "gid://shopify/Product/1", title: "P1", handle: "p1" }],
-              pageInfo: { hasNextPage: true, endCursor: "custom_end_cursor_123" },
-            },
-          }),
-          { status: 200, headers: { "Content-Type": "application/json" } },
-        );
-      }
-      return new Response(
-        JSON.stringify({
-          success: true,
-          data: {
-            products: [{ id: "gid://shopify/Product/2", title: "P2", handle: "p2" }],
-            pageInfo: { hasNextPage: false, endCursor: "custom_end_cursor_456" },
-          },
-        }),
-        { status: 200, headers: { "Content-Type": "application/json" } },
-      );
-    }
-    return new Response("Not Found", { status: 404 });
-  };
-
-  const client = new RealAutoSeoClient("http://gateway.test", fakeFetch);
-  await client.loadProducts();
-
-  assert.equal(calls.length, 3);
-  assert.equal(calls[0]?.operation, "stores.list");
-  assert.deepEqual(calls[1]?.payload, { limit: 250 });
-  assert.deepEqual(calls[2]?.payload, { limit: 250, cursor: "custom_end_cursor_123" });
-});
-
-test("33. RealAutoSeoClient.loadProducts: duplicate product IDs across pages are not duplicated", async () => {
-  const fakeFetch: typeof fetch = async (input, init) => {
-    const body = JSON.parse(String(init?.body));
-    if (body.operation === "stores.list") {
-      return new Response(
-        JSON.stringify({
-          success: true,
-          data: { stores: [{ storeId: "store-1" }] },
-        }),
-        { status: 200, headers: { "Content-Type": "application/json" } },
-      );
-    }
-    if (body.operation === "products.list") {
-      if (!body.payload?.cursor) {
-        return new Response(
-          JSON.stringify({
-            success: true,
-            data: {
-              products: [
-                { id: "gid://shopify/Product/1", title: "Product 1 Page 1", handle: "p1" },
-                { id: "gid://shopify/Product/2", title: "Product 2", handle: "p2" },
-              ],
-              pageInfo: { hasNextPage: true, endCursor: "cursor_page_1" },
-            },
-          }),
-          { status: 200, headers: { "Content-Type": "application/json" } },
-        );
-      }
-      return new Response(
-        JSON.stringify({
-          success: true,
-          data: {
-            products: [
-              { id: "gid://shopify/Product/1", title: "Product 1 Page 2 Duplicate", handle: "p1" },
-              { id: "gid://shopify/Product/3", title: "Product 3", handle: "p3" },
-            ],
-            pageInfo: { hasNextPage: false, endCursor: "cursor_page_2" },
-          },
-        }),
-        { status: 200, headers: { "Content-Type": "application/json" } },
-      );
-    }
-    return new Response("Not Found", { status: 404 });
-  };
-
-  const client = new RealAutoSeoClient("http://gateway.test", fakeFetch);
-  const products = await client.loadProducts();
-
-  assert.equal(products.length, 3);
-  assert.equal(products[0]?.id, "gid://shopify/Product/1");
-  assert.equal(products[0]?.title, "Product 1 Page 1");
-  assert.equal(products[1]?.id, "gid://shopify/Product/2");
-  assert.equal(products[2]?.id, "gid://shopify/Product/3");
-});
-
-test("34. RealAutoSeoClient.loadProducts: hasNextPage=true without endCursor throws AUTO_SEO_LOAD_FAILED", async () => {
-  const fakeFetch: typeof fetch = async (input, init) => {
-    const body = JSON.parse(String(init?.body));
-    if (body.operation === "stores.list") {
-      return new Response(
-        JSON.stringify({
-          success: true,
-          data: { stores: [{ storeId: "store-1" }] },
-        }),
-        { status: 200, headers: { "Content-Type": "application/json" } },
-      );
-    }
-    if (body.operation === "products.list") {
-      return new Response(
-        JSON.stringify({
-          success: true,
-          data: {
-            products: [{ id: "gid://shopify/Product/1", title: "P1", handle: "p1" }],
-            pageInfo: { hasNextPage: true, endCursor: null },
-          },
-        }),
-        { status: 200, headers: { "Content-Type": "application/json" } },
-      );
-    }
-    return new Response("Not Found", { status: 404 });
-  };
-
-  const client = new RealAutoSeoClient("http://gateway.test", fakeFetch);
-
-  await assert.rejects(
-    async () => {
-      await client.loadProducts();
-    },
-    (err: unknown) => {
-      assert.ok(err instanceof AppError);
-      assert.equal(err.code, "AUTO_SEO_LOAD_FAILED");
-      assert.match(err.message, /endCursor is missing/i);
-      return true;
-    },
-  );
-});
-
-test("35. RealAutoSeoClient.loadProducts: repeated endCursor throws AUTO_SEO_LOAD_FAILED", async () => {
-  const fakeFetch: typeof fetch = async (input, init) => {
-    const body = JSON.parse(String(init?.body));
-    if (body.operation === "stores.list") {
-      return new Response(
-        JSON.stringify({
-          success: true,
-          data: { stores: [{ storeId: "store-1" }] },
-        }),
-        { status: 200, headers: { "Content-Type": "application/json" } },
-      );
-    }
-    if (body.operation === "products.list") {
-      return new Response(
-        JSON.stringify({
-          success: true,
-          data: {
-            products: [{ id: "gid://shopify/Product/loop-p", title: "P", handle: "p" }],
-            pageInfo: { hasNextPage: true, endCursor: "stuck_cursor_abc" },
-          },
-        }),
-        { status: 200, headers: { "Content-Type": "application/json" } },
-      );
-    }
-    return new Response("Not Found", { status: 404 });
-  };
-
-  const client = new RealAutoSeoClient("http://gateway.test", fakeFetch);
-
-  await assert.rejects(
-    async () => {
-      await client.loadProducts();
-    },
-    (err: unknown) => {
-      assert.ok(err instanceof AppError);
-      assert.equal(err.code, "AUTO_SEO_LOAD_FAILED");
-      assert.match(err.message, /repeated cursor.*infinite loop/i);
-      return true;
-    },
-  );
-});
-
-test("36. RealAutoSeoClient.loadProducts: hasNextPage=true with whitespace endCursor throws AUTO_SEO_LOAD_FAILED", async () => {
-  const fakeFetch: typeof fetch = async (input, init) => {
-    const body = JSON.parse(String(init?.body));
-    if (body.operation === "stores.list") {
-      return new Response(
-        JSON.stringify({
-          success: true,
-          data: { stores: [{ storeId: "store-1" }] },
-        }),
-        { status: 200, headers: { "Content-Type": "application/json" } },
-      );
-    }
-    if (body.operation === "products.list") {
-      return new Response(
-        JSON.stringify({
-          success: true,
-          data: {
-            products: [{ id: "gid://shopify/Product/1", title: "P1", handle: "p1" }],
-            pageInfo: { hasNextPage: true, endCursor: "   " },
-          },
-        }),
-        { status: 200, headers: { "Content-Type": "application/json" } },
-      );
-    }
-    return new Response("Not Found", { status: 404 });
-  };
-
-  const client = new RealAutoSeoClient("http://gateway.test", fakeFetch);
-
-  await assert.rejects(
-    async () => {
-      await client.loadProducts();
-    },
-    (err: unknown) => {
-      assert.ok(err instanceof AppError);
-      assert.equal(err.code, "AUTO_SEO_LOAD_FAILED");
-      assert.match(err.message, /endCursor is missing/i);
-      return true;
-    },
-  );
-});
-
-test("37. RealAutoSeoClient.loadProducts: repeated cursor with whitespace triggers infinite loop protection", async () => {
-  let callCount = 0;
-  const fakeFetch: typeof fetch = async (input, init) => {
-    const body = JSON.parse(String(init?.body));
-    if (body.operation === "stores.list") {
-      return new Response(
-        JSON.stringify({
-          success: true,
-          data: { stores: [{ storeId: "store-1" }] },
-        }),
-        { status: 200, headers: { "Content-Type": "application/json" } },
-      );
-    }
-    if (body.operation === "products.list") {
-      callCount++;
-      if (callCount === 1) {
-        return new Response(
-          JSON.stringify({
-            success: true,
-            data: {
-              products: [{ id: "gid://shopify/Product/1", title: "P1", handle: "p1" }],
-              pageInfo: { hasNextPage: true, endCursor: "cursor_xyz" },
-            },
-          }),
-          { status: 200, headers: { "Content-Type": "application/json" } },
-        );
-      }
-      return new Response(
-        JSON.stringify({
-          success: true,
-          data: {
-            products: [{ id: "gid://shopify/Product/2", title: "P2", handle: "p2" }],
-            pageInfo: { hasNextPage: true, endCursor: "   cursor_xyz   " },
-          },
-        }),
-        { status: 200, headers: { "Content-Type": "application/json" } },
-      );
-    }
-    return new Response("Not Found", { status: 404 });
-  };
-
-  const client = new RealAutoSeoClient("http://gateway.test", fakeFetch);
-
-  await assert.rejects(
-    async () => {
-      await client.loadProducts();
-    },
-    (err: unknown) => {
-      assert.ok(err instanceof AppError);
-      assert.equal(err.code, "AUTO_SEO_LOAD_FAILED");
-      assert.match(err.message, /repeated cursor.*infinite loop/i);
-      return true;
-    },
-  );
-});
-
-test("38. RealAutoSeoClient.loadProducts: safely skips invalid or null products in page data", async () => {
-  const fakeFetch: typeof fetch = async (input, init) => {
-    const body = JSON.parse(String(init?.body));
-    if (body.operation === "stores.list") {
-      return new Response(
-        JSON.stringify({
-          success: true,
-          data: { stores: [{ storeId: "store-1" }] },
-        }),
-        { status: 200, headers: { "Content-Type": "application/json" } },
-      );
-    }
-    if (body.operation === "products.list") {
-      return new Response(
-        JSON.stringify({
-          success: true,
-          data: {
-            products: [
-              null,
-              { id: "", title: "Empty ID", handle: "empty" },
-              { id: "gid://shopify/Product/valid", title: "Valid", handle: "valid" },
-              { title: "Missing ID", handle: "no-id" },
-            ],
-            pageInfo: { hasNextPage: false },
-          },
-        }),
-        { status: 200, headers: { "Content-Type": "application/json" } },
-      );
-    }
-    return new Response("Not Found", { status: 404 });
-  };
-
-  const client = new RealAutoSeoClient("http://gateway.test", fakeFetch);
-  const products = await client.loadProducts();
-
-  assert.equal(products.length, 1);
-  assert.equal(products[0]?.id, "gid://shopify/Product/valid");
-});
-

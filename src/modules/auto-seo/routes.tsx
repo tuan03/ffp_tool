@@ -2,7 +2,7 @@ import type { RouteObject } from "react-router-dom";
 import type { AutoSeoClient } from "./types";
 import { AutoSeoPage } from "./ui/AutoSeoPage";
 
-export function createAutoSeoRoutes(client?: AutoSeoClient): RouteObject[] {
+export function createAutoSeoRoutes(client: AutoSeoClient): RouteObject[] {
   return [
     {
       path: "auto-seo",
@@ -10,5 +10,3 @@ export function createAutoSeoRoutes(client?: AutoSeoClient): RouteObject[] {
     },
   ];
 }
-
-export const autoSeoRoutes = createAutoSeoRoutes();

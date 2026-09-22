@@ -1,7 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { environment } from "../../../config/environment";
-import { getAutoSeoClient } from "../runtime";
-import { hydrateSelectedProducts } from "../service";
+import { AppError } from "../../../shared/errors/app-error";
 import { mapShopifyProductToAutoSeoCandidate } from "../shopify-adapter";
 import type {
   AutoSeoClient,
@@ -20,7 +18,7 @@ import { ProductDetailDrawer } from "./components/ProductDetailDrawer";
 import { ProductSelectionTable } from "./components/ProductSelectionTable";
 
 export interface AutoSeoPageProps {
-  client?: AutoSeoClient;
+  client: AutoSeoClient;
   initialProducts?: readonly ShopifyProductForAutoSeoUi[];
   initialSelectedProductIds?: readonly string[];
 }
@@ -30,7 +28,7 @@ export function AutoSeoPage({
   initialProducts,
   initialSelectedProductIds,
 }: AutoSeoPageProps): React.JSX.Element {
-  const activeClient = useMemo(() => client ?? getAutoSeoClient(environment), [client, environment]);
+  const activeClient = client;
 
   const [products, setProducts] = useState<readonly ShopifyProductForAutoSeoUi[]>(
     () => initialProducts ?? [],
@@ -151,39 +149,45 @@ export function AutoSeoPage({
 
   // Run Auto SEO
   const handleRunAutoSeo = async (): Promise<void> => {
-    if (products.length === 0) {
-      setErrorMessage("Chưa có sản phẩm nào được tải để xử lý.");
+    if (products.length === 0 || selectedProductIds.length === 0) {
       return;
-    }
-
-    let targetSelectedIds = selectedProductIds;
-
-    // If no products selected, prompt user
-    if (targetSelectedIds.length === 0) {
-      const confirmAll = window.confirm(
-        "Bạn chưa chọn sản phẩm nào. Bạn có muốn chạy Auto SEO cho TẤT CẢ sản phẩm không?",
-      );
-      if (!confirmAll) {
-        return;
-      }
-      targetSelectedIds = products.map((p) => p.id);
-      setSelectedProductIds(targetSelectedIds);
     }
 
     setIsRunningAutoSeo(true);
     setErrorMessage(null);
 
     try {
-      // TASK 5 & 6: Hydrate full product details for all selected products before running Auto SEO
-      const hydratedProducts = activeClient.hydrateSelectedProducts
-        ? await activeClient.hydrateSelectedProducts(targetSelectedIds, 5)
-        : await hydrateSelectedProducts(activeClient, targetSelectedIds, 5);
+      const hydratedProducts = await activeClient.hydrateSelectedProductsFresh(
+        selectedProductIds,
+        5,
+      );
+
+      const workflowId = `auto_seo_${Date.now()}`;
+
+      const storeInfo = await activeClient.getStoreInfo();
+      if (!storeInfo) {
+        throw new AppError("Không thể xác định thông tin cửa hàng Shopify.", "AUTO_SEO_STORE_INFO_UNAVAILABLE");
+      }
+
+      const backupResult = await activeClient.runAutoSeoBackup({
+        workflowId,
+        storeId: storeInfo.storeId,
+        shopDomain: storeInfo.shopDomain,
+        products: hydratedProducts,
+      });
+
+      if (backupResult.downstreamStatus !== "SENT") {
+        throw new AppError(
+          `Auto SEO backup succeeded, but downstream handoff failed: ${backupResult.downstreamError || "Unknown downstream error"}`,
+          "AUTO_SEO_DOWNSTREAM_FAILED",
+        );
+      }
 
       const autoSeoProducts = hydratedProducts.map(mapShopifyProductToAutoSeoCandidate);
       const result = await activeClient.runAutoSeo({
-        workflowId: `auto_seo_${Date.now()}`,
+        workflowId,
         products: autoSeoProducts,
-        selectedProductIds: targetSelectedIds,
+        selectedProductIds,
       });
 
       setOutput(result);

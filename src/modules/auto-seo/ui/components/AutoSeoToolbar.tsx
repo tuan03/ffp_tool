@@ -93,7 +93,7 @@ export function AutoSeoToolbar({
         <button
           type="button"
           onClick={onRunAutoSeo}
-          disabled={isRunningAutoSeo || totalProductsCount === 0}
+          disabled={isRunningAutoSeo || selectedCount === 0 || totalProductsCount === 0}
           className="inline-flex items-center gap-2 rounded-lg bg-gradient-to-r from-cyan-600 to-blue-600 px-5 py-2 text-xs font-bold text-white shadow-md shadow-cyan-600/20 hover:from-cyan-500 hover:to-blue-500 transition disabled:opacity-40 disabled:cursor-not-allowed"
         >
           {isRunningAutoSeo ? (

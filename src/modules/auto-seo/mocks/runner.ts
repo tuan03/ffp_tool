@@ -1,6 +1,8 @@
 import { AppError } from "../../../shared/errors/app-error";
 import { mapWithConcurrency, runAutoSeo } from "../service";
 import type {
+  AutoSeoBackupRequest,
+  AutoSeoBackupResponse,
   AutoSeoClient,
   AutoSeoOutput,
   AutoSeoProductCandidate,
@@ -54,6 +56,13 @@ export class MockAutoSeoClient implements AutoSeoClient {
     return JSON.parse(JSON.stringify(mockShopifyProducts)) as ShopifyProductForAutoSeoUi[];
   }
 
+  public async getStoreInfo(): Promise<{ storeId: string; shopDomain: string }> {
+    return {
+      storeId: "store-chillgen-mock",
+      shopDomain: "chillgen-mock.myshopify.com",
+    };
+  }
+
   public async loadProductDetail(productId: string): Promise<ShopifyProductForAutoSeoUi>;
   public async loadProductDetail(
     storeId: string,
@@ -73,6 +82,25 @@ export class MockAutoSeoClient implements AutoSeoClient {
     const cached = this.detailCache.get(productId);
     if (cached) {
       return JSON.parse(JSON.stringify(cached)) as ShopifyProductForAutoSeoUi;
+    }
+
+    return this.loadProductDetailFresh(productId);
+  }
+
+  public async loadProductDetailFresh(productId: string): Promise<ShopifyProductForAutoSeoUi>;
+  public async loadProductDetailFresh(
+    storeId: string,
+    productId: string,
+  ): Promise<ShopifyProductForAutoSeoUi>;
+  public async loadProductDetailFresh(
+    productIdOrStoreId: string,
+    maybeProductId?: string,
+  ): Promise<ShopifyProductForAutoSeoUi> {
+    const isStoreIdExplicit = Boolean(maybeProductId && maybeProductId.trim().length > 0);
+    const productId = isStoreIdExplicit ? maybeProductId! : productIdOrStoreId;
+
+    if (!productId || typeof productId !== "string" || productId.trim() === "") {
+      throw new AppError("Product ID is required to load product detail", "AUTO_SEO_LOAD_FAILED");
     }
 
     const product = mockShopifyProducts.find((p) => p.id === productId);
@@ -134,8 +162,49 @@ export class MockAutoSeoClient implements AutoSeoClient {
     });
   }
 
+  public async hydrateSelectedProductsFresh(
+    productIds: readonly string[],
+    concurrency = 5,
+  ): Promise<readonly ShopifyProductForAutoSeoUi[]> {
+    if (productIds.length === 0) {
+      return [];
+    }
+
+    const uniqueIds = Array.from(new Set(productIds));
+    const productMap = new Map<string, ShopifyProductForAutoSeoUi>();
+
+    await mapWithConcurrency(uniqueIds, concurrency, async (id) => {
+      const detail = await this.loadProductDetailFresh(id);
+      productMap.set(id, detail);
+    });
+
+    return productIds.map((id) => {
+      const product = productMap.get(id);
+      if (!product) {
+        throw new AppError(
+          `Failed to hydrate product detail for product ${id}: product detail not found`,
+          "AUTO_SEO_LOAD_FAILED",
+        );
+      }
+      return JSON.parse(JSON.stringify(product)) as ShopifyProductForAutoSeoUi;
+    });
+  }
+
   public async runAutoSeo(input: AutoSeoSelectionInput): Promise<AutoSeoOutput> {
     return runAutoSeo(input);
+  }
+
+  public async runAutoSeoBackup(
+    request: AutoSeoBackupRequest,
+  ): Promise<AutoSeoBackupResponse> {
+    return {
+      workflowId: request.workflowId,
+      backedUpCount: request.products.length,
+      backupIds: request.products.map((_, idx) => `mock_backup_${idx + 1}`),
+      downstreamStatus: "SENT",
+      downstreamHttpStatus: 200,
+      downstreamError: null,
+    };
   }
 }
 
