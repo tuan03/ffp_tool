@@ -422,7 +422,7 @@ test("SEO Pipeline Stage B3 incorporates buyerIntentKeywords from shoppingContex
   // Ensure seeds are deduplicated
   const uniqueSeeds = new Set(research.seedKeywords);
   assert.equal(uniqueSeeds.size, research.seedKeywords.length);
-  assert.equal(research.querySources["vintage gothic decor"], "niche_seed");
+  assert.equal(research.querySources["vintage gothic decor"], "buyer_intent_seed");
 });
 
 test("SEO Pipeline Stage B2 falls back to [niche] when detectedEntities is empty", async () => {
@@ -476,5 +476,5 @@ test("SEO Pipeline Stage B4 deduplicates discarded keywords when duplicate appea
   assert.ok(conflict);
   assert.deepEqual(conflict.approvedKeywords, ["rug", "rug ideas"]);
   assert.deepEqual(conflict.discardedKeywords, ["rug", "rug ideas"]);
-  assert.equal(conflict.conflictReasons["rug"], "duplicate");
+  assert.equal(conflict.conflictReasons["rug"], "exact_duplicate");
 });

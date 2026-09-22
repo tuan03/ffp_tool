@@ -26,11 +26,18 @@ export interface SearchResearchResult {
   readonly querySources: Readonly<Record<string, string>>;
 }
 
+export interface KeywordCluster {
+  readonly representative: string;
+  readonly members: readonly string[];
+}
+
 /** B4: Kết quả kiểm tra xung đột và trùng lặp từ khóa */
 export interface ConflictResult {
   readonly approvedKeywords: readonly string[];
   readonly discardedKeywords: readonly string[];
   readonly conflictReasons: Readonly<Record<string, string>>;
+  readonly relevanceScores?: Readonly<Record<string, number>>;
+  readonly keywordClusters?: readonly KeywordCluster[];
 }
 
 /** B5: Kết quả sáng tạo nội dung văn bản (Copywriting) */
