@@ -1550,6 +1550,12 @@ def _run_local_pipeline_worker(job_id: str, req_body: dict[str, Any], base_url: 
         or "gemini-2.5-pro"
     ).strip()
 
+    vision_model = str(
+        req_body.get("vision_model")
+        or os.getenv("GEMINI_VISION_MODEL")
+        or "gemini-2.5-flash"
+    ).strip()
+
     config = tt_cfg.PipelineConfig(
         target=target,
         output_root=output_root,
@@ -1557,6 +1563,7 @@ def _run_local_pipeline_worker(job_id: str, req_body: dict[str, Any], base_url: 
         trend_niche=niche,
         desired_output_count=desired_output_count,
         gemini_model=gemini_model,
+        vision_model=vision_model,
         design_mode=design_mode,
         artwork_image_size=artwork_size,
         task4_mockup_engine=mockup_engine,

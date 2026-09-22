@@ -20,7 +20,7 @@ class ProductVisionFilter:
         self,
         *,
         niche: str,
-        model: str = "gemini-2.5-pro",
+        model: str | None = None,
         backend: str = "auto",
         batch_size: int = 5,
         cache: JsonCache | None = None,
@@ -31,7 +31,7 @@ class ProductVisionFilter:
         crawl_purpose: str = "product",
     ):
         self.niche = niche
-        self.model = model
+        self.model = model or env("GEMINI_VISION_MODEL", "gemini-2.5-flash")
         self.backend = backend
         self.batch_size = max(1, min(8, int(batch_size)))
         self.cache = cache

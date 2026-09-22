@@ -1279,7 +1279,7 @@ def prepare_discovery(
             crawl_purpose=task5_crawl_purpose(config),
             product_focus=task5_product_focus(config),
             gemini_backend=config.gemini_backend,
-            vision_model=config.gemini_model,
+            vision_model=getattr(config, "vision_model", None) or os.getenv("GEMINI_VISION_MODEL", "gemini-2.5-flash"),
             refresh_vision_cache=config.task5_refresh_vision_cache,
             cancel_event=cancel_event,
         ),
