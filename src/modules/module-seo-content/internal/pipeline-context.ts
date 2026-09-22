@@ -48,7 +48,8 @@ export function createFallbackProcessedImages(
   source: SeoContentInput,
   content?: ContentResult,
 ): readonly SeoContentImageOutput[] {
-  const effectiveTitle = content?.productTitle ?? source.title;
+  const trimmedSourceTitle = source.title?.trim() || "";
+  const effectiveTitle = trimmedSourceTitle ? (content?.productTitle ?? source.title) : "";
   const effectiveHandle = content?.productHandle ?? source.handle;
   const trimmedTitle = effectiveTitle.trim();
   const trimmedHandle = effectiveHandle.trim();

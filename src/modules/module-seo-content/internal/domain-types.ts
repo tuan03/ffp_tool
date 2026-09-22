@@ -64,6 +64,16 @@ export interface ContentResult {
   readonly productHandle: string;
 }
 
+/** B5: Metadata nội bộ về từ khóa và cơ chế sinh nội dung */
+export interface ContentGenerationMetadata {
+  readonly primaryKeyword?: string;
+  readonly secondaryKeywords: readonly string[];
+  readonly supportingKeywords: readonly string[];
+  readonly targetedKeywords: readonly string[];
+  readonly generator: "gemini" | "heuristic";
+  readonly corpusRevision?: number;
+}
+
 /** B6: Kết quả tối ưu hóa hình ảnh (WebP & Alt Text) */
 export interface ImageProcessingResult {
   readonly processedImages: readonly SeoContentImageOutput[];
@@ -77,6 +87,7 @@ export interface SeoPipelineContext {
   readonly searchResearch?: SearchResearchResult;
   readonly conflictResult?: ConflictResult;
   readonly contentResult?: ContentResult;
+  readonly contentGenerationMetadata?: ContentGenerationMetadata;
   readonly imageResult?: ImageProcessingResult;
 }
 

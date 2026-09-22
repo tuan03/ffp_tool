@@ -15,11 +15,14 @@ import * as moduleExports from "..";
 test("SEO + Content baseline service produces valid output conforming to public contract", async () => {
   const result = await runSeoContent(seoContentMockInput);
 
-  assert.equal(result.productTitle, seoContentMockInput.title);
-  assert.equal(result.productDescription, seoContentMockInput.description);
+  assert.ok(result.productTitle.length > 0);
+  assert.ok(result.productDescription.length > 0);
+  assert.match(result.productDescription, /<p>/);
+  assert.ok(result.productSeoTitle.length > 0);
+  assert.ok(result.productSeoTitle.length <= 70);
+  assert.ok(result.productSeoDescription.length > 0);
+  assert.ok(result.productSeoDescription.length <= 160);
   assert.equal(result.productHandle, seoContentMockInput.handle);
-  assert.equal(result.productSeoTitle, seoContentMockInput.title.slice(0, 70));
-  assert.equal(result.productSeoDescription, seoContentMockInput.description.slice(0, 160));
   assert.equal(result.images.length, seoContentMockInput.images.length);
 
   assert.equal(result.images[0].sourceUrl, seoContentMockInput.images[0].url);
@@ -40,9 +43,12 @@ test("SEO + Content baseline service handles empty images and fallback values", 
 
   const result = await runSeoContent(minimalInput);
 
-  assert.equal(result.productTitle, "Minimal Rug Title");
-  assert.equal(result.productDescription, "Minimal description text");
-  assert.equal(result.productHandle, "");
+  assert.ok(result.productTitle.length > 0);
+  assert.ok(result.productTitle.length <= 100);
+  assert.ok(result.productDescription.length > 0);
+  assert.match(result.productDescription, /<p>/);
+  assert.ok(result.productHandle.length > 0);
+  assert.match(result.productHandle, /^[a-z0-9-]+$/);
   assert.deepEqual(result.images, []);
 });
 
@@ -62,7 +68,7 @@ test("SEO + Content baseline service handles image fallbacks when alt and handle
   const result = await runSeoContent(inputWithoutAlt);
 
   assert.equal(result.images.length, 1);
-  assert.equal(result.images[0].webp.filename, "product-image-1.webp");
+  assert.equal(result.images[0].webp.filename, `${result.productHandle}-1.webp`);
   assert.equal(result.images[0].alt, "Test Title - View 1");
   assert.equal(result.images[0].webp.localFilePath, undefined);
 });
@@ -84,9 +90,10 @@ test("SEO + Content baseline service handles whitespace in handle, title, and al
   const result = await runSeoContent(inputWithWhitespace);
 
   assert.equal(result.images.length, 1);
-  assert.equal(result.images[0].webp.filename, "product-image-1.webp");
+  assert.equal(result.images[0].webp.filename, `${result.productHandle}-1.webp`);
   assert.equal(result.images[0].alt, "Product image 1");
-  assert.equal(result.productHandle, "   ");
+  assert.ok(result.productHandle.length > 0);
+  assert.match(result.productHandle, /^[a-z0-9-]+$/);
 });
 
 test("SEO + Content mock runner returns valid mock output with customized handle", async () => {
