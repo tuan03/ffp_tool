@@ -21,6 +21,7 @@
     "test:engine": "python -m unittest discover -s src/modules/amazon-crawler/engine/tests -t src/modules/amazon-crawler -p \"test_*.py\"",
     "test:distributed": "python -m unittest discover -s src/modules/amazon-crawler/engine/tests -t src/modules/amazon-crawler -p \"test_distributed.py\" -v --locals",
     "gateway:start": "tsx gateway/server.ts",
+    "server:pod": "python src/modules/pinterest-pod/server/server.py",
     "build:agent": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-amazon-crawler-client.ps1 -SkipInstaller",
     "build:agent:installer": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-amazon-crawler-client.ps1",
     "preview": "vite preview"

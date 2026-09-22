@@ -15,6 +15,7 @@ import {
   getPinterestPodClient,
   getPinterestPodRunner,
   getProductionRunner,
+  handoverToSeo,
   launchLogin,
   launchMockLogin,
   mock15Candidates,
@@ -32,7 +33,11 @@ import {
   runMockDiscovery,
   runMockProduction,
   runProduction,
+  inferProductTypeFromNiche,
+  startDiscoveryJob,
   startProductionJob,
+  getOAuthAuthorizeUrl,
+  saveOAuthToken,
   STOREFRONT_DISPLAY_STANDARD,
 } from "..";
 import type { JobDetailResponse, PodJobStatusResponse } from "../types";
@@ -276,7 +281,7 @@ test("RealPinterestPodClient wraps fetch errors into AppError with appropriate c
     );
 
     globalThis.fetch = async () => {
-      throw new Error("ECONNREFUSED 127.0.0.1:8765");
+      throw new Error("ECONNREFUSED 127.0.0.1:8768");
     };
 
     await assert.rejects(
@@ -682,3 +687,491 @@ test("cancelJob calls cancel endpoint and parses response", async () => {
     globalThis.fetch = originalFetch;
   }
 });
+
+test("Mock client getStatus returns recent runs and deleteJob removes job", async () => {
+  const status = await mockPinterestPodClient.getStatus();
+  assert.equal(status.ok, true);
+  assert.ok(Array.isArray(status.recent));
+  assert.ok((status.recent?.length ?? 0) > 0);
+
+  const created = await mockPinterestPodClient.createJob({
+    niche: "nordic runner",
+    product: "rug",
+  });
+  const updatedStatus = await mockPinterestPodClient.getStatus();
+  assert.ok(updatedStatus.recent?.some((r) => r.jobId === created.jobId));
+
+  const deleteRes = await mockPinterestPodClient.deleteJob(created.jobId);
+  assert.equal(deleteRes.ok, true);
+
+  const postDeleteStatus = await mockPinterestPodClient.getStatus();
+  assert.equal(postDeleteStatus.recent?.some((r) => r.jobId === created.jobId), false);
+});
+
+test("Real client getStatus and deleteJob call respective endpoints with proper methods", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: { url: string; method?: string }[] = [];
+
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url: String(url), method: init?.method ?? "GET" });
+    if (String(url).includes("/status")) {
+      return new Response(
+        JSON.stringify({ ok: true, recent: [{ id: "job_recent_1", status: "ready_for_review" }] }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    return new Response(
+      JSON.stringify({ ok: true, message: "Deleted" }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  };
+
+  try {
+    const status = await realPinterestPodClient.getStatus();
+    assert.equal(status.ok, true);
+    assert.equal(status.recent?.[0].id, "job_recent_1");
+    assert.ok(calls.some((c) => c.url.includes("/api/pinterest-pod/status") && c.method === "GET"));
+
+    const del = await realPinterestPodClient.deleteJob("job_del_test");
+    assert.equal(del.ok, true);
+    assert.ok(calls.some((c) => c.url.includes("/api/pinterest-pod/jobs/job_del_test/delete") && c.method === "POST"));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("buildSeoDeliverables filters composedMockups with approvedMockupUrls while keeping printMaster intact", () => {
+  const cand = { ...mockCandidates[0], id: "cand_001", image_url: "/api/assets/cand_001.jpg" };
+  const jobStatus: PodJobStatusResponse = {
+    ok: true,
+    jobId: "wf_approval_test",
+    status: "completed",
+    candidates: [cand],
+    deliverables: {
+      comparison_rows: [
+        {
+          index: 1,
+          product_label: "Vintage Rug",
+          source_url: "/api/assets/cand_001.jpg",
+          final_print_url: "/api/assets/wf_approval_test/design_01_cmyk_300dpi.jpg",
+          ai_background_urls: [
+            "/api/assets/wf_approval_test/mockup_room_1.jpg",
+            "/api/assets/wf_approval_test/mockup_room_2.jpg",
+            "/api/assets/wf_approval_test/mockup_room_3.jpg",
+          ],
+        },
+      ],
+    },
+  };
+
+  // Case 1: No approval filter passed (defaults to all mockups)
+  const allPayload = buildSeoDeliverables(jobStatus, "rug");
+  assert.equal(allPayload.items.length, 1);
+  assert.equal(allPayload.items[0].printMaster.dpi, 300);
+  assert.equal(allPayload.items[0].composedMockups.length, 3);
+
+  // Case 2: User only approved mockup_room_1 and mockup_room_3 (deselected mockup_room_2)
+  const approvedSet = new Set([
+    "/api/assets/wf_approval_test/mockup_room_1.jpg",
+    "/api/assets/wf_approval_test/mockup_room_3.jpg",
+  ]);
+  const filteredPayload = buildSeoDeliverables(jobStatus, "rug", undefined, approvedSet);
+  assert.equal(filteredPayload.items.length, 1);
+  assert.equal(filteredPayload.items[0].printMaster.dpi, 300);
+  assert.equal(filteredPayload.items[0].printMaster.colorMode, "CMYK");
+  assert.equal(filteredPayload.items[0].composedMockups.length, 2);
+  assert.equal(filteredPayload.items[0].composedMockups[0].mockupUrl, "/api/assets/wf_approval_test/mockup_room_1.jpg");
+  assert.equal(filteredPayload.items[0].composedMockups[1].mockupUrl, "/api/assets/wf_approval_test/mockup_room_3.jpg");
+
+  // Case 3: Matching by filename
+  const filenameApproved = new Set(["mockup_room_2.jpg"]);
+  const filenameFilteredPayload = buildSeoDeliverables(jobStatus, "rug", undefined, filenameApproved);
+  assert.equal(filenameFilteredPayload.items[0].composedMockups.length, 1);
+  assert.equal(filenameFilteredPayload.items[0].composedMockups[0].mockupUrl, "/api/assets/wf_approval_test/mockup_room_2.jpg");
+});
+
+test("Mock client handoverToSeo returns proper response with accurate counts", async () => {
+  const mockPayload = {
+    workflowId: "wf_test_handover",
+    success: true as const,
+    productType: "rug" as const,
+    totalProduced: 1,
+    items: [
+      {
+        designId: "design_rug_1",
+        sourceCandidateId: "cand_1",
+        productType: "rug" as const,
+        originalPinTitle: "Test Pin",
+        trendKeywords: ["trend"],
+        printMaster: {
+          cmykUrl: "/api/cmyk.jpg",
+          rgbUrl: "/api/rgb.png",
+          widthPx: 4000,
+          heightPx: 6400,
+          dpi: 300 as const,
+          colorMode: "CMYK" as const,
+          label: "4000 x 6400 px @ 300 DPI (CMYK)",
+          badge: "✓ Chuẩn in xưởng: 4000 x 6400 px @ 300 DPI (CMYK)",
+        },
+        cutoutProduct: {
+          transparentUrl: "/api/trans.png",
+          whiteBgUrl: "/api/white.jpg",
+        },
+        composedMockups: [
+          {
+            referenceImageId: "ref_1",
+            mockupUrl: "/api/mock_1.jpg",
+            detectedSceneType: "living_room",
+            detectedSceneDescription: "Living room",
+          },
+          {
+            referenceImageId: "ref_2",
+            mockupUrl: "/api/mock_2.jpg",
+            detectedSceneType: "bedroom",
+            detectedSceneDescription: "Bedroom",
+          },
+        ],
+      },
+    ],
+  };
+
+  const res = await mockPinterestPodClient.handoverToSeo(mockPayload);
+  assert.equal(res.success, true);
+  assert.equal(res.printMasterCount, 1);
+  assert.equal(res.approvedMockupCount, 2);
+  assert.match(res.message, /Bàn giao sang SEO thành công/);
+});
+
+test("Real client handoverToSeo and handoverToSeo function send POST to /api/pinterest-pod/handover-seo", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: { url: string; method?: string; body?: unknown }[] = [];
+
+  globalThis.fetch = async (url, init) => {
+    calls.push({
+      url: String(url),
+      method: init?.method ?? "GET",
+      body: init?.body ? JSON.parse(String(init.body)) : undefined,
+    });
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        success: true,
+        message: "Bàn giao sang SEO thành công: 1 file in xưởng và 2 mockup AI đã duyệt.",
+        receivedAt: 1726900000000,
+        printMasterCount: 1,
+        approvedMockupCount: 2,
+        savedPath: "data/pinterest_pod/output/wf_post_test/seo_handoff_payload.json",
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  };
+
+  try {
+    const payload = {
+      workflowId: "wf_post_test",
+      success: true as const,
+      productType: "rug" as const,
+      totalProduced: 1,
+      items: [
+        {
+          designId: "design_rug_1",
+          sourceCandidateId: "cand_1",
+          productType: "rug" as const,
+          originalPinTitle: "Test Rug",
+          trendKeywords: ["rug"],
+          printMaster: {
+            cmykUrl: "/api/cmyk.jpg",
+            rgbUrl: "/api/rgb.png",
+            widthPx: 4000,
+            heightPx: 6400,
+            dpi: 300 as const,
+            colorMode: "CMYK" as const,
+            label: "4000 x 6400 px @ 300 DPI (CMYK)",
+            badge: "✓ Chuẩn in xưởng: 4000 x 6400 px @ 300 DPI (CMYK)",
+          },
+          cutoutProduct: { transparentUrl: "", whiteBgUrl: "" },
+          composedMockups: [
+            {
+              referenceImageId: "ref_1",
+              mockupUrl: "/api/mock_1.jpg",
+              detectedSceneType: "living_room",
+              detectedSceneDescription: "Living room",
+            },
+          ],
+        },
+      ],
+    };
+
+    const res = await realPinterestPodClient.handoverToSeo(payload);
+    assert.equal(res.success, true);
+    assert.equal(res.printMasterCount, 1);
+    assert.equal(res.approvedMockupCount, 2);
+    assert.ok(
+      calls.some(
+        (c) =>
+          c.url.includes("/api/pinterest-pod/handover-seo") &&
+          c.method === "POST" &&
+          (c.body as { workflowId?: string })?.workflowId === "wf_post_test",
+      ),
+    );
+
+    const directRes = await handoverToSeo(payload);
+    assert.equal(directRes.success, true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+// ==========================================
+// Tests for OAuth and Token Management API
+// ==========================================
+
+test("Mock client getOAuthAuthorizeUrl returns valid authorization URL", async () => {
+  const res = await mockPinterestPodClient.getOAuthAuthorizeUrl("http://localhost:8768/api/pinterest-pod/oauth/callback");
+  assert.equal(res.ok, true);
+  assert.ok(res.auth_url.includes("https://www.pinterest.com/oauth/"));
+  assert.ok(res.auth_url.includes("client_id=1595071"));
+  assert.equal(res.redirect_uri, "http://localhost:8768/api/pinterest-pod/oauth/callback");
+});
+
+test("Mock client saveOAuthToken simulates saving access token and updates auth status", async () => {
+  const res = await mockPinterestPodClient.saveOAuthToken({
+    access_token: "pina_test_token_12345",
+  });
+  assert.equal(res.ok, true);
+  assert.ok(res.message?.includes("thành công"));
+  assert.equal(res.username, "mock_pinterest_user");
+  assert.ok(typeof res.expires_at === "number");
+
+  const status = await mockPinterestPodClient.getAuthStatus();
+  assert.equal(status.ok, true);
+  assert.equal(status.oauth_valid, true);
+  assert.equal(status.token_info?.has_access_token, true);
+});
+
+test("Real client getOAuthAuthorizeUrl and saveOAuthToken call backend endpoints with proper payloads", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: { url: string; method?: string; body?: unknown }[] = [];
+
+  globalThis.fetch = async (url, init) => {
+    calls.push({
+      url: String(url),
+      method: init?.method ?? "GET",
+      body: init?.body ? JSON.parse(String(init.body)) : undefined,
+    });
+
+    if (String(url).includes("/oauth/authorize-url")) {
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          auth_url: "https://www.pinterest.com/oauth/?client_id=1595071&mock=true",
+          redirect_uri: "http://localhost:8768/api/pinterest-pod/oauth/callback",
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    if (String(url).includes("/oauth/save-token")) {
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          message: "Token hợp lệ và đã lưu thành công.",
+          username: "real_test_user",
+          expires_at: 1726950000,
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    return new Response(JSON.stringify({ ok: false }), { status: 404 });
+  };
+
+  try {
+    const authUrlRes = await realPinterestPodClient.getOAuthAuthorizeUrl();
+    assert.equal(authUrlRes.ok, true);
+    assert.ok(authUrlRes.auth_url.includes("https://www.pinterest.com/oauth/"));
+    assert.ok(calls.some((c) => c.url.includes("/api/pinterest-pod/oauth/authorize-url")));
+
+    const directAuthUrlRes = await getOAuthAuthorizeUrl();
+    assert.equal(directAuthUrlRes.ok, true);
+
+    const saveRes = await realPinterestPodClient.saveOAuthToken({
+      access_token: "pina_test_live_abc123",
+      refresh_token: "pinr_test_live_xyz789",
+    });
+    assert.equal(saveRes.ok, true);
+    assert.equal(saveRes.username, "real_test_user");
+    assert.ok(
+      calls.some(
+        (c) =>
+          c.url.includes("/api/pinterest-pod/oauth/save-token") &&
+          c.method === "POST" &&
+          (c.body as { access_token?: string })?.access_token === "pina_test_live_abc123",
+      ),
+    );
+
+    const directSaveRes = await saveOAuthToken({ access_token: "pina_direct_token" });
+    assert.equal(directSaveRes.ok, true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("inferProductTypeFromNiche correctly infers blanket, rug, custom, and default products", () => {
+  // Blanket keywords: blanket, throw, quilt
+  assert.equal(inferProductTypeFromNiche("cozy winter blanket"), "blanket");
+  assert.equal(inferProductTypeFromNiche("chunky knit throw"), "blanket");
+  assert.equal(inferProductTypeFromNiche("vintage patchwork quilt"), "blanket");
+  assert.equal(inferProductTypeFromNiche("BLANKET FLEECE"), "blanket");
+
+  // Rug keywords: rug, carpet, mat
+  assert.equal(inferProductTypeFromNiche("vintage distressed rug"), "rug");
+  assert.equal(inferProductTypeFromNiche("moroccan living room carpet"), "rug");
+  assert.equal(inferProductTypeFromNiche("boho door mat"), "rug");
+  assert.equal(inferProductTypeFromNiche("PERSIAN RUG"), "rug");
+
+  // Custom keyword: custom
+  assert.equal(inferProductTypeFromNiche("custom wooden wall art"), "custom");
+  assert.equal(inferProductTypeFromNiche("CUSTOM PRINT DESIGN"), "custom");
+
+  // Other niches default to rug
+  assert.equal(inferProductTypeFromNiche("leather bag"), "rug");
+  assert.equal(inferProductTypeFromNiche("table wood aesthetic"), "rug");
+  assert.equal(inferProductTypeFromNiche("abstract wall art"), "rug");
+  assert.equal(inferProductTypeFromNiche(""), "rug");
+});
+
+test("RealPinterestPodClient.createJob infers product and forwards crawlCount parameters", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+
+  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input.toString();
+    const body = init?.body ? (JSON.parse(init.body.toString()) as Record<string, unknown>) : {};
+    calls.push({ url, body });
+    return new Response(
+      JSON.stringify({ ok: true, jobId: "job_test_123", status: "running" }),
+      { status: 201, headers: { "Content-Type": "application/json" } },
+    );
+  };
+
+  try {
+    // 1. When product is omitted, infer blanket from niche
+    const res1 = await realPinterestPodClient.createJob({
+      niche: "retro 70s accent blanket",
+      candidatePoolSize: 55,
+    });
+    assert.equal(res1.ok, true);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].body.product, "blanket");
+    assert.equal(calls[0].body.candidatePoolSize, 55);
+    assert.equal(calls[0].body.task5_max_downloads, 55);
+    assert.equal(calls[0].body.top_images, 55);
+
+    // 2. When product is omitted and niche is rug
+    const res2 = await realPinterestPodClient.createJob({
+      niche: "boho runner rug",
+      candidatePoolSize: 30,
+    });
+    assert.equal(res2.ok, true);
+    assert.equal(calls.length, 2);
+    assert.equal(calls[1].body.product, "rug");
+    assert.equal(calls[1].body.candidatePoolSize, 30);
+    assert.equal(calls[1].body.task5_max_downloads, 30);
+    assert.equal(calls[1].body.top_images, 30);
+
+    // 3. startDiscoveryJob function also infers product and passes poolSize
+    const res3 = await startDiscoveryJob({
+      niche: "warm cozy throw",
+      candidatePoolSize: 60,
+    });
+    assert.equal(res3.ok, true);
+    assert.equal(calls.length, 3);
+    assert.equal(calls[2].body.product, "blanket");
+    assert.equal(calls[2].body.candidatePoolSize, 60);
+    assert.equal(calls[2].body.task5_max_downloads, 60);
+    assert.equal(calls[2].body.top_images, 60);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("RealPinterestPodClient.produce infers product and forwards ai_background_variants", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+
+  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input.toString();
+    const body = init?.body ? (JSON.parse(init.body.toString()) as Record<string, unknown>) : {};
+    calls.push({ url, body });
+    return new Response(
+      JSON.stringify({ ok: true, jobId: "job_prod_test", status: "producing" }),
+      { status: 201, headers: { "Content-Type": "application/json" } },
+    );
+  };
+
+  try {
+    const res = await realPinterestPodClient.produce({
+      jobId: "job_stage1_abc",
+      selected_candidates: ["cand_pin_101"],
+      niche: "cozy fleece blanket",
+      ai_background_variants: 3,
+    });
+    assert.equal(res.ok, true);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].body.product, "blanket");
+    assert.equal(calls[0].body.ai_background_variants, 3);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("MockPinterestPodClient.createJob infers product type when omitted", async () => {
+  const blanketJob = await mockPinterestPodClient.createJob({
+    niche: "luxury plush blanket",
+  });
+  assert.equal(blanketJob.ok, true);
+  const blanketDetail = await mockPinterestPodClient.getJobDetail(blanketJob.jobId);
+  assert.equal(blanketDetail.product, "blanket");
+
+  const rugJob = await mockPinterestPodClient.createJob({
+    niche: "persian traditional rug",
+  });
+  assert.equal(rugJob.ok, true);
+  const rugDetail = await mockPinterestPodClient.getJobDetail(rugJob.jobId);
+  assert.equal(rugDetail.product, "rug");
+});
+
+test("MockPinterestPodClient.produce with reference images determines mockup output count directly", async () => {
+  const job = await mockPinterestPodClient.createJob({
+    niche: "nordic style wool rug",
+  });
+
+  // Advance to ready_for_review
+  await mockPinterestPodClient.getJobDetail(job.jobId);
+  await mockPinterestPodClient.getJobDetail(job.jobId);
+
+  // Produce with 3 reference room images
+  const refImages = [
+    { id: "ref_1", url: "data:image/png;base64,room1", name: "Living Room 1" },
+    { id: "ref_2", url: "data:image/png;base64,room2", name: "Living Room 2" },
+    { id: "ref_3", url: "data:image/png;base64,room3", name: "Living Room 3" },
+  ];
+
+  await mockPinterestPodClient.produce({
+    jobId: job.jobId,
+    selected_candidates: ["cand_pin_101"],
+    referenceImages: refImages,
+  });
+
+  // Advance producing -> completed
+  await mockPinterestPodClient.getJobDetail(job.jobId);
+  const completed = await mockPinterestPodClient.getJobDetail(job.jobId);
+
+  assert.equal(completed.status, "completed");
+  // 1 candidate * 3 reference images = 3 mockups
+  assert.equal(completed.deliverables?.lifestyle_mockups?.length, 3);
+  assert.equal(completed.deliverables?.comparison_rows?.[0]?.ai_background_urls?.length, 3);
+});
+
+

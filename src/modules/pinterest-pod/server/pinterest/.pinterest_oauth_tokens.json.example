@@ -1,0 +1,9 @@
+{
+  "access_token": "YOUR_PINTEREST_ACCESS_TOKEN",
+  "refresh_token": "YOUR_PINTEREST_REFRESH_TOKEN",
+  "response_type": "authorization_code",
+  "token_type": "bearer",
+  "expires_in": 2592000,
+  "refresh_token_expires_in": 5184000,
+  "scope": "ads:read boards:read pins:read user_accounts:read"
+}

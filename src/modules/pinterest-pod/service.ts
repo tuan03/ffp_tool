@@ -23,10 +23,17 @@ import type {
   PodJobStatusResponse,
   PodPollOptions,
   PodProductType,
+  PodRecentRunItem,
+  PodStatusResponse,
   ProduceInput,
   ProduceOutput,
+  SavePinterestTokenPayload,
+  SavePinterestTokenResponse,
+  SeoHandoverResponse,
 } from "./types";
-import { FACTORY_PRINT_STANDARDS } from "./types";
+import { FACTORY_PRINT_STANDARDS, inferProductTypeFromNiche } from "./types";
+
+export { inferProductTypeFromNiche };
 
 const DEFAULT_POLL_INTERVAL_MS = 1500;
 const DEFAULT_POLL_TIMEOUT_MS = 300_000;
@@ -38,8 +45,10 @@ function getBaseUrl(customBaseUrl?: string): string {
   if (typeof window !== "undefined") {
     return "";
   }
-  const envUrl = typeof process !== "undefined" ? process.env?.VITE_BACKEND_URL : undefined;
-  return envUrl ? envUrl.replace(/\/+$/, "") : "http://127.0.0.1:8765";
+  const envUrl = typeof process !== "undefined"
+    ? (process.env?.VITE_PINTEREST_POD_API_URL || process.env?.VITE_BACKEND_URL)
+    : undefined;
+  return envUrl ? envUrl.replace(/\/+$/, "") : "http://127.0.0.1:8768";
 }
 
 /** Build standard relative asset URL conforming to CONTRACT_MAIN_TO_PINTEREST_POD */
@@ -142,6 +151,37 @@ export async function launchLogin(
   };
 }
 
+/** Save Pinterest OAuth token (manual access token or authorization code) */
+export async function saveOAuthToken(
+  payload: SavePinterestTokenPayload,
+  options?: { readonly baseUrl?: string; readonly signal?: AbortSignal },
+): Promise<SavePinterestTokenResponse> {
+  return requestJson<SavePinterestTokenResponse>(
+    "/api/pinterest-pod/oauth/save-token",
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+      signal: options?.signal,
+    },
+    "PINTEREST_POD_SAVE_TOKEN_FAILED",
+    options?.baseUrl,
+  );
+}
+
+/** Get Pinterest OAuth Authorize URL */
+export async function getOAuthAuthorizeUrl(
+  redirectUri?: string,
+  options?: { readonly baseUrl?: string; readonly signal?: AbortSignal },
+): Promise<{ readonly ok: boolean; readonly auth_url: string }> {
+  const query = redirectUri ? `?redirect_uri=${encodeURIComponent(redirectUri)}` : "";
+  return requestJson<{ readonly ok: boolean; readonly auth_url: string }>(
+    `/api/pinterest-pod/oauth/authorize-url${query}`,
+    { method: "GET", signal: options?.signal },
+    "PINTEREST_POD_GET_AUTH_URL_FAILED",
+    options?.baseUrl,
+  );
+}
+
 /** Submit Stage 1 discovery job */
 export async function startDiscoveryJob(
   input: PinterestDiscoveryInput,
@@ -155,16 +195,22 @@ export async function startDiscoveryJob(
     readonly logs?: readonly string[];
   }
 
+  const product = input.product ?? inferProductTypeFromNiche(input.niche);
+  const poolSize = input.candidatePoolSize ?? input.task5_max_downloads ?? input.top_images ?? 40;
+
   const raw = await requestJson<StartJobRawResponse>(
     "/api/pinterest-pod/jobs",
     {
       method: "POST",
       body: JSON.stringify({
         niche: input.niche,
-        product: input.product,
+        product,
         workflow_stage: input.workflow_stage ?? "crawl_and_review",
-        candidatePoolSize: input.candidatePoolSize ?? 15,
+        candidatePoolSize: poolSize,
+        task5_max_downloads: poolSize,
+        top_images: poolSize,
         referenceImages: input.referenceImages ?? [],
+        ...(input.ai_background_variants !== undefined ? { ai_background_variants: input.ai_background_variants } : {}),
       }),
       signal: options?.signal,
     },
@@ -308,6 +354,8 @@ export async function startProductionJob(
     readonly status: string;
   }
 
+  const product = input.product ?? (input.niche ? inferProductTypeFromNiche(input.niche) : undefined);
+
   const raw = await requestJson<ProduceRawResponse>(
     "/api/pinterest-pod/jobs/produce",
     {
@@ -315,8 +363,12 @@ export async function startProductionJob(
       body: JSON.stringify({
         jobId: input.jobId,
         selected_candidates: input.selected_candidates,
-        ...(input.product ? { product: input.product } : {}),
+        ...(product ? { product } : {}),
         ...(input.niche ? { niche: input.niche } : {}),
+        ...(input.design_mode ? { design_mode: input.design_mode } : {}),
+        ...(input.referenceImages ? { referenceImages: input.referenceImages } : {}),
+        ...(input.room_template_urls ? { room_template_urls: input.room_template_urls } : {}),
+        ...(input.ai_background_variants !== undefined ? { ai_background_variants: input.ai_background_variants } : {}),
       }),
       signal: options?.signal,
     },
@@ -346,11 +398,24 @@ export function buildSeoDeliverables(
   jobStatus: PodJobStatusResponse,
   productType: PodProductType = "rug",
   selectedCandidateIds?: readonly string[],
+  approvedMockupUrls?: ReadonlySet<string> | readonly string[],
 ): PinterestPodDeliverables {
   const deliverables: PodBackendDeliverables = jobStatus.deliverables ?? {};
   const comparisonRows = deliverables.comparison_rows ?? deliverables.comparison_matrix ?? [];
   const printStandard = FACTORY_PRINT_STANDARDS[productType];
   const workflowId = jobStatus.jobId || jobStatus.job_id || "pod_production_completed";
+
+  const approvedSet = approvedMockupUrls
+    ? (approvedMockupUrls instanceof Set ? approvedMockupUrls : new Set(approvedMockupUrls))
+    : null;
+
+  const isMockupApproved = (url: string): boolean => {
+    if (!approvedSet) return true;
+    if (approvedSet.has(url)) return true;
+    const fname = extractFilename(url);
+    if (fname && approvedSet.has(fname)) return true;
+    return false;
+  };
 
   // Build multi-index candidate maps for robust lookup
   const candidatesById = new Map<string, PodCandidate>();
@@ -451,7 +516,7 @@ export function buildSeoDeliverables(
           ? `temp/pinterest_pod/${workflowId}/${transCutoutFilename}`
           : undefined;
 
-      const backgroundUrls = row.ai_background_urls ?? [];
+      const backgroundUrls = (row.ai_background_urls ?? []).filter(isMockupApproved);
       const composedMockups: PodComposedMockupSpec[] = backgroundUrls.map(
         (bgUrl, bgIdx) => {
           const matchedMockup = deliverables.lifestyle_mockups?.find((m) => m.url === bgUrl);
@@ -517,7 +582,9 @@ export function buildSeoDeliverables(
         ? deliverables.product_cutouts[idx]
         : undefined;
 
-      const mockups: PodComposedMockupSpec[] = (deliverables.lifestyle_mockups ?? []).map(
+      const mockups: PodComposedMockupSpec[] = (deliverables.lifestyle_mockups ?? [])
+        .filter((m) => isMockupApproved(m.url))
+        .map(
         (m, mIdx) => ({
           referenceImageId: `ref_room_0${mIdx + 1}`,
           mockupUrl: m.url,
@@ -670,17 +737,30 @@ export class RealPinterestPodClient implements PinterestPodClient {
     );
   }
 
+  public async saveOAuthToken(payload: SavePinterestTokenPayload): Promise<SavePinterestTokenResponse> {
+    return saveOAuthToken(payload);
+  }
+
+  public async getOAuthAuthorizeUrl(redirectUri?: string): Promise<{ readonly ok: boolean; readonly auth_url: string }> {
+    return getOAuthAuthorizeUrl(redirectUri);
+  }
+
   public async createJob(input: CreateJobInput): Promise<CreateJobOutput> {
+    const product = input.product ?? inferProductTypeFromNiche(input.niche);
+    const poolSize = input.candidatePoolSize ?? input.task5_max_downloads ?? input.top_images ?? 40;
     return fetchJson<CreateJobOutput>(
       "/api/pinterest-pod/jobs",
       {
         method: "POST",
         body: JSON.stringify({
           niche: input.niche,
-          product: input.product,
+          product,
           workflow_stage: input.workflow_stage ?? "crawl_and_review",
-          candidatePoolSize: input.candidatePoolSize ?? 15,
+          candidatePoolSize: poolSize,
+          task5_max_downloads: poolSize,
+          top_images: poolSize,
           referenceImages: input.referenceImages ?? [],
+          ...(input.ai_background_variants !== undefined ? { ai_background_variants: input.ai_background_variants } : {}),
         }),
       },
       "PINTEREST_JOB_CREATION_FAILED",
@@ -696,6 +776,7 @@ export class RealPinterestPodClient implements PinterestPodClient {
   }
 
   public async produce(input: ProduceInput): Promise<ProduceOutput> {
+    const product = input.product ?? (input.niche ? inferProductTypeFromNiche(input.niche) : undefined);
     return fetchJson<ProduceOutput>(
       "/api/pinterest-pod/jobs/produce",
       {
@@ -703,6 +784,12 @@ export class RealPinterestPodClient implements PinterestPodClient {
         body: JSON.stringify({
           jobId: input.jobId,
           selected_candidates: input.selected_candidates,
+          ...(product ? { product } : {}),
+          ...(input.niche ? { niche: input.niche } : {}),
+          design_mode: input.design_mode ?? "direct_print",
+          ...(input.referenceImages ? { referenceImages: input.referenceImages } : {}),
+          ...(input.room_template_urls ? { room_template_urls: input.room_template_urls } : {}),
+          ...(input.ai_background_variants !== undefined ? { ai_background_variants: input.ai_background_variants } : {}),
         }),
       },
       "PINTEREST_PRODUCE_FAILED",
@@ -718,6 +805,44 @@ export class RealPinterestPodClient implements PinterestPodClient {
       "PINTEREST_JOB_CANCEL_FAILED",
     );
   }
+
+  public async getStatus(): Promise<PodStatusResponse> {
+    return fetchJson<PodStatusResponse>(
+      "/api/pinterest-pod/status",
+      undefined,
+      "PINTEREST_STATUS_FETCH_FAILED",
+    );
+  }
+
+  public async deleteJob(jobId: string): Promise<{ readonly ok: boolean; readonly message?: string }> {
+    return fetchJson<{ readonly ok: boolean; readonly message?: string }>(
+      `/api/pinterest-pod/jobs/${encodeURIComponent(jobId)}/delete`,
+      {
+        method: "POST",
+      },
+      "PINTEREST_JOB_DELETE_FAILED",
+    );
+  }
+
+  public async handoverToSeo(payload: PinterestPodDeliverables): Promise<SeoHandoverResponse> {
+    return handoverToSeo(payload);
+  }
+}
+
+/** Hand over final deliverables to the SEO Module */
+export async function handoverToSeo(
+  payload: PinterestPodDeliverables,
+  customBaseUrl?: string,
+): Promise<SeoHandoverResponse> {
+  return requestJson<SeoHandoverResponse>(
+    "/api/pinterest-pod/handover-seo",
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+    "PINTEREST_POD_SEO_HANDOVER_FAILED",
+    customBaseUrl,
+  );
 }
 
 export const realPinterestPodClient = new RealPinterestPodClient();

@@ -39,6 +39,8 @@ export {
   getAssetUrl,
   getAuthStatus,
   getJobStatus,
+  getOAuthAuthorizeUrl,
+  handoverToSeo,
   launchLogin,
   packageDeliverablesForSeo,
   pollDiscoveryJob,
@@ -47,12 +49,14 @@ export {
   RealPinterestPodClient,
   runDiscovery,
   runProduction,
+  saveOAuthToken,
   startDiscoveryJob,
   startProductionJob,
 } from "./service";
 
 export {
   FACTORY_PRINT_STANDARDS,
+  inferProductTypeFromNiche,
   POD_SIZE_PRESETS,
   STOREFRONT_DISPLAY_STANDARD,
 } from "./types";
@@ -80,6 +84,7 @@ export type {
   PinterestProductionInput,
   PinterestProductionOutput,
   PinterestProductType,
+  PinterestTokenInfo,
   PodAssetInfo,
   PodBackendDeliverables,
   PodCancelJobResponse,
@@ -103,6 +108,9 @@ export type {
   ProduceInput,
   ProduceOutput,
   ReferenceImage,
+  SavePinterestTokenPayload,
+  SavePinterestTokenResponse,
+  SeoHandoverResponse,
   StepperState,
   SummaryMetrics,
   WorkflowStage,
