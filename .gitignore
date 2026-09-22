@@ -1,10 +1,30 @@
 node_modules/
 dist/
+build/
+artifacts/
+Tool_crawer_New_update/
 .vite/
-.env.local
-.env.*.local
+.env
+.env.*
+.env.shopify
 *.tsbuildinfo
 *zip
+
+# Crawler & Gateway runtime/data
+.runtime/
+exports/
+client-data/
+*.sqlite3
+*.sqlite3-shm
+*.sqlite3-wal
+installer-output/
+__pycache__/
+*.py[cod]
+config/amazon-crawler-profiles.json
+config/amazon-crawler-agent.json
+.DS_Store
+stores.local.json
+stores.config.json
 
 #=== [start] Lth Loi ===
 .agents

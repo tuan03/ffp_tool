@@ -1,0 +1,48 @@
+[
+  {
+    "storeId": "capozen",
+    "shopDomain": "capozen.myshopify.com",
+    "apiVersion": "2026-07",
+    "auth": {
+      "type": "static",
+      "staticToken": "shpat_xxxxxxxxxxxxxxxxxxxxxxxx"
+    },
+    "proxy": {
+      "url": "http://us-proxy-01.example.com:8080",
+      "username": "proxy_user_1",
+      "password": "proxy_password_1",
+      "failClosed": true
+    }
+  },
+  {
+    "storeId": "wrydeco",
+    "shopDomain": "wrydeco.myshopify.com",
+    "apiVersion": "2026-07",
+    "auth": {
+      "type": "static",
+      "staticToken": "shpat_yyyyyyyyyyyyyyyyyyyyyyyy"
+    },
+    "proxy": {
+      "url": "http://us-proxy-02.example.com:8080",
+      "username": "proxy_user_2",
+      "password": "proxy_password_2",
+      "failClosed": true
+    }
+  },
+  {
+    "storeId": "chillgen",
+    "shopDomain": "chillgen.myshopify.com",
+    "apiVersion": "2026-07",
+    "auth": {
+      "type": "client_credentials",
+      "clientId": "client_id_for_same_org_app",
+      "clientSecret": "client_secret_for_same_org_app"
+    },
+    "proxy": {
+      "url": "http://us-proxy-03.example.com:8080",
+      "username": "proxy_user_3",
+      "password": "proxy_password_3",
+      "failClosed": true
+    }
+  }
+]
