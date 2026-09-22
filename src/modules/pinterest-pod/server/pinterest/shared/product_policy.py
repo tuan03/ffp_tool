@@ -224,7 +224,7 @@ def generate_product_policy(
     *,
     niche: str,
     product_focus: str = "auto",
-    model: str = "gemini-2.5-flash",
+    model: str = "gemini-2.5-pro",
     backend: str = "auto",
     output_path: Path | None = None,
 ) -> ProductPolicy:

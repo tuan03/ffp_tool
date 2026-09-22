@@ -156,7 +156,7 @@ def analyze_reference_image(
     target: ProductTarget,
     *,
     artwork: Image.Image | None = None,
-    model: str = "gemini-2.5-flash",
+    model: str = "gemini-2.5-pro",
     cache_dir: Path | None = None,
 ) -> dict[str, Any]:
     """Dynamically analyze any reference image with open-ended visual intelligence.

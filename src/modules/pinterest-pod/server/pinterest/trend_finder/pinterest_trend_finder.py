@@ -312,7 +312,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output", default="trend_output")
     parser.add_argument("--token-path", default="")
     parser.add_argument("--timeout", type=int, default=int(env("PINTEREST_TIMEOUT", "30") or 30))
-    parser.add_argument("--gemini-model", default=env("GEMINI_ANALYSIS_MODEL", "gemini-2.5-flash"))
+    parser.add_argument("--gemini-model", default=env("GEMINI_ANALYSIS_MODEL", "gemini-2.5-pro"))
     parser.add_argument("--gemini-backend", choices=["auto", "enterprise", "api-key"], default="auto")
     parser.add_argument("--gemini-batch-size", type=int, default=20)
     parser.add_argument("--min-semantic-fit", type=float, default=35.0)

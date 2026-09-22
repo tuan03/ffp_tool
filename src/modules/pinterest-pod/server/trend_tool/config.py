@@ -36,7 +36,7 @@ class PipelineConfig:
     trend_max_queries_per_trend: int = 6
     desired_output_count: int = 5
     gemini_backend: str = "auto"
-    gemini_model: str = "gemini-2.5-flash"
+    gemini_model: str = "gemini-2.5-pro"
     task5_token_path: Path | None = None
     task5_provider: str = "pinterest-browser"
     task5_max_images_per_query: int = 12

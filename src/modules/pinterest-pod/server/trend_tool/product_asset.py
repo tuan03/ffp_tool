@@ -23,7 +23,7 @@ class ProductAssetConfig:
     output_dir: Path
     mode: str = "auto"
     gemini_backend: str = "auto"
-    gemini_model: str = "gemini-2.5-flash"
+    gemini_model: str = "gemini-2.5-pro"
     target_hint: str = "product"
     min_visible_percent: float = 80.0
     min_mask_coverage: float = 0.01

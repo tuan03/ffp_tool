@@ -1543,12 +1543,20 @@ def _run_local_pipeline_worker(job_id: str, req_body: dict[str, Any], base_url: 
     task5_top_images = int(req_body.get("task5_top_images") or req_body.get("top_images") or req_body.get("candidatePoolSize") or 30)
     task5_max_images_per_query = int(req_body.get("task5_max_images_per_query") or req_body.get("max_images_per_query") or 12)
 
+    gemini_model = str(
+        req_body.get("gemini_model")
+        or os.getenv("GEMINI_MODEL")
+        or os.getenv("GEMINI_ANALYSIS_MODEL")
+        or "gemini-2.5-pro"
+    ).strip()
+
     config = tt_cfg.PipelineConfig(
         target=target,
         output_root=output_root,
         workflow_mode="trend_to_product",
         trend_niche=niche,
         desired_output_count=desired_output_count,
+        gemini_model=gemini_model,
         design_mode=design_mode,
         artwork_image_size=artwork_size,
         task4_mockup_engine=mockup_engine,

@@ -20,7 +20,7 @@ class ProductVisionFilter:
         self,
         *,
         niche: str,
-        model: str = "gemini-2.5-flash",
+        model: str = "gemini-2.5-pro",
         backend: str = "auto",
         batch_size: int = 5,
         cache: JsonCache | None = None,
