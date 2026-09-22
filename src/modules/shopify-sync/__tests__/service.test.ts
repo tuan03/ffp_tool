@@ -80,6 +80,24 @@ test("fromCustomizationNormalizerProduct adapts normalized crawl product into Sh
   assertStrict.ok(adapted.customization?.hasCustomization);
   assertStrict.equal(adapted.customization?.assets?.length, 1);
   assertStrict.equal(adapted.customization?.assets?.[0].friendlyFileName, "base-preview.jpg");
+
+  // Test Money object support as produced by amazon-crawler
+  const moneyProduct = {
+    ...crawlProduct,
+    categories: ["Home & Kitchen", "Bedding"],
+    variants: [
+      {
+        id: "var-money",
+        price: { raw: "$59.99", amount: 59.99, currency: "USD" },
+        compareAtPrice: { raw: "$79.99", amount: 79.99, currency: "USD" },
+        options: { Size: "Queen" },
+      },
+    ],
+  };
+  const adaptedMoney = fromCustomizationNormalizerProduct(moneyProduct);
+  assertStrict.equal(adaptedMoney.productType, "Bedding");
+  assertStrict.equal(adaptedMoney.variants?.[0].price, "59.99");
+  assertStrict.equal(adaptedMoney.variants?.[0].compareAtPrice, "79.99");
 });
 
 test("replaceUrlsInObject replaces all matched URLs recursively", () => {
