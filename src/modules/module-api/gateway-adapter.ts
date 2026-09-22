@@ -3,6 +3,7 @@ import type {
   ModuleApiRunner,
   ShopifyExecutionMode,
   ShopifyFilesCreateResponse,
+  ShopifyFilesBulkCreateResponse,
   ShopifyMetafieldsSetResponse,
   ShopifyProductsCreateResponse,
   ShopifyVariantsBulkCreateResponse,
@@ -143,6 +144,35 @@ export function createShopifyGatewayAdapter(
         fileId: response.data.fileId,
         shopifyCdnUrl: response.data.shopifyCdnUrl,
       };
+    },
+
+    async uploadFilesBatch(
+      inputs: readonly UploadFileInput[],
+    ): Promise<readonly UploadFileOutput[]> {
+      if (!inputs || inputs.length === 0) {
+        return [];
+      }
+      const requestId = getRequestId("files-bulk-create");
+      const response = (await runner({
+        storeId,
+        operation: "files.bulkCreate",
+        mode,
+        requestId,
+        payload: {
+          files: inputs.map((item) => ({
+            originalSource: item.originalSource,
+            filename: item.filename,
+            alt: item.alt,
+            contentType: "IMAGE" as const,
+          })),
+        },
+      })) as ShopifyFilesBulkCreateResponse;
+
+      return response.data.files.map((f) => ({
+        fileId: f.fileId || "",
+        shopifyCdnUrl: f.shopifyCdnUrl || "",
+        originalSource: f.originalSource,
+      }));
     },
 
     async setProductMetafield(input: SetMetafieldInput): Promise<SetMetafieldOutput> {

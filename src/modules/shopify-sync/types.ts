@@ -142,6 +142,7 @@ export interface UploadFileInput {
 export interface UploadFileOutput {
   readonly fileId: string;
   readonly shopifyCdnUrl: string;
+  readonly originalSource?: string;
 }
 
 export interface SetMetafieldInput {
@@ -164,6 +165,9 @@ export interface ShopifyGateway {
     variants: readonly CreateVariantItem[],
   ) => Promise<CreateVariantsOutput>;
   readonly uploadFile: (input: UploadFileInput) => Promise<UploadFileOutput>;
+  readonly uploadFilesBatch?: (
+    inputs: readonly UploadFileInput[],
+  ) => Promise<readonly UploadFileOutput[]>;
   readonly setProductMetafield: (input: SetMetafieldInput) => Promise<SetMetafieldOutput>;
 }
 

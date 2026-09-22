@@ -135,11 +135,69 @@ export async function syncSingleProduct(
     let metafieldSet = false;
 
     if (product.customization && product.customization.hasCustomization) {
-      const assets = product.customization.assets || [];
+      const rawAssets = product.customization.assets || [];
       const replacements = new Map<string, string>();
 
-      for (const asset of assets) {
-        if (asset.url) {
+      // Deduplicate assets by valid URL to avoid uploading duplicates
+      const uniqueUrlMap = new Map<string, (typeof rawAssets)[0]>();
+      for (const asset of rawAssets) {
+        if (asset.url && typeof asset.url === "string" && asset.url.trim() !== "") {
+          const trimmedUrl = asset.url.trim();
+          if (!uniqueUrlMap.has(trimmedUrl)) {
+            uniqueUrlMap.set(trimmedUrl, asset);
+          }
+        }
+      }
+      const uniqueAssets = Array.from(uniqueUrlMap.values());
+
+      if (gateway.uploadFilesBatch && uniqueAssets.length > 0) {
+        const BATCH_SIZE = 100;
+        for (let i = 0; i < uniqueAssets.length; i += BATCH_SIZE) {
+          const chunk = uniqueAssets.slice(i, i + BATCH_SIZE);
+          try {
+            const batchOutputs = await gateway.uploadFilesBatch(
+              chunk.map((a) => ({
+                originalSource: a.url,
+                filename: a.friendlyFileName || "amzcustom-asset.png",
+                alt: a.alt || "Customization Asset",
+              })),
+            );
+
+            batchOutputs.forEach((item, idx) => {
+              const orig = item.originalSource || chunk[idx]?.url;
+              if (item.shopifyCdnUrl && orig) {
+                replacements.set(orig, item.shopifyCdnUrl);
+                assetsUploadedCount += 1;
+              }
+            });
+          } catch (batchErr: unknown) {
+            const errDetail =
+              batchErr instanceof Error ? batchErr.message : String(batchErr);
+            warnings.push(
+              `Batch upload chunk failed (${errDetail}); falling back to single file uploads`,
+            );
+            for (const asset of chunk) {
+              try {
+                const uploaded = await gateway.uploadFile({
+                  originalSource: asset.url,
+                  filename: asset.friendlyFileName || "amzcustom-asset.png",
+                  alt: asset.alt || "Customization Asset",
+                });
+                replacements.set(asset.url, uploaded.shopifyCdnUrl);
+                assetsUploadedCount += 1;
+              } catch (singleErr: unknown) {
+                const singleDetail =
+                  singleErr instanceof Error ? singleErr.message : String(singleErr);
+                warnings.push(
+                  `Failed to upload customization asset ${asset.url}: ${singleDetail}`,
+                );
+              }
+            }
+          }
+        }
+      } else {
+        // Fallback to sequential uploads when uploadFilesBatch is not available
+        for (const asset of uniqueAssets) {
           try {
             const uploaded = await gateway.uploadFile({
               originalSource: asset.url,
@@ -151,7 +209,9 @@ export async function syncSingleProduct(
           } catch (uploadError: unknown) {
             const errDetail =
               uploadError instanceof Error ? uploadError.message : String(uploadError);
-            warnings.push(`Failed to upload customization asset ${asset.url}: ${errDetail}`);
+            warnings.push(
+              `Failed to upload customization asset ${asset.url}: ${errDetail}`,
+            );
           }
         }
       }
