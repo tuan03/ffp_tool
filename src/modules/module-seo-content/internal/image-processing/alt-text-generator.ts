@@ -6,8 +6,10 @@ export interface AltTextGenerationOptions {
   readonly sourceTitle?: string;
   readonly productTitle?: string;
   readonly primaryKeyword?: string;
+  readonly secondaryKeywords?: readonly string[];
   readonly productCategory?: string;
   readonly entities?: readonly string[];
+  readonly dominantColors?: readonly string[];
   readonly visualStyle?: string;
   readonly imageIndex: number;
   readonly previousAlts?: readonly string[];
@@ -42,11 +44,10 @@ const GENERIC_STYLES = new Set([
 /**
  * Generates an SEO-optimized, accessible, and grounded Alt text for product images:
  * 1. Prioritizes meaningful sourceAlt if already descriptive and clean (not placeholder/filename).
- * 2. If sourceTitle was empty/whitespace, falls back to "Product image ${index + 1}".
- * 3. If primaryKeyword is provided and distinct from sourceTitle, crafts an enriched alt text
- *    incorporating primaryKeyword + up to 1-2 distinct entities + visualStyle.
- * 4. Otherwise, falls back to "${effectiveTitle} - View ${index + 1}".
- * 5. Guarantees character length <= 125 and distinctness across gallery.
+ * 2. Determines grounded base subject from primaryKeyword, productTitle, secondaryKeywords, or category.
+ * 3. Enriches base subject with non-redundant visual entities, visualStyle, and dominantColors.
+ * 4. Ensures word-safe fitting <= maxLength (default 125 chars) and gallery distinctness.
+ * 5. Falls back safely to "Product image ${index + 1}" only when no title/keyword signals exist.
  */
 export function generateAltText(options: AltTextGenerationOptions): string {
   const {
@@ -54,8 +55,10 @@ export function generateAltText(options: AltTextGenerationOptions): string {
     sourceTitle,
     productTitle,
     primaryKeyword,
+    secondaryKeywords,
     productCategory,
     entities = [],
+    dominantColors,
     visualStyle,
     imageIndex,
     previousAlts = [],
@@ -67,8 +70,16 @@ export function generateAltText(options: AltTextGenerationOptions): string {
   const trimmedProductTitle = productTitle ? cleanAltText(productTitle) : "";
   const effectiveTitle = trimmedProductTitle || trimmedSourceTitle;
   const trimmedPrimary = primaryKeyword ? cleanAltText(primaryKeyword) : "";
+  const firstSecondary = secondaryKeywords?.[0] ? cleanAltText(secondaryKeywords[0]) : "";
+  const trimmedCategory = productCategory ? cleanAltText(productCategory) : "";
+  const cleanCategory =
+    trimmedCategory &&
+    !GENERIC_ENTITIES.has(trimmedCategory.toLowerCase()) &&
+    !GENERIC_STYLES.has(trimmedCategory.toLowerCase())
+      ? trimmedCategory
+      : "";
 
-  // 1. If sourceAlt is meaningful, prioritize it
+  // 1. If sourceAlt is meaningful and not a placeholder/filename, prioritize it
   if (trimmedSourceAlt && !isPlaceholderAlt(trimmedSourceAlt)) {
     const fitted = fitAltText(trimmedSourceAlt, maxLength);
     return ensureGalleryUniqueness(fitted, imageIndex, previousAlts, maxLength);
@@ -79,43 +90,77 @@ export function generateAltText(options: AltTextGenerationOptions): string {
     return `Product image ${imageIndex + 1}`;
   }
 
-  // 3. Enriched SEO Alt text if primaryKeyword is available and distinct from original title
-  const isDistinctPrimary =
-    trimmedPrimary &&
-    trimmedPrimary.toLowerCase() !== trimmedSourceTitle.toLowerCase() &&
-    trimmedPrimary.toLowerCase() !== trimmedProductTitle.toLowerCase();
+  // 3. Determine if we have visual enrichments (entities, visual style, dominant colors)
+  // or a primary keyword distinct from source title
+  const coreSubject = trimmedPrimary || firstSecondary || effectiveTitle;
+  const subjectLower = coreSubject.toLowerCase();
 
-  if (isDistinctPrimary) {
-    const parts: string[] = [toSentenceCase(trimmedPrimary)];
-    const primaryLower = trimmedPrimary.toLowerCase();
+  // Filter meaningful visual entities that are not already present in the subject
+  const additionalEntities: string[] = [];
+  for (const entity of entities) {
+    const entityClean = cleanAltText(entity);
+    const entityLower = entityClean.toLowerCase();
+    if (
+      entityClean &&
+      !GENERIC_ENTITIES.has(entityLower) &&
+      !subjectLower.includes(entityLower) &&
+      !additionalEntities.some(
+        (e) => e.toLowerCase().includes(entityLower) || entityLower.includes(e.toLowerCase()),
+      )
+    ) {
+      additionalEntities.push(entityClean);
+      if (additionalEntities.length >= 2) break;
+    }
+  }
 
-    // Select up to 1-2 distinct visual entities (filtering out stop words)
-    const additionalEntities: string[] = [];
-    for (const entity of entities) {
-      const entityClean = cleanAltText(entity).toLowerCase();
+  const hasMeaningfulStyle = Boolean(
+    visualStyle &&
+    visualStyle.trim() &&
+    !GENERIC_STYLES.has(visualStyle.trim().toLowerCase()) &&
+    !subjectLower.includes(visualStyle.toLowerCase()),
+  );
+
+  let colorAccent: string | undefined;
+  if (dominantColors && dominantColors.length > 0) {
+    for (const rawColor of dominantColors) {
+      const colorClean = cleanAltText(rawColor);
+      const colorLower = colorClean.toLowerCase();
       if (
-        entityClean &&
-        !GENERIC_ENTITIES.has(entityClean) &&
-        !primaryLower.includes(entityClean) &&
-        !additionalEntities.some((e) => e.includes(entityClean) || entityClean.includes(e))
+        colorClean &&
+        !GENERIC_STYLES.has(colorLower) &&
+        !GENERIC_ENTITIES.has(colorLower) &&
+        !subjectLower.includes(colorLower) &&
+        !additionalEntities.some((e) => e.toLowerCase().includes(colorLower)) &&
+        (!visualStyle || !visualStyle.toLowerCase().includes(colorLower))
       ) {
-        additionalEntities.push(cleanAltText(entity));
-        if (additionalEntities.length >= 2) break;
+        colorAccent = colorClean;
+        break;
       }
     }
+  }
+
+  const hasVisualEnrichment =
+    additionalEntities.length > 0 || hasMeaningfulStyle || Boolean(colorAccent && !hasMeaningfulStyle);
+
+  const isDistinctPrimary = Boolean(
+    trimmedPrimary &&
+    trimmedPrimary.toLowerCase() !== trimmedSourceTitle.toLowerCase() &&
+    trimmedPrimary.toLowerCase() !== trimmedProductTitle.toLowerCase(),
+  );
+
+  // If we have visual enrichment or distinct primary keyword, build enriched alt text
+  if (hasVisualEnrichment || isDistinctPrimary) {
+    const basePhrase = trimmedPrimary || firstSecondary || effectiveTitle;
+    const parts: string[] = [toSentenceCase(basePhrase)];
 
     if (additionalEntities.length > 0) {
       parts.push(`featuring ${additionalEntities.join(" and ")}`);
     }
 
-    // Add visual style if provided, meaningful, and not already in primary
-    if (
-      visualStyle &&
-      visualStyle.trim() &&
-      !GENERIC_STYLES.has(visualStyle.trim().toLowerCase()) &&
-      !primaryLower.includes(visualStyle.toLowerCase())
-    ) {
+    if (hasMeaningfulStyle && visualStyle) {
       parts.push(`in ${cleanAltText(visualStyle)} style`);
+    } else if (colorAccent) {
+      parts.push(`in ${colorAccent}`);
     }
 
     const candidate = parts.join(" ");
@@ -130,8 +175,8 @@ export function generateAltText(options: AltTextGenerationOptions): string {
     return ensureGalleryUniqueness(fitted, imageIndex, previousAlts, maxLength);
   }
 
-  if (productCategory && productCategory.trim() && !GENERIC_ENTITIES.has(productCategory.trim().toLowerCase())) {
-    const candidate = `${toSentenceCase(productCategory.trim())} - View ${imageIndex + 1}`;
+  if (cleanCategory) {
+    const candidate = `${toSentenceCase(cleanCategory)} - View ${imageIndex + 1}`;
     const fitted = fitAltText(candidate, maxLength);
     return ensureGalleryUniqueness(fitted, imageIndex, previousAlts, maxLength);
   }

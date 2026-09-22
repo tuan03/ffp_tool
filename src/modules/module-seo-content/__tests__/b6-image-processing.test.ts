@@ -42,6 +42,7 @@ import {
 } from "../internal/image-processing/image-processor";
 import {
   executeB6ImageProcessing,
+  buildImageProcessingInput,
 } from "../internal/stages/b6-image-processing";
 
 // --- Group 1: WebP Filename Generator ---
@@ -523,5 +524,178 @@ test("B6 Reviewer Confirmation 2: SSRF protection validates destination on redir
   // Safe public URLs pass
   assert.doesNotThrow(() => validateSafeUrl("https://example.com/images/cat.jpg"));
   assert.doesNotThrow(() => validateSafeUrl("http://cdn.shopify.com/products/item.png"));
+});
+
+// --- Group 9: Hardening & Edge-Case Probes ---
+
+test("B6 Hardening: SSRF blocks cloud metadata 169.254.169.254, IPv6 brackets [::1], 0.0.0.0, fe80::, fd00::, ::ffff:", () => {
+  // Cloud metadata endpoint
+  assert.throws(
+    () => validateSafeUrl("http://169.254.169.254/latest/meta-data"),
+    /blocked/,
+  );
+  // IPv6 loopback with brackets
+  assert.throws(
+    () => validateSafeUrl("http://[::1]/secret.png"),
+    /blocked/,
+  );
+  assert.throws(
+    () => validateSafeUrl("http://[::1]:8080/internal.png"),
+    /blocked/,
+  );
+  // 0.0.0.0
+  assert.throws(
+    () => validateSafeUrl("http://0.0.0.0/image.jpg"),
+    /blocked/,
+  );
+  // IPv6 link-local and unique-local
+  assert.throws(
+    () => validateSafeUrl("http://[fe80::1]/pic.png"),
+    /blocked/,
+  );
+  assert.throws(
+    () => validateSafeUrl("http://[fd00::1]/pic.png"),
+    /blocked/,
+  );
+  // IPv4-mapped IPv6
+  assert.throws(
+    () => validateSafeUrl("http://[::ffff:127.0.0.1]/pic.png"),
+    /blocked/,
+  );
+});
+
+test("B6 Hardening: Alt text preserves visual entities when primaryKeyword equals productTitle", () => {
+  const alt = generateAltText({
+    sourceTitle: "Black Cat Rug",
+    productTitle: "Black Cat Rug",
+    primaryKeyword: "black cat rug",
+    entities: ["pumpkin", "autumn leaves"],
+    visualStyle: "gothic",
+    imageIndex: 0,
+  });
+
+  assert.equal(
+    alt,
+    "Black cat rug featuring pumpkin and autumn leaves in gothic style",
+  );
+});
+
+test("B6 Hardening: Alt text incorporates dominantColors when visualStyle is unspecified", () => {
+  const alt = generateAltText({
+    sourceTitle: "Area Rug",
+    productTitle: "Area Rug",
+    primaryKeyword: "cat mat",
+    dominantColors: ["emerald green"],
+    visualStyle: "unspecified",
+    imageIndex: 0,
+  });
+
+  assert.equal(alt, "Cat mat in emerald green");
+});
+
+test("B6 Hardening: Alt text falls back to secondaryKeywords when primaryKeyword is missing", () => {
+  const alt = generateAltText({
+    sourceTitle: "Halloween Mat",
+    productTitle: "Halloween Mat",
+    secondaryKeywords: ["spooky cat runner"],
+    entities: ["witch hat"],
+    imageIndex: 0,
+  });
+
+  assert.equal(alt, "Spooky cat runner featuring witch hat");
+});
+
+test("B6 Hardening: buildImageProcessingInput maps dominantColors and secondaryKeywords from context", () => {
+  const sourceInput: SeoContentInput = {
+    images: [{ url: "https://example.com/item.jpg" }],
+    niche: "rugs",
+    title: "Cat Rug",
+    description: "Description",
+    handle: "cat-rug",
+  };
+
+  const initial = createInitialContext(sourceInput);
+  const fullContext: SeoPipelineContext = {
+    ...initial,
+    productUnderstanding: {
+      ocrTexts: [],
+      detectedEntities: ["pumpkin"],
+      dominantColors: ["black", "orange"],
+      visualStyle: "vintage",
+      productCategory: "rug",
+    },
+    contentResult: {
+      productTitle: "Vintage Halloween Cat Rug",
+      productDescription: "<p>Description</p>",
+      productSeoTitle: "Vintage Halloween Cat Rug",
+      productSeoDescription: "Description",
+      productHandle: "vintage-halloween-cat-rug",
+    },
+    contentGenerationMetadata: {
+      primaryKeyword: "vintage cat rug",
+      secondaryKeywords: ["halloween cat mat", "gothic rug"],
+      supportingKeywords: [],
+      targetedKeywords: ["vintage cat rug"],
+      generator: "heuristic",
+    },
+  };
+
+  const input = buildImageProcessingInput(fullContext);
+  assert.deepEqual(input.dominantColors, ["black", "orange"]);
+  assert.deepEqual(input.secondaryKeywords, ["halloween cat mat", "gothic rug"]);
+  assert.equal(input.primaryKeyword, "vintage cat rug");
+  assert.equal(input.visualStyle, "vintage");
+});
+
+test("B6 Hardening: DefaultImageSourceLoader detects circular redirect loop", async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async (url: string | URL | Request) => {
+      const urlStr = url.toString();
+      if (urlStr === "https://example.com/start.png") {
+        return new Response(null, {
+          status: 302,
+          headers: { location: "https://example.com/loop.png" },
+        });
+      }
+      if (urlStr === "https://example.com/loop.png") {
+        return new Response(null, {
+          status: 302,
+          headers: { location: "https://example.com/start.png" },
+        });
+      }
+      return new Response(null, { status: 404 });
+    };
+
+    const loader = new DefaultImageSourceLoader();
+    await assert.rejects(
+      async () => loader.load({ url: "https://example.com/start.png" }),
+      /Circular redirect detected/,
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("B6 Hardening: DefaultImageSourceLoader stops when max redirect hops exceeded", async () => {
+  const originalFetch = globalThis.fetch;
+  let hopCount = 0;
+  try {
+    globalThis.fetch = async () => {
+      hopCount++;
+      return new Response(null, {
+        status: 302,
+        headers: { location: `https://example.com/hop-${hopCount}.png` },
+      });
+    };
+
+    const loader = new DefaultImageSourceLoader();
+    await assert.rejects(
+      async () => loader.load({ url: "https://example.com/hop-0.png" }),
+      /Exceeded maximum redirect hops/,
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 

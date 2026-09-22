@@ -63,21 +63,23 @@ internal/image-processing/
 | `image-processor.ts` | `internal/image-processing/` | Trình điều phối chính của B6, hỗ trợ chế độ lenient và strict |
 | `b6-image-processing.ts` | `internal/stages/` | Kết nối Stage B6 vào luồng SEO Pipeline, đóng gói lỗi an toàn |
 | `domain-types.ts` | `internal/` | Cập nhật `SeoPipelineContext` thêm trường `imageProcessingMetadata` |
-| `b6-image-processing.test.ts` | `__tests__/` | 26 unit tests toàn diện cho toàn bộ các thành phần của Stage B6 |
+| `b6-image-processing.test.ts` | `__tests__/` | 35 unit tests toàn diện cho toàn bộ các thành phần và edge cases của Stage B6 |
 
 ---
 
 ## 4. Kết quả Kiểm thử & Nghiệm thu
 
-Toàn bộ **256/256 tests** trong repository đều vượt qua (100% PASS):
-- Nhóm B6 Unit Tests (`b6-image-processing.test.ts`): 26/26 tests PASS
-  + Nhóm 1 (Filename Generator): Định dạng tên file, fallback stem, chuẩn hóa ký tự tiếng Việt, chống path traversal.
+Toàn bộ **265/265 tests** trong repository đều vượt qua (100% PASS):
+- Nhóm B6 Unit Tests (`b6-image-processing.test.ts`): 35/35 tests PASS
+  + Nhóm 1 (Filename Generator): Định dạng tên file `${handle}-${index + 1}.webp`, fallback stem, chuẩn hóa ký tự tiếng Việt, chống path traversal.
   + Nhóm 2 (Alt Sanitizer & Fitter): Xóa tag HTML, xóa control chars, phát hiện placeholder, cắt an toàn ranh giới từ.
   + Nhóm 3 (Alt Text Generator): Giữ alt có nghĩa, kết hợp primary keyword + entities, loại bỏ generic stop words, đảm bảo tính duy nhất trong gallery, fallback khi thiếu context, trần cứng <= 125 ký tự.
   + Nhóm 4 (WebP Validator & Converters): Kiểm tra magic bytes RIFF/WEBP, test converter trả về buffer hợp lệ, unavailable converter ném lỗi đặc thù.
   + Nhóm 5 (Source Loader & Sink): Load buffer in-memory offline 100%, parse data URI, chặn IP cục bộ/SSRF, ghi đĩa nguyên tử và chặn thoát thư mục.
   + Nhóm 6 (Processor & Edge Cases): Xử lý danh sách ảnh rỗng, bảo toàn thứ tự ảnh đầu vào, chế độ lenient không tạo fake WebP data, chế độ strict ném lỗi khi convert hỏng.
   + Nhóm 7 (Stage Execution & Context Invariants): Context bất biến, giữ nguyên tham chiếu `source`, bảo toàn `contentResult` và `corpusRevision` của B4/B5.
+  + Nhóm 8 (Reviewer Confirmations): Kiểm thử ranh giới trùng alt dài 125 ký tự, bảo vệ chuyển hướng SSRF.
+  + Nhóm 9 (Hardening & Edge Cases): Chặn toàn diện SSRF (cloud metadata 169.254.169.254, IPv6 brackets `[::1]`, `0.0.0.0`, link-local `fe80::`, unique-local `fd00::`, `::ffff:`), phát hiện redirect loop tuần hoàn, chặn quá giới hạn hops, bảo toàn entities khi primaryKeyword trùng productTitle, bổ sung gam màu chủ đạo `dominantColors` và fallback `secondaryKeywords`.
 - Toàn bộ các bài kiểm thử hồi quy cũ (B1, B2, B3, B4, B5, Pipeline, Service, Mock, Orchestrator) đều PASS 100%.
 - TypeScript Typecheck: 0 lỗi (`npm run typecheck` pass).
 - Production Build: Thành công (`npm run build` pass).

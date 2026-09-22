@@ -13,6 +13,89 @@ export const DEFAULT_FETCH_TIMEOUT_MS = 15000;
 export const MAX_REDIRECT_HOPS = 5;
 
 /**
+ * Checks whether a hostname belongs to a private, loopback, link-local,
+ * cloud instance metadata, or local broadcast address.
+ */
+export function isPrivateOrLocalHost(rawHostname: string): boolean {
+  // Strip brackets from IPv6 hostnames, e.g. [::1] -> ::1
+  const host = rawHostname.replace(/^\[|\]$/g, "").toLowerCase().trim();
+
+  if (!host) {
+    return true;
+  }
+
+  // Localhost, local, internal domain names
+  if (
+    host === "localhost" ||
+    host.endsWith(".localhost") ||
+    host.endsWith(".local") ||
+    host.endsWith(".internal") ||
+    host === "metadata.google.internal"
+  ) {
+    return true;
+  }
+
+  // Unspecified and loopback (IPv4 & IPv6)
+  if (
+    host === "0.0.0.0" ||
+    host.startsWith("0.") ||
+    host === "::" ||
+    host === "::1" ||
+    host === "0:0:0:0:0:0:0:1" ||
+    host === "0:0:0:0:0:0:0:0"
+  ) {
+    return true;
+  }
+
+  // IPv4 Loopback: 127.0.0.0/8
+  if (host.startsWith("127.")) {
+    return true;
+  }
+
+  // IPv4 Private Class A: 10.0.0.0/8
+  if (host.startsWith("10.")) {
+    return true;
+  }
+
+  // IPv4 Link-Local / Cloud Instance Metadata: 169.254.0.0/16
+  if (host.startsWith("169.254.")) {
+    return true;
+  }
+
+  // IPv4 Private Class C: 192.168.0.0/16
+  if (host.startsWith("192.168.")) {
+    return true;
+  }
+
+  // IPv4 Private Class B: 172.16.0.0/12
+  if (/^172\.(1[6-9]|2\d|3[01])\./.test(host)) {
+    return true;
+  }
+
+  // Carrier-Grade NAT: 100.64.0.0/10
+  if (/^100\.(6[4-9]|[7-9]\d|1[0-1]\d|12[0-7])\./.test(host)) {
+    return true;
+  }
+
+  // IPv6 Link-Local: fe80::/10 (fe8*, fe9*, fea*, feb*)
+  if (/^fe[89ab]/i.test(host)) {
+    return true;
+  }
+
+  // IPv6 Unique Local: fc00::/7 (fc*, fd*)
+  if (/^f[cd]/i.test(host)) {
+    return true;
+  }
+
+  // IPv4-mapped IPv6: ::ffff:0:0/96
+  if (host.startsWith("::ffff:") || host.startsWith("ffff:")) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
  * Validates that the URL targets an allowed public http/https address
  * and blocks private/local network ranges (SSRF protection).
  */
@@ -28,17 +111,7 @@ export function validateSafeUrl(rawUrl: string): void {
     throw new Error(`Invalid protocol '${parsed.protocol}' for URL: ${rawUrl}`);
   }
 
-  const hostname = parsed.hostname.toLowerCase();
-  if (
-    hostname === "localhost" ||
-    hostname === "127.0.0.1" ||
-    hostname === "::1" ||
-    hostname.startsWith("10.") ||
-    hostname.startsWith("192.168.") ||
-    /^172\.(1[6-9]|2\d|3[01])\./.test(hostname) ||
-    hostname.endsWith(".local") ||
-    hostname.endsWith(".internal")
-  ) {
+  if (isPrivateOrLocalHost(parsed.hostname)) {
     throw new Error(`Access to private or local network URL '${rawUrl}' is blocked`);
   }
 }
@@ -144,8 +217,14 @@ export class DefaultImageSourceLoader implements ImageSourceLoader {
       try {
         let currentUrl = rawUrl;
         let response: Response | undefined;
+        const visitedUrls = new Set<string>();
 
         for (let hop = 0; hop <= MAX_REDIRECT_HOPS; hop++) {
+          if (visitedUrls.has(currentUrl)) {
+            throw new Error(`Circular redirect detected at ${currentUrl}`);
+          }
+          visitedUrls.add(currentUrl);
+
           validateSafeUrl(currentUrl);
 
           response = await fetch(currentUrl, {
@@ -154,6 +233,9 @@ export class DefaultImageSourceLoader implements ImageSourceLoader {
           });
 
           if ([301, 302, 303, 307, 308].includes(response.status)) {
+            if (hop >= MAX_REDIRECT_HOPS) {
+              throw new Error(`Exceeded maximum redirect hops of ${MAX_REDIRECT_HOPS}`);
+            }
             const location = response.headers.get("location");
             if (!location) {
               throw new Error(`Redirect missing location header from ${currentUrl}`);

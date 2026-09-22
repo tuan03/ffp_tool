@@ -13,6 +13,7 @@ import { DefaultImageSourceLoader } from "./image-source-loader";
 import type { WebpConverter } from "./webp-converter";
 import {
   DeterministicTestWebpConverter,
+  SharpWebpConverter,
   UnavailableWebpConverter,
 } from "./webp-converter";
 import { generateWebpFilename } from "./webp-filename-generator";
@@ -41,7 +42,7 @@ export class DefaultImageProcessor implements ImageProcessor {
 
   constructor(options: ImageProcessorOptions = {}) {
     this.sourceLoader = options.sourceLoader ?? new DefaultImageSourceLoader();
-    this.webpConverter = options.webpConverter ?? new UnavailableWebpConverter();
+    this.webpConverter = options.webpConverter ?? new SharpWebpConverter();
     this.artifactSink = options.artifactSink;
     this.strictConversion = options.strictConversion ?? false;
   }
@@ -82,8 +83,10 @@ export class DefaultImageProcessor implements ImageProcessor {
         sourceTitle: input.sourceTitle,
         productTitle: input.productTitle,
         primaryKeyword: input.primaryKeyword,
+        secondaryKeywords: input.secondaryKeywords,
         productCategory: input.productCategory,
         entities: input.entities,
+        dominantColors: input.dominantColors,
         visualStyle: input.visualStyle,
         imageIndex: i,
         previousAlts,

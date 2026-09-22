@@ -6,8 +6,10 @@ export interface ImageProcessingInput {
   readonly productTitle: string;
   readonly productHandle: string;
   readonly primaryKeyword?: string;
+  readonly secondaryKeywords?: readonly string[];
   readonly productCategory?: string;
   readonly entities: readonly string[];
+  readonly dominantColors?: readonly string[];
   readonly visualStyle?: string;
 }
 

@@ -30,8 +30,10 @@ export function buildImageProcessingInput(context: SeoPipelineContext): ImagePro
     productTitle: context.contentResult?.productTitle ?? context.source.title ?? "",
     productHandle: context.contentResult?.productHandle ?? context.source.handle ?? "",
     primaryKeyword: context.contentGenerationMetadata?.primaryKeyword,
+    secondaryKeywords: context.contentGenerationMetadata?.secondaryKeywords,
     productCategory: context.productUnderstanding?.productCategory,
     entities: context.productUnderstanding?.detectedEntities ?? [],
+    dominantColors: context.productUnderstanding?.dominantColors,
     visualStyle: context.productUnderstanding?.visualStyle,
   };
 }
