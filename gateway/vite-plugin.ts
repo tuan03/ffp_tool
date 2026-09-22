@@ -1,6 +1,7 @@
 import type { Plugin } from "vite";
 
 import { GatewayDispatcher } from "./dispatcher";
+import { handleAutoSeoHttpRequest } from "./auto-seo-handler";
 import { createGatewayHttpHandler, isGatewayAuthorized, MAX_BODY_BYTES } from "./http-server";
 import { InMemoryIdempotencyStore } from "./idempotency";
 import { ShopifyGraphqlClient } from "./shopify-graphql-client";
@@ -130,6 +131,8 @@ export function shopifyGatewayDevPlugin(options?: ShopifyGatewayDevPluginOptions
               }),
             );
           }
+        } else if (req.url && (req.url === "/api/auto-seo/run" || req.url.startsWith("/api/auto-seo/run?"))) {
+          await handleAutoSeoHttpRequest(req, res, { authToken, maxBodyBytes });
         } else {
           next();
         }

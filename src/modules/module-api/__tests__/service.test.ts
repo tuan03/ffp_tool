@@ -2859,6 +2859,194 @@ test("Shopify gateway adapter preserves manual tags and tracks only crawler-mana
   });
 });
 
+test("createShopifyGatewayAdapter accepts runner directly as second parameter", async () => {
+  const adapter = createShopifyGatewayAdapter("store-direct", runMockModuleApi);
+  const prod = await adapter.createProduct({
+    title: "Direct Runner Bag",
+    descriptionHtml: "<p>Bag</p>",
+  });
+  assert.ok(prod.productId);
+  assert.ok(prod.productHandle);
+
+  const vars = await adapter.createVariants(prod.productId, [{ price: "35.00" }]);
+  assert.equal(vars.createdCount, 1);
+
+  const file = await adapter.uploadFile({
+    originalSource: "https://example.com/asset.jpg",
+    filename: "asset.jpg",
+    alt: "Asset",
+  });
+  assert.ok(file.fileId);
+  assert.ok(file.shopifyCdnUrl.includes("asset.jpg"));
+
+  const meta = await adapter.setProductMetafield({
+    productId: prod.productId,
+    namespace: "custom",
+    key: "amazon_customizer",
+    type: "json",
+    value: "{}",
+  });
+  assert.equal(meta.success, true);
+});
+
+test("Module API mock runner validates variants.bulkCreate payload", async () => {
+  await assert.rejects(
+    async () => {
+      await runMockModuleApi({
+        storeId: "store-test",
+        operation: "variants.bulkCreate",
+        payload: { productId: "", variants: [] },
+      });
+    },
+    (err: unknown) => {
+      assert.ok(err instanceof ShopifyApiError);
+      assert.equal(err.code, "SHOPIFY_USER_ERROR");
+      assert.ok(err.message.includes("Product id is required"));
+      return true;
+    },
+  );
+});
+
+test("Module API mock runner validates files.create payload", async () => {
+  await assert.rejects(
+    async () => {
+      await runMockModuleApi({
+        storeId: "store-test",
+        operation: "files.create",
+        payload: { originalSource: "" },
+      });
+    },
+    (err: unknown) => {
+      assert.ok(err instanceof ShopifyApiError);
+      assert.equal(err.code, "SHOPIFY_USER_ERROR");
+      assert.ok(err.message.includes("originalSource is required"));
+      return true;
+    },
+  );
+});
+
+test("Module API mock runner validates metafields.set payload", async () => {
+  await assert.rejects(
+    async () => {
+      await runMockModuleApi({
+        storeId: "store-test",
+        operation: "metafields.set",
+        payload: { metafields: [] },
+      });
+    },
+    (err: unknown) => {
+      assert.ok(err instanceof ShopifyApiError);
+      assert.equal(err.code, "SHOPIFY_USER_ERROR");
+      assert.ok(err.message.includes("metafields array cannot be empty"));
+      return true;
+    },
+  );
+
+  await assert.rejects(
+    async () => {
+      await runMockModuleApi({
+        storeId: "store-test",
+        operation: "metafields.set",
+        payload: {
+          metafields: [{ namespace: "custom", key: "k1", value: "v1" }],
+        },
+      });
+    },
+    (err: unknown) => {
+      assert.ok(err instanceof ShopifyApiError);
+      assert.equal(err.code, "SHOPIFY_USER_ERROR");
+      assert.ok(err.message.includes("ownerId (or productId) is required"));
+      return true;
+    },
+  );
+
+  const res = await runMockModuleApi({
+    storeId: "store-test",
+    operation: "metafields.set",
+    payload: {
+      ownerId: "gid://shopify/Product/test-prod-1",
+      metafields: [
+        { namespace: "custom", key: "k1", value: "v1" },
+        { namespace: "custom", key: "k2", value: "v2" },
+      ],
+    },
+  });
+  assert.equal(res.success, true);
+  assert.equal(res.data.metafields?.length, 2);
+});
+
+test("Module API mock runner products.create populates images and featuredImage from product.media", async () => {
+  const res = await runMockModuleApi({
+    storeId: "store-test",
+    operation: "products.create",
+    mode: "apply",
+    requestId: "req-mock-media",
+    payload: {
+      product: {
+        title: "Gallery Bag",
+        media: [
+          { originalSource: "https://example.com/gallery1.jpg", alt: "Gallery 1" },
+          { originalSource: "https://example.com/gallery2.jpg", alt: "Gallery 2" },
+        ],
+      },
+    },
+  });
+
+  assert.equal(res.success, true);
+  assert.ok(res.data.product.featuredImage);
+  assert.equal(res.data.product.featuredImage.url, "https://example.com/gallery1.jpg");
+  assert.equal(res.data.product.featuredImage.altText, "Gallery 1");
+  assert.equal(res.data.product.images?.length, 2);
+  assert.equal(res.data.product.images?.[1]?.url, "https://example.com/gallery2.jpg");
+});
+
+test("Module API mock runner variants.bulkCreate handles empty array and invalid items", async () => {
+  await assert.rejects(
+    async () => {
+      await runMockModuleApi({
+        storeId: "store-test",
+        operation: "variants.bulkCreate",
+        payload: {
+          productId: "gid://shopify/Product/123",
+          variants: [null as unknown as { price: string }],
+        },
+      });
+    },
+    (err: unknown) => {
+      assert.ok(err instanceof ShopifyApiError);
+      assert.equal(err.code, "SHOPIFY_USER_ERROR");
+      assert.ok(err.message.includes("Each variant item must be an object"));
+      return true;
+    },
+  );
+
+  const res = await runMockModuleApi({
+    storeId: "store-test",
+    operation: "variants.bulkCreate",
+    payload: {
+      productId: "gid://shopify/Product/123",
+      variants: [],
+    },
+  });
+  assert.equal(res.success, true);
+  assert.equal(res.data.createdCount, 0);
+  assert.equal(res.data.variants.length, 0);
+});
+
+test("createShopifyGatewayAdapter validates storeId and handles empty variants", async () => {
+  assert.throws(
+    () => createShopifyGatewayAdapter("   "),
+    (err: unknown) => {
+      assert.ok(err instanceof Error);
+      assert.ok(err.message.includes("storeId is required"));
+      return true;
+    },
+  );
+
+  const adapter = createShopifyGatewayAdapter("store-test", runMockModuleApi);
+  const vars = await adapter.createVariants("gid://shopify/Product/123", []);
+  assert.equal(vars.createdCount, 0);
+});
 
 
 

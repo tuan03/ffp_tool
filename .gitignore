@@ -8,9 +8,13 @@ Tool_crawer_New_update/
 .env.*
 .env.shopify
 *.tsbuildinfo
+*zip
+
+# Crawler & Gateway runtime/data
 .runtime/
 exports/
 client-data/
+.local-data/
 *.sqlite3
 *.sqlite3-shm
 *.sqlite3-wal
@@ -22,3 +26,15 @@ config/amazon-crawler-agent.json
 .DS_Store
 stores.local.json
 stores.config.json
+
+#=== [start] - module SEO Content - Lth Loi ===
+.agents
+compress-src.cmd
+dev.cmd
+.compressignore
+PROJECT_CONTEXT.md
+test.cmd
+b1-visual-preview.html
+branches-git.cmd
+remotes-git.cmd
+#=== [end] - module SEO Content - Lth Loi ===
