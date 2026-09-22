@@ -173,3 +173,45 @@ test("createShopifyClient validates credentials and normalizes store domain", ()
   assertStrict.equal(client.shop, "my-test-store.myshopify.com");
   assertStrict.equal(client.apiVersion, "2026-04");
 });
+
+test("syncSingleProduct coordinates the 4 operations through an injected ShopifyGateway", async () => {
+  const operationsCalled: string[] = [];
+
+  const fakeHiepGateway = {
+    async createProduct(input: { title: string }) {
+      operationsCalled.push(`createProduct:${input.title}`);
+      return { productId: "gid://shopify/Product/hiep-123", productHandle: "hiep-handle" };
+    },
+    async createVariants(productId: string, variants: readonly unknown[]) {
+      operationsCalled.push(`createVariants:${productId}:${variants.length}`);
+      return { createdCount: variants.length };
+    },
+    async uploadFile(input: { filename: string }) {
+      operationsCalled.push(`uploadFile:${input.filename}`);
+      return {
+        fileId: "gid://shopify/File/hiep-f1",
+        shopifyCdnUrl: `https://cdn.shopify.com/files/${input.filename}`,
+      };
+    },
+    async setProductMetafield(input: { namespace: string; key: string }) {
+      operationsCalled.push(`setMetafield:${input.namespace}.${input.key}`);
+      return { success: true, metafieldId: "gid://shopify/Metafield/hiep-m1" };
+    },
+  };
+
+  const customProd = shopifySyncMockData.products[0];
+  const result = await syncSingleProduct(customProd, { gateway: fakeHiepGateway });
+
+  assertStrict.equal(result.success, true);
+  assertStrict.equal(result.productId, "gid://shopify/Product/hiep-123");
+  assertStrict.equal(result.metafieldSet, true);
+  assertStrict.equal(result.assetsUploadedCount, 2);
+
+  assertStrict.ok(operationsCalled.some((op) => op.startsWith("createProduct")));
+  assertStrict.ok(
+    operationsCalled.some((op) => op.startsWith("createVariants:gid://shopify/Product/hiep-123:2")),
+  );
+  assertStrict.ok(operationsCalled.some((op) => op.startsWith("uploadFile")));
+  assertStrict.ok(operationsCalled.includes("setMetafield:custom.amazon_customizer"));
+});
+

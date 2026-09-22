@@ -1,4 +1,125 @@
-import type { GraphqlResponse, ShopifyCredentials, ShopifySyncOptions } from "./types";
+import type {
+  CreateProductInput,
+  CreateProductOutput,
+  CreateVariantItem,
+  CreateVariantsOutput,
+  ShopifyCredentials,
+  ShopifyGateway,
+  ShopifySyncOptions,
+  UploadFileInput,
+  UploadFileOutput,
+  SetMetafieldInput,
+  SetMetafieldOutput,
+} from "./types";
+
+interface GraphqlUserError {
+  readonly field?: readonly string[];
+  readonly message: string;
+}
+
+interface GraphqlResponse<T = Record<string, unknown>> {
+  readonly data?: T;
+  readonly errors?: readonly {
+    readonly message: string;
+    readonly extensions?: {
+      readonly code?: string;
+    };
+  }[];
+}
+
+const CREATE_PRODUCT_MUTATION = `
+mutation CreateProduct($product: ProductCreateInput!, $media: [CreateMediaInput!]) {
+  productCreate(product: $product, media: $media) {
+    product {
+      id
+      handle
+      title
+    }
+    userErrors {
+      field
+      message
+    }
+  }
+}
+`;
+
+const CREATE_VARIANTS_MUTATION = `
+mutation CreateProductVariants($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+  productVariantsBulkCreate(productId: $productId, variants: $variants) {
+    productVariants {
+      id
+      title
+      price
+      sku
+    }
+    userErrors {
+      field
+      message
+    }
+  }
+}
+`;
+
+const CREATE_FILE_MUTATION = `
+mutation CreateFile($files: [FileCreateInput!]!) {
+  fileCreate(files: $files) {
+    files {
+      id
+      fileStatus
+      alt
+      ... on MediaImage {
+        image {
+          url
+        }
+      }
+      ... on GenericFile {
+        url
+      }
+    }
+    userErrors {
+      field
+      message
+    }
+  }
+}
+`;
+
+const GET_FILE_QUERY = `
+query GetFile($id: ID!) {
+  node(id: $id) {
+    ... on File {
+      id
+      fileStatus
+      alt
+    }
+    ... on MediaImage {
+      image {
+        url
+      }
+    }
+    ... on GenericFile {
+      url
+    }
+  }
+}
+`;
+
+const SET_METAFIELDS_MUTATION = `
+mutation SetCustomizerMetafield($metafields: [MetafieldsSetInput!]!) {
+  metafieldsSet(metafields: $metafields) {
+    metafields {
+      id
+      namespace
+      key
+      type
+    }
+    userErrors {
+      field
+      message
+    }
+  }
+}
+`;
 
 export interface ShopifyClient {
   readonly shop: string;
@@ -164,6 +285,202 @@ export function createShopifyClient(
       }
 
       throw new Error("Shopify GraphQL request exhausted maximum retry attempts.");
+    },
+  };
+}
+
+/**
+ * Creates the default ShopifyGateway implementing the 4 core operations required
+ * by the sync pipeline. When Hiệp provides an external module, it can satisfy
+ * the same ShopifyGateway interface.
+ */
+export function createShopifyGateway(
+  credentials?: ShopifyCredentials,
+  options?: ShopifySyncOptions,
+): ShopifyGateway {
+  const client = createShopifyClient(credentials, options);
+
+  return {
+    async createProduct(input: CreateProductInput): Promise<CreateProductOutput> {
+      const mediaInputs = (input.media || []).map((m) => ({
+        originalSource: m.originalSource,
+        alt: m.alt || input.title,
+        mediaContentType: m.mediaContentType || "IMAGE",
+      }));
+
+      const productPayload: Record<string, unknown> = {
+        title: input.title,
+        descriptionHtml: input.descriptionHtml,
+        vendor: input.vendor || "Default Vendor",
+        productType: input.productType || "Customized Item",
+        tags: input.tags || [],
+      };
+
+      const response = await client.request<{
+        productCreate: {
+          product: { id: string; handle: string; title: string } | null;
+          userErrors: GraphqlUserError[];
+        };
+      }>(CREATE_PRODUCT_MUTATION, {
+        product: productPayload,
+        media: mediaInputs.length > 0 ? mediaInputs : undefined,
+      });
+
+      const payload = response.productCreate;
+      if (payload.userErrors && payload.userErrors.length > 0) {
+        const errorMsg = payload.userErrors.map((u) => u.message).join("; ");
+        throw new Error(`productCreate user errors: ${errorMsg}`);
+      }
+
+      if (!payload.product?.id) {
+        throw new Error("productCreate failed: No product returned from Shopify.");
+      }
+
+      return {
+        productId: payload.product.id,
+        productHandle: payload.product.handle,
+      };
+    },
+
+    async createVariants(
+      productId: string,
+      variants: readonly CreateVariantItem[],
+    ): Promise<CreateVariantsOutput> {
+      if (!variants || variants.length === 0) {
+        return { createdCount: 0 };
+      }
+
+      const bulkVariants = variants.map((v) => ({
+        price: v.price,
+        compareAtPrice: v.compareAtPrice,
+        sku: v.sku,
+        barcode: v.barcode,
+        optionValues: v.optionValues,
+      }));
+
+      const response = await client.request<{
+        productVariantsBulkCreate: {
+          productVariants: Array<{ id: string }> | null;
+          userErrors: GraphqlUserError[];
+        };
+      }>(CREATE_VARIANTS_MUTATION, {
+        productId,
+        variants: bulkVariants,
+      });
+
+      const payload = response.productVariantsBulkCreate;
+      if (payload.userErrors && payload.userErrors.length > 0) {
+        const errorMsg = payload.userErrors.map((u) => u.message).join("; ");
+        throw new Error(`productVariantsBulkCreate user errors: ${errorMsg}`);
+      }
+
+      return {
+        createdCount: payload.productVariants?.length ?? 0,
+      };
+    },
+
+    async uploadFile(input: UploadFileInput): Promise<UploadFileOutput> {
+      const response = await client.request<{
+        fileCreate: {
+          files: Array<{
+            id: string;
+            fileStatus: string;
+            image?: { url: string };
+            url?: string;
+          }> | null;
+          userErrors: GraphqlUserError[];
+        };
+      }>(CREATE_FILE_MUTATION, {
+        files: [
+          {
+            originalSource: input.originalSource,
+            filename: input.filename,
+            alt: input.alt,
+            contentType: "IMAGE",
+          },
+        ],
+      });
+
+      const payload = response.fileCreate;
+      if (payload.userErrors && payload.userErrors.length > 0) {
+        const errorMsg = payload.userErrors.map((u) => u.message).join("; ");
+        throw new Error(`fileCreate user errors: ${errorMsg}`);
+      }
+
+      const createdFile = payload.files?.[0];
+      if (!createdFile?.id) {
+        throw new Error(`fileCreate failed: No file created for ${input.originalSource}`);
+      }
+
+      const immediateUrl = createdFile.image?.url || createdFile.url;
+      if (immediateUrl && createdFile.fileStatus === "READY") {
+        return {
+          fileId: createdFile.id,
+          shopifyCdnUrl: immediateUrl,
+        };
+      }
+
+      // Poll briefly for READY status
+      for (let attempt = 0; attempt < 8; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        const pollResponse = await client.request<{
+          node: {
+            id: string;
+            fileStatus: string;
+            image?: { url: string };
+            url?: string;
+          } | null;
+        }>(GET_FILE_QUERY, { id: createdFile.id });
+
+        const node = pollResponse.node;
+        if (node && node.fileStatus === "READY") {
+          const finalUrl = node.image?.url || node.url || "";
+          return {
+            fileId: node.id,
+            shopifyCdnUrl: finalUrl,
+          };
+        }
+        if (node && node.fileStatus === "FAILED") {
+          throw new Error(`Shopify file processing failed for ${input.originalSource}`);
+        }
+      }
+
+      const fallbackUrl = createdFile.image?.url || createdFile.url || input.originalSource;
+      return {
+        fileId: createdFile.id,
+        shopifyCdnUrl: fallbackUrl,
+      };
+    },
+
+    async setProductMetafield(input: SetMetafieldInput): Promise<SetMetafieldOutput> {
+      const response = await client.request<{
+        metafieldsSet: {
+          metafields: Array<{ id: string; namespace: string; key: string }> | null;
+          userErrors: GraphqlUserError[];
+        };
+      }>(SET_METAFIELDS_MUTATION, {
+        metafields: [
+          {
+            ownerId: input.productId,
+            namespace: input.namespace,
+            key: input.key,
+            type: input.type,
+            value: input.value,
+          },
+        ],
+      });
+
+      const payload = response.metafieldsSet;
+      if (payload.userErrors && payload.userErrors.length > 0) {
+        const errorMsg = payload.userErrors.map((u) => u.message).join("; ");
+        throw new Error(`metafieldsSet user errors: ${errorMsg}`);
+      }
+
+      const metafield = payload.metafields?.[0];
+      return {
+        success: Boolean(metafield?.id),
+        metafieldId: metafield?.id,
+      };
     },
   };
 }

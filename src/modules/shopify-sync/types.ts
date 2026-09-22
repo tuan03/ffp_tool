@@ -8,6 +8,7 @@ export interface ShopifySyncOptions {
   readonly dryRun?: boolean;
   readonly credentials?: ShopifyCredentials;
   readonly priceMultiplier?: number;
+  readonly gateway?: ShopifyGateway;
   readonly maxThrottleAttempts?: number;
   readonly throttleBaseDelayMs?: number;
 }
@@ -98,25 +99,63 @@ export interface ShopifySyncBatchOutput {
   readonly results: readonly ShopifySyncProductResult[];
 }
 
-export interface GraphqlUserError {
-  readonly field?: readonly string[];
-  readonly message: string;
+export interface CreateProductInput {
+  readonly title: string;
+  readonly descriptionHtml: string;
+  readonly vendor?: string;
+  readonly productType?: string;
+  readonly tags?: readonly string[];
+  readonly media?: readonly ShopifyMediaInput[];
 }
 
-export interface GraphqlResponse<T = Record<string, unknown>> {
-  readonly data?: T;
-  readonly errors?: readonly {
-    readonly message: string;
-    readonly extensions?: {
-      readonly code?: string;
-      readonly cost?: {
-        readonly requestedQueryCost?: number;
-        readonly actualQueryCost?: number;
-        readonly throttleStatus?: {
-          readonly currentlyAvailable?: number;
-          readonly restoreRate?: number;
-        };
-      };
-    };
-  }[];
+export interface CreateProductOutput {
+  readonly productId: string;
+  readonly productHandle: string;
 }
+
+export interface CreateVariantItem {
+  readonly price: string;
+  readonly compareAtPrice?: string;
+  readonly sku?: string;
+  readonly barcode?: string;
+  readonly optionValues?: readonly ShopifyVariantOptionValue[];
+}
+
+export interface CreateVariantsOutput {
+  readonly createdCount: number;
+}
+
+export interface UploadFileInput {
+  readonly originalSource: string;
+  readonly filename: string;
+  readonly alt: string;
+}
+
+export interface UploadFileOutput {
+  readonly fileId: string;
+  readonly shopifyCdnUrl: string;
+}
+
+export interface SetMetafieldInput {
+  readonly productId: string;
+  readonly namespace: "custom";
+  readonly key: "amazon_customizer";
+  readonly type: "json";
+  readonly value: string;
+}
+
+export interface SetMetafieldOutput {
+  readonly success: boolean;
+  readonly metafieldId?: string;
+}
+
+export interface ShopifyGateway {
+  readonly createProduct: (input: CreateProductInput) => Promise<CreateProductOutput>;
+  readonly createVariants: (
+    productId: string,
+    variants: readonly CreateVariantItem[],
+  ) => Promise<CreateVariantsOutput>;
+  readonly uploadFile: (input: UploadFileInput) => Promise<UploadFileOutput>;
+  readonly setProductMetafield: (input: SetMetafieldInput) => Promise<SetMetafieldOutput>;
+}
+

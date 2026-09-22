@@ -1,4 +1,4 @@
-export { createShopifyClient } from "./client";
+export { createShopifyClient, createShopifyGateway } from "./client";
 export type { ShopifyClient } from "./client";
 
 export {
@@ -14,20 +14,22 @@ export { getShopifySyncRunner } from "./runtime";
 export type { ShopifySyncRunner } from "./runtime";
 
 export {
-  createShopifyProduct,
-  createShopifyVariants,
+  createDryRunGateway,
   replaceUrlsInObject,
   runShopifySync,
-  setProductCustomizerMetafield,
   syncSingleProduct,
-  uploadShopifyAsset,
 } from "./service";
 
 export type {
-  GraphqlResponse,
-  GraphqlUserError,
+  CreateProductInput,
+  CreateProductOutput,
+  CreateVariantItem,
+  CreateVariantsOutput,
+  SetMetafieldInput,
+  SetMetafieldOutput,
   ShopifyCredentials,
   ShopifyCustomizationAssetInput,
+  ShopifyGateway,
   ShopifyMediaInput,
   ShopifyProductCustomizerInput,
   ShopifySyncBatchInput,
@@ -37,4 +39,6 @@ export type {
   ShopifySyncProductResult,
   ShopifyVariantInput,
   ShopifyVariantOptionValue,
+  UploadFileInput,
+  UploadFileOutput,
 } from "./types";
