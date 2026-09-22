@@ -34,7 +34,10 @@ export class DeterministicTestWebpConverter implements WebpConverter {
       throw new Error("Cannot convert empty buffer to WebP");
     }
     // Return a fresh clone of the valid WebP fixture
-    return Buffer.from(VALID_1X1_WEBP_BUFFER);
+    if (typeof Buffer !== "undefined" && typeof Buffer.from === "function") {
+      return Buffer.from(VALID_1X1_WEBP_BUFFER);
+    }
+    return VALID_1X1_WEBP_BUFFER;
   }
 }
 
