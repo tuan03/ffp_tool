@@ -76,14 +76,25 @@ export function ProductListTable({
 
   if (products.length === 0) {
     return (
-      <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-12 text-center">
-        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-slate-800 text-slate-400">
-          🔍
+      <div className="rounded-2xl border border-slate-800 bg-slate-900/40 p-12 text-center">
+        <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-800/80 text-2xl text-slate-400 border border-slate-700/50 shadow-inner">
+          📝
         </div>
-        <h3 className="mt-3 text-sm font-semibold text-slate-200">Không tìm thấy sản phẩm nào</h3>
-        <p className="mt-1 text-xs text-slate-500">
-          Thử thay đổi bộ lọc tìm kiếm hoặc nạp dữ liệu SEO Content mới.
+        <h3 className="mt-4 text-base font-bold text-slate-200">
+          Chưa có sản phẩm nào trong danh sách review
+        </h3>
+        <p className="mt-2 text-xs text-slate-400 max-w-md mx-auto leading-relaxed">
+          Danh sách đang trống. Bạn hãy sang tab <strong className="text-cyan-400">⚡ Distributed Crawler</strong> để cào sản phẩm và bấm nút <strong className="text-emerald-400">"✨ Bàn giao sang SEO Review"</strong> để tự động chuẩn hóa và đưa sản phẩm vào đây.
         </p>
+        <div className="mt-5">
+          <a
+            href="/amazon-crawler"
+            className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600 px-4 py-2.5 text-xs font-semibold text-white shadow-lg shadow-cyan-600/20 hover:from-cyan-500 hover:to-blue-500 transition"
+          >
+            <span>⚡ Đi tới Distributed Crawler</span>
+            <span>➔</span>
+          </a>
+        </div>
       </div>
     );
   }
@@ -128,7 +139,7 @@ export function ProductListTable({
           <tbody className="divide-y divide-slate-800/80">
             {products.map((product) => {
               const isSelected = selectedIds.has(product.id);
-              const firstImage = product.images[0]?.previewUrl.value || "https://placehold.co/100x100?text=No+Img";
+              const firstImage = product.images[0]?.previewUrl.value || "";
               const hasMockFields =
                 product.productTitle.source === "mock" ||
                 product.seoTitle.source === "mock" ||
@@ -153,17 +164,21 @@ export function ProductListTable({
                   </td>
 
                   <td className="py-3 px-3">
-                    <div className="relative h-12 w-12 overflow-hidden rounded-lg border border-slate-800 bg-slate-950">
-                      <img
-                        src={firstImage}
-                        alt={product.images[0]?.alt.value || product.productTitle.value}
-                        className="h-full w-full object-cover"
-                        loading="lazy"
-                        onError={(e) => {
-                          const target = e.currentTarget;
-                          target.src = "https://placehold.co/100x100/1e293b/94a3b8?text=Image";
-                        }}
-                      />
+                    <div className="relative h-12 w-12 overflow-hidden rounded-lg border border-slate-800 bg-slate-950 flex items-center justify-center text-slate-600">
+                      {firstImage ? (
+                        <img
+                          src={firstImage}
+                          alt={product.images[0]?.alt.value || product.productTitle.value}
+                          className="h-full w-full object-cover"
+                          loading="lazy"
+                          onError={(e) => {
+                            const target = e.currentTarget;
+                            target.style.display = "none";
+                          }}
+                        />
+                      ) : (
+                        <span className="text-base" title="Không có ảnh">📷</span>
+                      )}
                     </div>
                   </td>
 
@@ -187,7 +202,7 @@ export function ProductListTable({
                         )}
                         {hasMockFields && (
                           <span className="text-[10px] text-amber-500/80 font-sans">
-                            (chứa trường mock)
+                            (chưa đủ dữ liệu)
                           </span>
                         )}
                       </div>

@@ -84,7 +84,9 @@ export function AppRoutes({
             }
           }
           const existingFiltered = existingList.filter(
-            (ex) => !newViewModels.some((nv) => nv.id === ex.id),
+            (ex) =>
+              !ex.id.startsWith("sample-prod-") &&
+              !newViewModels.some((nv) => nv.id === ex.id),
           );
           const merged = [...newViewModels, ...existingFiltered];
           window.sessionStorage.setItem(storageKey, JSON.stringify(merged));

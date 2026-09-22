@@ -269,65 +269,81 @@ export function ProductDetailDrawer({
                 </label>
               </div>
 
-              <div className="space-y-4">
-                {product.images.map((img, idx) => (
-                  <div
-                    key={img.id}
-                    className="rounded-lg border border-slate-800/80 bg-slate-900/90 p-4 space-y-3"
-                  >
-                    <div className="flex items-start gap-4">
-                      {/* Thumbnail */}
-                      <div className="h-20 w-20 flex-shrink-0 overflow-hidden rounded-lg border border-slate-800 bg-slate-950">
-                        <img
-                          src={img.previewUrl.value}
-                          alt={img.alt.value}
-                          className="h-full w-full object-cover"
-                          onError={(e) => {
-                            const target = e.currentTarget;
-                            target.src = "https://placehold.co/120x120/1e293b/94a3b8?text=Image";
-                          }}
-                        />
-                      </div>
-
-                      {/* Alt text & metadata */}
-                      <div className="flex-1 min-w-0 space-y-2">
-                        <div>
-                          <div className="flex items-center justify-between mb-1">
-                            <div className="flex items-center gap-1.5">
-                              <span className="text-[11px] font-bold text-slate-400 uppercase">
-                                Image Alt #{idx + 1}
-                              </span>
-                              <SourceBadge source={img.alt.source} />
-                            </div>
-                            <span className="text-[10px] font-mono text-slate-500">
-                              {img.alt.value.length} / 125 ký tự
-                            </span>
-                          </div>
-                          <div className="text-xs text-slate-200 bg-slate-950 p-2 rounded border border-slate-800/80">
-                            {img.alt.value}
-                          </div>
+              {product.images.length === 0 ? (
+                <div className="p-4 rounded-lg bg-slate-900 border border-slate-800 text-slate-500 italic text-xs">
+                  Sản phẩm này chưa có dữ liệu hình ảnh.
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {product.images.map((img, idx) => (
+                    <div
+                      key={img.id}
+                      className="rounded-lg border border-slate-800/80 bg-slate-900/90 p-4 space-y-3"
+                    >
+                      <div className="flex items-start gap-4">
+                        {/* Thumbnail */}
+                        <div className="h-20 w-20 flex-shrink-0 overflow-hidden rounded-lg border border-slate-800 bg-slate-950 flex items-center justify-center text-slate-600">
+                          {img.previewUrl.value ? (
+                            <img
+                              src={img.previewUrl.value}
+                              alt={img.alt.value}
+                              className="h-full w-full object-cover"
+                              onError={(e) => {
+                                const target = e.currentTarget;
+                                target.style.display = "none";
+                              }}
+                            />
+                          ) : (
+                            <span className="text-xl" title="Không có ảnh">📷</span>
+                          )}
                         </div>
 
-                        {/* WebP info */}
-                        <div className="flex items-center gap-2 pt-1 text-xs">
-                          <span className="text-slate-500 font-mono text-[11px]">WebP:</span>
-                          <span className="font-mono text-cyan-400 text-[11px] truncate flex-1">
-                            {img.webpUrl.value || img.webpFilename.value}
-                          </span>
-                          <SourceBadge source={img.webpUrl.source} />
-                          <button
-                            type="button"
-                            onClick={() => handleCopy(img.webpUrl.value || img.webpFilename.value, `img-${idx}`)}
-                            className="px-2 py-0.5 rounded text-[11px] font-medium bg-slate-800 hover:bg-slate-700 text-slate-300 transition"
-                          >
-                            {copiedKey === `img-${idx}` ? "✓" : "Copy"}
-                          </button>
+                        {/* Alt text & metadata */}
+                        <div className="flex-1 min-w-0 space-y-2">
+                          <div>
+                            <div className="flex items-center justify-between mb-1">
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-[11px] font-bold text-slate-400 uppercase">
+                                  Image Alt #{idx + 1}
+                                </span>
+                                <SourceBadge source={img.alt.source} />
+                              </div>
+                              <span className="text-[10px] font-mono text-slate-500">
+                                {img.alt.value.length} / 125 ký tự
+                              </span>
+                            </div>
+                            <div className="text-xs text-slate-200 bg-slate-950 p-2 rounded border border-slate-800/80">
+                              {img.alt.value || (
+                                <span className="text-slate-500 italic">Chưa có Alt text</span>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* WebP info */}
+                          <div className="flex items-center gap-2 pt-1 text-xs">
+                            <span className="text-slate-500 font-mono text-[11px]">WebP:</span>
+                            <span className="font-mono text-cyan-400 text-[11px] truncate flex-1">
+                              {img.webpUrl.value || img.webpFilename.value || (
+                                <span className="text-slate-500 italic font-sans">Chưa có WebP URL</span>
+                              )}
+                            </span>
+                            <SourceBadge source={img.webpUrl.source} />
+                            {(img.webpUrl.value || img.webpFilename.value) ? (
+                              <button
+                                type="button"
+                                onClick={() => handleCopy(img.webpUrl.value || img.webpFilename.value, `img-${idx}`)}
+                                className="px-2 py-0.5 rounded text-[11px] font-medium bg-slate-800 hover:bg-slate-700 text-slate-300 transition"
+                              >
+                                {copiedKey === `img-${idx}` ? "✓" : "Copy"}
+                              </button>
+                            ) : null}
+                          </div>
                         </div>
                       </div>
                     </div>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
 

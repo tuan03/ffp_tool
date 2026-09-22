@@ -10,7 +10,7 @@ export interface SeoBatchToolbarProps {
   readonly onApproveSelected: () => void;
   readonly onRejectSelected: () => void;
   readonly onExportApprovedJson: () => void;
-  readonly onResetToSamples: () => void;
+  readonly onClearAll: () => void;
 }
 
 export function SeoBatchToolbar({
@@ -23,7 +23,7 @@ export function SeoBatchToolbar({
   onApproveSelected,
   onRejectSelected,
   onExportApprovedJson,
-  onResetToSamples,
+  onClearAll,
 }: SeoBatchToolbarProps): React.JSX.Element {
   return (
     <div className="space-y-4">
@@ -92,17 +92,20 @@ export function SeoBatchToolbar({
               onChange={(e) => onFilterChange({ onlyMockData: e.target.checked })}
               className="h-3.5 w-3.5 rounded border-slate-700 bg-slate-800 text-cyan-500 focus:ring-cyan-500"
             />
-            <span className="font-medium text-amber-400/90">Chứa Mock</span>
+            <span className="font-medium text-amber-400/90">Thiếu trường SEO</span>
           </label>
 
-          <button
-            type="button"
-            onClick={onResetToSamples}
-            title="Tải lại mẫu mặc định"
-            className="p-2 rounded-lg border border-slate-800 bg-slate-900 text-slate-400 hover:text-slate-200 text-xs transition"
-          >
-            ↺ Mẫu
-          </button>
+          {totalCount > 0 && (
+            <button
+              type="button"
+              onClick={onClearAll}
+              title="Xóa toàn bộ danh sách sản phẩm"
+              className="px-2.5 py-1.5 rounded-lg border border-slate-800 bg-slate-900 text-slate-400 hover:text-rose-400 hover:border-rose-900/60 text-xs transition cursor-pointer flex items-center gap-1.5"
+            >
+              <span>🗑️</span>
+              <span>Xóa danh sách</span>
+            </button>
+          )}
         </div>
       </div>
 

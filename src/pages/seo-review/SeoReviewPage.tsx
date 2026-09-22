@@ -3,7 +3,6 @@ import { ProductDetailDrawer } from "./components/ProductDetailDrawer";
 import { ProductEditModal } from "./components/ProductEditModal";
 import { ProductListTable } from "./components/ProductListTable";
 import { SeoBatchToolbar } from "./components/SeoBatchToolbar";
-import { getInitialSampleViewModels } from "./seo-content-ui-adapter";
 import type {
   SeoProductEditInput,
   SeoProductUiViewModel,
@@ -20,14 +19,19 @@ export function SeoReviewPage(): React.JSX.Element {
         if (saved) {
           const parsed = JSON.parse(saved);
           if (Array.isArray(parsed) && parsed.length > 0) {
-            return parsed;
+            // Filter out any leftover fake sample data from previous sessions
+            const realOnly = parsed.filter(
+              (p: { id?: string }) =>
+                p && typeof p.id === "string" && !p.id.startsWith("sample-prod-"),
+            );
+            return realOnly;
           }
         }
       } catch {
-        // Fall back to default samples
+        // Fall back to empty list
       }
     }
-    return getInitialSampleViewModels();
+    return [];
   });
 
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(new Set());
@@ -291,11 +295,15 @@ export function SeoReviewPage(): React.JSX.Element {
     URL.revokeObjectURL(url);
   }
 
-  function handleResetToSamples() {
-    if (confirm("Khôi phục danh sách sản phẩm mẫu mặc định?")) {
-      const samples = getInitialSampleViewModels();
-      setProducts(samples);
+  function handleClearAll() {
+    if (products.length === 0) return;
+    if (confirm("Bạn có chắc chắn muốn xóa toàn bộ sản phẩm khỏi danh sách review?")) {
+      setProducts([]);
       setSelectedIds(new Set());
+      setActiveProduct(null);
+      if (typeof window !== "undefined" && window.sessionStorage) {
+        window.sessionStorage.removeItem(SESSION_STORAGE_KEY);
+      }
     }
   }
 
@@ -375,7 +383,7 @@ export function SeoReviewPage(): React.JSX.Element {
         onApproveSelected={handleApproveSelected}
         onRejectSelected={handleRejectSelected}
         onExportApprovedJson={handleExportApprovedJson}
-        onResetToSamples={handleResetToSamples}
+        onClearAll={handleClearAll}
       />
 
       {/* Product List Table */}
