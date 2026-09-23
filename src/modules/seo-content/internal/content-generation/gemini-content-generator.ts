@@ -22,7 +22,14 @@ CRITICAL INVARIANTS:
 6. FORMAT: Output strictly valid JSON matching the specified schema. Do not wrap output in markdown codeblocks.`;
 
 export class GeminiSeoContentGenerator implements ContentGenerator {
-  constructor(private readonly generator: GeminiContentGenerator) {}
+  private readonly maxOutputTokens: number;
+
+  constructor(
+    private readonly generator: GeminiContentGenerator,
+    options?: { readonly maxOutputTokens?: number },
+  ) {
+    this.maxOutputTokens = options?.maxOutputTokens ?? 2048;
+  }
 
   async generate(input: ContentGenerationInput): Promise<GeneratedContentDraft> {
     if (!this.generator.generateStructuredText) {
@@ -79,7 +86,7 @@ Return the structured draft in the required JSON format.`;
       systemInstruction: SYSTEM_INSTRUCTION,
       responseJsonSchema: GEMINI_CONTENT_DRAFT_SCHEMA,
       temperature: 0.2,
-      maxOutputTokens: 2048,
+      maxOutputTokens: this.maxOutputTokens,
     });
 
     let parsed: unknown;

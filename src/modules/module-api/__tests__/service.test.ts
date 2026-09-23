@@ -2594,7 +2594,7 @@ test("Mock runner executes variants.bulkCreate, files.create, and metafields.set
   assert.equal(metaRes.data.metafields[0]?.key, "amazon_customizer");
 });
 
-test("Real service client dispatches variants.bulkCreate, files.create, and metafields.set correctly", async () => {
+test("Real service client dispatches variants.bulkCreate, files.create, files.bulkCreate, and metafields.set correctly", async () => {
   const recordedRequests: unknown[] = [];
   const fakeFetch = async (_url: string | URL | Request, init?: RequestInit): Promise<Response> => {
     const body = JSON.parse(init?.body as string);
@@ -2617,6 +2617,26 @@ test("Real service client dispatches variants.bulkCreate, files.create, and meta
           operation: "files.create",
           success: true,
           data: { fileId: "fid-1", shopifyCdnUrl: "https://cdn.shopify.com/f1.jpg", fileStatus: "READY" },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    if (body.operation === "files.bulkCreate") {
+      return new Response(
+        JSON.stringify({
+          storeId: "s1",
+          operation: "files.bulkCreate",
+          success: true,
+          data: {
+            files: [
+              {
+                fileId: "fid-batch-1",
+                shopifyCdnUrl: "https://cdn.shopify.com/batch-1.jpg",
+                fileStatus: "READY",
+                originalSource: "https://example.com/batch-1.jpg",
+              },
+            ],
+          },
         }),
         { status: 200, headers: { "Content-Type": "application/json" } },
       );
@@ -2658,15 +2678,27 @@ test("Real service client dispatches variants.bulkCreate, files.create, and meta
   });
   assert.equal(res2.data.shopifyCdnUrl, "https://cdn.shopify.com/f1.jpg");
 
+  const batchResult = await runner({
+    storeId: "s1",
+    operation: "files.bulkCreate",
+    mode: "apply",
+    requestId: "r3",
+    payload: {
+      files: [{ originalSource: "https://example.com/batch-1.jpg" }],
+    },
+  });
+  assert.equal(batchResult.data.files.length, 1);
+  assert.equal(batchResult.data.files[0]?.shopifyCdnUrl, "https://cdn.shopify.com/batch-1.jpg");
+
   const res3 = await runner({
     storeId: "s1",
     operation: "metafields.set",
     mode: "apply",
-    requestId: "r3",
+    requestId: "r4",
     payload: { ownerId: "p1", namespace: "custom", key: "k", value: "v" },
   });
   assert.equal(res3.data.success, true);
-  assert.equal(recordedRequests.length, 3);
+  assert.equal(recordedRequests.length, 4);
 });
 
 test("createShopifyGatewayAdapter implements ShopifyGateway interface and works with syncSingleProduct", async () => {

@@ -46,37 +46,20 @@ function buildFactualCorpus(facts: ContentFactSheet): string {
   return pieces.join(" ").toLowerCase();
 }
 
-/**
- * Checks a GeneratedContentDraft against high-risk claims and grounding rules.
- * Returns an array of detected violation descriptions. Empty array means PASS.
- */
-export function checkClaimGrounding(
-  draft: GeneratedContentDraft,
+export function findUnsupportedClaimsInText(
+  text: string,
   facts: ContentFactSheet,
 ): readonly string[] {
   const violations: string[] = [];
   const factualCorpus = buildFactualCorpus(facts);
+  const generatedText = text.toLowerCase();
 
-  const generatedText = [
-    draft.productTitle,
-    draft.intro,
-    ...draft.bullets.map((b) => `${b.label} ${b.text}`),
-    ...draft.guidance,
-    draft.closing,
-    draft.productSeoTitle,
-    draft.productSeoDescription,
-  ]
-    .join(" ")
-    .toLowerCase();
-
-  // 1. High-risk material and service claims
   for (const { pattern, label } of HIGH_RISK_CLAIM_PATTERNS) {
     if (pattern.test(generatedText) && !pattern.test(factualCorpus)) {
       violations.push(`Unsupported claim: '${label}' not present in product source facts`);
     }
   }
 
-  // 2. Personalization claim when not supported
   if (!facts.personalizationSupported) {
     for (const pattern of PERSONALIZATION_CLAIMS) {
       if (pattern.test(generatedText)) {
@@ -88,7 +71,6 @@ export function checkClaimGrounding(
     }
   }
 
-  // 3. Fabric composition percentages (e.g. 100% cotton) when not in source
   const percentageMatches = generatedText.match(/\b\d{2,3}%\s+[a-z]+/gi);
   if (percentageMatches) {
     for (const match of percentageMatches) {
@@ -99,4 +81,26 @@ export function checkClaimGrounding(
   }
 
   return violations;
+}
+
+/**
+ * Checks a GeneratedContentDraft against high-risk claims and grounding rules.
+ * Returns an array of detected violation descriptions. Empty array means PASS.
+ */
+export function checkClaimGrounding(
+  draft: GeneratedContentDraft,
+  facts: ContentFactSheet,
+): readonly string[] {
+  const generatedText = [
+    draft.productTitle,
+    draft.intro,
+    ...draft.bullets.map((b) => `${b.label} ${b.text}`),
+    ...draft.guidance,
+    draft.closing,
+    draft.productSeoTitle,
+    draft.productSeoDescription,
+  ]
+    .join(" ")
+    .toLowerCase();
+  return findUnsupportedClaimsInText(generatedText, facts);
 }

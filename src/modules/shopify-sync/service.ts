@@ -87,6 +87,18 @@ export async function syncSingleProduct(
   product: ShopifySyncProductInput,
   options: ShopifySyncOptions = {},
 ): Promise<ShopifySyncProductResult> {
+  const syncStartedAt = Date.now();
+  let productWriteMs = 0;
+  let variantsMs = 0;
+  let assetUploadMs = 0;
+  let metafieldMs = 0;
+  const getTimings = () => ({
+    productWriteMs,
+    variantsMs,
+    assetUploadMs,
+    metafieldMs,
+    totalMs: Date.now() - syncStartedAt,
+  });
   const dryRun = Boolean(options.dryRun);
   const warnings: string[] = [];
 
@@ -110,6 +122,7 @@ export async function syncSingleProduct(
       warnings,
       error:
         "ShopifyGateway is required. Please provide a ShopifyGateway implementation via options.gateway.",
+      timings: getTimings(),
     };
   }
 
@@ -129,23 +142,29 @@ export async function syncSingleProduct(
       media: product.media,
       variants: product.variants,
     };
-    if (options.existingProductId) {
-      if (!gateway.updateProduct) {
-        throw new Error("ShopifyGateway does not support updating an existing product.");
+    const productWriteStartedAt = Date.now();
+    try {
+      if (options.existingProductId) {
+        if (!gateway.updateProduct) {
+          throw new Error("ShopifyGateway does not support updating an existing product.");
+        }
+        writtenProduct = await gateway.updateProduct({
+          productId: options.existingProductId,
+          previousManagedResources: options.existingManagedResources,
+          ...productWriteInput,
+        });
+      } else {
+        writtenProduct = await gateway.createProduct({
+          ...productWriteInput,
+          status: "ACTIVE",
+        });
       }
-      writtenProduct = await gateway.updateProduct({
-        productId: options.existingProductId,
-        previousManagedResources: options.existingManagedResources,
-        ...productWriteInput,
-      });
-    } else {
-      writtenProduct = await gateway.createProduct({
-        ...productWriteInput,
-        status: "ACTIVE",
-      });
+    } finally {
+      productWriteMs = Date.now() - productWriteStartedAt;
     }
 
     // 2. Create Variants (if not already bulk-created by createProduct)
+    const variantsStartedAt = Date.now();
     let variantsCount = writtenProduct.createdVariantsCount ?? 0;
     if (!options.existingProductId && variantsCount === 0 && product.variants && product.variants.length > 0) {
       const variantResult = await gateway.createVariants(
@@ -160,12 +179,14 @@ export async function syncSingleProduct(
         `Shopify variants incomplete: synchronized ${variantsCount}/${expectedVariantsCount}.`,
       );
     }
+    variantsMs = Date.now() - variantsStartedAt;
 
     // 3. Process Customization if present
     let assetsUploadedCount = 0;
     let metafieldSet = false;
 
     if (product.customization && product.customization.hasCustomization) {
+      const assetUploadStartedAt = Date.now();
       const rawAssets = product.customization.assets || [];
       const replacements = new Map<string, string>();
 
@@ -263,6 +284,7 @@ export async function syncSingleProduct(
       }
 
       assetsUploadedCount = replacements.size;
+      assetUploadMs = Date.now() - assetUploadStartedAt;
 
       if (assetsUploadedCount !== uniqueAssets.length) {
         throw new Error(
@@ -303,6 +325,7 @@ export async function syncSingleProduct(
       }
 
       // 4. Set Metafield custom.amazon_customizer
+      const customizationMetafieldStartedAt = Date.now();
       try {
         const metaResult = await gateway.setProductMetafield({
           productId: writtenProduct.productId,
@@ -320,9 +343,11 @@ export async function syncSingleProduct(
       if (!metafieldSet) {
         throw new Error("Failed to set required custom.amazon_customizer metafield.");
       }
+      metafieldMs += Date.now() - customizationMetafieldStartedAt;
     }
 
     if (product.sourceKey) {
+      const sourceMetafieldStartedAt = Date.now();
       const sourceMetafield = await gateway.setProductMetafield({
         productId: writtenProduct.productId,
         namespace: "custom",
@@ -333,6 +358,7 @@ export async function syncSingleProduct(
       if (!sourceMetafield.success) {
         throw new Error("Failed to set required custom.ffp_source_key metafield.");
       }
+      metafieldMs += Date.now() - sourceMetafieldStartedAt;
     }
 
     return {
@@ -348,6 +374,7 @@ export async function syncSingleProduct(
       dryRun,
       warnings,
       managedResources: writtenProduct.managedResources,
+      timings: getTimings(),
     };
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -365,6 +392,7 @@ export async function syncSingleProduct(
       warnings,
       error: msg,
       reconciliationRequired: writtenProduct !== undefined,
+      timings: getTimings(),
     };
   }
 }

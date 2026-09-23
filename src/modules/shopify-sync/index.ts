@@ -36,6 +36,7 @@ export type {
   ShopifySyncOptions,
   ShopifySyncProductInput,
   ShopifySyncProductResult,
+  ShopifySyncTimings,
   ShopifyVariantInput,
   ShopifyVariantOptionValue,
   UploadFileInput,

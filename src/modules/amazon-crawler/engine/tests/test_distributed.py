@@ -1269,6 +1269,34 @@ class CoordinatorStoreTests(unittest.TestCase):
         self.assertIsNone(public_product["pipeline"]["shopify"].get("productId"))
         self.assertEqual(self.store.get_job(str(job["id"]))["progress"]["phase"], "seo")
 
+    def test_pipeline_failure_exposes_phase_timings_for_diagnostics(self) -> None:
+        job = self.store.create_job({"urls": ["B0FR4MSS2H"]})
+        self.store.register_client(client_hello(slots=1))
+        lease = self.store.lease_tasks("client-a", 1)[0]
+        product = {
+            "id": "product-ocean",
+            "sourceKey": "amazon:B0FR4MSS2H:design:ocean",
+            "title": "Ocean",
+        }
+        self.store.accept_product(
+            lease["taskId"], "client-a", lease["leaseId"], product["sourceKey"], "checksum-1",
+            {"jobId": job["id"], "product": product, "productChecksum": "checksum-1"},
+        )
+        claim = self.store.claim_product_items(worker_id="worker-1", store_id="store-1", limit=1)[0]
+        timings = {"normalizationMs": 2, "seoTotalMs": 1250, "totalMs": 1400}
+
+        self.store.fail_product_item(
+            claim["id"],
+            worker_id="worker-1",
+            store_id="store-1",
+            error={"message": "SEO failed.", "phase": "seo", "timings": timings},
+            retryable=False,
+            reconciliation_required=False,
+        )
+        public_product = self.store.job_products(str(job["id"]))["products"][0]
+
+        self.assertEqual(public_product["pipeline"]["shopify"]["timings"], {"pipeline": timings})
+
 
 class CoordinatorDatabaseTests(unittest.TestCase):
     def test_sqlite_database_parent_is_created_for_local_development(self) -> None:

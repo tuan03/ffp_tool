@@ -13,6 +13,7 @@ import {
 } from "../types";
 
 import { firstProductMediaUrl, resolveSelectedProduct } from "./product-selection";
+import { formatPipelineTimings } from "./pipeline-timings";
 
 interface AmazonCrawlerPageProps {
   clearAmazonCrawlerCache: AmazonCrawlerCacheClearer;
@@ -107,6 +108,7 @@ export function AmazonCrawlerPage({ clearAmazonCrawlerCache, loadAmazonCrawlerCl
     () => resolveSelectedProduct(resultProducts, selectedProductId),
     [resultProducts, selectedProductId],
   );
+  const selectedPipelineTimings = formatPipelineTimings(selectedProduct?.pipeline?.shopify.timings);
 
   useEffect(() => {
     if (selectedProductId && resultProducts.some((product) => product.id === selectedProductId)) return;
@@ -483,6 +485,14 @@ export function AmazonCrawlerPage({ clearAmazonCrawlerCache, loadAmazonCrawlerCl
                       </dl>
                       <a className="mt-4 inline-block text-sm font-semibold text-cyan-300 hover:text-cyan-200" href={selectedProduct.canonicalUrl} rel="noreferrer" target="_blank">Mở trên Amazon ↗</a>
                       {selectedProduct.pipeline?.shopify.adminUrl ? <a className="ml-4 mt-4 inline-block text-sm font-semibold text-emerald-300 hover:text-emerald-200" href={selectedProduct.pipeline.shopify.adminUrl} rel="noreferrer" target="_blank">Mở trên Shopify ↗</a> : null}
+                      {selectedPipelineTimings.length > 0 ? (
+                        <div className="mt-4 rounded-lg border border-slate-700 bg-slate-900/70 p-3">
+                          <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Thời gian xử lý</p>
+                          <div className="mt-2 grid gap-1 text-xs text-slate-300 sm:grid-cols-2">
+                            {selectedPipelineTimings.map((timing) => <span key={timing}>{timing}</span>)}
+                          </div>
+                        </div>
+                      ) : null}
                       {selectedProduct.pipeline?.shopify.error ? <p className="mt-3 rounded-lg border border-rose-800 bg-rose-950/30 p-3 text-sm text-rose-200">Shopify: {selectedProduct.pipeline.shopify.error}</p> : null}
                       {selectedProduct.pipeline?.seo.fallbackStages?.length ? <p className="mt-3 rounded-lg border border-amber-800 bg-amber-950/30 p-3 text-sm text-amber-200">SEO fallback: {selectedProduct.pipeline.seo.fallbackStages.join(", ")}</p> : null}
                       {selectedProduct.pipeline?.seo.warnings?.map((warning) => <p key={warning} className="mt-3 rounded-lg border border-amber-800 bg-amber-950/30 p-3 text-sm text-amber-200">SEO: {warning}</p>)}

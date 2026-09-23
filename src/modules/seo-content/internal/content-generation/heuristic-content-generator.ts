@@ -3,8 +3,10 @@ import type {
   ContentGenerator,
   GeneratedBullet,
   GeneratedContentDraft,
+  KeywordAllocation,
 } from "./content-generation-types";
 import { fitProductTitle, fitSeoDescription, fitSeoTitle, toTitleCase } from "./content-fitters";
+import { findUnsupportedClaimsInText } from "./claim-guard";
 
 import { buildHeuristicProductTitle } from "./heuristic-title-builder";
 
@@ -15,11 +17,22 @@ import { buildHeuristicProductTitle } from "./heuristic-title-builder";
 export class HeuristicContentGenerator implements ContentGenerator {
   async generate(input: ContentGenerationInput): Promise<GeneratedContentDraft> {
     const { facts, keywords, constraints } = input;
+    const isGroundedKeyword = (keyword: string): boolean =>
+      findUnsupportedClaimsInText(keyword, facts).length === 0;
+    const groundedKeywords: KeywordAllocation = {
+      primary: keywords.primary && isGroundedKeyword(keywords.primary)
+        ? keywords.primary
+        : undefined,
+      secondary: keywords.secondary.filter(isGroundedKeyword),
+      supportingKeywords: keywords.supportingKeywords.filter(isGroundedKeyword),
+      framingConcepts: keywords.framingConcepts.filter(isGroundedKeyword),
+      targetedKeywords: keywords.targetedKeywords.filter(isGroundedKeyword),
+    };
 
     // 1. Build Product Title (Preserve -> Enrich -> Rebuild policy)
     const productTitle = buildHeuristicProductTitle({
       facts,
-      keywords,
+      keywords: groundedKeywords,
       maxLength: 80,
     });
 
@@ -53,8 +66,8 @@ export class HeuristicContentGenerator implements ContentGenerator {
 
     // Bullet 2: Style & Fit
     const secondaryClause =
-      keywords.secondary.length > 0
-        ? `Ideal choice for ${keywords.secondary[0]}.`
+      groundedKeywords.secondary.length > 0
+        ? `Ideal choice for ${groundedKeywords.secondary[0]}.`
         : `A versatile statement piece that complements a wide range of settings.`;
 
     bullets.push({
@@ -96,14 +109,20 @@ export class HeuristicContentGenerator implements ContentGenerator {
     const closing = `Whether buying for yourself or searching for a memorable gift, this ${category} offers the perfect blend of distinctive styling and reliable everyday enjoyment.`;
 
     // 6. Build SEO Title (<= 70 chars)
-    const rawSeoTitle = keywords.primary
-      ? `${toTitleCase(keywords.primary)} | Quality & Style`
+    const rawSeoTitle = groundedKeywords.primary
+      ? `${toTitleCase(groundedKeywords.primary)} | Quality & Style`
       : `${productTitle} | Shop Online`;
-    const productSeoTitle = fitSeoTitle(rawSeoTitle, keywords.primary, constraints.maxSeoTitleLength);
+    const productSeoTitle = fitSeoTitle(
+      rawSeoTitle,
+      groundedKeywords.primary,
+      constraints.maxSeoTitleLength,
+    );
 
     // 7. Build SEO Description (<= 160 chars)
     const audienceFrag = facts.targetAudience.length > 0 ? ` for ${facts.targetAudience[0]}` : "";
-    const primaryFrag = keywords.primary ? keywords.primary : productTitle.toLowerCase();
+    const primaryFrag = groundedKeywords.primary
+      ? groundedKeywords.primary
+      : productTitle.toLowerCase();
     const rawSeoDesc = `Discover this ${primaryFrag}${audienceFrag}. Distinctive design, premium look, and everyday functionality. Shop now!`;
     const productSeoDescription = fitSeoDescription(rawSeoDesc, constraints.maxSeoDescriptionLength);
 

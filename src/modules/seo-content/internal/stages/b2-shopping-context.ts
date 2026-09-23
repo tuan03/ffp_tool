@@ -42,6 +42,10 @@ export function createDefaultShoppingContextAnalyzer(options?: {
     env?.GEMINI_ANALYSIS_MODEL ||
     env?.GEMINI_MODEL ||
     "gemini-2.5-flash";
+  const configuredMaxOutputTokens = Number(env?.AI_MAX_OUTPUT_TOKENS ?? 2048);
+  const maxOutputTokens = Number.isFinite(configuredMaxOutputTokens)
+    ? Math.max(512, Math.min(8192, Math.trunc(configuredMaxOutputTokens)))
+    : 2048;
 
   const generator = new GoogleGenAIVertexContentGenerator({
     projectId,
@@ -52,6 +56,7 @@ export function createDefaultShoppingContextAnalyzer(options?: {
   const geminiAnalyzer = new GeminiShoppingContextAnalyzer({
     generator,
     model,
+    maxOutputTokens,
   });
 
   return new FallbackShoppingContextAnalyzer({

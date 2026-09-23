@@ -27,4 +27,5 @@ export type {
   NormalizedCustomization,
   ProductPipelineMetadata,
   ProductPipelineStatus,
+  ProductPipelineTimings,
 } from "./types";
