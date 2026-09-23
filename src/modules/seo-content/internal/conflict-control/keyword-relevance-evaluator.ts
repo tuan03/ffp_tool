@@ -69,6 +69,18 @@ const KNOWN_PRODUCT_CATEGORIES: Readonly<Record<string, readonly string[]>> = {
   tote: ["tote", "tote bag", "canvas bag"],
 };
 
+/** Maps the small set of supported physical-identity variants to a shared guard key. */
+const PRODUCT_IDENTITY_CATEGORY_KEYS: Readonly<Record<string, string>> = {
+  "area rug": "rug",
+  "floor rug": "rug",
+  "floor mat": "rug",
+  carpet: "rug",
+};
+
+function getProductCategoryKey(identity: string): string {
+  return PRODUCT_IDENTITY_CATEGORY_KEYS[identity] ?? identity;
+}
+
 /**
  * Competing / distinct product terms that conflict when target product is different.
  */
@@ -129,18 +141,17 @@ export function evaluateCandidateRelevance(params: {
 
   // Build list of contextual anchors from product
   const anchors: string[] = [];
-  const categoryRaw = productContext.productUnderstanding?.productCategory?.toLowerCase().trim();
+  const categoryRaw = productContext.productUnderstanding?.physicalProductIdentity?.toLowerCase().trim();
+  const categoryKey = categoryRaw ? getProductCategoryKey(categoryRaw) : undefined;
   if (categoryRaw) {
     anchors.push(categoryRaw);
-    const catAliases = KNOWN_PRODUCT_CATEGORIES[categoryRaw] ?? [];
+    const catAliases = KNOWN_PRODUCT_CATEGORIES[categoryKey ?? categoryRaw] ?? [];
     anchors.push(...catAliases);
   }
 
-  for (const entity of productContext.productUnderstanding?.detectedEntities ?? []) {
-    const trimmed = entity.toLowerCase().trim();
-    if (trimmed) {
-      anchors.push(trimmed);
-    }
+  const visualEntities = productContext.productUnderstanding?.visualEntities?.toLowerCase().trim();
+  if (visualEntities && visualEntities !== "unknown") {
+    anchors.push(visualEntities);
   }
 
   for (const aud of productContext.shoppingContext?.targetAudience ?? []) {
@@ -205,21 +216,21 @@ export function evaluateCandidateRelevance(params: {
     let categoryConflictDetected = false;
 
     // Check specific known collision: "rugby" when product is "rug"
-    if (categoryRaw === "rug" || categoryRaw === "area rug") {
+    if (categoryKey === "rug") {
       if (/\brugby\b/i.test(lowerKeyword) && !/\brug\b/i.test(lowerKeyword)) {
         categoryConflictDetected = true;
       }
     }
 
     // Check competing product category terms if product category is clear
-    if (categoryRaw) {
+    if (categoryKey) {
       for (const comp of COMPETING_CATEGORY_PATTERNS) {
-        if (comp.categoryKey === categoryRaw) {
+        if (comp.categoryKey === categoryKey) {
           continue;
         }
         if (comp.pattern.test(lowerKeyword)) {
           // Check if candidate also contains target category
-          const hasTargetCat = KNOWN_PRODUCT_CATEGORIES[categoryRaw]?.some((alias) =>
+          const hasTargetCat = KNOWN_PRODUCT_CATEGORIES[categoryKey]?.some((alias) =>
             safeWordBoundaryRegex(alias).test(lowerKeyword),
           );
           if (!hasTargetCat) {

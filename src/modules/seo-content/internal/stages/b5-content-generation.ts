@@ -85,7 +85,7 @@ export async function executeB5ContentGeneration(
     discardedKeywords: context.conflictResult?.discardedKeywords ?? [],
     relevanceScores: context.conflictResult?.relevanceScores,
     keywordClusters: context.conflictResult?.keywordClusters,
-    productCategory: facts.productCategory,
+    productCategory: facts.physicalProductIdentity,
     framingSources: {
       targetAudience: facts.targetAudience,
       suitableOccasions: facts.occasions,

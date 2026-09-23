@@ -1,7 +1,10 @@
 import { evolveContext } from "../pipeline-context";
 import { FallbackSearchSuggestionsCollector } from "../search-suggestions/fallback-search-suggestions-collector";
+import { GeminiSearchQueryVariantGenerator } from "../search-suggestions/gemini-search-query-variant-generator";
 import { GoogleSearchSuggestionsCollector } from "../search-suggestions/google-search-suggestions-collector";
 import { UnofficialGoogleSuggestClient } from "../search-suggestions/google-suggest-client";
+import { NoopSearchQueryVariantGenerator } from "../search-suggestions/search-query-variant-generator";
+import { GoogleGenAIVertexContentGenerator } from "../product-understanding/gemini-content-generator";
 
 import type {
   SeoPipelineContext,
@@ -11,6 +14,9 @@ import type {
   SearchSuggestionsCollector,
 } from "../search-suggestions/search-suggestions-collector";
 import type { GoogleSuggestClient } from "../search-suggestions/google-suggest-client";
+import type {
+  SearchQueryVariantGenerator,
+} from "../search-suggestions/search-query-variant-generator";
 
 export interface B3SearchSuggestionsDependencies {
   readonly collector?: SearchSuggestionsCollector;
@@ -66,7 +72,28 @@ export function createDefaultSearchSuggestionsCollector(options?: {
   return new GoogleSearchSuggestionsCollector({
     client,
     onPartialFailure: options?.onPartialFailure,
+    variantGenerator: createDefaultSearchQueryVariantGenerator(),
   });
+}
+
+function createDefaultSearchQueryVariantGenerator(): SearchQueryVariantGenerator {
+  const env = typeof process !== "undefined" && process.env ? process.env : undefined;
+  const projectId = env?.GOOGLE_CLOUD_PROJECT;
+  if (!projectId) {
+    return new NoopSearchQueryVariantGenerator();
+  }
+
+  const model =
+    env?.GEMINI_ANALYSIS_MODEL ||
+    env?.GEMINI_MODEL ||
+    "gemini-2.5-flash";
+  const generator = new GoogleGenAIVertexContentGenerator({
+    projectId,
+    location: env?.GOOGLE_CLOUD_LOCATION || "global",
+    defaultModel: model,
+  });
+
+  return new GeminiSearchQueryVariantGenerator({ generator, model });
 }
 
 export function createB3SearchSuggestionsStage(
@@ -81,10 +108,11 @@ export function createB3SearchSuggestionsStage(
         createDefaultSearchSuggestionsCollector();
 
       const source = context.source;
+      const niche = context.effectiveNiche ?? source.niche;
 
       const searchResearch = await collector.collect({
         source: {
-          niche: source.niche,
+          niche,
           title: source.title,
           description: source.description,
           handle: source.handle,

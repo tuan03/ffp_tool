@@ -1,0 +1,372 @@
+import { runSeoContent } from "./service";
+import type {
+  SeoContentImageInput,
+  SeoContentInput,
+  SeoContentOutput,
+} from "./types";
+
+/**
+ * Thông số file in xưởng chất lượng cao từ Pinterest POD (300 DPI).
+ */
+export interface PodPrintMasterSpec {
+  readonly cmykUrl?: string;
+  readonly rgbUrl?: string;
+  readonly localFilePath?: string;
+  readonly widthPx?: number;
+  readonly heightPx?: number;
+  readonly dpi?: number;
+}
+
+/**
+ * Phôi sản phẩm bóc tách nền trắng và nền trong suốt.
+ */
+export interface PodCutoutSpec {
+  readonly transparentUrl?: string;
+  readonly whiteBgUrl?: string;
+  readonly localFilePath?: string;
+}
+
+/**
+ * Thông số ảnh phối cảnh phòng (lifestyle mockup) do AI render.
+ */
+export interface PodComposedMockupSpec {
+  readonly referenceImageId?: string;
+  readonly mockupUrl: string;
+  readonly localFilePath?: string;
+  readonly detectedSceneType?: string;
+  readonly detectedSceneDescription?: string;
+}
+
+/**
+ * Cấu trúc thành phẩm của một mẫu thiết kế từ Pinterest POD bàn giao sang SEO.
+ */
+export interface PodDeliverableItem {
+  readonly designId: string;
+  readonly sourceCandidateId?: string;
+  readonly productType?: "rug" | "blanket" | "custom" | string;
+  readonly originalPinTitle: string;
+  readonly trendKeywords?: readonly string[];
+  readonly printMaster?: PodPrintMasterSpec;
+  readonly cutoutProduct?: PodCutoutSpec;
+  readonly composedMockups?: readonly PodComposedMockupSpec[];
+}
+
+/**
+ * Gói dữ liệu hoàn chỉnh bàn giao từ Pinterest POD sang SEO (theo CONTRACT_PINTEREST_POD_TO_SEO.md).
+ */
+export interface PinterestPodDeliverables {
+  readonly workflowId: string;
+  readonly success: boolean;
+  readonly productType?: "rug" | "blanket" | "custom" | string;
+  readonly totalProduced?: number;
+  readonly items: readonly PodDeliverableItem[];
+}
+
+/**
+ * Tùy chọn thực thi bộ điều phối SEO cho các thành phẩm Pinterest POD.
+ */
+export interface PinterestPodAdapterOptions {
+  /** Runner tùy chỉnh (hỗ trợ dependency injection hoặc testing) */
+  readonly runner?: (input: SeoContentInput) => Promise<SeoContentOutput>;
+  /** Số lượng sản phẩm xử lý đồng thời tối đa (mặc định: 3) */
+  readonly concurrency?: number;
+  /** Niche mặc định khi sản phẩm không suy luận được niche (mặc định: "Home Decor") */
+  readonly defaultNiche?: string;
+}
+
+/**
+ * Kết quả xử lý SEO cho từng mẫu thiết kế / sản phẩm riêng lẻ của Pinterest POD.
+ */
+export interface PinterestPodSeoItemResult {
+  readonly designId: string;
+  readonly sourceCandidateId?: string;
+  readonly productType: string;
+  readonly handle: string;
+  readonly deliverableItem: PodDeliverableItem;
+  readonly seoInput: SeoContentInput;
+  readonly seoOutput?: SeoContentOutput;
+  readonly success: boolean;
+  readonly error?: string;
+}
+
+/**
+ * Kết quả tổng hợp của toàn bộ lô thành phẩm Pinterest POD sau khi qua Pipeline SEO.
+ */
+export interface PinterestPodSeoBatchResult {
+  readonly workflowId: string;
+  readonly total: number;
+  readonly successful: number;
+  readonly failed: number;
+  /** Danh sách chi tiết kết quả từng sản phẩm */
+  readonly items: readonly PinterestPodSeoItemResult[];
+  /** Danh sách JSON thuần các sản phẩm đã chuẩn hóa SEO (sẵn sàng đẩy lên Shopify hoặc review) */
+  readonly seoOutputs: readonly SeoContentOutput[];
+}
+
+/**
+ * Hàm slugify an toàn cho handle Shopify.
+ */
+function slugify(text: string): string {
+  return text
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+/**
+ * Suy luận ngành hàng (niche) từ loại sản phẩm và từ khóa trend.
+ */
+function inferNiche(
+  productType: string,
+  trendKeywords?: readonly string[],
+  defaultNiche = "Home Decor",
+): string {
+  const normType = productType.toLowerCase();
+  let baseCategory = defaultNiche;
+  if (normType.includes("rug")) {
+    baseCategory = "Home Decor > Rugs & Area Rugs";
+  } else if (normType.includes("blanket")) {
+    baseCategory = "Home & Living > Bedding & Blankets";
+  } else if (normType.includes("custom")) {
+    baseCategory = "Custom Print-on-Demand";
+  }
+
+  if (trendKeywords && trendKeywords.length > 0 && typeof trendKeywords[0] === "string" && trendKeywords[0].trim().length > 0) {
+    return `${baseCategory} (${trendKeywords[0].trim()})`;
+  }
+  return baseCategory;
+}
+
+/**
+ * Tạo mô tả giàu ngữ cảnh (Rich Contextual Description) từ thông tin Pinterest POD:
+ * Kết hợp tiêu đề gốc, từ khóa trend, và mô tả không gian phòng do AI Vision nhận diện.
+ */
+function buildDescription(item: PodDeliverableItem): string {
+  const sections: string[] = [];
+
+  if (item.originalPinTitle && item.originalPinTitle.trim().length > 0) {
+    sections.push(item.originalPinTitle.trim());
+  }
+
+  if (item.trendKeywords && item.trendKeywords.length > 0) {
+    const validTrends = item.trendKeywords
+      .map((k) => (typeof k === "string" ? k.trim() : ""))
+      .filter((k) => k.length > 0);
+    if (validTrends.length > 0) {
+      sections.push(`Trending Aesthetic & Search Keywords: ${validTrends.join(", ")}.`);
+    }
+  }
+
+  if (item.composedMockups && item.composedMockups.length > 0) {
+    const sceneNotes = item.composedMockups
+      .map((m) => {
+        const scene = m.detectedSceneType?.trim();
+        const desc = m.detectedSceneDescription?.trim();
+        if (scene && desc) {
+          return `${scene} setting (${desc})`;
+        }
+        return desc || scene || "";
+      })
+      .filter((s) => s.length > 0);
+
+    if (sceneNotes.length > 0) {
+      sections.push(`Lifestyle Room Context: ${sceneNotes.join("; ")}.`);
+    }
+  }
+
+  return sections.join("\n\n") || item.originalPinTitle || "Print-on-demand custom product.";
+}
+
+/**
+ * Trích xuất và chuẩn hóa danh sách hình ảnh từ PodDeliverableItem sang SeoContentImageInput.
+ * Ưu tiên ảnh phôi nền trắng (whiteBgUrl) làm ảnh đại diện chính (featured image),
+ * theo sau là các ảnh phối cảnh AI phòng (mockupUrl) và file thiết kế in (rgbUrl).
+ */
+function extractImages(item: PodDeliverableItem): SeoContentImageInput[] {
+  const images: SeoContentImageInput[] = [];
+  const seenUrls = new Set<string>();
+
+  const addImage = (url: string | undefined, alt: string | undefined, localFilePath?: string): void => {
+    if (!url || typeof url !== "string") return;
+    const cleanUrl = url.trim();
+    if (cleanUrl.length === 0 || seenUrls.has(cleanUrl)) return;
+    seenUrls.add(cleanUrl);
+    images.push({
+      url: cleanUrl,
+      ...(alt ? { alt: alt.trim() } : {}),
+      ...(localFilePath && typeof localFilePath === "string" && localFilePath.trim().length > 0
+        ? { localFilePath: localFilePath.trim() }
+        : {}),
+    });
+  };
+
+  const title = item.originalPinTitle || item.designId;
+
+  // 1. Ảnh chính đại diện: Phôi nền trắng sạch 1:1 chuẩn sàn thương mại điện tử
+  if (item.cutoutProduct?.whiteBgUrl) {
+    addImage(
+      item.cutoutProduct.whiteBgUrl,
+      `${title} - Clean White Background Product View`,
+      item.cutoutProduct.localFilePath,
+    );
+  }
+
+  // 2. Ảnh phối cảnh phòng sống động do AI render (Composed Mockups)
+  if (Array.isArray(item.composedMockups)) {
+    for (const mockup of item.composedMockups) {
+      if (!mockup?.mockupUrl) continue;
+      const scene = mockup.detectedSceneType || "living room";
+      const desc = mockup.detectedSceneDescription || "";
+      const alt = desc ? `${title} styled in ${scene}: ${desc}` : `${title} in ${scene} setting`;
+      addImage(mockup.mockupUrl, alt, mockup.localFilePath);
+    }
+  }
+
+  // 3. Ảnh thiết kế in ấn xưởng hệ màu RGB / chi tiết họa tiết
+  if (item.printMaster?.rgbUrl) {
+    addImage(
+      item.printMaster.rgbUrl,
+      `${title} - High Resolution Print Graphic Detail (300 DPI)`,
+      item.printMaster.localFilePath,
+    );
+  }
+
+  // 4. Ảnh phôi trong suốt (nếu có và chưa được thêm)
+  if (item.cutoutProduct?.transparentUrl) {
+    addImage(
+      item.cutoutProduct.transparentUrl,
+      `${title} - Isolated Transparent Product Cutout`,
+      item.cutoutProduct.localFilePath,
+    );
+  }
+
+  return images;
+}
+
+/**
+ * Chuyển đổi một sản phẩm PodDeliverableItem sang chuẩn `SeoContentInput`.
+ *
+ * @param item Thành phẩm chi tiết từ module Pinterest POD.
+ * @param defaultNiche Ngành hàng dự phòng nếu không suy luận được.
+ * @returns Đối tượng `SeoContentInput` chuẩn cho pipeline SEO.
+ */
+export function fromPinterestPodItem(
+  item: PodDeliverableItem,
+  defaultNiche = "Home Decor",
+): SeoContentInput {
+  const designId = (typeof item.designId === "string" ? item.designId : "").trim();
+  const rawTitle = typeof item.originalPinTitle === "string" && item.originalPinTitle.trim().length > 0
+    ? item.originalPinTitle.trim()
+    : designId || "Untitled Pinterest POD Item";
+
+  const handle = slugify(rawTitle) || slugify(designId) || "pinterest-pod-product";
+  const niche = inferNiche(item.productType || "", item.trendKeywords, defaultNiche);
+  const description = buildDescription(item);
+  const images = extractImages(item);
+
+  return {
+    productId: designId || item.sourceCandidateId,
+    title: rawTitle,
+    description,
+    niche,
+    handle,
+    images,
+  };
+}
+
+/**
+ * Chuyển đổi toàn bộ gói thành phẩm Pinterest POD sang danh sách `SeoContentInput`.
+ *
+ * @param deliverables Gói thành phẩm bàn giao từ Pinterest POD.
+ * @param defaultNiche Ngành hàng mặc định dự phòng.
+ * @returns Mảng `SeoContentInput[]` chuẩn hóa.
+ */
+export function fromPinterestPodBatch(
+  deliverables: PinterestPodDeliverables,
+  defaultNiche = "Home Decor",
+): readonly SeoContentInput[] {
+  if (!deliverables || !Array.isArray(deliverables.items)) {
+    return [];
+  }
+  return deliverables.items.map((it) => fromPinterestPodItem(it, defaultNiche));
+}
+
+/**
+ * Runner chính của Adapter (Pinterest POD -> SEO Content Pipeline):
+ * Nhận gói bàn giao từ Pinterest POD, tự động chuyển đổi và thực thi Pipeline SEO B1 → B6,
+ * trả về kết quả batch tổng hợp đầy đủ và danh sách `seoOutputs` chuẩn hóa.
+ *
+ * @param deliverables Gói thành phẩm từ Pinterest POD.
+ * @param options Tùy chọn runner, concurrency, default niche.
+ * @returns Kết quả batch tổng hợp kèm danh sách JSON `seoOutputs`.
+ */
+export async function runPinterestPodSeoPipeline(
+  deliverables: PinterestPodDeliverables,
+  options: PinterestPodAdapterOptions = {},
+): Promise<PinterestPodSeoBatchResult> {
+  const runner = options.runner || runSeoContent;
+  const concurrency = Math.max(1, Math.min(options.concurrency || 3, 10));
+  const rawItems = deliverables && Array.isArray(deliverables.items) ? deliverables.items : [];
+
+  const items: PinterestPodSeoItemResult[] = [];
+  const seoOutputs: SeoContentOutput[] = [];
+
+  for (let i = 0; i < rawItems.length; i += concurrency) {
+    const chunk = rawItems.slice(i, i + concurrency);
+    const chunkPromises = chunk.map(async (deliverableItem): Promise<PinterestPodSeoItemResult> => {
+      const seoInput = fromPinterestPodItem(deliverableItem, options.defaultNiche);
+      const designId = deliverableItem.designId || "";
+      const sourceCandidateId = deliverableItem.sourceCandidateId;
+      const productType = deliverableItem.productType || "custom";
+      const handle = seoInput.handle;
+
+      try {
+        const seoOutput = await runner(seoInput);
+        return {
+          designId,
+          sourceCandidateId,
+          productType,
+          handle,
+          deliverableItem,
+          seoInput,
+          seoOutput,
+          success: true,
+        };
+      } catch (err: unknown) {
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        return {
+          designId,
+          sourceCandidateId,
+          productType,
+          handle,
+          deliverableItem,
+          seoInput,
+          success: false,
+          error: errorMessage,
+        };
+      }
+    });
+
+    const chunkResults = await Promise.all(chunkPromises);
+    for (const res of chunkResults) {
+      items.push(res);
+      if (res.success && res.seoOutput) {
+        seoOutputs.push(res.seoOutput);
+      }
+    }
+  }
+
+  const successful = items.filter((it) => it.success).length;
+  const failed = items.length - successful;
+
+  return {
+    workflowId: deliverables?.workflowId || "unknown_workflow",
+    total: items.length,
+    successful,
+    failed,
+    items,
+    seoOutputs,
+  };
+}

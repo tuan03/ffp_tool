@@ -32,5 +32,7 @@ export const GEMINI_SHOPPING_CONTEXT_SCHEMA = {
       maxItems: 12,
       items: { type: "string" },
     },
+    contextualAudienceHints: { type: "array", maxItems: 3, items: { type: "string" } },
+    sceneSearchSeeds: { type: "array", maxItems: 5, items: { type: "string" } },
   },
 } as const;

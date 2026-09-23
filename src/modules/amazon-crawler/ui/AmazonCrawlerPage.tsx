@@ -1,11 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 
 import {
-  DEFAULT_AMAZON_CRAWLER_SETTINGS,
   type AmazonCrawlerCacheClearer,
   type AmazonCrawlerClientSummary,
   type AmazonCrawlerClientsLoader,
-  type AmazonCrawlerOutput,
   type AmazonCrawlerProgress,
   type AmazonCrawlerRunner,
   type AmazonCrawlerSettings,
@@ -14,6 +12,20 @@ import {
   type ImageProcessingProfileManager,
 } from "../types";
 
+import {
+  abortCrawlerJob,
+  resetCrawlerOutput,
+  selectCrawlerProduct,
+  setCrawlerActiveTab,
+  setCrawlerSelectedMediaUrl,
+  setCrawlerUrlText,
+  startCrawlerJob,
+  toggleCrawlerAdvancedOpen,
+  toggleCrawlerBatchJsonOpen,
+  updateCrawlerSetting,
+  updateCrawlerSession,
+  useAmazonCrawlerSession,
+} from "./crawler-session";
 import { firstProductMediaUrl, resolveSelectedProduct } from "./product-selection";
 import { formatPipelineTimings } from "./pipeline-timings";
 
@@ -24,8 +36,6 @@ interface AmazonCrawlerPageProps {
   retryAmazonCrawlerSyncs: AmazonCrawlerSyncRetrier;
   imageProcessingProfiles?: ImageProcessingProfileManager;
 }
-
-type ResultTab = "overview" | "source" | "final" | "customize" | "json";
 
 const COMMON_PRODUCT_TYPES = [
   { label: "Rug (Thảm trải sàn)", value: "Rug" },
@@ -52,7 +62,6 @@ const QUICK_PRODUCT_TYPE_PILLS = [
   "Canvas",
   "T-Shirt",
 ];
-
 function NumberSetting({
   label,
   value,
@@ -108,21 +117,23 @@ function progressPhaseLabel(phase: AmazonCrawlerProgress["phase"]): string {
 }
 
 export function AmazonCrawlerPage({ clearAmazonCrawlerCache, imageProcessingProfiles, loadAmazonCrawlerClients, retryAmazonCrawlerSyncs, runAmazonCrawler }: AmazonCrawlerPageProps): React.JSX.Element {
-  const [urlText, setUrlText] = useState("");
-  const [settings, setSettings] = useState<AmazonCrawlerSettings>(DEFAULT_AMAZON_CRAWLER_SETTINGS);
-  const [isAdvancedOpen, setIsAdvancedOpen] = useState(false);
-  const [isRunning, setIsRunning] = useState(false);
-  const [progress, setProgress] = useState<AmazonCrawlerProgress | null>(null);
-  const [output, setOutput] = useState<AmazonCrawlerOutput | null>(null);
-  const [liveProducts, setLiveProducts] = useState<AmazonCrawlerOutput["products"]>([]);
+  const session = useAmazonCrawlerSession();
+  const {
+    urlText,
+    settings,
+    isAdvancedOpen,
+    isRunning,
+    progress,
+    output,
+    liveProducts,
+    error,
+    activeTab,
+    selectedProductId,
+    selectedMediaUrl,
+    isBatchJsonOpen,
+  } = session;
   const [isRetryingSync, setIsRetryingSync] = useState(false);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [controller, setController] = useState<AbortController | null>(null);
-  const [activeTab, setActiveTab] = useState<ResultTab>("overview");
-  const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
-  const [selectedMediaUrl, setSelectedMediaUrl] = useState<string | null>(null);
-  const [isBatchJsonOpen, setIsBatchJsonOpen] = useState(false);
   const [isClearingCache, setIsClearingCache] = useState(false);
   const [cacheMessage, setCacheMessage] = useState<string | null>(null);
   const [clients, setClients] = useState<AmazonCrawlerClientSummary[]>([]);
@@ -151,13 +162,7 @@ export function AmazonCrawlerPage({ clearAmazonCrawlerCache, imageProcessingProf
     [resultProducts, selectedProductId],
   );
   const selectedPipelineTimings = formatPipelineTimings(selectedProduct?.pipeline?.shopify.timings);
-
-  useEffect(() => {
-    if (selectedProductId && resultProducts.some((product) => product.id === selectedProductId)) return;
-    const firstProduct = resultProducts[0] ?? null;
-    setSelectedProductId(firstProduct?.id ?? null);
-    setSelectedMediaUrl(firstProductMediaUrl(firstProduct));
-  }, [resultProducts, selectedProductId]);
+  const activeMediaUrl = selectedMediaUrl ?? firstProductMediaUrl(selectedProduct);
 
   useEffect(() => {
     let isMounted = true;
@@ -191,7 +196,7 @@ export function AmazonCrawlerPage({ clearAmazonCrawlerCache, imageProcessingProf
       setImageProfiles(profiles);
       const selected = profiles.find((profile) => profile.slug === settings.imageProfileSlug) ?? profiles[0];
       if (selected) {
-        setSettings((current) => ({ ...current, imageProfileSlug: selected.slug }));
+        updateCrawlerSetting("imageProfileSlug", selected.slug);
         setEditingImageProfile(selected);
       }
     }).catch((caught: unknown) => {
@@ -339,14 +344,11 @@ export function AmazonCrawlerPage({ clearAmazonCrawlerCache, imageProcessingProf
   }, [settings.storeId]);
 
   function handleSelectProduct(productId: string): void {
-    const product = resultProducts.find((candidate) => candidate.id === productId);
-    setSelectedProductId(productId);
-    setSelectedMediaUrl(firstProductMediaUrl(product ?? null));
-    setActiveTab("overview");
+    selectCrawlerProduct(productId);
   }
 
   function updateSetting<K extends keyof AmazonCrawlerSettings>(key: K, value: AmazonCrawlerSettings[K]): void {
-    setSettings((current) => ({ ...current, [key]: value }));
+    updateCrawlerSetting(key, value);
   }
 
   const activeCollectionIds = useMemo(() => {
@@ -367,73 +369,31 @@ export function AmazonCrawlerPage({ clearAmazonCrawlerCache, imageProcessingProf
       current.add(colId);
     }
     const nextList = Array.from(current);
-    setSettings((currentSettings) => ({
-      ...currentSettings,
-      collectionIds: nextList,
-      collectionId: nextList[0] || "",
-    }));
+    updateCrawlerSession({
+      settings: { ...settings, collectionIds: nextList, collectionId: nextList[0] || "" },
+    });
   }
 
   function handleSelectAllCollections(): void {
     const allIds = availableCollections.map((c) => c.id);
-    setSettings((currentSettings) => ({
-      ...currentSettings,
-      collectionIds: allIds,
-      collectionId: allIds[0] || "",
-    }));
+    updateCrawlerSession({
+      settings: { ...settings, collectionIds: allIds, collectionId: allIds[0] || "" },
+    });
   }
 
   function handleClearCollections(): void {
-    setSettings((currentSettings) => ({
-      ...currentSettings,
-      collectionIds: [],
-      collectionId: "",
-    }));
+    updateCrawlerSession({
+      settings: { ...settings, collectionIds: [], collectionId: "" },
+    });
   }
 
   async function handleStart(): Promise<void> {
-    if (urls.length === 0 || isRunning) return;
-    const nextController = new AbortController();
-    setController(nextController);
-    setIsRunning(true);
-    setError(null);
-    setOutput(null);
-    setLiveProducts([]);
     setSyncMessage(null);
-    setProgress({
-      phase: "queued",
-      completed: 0,
-      total: urls.length,
-      message: "Đang tạo job...",
-      items: urls.map((source) => ({
-        source,
-        asin: source,
-        phase: "queued",
-        status: "queued",
-        message: "Đang chờ xử lý.",
-        variantCompleted: 0,
-        variantTotal: 0,
-        activeVariants: [],
-      })),
-    });
-    try {
-      const crawlerOutput = await runAmazonCrawler({
-        input: { ...settings, urls },
-        onProgress: setProgress,
-        onProducts: (products) => setLiveProducts([...products]),
-        signal: nextController.signal,
-      });
-      setOutput(crawlerOutput);
-    } catch (caught: unknown) {
-      if (caught instanceof DOMException && caught.name === "AbortError") {
-        setError("Job đã được dừng an toàn.");
-      } else {
-        setError(caught instanceof Error ? caught.message : "Không thể chạy Amazon crawler.");
-      }
-    } finally {
-      setController(null);
-      setIsRunning(false);
-    }
+    await startCrawlerJob({ runAmazonCrawler, urls, settings });
+  }
+
+  function handleStop(): void {
+    abortCrawlerJob();
   }
 
   async function handleRetrySyncs(): Promise<void> {
@@ -442,12 +402,14 @@ export function AmazonCrawlerPage({ clearAmazonCrawlerCache, imageProcessingProf
     setSyncMessage(null);
     try {
       const retried = await retryAmazonCrawlerSyncs(output.jobId, {
-        onProgress: setProgress,
-        onProducts: (products) => setLiveProducts([...products]),
+        onProgress: (nextProgress) => updateCrawlerSession({ progress: nextProgress }),
+        onProducts: (products) => updateCrawlerSession({ liveProducts: [...products] }),
       });
       if (retried.output) {
-        setOutput(retried.output);
-        setLiveProducts([...retried.output.products]);
+        updateCrawlerSession({
+          output: retried.output,
+          liveProducts: [...retried.output.products],
+        });
       }
       setSyncMessage(`Đã đưa ${retried.retried} product lỗi trở lại hàng đợi Shopify.`);
     } catch (caught: unknown) {
@@ -525,7 +487,7 @@ export function AmazonCrawlerPage({ clearAmazonCrawlerCache, imageProcessingProf
           className="min-h-40 rounded-xl border border-slate-700 bg-slate-950 p-3 font-mono text-sm text-slate-100 outline-none focus:border-cyan-400"
           placeholder={"https://www.amazon.com/dp/B0...\nB0..."}
           value={urlText}
-          onChange={(event) => setUrlText(event.target.value)}
+          onChange={(event) => setCrawlerUrlText(event.target.value)}
         />
       </label>
 
@@ -1079,7 +1041,7 @@ export function AmazonCrawlerPage({ clearAmazonCrawlerCache, imageProcessingProf
         </section>
       ) : null}
 
-      <button className="text-sm font-semibold text-cyan-300" type="button" onClick={() => setIsAdvancedOpen((open) => !open)}>
+      <button className="text-sm font-semibold text-cyan-300" type="button" onClick={toggleCrawlerAdvancedOpen}>
         {isAdvancedOpen ? "Ẩn" : "Hiện"} Advanced Settings
       </button>
       {isAdvancedOpen ? (
@@ -1098,8 +1060,13 @@ export function AmazonCrawlerPage({ clearAmazonCrawlerCache, imageProcessingProf
 
       <div className="flex flex-wrap gap-3">
         <button className="rounded-lg bg-cyan-400 px-5 py-2 font-semibold text-slate-950 disabled:opacity-50" disabled={urls.length === 0 || isRunning} type="button" onClick={() => void handleStart()}>Start ({urls.length})</button>
-        <button className="rounded-lg border border-rose-400 px-5 py-2 font-semibold text-rose-300 disabled:opacity-50" disabled={!isRunning} type="button" onClick={() => controller?.abort()}>Stop</button>
-        {output === null ? null : <button className="rounded-lg border border-cyan-500 px-5 py-2 font-semibold text-cyan-300" type="button" onClick={handleDownload}>Tải JSON</button>}
+        <button className="rounded-lg border border-rose-400 px-5 py-2 font-semibold text-rose-300 disabled:opacity-50" disabled={!isRunning} type="button" onClick={handleStop}>Stop</button>
+        {output === null ? null : (
+          <>
+            <button className="rounded-lg border border-cyan-500 px-5 py-2 font-semibold text-cyan-300" type="button" onClick={handleDownload}>Tải JSON</button>
+            <button className="rounded-lg border border-slate-600 px-5 py-2 font-semibold text-slate-300 hover:border-rose-500 hover:text-rose-300 disabled:opacity-50" disabled={isRunning} type="button" onClick={resetCrawlerOutput}>Xóa kết quả</button>
+          </>
+        )}
         <button className="rounded-lg border border-amber-500 px-5 py-2 font-semibold text-amber-300 disabled:opacity-50" disabled={isRunning || isClearingCache} type="button" onClick={() => void handleClearCache()}>{isClearingCache ? "Đang xóa cache..." : "Xóa cache"}</button>
       </div>
       {cacheMessage === null ? null : <p className="text-sm text-amber-200">{cacheMessage}</p>}
@@ -1223,15 +1190,15 @@ export function AmazonCrawlerPage({ clearAmazonCrawlerCache, imageProcessingProf
                 <article className="min-w-0 space-y-5 rounded-xl border border-slate-700 bg-slate-950/30 p-4 sm:p-5">
                   <div className="grid gap-5 xl:grid-cols-[minmax(16rem,22rem)_minmax(0,1fr)]">
                     <div>
-                      {selectedMediaUrl ? (
-                        <img alt={selectedProduct.title} className="aspect-square w-full rounded-xl bg-white object-contain" src={selectedMediaUrl} />
+                      {activeMediaUrl ? (
+                        <img alt={selectedProduct.title} className="aspect-square w-full rounded-xl bg-white object-contain" src={activeMediaUrl} />
                       ) : (
                         <div className="flex aspect-square items-center justify-center rounded-xl bg-slate-900 text-sm text-slate-500">Không có ảnh</div>
                       )}
                       {selectedProduct.media.length > 1 ? (
                         <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
                           {selectedProduct.media.map((media) => (
-                            <button key={media.url} className={`shrink-0 rounded-md border p-1 ${selectedMediaUrl === media.url ? "border-cyan-400" : "border-slate-700"}`} type="button" onClick={() => setSelectedMediaUrl(media.url)}>
+                            <button key={media.url} className={`shrink-0 rounded-md border p-1 ${activeMediaUrl === media.url ? "border-cyan-400" : "border-slate-700"}`} type="button" onClick={() => setCrawlerSelectedMediaUrl(media.url)}>
                               {media.kind === "image" ? <img alt="" className="h-14 w-14 bg-white object-contain" src={media.url} /> : <span className="flex h-14 w-14 items-center justify-center text-xs">Video</span>}
                             </button>
                           ))}
@@ -1270,7 +1237,7 @@ export function AmazonCrawlerPage({ clearAmazonCrawlerCache, imageProcessingProf
 
                   <div className="flex flex-wrap gap-2 border-b border-slate-700 pb-3">
                     {(["overview", "source", "final", "customize", "json"] as const).map((tab) => (
-                      <button key={tab} className={`rounded-lg px-3 py-2 text-sm ${activeTab === tab ? "bg-cyan-400 text-slate-950" : "bg-slate-800 text-slate-300"}`} type="button" onClick={() => setActiveTab(tab)}>
+                      <button key={tab} className={`rounded-lg px-3 py-2 text-sm ${activeTab === tab ? "bg-cyan-400 text-slate-950" : "bg-slate-800 text-slate-300"}`} type="button" onClick={() => setCrawlerActiveTab(tab)}>
                         {{ overview: "Thông tin", source: "Source variants", final: "Final variants", customize: "Customize", json: "Product JSON" }[tab]}
                       </button>
                     ))}
@@ -1302,7 +1269,7 @@ export function AmazonCrawlerPage({ clearAmazonCrawlerCache, imageProcessingProf
           {output?.errors.map((crawlError) => <p key={`${crawlError.source}-${crawlError.code}`} className="rounded-lg border border-rose-700 p-3 text-rose-200">{crawlError.source}: {crawlError.message}</p>)}
           {output?.status === "partial" ? <button className="rounded-lg border border-amber-600 px-3 py-2 text-sm font-semibold text-amber-200 disabled:opacity-50" disabled={isRetryingSync} type="button" onClick={() => void handleRetrySyncs()}>{isRetryingSync ? "Đang retry..." : "Retry Shopify lỗi"}</button> : null}
           {syncMessage ? <p className="text-sm text-amber-200">{syncMessage}</p> : null}
-          {output ? <button className="text-sm font-semibold text-cyan-300" type="button" onClick={() => setIsBatchJsonOpen((open) => !open)}>{isBatchJsonOpen ? "Ẩn" : "Hiện"} Raw JSON toàn batch</button> : null}
+          {output ? <button className="text-sm font-semibold text-cyan-300" type="button" onClick={toggleCrawlerBatchJsonOpen}>{isBatchJsonOpen ? "Ẩn" : "Hiện"} Raw JSON toàn batch</button> : null}
           {isBatchJsonOpen && output ? <pre className="max-h-[42rem] overflow-auto rounded-xl bg-slate-950 p-4 text-xs text-cyan-100">{JSON.stringify(output, null, 2)}</pre> : null}
         </section>
       )}

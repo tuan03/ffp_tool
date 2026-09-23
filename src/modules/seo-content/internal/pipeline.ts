@@ -8,6 +8,7 @@ import { b3SearchSuggestionsStage } from "./stages/b3-search-suggestions";
 import { b4ConflictControlStage } from "./stages/b4-conflict-control";
 import { b5ContentGenerationStage } from "./stages/b5-content-generation";
 import { b6ImageProcessingStage } from "./stages/b6-image-processing";
+import type { SiteNicheResolver } from "./site-niche/site-niche-resolver";
 
 export type { SeoPipelineStage };
 
@@ -31,9 +32,24 @@ export interface SeoPipeline {
   }>;
 }
 
+export interface SeoPipelineOptions {
+  readonly stages?: readonly SeoPipelineStage[];
+  /** Structural dependency keeps pipeline tests and alternate server runtimes network-free. */
+  readonly siteNicheResolver?: Pick<SiteNicheResolver, "resolve">;
+}
+
+function isPipelineOptions(
+  options: readonly SeoPipelineStage[] | SeoPipelineOptions | undefined,
+): options is SeoPipelineOptions {
+  return !Array.isArray(options);
+}
+
 export function createSeoPipeline(
-  customStages?: readonly SeoPipelineStage[],
+  options?: readonly SeoPipelineStage[] | SeoPipelineOptions,
 ): SeoPipeline {
+  const pipelineOptions = isPipelineOptions(options) ? options : undefined;
+  const customStages = Array.isArray(options) ? options : pipelineOptions?.stages;
+  const siteNicheResolver = pipelineOptions?.siteNicheResolver;
   if (customStages && customStages.length === 0) {
     throw new SeoStageError("b1", "Pipeline must contain at least one stage");
   }
@@ -41,9 +57,15 @@ export function createSeoPipeline(
   const stages = customStages ?? DEFAULT_SEO_PIPELINE_STAGES;
 
   async function executeDetailed(input: SeoContentInput) {
-      let currentContext = createInitialContext(input);
-      const fallbackStages: string[] = [];
-      const warnings: string[] = [];
+    const resolution = siteNicheResolver
+      ? await siteNicheResolver.resolve({
+          siteDomain: input.siteDomain ?? "",
+          fallbackNiche: input.niche,
+        })
+      : undefined;
+    let currentContext = createInitialContext(input, resolution?.niche ?? input.niche);
+    const fallbackStages: string[] = [];
+    const warnings: string[] = [];
 
       for (const stage of stages) {
         try {

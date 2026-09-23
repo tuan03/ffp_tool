@@ -60,6 +60,22 @@ test("SEO detailed runner supports alt-only processing without image binaries or
   assert.equal(JSON.stringify(publicSummary).includes("corpusRevision"), false);
 });
 
+test("SEO + Content analyzes and emits every supplied image in source order", async () => {
+  const result = await runSeoContent(seoContentMockInput);
+
+  assert.deepEqual(
+    result.images.map((image) => image.sourceUrl),
+    seoContentMockInput.images.map((image) => image.url),
+  );
+  assert.deepEqual(
+    result.images.map((image) => image.webp.filename),
+    [
+      `${seoContentMockInput.handle}-1.webp`,
+      `${seoContentMockInput.handle}-2.webp`,
+    ],
+  );
+});
+
 test("SEO + Content baseline service handles empty images and fallback values", async () => {
   const minimalInput: SeoContentInput = {
     images: [],

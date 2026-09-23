@@ -24,10 +24,10 @@ export class HeuristicShoppingContextAnalyzer implements ShoppingContextAnalyzer
     const rawNiche = (source.niche || "").toLowerCase();
     const rawDescription = (source.description || "").toLowerCase();
     const rawHandle = (source.handle || "").replace(/[-_]/g, " ").toLowerCase();
-    const rawCategory = (pu?.productCategory || "").toLowerCase();
-    const rawStyle = (pu?.visualStyle || "").toLowerCase();
-    const ocrTokens = (pu?.ocrTexts || []).map((t) => t.toLowerCase());
-    const entities = (pu?.detectedEntities || []).map((e) => e.toLowerCase());
+    const rawCategory = (pu?.physicalProductIdentity || "").toLowerCase();
+    const rawStyle = (pu?.typography.styleSummary || "").toLowerCase();
+    const ocrTokens = (pu?.typography.visibleTexts || []).map((t) => t.toLowerCase());
+    const entities = pu?.visualEntities && pu.visualEntities !== "unknown" ? [pu.visualEntities.toLowerCase()] : [];
 
     const allSignalsText = [
       rawTitle,
@@ -326,5 +326,6 @@ export class HeuristicShoppingContextAnalyzer implements ShoppingContextAnalyzer
     };
   }
 }
+
 
 export const heuristicShoppingContextAnalyzer = new HeuristicShoppingContextAnalyzer();

@@ -1,3 +1,4 @@
+import { inferProductTypeFromNiche } from "../../types";
 import type { JobStatus, PinterestProductType, ReferenceImage } from "../../types";
 import { ReferenceDropzone } from "./ReferenceDropzone";
 
@@ -10,30 +11,39 @@ const SUGGESTED_CHIPS = [
   "floral cozy blanket",
 ] as const;
 
-interface InitFormProps {
+export interface InitFormProps {
   readonly niche: string;
   readonly onNicheChange: (niche: string) => void;
-  readonly product: PinterestProductType;
-  readonly onProductChange: (product: PinterestProductType) => void;
+  readonly crawlCount?: number;
+  readonly onCrawlCountChange?: (count: number) => void;
   readonly referenceImages: readonly ReferenceImage[];
   readonly onReferenceImagesChange: (images: readonly ReferenceImage[]) => void;
   readonly jobStatus: JobStatus;
   readonly onStartCrawl: () => void;
   readonly onStopJob: () => void;
+  /** Optional for backward compatibility with existing callers */
+  readonly product?: PinterestProductType;
+  readonly onProductChange?: (product: PinterestProductType) => void;
+  readonly aiBackgroundVariants?: number;
+  readonly onAiBackgroundVariantsChange?: (count: number) => void;
 }
 
 export function InitForm({
   niche,
   onNicheChange,
-  product,
-  onProductChange,
+  crawlCount = 40,
+  onCrawlCountChange,
   referenceImages,
   onReferenceImagesChange,
   jobStatus,
   onStartCrawl,
   onStopJob,
+  product,
+  onProductChange,
 }: InitFormProps): React.JSX.Element {
   const isBusy = jobStatus === "running" || jobStatus === "producing";
+  const detectedProduct = niche.trim() ? inferProductTypeFromNiche(niche) : (product ?? "rug");
+  const expectedMockupCount = referenceImages.length > 0 ? referenceImages.length : 5;
 
   return (
     <section className="flex flex-col gap-5 rounded-xl border border-slate-800 bg-slate-900/90 p-5 shadow-xl">
@@ -47,17 +57,33 @@ export function InitForm({
         </span>
       </div>
 
-      {/* Niche Input */}
+      {/* Niche Input & Auto-detect Badge */}
       <div className="flex flex-col gap-2">
-        <label htmlFor="niche-input" className="text-xs font-semibold text-slate-200">
-          Từ khóa xu hướng Pinterest <span className="text-rose-400">*</span>
-        </label>
+        <div className="flex items-center justify-between">
+          <label htmlFor="niche-input" className="text-xs font-semibold text-slate-200">
+            Từ khóa xu hướng Pinterest <span className="text-rose-400">*</span>
+          </label>
+          <div className="flex items-center gap-1.5 rounded-full bg-slate-800/90 px-2.5 py-0.5 text-[10px] font-medium text-slate-300 border border-slate-700">
+            <span className="text-slate-400">Tự động nhận diện:</span>
+            <span className="font-bold text-cyan-300">
+              {detectedProduct === "blanket"
+                ? "Chăn (Blanket - 10000x11000px)"
+                : detectedProduct === "custom"
+                ? "Tùy biến (Custom - 4000x6400px)"
+                : "Thảm (Rug - 4000x6400px)"}
+            </span>
+          </div>
+        </div>
         <input
           id="niche-input"
           type="text"
           value={niche}
-          onChange={(e) => onNicheChange(e.target.value)}
-          placeholder="Ví dụ: vintage distressed rug, boho runner..."
+          onChange={(e) => {
+            const next = e.target.value;
+            onNicheChange(next);
+            onProductChange?.(inferProductTypeFromNiche(next));
+          }}
+          placeholder="Ví dụ: vintage distressed rug, boho blanket, persian mat..."
           disabled={isBusy}
           className="rounded-lg border border-slate-700 bg-slate-950 px-3.5 py-2 text-sm text-slate-100 placeholder-slate-500 focus:border-cyan-400 focus:outline-none focus:ring-1 focus:ring-cyan-400 disabled:opacity-50"
         />
@@ -70,7 +96,10 @@ export function InitForm({
               key={chip}
               type="button"
               disabled={isBusy}
-              onClick={() => onNicheChange(chip)}
+              onClick={() => {
+                onNicheChange(chip);
+                onProductChange?.(inferProductTypeFromNiche(chip));
+              }}
               className="rounded-full border border-slate-700 bg-slate-800/80 px-2.5 py-0.5 text-[11px] text-slate-300 transition hover:border-cyan-500 hover:bg-slate-700 hover:text-cyan-300 disabled:opacity-50"
             >
               {chip}
@@ -79,30 +108,50 @@ export function InitForm({
         </div>
       </div>
 
-      {/* Product Select */}
-      <div className="flex flex-col gap-2">
-        <label htmlFor="product-select" className="text-xs font-semibold text-slate-200">
-          Loại sản phẩm POD <span className="text-rose-400">*</span>
-        </label>
-        <select
-          id="product-select"
-          value={product}
-          onChange={(e) => onProductChange(e.target.value as PinterestProductType)}
-          disabled={isBusy}
-          className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-cyan-400 focus:outline-none focus:ring-1 focus:ring-cyan-400 disabled:opacity-50"
-        >
-          <option value="rug">Thảm trải sàn (Rug) - Chuẩn 4000x6400px</option>
-          <option value="blanket">Chăn ném mềm (Blanket) - Chuẩn 10000x11000px</option>
-        </select>
+      {/* Pinterest Crawl Count Slider (Requirement 2) */}
+      <div className="flex flex-col gap-1.5 rounded-lg border border-slate-800 bg-slate-950/60 p-3">
+        <div className="flex items-center justify-between">
+          <label htmlFor="crawl-count-input" className="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
+            <span>📥 Số lượng ảnh cào từ Pinterest:</span>
+            <span className="text-cyan-400 font-bold">{crawlCount} ảnh</span>
+          </label>
+          <span className="text-[11px] text-slate-400">10 – 80 ảnh (Mặc định 40)</span>
+        </div>
+        <div className="flex items-center gap-3 pt-1">
+          <input
+            id="crawl-count-input"
+            type="range"
+            min={10}
+            max={80}
+            step={5}
+            value={crawlCount}
+            onChange={(e) => onCrawlCountChange?.(Number(e.target.value))}
+            disabled={isBusy}
+            className="flex-1 accent-cyan-400 h-2 bg-slate-700 rounded-lg cursor-pointer disabled:opacity-50"
+          />
+          <span className="w-10 text-center text-xs font-bold text-cyan-300 bg-slate-800 px-2 py-0.5 rounded border border-slate-700">
+            {crawlCount}
+          </span>
+        </div>
+        <p className="text-[11px] text-slate-400">
+          Vision AI sẽ thu thập {crawlCount} ảnh Pinterest, sau đó lọc trùng lặp và chấm điểm nét tự động để đề xuất danh sách ứng viên in ấn tốt nhất.
+        </p>
       </div>
 
-      {/* Reference Images Dropzone */}
-      <ReferenceDropzone
-        images={referenceImages}
-        onChange={onReferenceImagesChange}
-        disabled={isBusy}
-        maxImages={5}
-      />
+      {/* Reference Images Dropzone & Mockup Output Notice (Requirement 4) */}
+      <div className="flex flex-col gap-2">
+        <ReferenceDropzone
+          images={referenceImages}
+          onChange={onReferenceImagesChange}
+          disabled={isBusy}
+          maxImages={10}
+        />
+        <p className="text-[11px] text-slate-400 px-1">
+          {referenceImages.length > 0
+            ? `✓ Đã nạp ${referenceImages.length} ảnh phòng tham chiếu: Hệ thống sẽ render chính xác ${referenceImages.length} mockup AI tương ứng.`
+            : `Chưa nạp ảnh phòng tham chiếu: Hệ thống sẽ tự động tạo ${expectedMockupCount} mockup lifestyle với bối cảnh cao cấp ngẫu nhiên.`}
+        </p>
+      </div>
 
       {/* Action Buttons */}
       <div className="flex items-center gap-3 pt-2">

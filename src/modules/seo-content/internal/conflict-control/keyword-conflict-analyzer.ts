@@ -96,6 +96,24 @@ interface VectorSession {
   readonly reusableAcrossRuns: boolean;
 }
 
+function collectMeaningfulTerms(value: string | undefined): ReadonlySet<string> {
+  return new Set((value?.toLowerCase().match(/[a-z0-9]{3,}/g) ?? []));
+}
+
+function hasSupportedSceneClaim(params: {
+  readonly keyword: string;
+  readonly sceneContext: string | undefined;
+  readonly productEvidence: string;
+}): boolean {
+  const sceneTerms = collectMeaningfulTerms(params.sceneContext);
+  const candidateTerms = collectMeaningfulTerms(params.keyword);
+  const claimedSceneTerms = [...candidateTerms].filter((term) => sceneTerms.has(term));
+  if (claimedSceneTerms.length === 0) return true;
+
+  const productTerms = collectMeaningfulTerms(params.productEvidence);
+  return claimedSceneTerms.every((term) => productTerms.has(term));
+}
+
 async function findCorpusConflicts(
   corpus: SeoConflictCorpus,
   lookup: SeoConflictLookup,
@@ -285,9 +303,33 @@ export class DefaultKeywordConflictAnalyzer implements KeywordConflictAnalyzer {
 
     // 1. Build Candidate Pool
     const allCandidates = buildKeywordCandidates(input.searchResearch);
+    const sceneSeedSet = new Set(
+      Object.entries(input.searchResearch?.querySources ?? {})
+        .filter(([, source]) => source === "scene_context_seed")
+        .map(([query]) => query.toLowerCase().trim()),
+    );
+    const productEvidence = [
+      input.source.title,
+      input.source.description,
+      input.source.niche,
+      input.productUnderstanding?.physicalProductIdentity,
+      input.productUnderstanding?.visualEntities,
+      input.productUnderstanding?.typography.styleSummary,
+      ...(input.productUnderstanding?.typography.visibleTexts ?? []),
+    ].join(" ").toLowerCase();
+    const candidates = allCandidates.filter((candidate) => {
+      if (!sceneSeedSet.has(candidate.keyword.toLowerCase().trim())) return true;
+      if (hasSupportedSceneClaim({
+        keyword: candidate.keyword,
+        sceneContext: input.productUnderstanding?.sceneContext,
+        productEvidence,
+      })) return true;
+      recordConflict(candidate.keyword, CONFLICT_REASON.SCENE_CONTEXT_ONLY, conflictReasons, discardedKeywords);
+      return false;
+    });
 
     // 2. Precedence Rank 1: Exact Normalization and Deduplication
-    const exactResult = removeExactDuplicates(allCandidates);
+    const exactResult = removeExactDuplicates(candidates);
     for (const item of exactResult.discardedCandidates) {
       recordConflict(
         item.candidate.keyword,
@@ -585,7 +627,7 @@ export class DefaultKeywordConflictAnalyzer implements KeywordConflictAnalyzer {
                 isConflict = checkContextualConflict({
                   candidateKeyword: kw,
                   candidateCategory:
-                    input.productUnderstanding?.productCategory ?? input.source.niche,
+                    input.productUnderstanding?.physicalProductIdentity ?? input.source.niche,
                   candidateTitle: input.source.title,
                   catalogTitle: catTarget.title,
                   catalogKeyword: catTarget.keyword,
@@ -621,7 +663,7 @@ export class DefaultKeywordConflictAnalyzer implements KeywordConflictAnalyzer {
           embedding: storedEmbedding,
           snapshot: corpusSnapshot,
           productCategory:
-            input.productUnderstanding?.productCategory ?? input.source.niche,
+            input.productUnderstanding?.physicalProductIdentity ?? input.source.niche,
           productTitle: input.source.title,
         });
         if (legacyConflicts.length > 0) {
@@ -719,4 +761,3 @@ export class DefaultKeywordConflictAnalyzer implements KeywordConflictAnalyzer {
     };
   }
 }
-

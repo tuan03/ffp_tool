@@ -6,6 +6,27 @@ export type { AppEnvironment };
 export type PodProductType = "rug" | "blanket" | "custom";
 export type PinterestProductType = PodProductType;
 
+/**
+ * Automatically infers product type ('blanket', 'rug', or 'custom') from niche keywords:
+ * - If niche contains 'blanket', 'throw', 'quilt' -> 'blanket' (preset 10000x11000 px)
+ * - If niche contains 'rug', 'carpet', 'mat' -> 'rug' (preset 4000x6400 px)
+ * - If niche contains 'custom' -> 'custom' (preset 4000x6400 px)
+ * - Otherwise -> 'rug' (default 4000x6400 px)
+ */
+export function inferProductTypeFromNiche(niche: string): PodProductType {
+  const lower = (niche ?? "").toLowerCase().trim();
+  if (lower.includes("blanket") || lower.includes("throw") || lower.includes("quilt")) {
+    return "blanket";
+  }
+  if (lower.includes("rug") || lower.includes("carpet") || lower.includes("mat")) {
+    return "rug";
+  }
+  if (lower.includes("custom")) {
+    return "custom";
+  }
+  return "rug";
+}
+
 /** Workflow stage for job execution */
 export type PodWorkflowStage = "crawl_and_review" | "full_pipeline" | "produce" | "full";
 export type WorkflowStage = PodWorkflowStage;
@@ -32,6 +53,7 @@ export type ReferenceImage = PodReferenceImage;
 /** Standard Pinterest Candidate crawled and scored by AI Vision */
 export interface PodCandidate {
   readonly id: string;
+  readonly candidate_id?: string;
   readonly image_id?: string;
   readonly pin_id?: string;
   readonly title: string;
@@ -128,9 +150,18 @@ export interface PodBackendDeliverables {
 
 export interface DeliverablesData {
   readonly print_cmyk_images?: readonly DeliverablePrintImage[];
+  readonly final_png_images?: readonly DeliverablePrintImage[];
   readonly lifestyle_mockups?: readonly DeliverableLifestyleMockup[];
   readonly product_cutouts_white?: readonly DeliverableCutout[];
   readonly comparison_rows?: readonly ComparisonRow[];
+}
+
+export interface PinterestTokenInfo {
+  readonly has_access_token: boolean;
+  readonly has_refresh_token: boolean;
+  readonly expires_at?: number;
+  readonly username?: string | null;
+  readonly source?: string;
 }
 
 /** Pinterest authentication status response */
@@ -138,7 +169,33 @@ export interface PinterestAuthStatus {
   readonly ok: boolean;
   readonly logged_in: boolean;
   readonly browser_logged_in?: boolean;
+  readonly oauth_valid?: boolean;
   readonly status_text: string;
+  readonly profile_dir?: string;
+  readonly profile_exists?: boolean;
+  readonly oauth_file_exists?: boolean;
+  readonly auth_url?: string;
+  readonly redirect_uri?: string;
+  readonly app_id_configured?: boolean;
+  readonly token_info?: PinterestTokenInfo | null;
+}
+
+export interface SavePinterestTokenPayload {
+  readonly access_token?: string;
+  readonly refresh_token?: string;
+  readonly scopes?: string;
+  readonly code?: string;
+  readonly url?: string;
+  readonly redirect_uri?: string;
+}
+
+export interface SavePinterestTokenResponse {
+  readonly ok: boolean;
+  readonly message?: string;
+  readonly username?: string;
+  readonly business_name?: string;
+  readonly saved_path?: string;
+  readonly expires_at?: number;
 }
 
 /** Payload for launching Pinterest browser login */
@@ -161,10 +218,13 @@ export type PinterestLaunchLoginOutput = PinterestLaunchLoginResponse;
 /** Stage 1: Input parameters for Pinterest crawl & discovery */
 export interface PinterestDiscoveryInput {
   readonly niche: string;
-  readonly product: PodProductType;
+  readonly product?: PodProductType;
   readonly workflow_stage?: PodWorkflowStage;
   readonly candidatePoolSize?: number;
+  readonly task5_max_downloads?: number;
+  readonly top_images?: number;
   readonly referenceImages?: readonly PodReferenceImage[];
+  readonly ai_background_variants?: number;
 }
 export type CreateJobInput = PinterestDiscoveryInput;
 
@@ -193,6 +253,11 @@ export interface PinterestProductionInput {
   readonly selected_candidates: readonly string[];
   readonly product?: PodProductType;
   readonly niche?: string;
+  readonly candidates?: readonly PodCandidate[];
+  readonly design_mode?: "direct_print" | "ai-artwork" | string;
+  readonly referenceImages?: readonly ReferenceImage[];
+  readonly room_template_urls?: readonly string[];
+  readonly ai_background_variants?: number;
 }
 export type ProduceInput = PinterestProductionInput;
 
@@ -211,6 +276,9 @@ export interface PinterestProductionOutput {
 export interface ProduceOutput {
   readonly ok: boolean;
   readonly status: JobStatus;
+  readonly jobId?: string;
+  readonly job_id?: string;
+  readonly logs?: readonly string[];
 }
 
 /** Full response structure when polling /api/pinterest-pod/jobs/:jobId */
@@ -231,6 +299,12 @@ export interface PodJobStatusResponse {
   readonly report_url?: string;
   readonly rugShape?: string;
   readonly rugShapeDecision?: Record<string, unknown>;
+  readonly niche?: string;
+  readonly product?: PinterestProductType;
+  readonly roomTemplates?: readonly ReferenceImage[];
+  readonly room_templates?: readonly ReferenceImage[];
+  readonly referenceImages?: readonly ReferenceImage[];
+  readonly reference_images?: readonly ReferenceImage[];
   readonly error?: string;
   readonly message?: string;
 }
@@ -304,14 +378,61 @@ export interface PinterestPodDeliverables {
   readonly items: readonly PodDeliverableItem[];
 }
 
+/** Recent job or run item for UI history listing */
+export interface PodRecentRunItem {
+  readonly type: "cached_job" | "standalone_run";
+  readonly id: string;
+  readonly jobId: string;
+  readonly job_id?: string;
+  readonly status: PodJobStatus;
+  readonly createdAt?: number;
+  readonly title?: string;
+  readonly niche?: string;
+  readonly product?: string;
+  readonly productType?: string;
+  readonly candidateCount?: number;
+  readonly deliverableCount?: number;
+  readonly cmykCount?: number;
+  readonly mockupCount?: number;
+  readonly thumbnails?: readonly string[];
+  readonly hasManifest?: boolean;
+}
+
+/** General server status and recent runs response */
+export interface PodStatusResponse {
+  readonly ok: boolean;
+  readonly service?: {
+    readonly online: boolean;
+    readonly error?: string;
+    readonly port?: number;
+  };
+  readonly recent?: readonly PodRecentRunItem[];
+  readonly presets?: Record<string, unknown>;
+}
+
+/** Response from handing over deliverables to the SEO Module */
+export interface SeoHandoverResponse {
+  readonly success: boolean;
+  readonly message: string;
+  readonly receivedAt?: number;
+  readonly printMasterCount?: number;
+  readonly approvedMockupCount?: number;
+  readonly savedPath?: string;
+}
+
 /** Pinterest Pod client interface for UI consumption */
 export interface PinterestPodClient {
   getAuthStatus(): Promise<PinterestAuthStatus>;
   launchLogin(timeout?: number): Promise<PinterestLaunchLoginOutput>;
+  saveOAuthToken?(payload: SavePinterestTokenPayload): Promise<SavePinterestTokenResponse>;
+  getOAuthAuthorizeUrl?(redirectUri?: string): Promise<{ readonly ok: boolean; readonly auth_url: string }>;
   createJob(input: CreateJobInput): Promise<CreateJobOutput>;
   getJobDetail(jobId: string): Promise<JobDetailResponse>;
   produce(input: ProduceInput): Promise<ProduceOutput>;
   cancelJob(jobId: string): Promise<CancelJobOutput>;
+  getStatus(): Promise<PodStatusResponse>;
+  deleteJob(jobId: string): Promise<{ readonly ok: boolean; readonly message?: string }>;
+  handoverToSeo?(payload: PinterestPodDeliverables): Promise<SeoHandoverResponse>;
 }
 
 /** Factory specification definition for print production */

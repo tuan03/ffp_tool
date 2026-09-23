@@ -1,3 +1,5 @@
+import { loadServerEnvironment } from "../../config/server-environment";
+
 import { AltOnlyImageProcessor } from "./internal/image-processing/image-processor";
 import { FileSeoConflictCorpus } from "./internal/conflict-control/file-seo-conflict-corpus";
 import { createSeoPipeline, DEFAULT_SEO_PIPELINE_STAGES } from "./internal/pipeline";
@@ -12,6 +14,7 @@ import {
 import { createB4ConflictControlStage } from "./internal/stages/b4-conflict-control";
 import { createB5ContentGenerationStage, createDefaultB5Generator } from "./internal/stages/b5-content-generation";
 import { createB6ImageProcessingStage } from "./internal/stages/b6-image-processing";
+import { getDefaultSiteNicheResolver } from "./internal/site-niche/site-niche-runtime";
 import type {
   SeoContentAltOnlyDetailedOutput,
   SeoContentDetailedOutput,
@@ -22,7 +25,9 @@ import type {
   SeoContentRunOptions,
 } from "./types";
 
-const defaultPipeline = createSeoPipeline();
+loadServerEnvironment();
+
+const defaultPipeline = createSeoPipeline({ siteNicheResolver: getDefaultSiteNicheResolver() });
 
 /**
  * Executes the SEO + Content pipeline for a single product.
@@ -86,7 +91,10 @@ export async function runSeoContentDetailed(
       ? createB6ImageProcessingStage({ imageProcessor: new AltOnlyImageProcessor() })
       : DEFAULT_SEO_PIPELINE_STAGES[DEFAULT_SEO_PIPELINE_STAGES.length - 1],
   ];
-  const pipeline = createSeoPipeline(runtimeStages);
+  const pipeline = createSeoPipeline({
+    stages: runtimeStages,
+    siteNicheResolver: getDefaultSiteNicheResolver(),
+  });
   const execution = await pipeline.executeDetailed(input);
   const generator = execution.context.contentGenerationMetadata?.generator ?? "heuristic";
   const hasGeminiConfiguration = Boolean(process.env.GOOGLE_CLOUD_PROJECT?.trim());

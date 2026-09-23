@@ -7,10 +7,10 @@ export interface ImageProcessingInput {
   readonly productHandle: string;
   readonly primaryKeyword?: string;
   readonly secondaryKeywords?: readonly string[];
-  readonly productCategory?: string;
-  readonly entities: readonly string[];
-  readonly dominantColors?: readonly string[];
-  readonly visualStyle?: string;
+  readonly physicalProductIdentity?: string;
+  readonly typographyVisibleTexts: readonly string[];
+  readonly typographyStyleSummary?: string;
+  readonly visualEntities?: string;
 }
 
 export type ImageProcessingIssueCode =

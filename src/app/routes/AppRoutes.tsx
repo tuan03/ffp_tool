@@ -4,12 +4,18 @@ import { createBrowserRouter, Navigate, RouterProvider } from "react-router-dom"
 import { environment } from "../../config/environment";
 import { AppLayout } from "../../layouts/AppLayout";
 import { amazonCrawlerRoutes } from "../../modules/amazon-crawler";
+import type {
+  AmazonCrawlerCacheClearer,
+  AmazonCrawlerClientsLoader,
+  AmazonCrawlerRunner,
+  AmazonCrawlerSyncRetrier,
+  ImageProcessingProfileManager,
+} from "../../modules/amazon-crawler";
 import { createAutoSeoRoutes } from "../../modules/auto-seo";
 import { getModuleApiRunner } from "../../modules/module-api";
 import { createAutoSeoModuleApiClient } from "../../modules/orchestrator";
 import { createPinterestPodRoutes, getPinterestPodClient } from "../../modules/pinterest-pod";
 import { createProductCrawlerRoutes, getProductCrawlerClient } from "../../modules/product-crawler";
-import type { AmazonCrawlerCacheClearer, AmazonCrawlerClientsLoader, AmazonCrawlerRunner, AmazonCrawlerSyncRetrier, ImageProcessingProfileManager } from "../../modules/amazon-crawler";
 import type { WorkflowInput, WorkflowOutput } from "../../modules/orchestrator";
 import { HomePage } from "../../pages/home/HomePage";
 import { NotFoundPage } from "../../pages/not-found/NotFoundPage";
@@ -39,7 +45,7 @@ export function AppRoutes({
     const moduleApiRunner = getModuleApiRunner(environment);
     const autoSeoClient = createAutoSeoModuleApiClient(moduleApiRunner);
     const autoSeoRoutes = createAutoSeoRoutes(autoSeoClient);
-    const amazonRoutes = amazonCrawlerRoutes(
+    const distributedCrawlerRoutes = amazonCrawlerRoutes(
       runAmazonCrawler,
       clearAmazonCrawlerCache,
       loadAmazonCrawlerClients,
@@ -53,10 +59,10 @@ export function AppRoutes({
         children: [
           {
             index: true,
-            element: <Navigate to="/product-crawler" replace />,
+            element: <Navigate to="/amazon-crawler" replace />,
           },
           ...crawlerRoutes,
-          ...amazonRoutes,
+          ...distributedCrawlerRoutes,
           ...podRoutes,
           ...autoSeoRoutes,
           {

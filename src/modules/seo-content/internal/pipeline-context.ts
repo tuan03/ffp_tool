@@ -8,7 +8,7 @@ import type { ContentResult, SeoPipelineContext } from "./domain-types";
 /**
  * Creates the initial immutable SeoPipelineContext from the raw input.
  */
-export function createInitialContext(input: SeoContentInput): SeoPipelineContext {
+export function createInitialContext(input: SeoContentInput, effectiveNiche?: string): SeoPipelineContext {
   const frozenSource: SeoContentInput = Object.freeze({
     ...input,
     images: Object.freeze(
@@ -22,6 +22,7 @@ export function createInitialContext(input: SeoContentInput): SeoPipelineContext
 
   return Object.freeze({
     source: frozenSource,
+    ...(effectiveNiche ? { effectiveNiche } : {}),
   });
 }
 

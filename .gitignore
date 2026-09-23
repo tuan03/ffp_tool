@@ -10,6 +10,19 @@ Tool_crawer_New_update/
 *.tsbuildinfo
 *zip
 
+# Python & Local Server Artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+.pinterest_browser_profile/
+temp/
+output/
+data/
+src/modules/pinterest-pod/server/.env
+.pinterest_oauth_tokens.json
+**/.*oauth*.json
+pinterest_oauth_tokens.json
+
 # Crawler & Gateway runtime/data
 .runtime/
 exports/
@@ -19,8 +32,6 @@ client-data/
 *.sqlite3-shm
 *.sqlite3-wal
 installer-output/
-__pycache__/
-*.py[cod]
 config/amazon-crawler-profiles.json
 config/amazon-crawler-agent.json
 .DS_Store
@@ -33,8 +44,16 @@ compress-src.cmd
 dev.cmd
 .compressignore
 PROJECT_CONTEXT.md
-test.cmd
-b1-visual-preview.html
 branches-git.cmd
 remotes-git.cmd
+repo-seo-content.cmd
+log-git.cmd
+stash-git.cmd
+stash-apply-git.cmd
+stash-drop-git.cmd
 #=== [end] - module SEO Content - Lth Loi ===
+
+# Manual SEO Content smoke-test artifacts and developer-specific inputs.
+testing/module-seo-content/output/
+testing/module-seo-content/local-input*.json
+testing/module-seo-content/.env.local

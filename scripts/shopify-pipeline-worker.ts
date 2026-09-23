@@ -465,7 +465,10 @@ async function processClaim(
     try {
       prepared = await seoCorpusCommitCoordinator.prepare<PreparedSeo>({
         runSeo: async () => {
-          const input = fromCustomizationProduct(baseNormalizedProduct);
+          const input = {
+            ...fromCustomizationProduct(baseNormalizedProduct),
+            siteDomain: claimStoreConfig?.shopDomain,
+          };
           const execution = await runSeoContentDetailed(input, { imageMode: "alt_only" });
           const product = applySeoContentToCustomizationProduct(
             baseNormalizedProduct,
@@ -474,7 +477,10 @@ async function processClaim(
           );
           const finalHandle = String(product.handle || execution.output.productHandle);
           return {
-            input: fromCustomizationProduct(product),
+            input: {
+              ...fromCustomizationProduct(product),
+              siteDomain: claimStoreConfig?.shopDomain,
+            },
             execution: {
               ...execution,
               output: { ...execution.output, productHandle: finalHandle },
