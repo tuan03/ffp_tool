@@ -278,27 +278,52 @@ def rank_images(
             )
         )
     ranked.sort(key=lambda item: item.image_score, reverse=True)
-    selected = ranked[:top_images]
-    for item in ranked[top_images:]:
-        rejected.append(
-            {
-                "image_id": item.image_id,
-                "image_url": item.image_url,
-                "pin_url": item.pin_url,
-                "query": item.query,
-                "trend": item.trend,
-                "reason": "NOT_SELECTED_TOP_LIMIT",
-                "vision_reason": item.reason,
-                "product_role": item.product_role,
-                "product_visibility": item.product_visibility,
-                "trend_relevance": item.trend_relevance,
-                "main_subject": item.main_subject,
-                "target_product_type": item.target_product_type,
-                "motifs": item.motifs,
-                "detected_product": item.detected_product,
-                "image_score": item.image_score,
-            }
-        )
+
+    # Balanced trend selection: ensure top_images is richly diverse across trends
+    ranked_by_trend: dict[str, list[RankedImage]] = {}
+    for item in ranked:
+        t_key = item.trend_id or item.trend or "default"
+        ranked_by_trend.setdefault(t_key, []).append(item)
+
+    selected: list[RankedImage] = []
+    trend_ranked_lists = list(ranked_by_trend.values())
+    max_t_len = max((len(lst) for lst in trend_ranked_lists), default=0)
+    for i in range(max_t_len):
+        for lst in trend_ranked_lists:
+            if i < len(lst) and len(selected) < top_images:
+                selected.append(lst[i])
+        if len(selected) >= top_images:
+            break
+
+    # If round-robin didn't fill top_images, fill remaining from remaining ranked candidates
+    if len(selected) < top_images and len(selected) < len(ranked):
+        selected_ids = {item.image_id for item in selected}
+        for item in ranked:
+            if item.image_id not in selected_ids and len(selected) < top_images:
+                selected.append(item)
+
+    selected_ids = {item.image_id for item in selected}
+    for item in ranked:
+        if item.image_id not in selected_ids:
+            rejected.append(
+                {
+                    "image_id": item.image_id,
+                    "image_url": item.image_url,
+                    "pin_url": item.pin_url,
+                    "query": item.query,
+                    "trend": item.trend,
+                    "reason": "NOT_SELECTED_TOP_LIMIT",
+                    "vision_reason": item.reason,
+                    "product_role": item.product_role,
+                    "product_visibility": item.product_visibility,
+                    "trend_relevance": item.trend_relevance,
+                    "main_subject": item.main_subject,
+                    "target_product_type": item.target_product_type,
+                    "motifs": item.motifs,
+                    "detected_product": item.detected_product,
+                    "image_score": item.image_score,
+                }
+            )
     for index, item in enumerate(selected, start=1):
         item.rank = index
     return selected, rejected

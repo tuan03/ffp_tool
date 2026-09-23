@@ -98,7 +98,22 @@ def collect_results(
     by_url: dict[str, SearchResult] = {}
     for result in results:
         by_url.setdefault(result.image_url, result)
-    results = list(by_url.values())
+
+    # Interleave results across trends (Round-Robin) to prevent the first trend from starving subsequent trends
+    results_by_trend: dict[str, list[SearchResult]] = {}
+    for result in by_url.values():
+        t_key = result.trend_id or "default"
+        results_by_trend.setdefault(t_key, []).append(result)
+
+    interleaved: list[SearchResult] = []
+    trend_lists = list(results_by_trend.values())
+    max_len = max((len(lst) for lst in trend_lists), default=0)
+    for i in range(max_len):
+        for lst in trend_lists:
+            if i < len(lst):
+                interleaved.append(lst[i])
+
+    results = interleaved
     write_json(output_dir / "raw_results.json", {"audit": audit, "results": results})
     return results, {"package": package, "audit": audit}
 

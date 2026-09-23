@@ -1567,17 +1567,26 @@ def _run_local_pipeline_worker(job_id: str, req_body: dict[str, Any], base_url: 
         ai_background_variants = max(1, min(10, ai_background_variants))
 
     try:
-        task5_max_downloads = int(req_body.get("task5_max_downloads") or req_body.get("candidatePoolSize") or req_body.get("max_downloads") or 40)
+        user_pool_size = int(
+            req_body.get("candidatePoolSize")
+            or req_body.get("task5_top_images")
+            or req_body.get("task5_max_downloads")
+            or req_body.get("max_downloads")
+            or 40
+        )
     except (ValueError, TypeError):
-        task5_max_downloads = 40
+        user_pool_size = 40
+
+    task5_top_images = user_pool_size
+    # Since Vision AI strictly rejects text, quotes, specs, and watermark noise (~40-50% rejection rate),
+    # we over-fetch raw downloads with a buffer multiplier (~1.8x to 2.0x) so the final accepted review pool
+    # achieves the user's requested target quantity.
+    task5_max_downloads = max(user_pool_size, min(240, int(user_pool_size * 2.0)))
     try:
-        task5_top_images = int(req_body.get("task5_top_images") or req_body.get("candidatePoolSize") or req_body.get("top_images") or task5_max_downloads)
+        task5_max_images_per_query = int(req_body.get("task5_max_images_per_query") or req_body.get("max_images_per_query") or max(15, task5_max_downloads // 8))
     except (ValueError, TypeError):
-        task5_top_images = task5_max_downloads
-    try:
-        task5_max_images_per_query = int(req_body.get("task5_max_images_per_query") or req_body.get("max_images_per_query") or max(12, task5_max_downloads // 4))
-    except (ValueError, TypeError):
-        task5_max_images_per_query = max(12, task5_max_downloads // 4)
+        task5_max_images_per_query = max(15, task5_max_downloads // 8)
+    task5_max_crawl_trends = max(5, min(10, int(req_body.get("max_trends") or 8)))
 
     gemini_model = str(
         req_body.get("gemini_model")
@@ -1608,6 +1617,7 @@ def _run_local_pipeline_worker(job_id: str, req_body: dict[str, Any], base_url: 
         remove_white_background=remove_white_background,
         export_cmyk=True,
         task5_token_path=token_path,
+        task5_max_crawl_trends=task5_max_crawl_trends,
         task5_max_downloads=task5_max_downloads,
         task5_top_images=task5_top_images,
         task5_max_images_per_query=task5_max_images_per_query,
