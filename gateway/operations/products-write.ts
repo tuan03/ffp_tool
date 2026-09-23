@@ -68,6 +68,16 @@ const PRODUCT_CREATE_MUTATION = `
   }
 `;
 
+const PRODUCT_HANDLE_LOOKUP_QUERY = `
+  query ProductHandleLookup($handle: String!) {
+    productByHandle(handle: $handle) {
+      id
+    }
+  }
+`;
+
+const MAX_HANDLE_SUFFIX = 100;
+
 const PRODUCT_VARIANTS_BULK_CREATE_MUTATION = `
   mutation ProductVariantsBulkCreate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
     productVariantsBulkCreate(productId: $productId, variants: $variants, strategy: REMOVE_STANDALONE_VARIANT) {
@@ -272,6 +282,34 @@ function extractMediaInputs(
   return mediaList;
 }
 
+async function resolveAvailableProductHandle(
+  store: StoreConfig,
+  client: ShopifyGraphqlClient,
+  requestedHandle: string,
+): Promise<string> {
+  interface ProductHandleLookupResponse {
+    readonly productByHandle: { readonly id: string } | null;
+  }
+
+  for (let suffix = 1; suffix <= MAX_HANDLE_SUFFIX; suffix += 1) {
+    const candidate = suffix === 1 ? requestedHandle : `${requestedHandle}-${suffix}`;
+    const result = await client.query<ProductHandleLookupResponse>(
+      store,
+      PRODUCT_HANDLE_LOOKUP_QUERY,
+      { handle: candidate },
+    );
+    if (!result.productByHandle) {
+      return candidate;
+    }
+  }
+
+  throw new GatewayError(
+    `Unable to allocate a unique product handle for '${requestedHandle}'`,
+    "SHOPIFY_USER_ERROR",
+    400,
+  );
+}
+
 export async function executeProductsCreate(
   store: StoreConfig,
   client: ShopifyGraphqlClient,
@@ -418,7 +456,7 @@ export async function executeProductsCreate(
 
   const input: Record<string, unknown> = { title };
   if (typeof productInput.handle === "string" && productInput.handle.trim() !== "") {
-    input.handle = productInput.handle.trim();
+    input.handle = await resolveAvailableProductHandle(store, client, productInput.handle.trim());
   }
   if (typeof productInput.descriptionHtml === "string") {
     input.descriptionHtml = productInput.descriptionHtml;

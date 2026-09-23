@@ -1002,6 +1002,62 @@ describe("Gateway: Operations & Dispatcher", () => {
     assert.equal(deleteData.deletedProductId, "gid://shopify/Product/100");
   });
 
+  it("allocates the next available handle before creating a product", async () => {
+    let createdHandle: string | undefined;
+    const dispatcher = setupGateway(async (_url: string, init?: RequestInit) => {
+      const request = JSON.parse(String(init?.body)) as {
+        query: string;
+        variables?: { handle?: string; product?: { handle?: string } };
+      };
+
+      if (request.query.includes("ProductHandleLookup")) {
+        const handle = request.variables?.handle;
+        return createMockResponse({
+          data: {
+            productByHandle:
+              handle === "custom-rug" || handle === "custom-rug-2"
+                ? { id: `gid://shopify/Product/${handle}` }
+                : null,
+          },
+        });
+      }
+
+      if (request.query.includes("productCreate")) {
+        createdHandle = request.variables?.product?.handle;
+        return createMockResponse({
+          data: {
+            productCreate: {
+              product: {
+                id: "gid://shopify/Product/new-rug",
+                title: "Custom Rug",
+                handle: createdHandle,
+                status: "DRAFT",
+                tags: [],
+                createdAt: "2026-09-23",
+                updatedAt: "2026-09-23",
+                variants: { edges: [] },
+              },
+              userErrors: [],
+            },
+          },
+        });
+      }
+
+      throw new Error(`Unexpected GraphQL request: ${request.query}`);
+    });
+
+    const response = await dispatcher.dispatch({
+      storeId: "store-test",
+      operation: "products.create",
+      mode: "apply",
+      requestId: "handle-dedupe-test",
+      payload: { product: { title: "Custom Rug", handle: "custom-rug" } },
+    });
+
+    assert.equal(response.success, true);
+    assert.equal(createdHandle, "custom-rug-3");
+  });
+
   it("executes variants.update and bulkUpdate, mapping top-level sku to inventoryItem { sku }", async () => {
     let capturedVariables: Record<string, unknown> | undefined;
     const dispatcher = setupGateway(async (_url: string, init?: RequestInit) => {
@@ -6892,7 +6948,6 @@ describe("Gateway: Architectural & Operational Hardening (P1)", () => {
     });
   });
 });
-
 
 
 
