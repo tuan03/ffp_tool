@@ -152,13 +152,26 @@ def build_template_mockup(
 
 
 def _normalize_boxes(raw_boxes: Any) -> list[list[int]]:
-    if not isinstance(raw_boxes, list):
+    if not isinstance(raw_boxes, (list, tuple)):
         return []
     result: list[list[int]] = []
     for b in raw_boxes:
+        if isinstance(b, dict):
+            if "box_2d" in b and isinstance(b["box_2d"], (list, tuple)) and len(b["box_2d"]) == 4:
+                b = b["box_2d"]
+            elif all(k in b for k in ("ymin", "xmin", "ymax", "xmax")):
+                b = [b["ymin"], b["xmin"], b["ymax"], b["xmax"]]
+            else:
+                continue
+
         if isinstance(b, (list, tuple)) and len(b) == 4:
             try:
-                coords = [int(float(x)) for x in b]
+                raw_nums = [float(x) for x in b]
+                max_coord = max(raw_nums)
+                if 0.0 < max_coord <= 1.0:
+                    raw_nums = [x * 1000.0 for x in raw_nums]
+
+                coords = [int(round(x)) for x in raw_nums]
                 if 0 <= coords[0] < coords[2] <= 1000 and 0 <= coords[1] < coords[3] <= 1000:
                     result.append(coords)
             except (ValueError, TypeError):
@@ -167,104 +180,59 @@ def _normalize_boxes(raw_boxes: Any) -> list[list[int]]:
 
 
 def _boxes_overlap(b1: list[int], b2: list[int]) -> bool:
-    y1_min, x1_min, y1_max, x1_max = b1
-    y2_min, x2_min, y2_max, x2_max = b2
+    y1_min, y1_max = min(b1[0], b1[2]), max(b1[0], b1[2])
+    x1_min, x1_max = min(b1[1], b1[3]), max(b1[1], b1[3])
+    y2_min, y2_max = min(b2[0], b2[2]), max(b2[0], b2[2])
+    x2_min, x2_max = min(b2[1], b2[3]), max(b2[1], b2[3])
     return not (y1_max < y2_min or y1_min > y2_max or x1_max < x2_min or x1_min > x2_max)
 
 
 def detect_infographic_chrome_boxes(img_pil: Image.Image) -> list[list[int]]:
-    """Resilient computer vision detection for infographic text banners and headers.
+    """Legacy helper: hardcoded color-based banner detection has been eliminated.
 
-    Detects prominent graphic banners (e.g. yellow text banner 'CAN BE CARRIED OR LIFTED' in template 2)
-    to ensure hybrid overlays never miss graphic chrome.
+    All infographic chrome, text banners, and layout detection are now governed
+    dynamically by multimodal AI visual analysis (analyze_reference_image).
     """
-    try:
-        import cv2
-    except ImportError:
-        return []
-
-    img = np.array(img_pil.convert("RGB"))
-    h, w = img.shape[:2]
-    boxes: list[list[int]] = []
-
-    # 1. Detect yellow text banners (e.g. template 2 'CAN BE CARRIED OR LIFTED')
-    hsv = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
-    yellow_mask = cv2.inRange(hsv, np.array([15, 100, 100]), np.array([35, 255, 255]))
-    cnts, _ = cv2.findContours(yellow_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    for c in cnts:
-        area = cv2.contourArea(c)
-        if area > 10000:  # Large banner area
-            x, y, bw, bh = cv2.boundingRect(c)
-            if bw > bh * 1.5:
-                ymin = max(0, int((y - 4) * 1000 / h))
-                xmin = max(0, int((x - 4) * 1000 / w))
-                ymax = min(1000, int((y + bh + 4) * 1000 / h))
-                xmax = min(1000, int((x + bw + 4) * 1000 / w))
-                boxes.append([ymin, xmin, ymax, xmax])
-
-    return boxes
+    return []
 
 
 def composite_infographic_hybrid(
     template_img: Image.Image,
     generated_img: Image.Image,
     chrome_boxes: list[list[int]] | None = None,
+    product_boxes: list[list[int]] | None = None,
 ) -> Image.Image:
     """Overlays native high-resolution chrome, text banners, headers, and hardware zoom panels from the original template over the generated image.
 
-    Guarantees 100% crisp typography, clean vector banners, and untouched hardware callout panels without offset or duplicate banner artifacts.
-    Also detects and wipes any hallucinated duplicate banners drawn on the generated image canvas.
+    Guarantees 100% crisp typography, clean vector banners, and untouched hardware callout panels.
+    Enforces Dynamic Bounding Box Collision check: any chrome box that overlaps with the product area
+    is strictly skipped to prevent cutting or slicing through the product.
     """
     w, h = template_img.size
     gen_resized = generated_img.resize((w, h), Image.Resampling.LANCZOS)
 
     norm_chrome_boxes = _normalize_boxes(chrome_boxes)
-    template_detected = detect_infographic_chrome_boxes(template_img)
     if not norm_chrome_boxes:
-        norm_chrome_boxes = template_detected
-    else:
-        # Refine approximate bounding boxes with exact CV pixel detection from template
-        merged_boxes: list[list[int]] = []
-        used_detected = set()
-        for cbox in norm_chrome_boxes:
-            matched_dbox = None
-            for idx, dbox in enumerate(template_detected):
-                if _boxes_overlap(cbox, dbox):
-                    matched_dbox = dbox
-                    used_detected.add(idx)
-                    break
-            if matched_dbox:
-                merged_boxes.append(matched_dbox)
-            else:
-                merged_boxes.append(cbox)
-        for idx, dbox in enumerate(template_detected):
-            if idx not in used_detected:
-                merged_boxes.append(dbox)
-        norm_chrome_boxes = merged_boxes
+        return gen_resized
 
-    if not norm_chrome_boxes:
+    norm_product_boxes = _normalize_boxes(product_boxes)
+
+    # Enforce Dynamic Bounding Box Collision check:
+    # Any chrome box that overlaps with the product area must be strictly skipped.
+    valid_chrome_boxes: list[list[int]] = []
+    for cbox in norm_chrome_boxes:
+        if norm_product_boxes and any(_boxes_overlap(cbox, pbox) for pbox in norm_product_boxes):
+            LOG.info("Skipping chrome box %s colliding with product area %s", cbox, norm_product_boxes)
+            continue
+        valid_chrome_boxes.append(cbox)
+
+    if not valid_chrome_boxes:
         return gen_resized
 
     result = gen_resized.copy()
 
-    # Step 1: Detect hallucinated duplicate banners on generated image and wipe them with clean template background
-    gen_detected_boxes = detect_infographic_chrome_boxes(gen_resized)
-    for gbox in gen_detected_boxes:
-        # If the generated image has a banner where the template does NOT have a chrome box,
-        # it is a hallucinated duplicate banner. Replace it with the template's background!
-        has_match = any(_boxes_overlap(gbox, tbox) for tbox in norm_chrome_boxes)
-        if not has_match:
-            gymin, gxmin, gymax, gxmax = gbox
-            gleft = max(0, int((gxmin - 8) * w / 1000.0))
-            gtop = max(0, int((gymin - 8) * h / 1000.0))
-            gright = min(w, int((gxmax + 8) * w / 1000.0))
-            gbottom = min(h, int((gymax + 8) * h / 1000.0))
-            if gright > gleft and gbottom > gtop:
-                clean_bg = template_img.crop((gleft, gtop, gright, gbottom))
-                result.paste(clean_bg, (gleft, gtop))
-
-    # Step 2: Overlay native template chrome boxes with crisp vector sharpness
-    for cbox in norm_chrome_boxes:
+    # Overlay native template chrome boxes with crisp vector sharpness
+    for cbox in valid_chrome_boxes:
         cymin, cxmin, cymax, cxmax = cbox
         cleft = max(0, int(cxmin * w / 1000.0))
         ctop = max(0, int(cymin * h / 1000.0))
@@ -319,7 +287,7 @@ def analyze_reference_image(
         thumb_art.save(buf_art, format="JPEG", quality=75)
         buf_art_bytes = buf_art.getvalue()
 
-    hash_key = "v4_" + hashlib.sha256(buf_ref.getvalue() + buf_art_bytes + product_label.encode("utf-8")).hexdigest()[:16]
+    hash_key = "v6_" + hashlib.sha256(buf_ref.getvalue() + buf_art_bytes + product_label.encode("utf-8")).hexdigest()[:16]
 
     cache_file: Path | None = None
     if cache_dir:
@@ -336,6 +304,11 @@ def analyze_reference_image(
                         and "external_chrome_to_preserve" in val
                         and "chrome_boxes_norm_0_1000" in val
                     ):
+                        val["is_infographic"] = bool(val.get("is_infographic"))
+                        val["is_plain_background"] = bool(val.get("is_plain_background", False))
+                        if not (val["is_infographic"] and val["is_plain_background"]):
+                            val["chrome_boxes_norm_0_1000"] = []
+                            val["is_plain_background"] = False
                         return val
             except Exception:
                 pass
@@ -355,12 +328,20 @@ Apply the universal principles of Semantic Physics, Product Geometry, and Object
      - The hands, fingers, and wrists MUST be natural and anatomically flawless: exactly 5 distinct fingers, natural joint articulation, relaxed wrists, no dislocated joints, no floating handles.
      - The model's exact pose, grip, arm position, and clothing from Image 2 must be preserved faithfully.
 
-3. INFOGRAPHIC & MULTI-PANEL CHROME DETECTION:
-   - Determine if Image 2 is an INFOGRAPHIC, SPEC SHEET, MULTI-PANEL DISPLAY, or contains text banners/callouts (e.g. headers like 'PRODUCT DISPLAY', labels like 'Metal Buckle', 'Removable & Adjustable Strap', 'Exquisite Zipper', 'PU Leather Handbag', 'CAN BE CARRIED OR LIFTED', or logos).
-   - Set "is_infographic": true if it contains an infographic grid, multi-panel display, or graphic text banners.
-   - "product_boxes_norm_0_1000": list of normalized bounding boxes [ymin, xmin, ymax, xmax] in 0..1000 scale for the product surfaces that receive the new print artwork.
-   - "chrome_boxes_norm_0_1000": list of normalized bounding boxes [ymin, xmin, ymax, xmax] for all text banners, headers, callouts, and logos that must be preserved with 100% crisp vector sharpness.
-   - MANDATORY INSTRUCTION FOR 'generation_directive': If Image 2 contains text banners, headers, callouts, or infographic labels (e.g. 'CAN BE CARRIED OR LIFTED'), your 'generation_directive' MUST explicitly instruct the generative model: 'DO NOT draw, paint, or hallucinate any text banners, headers, or text boxes on the canvas. Leave the canvas/background plain and empty in those regions. High-res native text banners will be composited in post-processing. Generating text banners directly on the canvas will cause duplicate banner defects.'
+3. SCENE CLASSIFICATION (INFOGRAPHIC STUDIO SPEC SHEET vs. PHOTOGRAPHIC LIFESTYLE SCENE):
+   - You MUST accurately classify Image 2 into one of two categories:
+     a) PHOTOGRAPHIC LIFESTYLE SCENE: An authentic real-world scene (e.g. living room, bedroom, patio, street scene, tabletop with flowers/decorations, model in an environment).
+        - Set "is_infographic": false
+        - Set "is_plain_background": false
+        - Set "chrome_boxes_norm_0_1000": [] (Never identify room decor, circular swatches on walls, or props as chrome boxes. The generative model will render the entire photographic scene seamlessly without any rectangular cut-and-paste patches).
+     b) INFOGRAPHIC / STUDIO SPEC SHEET: A commercial catalog specification sheet or product diagram on a plain/solid studio backdrop (white, light gray, solid uniform studio color) featuring graphic text banners, typography callouts, feature arrows, or multi-panel detail insets (e.g. 'PRODUCT DISPLAY', 'CAN BE CARRIED OR LIFTED', 'Exquisite Zipper', feature callout tags).
+        - Set "is_infographic": true
+        - Set "is_plain_background": true (only if the background is a solid/plain studio color)
+        - "product_boxes_norm_0_1000": list of normalized bounding boxes [ymin, xmin, ymax, xmax] in 0..1000 scale for the product surfaces receiving the new print.
+        - "chrome_boxes_norm_0_1000": list of normalized bounding boxes [ymin, xmin, ymax, xmax] for graphic text banners, headers, callout tags, and logos strictly OUTSIDE the product area.
+   - MANDATORY INSTRUCTION FOR 'generation_directive':
+     - If "is_infographic" is true: Explicitly instruct the generative model: 'DO NOT draw, paint, or hallucinate any text banners, headers, labels, or typography on the canvas. Leave banner and header areas completely plain and empty on the background. High-res native vector banners will be composited in post-processing.'
+     - If "is_infographic" is false (lifestyle scene): Explicitly instruct the generative model: 'Render a cohesive, seamless photographic lifestyle photograph. Faithfully preserve the room architecture, walls, lighting, background furniture, and decorative props from Image 2, and seamlessly integrate the product with the new artwork from Image 1 with realistic contact shadows, natural material texture, and coherent ambient illumination.'
 
 4. PRIOR SURFACE PRINT ELIMINATION (Zero Bleed-Through):
    - ANY graphic, illustration, motif, or old base pattern printed on the old product in Image 2 must be 100% eliminated and replaced with the new artwork from Image 1.
@@ -374,6 +355,7 @@ Analyze the images deeply and return JSON only in English with these exact keys:
   "scene_title": "Short descriptive title (3-6 words)",
   "visual_concept": "2-3 sentences explaining the commercial marketing concept, camera angle, and intention",
   "is_infographic": false,
+  "is_plain_background": false,
   "product_boxes_norm_0_1000": [],
   "chrome_boxes_norm_0_1000": [],
   "product_form": "Precise description of the physical product form and hardware geometry",
@@ -422,12 +404,15 @@ Analyze the images deeply and return JSON only in English with these exact keys:
             parsed["product_boxes_norm_0_1000"] = _normalize_boxes(parsed.get("product_boxes_norm_0_1000"))
             parsed["chrome_boxes_norm_0_1000"] = _normalize_boxes(parsed.get("chrome_boxes_norm_0_1000"))
             parsed["is_infographic"] = bool(parsed.get("is_infographic"))
+            parsed["is_plain_background"] = bool(parsed.get("is_plain_background", False))
 
-            if not parsed["chrome_boxes_norm_0_1000"]:
-                detected_cv = detect_infographic_chrome_boxes(image)
-                if detected_cv:
-                    parsed["chrome_boxes_norm_0_1000"] = detected_cv
-                    parsed["is_infographic"] = True
+            if not (parsed["is_infographic"] and parsed["is_plain_background"]):
+                # Photographic lifestyle scenes or non-solid backdrops must NEVER have chrome boxes pasted
+                parsed["chrome_boxes_norm_0_1000"] = []
+                parsed["is_plain_background"] = False
+            elif not parsed["product_boxes_norm_0_1000"]:
+                # Ensure infographic template has product area protection
+                parsed["product_boxes_norm_0_1000"] = [[150, 150, 850, 850]]
 
             if cache_file:
                 try:
@@ -449,6 +434,7 @@ Analyze the images deeply and return JSON only in English with these exact keys:
         "scene_title": "Exemplary Listing Reference",
         "visual_concept": "Commercial product presentation showcasing the product in an authentic setting.",
         "is_infographic": False,
+        "is_plain_background": False,
         "product_boxes_norm_0_1000": [],
         "chrome_boxes_norm_0_1000": [],
         "product_form": f"Physical {product_label} matching Image 2",
@@ -548,14 +534,19 @@ def build_direct_ai_mockup(
                 room_template=room_img,
                 reference_analysis=reference_analysis,
             )
-            if room_img is not None:
-                c_boxes = (reference_analysis.get("chrome_boxes_norm_0_1000") if reference_analysis else None) or detect_infographic_chrome_boxes(room_img)
-                if c_boxes:
-                    generated = composite_infographic_hybrid(
-                        room_img,
-                        generated,
-                        chrome_boxes=c_boxes,
-                    )
+            if room_img is not None and reference_analysis:
+                is_infographic = bool(reference_analysis.get("is_infographic"))
+                is_plain_bg = bool(reference_analysis.get("is_plain_background", False))
+                if is_infographic and is_plain_bg:
+                    c_boxes = reference_analysis.get("chrome_boxes_norm_0_1000") or []
+                    p_boxes = reference_analysis.get("product_boxes_norm_0_1000") or []
+                    if c_boxes:
+                        generated = composite_infographic_hybrid(
+                            room_img,
+                            generated,
+                            chrome_boxes=c_boxes,
+                            product_boxes=p_boxes,
+                        )
             candidate_path.parent.mkdir(parents=True, exist_ok=True)
             generated.save(candidate_path)
             best_candidate_path = candidate_path
@@ -582,10 +573,9 @@ def build_direct_ai_mockup(
             best_candidate_metrics = metrics_dict
 
             if not quality.accepted:
-                if room_img is not None:
-                    LOG.info("Proceeding with reference composite despite QA check: %s", quality.reason)
-                else:
+                if attempt < max(1, attempts):
                     raise RuntimeError(f"direct AI mockup QA rejected: {quality.reason}")
+                LOG.info("Proceeding with candidate on final attempt despite QA check: %s", quality.reason)
             mockup_path.parent.mkdir(parents=True, exist_ok=True)
             generated.save(mockup_path)
             return TemplateMockupRecord(
@@ -606,12 +596,20 @@ def build_direct_ai_mockup(
             if "direct ai mockup qa rejected:" in last_error.lower():
                 qa_detail = last_error.split(":", 1)[-1].strip()
                 if reference_analysis:
-                    correction = (
-                        f"CRITICAL FIX: The previous render failed QA: {qa_detail}. "
-                        "You MUST strictly preserve 100% of Image 2's composition, layout, background, text, sizing charts, and infographic elements! "
-                        "Do NOT invent a new room or different furniture (do NOT render a random sofa or change the product type). "
-                        "Replace ONLY the product surface in Image 2 with the new artwork from Image 1, conforming to its physical folds and geometry with zero remnants of the old print."
-                    )
+                    if reference_analysis.get("is_infographic") and reference_analysis.get("is_plain_background"):
+                        correction = (
+                            f"CRITICAL FIX: The previous render failed QA: {qa_detail}. "
+                            "You MUST strictly preserve 100% of Image 2's studio layout and background. "
+                            "Do NOT render text banners on canvas (banners are composited post-generation). "
+                            "Replace ONLY the product surface in Image 2 with the new artwork from Image 1, conforming to its physical folds and geometry with zero remnants of the old print."
+                        )
+                    else:
+                        correction = (
+                            f"CRITICAL FIX: The previous render failed QA: {qa_detail}. "
+                            "You MUST strictly preserve 100% of Image 2's room environment, furniture, decor, lighting, and camera perspective! "
+                            "Do NOT invent a new room or change furniture. "
+                            "Seamlessly render the product into the scene with the new artwork from Image 1, conforming to realistic 3D depth, material folds, and contact shadows with zero remnants of the old print."
+                        )
                 else:
                     correction = (
                         f"The previous render failed final QA: {qa_detail}. Keep the reference artwork recognizable, "
@@ -792,26 +790,9 @@ def generate_direct_ai_lifestyle(
             with Image.open(io.BytesIO(image_bytes)) as generated:
                 return generated.convert("RGB")
     except Exception as exc:
-        LOG.warning("Multimodal generative AI lifestyle call failed (%s); evaluating fallback", exc)
-        if room_template is not None:
-            # Fallback to intelligent geometric luminance composite
-            return generate_reference_template_composite(
-                client,
-                artwork,
-                room_template,
-                target,
-                model="gemini-2.5-flash",
-            )
+        LOG.warning("Multimodal generative AI lifestyle call failed: %s", exc)
         raise
 
-    if room_template is not None:
-        return generate_reference_template_composite(
-            client,
-            artwork,
-            room_template,
-            target,
-            model="gemini-2.5-flash",
-        )
     raise RuntimeError("direct AI lifestyle generation returned no image.")
 
 
@@ -915,28 +896,17 @@ def direct_ai_lifestyle_prompt(
         product_form = reference_analysis.get("product_form", "")
 
         is_infographic = bool(reference_analysis.get("is_infographic"))
+        is_plain_bg = bool(reference_analysis.get("is_plain_background", False))
         chrome_boxes = reference_analysis.get("chrome_boxes_norm_0_1000") or []
-        banner_keywords = ("banner", "callout", "header", "carried or lifted", "product display", "infographic", "text box")
-        ref_text = (
-            str(reference_analysis.get("scene_title", "")) + " " +
-            str(visual_concept) + " " +
-            str(preserve) + " " +
-            str(directive)
-        ).lower()
-        has_text_banner = is_infographic or bool(chrome_boxes) or any(k in ref_text for k in banner_keywords)
+        is_infographic_template = is_infographic and is_plain_bg
 
         banner_lock = ""
-        zero_hallucination_rule = (
-            "- ZERO HALLUCINATIONS / DO NOT INVENT A NEW SCENE: You MUST preserve 100% of the composition, room/studio environment, furniture, background, and lighting from Image 2 (EXCEPT text banners, callouts, or typography which MUST NOT be painted on canvas). Do NOT invent a different room, sofa, or street!\n"
-            if has_text_banner
-            else "- ZERO HALLUCINATIONS / DO NOT INVENT A NEW SCENE: You MUST preserve 100% of the composition, room/street environment, furniture, background, text callouts, charts, and lighting from Image 2. Do NOT invent a different room, sofa, or street!\n"
-        )
-        if has_text_banner:
+        if is_infographic_template:
             banner_lock = (
                 "- STRICT NO-TEXT-BANNER MANDATE (CRITICAL - AVOID DUPLICATE BANNER ARTIFACTS): "
-                "Image 2 contains graphic text banners, headers, callouts, or typography (e.g. 'CAN BE CARRIED OR LIFTED', 'PRODUCT DISPLAY', feature tags, or logos). "
-                "You MUST NOT DRAW, RENDER, PAINT, OR HALLUCINATE ANY TEXT BANNERS, HEADERS, CALLOUTS, LABELS, OR TEXT BOXES on the plain canvas or background! "
-                "Leave all background areas around the product completely plain, solid, uniform, and empty (e.g. pure clean studio background). "
+                "Image 2 is an infographic / studio spec sheet with graphic text banners, headers, callouts, or typography (e.g. 'CAN BE CARRIED OR LIFTED', 'PRODUCT DISPLAY', feature tags, or logos). "
+                "You MUST NOT DRAW, RENDER, PAINT, OR HALLUCINATE ANY TEXT BANNERS, HEADERS, CALLOUTS, LABELS, OR TEXT BOXES on the canvas or background! "
+                "Leave all banner and header background areas around the product completely plain, solid, uniform, and empty (e.g. pure clean studio background). "
                 "Native high-resolution vector text banners and infographic chrome will be composited in post-processing. "
                 "Drawing text banners directly on the canvas will cause severe duplicate/offset banner errors.\n"
             )
@@ -957,6 +927,18 @@ def direct_ai_lifestyle_prompt(
             if not preserve:
                 preserve = "Clean studio background (text banners composited via post-processing overlay)."
 
+            zero_hallucination_rule = (
+                "- ZERO HALLUCINATIONS / STUDIO PRESERVATION: You MUST preserve 100% of the studio backdrop, product layout, and lighting from Image 2 (EXCEPT text banners, callouts, or typography which MUST NOT be painted on canvas). Do NOT invent a different room, sofa, or street!\n"
+            )
+        else:
+            zero_hallucination_rule = (
+                "- ZERO HALLUCINATIONS / SEAMLESS LIFESTYLE PRESERVATION: Image 2 is an authentic photographic lifestyle scene. "
+                "You MUST faithfully preserve 100% of the room/environment context: the exact room architecture, walls, flooring, ambient lighting, "
+                "surrounding furniture, and decorative props from Image 2. Do NOT invent a different room, sofa, or street!\n"
+                f"- SEAMLESS PRODUCT INTEGRATION: Seamlessly render the {product} into the exact physical context of Image 2. "
+                "The product must be integrated naturally with realistic contact shadows, surface reflections, natural depth of field, and ambient light matching the room.\n"
+            )
+
         silhouette_rule = f"- Exact Product Silhouette & Form: {product_form}\n" if product_form else ""
         if is_bag:
             bag_lock = (
@@ -974,33 +956,31 @@ def direct_ai_lifestyle_prompt(
         )
         eliminate_section = f"- Prior Surface Graphics to Eliminate (Zero Bleed-Through): {prior_eliminate}\n" if prior_eliminate else ""
 
-        product_rule = (
-            f"STRICT TEMPLATE PRESERVATION MANDATE: Render the new print artwork from Image 1 onto the product carrier shown in Image 2. "
-            f"Faithfully reproduce its motifs, colors, and layout across the surface with realistic material texture, folds, and seams as defined in Image 2. "
-            f"Zero remnants or bleed-through of any old patterns from Image 2."
-        )
-        scene_desc = (
-            f"CRITICAL MANDATORY TEMPLATE REPLACEMENT DIRECTIVE ({scene_title}):\n"
-            f"- Image 1: Commercial print artwork.\n"
-            f"- Image 2: EXACT reference template / commercial shot to preserve and adapt.\n"
-            f"{zero_hallucination_rule}"
-            f"- External Context/Infographic Chrome to Preserve 100%: {preserve}\n"
-            f"- Product Printable Canvas Area: {placement_zone}\n"
-            f"{silhouette_rule}"
-            f"{bag_lock}"
-            f"{anatomy_lock}"
-            f"{banner_lock}"
-            f"{eliminate_section}"
-            f"- Tailored Synthesis Directive:\n{directive}\n"
-            f"- Obey visual physics: Maintain realistic contact shadows, depth-of-field, and lighting temperature from Image 2."
-        )
-        placement = placement_zone or f"Positioned exactly as demonstrated in Image 2 ({scene_title})."
-        listing_requirement = (
-            f"STRICT TEMPLATE PRESERVATION: Retain the composition, product geometry, and clean background from Image 2 ({scene_title}). DO NOT generate text banners on canvas (banners are composited post-generation). Replace only the designated product surface."
-            if has_text_banner
-            else f"STRICT TEMPLATE PRESERVATION: Retain the exact composition, graphics, text, and scene from Image 2 ({scene_title}). Replace only the designated product surface."
-        )
-        if has_text_banner:
+        if is_infographic_template:
+            product_rule = (
+                f"STRICT INFOGRAPHIC TEMPLATE PRESERVATION MANDATE: Render the new print artwork from Image 1 onto the product carrier shown in Image 2. "
+                f"Faithfully reproduce its motifs, colors, and layout across the surface with realistic material texture, folds, and seams as defined in Image 2. "
+                f"Zero remnants or bleed-through of any old patterns from Image 2."
+            )
+            scene_desc = (
+                f"CRITICAL MANDATORY TEMPLATE REPLACEMENT DIRECTIVE ({scene_title}):\n"
+                f"- Image 1: Commercial print artwork.\n"
+                f"- Image 2: EXACT reference studio template to preserve and adapt.\n"
+                f"{zero_hallucination_rule}"
+                f"- External Context/Infographic Chrome to Preserve 100%: {preserve}\n"
+                f"- Product Printable Canvas Area: {placement_zone}\n"
+                f"{silhouette_rule}"
+                f"{bag_lock}"
+                f"{anatomy_lock}"
+                f"{banner_lock}"
+                f"{eliminate_section}"
+                f"- Tailored Synthesis Directive:\n{directive}\n"
+                f"- Obey visual physics: Maintain realistic contact shadows, depth-of-field, and lighting temperature from Image 2."
+            )
+            placement = placement_zone or f"Positioned exactly as demonstrated in Image 2 ({scene_title})."
+            listing_requirement = (
+                f"STRICT TEMPLATE PRESERVATION: Retain the composition, product geometry, and clean background from Image 2 ({scene_title}). DO NOT generate text banners on canvas (banners are composited post-generation). Replace only the designated product surface."
+            )
             constraints = (
                 "STRICT NO TEXT BANNERS: Absolutely zero drawn text banners, zero text boxes, "
                 "no 'CAN BE CARRIED OR LIFTED' or header lettering painted on the canvas. Leave all background areas around product plain, clean, and empty. "
@@ -1008,17 +988,41 @@ def direct_ai_lifestyle_prompt(
                 "Anatomically perfect hands (5 fingers). Absolutely zero stray colored dots (purple/green dots), "
                 "no superimposed photographer watermarks, no bleed-through of prior prints from Image 2."
             )
-        else:
-            constraints = (
-                "Preserve all external elements from Image 2. Retain exact product silhouette. "
-                "Anatomically perfect hands (5 fingers). Absolutely zero stray colored dots (purple/green dots), "
-                "no distorted lettering, no superimposed photographer watermarks, no bleed-through of prior prints from Image 2."
+            composition_rule = (
+                "Composition: Match the exact framing, perspective, and arrangement of Image 2. Replace only the product carrier surface. Leave infographic text banner areas clean, plain, and empty."
             )
-        composition_rule = (
-            "Composition: Match the exact framing, perspective, and arrangement of Image 2. Replace only the product carrier surface. Leave infographic text banner areas clean, plain, and empty."
-            if has_text_banner
-            else "Composition: Match the exact framing, perspective, and arrangement of Image 2. Replace only the product carrier surface."
-        )
+        else:
+            product_rule = (
+                f"STRICT PHOTOGRAPHIC LIFESTYLE INTEGRATION MANDATE: Seamlessly integrate the {product} into the authentic lifestyle scene shown in Image 2. "
+                f"Render the new print artwork from Image 1 across the product surface with realistic 3D volume, authentic material grain, natural cloth/leather folds, "
+                f"and flawless lighting coherence matching the room environment in Image 2. Zero bleed-through of old graphics."
+            )
+            scene_desc = (
+                f"CRITICAL MANDATORY LIFESTYLE SCENE PRESERVATION ({scene_title}):\n"
+                f"- Image 1: Commercial print artwork.\n"
+                f"- Image 2: Authentic lifestyle photograph to preserve.\n"
+                f"{zero_hallucination_rule}"
+                f"- Room Environment and Context to Preserve: {preserve or 'Preserve all walls, furniture, flooring, decor, and props from Image 2.'}\n"
+                f"- Product Placement Area: {placement_zone}\n"
+                f"{silhouette_rule}"
+                f"{bag_lock}"
+                f"{anatomy_lock}"
+                f"{eliminate_section}"
+                f"- Tailored Synthesis Directive:\n{directive}\n"
+                f"- Visual physics & cohesion: Obey the room's natural lighting, casting realistic soft contact shadows onto nearby surfaces. Ensure seamless photographic coherence."
+            )
+            placement = placement_zone or f"Positioned naturally in the scene as shown in Image 2 ({scene_title})."
+            listing_requirement = (
+                f"STRICT LIFESTYLE PRESERVATION: Retain 100% of the room environment, decor, furniture, and lighting from Image 2 ({scene_title}). Seamlessly render the product featuring the new artwork into the room."
+            )
+            constraints = (
+                "Preserve all room environment and background objects from Image 2. Retain exact product silhouette. "
+                "Anatomically perfect hands (5 fingers). Absolutely zero stray colored dots (purple/green dots), "
+                "no garbled lettering, no superimposed photographer watermarks, no bleed-through of prior prints from Image 2."
+            )
+            composition_rule = (
+                "Composition: Match the exact camera angle, perspective, depth of field, and room arrangement of Image 2. Seamlessly blend the product into the scene."
+            )
         coordinated_products = "None (adhere strictly to the product items present in Image 2)."
 
         return f"""
