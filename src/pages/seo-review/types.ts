@@ -26,6 +26,15 @@ export interface SeoImageUiViewModel {
   readonly webpFilename: DisplayField<string>;
 }
 
+export interface SeoProductBackup {
+  readonly productTitle: string;
+  readonly productDescription: string;
+  readonly handle?: string;
+  readonly seoTitle?: string;
+  readonly seoDescription?: string;
+  readonly backedUpAt?: number;
+}
+
 export interface SeoProductUiViewModel {
   readonly id: string;
   readonly storeId?: string;
@@ -51,6 +60,12 @@ export interface SeoProductUiViewModel {
   readonly isSyncing?: boolean;
   readonly syncError?: string;
   readonly lastSyncedAt?: number;
+
+  // Rollback / Undo State
+  readonly isReverting?: boolean;
+  readonly revertError?: string;
+  readonly lastRevertedAt?: number;
+  readonly originalBackup?: SeoProductBackup;
 }
 
 export interface SeoReviewFilterState {

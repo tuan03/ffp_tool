@@ -12,6 +12,7 @@ export interface ProductDetailDrawerProps {
   readonly onEdit: (product: SeoProductUiViewModel) => void;
   readonly onApprove: (id: string) => void;
   readonly onReject: (id: string) => void;
+  readonly onRollback?: (id: string) => void;
   readonly onZoomImage?: (images: readonly ZoomImageItem[], initialIndex?: number) => void;
 }
 
@@ -22,6 +23,7 @@ export function ProductDetailDrawer({
   onEdit,
   onApprove,
   onReject,
+  onRollback,
   onZoomImage,
 }: ProductDetailDrawerProps): React.JSX.Element | null {
   const [descriptionTab, setDescriptionTab] = useState<"formatted" | "raw">("formatted");
@@ -121,7 +123,7 @@ export function ProductDetailDrawer({
               </div>
             </div>
 
-            {product.lastSyncedAt && (
+            {product.lastSyncedAt && product.reviewDecision === "approved" && (
               <div className="rounded-xl border border-emerald-900/60 bg-emerald-950/40 p-3.5 text-xs text-emerald-300 flex items-center justify-between">
                 <span className="flex items-center gap-1.5 font-medium">
                   <span>✓</span> Đã đồng bộ lên Shopify thành công
@@ -132,12 +134,33 @@ export function ProductDetailDrawer({
               </div>
             )}
 
+            {product.lastRevertedAt && product.reviewDecision !== "approved" && (
+              <div className="rounded-xl border border-amber-900/60 bg-amber-950/40 p-3.5 text-xs text-amber-300 flex items-center justify-between">
+                <span className="flex items-center gap-1.5 font-medium">
+                  <span>↩</span> Đã hoàn tác về dữ liệu gốc thành công
+                </span>
+                <span className="font-mono text-amber-400">
+                  {new Date(product.lastRevertedAt).toLocaleString()}
+                </span>
+              </div>
+            )}
+
             {product.syncError && (
               <div className="rounded-xl border border-rose-900/60 bg-rose-950/40 p-3.5 text-xs text-rose-200 flex items-start gap-2.5">
                 <span className="text-base flex-shrink-0">⚠️</span>
                 <div>
                   <div className="font-bold text-rose-100">Lỗi đồng bộ lên Shopify:</div>
                   <div className="mt-0.5 text-rose-300">{product.syncError}</div>
+                </div>
+              </div>
+            )}
+
+            {product.revertError && (
+              <div className="rounded-xl border border-rose-900/60 bg-rose-950/40 p-3.5 text-xs text-rose-200 flex items-start gap-2.5">
+                <span className="text-base flex-shrink-0">⚠️</span>
+                <div>
+                  <div className="font-bold text-rose-100">Lỗi hoàn tác lên Shopify:</div>
+                  <div className="mt-0.5 text-rose-300">{product.revertError}</div>
                 </div>
               </div>
             )}
@@ -391,9 +414,9 @@ export function ProductDetailDrawer({
             <button
               type="button"
               onClick={() => onEdit(product)}
-              disabled={product.isSyncing}
+              disabled={product.isSyncing || product.isReverting}
               className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold transition ${
-                product.isSyncing
+                product.isSyncing || product.isReverting
                   ? "bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed"
                   : "bg-slate-800 text-slate-200 hover:bg-slate-700 border border-slate-700 cursor-pointer"
               }`}
@@ -402,12 +425,45 @@ export function ProductDetailDrawer({
             </button>
 
             <div className="flex items-center gap-3">
+              {/* Nút Hoàn tác dữ liệu cũ */}
+              {Boolean(product.originalBackup) &&
+                (product.reviewDecision === "approved" || Boolean(product.lastSyncedAt)) && (
+                  <button
+                    type="button"
+                    onClick={() => onRollback?.(product.id)}
+                    disabled={product.isSyncing || product.isReverting}
+                    className={`px-4 py-2 rounded-lg text-sm font-semibold transition flex items-center gap-2 ${
+                      product.isReverting
+                        ? "bg-slate-800 text-slate-400 border border-slate-700 cursor-not-allowed"
+                        : product.isSyncing
+                          ? "bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed"
+                          : "bg-amber-500/15 text-amber-300 hover:bg-amber-500/25 border border-amber-500/30 cursor-pointer shadow-sm shadow-amber-950/40"
+                    }`}
+                    title="Hoàn tác sản phẩm về dữ liệu gốc đã backup lên Shopify"
+                  >
+                    {product.isReverting ? (
+                      <>
+                        <svg className="animate-spin h-4 w-4 text-amber-400" viewBox="0 0 24 24" fill="none">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                        </svg>
+                        <span>Đang hoàn tác Shopify...</span>
+                      </>
+                    ) : (
+                      <>
+                        <span>↩</span>
+                        <span>Hoàn tác dữ liệu cũ</span>
+                      </>
+                    )}
+                  </button>
+                )}
+
               <button
                 type="button"
                 onClick={() => onReject(product.id)}
-                disabled={product.isSyncing}
+                disabled={product.isSyncing || product.isReverting}
                 className={`px-4 py-2 rounded-lg text-sm font-semibold transition ${
-                  product.isSyncing
+                  product.isSyncing || product.isReverting
                     ? "bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed"
                     : "bg-rose-950/60 text-rose-300 hover:bg-rose-900/80 border border-rose-800 cursor-pointer"
                 }`}
@@ -418,9 +474,9 @@ export function ProductDetailDrawer({
               <button
                 type="button"
                 onClick={() => onApprove(product.id)}
-                disabled={product.isSyncing}
+                disabled={product.isSyncing || product.isReverting}
                 className={`px-4 py-2 rounded-lg text-sm font-semibold transition flex items-center gap-2 ${
-                  product.isSyncing
+                  product.isSyncing || product.isReverting
                     ? "bg-slate-800 text-slate-400 border border-slate-700 cursor-not-allowed"
                     : product.reviewDecision === "approved"
                       ? "bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 cursor-pointer"

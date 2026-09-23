@@ -41,6 +41,7 @@ import {
   adaptAutoSeoItemToViewModel,
   adaptCustomizationItemToViewModel,
   adaptViewModelToApprovedUpdate,
+  adaptViewModelToRollbackUpdate,
   SeoReviewPage,
 } from "../../pages/seo-review";
 import type { SeoProductUiViewModel } from "../../pages/seo-review";
@@ -318,6 +319,155 @@ export function AppRoutes({
       };
     };
 
+    const handleRollbackApprovedProducts = async (
+      items: readonly SeoProductUiViewModel[],
+    ): Promise<ApplyApprovedProductUpdatesResult> => {
+      if (items.length === 0) {
+        return {
+          workflowId: `seo-rollback-${Date.now()}`,
+          requestedCount: 0,
+          successCount: 0,
+          failedCount: 0,
+          items: [],
+        };
+      }
+
+      // Group products by storeId
+      const itemsByStore = new Map<string, SeoProductUiViewModel[]>();
+      let defaultStoreId: string | undefined = undefined;
+
+      for (const item of items) {
+        let targetStoreId = item.storeId?.trim();
+        if (!targetStoreId) {
+          if (!defaultStoreId) {
+            try {
+              const info = await autoSeoClient.getStoreInfo();
+              if (info?.storeId) {
+                defaultStoreId = info.storeId.trim();
+              }
+            } catch {
+              // Ignore failure to fetch default store info
+            }
+          }
+          targetStoreId = defaultStoreId;
+        }
+
+        const effectiveKey = targetStoreId || "__missing_store__";
+        const group = itemsByStore.get(effectiveKey) ?? [];
+        group.push(item);
+        itemsByStore.set(effectiveKey, group);
+      }
+
+      const workflowId = `seo-rollback-${Date.now()}`;
+      const allItemResults: ApprovedProductUpdateItemResult[] = [];
+      let totalSuccess = 0;
+      let totalFailed = 0;
+
+      for (const [storeId, group] of itemsByStore.entries()) {
+        if (storeId === "__missing_store__") {
+          for (const item of group) {
+            allItemResults.push({
+              productId: (item.productId || item.id).trim(),
+              ok: false,
+              error: "Không tìm thấy storeId cho sản phẩm. Vui lòng kiểm tra cấu hình cửa hàng trong Auto SEO.",
+              errorCode: "MISSING_STORE_ID",
+            });
+            totalFailed++;
+          }
+          continue;
+        }
+
+        const validGroupUpdates: ApprovedProductUpdate[] = [];
+        const seenProductIds = new Set<string>();
+
+        for (const item of group) {
+          const rawId = (item.productId || item.id).trim();
+          if (!rawId) {
+            allItemResults.push({
+              productId: item.id,
+              ok: false,
+              error: "Thiếu productId hợp lệ cho sản phẩm.",
+              errorCode: "MISSING_PRODUCT_ID",
+            });
+            totalFailed++;
+            continue;
+          }
+
+          if (seenProductIds.has(rawId)) {
+            allItemResults.push({
+              productId: rawId,
+              ok: false,
+              error: `Trùng lặp productId trong cùng đợt hoàn tác: ${rawId}`,
+              errorCode: "DUPLICATE_PRODUCT_ID",
+            });
+            totalFailed++;
+            continue;
+          }
+
+          const rollbackUpdate = adaptViewModelToRollbackUpdate(item);
+          if (!rollbackUpdate) {
+            allItemResults.push({
+              productId: rawId,
+              ok: false,
+              error: "Không tìm thấy dữ liệu backup gốc để hoàn tác cho sản phẩm này.",
+              errorCode: "MISSING_BACKUP",
+            });
+            totalFailed++;
+            continue;
+          }
+
+          if (!hasWritableChanges(rollbackUpdate.patch)) {
+            allItemResults.push({
+              productId: rawId,
+              ok: false,
+              error: "Dữ liệu backup gốc không có nội dung hợp lệ để hoàn tác lên Shopify.",
+              errorCode: "EMPTY_PATCH",
+            });
+            totalFailed++;
+            continue;
+          }
+
+          seenProductIds.add(rawId);
+          validGroupUpdates.push(rollbackUpdate);
+        }
+
+        if (validGroupUpdates.length === 0) {
+          continue;
+        }
+
+        try {
+          const rollbackResult = await applyApprovedProductUpdates(moduleApiRunner, {
+            workflowId,
+            storeId,
+            products: validGroupUpdates,
+          });
+
+          totalSuccess += rollbackResult.successCount;
+          totalFailed += rollbackResult.failedCount;
+          allItemResults.push(...rollbackResult.items);
+        } catch (groupError) {
+          const errMsg = groupError instanceof Error ? groupError.message : String(groupError);
+          for (const validItem of validGroupUpdates) {
+            allItemResults.push({
+              productId: validItem.productId,
+              ok: false,
+              error: errMsg,
+              errorCode: "SHOPIFY_ROLLBACK_FAILED",
+            });
+            totalFailed++;
+          }
+        }
+      }
+
+      return {
+        workflowId,
+        requestedCount: items.length,
+        successCount: totalSuccess,
+        failedCount: totalFailed,
+        items: allItemResults,
+      };
+    };
+
     const distributedCrawlerRoutes = amazonCrawlerRoutes(
       runAmazonCrawler,
       clearAmazonCrawlerCache,
@@ -340,7 +490,12 @@ export function AppRoutes({
           ...autoSeoRoutes,
           {
             path: "seo-review",
-            element: <SeoReviewPage onSyncApprovedProducts={handleSyncApprovedProducts} />,
+            element: (
+              <SeoReviewPage
+                onSyncApprovedProducts={handleSyncApprovedProducts}
+                onRollbackApprovedProducts={handleRollbackApprovedProducts}
+              />
+            ),
           },
           {
             path: "workflow-demo",

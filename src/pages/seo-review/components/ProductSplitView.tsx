@@ -16,6 +16,7 @@ export interface ProductSplitViewProps {
   readonly onEditProduct: (product: SeoProductUiViewModel) => void;
   readonly onApproveProduct: (id: string) => void;
   readonly onRejectProduct: (id: string) => void;
+  readonly onRollbackProduct?: (id: string) => void;
   readonly onApproveAndNext: (id: string) => void;
   readonly onRejectAndNext: (id: string) => void;
   readonly onZoomImage?: (images: readonly ZoomImageItem[], initialIndex?: number) => void;
@@ -31,6 +32,7 @@ export function ProductSplitView({
   onEditProduct,
   onApproveProduct,
   onRejectProduct,
+  onRollbackProduct,
   onApproveAndNext,
   onRejectAndNext,
   onZoomImage,
@@ -276,14 +278,33 @@ export function ProductSplitView({
                         <span>Syncing</span>
                       </span>
                     )}
-                    {product.lastSyncedAt && !product.isSyncing && (
+                    {product.isReverting && (
+                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-950/70 text-amber-300 border border-amber-800/60">
+                        <svg className="animate-spin h-2.5 w-2.5 text-amber-400" viewBox="0 0 24 24" fill="none">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                        </svg>
+                        <span>Reverting</span>
+                      </span>
+                    )}
+                    {product.lastSyncedAt && product.reviewDecision === "approved" && !product.isSyncing && !product.isReverting && (
                       <span className="text-[10px] text-emerald-400 font-medium" title={`Shopify Synced: ${new Date(product.lastSyncedAt).toLocaleString()}`}>
                         ✓ Synced
+                      </span>
+                    )}
+                    {product.lastRevertedAt && product.reviewDecision !== "approved" && !product.isSyncing && !product.isReverting && (
+                      <span className="text-[10px] text-amber-400 font-medium" title={`Đã hoàn tác: ${new Date(product.lastRevertedAt).toLocaleString()}`}>
+                        ↩ Reverted
                       </span>
                     )}
                     {product.syncError && !product.isSyncing && (
                       <span className="text-[10px] text-rose-400 font-medium" title={product.syncError}>
                         ⚠️ Lỗi sync
+                      </span>
+                    )}
+                    {product.revertError && !product.isReverting && (
+                      <span className="text-[10px] text-rose-400 font-medium" title={product.revertError}>
+                        ⚠️ Lỗi hoàn tác
                       </span>
                     )}
                   </div>
@@ -354,7 +375,7 @@ export function ProductSplitView({
                 </div>
               </div>
 
-              {activeProduct.lastSyncedAt && (
+              {activeProduct.lastSyncedAt && activeProduct.reviewDecision === "approved" && (
                 <div className="rounded-lg border border-emerald-900/60 bg-emerald-950/40 p-2.5 text-xs text-emerald-300 flex items-center justify-between">
                   <span className="flex items-center gap-1.5 font-medium">
                     <span>✓</span> Đã đồng bộ lên Shopify thành công
@@ -365,11 +386,31 @@ export function ProductSplitView({
                 </div>
               )}
 
+              {activeProduct.lastRevertedAt && activeProduct.reviewDecision !== "approved" && (
+                <div className="rounded-lg border border-amber-900/60 bg-amber-950/40 p-2.5 text-xs text-amber-300 flex items-center justify-between">
+                  <span className="flex items-center gap-1.5 font-medium">
+                    <span>↩</span> Đã hoàn tác về dữ liệu gốc thành công
+                  </span>
+                  <span className="font-mono text-[11px] text-amber-400/80">
+                    {new Date(activeProduct.lastRevertedAt).toLocaleTimeString()}
+                  </span>
+                </div>
+              )}
+
               {activeProduct.syncError && (
                 <div className="rounded-lg border border-rose-900/60 bg-rose-950/40 p-3 text-xs text-rose-200 flex items-start gap-2">
                   <span className="text-sm">⚠️</span>
                   <div>
                     <span className="font-bold">Lỗi đồng bộ Shopify:</span> {activeProduct.syncError}
+                  </div>
+                </div>
+              )}
+
+              {activeProduct.revertError && (
+                <div className="rounded-lg border border-rose-900/60 bg-rose-950/40 p-3 text-xs text-rose-200 flex items-start gap-2">
+                  <span className="text-sm">⚠️</span>
+                  <div>
+                    <span className="font-bold">Lỗi hoàn tác Shopify:</span> {activeProduct.revertError}
                   </div>
                 </div>
               )}
@@ -522,7 +563,12 @@ export function ProductSplitView({
                 <button
                   type="button"
                   onClick={() => onEditProduct(activeProduct)}
-                  className="px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition cursor-pointer"
+                  disabled={activeProduct.isSyncing || activeProduct.isReverting}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${
+                    activeProduct.isSyncing || activeProduct.isReverting
+                      ? "bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed"
+                      : "bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 cursor-pointer"
+                  }`}
                 >
                   ✏️ Chỉnh sửa
                 </button>
@@ -536,12 +582,45 @@ export function ProductSplitView({
               </div>
 
               <div className="flex items-center gap-2">
+                {/* Nút Hoàn tác dữ liệu cũ */}
+                {Boolean(activeProduct.originalBackup) &&
+                  (activeProduct.reviewDecision === "approved" || Boolean(activeProduct.lastSyncedAt)) && (
+                    <button
+                      type="button"
+                      onClick={() => onRollbackProduct?.(activeProduct.id)}
+                      disabled={activeProduct.isSyncing || activeProduct.isReverting}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 ${
+                        activeProduct.isReverting
+                          ? "bg-slate-800 text-slate-400 border border-slate-700 cursor-not-allowed"
+                          : activeProduct.isSyncing
+                            ? "bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed"
+                            : "bg-amber-500/15 text-amber-300 hover:bg-amber-500/25 border border-amber-500/30 cursor-pointer shadow-sm shadow-amber-950/40"
+                      }`}
+                      title="Hoàn tác sản phẩm về dữ liệu gốc đã backup lên Shopify"
+                    >
+                      {activeProduct.isReverting ? (
+                        <>
+                          <svg className="animate-spin h-3.5 w-3.5 text-amber-400" viewBox="0 0 24 24" fill="none">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                          </svg>
+                          <span>Đang hoàn tác...</span>
+                        </>
+                      ) : (
+                        <>
+                          <span>↩</span>
+                          <span>Hoàn tác</span>
+                        </>
+                      )}
+                    </button>
+                  )}
+
                 <button
                   type="button"
                   onClick={() => onApproveProduct(activeProduct.id)}
-                  disabled={activeProduct.isSyncing}
+                  disabled={activeProduct.isSyncing || activeProduct.isReverting}
                   className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 ${
-                    activeProduct.isSyncing
+                    activeProduct.isSyncing || activeProduct.isReverting
                       ? "bg-slate-800 text-slate-400 border border-slate-700 cursor-not-allowed"
                       : activeProduct.reviewDecision === "approved"
                         ? "bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 cursor-pointer"
@@ -565,9 +644,9 @@ export function ProductSplitView({
                 <button
                   type="button"
                   onClick={() => onRejectAndNext(activeProduct.id)}
-                  disabled={activeProduct.isSyncing}
+                  disabled={activeProduct.isSyncing || activeProduct.isReverting}
                   className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
-                    activeProduct.isSyncing
+                    activeProduct.isSyncing || activeProduct.isReverting
                       ? "bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed"
                       : "bg-rose-950/80 text-rose-300 hover:bg-rose-900 border border-rose-800 cursor-pointer"
                   }`}
@@ -579,9 +658,9 @@ export function ProductSplitView({
                 <button
                   type="button"
                   onClick={() => onApproveAndNext(activeProduct.id)}
-                  disabled={activeProduct.isSyncing}
+                  disabled={activeProduct.isSyncing || activeProduct.isReverting}
                   className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 ${
-                    activeProduct.isSyncing
+                    activeProduct.isSyncing || activeProduct.isReverting
                       ? "bg-slate-800 text-slate-400 border border-slate-700 cursor-not-allowed"
                       : "bg-emerald-600 text-white hover:bg-emerald-500 shadow-md shadow-emerald-900/30 cursor-pointer"
                   }`}

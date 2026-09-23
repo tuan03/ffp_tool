@@ -11,7 +11,9 @@ import {
   adaptCustomizationItemToViewModel,
   adaptSeoOutputToViewModel,
   adaptViewModelToApprovedUpdate,
+  adaptViewModelToRollbackUpdate,
   adaptViewModelsToApprovedUpdates,
+  adaptViewModelsToRollbackUpdates,
   getDisplayValue,
   getInitialSampleViewModels,
 } from "../seo-content-ui-adapter";
@@ -442,4 +444,291 @@ test("adaptViewModelToApprovedUpdate: empty view model produces patch that hasWr
   const update = adaptViewModelToApprovedUpdate(emptyVm);
   assert.equal(hasWritableChanges(update.patch), false);
 });
+
+test("adaptViewModelToRollbackUpdate: generates correct patch from originalBackup", () => {
+  const sampleVm: SeoProductUiViewModel = {
+    id: "prod-rollback-1",
+    productId: "gid://shopify/Product/12345",
+    productTitle: { value: "Optimized Title", source: "real" },
+    productDescription: { value: "<p>Optimized Description</p>", source: "real" },
+    seoTitle: { value: "Optimized SEO Title", source: "real" },
+    seoDescription: { value: "Optimized SEO Desc", source: "real" },
+    handle: { value: "optimized-handle", source: "real" },
+    seoStatus: { value: "completed", source: "real" },
+    reviewDecision: "approved",
+    updatedAt: Date.now(),
+    images: [],
+    originalBackup: {
+      productTitle: "Original Raw Title From Shopify",
+      productDescription: "<p>Original Raw Description</p>",
+      handle: "original-handle",
+      seoTitle: "Original Meta Title",
+      seoDescription: "Original Meta Description",
+      backedUpAt: 1700000000000,
+    },
+  };
+
+  const rollback = adaptViewModelToRollbackUpdate(sampleVm);
+  assert.ok(rollback);
+  assert.equal(rollback.productId, "gid://shopify/Product/12345");
+  assert.equal(rollback.patch.title, "Original Raw Title From Shopify");
+  assert.equal(rollback.patch.descriptionHtml, "<p>Original Raw Description</p>");
+  assert.equal(rollback.patch.handle, "original-handle");
+  assert.deepEqual(rollback.patch.seo, {
+    title: "Original Meta Title",
+    description: "Original Meta Description",
+  });
+  assert.equal(hasWritableChanges(rollback.patch), true);
+});
+
+test("adaptViewModelToRollbackUpdate: returns null if originalBackup is missing or id is empty", () => {
+  const noBackupVm: SeoProductUiViewModel = {
+    id: "prod-no-backup",
+    productId: "gid://shopify/Product/999",
+    productTitle: { value: "Title", source: "real" },
+    productDescription: { value: "Desc", source: "real" },
+    seoTitle: { value: "SEO Title", source: "real" },
+    seoDescription: { value: "SEO Desc", source: "real" },
+    handle: { value: "handle", source: "real" },
+    seoStatus: { value: "completed", source: "real" },
+    reviewDecision: "approved",
+    updatedAt: Date.now(),
+    images: [],
+  };
+
+  assert.equal(adaptViewModelToRollbackUpdate(noBackupVm), null);
+
+  const noIdVm: SeoProductUiViewModel = {
+    ...noBackupVm,
+    id: "   ",
+    productId: " ",
+    originalBackup: {
+      productTitle: "Backup Title",
+      productDescription: "Backup Desc",
+      backedUpAt: Date.now(),
+    },
+  };
+  assert.equal(adaptViewModelToRollbackUpdate(noIdVm), null);
+});
+
+test("adaptViewModelsToRollbackUpdates: filters out items without backup and maps valid ones", () => {
+  const vmWithBackup: SeoProductUiViewModel = {
+    id: "prod-has-backup",
+    productId: "gid://shopify/Product/111",
+    productTitle: { value: "Opt Title", source: "real" },
+    productDescription: { value: "Opt Desc", source: "real" },
+    seoTitle: { value: "Opt SEO Title", source: "real" },
+    seoDescription: { value: "Opt SEO Desc", source: "real" },
+    handle: { value: "opt-handle", source: "real" },
+    seoStatus: { value: "completed", source: "real" },
+    reviewDecision: "approved",
+    updatedAt: Date.now(),
+    images: [],
+    originalBackup: {
+      productTitle: "Original Title 111",
+      productDescription: "Original Desc 111",
+      backedUpAt: 1700000000000,
+    },
+  };
+
+  const vmWithoutBackup: SeoProductUiViewModel = {
+    id: "prod-without-backup",
+    productId: "gid://shopify/Product/222",
+    productTitle: { value: "Title 2", source: "real" },
+    productDescription: { value: "Desc 2", source: "real" },
+    seoTitle: { value: "SEO Title 2", source: "real" },
+    seoDescription: { value: "SEO Desc 2", source: "real" },
+    handle: { value: "handle-2", source: "real" },
+    seoStatus: { value: "completed", source: "real" },
+    reviewDecision: "approved",
+    updatedAt: Date.now(),
+    images: [],
+  };
+
+  const results = adaptViewModelsToRollbackUpdates([vmWithBackup, vmWithoutBackup]);
+  assert.equal(results.length, 1);
+  assert.equal(results[0].productId, "gid://shopify/Product/111");
+  assert.equal(results[0].patch.title, "Original Title 111");
+});
+
+test("adaptAutoSeoItemToViewModel: preserves original product data in originalBackup", () => {
+  const autoSeoItem: AutoSeoItemResult = {
+    productId: "gid://shopify/Product/45678",
+    handle: "store-original-t-shirt",
+    sourceProduct: {
+      productId: "gid://shopify/Product/45678",
+      title: "Store Original T-Shirt",
+      descriptionHtml: "<p>Original 100% cotton tee</p>",
+      handle: "store-original-t-shirt",
+      seoTitle: "Store Meta Title",
+      seoDescription: "Store Meta Description",
+      tags: ["clothing", "tee"],
+    },
+    seoInput: {
+      title: "Store Original T-Shirt",
+      description: "Original 100% cotton tee",
+      niche: "Apparel",
+      handle: "store-original-t-shirt",
+      images: [],
+    },
+    seoOutput: {
+      productTitle: "Optimized Vintage Graphic T-Shirt",
+      productDescription: "<p>Ultra-soft vintage apparel</p>",
+      productSeoTitle: "Vintage Graphic T-Shirt | Retro Style",
+      productSeoDescription: "Shop comfortable graphic tee online.",
+      productHandle: "optimized-vintage-graphic-t-shirt",
+      images: [],
+    },
+    success: true,
+  };
+
+  const vm = adaptAutoSeoItemToViewModel(autoSeoItem, "store-apparel-1");
+  const backup = vm.originalBackup;
+  assert.ok(backup);
+  if (!backup) {
+    assert.fail("backup must be defined");
+  }
+  assert.equal(backup.productTitle, "Store Original T-Shirt");
+  assert.equal(backup.productDescription, "<p>Original 100% cotton tee</p>");
+  assert.equal(backup.handle, "store-original-t-shirt");
+  assert.equal(backup.seoTitle, "Store Meta Title");
+  assert.equal(backup.seoDescription, "Store Meta Description");
+  assert.ok((backup.backedUpAt ?? 0) > 0);
+});
+
+test("getInitialSampleViewModels: sample models have realistic originalBackup populated", () => {
+  const samples = getInitialSampleViewModels();
+  assert.ok(samples.length > 0);
+  for (const sample of samples) {
+    const backup = sample.originalBackup;
+    assert.ok(backup, `Sample ${sample.id} must have originalBackup`);
+    if (!backup) {
+      assert.fail("backup must be defined");
+    }
+    assert.ok(backup.productTitle.length > 0);
+    assert.ok(backup.productDescription.length > 0);
+  }
+});
+
+test("adaptViewModelToRollbackUpdate: resets SEO title to product title and clears SEO description when original had no custom SEO", () => {
+  const vmWithoutCustomSeo: SeoProductUiViewModel = {
+    id: "prod-no-custom-seo",
+    productId: "gid://shopify/Product/555",
+    productTitle: { value: "AI Optimized Title", source: "real" },
+    productDescription: { value: "<p>AI Optimized Desc</p>", source: "real" },
+    seoTitle: { value: "AI SEO Title", source: "real" },
+    seoDescription: { value: "AI SEO Desc", source: "real" },
+    handle: { value: "ai-handle", source: "real" },
+    seoStatus: { value: "completed", source: "real" },
+    reviewDecision: "approved",
+    updatedAt: Date.now(),
+    images: [],
+    originalBackup: {
+      productTitle: "Original Plain Title",
+      productDescription: "<p>Original Plain Desc</p>",
+      handle: "original-plain-title",
+      // seoTitle & seoDescription omitted / undefined
+      backedUpAt: Date.now(),
+    },
+  };
+
+  const rollback = adaptViewModelToRollbackUpdate(vmWithoutCustomSeo);
+  assert.ok(rollback);
+  assert.equal(rollback.patch.title, "Original Plain Title");
+  assert.deepEqual(rollback.patch.seo, {
+    title: "Original Plain Title",
+    description: "",
+  });
+  assert.equal(hasWritableChanges(rollback.patch), true);
+});
+
+test("adaptViewModelToRollbackUpdate: preserves empty productDescription as empty string in patch", () => {
+  const vmWithEmptyDesc: SeoProductUiViewModel = {
+    id: "prod-empty-desc",
+    productId: "gid://shopify/Product/666",
+    productTitle: { value: "AI Optimized Title", source: "real" },
+    productDescription: { value: "<p>AI Optimized Long Description</p>", source: "real" },
+    seoTitle: { value: "AI SEO Title", source: "real" },
+    seoDescription: { value: "AI SEO Desc", source: "real" },
+    handle: { value: "ai-handle", source: "real" },
+    seoStatus: { value: "completed", source: "real" },
+    reviewDecision: "approved",
+    updatedAt: Date.now(),
+    images: [],
+    originalBackup: {
+      productTitle: "Product With No Description",
+      productDescription: "",
+      handle: "product-no-desc",
+      backedUpAt: Date.now(),
+    },
+  };
+
+  const rollback = adaptViewModelToRollbackUpdate(vmWithEmptyDesc);
+  assert.ok(rollback);
+  assert.equal(rollback.patch.descriptionHtml, "");
+  assert.equal(hasWritableChanges(rollback.patch), true);
+});
+
+test("adaptAutoSeoItemToViewModel: preserves empty description cleanly without corrupting with title", () => {
+  const emptyDescItem: AutoSeoItemResult = {
+    productId: "gid://shopify/Product/777",
+    handle: "empty-desc-tee",
+    sourceProduct: {
+      productId: "gid://shopify/Product/777",
+      title: "Clean Minimalist Tee",
+      descriptionHtml: "",
+      handle: "clean-minimalist-tee",
+    },
+    seoInput: {
+      title: "Clean Minimalist Tee",
+      description: "",
+      handle: "empty-desc-tee",
+      niche: "Apparel",
+      images: [],
+    },
+    seoOutput: {
+      productTitle: "Optimized Clean Minimalist Tee",
+      productDescription: "<p>Generated 500 words description</p>",
+      productSeoTitle: "Optimized Clean Minimalist Tee",
+      productSeoDescription: "Shop the cleanest tee online.",
+      productHandle: "optimized-clean-minimalist-tee",
+      images: [],
+    },
+    success: true,
+  };
+
+  const vm = adaptAutoSeoItemToViewModel(emptyDescItem);
+  assert.ok(vm.originalBackup);
+  assert.equal(vm.originalBackup.productDescription, "");
+  assert.equal(vm.originalBackup.productTitle, "Clean Minimalist Tee");
+});
+
+test("adaptAutoSeoItemToViewModel: extracts sourceSeoTitle and sourceSeoDescription if present", () => {
+  const itemWithSourceSeo: AutoSeoItemResult = {
+    productId: "gid://shopify/Product/888",
+    handle: "hat-vintage",
+    sourceProduct: {
+      productId: "gid://shopify/Product/888",
+      title: "Vintage Hat",
+      descriptionHtml: "<p>Cool hat</p>",
+      handle: "hat-vintage",
+      sourceSeoTitle: "Source SEO Title",
+      sourceSeoDescription: "Source SEO Desc",
+    },
+    seoInput: {
+      title: "Vintage Hat",
+      description: "Cool hat",
+      handle: "hat-vintage",
+      niche: "Accessories",
+      images: [],
+    },
+    success: true,
+  };
+
+  const vm = adaptAutoSeoItemToViewModel(itemWithSourceSeo);
+  assert.ok(vm.originalBackup);
+  assert.equal(vm.originalBackup.seoTitle, "Source SEO Title");
+  assert.equal(vm.originalBackup.seoDescription, "Source SEO Desc");
+});
+
 

@@ -14,6 +14,7 @@ export interface ProductCardListProps {
   readonly onEditProduct: (product: SeoProductUiViewModel) => void;
   readonly onApproveProduct: (id: string) => void;
   readonly onRejectProduct: (id: string) => void;
+  readonly onRollbackProduct?: (id: string) => void;
   readonly onZoomImage?: (images: readonly ZoomImageItem[], initialIndex?: number) => void;
 }
 
@@ -25,6 +26,7 @@ export function ProductCardList({
   onEditProduct,
   onApproveProduct,
   onRejectProduct,
+  onRollbackProduct,
   onZoomImage,
 }: ProductCardListProps): React.JSX.Element {
   const [expandedDescIds, setExpandedDescIds] = useState<ReadonlySet<string>>(new Set());
@@ -206,13 +208,22 @@ export function ProductCardList({
                 <div className="flex items-center gap-2 flex-wrap">
                   {renderSeoStatusBadge(product.seoStatus.value, product.seoStatus.source === "mock")}
                   {renderReviewBadge(product.reviewDecision)}
-                  {product.lastSyncedAt && (
+                  {product.lastSyncedAt && product.reviewDecision === "approved" && (
                     <span
                       className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-emerald-950/70 text-emerald-300 border border-emerald-800/60"
                       title={`Đã đồng bộ lên Shopify: ${new Date(product.lastSyncedAt).toLocaleString()}`}
                     >
                       <span className="text-emerald-400">✓</span>
                       <span>Shopify Synced</span>
+                    </span>
+                  )}
+                  {product.lastRevertedAt && product.reviewDecision !== "approved" && (
+                    <span
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-amber-950/70 text-amber-300 border border-amber-800/60"
+                      title={`Đã hoàn tác dữ liệu gốc: ${new Date(product.lastRevertedAt).toLocaleString()}`}
+                    >
+                      <span>↩</span>
+                      <span>Đã hoàn tác</span>
                     </span>
                   )}
                   {product.syncError && (
@@ -224,16 +235,31 @@ export function ProductCardList({
                       <span className="max-w-[150px] truncate">Lỗi sync: {product.syncError}</span>
                     </span>
                   )}
+                  {product.revertError && (
+                    <span
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-rose-950/80 text-rose-300 border border-rose-800"
+                      title={product.revertError}
+                    >
+                      <span>⚠️</span>
+                      <span className="max-w-[150px] truncate">Lỗi hoàn tác: {product.revertError}</span>
+                    </span>
+                  )}
                 </div>
 
                 <div className="flex items-center gap-1.5">
                   <button
                     type="button"
-                    title={product.isSyncing ? "Đang đồng bộ lên Shopify..." : "Phê duyệt và đồng bộ lên Shopify"}
-                    onClick={() => onApproveProduct(product.id)}
-                    disabled={product.isSyncing}
-                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
+                    title={
                       product.isSyncing
+                        ? "Đang đồng bộ lên Shopify..."
+                        : product.isReverting
+                          ? "Đang hoàn tác dữ liệu cũ..."
+                          : "Phê duyệt và đồng bộ lên Shopify"
+                    }
+                    onClick={() => onApproveProduct(product.id)}
+                    disabled={product.isSyncing || product.isReverting}
+                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
+                      product.isSyncing || product.isReverting
                         ? "bg-slate-800 text-slate-400 border border-slate-700 cursor-not-allowed opacity-80"
                         : product.reviewDecision === "approved"
                           ? "bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 cursor-pointer"
@@ -256,13 +282,50 @@ export function ProductCardList({
                     )}
                   </button>
 
+                  {/* Nút Hoàn tác (chỉ hiện khi đã duyệt/sync và có bản backup) */}
+                  {Boolean(product.originalBackup) &&
+                    (product.reviewDecision === "approved" || Boolean(product.lastSyncedAt)) && (
+                      <button
+                        type="button"
+                        title={
+                          product.isReverting
+                            ? "Đang hoàn tác dữ liệu cũ lên Shopify..."
+                            : "Hoàn tác dữ liệu cũ của sản phẩm đã backup lên lại Shopify"
+                        }
+                        onClick={() => onRollbackProduct?.(product.id)}
+                        disabled={product.isSyncing || product.isReverting}
+                        className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
+                          product.isReverting
+                            ? "bg-slate-800 text-slate-400 border border-slate-700 cursor-not-allowed opacity-80"
+                            : product.isSyncing
+                              ? "bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed"
+                              : "bg-amber-500/15 text-amber-300 hover:bg-amber-500/25 border border-amber-500/30 cursor-pointer shadow-sm shadow-amber-950/40"
+                        }`}
+                      >
+                        {product.isReverting ? (
+                          <>
+                            <svg className="animate-spin h-3.5 w-3.5 text-amber-400" viewBox="0 0 24 24" fill="none">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                            </svg>
+                            <span>Đang hoàn tác...</span>
+                          </>
+                        ) : (
+                          <>
+                            <span>↩</span>
+                            <span>Hoàn tác</span>
+                          </>
+                        )}
+                      </button>
+                    )}
+
                   <button
                     type="button"
                     title="Từ chối sản phẩm"
                     onClick={() => onRejectProduct(product.id)}
-                    disabled={product.isSyncing}
+                    disabled={product.isSyncing || product.isReverting}
                     className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition ${
-                      product.isSyncing
+                      product.isSyncing || product.isReverting
                         ? "bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed"
                         : product.reviewDecision === "rejected"
                           ? "bg-rose-950 text-rose-300 border border-rose-700 cursor-pointer"
@@ -275,11 +338,15 @@ export function ProductCardList({
 
                   <button
                     type="button"
-                    title={product.isSyncing ? "Không thể chỉnh sửa khi đang đồng bộ" : "Chỉnh sửa nội dung SEO"}
+                    title={
+                      product.isSyncing || product.isReverting
+                        ? "Không thể chỉnh sửa khi đang đồng bộ hoặc hoàn tác"
+                        : "Chỉnh sửa nội dung SEO"
+                    }
                     onClick={() => onEditProduct(product)}
-                    disabled={product.isSyncing}
+                    disabled={product.isSyncing || product.isReverting}
                     className={`p-1.5 rounded-lg text-xs font-medium border transition ${
-                      product.isSyncing
+                      product.isSyncing || product.isReverting
                         ? "bg-slate-800 text-slate-500 border-slate-700 cursor-not-allowed"
                         : "text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 border-slate-700 cursor-pointer"
                     }`}
