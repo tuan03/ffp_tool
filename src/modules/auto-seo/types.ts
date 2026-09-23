@@ -141,7 +141,7 @@ export interface AutoSeoClient {
     concurrency?: number,
     storeId?: string,
   ): Promise<readonly ShopifyProductForAutoSeoUi[]>;
-  getCachedDetail?(productId: string): ShopifyProductForAutoSeoUi | undefined;
+  getCachedDetail?(productId: string, storeId?: string): ShopifyProductForAutoSeoUi | undefined;
   clearCache?(): void;
   clearDetailCache?(): void;
 }

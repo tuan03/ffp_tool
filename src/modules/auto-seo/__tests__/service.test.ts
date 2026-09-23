@@ -628,3 +628,30 @@ test("24. MockAutoSeoClient supports multi-store listStores, active store, and s
   assert.equal(chillgenInfo.storeId, "store-chillgen-mock");
 });
 
+test("25. MockAutoSeoClient scopes detail and hydration by storeId", async () => {
+  const client = new MockAutoSeoClient();
+  const sampleId = "gid://shopify/Product/8123456789001";
+
+  // Load detail for default store (ChillGen)
+  const chillgenDetail = await client.loadProductDetail(sampleId);
+  assert.equal(chillgenDetail.vendor, "CHILLGEN");
+  assert.ok(!chillgenDetail.title.startsWith("[Capozen]"));
+
+  // Load detail for Capozen store
+  const capozenDetail = await client.loadProductDetail("capozen", sampleId);
+  assert.equal(capozenDetail.vendor, "Capozen");
+  assert.ok(capozenDetail.title.startsWith("[Capozen]"));
+
+  // Verify cached details are properly isolated
+  const cachedChillgen = client.getCachedDetail?.(sampleId, "store-chillgen-mock");
+  assert.equal(cachedChillgen?.vendor, "CHILLGEN");
+
+  const cachedCapozen = client.getCachedDetail?.(sampleId, "capozen");
+  assert.equal(cachedCapozen?.vendor, "Capozen");
+
+  // Verify hydration for Capozen
+  const hydrated = await client.hydrateSelectedProductsFresh([sampleId], 2, "capozen");
+  assert.equal(hydrated.length, 1);
+  assert.equal(hydrated[0].vendor, "Capozen");
+});
+

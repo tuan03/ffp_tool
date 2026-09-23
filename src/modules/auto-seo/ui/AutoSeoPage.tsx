@@ -77,6 +77,9 @@ export function AutoSeoPage({
   const [isDetailLoading, setIsDetailLoading] = useState(false);
   const [detailErrorMessage, setDetailErrorMessage] = useState<string | null>(null);
   const activeDetailIdRef = useRef<string | null>(null);
+  const loadRequestIdRef = useRef(0);
+  const selectedStoreIdRef = useRef(selectedStoreId);
+  selectedStoreIdRef.current = selectedStoreId;
   const [isSendingToSeo, setIsSendingToSeo] = useState(false);
 
   // Load available stores on mount
@@ -98,7 +101,7 @@ export function AutoSeoPage({
 
         if (isMounted && storeOptions.length > 0) {
           setAvailableStores(storeOptions);
-          const currentStoreId = session.selectedStoreId;
+          const currentStoreId = selectedStoreIdRef.current;
           if (!currentStoreId || !storeOptions.some((s) => s.storeId === currentStoreId)) {
             const firstStoreId = storeOptions[0].storeId;
             setAutoSeoSelectedStoreId(firstStoreId);
@@ -120,7 +123,7 @@ export function AutoSeoPage({
     return () => {
       isMounted = false;
     };
-  }, [activeClient, session.selectedStoreId]);
+  }, [activeClient]);
 
   const filteredProducts = useMemo(() => {
     return filterAutoSeoProducts(products, {
@@ -133,6 +136,9 @@ export function AutoSeoPage({
     if (storeId === selectedStoreId) {
       return;
     }
+    loadRequestIdRef.current++;
+    setIsLoadingProducts(false);
+    setErrorMessage(null);
     setAutoSeoSelectedStoreId(storeId);
     activeClient.setActiveStoreId?.(storeId);
     activeClient.clearDetailCache?.();
@@ -144,20 +150,28 @@ export function AutoSeoPage({
   }, [activeClient, selectedStoreId]);
 
   const handleLoadProducts = useCallback(async (): Promise<void> => {
+    const currentRequestId = ++loadRequestIdRef.current;
+    const targetStoreId = selectedStoreId;
     setIsLoadingProducts(true);
     setErrorMessage(null);
 
     try {
-      const fetchedProducts = await activeClient.loadProducts(selectedStoreId);
-      setAutoSeoProducts(fetchedProducts);
-      setAutoSeoSelectedProductIds([]);
-      setTestSelectedProductIds(undefined);
+      const fetchedProducts = await activeClient.loadProducts(targetStoreId);
+      if (currentRequestId === loadRequestIdRef.current) {
+        setAutoSeoProducts(fetchedProducts);
+        setAutoSeoSelectedProductIds([]);
+        setTestSelectedProductIds(undefined);
+      }
     } catch (err) {
-      setErrorMessage(
-        err instanceof Error ? err.message : "Không thể tải danh sách sản phẩm từ Shopify.",
-      );
+      if (currentRequestId === loadRequestIdRef.current) {
+        setErrorMessage(
+          err instanceof Error ? err.message : "Không thể tải danh sách sản phẩm từ Shopify.",
+        );
+      }
     } finally {
-      setIsLoadingProducts(false);
+      if (currentRequestId === loadRequestIdRef.current) {
+        setIsLoadingProducts(false);
+      }
     }
   }, [activeClient, selectedStoreId]);
 
@@ -168,7 +182,7 @@ export function AutoSeoPage({
     async (product: ShopifyProductForAutoSeoUi): Promise<void> => {
       activeDetailIdRef.current = product.id;
 
-      const cached = activeClient.getCachedDetail?.(product.id);
+      const cached = activeClient.getCachedDetail?.(product.id, selectedStoreId);
       if (cached) {
         setActiveProduct(cached);
         setIsDetailOpen(true);
@@ -183,7 +197,9 @@ export function AutoSeoPage({
       setDetailErrorMessage(null);
 
       try {
-        const fullProduct = await activeClient.loadProductDetail(product.id);
+        const fullProduct = selectedStoreId
+          ? await activeClient.loadProductDetail(selectedStoreId, product.id)
+          : await activeClient.loadProductDetail(product.id);
         if (activeDetailIdRef.current === product.id) {
           setActiveProduct(fullProduct);
         }
@@ -199,7 +215,7 @@ export function AutoSeoPage({
         }
       }
     },
-    [activeClient],
+    [activeClient, selectedStoreId],
   );
 
   // Toggle selection
@@ -381,6 +397,7 @@ export function AutoSeoPage({
         filteredProducts={filteredProducts}
         onToggleSelect={handleToggleSelect}
         onOpenDetail={handleOpenDetail}
+        isLoading={isLoadingProducts}
       />
 
       {/* PDP Detail Drawer */}

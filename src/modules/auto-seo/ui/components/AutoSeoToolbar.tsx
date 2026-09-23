@@ -91,7 +91,7 @@ export function AutoSeoToolbar({
           <button
             type="button"
             onClick={onLoadProducts}
-            disabled={isLoadingProducts || isLoadingStores || (selectedStoreId !== undefined && !selectedStoreId)}
+            disabled={isLoadingProducts || isLoadingStores || !selectedStoreId || !stores || stores.length === 0}
             className="inline-flex items-center gap-2 rounded-lg bg-cyan-700 hover:bg-cyan-600 px-3.5 py-2 text-xs font-semibold text-white shadow-xs transition disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isLoadingProducts ? (

@@ -7,6 +7,7 @@ import { MockAutoSeoClient } from "../mocks/runner";
 import type { ShopifyProductForAutoSeoUi } from "../types";
 import { AutoSeoPage } from "../ui/AutoSeoPage";
 import { AutoSeoToolbar } from "../ui/components/AutoSeoToolbar";
+import { ProductSelectionTable } from "../ui/components/ProductSelectionTable";
 import {
   clearAutoSeoSession,
   getAutoSeoSessionState,
@@ -185,6 +186,41 @@ test("auto-seo: AutoSeoToolbar renders store select dropdown with available stor
   assert.ok(html.includes("store-chillgen-mock (chillgen-mock.myshopify.com)"));
   assert.ok(html.includes("capozen (capozen.myshopify.com)"));
   assert.ok(html.includes("Tải sản phẩm"));
+});
+
+test("auto-seo: AutoSeoToolbar disables 'Tải sản phẩm' when selectedStoreId is undefined or empty", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(AutoSeoToolbar, {
+      isLoadingProducts: false,
+      isRunningAutoSeo: false,
+      totalProductsCount: 0,
+      selectedCount: 0,
+      visibleProductsCount: 0,
+      onLoadProducts: () => {},
+      onSelectAll: () => {},
+      onClearSelection: () => {},
+      onRunAutoSeo: () => {},
+      stores: [{ storeId: "store-1", shopDomain: "store-1.myshopify.com" }],
+      selectedStoreId: undefined,
+    }),
+  );
+
+  assert.ok(html.includes("disabled"));
+});
+
+test("auto-seo: ProductSelectionTable renders loading skeleton state when isLoading is true and products is empty", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(ProductSelectionTable, {
+      products: [],
+      selectedProductIds: [],
+      onToggleSelect: () => {},
+      onOpenDetail: () => {},
+      isLoading: true,
+    }),
+  );
+
+  assert.ok(html.includes("Đang tải sản phẩm từ cửa hàng..."));
+  assert.ok(!html.includes("Chưa có sản phẩm nào được tải"));
 });
 
 

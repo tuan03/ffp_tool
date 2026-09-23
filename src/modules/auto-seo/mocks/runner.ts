@@ -64,9 +64,38 @@ export class MockAutoSeoClient implements AutoSeoClient {
     return this.activeStoreId;
   }
 
-  public getCachedDetail(productId: string): ShopifyProductForAutoSeoUi | undefined {
-    const cached = this.detailCache.get(productId);
-    return cached ? (JSON.parse(JSON.stringify(cached)) as ShopifyProductForAutoSeoUi) : undefined;
+  private getCacheKey(storeId: string, productId: string): string {
+    return `${storeId.trim()}:::${productId.trim()}`;
+  }
+
+  private getMockProductForStore(productId: string, storeId?: string): ShopifyProductForAutoSeoUi | undefined {
+    const targetStoreId = (storeId ?? this.activeStoreId).trim();
+    const product = mockShopifyProducts.find((p) => p.id === productId);
+    if (!product) return undefined;
+    const cloned = JSON.parse(JSON.stringify(product)) as ShopifyProductForAutoSeoUi;
+    if (targetStoreId === "capozen") {
+      return {
+        ...cloned,
+        vendor: "Capozen",
+        title: `[Capozen] ${cloned.title}`,
+      };
+    }
+    return cloned;
+  }
+
+  public getCachedDetail(productId: string, storeId?: string): ShopifyProductForAutoSeoUi | undefined {
+    const targetStoreId = (storeId ?? this.activeStoreId).trim();
+    const key = this.getCacheKey(targetStoreId, productId);
+    const cached = this.detailCache.get(key);
+    if (cached) {
+      return JSON.parse(JSON.stringify(cached)) as ShopifyProductForAutoSeoUi;
+    }
+    for (const [k, v] of this.detailCache.entries()) {
+      if (k.endsWith(`:::${productId.trim()}`)) {
+        return JSON.parse(JSON.stringify(v)) as ShopifyProductForAutoSeoUi;
+      }
+    }
+    return undefined;
   }
 
   public clearDetailCache(): void {
@@ -116,18 +145,20 @@ export class MockAutoSeoClient implements AutoSeoClient {
     maybeProductId?: string,
   ): Promise<ShopifyProductForAutoSeoUi> {
     const isStoreIdExplicit = Boolean(maybeProductId && maybeProductId.trim().length > 0);
+    const storeId = isStoreIdExplicit ? productIdOrStoreId : this.activeStoreId;
     const productId = isStoreIdExplicit ? maybeProductId! : productIdOrStoreId;
 
     if (!productId || typeof productId !== "string" || productId.trim() === "") {
       throw new AppError("Product ID is required to load product detail", "AUTO_SEO_LOAD_FAILED");
     }
 
-    const cached = this.detailCache.get(productId);
+    const key = this.getCacheKey(storeId, productId);
+    const cached = this.detailCache.get(key);
     if (cached) {
       return JSON.parse(JSON.stringify(cached)) as ShopifyProductForAutoSeoUi;
     }
 
-    return this.loadProductDetailFresh(productId);
+    return this.loadProductDetailFresh(storeId, productId);
   }
 
   public async loadProductDetailFresh(productId: string): Promise<ShopifyProductForAutoSeoUi>;
@@ -140,39 +171,43 @@ export class MockAutoSeoClient implements AutoSeoClient {
     maybeProductId?: string,
   ): Promise<ShopifyProductForAutoSeoUi> {
     const isStoreIdExplicit = Boolean(maybeProductId && maybeProductId.trim().length > 0);
+    const storeId = isStoreIdExplicit ? productIdOrStoreId : this.activeStoreId;
     const productId = isStoreIdExplicit ? maybeProductId! : productIdOrStoreId;
 
     if (!productId || typeof productId !== "string" || productId.trim() === "") {
       throw new AppError("Product ID is required to load product detail", "AUTO_SEO_LOAD_FAILED");
     }
 
-    const product = mockShopifyProducts.find((p) => p.id === productId);
+    const product = this.getMockProductForStore(productId, storeId);
     if (!product) {
       throw new AppError(`Product not found: ${productId}`, "AUTO_SEO_LOAD_FAILED");
     }
 
     const cloned = JSON.parse(JSON.stringify(product)) as ShopifyProductForAutoSeoUi;
-    this.detailCache.set(productId, cloned);
+    const key = this.getCacheKey(storeId, productId);
+    this.detailCache.set(key, cloned);
     return JSON.parse(JSON.stringify(cloned)) as ShopifyProductForAutoSeoUi;
   }
 
   public async hydrateSelectedProducts(
     productIds: readonly string[],
     concurrency = 5,
-    _storeId?: string,
+    storeId?: string,
   ): Promise<readonly ShopifyProductForAutoSeoUi[]> {
     if (productIds.length === 0) {
       return [];
     }
 
+    const targetStoreId = (storeId ?? this.activeStoreId).trim();
     const uniqueIds = Array.from(new Set(productIds));
     const productMap = new Map<string, ShopifyProductForAutoSeoUi>();
 
     const idsToFetch: string[] = [];
     for (const id of uniqueIds) {
-      const cached = this.detailCache.get(id);
+      const key = this.getCacheKey(targetStoreId, id);
+      const cached = this.detailCache.get(key);
       if (cached) {
-        productMap.set(id, cached);
+        productMap.set(id, JSON.parse(JSON.stringify(cached)) as ShopifyProductForAutoSeoUi);
       } else {
         idsToFetch.push(id);
       }
@@ -180,17 +215,8 @@ export class MockAutoSeoClient implements AutoSeoClient {
 
     if (idsToFetch.length > 0) {
       await mapWithConcurrency(idsToFetch, concurrency, async (id) => {
-        try {
-          const detail = await this.loadProductDetail(id);
-          productMap.set(id, detail);
-        } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          throw new AppError(
-            `Failed to hydrate product detail for product ${id}: ${message}`,
-            "AUTO_SEO_LOAD_FAILED",
-            err,
-          );
-        }
+        const detail = await this.loadProductDetailFresh(targetStoreId, id);
+        productMap.set(id, detail);
       });
     }
 
@@ -209,17 +235,18 @@ export class MockAutoSeoClient implements AutoSeoClient {
   public async hydrateSelectedProductsFresh(
     productIds: readonly string[],
     concurrency = 5,
-    _storeId?: string,
+    storeId?: string,
   ): Promise<readonly ShopifyProductForAutoSeoUi[]> {
     if (productIds.length === 0) {
       return [];
     }
 
+    const targetStoreId = (storeId ?? this.activeStoreId).trim();
     const uniqueIds = Array.from(new Set(productIds));
     const productMap = new Map<string, ShopifyProductForAutoSeoUi>();
 
     await mapWithConcurrency(uniqueIds, concurrency, async (id) => {
-      const detail = await this.loadProductDetailFresh(id);
+      const detail = await this.loadProductDetailFresh(targetStoreId, id);
       productMap.set(id, detail);
     });
 

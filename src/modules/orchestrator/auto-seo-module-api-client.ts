@@ -133,8 +133,24 @@ export class AutoSeoModuleApiClient implements AutoSeoClient {
 
   public constructor(private readonly moduleApiRunner: ModuleApiRunner) {}
 
-  public getCachedDetail(productId: string): ShopifyProductForAutoSeoUi | undefined {
-    return this.detailCache.get(productId.trim());
+  private getCacheKey(storeId: string, productId: string): string {
+    return `${storeId.trim()}:::${productId.trim()}`;
+  }
+
+  public getCachedDetail(productId: string, storeId?: string): ShopifyProductForAutoSeoUi | undefined {
+    const effectiveStoreId = storeId?.trim() || this.activeStoreId?.trim();
+    if (effectiveStoreId) {
+      const match = this.detailCache.get(this.getCacheKey(effectiveStoreId, productId));
+      if (match) {
+        return match;
+      }
+    }
+    for (const [key, val] of this.detailCache.entries()) {
+      if (key.endsWith(`:::${productId.trim()}`)) {
+        return val;
+      }
+    }
+    return undefined;
   }
 
   public clearDetailCache(): void {
@@ -370,28 +386,30 @@ export class AutoSeoModuleApiClient implements AutoSeoClient {
     }
 
     const productId = rawProductId.trim();
-    const cached = this.detailCache.get(productId);
+    const store = isStoreIdExplicit
+      ? await this.resolveStore(productIdOrStoreId)
+      : await this.resolveStore();
+    const cacheKey = this.getCacheKey(store.storeId, productId);
+
+    const cached = this.detailCache.get(cacheKey);
     if (cached) {
       return cached;
     }
 
-    const inFlight = this.inFlightRequests.get(productId);
+    const inFlight = this.inFlightRequests.get(cacheKey);
     if (inFlight) {
       return await inFlight;
     }
 
     const fetchPromise = (async (): Promise<ShopifyProductForAutoSeoUi> => {
       try {
-        const storeId = isStoreIdExplicit
-          ? productIdOrStoreId.trim()
-          : (await this.resolveStore()).storeId;
-        return await this.fetchProductDetailFresh(storeId, productId);
+        return await this.fetchProductDetailFresh(store.storeId, productId);
       } finally {
-        this.inFlightRequests.delete(productId);
+        this.inFlightRequests.delete(cacheKey);
       }
     })();
 
-    this.inFlightRequests.set(productId, fetchPromise);
+    this.inFlightRequests.set(cacheKey, fetchPromise);
     return await fetchPromise;
   }
 
@@ -412,17 +430,18 @@ export class AutoSeoModuleApiClient implements AutoSeoClient {
     }
 
     const productId = rawProductId.trim();
-    const storeId = isStoreIdExplicit
-      ? productIdOrStoreId.trim()
-      : (await this.resolveStore()).storeId;
+    const store = isStoreIdExplicit
+      ? await this.resolveStore(productIdOrStoreId)
+      : await this.resolveStore();
 
-    return this.fetchProductDetailFresh(storeId, productId);
+    return this.fetchProductDetailFresh(store.storeId, productId);
   }
 
   private async fetchProductDetailFresh(
     storeId: string,
     productId: string,
   ): Promise<ShopifyProductForAutoSeoUi> {
+    const cacheKey = this.getCacheKey(storeId, productId);
     const requestVersion = ++this.versionSequence;
     try {
       const getInput: ShopifyProductsGetInput = {
@@ -443,10 +462,10 @@ export class AutoSeoModuleApiClient implements AutoSeoClient {
       }
 
       const uiProduct = mapShopifyProductToUi(product);
-      const currentVersion = this.detailVersions.get(productId) ?? 0;
+      const currentVersion = this.detailVersions.get(cacheKey) ?? 0;
       if (requestVersion >= currentVersion) {
-        this.detailVersions.set(productId, requestVersion);
-        this.detailCache.set(productId, uiProduct);
+        this.detailVersions.set(cacheKey, requestVersion);
+        this.detailCache.set(cacheKey, uiProduct);
       }
       return uiProduct;
     } catch (error) {
@@ -504,9 +523,11 @@ export class AutoSeoModuleApiClient implements AutoSeoClient {
     const uniqueIds = Array.from(new Set(productIds.map((id) => id.trim())));
     const productMap = new Map<string, ShopifyProductForAutoSeoUi>();
     const idsToFetch: string[] = [];
+    const store = await this.resolveStore(storeId);
 
     for (const id of uniqueIds) {
-      const cached = this.detailCache.get(id);
+      const cacheKey = this.getCacheKey(store.storeId, id);
+      const cached = this.detailCache.get(cacheKey);
       if (cached) {
         productMap.set(id, cached);
       } else {
@@ -515,7 +536,6 @@ export class AutoSeoModuleApiClient implements AutoSeoClient {
     }
 
     if (idsToFetch.length > 0) {
-      const store = await this.resolveStore(storeId);
       await runWithConcurrency(idsToFetch, concurrency, async (id) => {
         const detail = await this.loadProductDetail(store.storeId, id);
         productMap.set(id, detail);

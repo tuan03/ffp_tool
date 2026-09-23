@@ -17,6 +17,7 @@ export interface ProductSelectionTableProps {
   filteredProducts?: readonly ShopifyProductForAutoSeoUi[];
   onToggleSelect(productId: string): void;
   onOpenDetail(product: ShopifyProductForAutoSeoUi): void;
+  isLoading?: boolean;
 }
 
 export function ProductSelectionTable(props: ProductSelectionTableProps): React.JSX.Element {
@@ -25,6 +26,7 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
     selectedProductIds,
     onToggleSelect,
     onOpenDetail,
+    isLoading = false,
   } = props;
 
   const [internalSearchQuery, setInternalSearchQuery] = useState("");
@@ -53,7 +55,6 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
     let active = 0;
     let draft = 0;
     let archived = 0;
-
     for (const product of products) {
       const status = (product.status ?? "").toUpperCase();
       if (status === "ACTIVE") {
@@ -89,6 +90,20 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
   ]);
 
   if (products.length === 0) {
+    if (isLoading) {
+      return (
+        <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-12 text-center">
+          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-cyan-950/60 text-2xl text-cyan-400 mb-3 animate-pulse">
+            ⏳
+          </div>
+          <h3 className="text-base font-semibold text-slate-200">Đang tải sản phẩm từ cửa hàng...</h3>
+          <p className="text-xs text-slate-400 max-w-md mx-auto mt-1">
+            Vui lòng chờ trong giây lát trong khi danh sách sản phẩm được đồng bộ từ Shopify.
+          </p>
+        </div>
+      );
+    }
+
     return (
       <div className="rounded-xl border border-dashed border-slate-800 bg-slate-900/40 p-12 text-center">
         <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-slate-800/80 text-2xl text-slate-400 mb-3">
