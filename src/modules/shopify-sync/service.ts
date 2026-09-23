@@ -202,6 +202,12 @@ export async function syncSingleProduct(
       }
       const uniqueAssets = Array.from(uniqueUrlMap.values());
 
+      const targetProductId = writtenProduct?.productId ?? "";
+      const buildAssetAlt = (customAlt?: string) => {
+        const prefix = customAlt && customAlt.trim() !== "" ? customAlt.trim() : "Customization Asset";
+        return targetProductId ? `${prefix} | product:${targetProductId}` : prefix;
+      };
+
       if (gateway.uploadFilesBatch && uniqueAssets.length > 0) {
         const BATCH_SIZE = 100;
         for (let i = 0; i < uniqueAssets.length; i += BATCH_SIZE) {
@@ -211,7 +217,7 @@ export async function syncSingleProduct(
               chunk.map((a) => ({
                 originalSource: a.url,
                 filename: a.friendlyFileName || "amzcustom-asset.png",
-                alt: a.alt || "Customization Asset",
+                alt: buildAssetAlt(a.alt),
               })),
             );
 
@@ -228,7 +234,7 @@ export async function syncSingleProduct(
                 const uploaded = await gateway.uploadFile({
                   originalSource: asset.url,
                   filename: asset.friendlyFileName || "amzcustom-asset.png",
-                  alt: asset.alt || "Customization Asset",
+                  alt: buildAssetAlt(asset.alt),
                 });
                 replacements.set(asset.url, uploaded.shopifyCdnUrl);
               } catch (singleErr: unknown) {
@@ -250,7 +256,7 @@ export async function syncSingleProduct(
                 const uploaded = await gateway.uploadFile({
                   originalSource: asset.url,
                   filename: asset.friendlyFileName || "amzcustom-asset.png",
-                  alt: asset.alt || "Customization Asset",
+                  alt: buildAssetAlt(asset.alt),
                 });
                 replacements.set(asset.url, uploaded.shopifyCdnUrl);
               } catch (singleErr: unknown) {
@@ -270,7 +276,7 @@ export async function syncSingleProduct(
             const uploaded = await gateway.uploadFile({
               originalSource: asset.url,
               filename: asset.friendlyFileName || "amzcustom-asset.png",
-              alt: asset.alt || "Customization Asset",
+              alt: buildAssetAlt(asset.alt),
             });
             replacements.set(asset.url, uploaded.shopifyCdnUrl);
           } catch (uploadError: unknown) {
@@ -296,6 +302,8 @@ export async function syncSingleProduct(
       const baseConfig: Record<string, unknown> = {
         ...product.customization,
         hasCustomization: true,
+        shopifyProductId: targetProductId,
+        productId: targetProductId,
         assets: product.customization.assets,
         optionGroups: product.customization.optionGroups,
         pricing: product.customization.pricing,

@@ -337,7 +337,13 @@ export async function cleanOrphanAssets(
   const checkedProductCache = new Map<string, boolean>();
 
   for (const file of files) {
-    const productTag = (file.tags ?? []).find((t) => t.startsWith(tagPrefix));
+    let productTag = (file.tags ?? []).find((t) => t.startsWith(tagPrefix));
+    if (!productTag && file.altText) {
+      const match = file.altText.match(new RegExp(`${tagPrefix}(gid:\\/\\/shopify\\/Product\\/\\d+|[a-zA-Z0-9_-]+)`));
+      if (match) {
+        productTag = `${tagPrefix}${match[1]}`;
+      }
+    }
     if (!productTag) continue;
 
     const productId = productTag.slice(tagPrefix.length).trim();
