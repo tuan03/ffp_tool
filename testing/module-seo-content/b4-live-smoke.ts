@@ -1,12 +1,12 @@
-import { buildProductReferences } from "../internal/conflict-control/product-reference-builder";
-import { VertexTextEmbeddingProvider } from "../internal/conflict-control/vertex-text-embedding-provider";
-import { cosineSimilarity } from "../internal/conflict-control/cosine-similarity";
+import { buildProductReferences } from "../../src/modules/seo-content/internal/conflict-control/product-reference-builder";
+import { VertexTextEmbeddingProvider } from "../../src/modules/seo-content/internal/conflict-control/vertex-text-embedding-provider";
+import { cosineSimilarity } from "../../src/modules/seo-content/internal/conflict-control/cosine-similarity";
 import {
   DENSE_VERTEX_THRESHOLDS,
   looksInformational,
-} from "../internal/conflict-control/keyword-relevance-evaluator";
-import type { SeoContentInput } from "../types";
-import type { ProductUnderstanding, ShoppingContext } from "../internal/domain-types";
+} from "../../src/modules/seo-content/internal/conflict-control/keyword-relevance-evaluator";
+import type { SeoContentInput } from "../../src/modules/seo-content/types";
+import type { ProductUnderstanding, ShoppingContext } from "../../src/modules/seo-content/internal/domain-types";
 
 async function main() {
   const sampleProduct: SeoContentInput = {

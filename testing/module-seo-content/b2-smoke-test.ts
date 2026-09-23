@@ -1,6 +1,6 @@
-import type { SeoContentInput } from "../types";
-import { createInitialContext, evolveContext } from "../internal/pipeline-context";
-import { createB2ShoppingContextStage } from "../internal/stages/b2-shopping-context";
+import type { SeoContentInput } from "../../src/modules/seo-content/types";
+import { createInitialContext, evolveContext } from "../../src/modules/seo-content/internal/pipeline-context";
+import { createB2ShoppingContextStage } from "../../src/modules/seo-content/internal/stages/b2-shopping-context";
 
 /**
  * Standalone Node.js smoke test for B2 Shopping Context.

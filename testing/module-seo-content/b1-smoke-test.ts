@@ -1,7 +1,7 @@
-import { createDefaultProductImageAnalyzer } from "../internal/stages/b1-product-understanding";
-import type { SeoContentInput } from "../types";
-import { createInitialContext } from "../internal/pipeline-context";
-import { createB1ProductUnderstandingStage } from "../internal/stages/b1-product-understanding";
+import { createDefaultProductImageAnalyzer } from "../../src/modules/seo-content/internal/stages/b1-product-understanding";
+import type { SeoContentInput } from "../../src/modules/seo-content/types";
+import { createInitialContext } from "../../src/modules/seo-content/internal/pipeline-context";
+import { createB1ProductUnderstandingStage } from "../../src/modules/seo-content/internal/stages/b1-product-understanding";
 
 /**
  * Standalone Node.js smoke test for B1 Product Understanding.

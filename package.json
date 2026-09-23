@@ -16,7 +16,7 @@
     "typecheck:gateway": "tsc --noEmit -p tsconfig.gateway.json",
     "test": "npm run test:tooling && npm run test:web && npm run test:gateway && npm run test:engine",
     "test:tooling": "node --test scripts/*.test.mjs",
-    "test:web": "tsx --test src/config/__tests__/*.test.ts src/modules/*/__tests__/*.test.ts",
+    "test:web": "tsx --test src/config/__tests__/*.test.ts src/modules/*/__tests__/*.test.ts testing/module-seo-content/*.test.ts",
     "test:gateway": "tsx --test gateway/__tests__/*.test.ts",
     "test:engine": "python -m unittest discover -s src/modules/amazon-crawler/engine/tests -t src/modules/amazon-crawler -p \"test_*.py\"",
     "test:distributed": "python -m unittest discover -s src/modules/amazon-crawler/engine/tests -t src/modules/amazon-crawler -p \"test_distributed.py\" -v --locals",
