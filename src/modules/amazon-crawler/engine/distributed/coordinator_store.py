@@ -31,7 +31,7 @@ from .protocol import CLIENT_OFFLINE_SECONDS, LEASE_SECONDS, MAX_CRAWL_FAILURES,
 
 TERMINAL_TASK_STATUSES = {"completed", "failed", "cancelled"}
 TERMINAL_PRODUCT_STATUSES = {"completed", "failed", "reconciliation_required", "cancelled"}
-ACTIVE_PRODUCT_STATUSES = {"received", "normalizing", "seo", "syncing", "retry_wait"}
+ACTIVE_PRODUCT_STATUSES = {"received", "normalizing", "seo", "image_processing", "syncing", "retry_wait"}
 
 
 def _id() -> str:
@@ -480,7 +480,7 @@ class CoordinatorStore:
                         (CrawlProductItem.status == "retry_wait")
                         & (CrawlProductItem.next_attempt_at <= now)
                     ) | (
-                        CrawlProductItem.status.in_(["normalizing", "seo", "syncing"])
+                        CrawlProductItem.status.in_(["normalizing", "seo", "image_processing", "syncing"])
                         & (CrawlProductItem.claim_expires_at < now)
                     )
                 )
@@ -539,6 +539,7 @@ class CoordinatorStore:
                     ShopifyProductLink.store_id == store_id,
                     ShopifyProductLink.source_key == item.source_key,
                 ))
+                job = session.get(CrawlJob, item.job_id)
                 claimed.append({
                     "id": item.id,
                     "jobId": item.job_id,
@@ -548,6 +549,7 @@ class CoordinatorStore:
                     "checksum": item.checksum,
                     "attempt": item.attempt_count,
                     "product": item.raw_payload,
+                    "settings": dict(job.settings or {}) if job is not None else {},
                     "existingShopify": None if link is None else {
                         "productId": link.shopify_product_id,
                         "productHandle": link.shopify_product_handle,
@@ -598,7 +600,7 @@ class CoordinatorStore:
     ) -> bool:
         with self.sessions.begin() as session:
             item = session.get(CrawlProductItem, item_id)
-            if item is None or item.claimed_by != worker_id or item.status not in {"normalizing", "seo", "syncing"}:
+            if item is None or item.claimed_by != worker_id or item.status not in {"normalizing", "seo", "image_processing", "syncing"}:
                 return False
             item.normalized_payload = normalized_payload
             if seo_summary is not None:
@@ -619,9 +621,35 @@ class CoordinatorStore:
     def heartbeat_product_item(self, item_id: str, *, worker_id: str) -> bool:
         with self.sessions.begin() as session:
             item = session.get(CrawlProductItem, item_id)
-            if item is None or item.claimed_by != worker_id or item.status not in {"normalizing", "seo", "syncing"}:
+            if item is None or item.claimed_by != worker_id or item.status not in {"normalizing", "seo", "image_processing", "syncing"}:
                 return False
             item.claim_expires_at = utc_now() + timedelta(seconds=180)
+            return True
+
+    def mark_product_image_processing(
+        self,
+        item_id: str,
+        *,
+        worker_id: str,
+        normalized_payload: dict[str, Any],
+        image_summary: dict[str, Any],
+    ) -> bool:
+        with self.sessions.begin() as session:
+            item = session.get(CrawlProductItem, item_id)
+            if item is None or item.claimed_by != worker_id or item.status not in {"seo", "image_processing"}:
+                return False
+            item.normalized_payload = normalized_payload
+            current = dict(item.shopify_result or {})
+            current["imageProcessing"] = image_summary
+            item.shopify_result = current
+            item.status = "image_processing"
+            item.claim_expires_at = utc_now() + timedelta(seconds=180)
+            self._event(session, item.job_id, "product_image_processing", {
+                "productItemId": item.id,
+                "sourceKey": item.source_key,
+                "imageProcessing": image_summary,
+            })
+            self._refresh_job(session, item.job_id)
             return True
 
     def checkpoint_shopify_product(
@@ -821,6 +849,13 @@ class CoordinatorStore:
                     "error": str(error.get("message") or "SEO pipeline failed."),
                 }
                 item.shopify_result = pipeline_result
+            elif str(error.get("phase") or "") == "image_processing":
+                pipeline_result = dict(item.shopify_result or {})
+                pipeline_result["imageProcessing"] = {
+                    "status": "failed",
+                    "error": str(error.get("message") or "Image processing failed."),
+                }
+                item.shopify_result = pipeline_result
             item.claimed_by = None
             item.claim_expires_at = None
             if next_status == "retry_wait":
@@ -915,7 +950,7 @@ class CoordinatorStore:
                 task.lease_expires_at = None
             for item in session.scalars(select(CrawlProductItem).where(
                 CrawlProductItem.job_id == job_id,
-                CrawlProductItem.status.in_(["received", "normalizing", "seo", "retry_wait"]),
+                CrawlProductItem.status.in_(["received", "normalizing", "seo", "image_processing", "retry_wait"]),
             )):
                 item.status = "cancelled"
                 item.completed_at = utc_now()
@@ -981,6 +1016,7 @@ class CoordinatorStore:
     def _product_pipeline_snapshot(item: CrawlProductItem) -> dict[str, Any]:
         pipeline_result = dict(item.shopify_result or {})
         seo = pipeline_result.pop("seo", None)
+        image_processing = pipeline_result.pop("imageProcessing", None)
         public_seo = (
             {
                 key: seo[key]
@@ -1014,6 +1050,11 @@ class CoordinatorStore:
                 "assetsNormalized": int(shopify.get("assetsNormalized") or 0),
             },
             "seo": public_seo,
+            "imageProcessing": image_processing if isinstance(image_processing, dict) else {
+                "status": "running" if item.status == "image_processing" else (
+                    "completed" if item.status in {"syncing", "completed"} else "pending"
+                ),
+            },
             "shopify": shopify,
         }
         return product
@@ -1234,6 +1275,8 @@ class CoordinatorStore:
             phase = "export"
         elif product_counts.get("syncing", 0) or "shopify" in retry_phases:
             phase = "shopify"
+        elif product_counts.get("image_processing", 0) or "image_processing" in retry_phases:
+            phase = "image_processing"
         elif product_counts.get("seo", 0) or "seo" in retry_phases:
             phase = "seo"
         elif product_counts.get("normalizing", 0) or product_counts.get("received", 0):

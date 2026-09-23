@@ -33,6 +33,23 @@ var dimensionToAsinMap = {"1_1":"B012345681"};
 </body></html>
 """
 
+DIRECT_GALLERY_HTML = r'''<html><body>
+<input id="ASIN" value="B012345678"><h1 id="productTitle">Gallery product</h1>
+<script>
+var imageBlock = {"colorImages":{"initial":[
+  {"hiRes":"https://m.media-amazon.com/images/I/MAINIMAGE01._SL1500_.jpg","large":"https://m.media-amazon.com/images/I/MAINIMAGE01._SL1000_.jpg","mainUrl":"https://m.media-amazon.com/images/I/MAINIMAGE01._SL500_.jpg"},
+  {"large":"https://m.media-amazon.com/images/I/GALLERYIMG2._SL1000_.jpg"},
+  {"thumb":"https://m.media-amazon.com/images/I/VIDEOICON01._SS40_PKplay-button-mb-image-grid-small_.png","isVideo":true},
+  {"hiRes":"https://m.media-amazon.com/images/I/MAINIMAGE01._SL1500_.jpg"}
+]}};
+</script></body></html>'''
+
+PARSE_JSON_GALLERY_HTML = r'''<html><body>
+<input id="ASIN" value="B012345678"><h1 id="productTitle">Encoded gallery</h1>
+<script>
+var data = {"colorImages":{"initial":A.$.parseJSON('[{"hiRes":"https:\/\/m.media-amazon.com\/images\/I\/PARSEJSON01._SL1500_.jpg"},{"mainUrl":"https:\/\/m.media-amazon.com\/images\/I\/PARSEJSON02._SL500_.jpg"}]')}};
+</script></body></html>'''
+
 CUSTOMIZABLE_ENTRY_HTML = """
 <html><body><input id="ASIN" value="B012345678"><h1 id="productTitle">Custom product</h1>
 <script type="a-state" data-a-state='{"key":"gc:productInfo"}'>
@@ -287,6 +304,32 @@ class CoreTests(unittest.TestCase):
             "https://m.media-amazon.com/images/I/alt-large._AC_.jpg",
         ])
 
+    def test_media_parses_direct_color_images_and_preserves_gallery_metadata(self) -> None:
+        parsed = parse_product_html(
+            DIRECT_GALLERY_HTML,
+            "B012345678",
+            "https://www.amazon.com/dp/B012345678",
+        )
+
+        self.assertEqual(len(parsed["media"]), 2)
+        self.assertEqual(parsed["media"][0]["amazonImageId"], "MAINIMAGE01")
+        self.assertTrue(parsed["media"][0]["isMain"])
+        self.assertEqual(parsed["media"][1]["amazonImageId"], "GALLERYIMG2")
+        self.assertFalse(parsed["media"][1]["isMain"])
+        self.assertTrue(all(media["sourceAsin"] == "B012345678" for media in parsed["media"]))
+
+    def test_media_parses_amazon_parse_json_main_url_fallback(self) -> None:
+        parsed = parse_product_html(
+            PARSE_JSON_GALLERY_HTML,
+            "B012345678",
+            "https://www.amazon.com/dp/B012345678",
+        )
+
+        self.assertEqual(
+            [media["amazonImageId"] for media in parsed["media"]],
+            ["PARSEJSON01", "PARSEJSON02"],
+        )
+
     def test_media_excludes_product_videos(self) -> None:
         html = """<html><body><input id='ASIN' value='B012345678'><h1 id='productTitle'>Images only</h1>
         <img id='landingImage' src='https://m.media-amazon.com/images/I/product.jpg'>
@@ -297,7 +340,7 @@ class CoreTests(unittest.TestCase):
         parsed = parse_product_html(html, "B012345678", "https://www.amazon.com/dp/B012345678")
 
         self.assertEqual([media["url"] for media in parsed["media"]], [
-            "https://m.media-amazon.com/images/I/product.jpg",
+            "https://m.media-amazon.com/images/I/product._SL1500_.jpg",
         ])
 
     def test_parses_description_and_bullets_from_new_product_facts_layout(self) -> None:
@@ -519,6 +562,53 @@ class CoreTests(unittest.TestCase):
         self.assertEqual([control["type"] for control in normalized["textInputs"]], ["TextInputComponent"])
         self.assertNotIn("controls", normalized)
         self.assertNotIn("rules", normalized)
+
+    def test_customization_filters_mini_size_and_all_unavailable_option_signals(self) -> None:
+        raw = {"components": [{
+            "componentType": "OptionChooserComponent", "id": "size", "label": "Size", "required": False,
+            "defaultOptionId": "mini",
+            "options": [
+                {"id": "mini", "label": "SMALL (Mini Size)", "price": 0},
+                {"id": "no-print", "label": "Small Size - No-Print", "price": 0},
+                {"id": "stock-flag", "label": "Medium", "price": 4, "outOfStock": True},
+                {"id": "available-flag", "label": "Large", "price": 5, "isAvailable": False},
+                {"id": "status", "label": "X-Large", "price": 6, "status": "currently_unavailable"},
+                {"id": "regular", "label": "Regular Size", "price": 7},
+            ],
+        }]}
+
+        normalized, warnings = normalize_customization(raw)
+
+        self.assertEqual(warnings, [])
+        assert normalized is not None
+        paid_group = normalized["pricing"]["paidOptionGroups"][0]
+        self.assertEqual([option["label"] for option in paid_group["options"]], ["None", "Regular Size"])
+        self.assertEqual(paid_group["defaultOptionId"], "")
+        variants = expand_paid_variants([
+            {
+                "id": "base", "sku": "BASE", "sourceAsin": "B012345678", "options": {},
+                "price": {"raw": "$20.00", "amount": 20.0, "currency": "USD"},
+                "surcharge": None, "metadata": {},
+            },
+        ], normalized)
+        self.assertEqual([variant["options"]["Size"] for variant in variants], ["None", "Regular Size"])
+
+    def test_customization_keeps_normal_small_options_without_mini_marker(self) -> None:
+        raw = {"components": [{
+            "componentType": "OptionChooserComponent", "id": "size", "label": "Size", "required": True,
+            "defaultOptionId": "small",
+            "options": [
+                {"id": "small", "label": "Small", "price": 3},
+                {"id": "large", "label": "Large", "price": 5},
+            ],
+        }]}
+
+        normalized, _ = normalize_customization(raw)
+
+        assert normalized is not None
+        paid_group = normalized["pricing"]["paidOptionGroups"][0]
+        self.assertEqual([option["label"] for option in paid_group["options"]], ["Small", "Large"])
+        self.assertEqual(paid_group["defaultOptionId"], "small")
 
     def test_customization_ports_amazon_identifiers_costs_hierarchy_and_assets(self) -> None:
         raw = {

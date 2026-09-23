@@ -739,6 +739,17 @@ export async function runMockModuleApi(input: ShopifyApiInput): Promise<ShopifyA
       };
     }
 
+    case "files.stageBinary": {
+      return {
+        storeId: input.storeId,
+        operation: "files.stageBinary",
+        success: true,
+        data: {
+          resourceUrl: `https://cdn.shopify.com/staged/${encodeURIComponent(input.payload.filename)}`,
+        },
+      };
+    }
+
     case "metafields.set": {
       let rawItems: readonly Record<string, unknown>[];
       if (Array.isArray(input.payload.metafields)) {

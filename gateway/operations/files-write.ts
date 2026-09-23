@@ -1,6 +1,11 @@
+import { Blob } from "node:buffer";
+
+import { FormData } from "undici";
+
 import { GatewayError, mapUserErrorsToGatewayError, type MutationUserErrorItem } from "../errors";
+import { createStoreTransport } from "../proxy-transport";
 import type { ShopifyGraphqlClient } from "../shopify-graphql-client";
-import type { StoreConfig } from "../types";
+import type { HttpTransport, StoreConfig } from "../types";
 
 export const FILE_CREATE_MUTATION = `
   mutation FileCreate($files: [FileCreateInput!]!) {
@@ -28,6 +33,150 @@ export const FILE_CREATE_MUTATION = `
     }
   }
 `;
+
+export const STAGED_UPLOADS_CREATE_MUTATION = `
+  mutation StagedUploadsCreate($input: [StagedUploadInput!]!) {
+    stagedUploadsCreate(input: $input) {
+      stagedTargets {
+        url
+        resourceUrl
+        parameters { name value }
+      }
+      userErrors { field message }
+    }
+  }
+`;
+
+interface StagedUploadCreateResponse {
+  readonly stagedUploadsCreate: {
+    readonly stagedTargets: readonly {
+      readonly url: string;
+      readonly resourceUrl: string;
+      readonly parameters: readonly { readonly name: string; readonly value: string }[];
+    }[] | null;
+    readonly userErrors: readonly MutationUserErrorItem[];
+  };
+}
+
+function decodeXmlText(value: string): string {
+  return value
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&")
+    .trim();
+}
+
+function readXmlElement(xml: string, elementName: "Code" | "Message" | "Details"): string | undefined {
+  const match = new RegExp(`<${elementName}>([\\s\\S]*?)<\\/${elementName}>`, "i").exec(xml);
+  return match?.[1] ? decodeXmlText(match[1]) : undefined;
+}
+
+function stagedUploadFailureMessage(status: number, responseBody: string): {
+  readonly message: string;
+  readonly details: Record<string, unknown>;
+} {
+  const storageCode = readXmlElement(responseBody, "Code");
+  const storageMessage = readXmlElement(responseBody, "Message");
+  const storageDetails = readXmlElement(responseBody, "Details");
+  const safeParts = [storageCode, storageMessage, storageDetails]
+    .filter((part): part is string => Boolean(part))
+    .map((part) => part.slice(0, 300));
+  return {
+    message: `Staged image upload failed with status ${status}${safeParts.length > 0 ? `: ${safeParts.join(" - ")}` : ""}`,
+    details: {
+      stage: "staged_binary_upload",
+      upstreamStatus: status,
+      ...(storageCode ? { storageCode: storageCode.slice(0, 100) } : {}),
+      ...(storageMessage ? { storageMessage: storageMessage.slice(0, 300) } : {}),
+      ...(storageDetails ? { storageDetails: storageDetails.slice(0, 300) } : {}),
+    },
+  };
+}
+
+export async function executeFilesStageBinary(
+  store: StoreConfig,
+  client: ShopifyGraphqlClient,
+  payload: unknown,
+  mode: "preview" | "apply" = "apply",
+  requestId?: string,
+  uploadTransport?: HttpTransport,
+): Promise<{ readonly resourceUrl: string }> {
+  const value = payload && typeof payload === "object" ? payload as Record<string, unknown> : {};
+  const filename = typeof value.filename === "string" ? value.filename.trim() : "";
+  const mimeType = typeof value.mimeType === "string" ? value.mimeType.trim() : "";
+  const contentBase64 = typeof value.contentBase64 === "string" ? value.contentBase64.trim() : "";
+  if (!filename || !/^image\/(?:jpeg|png|webp)$/i.test(mimeType) || !contentBase64) {
+    throw new GatewayError("filename, supported image mimeType and contentBase64 are required", "SHOPIFY_USER_ERROR", 400);
+  }
+  let content: Buffer;
+  try {
+    content = Buffer.from(contentBase64, "base64");
+  } catch (error: unknown) {
+    throw new GatewayError("contentBase64 is invalid", "SHOPIFY_USER_ERROR", 400, undefined, error);
+  }
+  if (content.length === 0 || content.length > 20 * 1024 * 1024) {
+    throw new GatewayError("Staged image must be between 1 byte and 20 MB", "SHOPIFY_USER_ERROR", 400);
+  }
+  if (mode === "preview") {
+    return { resourceUrl: `https://cdn.shopify.com/staged/${encodeURIComponent(filename)}` };
+  }
+  const response = await client.query<StagedUploadCreateResponse>(
+    store,
+    STAGED_UPLOADS_CREATE_MUTATION,
+    {
+      input: [{
+        filename,
+        mimeType,
+        httpMethod: "POST",
+        resource: "IMAGE",
+        fileSize: String(content.length),
+      }],
+    },
+    { isWrite: true, requestId },
+  );
+  if (response.stagedUploadsCreate.userErrors.length > 0) {
+    throw mapUserErrorsToGatewayError(response.stagedUploadsCreate.userErrors);
+  }
+  const target = response.stagedUploadsCreate.stagedTargets?.[0];
+  if (!target?.url || !target.resourceUrl) {
+    throw new GatewayError("Shopify did not return a staged image target", "SHOPIFY_USER_ERROR", 400);
+  }
+  // The proxy transport uses undici.fetch, so its FormData implementation must
+  // also come from undici. Node's global FormData is from a separate undici
+  // instance and is serialized as a plain body by the package transport.
+  const form = new FormData();
+  for (const parameter of target.parameters) {
+    form.append(parameter.name, parameter.value);
+  }
+  form.append("file", new Blob([Uint8Array.from(content)], { type: mimeType }), filename);
+  const transport = uploadTransport ?? createStoreTransport(store);
+  let upload: Response;
+  try {
+    upload = await transport(target.url, {
+      method: "POST",
+      body: form as unknown as BodyInit,
+    });
+  } catch (error: unknown) {
+    throw new GatewayError("Failed to upload staged image through the configured proxy", "SHOPIFY_NETWORK_ERROR", 502, undefined, error);
+  }
+  if (!upload.ok) {
+    const responseBody = await upload.text().catch(() => "");
+    const failure = stagedUploadFailureMessage(upload.status, responseBody.slice(0, 8_192));
+    throw new GatewayError(
+      failure.message,
+      "SHOPIFY_NETWORK_ERROR",
+      upload.status,
+      undefined,
+      undefined,
+      undefined,
+      upload.status === 408 || upload.status === 429 || upload.status >= 500,
+      failure.details,
+    );
+  }
+  return { resourceUrl: target.resourceUrl };
+}
 
 export const FILE_NODE_QUERY = `
   query GetFileNode($id: ID!) {

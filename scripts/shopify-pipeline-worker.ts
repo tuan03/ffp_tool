@@ -14,6 +14,7 @@ import {
   createShopifyGatewayAdapter,
   createModuleApiRunner,
   resolveShopifyProductForSync,
+  type ShopifyFilesStageBinaryResponse,
 } from "../src/modules/module-api";
 import {
   fromCustomizationNormalizerProduct,
@@ -41,6 +42,11 @@ interface PipelineClaim {
   readonly checksum: string;
   readonly attempt: number;
   readonly product: CrawlProduct;
+  readonly settings: {
+    readonly imageProfileSlug?: string;
+    readonly imageProfileRevision?: string | null;
+    readonly [key: string]: unknown;
+  };
   readonly existingShopify: {
     readonly productId: string;
     readonly productHandle?: string;
@@ -96,6 +102,8 @@ interface PipelineTimings {
   seoRebaseMs?: number;
   seoRegistrationMs?: number;
   seoTotalMs?: number;
+  imageProcessingMs?: number;
+  imageUploadMs?: number;
   shopifySyncMs?: number;
   totalMs?: number;
 }
@@ -160,6 +168,99 @@ async function postJson<TResponse>(path: string, body: Record<string, unknown>):
   return payload as TResponse;
 }
 
+interface ProcessedImageMedia {
+  readonly url: string;
+  readonly kind?: string;
+  readonly sourceAsin?: string;
+  readonly alt?: string;
+  readonly processedFileToken?: string;
+  readonly processedContentType?: string;
+  readonly processedUrl?: string;
+  readonly [key: string]: unknown;
+}
+
+interface ImageProcessingResponse {
+  readonly product: CrawlProduct;
+  readonly profile: { readonly slug: string; readonly enabled: boolean; readonly revision: string };
+  readonly processed: number;
+}
+
+async function loadProcessedImage(token: string): Promise<Buffer> {
+  const response = await fetch(
+    `${coordinatorUrl}/api/v1/internal/image-processing/files/${encodeURIComponent(token)}`,
+    { headers: pipelineToken ? { "X-Pipeline-Key": pipelineToken } : {} },
+  );
+  if (!response.ok) {
+    throw new Error(`Coordinator processed image download failed with HTTP ${response.status}.`);
+  }
+  return Buffer.from(await response.arrayBuffer());
+}
+
+async function stageProcessedMedia(
+  product: CrawlProduct,
+  runner: ReturnType<typeof createModuleApiRunner>,
+  proxyStoreId: string,
+  requestPrefix: string,
+): Promise<CrawlProduct> {
+  const stagedMedia: ProcessedImageMedia[] = [];
+  for (const [index, rawMedia] of (product.media ?? []).entries()) {
+    const media = rawMedia as ProcessedImageMedia;
+    if (!media.processedFileToken) {
+      stagedMedia.push(media);
+      continue;
+    }
+    const content = await loadProcessedImage(media.processedFileToken);
+    const response = await runner({
+      storeId: proxyStoreId,
+      operation: "files.stageBinary",
+      mode: "apply",
+      requestId: `${requestPrefix}-image-${index + 1}-${media.processedFileToken.slice(0, 12)}`,
+      payload: {
+        filename: `${media.processedFileToken}.jpg`,
+        mimeType: media.processedContentType || "image/jpeg",
+        contentBase64: content.toString("base64"),
+      },
+    }) as ShopifyFilesStageBinaryResponse;
+    stagedMedia.push({
+      ...media,
+      processedUrl: response.data.resourceUrl,
+      processedFileToken: undefined,
+      processedContentType: undefined,
+    });
+  }
+  const firstImageByAsin = new Map<string, string>();
+  for (const media of stagedMedia) {
+    const sourceAsin = typeof media.sourceAsin === "string" ? media.sourceAsin : "";
+    const processedUrl = typeof media.processedUrl === "string" ? media.processedUrl : "";
+    if (sourceAsin && processedUrl && !firstImageByAsin.has(sourceAsin)) {
+      firstImageByAsin.set(sourceAsin, processedUrl);
+    }
+  }
+  const variants = Array.isArray(product.variants)
+    ? product.variants.map((rawVariant) => {
+        if (!rawVariant || typeof rawVariant !== "object") return rawVariant;
+        const variant = rawVariant as Record<string, unknown>;
+        const sourceAsin = typeof variant.sourceAsin === "string" ? variant.sourceAsin : "";
+        return firstImageByAsin.has(sourceAsin)
+          ? { ...variant, mediaUrl: firstImageByAsin.get(sourceAsin) }
+          : variant;
+      })
+    : product.variants;
+  return { ...product, media: stagedMedia, variants };
+}
+
+function stripProcessingTokens(product: CrawlProduct): CrawlProduct {
+  return {
+    ...product,
+    media: (product.media ?? []).map((rawMedia) => {
+      const media = { ...rawMedia } as Record<string, unknown>;
+      delete media.processedFileToken;
+      delete media.processedContentType;
+      return media as ProcessedImageMedia;
+    }),
+  };
+}
+
 function productBlockers(product: CrawlProduct): string[] {
   const blockers: string[] = [];
   const matrix = product.variantMatrix && typeof product.variantMatrix === "object"
@@ -195,7 +296,7 @@ async function failClaim(
   options?: {
     readonly retryable?: boolean;
     readonly reconciliationRequired?: boolean;
-    readonly phase?: "normalization" | "seo" | "shopify";
+    readonly phase?: "normalization" | "seo" | "image_processing" | "shopify";
     readonly timings?: PipelineTimings;
   },
 ): Promise<void> {
@@ -358,29 +459,84 @@ async function processClaim(
 
     const seoProduct = prepared.execution.product;
     const seoExecution = prepared.execution.execution;
-    const finalChecksum = checksum(seoProduct);
     const seoSummary = createSeoContentPipelineSummary(seoExecution);
-    await postJson(`/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/syncing`, {
+    const imageProfileSlug = claim.settings.imageProfileSlug || "default";
+    await postJson(`/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/image-processing`, {
       workerId,
       normalizedProduct: seoProduct,
+      imageProcessing: { status: "running", profileSlug: imageProfileSlug },
+    });
+
+    const imageStartedAt = Date.now();
+    let imageResponse: ImageProcessingResponse;
+    try {
+      imageResponse = await postJson<ImageProcessingResponse>("/api/v1/internal/image-processing/process", {
+        product: seoProduct,
+        profileSlug: imageProfileSlug,
+        profileRevision: claim.settings.imageProfileRevision,
+      });
+    } catch (error: unknown) {
+      timings.imageProcessingMs = Date.now() - imageStartedAt;
+      timings.totalMs = Date.now() - pipelineStartedAt;
+      await failClaim(claim, workerId, error, { retryable: true, phase: "image_processing", timings });
+      return;
+    }
+    timings.imageProcessingMs = Date.now() - imageStartedAt;
+    const finalChecksum = checksum({ product: seoProduct, imageProfileRevision: imageResponse.profile.revision });
+    const isNoOp = Boolean(existingProductId && lastSyncedChecksum === finalChecksum);
+    let shopifyProduct = imageResponse.product;
+    if (isNoOp) {
+      shopifyProduct = stripProcessingTokens(shopifyProduct);
+    }
+    if (!isNoOp && imageResponse.profile.enabled) {
+      const uploadStartedAt = Date.now();
+      try {
+        shopifyProduct = await stageProcessedMedia(
+          imageResponse.product,
+          runner,
+          proxyStoreId,
+          `pipeline-${claim.id}-${finalChecksum}`,
+        );
+      } catch (error: unknown) {
+        timings.imageUploadMs = Date.now() - uploadStartedAt;
+        timings.totalMs = Date.now() - pipelineStartedAt;
+        await failClaim(claim, workerId, error, { retryable: true, phase: "image_processing", timings });
+        return;
+      }
+      timings.imageUploadMs = Date.now() - uploadStartedAt;
+    }
+    const imageProcessingSummary = {
+      status: "completed",
+      profileSlug: imageResponse.profile.slug,
+      profileRevision: imageResponse.profile.revision,
+      processedImages: imageResponse.processed,
+    } as const;
+    await postJson(`/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/image-processing`, {
+      workerId,
+      normalizedProduct: shopifyProduct,
+      imageProcessing: imageProcessingSummary,
+    });
+    logPhase(claim.sourceKey, "image-processing", timings.imageProcessingMs + (timings.imageUploadMs ?? 0));
+    await postJson(`/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/syncing`, {
+      workerId,
+      normalizedProduct: shopifyProduct,
       proxyProfile,
       seo: seoSummary,
     });
 
-    const isNoOp = Boolean(existingProductId && lastSyncedChecksum === finalChecksum);
     let syncResult: ShopifySyncProductResult;
     const syncStartedAt = Date.now();
     if (isNoOp) {
       syncResult = {
         success: true,
-        sourceId: seoProduct.id,
+        sourceId: shopifyProduct.id,
         productId: existingProductId,
         productHandle: existingProductHandle,
-        title: seoProduct.title || seoProduct.sourceTitle || "Custom Product",
-        variantsCount: Array.isArray(seoProduct.variants) ? seoProduct.variants.length : 0,
-        mediaCount: Array.isArray(seoProduct.media) ? seoProduct.media.length : 0,
+        title: shopifyProduct.title || shopifyProduct.sourceTitle || "Custom Product",
+        variantsCount: Array.isArray(shopifyProduct.variants) ? shopifyProduct.variants.length : 0,
+        mediaCount: Array.isArray(shopifyProduct.media) ? shopifyProduct.media.length : 0,
         assetsUploadedCount: 0,
-        metafieldSet: Boolean(seoProduct.customization),
+        metafieldSet: Boolean(shopifyProduct.customization),
         dryRun: false,
         warnings: [],
         managedResources: existingManagedResources,
@@ -399,7 +555,7 @@ async function processClaim(
         getRequestId: (operation) => `pipeline-${claim.id}-${finalChecksum}-${operation}`,
       });
       hasStartedShopifyWrite = true;
-      syncResult = await syncSingleProduct(fromCustomizationNormalizerProduct(seoProduct), {
+      syncResult = await syncSingleProduct(fromCustomizationNormalizerProduct(shopifyProduct), {
         gateway,
         existingProductId,
         existingManagedResources,
@@ -447,10 +603,11 @@ async function processClaim(
       workerId,
       storeId,
       normalizedChecksum: finalChecksum,
-      normalizedProduct: seoProduct,
+      normalizedProduct: shopifyProduct,
       shopify: {
         ...syncResult,
         seo: seoSummary,
+        imageProcessing: imageProcessingSummary,
         noOp: isNoOp,
         warnings: [...syncResult.warnings, ...reconciliationWarnings],
         storeId,
@@ -522,20 +679,19 @@ async function waitForCoordinator(): Promise<void> {
     try {
       const response = await fetch(`${coordinatorUrl}/api/v1/health`);
       const payload: unknown = await response.json().catch(() => null);
+      const health = payload && typeof payload === "object"
+        ? payload as { status?: unknown; apiVersion?: unknown }
+        : null;
       if (
         response.ok
-        && payload
-        && typeof payload === "object"
-        && (payload as { protocolVersion?: unknown }).protocolVersion === "2"
+        && health?.status === "ok"
+        && health.apiVersion === "v1"
       ) {
         return;
       }
-      const protocolVersion = payload && typeof payload === "object"
-        ? String((payload as { protocolVersion?: unknown }).protocolVersion ?? "unknown")
-        : "unknown";
-      if (response.ok && protocolVersion !== "2") {
+      if (response.ok && health?.status === "ok") {
         throw new Error(
-          `Coordinator protocol ${protocolVersion} is running at ${coordinatorUrl}; protocol 2 is required. Stop the old dev process and restart npm run dev.`,
+          `Coordinator at ${coordinatorUrl} does not expose the required API v1 health contract.`,
         );
       }
       lastError = `Coordinator health returned HTTP ${response.status}.`;

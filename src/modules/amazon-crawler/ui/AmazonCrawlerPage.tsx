@@ -10,6 +10,8 @@ import {
   type AmazonCrawlerRunner,
   type AmazonCrawlerSettings,
   type AmazonCrawlerSyncRetrier,
+  type ImageProcessingProfile,
+  type ImageProcessingProfileManager,
 } from "../types";
 
 import { firstProductMediaUrl, resolveSelectedProduct } from "./product-selection";
@@ -20,6 +22,7 @@ interface AmazonCrawlerPageProps {
   loadAmazonCrawlerClients: AmazonCrawlerClientsLoader;
   runAmazonCrawler: AmazonCrawlerRunner;
   retryAmazonCrawlerSyncs: AmazonCrawlerSyncRetrier;
+  imageProcessingProfiles?: ImageProcessingProfileManager;
 }
 
 type ResultTab = "overview" | "source" | "final" | "customize" | "json";
@@ -70,6 +73,7 @@ function progressPhaseLabel(phase: AmazonCrawlerProgress["phase"]): string {
     customization: "Amazon Customize",
     normalization: "Chuẩn hóa",
     seo: "Tạo nội dung SEO",
+    image_processing: "Xử lý và tải ảnh",
     shopify: "Đẩy Shopify",
     captcha: "Chờ CAPTCHA",
     export: "Xuất JSON",
@@ -77,7 +81,7 @@ function progressPhaseLabel(phase: AmazonCrawlerProgress["phase"]): string {
   return labels[phase];
 }
 
-export function AmazonCrawlerPage({ clearAmazonCrawlerCache, loadAmazonCrawlerClients, retryAmazonCrawlerSyncs, runAmazonCrawler }: AmazonCrawlerPageProps): React.JSX.Element {
+export function AmazonCrawlerPage({ clearAmazonCrawlerCache, imageProcessingProfiles, loadAmazonCrawlerClients, retryAmazonCrawlerSyncs, runAmazonCrawler }: AmazonCrawlerPageProps): React.JSX.Element {
   const [urlText, setUrlText] = useState("");
   const [settings, setSettings] = useState<AmazonCrawlerSettings>(DEFAULT_AMAZON_CRAWLER_SETTINGS);
   const [isAdvancedOpen, setIsAdvancedOpen] = useState(false);
@@ -98,6 +102,11 @@ export function AmazonCrawlerPage({ clearAmazonCrawlerCache, loadAmazonCrawlerCl
   const [clients, setClients] = useState<AmazonCrawlerClientSummary[]>([]);
   const [clientError, setClientError] = useState<string | null>(null);
   const [isLoadingClients, setIsLoadingClients] = useState(true);
+  const [imageProfiles, setImageProfiles] = useState<ImageProcessingProfile[]>([]);
+  const [editingImageProfile, setEditingImageProfile] = useState<ImageProcessingProfile | null>(null);
+  const [isImageProfileEditorOpen, setIsImageProfileEditorOpen] = useState(false);
+  const [imageProfileMessage, setImageProfileMessage] = useState<string | null>(null);
+  const [imageProfilePreview, setImageProfilePreview] = useState<string | null>(null);
 
   const urls = useMemo(
     () => urlText.split(/\r?\n/).map((url) => url.trim()).filter(Boolean),
@@ -140,6 +149,99 @@ export function AmazonCrawlerPage({ clearAmazonCrawlerCache, loadAmazonCrawlerCl
       window.clearInterval(intervalId);
     };
   }, [loadAmazonCrawlerClients]);
+
+  useEffect(() => {
+    if (!imageProcessingProfiles) return;
+    let isMounted = true;
+    void imageProcessingProfiles.list().then((profiles) => {
+      if (!isMounted) return;
+      setImageProfiles(profiles);
+      const selected = profiles.find((profile) => profile.slug === settings.imageProfileSlug) ?? profiles[0];
+      if (selected) {
+        setSettings((current) => ({ ...current, imageProfileSlug: selected.slug }));
+        setEditingImageProfile(selected);
+      }
+    }).catch((caught: unknown) => {
+      if (isMounted) setImageProfileMessage(caught instanceof Error ? caught.message : "Không tải được image profiles.");
+    });
+    return () => { isMounted = false; };
+  }, [imageProcessingProfiles]);
+
+  async function refreshImageProfiles(selectedSlug?: string): Promise<void> {
+    if (!imageProcessingProfiles) return;
+    const profiles = await imageProcessingProfiles.list();
+    setImageProfiles(profiles);
+    const selected = profiles.find((profile) => profile.slug === (selectedSlug ?? settings.imageProfileSlug)) ?? profiles[0] ?? null;
+    setEditingImageProfile(selected);
+    if (selected) updateSetting("imageProfileSlug", selected.slug);
+  }
+
+  async function handleSaveImageProfile(): Promise<void> {
+    if (!imageProcessingProfiles || !editingImageProfile) return;
+    try {
+      const saved = await imageProcessingProfiles.save(editingImageProfile.slug, editingImageProfile);
+      await refreshImageProfiles(saved.slug);
+      setImageProfileMessage(`Đã lưu image profile ${saved.name}.`);
+    } catch (caught: unknown) {
+      setImageProfileMessage(caught instanceof Error ? caught.message : "Không lưu được image profile.");
+    }
+  }
+
+  async function handleCreateImageProfile(): Promise<void> {
+    const template = imageProfiles.find((profile) => profile.slug === settings.imageProfileSlug) ?? imageProfiles[0];
+    if (!template) return;
+    const slug = `image-profile-${Date.now()}`;
+    setEditingImageProfile({ ...template, slug, name: "New image profile", revision: "new", hasLogo: false });
+    setIsImageProfileEditorOpen(true);
+  }
+
+  async function handleDeleteImageProfile(): Promise<void> {
+    if (!imageProcessingProfiles || !editingImageProfile || editingImageProfile.slug === "default") return;
+    try {
+      await imageProcessingProfiles.delete(editingImageProfile.slug);
+      await refreshImageProfiles("default");
+      setImageProfileMessage("Đã xóa image profile.");
+    } catch (caught: unknown) {
+      setImageProfileMessage(caught instanceof Error ? caught.message : "Không xóa được image profile.");
+    }
+  }
+
+  async function handleImageProfileLogo(file: File | undefined): Promise<void> {
+    if (!file || !imageProcessingProfiles || !editingImageProfile) return;
+    const dataUrl = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.addEventListener("load", () => resolve(String(reader.result || "")), { once: true });
+      reader.addEventListener("error", () => reject(reader.error ?? new Error("Không đọc được logo.")), { once: true });
+      reader.readAsDataURL(file);
+    });
+    try {
+      const isUnsaved = !imageProfiles.some((profile) => profile.slug === editingImageProfile.slug);
+      const profile = isUnsaved
+        ? await imageProcessingProfiles.save(editingImageProfile.slug, editingImageProfile)
+        : editingImageProfile;
+      const saved = await imageProcessingProfiles.uploadLogo(profile.slug, dataUrl);
+      await refreshImageProfiles(saved.slug);
+      setImageProfileMessage("Đã tải logo lên profile.");
+    } catch (caught: unknown) {
+      setImageProfileMessage(caught instanceof Error ? caught.message : "Không tải được logo.");
+    }
+  }
+
+  async function handleImageProfilePreview(file: File | undefined): Promise<void> {
+    if (!file || !imageProcessingProfiles || !editingImageProfile) return;
+    const dataUrl = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.addEventListener("load", () => resolve(String(reader.result || "")), { once: true });
+      reader.addEventListener("error", () => reject(reader.error ?? new Error("Không đọc được ảnh preview.")), { once: true });
+      reader.readAsDataURL(file);
+    });
+    try {
+      setImageProfilePreview(await imageProcessingProfiles.preview(editingImageProfile.slug, editingImageProfile, dataUrl));
+      setImageProfileMessage("Preview dùng chính cấu hình hiện tại, chưa cần bấm lưu.");
+    } catch (caught: unknown) {
+      setImageProfileMessage(caught instanceof Error ? caught.message : "Không tạo được preview.");
+    }
+  }
 
   function handleSelectProduct(productId: string): void {
     const product = resultProducts.find((candidate) => candidate.id === productId);
@@ -311,7 +413,67 @@ export function AmazonCrawlerPage({ clearAmazonCrawlerCache, loadAmazonCrawlerCl
           />
           Thay variants bằng preset Jeminise 47 variants
         </label>
+        <label className="grid gap-1 text-sm text-slate-300">
+          Xử lý ảnh
+          <select
+            className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2"
+            value={settings.imageProfileSlug}
+            onChange={(event) => {
+              const slug = event.target.value;
+              updateSetting("imageProfileSlug", slug);
+              setEditingImageProfile(imageProfiles.find((profile) => profile.slug === slug) ?? null);
+            }}
+          >
+            {imageProfiles.map((profile) => <option key={profile.slug} value={profile.slug}>{profile.name}{profile.enabled ? " · bật" : " · tắt"}</option>)}
+          </select>
+        </label>
+        <div className="flex items-end gap-2">
+          <button className="rounded-lg border border-cyan-700 px-3 py-2 text-sm text-cyan-200" type="button" onClick={() => setIsImageProfileEditorOpen((open) => !open)}>Cấu hình ảnh</button>
+          <button className="rounded-lg border border-slate-700 px-3 py-2 text-sm" type="button" onClick={() => void handleCreateImageProfile()}>Tạo profile</button>
+        </div>
       </div>
+
+      {isImageProfileEditorOpen && editingImageProfile ? (
+        <section className="space-y-4 rounded-xl border border-cyan-900 bg-slate-950/60 p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h2 className="font-semibold text-cyan-200">Image profile · {editingImageProfile.slug}</h2>
+            <span className="text-xs text-slate-500">Revision {editingImageProfile.revision}</span>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-3">
+            <label className="grid gap-1 text-sm">Tên<input className="rounded border border-slate-700 bg-slate-900 px-3 py-2" value={editingImageProfile.name} onChange={(event) => setEditingImageProfile({ ...editingImageProfile, name: event.target.value })} /></label>
+            <label className="flex items-center gap-2 self-end p-2 text-sm"><input checked={editingImageProfile.enabled} type="checkbox" onChange={(event) => setEditingImageProfile({ ...editingImageProfile, enabled: event.target.checked })} /> Bật xử lý ảnh</label>
+            <label className="grid gap-2 text-sm">
+              Logo PNG/JPEG/WebP
+              {editingImageProfile.logoUrl ? (
+                <span className="flex h-24 items-center justify-center overflow-hidden rounded-lg border border-slate-700 bg-white/90 p-2">
+                  <img alt={`Logo hiện tại của ${editingImageProfile.name}`} className="max-h-full max-w-full object-contain" src={editingImageProfile.logoUrl} />
+                </span>
+              ) : (
+                <span className="flex h-24 items-center justify-center rounded-lg border border-dashed border-slate-700 text-xs text-slate-500">Chưa có logo</span>
+              )}
+              <input accept="image/png,image/jpeg,image/webp" className="text-xs" type="file" onChange={(event) => void handleImageProfileLogo(event.target.files?.[0])} />
+            </label>
+            <label className="grid gap-1 text-sm">Ảnh thử preview<input accept="image/png,image/jpeg,image/webp" className="text-xs" type="file" onChange={(event) => void handleImageProfilePreview(event.target.files?.[0])} /></label>
+            <NumberSetting label="Random pixels" min={0} max={10000} value={editingImageProfile.randomPixels} onChange={(value) => setEditingImageProfile({ ...editingImageProfile, randomPixels: value })} />
+            <NumberSetting label="Pixel delta" min={1} max={20} value={editingImageProfile.pixelDelta} onChange={(value) => setEditingImageProfile({ ...editingImageProfile, pixelDelta: value })} />
+            <NumberSetting label="JPEG quality" min={70} max={98} value={editingImageProfile.jpegQuality} onChange={(value) => setEditingImageProfile({ ...editingImageProfile, jpegQuality: value })} />
+            <NumberSetting label="Output width" min={100} max={4000} value={editingImageProfile.output.width} onChange={(value) => setEditingImageProfile({ ...editingImageProfile, output: { ...editingImageProfile.output, width: value } })} />
+            <NumberSetting label="Output height" min={100} max={4000} value={editingImageProfile.output.height} onChange={(value) => setEditingImageProfile({ ...editingImageProfile, output: { ...editingImageProfile.output, height: value } })} />
+            <label className="grid gap-1 text-sm">Fit<select className="rounded border border-slate-700 bg-slate-900 px-3 py-2" value={editingImageProfile.output.fit} onChange={(event) => setEditingImageProfile({ ...editingImageProfile, output: { ...editingImageProfile.output, fit: event.target.value === "cover" ? "cover" : "contain" } })}><option value="contain">Contain</option><option value="cover">Cover</option></select></label>
+            <label className="grid gap-1 text-sm">Background<input className="h-10 rounded border border-slate-700 bg-slate-900" type="color" value={editingImageProfile.output.background} onChange={(event) => setEditingImageProfile({ ...editingImageProfile, output: { ...editingImageProfile.output, background: event.target.value } })} /></label>
+            <label className="flex items-center gap-2 self-end p-2 text-sm"><input checked={editingImageProfile.logo.enabled} disabled={!editingImageProfile.hasLogo} type="checkbox" onChange={(event) => setEditingImageProfile({ ...editingImageProfile, logo: { ...editingImageProfile.logo, enabled: event.target.checked } })} /> Bật logo {editingImageProfile.hasLogo ? "" : "(chưa có file)"}</label>
+            <label className="grid gap-1 text-sm">Vị trí logo<select className="rounded border border-slate-700 bg-slate-900 px-3 py-2" value={editingImageProfile.logo.position} onChange={(event) => setEditingImageProfile({ ...editingImageProfile, logo: { ...editingImageProfile.logo, position: event.target.value as ImageProcessingProfile["logo"]["position"] } })}><option value="top-left">Top left</option><option value="top-right">Top right</option><option value="bottom-left">Bottom left</option><option value="bottom-right">Bottom right</option></select></label>
+            <NumberSetting label="Logo max %" min={1} max={100} value={editingImageProfile.logo.maxPercent} onChange={(value) => setEditingImageProfile({ ...editingImageProfile, logo: { ...editingImageProfile.logo, maxPercent: value } })} />
+            <NumberSetting label="Logo padding" min={0} max={4000} value={editingImageProfile.logo.padding} onChange={(value) => setEditingImageProfile({ ...editingImageProfile, logo: { ...editingImageProfile.logo, padding: value } })} />
+          </div>
+          {imageProfilePreview ? <img alt="Image processing preview" className="max-h-80 rounded-lg border border-slate-700 object-contain" src={imageProfilePreview} /> : null}
+          <div className="flex gap-2">
+            <button className="rounded bg-cyan-500 px-4 py-2 font-semibold text-slate-950" type="button" onClick={() => void handleSaveImageProfile()}>Lưu profile</button>
+            <button className="rounded border border-rose-700 px-4 py-2 text-rose-300 disabled:opacity-40" disabled={editingImageProfile.slug === "default"} type="button" onClick={() => void handleDeleteImageProfile()}>Xóa profile</button>
+          </div>
+          {imageProfileMessage ? <p className="text-sm text-amber-200">{imageProfileMessage}</p> : null}
+        </section>
+      ) : null}
 
       <button className="text-sm font-semibold text-cyan-300" type="button" onClick={() => setIsAdvancedOpen((open) => !open)}>
         {isAdvancedOpen ? "Ẩn" : "Hiện"} Advanced Settings
@@ -481,6 +643,7 @@ export function AmazonCrawlerPage({ clearAmazonCrawlerCache, loadAmazonCrawlerCl
                         <div><dt className="text-slate-500">Preset</dt><dd>{selectedProduct.preset ?? "—"}</dd></div>
                         <div><dt className="text-slate-500">Pipeline</dt><dd>{selectedProduct.pipeline?.status ?? "Chưa nhận"}</dd></div>
                         <div><dt className="text-slate-500">SEO</dt><dd>{selectedProduct.pipeline?.seo.status ?? "pending"}{selectedProduct.pipeline?.seo.engine ? ` · ${selectedProduct.pipeline.seo.engine}` : ""}</dd></div>
+                        <div><dt className="text-slate-500">Ảnh</dt><dd>{selectedProduct.pipeline?.imageProcessing?.status ?? "pending"}{selectedProduct.pipeline?.imageProcessing?.profileSlug ? ` · ${selectedProduct.pipeline.imageProcessing.profileSlug}` : ""}</dd></div>
                         <div><dt className="text-slate-500">Proxy Shopify</dt><dd>{selectedProduct.pipeline?.shopify.proxyProfile ?? "—"}</dd></div>
                       </dl>
                       <a className="mt-4 inline-block text-sm font-semibold text-cyan-300 hover:text-cyan-200" href={selectedProduct.canonicalUrl} rel="noreferrer" target="_blank">Mở trên Amazon ↗</a>
@@ -497,6 +660,7 @@ export function AmazonCrawlerPage({ clearAmazonCrawlerCache, loadAmazonCrawlerCl
                       {selectedProduct.pipeline?.seo.fallbackStages?.length ? <p className="mt-3 rounded-lg border border-amber-800 bg-amber-950/30 p-3 text-sm text-amber-200">SEO fallback: {selectedProduct.pipeline.seo.fallbackStages.join(", ")}</p> : null}
                       {selectedProduct.pipeline?.seo.warnings?.map((warning) => <p key={warning} className="mt-3 rounded-lg border border-amber-800 bg-amber-950/30 p-3 text-sm text-amber-200">SEO: {warning}</p>)}
                       {selectedProduct.pipeline?.seo.error ? <p className="mt-3 rounded-lg border border-rose-800 bg-rose-950/30 p-3 text-sm text-rose-200">SEO: {selectedProduct.pipeline.seo.error}</p> : null}
+                      {selectedProduct.pipeline?.imageProcessing?.error ? <p className="mt-3 rounded-lg border border-rose-800 bg-rose-950/30 p-3 text-sm text-rose-200">Ảnh: {selectedProduct.pipeline.imageProcessing.error}</p> : null}
                     </div>
                   </div>
 

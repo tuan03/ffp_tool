@@ -5,13 +5,16 @@ import json
 import tempfile
 import unittest
 import asyncio
+import base64
 import os
 from datetime import timedelta
+from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
 
 import websockets
 from fastapi.testclient import TestClient
+from PIL import Image
 from sqlalchemy import select
 
 from engine.crawler_core import CrawlSettings
@@ -42,12 +45,12 @@ from engine.proxy_profiles import resolve_proxy_assignments
 def client_hello(client_id: str = "client-a", slots: int = 2) -> dict[str, object]:
     return {
         "type": "hello",
-        "protocolVersion": "1",
+        "protocolVersion": "3",
         "agentVersion": "1.0.0",
         "clientId": client_id,
         "displayName": client_id,
         "availableSlots": slots,
-        "capabilities": {"amazon": True, "offlineSpool": True},
+        "capabilities": {"amazon": True, "offlineSpool": True, "mediaGalleryV2": True},
         "limits": {
             "productThreads": 4,
             "variantThreads": 8,
@@ -512,7 +515,7 @@ class ClientAgentTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(hello["type"], "hello")
             await websocket.send(json.dumps({
                 "type": "hello_ack",
-                "protocolVersion": "1",
+                "protocolVersion": "3",
                 "heartbeatIntervalSeconds": 10,
                 "leaseSeconds": 60,
             }))
@@ -1312,6 +1315,47 @@ class CoordinatorDatabaseTests(unittest.TestCase):
 
 
 class CoordinatorApiTests(unittest.TestCase):
+    def test_image_profile_preview_supports_unsaved_draft_and_job_pins_revision(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = Path(directory) / "coordinator.sqlite3"
+            image_root = Path(directory) / "images"
+            with patch.dict(os.environ, {"IMAGE_PROCESSING_CACHE_DIR": str(image_root)}):
+                app = create_coordinator_app(database_url=f"sqlite:///{database_path.as_posix()}")
+            source = BytesIO()
+            Image.new("RGB", (40, 20), "#336699").save(source, format="PNG")
+            data_url = "data:image/png;base64," + base64.b64encode(source.getvalue()).decode("ascii")
+            draft = {
+                "slug": "draft-profile",
+                "name": "Draft profile",
+                "enabled": True,
+                "randomPixels": 0,
+                "output": {"width": 64, "height": 64, "fit": "contain", "background": "#ffffff"},
+            }
+
+            with TestClient(app) as client:
+                preview = client.post(
+                    "/api/v1/image-profiles/draft-profile/preview",
+                    json={"dataUrl": data_url, "profile": draft},
+                )
+                client.put("/api/v1/image-profiles/draft-profile", json=draft)
+                saved = client.post(
+                    "/api/v1/image-profiles/draft-profile/logo",
+                    json={"dataUrl": data_url},
+                ).json()
+                logo = client.get("/api/v1/image-profiles/draft-profile/logo")
+                job = client.post(
+                    "/api/v1/crawl-jobs",
+                    json={"urls": ["B0FR4MSS2H"], "imageProfileSlug": "draft-profile"},
+                ).json()
+
+            self.assertEqual(preview.status_code, 200)
+            self.assertTrue(preview.json()["dataUrl"].startswith("data:image/jpeg;base64,"))
+            self.assertEqual(logo.status_code, 200)
+            self.assertEqual(logo.headers["content-type"], "image/png")
+            self.assertEqual(logo.content, source.getvalue())
+            self.assertEqual(job["settings"]["imageProfileSlug"], "draft-profile")
+            self.assertEqual(job["settings"]["imageProfileRevision"], saved["revision"])
+
     def test_lan_frontend_origin_is_allowed_in_development(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             database_path = Path(directory) / "coordinator.sqlite3"
@@ -1339,7 +1383,10 @@ class CoordinatorApiTests(unittest.TestCase):
             database_path = Path(directory) / "coordinator.sqlite3"
             app = create_coordinator_app(database_url=f"sqlite:///{database_path.as_posix()}")
             with TestClient(app) as client:
-                self.assertEqual(client.get("/api/v1/health").json()["status"], "ok")
+                health = client.get("/api/v1/health").json()
+                self.assertEqual(health["status"], "ok")
+                self.assertEqual(health["apiVersion"], "v1")
+                self.assertEqual(health["workerProtocolVersion"], "3")
                 job = client.post("/api/v1/crawl-jobs", json={"urls": ["B0FR4MSS2H"]}).json()
                 with client.websocket_connect("/api/v1/worker/connect") as websocket:
                     websocket.send_json(client_hello(slots=1))
@@ -1450,15 +1497,16 @@ class CoordinatorApiTests(unittest.TestCase):
                 self.assertNotIn("corpusRevision", export.json()["products"][0]["pipeline"]["seo"])
                 self.assertNotIn("taskResults", export.json())
 
-    def test_cache_clear_requires_a_connected_client(self) -> None:
+    def test_cache_clear_also_clears_server_image_cache_without_a_client(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             database_path = Path(directory) / "coordinator.sqlite3"
             app = create_coordinator_app(database_url=f"sqlite:///{database_path.as_posix()}")
             with TestClient(app) as client:
                 response = client.delete("/api/v1/clients/cache")
 
-            self.assertEqual(response.status_code, 409)
-            self.assertIn("client", response.json()["detail"].casefold())
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json()["requestedClients"], 0)
+            self.assertIn("imageProcessing", response.json())
 
     def test_result_job_identity_must_match_the_leased_task(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

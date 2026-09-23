@@ -34,6 +34,7 @@ export async function runMockAmazonCrawler({
   });
   const mockSettings = {
     profileSlug: input.profileSlug,
+    imageProfileSlug: input.imageProfileSlug,
     applyJeminisePreset: input.applyJeminisePreset,
     productThreads: input.productThreads,
     variantThreads: input.variantThreads,

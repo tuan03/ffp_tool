@@ -11,6 +11,7 @@ export type ShopifyOperation =
   | "variants.bulkCreate"
   | "files.create"
   | "files.bulkCreate"
+  | "files.stageBinary"
   | "metafields.set"
   | "collections.list"
   | "collections.get"
@@ -582,6 +583,31 @@ export interface ShopifyFilesBulkCreateResponse {
   readonly data: ShopifyFilesBulkCreateData;
 }
 
+export interface ShopifyFilesStageBinaryPayload {
+  readonly filename: string;
+  readonly mimeType: string;
+  readonly contentBase64: string;
+}
+
+export interface ShopifyFilesStageBinaryData {
+  readonly resourceUrl: string;
+}
+
+export interface ShopifyFilesStageBinaryInput {
+  readonly storeId: string;
+  readonly requestId?: string;
+  readonly mode?: ShopifyExecutionMode;
+  readonly operation: "files.stageBinary";
+  readonly payload: ShopifyFilesStageBinaryPayload;
+}
+
+export interface ShopifyFilesStageBinaryResponse {
+  readonly storeId: string;
+  readonly operation: "files.stageBinary";
+  readonly success: true;
+  readonly data: ShopifyFilesStageBinaryData;
+}
+
 // 9d. metafields.set
 export interface ShopifyMetafieldItemInput {
   readonly ownerId?: string;
@@ -850,6 +876,7 @@ export type ShopifyApiInput =
   | ShopifyVariantsBulkCreateInput
   | ShopifyFilesCreateInput
   | ShopifyFilesBulkCreateInput
+  | ShopifyFilesStageBinaryInput
   | ShopifyMetafieldsSetInput
   | ShopifyCollectionsListInput
   | ShopifyCollectionsGetInput
@@ -873,6 +900,7 @@ export type ShopifyApiResponse =
   | ShopifyVariantsBulkCreateResponse
   | ShopifyFilesCreateResponse
   | ShopifyFilesBulkCreateResponse
+  | ShopifyFilesStageBinaryResponse
   | ShopifyMetafieldsSetResponse
   | ShopifyCollectionsListResponse
   | ShopifyCollectionsGetResponse

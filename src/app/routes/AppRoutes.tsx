@@ -9,7 +9,7 @@ import { getModuleApiRunner } from "../../modules/module-api";
 import { createAutoSeoModuleApiClient } from "../../modules/orchestrator";
 import { createPinterestPodRoutes, getPinterestPodClient } from "../../modules/pinterest-pod";
 import { createProductCrawlerRoutes, getProductCrawlerClient } from "../../modules/product-crawler";
-import type { AmazonCrawlerCacheClearer, AmazonCrawlerClientsLoader, AmazonCrawlerRunner, AmazonCrawlerSyncRetrier } from "../../modules/amazon-crawler";
+import type { AmazonCrawlerCacheClearer, AmazonCrawlerClientsLoader, AmazonCrawlerRunner, AmazonCrawlerSyncRetrier, ImageProcessingProfileManager } from "../../modules/amazon-crawler";
 import type { WorkflowInput, WorkflowOutput } from "../../modules/orchestrator";
 import { HomePage } from "../../pages/home/HomePage";
 import { NotFoundPage } from "../../pages/not-found/NotFoundPage";
@@ -19,6 +19,7 @@ interface AppRoutesProps {
   loadAmazonCrawlerClients: AmazonCrawlerClientsLoader;
   runAmazonCrawler: AmazonCrawlerRunner;
   retryAmazonCrawlerSyncs: AmazonCrawlerSyncRetrier;
+  imageProcessingProfiles: ImageProcessingProfileManager;
   runWorkflow(input: WorkflowInput): Promise<WorkflowOutput>;
 }
 
@@ -26,6 +27,7 @@ export function AppRoutes({
   clearAmazonCrawlerCache,
   loadAmazonCrawlerClients,
   retryAmazonCrawlerSyncs,
+  imageProcessingProfiles,
   runAmazonCrawler,
   runWorkflow,
 }: AppRoutesProps): React.JSX.Element {
@@ -42,6 +44,7 @@ export function AppRoutes({
       clearAmazonCrawlerCache,
       loadAmazonCrawlerClients,
       retryAmazonCrawlerSyncs,
+      imageProcessingProfiles,
     );
 
     return createBrowserRouter([
@@ -67,7 +70,7 @@ export function AppRoutes({
         ],
       },
     ]);
-  }, [clearAmazonCrawlerCache, loadAmazonCrawlerClients, retryAmazonCrawlerSyncs, runAmazonCrawler, runWorkflow]);
+  }, [clearAmazonCrawlerCache, imageProcessingProfiles, loadAmazonCrawlerClients, retryAmazonCrawlerSyncs, runAmazonCrawler, runWorkflow]);
 
   return <RouterProvider router={router} />;
 }

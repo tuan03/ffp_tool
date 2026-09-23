@@ -110,7 +110,12 @@ def hello_message(
         "displayName": display_name,
         "availableSlots": max(0, available_slots),
         "maxConcurrentInputs": max(1, max_concurrent_inputs),
-        "capabilities": {"amazon": True, "captcha": not limits.headless, "offlineSpool": True},
+        "capabilities": {
+            "amazon": True,
+            "captcha": not limits.headless,
+            "offlineSpool": True,
+            "mediaGalleryV2": True,
+        },
         "limits": {
             "productThreads": limits.product_threads,
             "variantThreads": limits.variant_threads,

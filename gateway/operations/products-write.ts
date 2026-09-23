@@ -585,6 +585,7 @@ export async function executeProductsCreate(
         tracked: isTracked,
       };
       vInput.inventoryPolicy = isTracked ? "DENY" : "CONTINUE";
+      if (typeof v.mediaUrl === "string" && v.mediaUrl.trim()) vInput.mediaSrc = [v.mediaUrl.trim()];
       if (Array.isArray(v.optionValues)) {
         vInput.optionValues = (v.optionValues as readonly Record<string, unknown>[]).map((ov) => {
           const optVal: Record<string, unknown> = {};
@@ -1041,6 +1042,7 @@ export async function executeProductsUpdate(
         tracked: variant.inventoryTracked === true,
       };
       value.inventoryPolicy = variant.inventoryTracked === true ? "DENY" : "CONTINUE";
+      if (typeof variant.mediaUrl === "string" && variant.mediaUrl.trim()) value.mediaSrc = [variant.mediaUrl.trim()];
       if (Array.isArray(variant.optionValues)) value.optionValues = variant.optionValues;
       return value;
     };

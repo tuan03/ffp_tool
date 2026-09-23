@@ -322,6 +322,60 @@ class PlaywrightPool:
             )
         except Exception:
             pass
+        # Amazon lazily materializes part of the gallery. Scrolling and clicking
+        # each image thumbnail makes those URLs available in the rendered DOM.
+        # Video thumbnails are deliberately skipped.
+        rendered_gallery: list[dict[str, Any]] = []
+
+        async def capture_current_image() -> None:
+            try:
+                captured = await page.eval_on_selector(
+                    "#landingImage, #imgBlkFront, #main-image",
+                    """element => ({
+                        hiRes: element.getAttribute('data-old-hires') || '',
+                        large: (() => {
+                          const raw = element.getAttribute('data-a-dynamic-image') || '';
+                          try { return Object.keys(JSON.parse(raw))[0] || ''; } catch { return ''; }
+                        })(),
+                        mainUrl: element.currentSrc || element.src || ''
+                    })""",
+                )
+                if isinstance(captured, dict):
+                    rendered_gallery.append(captured)
+            except Exception:
+                pass
+
+        await capture_current_image()
+        try:
+            thumbnails = page.locator(
+                "#altImages li:not(.videoThumbnail) img, "
+                "#altImages li:not([class*='video']) input[type='image']"
+            )
+            count = min(await thumbnails.count(), 30)
+            for index in range(count):
+                thumbnail = thumbnails.nth(index)
+                try:
+                    await thumbnail.scroll_into_view_if_needed(timeout=1_500)
+                    await thumbnail.click(timeout=1_500)
+                    await page.wait_for_timeout(80)
+                    await capture_current_image()
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        if rendered_gallery:
+            await page.evaluate(
+                """entries => {
+                    const previous = document.querySelector('#ffp-rendered-gallery');
+                    if (previous) previous.remove();
+                    const script = document.createElement('script');
+                    script.id = 'ffp-rendered-gallery';
+                    script.type = 'application/json';
+                    script.textContent = JSON.stringify(entries);
+                    document.body.appendChild(script);
+                }""",
+                rendered_gallery,
+            )
         await page.wait_for_timeout(250)
         return await page.content()
 
@@ -737,6 +791,10 @@ class PlaywrightPool:
 
     def fetch_proxy_fallback(self, url: str, *, cancel_event: threading.Event | None = None) -> str:
         return self.fetch(url, cancel_event=cancel_event, prefer_proxy=True)
+
+    def fetch_gallery(self, url: str, *, cancel_event: threading.Event | None = None) -> str:
+        """Render the complete image gallery using the normal direct/proxy routing."""
+        return self.fetch(url, cancel_event=cancel_event)
 
     def _fetch_customization(
         self,

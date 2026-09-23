@@ -17,6 +17,8 @@ export interface Money {
 
 export interface AmazonCrawlerSettings {
   profileSlug: AmazonCrawlerProfile;
+  imageProfileSlug: string;
+  imageProfileRevision?: string | null;
   applyJeminisePreset: boolean;
   productThreads: number;
   variantThreads: number;
@@ -64,7 +66,7 @@ export interface AmazonCrawlerBrowserPoolProgress {
 }
 
 export interface AmazonCrawlerProgress {
-  phase: "queued" | "product" | "variant_matrix" | "customization" | "normalization" | "seo" | "shopify" | "export" | "captcha";
+  phase: "queued" | "product" | "variant_matrix" | "customization" | "normalization" | "seo" | "image_processing" | "shopify" | "export" | "captcha";
   completed: number;
   total: number;
   message: string;
@@ -77,6 +79,7 @@ export type ProductPipelineStatus =
   | "received"
   | "normalizing"
   | "seo"
+  | "image_processing"
   | "syncing"
   | "retry_wait"
   | "completed"
@@ -96,6 +99,13 @@ export interface ProductPipelineMetadata {
     fieldsApplied?: string[];
     fallbackStages?: string[];
     warnings?: string[];
+    error?: string | null;
+  };
+  imageProcessing?: {
+    status: "pending" | "running" | "completed" | "failed";
+    profileSlug?: string;
+    profileRevision?: string;
+    processedImages?: number;
     error?: string | null;
   };
   shopify: {
@@ -121,6 +131,8 @@ export interface ProductPipelineTimings {
     seoRebaseMs?: number;
     seoRegistrationMs?: number;
     seoTotalMs?: number;
+    imageProcessingMs?: number;
+    imageUploadMs?: number;
     shopifySyncMs?: number;
     totalMs?: number;
   };
@@ -145,6 +157,9 @@ export interface ProductMedia {
   kind: "image" | "video";
   sourceAsin?: string;
   alt?: string;
+  amazonImageId?: string | null;
+  isMain?: boolean;
+  processedUrl?: string;
 }
 
 export interface PriceInference {
@@ -368,8 +383,46 @@ export interface AmazonCrawlerClientsLoader {
   (): Promise<AmazonCrawlerClientSummary[]>;
 }
 
+export interface ImageProcessingProfile {
+  slug: string;
+  name: string;
+  enabled: boolean;
+  revision: string;
+  hasLogo: boolean;
+  logoUrl?: string;
+  randomPixels: number;
+  pixelDelta: number;
+  jpegQuality: number;
+  output: {
+    width: number;
+    height: number;
+    fit: "contain" | "cover";
+    upscale: boolean;
+    background: string;
+  };
+  logo: {
+    enabled: boolean;
+    width: number;
+    height: number;
+    maxPercent: number;
+    percentBasis: "width" | "height";
+    padding: number;
+    position: "top-left" | "top-right" | "bottom-left" | "bottom-right";
+    opacity: number;
+  };
+}
+
+export interface ImageProcessingProfileManager {
+  list(): Promise<ImageProcessingProfile[]>;
+  save(slug: string, profile: ImageProcessingProfile): Promise<ImageProcessingProfile>;
+  delete(slug: string): Promise<void>;
+  uploadLogo(slug: string, dataUrl: string): Promise<ImageProcessingProfile>;
+  preview(slug: string, profile: ImageProcessingProfile, dataUrl: string): Promise<string>;
+}
+
 export const DEFAULT_AMAZON_CRAWLER_SETTINGS: AmazonCrawlerSettings = {
   profileSlug: "default",
+  imageProfileSlug: "default",
   applyJeminisePreset: false,
   productThreads: 3,
   variantThreads: 8,

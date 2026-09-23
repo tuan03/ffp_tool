@@ -1,6 +1,6 @@
 export { amazonCrawlerRoutes } from "./routes";
-export { getAmazonCrawlerCacheClearer, getAmazonCrawlerClientsLoader, getAmazonCrawlerRunner, getAmazonCrawlerSyncRetrier } from "./runtime";
-export { AmazonCrawlerServiceError, createAmazonCrawlerCacheClearer, createAmazonCrawlerClientsLoader, createAmazonCrawlerRunner, createAmazonCrawlerSyncRetrier, serializeAmazonCrawlerInput } from "./service";
+export { getAmazonCrawlerCacheClearer, getAmazonCrawlerClientsLoader, getAmazonCrawlerRunner, getAmazonCrawlerSyncRetrier, getImageProcessingProfileManager } from "./runtime";
+export { AmazonCrawlerServiceError, createAmazonCrawlerCacheClearer, createAmazonCrawlerClientsLoader, createAmazonCrawlerRunner, createAmazonCrawlerSyncRetrier, createImageProcessingProfileManager, serializeAmazonCrawlerInput } from "./service";
 export { DEFAULT_AMAZON_CRAWLER_SETTINGS } from "./types";
 export type {
   AmazonCrawlerError,
@@ -28,4 +28,6 @@ export type {
   ProductPipelineMetadata,
   ProductPipelineStatus,
   ProductPipelineTimings,
+  ImageProcessingProfile,
+  ImageProcessingProfileManager,
 } from "./types";

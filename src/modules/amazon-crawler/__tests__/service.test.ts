@@ -7,6 +7,7 @@ import {
   createAmazonCrawlerClientsLoader,
   createAmazonCrawlerRunner,
   createAmazonCrawlerSyncRetrier,
+  createImageProcessingProfileManager,
   DEFAULT_AMAZON_CRAWLER_SETTINGS,
   getAmazonCrawlerRunner,
   serializeAmazonCrawlerInput,
@@ -36,6 +37,39 @@ test("default settings match the four-proxy concurrency profile", () => {
       browserTabs: 2,
     },
   );
+});
+
+test("image profile manager lists, saves, uploads logo, previews and deletes profiles", async () => {
+  const requests: Array<{ url: string; method: string }> = [];
+  const profile = {
+    slug: "default", name: "Default", enabled: false, revision: "revision-1", hasLogo: true,
+    randomPixels: 100, pixelDelta: 3, jpegQuality: 92,
+    output: { width: 1500, height: 1500, fit: "contain" as const, upscale: true, background: "#ffffff" },
+    logo: { enabled: false, width: 120, height: 60, maxPercent: 15, percentBasis: "width" as const, padding: 0, position: "bottom-right" as const, opacity: 1 },
+  };
+  const manager = createImageProcessingProfileManager({
+    engineUrl: "http://127.0.0.1:8766",
+    fetchImplementation: async (request, init) => {
+      const url = String(request);
+      requests.push({ url, method: init?.method ?? "GET" });
+      if (url.endsWith("/preview")) return jsonResponse({ dataUrl: "data:image/jpeg;base64,cHJldmlldw==" });
+      if ((init?.method ?? "GET") === "DELETE") return jsonResponse({ status: "deleted" });
+      if (url.endsWith("/image-profiles")) return jsonResponse({ profiles: [profile] });
+      return jsonResponse(profile);
+    },
+  });
+
+  const profiles = await manager.list();
+  assert.equal(profiles.length, 1);
+  assert.equal(
+    profiles[0]?.logoUrl,
+    "http://127.0.0.1:8766/api/v1/image-profiles/default/logo?revision=revision-1",
+  );
+  await manager.save("default", profile);
+  await manager.uploadLogo("default", "data:image/png;base64,bG9nbw==");
+  assert.match(await manager.preview("default", profile, "data:image/png;base64,aW1hZ2U="), /^data:image\/jpeg/);
+  await manager.delete("brand");
+  assert.deepEqual(requests.map((request) => request.method), ["GET", "PUT", "POST", "POST", "DELETE"]);
 });
 
 test("real runner serializes input, polls progress, and returns partial output", async () => {

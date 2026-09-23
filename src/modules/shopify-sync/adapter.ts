@@ -100,7 +100,9 @@ export function fromCustomizationNormalizerProduct(
   const media: ShopifyMediaInput[] = (product.media || [])
     .filter((item: ProductMediaItem) => String(item.kind ?? "image").toLowerCase() !== "video")
     .map((item: ProductMediaItem) => ({
-      originalSource: item.url,
+      originalSource: typeof item.processedUrl === "string" && item.processedUrl
+        ? item.processedUrl
+        : item.url,
       alt: item.alt || title,
       mediaContentType: "IMAGE",
       friendlyFileName: item.friendlyFileName,
@@ -173,6 +175,7 @@ export function fromCustomizationNormalizerProduct(
         barcode: typeof v.barcode === "string" ? v.barcode : undefined,
         inventoryTracked: false, // Default to Inventory not tracked
         optionValues: optionValues.length > 0 ? optionValues : undefined,
+        mediaUrl: typeof v.mediaUrl === "string" ? v.mediaUrl : undefined,
       }];
     });
 

@@ -2,6 +2,7 @@ import type { AmazonCrawlerOutput, AmazonCrawlerProduct, AmazonCrawlerSettings, 
 
 const MOCK_SETTINGS: AmazonCrawlerSettings = {
   profileSlug: "default",
+  imageProfileSlug: "default",
   applyJeminisePreset: false,
   productThreads: 3,
   variantThreads: 8,

@@ -165,6 +165,7 @@ export interface CreateVariantItem {
   readonly barcode?: string;
   readonly inventoryTracked?: boolean;
   readonly optionValues?: readonly ShopifyVariantOptionValue[];
+  readonly mediaUrl?: string;
 }
 
 export interface CreateVariantsOutput {

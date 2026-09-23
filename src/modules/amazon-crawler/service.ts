@@ -9,6 +9,8 @@ import type {
   AmazonCrawlerRunOptions,
   AmazonCrawlerRunner,
   AmazonCrawlerSyncRetrier,
+  ImageProcessingProfile,
+  ImageProcessingProfileManager,
 } from "./types";
 
 interface JobCreatedResponse {
@@ -311,5 +313,66 @@ export function createAmazonCrawlerClientsLoader({
       if (error instanceof AmazonCrawlerServiceError) throw error;
       throw new AmazonCrawlerServiceError("Không kết nối được coordinator. Hãy chạy npm run dev.", "COORDINATOR_OFFLINE");
     }
+  };
+}
+
+function readImageProfile(value: unknown, baseUrl?: string): ImageProcessingProfile {
+  if (!isRecord(value) || typeof value.slug !== "string" || typeof value.name !== "string") {
+    throw new AmazonCrawlerServiceError("Coordinator returned an invalid image profile.", "INVALID_ENGINE_RESPONSE");
+  }
+  const profile = value as unknown as ImageProcessingProfile;
+  if (!profile.hasLogo || !baseUrl) return profile;
+  return {
+    ...profile,
+    logoUrl: `${baseUrl}/api/v1/image-profiles/${encodeURIComponent(profile.slug)}/logo?revision=${encodeURIComponent(profile.revision)}`,
+  };
+}
+
+export function createImageProcessingProfileManager({
+  engineUrl,
+  fetchImplementation = fetch,
+}: AmazonCrawlerClientOptions): ImageProcessingProfileManager {
+  const baseUrl = normalizeEngineUrl(engineUrl);
+  return {
+    async list() {
+      const payload = await readJson(await fetchImplementation(`${baseUrl}/api/v1/image-profiles`));
+      if (!isRecord(payload) || !Array.isArray(payload.profiles)) {
+        throw new AmazonCrawlerServiceError("Coordinator returned an invalid image profile list.", "INVALID_ENGINE_RESPONSE");
+      }
+      return payload.profiles.map((profile) => readImageProfile(profile, baseUrl));
+    },
+    async save(slug, profile) {
+      const response = await fetchImplementation(`${baseUrl}/api/v1/image-profiles/${encodeURIComponent(slug)}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(profile),
+      });
+      return readImageProfile(await readJson(response), baseUrl);
+    },
+    async delete(slug) {
+      await readJson(await fetchImplementation(`${baseUrl}/api/v1/image-profiles/${encodeURIComponent(slug)}`, {
+        method: "DELETE",
+      }));
+    },
+    async uploadLogo(slug, dataUrl) {
+      const response = await fetchImplementation(`${baseUrl}/api/v1/image-profiles/${encodeURIComponent(slug)}/logo`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dataUrl }),
+      });
+      return readImageProfile(await readJson(response), baseUrl);
+    },
+    async preview(slug, profile, dataUrl) {
+      const response = await fetchImplementation(`${baseUrl}/api/v1/image-profiles/${encodeURIComponent(slug)}/preview`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ profile, dataUrl }),
+      });
+      const payload = await readJson(response);
+      if (!isRecord(payload) || typeof payload.dataUrl !== "string") {
+        throw new AmazonCrawlerServiceError("Coordinator returned an invalid image preview.", "INVALID_ENGINE_RESPONSE");
+      }
+      return payload.dataUrl;
+    },
   };
 }
