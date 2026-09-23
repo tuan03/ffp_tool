@@ -192,3 +192,98 @@ export async function executeMetafieldsSet(
     metafields: mappedMetafields,
   };
 }
+
+export const METAFIELD_GET_QUERY = `
+  query GetMetafieldNode($id: ID!, $namespace: String!, $key: String!) {
+    node(id: $id) {
+      id
+      ... on HasMetafields {
+        metafield(namespace: $namespace, key: $key) {
+          id
+          namespace
+          key
+          value
+          type
+        }
+      }
+    }
+  }
+`;
+
+export interface MetafieldsGetPayload {
+  readonly ownerId: string;
+  readonly namespace?: string;
+  readonly key?: string;
+}
+
+export interface MetafieldsGetData {
+  readonly id?: string;
+  readonly value: string | null;
+  readonly namespace?: string;
+  readonly key?: string;
+  readonly type?: string;
+}
+
+interface RawMetafieldGetResponse {
+  readonly node?: {
+    readonly id: string;
+    readonly metafield?: {
+      readonly id: string;
+      readonly namespace: string;
+      readonly key: string;
+      readonly value: string;
+      readonly type: string;
+    } | null;
+  } | null;
+}
+
+export async function executeMetafieldsGet(
+  client: ShopifyGraphqlClient,
+  store: StoreConfig,
+  payload: unknown,
+  executionMode: "preview" | "apply",
+): Promise<MetafieldsGetData> {
+  const p = payload as Record<string, unknown> | null;
+  const ownerId = typeof p?.ownerId === "string" ? p.ownerId.trim() : "";
+  if (!ownerId) {
+    throw new GatewayError("ownerId is required", "SHOPIFY_USER_ERROR", 400);
+  }
+
+  const namespace = typeof p?.namespace === "string" && p.namespace.trim().length > 0 ? p.namespace.trim() : "custom";
+  const key = typeof p?.key === "string" && p.key.trim().length > 0 ? p.key.trim() : "amazon_customizer";
+
+  if (executionMode === "preview") {
+    return {
+      id: "gid://shopify/Metafield/preview-1",
+      value: null,
+      namespace,
+      key,
+      type: "json",
+    };
+  }
+
+  const raw = await client.query<RawMetafieldGetResponse>(
+    store,
+    METAFIELD_GET_QUERY,
+    { id: ownerId, namespace, key },
+    { isWrite: false },
+  );
+
+  const mf = raw?.node?.metafield;
+  if (!mf) {
+    return {
+      id: undefined,
+      value: null,
+      namespace,
+      key,
+    };
+  }
+
+  return {
+    id: mf.id,
+    value: mf.value,
+    namespace: mf.namespace,
+    key: mf.key,
+    type: mf.type,
+  };
+}

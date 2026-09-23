@@ -24,8 +24,13 @@ import {
   executeVariantsBulkUpdate,
   executeVariantsUpdate,
 } from "./operations/variants-write";
-import { executeFilesBulkCreate, executeFilesCreate, executeFilesStageBinary } from "./operations/files-write";
-import { executeMetafieldsSet } from "./operations/metafields-write";
+import {
+  executeFilesBulkCreate,
+  executeFilesCreate,
+  executeFilesDelete,
+  executeFilesStageBinary,
+} from "./operations/files-write";
+import { executeMetafieldsGet, executeMetafieldsSet } from "./operations/metafields-write";
 import {
   executeStoresGet,
   executeStoresList,
@@ -45,6 +50,7 @@ const WRITE_OPERATIONS: ReadonlySet<string> = new Set([
   "files.create",
   "files.bulkCreate",
   "files.stageBinary",
+  "files.delete",
   "metafields.set",
   "collections.create",
   "collections.update",
@@ -394,7 +400,7 @@ export class GatewayDispatcher {
     }
 
     // 3. Read Operations
-    const data = await this.executeRead(store, request.operation, request.payload, requestId);
+    const data = await this.executeRead(store, request.operation, request.payload, requestId, mode);
     return {
       storeId: effectiveStoreId,
       operation: request.operation,
@@ -408,6 +414,7 @@ export class GatewayDispatcher {
     operation: string,
     payload: unknown,
     requestId?: string,
+    mode: "preview" | "apply" = "apply",
   ): Promise<unknown> {
     switch (operation) {
       case "connection.test":
@@ -420,6 +427,8 @@ export class GatewayDispatcher {
         return executeCollectionsList(store, this.graphqlClient, payload);
       case "collections.get":
         return executeCollectionsGet(store, this.graphqlClient, payload);
+      case "metafields.get":
+        return executeMetafieldsGet(this.graphqlClient, store, payload, mode);
       default:
         throw new GatewayError(`Unsupported operation: ${operation}`, "NOT_IMPLEMENTED", 501);
     }
@@ -453,6 +462,8 @@ export class GatewayDispatcher {
         return executeFilesBulkCreate(store, this.graphqlClient, payload, mode, requestId);
       case "files.stageBinary":
         return executeFilesStageBinary(store, this.graphqlClient, payload, mode, requestId);
+      case "files.delete":
+        return executeFilesDelete(this.graphqlClient, store, payload, mode);
       case "metafields.set":
         return executeMetafieldsSet(store, this.graphqlClient, payload, mode, requestId);
       case "collections.create":

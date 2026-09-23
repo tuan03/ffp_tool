@@ -7121,6 +7121,124 @@ describe("Gateway: Architectural & Operational Hardening (P1)", () => {
       assert.equal(requestPayload.variables.metafields?.[0]?.ownerId, "gid://shopify/Product/top-owner-1");
       assert.equal(requestPayload.variables.metafields?.[0]?.value, "{\"test\":1}");
     });
+
+    it("executes files.delete in preview mode without calling Shopify", async () => {
+      let called = false;
+      const dispatcher = setupTestGateway(async () => {
+        called = true;
+        return createMockResponse({});
+      });
+
+      const res = await dispatcher.dispatch({
+        storeId: "store-test",
+        operation: "files.delete",
+        mode: "preview",
+        payload: {
+          fileIds: ["gid://shopify/MediaImage/file-del-1", "gid://shopify/MediaImage/file-del-2"],
+        },
+      });
+
+      assert.equal(called, false);
+      assert.equal(res.success, true);
+      const data = res.data as { success: boolean; deletedFileIds: readonly string[] };
+      assert.equal(data.success, true);
+      assert.deepEqual(data.deletedFileIds, [
+        "gid://shopify/MediaImage/file-del-1",
+        "gid://shopify/MediaImage/file-del-2",
+      ]);
+    });
+
+    it("executes files.delete in apply mode calling fileDelete mutation", async () => {
+      let requestPayload: { query: string; variables: { fileIds?: string[] } } | undefined;
+      const dispatcher = setupTestGateway(async (_url: string, init?: RequestInit) => {
+        requestPayload = JSON.parse(init?.body as string);
+        return createMockResponse({
+          data: {
+            fileDelete: {
+              deletedFileIds: ["gid://shopify/MediaImage/file-del-1"],
+              userErrors: [],
+            },
+          },
+        });
+      });
+
+      const res = await dispatcher.dispatch({
+        storeId: "store-test",
+        operation: "files.delete",
+        mode: "apply",
+        requestId: "req-file-del-1",
+        payload: {
+          fileIds: ["gid://shopify/MediaImage/file-del-1"],
+        },
+      });
+
+      assert.equal(res.success, true);
+      const data = res.data as { success: boolean; deletedFileIds: readonly string[] };
+      assert.deepEqual(data.deletedFileIds, ["gid://shopify/MediaImage/file-del-1"]);
+      assert.ok(requestPayload?.query.includes("fileDelete"));
+      assert.deepEqual(requestPayload?.variables.fileIds, ["gid://shopify/MediaImage/file-del-1"]);
+    });
+
+    it("executes metafields.get in preview mode", async () => {
+      let called = false;
+      const dispatcher = setupTestGateway(async () => {
+        called = true;
+        return createMockResponse({});
+      });
+
+      const res = await dispatcher.dispatch({
+        storeId: "store-test",
+        operation: "metafields.get",
+        mode: "preview",
+        payload: {
+          ownerId: "gid://shopify/Product/123",
+          namespace: "custom",
+          key: "amazon_customizer",
+        },
+      });
+
+      assert.equal(called, false);
+      assert.equal(res.success, true);
+      const data = res.data as { id?: string; value: string | null };
+      assert.equal(data.value, null);
+    });
+
+    it("executes metafields.get in apply mode returning parsed value", async () => {
+      const dispatcher = setupTestGateway(async () => {
+        return createMockResponse({
+          data: {
+            node: {
+              id: "gid://shopify/Product/123",
+              metafield: {
+                id: "gid://shopify/Metafield/mf-read-1",
+                namespace: "custom",
+                key: "amazon_customizer",
+                value: "{\"surfaces\":[]}",
+                type: "json",
+              },
+            },
+          },
+        });
+      });
+
+      const res = await dispatcher.dispatch({
+        storeId: "store-test",
+        operation: "metafields.get",
+        mode: "apply",
+        payload: {
+          ownerId: "gid://shopify/Product/123",
+          namespace: "custom",
+          key: "amazon_customizer",
+        },
+      });
+
+      assert.equal(res.success, true);
+      const data = res.data as { id?: string; value: string | null; namespace?: string; key?: string };
+      assert.equal(data.id, "gid://shopify/Metafield/mf-read-1");
+      assert.equal(data.value, "{\"surfaces\":[]}");
+      assert.equal(data.namespace, "custom");
+      assert.equal(data.key, "amazon_customizer");
+    });
   });
 
   describe("Gateway Hardening: Polling, Security, MediaImage, Metafields, Category, StoreId", () => {

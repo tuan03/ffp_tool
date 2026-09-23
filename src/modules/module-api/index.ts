@@ -1,4 +1,5 @@
 export {
+  createCustomizationGatewayAdapter,
   createShopifyGatewayAdapter,
   resolveShopifyProductForSync,
 } from "./gateway-adapter";
@@ -71,6 +72,10 @@ export type {
   ShopifyFilesStageBinaryInput,
   ShopifyFilesStageBinaryPayload,
   ShopifyFilesStageBinaryResponse,
+  ShopifyFilesDeleteData,
+  ShopifyFilesDeleteInput,
+  ShopifyFilesDeletePayload,
+  ShopifyFilesDeleteResponse,
   ShopifyImage,
   ShopifyImageInput,
   ShopifyMetafieldItemInput,
@@ -79,6 +84,10 @@ export type {
   ShopifyMetafieldsSetInput,
   ShopifyMetafieldsSetPayload,
   ShopifyMetafieldsSetResponse,
+  ShopifyMetafieldsGetData,
+  ShopifyMetafieldsGetInput,
+  ShopifyMetafieldsGetPayload,
+  ShopifyMetafieldsGetResponse,
   ShopifyOperation,
   ShopifyPageInfo,
   ShopifyProduct,

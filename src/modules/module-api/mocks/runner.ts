@@ -41,8 +41,12 @@ import type {
   ShopifyFilesCreateResponse,
   ShopifyFilesBulkCreateInput,
   ShopifyFilesBulkCreateResponse,
+  ShopifyFilesDeleteInput,
+  ShopifyFilesDeleteResponse,
   ShopifyMetafieldsSetInput,
   ShopifyMetafieldsSetResponse,
+  ShopifyMetafieldsGetInput,
+  ShopifyMetafieldsGetResponse,
   ShopifyVariantsBulkCreateInput,
   ShopifyVariantsBulkCreateResponse,
   ShopifyVariantsBulkUpdateInput,
@@ -159,7 +163,9 @@ export async function runMockModuleApi(input: ShopifyVariantsBulkUpdateInput): P
 export async function runMockModuleApi(input: ShopifyVariantsBulkCreateInput): Promise<ShopifyVariantsBulkCreateResponse>;
 export async function runMockModuleApi(input: ShopifyFilesCreateInput): Promise<ShopifyFilesCreateResponse>;
 export async function runMockModuleApi(input: ShopifyFilesBulkCreateInput): Promise<ShopifyFilesBulkCreateResponse>;
+export async function runMockModuleApi(input: ShopifyFilesDeleteInput): Promise<ShopifyFilesDeleteResponse>;
 export async function runMockModuleApi(input: ShopifyMetafieldsSetInput): Promise<ShopifyMetafieldsSetResponse>;
+export async function runMockModuleApi(input: ShopifyMetafieldsGetInput): Promise<ShopifyMetafieldsGetResponse>;
 export async function runMockModuleApi(input: ShopifyCollectionsListInput): Promise<ShopifyCollectionsListResponse>;
 export async function runMockModuleApi(input: ShopifyCollectionsGetInput): Promise<ShopifyCollectionsGetResponse>;
 export async function runMockModuleApi(input: ShopifyCollectionsCreateInput): Promise<ShopifyCollectionsCreateResponse>;
@@ -750,6 +756,21 @@ export async function runMockModuleApi(input: ShopifyApiInput): Promise<ShopifyA
       };
     }
 
+    case "files.delete": {
+      if (!Array.isArray(input.payload.fileIds)) {
+        throw new ShopifyApiError("fileIds array is required", "SHOPIFY_USER_ERROR");
+      }
+      return {
+        storeId: input.storeId,
+        operation: "files.delete",
+        success: true,
+        data: {
+          success: true,
+          deletedFileIds: [...input.payload.fileIds],
+        },
+      };
+    }
+
     case "metafields.set": {
       let rawItems: readonly Record<string, unknown>[];
       if (Array.isArray(input.payload.metafields)) {
@@ -826,6 +847,24 @@ export async function runMockModuleApi(input: ShopifyApiInput): Promise<ShopifyA
           success: true,
           metafieldId: summaries[0]?.id,
           metafields: summaries,
+        },
+      };
+    }
+
+    case "metafields.get": {
+      if (!input.payload.ownerId || input.payload.ownerId.trim() === "") {
+        throw new ShopifyApiError("ownerId is required", "SHOPIFY_USER_ERROR");
+      }
+      return {
+        storeId: input.storeId,
+        operation: "metafields.get",
+        success: true,
+        data: {
+          id: `gid://shopify/Metafield/mock-${Date.now()}`,
+          value: null,
+          namespace: input.payload.namespace || "custom",
+          key: input.payload.key || "amazon_customizer",
+          type: "json",
         },
       };
     }
