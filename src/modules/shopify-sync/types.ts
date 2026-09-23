@@ -84,6 +84,7 @@ export interface ShopifySyncProductInput {
   readonly productType?: string;
   readonly tags?: readonly string[];
   readonly category?: string;
+  readonly collectionsToJoin?: readonly string[];
   readonly media?: readonly ShopifyMediaInput[];
   readonly options?: readonly string[];
   readonly variants?: readonly ShopifyVariantInput[];
@@ -140,6 +141,7 @@ export interface CreateProductInput {
   readonly vendor?: string;
   readonly productType?: string;
   readonly tags?: readonly string[];
+  readonly collectionsToJoin?: readonly string[];
   readonly media?: readonly ShopifyMediaInput[];
   readonly variants?: readonly CreateVariantItem[];
 }
@@ -165,6 +167,7 @@ export interface CreateVariantItem {
   readonly barcode?: string;
   readonly inventoryTracked?: boolean;
   readonly optionValues?: readonly ShopifyVariantOptionValue[];
+  readonly mediaUrl?: string;
 }
 
 export interface CreateVariantsOutput {

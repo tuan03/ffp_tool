@@ -190,4 +190,3 @@ def first_asset_path(value: Path | object | None) -> Path | None:
     if isinstance(value, str) and value.strip():
         return Path(value)
     return None
-

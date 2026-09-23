@@ -52,4 +52,3 @@ def dedupe_candidates(candidates: list[ImageCandidate], *, dhash_distance: int =
         else:
             kept.append(candidate)
     return kept, rejected
-

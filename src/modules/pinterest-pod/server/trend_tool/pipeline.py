@@ -1586,7 +1586,3 @@ def copy_decision_files(decisions: list[DedupeDecision], kept_dir: Path, rejecte
         target = destination / decision.candidate.path.name
         if not target.exists():
             target.write_bytes(decision.candidate.path.read_bytes())
-
-
-
-

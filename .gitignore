@@ -11,6 +11,7 @@ Tool_crawer_New_update/
 .DS_Store
 stores.local.json
 stores.config.json
+*zip
 
 # Python & Local Server Artifacts
 __pycache__/
@@ -26,8 +27,6 @@ src/modules/pinterest-pod/server/.env
 pinterest_oauth_tokens.json
 
 # Amazon Distributed Crawler & Local Data Artifacts
-*zip
-
 # Crawler & Gateway runtime/data
 .runtime/
 exports/
@@ -46,8 +45,16 @@ compress-src.cmd
 dev.cmd
 .compressignore
 PROJECT_CONTEXT.md
-test.cmd
-b1-visual-preview.html
 branches-git.cmd
 remotes-git.cmd
+repo-seo-content.cmd
+log-git.cmd
+stash-git.cmd
+stash-apply-git.cmd
+stash-drop-git.cmd
 #=== [end] - module SEO Content - Lth Loi ===
+
+# Manual SEO Content smoke-test artifacts and developer-specific inputs.
+testing/module-seo-content/output/
+testing/module-seo-content/local-input*.json
+testing/module-seo-content/.env.local

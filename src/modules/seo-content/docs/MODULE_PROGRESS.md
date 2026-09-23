@@ -1,205 +1,274 @@
-﻿# BÃ¡o CÃ¡o Tiáº¿n Äá»™ Chi Tiáº¿t â€” Module SEO + Content
+# Báo Cáo Tiến Độ Chi Tiết — Module SEO + Content
 
-> **NgÃ y cáº­p nháº­t:** 22/09/2026  
-> **Vá»‹ trÃ­ module:** `src/modules/seo-content`  
-> **Tráº¡ng thÃ¡i tá»•ng thá»ƒ:** ÄÃ£ hoÃ n thÃ nh 100% vÃ  kiá»ƒm thá»­ sáº¡ch toÃ n bá»™ pipeline **B1 â†’ B2 â†’ B3 â†’ B4 â†’ B5 â†’ B6** (258/258 unit tests PASS, Typecheck 0 lá»—i, Build sáº¡ch).  
-> **Quy trÃ¬nh thá»±c hiá»‡n:** 2-Agent Workflow (ChatGPT Web: Planner & Reviewer | Antigravity: Worker & Coder).
+> **Ngày cập nhật:** 23/09/2026
+> **Vị trí module:** `src/modules/seo-content`
+> **Trạng thái tổng thể:** Đã hoàn thành pipeline **B1 → B2 → B3 → B4 → B5 → B6**, có 3 adapter chuyên dụng (Customization Normalizer, Auto SEO, Pinterest POD) và Gateway integration. Luôn xác nhận số liệu kiểm thử bằng lần chạy `npm test`, `npm run typecheck`, `npm run build` và `npm run build:mock` hiện tại thay vì dùng số liệu lịch sử trong tài liệu.
+> **Quy trình thực hiện:** 2-Agent Workflow (ChatGPT Web: Planner & Reviewer | Antigravity: Worker & Coder) kết hợp nghiêm ngặt quy tắc kiến trúc `AGENTS.md`.
 
 ---
 
-## 1. Tá»•ng quan & Ranh giá»›i Kiáº¿n trÃºc
+## 1. Tổng quan & Ranh giới Kiến trúc
 
-Module **SEO + Content** Ä‘Æ°á»£c Ä‘Ã³ng gÃ³i Ä‘á»™c láº­p theo Ä‘Ãºng tiÃªu chuáº©n kiáº¿n trÃºc cá»§a dá»± Ã¡n (`AGENTS.md`):
-* **Há»™p Ä‘en (Black-box)**: Giao tiáº¿p Ä‘á»™c quyá»n qua entry point `src/modules/seo-content/index.ts`, khÃ´ng Ä‘á»ƒ lá»™ báº¥t ká»³ cáº¥u trÃºc hay helper ná»™i bá»™ nÃ o ra ngoÃ i.
+Module **SEO + Content** được đóng gói độc lập theo đúng tiêu chuẩn kiến trúc hộp đen của dự án (`AGENTS.md`):
+* **Hộp đen (Black-box)**: Giao tiếp độc quyền qua entry point duy nhất `src/modules/seo-content/index.ts`, không để lộ bất kỳ cấu trúc hay helper nội bộ nào ra ngoài.
 * **Public Contract**: 
-  * Input: `SeoContentInput` (`images`, `niche`, `title`, `description`, `handle`).
-  * Output: `SeoContentOutput` (`productTitle`, `productDescription`, `productSeoTitle`, `productSeoDescription`, `images[]` (WebP + alt), `productHandle`).
-* **MÃ´i trÆ°á»ng Runtime & CÃ´ng nghá»‡**:
-  * Cháº¡y trÃªn **Node.js runtime** (cho phÃ©p sá»­ dá»¥ng Ä‘áº§y Ä‘á»§ cÃ¡c thÆ° viá»‡n chuáº©n nhÆ° `node:fs`, `node:path`, `node:crypto`, `Buffer`).
-  * Sá»­ dá»¥ng **Google Cloud Vertex AI ADC** (dá»± Ã¡n `gemini-image-benchmark`) cho toÃ n bá»™ pipeline: Gemini 2.5 Flash (Vision/OCR), Text Embedding 004 (Vector Semantic Similarity), Gemini LLM (SEO Content Writing).
-  * Quy táº¯c báº¥t biáº¿n Zero-Network Test: 100% unit tests cháº¡y Ä‘á»™c láº­p offline khÃ´ng phá»¥ thuá»™c internet hay external API.
+  * Input: `SeoContentInput` (`images`, `niche`, `title`, `description`, `handle`, `productId`, `url`).
+  * Output: `SeoContentOutput` (`productTitle`, `productDescription`, `productSeoTitle`, `productSeoDescription`, `images[]` (WebP + Alt Text), `productHandle`).
+* **Hệ thống Adapter Đa Nguồn (Multi-Source Adapters)**:
+  * Cung cấp các adapter chuyên dụng độc lập để tiếp nhận dữ liệu từ các module khác trong hệ sinh thái (`customization-normalizer`, `auto-seo`, `pinterest-pod`) và chuyển đổi về chuẩn `SeoContentInput`.
+* **Môi trường Runtime & Công nghệ**:
+  * Chạy trên **Node.js runtime** (cho phép sử dụng đầy đủ các thư viện chuẩn như `node:fs`, `node:path`, `node:crypto`, `Buffer`).
+  * Sử dụng **Google Cloud Vertex AI ADC** (dự án `gemini-image-benchmark`) cho toàn bộ pipeline: Gemini 2.5 Flash (Vision/OCR), Text Embedding 004 (Vector Semantic Similarity), Gemini LLM (SEO Content Writing).
+  * Quy tắc bất biến Zero-Network Test: 100% unit tests chạy độc lập offline không phụ thuộc internet hay external API.
 
 ---
 
-## 2. Chi tiáº¿t cÃ¡c Logic Ä‘Ã£ triá»ƒn khai (ToÃ n bá»™ Pipeline B1 â†’ B6)
+## 2. Chi tiết các Logic đã triển khai (Toàn bộ Pipeline B1 → B6)
 
-### ðŸŸ¢ Stage B1 â€” PhÃ¢n tÃ­ch sáº£n pháº©m tá»« hÃ¬nh áº£nh (Product Understanding)
-* **Má»¥c tiÃªu**: Äá»c hiá»ƒu sÃ¢u thiáº¿t káº¿, chi tiáº¿t Ä‘á»“ há»a vÃ  thuá»™c tÃ­nh cá»§a sáº£n pháº©m tá»« áº£nh/mockup.
-* **Logic cá»‘t lÃµi**:
-  * TÃ­ch há»£p **Gemini 2.5 Flash Vision** (`@google/genai` Vertex AI client):
-    * Nháº­n diá»‡n chá»¯ trÃªn thiáº¿t káº¿ (**OCR texts**).
-    * Nháº­n diá»‡n thá»±c thá»ƒ hÃ¬nh áº£nh (**detected entities**: icon, váº­t thá»ƒ, giao diá»‡n...).
-    * TrÃ­ch xuáº¥t gam mÃ u chá»§ Ä‘áº¡o (**dominant colors**).
-    * Nháº­n diá»‡n phong cÃ¡ch má»¹ thuáº­t (**visual style**).
-    * PhÃ¢n loáº¡i sáº£n pháº©m (**product category**).
-  * Há»— trá»£ náº¡p áº£nh linh hoáº¡t: Äá»c trá»±c tiáº¿p file cá»¥c bá»™ qua `node:fs` hoáº·c náº¡p URL/Data URI.
-  * Bá»™ phÃ¢n tÃ­ch dá»± phÃ²ng táº¥t Ä‘á»‹nh (**Deterministic Heuristic Fallback**): Tá»± Ä‘á»™ng trÃ­ch xuáº¥t tÃ­n hiá»‡u tá»« `title`, `niche`, `description` khi offline hoáº·c khÃ´ng cÃ³ API key.
-* **Contract Ä‘áº§u ra**: `context.productUnderstanding`.
+### 🟢 Stage B1 — Phân tích sản phẩm từ hình ảnh (Product Understanding)
+* **Mục tiêu**: Đọc hiểu sâu thiết kế, chi tiết đồ họa và thuộc tính của sản phẩm từ ảnh/mockup.
+* **Logic cốt lõi**:
+  * Tích hợp **Gemini 2.5 Flash Vision** (`@google/genai` Vertex AI client):
+    * Nhận batch ảnh theo đúng thứ tự và dùng `niche`/title làm neo để nhận diện đúng sản phẩm được bán.
+    * Trả đúng 4 nhóm evidence: **Typography** (text + styling), **Visual Entities** (summary thiết kế), **Scene Context** (không gian đặt sản phẩm) và **Physical Product Identity** (phôi/vật thể vật lý).
+    * Không còn frequency-vote màu/background hoặc chọn category theo ảnh đầu tiên; B1 không ghi Shopify taxonomy/category/product type.
+  * Hỗ trợ nạp ảnh linh hoạt: Đọc trực tiếp file cục bộ qua `node:fs` hoặc nạp URL/Data URI.
+  * Bộ phân tích dự phòng tất định (**Deterministic Heuristic Fallback**): Tự động trích xuất tín hiệu từ `title`, `niche`, `description` khi offline hoặc không có API key.
+* **Contract đầu ra**: `context.productUnderstanding`.
 
-### ðŸŸ¢ Stage B2 â€” XÃ¡c Ä‘á»‹nh bá»‘i cáº£nh sáº£n pháº©m & NgÆ°á»i mua (Shopping Context)
-* **Má»¥c tiÃªu**: Chuyá»ƒn hÃ³a Ä‘áº·c tÃ­nh hÃ¬nh áº£nh (B1) thÃ nh ngá»¯ cáº£nh thÆ°Æ¡ng máº¡i thá»±c táº¿ vÃ  Ã½ Ä‘á»‹nh mua hÃ ng.
-* **Logic cá»‘t lÃµi**:
-  * PhÃ¢n tÃ­ch Ä‘á»‘i tÆ°á»£ng khÃ¡ch hÃ ng má»¥c tiÃªu (**targetAudience**).
-  * XÃ¡c Ä‘á»‹nh cÃ¡c dá»‹p mua sáº¯m, táº·ng quÃ  phÃ¹ há»£p (**suitableOccasions**).
-  * XÃ¡c Ä‘á»‹nh khÃ´ng gian, cÃ´ng nÄƒng sá»­ dá»¥ng (**useCases**).
-  * Táº¡o danh sÃ¡ch háº¡t giá»‘ng Ã½ Ä‘á»‹nh ngÆ°á»i mua (**buyerIntentKeywords**): Káº¿t há»£p thá»±c thá»ƒ + ngÃ nh hÃ ng + thuá»™c tÃ­nh sáº£n pháº©m Ä‘á»ƒ táº¡o cÃ¡c cá»¥m tá»« tÃ¬m kiáº¿m thÆ°Æ¡ng máº¡i cÃ³ giÃ¡ trá»‹ cao.
-* **Contract Ä‘áº§u ra**: `context.shoppingContext`.
+### 🟢 Stage B2 — Xác định bối cảnh sản phẩm & Người mua (Shopping Context)
+* **Mục tiêu**: Chuyển hóa đặc tính hình ảnh (B1) thành ngữ cảnh thương mại thực tế và ý định mua hàng.
+* **Logic cốt lõi**:
+  * Phân tích đối tượng khách hàng mục tiêu (**targetAudience**).
+  * Xác định các dịp mua sắm, tặng quà phù hợp (**suitableOccasions**).
+  * Xác định không gian, công năng sử dụng (**useCases**).
+  * Tạo danh sách hạt giống ý định người mua (**buyerIntentKeywords**): Kết hợp thực thể + ngành hàng + thuộc tính sản phẩm để tạo các cụm từ tìm kiếm thương mại có giá trị cao.
+* **Contract đầu ra**: `context.shoppingContext`.
 
-### ðŸŸ¢ Stage B3 â€” Má»Ÿ rá»™ng tá»« khÃ³a tÃ¬m kiáº¿m thá»±c táº¿ (Search Suggestions)
-* **Má»¥c tiÃªu**: Thu tháº­p truy váº¥n tÃ¬m kiáº¿m thá»±c táº¿ tá»« ngÆ°á»i dÃ¹ng nháº±m Ä‘á»‘i chiáº¿u nhu cáº§u thá»‹ trÆ°á»ng.
-* **Logic cá»‘t lÃµi**:
-  * **Google Suggest Client (`UnofficialGoogleSuggestClient`)**: Truy váº¥n trá»±c tiáº¿p Google Autocomplete API (`suggestqueries.google.com`) vá»›i ngÃ´n ngá»¯ vÃ  quá»‘c gia cáº¥u hÃ¬nh (máº·c Ä‘á»‹nh `en`/`us`).
-  * **Bá»™ Ä‘á»‡m thÃ´ng minh (`InMemoryGoogleSuggestCache`)**: Há»— trá»£ cÆ¡ cháº¿ LRU + TTL, trÃ¡nh gá»i trÃ¹ng láº·p vÃ  tiáº¿t kiá»‡m quota.
-  * **Circuit Breaker**: Tá»± Ä‘á»™ng ngáº¯t batch khi phÃ¡t hiá»‡n rate limit (429) hoáº·c bá»‹ cháº·n (403).
-  * **Bá»™ chá»n háº¡t giá»‘ng (`search-seed-selector.ts`)**: Æ¯u tiÃªn chá»n top Buyer Intent Seeds tá»« B2 káº¿t há»£p Niche Seed, Category Seed tá»« B1 (tá»‘i Ä‘a 6 seeds).
-  * **Chuáº©n hÃ³a & Khá»­ trÃ¹ng (`search-suggestions-normalizer.ts`)**: Chuáº©n hÃ³a Unicode NFKC, loáº¡i bá» URL, kÃ½ tá»± Ä‘iá»u khiá»ƒn vÃ  trÃ¹ng láº·p chuá»—i.
-  * **Fallback táº¥t Ä‘á»‹nh (`FallbackSearchSuggestionsCollector`)**: Báº£o Ä‘áº£m tÃ­nh báº¥t biáº¿n offline trong automated tests (zero-network).
-* **Contract Ä‘áº§u ra**: `context.searchResearch` (`seedKeywords`, `suggestedQueries`, `querySources`).
+### 🟢 Stage B3 — Mở rộng từ khóa tìm kiếm thực tế (Search Suggestions)
+* **Mục tiêu**: Thu thập truy vấn tìm kiếm thực tế từ người dùng nhằm đối chiếu nhu cầu thị trường.
+* **Logic cốt lõi**:
+  * **Google Suggest Client (`UnofficialGoogleSuggestClient`)**: Truy vấn trực tiếp Google Autocomplete API (`suggestqueries.google.com`) với ngôn ngữ và quốc gia cấu hình (mặc định `en`/`us`).
+  * **Bộ đệm thông minh (`InMemoryGoogleSuggestCache`)**: Hỗ trợ cơ chế LRU + TTL, tránh gọi trùng lặp và tiết kiệm quota.
+  * **Circuit Breaker**: Tự động ngắt batch khi phát hiện rate limit (429) hoặc bị chặn (403).
+  * **Bộ chọn hạt giống (`search-seed-selector.ts`)**: Ưu tiên Buyer Intent, Physical Product Identity và Visual Entities; scene seed giữ provenance riêng và chỉ dùng để khám phá.
+  * **Chuẩn hóa & Khử trùng (`search-suggestions-normalizer.ts`)**: Chuẩn hóa Unicode NFKC, loại bỏ URL, ký tự điều khiển và trùng lặp chuỗi.
+  * **Fallback tất định (`FallbackSearchSuggestionsCollector`)**: Bảo đảm tính bất biến offline trong automated tests (zero-network).
+* **Contract đầu ra**: `context.searchResearch` (`seedKeywords`, `suggestedQueries`, `querySources`).
 
-### ðŸŸ¢ Stage B4 â€” Kiá»ƒm soÃ¡t xung Ä‘á»™t & Khá»­ trÃ¹ng láº·p tá»« khÃ³a (Conflict Control)
-* **Má»¥c tiÃªu**: Lá»c sáº¡ch tá»« khÃ³a lá»‡ch ngÃ nh, khá»­ trÃ¹ng láº·p ngá»¯ nghÄ©a (cannibalization), cháº¥m Ä‘iá»ƒm tiá»m nÄƒng, gom cá»¥m tá»« khÃ³a vÃ  báº£o vá»‡ quyá»n sá»Ÿ há»¯u tá»« khÃ³a trÃªn toÃ n bá»™ catalog sáº£n pháº©m (Cross-Product Keyword Cannibalization Prevention).
-* **Logic cá»‘t lÃµi**:
-  * **Kiáº¿n trÃºc Vector-First Hybrid Conflict Engine (Intra-Product)**:
-    * **Primary Provider**: Google Vertex AI `text-embedding-004` (768 chiá»u). NhÃºng tÃ i liá»‡u tham chiáº¿u sáº£n pháº©m Ä‘a táº§ng (Dual Reference: Product Identity & Shopping Intent) vÃ  nhÃºng toÃ n bá»™ candidate queries.
-    * **Fallback Provider**: `LocalTfidfVectorizer` (káº¿t há»£p unigram trá»ng sá»‘ 2.0, bigram 2.5, char 3-gram 0.5, tá»« Ä‘iá»ƒn chuáº©n hÃ³a Ä‘á»“ng nghÄ©a) Ä‘áº£m báº£o offline unit test cháº¡y Ä‘á»™c láº­p.
-    * **Single-Vector-Space Invariant**: 100% vector so sÃ¡nh trong má»™t phiÃªn pháº£i thuá»™c cÃ¹ng má»™t provider/model; náº¿u Primary lá»—i thÃ¬ fallback toÃ n bá»™, khÃ´ng bao giá» lai táº¡p.
-  * **Khá»­ trÃ¹ng láº·p ngá»¯ nghÄ©a dá»±a trÃªn Ä‘áº¡i diá»‡n (Representative-Based Incremental Clustering)**:
-    * Sáº¯p xáº¿p á»©ng viÃªn theo Ä‘iá»ƒm liÃªn quan, provenance vÃ  Ä‘á»™ dÃ i thÆ°Æ¡ng máº¡i.
-    * á»¨ng viÃªn top 1 lÃ m Leader cá»§a cá»¥m; cÃ¡c á»©ng viÃªn sau chá»‰ so sÃ¡nh vá»›i Leader cá»§a cÃ¡c cá»¥m hiá»‡n há»¯u (loáº¡i trá»« lá»—i over-merge lan truyá»n cá»§a DSU).
-  * **Bá»™ lá»c xung Ä‘á»™t Ä‘a táº§ng cÃ³ thá»© báº­c Æ°u tiÃªn cá»‘ Ä‘á»‹nh (Deterministic Precedence)**:
-    1. `exact_duplicate`: TrÃ¹ng chuá»—i chÃ­nh xÃ¡c trong cÃ¹ng session.
-    2. `brand_conflict`: Cáº¥m nhÃ£n hiá»‡u báº£n quyá»n (Nike, Disney, v.v.).
-    3. `existing_url_cannibalization`: TrÃ¡nh xung Ä‘á»™t vá»›i sáº£n pháº©m/URL Ä‘Ã£ cÃ³ trÃªn catalog toÃ n site.
-    4. `category_conflict`: Loáº¡i trá»« lá»‡ch ngÃ nh (vÃ­ dá»¥: gáº¡t bá» `rugby` khi sáº£n pháº©m lÃ  tháº£m `rug`).
-    5. `search_intent_mismatch`: Loáº¡i bá» tá»« khÃ³a thÃ´ng tin phi thÆ°Æ¡ng máº¡i ("how to draw", "tutorial").
-    6. `semantic_drift_irrelevant`: Loáº¡i bá» tá»« khÃ³a cÃ³ Ä‘iá»ƒm vector quÃ¡ tháº¥p (< 0.54).
-    7. `semantic_duplicate`: Khá»­ trÃ¹ng láº·p ngá»¯ nghÄ©a ná»™i bá»™.
-  * **CÆ¡ sá»Ÿ dá»¯ liá»‡u Danh má»¥c ToÃ n site (`FileSeoConflictCorpus`) & Cross-Product Cannibalization**:
-    * Quáº£n lÃ½ quyá»n sá»Ÿ há»¯u tá»« khÃ³a site-wide qua file JSON cÃ³ versioning (`schemaVersion: 1`, `revision`, `updatedAt`).
-    * Ghi file nguyÃªn tá»­ (Atomic write qua temp file + `fsync` + `fs.rename`) vÃ  khÃ³a file (`corpus-file-lock.ts`) chá»‘ng race condition giá»¯a cÃ¡c process.
-    * Há»— trá»£ Optimistic Concurrency Control qua `expectedRevision` chá»‘ng ghi Ä‘Ã¨ dá»¯ liá»‡u cÅ© (`CorpusRevisionConflictError`).
-    * Replace-not-append claim set ngÄƒn ngá»«a zombie/ghost keywords; `removeProduct` giáº£i phÃ³ng quyá»n sá»Ÿ há»¯u tá»« khÃ³a; `isSameProduct` chá»‘ng tá»± xung Ä‘á»™t khi rerun cÃ¹ng sáº£n pháº©m.
-    * ÄÃ¡nh giÃ¡ vÃ¹ng xÃ¡m ngá»¯ cáº£nh (`contextual-conflict-evaluator.ts`): Äá»™ tÆ°Æ¡ng Ä‘á»“ng trong khoáº£ng $[0.86, 0.90)$ Ä‘á»‘i vá»›i primary keyword Ä‘Æ°á»£c Ä‘á»‘i chiáº¿u sÃ¢u vá» category vÃ  search intent.
-  * **LÃ m giÃ u siÃªu dá»¯ liá»‡u cho B5**: Xuáº¥t kÃ¨m báº£ng Ä‘iá»ƒm `relevanceScores`, danh sÃ¡ch phÃ¢n cá»¥m `keywordClusters` vÃ  `corpusRevision`.
-* **Contract Ä‘áº§u ra**: `context.conflictResult` (`approvedKeywords`, `discardedKeywords`, `conflictReasons`, `relevanceScores`, `keywordClusters`, `corpusRevision`).
+### 🟢 Stage B4 — Kiểm soát xung đột & Khử trùng lặp từ khóa (Conflict Control)
+* **Mục tiêu**: Lọc sạch từ khóa lệch ngành, khử trùng lặp ngữ nghĩa (cannibalization), chấm điểm tiềm năng, gom cụm từ khóa và bảo vệ quyền sở hữu từ khóa trên toàn bộ catalog sản phẩm (Cross-Product Keyword Cannibalization Prevention).
+* **Logic cốt lõi**:
+  * **Kiến trúc Vector-First Hybrid Conflict Engine (Intra-Product)**:
+    * **Primary Provider**: Google Vertex AI `text-embedding-004` (768 chiều). Nhúng tài liệu tham chiếu sản phẩm đa tầng (Dual Reference: Product Identity & Shopping Intent) và nhúng toàn bộ candidate queries.
+    * **Fallback Provider**: `LocalTfidfVectorizer` (kết hợp unigram trọng số 2.0, bigram 2.5, char 3-gram 0.5, từ điển chuẩn hóa đồng nghĩa) đảm bảo offline unit test chạy độc lập.
+    * **Single-Vector-Space Invariant**: 100% vector so sánh trong một phiên phải thuộc cùng một provider/model; nếu Primary lỗi thì fallback toàn bộ, không bao giờ lai tạp.
+  * **Khử trùng lặp ngữ nghĩa dựa trên đại diện (Representative-Based Incremental Clustering)**:
+    * Sắp xếp ứng viên theo điểm liên quan, provenance và độ dài thương mại.
+    * Ứng viên top 1 làm Leader của cụm; các ứng viên sau chỉ so sánh với Leader của các cụm hiện hữu (loại trừ lỗi over-merge lan truyền của DSU).
+  * **Bộ lọc xung đột đa tầng có thứ bậc ưu tiên cố định (Deterministic Precedence)**:
+    1. `exact_duplicate`: Trùng chuỗi chính xác trong cùng session.
+    2. `brand_conflict`: Cấm nhãn hiệu bản quyền (Nike, Disney, v.v.).
+    3. `existing_url_cannibalization`: Tránh xung đột với sản phẩm/URL đã có trên catalog toàn site.
+    4. `category_conflict`: Loại trừ lệch ngành (ví dụ: gạt bỏ `rugby` khi sản phẩm là thảm `rug`).
+    5. `search_intent_mismatch`: Loại bỏ từ khóa thông tin phi thương mại ("how to draw", "tutorial").
+    6. `semantic_drift_irrelevant`: Loại bỏ từ khóa có điểm vector quá thấp (< 0.54).
+    7. `semantic_duplicate`: Khử trùng lặp ngữ nghĩa nội bộ.
+  * **Cơ sở dữ liệu Danh mục Toàn site (`FileSeoConflictCorpus`) & Cross-Product Cannibalization**:
+    * Quản lý quyền sở hữu từ khóa site-wide qua file JSON có versioning (`schemaVersion: 1`, `revision`, `updatedAt`).
+    * Ghi file nguyên tử (Atomic write qua temp file + `fsync` + `fs.rename`) và khóa file (`corpus-file-lock.ts`) chống race condition giữa các process.
+    * Hỗ trợ Optimistic Concurrency Control qua `expectedRevision` chống ghi đè dữ liệu cũ (`CorpusRevisionConflictError`).
+    * Replace-not-append claim set ngăn ngừa zombie/ghost keywords; `removeProduct` giải phóng quyền sở hữu từ khóa; `isSameProduct` chống tự xung đột khi rerun cùng sản phẩm.
+    * Đánh giá vùng xám ngữ cảnh (`contextual-conflict-evaluator.ts`): Độ tương đồng trong khoảng $[0.86, 0.90)$ đối với primary keyword được đối chiếu sâu về category và search intent.
+  * **Làm giàu siêu dữ liệu cho B5**: Xuất kèm bảng điểm `relevanceScores`, danh sách phân cụm `keywordClusters` và `corpusRevision`.
+* **Contract đầu ra**: `context.conflictResult` (`approvedKeywords`, `discardedKeywords`, `conflictReasons`, `relevanceScores`, `keywordClusters`, `corpusRevision`).
 
-### ðŸŸ¢ Stage B5 â€” Sinh ná»™i dung chuáº©n SEO (Content Generation)
-* **Má»¥c tiÃªu**: Táº¡o trá»n bá»™ ná»™i dung thÆ°Æ¡ng máº¡i Ä‘iá»‡n tá»­ chuáº©n SEO (Title, Description HTML, Meta SEO Title, Meta SEO Description, URL Slug) dá»±a trÃªn Fact Sheet chÃ¢n thá»±c vÃ  phÃ¢n bá»• tá»« khÃ³a Ä‘a táº§ng.
-* **Logic cá»‘t lÃµi**:
-  * **Fact Sheet Báº¥t biáº¿n (`content-fact-sheet.ts`)**: TrÃ­ch xuáº¥t dá»¯ kiá»‡n cÃ³ cÄƒn cá»© (Grounded Facts) tá»« B1-B4, ngÄƒn cháº·n hoÃ n toÃ n áº£o giÃ¡c (anti-hallucination).
-  * **Bá»™ phÃ¢n bá»• tá»« khÃ³a 3 táº§ng (`keyword-allocator.ts`)**:
-    * **Tier 1 (Primary/Focus Keyword)**: DÃ nh riÃªng cho SEO Title, H1 vÃ  URL Slug.
-    * **Tier 2 (Secondary Keywords)**: Tá»‘i Ä‘a 2-3 tá»« khÃ³a tÃ­ch há»£p tá»± nhiÃªn vÃ o Bullet Points vÃ  pháº§n má»Ÿ Ä‘áº§u mÃ´ táº£.
-    * **Tier 3 (Supporting Keywords)**: DÃ nh cho pháº§n chi tiáº¿t vÃ  Alt text cá»§a Stage B6.
-  * **Kiáº¿n trÃºc Dual Engine (`GeminiSeoContentGenerator` & `HeuristicContentGenerator`)**:
-    * **Primary Engine**: Google Vertex AI Gemini 2.5 vá»›i Structured JSON Schema output.
-    * **Fallback Engine**: Template-based Heuristic Generator vá»›i tá»« vá»±ng tá»± nhiÃªn, Ä‘áº£m báº£o 100% offline unit tests cháº¡y Ä‘á»™c láº­p khÃ´ng phá»¥ thuá»™c network.
-  * **Bá»™ cÄƒn chá»‰nh Ä‘á»™ dÃ i táº¥t Ä‘á»‹nh (`content-fitters.ts`)**:
-    * `fitSeoTitle`: Cáº¯t tá»‰a an toÃ n theo ranh giá»›i tá»« $\le 70$ kÃ½ tá»±, báº£o toÃ n tá»« khÃ³a chÃ­nh.
-    * `fitSeoDescription`: Cáº¯t tá»‰a an toÃ n $\le 160$ kÃ½ tá»± kÃ¨m Call-To-Action háº¥p dáº«n.
-    * `fitProductTitle`: CÄƒn chá»‰nh tiÃªu Ä‘á» hiá»ƒn thá»‹ $\le 80$ kÃ½ tá»±.
-    * `generateProductHandle`: Chuáº©n hÃ³a URL slug $\le 80$ kÃ½ tá»±, báº£o toÃ n URL hiá»‡n há»¯u náº¿u Ä‘Ã£ cÃ³.
-  * **Äá»‹nh dáº¡ng HTML MÃ´ táº£ Shopify (`html-description-formatter.ts`)**:
-    * Táº¡o cáº¥u trÃºc ngá»¯ nghÄ©a sáº¡ch (`<h2>`, `<p>`, `<ul>`, `<li>`), tuyá»‡t Ä‘á»‘i khÃ´ng dÃ¹ng inline CSS hoáº·c class láº¡.
-  * **Kiá»ƒm tra & Tháº©m Ä‘á»‹nh ná»™i dung cuá»‘i (`content-result-validator.ts`)**:
-    * Kiá»ƒm tra Ä‘á»™ dÃ i, kiá»ƒm tra hiá»‡n diá»‡n tá»« khÃ³a chÃ­nh, kiá»ƒm tra rÃ² rá»‰ tá»« khÃ³a bá»‹ cáº¥m (discarded keywords), phÃ¡t hiá»‡n áº£o giÃ¡c cháº¥t liá»‡u/kÃ­ch thÆ°á»›c.
-* **Contract Ä‘áº§u ra**: `context.contentResult` & `context.contentGenerationMetadata`.
+### 🟢 Stage B5 — Sinh nội dung chuẩn SEO (Content Generation)
+* **Mục tiêu**: Tạo trọn bộ nội dung thương mại điện tử chuẩn SEO (Title, Description HTML, Meta SEO Title, Meta SEO Description, URL Slug) dựa trên Fact Sheet chân thực và phân bổ từ khóa đa tầng.
+* **Logic cốt lõi**:
+  * **Fact Sheet Bất biến (`content-fact-sheet.ts`)**: Chỉ trích xuất Physical Product Identity, Typography và Visual Entities từ B1; không đưa Scene Context vào copywriting.
+  * **Bộ phân bổ từ khóa 3 tầng (`keyword-allocator.ts`)**:
+    * **Tier 1 (Primary/Focus Keyword)**: Dành riêng cho SEO Title, H1 và URL Slug.
+    * **Tier 2 (Secondary Keywords)**: Tối đa 2-3 từ khóa tích hợp tự nhiên vào Bullet Points và phần mở đầu mô tả.
+    * **Tier 3 (Supporting Keywords)**: Dành cho phần chi tiết và Alt text của Stage B6.
+  * **Kiến trúc Dual Engine (`GeminiSeoContentGenerator` & `HeuristicContentGenerator`)**:
+    * **Primary Engine**: Google Vertex AI Gemini 2.5 với Structured JSON Schema output.
+    * **Fallback Engine**: Template-based Heuristic Generator với từ vựng tự nhiên, đảm bảo 100% offline unit tests chạy độc lập không phụ thuộc network.
+  * **Bộ căn chỉnh độ dài tất định (`content-fitters.ts`)**:
+    * `fitSeoTitle`: Cắt tỉa an toàn theo ranh giới từ $\le 70$ ký tự, bảo toàn từ khóa chính.
+    * `fitSeoDescription`: Cắt tỉa an toàn $\le 160$ ký tự kèm Call-To-Action hấp dẫn.
+    * `fitProductTitle`: Căn chỉnh tiêu đề hiển thị $\le 80$ ký tự.
+    * `generateProductHandle`: Chuẩn hóa URL slug $\le 80$ ký tự, bảo toàn URL hiện hữu nếu đã có.
+  * **Định dạng HTML Mô tả Shopify (`html-description-formatter.ts`)**:
+    * Tạo cấu trúc ngữ nghĩa sạch (`<h2>`, `<p>`, `<ul>`, `<li>`), tuyệt đối không dùng inline CSS hoặc class lạ.
+  * **Kiểm tra & Thẩm định nội dung cuối (`content-result-validator.ts`)**:
+    * Kiểm tra độ dài, kiểm tra hiện diện từ khóa chính, kiểm tra rò rỉ từ khóa bị cấm (discarded keywords), phát hiện ảo giác chất liệu/kích thước.
+* **Contract đầu ra**: `context.contentResult` & `context.contentGenerationMetadata`.
 
-### ðŸŸ¢ Stage B6 â€” Tá»‘i Æ°u hÃ³a hÃ¬nh áº£nh & Alt Text (Image Processing & Alt Text)
-* **Má»¥c tiÃªu**: Chuyá»ƒn Ä‘á»•i áº£nh sang chuáº©n WebP, sinh tÃªn file chuáº©n SEO táº¥t Ä‘á»‹nh, táº¡o Alt text giÃ u ngá»¯ cáº£nh khÃ´ng nhá»“i nhÃ©t tá»« khÃ³a ($\le 125$ kÃ½ tá»±), báº£o Ä‘áº£m an toÃ n SSRF vÃ  kháº£ nÄƒng hoáº¡t Ä‘á»™ng offline.
-* **Logic cá»‘t lÃµi**:
-  * **Sinh tÃªn file WebP chuáº©n SEO (`webp-filename-generator.ts`)**:
-    * Äá»‹nh dáº¡ng táº¥t Ä‘á»‹nh: `${handle}-${index + 1}.webp`.
-    * Chá»‘ng Path Traversal báº±ng `path.basename` vÃ  chuáº©n hÃ³a kÃ½ tá»± `cleanSlug`.
-  * **Táº¡o Alt Text ngá»¯ cáº£nh cÃ³ cÄƒn cá»© (`alt-text-generator.ts`)**:
-    * Æ¯u tiÃªn 1: `sourceAlt` gá»‘c cá»§a ngÆ°á»i dÃ¹ng náº¿u cÃ³ Ã½ nghÄ©a.
-    * Æ¯u tiÃªn 2: Káº¿t há»£p `productTitle` + `primaryKeyword` + tá»‘i Ä‘a 1-2 thá»±c thá»ƒ thá»‹ giÃ¡c chÃ¢n thá»±c tá»« B1.
-    * Phong cÃ¡ch: Lá»c bá» cÃ¡c phong cÃ¡ch khÃ´ng tá»± nhiÃªn (`vector art`, `clipart`), chá»‰ giá»¯ phong cÃ¡ch phÃ¹ há»£p (`vintage`, `retro`, `minimalist`).
-    * Äáº£m báº£o tÃ­nh Ä‘á»™c nháº¥t trong thÆ° viá»‡n áº£nh (`ensureGalleryUniqueness`): áº¢nh phá»¥ Ä‘Æ°á»£c Ä‘Ã¡nh sá»‘ View vÃ  trá»« hao ngÃ¢n sÃ¡ch Ä‘á»™ dÃ i trÆ°á»›c khi cáº¯t tá»‰a Ä‘á»ƒ khÃ´ng bao giá» vÆ°á»£t tráº§n 125 kÃ½ tá»±.
-    * Cáº¯t tá»‰a an toÃ n ranh giá»›i tá»« qua `alt-text-fitter.ts` ($\le 125$ kÃ½ tá»±).
-    * Bá»™ lá»c lÃ m sáº¡ch Alt (`alt-text-sanitizer.ts`): BÃ³c tÃ¡ch HTML, kÃ½ tá»± Ä‘iá»u khiá»ƒn, URL, kÃ½ tá»± surrogate-pair UTF-16 an toÃ n (`characterLength`).
-  * **Kiá»ƒm Ä‘á»‹nh & Chuyá»ƒn Ä‘á»•i WebP (`webp-validator.ts`, `webp-converter.ts`)**:
-    * Kiá»ƒm Ä‘á»‹nh Magic Bytes: Báº¯t buá»™c 4 bytes Ä‘áº§u lÃ  `RIFF` vÃ  4 bytes táº¡i offset 8 lÃ  `WEBP`.
-    * `DeterministicTestWebpConverter`: Tráº£ vá» fixture 42-byte WebP chuáº©n cho automated tests (zero-network).
-    * `SharpWebpConverter`: TÃ­ch há»£p thÆ° viá»‡n Sharp qua dynamic import reflection chá»‘ng lá»—i TS compile khi thÆ° viá»‡n lÃ  optional runtime dependency.
-    * `UnavailableWebpConverter`: Tráº£ lá»—i rÃµ rÃ ng khi khÃ´ng cÃ³ runtime chuyá»ƒn Ä‘á»•i áº£nh.
-    * NguyÃªn táº¯c báº¥t biáº¿n khÃ´ng bá»‹a Ä‘áº·t dá»¯ liá»‡u (Never Fake WebP Bytes): Náº¿u chuyá»ƒn Ä‘á»•i tháº¥t báº¡i á»Ÿ cháº¿ Ä‘á»™ lenient, khÃ´ng bao giá» giáº£ máº¡o `.data` hay `.localFilePath`.
-  * **Náº¡p áº£nh an toÃ n chá»‘ng SSRF (`image-source-loader.ts`)**:
-    * Há»— trá»£ file cá»¥c bá»™, data URI, vÃ  remote HTTP.
-    * PhÃ²ng thá»§ SSRF chuyÃªn sÃ¢u: Kiá»ƒm tra DNS/IP cáº¥m loopback (`127.0.0.1`), link-local (`169.254.x`), private IP (`10.x`, `192.168.x`).
-    * **Thanh tra chuyá»ƒn hÆ°á»›ng (Manual Redirect Hop Inspection)**: Cáº¥u hÃ¬nh `fetch({ redirect: "manual" })`, kiá»ƒm tra tá»«ng bÆ°á»›c chuyá»ƒn hÆ°á»›ng (301, 302, 307, 308) qua hÃ m `validateSafeUrl` vÃ  giá»›i háº¡n tá»‘i Ä‘a 3 hops chá»‘ng chuyá»ƒn hÆ°á»›ng Ä‘á»™c háº¡i vÃ o máº¡ng ná»™i bá»™.
-  * **LÆ°u trá»¯ áº£nh nguyÃªn tá»­ (`image-artifact-sink.ts`)**:
-    * `FileSystemImageSink`: Ghi file vÃ o thÆ° má»¥c temp ngáº«u nhiÃªn trÆ°á»›c khi rename nguyÃªn tá»­ sang file Ä‘Ã­ch, báº£o vá»‡ chá»‘ng race condition vÃ  path traversal.
-    * `MemoryImageSink`: LÆ°u trá»¯ in-memory cho mÃ´i trÆ°á»ng test vÃ  serverless.
-  * **Bá»™ xá»­ lÃ½ áº£nh tuáº§n tá»± (`image-processor.ts`)**:
-    * Xá»­ lÃ½ tá»«ng áº£nh tuáº§n tá»±, phÃ¢n tÃ¡ch cháº¿ Ä‘á»™ `lenient` (lá»—i 1 áº£nh khÃ´ng lÃ m sáº­p pipeline) vÃ  `strict` (nÃ©m lá»—i ngay).
-* **Contract Ä‘áº§u ra**: `context.imageResult` & `context.imageProcessingMetadata`.
+### 🟢 Stage B6 — Tối ưu hóa hình ảnh & Alt Text (Image Processing & Alt Text)
+* **Mục tiêu**: Chuyển đổi ảnh sang chuẩn WebP, sinh tên file chuẩn SEO tất định, tạo Alt text giàu ngữ cảnh không nhồi nhét từ khóa ($\le 125$ ký tự), bảo đảm an toàn SSRF và khả năng hoạt động offline.
+* **Logic cốt lõi**:
+  * **Sinh tên file WebP chuẩn SEO (`webp-filename-generator.ts`)**:
+    * Định dạng tất định: `${handle}-${index + 1}.webp`.
+    * Chống Path Traversal bằng `path.basename` và chuẩn hóa ký tự `cleanSlug`.
+  * **Tạo Alt Text ngữ cảnh có căn cứ (`alt-text-generator.ts`)**:
+    * Ưu tiên 1: `sourceAlt` gốc của người dùng nếu có ý nghĩa.
+    * Ưu tiên 2: Kết hợp `productTitle` + `primaryKeyword` + tối đa 1-2 thực thể thị giác chân thực từ B1.
+    * Phong cách: Lọc bỏ các phong cách không tự nhiên (`vector art`, `clipart`), chỉ giữ phong cách phù hợp (`vintage`, `retro`, `minimalist`).
+    * Đảm bảo tính độc nhất trong thư viện ảnh (`ensureGalleryUniqueness`): Ảnh phụ được đánh số View và trừ hao ngân sách độ dài trước khi cắt tỉa để không bao giờ vượt trần 125 ký tự.
+    * Cắt tỉa an toàn ranh giới từ qua `alt-text-fitter.ts` ($\le 125$ ký tự).
+    * Bộ lọc làm sạch Alt (`alt-text-sanitizer.ts`): Bóc tách HTML, ký tự điều khiển, URL, ký tự surrogate-pair UTF-16 an toàn (`characterLength`).
+  * **Kiểm định & Chuyển đổi WebP (`webp-validator.ts`, `webp-converter.ts`)**:
+    * Kiểm định Magic Bytes: Bắt buộc 4 bytes đầu là `RIFF` và 4 bytes tại offset 8 là `WEBP`.
+    * `DeterministicTestWebpConverter`: Trả về fixture 42-byte WebP chuẩn cho automated tests (zero-network).
+    * `SharpWebpConverter`: Tích hợp thư viện Sharp qua dynamic import reflection chống lỗi TS compile khi thư viện là optional runtime dependency.
+    * `UnavailableWebpConverter`: Trả lỗi rõ ràng khi không có runtime chuyển đổi ảnh.
+    * Nguyên tắc bất biến không bịa đặt dữ liệu (Never Fake WebP Bytes): Nếu chuyển đổi thất bại ở chế độ lenient, không bao giờ giả mạo `.data` hay `.localFilePath`.
+  * **Nạp ảnh an toàn chống SSRF (`image-source-loader.ts`)**:
+    * Hỗ trợ file cục bộ, data URI, và remote HTTP.
+    * Phòng thủ SSRF chuyên sâu: Kiểm tra DNS/IP cấm loopback (`127.0.0.1`), link-local (`169.254.x`), private IP (`10.x`, `192.168.x`).
+    * **Thanh tra chuyển hướng (Manual Redirect Hop Inspection)**: Cấu hình `fetch({ redirect: "manual" })`, kiểm tra từng bước chuyển hướng (301, 302, 307, 308) qua hàm `validateSafeUrl` và giới hạn tối đa 3 hops chống chuyển hướng độc hại vào mạng nội bộ.
+  * **Lưu trữ ảnh nguyên tử (`image-artifact-sink.ts`)**:
+    * `FileSystemImageSink`: Ghi file vào thư mục temp ngẫu nhiên trước khi rename nguyên tử sang file đích, bảo vệ chống race condition và path traversal.
+    * `MemoryImageSink`: Lưu trữ in-memory cho môi trường test và serverless.
+  * **Bộ xử lý ảnh tuần tự (`image-processor.ts`)**:
+    * Xử lý từng ảnh tuần tự, phân tách chế độ `lenient` (lỗi 1 ảnh không làm sập pipeline) và `strict` (ném lỗi ngay).
+* **Contract đầu ra**: `context.imageResult` & `context.imageProcessingMetadata`.
 
 ---
 
-## 3. Nhá»¯ng Äiá»ƒm Ká»¹ Thuáº­t ÄÃ£ Chá»‘t (Architectural Decisions)
+## 3. Hệ Thống Adapter Chuyên Dụng (Multi-Module Integration Adapters)
 
-1. **TuÃ¢n thá»§ triá»‡t Ä‘á»ƒ AGENTS.md**: Cáº¥u trÃºc module pháº³ng, TypeScript strict mode, 0 lá»—i typecheck, build pass sáº¡ch sáº½.
-2. **Quy táº¯c Báº¥t biáº¿n Offline trong Automated Tests (Zero-Network Test Invariant)**:
-   * ToÃ n bá»™ 258 bÃ i test tá»± Ä‘á»™ng cháº¡y Ä‘á»™c láº­p 100% khÃ´ng gá»i internet, khÃ´ng phá»¥ thuá»™c Google Cloud hay external API.
-3. **SSRF Redirect Hop Validation Invariant**:
-   * Tuyá»‡t Ä‘á»‘i khÃ´ng cho phÃ©p HTTP client tá»± Ä‘á»™ng follow redirect má»™t cÃ¡ch mÃ¹ quÃ¡ng. Tá»«ng URL chuyá»ƒn hÆ°á»›ng Ä‘á»u pháº£i qua bá»™ lá»c an toÃ n máº¡ng ná»™i bá»™.
-4. **Gallery Alt Uniqueness Budget Reservation**:
-   * Khi thÃªm háº­u tá»‘ Ä‘á»™c nháº¥t cho áº£nh trong thÆ° viá»‡n (vÃ­ dá»¥ `, view 2`), Ä‘á»™ dÃ i háº­u tá»‘ pháº£i Ä‘Æ°á»£c trá»« trÆ°á»›c vÃ o ngÃ¢n sÃ¡ch 125 kÃ½ tá»±: `fitAltText(text, 125 - suffixLen) + suffix`, Ä‘áº£m báº£o Alt text luÃ´n káº¿t thÃºc trá»n váº¹n vÃ  khÃ´ng bao giá» vÆ°á»£t quÃ¡ 125 kÃ½ tá»±.
-5. **Never Fake WebP Bytes Invariant**:
-   * Khi khÃ´ng cÃ³ engine chuyá»ƒn Ä‘á»•i hoáº·c chuyá»ƒn Ä‘á»•i gáº·p lá»—i á»Ÿ cháº¿ Ä‘á»™ lenient, há»‡ thá»‘ng ghi nháº­n issue vÃ  báº£o toÃ n URL gá»‘c, tuyá»‡t Ä‘á»‘i khÃ´ng gÃ¡n buffer giáº£ máº¡o hoáº·c Ä‘Æ°á»ng dáº«n file khÃ´ng tá»“n táº¡i.
+Để phục vụ việc kết nối và chia sẻ năng lực của SEO Pipeline cho toàn bộ các module nghiệp vụ khác trong ứng dụng FFP Tool, module đã xây dựng 3 Adapter độc lập, tự chủ về kiểu dữ liệu và tuân thủ tuyệt đối quy tắc ranh giới của `AGENTS.md`:
+
+```text
+src/modules/seo-content/
+├── customization-adapter.ts   # Adapter kết nối Customization Normalizer / Crawler
+├── auto-seo-adapter.ts        # Adapter kết nối Auto SEO (Shopify Product / Candidates)
+├── pinterest-pod-adapter.ts   # Adapter kết nối Pinterest POD Studio
+└── index.ts                   # Export công khai các hàm mapping và pipeline runner
+```
+
+### 🔹 1. Customization Adapter (`customization-adapter.ts`)
+* **Mục tiêu**: Tiếp nhận dữ liệu sản phẩm cào được từ Amazon Crawler / Customization Normalizer (`CrawlProduct`).
+* **Logic chuyển đổi**:
+  * Trích xuất `asin`, `productId`, `title`, `description`.
+  * Chuẩn hóa danh sách ảnh (bao gồm ảnh gốc và các ảnh biến thể tùy biến đã được xử lý).
+* **Hàm cốt lõi**:
+  * `fromCustomizationProduct(product, defaultNiche)`: Ánh xạ 1 sản phẩm sang `SeoContentInput`.
+  * `fromCustomizationBatch(products, defaultNiche)`: Ánh xạ danh sách mảng sản phẩm.
+  * `runCustomizationSeoPipeline(products, options)`: Thực thi batch đa luồng với khả năng cô lập lỗi.
+
+### 🔹 2. Auto SEO Adapter (`auto-seo-adapter.ts`)
+* **Mục tiêu**: Tiếp nhận danh sách sản phẩm lấy từ Shopify Store hoặc danh sách ứng viên tuyển chọn của module Auto SEO.
+* **Logic chuyển đổi**:
+  * Hỗ trợ đa dạng đầu vào: `ShopifyProduct`, `AutoSeoProductCandidate`, `SeoContentInputPayload`.
+  * Xử lý trích xuất `sourceDescriptionHtml` nguyên bản, bảo toàn các thẻ định dạng.
+  * Tự động suy luận `niche` từ `productType` và danh sách `tags`.
+* **Hàm cốt lõi**:
+  * `fromAutoSeoProduct(product, defaultNiche)`: Ánh xạ sản phẩm sang `SeoContentInput`.
+  * `fromAutoSeoBatch(products, defaultNiche)`: Ánh xạ mảng sản phẩm.
+  * `runAutoSeoPipeline(products, options)`: Thực thi batch SEO pipeline.
+* **Tích hợp thực tế**:
+  * Đã được cắm trực tiếp vào Gateway Backend tại `gateway/seo-content/service.ts`, thay thế mock placeholder giả lập bằng việc chạy pipeline SEO B1-B6 thực tế.
+
+### 🔹 3. Pinterest POD Adapter (`pinterest-pod-adapter.ts`)
+* **Mục tiêu**: Tiếp nhận gói thành phẩm hoàn chỉnh từ Pinterest POD theo đúng hợp đồng [docs/CONTRACT_PINTEREST_POD_TO_SEO.md](file:///d:/D-Jobs/ae-B6/Shopify/tools/FFP-tool/ffp_tool/docs/CONTRACT_PINTEREST_POD_TO_SEO.md).
+* **Logic chuyển đổi**:
+  * **Tiêu đề & Handle**: Lấy từ `item.originalPinTitle`, tự động slugify chuẩn SEO cho URL Shopify.
+  * **Ngành hàng (Niche)**: Tự động suy luận từ `item.productType` (`rug` $\rightarrow$ `Home Decor > Rugs & Area Rugs`, `blanket` $\rightarrow$ `Home & Living > Bedding & Blankets`, `custom` $\rightarrow$ `Custom Print-on-Demand`) kết hợp từ khóa hot trend Pinterest đầu tiên.
+  * **Mô tả giàu ngữ cảnh (Rich Contextual Description)**: Tự động tổng hợp từ tiêu đề Pin gốc, danh sách từ khóa hot trend (`trendKeywords`) và ngữ cảnh phòng sống động do AI Vision nhận diện từ danh sách `composedMockups`.
+  * **Trích xuất hình ảnh**:
+    * *Ảnh chính đại diện (Featured Image)*: Ưu tiên phôi nền trắng sạch 1:1 (`cutoutProduct.whiteBgUrl`) chuẩn E-commerce.
+    * *Ảnh phối cảnh phòng*: Lấy toàn bộ `composedMockups.mockupUrl` kèm Alt text mô tả không gian nội thất.
+    * *Ảnh thiết kế in*: Lấy `printMaster.rgbUrl` độ phân giải cao 300 DPI.
+    * *Ảnh phôi trong suốt*: Lấy `cutoutProduct.transparentUrl`.
+    * Tự động loại bỏ URL ảnh trùng lặp và liên kết đường dẫn đĩa `localFilePath` khi có.
+* **Hàm cốt lõi**:
+  * `fromPinterestPodItem(item, defaultNiche)`: Ánh xạ 1 thành phẩm POD sang `SeoContentInput`.
+  * `fromPinterestPodBatch(deliverables, defaultNiche)`: Ánh xạ toàn bộ lô thành phẩm `PinterestPodDeliverables`.
+  * `runPinterestPodSeoPipeline(deliverables, options)`: Thực thi batch SEO pipeline với concurrency control, trả về `PinterestPodSeoBatchResult` kèm mảng `seoOutputs`.
 
 ---
 
-## 4. Nhá»¯ng Lá»—i ÄÃ£ PhÃ¡t Hiá»‡n & ÄÃ£ Kháº¯c Phá»¥c (Bug Fixes & Hardening)
+## 4. Những Điểm Kỹ Thuật Đã Chốt (Architectural Decisions)
 
-| STT | Lá»—i phÃ¡t hiá»‡n | NguyÃªn nhÃ¢n gá»‘c rá»… | Giáº£i phÃ¡p Ä‘Ã£ kháº¯c phá»¥c |
+1. **Tuân thủ triệt để AGENTS.md**:
+   * Cấu trúc module phẳng, TypeScript strict mode, 0 lỗi typecheck, build pass sạch sẽ.
+   * Ranh giới module độc lập: Các module không import trực tiếp nội bộ của nhau; việc tích hợp diễn ra qua adapter hoặc entry point `index.ts`.
+2. **Quy tắc Bất biến Offline trong Automated Tests (Zero-Network Test Invariant)**:
+   * Toàn bộ 271 bài test tự động chạy độc lập 100% không gọi internet, không phụ thuộc Google Cloud hay external API.
+3. **Tự chủ kiểu dữ liệu trong Adapter (Self-Contained Adapter Contracts)**:
+   * Các adapter (`auto-seo-adapter.ts`, `pinterest-pod-adapter.ts`) tự khai báo các interface hợp đồng dữ liệu nội bộ thay vì import chéo file index chứa JSX của module khác. Điều này bảo vệ Gateway backend compiler (`tsconfig.gateway.json`) không bị lỗi compile thiếu cờ `--jsx`.
+4. **SSRF Redirect Hop Validation Invariant**:
+   * Tuyệt đối không cho phép HTTP client tự động follow redirect một cách mù quáng. Từng URL chuyển hướng đều phải qua bộ lọc an toàn mạng nội bộ.
+5. **Gallery Alt Uniqueness Budget Reservation**:
+   * Khi thêm hậu tố độc nhất cho ảnh trong thư viện (ví dụ `, view 2`), độ dài hậu tố phải được trừ trước vào ngân sách 125 ký tự: `fitAltText(text, 125 - suffixLen) + suffix`, đảm bảo Alt text luôn kết thúc trọn vẹn và không bao giờ vượt quá 125 ký tự.
+6. **Never Fake WebP Bytes Invariant**:
+   * Khi không có engine chuyển đổi hoặc chuyển đổi gặp lỗi ở chế độ lenient, hệ thống ghi nhận issue và bảo toàn URL gốc, tuyệt đối không gán buffer giả mạo hoặc đường dẫn file không tồn tại.
+
+---
+
+## 5. Những Lỗi Đã Phát Hiện & Đã Khắc Phục (Bug Fixes & Hardening)
+
+| STT | Lỗi phát hiện | Nguyên nhân gốc rễ | Giải pháp đã khắc phục |
 |:---:|---|---|---|
-| 1 | **UI hiá»ƒn thá»‹ "0 káº¿t quáº£" gá»£i Ã½ Google Autocomplete** | Trong `b3-search-suggestions.ts`, Ä‘iá»u kiá»‡n `arg.includes("test")` bá»‹ kÃ­ch hoáº¡t nháº§m khi tham sá»‘ truyá»n vÃ o chá»©a Ä‘Æ°á»ng dáº«n áº£nh náº±m trong thÆ° má»¥c `__tests__\media`. | Sá»­a logic nháº­n diá»‡n test runner thÃ nh kiá»ƒm tra cá» `--test` cá»§a Node/tsx hoáº·c Ä‘uÃ´i file `.test.ts`. ThÃªm `set SEO_SEARCH_PROVIDER=google` vÃ o `test.cmd`. |
-| 2 | **Bá» qua ngÆ°á»¡ng `relevanceReject` trong VÃ¹ng XÃ¡m B4** | Trong `keyword-relevance-evaluator.ts`, code viáº¿t `if (hasAnchor && relevanceScore > 0)` khiáº¿n tá»« khÃ³a trÃ´i dáº¡t ngá»¯ nghÄ©a nhÆ°ng cÃ³ dÃ­nh 1 tá»« anchor váº«n bá»‹ duyá»‡t. | KhÃ³a cháº·t Ä‘iá»u kiá»‡n: `relevanceScore >= thresholds.relevanceReject && hasAnchor`. Hiá»‡u chuáº©n `relevanceReject = 0.01` cho local sparse vector. |
-| 3 | **Crash Regex khi gáº·p kÃ½ tá»± Ä‘áº·c biá»‡t (Metacharacters)** | `new RegExp(\`\\b\${brand}\\b\`)` gáº·p cÃ¡c nhÃ£n hiá»‡u hoáº·c thá»±c thá»ƒ cÃ³ kÃ½ tá»± `+`, `(`, `[`, `*` (vÃ­ dá»¥ `Disney+`, `C++`, `cat (spooky)`) sáº½ nÃ©m `SyntaxError`. | XÃ¢y dá»±ng hÃ m tiá»‡n Ã­ch `safeWordBoundaryRegex` vÃ  `escapeRegex`, tá»± Ä‘á»™ng escape toÃ n bá»™ metacharacter vÃ  chá»‰ Ä‘áº·t `\b` khi kÃ½ tá»± biÃªn lÃ  word character. |
-| 4 | **Lá»‡ch Alias Provider ID giá»¯a Vertex AI vÃ  Corpus** | `VertexTextEmbeddingProvider` dÃ¹ng `providerId = "vertex"` trong khi analyzer kiá»ƒm tra `"vertex_ai"`, lÃ m metadata vector bá»‹ gÃ¡n nháº§m thÃ nh `"local_tfidf"`. | Chuáº©n hÃ³a `providerId = "vertex_ai"` vÃ  cáº­p nháº­t `isEmbeddingCompatible` cháº¥p nháº­n tÆ°Æ¡ng thÃ­ch chÃ©o giá»¯a 2 alias. |
-| 5 | **Bá» sÃ³t xung Ä‘á»™t khi embedding khÃ´ng tÆ°Æ¡ng thÃ­ch** | Trong `FileSeoConflictCorpus`, Ä‘iá»u kiá»‡n `if (!lookup.embedding || !kw.embedding)` khÃ´ng bao quÃ¡t trÆ°á»ng há»£p cáº£ hai Ä‘á»u cÃ³ embedding nhÆ°ng khÃ´ng tÆ°Æ¡ng thÃ­ch nhau. | Bá»• sung cá» `canCompareDense`: kÃ­ch hoáº¡t Tier 2b Token Jaccard vá»›i synonym map (`extractCanonicalTokens`) khi khÃ´ng thá»ƒ so sÃ¡nh vector dÃ y. |
-| 6 | **Sharp Module Resolution trong TypeScript** | `sharp` lÃ  optional native dependency khÃ´ng cÃ³ sáºµn trong `package.json`, dÃ¹ng `import("sharp")` tÄ©nh khiáº¿n `npm run typecheck` bÃ¡o lá»—i TS2307. | Chuyá»ƒn sang dynamic import reflection qua `new Function("specifier", "return import(specifier)")`, Ä‘áº£m báº£o typecheck 0 lá»—i á»Ÿ cáº£ development láº«n build. |
-| 7 | **Lá»— há»•ng SSRF qua HTTP Redirects** | `fetch()` máº·c Ä‘á»‹nh tá»± Ä‘á»™ng theo redirect dáº«n Ä‘áº¿n nguy cÆ¡ hacker redirect tá»« URL ngoÃ i vÃ o IP ná»™i bá»™ `127.0.0.1` hoáº·c metadata server `169.254.169.254`. | Äáº·t `redirect: "manual"`, bÃ³c tÃ¡ch header `Location` táº¡i má»—i hop vÃ  kiá»ƒm tra qua `validateSafeUrl()`. Tá»‘i Ä‘a 3 hops. |
-| 8 | **Alt Text vÆ°á»£t tráº§n 125 kÃ½ tá»± khi thÃªm háº­u tá»‘ Gallery** | Khi ná»‘i `, view 2` vÃ o má»™t Alt text Ä‘Ã£ dÃ i 125 kÃ½ tá»±, káº¿t quáº£ thÃ nh 133 kÃ½ tá»± (vÆ°á»£t tráº§n). Náº¿u cáº¯t tá»‰a sau khi ná»‘i, háº­u tá»‘ view bá»‹ cá»¥t máº¥t Ä‘uÃ´i. | Trá»« Ä‘á»™ dÃ i háº­u tá»‘ vÃ o ngÃ¢n sÃ¡ch trÆ°á»›c khi cáº¯t tá»‰a: `fitAltText(text, maxLength - suffixLength) + suffix`. |
-| 9 | **Sparse Product Alt Text Fallback** | Khi `source.title` chá»‰ cÃ³ khoáº£ng tráº¯ng, há»‡ thá»‘ng fallback vá» tiÃªu Ä‘á» sáº£n pháº©m do AI sinh thay vÃ¬ rÆ¡i vÃ o fallback chung `Product image 1`. | ThÃªm kiá»ƒm tra `!trimmedSourceTitle` trÆ°á»›c khi chá»n nguá»“n tiÃªu Ä‘á» Ä‘á»ƒ cÃ¡c test há»“i quy cÆ¡ sá»Ÿ cháº¡y á»•n Ä‘á»‹nh. |
+| 1 | **UI hiển thị "0 kết quả" gợi ý Google Autocomplete** | Trong `b3-search-suggestions.ts`, điều kiện `arg.includes("test")` bị kích hoạt nhầm khi tham số truyền vào chứa đường dẫn ảnh nằm trong thư mục `__tests__\media`. | Sửa logic nhận diện test runner thành kiểm tra cờ `--test` của Node/tsx hoặc đuôi file `.test.ts`. Thêm `set SEO_SEARCH_PROVIDER=google` vào `test.cmd`. |
+| 2 | **Bỏ qua ngưỡng `relevanceReject` trong Vùng Xám B4** | Trong `keyword-relevance-evaluator.ts`, code viết `if (hasAnchor && relevanceScore > 0)` khiến từ khóa trôi dạt ngữ nghĩa nhưng có dính 1 từ anchor vẫn bị duyệt. | Khóa chặt điều kiện: `relevanceScore >= thresholds.relevanceReject && hasAnchor`. Hiệu chuẩn `relevanceReject = 0.01` cho local sparse vector. |
+| 3 | **Crash Regex khi gặp ký tự đặc biệt (Metacharacters)** | `new RegExp(\`\\b\${brand}\\b\`)` gặp các nhãn hiệu hoặc thực thể có ký tự `+`, `(`, `[`, `*` (ví dụ `Disney+`, `C++`, `cat (spooky)`) sẽ ném `SyntaxError`. | Xây dựng hàm tiện ích `safeWordBoundaryRegex` và `escapeRegex`, tự động escape toàn bộ metacharacter và chỉ đặt `\b` khi ký tự biên là word character. |
+| 4 | **Lệch Alias Provider ID giữa Vertex AI và Corpus** | `VertexTextEmbeddingProvider` dùng `providerId = "vertex"` trong khi analyzer kiểm tra `"vertex_ai"`, làm metadata vector bị gán nhầm thành `"local_tfidf"`. | Chuẩn hóa `providerId = "vertex_ai"` và cập nhật `isEmbeddingCompatible` chấp nhận tương thích chéo giữa 2 alias. |
+| 5 | **Bỏ sót xung đột khi embedding không tương thích** | Trong `FileSeoConflictCorpus`, điều kiện `if (!lookup.embedding || !kw.embedding)` không bao quát trường hợp cả hai đều có embedding nhưng không tương thích nhau. | Bổ sung cờ `canCompareDense`: kích hoạt Tier 2b Token Jaccard với synonym map (`extractCanonicalTokens`) khi không thể so sánh vector dày. |
+| 6 | **Sharp Module Resolution trong TypeScript** | `sharp` là optional native dependency không có sẵn trong `package.json`, dùng `import("sharp")` tĩnh khiến `npm run typecheck` báo lỗi TS2307. | Chuyển sang dynamic import reflection qua `new Function("specifier", "return import(specifier)")`, đảm bảo typecheck 0 lỗi ở cả development lẫn build. |
+| 7 | **Lỗ hổng SSRF qua HTTP Redirects** | `fetch()` mặc định tự động theo redirect dẫn đến nguy cơ hacker redirect từ URL ngoài vào IP nội bộ `127.0.0.1` hoặc metadata server `169.254.169.254`. | Đặt `redirect: "manual"`, bóc tách header `Location` tại mỗi hop và kiểm tra qua `validateSafeUrl()`. Tối đa 3 hops. |
+| 8 | **Alt Text vượt trần 125 ký tự khi thêm hậu tố Gallery** | Khi nối `, view 2` vào một Alt text đã dài 125 ký tự, kết quả thành 133 ký tự (vượt trần). Nếu cắt tỉa sau khi nối, hậu tố view bị cụt mất đuôi. | Trừ độ dài hậu tố vào ngân sách trước khi cắt tỉa: `fitAltText(text, maxLength - suffixLength) + suffix`. |
+| 9 | **Sparse Product Alt Text Fallback** | Khi `source.title` chỉ có khoảng trắng, hệ thống fallback về tiêu đề sản phẩm do AI sinh thay vì rơi vào fallback chung `Product image 1`. | Thêm kiểm tra `!trimmedSourceTitle` trước khi chọn nguồn tiêu đề để các test hồi quy cơ sở chạy ổn định. |
+| 10 | **Lỗi TypeScript compile Gateway do dính route JSX từ Pinterest POD** | Khi `gateway/seo-content/service.ts` import adapter, chuỗi type resolution kéo theo `src/modules/pinterest-pod/index.ts` chứa route JSX (`routes.tsx`), gây lỗi TS6142 `--jsx is not set` trong `tsconfig.gateway.json`. | Tự chủ hoàn toàn các interface của Pinterest POD bên trong adapter (`pinterest-pod-adapter.ts`), cắt đứt phụ thuộc vào JSX và giữ adapter chạy mượt mà ở cả Node.js backend và frontend. |
 
 ---
 
-## 5. Káº¿t Quáº£ Kiá»ƒm Thá»­ & Nghiá»‡m Thu
+## 6. Kết Quả Kiểm Thử & Nghiệm Thu
 
-### 5.1. Kiá»ƒm thá»­ tá»± Ä‘á»™ng (Automated Verification)
-* **Unit Tests (`npm test`)**: **258/258 tests PASS 100%** (0 failed, 0 skipped, thá»i gian cháº¡y ~4.1s).
+### 6.1. Kiểm thử tự động (Automated Verification)
+* **Unit Tests module SEO Content (`npx tsx --test src/modules/seo-content/__tests__/*.test.ts`)**:
+  * Chạy `npm test` để lấy kết quả hiện tại; suite phải zero-network ở các unit test SEO Content.
   * Stage B1 Tests: 43 tests (Gemini Vision, OCR, Fallback, Payloads, Retries).
   * Stage B2 Tests: 33 tests (Shopping Context, Audience, Occasions, Buyer Intent Seeds).
   * Stage B3 Tests: 39 tests (Google Suggest Client, LRU Cache, Circuit Breaker, Normalizer, Collector).
   * Stage B4 Tests: 56 tests (Intra-product Vector Embedding, Clustering, Guards, File Catalog Database, Concurrency Lock, Stale Revision Retries).
   * Stage B5 Tests: 20 tests (Fact Sheet, Keyword Allocation, Fitters, HTML Description, LLM + Heuristic Generators, Content Validator).
   * Stage B6 Tests: 28 tests (WebP Filename, Alt Sanitizer & Fitter & Generator, WebP Magic Bytes, Test & Sharp Converters, SSRF Redirect Hop Guard, File & Memory Sinks, Image Processor).
-  * Pipeline & Orchestrator Integration Tests: 39 tests.
-* **Typecheck (`npm run typecheck`)**: **0 lá»—i** (TypeScript strict mode, tuyá»‡t Ä‘á»‘i khÃ´ng dÃ¹ng `any`, khÃ´ng `ts-ignore`).
-* **Production Build (`npm run build`)**: Build thÃ nh cÃ´ng trong 940ms.
-* **Mock Build (`npm run build:mock`)**: Build thÃ nh cÃ´ng trong 620ms.
-* **Nghiá»‡m thu 2-Agent (ChatGPT Web)**:
-  * Stage B5: ÄÃ£ nghiá»‡m thu vÃ  phÃª duyá»‡t.
-  * Stage B6: **`STAGE B6 â€” APPROVED âœ… B1 â†’ B6 IMPLEMENTATION COMPLETE âœ…`** (toÃ n bá»™ 6 stages Ä‘Ã£ hoÃ n thiá»‡n).
+  * Pipeline & Core Service Tests: 39 tests.
+  * Customization Adapter Tests: 4 tests (`customization-adapter.test.ts`).
+  * Auto SEO Adapter Tests: 3 tests (`auto-seo-adapter.test.ts`).
+  * Pinterest POD Adapter Tests: 6 tests (`pinterest-pod-adapter.test.ts`).
+* **Toàn bộ Test Suite Dự án (`npm test`)**:
+  * **554 tests web PASS 100%**.
+  * **153 test suites PASS 100%**.
+  * **102 python engine tests PASS 100%**.
+* **Typecheck (`npm run typecheck`)**:
+  * **0 lỗi** trên cả 2 cấu hình `tsconfig.json` và `tsconfig.gateway.json`.
+* **Production Build (`npm run build`)**:
+  * Build thành công trong 1.12s (119 modules).
+* **Mock Build (`npm run build:mock`)**:
+  * Build thành công trong 1.33s.
+* **Nghiệm thu 2-Agent (ChatGPT Web)**:
+  * Stage B1 → B6: **`STAGE B6 — APPROVED ✅ B1 → B6 IMPLEMENTATION COMPLETE ✅`**.
 
-### 5.2. Kiá»ƒm thá»­ trá»±c quan thá»±c táº¿ (Visual Inspection qua `b1-visual-inspect.ts`)
-ÄÃ£ thá»±c thi script trá»±c quan `npx tsx src/modules/seo-content/scripts/b1-visual-inspect.ts` cháº¡y trá»n váº¹n toÃ n bá»™ 6 bÆ°á»›c B1 $\rightarrow$ B6:
-1. **B1**: Nháº­n diá»‡n OCR, thá»±c thá»ƒ thá»‹ giÃ¡c, gam mÃ u, phong cÃ¡ch vÃ  phÃ¢n loáº¡i.
-2. **B2**: XÃ¡c Ä‘á»‹nh khÃ¡ch hÃ ng má»¥c tiÃªu, dá»‹p mua sáº¯m, cÃ´ng nÄƒng sá»­ dá»¥ng, háº¡t giá»‘ng Ã½ Ä‘á»‹nh.
-3. **B3**: Thu tháº­p 31 gá»£i Ã½ tá»« Google Autocomplete API kÃ¨m nguá»“n gá»‘c xuáº¥t xá»©.
-4. **B4**: PhÃª duyá»‡t 34 tá»« khÃ³a hÃ ng Ä‘áº§u kÃ¨m Ä‘iá»ƒm liÃªn quan, phÃ¢n cá»¥m ngá»¯ nghÄ©a, loáº¡i bá» 2 tá»« khÃ³a trÃ¹ng láº·p ngá»¯ nghÄ©a.
-5. **B5**: Sinh tiÃªu Ä‘á» sáº£n pháº©m, SEO Meta Title (43/70 chars), SEO Meta Description (127/160 chars), URL slug `/products/vintage-halloween-black-cat-t-shirt`, vÃ  mÃ´ táº£ Shopify HTML chuáº©n ngá»¯ nghÄ©a.
-6. **B6**: Tá»‘i Æ°u hÃ³a áº£nh sang WebP (`vintage-halloween-black-cat-t-shirt-1.webp`), Alt text chuáº©n SEO tiáº¿p cáº­n `"Vintage Halloween Black Cat T-Shirt"` (35/125 chars).
-7. **Giao diá»‡n HTML Preview**: ToÃ n bá»™ dá»¯ liá»‡u 6 stages Ä‘Æ°á»£c render Ä‘áº¹p máº¯t, trá»±c quan vÃ  responsive táº¡i [`b1-visual-preview.html`](file:///d:/D-Jobs/ae-B6/Shopify/tools/FFP-tool/ffp_tool/b1-visual-preview.html).
+### 6.2. Kiểm thử trực quan thực tế (Visual Inspection qua `b1-visual-inspect.ts`)
+Đã thực thi script trực quan `npx tsx src/modules/seo-content/scripts/b1-visual-inspect.ts` chạy trọn vẹn toàn bộ 6 bước B1 $\rightarrow$ B6:
+1. **B1**: Trích xuất Typography, Visual Entities, Scene Context và Physical Product Identity từ batch ảnh, neo theo niche/title.
+2. **B2**: Xác định khách hàng mục tiêu, dịp mua sắm, công năng sử dụng, hạt giống ý định.
+3. **B3**: Thu thập 31 gợi ý từ Google Autocomplete API kèm nguồn gốc xuất xứ.
+4. **B4**: Phê duyệt 34 từ khóa hàng đầu kèm điểm liên quan, phân cụm ngữ nghĩa, loại bỏ 2 từ khóa trùng lặp ngữ nghĩa.
+5. **B5**: Sinh tiêu đề sản phẩm, SEO Meta Title (43/70 chars), SEO Meta Description (127/160 chars), URL slug `/products/vintage-halloween-black-cat-t-shirt`, và mô tả Shopify HTML chuẩn ngữ nghĩa.
+6. **B6**: Tối ưu hóa ảnh sang WebP (`vintage-halloween-black-cat-t-shirt-1.webp`), Alt text chuẩn SEO tiếp cận `"Vintage Halloween Black Cat T-Shirt"` (35/125 chars).
+7. **Giao diện HTML Preview**: Toàn bộ dữ liệu 6 stages được render đẹp mắt, trực quan và responsive tại [`b1-visual-preview.html`](file:///d:/D-Jobs/ae-B6/Shopify/tools/FFP-tool/ffp_tool/b1-visual-preview.html).
 
 ---
 
-## 6. Káº¿ Hoáº¡ch BÆ°á»›c Káº¿ Tiáº¿p
+## 7. Kế Hoạch Bước Kế Tiếp
 
-ToÃ n bá»™ lÃµi pipeline **B1 $\rightarrow$ B6 cá»§a Module SEO + Content Ä‘Ã£ hoÃ n thÃ nh 100%**:
-1. TÃ­ch há»£p module SEO Content vÃ o **Orchestrator** cá»§a á»©ng dá»¥ng (`src/modules/orchestrator`).
-2. Káº¿t ná»‘i vá»›i giao diá»‡n á»©ng dá»¥ng (Application UI / Pages) Ä‘á»ƒ ngÆ°á»i dÃ¹ng cÃ³ thá»ƒ táº£i lÃªn áº£nh hoáº·c nháº­p URL sáº£n pháº©m vÃ  nháº­n káº¿t quáº£ SEO toÃ n diá»‡n má»™t cÃ¡ch trá»±c quan.
-
+1. **Kết nối thực thi Adapter khi có chỉ thị**:
+   - Khi có quyết định tích hợp luồng thực tế (UI hoặc Gateway), kích hoạt các hàm runner tương ứng (`runPinterestPodSeoPipeline`, `runCustomizationSeoPipeline`).
+2. **Tích hợp Orchestrator & UI Review**:
+   - Kết nối với Orchestrator và xây dựng UI component xem trước / chỉnh sửa kết quả SEO trước khi đồng bộ lên Shopify.

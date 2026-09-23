@@ -76,6 +76,16 @@ const PRODUCT_CREATE_MUTATION = `
   }
 `;
 
+const PRODUCT_HANDLE_LOOKUP_QUERY = `
+  query ProductHandleLookup($handle: String!) {
+    productByHandle(handle: $handle) {
+      id
+    }
+  }
+`;
+
+const MAX_HANDLE_SUFFIX = 100;
+
 const PRODUCT_VARIANTS_BULK_CREATE_MUTATION = `
   mutation ProductVariantsBulkCreate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
     productVariantsBulkCreate(productId: $productId, variants: $variants, strategy: REMOVE_STANDALONE_VARIANT) {
@@ -326,6 +336,34 @@ function extractMediaInputs(
   return mediaList;
 }
 
+async function resolveAvailableProductHandle(
+  store: StoreConfig,
+  client: ShopifyGraphqlClient,
+  requestedHandle: string,
+): Promise<string> {
+  interface ProductHandleLookupResponse {
+    readonly productByHandle: { readonly id: string } | null;
+  }
+
+  for (let suffix = 1; suffix <= MAX_HANDLE_SUFFIX; suffix += 1) {
+    const candidate = suffix === 1 ? requestedHandle : `${requestedHandle}-${suffix}`;
+    const result = await client.query<ProductHandleLookupResponse>(
+      store,
+      PRODUCT_HANDLE_LOOKUP_QUERY,
+      { handle: candidate },
+    );
+    if (!result.productByHandle) {
+      return candidate;
+    }
+  }
+
+  throw new GatewayError(
+    `Unable to allocate a unique product handle for '${requestedHandle}'`,
+    "SHOPIFY_USER_ERROR",
+    400,
+  );
+}
+
 export async function executeProductsCreate(
   store: StoreConfig,
   client: ShopifyGraphqlClient,
@@ -394,7 +432,10 @@ export async function executeProductsCreate(
         productInput.status === "ACTIVE" || productInput.status === "ARCHIVED" || productInput.status === "DRAFT"
           ? productInput.status
           : "DRAFT",
-      vendor: typeof productInput.vendor === "string" ? productInput.vendor : undefined,
+      vendor:
+        typeof productInput.vendor === "string" && productInput.vendor.trim() !== ""
+          ? productInput.vendor.trim()
+          : (store.storeId.split("--")[0]?.trim() || "").toUpperCase() || undefined,
       productType: typeof productInput.productType === "string" ? productInput.productType : undefined,
       tags: Array.isArray(productInput.tags) ? (productInput.tags as string[]) : [],
       onlineStoreUrl:
@@ -472,7 +513,7 @@ export async function executeProductsCreate(
 
   const input: Record<string, unknown> = { title };
   if (typeof productInput.handle === "string" && productInput.handle.trim() !== "") {
-    input.handle = productInput.handle.trim();
+    input.handle = await resolveAvailableProductHandle(store, client, productInput.handle.trim());
   }
   if (typeof productInput.descriptionHtml === "string") {
     input.descriptionHtml = productInput.descriptionHtml;
@@ -482,14 +523,31 @@ export async function executeProductsCreate(
   if (typeof productInput.status === "string" && productInput.status.trim() !== "") {
     input.status = productInput.status.trim();
   }
-  if (typeof productInput.vendor === "string") {
-    input.vendor = productInput.vendor;
+  if (typeof productInput.vendor === "string" && productInput.vendor.trim() !== "") {
+    input.vendor = productInput.vendor.trim();
+  } else {
+    const baseStoreName = store.storeId.split("--")[0]?.trim();
+    if (baseStoreName) {
+      input.vendor = baseStoreName.toUpperCase();
+    }
   }
   if (typeof productInput.productType === "string") {
     input.productType = productInput.productType;
   }
+  if (typeof productInput.categoryId === "string" && productInput.categoryId.trim() !== "") {
+    input.category = productInput.categoryId.trim();
+  }
   if (Array.isArray(productInput.tags)) {
     input.tags = productInput.tags;
+  }
+  const rawCollections = productInput.collectionsToJoin ?? productInput.collectionIds;
+  if (Array.isArray(rawCollections)) {
+    const validColIds = (rawCollections as unknown[])
+      .filter((c): c is string => typeof c === "string" && c.trim() !== "")
+      .map((c) => c.trim());
+    if (validColIds.length > 0) {
+      input.collectionsToJoin = validColIds;
+    }
   }
   if (productInput.seo && typeof productInput.seo === "object") {
     const seoObj = productInput.seo as Record<string, unknown>;
@@ -585,6 +643,7 @@ export async function executeProductsCreate(
         tracked: isTracked,
       };
       vInput.inventoryPolicy = isTracked ? "DENY" : "CONTINUE";
+      if (typeof v.mediaUrl === "string" && v.mediaUrl.trim()) vInput.mediaSrc = [v.mediaUrl.trim()];
       if (Array.isArray(v.optionValues)) {
         vInput.optionValues = (v.optionValues as readonly Record<string, unknown>[]).map((ov) => {
           const optVal: Record<string, unknown> = {};
@@ -821,6 +880,9 @@ export async function executeProductsUpdate(
   if (typeof productPatch.productType === "string") {
     input.productType = productPatch.productType;
   }
+  if (typeof productPatch.categoryId === "string" && productPatch.categoryId.trim() !== "") {
+    input.category = productPatch.categoryId.trim();
+  }
   if (Array.isArray(productPatch.tags)) {
     input.tags = productPatch.tags;
   }
@@ -1041,6 +1103,7 @@ export async function executeProductsUpdate(
         tracked: variant.inventoryTracked === true,
       };
       value.inventoryPolicy = variant.inventoryTracked === true ? "DENY" : "CONTINUE";
+      if (typeof variant.mediaUrl === "string" && variant.mediaUrl.trim()) value.mediaSrc = [variant.mediaUrl.trim()];
       if (Array.isArray(variant.optionValues)) value.optionValues = variant.optionValues;
       return value;
     };

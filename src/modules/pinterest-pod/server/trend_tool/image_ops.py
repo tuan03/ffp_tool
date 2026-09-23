@@ -25,7 +25,6 @@ def enhance_image(source: Path, destination: Path, min_long_edge: int) -> Path:
     gc.collect()
     return destination
 
-
 def fit_to_target(source: Path, destination: Path, target: ProductTarget, mode: str) -> Path:
     destination.parent.mkdir(parents=True, exist_ok=True)
     with Image.open(source) as image:
@@ -85,4 +84,3 @@ def export_cmyk_jpg(source: Path, destination: Path, dpi: int) -> Path:
         del cmyk
     gc.collect()
     return destination
-

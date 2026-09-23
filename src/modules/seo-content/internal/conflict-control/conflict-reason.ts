@@ -7,6 +7,7 @@ export const CONFLICT_REASON = {
   EXISTING_URL_CANNIBALIZATION: "existing_url_cannibalization",
   BRAND_CONFLICT: "brand_conflict",
   LOW_SPECIFICITY: "low_specificity_generic",
+  SCENE_CONTEXT_ONLY: "scene_context_only",
 } as const;
 
 export type ConflictReasonCode = (typeof CONFLICT_REASON)[keyof typeof CONFLICT_REASON];
@@ -20,6 +21,7 @@ export const REASON_PRECEDENCE: readonly ConflictReasonCode[] = [
   CONFLICT_REASON.SEMANTIC_DRIFT,
   CONFLICT_REASON.SEMANTIC_DUPLICATE,
   CONFLICT_REASON.LOW_SPECIFICITY,
+  CONFLICT_REASON.SCENE_CONTEXT_ONLY,
 ] as const;
 
 export const REASON_PRECEDENCE_RANK: Readonly<Record<ConflictReasonCode, number>> = {
@@ -31,5 +33,5 @@ export const REASON_PRECEDENCE_RANK: Readonly<Record<ConflictReasonCode, number>
   [CONFLICT_REASON.SEMANTIC_DRIFT]: 6,
   [CONFLICT_REASON.SEMANTIC_DUPLICATE]: 7,
   [CONFLICT_REASON.LOW_SPECIFICITY]: 8,
+  [CONFLICT_REASON.SCENE_CONTEXT_ONLY]: 9,
 };
-

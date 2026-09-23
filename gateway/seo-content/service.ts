@@ -14,6 +14,7 @@ export async function runSeoContent(
 
   const result = await runAutoSeoPipeline(input.products, {
     ...(runner ? { runner } : {}),
+    siteDomain: input.shopDomain,
   });
 
   const isSuccess = result.successful > 0 || result.total === 0;

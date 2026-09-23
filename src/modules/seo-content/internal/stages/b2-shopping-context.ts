@@ -3,6 +3,10 @@ import { GoogleGenAIVertexContentGenerator } from "../product-understanding/gemi
 import { FallbackShoppingContextAnalyzer } from "../shopping-context/fallback-shopping-context-analyzer";
 import { GeminiShoppingContextAnalyzer } from "../shopping-context/gemini-shopping-context-analyzer";
 import { heuristicShoppingContextAnalyzer } from "../shopping-context/heuristic-shopping-context-analyzer";
+import {
+  deriveSceneDiscoveryHints,
+  removeSceneOnlyGroundedContext,
+} from "../shopping-context/scene-discovery";
 
 import type {
   SeoPipelineContext,
@@ -85,10 +89,11 @@ export function createB2ShoppingContextStage(
     name: "b2",
     async execute(context: SeoPipelineContext): Promise<SeoPipelineContext> {
       const source = context.source;
+      const niche = context.effectiveNiche ?? source.niche;
 
-      const shoppingContext = await analyzer.analyze({
+      const groundedShoppingContext = await analyzer.analyze({
         source: {
-          niche: source.niche ?? "",
+          niche,
           title: source.title ?? "",
           description: source.description ?? "",
           handle: source.handle ?? "",
@@ -96,6 +101,14 @@ export function createB2ShoppingContextStage(
         productUnderstanding: context.productUnderstanding,
       });
 
+      const shoppingContext = {
+        ...removeSceneOnlyGroundedContext(groundedShoppingContext, {
+          niche,
+          title: source.title ?? "",
+          description: source.description ?? "",
+        }, context.productUnderstanding),
+        ...deriveSceneDiscoveryHints(context.productUnderstanding),
+      };
       return evolveContext(context, { shoppingContext });
     },
   };

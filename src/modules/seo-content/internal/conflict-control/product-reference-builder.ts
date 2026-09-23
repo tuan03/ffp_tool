@@ -26,22 +26,19 @@ export function buildProductReferences(
   const { source, productUnderstanding, shoppingContext } = input;
 
   // 1. Reference A — Product Identity
-  const category = (productUnderstanding?.productCategory || "").trim();
+  const physicalProductIdentity = (productUnderstanding?.physicalProductIdentity || "").trim();
   const title = (source.title || "").trim();
   const niche = (source.niche || "").trim();
-  const entities = (productUnderstanding?.detectedEntities ?? [])
-    .map((e) => e.trim())
-    .filter(Boolean)
-    .join(", ");
-  const ocr = (productUnderstanding?.ocrTexts ?? [])
+  const typography = (productUnderstanding?.typography.visibleTexts ?? [])
     .map((t) => t.trim())
     .filter(Boolean)
     .join(", ");
-  const visualStyle = (productUnderstanding?.visualStyle || "").trim();
+  const typographyStyle = (productUnderstanding?.typography.styleSummary || "").trim();
+  const visualEntities = (productUnderstanding?.visualEntities || "").trim();
 
   const identityParts: string[] = [];
-  if (category) {
-    identityParts.push(`Product Category: ${category}`);
+  if (physicalProductIdentity) {
+    identityParts.push(`Physical Product Identity: ${physicalProductIdentity}`);
   }
   if (title) {
     identityParts.push(`Product Title: ${title}`);
@@ -49,14 +46,14 @@ export function buildProductReferences(
   if (niche) {
     identityParts.push(`Product Niche: ${niche}`);
   }
-  if (entities) {
-    identityParts.push(`Visual Entities: ${entities}`);
+  if (visualEntities && visualEntities !== "unknown") {
+    identityParts.push(`Visual Entities: ${visualEntities}`);
   }
-  if (ocr) {
-    identityParts.push(`Design Text: ${ocr}`);
+  if (typography) {
+    identityParts.push(`Design Text: ${typography}`);
   }
-  if (visualStyle && visualStyle !== "unknown" && visualStyle !== "unspecified") {
-    identityParts.push(`Visual Style: ${visualStyle}`);
+  if (typographyStyle && typographyStyle !== "unknown") {
+    identityParts.push(`Typography Style: ${typographyStyle}`);
   }
 
   // Fallback if structured B1 metadata is completely empty

@@ -7,6 +7,8 @@ export interface SeoContentImageInput {
 
 export interface SeoContentInput {
   readonly images: readonly SeoContentImageInput[];
+  /** Public storefront domain used to infer the workflow niche before B1. */
+  readonly siteDomain?: string;
   readonly niche: string;
   readonly title: string;
   readonly description: string;

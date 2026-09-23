@@ -1,18 +1,20 @@
 import type { SeoContentImageInput } from "../../types";
 
 export interface ProductImageAnalyzerInput {
-  readonly image: SeoContentImageInput;
+  readonly images: readonly SeoContentImageInput[];
   readonly title: string;
   readonly description: string;
   readonly niche: string;
 }
 
 export interface ProductImageAnalysis {
-  readonly ocrTexts: readonly string[];
-  readonly detectedEntities: readonly string[];
-  readonly dominantColors: readonly string[];
-  readonly visualStyle?: string;
-  readonly productCategory?: string;
+  readonly typography: {
+    readonly visibleTexts: readonly string[];
+    readonly styleSummary: string;
+  };
+  readonly visualEntities: string;
+  readonly sceneContext: string;
+  readonly physicalProductIdentity: string;
 }
 
 export interface ProductImageAnalyzer {

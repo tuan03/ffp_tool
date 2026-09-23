@@ -7,6 +7,7 @@ import {
   createAmazonCrawlerClientsLoader,
   createAmazonCrawlerRunner,
   createAmazonCrawlerSyncRetrier,
+  createImageProcessingProfileManager,
   DEFAULT_AMAZON_CRAWLER_SETTINGS,
   getAmazonCrawlerRunner,
   serializeAmazonCrawlerInput,
@@ -36,6 +37,39 @@ test("default settings match the four-proxy concurrency profile", () => {
       browserTabs: 2,
     },
   );
+});
+
+test("image profile manager lists, saves, uploads logo, previews and deletes profiles", async () => {
+  const requests: Array<{ url: string; method: string }> = [];
+  const profile = {
+    slug: "default", name: "Default", enabled: false, revision: "revision-1", hasLogo: true,
+    randomPixels: 100, pixelDelta: 3, jpegQuality: 92,
+    output: { width: 1500, height: 1500, fit: "contain" as const, upscale: true, background: "#ffffff" },
+    logo: { enabled: false, width: 120, height: 60, maxPercent: 15, percentBasis: "width" as const, padding: 0, position: "bottom-right" as const, opacity: 1 },
+  };
+  const manager = createImageProcessingProfileManager({
+    engineUrl: "http://127.0.0.1:8766",
+    fetchImplementation: async (request, init) => {
+      const url = String(request);
+      requests.push({ url, method: init?.method ?? "GET" });
+      if (url.endsWith("/preview")) return jsonResponse({ dataUrl: "data:image/jpeg;base64,cHJldmlldw==" });
+      if ((init?.method ?? "GET") === "DELETE") return jsonResponse({ status: "deleted" });
+      if (url.endsWith("/image-profiles")) return jsonResponse({ profiles: [profile] });
+      return jsonResponse(profile);
+    },
+  });
+
+  const profiles = await manager.list();
+  assert.equal(profiles.length, 1);
+  assert.equal(
+    profiles[0]?.logoUrl,
+    "http://127.0.0.1:8766/api/v1/image-profiles/default/logo?revision=revision-1",
+  );
+  await manager.save("default", profile);
+  await manager.uploadLogo("default", "data:image/png;base64,bG9nbw==");
+  assert.match(await manager.preview("default", profile, "data:image/png;base64,aW1hZ2U="), /^data:image\/jpeg/);
+  await manager.delete("brand");
+  assert.deepEqual(requests.map((request) => request.method), ["GET", "PUT", "POST", "POST", "DELETE"]);
 });
 
 test("real runner serializes input, polls progress, and returns partial output", async () => {
@@ -122,6 +156,101 @@ test("runner posts coordinator cancellation when polling is aborted", async () =
 
   await assert.rejects(run({ input, signal: controller.signal }), { name: "AbortError" });
   await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(cancelCalled, true);
+});
+
+test("runner waits for coordinator cancellation confirmation before reporting an abort", async () => {
+  const controller = new AbortController();
+  let releaseCancellation = (): void => undefined;
+  let runSettled = false;
+  const cancellationGate = new Promise<void>((resolve) => {
+    releaseCancellation = resolve;
+  });
+  const run = createAmazonCrawlerRunner({
+    engineUrl: "http://engine.test",
+    pollIntervalMs: 10_000,
+    fetchImplementation: async (_request, init) => {
+      const url = String(_request);
+      if (url.endsWith("/clients")) return jsonResponse([{ id: "client-a", displayName: "A", status: "online", isConnected: true, maxConcurrentInputs: 1, activeTasks: 0 }]);
+      if (url.endsWith("/cancel")) {
+        await cancellationGate;
+        return jsonResponse({ jobId: "job-cancel", status: "cancelled" });
+      }
+      if (init?.method === "POST") return jsonResponse({ id: "job-cancel" }, 202);
+      controller.abort();
+      return jsonResponse({
+        id: "job-cancel",
+        status: "running",
+        progress: { completed: 0, total: 1 },
+        taskCounts: { running: 1 },
+      });
+    },
+  });
+
+  const runPromise = run({ input, signal: controller.signal }).finally(() => {
+    runSettled = true;
+  });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(runSettled, false);
+  releaseCancellation();
+  await assert.rejects(runPromise, { name: "AbortError" });
+});
+
+test("runner reports when coordinator cannot confirm cancellation", async () => {
+  const controller = new AbortController();
+  const run = createAmazonCrawlerRunner({
+    engineUrl: "http://engine.test",
+    pollIntervalMs: 10_000,
+    fetchImplementation: async (_request, init) => {
+      const url = String(_request);
+      if (url.endsWith("/clients")) return jsonResponse([{ id: "client-a", displayName: "A", status: "online", isConnected: true, maxConcurrentInputs: 1, activeTasks: 0 }]);
+      if (url.endsWith("/cancel")) return jsonResponse({ detail: "Coordinator unavailable" }, 503);
+      if (init?.method === "POST") return jsonResponse({ id: "job-cancel" }, 202);
+      controller.abort();
+      return jsonResponse({
+        id: "job-cancel",
+        status: "running",
+        progress: { completed: 0, total: 1 },
+        taskCounts: { running: 1 },
+      });
+    },
+  });
+
+  await assert.rejects(run({ input, signal: controller.signal }), {
+    code: "CANCEL_CONFIRMATION_FAILED",
+  });
+});
+
+test("runner cancels the server job when stop is pressed while job creation is in flight", async () => {
+  const controller = new AbortController();
+  let releaseCreation = (): void => undefined;
+  let cancelCalled = false;
+  const creationGate = new Promise<void>((resolve) => {
+    releaseCreation = resolve;
+  });
+  const run = createAmazonCrawlerRunner({
+    engineUrl: "http://engine.test",
+    fetchImplementation: async (_request, init) => {
+      const url = String(_request);
+      if (url.endsWith("/clients")) return jsonResponse([{ id: "client-a", displayName: "A", status: "online", isConnected: true, maxConcurrentInputs: 1, activeTasks: 0 }]);
+      if (url.endsWith("/cancel")) {
+        cancelCalled = true;
+        return jsonResponse({ jobId: "job-create-race", status: "cancelled" });
+      }
+      if (init?.method === "POST") {
+        await creationGate;
+        return jsonResponse({ id: "job-create-race" }, 202);
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    },
+  });
+
+  const runPromise = run({ input, signal: controller.signal });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  controller.abort();
+  releaseCreation();
+
+  await assert.rejects(runPromise, { name: "AbortError" });
   assert.equal(cancelCalled, true);
 });
 

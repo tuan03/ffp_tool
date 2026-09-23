@@ -84,7 +84,8 @@ class DistributedCrawlerAgent:
         self.outbound_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         self.completion_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         self.active: dict[str, dict[str, Any]] = {}
-        self.cancel_events: dict[str, threading.Event] = {}
+        self.cancel_events: dict[str, set[threading.Event]] = {}
+        self._cancel_events_lock = threading.Lock()
         self.stop_event = asyncio.Event()
         self.connection_status = "offline"
         self._paused = False
@@ -121,7 +122,37 @@ class DistributedCrawlerAgent:
 
     def stop(self) -> None:
         self.stop_event.set()
-        for event in self.cancel_events.values():
+        with self._cancel_events_lock:
+            events = [event for job_events in self.cancel_events.values() for event in job_events]
+        for event in events:
+            event.set()
+
+    def _register_cancel_event(self, job_id: str, event: threading.Event) -> None:
+        with self._cancel_events_lock:
+            self.cancel_events.setdefault(job_id, set()).add(event)
+        if any(
+            self.store.is_task_cancelled(task_id)
+            for task_id, assignment in self.active.items()
+            if str(assignment.get("jobId") or "") == job_id
+        ):
+            event.set()
+
+    def _unregister_cancel_event(self, job_id: str, event: threading.Event) -> None:
+        with self._cancel_events_lock:
+            events = self.cancel_events.get(job_id)
+            if events is None:
+                return
+            events.discard(event)
+            if not events:
+                self.cancel_events.pop(job_id, None)
+
+    def _cancel_job(self, job_id: str) -> None:
+        if not job_id:
+            return
+        self.store.cancel_job(job_id)
+        with self._cancel_events_lock:
+            events = list(self.cancel_events.get(job_id, set()))
+        for event in events:
             event.set()
 
     def set_paused(self, is_paused: bool) -> None:
@@ -206,10 +237,7 @@ class DistributedCrawlerAgent:
                     self._publish_status()
             elif message_type == "cancel":
                 job_id = str(payload.get("jobId") or "")
-                self.store.cancel_job(job_id)
-                event = self.cancel_events.get(job_id)
-                if event:
-                    event.set()
+                self._cancel_job(job_id)
             elif message_type == "pause":
                 self.set_paused(bool(payload.get("paused", True)))
             elif message_type == "clear_cache":
@@ -285,7 +313,7 @@ class DistributedCrawlerAgent:
             self.store.mark_running(task_ids)
             cancel_event = threading.Event()
             job_id = str(first["jobId"])
-            self.cancel_events[job_id] = cancel_event
+            self._register_cancel_event(job_id, cancel_event)
             try:
                 await asyncio.to_thread(self._run_batch, batch, cancel_event, loop)
             except Exception as error:
@@ -300,7 +328,7 @@ class DistributedCrawlerAgent:
                         },
                     })
             finally:
-                self.cancel_events.pop(job_id, None)
+                self._unregister_cancel_event(job_id, cancel_event)
 
     def _run_batch(self, batch: list[dict[str, Any]], cancel_event: threading.Event, loop: asyncio.AbstractEventLoop) -> None:
         first = batch[0]
@@ -308,8 +336,27 @@ class DistributedCrawlerAgent:
         settings = CrawlSettings.from_api(effective_settings)
         actual_settings = settings.api_dict()
         assignments_by_source = {str(assignment["url"]): assignment for assignment in batch}
+        completed_task_ids: set[str] = set()
+        completion_lock = threading.Lock()
+
+        def enqueue_completion(completion: dict[str, Any]) -> None:
+            task_id = str(completion["taskId"])
+            with completion_lock:
+                if task_id in completed_task_ids:
+                    return
+                completed_task_ids.add(task_id)
+            asyncio.run_coroutine_threadsafe(self.completion_queue.put(completion), loop)
+
+        def enqueue_cancelled(assignment: dict[str, Any]) -> None:
+            enqueue_completion({
+                "type": "cancelled",
+                "taskId": assignment["taskId"],
+                "leaseId": assignment["leaseId"],
+            })
 
         def progress(progress_payload: dict[str, Any]) -> None:
+            if cancel_event.is_set():
+                return
             phase = str(progress_payload.get("phase") or "product")
             self._captcha_waiting = phase == "captcha"
             for assignment in progress_targets(batch, progress_payload):
@@ -324,6 +371,9 @@ class DistributedCrawlerAgent:
             if assignment is None:
                 assignment = next((item for item in batch if item.get("asin") == input_result.get("asin")), None)
             if assignment is None:
+                return
+            if cancel_event.is_set():
+                enqueue_cancelled(assignment)
                 return
             core_result = {
                 "status": input_result["status"], "products": input_result["products"],
@@ -347,18 +397,16 @@ class DistributedCrawlerAgent:
                     task_id=assignment["taskId"], lease_id=assignment["leaseId"],
                     checksum=checksum, payload=envelope,
                 )
-                asyncio.run_coroutine_threadsafe(self.completion_queue.put({
+                enqueue_completion({
                     "type": "completed", "taskId": assignment["taskId"],
-                }), loop)
+                })
             elif input_result["status"] == "failed":
                 error = input_result["errors"][0] if input_result["errors"] else {"message": "Crawler failed.", "retryable": True}
-                asyncio.run_coroutine_threadsafe(self.completion_queue.put({
+                enqueue_completion({
                     "type": "failed", "taskId": assignment["taskId"], "leaseId": assignment["leaseId"], "error": error,
-                }), loop)
+                })
             elif input_result["status"] == "cancelled":
-                asyncio.run_coroutine_threadsafe(self.completion_queue.put({
-                    "type": "cancelled", "taskId": assignment["taskId"], "leaseId": assignment["leaseId"],
-                }), loop)
+                enqueue_cancelled(assignment)
 
         def product_completed(product_result: dict[str, Any]) -> None:
             assignment = assignments_by_source.get(str(product_result.get("source") or ""))
@@ -369,6 +417,8 @@ class DistributedCrawlerAgent:
                 )
             product = product_result.get("product")
             if assignment is None or not isinstance(product, dict):
+                return
+            if cancel_event.is_set():
                 return
             product_key = str(product.get("sourceKey") or product.get("id") or "").strip()
             if not product_key:
@@ -416,6 +466,9 @@ class DistributedCrawlerAgent:
                 write_export=False,
             )
         finally:
+            if cancel_event.is_set():
+                for assignment in batch:
+                    enqueue_cancelled(assignment)
             crawler.browser_pool.close()
             self._captcha_waiting = False
             loop.call_soon_threadsafe(self._publish_status)

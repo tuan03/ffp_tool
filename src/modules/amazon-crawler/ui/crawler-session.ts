@@ -20,6 +20,7 @@ export interface AmazonCrawlerSessionState {
   isRunning: boolean;
   progress: AmazonCrawlerProgress | null;
   output: AmazonCrawlerOutput | null;
+  liveProducts: AmazonCrawlerOutput["products"];
   error: string | null;
   activeTab: ResultTab;
   selectedProductId: string | null;
@@ -47,6 +48,7 @@ const DEFAULT_SESSION_STATE: AmazonCrawlerSessionState = {
   isRunning: false,
   progress: null,
   output: null,
+  liveProducts: [],
   error: null,
   activeTab: "overview",
   selectedProductId: null,
@@ -174,7 +176,8 @@ export function setCrawlerActiveTab(activeTab: ResultTab): void {
 }
 
 export function selectCrawlerProduct(productId: string): void {
-  const product = sessionState.output?.products.find((candidate) => candidate.id === productId) ?? null;
+  const products = sessionState.output?.products ?? sessionState.liveProducts;
+  const product = products.find((candidate) => candidate.id === productId) ?? null;
   updateCrawlerSession({
     selectedProductId: productId,
     selectedMediaUrl: firstProductMediaUrl(product),
@@ -235,6 +238,7 @@ export async function startCrawlerJob({
     isRunning: true,
     error: null,
     output: null,
+    liveProducts: [],
     progress: initialProgress,
     settings: jobSettings,
   };
@@ -261,7 +265,23 @@ export async function startCrawlerJob({
         }
         notifyListeners();
       },
-      onProducts,
+      onProducts: (products) => {
+        const firstProduct = products[0] ?? null;
+        const hasSelectedProduct = sessionState.selectedProductId
+          ? products.some((product) => product.id === sessionState.selectedProductId)
+          : false;
+        sessionState = {
+          ...sessionState,
+          liveProducts: [...products],
+          selectedProductId: hasSelectedProduct
+            ? sessionState.selectedProductId
+            : firstProduct?.id ?? null,
+          selectedMediaUrl: hasSelectedProduct
+            ? sessionState.selectedMediaUrl
+            : firstProductMediaUrl(firstProduct),
+        };
+        notifyListeners();
+      },
       signal: controller.signal,
     });
 
@@ -269,6 +289,7 @@ export async function startCrawlerJob({
     sessionState = {
       ...sessionState,
       output: crawlerOutput,
+      liveProducts: [...crawlerOutput.products],
       isRunning: false,
       error: null,
       selectedProductId: firstProduct?.id ?? null,
@@ -325,6 +346,13 @@ export async function startCrawlerJob({
 
 export function abortCrawlerJob(): void {
   if (activeController) {
+    sessionState = {
+      ...sessionState,
+      progress: sessionState.progress
+        ? { ...sessionState.progress, message: "Đang yêu cầu coordinator dừng tất cả crawler agent..." }
+        : sessionState.progress,
+    };
+    notifyListeners();
     activeController.abort();
     activeController = null;
   }
@@ -334,6 +362,7 @@ export function resetCrawlerOutput(): void {
   sessionState = {
     ...sessionState,
     output: null,
+    liveProducts: [],
     progress: null,
     error: null,
     selectedProductId: null,

@@ -94,7 +94,7 @@ test("handoverPinterestToSeo: processes deliverables wrapper and preserves workf
   assert.equal(firstItem.designId, "design_1");
   assert.equal(firstItem.sourceItem.designId, "design_1");
   assert.equal(firstItem.productType, "rug");
-  assert.equal(firstItem.seoInput.niche, "boho");
+  assert.ok(firstItem.seoInput.niche.includes("boho"));
 });
 
 test("handoverPinterestToSeo: handles partial failures gracefully", async () => {

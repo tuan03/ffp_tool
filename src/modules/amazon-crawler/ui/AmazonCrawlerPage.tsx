@@ -4,7 +4,6 @@ import { useNavigate } from "react-router-dom";
 import { notifyUser } from "../../../shared/utils";
 
 import {
-  DEFAULT_AMAZON_CRAWLER_SETTINGS,
   type AmazonCrawlerCacheClearer,
   type AmazonCrawlerClientSummary,
   type AmazonCrawlerClientsLoader,
@@ -14,11 +13,14 @@ import {
   type AmazonCrawlerRunner,
   type AmazonCrawlerSettings,
   type AmazonCrawlerSyncRetrier,
+  type ImageProcessingProfile,
+  type ImageProcessingProfileManager,
 } from "../types";
 
 import {
   abortCrawlerJob,
   resetCrawlerOutput,
+  selectCrawlerProduct,
   setCrawlerActiveTab,
   setCrawlerSelectedMediaUrl,
   setCrawlerUrlText,
@@ -38,8 +40,34 @@ interface AmazonCrawlerPageProps {
   runAmazonCrawler: AmazonCrawlerRunner;
   onHandoverToSeo?: AmazonCrawlerHandoverHandler;
   retryAmazonCrawlerSyncs?: AmazonCrawlerSyncRetrier;
+  imageProcessingProfiles?: ImageProcessingProfileManager;
 }
 
+const COMMON_PRODUCT_TYPES = [
+  { label: "Rug (Thảm trải sàn)", value: "Rug" },
+  { label: "Blanket (Chăn lông / Fleece Blanket)", value: "Blanket" },
+  { label: "Quilt (Chăn chần bông)", value: "Quilt" },
+  { label: "Comforter (Bộ chăn ga)", value: "Comforter" },
+  { label: "Pillow (Gối / Vỏ gối)", value: "Pillow" },
+  { label: "Doormat (Thảm cửa)", value: "Doormat" },
+  { label: "Canvas (Tranh Canvas)", value: "Canvas" },
+  { label: "T-Shirt (Áo thun)", value: "T-Shirt" },
+  { label: "Hoodie (Áo nỉ có mũ)", value: "Hoodie" },
+  { label: "Tumbler (Ly giữ nhiệt)", value: "Tumbler" },
+  { label: "Ornament (Đồ trang trí)", value: "Ornament" },
+  { label: "Sign (Biển hiệu)", value: "Sign" },
+];
+
+const QUICK_PRODUCT_TYPE_PILLS = [
+  "Rug",
+  "Blanket",
+  "Quilt",
+  "Comforter",
+  "Pillow",
+  "Doormat",
+  "Canvas",
+  "T-Shirt",
+];
 function NumberSetting({
   label,
   value,
@@ -88,6 +116,7 @@ function progressPhaseLabel(phase: AmazonCrawlerProgress["phase"]): string {
     customization: "Amazon Customize",
     normalization: "Chuẩn hóa",
     seo: "Tạo nội dung SEO",
+    image_processing: "Xử lý và tải ảnh",
     shopify: "Đẩy Shopify",
     captcha: "Chờ CAPTCHA",
     export: "Xuất JSON",
@@ -97,6 +126,7 @@ function progressPhaseLabel(phase: AmazonCrawlerProgress["phase"]): string {
 
 export function AmazonCrawlerPage({
   clearAmazonCrawlerCache,
+  imageProcessingProfiles,
   loadAmazonCrawlerClients,
   onHandoverToSeo,
   retryAmazonCrawlerSyncs,
@@ -111,14 +141,13 @@ export function AmazonCrawlerPage({
     isRunning,
     progress,
     output,
+    liveProducts,
     error,
     activeTab,
     selectedProductId,
     selectedMediaUrl,
     isBatchJsonOpen,
   } = session;
-
-  const [liveProducts, setLiveProducts] = useState<AmazonCrawlerOutput["products"]>([]);
   const [isRetryingSync, setIsRetryingSync] = useState(false);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
   const [isClearingCache, setIsClearingCache] = useState(false);
@@ -128,6 +157,18 @@ export function AmazonCrawlerPage({
   const [clients, setClients] = useState<AmazonCrawlerClientSummary[]>([]);
   const [clientError, setClientError] = useState<string | null>(null);
   const [isLoadingClients, setIsLoadingClients] = useState(true);
+  const [imageProfiles, setImageProfiles] = useState<ImageProcessingProfile[]>([]);
+  const [editingImageProfile, setEditingImageProfile] = useState<ImageProcessingProfile | null>(null);
+  const [isImageProfileEditorOpen, setIsImageProfileEditorOpen] = useState(false);
+  const [imageProfileMessage, setImageProfileMessage] = useState<string | null>(null);
+  const [imageProfilePreview, setImageProfilePreview] = useState<string | null>(null);
+  const [availableStores, setAvailableStores] = useState<Array<{ storeId: string; shopDomain: string }>>([
+    { storeId: "capozen", shopDomain: "capozen.myshopify.com" },
+    { storeId: "jeminise", shopDomain: "b6-theme-test.myshopify.com" },
+  ]);
+  const [availableCollections, setAvailableCollections] = useState<Array<{ id: string; title: string; productsCount?: number }>>([]);
+  const [isLoadingCollections, setIsLoadingCollections] = useState(false);
+  const [isCollectionListOpen, setIsCollectionListOpen] = useState(false);
 
   const urls = useMemo(
     () => urlText.split(/\r?\n/).map((url) => url.trim()).filter(Boolean),
@@ -176,28 +217,208 @@ export function AmazonCrawlerPage({
     };
   }, [loadAmazonCrawlerClients]);
 
-  function handleSelectProduct(productId: string): void {
-    const product = resultProducts.find((candidate) => candidate.id === productId);
-    updateCrawlerSession({
-      selectedProductId: productId,
-      selectedMediaUrl: firstProductMediaUrl(product ?? null),
-      activeTab: "overview",
+  useEffect(() => {
+    if (!imageProcessingProfiles) return;
+    let isMounted = true;
+    void imageProcessingProfiles.list().then((profiles) => {
+      if (!isMounted) return;
+      setImageProfiles(profiles);
+      const selected = profiles.find((profile) => profile.slug === settings.imageProfileSlug) ?? profiles[0];
+      if (selected) {
+        updateCrawlerSetting("imageProfileSlug", selected.slug);
+        setEditingImageProfile(selected);
+      }
+    }).catch((caught: unknown) => {
+      if (isMounted) setImageProfileMessage(caught instanceof Error ? caught.message : "Không tải được image profiles.");
     });
+    return () => { isMounted = false; };
+  }, [imageProcessingProfiles]);
+
+  async function refreshImageProfiles(selectedSlug?: string): Promise<void> {
+    if (!imageProcessingProfiles) return;
+    const profiles = await imageProcessingProfiles.list();
+    setImageProfiles(profiles);
+    const selected = profiles.find((profile) => profile.slug === (selectedSlug ?? settings.imageProfileSlug)) ?? profiles[0] ?? null;
+    setEditingImageProfile(selected);
+    if (selected) updateSetting("imageProfileSlug", selected.slug);
+  }
+
+  async function handleSaveImageProfile(): Promise<void> {
+    if (!imageProcessingProfiles || !editingImageProfile) return;
+    try {
+      const saved = await imageProcessingProfiles.save(editingImageProfile.slug, editingImageProfile);
+      await refreshImageProfiles(saved.slug);
+      setImageProfileMessage(`Đã lưu image profile ${saved.name}.`);
+    } catch (caught: unknown) {
+      setImageProfileMessage(caught instanceof Error ? caught.message : "Không lưu được image profile.");
+    }
+  }
+
+  async function handleCreateImageProfile(): Promise<void> {
+    const template = imageProfiles.find((profile) => profile.slug === settings.imageProfileSlug) ?? imageProfiles[0];
+    if (!template) return;
+    const slug = `image-profile-${Date.now()}`;
+    setEditingImageProfile({ ...template, slug, name: "New image profile", revision: "new", hasLogo: false });
+    setIsImageProfileEditorOpen(true);
+  }
+
+  async function handleDeleteImageProfile(): Promise<void> {
+    if (!imageProcessingProfiles || !editingImageProfile || editingImageProfile.slug === "default") return;
+    try {
+      await imageProcessingProfiles.delete(editingImageProfile.slug);
+      await refreshImageProfiles("default");
+      setImageProfileMessage("Đã xóa image profile.");
+    } catch (caught: unknown) {
+      setImageProfileMessage(caught instanceof Error ? caught.message : "Không xóa được image profile.");
+    }
+  }
+
+  async function handleImageProfileLogo(file: File | undefined): Promise<void> {
+    if (!file || !imageProcessingProfiles || !editingImageProfile) return;
+    const dataUrl = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.addEventListener("load", () => resolve(String(reader.result || "")), { once: true });
+      reader.addEventListener("error", () => reject(reader.error ?? new Error("Không đọc được logo.")), { once: true });
+      reader.readAsDataURL(file);
+    });
+    try {
+      const isUnsaved = !imageProfiles.some((profile) => profile.slug === editingImageProfile.slug);
+      const profile = isUnsaved
+        ? await imageProcessingProfiles.save(editingImageProfile.slug, editingImageProfile)
+        : editingImageProfile;
+      const saved = await imageProcessingProfiles.uploadLogo(profile.slug, dataUrl);
+      await refreshImageProfiles(saved.slug);
+      setImageProfileMessage("Đã tải logo lên profile.");
+    } catch (caught: unknown) {
+      setImageProfileMessage(caught instanceof Error ? caught.message : "Không tải được logo.");
+    }
+  }
+
+  async function handleImageProfilePreview(file: File | undefined): Promise<void> {
+    if (!file || !imageProcessingProfiles || !editingImageProfile) return;
+    const dataUrl = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.addEventListener("load", () => resolve(String(reader.result || "")), { once: true });
+      reader.addEventListener("error", () => reject(reader.error ?? new Error("Không đọc được ảnh preview.")), { once: true });
+      reader.readAsDataURL(file);
+    });
+    try {
+      setImageProfilePreview(await imageProcessingProfiles.preview(editingImageProfile.slug, editingImageProfile, dataUrl));
+      setImageProfileMessage("Preview dùng chính cấu hình hiện tại, chưa cần bấm lưu.");
+    } catch (caught: unknown) {
+      setImageProfileMessage(caught instanceof Error ? caught.message : "Không tạo được preview.");
+    }
+  }
+
+  useEffect(() => {
+    let isMounted = true;
+    async function loadStores(): Promise<void> {
+      try {
+        const response = await fetch("/api/shopify", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ operation: "stores.list", payload: {} }),
+        });
+        const result = await response.json();
+        if (isMounted && result.success && Array.isArray(result.data?.stores) && result.data.stores.length > 0) {
+          const fetched = (result.data.stores as Array<{ storeId: string; shopDomain: string }>).map((s) => ({
+            storeId: s.storeId,
+            shopDomain: s.shopDomain,
+          }));
+          setAvailableStores(fetched);
+        }
+      } catch {
+        // Keep fallback stores
+      }
+    }
+    void loadStores();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let isMounted = true;
+    const targetStore = settings.storeId || "capozen";
+    async function loadCollections(): Promise<void> {
+      setIsLoadingCollections(true);
+      try {
+        const response = await fetch("/api/shopify", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            storeId: targetStore,
+            operation: "collections.list",
+            payload: { limit: 100 },
+          }),
+        });
+        const result = await response.json();
+        if (isMounted) {
+          if (result.success && Array.isArray(result.data?.collections)) {
+            setAvailableCollections(result.data.collections as Array<{ id: string; title: string; productsCount?: number }>);
+          } else {
+            setAvailableCollections([]);
+          }
+        }
+      } catch {
+        if (isMounted) setAvailableCollections([]);
+      } finally {
+        if (isMounted) setIsLoadingCollections(false);
+      }
+    }
+    void loadCollections();
+    return () => {
+      isMounted = false;
+    };
+  }, [settings.storeId]);
+
+  function handleSelectProduct(productId: string): void {
+    selectCrawlerProduct(productId);
   }
 
   function updateSetting<K extends keyof AmazonCrawlerSettings>(key: K, value: AmazonCrawlerSettings[K]): void {
     updateCrawlerSetting(key, value);
   }
 
-  async function handleStart(): Promise<void> {
-    setLiveProducts([]);
-    setSyncMessage(null);
-    await startCrawlerJob({
-      runAmazonCrawler,
-      urls,
-      settings,
-      onProducts: (products) => setLiveProducts([...products]),
+  const activeCollectionIds = useMemo(() => {
+    const fromArray = Array.isArray(settings.collectionIds) ? settings.collectionIds : [];
+    if (fromArray.length > 0) return fromArray;
+    return settings.collectionId ? [settings.collectionId] : [];
+  }, [settings.collectionIds, settings.collectionId]);
+
+  const selectedCollections = useMemo(() => {
+    return availableCollections.filter((c) => activeCollectionIds.includes(c.id));
+  }, [availableCollections, activeCollectionIds]);
+
+  function toggleCollection(colId: string): void {
+    const current = new Set(activeCollectionIds);
+    if (current.has(colId)) {
+      current.delete(colId);
+    } else {
+      current.add(colId);
+    }
+    const nextList = Array.from(current);
+    updateCrawlerSession({
+      settings: { ...settings, collectionIds: nextList, collectionId: nextList[0] || "" },
     });
+  }
+
+  function handleSelectAllCollections(): void {
+    const allIds = availableCollections.map((c) => c.id);
+    updateCrawlerSession({
+      settings: { ...settings, collectionIds: allIds, collectionId: allIds[0] || "" },
+    });
+  }
+
+  function handleClearCollections(): void {
+    updateCrawlerSession({
+      settings: { ...settings, collectionIds: [], collectionId: "" },
+    });
+  }
+
+  async function handleStart(): Promise<void> {
+    setSyncMessage(null);
+    await startCrawlerJob({ runAmazonCrawler, urls, settings });
   }
 
   function handleStop(): void {
@@ -210,14 +431,14 @@ export function AmazonCrawlerPage({
     setSyncMessage(null);
     try {
       const retried = await retryAmazonCrawlerSyncs(output.jobId, {
-        onProgress: (nextProgress) => {
-          updateCrawlerSession({ progress: nextProgress });
-        },
-        onProducts: (products) => setLiveProducts([...products]),
+        onProgress: (nextProgress) => updateCrawlerSession({ progress: nextProgress }),
+        onProducts: (products) => updateCrawlerSession({ liveProducts: [...products] }),
       });
       if (retried.output) {
-        updateCrawlerSession({ output: retried.output });
-        setLiveProducts([...retried.output.products]);
+        updateCrawlerSession({
+          output: retried.output,
+          liveProducts: [...retried.output.products],
+        });
       }
       setSyncMessage(`Đã đưa ${retried.retried} product lỗi trở lại hàng đợi Shopify.`);
       notifyUser({
@@ -343,13 +564,480 @@ export function AmazonCrawlerPage({
         />
       </label>
 
+      {/* Cấu hình Đồng bộ Shopify, Phân loại & Định giá */}
+      <section className="rounded-2xl border border-slate-700/80 bg-slate-950/70 p-5 sm:p-6 shadow-xl space-y-5">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-3.5">
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-emerald-500/20 text-emerald-400 text-xs font-bold border border-emerald-500/30">
+                ⚡
+              </span>
+              <h2 className="text-base font-bold text-slate-100 tracking-tight">
+                Cấu hình Shopify Store, Phân loại &amp; Định giá
+              </h2>
+              <span className="rounded-full bg-cyan-500/10 px-2 py-0.5 text-[11px] font-medium text-cyan-400 border border-cyan-500/20">
+                Áp dụng toàn bộ batch
+              </span>
+            </div>
+            <p className="mt-1 text-xs text-slate-400">
+              Chọn store đồng bộ, collection, loại sản phẩm (Product Type) và công thức giá bán áp dụng đồng loạt cho mọi sản phẩm trong link cào.
+            </p>
+          </div>
+          {settings.storeId && (
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="rounded-md bg-cyan-950 px-2.5 py-1 text-xs font-mono text-cyan-300 border border-cyan-800">
+                🏬 Store: {settings.storeId}
+              </span>
+              <span className="rounded-md bg-purple-950 px-2.5 py-1 text-xs font-mono text-purple-300 border border-purple-800">
+                🏷️ Vendor: {(settings.storeId.split("--")[0] || settings.storeId).trim().toUpperCase()}
+              </span>
+              {settings.productType && (
+                <span className="rounded-md bg-emerald-950 px-2.5 py-1 text-xs font-mono text-emerald-300 border border-emerald-800">
+                  📦 Type: {settings.productType}
+                </span>
+              )}
+              {selectedCollections.length > 0 && (
+                <span className="rounded-md bg-amber-950 px-2.5 py-1 text-xs font-mono text-amber-300 border border-amber-800">
+                  📁 Collections: {selectedCollections.length} đã chọn
+                </span>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Row 1: Store, Collection & Product Type */}
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {/* Store selector */}
+          <div className="space-y-1.5 rounded-xl border border-slate-800 bg-slate-900/40 p-3.5">
+            <label className="grid gap-1.5 text-sm text-slate-300">
+              <span className="font-medium text-slate-200 flex items-center justify-between">
+                <span>Shopify Store đích</span>
+                <span className="text-[11px] font-mono text-purple-400">
+                  Vendor: {((settings.storeId || "capozen").split("--")[0] || "CAPOZEN").trim().toUpperCase()}
+                </span>
+              </span>
+              <select
+                className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-slate-100 outline-none focus:border-cyan-400 text-sm"
+                value={settings.storeId || "capozen"}
+                onChange={(e) => {
+                  const nextStore = e.target.value;
+                  updateSetting("storeId", nextStore);
+                  updateSetting("collectionId", "");
+                  updateSetting("collectionIds", []);
+                  if (nextStore === "chillgen" && !settings.productType) {
+                    updateSetting("productType", "Rug");
+                  }
+                }}
+              >
+                {availableStores.map((s) => (
+                  <option key={s.storeId} value={s.storeId}>
+                    {s.storeId} ({s.shopDomain})
+                  </option>
+                ))}
+              </select>
+            </label>
+            <p className="text-[11px] text-slate-400 leading-relaxed">
+              Store nhận sync. Vendor trên Shopify tự động gán là:{" "}
+              <strong className="text-purple-300 font-mono">
+                {((settings.storeId || "capozen").split("--")[0] || "CAPOZEN").trim().toUpperCase()}
+              </strong>
+            </p>
+          </div>
+
+          {/* Collection multi-selector */}
+          <div className="space-y-2 rounded-xl border border-slate-800 bg-slate-900/40 p-3.5">
+            <div className="flex items-center justify-between">
+              <label className="text-sm font-medium text-slate-200 flex items-center gap-1.5">
+                <span>Collections đích</span>
+                {selectedCollections.length > 0 && (
+                  <span className="text-xs text-amber-400 font-mono font-semibold">
+                    ({selectedCollections.length})
+                  </span>
+                )}
+                {isLoadingCollections && (
+                  <span className="text-[11px] text-cyan-400 animate-pulse font-normal">Đang tải...</span>
+                )}
+              </label>
+              <div className="flex items-center gap-2 text-[11px]">
+                {selectedCollections.length > 0 ? (
+                  <button
+                    type="button"
+                    onClick={handleClearCollections}
+                    className="text-rose-400 hover:text-rose-300 transition-colors font-medium"
+                  >
+                    Bỏ chọn hết
+                  </button>
+                ) : (
+                  availableCollections.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={handleSelectAllCollections}
+                      className="text-cyan-400 hover:text-cyan-300 transition-colors font-medium"
+                    >
+                      Chọn tất cả
+                    </button>
+                  )
+                )}
+              </div>
+            </div>
+
+            {/* Selected Pills */}
+            {selectedCollections.length > 0 && (
+              <div className="flex flex-wrap gap-1 max-h-20 overflow-y-auto pr-1">
+                {selectedCollections.map((col) => (
+                  <span
+                    key={col.id}
+                    className="inline-flex items-center gap-1 rounded bg-amber-950/80 border border-amber-700/70 px-2 py-0.5 text-xs text-amber-200 font-medium"
+                  >
+                    <span className="truncate max-w-[130px]">{col.title}</span>
+                    <button
+                      type="button"
+                      onClick={() => toggleCollection(col.id)}
+                      className="text-amber-400 hover:text-amber-100 font-bold ml-0.5 text-xs"
+                      title="Bỏ chọn"
+                    >
+                      ✕
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+
+            {/* Add Collection dropdown */}
+            <div className="grid grid-cols-[1fr_auto] gap-1.5">
+              <select
+                className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-slate-100 outline-none focus:border-cyan-400 disabled:opacity-50 text-sm cursor-pointer"
+                disabled={isLoadingCollections || availableCollections.length === 0}
+                value=""
+                onChange={(e) => {
+                  if (e.target.value) {
+                    toggleCollection(e.target.value);
+                  }
+                }}
+              >
+                <option value="">+ Thêm / Bỏ Collection...</option>
+                {availableCollections.map((c) => {
+                  const isSelected = activeCollectionIds.includes(c.id);
+                  return (
+                    <option key={c.id} value={c.id}>
+                      {isSelected ? "✓ [Đã chọn] " : "+ "}{c.title} ({c.productsCount ?? 0} sp)
+                    </option>
+                  );
+                })}
+              </select>
+              <button
+                type="button"
+                onClick={() => setIsCollectionListOpen(!isCollectionListOpen)}
+                className={`rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors ${
+                  isCollectionListOpen
+                    ? "border-cyan-500 bg-cyan-950 text-cyan-200"
+                    : "border-slate-700 bg-slate-800 text-slate-300 hover:bg-slate-700"
+                }`}
+                title="Bật/tắt danh sách checklist"
+              >
+                {isCollectionListOpen ? "Thu gọn" : "Chi tiết ▾"}
+              </button>
+            </div>
+
+            {/* Expandable Checklist */}
+            {isCollectionListOpen && availableCollections.length > 0 && (
+              <div className="max-h-36 overflow-y-auto space-y-1 rounded-lg border border-slate-800 bg-slate-950/80 p-2 text-xs">
+                {availableCollections.map((c) => {
+                  const isChecked = activeCollectionIds.includes(c.id);
+                  return (
+                    <label
+                      key={c.id}
+                      className="flex items-center gap-2 text-slate-300 hover:text-slate-100 cursor-pointer py-0.5 select-none"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={isChecked}
+                        onChange={() => toggleCollection(c.id)}
+                        className="rounded border-slate-700 text-cyan-500 focus:ring-0 cursor-pointer"
+                      />
+                      <span className={`truncate flex-1 ${isChecked ? "text-amber-200 font-medium" : ""}`}>
+                        {c.title}
+                      </span>
+                      <span className="text-[10px] text-slate-500 font-mono">
+                        {c.productsCount ?? 0} sp
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+            )}
+
+            <p className="text-[11px] text-slate-400 leading-relaxed">
+              Tự động thêm sản phẩm vào tất cả các bộ sưu tập được chọn.
+            </p>
+          </div>
+
+          {/* Product Type selector */}
+          <div className="space-y-2 rounded-xl border border-slate-800 bg-slate-900/40 p-3.5 sm:col-span-2 lg:col-span-1">
+            <div className="flex items-center justify-between">
+              <label className="text-sm font-medium text-slate-200">
+                Loại sản phẩm (Product Type)
+              </label>
+              {settings.productType ? (
+                <button
+                  type="button"
+                  onClick={() => updateSetting("productType", "")}
+                  className="text-[11px] text-rose-400 hover:text-rose-300 transition-colors"
+                >
+                  Xóa / Theo gốc
+                </button>
+              ) : (
+                <span className="text-[11px] text-slate-400 font-mono">
+                  Theo Amazon
+                </span>
+              )}
+            </div>
+
+            {/* Quick Pills */}
+            <div className="flex flex-wrap gap-1">
+              {QUICK_PRODUCT_TYPE_PILLS.map((pill) => {
+                const isActive = settings.productType?.toLowerCase() === pill.toLowerCase();
+                return (
+                  <button
+                    key={pill}
+                    type="button"
+                    className={`rounded px-1.5 py-0.5 text-[11px] font-medium transition-colors ${
+                      isActive
+                        ? "bg-emerald-500 text-slate-950 font-semibold shadow-sm"
+                        : "bg-slate-800/80 text-slate-300 hover:bg-slate-700 hover:text-slate-100"
+                    }`}
+                    onClick={() => updateSetting("productType", isActive ? "" : pill)}
+                  >
+                    {pill}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Dropdown & Direct Text Input Combo */}
+            <div className="grid grid-cols-[1fr_auto] gap-1.5">
+              <input
+                type="text"
+                placeholder="VD: Rug, Blanket, Quilt..."
+                className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-slate-100 outline-none focus:border-cyan-400 text-sm font-medium placeholder:text-slate-500"
+                value={settings.productType || ""}
+                onChange={(e) => updateSetting("productType", e.target.value)}
+              />
+              <select
+                className="rounded-lg border border-slate-700 bg-slate-800 px-2 py-1.5 text-slate-200 outline-none focus:border-cyan-400 text-xs cursor-pointer"
+                value={
+                  COMMON_PRODUCT_TYPES.some((t) => t.value === settings.productType)
+                    ? settings.productType
+                    : ""
+                }
+                onChange={(e) => {
+                  if (e.target.value) {
+                    updateSetting("productType", e.target.value);
+                  }
+                }}
+              >
+                <option value="">Mẫu...</option>
+                {COMMON_PRODUCT_TYPES.map((t) => (
+                  <option key={t.value} value={t.value}>
+                    {t.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <p className="text-[11px] text-slate-400 leading-relaxed">
+              Loại sp hiển thị trên Shopify (Chillgen: <span className="text-cyan-300 font-mono">Rug</span>, Jeminise: <span className="text-cyan-300 font-mono">Blanket</span>).
+            </p>
+          </div>
+        </div>
+
+        {/* Row 2: Price Addition & Compare-At Discount */}
+        <div className="grid gap-4 sm:grid-cols-2">
+          {/* Price Addition */}
+          <div className="space-y-2 rounded-xl border border-slate-800 bg-slate-900/40 p-3.5">
+            <div className="flex items-center justify-between">
+              <label className="text-sm font-medium text-slate-200">
+                Giá cộng thêm ($)
+              </label>
+              <div className="flex flex-wrap gap-1">
+                {[
+                  { label: "+$0", value: 0 },
+                  { label: "+$5.99", value: 5.99 },
+                  { label: "+$6.95", value: 6.95 },
+                  { label: "+$9.99", value: 9.99 },
+                  { label: "+$14.99", value: 14.99 },
+                ].map((btn) => (
+                  <button
+                    key={btn.label}
+                    type="button"
+                    className={`rounded px-2 py-0.5 text-xs font-semibold transition-colors ${
+                      settings.priceAddition === btn.value
+                        ? "bg-cyan-500 text-slate-950 shadow-sm"
+                        : "bg-slate-800 text-slate-300 hover:bg-slate-700"
+                    }`}
+                    onClick={() => updateSetting("priceAddition", btn.value)}
+                  >
+                    {btn.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="relative">
+              <span className="absolute left-3 top-2 text-sm text-slate-500 pointer-events-none font-mono">$</span>
+              <input
+                type="number"
+                step="0.01"
+                min="0"
+                placeholder="0.00"
+                className="w-full rounded-lg border border-slate-700 bg-slate-900 pl-7 pr-3 py-2 text-slate-100 outline-none focus:border-cyan-400 font-mono text-sm"
+                value={settings.priceAddition ?? 0}
+                onChange={(e) => {
+                  const val = Math.max(0, Number(e.target.value) || 0);
+                  updateSetting("priceAddition", val);
+                }}
+              />
+            </div>
+            <p className="text-[11px] text-slate-400">
+              Số tiền cộng vào giá gốc Amazon trước khi bán (VD: +$6.95).
+            </p>
+          </div>
+
+          {/* Compare-At Discount % */}
+          <div className="space-y-2 rounded-xl border border-slate-800 bg-slate-900/40 p-3.5">
+            <div className="flex items-center justify-between">
+              <label className="text-sm font-medium text-slate-200">
+                Giảm giá so sánh (% Compare-At)
+              </label>
+              <span className="text-xs font-mono text-cyan-300 font-semibold">
+                {settings.discountPercent ?? 0}%
+              </span>
+            </div>
+            <div className="grid grid-cols-[1fr_auto] gap-2">
+              <select
+                className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-slate-100 outline-none focus:border-cyan-400 text-sm"
+                value={
+                  [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95].includes(
+                    settings.discountPercent ?? 0
+                  )
+                    ? settings.discountPercent ?? 0
+                    : "custom"
+                }
+                onChange={(e) => {
+                  if (e.target.value !== "custom") {
+                    updateSetting("discountPercent", Number(e.target.value));
+                  }
+                }}
+              >
+                <option value={0}>0% (Không hiển thị giá giảm)</option>
+                {Array.from({ length: 19 }, (_, i) => (i + 1) * 5).map((pct) => (
+                  <option key={pct} value={pct}>
+                    Giảm {pct}%
+                  </option>
+                ))}
+                {![0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95].includes(
+                  settings.discountPercent ?? 0
+                ) && (
+                  <option value="custom">Tự nhập: {settings.discountPercent}%</option>
+                )}
+              </select>
+              <div className="relative">
+                <input
+                  type="number"
+                  step="1"
+                  min="0"
+                  max="95"
+                  placeholder="%"
+                  className="w-20 rounded-lg border border-slate-700 bg-slate-900 px-2 py-2 pr-6 text-slate-100 outline-none focus:border-cyan-400 font-mono text-sm text-right"
+                  value={settings.discountPercent ?? 0}
+                  onChange={(e) => {
+                    const val = Math.min(95, Math.max(0, Number(e.target.value) || 0));
+                    updateSetting("discountPercent", val);
+                  }}
+                />
+                <span className="absolute right-2 top-2 text-xs text-slate-500 pointer-events-none">%</span>
+              </div>
+            </div>
+            <p className="text-[11px] text-slate-400">
+              Tạo giá gạch ngang sao cho giá bán đã giảm đúng % này so với giá gốc.
+            </p>
+          </div>
+        </div>
+
+        {/* Live Calculation Preview Box */}
+        {(() => {
+          const sampleBase = 20.0;
+          const addition = settings.priceAddition ?? 0;
+          const discount = settings.discountPercent ?? 0;
+          const selling = sampleBase + addition;
+          const compareAt = discount > 0 && discount < 100 ? selling / (1 - discount / 100) : undefined;
+
+          return (
+            <div className="rounded-xl border border-cyan-900/60 bg-gradient-to-r from-slate-900/90 via-slate-900 to-cyan-950/30 p-4 text-xs text-slate-300 shadow-inner">
+              <div className="flex flex-wrap items-center justify-between gap-2 mb-2 pb-2 border-b border-slate-800/80">
+                <span className="font-semibold text-slate-200 flex items-center gap-1.5">
+                  <span className="text-cyan-400 font-bold">📊 Xem trước kết quả</span>
+                  <span className="text-slate-400 font-normal">(Ví dụ sản phẩm Amazon có giá gốc $20.00):</span>
+                </span>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="rounded bg-slate-800 px-2 py-0.5 text-[11px] text-slate-300">
+                    Store: <strong className="text-cyan-300">{settings.storeId || "capozen"}</strong>
+                  </span>
+                  <span className="rounded bg-slate-800 px-2 py-0.5 text-[11px] text-slate-300">
+                    Vendor: <strong className="text-purple-300">{((settings.storeId || "capozen").split("--")[0] || "CAPOZEN").trim().toUpperCase()}</strong>
+                  </span>
+                  <span className="rounded bg-slate-800 px-2 py-0.5 text-[11px] text-slate-300">
+                    Type: <strong className="text-emerald-300">{settings.productType || "(Gốc Amazon)"}</strong>
+                  </span>
+                  <span className="rounded bg-slate-800 px-2 py-0.5 text-[11px] text-slate-300">
+                    Collections:{" "}
+                    <strong className="text-amber-300">
+                      {selectedCollections.length > 0
+                        ? selectedCollections.map((c) => c.title).join(", ")
+                        : "(Không gán)"}
+                    </strong>
+                  </span>
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 text-sm">
+                <span>
+                  Giá bán thực tế:{" "}
+                  <strong className="text-emerald-400 font-mono font-bold">${selling.toFixed(2)}</strong>{" "}
+                  <span className="text-xs text-slate-500">($20.00 + ${addition.toFixed(2)})</span>
+                </span>
+                {compareAt !== undefined && (
+                  <span>
+                    Giá gạch ngang (Compare-At):{" "}
+                    <strong className="text-amber-400 font-mono line-through font-bold">${compareAt.toFixed(2)}</strong>
+                  </span>
+                )}
+                {discount > 0 ? (
+                  <span className="rounded-md bg-rose-950/90 border border-rose-800 px-2 py-0.5 text-xs text-rose-300 font-bold tracking-wide">
+                    Khách thấy: Tiết kiệm {discount}%
+                  </span>
+                ) : (
+                  <span className="text-xs text-slate-500">
+                    (Không áp dụng gạch ngang)
+                  </span>
+                )}
+              </div>
+            </div>
+          );
+        })()}
+      </section>
+
       <div className="grid gap-4 sm:grid-cols-2">
         <label className="grid gap-1 text-sm text-slate-300">
           Profile
           <select
             className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2"
             value={settings.profileSlug}
-            onChange={(event) => updateSetting("profileSlug", event.target.value === "jeminise" ? "jeminise" : "default")}
+            onChange={(event) => {
+              const nextProfile = event.target.value === "jeminise" ? "jeminise" : "default";
+              updateSetting("profileSlug", nextProfile);
+              if (nextProfile === "jeminise") {
+                updateSetting("storeId", "jeminise");
+                updateSetting("applyJeminisePreset", true);
+              }
+            }}
           >
             <option value="default">Default</option>
             <option value="jeminise">Jeminise</option>
@@ -364,7 +1052,67 @@ export function AmazonCrawlerPage({
           />
           Thay variants bằng preset Jeminise 47 variants
         </label>
+        <label className="grid gap-1 text-sm text-slate-300">
+          Xử lý ảnh
+          <select
+            className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2"
+            value={settings.imageProfileSlug}
+            onChange={(event) => {
+              const slug = event.target.value;
+              updateSetting("imageProfileSlug", slug);
+              setEditingImageProfile(imageProfiles.find((profile) => profile.slug === slug) ?? null);
+            }}
+          >
+            {imageProfiles.map((profile) => <option key={profile.slug} value={profile.slug}>{profile.name}{profile.enabled ? " · bật" : " · tắt"}</option>)}
+          </select>
+        </label>
+        <div className="flex items-end gap-2">
+          <button className="rounded-lg border border-cyan-700 px-3 py-2 text-sm text-cyan-200" type="button" onClick={() => setIsImageProfileEditorOpen((open) => !open)}>Cấu hình ảnh</button>
+          <button className="rounded-lg border border-slate-700 px-3 py-2 text-sm" type="button" onClick={() => void handleCreateImageProfile()}>Tạo profile</button>
+        </div>
       </div>
+
+      {isImageProfileEditorOpen && editingImageProfile ? (
+        <section className="space-y-4 rounded-xl border border-cyan-900 bg-slate-950/60 p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h2 className="font-semibold text-cyan-200">Image profile · {editingImageProfile.slug}</h2>
+            <span className="text-xs text-slate-500">Revision {editingImageProfile.revision}</span>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-3">
+            <label className="grid gap-1 text-sm">Tên<input className="rounded border border-slate-700 bg-slate-900 px-3 py-2" value={editingImageProfile.name} onChange={(event) => setEditingImageProfile({ ...editingImageProfile, name: event.target.value })} /></label>
+            <label className="flex items-center gap-2 self-end p-2 text-sm"><input checked={editingImageProfile.enabled} type="checkbox" onChange={(event) => setEditingImageProfile({ ...editingImageProfile, enabled: event.target.checked })} /> Bật xử lý ảnh</label>
+            <label className="grid gap-2 text-sm">
+              Logo PNG/JPEG/WebP
+              {editingImageProfile.logoUrl ? (
+                <span className="flex h-24 items-center justify-center overflow-hidden rounded-lg border border-slate-700 bg-white/90 p-2">
+                  <img alt={`Logo hiện tại của ${editingImageProfile.name}`} className="max-h-full max-w-full object-contain" src={editingImageProfile.logoUrl} />
+                </span>
+              ) : (
+                <span className="flex h-24 items-center justify-center rounded-lg border border-dashed border-slate-700 text-xs text-slate-500">Chưa có logo</span>
+              )}
+              <input accept="image/png,image/jpeg,image/webp" className="text-xs" type="file" onChange={(event) => void handleImageProfileLogo(event.target.files?.[0])} />
+            </label>
+            <label className="grid gap-1 text-sm">Ảnh thử preview<input accept="image/png,image/jpeg,image/webp" className="text-xs" type="file" onChange={(event) => void handleImageProfilePreview(event.target.files?.[0])} /></label>
+            <NumberSetting label="Random pixels" min={0} max={10000} value={editingImageProfile.randomPixels} onChange={(value) => setEditingImageProfile({ ...editingImageProfile, randomPixels: value })} />
+            <NumberSetting label="Pixel delta" min={1} max={20} value={editingImageProfile.pixelDelta} onChange={(value) => setEditingImageProfile({ ...editingImageProfile, pixelDelta: value })} />
+            <NumberSetting label="JPEG quality" min={70} max={98} value={editingImageProfile.jpegQuality} onChange={(value) => setEditingImageProfile({ ...editingImageProfile, jpegQuality: value })} />
+            <NumberSetting label="Output width" min={100} max={4000} value={editingImageProfile.output.width} onChange={(value) => setEditingImageProfile({ ...editingImageProfile, output: { ...editingImageProfile.output, width: value } })} />
+            <NumberSetting label="Output height" min={100} max={4000} value={editingImageProfile.output.height} onChange={(value) => setEditingImageProfile({ ...editingImageProfile, output: { ...editingImageProfile.output, height: value } })} />
+            <label className="grid gap-1 text-sm">Fit<select className="rounded border border-slate-700 bg-slate-900 px-3 py-2" value={editingImageProfile.output.fit} onChange={(event) => setEditingImageProfile({ ...editingImageProfile, output: { ...editingImageProfile.output, fit: event.target.value === "cover" ? "cover" : "contain" } })}><option value="contain">Contain</option><option value="cover">Cover</option></select></label>
+            <label className="grid gap-1 text-sm">Background<input className="h-10 rounded border border-slate-700 bg-slate-900" type="color" value={editingImageProfile.output.background} onChange={(event) => setEditingImageProfile({ ...editingImageProfile, output: { ...editingImageProfile.output, background: event.target.value } })} /></label>
+            <label className="flex items-center gap-2 self-end p-2 text-sm"><input checked={editingImageProfile.logo.enabled} disabled={!editingImageProfile.hasLogo} type="checkbox" onChange={(event) => setEditingImageProfile({ ...editingImageProfile, logo: { ...editingImageProfile.logo, enabled: event.target.checked } })} /> Bật logo {editingImageProfile.hasLogo ? "" : "(chưa có file)"}</label>
+            <label className="grid gap-1 text-sm">Vị trí logo<select className="rounded border border-slate-700 bg-slate-900 px-3 py-2" value={editingImageProfile.logo.position} onChange={(event) => setEditingImageProfile({ ...editingImageProfile, logo: { ...editingImageProfile.logo, position: event.target.value as ImageProcessingProfile["logo"]["position"] } })}><option value="top-left">Top left</option><option value="top-right">Top right</option><option value="bottom-left">Bottom left</option><option value="bottom-right">Bottom right</option></select></label>
+            <NumberSetting label="Logo max %" min={1} max={100} value={editingImageProfile.logo.maxPercent} onChange={(value) => setEditingImageProfile({ ...editingImageProfile, logo: { ...editingImageProfile.logo, maxPercent: value } })} />
+            <NumberSetting label="Logo padding" min={0} max={4000} value={editingImageProfile.logo.padding} onChange={(value) => setEditingImageProfile({ ...editingImageProfile, logo: { ...editingImageProfile.logo, padding: value } })} />
+          </div>
+          {imageProfilePreview ? <img alt="Image processing preview" className="max-h-80 rounded-lg border border-slate-700 object-contain" src={imageProfilePreview} /> : null}
+          <div className="flex gap-2">
+            <button className="rounded bg-cyan-500 px-4 py-2 font-semibold text-slate-950" type="button" onClick={() => void handleSaveImageProfile()}>Lưu profile</button>
+            <button className="rounded border border-rose-700 px-4 py-2 text-rose-300 disabled:opacity-40" disabled={editingImageProfile.slug === "default"} type="button" onClick={() => void handleDeleteImageProfile()}>Xóa profile</button>
+          </div>
+          {imageProfileMessage ? <p className="text-sm text-amber-200">{imageProfileMessage}</p> : null}
+        </section>
+      ) : null}
 
       <button className="text-sm font-semibold text-cyan-300" type="button" onClick={toggleCrawlerAdvancedOpen}>
         {isAdvancedOpen ? "Ẩn" : "Hiện"} Advanced Settings
@@ -585,6 +1333,7 @@ export function AmazonCrawlerPage({
                         <div><dt className="text-slate-500">Preset</dt><dd>{selectedProduct.preset ?? "—"}</dd></div>
                         <div><dt className="text-slate-500">Pipeline</dt><dd>{selectedProduct.pipeline?.status ?? "Chưa nhận"}</dd></div>
                         <div><dt className="text-slate-500">SEO</dt><dd>{selectedProduct.pipeline?.seo.status ?? "pending"}{selectedProduct.pipeline?.seo.engine ? ` · ${selectedProduct.pipeline.seo.engine}` : ""}</dd></div>
+                        <div><dt className="text-slate-500">Ảnh</dt><dd>{selectedProduct.pipeline?.imageProcessing?.status ?? "pending"}{selectedProduct.pipeline?.imageProcessing?.profileSlug ? ` · ${selectedProduct.pipeline.imageProcessing.profileSlug}` : ""}</dd></div>
                         <div><dt className="text-slate-500">Proxy Shopify</dt><dd>{selectedProduct.pipeline?.shopify.proxyProfile ?? "—"}</dd></div>
                       </dl>
                       <a className="mt-4 inline-block text-sm font-semibold text-cyan-300 hover:text-cyan-200" href={selectedProduct.canonicalUrl} rel="noreferrer" target="_blank">Mở trên Amazon ↗</a>
@@ -601,6 +1350,7 @@ export function AmazonCrawlerPage({
                       {selectedProduct.pipeline?.seo.fallbackStages?.length ? <p className="mt-3 rounded-lg border border-amber-800 bg-amber-950/30 p-3 text-sm text-amber-200">SEO fallback: {selectedProduct.pipeline.seo.fallbackStages.join(", ")}</p> : null}
                       {selectedProduct.pipeline?.seo.warnings?.map((warning) => <p key={warning} className="mt-3 rounded-lg border border-amber-800 bg-amber-950/30 p-3 text-sm text-amber-200">SEO: {warning}</p>)}
                       {selectedProduct.pipeline?.seo.error ? <p className="mt-3 rounded-lg border border-rose-800 bg-rose-950/30 p-3 text-sm text-rose-200">SEO: {selectedProduct.pipeline.seo.error}</p> : null}
+                      {selectedProduct.pipeline?.imageProcessing?.error ? <p className="mt-3 rounded-lg border border-rose-800 bg-rose-950/30 p-3 text-sm text-rose-200">Ảnh: {selectedProduct.pipeline.imageProcessing.error}</p> : null}
                     </div>
                   </div>
 

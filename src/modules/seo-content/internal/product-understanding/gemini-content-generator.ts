@@ -4,7 +4,7 @@ import { GEMINI_PRODUCT_IMAGE_ANALYSIS_SCHEMA } from "./gemini-analysis-schema";
 
 export interface GeminiAnalysisRequest {
   readonly prompt: string;
-  readonly imagePayload: GeminiImagePart;
+  readonly imagePayloads: readonly GeminiImagePart[];
   readonly systemInstruction: string;
   readonly model?: string;
   readonly maxOutputTokens?: number;
@@ -19,6 +19,8 @@ export interface GeminiStructuredTextRequest {
   readonly maxOutputTokens?: number;
   readonly timeoutMs?: number;
   readonly temperature?: number;
+  /** Set to zero for short deterministic classifications that do not need model reasoning tokens. */
+  readonly thinkingBudget?: number;
 }
 
 export interface GeminiAnalysisResponse {
@@ -72,13 +74,7 @@ export class FakeGeminiContentGenerator implements GeminiContentGenerator {
       this.handler = async () => initialHandler;
     } else {
       this.handler = async () => ({
-        rawText: JSON.stringify({
-          ocrTexts: [],
-          detectedEntities: [],
-          dominantColors: [],
-          visualStyle: "unspecified",
-          productCategory: "unknown",
-        }),
+        rawText: JSON.stringify({ typography: { visibleTexts: [], styleSummary: "unknown" }, visualEntities: "unknown", sceneContext: "unknown", physicalProductIdentity: "unknown" }),
       });
     }
   }
@@ -192,20 +188,12 @@ export class GoogleGenAIVertexContentGenerator implements GeminiContentGenerator
 
     const parts: Array<Record<string, unknown>> = [{ text: request.prompt }];
 
-    if (request.imagePayload.type === "inline") {
-      parts.push({
-        inlineData: {
-          mimeType: request.imagePayload.inlineData.mimeType,
-          data: request.imagePayload.inlineData.data,
-        },
-      });
-    } else {
-      parts.push({
-        fileData: {
-          mimeType: request.imagePayload.fileData.mimeType,
-          fileUri: request.imagePayload.fileData.fileUri,
-        },
-      });
+    for (const imagePayload of request.imagePayloads) {
+      if (imagePayload.type === "inline") {
+        parts.push({ inlineData: { mimeType: imagePayload.inlineData.mimeType, data: imagePayload.inlineData.data } });
+      } else {
+        parts.push({ fileData: { mimeType: imagePayload.fileData.mimeType, fileUri: imagePayload.fileData.fileUri } });
+      }
     }
 
     let timer: NodeJS.Timeout | undefined;
@@ -325,6 +313,9 @@ export class GoogleGenAIVertexContentGenerator implements GeminiContentGenerator
           temperature: request.temperature ?? 0,
           candidateCount: 1,
           maxOutputTokens: request.maxOutputTokens || 2048,
+          ...(request.thinkingBudget === undefined
+            ? {}
+            : { thinkingConfig: { thinkingBudget: request.thinkingBudget } }),
         },
       });
 

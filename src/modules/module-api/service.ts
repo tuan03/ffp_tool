@@ -23,8 +23,12 @@ import type {
   ShopifyFilesCreateResponse,
   ShopifyFilesBulkCreateInput,
   ShopifyFilesBulkCreateResponse,
+  ShopifyFilesDeleteInput,
+  ShopifyFilesDeleteResponse,
   ShopifyMetafieldsSetInput,
   ShopifyMetafieldsSetResponse,
+  ShopifyMetafieldsGetInput,
+  ShopifyMetafieldsGetResponse,
   ShopifyOperation,
   ShopifyProductsBulkUpdateInput,
   ShopifyProductsBulkUpdateResponse,
@@ -57,6 +61,7 @@ const READ_OPERATIONS: ReadonlySet<ShopifyOperation> = new Set([
   "connection.test",
   "products.list",
   "products.get",
+  "metafields.get",
   "collections.list",
   "collections.get",
   "stores.list",
@@ -76,7 +81,10 @@ const ALL_OPERATIONS: ReadonlySet<ShopifyOperation> = new Set([
   "variants.bulkCreate",
   "files.create",
   "files.bulkCreate",
+  "files.stageBinary",
+  "files.delete",
   "metafields.set",
+  "metafields.get",
   "collections.list",
   "collections.get",
   "collections.create",
@@ -86,6 +94,8 @@ const ALL_OPERATIONS: ReadonlySet<ShopifyOperation> = new Set([
   "stores.list",
   "stores.get",
 ]);
+
+export const SUPPORTED_SHOPIFY_OPERATIONS: ReadonlySet<ShopifyOperation> = ALL_OPERATIONS;
 
 function isShopifyReadOperation(operation: ShopifyOperation): boolean {
   return READ_OPERATIONS.has(operation);
@@ -448,7 +458,10 @@ export function createModuleApiRunner(
       (config as Record<string, unknown> | undefined)?.GATEWAY_AUTH_TOKEN as string | undefined ??
       (dependencies as Record<string, unknown> | undefined)?.gatewayAuthToken as string | undefined ??
       (dependencies as Record<string, unknown> | undefined)?.GATEWAY_AUTH_TOKEN as string | undefined ??
-      (typeof process !== "undefined" && process.env ? process.env.GATEWAY_AUTH_TOKEN : undefined);
+      (typeof process !== "undefined" && process.env ? process.env.GATEWAY_AUTH_TOKEN : undefined) ??
+      (typeof import.meta !== "undefined" && "env" in import.meta && (import.meta as { env?: Record<string, unknown> }).env
+        ? ((import.meta as { env?: Record<string, unknown> }).env?.VITE_GATEWAY_AUTH_TOKEN as string | undefined)
+        : undefined);
 
     if (authToken && typeof authToken === "string" && authToken.trim() !== "") {
       headers["X-Gateway-Key"] = authToken.trim();
@@ -603,9 +616,9 @@ export function createModuleApiRunner(
 
     return {
       storeId:
-        typeof parsedObj.storeId === "string"
-          ? parsedObj.storeId
-          : input.storeId ?? effectiveStoreId,
+        typeof parsedObj.storeId === "string" && parsedObj.storeId.trim() !== ""
+          ? parsedObj.storeId.trim()
+          : effectiveStoreId,
       operation: input.operation,
       success: true,
       data: parsedObj.data,
@@ -632,7 +645,9 @@ export async function runModuleApi(input: ShopifyVariantsBulkUpdateInput): Promi
 export async function runModuleApi(input: ShopifyVariantsBulkCreateInput): Promise<ShopifyVariantsBulkCreateResponse>;
 export async function runModuleApi(input: ShopifyFilesCreateInput): Promise<ShopifyFilesCreateResponse>;
 export async function runModuleApi(input: ShopifyFilesBulkCreateInput): Promise<ShopifyFilesBulkCreateResponse>;
+export async function runModuleApi(input: ShopifyFilesDeleteInput): Promise<ShopifyFilesDeleteResponse>;
 export async function runModuleApi(input: ShopifyMetafieldsSetInput): Promise<ShopifyMetafieldsSetResponse>;
+export async function runModuleApi(input: ShopifyMetafieldsGetInput): Promise<ShopifyMetafieldsGetResponse>;
 export async function runModuleApi(input: ShopifyCollectionsListInput): Promise<ShopifyCollectionsListResponse>;
 export async function runModuleApi(input: ShopifyCollectionsGetInput): Promise<ShopifyCollectionsGetResponse>;
 export async function runModuleApi(input: ShopifyCollectionsCreateInput): Promise<ShopifyCollectionsCreateResponse>;

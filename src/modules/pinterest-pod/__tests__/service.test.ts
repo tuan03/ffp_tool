@@ -1173,5 +1173,3 @@ test("MockPinterestPodClient.produce with reference images determines mockup out
   assert.equal(completed.deliverables?.lifestyle_mockups?.length, 3);
   assert.equal(completed.deliverables?.comparison_rows?.[0]?.ai_background_urls?.length, 3);
 });
-
-

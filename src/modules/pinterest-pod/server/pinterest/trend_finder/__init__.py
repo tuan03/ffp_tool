@@ -1,2 +1,1 @@
 """Trend finder package."""
-

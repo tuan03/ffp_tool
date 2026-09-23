@@ -61,6 +61,37 @@ export function isGatewayAuthorized(
   return checkMatch(gatewayKey) || checkMatch(bearerToken);
 }
 
+export function isLocalHost(host?: string | boolean): boolean {
+  if (host === undefined || host === false) {
+    return true;
+  }
+  if (typeof host === "boolean") {
+    return !host;
+  }
+  const clean = host.trim().toLowerCase();
+  return (
+    clean === "127.0.0.1" ||
+    clean === "localhost" ||
+    clean === "::1" ||
+    clean === "[::1]"
+  );
+}
+
+export function assertHostSecurity(
+  host?: string | boolean,
+  authToken?: string,
+  context: "gateway server" | "vite dev server" = "gateway server",
+): void {
+  const isLocal = isLocalHost(host);
+  const hasAuthToken = typeof authToken === "string" && authToken.trim().length > 0;
+  if (!isLocal && !hasAuthToken) {
+    const displayHost = typeof host === "boolean" ? (host ? "0.0.0.0" : "localhost") : host;
+    throw new Error(
+      `Refusing to start ${context} on host '${displayHost}' without GATEWAY_AUTH_TOKEN. Unauthenticated public exposure is prohibited.`,
+    );
+  }
+}
+
 export function createGatewayHttpHandler(
   dispatcher: GatewayDispatcher,
   options?: GatewayHttpHandlerOptions,
@@ -166,7 +197,10 @@ export function createGatewayHttpHandler(
       if (err instanceof GatewayError) {
         return new Response(
           JSON.stringify({
-            storeId: (body as GatewayRequest)?.storeId ?? "",
+            storeId:
+              typeof (body as GatewayRequest)?.storeId === "string"
+                ? String((body as GatewayRequest).storeId).trim()
+                : "",
             operation: (body as GatewayRequest)?.operation ?? "",
             success: false,
             error: {

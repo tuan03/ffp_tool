@@ -14,11 +14,13 @@ import {
   createShopifyGatewayAdapter,
   createModuleApiRunner,
   resolveShopifyProductForSync,
+  type ShopifyFilesStageBinaryResponse,
 } from "../src/modules/module-api";
 import {
   fromCustomizationNormalizerProduct,
   syncSingleProduct,
   type ShopifyManagedResources,
+  type ShopifySyncProductInput,
   type ShopifySyncProductResult,
 } from "../src/modules/shopify-sync";
 import {
@@ -41,6 +43,11 @@ interface PipelineClaim {
   readonly checksum: string;
   readonly attempt: number;
   readonly product: CrawlProduct;
+  readonly settings: {
+    readonly imageProfileSlug?: string;
+    readonly imageProfileRevision?: string | null;
+    readonly [key: string]: unknown;
+  };
   readonly existingShopify: {
     readonly productId: string;
     readonly productHandle?: string;
@@ -75,6 +82,9 @@ const seoEnvironmentKeys = [
 for (const key of seoEnvironmentKeys) {
   if (env[key]) process.env[key] = env[key];
 }
+if (env.GATEWAY_AUTH_TOKEN) {
+  process.env.GATEWAY_AUTH_TOKEN = env.GATEWAY_AUTH_TOKEN;
+}
 process.env.SEO_CONFLICT_CORPUS_PATH = process.env.SEO_CONFLICT_CORPUS_PATH
   || ".runtime/seo-conflict-corpus.json";
 env.SHOPIFY_PROXY_CONFIG = env.SHOPIFY_PROXY_CONFIG || env.AMAZON_CRAWLER_PROXY_CONFIG || "config/amazon-crawler-profiles.json";
@@ -96,6 +106,8 @@ interface PipelineTimings {
   seoRebaseMs?: number;
   seoRegistrationMs?: number;
   seoTotalMs?: number;
+  imageProcessingMs?: number;
+  imageUploadMs?: number;
   shopifySyncMs?: number;
   totalMs?: number;
 }
@@ -112,7 +124,11 @@ const effectiveStores = proxyStores.length > 0 ? proxyStores : (baseStore ? [bas
 
 let gatewayServer: ReturnType<typeof startGatewayServer> | undefined;
 if (!env.SHOPIFY_GATEWAY_URL) {
-  gatewayServer = startGatewayServer({ port: gatewayPort, host: "127.0.0.1" });
+  gatewayServer = startGatewayServer({
+    port: gatewayPort,
+    host: "127.0.0.1",
+    authToken: env.GATEWAY_AUTH_TOKEN,
+  });
 }
 
 function canonicalize(value: unknown): string {
@@ -151,6 +167,99 @@ async function postJson<TResponse>(path: string, body: Record<string, unknown>):
   return payload as TResponse;
 }
 
+interface ProcessedImageMedia {
+  readonly url: string;
+  readonly kind?: string;
+  readonly sourceAsin?: string;
+  readonly alt?: string;
+  readonly processedFileToken?: string;
+  readonly processedContentType?: string;
+  readonly processedUrl?: string;
+  readonly [key: string]: unknown;
+}
+
+interface ImageProcessingResponse {
+  readonly product: CrawlProduct;
+  readonly profile: { readonly slug: string; readonly enabled: boolean; readonly revision: string };
+  readonly processed: number;
+}
+
+async function loadProcessedImage(token: string): Promise<Buffer> {
+  const response = await fetch(
+    `${coordinatorUrl}/api/v1/internal/image-processing/files/${encodeURIComponent(token)}`,
+    { headers: pipelineToken ? { "X-Pipeline-Key": pipelineToken } : {} },
+  );
+  if (!response.ok) {
+    throw new Error(`Coordinator processed image download failed with HTTP ${response.status}.`);
+  }
+  return Buffer.from(await response.arrayBuffer());
+}
+
+async function stageProcessedMedia(
+  product: CrawlProduct,
+  runner: ReturnType<typeof createModuleApiRunner>,
+  proxyStoreId: string,
+  requestPrefix: string,
+): Promise<CrawlProduct> {
+  const stagedMedia: ProcessedImageMedia[] = [];
+  for (const [index, rawMedia] of (product.media ?? []).entries()) {
+    const media = rawMedia as ProcessedImageMedia;
+    if (!media.processedFileToken) {
+      stagedMedia.push(media);
+      continue;
+    }
+    const content = await loadProcessedImage(media.processedFileToken);
+    const response = await runner({
+      storeId: proxyStoreId,
+      operation: "files.stageBinary",
+      mode: "apply",
+      requestId: `${requestPrefix}-image-${index + 1}-${media.processedFileToken.slice(0, 12)}`,
+      payload: {
+        filename: `${media.processedFileToken}.jpg`,
+        mimeType: media.processedContentType || "image/jpeg",
+        contentBase64: content.toString("base64"),
+      },
+    }) as ShopifyFilesStageBinaryResponse;
+    stagedMedia.push({
+      ...media,
+      processedUrl: response.data.resourceUrl,
+      processedFileToken: undefined,
+      processedContentType: undefined,
+    });
+  }
+  const firstImageByAsin = new Map<string, string>();
+  for (const media of stagedMedia) {
+    const sourceAsin = typeof media.sourceAsin === "string" ? media.sourceAsin : "";
+    const processedUrl = typeof media.processedUrl === "string" ? media.processedUrl : "";
+    if (sourceAsin && processedUrl && !firstImageByAsin.has(sourceAsin)) {
+      firstImageByAsin.set(sourceAsin, processedUrl);
+    }
+  }
+  const variants = Array.isArray(product.variants)
+    ? product.variants.map((rawVariant) => {
+        if (!rawVariant || typeof rawVariant !== "object") return rawVariant;
+        const variant = rawVariant as Record<string, unknown>;
+        const sourceAsin = typeof variant.sourceAsin === "string" ? variant.sourceAsin : "";
+        return firstImageByAsin.has(sourceAsin)
+          ? { ...variant, mediaUrl: firstImageByAsin.get(sourceAsin) }
+          : variant;
+      })
+    : product.variants;
+  return { ...product, media: stagedMedia, variants };
+}
+
+function stripProcessingTokens(product: CrawlProduct): CrawlProduct {
+  return {
+    ...product,
+    media: (product.media ?? []).map((rawMedia) => {
+      const media = { ...rawMedia } as Record<string, unknown>;
+      delete media.processedFileToken;
+      delete media.processedContentType;
+      return media as ProcessedImageMedia;
+    }),
+  };
+}
+
 function productBlockers(product: CrawlProduct): string[] {
   const blockers: string[] = [];
   const matrix = product.variantMatrix && typeof product.variantMatrix === "object"
@@ -186,14 +295,17 @@ async function failClaim(
   options?: {
     readonly retryable?: boolean;
     readonly reconciliationRequired?: boolean;
-    readonly phase?: "normalization" | "seo" | "shopify";
+    readonly phase?: "normalization" | "seo" | "image_processing" | "shopify";
     readonly timings?: PipelineTimings;
   },
 ): Promise<void> {
   const message = error instanceof Error ? error.message : String(error);
+  const effectiveStoreId = typeof claim.settings?.storeId === "string" && claim.settings.storeId.trim()
+    ? claim.settings.storeId.trim()
+    : storeId;
   await postJson(`/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/fail`, {
     workerId,
-    storeId,
+    storeId: effectiveStoreId,
     error: { message, phase: options?.phase, timings: options?.timings },
     retryable: options?.retryable ?? false,
     reconciliationRequired: options?.reconciliationRequired ?? false,
@@ -263,12 +375,49 @@ async function processClaim(
     | undefined;
   let hasStartedShopifyWrite = false;
   try {
-    const runner = createModuleApiRunner({ gatewayUrl, timeoutMs: 180_000 });
+    const claimStoreId = typeof claim.settings?.storeId === "string" && claim.settings.storeId.trim()
+      ? claim.settings.storeId.trim()
+      : storeId;
+    const claimStoreConfig = configuredStores.find((store) => store.storeId === claimStoreId);
+    const claimAdminHandle = claimStoreConfig?.shopDomain
+      ? claimStoreConfig.shopDomain.replace(/\.myshopify\.com$/i, "")
+      : claimStoreId;
+    const targetProxyStores = configuredStores.filter(
+      (store) => store.storeId.startsWith(`${claimStoreId}--`) && store.proxy?.url && store.proxy.failClosed !== false,
+    );
+    const assignedProxyStore = targetProxyStores.find(
+      (store) => store.storeId === proxyStoreId || store.storeId.endsWith(`--${proxyProfile}`),
+    );
+    const effectiveProxyStoreId = assignedProxyStore?.storeId
+      ?? targetProxyStores[0]?.storeId
+      ?? claimStoreId;
+
+    const priceAddition = Number(claim.settings?.priceAddition ?? 0);
+    const discountPercent = Number(claim.settings?.discountPercent ?? 0);
+    const rawCollectionIds = Array.isArray(claim.settings?.collectionIds)
+      ? (claim.settings.collectionIds as unknown[]).map(String).map((s) => s.trim()).filter(Boolean)
+      : [];
+    const legacyCollectionId = typeof claim.settings?.collectionId === "string" && claim.settings.collectionId.trim()
+      ? claim.settings.collectionId.trim()
+      : undefined;
+    if (legacyCollectionId && !rawCollectionIds.includes(legacyCollectionId)) {
+      rawCollectionIds.unshift(legacyCollectionId);
+    }
+    const collectionIds = Array.from(new Set(rawCollectionIds));
+    const customProductType = typeof claim.settings?.productType === "string" && claim.settings.productType.trim()
+      ? claim.settings.productType.trim()
+      : undefined;
+
+    const runner = createModuleApiRunner({
+      gatewayUrl,
+      timeoutMs: 180_000,
+      gatewayAuthToken: env.GATEWAY_AUTH_TOKEN,
+    });
     const reconciliationWarnings: string[] = [];
     const resolveStartedAt = Date.now();
     const resolvedProduct = await resolveShopifyProductForSync({
       runner,
-      storeId: proxyStoreId,
+      storeId: effectiveProxyStoreId,
       sourceKey: claim.sourceKey,
       mappedProductId: claim.existingShopify?.productId,
     });
@@ -307,7 +456,10 @@ async function processClaim(
     try {
       prepared = await seoCorpusCommitCoordinator.prepare<PreparedSeo>({
         runSeo: async () => {
-          const input = fromCustomizationProduct(baseNormalizedProduct);
+          const input = {
+            ...fromCustomizationProduct(baseNormalizedProduct),
+            siteDomain: claimStoreConfig?.shopDomain,
+          };
           const execution = await runSeoContentDetailed(input, { imageMode: "alt_only" });
           const product = applySeoContentToCustomizationProduct(
             baseNormalizedProduct,
@@ -316,7 +468,10 @@ async function processClaim(
           );
           const finalHandle = String(product.handle || execution.output.productHandle);
           return {
-            input: fromCustomizationProduct(product),
+            input: {
+              ...fromCustomizationProduct(product),
+              siteDomain: claimStoreConfig?.shopDomain,
+            },
             execution: {
               ...execution,
               output: { ...execution.output, productHandle: finalHandle },
@@ -349,29 +504,93 @@ async function processClaim(
 
     const seoProduct = prepared.execution.product;
     const seoExecution = prepared.execution.execution;
-    const finalChecksum = checksum(seoProduct);
+    const storeVendor = (claimStoreId.split("--")[0] || claimStoreId).trim().toUpperCase();
     const seoSummary = createSeoContentPipelineSummary(seoExecution);
-    await postJson(`/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/syncing`, {
+    const imageProfileSlug = claim.settings.imageProfileSlug || "default";
+    await postJson(`/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/image-processing`, {
       workerId,
       normalizedProduct: seoProduct,
+      imageProcessing: { status: "running", profileSlug: imageProfileSlug },
+    });
+
+    const imageStartedAt = Date.now();
+    let imageResponse: ImageProcessingResponse;
+    try {
+      imageResponse = await postJson<ImageProcessingResponse>("/api/v1/internal/image-processing/process", {
+        product: seoProduct,
+        profileSlug: imageProfileSlug,
+        profileRevision: claim.settings.imageProfileRevision,
+      });
+    } catch (error: unknown) {
+      timings.imageProcessingMs = Date.now() - imageStartedAt;
+      timings.totalMs = Date.now() - pipelineStartedAt;
+      await failClaim(claim, workerId, error, { retryable: true, phase: "image_processing", timings });
+      return;
+    }
+    timings.imageProcessingMs = Date.now() - imageStartedAt;
+    const finalChecksum = checksum({
+      product: seoProduct,
+      imageProfileRevision: imageResponse.profile.revision,
+      customProductType: customProductType ?? null,
+      collectionIds: [...collectionIds].sort(),
+      priceAddition,
+      discountPercent,
+      storeVendor,
+    });
+    const isNoOp = Boolean(existingProductId && lastSyncedChecksum === finalChecksum);
+    let shopifyProduct = imageResponse.product;
+    if (isNoOp) {
+      shopifyProduct = stripProcessingTokens(shopifyProduct);
+    }
+    if (!isNoOp && imageResponse.profile.enabled) {
+      const uploadStartedAt = Date.now();
+      try {
+        shopifyProduct = await stageProcessedMedia(
+          imageResponse.product,
+          runner,
+          effectiveProxyStoreId,
+          `pipeline-${claim.id}-${finalChecksum}`,
+        );
+      } catch (error: unknown) {
+        timings.imageUploadMs = Date.now() - uploadStartedAt;
+        timings.totalMs = Date.now() - pipelineStartedAt;
+        await failClaim(claim, workerId, error, { retryable: true, phase: "image_processing", timings });
+        return;
+      }
+      timings.imageUploadMs = Date.now() - uploadStartedAt;
+    }
+    const imageProcessingSummary = {
+      status: "completed",
+      profileSlug: imageResponse.profile.slug,
+      profileRevision: imageResponse.profile.revision,
+      processedImages: imageResponse.processed,
+    } as const;
+    await postJson(`/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/image-processing`, {
+      workerId,
+      normalizedProduct: shopifyProduct,
+      imageProcessing: imageProcessingSummary,
+    });
+    logPhase(claim.sourceKey, "image-processing", timings.imageProcessingMs + (timings.imageUploadMs ?? 0));
+    await postJson(`/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/syncing`, {
+      workerId,
+      normalizedProduct: shopifyProduct,
       proxyProfile,
       seo: seoSummary,
     });
 
-    const isNoOp = Boolean(existingProductId && lastSyncedChecksum === finalChecksum);
     let syncResult: ShopifySyncProductResult;
     const syncStartedAt = Date.now();
     if (isNoOp) {
       syncResult = {
         success: true,
-        sourceId: seoProduct.id,
+        sourceId: shopifyProduct.id,
         productId: existingProductId,
         productHandle: existingProductHandle,
-        title: seoProduct.title || seoProduct.sourceTitle || "Custom Product",
-        variantsCount: Array.isArray(seoProduct.variants) ? seoProduct.variants.length : 0,
-        mediaCount: Array.isArray(seoProduct.media) ? seoProduct.media.length : 0,
+        title: shopifyProduct.title || shopifyProduct.sourceTitle || "Custom Product",
+        variantsCount: Array.isArray(shopifyProduct.variants) ? shopifyProduct.variants.length : 0,
+        mediaCount: Array.isArray(shopifyProduct.media) ? shopifyProduct.media.length : 0,
         assetsUploadedCount: 0,
-        metafieldSet: Boolean(seoProduct.customization),
+        metafieldSet: Boolean(shopifyProduct.customization),
         dryRun: false,
         warnings: [],
         managedResources: existingManagedResources,
@@ -384,20 +603,76 @@ async function processClaim(
         },
       };
     } else {
-      const gateway = createShopifyGatewayAdapter(proxyStoreId, {
+      const gateway = createShopifyGatewayAdapter(effectiveProxyStoreId, {
         runner,
         mode: "apply",
         getRequestId: (operation) => `pipeline-${claim.id}-${finalChecksum}-${operation}`,
       });
       hasStartedShopifyWrite = true;
-      syncResult = await syncSingleProduct(fromCustomizationNormalizerProduct(seoProduct), {
+      const baseInput = fromCustomizationNormalizerProduct(shopifyProduct, {
+        vendor: storeVendor,
+        productType: customProductType,
+      });
+      let syncInput: ShopifySyncProductInput = {
+        ...baseInput,
+        vendor: storeVendor,
+        collectionsToJoin: collectionIds,
+        ...(customProductType ? { productType: customProductType } : {}),
+      };
+
+      if ((priceAddition > 0 || discountPercent > 0) && baseInput.variants && baseInput.variants.length > 0) {
+        const adjustedVariants = baseInput.variants.map((v) => {
+          const rawPrice = Number.parseFloat(v.price);
+          if (!Number.isFinite(rawPrice)) return v;
+          const sellingPrice = rawPrice + priceAddition;
+          let compareAtPrice: string | undefined = v.compareAtPrice;
+          if (discountPercent > 0 && discountPercent < 100) {
+            const calcCompare = sellingPrice / (1 - discountPercent / 100);
+            compareAtPrice = calcCompare.toFixed(2);
+          }
+          return {
+            ...v,
+            price: sellingPrice.toFixed(2),
+            compareAtPrice,
+          };
+        });
+        syncInput = {
+          ...syncInput,
+          variants: adjustedVariants,
+        };
+      }
+
+      syncResult = await syncSingleProduct(syncInput, {
         gateway,
         existingProductId,
         existingManagedResources,
       });
+    }
+
+    if (syncResult.success && syncResult.productId && collectionIds.length > 0) {
+      for (const colId of collectionIds) {
+        try {
+          await runner({
+            storeId: effectiveProxyStoreId,
+            operation: "collections.updateMembership",
+            payload: {
+              collectionId: colId,
+              productIdsToAdd: [syncResult.productId],
+            },
+            mode: "apply",
+            requestId: `pipeline-${claim.id}-${finalChecksum}-collection-${colId}`,
+          });
+          console.log(`[Shopify pipeline] Attached product ${syncResult.productId} to collection ${colId}`);
+        } catch (collectionError: unknown) {
+          const msg = collectionError instanceof Error ? collectionError.message : String(collectionError);
+          console.warn(`[Shopify pipeline] Non-fatal: Failed to attach product to collection ${colId}: ${msg}`);
+        }
+      }
+    }
+
       if (!syncResult.success) {
         if (isProxyOrNetworkFailure(syncResult.error || "")) {
-          proxyCooldownUntil.set(proxyStoreId, Date.now() + 30_000);
+          proxyCooldownUntil.set(effectiveProxyStoreId, Date.now() + 30_000);
         }
         if (!syncResult.reconciliationRequired && reservedSeo) {
           await unregisterSeoContentKeywords(reservedSeo.input, reservedSeo.execution);
@@ -413,14 +688,13 @@ async function processClaim(
         });
         return;
       }
-    }
     timings.shopifySyncMs = Date.now() - syncStartedAt;
     logPhase(claim.sourceKey, "shopify-sync", timings.shopifySyncMs);
 
     if (syncResult.productId) {
       await postJson(`/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/shopify-checkpoint`, {
         workerId,
-        storeId,
+        storeId: claimStoreId,
         normalizedChecksum: finalChecksum,
         shopify: {
           productId: syncResult.productId,
@@ -436,17 +710,18 @@ async function processClaim(
 
     await postJson(`/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/complete`, {
       workerId,
-      storeId,
+      storeId: claimStoreId,
       normalizedChecksum: finalChecksum,
-      normalizedProduct: seoProduct,
+      normalizedProduct: shopifyProduct,
       shopify: {
         ...syncResult,
         seo: seoSummary,
+        imageProcessing: imageProcessingSummary,
         noOp: isNoOp,
         warnings: [...syncResult.warnings, ...reconciliationWarnings],
-        storeId,
+        storeId: claimStoreId,
         adminUrl: existingProductId
-          ? `https://admin.shopify.com/store/${shopAdminHandle}/products/${existingProductId.split("/").pop() ?? ""}`
+          ? `https://admin.shopify.com/store/${claimAdminHandle}/products/${existingProductId.split("/").pop() ?? ""}`
           : undefined,
         attempts: claim.attempt,
         proxyProfile,
@@ -515,20 +790,19 @@ async function waitForCoordinator(): Promise<void> {
     try {
       const response = await fetch(`${coordinatorUrl}/api/v1/health`);
       const payload: unknown = await response.json().catch(() => null);
+      const health = payload && typeof payload === "object"
+        ? payload as { status?: unknown; apiVersion?: unknown }
+        : null;
       if (
         response.ok
-        && payload
-        && typeof payload === "object"
-        && (payload as { protocolVersion?: unknown }).protocolVersion === "2"
+        && health?.status === "ok"
+        && health.apiVersion === "v1"
       ) {
         return;
       }
-      const protocolVersion = payload && typeof payload === "object"
-        ? String((payload as { protocolVersion?: unknown }).protocolVersion ?? "unknown")
-        : "unknown";
-      if (response.ok && protocolVersion !== "2") {
+      if (response.ok && health?.status === "ok") {
         throw new Error(
-          `Coordinator protocol ${protocolVersion} is running at ${coordinatorUrl}; protocol 2 is required. Stop the old dev process and restart npm run dev.`,
+          `Coordinator at ${coordinatorUrl} does not expose the required API v1 health contract.`,
         );
       }
       lastError = `Coordinator health returned HTTP ${response.status}.`;

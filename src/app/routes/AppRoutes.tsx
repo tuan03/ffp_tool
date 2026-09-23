@@ -8,6 +8,8 @@ import type {
   AmazonCrawlerCacheClearer,
   AmazonCrawlerClientsLoader,
   AmazonCrawlerRunner,
+  AmazonCrawlerSyncRetrier,
+  ImageProcessingProfileManager,
 } from "../../modules/amazon-crawler";
 import { createAutoSeoRoutes } from "../../modules/auto-seo";
 import type { ShopifyProductForAutoSeoUi } from "../../modules/auto-seo";
@@ -29,9 +31,6 @@ import { createPinterestPodRoutes, getPinterestPodClient } from "../../modules/p
 import type { PinterestPodDeliverables } from "../../modules/pinterest-pod";
 import { createProductCrawlerRoutes, getProductCrawlerClient } from "../../modules/product-crawler";
 import { getSeoContentRunner } from "../../modules/seo-content";
-import type {
-  AmazonCrawlerSyncRetrier,
-} from "../../modules/amazon-crawler";
 import { NotFoundPage } from "../../pages/not-found/NotFoundPage";
 import {
   adaptAutoSeoItemToViewModel,
@@ -47,11 +46,13 @@ interface AppRoutesProps {
   loadAmazonCrawlerClients: AmazonCrawlerClientsLoader;
   runAmazonCrawler: AmazonCrawlerRunner;
   retryAmazonCrawlerSyncs: AmazonCrawlerSyncRetrier;
+  imageProcessingProfiles: ImageProcessingProfileManager;
   runWorkflow(input: WorkflowInput): Promise<WorkflowOutput>;
 }
 
 export function AppRoutes({
   clearAmazonCrawlerCache,
+  imageProcessingProfiles,
   loadAmazonCrawlerClients,
   retryAmazonCrawlerSyncs,
   runAmazonCrawler,
@@ -222,6 +223,7 @@ export function AppRoutes({
       loadAmazonCrawlerClients,
       handleHandoverToSeo,
       retryAmazonCrawlerSyncs,
+      imageProcessingProfiles,
     );
 
     return createBrowserRouter([
@@ -247,7 +249,7 @@ export function AppRoutes({
         ],
       },
     ]);
-  }, [clearAmazonCrawlerCache, loadAmazonCrawlerClients, retryAmazonCrawlerSyncs, runAmazonCrawler, runWorkflow]);
+  }, [clearAmazonCrawlerCache, imageProcessingProfiles, loadAmazonCrawlerClients, retryAmazonCrawlerSyncs, runAmazonCrawler, runWorkflow]);
 
   return <RouterProvider router={router} />;
 }

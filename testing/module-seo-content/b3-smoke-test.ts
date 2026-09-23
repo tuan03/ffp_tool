@@ -1,8 +1,8 @@
-import type { SeoContentInput } from "../types";
-import { createInitialContext, evolveContext } from "../internal/pipeline-context";
-import { GoogleSearchSuggestionsCollector } from "../internal/search-suggestions/google-search-suggestions-collector";
-import { UnofficialGoogleSuggestClient } from "../internal/search-suggestions/google-suggest-client";
-import { createB3SearchSuggestionsStage } from "../internal/stages/b3-search-suggestions";
+import type { SeoContentInput } from "../../src/modules/seo-content/types";
+import { createInitialContext, evolveContext } from "../../src/modules/seo-content/internal/pipeline-context";
+import { GoogleSearchSuggestionsCollector } from "../../src/modules/seo-content/internal/search-suggestions/google-search-suggestions-collector";
+import { UnofficialGoogleSuggestClient } from "../../src/modules/seo-content/internal/search-suggestions/google-suggest-client";
+import { createB3SearchSuggestionsStage } from "../../src/modules/seo-content/internal/stages/b3-search-suggestions";
 
 /**
  * Standalone Node.js live smoke test for B3 Search Suggestions.
@@ -28,11 +28,10 @@ async function main(): Promise<void> {
   const initialContext = createInitialContext(sampleInput);
   const contextWithB1AndB2 = evolveContext(initialContext, {
     productUnderstanding: {
-      ocrTexts: ["TRICK OR TREAT"],
-      detectedEntities: ["black cat", "pumpkin"],
-      dominantColors: ["black", "orange"],
-      visualStyle: "vintage retro",
-      productCategory: "t-shirt",
+      typography: { visibleTexts: ["TRICK OR TREAT"], styleSummary: "vintage retro lettering" },
+      visualEntities: "Black cat and pumpkin graphic.",
+      sceneContext: "Unknown",
+      physicalProductIdentity: "t-shirt",
     },
     shoppingContext: {
       targetAudience: ["cat lovers", "vintage aesthetic enthusiasts"],

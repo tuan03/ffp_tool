@@ -48,6 +48,8 @@ export interface AutoSeoAdapterOptions {
   readonly concurrency?: number;
   /** Niche mặc định khi sản phẩm không có productType hoặc tags (mặc định: "General") */
   readonly defaultNiche?: string;
+  /** Storefront domain shared by the batch, supplied by Gateway when available. */
+  readonly siteDomain?: string;
 }
 
 /**
@@ -187,6 +189,9 @@ export function fromAutoSeoProduct(
   }
 
   return {
+    ...(typeof product.onlineStoreUrl === "string" && product.onlineStoreUrl.trim()
+      ? { siteDomain: product.onlineStoreUrl.trim() }
+      : {}),
     title,
     description,
     niche,
@@ -233,7 +238,10 @@ export async function runAutoSeoPipeline(
   for (let i = 0; i < products.length; i += concurrency) {
     const chunk = products.slice(i, i + concurrency);
     const chunkPromises = chunk.map(async (product): Promise<AutoSeoItemResult> => {
-      const seoInput = fromAutoSeoProduct(product, options.defaultNiche);
+      const mappedInput = fromAutoSeoProduct(product, options.defaultNiche);
+      const seoInput = options.siteDomain?.trim()
+        ? { ...mappedInput, siteDomain: options.siteDomain.trim() }
+        : mappedInput;
       const productId = seoInput.productId ?? "";
       const handle = seoInput.handle;
 

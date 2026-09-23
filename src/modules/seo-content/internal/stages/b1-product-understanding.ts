@@ -59,7 +59,7 @@ export function createDefaultProductImageAnalyzer(options?: {
     onFallback: (error, input) => {
       options?.onFallback?.(error);
       const errMsg = error instanceof Error ? error.message : String(error);
-      const target = input.image.url || input.image.localFilePath || "unknown";
+      const target = input.images[0]?.url || input.images[0]?.localFilePath || "unknown";
       console.warn(
         `[SEO B1 Fallback] Gemini analysis failed for image '${target}'. Falling back to heuristic analyzer. Cause: ${errMsg}`,
       );
@@ -76,39 +76,31 @@ export function createB1ProductUnderstandingStage(
     name: "b1",
     async execute(context: SeoPipelineContext): Promise<SeoPipelineContext> {
       const source = context.source;
+      const niche = context.effectiveNiche ?? source.niche;
       const images = source.images ?? [];
 
       const textSignals = extractTextProductSignals({
         title: source.title ?? "",
         description: source.description ?? "",
-        niche: source.niche ?? "",
+        niche,
       });
 
-      const successfulAnalyses: ProductImageAnalysis[] = [];
-
+      let imageAnalysis: ProductImageAnalysis | undefined;
       if (images.length > 0) {
-        const settledResults = await Promise.allSettled(
-          images.map((image) =>
-            Promise.resolve().then(() =>
-              imageAnalyzer.analyze({
-                image,
-                title: source.title ?? "",
-                description: source.description ?? "",
-                niche: source.niche ?? "",
-              }),
-            ),
-          ),
-        );
-
-        for (const result of settledResults) {
-          if (result.status === "fulfilled" && result.value) {
-            successfulAnalyses.push(result.value);
-          }
+        try {
+          imageAnalysis = await imageAnalyzer.analyze({
+            images,
+            title: source.title ?? "",
+            description: source.description ?? "",
+            niche,
+          });
+        } catch {
+          // Do not promote source metadata into visual evidence when all image reads fail.
         }
       }
 
       const productUnderstanding = buildProductUnderstanding(
-        successfulAnalyses,
+        imageAnalysis,
         textSignals,
       );
 

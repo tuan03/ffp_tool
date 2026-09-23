@@ -1,4 +1,5 @@
 export {
+  createCustomizationGatewayAdapter,
   createShopifyGatewayAdapter,
   isShopifyProductGid,
   normalizeShopifyProductGid,
@@ -16,6 +17,7 @@ export {
   createModuleApiRunner,
   DEFAULT_GATEWAY_URL,
   runModuleApi,
+  SUPPORTED_SHOPIFY_OPERATIONS,
 } from "./service";
 export { ShopifyApiError } from "./types";
 export type {
@@ -68,6 +70,14 @@ export type {
   ShopifyFilesBulkCreateData,
   ShopifyFilesBulkCreateInput,
   ShopifyFilesBulkCreateResponse,
+  ShopifyFilesStageBinaryData,
+  ShopifyFilesStageBinaryInput,
+  ShopifyFilesStageBinaryPayload,
+  ShopifyFilesStageBinaryResponse,
+  ShopifyFilesDeleteData,
+  ShopifyFilesDeleteInput,
+  ShopifyFilesDeletePayload,
+  ShopifyFilesDeleteResponse,
   ShopifyImage,
   ShopifyImageInput,
   ShopifyMetafieldItemInput,
@@ -76,6 +86,10 @@ export type {
   ShopifyMetafieldsSetInput,
   ShopifyMetafieldsSetPayload,
   ShopifyMetafieldsSetResponse,
+  ShopifyMetafieldsGetData,
+  ShopifyMetafieldsGetInput,
+  ShopifyMetafieldsGetPayload,
+  ShopifyMetafieldsGetResponse,
   ShopifyOperation,
   ShopifyPageInfo,
   ShopifyProduct,

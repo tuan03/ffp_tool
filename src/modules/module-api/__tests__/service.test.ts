@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  createCustomizationGatewayAdapter,
   createModuleApiRunner,
   createShopifyGatewayAdapter,
   DEFAULT_GATEWAY_URL,
@@ -11,8 +12,15 @@ import {
   runModuleApi,
   ShopifyApiError,
   shopifyApiMockData,
+  SUPPORTED_SHOPIFY_OPERATIONS,
 } from "..";
-import type { ModuleApiRunner, ShopifyApiInput, ShopifyApiResponse } from "..";
+import type {
+  ModuleApiRunner,
+  ShopifyApiInput,
+  ShopifyApiResponse,
+  ShopifyOperation,
+  ShopifyProduct,
+} from "..";
 import { syncSingleProduct } from "../../shopify-sync";
 
 test("Module API selects mock runner in mock environment", async () => {
@@ -74,7 +82,7 @@ test("Module API mock runner executes products.list with filtering", async () =>
     "https://quickstart-demo.myshopify.com/products/classic-cotton-t-shirt",
   );
   assert.deepEqual(allResponse.data.products[0]?.featuredImage, {
-    id: "gid://shopify/ProductImage/5001",
+    id: "gid://shopify/MediaImage/5001",
     url: "https://cdn.shopify.com/s/files/1/0001/products/tshirt-front.jpg",
     altText: "Classic Cotton T-Shirt front view",
     width: 1000,
@@ -82,7 +90,7 @@ test("Module API mock runner executes products.list with filtering", async () =>
   });
   assert.equal(allResponse.data.products[0]?.images?.length, 2);
   assert.deepEqual(allResponse.data.products[0]?.images?.[0], {
-    id: "gid://shopify/ProductImage/5001",
+    id: "gid://shopify/MediaImage/5001",
     url: "https://cdn.shopify.com/s/files/1/0001/products/tshirt-front.jpg",
     altText: "Classic Cotton T-Shirt front view",
     width: 1000,
@@ -128,7 +136,7 @@ test("Module API mock runner executes products.get", async () => {
     "https://quickstart-demo.myshopify.com/products/classic-cotton-t-shirt",
   );
   assert.deepEqual(foundResponse.data.product?.featuredImage, {
-    id: "gid://shopify/ProductImage/5001",
+    id: "gid://shopify/MediaImage/5001",
     url: "https://cdn.shopify.com/s/files/1/0001/products/tshirt-front.jpg",
     altText: "Classic Cotton T-Shirt front view",
     width: 1000,
@@ -136,14 +144,14 @@ test("Module API mock runner executes products.get", async () => {
   });
   assert.equal(foundResponse.data.product?.images?.length, 2);
   assert.deepEqual(foundResponse.data.product?.images?.[0], {
-    id: "gid://shopify/ProductImage/5001",
+    id: "gid://shopify/MediaImage/5001",
     url: "https://cdn.shopify.com/s/files/1/0001/products/tshirt-front.jpg",
     altText: "Classic Cotton T-Shirt front view",
     width: 1000,
     height: 1000,
   });
   assert.deepEqual(foundResponse.data.product?.images?.[1], {
-    id: "gid://shopify/ProductImage/5002",
+    id: "gid://shopify/MediaImage/5002",
     url: "https://cdn.shopify.com/s/files/1/0001/products/tshirt-back.jpg",
     altText: "Classic Cotton T-Shirt back view",
     width: 1000,
@@ -260,7 +268,7 @@ test("Module API mock runner executes products.create and products.update with i
         title: "Updated Cotton T-Shirt",
         description: "Updated description text",
         featuredImage: {
-          id: "gid://shopify/ProductImage/5002",
+          id: "gid://shopify/MediaImage/5002",
           url: "https://cdn.shopify.com/s/files/1/0001/products/tshirt-back.jpg",
           altText: "Updated Featured",
           width: 1000,
@@ -273,7 +281,7 @@ test("Module API mock runner executes products.create and products.update with i
   assert.equal(updateRes.success, true);
   assert.equal(updateRes.data.product.description, "Updated description text");
   assert.deepEqual(updateRes.data.product.featuredImage, {
-    id: "gid://shopify/ProductImage/5002",
+    id: "gid://shopify/MediaImage/5002",
     url: "https://cdn.shopify.com/s/files/1/0001/products/tshirt-back.jpg",
     altText: "Updated Featured",
     width: 1000,
@@ -2511,7 +2519,7 @@ test("Mock runner products.update merges altText of existing image by id without
       product: {
         images: [
           {
-            id: "gid://shopify/ProductImage/5001",
+            id: "gid://shopify/MediaImage/5001",
             altText: "New Front Alt",
           },
         ],
@@ -2522,11 +2530,11 @@ test("Mock runner products.update merges altText of existing image by id without
   assert.equal(updateRes.success, true);
   const images = updateRes.data.product.images;
   assert.ok(images && images.length >= 2, "Must preserve existing images");
-  const img5001 = images.find((im) => im.id === "gid://shopify/ProductImage/5001");
+  const img5001 = images.find((im) => im.id === "gid://shopify/MediaImage/5001");
   assert.ok(img5001);
   assert.equal(img5001.altText, "New Front Alt");
   assert.ok(img5001.url.includes("tshirt-front.jpg"));
-  const img5002 = images.find((im) => im.id === "gid://shopify/ProductImage/5002");
+  const img5002 = images.find((im) => im.id === "gid://shopify/MediaImage/5002");
   assert.ok(img5002);
   assert.equal(img5002.altText, "Classic Cotton T-Shirt back view");
 });
@@ -3088,6 +3096,241 @@ test("createShopifyGatewayAdapter validates storeId and handles empty variants",
   assert.equal(vars.createdCount, 0);
 });
 
+test("Real service client dispatches files.bulkCreate successfully to Gateway without throwing Unsupported operation", async () => {
+  let capturedBody: unknown = null;
+  const fakeFetch = async (_url: string | URL | Request, init?: RequestInit): Promise<Response> => {
+    capturedBody = JSON.parse(init?.body as string);
+    return new Response(
+      JSON.stringify({
+        storeId: "store-test",
+        operation: "files.bulkCreate",
+        success: true,
+        data: {
+          files: [
+            {
+              originalSource: "https://example.com/asset-1.png",
+              fileId: "gid://shopify/MediaImage/9991",
+              shopifyCdnUrl: "https://cdn.shopify.com/asset-1.png",
+              fileStatus: "READY",
+            },
+          ],
+          totalCount: 1,
+          successCount: 1,
+          failedCount: 0,
+        },
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  };
+
+  const runner = createModuleApiRunner(
+    { gatewayUrl: "https://gateway.example.com/api" },
+    { fetch: fakeFetch as typeof fetch },
+  );
+
+  const res = await runner({
+    storeId: "store-test",
+    operation: "files.bulkCreate",
+    mode: "apply",
+    requestId: "req-bulk-1",
+    payload: {
+      files: [{ originalSource: "https://example.com/asset-1.png" }],
+    },
+  });
+
+  assert.equal(res.success, true);
+  assert.equal(res.operation, "files.bulkCreate");
+  assert.equal(res.data.files.length, 1);
+  assert.equal(res.data.files[0]?.fileId, "gid://shopify/MediaImage/9991");
+  assert.equal((capturedBody as { operation?: string })?.operation, "files.bulkCreate");
+});
+
+test("Test invariant: every ShopifyOperation union member is present in SUPPORTED_SHOPIFY_OPERATIONS", () => {
+  const operationsCoverage: Record<ShopifyOperation, true> = {
+    "connection.test": true,
+    "products.list": true,
+    "products.get": true,
+    "products.create": true,
+    "products.update": true,
+    "products.bulkUpdate": true,
+    "products.delete": true,
+    "variants.update": true,
+    "variants.bulkUpdate": true,
+    "variants.bulkCreate": true,
+    "files.create": true,
+    "files.bulkCreate": true,
+    "files.stageBinary": true,
+    "files.delete": true,
+    "metafields.set": true,
+    "metafields.get": true,
+    "collections.list": true,
+    "collections.get": true,
+    "collections.create": true,
+    "collections.update": true,
+    "collections.delete": true,
+    "collections.updateMembership": true,
+    "stores.list": true,
+    "stores.get": true,
+  };
+
+  const allKnownOperations = Object.keys(operationsCoverage) as ShopifyOperation[];
+
+  for (const op of allKnownOperations) {
+    assert.ok(
+      SUPPORTED_SHOPIFY_OPERATIONS.has(op),
+      `Operation "${op}" must be present in SUPPORTED_SHOPIFY_OPERATIONS`,
+    );
+  }
+  assert.equal(SUPPORTED_SHOPIFY_OPERATIONS.size, allKnownOperations.length);
+});
+
+test("storeId with leading/trailing whitespace is normalized safely in module-api and adapter", async () => {
+  // 1. Mock runner trims storeId
+  const mockRes = await runMockModuleApi({
+    storeId: "   capozen   ",
+    operation: "connection.test",
+    payload: {},
+  });
+  assert.equal(mockRes.storeId, "capozen");
+
+  // 2. Real service runner sends trimmed storeId and returns trimmed storeId
+  let sentStoreId: string | undefined;
+  const fakeFetch = async (_url: string | URL | Request, init?: RequestInit): Promise<Response> => {
+    const parsed = JSON.parse(init?.body as string);
+    sentStoreId = parsed.storeId;
+    return new Response(
+      JSON.stringify({
+        storeId: "capozen",
+        operation: "connection.test",
+        success: true,
+        data: { isConnected: true, connected: true, shopDomain: "capozen.myshopify.com", shopName: "Capozen", currencyCode: "USD" },
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  };
+  const realRunner = createModuleApiRunner(
+    { gatewayUrl: "https://gateway.example.com/api" },
+    { fetch: fakeFetch as typeof fetch },
+  );
+  const realRes = await realRunner({
+    storeId: "   capozen   ",
+    operation: "connection.test",
+    payload: {},
+  });
+  assert.equal(sentStoreId, "capozen");
+  assert.equal(realRes.storeId, "capozen");
+
+  // 3. createShopifyGatewayAdapter normalizes storeId and passes cleanStoreId to uploadFilesBatch
+  let capturedOp: ShopifyApiInput | null = null;
+  const spyRunner = (async (input: ShopifyApiInput) => {
+    capturedOp = input;
+    return {
+      storeId: input.storeId,
+      operation: input.operation,
+      success: true,
+      data: {
+        files: [{ fileId: "f1", shopifyCdnUrl: "https://cdn.shopify.com/1.png", originalSource: "https://example.com/1.png" }],
+        totalCount: 1,
+        successCount: 1,
+        failedCount: 0,
+      },
+    };
+  }) as unknown as ModuleApiRunner;
+  const adapter = createShopifyGatewayAdapter("   capozen   ", spyRunner);
+  await adapter.uploadFilesBatch!([{ originalSource: "https://example.com/1.png", filename: "1.png", alt: "1" }]);
+  assert.equal(capturedOp ? (capturedOp as ShopifyApiInput).storeId : undefined, "capozen");
+});
+
+test("createShopifyGatewayAdapter uses deterministic requestId and respects options.requestId / getRequestId / per-input requestId", async () => {
+  const capturedInputs: (ShopifyApiInput & { mode?: string; requestId?: string })[] = [];
+  const spyRunner = (async (input: ShopifyApiInput & { mode?: string; requestId?: string }) => {
+    capturedInputs.push(input);
+    if (input.operation === "products.create") {
+      return {
+        storeId: input.storeId,
+        operation: input.operation,
+        success: true,
+        data: { product: { id: "gid://shopify/Product/1", handle: "p1" } },
+      };
+    }
+    if (input.operation === "files.bulkCreate") {
+      return {
+        storeId: input.storeId,
+        operation: input.operation,
+        success: true,
+        data: { files: [] },
+      };
+    }
+    return { storeId: input.storeId, operation: input.operation, success: true, data: {} };
+  }) as unknown as ModuleApiRunner;
+
+  // 3a. Deterministic options.requestId
+  const adapterWithReqId = createShopifyGatewayAdapter("capozen", {
+    runner: spyRunner,
+    mode: "apply",
+    requestId: "job-sync-100",
+  });
+  await adapterWithReqId.createProduct({ title: "T", descriptionHtml: "<p>D</p>" });
+  assert.equal(capturedInputs[0]?.requestId, "job-sync-100-product-create");
+  assert.equal(capturedInputs[0]?.mode, "apply");
+
+  // 3b. Custom getRequestId
+  const adapterWithCustom = createShopifyGatewayAdapter("capozen", {
+    runner: spyRunner,
+    mode: "apply",
+    getRequestId: (op) => `custom-${op}-deterministic`,
+  });
+  await adapterWithCustom.uploadFilesBatch!([{ originalSource: "https://example.com/1.png", filename: "1.png", alt: "1" }]);
+  assert.equal(capturedInputs[1]?.requestId, "custom-files-bulk-create-deterministic");
+
+  // 3c. Per-input requestId override
+  await adapterWithReqId.createProduct({ title: "T", descriptionHtml: "<p>D</p>", requestId: "explicit-req-999" } as unknown as { title: string; descriptionHtml: string });
+  assert.equal(capturedInputs[2]?.requestId, "explicit-req-999");
+
+  // 3d. Batch item requestId override on array input
+  await adapterWithReqId.uploadFilesBatch!([
+    { originalSource: "https://example.com/2.png", filename: "2.png", alt: "2", requestId: "batch-item-req-77" } as unknown as { originalSource: string; filename: string; alt: string },
+  ]);
+  assert.equal(capturedInputs[3]?.requestId, "batch-item-req-77");
+});
+
+test("Public contracts allow inventoryTracked on variants and categoryId on products", async () => {
+  let capturedInput: ShopifyApiInput | null = null;
+  const spyRunner = (async (input: ShopifyApiInput) => {
+    capturedInput = input;
+    return {
+      storeId: input.storeId,
+      operation: input.operation,
+      success: true,
+      data: { product: { id: "gid://shopify/Product/1", handle: "p1", variants: [{ id: "v1" }] } },
+    };
+  }) as unknown as ModuleApiRunner;
+
+  const adapter = createShopifyGatewayAdapter("capozen", spyRunner);
+  await adapter.createProduct({
+    title: "Test Product",
+    descriptionHtml: "<p>Test</p>",
+    variants: [
+      {
+        price: "19.99",
+        inventoryTracked: true,
+      },
+    ],
+    ...({ categoryId: "gid://shopify/TaxonomyCategory/123" } as unknown as Record<string, unknown>),
+  });
+
+  const productPayload = capturedInput as unknown as {
+    payload: {
+      product: {
+        categoryId?: string;
+        variants: readonly { inventoryTracked?: boolean }[];
+      };
+    };
+  };
+  assert.equal(productPayload.payload.product.variants[0]?.inventoryTracked, true);
+  assert.equal(productPayload.payload.product.categoryId, "gid://shopify/TaxonomyCategory/123");
+});
+
 test("resolveShopifyProductForSync recovers a stale mapping from the stable source tag", async () => {
   const calls: ShopifyApiInput[] = [];
   const recoveredProduct = {
@@ -3157,6 +3400,104 @@ test("resolveShopifyProductForSync returns no product when a stale mapping has n
   assert.equal(resolved.match, "none");
   assert.equal(resolved.product, undefined);
   assert.equal(resolved.staleMappedProductId, "gid://shopify/Product/deleted");
+});
+
+test("createCustomizationGatewayAdapter successfully routes calls to runner", async () => {
+  const calls: string[] = [];
+  const fakeRunner = (async (input: ShopifyApiInput) => {
+    calls.push(input.operation);
+    if (input.operation === "metafields.get") {
+      return {
+        success: true,
+        storeId: input.storeId,
+        operation: input.operation,
+        data: {
+          id: "gid://shopify/Metafield/mf-1",
+          value: "{\"test\":true}",
+          namespace: "custom",
+          key: "amazon_customizer",
+          type: "json",
+        },
+      };
+    }
+    if (input.operation === "metafields.set") {
+      return {
+        success: true,
+        storeId: input.storeId,
+        operation: input.operation,
+        data: {
+          success: true,
+          metafieldId: "gid://shopify/Metafield/mf-1",
+          metafields: [],
+        },
+      };
+    }
+    if (input.operation === "files.delete") {
+      return {
+        success: true,
+        storeId: input.storeId,
+        operation: input.operation,
+        data: {
+          success: true,
+          deletedFileIds: (input.payload as { fileIds: string[] }).fileIds,
+        },
+      };
+    }
+    if (input.operation === "products.get") {
+      return {
+        success: true,
+        storeId: input.storeId,
+        operation: input.operation,
+        data: {
+          product: {
+            id: (input.payload as { id: string }).id,
+            title: "Sample Product",
+            handle: "sample-product",
+            status: "ACTIVE",
+          } as unknown as ShopifyProduct,
+        },
+      };
+    }
+    throw new Error(`Unexpected operation: ${input.operation}`);
+  }) as ModuleApiRunner;
+
+  const adapter = createCustomizationGatewayAdapter("capozen", {
+    runner: fakeRunner,
+  });
+
+  const getRes = await adapter.getMetafield({
+    ownerId: "gid://shopify/Product/100",
+    namespace: "custom",
+    key: "amazon_customizer",
+  });
+  assert.equal(getRes.id, "gid://shopify/Metafield/mf-1");
+  assert.equal(getRes.value, "{\"test\":true}");
+
+  const setRes = await adapter.setMetafield({
+    ownerId: "gid://shopify/Product/100",
+    namespace: "custom",
+    key: "amazon_customizer",
+    value: "{\"test\":true}",
+  });
+  assert.equal(setRes.success, true);
+  assert.equal(setRes.metafieldId, "gid://shopify/Metafield/mf-1");
+
+  const delRes = await adapter.deleteFiles({
+    fileIds: ["gid://shopify/MediaImage/file-1"],
+  });
+  assert.deepEqual(delRes.deletedFileIds, ["gid://shopify/MediaImage/file-1"]);
+
+  const prodRes = await adapter.getProduct?.({
+    id: "gid://shopify/Product/100",
+  });
+  assert.equal(prodRes?.product?.title, "Sample Product");
+
+  assert.deepEqual(calls, [
+    "metafields.get",
+    "metafields.set",
+    "files.delete",
+    "products.get",
+  ]);
 });
 
 

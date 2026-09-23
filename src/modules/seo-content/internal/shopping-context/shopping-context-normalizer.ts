@@ -29,14 +29,20 @@ const BANNED_REGEXES: readonly RegExp[] = BANNED_INTENT_TERMS.map(
     ),
 );
 
-const REQUIRED_KEYS: readonly (keyof ShoppingContext)[] = [
+type RequiredShoppingContextKey = "targetAudience" | "suitableOccasions" | "useCases" | "buyerIntentKeywords";
+
+const REQUIRED_KEYS: readonly RequiredShoppingContextKey[] = [
   "targetAudience",
   "suitableOccasions",
   "useCases",
   "buyerIntentKeywords",
 ];
+const OPTIONAL_CONTEXTUAL_KEYS: readonly (keyof ShoppingContext)[] = [
+  "contextualAudienceHints",
+  "sceneSearchSeeds",
+];
 
-const BOUNDS: Record<keyof ShoppingContext, { min: number; max: number }> = {
+const BOUNDS: Record<RequiredShoppingContextKey, { min: number; max: number }> = {
   targetAudience: { min: 1, max: 8 },
   suitableOccasions: { min: 1, max: 6 },
   useCases: { min: 1, max: 6 },
@@ -112,7 +118,7 @@ export function parseAndNormalizeShoppingContext(
 
   // Enforce additionalProperties: false
   for (const key of Object.keys(record)) {
-    if (!REQUIRED_KEYS.includes(key as keyof ShoppingContext)) {
+    if (!REQUIRED_KEYS.includes(key as RequiredShoppingContextKey) && !OPTIONAL_CONTEXTUAL_KEYS.includes(key as keyof ShoppingContext)) {
       throw new ShoppingContextSchemaValidationError(
         `Unexpected property '${key}' not allowed in ShoppingContext schema`,
       );
@@ -153,6 +159,12 @@ export function parseAndNormalizeShoppingContext(
     record.buyerIntentKeywords as string[],
     true,
   );
+  const contextualAudienceHints = Array.isArray(record.contextualAudienceHints)
+    ? deduplicateAndNormalizeList(record.contextualAudienceHints.filter((item): item is string => typeof item === "string")).slice(0, 3)
+    : [];
+  const sceneSearchSeeds = Array.isArray(record.sceneSearchSeeds)
+    ? deduplicateAndNormalizeList(record.sceneSearchSeeds.filter((item): item is string => typeof item === "string"), true).slice(0, 5)
+    : [];
 
   // Validate bounds
   validateBounds("targetAudience", targetAudience, BOUNDS.targetAudience);
@@ -165,6 +177,8 @@ export function parseAndNormalizeShoppingContext(
     suitableOccasions,
     useCases,
     buyerIntentKeywords,
+    contextualAudienceHints,
+    sceneSearchSeeds,
   };
 }
 

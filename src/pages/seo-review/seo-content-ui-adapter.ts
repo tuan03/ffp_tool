@@ -254,10 +254,10 @@ export function adaptAutoSeoItemToViewModel(
 export function adaptPinterestPodItemToViewModel(
   item: PinterestPodSeoItemResult,
 ): SeoProductUiViewModel {
-  const podItem = item.sourceItem;
-  const niche = (podItem.trendKeywords && podItem.trendKeywords.length > 0)
+  const podItem = (item.sourceItem ?? item.deliverableItem) as unknown as PodDeliverableItem;
+  const niche = podItem?.trendKeywords && podItem.trendKeywords.length > 0
     ? podItem.trendKeywords[0]
-    : podItem.productType || "POD";
+    : podItem?.productType || "POD";
 
   const options: AdaptSeoOutputOptions = {
     id: item.designId || `pod-${Date.now()}`,

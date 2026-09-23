@@ -1,6 +1,6 @@
-import type { SeoContentInput } from "../types";
-import { createInitialContext, evolveContext } from "../internal/pipeline-context";
-import { createB2ShoppingContextStage } from "../internal/stages/b2-shopping-context";
+import type { SeoContentInput } from "../../src/modules/seo-content/types";
+import { createInitialContext, evolveContext } from "../../src/modules/seo-content/internal/pipeline-context";
+import { createB2ShoppingContextStage } from "../../src/modules/seo-content/internal/stages/b2-shopping-context";
 
 /**
  * Standalone Node.js smoke test for B2 Shopping Context.
@@ -27,11 +27,10 @@ async function main(): Promise<void> {
   const initialContext = createInitialContext(sampleInput);
   const contextWithB1 = evolveContext(initialContext, {
     productUnderstanding: {
-      ocrTexts: ["TRICK OR TREAT"],
-      detectedEntities: ["black cat", "pumpkin"],
-      dominantColors: ["black", "orange"],
-      visualStyle: "vintage retro",
-      productCategory: "t-shirt",
+      typography: { visibleTexts: ["TRICK OR TREAT"], styleSummary: "vintage retro lettering" },
+      visualEntities: "Black cat and pumpkin graphic.",
+      sceneContext: "Unknown",
+      physicalProductIdentity: "t-shirt",
     },
   });
 

@@ -3,15 +3,19 @@ from __future__ import annotations
 import gzip
 import json
 import tempfile
+import threading
 import unittest
 import asyncio
+import base64
 import os
 from datetime import timedelta
+from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
 
 import websockets
 from fastapi.testclient import TestClient
+from PIL import Image
 from sqlalchemy import select
 
 from engine.crawler_core import CrawlSettings
@@ -42,12 +46,12 @@ from engine.proxy_profiles import resolve_proxy_assignments
 def client_hello(client_id: str = "client-a", slots: int = 2) -> dict[str, object]:
     return {
         "type": "hello",
-        "protocolVersion": "1",
+        "protocolVersion": "3",
         "agentVersion": "1.0.0",
         "clientId": client_id,
         "displayName": client_id,
         "availableSlots": slots,
-        "capabilities": {"amazon": True, "offlineSpool": True},
+        "capabilities": {"amazon": True, "offlineSpool": True, "mediaGalleryV2": True},
         "limits": {
             "productThreads": 4,
             "variantThreads": 8,
@@ -135,7 +139,7 @@ class PackagedClientTests(unittest.TestCase):
             portable_config.write_text("{}", encoding="utf-8")
 
             with patch("sys.frozen", True, create=True), patch("sys.executable", str(executable)):
-                self.assertEqual(_resolve_config_path(None), portable_config)
+                self.assertEqual(_resolve_config_path(None), portable_config.resolve())
 
     def test_explicit_config_overrides_packaged_default(self) -> None:
         explicit = Path("custom-agent.json")
@@ -144,7 +148,7 @@ class PackagedClientTests(unittest.TestCase):
 
     def test_portable_agent_discovers_proxy_config_beside_agent_config(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            portable_root = Path(directory)
+            portable_root = Path(directory).resolve()
             config_path = portable_root / "agent.json"
             proxy_path = portable_root / "amazon-crawler-profiles.json"
             config_path.write_text(json.dumps({"serverUrl": "http://127.0.0.1:8766"}), encoding="utf-8")
@@ -162,13 +166,13 @@ class PackagedClientTests(unittest.TestCase):
                 config_path=config.proxy_config_path,
             )
 
-            self.assertEqual(config.proxy_config_path, proxy_path)
+            self.assertEqual(config.proxy_config_path, proxy_path.resolve())
             self.assertEqual([assignment.name for assignment in assignments], ["direct", "fallback-1"])
             self.assertEqual(warnings, [])
 
     def test_relative_agent_config_discovers_proxy_config_in_same_directory(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
+            root = Path(directory).resolve()
             config_directory = root / "config"
             config_directory.mkdir()
             config_path = config_directory / "agent.json"
@@ -183,7 +187,7 @@ class PackagedClientTests(unittest.TestCase):
             finally:
                 os.chdir(previous_directory)
 
-            self.assertEqual(config.proxy_config_path, proxy_path)
+            self.assertEqual(config.proxy_config_path, proxy_path.resolve())
 
 
 class DistributedCacheControlTests(unittest.IsolatedAsyncioTestCase):
@@ -319,6 +323,86 @@ class ClientStoreTests(unittest.TestCase):
 
 
 class ClientAgentTests(unittest.IsolatedAsyncioTestCase):
+    def test_job_cancellation_sets_every_registered_batch_event(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            config = AgentConfig(
+                server_url="http://127.0.0.1:9999",
+                display_name="test-agent",
+                max_concurrent_inputs=2,
+                limits=AgentLimits(),
+                data_directory=Path(directory),
+            )
+            agent = DistributedCrawlerAgent(project_root=Path(directory), config=config)
+            first_event = threading.Event()
+            second_event = threading.Event()
+
+            agent._register_cancel_event("job-1", first_event)
+            agent._register_cancel_event("job-1", second_event)
+            agent._cancel_job("job-1")
+
+            self.assertTrue(first_event.is_set())
+            self.assertTrue(second_event.is_set())
+
+    async def test_cancelled_batch_discards_late_products_and_results(self) -> None:
+        class FakeBrowserPool:
+            def close(self) -> None:
+                pass
+
+        class LateCallbackCrawler:
+            def __init__(self, **_kwargs: object) -> None:
+                self.browser_pool = FakeBrowserPool()
+
+            def run(self, **kwargs: object) -> dict[str, object]:
+                kwargs["on_product_complete"]({
+                    "source": "B0FR4MSS2H",
+                    "asin": "B0FR4MSS2H",
+                    "product": {"id": "late-product", "sourceKey": "amazon:late"},
+                })
+                kwargs["on_input_complete"]({
+                    "source": "B0FR4MSS2H",
+                    "asin": "B0FR4MSS2H",
+                    "status": "completed",
+                    "products": [{"id": "late-product"}],
+                    "errors": [],
+                    "warnings": [],
+                    "completedAt": "2026-09-23T00:00:00Z",
+                    "durationMs": 1,
+                })
+                return {"status": "completed"}
+
+        with tempfile.TemporaryDirectory() as directory:
+            config = AgentConfig(
+                server_url="http://127.0.0.1:9999",
+                display_name="test-agent",
+                max_concurrent_inputs=1,
+                limits=AgentLimits(),
+                data_directory=Path(directory),
+            )
+            agent = DistributedCrawlerAgent(
+                project_root=Path(directory),
+                config=config,
+                crawler_factory=LateCallbackCrawler,
+            )
+            assignment = {
+                "taskId": "task-1",
+                "jobId": "job-1",
+                "leaseId": "lease-1",
+                "source": "B0FR4MSS2H",
+                "asin": "B0FR4MSS2H",
+                "url": "https://www.amazon.com/dp/B0FR4MSS2H",
+                "settings": {},
+                "settingsFingerprint": "settings-1",
+            }
+            cancel_event = threading.Event()
+            cancel_event.set()
+
+            await asyncio.to_thread(agent._run_batch, [assignment], cancel_event, asyncio.get_running_loop())
+            completion = await asyncio.wait_for(agent.completion_queue.get(), timeout=1)
+
+            self.assertEqual(completion["type"], "cancelled")
+            self.assertEqual(agent.store.pending_products(), [])
+            self.assertEqual(agent.store.pending_results(), [])
+
     async def test_crawler_receives_agent_proxy_config_path(self) -> None:
         captured: dict[str, object] = {}
 
@@ -512,7 +596,7 @@ class ClientAgentTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(hello["type"], "hello")
             await websocket.send(json.dumps({
                 "type": "hello_ack",
-                "protocolVersion": "1",
+                "protocolVersion": "3",
                 "heartbeatIntervalSeconds": 10,
                 "leaseSeconds": 60,
             }))
@@ -727,6 +811,19 @@ class CoordinatorStoreTests(unittest.TestCase):
 
         self.assertEqual(len(first), 2)
         self.assertEqual(second, [])
+
+    def test_heartbeat_reissues_cancel_for_a_cancelled_running_job(self) -> None:
+        job = self.store.create_job({"urls": ["B0FR4MSS2H"]})
+        self.store.register_client(client_hello(slots=1))
+        lease = self.store.lease_tasks("client-a", 1)[0]
+        self.store.cancel_job(str(job["id"]))
+
+        cancelled_job_ids = self.store.heartbeat("client-a", [{
+            "taskId": lease["taskId"],
+            "leaseId": lease["leaseId"],
+        }], "busy")
+
+        self.assertEqual(cancelled_job_ids, [job["id"]])
 
     def test_job_snapshot_exposes_latest_detailed_progress_for_each_task(self) -> None:
         job = self.store.create_job({"urls": ["B0FR4MSS2H"]})
@@ -1312,6 +1409,47 @@ class CoordinatorDatabaseTests(unittest.TestCase):
 
 
 class CoordinatorApiTests(unittest.TestCase):
+    def test_image_profile_preview_supports_unsaved_draft_and_job_pins_revision(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = Path(directory) / "coordinator.sqlite3"
+            image_root = Path(directory) / "images"
+            with patch.dict(os.environ, {"IMAGE_PROCESSING_CACHE_DIR": str(image_root)}):
+                app = create_coordinator_app(database_url=f"sqlite:///{database_path.as_posix()}")
+            source = BytesIO()
+            Image.new("RGB", (40, 20), "#336699").save(source, format="PNG")
+            data_url = "data:image/png;base64," + base64.b64encode(source.getvalue()).decode("ascii")
+            draft = {
+                "slug": "draft-profile",
+                "name": "Draft profile",
+                "enabled": True,
+                "randomPixels": 0,
+                "output": {"width": 64, "height": 64, "fit": "contain", "background": "#ffffff"},
+            }
+
+            with TestClient(app) as client:
+                preview = client.post(
+                    "/api/v1/image-profiles/draft-profile/preview",
+                    json={"dataUrl": data_url, "profile": draft},
+                )
+                client.put("/api/v1/image-profiles/draft-profile", json=draft)
+                saved = client.post(
+                    "/api/v1/image-profiles/draft-profile/logo",
+                    json={"dataUrl": data_url},
+                ).json()
+                logo = client.get("/api/v1/image-profiles/draft-profile/logo")
+                job = client.post(
+                    "/api/v1/crawl-jobs",
+                    json={"urls": ["B0FR4MSS2H"], "imageProfileSlug": "draft-profile"},
+                ).json()
+
+            self.assertEqual(preview.status_code, 200)
+            self.assertTrue(preview.json()["dataUrl"].startswith("data:image/jpeg;base64,"))
+            self.assertEqual(logo.status_code, 200)
+            self.assertEqual(logo.headers["content-type"], "image/png")
+            self.assertEqual(logo.content, source.getvalue())
+            self.assertEqual(job["settings"]["imageProfileSlug"], "draft-profile")
+            self.assertEqual(job["settings"]["imageProfileRevision"], saved["revision"])
+
     def test_lan_frontend_origin_is_allowed_in_development(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             database_path = Path(directory) / "coordinator.sqlite3"
@@ -1339,7 +1477,10 @@ class CoordinatorApiTests(unittest.TestCase):
             database_path = Path(directory) / "coordinator.sqlite3"
             app = create_coordinator_app(database_url=f"sqlite:///{database_path.as_posix()}")
             with TestClient(app) as client:
-                self.assertEqual(client.get("/api/v1/health").json()["status"], "ok")
+                health = client.get("/api/v1/health").json()
+                self.assertEqual(health["status"], "ok")
+                self.assertEqual(health["apiVersion"], "v1")
+                self.assertEqual(health["workerProtocolVersion"], "3")
                 job = client.post("/api/v1/crawl-jobs", json={"urls": ["B0FR4MSS2H"]}).json()
                 with client.websocket_connect("/api/v1/worker/connect") as websocket:
                     websocket.send_json(client_hello(slots=1))
@@ -1450,15 +1591,16 @@ class CoordinatorApiTests(unittest.TestCase):
                 self.assertNotIn("corpusRevision", export.json()["products"][0]["pipeline"]["seo"])
                 self.assertNotIn("taskResults", export.json())
 
-    def test_cache_clear_requires_a_connected_client(self) -> None:
+    def test_cache_clear_also_clears_server_image_cache_without_a_client(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             database_path = Path(directory) / "coordinator.sqlite3"
             app = create_coordinator_app(database_url=f"sqlite:///{database_path.as_posix()}")
             with TestClient(app) as client:
                 response = client.delete("/api/v1/clients/cache")
 
-            self.assertEqual(response.status_code, 409)
-            self.assertIn("client", response.json()["detail"].casefold())
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json()["requestedClients"], 0)
+            self.assertIn("imageProcessing", response.json())
 
     def test_result_job_identity_must_match_the_leased_task(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

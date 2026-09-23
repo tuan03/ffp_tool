@@ -7,6 +7,7 @@ import type {
   AmazonCrawlerHandoverHandler,
   AmazonCrawlerRunner,
   AmazonCrawlerSyncRetrier,
+  ImageProcessingProfileManager,
 } from "./types";
 
 export function amazonCrawlerRoutes(
@@ -15,6 +16,7 @@ export function amazonCrawlerRoutes(
   loadAmazonCrawlerClients: AmazonCrawlerClientsLoader,
   onHandoverToSeo?: AmazonCrawlerHandoverHandler,
   retryAmazonCrawlerSyncs: AmazonCrawlerSyncRetrier = async () => ({ retried: 0 }),
+  imageProcessingProfiles?: ImageProcessingProfileManager,
 ): RouteObject[] {
   return [
     {
@@ -22,6 +24,7 @@ export function amazonCrawlerRoutes(
       element: (
         <AmazonCrawlerPage
           clearAmazonCrawlerCache={clearAmazonCrawlerCache}
+          imageProcessingProfiles={imageProcessingProfiles}
           loadAmazonCrawlerClients={loadAmazonCrawlerClients}
           onHandoverToSeo={onHandoverToSeo}
           retryAmazonCrawlerSyncs={retryAmazonCrawlerSyncs}

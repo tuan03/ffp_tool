@@ -448,8 +448,3 @@ def terminate_process_tree(process: subprocess.Popen[str]) -> None:
         )
         return
     process.terminate()
-
-
-
-
-

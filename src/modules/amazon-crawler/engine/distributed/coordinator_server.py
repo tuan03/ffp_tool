@@ -3,18 +3,21 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import gzip
 import io
 import json
 import os
 import uuid
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, Header, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
+from ..image_processing import ImageProcessingService, normalize_profile, process_image_bytes
 from . import PROTOCOL_VERSION, SUPPORTED_PROTOCOL_VERSIONS
 from .coordinator_models import Base, create_database_engine, create_session_factory
 from .coordinator_store import CoordinatorStore
@@ -167,6 +170,16 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
     sessions = create_session_factory(engine)
     store = CoordinatorStore(sessions)
     manager = ConnectionManager()
+    project_root = Path(__file__).resolve().parents[5]
+    image_processing_root = Path(
+        os.environ.get("IMAGE_PROCESSING_CACHE_DIR", str(project_root / ".runtime" / "image-processing"))
+    ).resolve()
+    image_service = ImageProcessingService(
+        image_processing_root,
+        workers=positive_environment_integer("IMAGE_PROCESSING_WORKERS", 4),
+        cache_ttl_minutes=positive_environment_integer("IMAGE_PROCESSING_CACHE_TTL_MINUTES", 60),
+        legacy_profile_root=project_root / "Tool_crawer_New_update" / "config_file" / "image_processing_profiles",
+    )
     history_retention_minutes = positive_environment_integer(
         "AMAZON_COORDINATOR_JOB_RETENTION_MINUTES",
         60,
@@ -188,6 +201,7 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
                         store.cleanup_history,
                         retention_minutes=history_retention_minutes,
                     )
+                    await asyncio.to_thread(image_service.clear_expired)
                     next_cleanup_at = loop_time + 60
                 try:
                     await asyncio.wait_for(stop.wait(), timeout=5)
@@ -200,11 +214,13 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
         finally:
             stop.set()
             await task
+            image_service.close()
             engine.dispose()
 
     app = FastAPI(title="FFP Amazon Crawler Coordinator", version="1.0.0", lifespan=lifespan)
     app.state.store = store
     app.state.connection_manager = manager
+    app.state.image_processing_service = image_service
     origins = [value.strip() for value in os.environ.get(
         "AMAZON_COORDINATOR_CORS_ORIGINS",
         "http://localhost:5173,http://127.0.0.1:5173",
@@ -224,12 +240,23 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
 
     @app.get("/api/v1/health")
     def health() -> dict[str, Any]:
-        return {"status": "ok", "protocolVersion": PROTOCOL_VERSION}
+        return {
+            "status": "ok",
+            "apiVersion": "v1",
+            "protocolVersion": PROTOCOL_VERSION,
+            "workerProtocolVersion": PROTOCOL_VERSION,
+        }
 
     @app.post("/api/v1/crawl-jobs", status_code=202)
     def create_job(payload: dict[str, Any]) -> dict[str, Any]:
         try:
-            return store.create_job(payload)
+            enriched_payload = dict(payload)
+            image_profile = image_service.profiles.load(str(payload.get("imageProfileSlug") or "default"))
+            enriched_payload["imageProfileSlug"] = image_profile["slug"]
+            enriched_payload["imageProfileRevision"] = image_profile["revision"]
+            return store.create_job(enriched_payload)
+        except KeyError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
         except ValueError as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
 
@@ -306,8 +333,10 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
     @app.delete("/api/v1/clients/cache")
     async def clear_client_caches() -> dict[str, Any]:
         result = await manager.clear_client_caches()
-        if result["requestedClients"] == 0:
-            raise HTTPException(status_code=409, detail="No crawler client is currently connected.")
+        image_cache = await asyncio.to_thread(image_service.clear_cache)
+        result["removedFiles"] += image_cache["removedFiles"]
+        result["removedBytes"] += image_cache["removedBytes"]
+        result["imageProcessing"] = image_cache
         return result
 
     @app.get("/api/v1/crawl-jobs/{job_id}/events")
@@ -423,6 +452,134 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
         expected = os.environ.get("SHOPIFY_PIPELINE_TOKEN", "").strip()
         if expected and value != expected:
             raise HTTPException(status_code=401, detail="Invalid pipeline worker key.")
+
+    @app.get("/api/v1/image-profiles")
+    def list_image_profiles() -> dict[str, Any]:
+        return {"profiles": image_service.profiles.list()}
+
+    @app.get("/api/v1/image-profiles/{profile_slug}")
+    def get_image_profile(profile_slug: str) -> dict[str, Any]:
+        try:
+            return image_service.profiles.load(profile_slug)
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+
+    @app.put("/api/v1/image-profiles/{profile_slug}")
+    def save_image_profile(profile_slug: str, payload: dict[str, Any]) -> dict[str, Any]:
+        return image_service.profiles.save(payload, profile_slug)
+
+    @app.get("/api/v1/image-profiles/{profile_slug}/logo")
+    def get_image_profile_logo(profile_slug: str) -> FileResponse:
+        try:
+            profile = image_service.profiles.load(profile_slug)
+            logo_path = image_service.profiles.logo_path(profile_slug, profile["revision"])
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        if logo_path is None:
+            raise HTTPException(status_code=404, detail="Image profile does not have a logo.")
+        return FileResponse(logo_path)
+
+    @app.post("/api/v1/image-profiles/{profile_slug}/logo")
+    def save_image_profile_logo(profile_slug: str, payload: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return image_service.profiles.save_logo(profile_slug, str(payload.get("dataUrl") or ""))
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
+    @app.post("/api/v1/image-profiles/{profile_slug}/preview")
+    async def preview_image_profile(profile_slug: str, payload: dict[str, Any]) -> dict[str, str]:
+        data_url = str(payload.get("dataUrl") or "")
+        if not data_url.startswith("data:image/") or ";base64," not in data_url:
+            raise HTTPException(status_code=422, detail="Preview image must be an image data URL.")
+        try:
+            source = base64.b64decode(data_url.split(",", 1)[1], validate=True)
+            if len(source) > 20 * 1024 * 1024:
+                raise ValueError("Preview image exceeds 20 MB.")
+            draft = payload.get("profile") if isinstance(payload.get("profile"), dict) else None
+            try:
+                saved = image_service.profiles.load(profile_slug)
+                logo_path = image_service.profiles.logo_path(profile_slug, saved["revision"])
+            except KeyError:
+                if draft is None:
+                    raise
+                saved = normalize_profile(draft, profile_slug)
+                logo_path = None
+            profile = normalize_profile({**saved, **(draft or {})}, profile_slug)
+            preview = await asyncio.to_thread(
+                process_image_bytes,
+                source,
+                profile,
+                logo_content=logo_path.read_bytes() if logo_path else None,
+                seed="profile-preview",
+            )
+        except Exception as error:
+            raise HTTPException(status_code=422, detail=f"Unable to render preview: {error}") from error
+        return {"dataUrl": "data:image/jpeg;base64," + base64.b64encode(preview).decode("ascii")}
+
+    @app.delete("/api/v1/image-profiles/{profile_slug}")
+    def delete_image_profile(profile_slug: str) -> dict[str, str]:
+        try:
+            image_service.profiles.delete(profile_slug)
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        return {"status": "deleted"}
+
+    @app.post("/api/v1/internal/image-processing/process")
+    async def process_product_images(
+        payload: dict[str, Any],
+        x_pipeline_key: str | None = Header(default=None, alias="X-Pipeline-Key"),
+    ) -> dict[str, Any]:
+        require_pipeline_key(x_pipeline_key)
+        product = payload.get("product")
+        if not isinstance(product, dict):
+            raise HTTPException(status_code=422, detail="product is required.")
+        profile_slug = str(payload.get("profileSlug") or "default")
+        profile_revision = str(payload.get("profileRevision") or "").strip() or None
+        try:
+            return await asyncio.to_thread(
+                image_service.process_product,
+                product,
+                profile_slug,
+                profile_revision,
+            )
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        except Exception as error:
+            raise HTTPException(status_code=422, detail=f"Image processing failed: {error}") from error
+
+    @app.get("/api/v1/internal/image-processing/files/{file_token}")
+    def get_processed_image(
+        file_token: str,
+        x_pipeline_key: str | None = Header(default=None, alias="X-Pipeline-Key"),
+    ) -> FileResponse:
+        require_pipeline_key(x_pipeline_key)
+        try:
+            path = image_service.file_path(file_token)
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        return FileResponse(path, media_type="image/jpeg", filename=f"{file_token}.jpg")
+
+    @app.post("/api/v1/internal/product-pipeline/{item_id}/image-processing")
+    def mark_product_image_processing(
+        item_id: str,
+        payload: dict[str, Any],
+        x_pipeline_key: str | None = Header(default=None, alias="X-Pipeline-Key"),
+    ) -> dict[str, Any]:
+        require_pipeline_key(x_pipeline_key)
+        normalized = payload.get("normalizedProduct")
+        summary = payload.get("imageProcessing")
+        if not isinstance(normalized, dict) or not isinstance(summary, dict):
+            raise HTTPException(status_code=422, detail="normalizedProduct and imageProcessing are required.")
+        if not store.mark_product_image_processing(
+            item_id,
+            worker_id=str(payload.get("workerId") or ""),
+            normalized_payload=normalized,
+            image_summary=summary,
+        ):
+            raise HTTPException(status_code=409, detail="Pipeline item claim is stale.")
+        return {"status": "image_processing"}
 
     @app.post("/api/v1/internal/product-pipeline/claim")
     def claim_product_pipeline(
@@ -578,6 +735,10 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
             if str(hello.get("protocolVersion")) not in SUPPORTED_PROTOCOL_VERSIONS:
                 await websocket.close(code=4002, reason="Unsupported protocol version.")
                 return
+            capabilities = hello.get("capabilities") if isinstance(hello.get("capabilities"), dict) else {}
+            if capabilities.get("mediaGalleryV2") is not True:
+                await websocket.close(code=4003, reason="Agent must support complete Amazon media galleries.")
+                return
             client = await asyncio.to_thread(store.register_client, hello)
             client_id = client["id"]
             await manager.add(client_id, websocket)
@@ -610,12 +771,14 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
                         active_tasks=len(running),
                         available_slots=int(message.get("availableSlots") or 0),
                     )
-                    await asyncio.to_thread(
+                    cancelled_job_ids = await asyncio.to_thread(
                         store.heartbeat,
                         client_id,
                         running,
                         str(message.get("status") or "online"),
                     )
+                    for cancelled_job_id in cancelled_job_ids:
+                        await websocket.send_json({"type": "cancel", "jobId": cancelled_job_id})
                     await assign(int(message.get("availableSlots") or 0))
                 elif message_type == "ready":
                     await manager.update_available_slots(client_id, int(message.get("availableSlots") or 0))

@@ -88,6 +88,7 @@ function formatOptionalPrice(value: unknown): string | undefined {
 
 export function fromCustomizationNormalizerProduct(
   product: CrawlProduct,
+  options?: { readonly vendor?: string; readonly productType?: string },
 ): ShopifySyncProductInput {
   const title = product.title || product.sourceTitle || "Custom Product";
   const descriptionHtml = typeof product.descriptionHtml === "string"
@@ -100,7 +101,9 @@ export function fromCustomizationNormalizerProduct(
   const media: ShopifyMediaInput[] = (product.media || [])
     .filter((item: ProductMediaItem) => String(item.kind ?? "image").toLowerCase() !== "video")
     .map((item: ProductMediaItem) => ({
-      originalSource: item.url,
+      originalSource: typeof item.processedUrl === "string" && item.processedUrl
+        ? item.processedUrl
+        : item.url,
       alt: item.alt || title,
       mediaContentType: "IMAGE",
       friendlyFileName: item.friendlyFileName,
@@ -173,11 +176,14 @@ export function fromCustomizationNormalizerProduct(
         barcode: typeof v.barcode === "string" ? v.barcode : undefined,
         inventoryTracked: false, // Default to Inventory not tracked
         optionValues: optionValues.length > 0 ? optionValues : undefined,
+        mediaUrl: typeof v.mediaUrl === "string" ? v.mediaUrl : undefined,
       }];
     });
 
   const productType =
-    product.categories && product.categories.length > 0
+    typeof options?.productType === "string" && options.productType.trim() !== ""
+      ? options.productType.trim()
+      : product.categories && product.categories.length > 0
       ? String(product.categories[product.categories.length - 1])
       : "Custom Product";
 
@@ -190,7 +196,7 @@ export function fromCustomizationNormalizerProduct(
     seo: typeof seo?.title === "string" && typeof seo.description === "string"
       ? { title: seo.title, description: seo.description }
       : undefined,
-    vendor: "FFP Store",
+    vendor: options?.vendor ?? "FFP Store",
     productType,
     tags: Array.from(tags),
     media,
@@ -202,9 +208,10 @@ export function fromCustomizationNormalizerProduct(
 
 export function fromCustomizationNormalizerBatch(
   batch: CustomizationNormalizerOutput,
+  options?: { readonly vendor?: string; readonly productType?: string },
 ): ShopifySyncBatchInput {
   return {
     jobId: batch.jobId,
-    products: batch.products.map(fromCustomizationNormalizerProduct),
+    products: batch.products.map((product) => fromCustomizationNormalizerProduct(product, options)),
   };
 }

@@ -44,6 +44,8 @@ ProductCompletionCallback = Callable[[dict[str, Any]], None]
 @dataclass(frozen=True)
 class CrawlSettings:
     profile_slug: str = "default"
+    image_profile_slug: str = "default"
+    image_profile_revision: str | None = None
     apply_jeminise_preset: bool = False
     product_threads: int = 3
     variant_threads: int = 8
@@ -54,6 +56,12 @@ class CrawlSettings:
     amazon_zip: str = "10001"
     captcha_timeout_seconds: int = 180
     max_matrix_variants: int = 500
+    store_id: str = ""
+    price_addition: float = 0.0
+    discount_percent: float = 0.0
+    collection_id: str = ""
+    collection_ids: tuple[str, ...] = ()
+    product_type: str = ""
 
     @classmethod
     def from_api(cls, payload: dict[str, Any]) -> "CrawlSettings":
@@ -69,11 +77,33 @@ class CrawlSettings:
                 raise ValueError(f"{key} must be between {minimum} and {maximum}.")
             return value
 
+        def safe_float(key: str, default: float) -> float:
+            try:
+                return float(payload.get(key, default))
+            except (ValueError, TypeError):
+                return default
+
         zip_code = str(payload.get("amazonZip") or "10001").strip()
         if not re.fullmatch(r"\d{5}(?:-\d{4})?", zip_code):
             raise ValueError("amazonZip must be a US ZIP code.")
+
+        raw_col_ids = payload.get("collectionIds")
+        col_ids: list[str] = []
+        if isinstance(raw_col_ids, (list, tuple)):
+            col_ids = [str(c).strip() for c in raw_col_ids if str(c).strip()]
+        single_col_id = str(payload.get("collectionId") or "").strip()
+        if single_col_id and single_col_id not in col_ids:
+            col_ids.insert(0, single_col_id)
+        effective_col_id = col_ids[0] if col_ids else ""
+
         return cls(
             profile_slug=profile,
+            image_profile_slug=re.sub(
+                r"[^a-z0-9]+", "-", str(payload.get("imageProfileSlug") or "default").strip().casefold()
+            ).strip("-")[:80] or "default",
+            image_profile_revision=(
+                str(payload.get("imageProfileRevision") or "").strip() or None
+            ),
             apply_jeminise_preset=bool(payload.get("applyJeminisePreset", False)),
             product_threads=bounded("productThreads", 3, 1, 16),
             variant_threads=bounded("variantThreads", 8, 1, 32),
@@ -84,17 +114,31 @@ class CrawlSettings:
             amazon_zip=zip_code,
             captcha_timeout_seconds=bounded("captchaTimeoutSeconds", 180, 30, 900),
             max_matrix_variants=bounded("maxMatrixVariants", 500, 1, 5000),
+            store_id=str(payload.get("storeId") or "").strip(),
+            price_addition=max(0.0, safe_float("priceAddition", 0.0)),
+            discount_percent=max(0.0, min(100.0, safe_float("discountPercent", 0.0))),
+            collection_id=effective_col_id,
+            collection_ids=tuple(col_ids),
+            product_type=str(payload.get("productType") or "").strip(),
         )
 
     def api_dict(self) -> dict[str, Any]:
         values = asdict(self)
         return {
             "profileSlug": values["profile_slug"], "applyJeminisePreset": values["apply_jeminise_preset"],
+            "imageProfileSlug": values["image_profile_slug"],
+            "imageProfileRevision": values["image_profile_revision"],
             "productThreads": values["product_threads"], "variantThreads": values["variant_threads"],
             "urllibThreads": values["urllib_threads"], "browserProfiles": values["browser_profiles"],
             "browserTabs": values["browser_tabs"], "headless": values["headless"],
             "amazonZip": values["amazon_zip"], "captchaTimeoutSeconds": values["captcha_timeout_seconds"],
             "maxMatrixVariants": values["max_matrix_variants"],
+            "storeId": values["store_id"],
+            "priceAddition": values["price_addition"],
+            "discountPercent": values["discount_percent"],
+            "collectionId": values["collection_id"],
+            "collectionIds": list(values["collection_ids"]),
+            "productType": values["product_type"],
         }
 
 
@@ -279,36 +323,128 @@ def _extract_parent_asin(html: str, current_asin: str) -> str:
     return current_asin
 
 
-def _extract_high_resolution_images(html: str, source_asin: str) -> list[dict[str, Any]]:
-    match = re.search(
-        r"[\"']colorImages[\"']\s*:\s*\{\s*[\"']initial[\"']\s*:\s*"
+def _balanced_json_array(text: str, start: int) -> list[Any] | None:
+    depth = 0
+    quote: str | None = None
+    escaped = False
+    for index in range(start, len(text)):
+        character = text[index]
+        if quote is not None:
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == quote:
+                quote = None
+            continue
+        if character in {"\"", "'"}:
+            quote = character
+        elif character == "[":
+            depth += 1
+        elif character == "]":
+            depth -= 1
+            if depth == 0:
+                try:
+                    parsed = json.loads(text[start:index + 1])
+                except json.JSONDecodeError:
+                    return None
+                return parsed if isinstance(parsed, list) else None
+    return None
+
+
+def _amazon_image_id(url: str) -> str | None:
+    match = re.search(r"/images/I/([^./?]+)", url, re.I)
+    if match is None:
+        return None
+    return match.group(1).split("._", 1)[0]
+
+
+def _amazon_high_resolution_url(url: str) -> str:
+    if "/images/I/" not in url:
+        return url
+    upgraded = re.sub(r"\._[^./?]*_(?=\.(?:jpe?g|png|webp)(?:\?|$))", "._SL1500_", url, flags=re.I)
+    if upgraded == url:
+        upgraded = re.sub(r"(?=\.(?:jpe?g|png|webp)(?:\?|$))", "._SL1500_", url, count=1, flags=re.I)
+    return upgraded
+
+
+def _is_video_gallery_entry(entry: dict[str, Any], url: str) -> bool:
+    if entry.get("isVideo") is True or entry.get("videoUrl") or entry.get("video"):
+        return True
+    lowered = url.casefold()
+    return any(marker in lowered for marker in ("play-button", "video", "/images/s/"))
+
+
+def _extract_gallery_entries(html: str) -> list[Any]:
+    marker = re.search(r"[\"']colorImages[\"']\s*:\s*\{\s*[\"']initial[\"']\s*:\s*", html, re.DOTALL)
+    if marker is None:
+        return []
+    remainder = html[marker.end():]
+    encoded = re.match(
         r"A\.\$\.parseJSON\(\s*(?P<quote>[\"'])(?P<payload>(?:\\.|(?!(?P=quote)).)*)\1\s*\)",
-        html,
+        remainder,
         re.DOTALL,
     )
-    if match is None:
-        return []
-    payload = html_module.unescape(match.group("payload")).replace(r"\/", "/")
-    if match.group("quote") == '"':
+    if encoded is not None:
+        payload = html_module.unescape(encoded.group("payload")).replace(r"\/", "/")
+        if encoded.group("quote") == '"':
+            try:
+                payload = json.loads(f'"{payload}"')
+            except json.JSONDecodeError:
+                return []
         try:
-            payload = json.loads(f'"{payload}"')
+            parsed = json.loads(payload)
         except json.JSONDecodeError:
             return []
+        return parsed if isinstance(parsed, list) else []
+    array_start = remainder.find("[")
+    if array_start < 0:
+        return []
+    return _balanced_json_array(remainder, array_start) or []
+
+
+def _extract_rendered_gallery_entries(html: str) -> list[Any]:
+    soup = BeautifulSoup(html, "html.parser")
+    script = soup.select_one("#ffp-rendered-gallery")
+    if script is None:
+        return []
     try:
-        entries = json.loads(payload)
+        parsed = json.loads(script.string or script.get_text() or "[]")
     except json.JSONDecodeError:
         return []
-    if not isinstance(entries, list):
-        return []
+    return parsed if isinstance(parsed, list) else []
+
+
+def _extract_high_resolution_images(html: str, source_asin: str) -> list[dict[str, Any]]:
+    entries = [*_extract_gallery_entries(html), *_extract_rendered_gallery_entries(html)]
     images: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
     seen_urls: set[str] = set()
     for entry in entries:
         if not isinstance(entry, dict):
             continue
-        image_url = str(entry.get("hiRes") or entry.get("large") or entry.get("thumb") or "").strip()
-        if image_url.startswith("http") and image_url not in seen_urls:
-            seen_urls.add(image_url)
-            images.append({"url": image_url, "kind": "image", "sourceAsin": source_asin})
+        high_resolution = entry.get("hiRes") or entry.get("large")
+        image_url = str(high_resolution or entry.get("mainUrl") or entry.get("thumb") or "").strip()
+        if not high_resolution:
+            image_url = _amazon_high_resolution_url(image_url)
+        image_id = _amazon_image_id(image_url)
+        if (
+            not image_url.startswith("http")
+            or _is_video_gallery_entry(entry, image_url)
+            or image_url in seen_urls
+            or (image_id is not None and image_id in seen_ids)
+        ):
+            continue
+        seen_urls.add(image_url)
+        if image_id is not None:
+            seen_ids.add(image_id)
+        images.append({
+            "url": image_url,
+            "kind": "image",
+            "sourceAsin": source_asin,
+            "amazonImageId": image_id,
+            "isMain": len(images) == 0,
+        })
     return images
 
 
@@ -421,8 +557,11 @@ def parse_product_html(html: str, requested_asin: str, url: str) -> dict[str, An
     ))
     images = _extract_high_resolution_images(html, canonical_asin)
     if not images:
+        seen_ids: set[str] = set()
         seen_urls: set[str] = set()
         for element in soup.select("#landingImage, #altImages img, img[data-old-hires]"):
+            if element.find_parent(class_=re.compile(r"video", re.I)) is not None:
+                continue
             image_url = str(element.get("data-old-hires") or element.get("data-a-dynamic-image") or element.get("src") or "")
             if image_url.startswith("{"):
                 try:
@@ -431,9 +570,24 @@ def parse_product_html(html: str, requested_asin: str, url: str) -> dict[str, An
                 except json.JSONDecodeError:
                     image_url = ""
             image_url = image_url.strip()
-            if image_url.startswith("http") and image_url not in seen_urls:
+            image_url = _amazon_high_resolution_url(image_url)
+            image_id = _amazon_image_id(image_url)
+            if (
+                image_url.startswith("http")
+                and not _is_video_gallery_entry({}, image_url)
+                and image_url not in seen_urls
+                and (image_id is None or image_id not in seen_ids)
+            ):
                 seen_urls.add(image_url)
-                images.append({"url": image_url, "kind": "image", "sourceAsin": canonical_asin})
+                if image_id is not None:
+                    seen_ids.add(image_id)
+                images.append({
+                    "url": image_url,
+                    "kind": "image",
+                    "sourceAsin": canonical_asin,
+                    "amazonImageId": image_id,
+                    "isMain": len(images) == 0,
+                })
     dimensions, asin_options = _extract_dimensions(html, canonical_asin)
     customization_raw, customization_warnings, customization_form_url = _extract_customization(html)
     return {
@@ -1159,6 +1313,28 @@ class AmazonCrawler:
             else:
                 child, child_diagnostics = self._fetch_parsed(normalize_amazon_input(asin))
             warnings = list(child.get("customizationWarnings", []))
+            if len(child.get("media") or []) <= 1 and hasattr(self.browser_pool, "fetch_gallery"):
+                try:
+                    gallery_html = self.browser_pool.fetch_gallery(
+                        f"https://www.amazon.com/dp/{asin}",
+                        cancel_event=self.cancel_event,
+                    )
+                    gallery_product = parse_product_html(
+                        gallery_html,
+                        asin,
+                        f"https://www.amazon.com/dp/{asin}",
+                    )
+                    gallery_media = gallery_product.get("media") or []
+                    if gallery_product.get("asin") != asin:
+                        warnings.append(
+                            f"Gallery render requested {asin}, but Amazon returned {gallery_product.get('asin')}."
+                        )
+                    elif len(gallery_media) > len(child.get("media") or []):
+                        child["media"] = gallery_media
+                except (InterruptedError, CaptchaTimeout):
+                    raise
+                except Exception as error:
+                    warnings.append(f"Full gallery browser fallback failed for {asin}: {error}")
             customization_raw = child.get("customizationRaw")
             form_url = child.get("customizationFormUrl")
             if warnings and not self._has_customization_entry(child):
@@ -1459,18 +1635,27 @@ class AmazonCrawler:
             else:
                 final_variants = expand_paid_variants(base_variants, customization)
                 preset = None
-            media_by_url: dict[str, dict[str, Any]] = {}
+            media_by_identity: dict[str, dict[str, Any]] = {}
             ordered_media_variants = [representative, *(variant for variant in source_variants if variant is not representative)]
             for variant in ordered_media_variants:
                 for media in variant.get("media", []):
-                    media_by_url.setdefault(media["url"], media)
+                    identity = str(media.get("amazonImageId") or media.get("url") or "")
+                    if identity:
+                        media_by_identity.setdefault(identity, deepcopy(media))
             for media in family.get("media", []):
                 media_source_asin = media.get("sourceAsin")
                 if media_source_asin in source_asins:
-                    media_by_url.setdefault(media["url"], media)
-            if not media_by_url:
+                    identity = str(media.get("amazonImageId") or media.get("url") or "")
+                    if identity:
+                        media_by_identity.setdefault(identity, deepcopy(media))
+            if not media_by_identity:
                 for media in family.get("media", []):
-                    media_by_url.setdefault(media["url"], media)
+                    identity = str(media.get("amazonImageId") or media.get("url") or "")
+                    if identity:
+                        media_by_identity.setdefault(identity, deepcopy(media))
+            product_media = list(media_by_identity.values())
+            for media_index, media in enumerate(product_media):
+                media["isMain"] = media_index == 0
             remaining_dimensions = self._source_variant_dimensions(source_variants)
             if split_attribute:
                 remaining_dimensions.pop(split_attribute, None)
@@ -1492,7 +1677,7 @@ class AmazonCrawler:
                 "id": group_key, "parentAsin": family["parentAsin"], "canonicalUrl": family["canonicalUrl"],
                 "sourceTitle": family["sourceTitle"], "title": title, "description": description,
                 "bulletPoints": deepcopy(bullet_points), "categories": deepcopy(categories),
-                "productDetails": deepcopy(product_details), "media": list(media_by_url.values()),
+                "productDetails": deepcopy(product_details), "media": product_media,
                 "sourceVariants": [{
                     key: deepcopy(variant.get(key))
                     for key in (

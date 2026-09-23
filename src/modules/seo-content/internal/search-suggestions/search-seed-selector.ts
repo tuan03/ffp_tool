@@ -73,11 +73,10 @@ export function selectSearchSeeds(
 
   // Priority 2: Category + strongest entity/theme from B1 if available and not yet covered
   if (seeds.length < MAX_SEARCH_SEEDS) {
-    const category = cleanPhrase(input.productUnderstanding?.productCategory ?? "");
-    const entities = input.productUnderstanding?.detectedEntities ?? [];
-    const firstEntity = entities.length > 0 ? cleanPhrase(entities[0]) : "";
+    const category = cleanPhrase(input.productUnderstanding?.physicalProductIdentity ?? "");
+    const firstEntity = cleanPhrase(input.productUnderstanding?.visualEntities ?? "");
 
-    if (isValidCategory(category) && firstEntity) {
+    if (isValidCategory(category) && firstEntity && firstEntity.length <= 72) {
       const catLower = category.toLowerCase();
       const entityLower = firstEntity.toLowerCase();
       let combined: string;
@@ -94,7 +93,13 @@ export function selectSearchSeeds(
     }
   }
 
-  // Priority 3: Niche if useful and not duplicate
+  // Priority 3: Scene-derived seeds are discovery-only and retain separate provenance.
+  for (const sceneSeed of input.shoppingContext?.sceneSearchSeeds ?? []) {
+    if (seeds.length >= MAX_SEARCH_SEEDS) break;
+    tryAddSeed(sceneSeed, QUERY_SOURCE.SCENE_CONTEXT_SEED);
+  }
+
+  // Priority 4: Niche if useful and not duplicate
   if (seeds.length < MAX_SEARCH_SEEDS) {
     const niche = cleanPhrase(input.source.niche ?? "");
     if (niche) {
@@ -102,7 +107,7 @@ export function selectSearchSeeds(
     }
   }
 
-  // Priority 4: Title-derived clean phrase only if still sparse (< 3)
+  // Priority 5: Title-derived clean phrase only if still sparse (< 3)
   if (seeds.length < 3) {
     const rawTitle = input.source.title ?? "";
     if (rawTitle) {
@@ -115,9 +120,9 @@ export function selectSearchSeeds(
     }
   }
 
-  // Priority 5: Safe category fallback if still empty (0 seeds)
+  // Priority 6: Safe category fallback if still empty (0 seeds)
   if (seeds.length === 0) {
-    const category = cleanPhrase(input.productUnderstanding?.productCategory ?? "");
+    const category = cleanPhrase(input.productUnderstanding?.physicalProductIdentity ?? "");
     const fallbackNoun = isValidCategory(category) ? category : "product";
     tryAddSeed(fallbackNoun, QUERY_SOURCE.FALLBACK_SEED);
   }

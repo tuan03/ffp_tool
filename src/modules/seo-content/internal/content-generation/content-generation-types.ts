@@ -7,11 +7,10 @@ export interface ContentFactSheet {
   readonly originalDescription: string;
   readonly existingHandle?: string;
   readonly niche?: string;
-  readonly productCategory?: string;
-  readonly ocrTexts: readonly string[];
-  readonly entities: readonly string[];
-  readonly colors: readonly string[];
-  readonly visualStyle?: string;
+  readonly physicalProductIdentity?: string;
+  readonly typographyVisibleTexts: readonly string[];
+  readonly typographyStyleSummary?: string;
+  readonly visualEntities?: string;
   readonly targetAudience: readonly string[];
   readonly occasions: readonly string[];
   readonly useCases: readonly string[];
