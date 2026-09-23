@@ -94,7 +94,11 @@ export function createB2ShoppingContextStage(
       });
 
       const shoppingContext = {
-        ...removeSceneOnlyGroundedContext(groundedShoppingContext),
+        ...removeSceneOnlyGroundedContext(groundedShoppingContext, {
+          niche,
+          title: source.title ?? "",
+          description: source.description ?? "",
+        }, context.productUnderstanding),
         ...deriveSceneDiscoveryHints(context.productUnderstanding),
       };
       return evolveContext(context, { shoppingContext });

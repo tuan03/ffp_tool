@@ -96,6 +96,24 @@ interface VectorSession {
   readonly reusableAcrossRuns: boolean;
 }
 
+function collectMeaningfulTerms(value: string | undefined): ReadonlySet<string> {
+  return new Set((value?.toLowerCase().match(/[a-z0-9]{3,}/g) ?? []));
+}
+
+function hasSupportedSceneClaim(params: {
+  readonly keyword: string;
+  readonly sceneContext: string | undefined;
+  readonly productEvidence: string;
+}): boolean {
+  const sceneTerms = collectMeaningfulTerms(params.sceneContext);
+  const candidateTerms = collectMeaningfulTerms(params.keyword);
+  const claimedSceneTerms = [...candidateTerms].filter((term) => sceneTerms.has(term));
+  if (claimedSceneTerms.length === 0) return true;
+
+  const productTerms = collectMeaningfulTerms(params.productEvidence);
+  return claimedSceneTerms.every((term) => productTerms.has(term));
+}
+
 async function findCorpusConflicts(
   corpus: SeoConflictCorpus,
   lookup: SeoConflictLookup,
@@ -301,9 +319,11 @@ export class DefaultKeywordConflictAnalyzer implements KeywordConflictAnalyzer {
     ].join(" ").toLowerCase();
     const candidates = allCandidates.filter((candidate) => {
       if (!sceneSeedSet.has(candidate.keyword.toLowerCase().trim())) return true;
-      const terms = candidate.keyword.toLowerCase().match(/[a-z0-9]{3,}/g) ?? [];
-      const isSupported = terms.some((term) => productEvidence.includes(term));
-      if (isSupported) return true;
+      if (hasSupportedSceneClaim({
+        keyword: candidate.keyword,
+        sceneContext: input.productUnderstanding?.sceneContext,
+        productEvidence,
+      })) return true;
       recordConflict(candidate.keyword, CONFLICT_REASON.SCENE_CONTEXT_ONLY, conflictReasons, discardedKeywords);
       return false;
     });

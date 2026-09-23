@@ -1,6 +1,12 @@
 import type { ProductUnderstanding } from "../domain-types";
 import type { ShoppingContext } from "../domain-types";
 
+interface GroundedSourceEvidence {
+  readonly niche: string;
+  readonly title: string;
+  readonly description: string;
+}
+
 export interface SceneDiscoveryHints {
   readonly contextualAudienceHints: readonly string[];
   readonly sceneSearchSeeds: readonly string[];
@@ -16,10 +22,22 @@ export function deriveSceneDiscoveryHints(
 ): SceneDiscoveryHints {
   const scene = productUnderstanding?.sceneContext.toLowerCase() ?? "";
   const identity = productUnderstanding?.physicalProductIdentity.trim() ?? "";
-  if ((scene.includes("home studio") || scene.includes("music studio")) && identity && identity !== "unknown") {
+  if (!identity || identity === "unknown") {
+    return { contextualAudienceHints: [], sceneSearchSeeds: [] };
+  }
+
+  const sceneProfiles: ReadonlyArray<{ readonly match: RegExp; readonly label: string }> = [
+    { match: /\b(home|music) studio\b/, label: "home studio" },
+    { match: /\bbedroom\b/, label: "bedroom" },
+    { match: /\bliving room\b/, label: "living room" },
+    { match: /\b(home office|workspace)\b/, label: "home office" },
+    { match: /\bnursery\b/, label: "nursery" },
+  ];
+  const profile = sceneProfiles.find(({ match }) => match.test(scene));
+  if (profile) {
     return {
-      contextualAudienceHints: ["home studio decorators"],
-      sceneSearchSeeds: [`home studio ${identity}`],
+      contextualAudienceHints: [`${profile.label} decorators`],
+      sceneSearchSeeds: [`${profile.label} ${identity}`],
     };
   }
   return { contextualAudienceHints: [], sceneSearchSeeds: [] };
@@ -30,9 +48,23 @@ const SCENE_ONLY_TERM = /\b(studios?|guitars?|vinyl|turntable|monitor speakers?|
 /** Removes scene-prop claims from B2's grounded fields before B3/B5 can consume them. */
 export function removeSceneOnlyGroundedContext(
   context: ShoppingContext,
+  source: GroundedSourceEvidence,
+  productUnderstanding: ProductUnderstanding | undefined,
 ): ShoppingContext {
+  const groundedEvidence = [
+    source.title,
+    source.description,
+    source.niche,
+    productUnderstanding?.physicalProductIdentity,
+    productUnderstanding?.visualEntities,
+    productUnderstanding?.typography.styleSummary,
+    ...(productUnderstanding?.typography.visibleTexts ?? []),
+  ].join(" ").toLowerCase();
   const removeSceneTerms = (items: readonly string[]): readonly string[] =>
-    items.filter((item) => !SCENE_ONLY_TERM.test(item));
+    items.filter((item) => {
+      const sceneTerm = item.match(SCENE_ONLY_TERM)?.[0]?.toLowerCase();
+      return !sceneTerm || groundedEvidence.includes(sceneTerm);
+    });
   const targetAudience = removeSceneTerms(context.targetAudience);
   const suitableOccasions = removeSceneTerms(context.suitableOccasions);
   const useCases = removeSceneTerms(context.useCases);
