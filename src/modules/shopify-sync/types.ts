@@ -111,6 +111,15 @@ export interface ShopifySyncProductResult {
   readonly error?: string;
   readonly reconciliationRequired?: boolean;
   readonly managedResources?: ShopifyManagedResources;
+  readonly timings?: ShopifySyncTimings;
+}
+
+export interface ShopifySyncTimings {
+  readonly productWriteMs: number;
+  readonly variantsMs: number;
+  readonly assetUploadMs: number;
+  readonly metafieldMs: number;
+  readonly totalMs: number;
 }
 
 export interface ShopifySyncBatchOutput {

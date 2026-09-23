@@ -151,6 +151,18 @@ export async function registerSeoContentKeywords(
   );
 }
 
+export async function unregisterSeoContentKeywords(
+  input: SeoContentInput,
+  detailed: SeoContentDetailedResult,
+): Promise<void> {
+  const corpus = new FileSeoConflictCorpus();
+  await corpus.removeProduct({
+    productId: input.productId,
+    handle: detailed.output.productHandle,
+    url: input.url ?? `/products/${detailed.output.productHandle}`,
+  });
+}
+
 export function createSeoContentPipelineSummary(
   detailed: SeoContentDetailedResult,
 ): SeoContentPipelineSummary {

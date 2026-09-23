@@ -1000,6 +1000,9 @@ class CoordinatorStore:
             "proxyProfile": item.proxy_profile,
             "error": None if item.last_error is None else str(item.last_error.get("message") or "Pipeline failed."),
         })
+        error_timings = (item.last_error or {}).get("timings")
+        if isinstance(error_timings, dict):
+            shopify["timings"] = {"pipeline": error_timings}
         product = dict(item.normalized_payload or item.raw_payload)
         product["sourceKey"] = item.source_key
         product["pipeline"] = {

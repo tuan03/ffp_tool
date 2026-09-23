@@ -108,6 +108,61 @@ test("SEO adapter excludes video input and only applies SEO-owned product fields
   assert.equal(JSON.stringify(enriched).includes("not-public"), false);
 });
 
+test("SEO adapter derives deterministic unique handles for split products", () => {
+  const seoOutput: SeoContentOutput = {
+    productTitle: "SEO product title",
+    productDescription: "<p>SEO description</p>",
+    productSeoTitle: "SEO title",
+    productSeoDescription: "SEO description",
+    productHandle: "gifts-that-are-black",
+    images: [],
+  };
+  const firstProduct: CrawlProduct = {
+    ...sampleProductB,
+    sourceKey: "amazon:B0PARENT:color:black women 03",
+  };
+  const secondProduct: CrawlProduct = {
+    ...sampleProductB,
+    id: "prod-3",
+    sourceKey: "amazon:B0PARENT:color:st02",
+  };
+
+  const first = applySeoContentToCustomizationProduct(firstProduct, seoOutput, {
+    ensureUniqueHandle: true,
+  });
+  const repeated = applySeoContentToCustomizationProduct(firstProduct, seoOutput, {
+    ensureUniqueHandle: true,
+  });
+  const second = applySeoContentToCustomizationProduct(secondProduct, seoOutput, {
+    ensureUniqueHandle: true,
+  });
+
+  assert.equal(first.handle, repeated.handle);
+  assert.notEqual(first.handle, second.handle);
+  assert.match(String(first.handle ?? ""), /^gifts-that-are-black-black-women-03-[a-f0-9]{8}$/);
+  assert.match(String(second.handle ?? ""), /^gifts-that-are-black-st02-[a-f0-9]{8}$/);
+});
+
+test("SEO adapter preserves an existing Shopify handle", () => {
+  const enriched = applySeoContentToCustomizationProduct(
+    { ...sampleProductB, sourceKey: "amazon:B0PARENT:color:st02" },
+    {
+      productTitle: "SEO title",
+      productDescription: "<p>SEO description</p>",
+      productSeoTitle: "SEO title",
+      productSeoDescription: "SEO description",
+      productHandle: "new-generated-handle",
+      images: [],
+    },
+    {
+      ensureUniqueHandle: true,
+      existingShopifyHandle: "existing-shopify-handle",
+    },
+  );
+
+  assert.equal(enriched.handle, "existing-shopify-handle");
+});
+
 test("fromCustomizationBatch: converts array and CustomizationNormalizerOutput", () => {
   const batchOutput: CustomizationNormalizerOutput = {
     jobId: "job-123",

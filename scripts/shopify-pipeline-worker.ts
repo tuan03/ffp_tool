@@ -23,11 +23,13 @@ import {
 } from "../src/modules/shopify-sync";
 import {
   applySeoContentToCustomizationProduct,
-  CorpusRevisionConflictError,
   createSeoContentPipelineSummary,
   fromCustomizationProduct,
   registerSeoContentKeywords,
   runSeoContentDetailed,
+  SeoCorpusCommitCoordinator,
+  type SeoCorpusCommitResult,
+  unregisterSeoContentKeywords,
 } from "../src/modules/seo-content";
 
 interface PipelineClaim {
@@ -84,6 +86,19 @@ const workerCount = Math.max(1, Math.min(16, Number(env.SHOPIFY_PIPELINE_WORKERS
 const gatewayPort = Math.max(1, Number(env.GATEWAY_PORT || 3001));
 const gatewayUrl = (env.SHOPIFY_GATEWAY_URL || `http://127.0.0.1:${gatewayPort}/api/shopify`).replace(/\/+$/, "");
 const proxyCooldownUntil = new Map<string, number>();
+const seoCorpusCommitCoordinator = new SeoCorpusCommitCoordinator();
+
+interface PipelineTimings {
+  normalizationMs?: number;
+  shopifyResolveMs?: number;
+  seoInitialMs?: number;
+  seoQueueWaitMs?: number;
+  seoRebaseMs?: number;
+  seoRegistrationMs?: number;
+  seoTotalMs?: number;
+  shopifySyncMs?: number;
+  totalMs?: number;
+}
 
 if (!storeId) {
   throw new Error("GATEWAY_STORE_ID is required for the Shopify pipeline worker.");
@@ -181,16 +196,21 @@ async function failClaim(
     readonly retryable?: boolean;
     readonly reconciliationRequired?: boolean;
     readonly phase?: "normalization" | "seo" | "shopify";
+    readonly timings?: PipelineTimings;
   },
 ): Promise<void> {
   const message = error instanceof Error ? error.message : String(error);
   await postJson(`/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/fail`, {
     workerId,
     storeId,
-    error: { message, phase: options?.phase },
+    error: { message, phase: options?.phase, timings: options?.timings },
     retryable: options?.retryable ?? false,
     reconciliationRequired: options?.reconciliationRequired ?? false,
   });
+}
+
+function logPhase(sourceKey: string, phase: string, elapsedMs: number): void {
+  console.info(`[Shopify pipeline] ${sourceKey} ${phase} ${elapsedMs}ms`);
 }
 
 function isProxyOrNetworkFailure(message: string): boolean {
@@ -203,19 +223,29 @@ async function processClaim(
   proxyStoreId: string,
   proxyProfile: string,
 ): Promise<void> {
+  const pipelineStartedAt = Date.now();
+  const timings: PipelineTimings = {};
   const blockers = productBlockers(claim.product);
   if (blockers.length > 0) {
-    await failClaim(claim, workerId, new Error(blockers.join(" ")), { phase: "normalization" });
+    await failClaim(claim, workerId, new Error(blockers.join(" ")), {
+      phase: "normalization",
+      timings: { totalMs: Date.now() - pipelineStartedAt },
+    });
     return;
   }
 
   let normalization: ReturnType<typeof normalizeCustomizationProduct>;
+  const normalizationStartedAt = Date.now();
   try {
     normalization = normalizeCustomizationProduct(claim.product);
   } catch (error: unknown) {
-    await failClaim(claim, workerId, error, { phase: "normalization" });
+    timings.normalizationMs = Date.now() - normalizationStartedAt;
+    timings.totalMs = Date.now() - pipelineStartedAt;
+    await failClaim(claim, workerId, error, { phase: "normalization", timings });
     return;
   }
+  timings.normalizationMs = Date.now() - normalizationStartedAt;
+  logPhase(claim.sourceKey, "normalization", timings.normalizationMs);
   const baseNormalizedProduct: CrawlProduct = {
     ...normalization.normalizedProduct,
     sourceKey: claim.sourceKey,
@@ -234,174 +264,222 @@ async function processClaim(
   }, 30_000);
   heartbeat.unref();
 
+  let reservedSeo:
+    | {
+        readonly input: ReturnType<typeof fromCustomizationProduct>;
+        readonly execution: Awaited<ReturnType<typeof runSeoContentDetailed>>;
+      }
+    | undefined;
+  let hasStartedShopifyWrite = false;
   try {
     const runner = createModuleApiRunner({ gatewayUrl, timeoutMs: 180_000 });
     const reconciliationWarnings: string[] = [];
-    let didResolveShopifyProduct = false;
-    let existingProductId: string | undefined;
-    let existingProductHandle: string | undefined;
-    let existingManagedResources: ShopifyManagedResources | undefined;
-    let lastSyncedChecksum: string | undefined;
-
-    for (let corpusAttempt = 0; corpusAttempt < 3; corpusAttempt += 1) {
-      const seoInput = fromCustomizationProduct(baseNormalizedProduct);
-      let seoExecution: Awaited<ReturnType<typeof runSeoContentDetailed>>;
-      try {
-        seoExecution = await runSeoContentDetailed(seoInput, { imageMode: "alt_only" });
-      } catch (error: unknown) {
-        await failClaim(claim, workerId, error, { retryable: true, phase: "seo" });
-        return;
-      }
-      const seoProduct = applySeoContentToCustomizationProduct(
-        baseNormalizedProduct,
-        seoExecution.output,
+    const resolveStartedAt = Date.now();
+    const resolvedProduct = await resolveShopifyProductForSync({
+      runner,
+      storeId: proxyStoreId,
+      sourceKey: claim.sourceKey,
+      mappedProductId: claim.existingShopify?.productId,
+    });
+    timings.shopifyResolveMs = Date.now() - resolveStartedAt;
+    logPhase(claim.sourceKey, "shopify-resolve", timings.shopifyResolveMs);
+    if (resolvedProduct.staleMappedProductId && resolvedProduct.match === "source_tag") {
+      reconciliationWarnings.push(
+        `Stored Shopify product ${resolvedProduct.staleMappedProductId} was missing; recovered source product as ${resolvedProduct.product?.id ?? "unknown"}.`,
       );
-      const finalChecksum = checksum(seoProduct);
-      const seoSummary = createSeoContentPipelineSummary(seoExecution);
-      await postJson(`/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/syncing`, {
-        workerId,
-        normalizedProduct: seoProduct,
-        proxyProfile,
-        seo: seoSummary,
-      });
-
-      if (!didResolveShopifyProduct) {
-        const resolvedProduct = await resolveShopifyProductForSync({
-          runner,
-          storeId: proxyStoreId,
-          sourceKey: claim.sourceKey,
-          mappedProductId: claim.existingShopify?.productId,
-        });
-        if (resolvedProduct.staleMappedProductId && resolvedProduct.match === "source_tag") {
-          reconciliationWarnings.push(
-            `Stored Shopify product ${resolvedProduct.staleMappedProductId} was missing; recovered source product as ${resolvedProduct.product?.id ?? "unknown"}.`,
-          );
-        } else if (resolvedProduct.staleMappedProductId && resolvedProduct.match === "none") {
-          reconciliationWarnings.push(
-            `Stored Shopify product ${resolvedProduct.staleMappedProductId} was missing; created a replacement product.`,
-          );
-        }
-        existingProductId = resolvedProduct.product?.id;
-        existingProductHandle = resolvedProduct.product?.handle;
-        existingManagedResources = resolvedProduct.match === "mapping"
-          ? claim.existingShopify?.managedResources
-          : resolvedProduct.product
-            ? {
-                tags: resolvedProduct.product.tags,
-                mediaIds: resolvedProduct.product.images?.flatMap((media) => media.id ? [media.id] : []) ?? [],
-                variantIds: resolvedProduct.product.variants.map((variant) => variant.id),
-              }
-            : undefined;
-        lastSyncedChecksum = existingProductId
-          ? claim.existingShopify?.normalizedChecksum
-          : undefined;
-        didResolveShopifyProduct = true;
-      }
-
-      let syncResult: ShopifySyncProductResult;
-      if (existingProductId && lastSyncedChecksum === finalChecksum) {
-        syncResult = {
-          success: true,
-          sourceId: seoProduct.id,
-          productId: existingProductId,
-          productHandle: existingProductHandle,
-          title: seoProduct.title || seoProduct.sourceTitle || "Custom Product",
-          variantsCount: Array.isArray(seoProduct.variants) ? seoProduct.variants.length : 0,
-          mediaCount: Array.isArray(seoProduct.media) ? seoProduct.media.length : 0,
-          assetsUploadedCount: 0,
-          metafieldSet: Boolean(seoProduct.customization),
-          dryRun: false,
-          warnings: [],
-          managedResources: existingManagedResources,
-        };
-      } else {
-        const gateway = createShopifyGatewayAdapter(proxyStoreId, {
-          runner,
-          mode: "apply",
-          getRequestId: (operation) => `pipeline-${claim.id}-${finalChecksum}-${operation}`,
-        });
-        syncResult = await syncSingleProduct(fromCustomizationNormalizerProduct(seoProduct), {
-          gateway,
-          existingProductId,
-          existingManagedResources,
-        });
-        if (!syncResult.success) {
-          if (isProxyOrNetworkFailure(syncResult.error || "")) {
-            proxyCooldownUntil.set(proxyStoreId, Date.now() + 30_000);
+    } else if (resolvedProduct.staleMappedProductId && resolvedProduct.match === "none") {
+      reconciliationWarnings.push(
+        `Stored Shopify product ${resolvedProduct.staleMappedProductId} was missing; created a replacement product.`,
+      );
+    }
+    let existingProductId = resolvedProduct.product?.id;
+    let existingProductHandle = resolvedProduct.product?.handle;
+    let existingManagedResources: ShopifyManagedResources | undefined = resolvedProduct.match === "mapping"
+      ? claim.existingShopify?.managedResources
+      : resolvedProduct.product
+        ? {
+            tags: resolvedProduct.product.tags,
+            mediaIds: resolvedProduct.product.images?.flatMap((media) => media.id ? [media.id] : []) ?? [],
+            variantIds: resolvedProduct.product.variants.map((variant) => variant.id),
           }
-          await failClaim(claim, workerId, new Error(syncResult.error || "Shopify sync failed."), {
-            retryable: !syncResult.reconciliationRequired,
-            reconciliationRequired: syncResult.reconciliationRequired,
-            phase: "shopify",
-          });
-          return;
-        }
-      }
+        : undefined;
+    const lastSyncedChecksum = existingProductId
+      ? claim.existingShopify?.normalizedChecksum
+      : undefined;
 
-      if (syncResult.productId) {
-        await postJson(`/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/shopify-checkpoint`, {
-          workerId,
-          storeId,
-          normalizedChecksum: finalChecksum,
-          shopify: {
-            productId: syncResult.productId,
-            productHandle: syncResult.productHandle,
-            managedResources: syncResult.managedResources ?? existingManagedResources ?? {},
-          },
-        });
-      }
-      existingProductId = syncResult.productId ?? existingProductId;
-      existingProductHandle = syncResult.productHandle ?? existingProductHandle;
-      existingManagedResources = syncResult.managedResources ?? existingManagedResources;
-      lastSyncedChecksum = finalChecksum;
-      try {
-        await registerSeoContentKeywords(seoInput, seoExecution);
-      } catch (error: unknown) {
-        if (error instanceof CorpusRevisionConflictError && corpusAttempt < 2) {
-          reconciliationWarnings.push(
-            `SEO corpus revision changed; regenerated SEO content (attempt ${corpusAttempt + 2}/3).`,
+    interface PreparedSeo {
+      readonly input: ReturnType<typeof fromCustomizationProduct>;
+      readonly execution: Awaited<ReturnType<typeof runSeoContentDetailed>>;
+      readonly product: CrawlProduct;
+    }
+    let prepared: SeoCorpusCommitResult<PreparedSeo>;
+    try {
+      prepared = await seoCorpusCommitCoordinator.prepare<PreparedSeo>({
+        runSeo: async () => {
+          const input = fromCustomizationProduct(baseNormalizedProduct);
+          const execution = await runSeoContentDetailed(input, { imageMode: "alt_only" });
+          const product = applySeoContentToCustomizationProduct(
+            baseNormalizedProduct,
+            execution.output,
+            { ensureUniqueHandle: true, existingShopifyHandle: existingProductHandle },
           );
-          continue;
+          const finalHandle = String(product.handle || execution.output.productHandle);
+          return {
+            input: fromCustomizationProduct(product),
+            execution: {
+              ...execution,
+              output: { ...execution.output, productHandle: finalHandle },
+            },
+            product,
+          };
+        },
+        register: async (seo) => registerSeoContentKeywords(seo.input, seo.execution),
+      });
+      reservedSeo = {
+        input: prepared.execution.input,
+        execution: prepared.execution.execution,
+      };
+    } catch (error: unknown) {
+      timings.totalMs = Date.now() - pipelineStartedAt;
+      await failClaim(claim, workerId, error, { retryable: true, phase: "seo", timings });
+      return;
+    }
+    timings.seoInitialMs = prepared.timings.initialSeoMs;
+    timings.seoQueueWaitMs = prepared.timings.queueWaitMs;
+    timings.seoRebaseMs = prepared.timings.rebaseSeoMs;
+    timings.seoRegistrationMs = prepared.timings.registrationMs;
+    timings.seoTotalMs = prepared.timings.totalMs;
+    if (prepared.revisionRetries > 0) {
+      reconciliationWarnings.push(
+        `SEO corpus changed during processing; regenerated SEO ${prepared.revisionRetries} time(s) before Shopify sync.`,
+      );
+    }
+    logPhase(claim.sourceKey, "seo-and-corpus", timings.seoTotalMs);
+
+    const seoProduct = prepared.execution.product;
+    const seoExecution = prepared.execution.execution;
+    const finalChecksum = checksum(seoProduct);
+    const seoSummary = createSeoContentPipelineSummary(seoExecution);
+    await postJson(`/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/syncing`, {
+      workerId,
+      normalizedProduct: seoProduct,
+      proxyProfile,
+      seo: seoSummary,
+    });
+
+    const isNoOp = Boolean(existingProductId && lastSyncedChecksum === finalChecksum);
+    let syncResult: ShopifySyncProductResult;
+    const syncStartedAt = Date.now();
+    if (isNoOp) {
+      syncResult = {
+        success: true,
+        sourceId: seoProduct.id,
+        productId: existingProductId,
+        productHandle: existingProductHandle,
+        title: seoProduct.title || seoProduct.sourceTitle || "Custom Product",
+        variantsCount: Array.isArray(seoProduct.variants) ? seoProduct.variants.length : 0,
+        mediaCount: Array.isArray(seoProduct.media) ? seoProduct.media.length : 0,
+        assetsUploadedCount: 0,
+        metafieldSet: Boolean(seoProduct.customization),
+        dryRun: false,
+        warnings: [],
+        managedResources: existingManagedResources,
+        timings: {
+          productWriteMs: 0,
+          variantsMs: 0,
+          assetUploadMs: 0,
+          metafieldMs: 0,
+          totalMs: 0,
+        },
+      };
+    } else {
+      const gateway = createShopifyGatewayAdapter(proxyStoreId, {
+        runner,
+        mode: "apply",
+        getRequestId: (operation) => `pipeline-${claim.id}-${finalChecksum}-${operation}`,
+      });
+      hasStartedShopifyWrite = true;
+      syncResult = await syncSingleProduct(fromCustomizationNormalizerProduct(seoProduct), {
+        gateway,
+        existingProductId,
+        existingManagedResources,
+      });
+      if (!syncResult.success) {
+        if (isProxyOrNetworkFailure(syncResult.error || "")) {
+          proxyCooldownUntil.set(proxyStoreId, Date.now() + 30_000);
         }
-        await failClaim(claim, workerId, error, {
-          retryable: !(error instanceof CorpusRevisionConflictError),
-          phase: "seo",
+        if (!syncResult.reconciliationRequired && reservedSeo) {
+          await unregisterSeoContentKeywords(reservedSeo.input, reservedSeo.execution);
+          reservedSeo = undefined;
+        }
+        timings.shopifySyncMs = Date.now() - syncStartedAt;
+        timings.totalMs = Date.now() - pipelineStartedAt;
+        await failClaim(claim, workerId, new Error(syncResult.error || "Shopify sync failed."), {
+          retryable: !syncResult.reconciliationRequired,
+          reconciliationRequired: syncResult.reconciliationRequired,
+          phase: "shopify",
+          timings,
         });
         return;
       }
+    }
+    timings.shopifySyncMs = Date.now() - syncStartedAt;
+    logPhase(claim.sourceKey, "shopify-sync", timings.shopifySyncMs);
 
-      await postJson(`/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/complete`, {
+    if (syncResult.productId) {
+      await postJson(`/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/shopify-checkpoint`, {
         workerId,
         storeId,
         normalizedChecksum: finalChecksum,
-        normalizedProduct: seoProduct,
         shopify: {
-          ...syncResult,
-          seo: seoSummary,
-          noOp: lastSyncedChecksum === claim.existingShopify?.normalizedChecksum,
-          warnings: [...syncResult.warnings, ...reconciliationWarnings],
-          storeId,
-          adminUrl: existingProductId
-            ? `https://admin.shopify.com/store/${shopAdminHandle}/products/${existingProductId.split("/").pop() ?? ""}`
-            : undefined,
-          attempts: claim.attempt,
-          proxyProfile,
-          assetsNormalized,
-          managedResources: existingManagedResources ?? {},
+          productId: syncResult.productId,
+          productHandle: syncResult.productHandle,
+          managedResources: syncResult.managedResources ?? existingManagedResources ?? {},
         },
       });
-      return;
     }
+    existingProductId = syncResult.productId ?? existingProductId;
+    existingProductHandle = syncResult.productHandle ?? existingProductHandle;
+    existingManagedResources = syncResult.managedResources ?? existingManagedResources;
+    timings.totalMs = Date.now() - pipelineStartedAt;
+
+    await postJson(`/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/complete`, {
+      workerId,
+      storeId,
+      normalizedChecksum: finalChecksum,
+      normalizedProduct: seoProduct,
+      shopify: {
+        ...syncResult,
+        seo: seoSummary,
+        noOp: isNoOp,
+        warnings: [...syncResult.warnings, ...reconciliationWarnings],
+        storeId,
+        adminUrl: existingProductId
+          ? `https://admin.shopify.com/store/${shopAdminHandle}/products/${existingProductId.split("/").pop() ?? ""}`
+          : undefined,
+        attempts: claim.attempt,
+        proxyProfile,
+        assetsNormalized,
+        timings: { pipeline: timings, shopify: syncResult.timings },
+        managedResources: existingManagedResources ?? {},
+      },
+    });
+    logPhase(claim.sourceKey, "total", timings.totalMs);
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
     if (isProxyOrNetworkFailure(message)) {
       proxyCooldownUntil.set(proxyStoreId, Date.now() + 30_000);
     }
     const reconciliationRequired = /unknown write state|partial write|reconciliation/i.test(message);
+    if (reservedSeo && !hasStartedShopifyWrite) {
+      await unregisterSeoContentKeywords(reservedSeo.input, reservedSeo.execution).catch(() => undefined);
+    }
+    timings.totalMs = Date.now() - pipelineStartedAt;
     await failClaim(claim, workerId, error, {
       retryable: !reconciliationRequired,
       reconciliationRequired,
       phase: "shopify",
+      timings,
     });
   } finally {
     clearInterval(heartbeat);

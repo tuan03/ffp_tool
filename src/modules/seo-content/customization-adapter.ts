@@ -123,9 +123,52 @@ export function fromCustomizationProduct(
   };
 }
 
+export interface ApplySeoContentOptions {
+  readonly ensureUniqueHandle?: boolean;
+  readonly existingShopifyHandle?: string;
+}
+
+function slugifyHandlePart(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function stableHandleHash(value: string): string {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16).padStart(8, "0");
+}
+
+function resolveProductHandle(
+  product: CrawlProduct,
+  generatedHandle: string,
+  options?: ApplySeoContentOptions,
+): string {
+  const existingHandle = options?.existingShopifyHandle?.trim();
+  if (existingHandle) return existingHandle;
+  if (!options?.ensureUniqueHandle) return generatedHandle;
+
+  const identity = String(product.sourceKey || product.id || product.parentAsin || product.asin || "product");
+  const splitValue = identity.split(":").at(-1) ?? identity;
+  const readableSuffix = slugifyHandlePart(splitValue).slice(0, 24) || "product";
+  const suffix = `${readableSuffix}-${stableHandleHash(identity)}`;
+  const maxHandleLength = 80;
+  const base = slugifyHandlePart(generatedHandle) || "product";
+  const availableBaseLength = Math.max(1, maxHandleLength - suffix.length - 1);
+  const trimmedBase = base.slice(0, availableBaseLength).replace(/-+$/g, "") || "product";
+  return `${trimmedBase}-${suffix}`;
+}
+
 export function applySeoContentToCustomizationProduct(
   product: CrawlProduct,
   seoOutput: SeoContentOutput | SeoContentAltOnlyOutput,
+  options?: ApplySeoContentOptions,
 ): CrawlProduct {
   const altBySourceUrl = new Map(
     seoOutput.images.map((image) => [image.sourceUrl, image.alt] as const),
@@ -134,7 +177,7 @@ export function applySeoContentToCustomizationProduct(
     ...product,
     title: seoOutput.productTitle,
     descriptionHtml: seoOutput.productDescription,
-    handle: seoOutput.productHandle,
+    handle: resolveProductHandle(product, seoOutput.productHandle, options),
     seo: {
       title: seoOutput.productSeoTitle,
       description: seoOutput.productSeoDescription,

@@ -68,6 +68,7 @@ export interface GeminiShoppingContextAnalyzerOptions {
   readonly model?: string;
   readonly timeoutMs?: number;
   readonly maxRetries?: number;
+  readonly maxOutputTokens?: number;
 }
 
 export class GeminiShoppingContextAnalyzer implements ShoppingContextAnalyzer {
@@ -75,12 +76,14 @@ export class GeminiShoppingContextAnalyzer implements ShoppingContextAnalyzer {
   private readonly model?: string;
   private readonly timeoutMs: number;
   private readonly maxRetries: number;
+  private readonly maxOutputTokens: number;
 
   constructor(options: GeminiShoppingContextAnalyzerOptions) {
     this.generator = options.generator;
     this.model = options.model;
     this.timeoutMs = options.timeoutMs || 25000;
     this.maxRetries = options.maxRetries ?? 1;
+    this.maxOutputTokens = options.maxOutputTokens ?? 2048;
   }
 
   async analyze(input: ShoppingContextAnalysisInput): Promise<ShoppingContext> {
@@ -93,7 +96,7 @@ export class GeminiShoppingContextAnalyzer implements ShoppingContextAnalyzer {
       model: this.model,
       timeoutMs: this.timeoutMs,
       temperature: 0,
-      maxOutputTokens: 2048,
+      maxOutputTokens: this.maxOutputTokens,
     };
 
     let attempts = 0;

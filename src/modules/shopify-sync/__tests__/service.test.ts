@@ -220,6 +220,29 @@ test("syncSingleProduct fails gracefully when no gateway is provided in non-dry-
   assertStrict.ok(result.error?.includes("ShopifyGateway is required"));
 });
 
+test("syncSingleProduct records product write time when the gateway write fails", async () => {
+  const gateway: ShopifyGateway = {
+    async createProduct() {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      throw new Error("OAuth endpoint unavailable");
+    },
+    async createVariants() {
+      return { createdCount: 0 };
+    },
+    async uploadFile() {
+      return { fileId: "unused", shopifyCdnUrl: "https://cdn.shopify.com/unused" };
+    },
+    async setProductMetafield() {
+      return { success: true };
+    },
+  };
+
+  const result = await syncSingleProduct(shopifySyncMockData.products[1], { gateway });
+
+  assertStrict.equal(result.success, false);
+  assertStrict.ok((result.timings?.productWriteMs ?? 0) >= 5);
+});
+
 test("syncSingleProduct coordinates the 4 operations through an injected ShopifyGateway", async () => {
   const operationsCalled: string[] = [];
   let createdStatus: string | undefined;
@@ -262,6 +285,11 @@ test("syncSingleProduct coordinates the 4 operations through an injected Shopify
   );
   assertStrict.ok(operationsCalled.some((op) => op.startsWith("uploadFile")));
   assertStrict.ok(operationsCalled.includes("setMetafield:custom.amazon_customizer"));
+  assertStrict.equal(typeof result.timings?.productWriteMs, "number");
+  assertStrict.equal(typeof result.timings?.variantsMs, "number");
+  assertStrict.equal(typeof result.timings?.assetUploadMs, "number");
+  assertStrict.equal(typeof result.timings?.metafieldMs, "number");
+  assertStrict.equal(typeof result.timings?.totalMs, "number");
 });
 
 test("syncSingleProduct updates the mapped Shopify product instead of creating a duplicate", async () => {
@@ -328,6 +356,8 @@ test("syncSingleProduct fails when Shopify does not persist every requested vari
   assertStrict.equal(result.success, false);
   assertStrict.equal(result.reconciliationRequired, true);
   assertStrict.match(result.error ?? "", /variants incomplete/i);
+  assertStrict.equal(typeof result.timings?.productWriteMs, "number");
+  assertStrict.equal(typeof result.timings?.totalMs, "number");
 });
 
 test("syncSingleProduct leverages uploadFilesBatch and deduplicates asset URLs", async () => {

@@ -108,6 +108,28 @@ export interface ProductPipelineMetadata {
     warnings?: string[];
     error?: string | null;
     noOp?: boolean;
+    timings?: ProductPipelineTimings;
+  };
+}
+
+export interface ProductPipelineTimings {
+  pipeline?: {
+    normalizationMs?: number;
+    shopifyResolveMs?: number;
+    seoInitialMs?: number;
+    seoQueueWaitMs?: number;
+    seoRebaseMs?: number;
+    seoRegistrationMs?: number;
+    seoTotalMs?: number;
+    shopifySyncMs?: number;
+    totalMs?: number;
+  };
+  shopify?: {
+    productWriteMs?: number;
+    variantsMs?: number;
+    assetUploadMs?: number;
+    metafieldMs?: number;
+    totalMs?: number;
   };
 }
 
