@@ -120,6 +120,15 @@ export async function executeMetafieldsSet(
     } else {
       throw new GatewayError(`value is required at index ${index}`, "SHOPIFY_USER_ERROR", 400);
     }
+
+    const byteLength = Buffer.byteLength(valStr, "utf8");
+    if (byteLength > 131072) {
+      throw new GatewayError(
+        "Metafield value exceeds Shopify 128KB UTF-8 byte limit",
+        "SHOPIFY_INVALID_INPUT",
+        400,
+      );
+    }
     const type =
       typeof item.type === "string" && item.type.trim() !== ""
         ? item.type.trim()

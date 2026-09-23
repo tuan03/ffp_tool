@@ -512,7 +512,7 @@ export async function executeFilesBulkCreate(
   // Batch poll nodes that are not yet READY
   for (let attempt = 0; attempt < maxPollAttempts; attempt++) {
     const pending = results.filter(
-      (r) => r.fileId && r.fileStatus !== "READY" && r.fileStatus !== "FAILED" && !r.shopifyCdnUrl,
+      (r) => r.fileId && r.fileStatus !== "READY" && r.fileStatus !== "FAILED",
     );
     if (pending.length === 0) {
       break;

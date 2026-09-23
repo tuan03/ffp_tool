@@ -20,6 +20,7 @@ import {
   fromCustomizationNormalizerProduct,
   syncSingleProduct,
   type ShopifyManagedResources,
+  type ShopifySyncProductInput,
   type ShopifySyncProductResult,
 } from "../src/modules/shopify-sync";
 import {
@@ -81,6 +82,9 @@ const seoEnvironmentKeys = [
 for (const key of seoEnvironmentKeys) {
   if (env[key]) process.env[key] = env[key];
 }
+if (env.GATEWAY_AUTH_TOKEN) {
+  process.env.GATEWAY_AUTH_TOKEN = env.GATEWAY_AUTH_TOKEN;
+}
 process.env.SEO_CONFLICT_CORPUS_PATH = process.env.SEO_CONFLICT_CORPUS_PATH
   || ".runtime/seo-conflict-corpus.json";
 env.SHOPIFY_PROXY_CONFIG = env.SHOPIFY_PROXY_CONFIG || env.AMAZON_CRAWLER_PROXY_CONFIG || "config/amazon-crawler-profiles.json";
@@ -129,7 +133,11 @@ if (proxyStores.length === 0) {
 
 let gatewayServer: ReturnType<typeof startGatewayServer> | undefined;
 if (!env.SHOPIFY_GATEWAY_URL) {
-  gatewayServer = startGatewayServer({ port: gatewayPort, host: "127.0.0.1" });
+  gatewayServer = startGatewayServer({
+    port: gatewayPort,
+    host: "127.0.0.1",
+    authToken: env.GATEWAY_AUTH_TOKEN,
+  });
 }
 
 function canonicalize(value: unknown): string {
@@ -301,9 +309,12 @@ async function failClaim(
   },
 ): Promise<void> {
   const message = error instanceof Error ? error.message : String(error);
+  const effectiveStoreId = typeof claim.settings?.storeId === "string" && claim.settings.storeId.trim()
+    ? claim.settings.storeId.trim()
+    : storeId;
   await postJson(`/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/fail`, {
     workerId,
-    storeId,
+    storeId: effectiveStoreId,
     error: { message, phase: options?.phase, timings: options?.timings },
     retryable: options?.retryable ?? false,
     reconciliationRequired: options?.reconciliationRequired ?? false,
@@ -373,12 +384,49 @@ async function processClaim(
     | undefined;
   let hasStartedShopifyWrite = false;
   try {
-    const runner = createModuleApiRunner({ gatewayUrl, timeoutMs: 180_000 });
+    const claimStoreId = typeof claim.settings?.storeId === "string" && claim.settings.storeId.trim()
+      ? claim.settings.storeId.trim()
+      : storeId;
+    const claimStoreConfig = configuredStores.find((store) => store.storeId === claimStoreId);
+    const claimAdminHandle = claimStoreConfig?.shopDomain
+      ? claimStoreConfig.shopDomain.replace(/\.myshopify\.com$/i, "")
+      : claimStoreId;
+    const targetProxyStores = configuredStores.filter(
+      (store) => store.storeId.startsWith(`${claimStoreId}--`) && store.proxy?.url && store.proxy.failClosed !== false,
+    );
+    const assignedProxyStore = targetProxyStores.find(
+      (store) => store.storeId === proxyStoreId || store.storeId.endsWith(`--${proxyProfile}`),
+    );
+    const effectiveProxyStoreId = assignedProxyStore?.storeId
+      ?? targetProxyStores[0]?.storeId
+      ?? claimStoreId;
+
+    const priceAddition = Number(claim.settings?.priceAddition ?? 0);
+    const discountPercent = Number(claim.settings?.discountPercent ?? 0);
+    const rawCollectionIds = Array.isArray(claim.settings?.collectionIds)
+      ? (claim.settings.collectionIds as unknown[]).map(String).map((s) => s.trim()).filter(Boolean)
+      : [];
+    const legacyCollectionId = typeof claim.settings?.collectionId === "string" && claim.settings.collectionId.trim()
+      ? claim.settings.collectionId.trim()
+      : undefined;
+    if (legacyCollectionId && !rawCollectionIds.includes(legacyCollectionId)) {
+      rawCollectionIds.unshift(legacyCollectionId);
+    }
+    const collectionIds = Array.from(new Set(rawCollectionIds));
+    const customProductType = typeof claim.settings?.productType === "string" && claim.settings.productType.trim()
+      ? claim.settings.productType.trim()
+      : undefined;
+
+    const runner = createModuleApiRunner({
+      gatewayUrl,
+      timeoutMs: 180_000,
+      gatewayAuthToken: env.GATEWAY_AUTH_TOKEN,
+    });
     const reconciliationWarnings: string[] = [];
     const resolveStartedAt = Date.now();
     const resolvedProduct = await resolveShopifyProductForSync({
       runner,
-      storeId: proxyStoreId,
+      storeId: effectiveProxyStoreId,
       sourceKey: claim.sourceKey,
       mappedProductId: claim.existingShopify?.productId,
     });
@@ -459,6 +507,7 @@ async function processClaim(
 
     const seoProduct = prepared.execution.product;
     const seoExecution = prepared.execution.execution;
+    const storeVendor = (claimStoreId.split("--")[0] || claimStoreId).trim().toUpperCase();
     const seoSummary = createSeoContentPipelineSummary(seoExecution);
     const imageProfileSlug = claim.settings.imageProfileSlug || "default";
     await postJson(`/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/image-processing`, {
@@ -482,7 +531,15 @@ async function processClaim(
       return;
     }
     timings.imageProcessingMs = Date.now() - imageStartedAt;
-    const finalChecksum = checksum({ product: seoProduct, imageProfileRevision: imageResponse.profile.revision });
+    const finalChecksum = checksum({
+      product: seoProduct,
+      imageProfileRevision: imageResponse.profile.revision,
+      customProductType: customProductType ?? null,
+      collectionIds: [...collectionIds].sort(),
+      priceAddition,
+      discountPercent,
+      storeVendor,
+    });
     const isNoOp = Boolean(existingProductId && lastSyncedChecksum === finalChecksum);
     let shopifyProduct = imageResponse.product;
     if (isNoOp) {
@@ -494,7 +551,7 @@ async function processClaim(
         shopifyProduct = await stageProcessedMedia(
           imageResponse.product,
           runner,
-          proxyStoreId,
+          effectiveProxyStoreId,
           `pipeline-${claim.id}-${finalChecksum}`,
         );
       } catch (error: unknown) {
@@ -549,20 +606,76 @@ async function processClaim(
         },
       };
     } else {
-      const gateway = createShopifyGatewayAdapter(proxyStoreId, {
+      const gateway = createShopifyGatewayAdapter(effectiveProxyStoreId, {
         runner,
         mode: "apply",
         getRequestId: (operation) => `pipeline-${claim.id}-${finalChecksum}-${operation}`,
       });
       hasStartedShopifyWrite = true;
-      syncResult = await syncSingleProduct(fromCustomizationNormalizerProduct(shopifyProduct), {
+      const baseInput = fromCustomizationNormalizerProduct(shopifyProduct, {
+        vendor: storeVendor,
+        productType: customProductType,
+      });
+      let syncInput: ShopifySyncProductInput = {
+        ...baseInput,
+        vendor: storeVendor,
+        collectionsToJoin: collectionIds,
+        ...(customProductType ? { productType: customProductType } : {}),
+      };
+
+      if ((priceAddition > 0 || discountPercent > 0) && baseInput.variants && baseInput.variants.length > 0) {
+        const adjustedVariants = baseInput.variants.map((v) => {
+          const rawPrice = Number.parseFloat(v.price);
+          if (!Number.isFinite(rawPrice)) return v;
+          const sellingPrice = rawPrice + priceAddition;
+          let compareAtPrice: string | undefined = v.compareAtPrice;
+          if (discountPercent > 0 && discountPercent < 100) {
+            const calcCompare = sellingPrice / (1 - discountPercent / 100);
+            compareAtPrice = calcCompare.toFixed(2);
+          }
+          return {
+            ...v,
+            price: sellingPrice.toFixed(2),
+            compareAtPrice,
+          };
+        });
+        syncInput = {
+          ...syncInput,
+          variants: adjustedVariants,
+        };
+      }
+
+      syncResult = await syncSingleProduct(syncInput, {
         gateway,
         existingProductId,
         existingManagedResources,
       });
+    }
+
+    if (syncResult.success && syncResult.productId && collectionIds.length > 0) {
+      for (const colId of collectionIds) {
+        try {
+          await runner({
+            storeId: effectiveProxyStoreId,
+            operation: "collections.updateMembership",
+            payload: {
+              collectionId: colId,
+              productIdsToAdd: [syncResult.productId],
+            },
+            mode: "apply",
+            requestId: `pipeline-${claim.id}-${finalChecksum}-collection-${colId}`,
+          });
+          console.log(`[Shopify pipeline] Attached product ${syncResult.productId} to collection ${colId}`);
+        } catch (collectionError: unknown) {
+          const msg = collectionError instanceof Error ? collectionError.message : String(collectionError);
+          console.warn(`[Shopify pipeline] Non-fatal: Failed to attach product to collection ${colId}: ${msg}`);
+        }
+      }
+    }
+
       if (!syncResult.success) {
         if (isProxyOrNetworkFailure(syncResult.error || "")) {
-          proxyCooldownUntil.set(proxyStoreId, Date.now() + 30_000);
+          proxyCooldownUntil.set(effectiveProxyStoreId, Date.now() + 30_000);
         }
         if (!syncResult.reconciliationRequired && reservedSeo) {
           await unregisterSeoContentKeywords(reservedSeo.input, reservedSeo.execution);
@@ -578,14 +691,13 @@ async function processClaim(
         });
         return;
       }
-    }
     timings.shopifySyncMs = Date.now() - syncStartedAt;
     logPhase(claim.sourceKey, "shopify-sync", timings.shopifySyncMs);
 
     if (syncResult.productId) {
       await postJson(`/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/shopify-checkpoint`, {
         workerId,
-        storeId,
+        storeId: claimStoreId,
         normalizedChecksum: finalChecksum,
         shopify: {
           productId: syncResult.productId,
@@ -601,7 +713,7 @@ async function processClaim(
 
     await postJson(`/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/complete`, {
       workerId,
-      storeId,
+      storeId: claimStoreId,
       normalizedChecksum: finalChecksum,
       normalizedProduct: shopifyProduct,
       shopify: {
@@ -610,9 +722,9 @@ async function processClaim(
         imageProcessing: imageProcessingSummary,
         noOp: isNoOp,
         warnings: [...syncResult.warnings, ...reconciliationWarnings],
-        storeId,
+        storeId: claimStoreId,
         adminUrl: existingProductId
-          ? `https://admin.shopify.com/store/${shopAdminHandle}/products/${existingProductId.split("/").pop() ?? ""}`
+          ? `https://admin.shopify.com/store/${claimAdminHandle}/products/${existingProductId.split("/").pop() ?? ""}`
           : undefined,
         attempts: claim.attempt,
         proxyProfile,

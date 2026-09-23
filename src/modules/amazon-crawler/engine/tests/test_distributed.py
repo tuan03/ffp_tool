@@ -138,7 +138,7 @@ class PackagedClientTests(unittest.TestCase):
             portable_config.write_text("{}", encoding="utf-8")
 
             with patch("sys.frozen", True, create=True), patch("sys.executable", str(executable)):
-                self.assertEqual(_resolve_config_path(None), portable_config)
+                self.assertEqual(_resolve_config_path(None), portable_config.resolve())
 
     def test_explicit_config_overrides_packaged_default(self) -> None:
         explicit = Path("custom-agent.json")
@@ -147,7 +147,7 @@ class PackagedClientTests(unittest.TestCase):
 
     def test_portable_agent_discovers_proxy_config_beside_agent_config(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            portable_root = Path(directory)
+            portable_root = Path(directory).resolve()
             config_path = portable_root / "agent.json"
             proxy_path = portable_root / "amazon-crawler-profiles.json"
             config_path.write_text(json.dumps({"serverUrl": "http://127.0.0.1:8766"}), encoding="utf-8")
@@ -165,13 +165,13 @@ class PackagedClientTests(unittest.TestCase):
                 config_path=config.proxy_config_path,
             )
 
-            self.assertEqual(config.proxy_config_path, proxy_path)
+            self.assertEqual(config.proxy_config_path, proxy_path.resolve())
             self.assertEqual([assignment.name for assignment in assignments], ["direct", "fallback-1"])
             self.assertEqual(warnings, [])
 
     def test_relative_agent_config_discovers_proxy_config_in_same_directory(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
+            root = Path(directory).resolve()
             config_directory = root / "config"
             config_directory.mkdir()
             config_path = config_directory / "agent.json"
@@ -186,7 +186,7 @@ class PackagedClientTests(unittest.TestCase):
             finally:
                 os.chdir(previous_directory)
 
-            self.assertEqual(config.proxy_config_path, proxy_path)
+            self.assertEqual(config.proxy_config_path, proxy_path.resolve())
 
 
 class DistributedCacheControlTests(unittest.IsolatedAsyncioTestCase):

@@ -494,16 +494,19 @@ class CoordinatorStore:
             for item in candidates:
                 if len(claimed) >= count:
                     break
+                job = session.get(CrawlJob, item.job_id)
+                job_settings = dict(job.settings) if job is not None and isinstance(job.settings, dict) else {}
+                effective_store = str(job_settings.get("storeId") or "").strip() or store_id
                 if dialect_name == "postgresql":
                     session.execute(
                         text("SELECT pg_advisory_xact_lock(:lock_key)"),
-                        {"lock_key": _shopify_sync_lock_key(store_id, item.source_key)},
+                        {"lock_key": _shopify_sync_lock_key(effective_store, item.source_key)},
                     )
                 request_id = _shopify_sync_request_id(item.source_key)
                 operation = session.scalar(
                     select(ShopifyOperationIdempotency)
                     .where(
-                        ShopifyOperationIdempotency.store_id == store_id,
+                        ShopifyOperationIdempotency.store_id == effective_store,
                         ShopifyOperationIdempotency.request_id == request_id,
                     )
                     .with_for_update()
@@ -518,7 +521,7 @@ class CoordinatorStore:
                 if operation is None:
                     operation = ShopifyOperationIdempotency(
                         id=_id(),
-                        store_id=store_id,
+                        store_id=effective_store,
                         request_id=request_id,
                         operation="product.sync",
                         payload_hash=item.checksum,
@@ -536,10 +539,9 @@ class CoordinatorStore:
                 item.claim_expires_at = claim_until
                 item.attempt_count += 1
                 link = session.scalar(select(ShopifyProductLink).where(
-                    ShopifyProductLink.store_id == store_id,
+                    ShopifyProductLink.store_id == effective_store,
                     ShopifyProductLink.source_key == item.source_key,
                 ))
-                job = session.get(CrawlJob, item.job_id)
                 claimed.append({
                     "id": item.id,
                     "jobId": item.job_id,
@@ -549,7 +551,7 @@ class CoordinatorStore:
                     "checksum": item.checksum,
                     "attempt": item.attempt_count,
                     "product": item.raw_payload,
-                    "settings": dict(job.settings or {}) if job is not None else {},
+                    "settings": job_settings,
                     "existingShopify": None if link is None else {
                         "productId": link.shopify_product_id,
                         "productHandle": link.shopify_product_handle,

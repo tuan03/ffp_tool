@@ -381,15 +381,18 @@ class PlaywrightPoolTests(unittest.IsolatedAsyncioTestCase):
             pass
 
         original_policy = SelectorPolicy()
-
-        with (
-            patch("engine.playwright_pool.sys.platform", "win32"),
-            patch("engine.playwright_pool.asyncio.WindowsSelectorEventLoopPolicy", SelectorPolicy, create=True),
-            patch("engine.playwright_pool.asyncio.WindowsProactorEventLoopPolicy", ProactorPolicy, create=True),
-            patch("engine.playwright_pool.asyncio.get_event_loop_policy", return_value=original_policy),
-            patch("engine.playwright_pool.asyncio.set_event_loop_policy") as set_policy,
-        ):
-            result = start_with_playwright_event_loop(lambda: "started")
+        setattr(asyncio, "WindowsSelectorEventLoopPolicy", SelectorPolicy)
+        setattr(asyncio, "WindowsProactorEventLoopPolicy", ProactorPolicy)
+        try:
+            with (
+                patch("engine.playwright_pool.sys.platform", "win32"),
+                patch("engine.playwright_pool.asyncio.get_event_loop_policy", return_value=original_policy),
+                patch("engine.playwright_pool.asyncio.set_event_loop_policy") as set_policy,
+            ):
+                result = start_with_playwright_event_loop(lambda: "started")
+        finally:
+            delattr(asyncio, "WindowsSelectorEventLoopPolicy")
+            delattr(asyncio, "WindowsProactorEventLoopPolicy")
 
         self.assertEqual(result, "started")
         policies = [call.args[0] for call in set_policy.call_args_list]

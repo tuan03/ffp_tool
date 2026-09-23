@@ -2,7 +2,7 @@ import type { Plugin } from "vite";
 
 import { GatewayDispatcher } from "./dispatcher";
 import { handleAutoSeoHttpRequest } from "./auto-seo-handler";
-import { createGatewayHttpHandler, isGatewayAuthorized, MAX_BODY_BYTES } from "./http-server";
+import { assertHostSecurity, createGatewayHttpHandler, isGatewayAuthorized, MAX_BODY_BYTES } from "./http-server";
 import { InMemoryIdempotencyStore } from "./idempotency";
 import { ShopifyGraphqlClient } from "./shopify-graphql-client";
 import { InMemoryStoreRegistry } from "./store-registry";
@@ -15,12 +15,45 @@ export interface ShopifyGatewayDevPluginOptions {
   readonly maxBodyBytes?: number;
 }
 
+function isSameOriginRequest(headers: Record<string, string | string[] | undefined>): boolean {
+  if (headers["sec-fetch-site"] === "same-origin") {
+    return true;
+  }
+  const host = typeof headers.host === "string" ? headers.host : undefined;
+  if (!host) {
+    return false;
+  }
+  const origin = typeof headers.origin === "string" ? headers.origin : undefined;
+  if (origin) {
+    try {
+      return new URL(origin).host.toLowerCase() === host.toLowerCase();
+    } catch {
+      return false;
+    }
+  }
+  const referer = typeof headers.referer === "string" ? headers.referer : undefined;
+  if (referer) {
+    try {
+      return new URL(referer).host.toLowerCase() === host.toLowerCase();
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
 export function shopifyGatewayDevPlugin(options?: ShopifyGatewayDevPluginOptions): Plugin {
   return {
     name: "shopify-gateway-dev",
     configureServer(server) {
       const env = loadLocalEnv();
-      const authToken = options?.authToken ?? env.GATEWAY_AUTH_TOKEN ?? process.env.GATEWAY_AUTH_TOKEN;
+      const rawAuthToken = options?.authToken ?? env.GATEWAY_AUTH_TOKEN ?? process.env.GATEWAY_AUTH_TOKEN;
+      const authToken =
+        typeof rawAuthToken === "string" && rawAuthToken.trim() !== ""
+          ? rawAuthToken.trim()
+          : undefined;
+      const host = server?.config?.server?.host;
+      assertHostSecurity(host, authToken, "vite dev server");
       const maxBodyBytes = options?.maxBodyBytes && options.maxBodyBytes > 0 ? options.maxBodyBytes : MAX_BODY_BYTES;
 
       const stores = loadBootstrappedStores({ env });
@@ -34,7 +67,31 @@ export function shopifyGatewayDevPlugin(options?: ShopifyGatewayDevPluginOptions
       const httpHandler = createGatewayHttpHandler(dispatcher, { authToken, maxBodyBytes });
 
       server.middlewares.use(async (req, res, next) => {
-        if (req.url && (req.url === "/api/shopify" || req.url.startsWith("/api/shopify?"))) {
+        const isShopify = req.url && (req.url === "/api/shopify" || req.url.startsWith("/api/shopify?"));
+        const isAutoSeo = req.url && (req.url === "/api/auto-seo/run" || req.url.startsWith("/api/auto-seo/run?"));
+
+        if (authToken && (isShopify || isAutoSeo) && isSameOriginRequest(req.headers)) {
+          if (!req.headers["x-gateway-key"]) {
+            req.headers["x-gateway-key"] = authToken;
+          }
+        }
+
+        if (isShopify || isAutoSeo) {
+          try {
+            const freshStores = loadBootstrappedStores({ env: loadLocalEnv() });
+            for (const store of freshStores) {
+              if (!storeRegistry.getStore(store.storeId)) {
+                storeRegistry.registerStore(store);
+              } else {
+                storeRegistry.updateStore(store);
+              }
+            }
+          } catch {
+            // non-fatal env sync in dev
+          }
+        }
+
+        if (isShopify) {
           if (req.method !== "POST") {
             res.statusCode = 405;
             res.setHeader("Content-Type", "application/json");

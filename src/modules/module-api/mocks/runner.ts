@@ -211,27 +211,27 @@ export async function runMockModuleApi(input: ShopifyApiInput): Promise<ShopifyA
     throw new ShopifyApiError("Store ID is required", "SHOPIFY_USER_ERROR");
   }
 
-  if (input.storeId === "simulate-user-error") {
+  if (effectiveStoreId === "simulate-user-error") {
     throw new ShopifyApiError("Simulated Shopify user error", "SHOPIFY_USER_ERROR");
   }
 
-  if (input.storeId === "simulate-auth-failure") {
+  if (effectiveStoreId === "simulate-auth-failure") {
     throw new ShopifyApiError("Simulated Shopify authentication failure", "SHOPIFY_AUTH_FAILED");
   }
 
-  if (input.storeId === "simulate-throttled") {
+  if (effectiveStoreId === "simulate-throttled") {
     throw new ShopifyApiError("Simulated Shopify rate limit throttling", "SHOPIFY_THROTTLED");
   }
 
-  if (input.storeId === "simulate-network-error") {
+  if (effectiveStoreId === "simulate-network-error") {
     throw new ShopifyApiError("Simulated network connection error", "SHOPIFY_NETWORK_ERROR");
   }
 
-  if (input.storeId === "simulate-unknown-state") {
+  if (effectiveStoreId === "simulate-unknown-state") {
     throw new ShopifyApiError("Simulated unknown write state", "SHOPIFY_UNKNOWN_WRITE_STATE");
   }
 
-  if (input.storeId === "simulate-partial-write") {
+  if (effectiveStoreId === "simulate-partial-write") {
     throw new ShopifyApiError(
       "Simulated partial write",
       "SHOPIFY_PARTIAL_WRITE",
@@ -246,7 +246,7 @@ export async function runMockModuleApi(input: ShopifyApiInput): Promise<ShopifyA
   switch (input.operation) {
     case "connection.test": {
       return {
-        storeId: input.storeId,
+        storeId: effectiveStoreId,
         operation: "connection.test",
         success: true,
         data: { ...shopifyMockConnection },
@@ -274,7 +274,7 @@ export async function runMockModuleApi(input: ShopifyApiInput): Promise<ShopifyA
       const { pageItems, pageInfo } = paginateItems(filtered, input.payload.limit, input.payload.cursor);
 
       return {
-        storeId: input.storeId,
+        storeId: effectiveStoreId,
         operation: "products.list",
         success: true,
         data: {
@@ -290,7 +290,7 @@ export async function runMockModuleApi(input: ShopifyApiInput): Promise<ShopifyA
       }
       const found = shopifyMockProducts.find((p) => p.id === input.payload.id);
       return {
-        storeId: input.storeId,
+        storeId: effectiveStoreId,
         operation: "products.get",
         success: true,
         data: {
@@ -411,7 +411,7 @@ export async function runMockModuleApi(input: ShopifyApiInput): Promise<ShopifyA
       };
 
       return {
-        storeId: input.storeId,
+        storeId: effectiveStoreId,
         operation: "products.create",
         success: true,
         data: { product: newProduct },
@@ -513,7 +513,7 @@ export async function runMockModuleApi(input: ShopifyApiInput): Promise<ShopifyA
       };
 
       return {
-        storeId: input.storeId,
+        storeId: effectiveStoreId,
         operation: "products.update",
         success: true,
         data: { product: updatedProduct },
@@ -525,7 +525,7 @@ export async function runMockModuleApi(input: ShopifyApiInput): Promise<ShopifyA
         throw new ShopifyApiError("Products array is required", "SHOPIFY_USER_ERROR");
       }
       return {
-        storeId: input.storeId,
+        storeId: effectiveStoreId,
         operation: "products.bulkUpdate",
         success: true,
         data: {
@@ -543,7 +543,7 @@ export async function runMockModuleApi(input: ShopifyApiInput): Promise<ShopifyA
         throw new ShopifyApiError("Product ID is required", "SHOPIFY_USER_ERROR");
       }
       return {
-        storeId: input.storeId,
+        storeId: effectiveStoreId,
         operation: "products.delete",
         success: true,
         data: {
@@ -595,7 +595,7 @@ export async function runMockModuleApi(input: ShopifyApiInput): Promise<ShopifyA
       };
 
       return {
-        storeId: input.storeId,
+        storeId: effectiveStoreId,
         operation: "variants.update",
         success: true,
         data: { variant: updatedVariant },
@@ -627,7 +627,7 @@ export async function runMockModuleApi(input: ShopifyApiInput): Promise<ShopifyA
         }
       }
       return {
-        storeId: input.storeId,
+        storeId: effectiveStoreId,
         operation: "variants.bulkUpdate",
         success: true,
         data: {
@@ -651,7 +651,7 @@ export async function runMockModuleApi(input: ShopifyApiInput): Promise<ShopifyA
       }
       if (input.payload.variants.length === 0) {
         return {
-          storeId: input.storeId,
+          storeId: effectiveStoreId,
           operation: "variants.bulkCreate",
           success: true,
           data: {
@@ -684,7 +684,7 @@ export async function runMockModuleApi(input: ShopifyApiInput): Promise<ShopifyA
       });
 
       return {
-        storeId: input.storeId,
+        storeId: effectiveStoreId,
         operation: "variants.bulkCreate",
         success: true,
         data: {
@@ -700,7 +700,7 @@ export async function runMockModuleApi(input: ShopifyApiInput): Promise<ShopifyA
       }
       const filename = input.payload.filename || "mock-asset.jpg";
       return {
-        storeId: input.storeId,
+        storeId: effectiveStoreId,
         operation: "files.create",
         success: true,
         data: {
@@ -727,7 +727,7 @@ export async function runMockModuleApi(input: ShopifyApiInput): Promise<ShopifyA
         };
       });
       return {
-        storeId: input.storeId,
+        storeId: effectiveStoreId,
         operation: "files.bulkCreate",
         success: true,
         data: {
@@ -819,7 +819,7 @@ export async function runMockModuleApi(input: ShopifyApiInput): Promise<ShopifyA
       });
 
       return {
-        storeId: input.storeId,
+        storeId: effectiveStoreId,
         operation: "metafields.set",
         success: true,
         data: {
@@ -844,7 +844,7 @@ export async function runMockModuleApi(input: ShopifyApiInput): Promise<ShopifyA
       const { pageItems, pageInfo } = paginateItems(filtered, input.payload.limit, input.payload.cursor);
 
       return {
-        storeId: input.storeId,
+        storeId: effectiveStoreId,
         operation: "collections.list",
         success: true,
         data: {
@@ -860,7 +860,7 @@ export async function runMockModuleApi(input: ShopifyApiInput): Promise<ShopifyA
       }
       const found = shopifyMockCollections.find((c) => c.id === input.payload.id);
       return {
-        storeId: input.storeId,
+        storeId: effectiveStoreId,
         operation: "collections.get",
         success: true,
         data: {
@@ -884,7 +884,7 @@ export async function runMockModuleApi(input: ShopifyApiInput): Promise<ShopifyA
       };
 
       return {
-        storeId: input.storeId,
+        storeId: effectiveStoreId,
         operation: "collections.create",
         success: true,
         data: { collection: newCollection },
@@ -907,7 +907,7 @@ export async function runMockModuleApi(input: ShopifyApiInput): Promise<ShopifyA
       };
 
       return {
-        storeId: input.storeId,
+        storeId: effectiveStoreId,
         operation: "collections.update",
         success: true,
         data: { collection: updatedCollection },
@@ -919,7 +919,7 @@ export async function runMockModuleApi(input: ShopifyApiInput): Promise<ShopifyA
         throw new ShopifyApiError("Collection ID is required", "SHOPIFY_USER_ERROR");
       }
       return {
-        storeId: input.storeId,
+        storeId: effectiveStoreId,
         operation: "collections.delete",
         success: true,
         data: {
@@ -933,7 +933,7 @@ export async function runMockModuleApi(input: ShopifyApiInput): Promise<ShopifyA
         throw new ShopifyApiError("Collection ID is required", "SHOPIFY_USER_ERROR");
       }
       return {
-        storeId: input.storeId,
+        storeId: effectiveStoreId,
         operation: "collections.updateMembership",
         success: true,
         data: {
@@ -947,7 +947,7 @@ export async function runMockModuleApi(input: ShopifyApiInput): Promise<ShopifyA
     case "stores.list": {
       const stores = [...mockStores];
       return {
-        storeId: input.storeId ?? "system",
+        storeId: effectiveStoreId,
         operation: "stores.list",
         success: true,
         data: {
@@ -961,7 +961,7 @@ export async function runMockModuleApi(input: ShopifyApiInput): Promise<ShopifyA
       const targetId = input.payload.targetStoreId.trim();
       const found = mockStores.find((s) => s.storeId === targetId);
       return {
-        storeId: input.storeId ?? targetId,
+        storeId: effectiveStoreId,
         operation: "stores.get",
         success: true,
         data: {

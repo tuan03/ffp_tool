@@ -29,7 +29,8 @@ import type {
 export interface ShopifyGatewayAdapterOptions {
   readonly runner?: ModuleApiRunner;
   readonly mode?: ShopifyExecutionMode;
-  readonly getRequestId?: (operation: string) => string;
+  readonly requestId?: string;
+  readonly getRequestId?: (operation: string, payload?: unknown) => string;
 }
 
 export interface ResolveShopifyProductForSyncInput {
@@ -135,15 +136,46 @@ export function createShopifyGatewayAdapter(
       : optionsOrRunner ?? {};
   const runner = options.runner ?? runModuleApi;
   const mode = options.mode ?? "apply";
-  const defaultGetRequestId = (op: string) =>
-    `sync-${op}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  const getRequestId = options.getRequestId ?? defaultGetRequestId;
+
+  const resolveRequestId = (baseOp: string, payload?: unknown, stableKey?: string): string => {
+    if (
+      payload &&
+      typeof payload === "object" &&
+      typeof (payload as { requestId?: unknown }).requestId === "string" &&
+      (payload as { requestId: string }).requestId.trim() !== ""
+    ) {
+      return (payload as { requestId: string }).requestId.trim();
+    }
+    if (
+      Array.isArray(payload) &&
+      payload.length > 0 &&
+      payload[0] &&
+      typeof payload[0] === "object" &&
+      typeof (payload[0] as { requestId?: unknown }).requestId === "string" &&
+      (payload[0] as { requestId: string }).requestId.trim() !== ""
+    ) {
+      return (payload[0] as { requestId: string }).requestId.trim();
+    }
+    if (options.getRequestId) {
+      return options.getRequestId(baseOp, payload);
+    }
+    if (options.requestId && options.requestId.trim() !== "") {
+      return `${options.requestId.trim()}-${baseOp}`;
+    }
+    const suffix = stableKey ? stableRequestSuffix(stableKey) : `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    return `sync-${cleanStoreId}-${baseOp}-${suffix}`;
+  };
 
   return {
     async createProduct(input: CreateProductInput): Promise<CreateProductOutput> {
-      const requestId = getRequestId(
-        `product-create-${stableRequestSuffix(JSON.stringify(input))}`,
-      );
+      const requestId = resolveRequestId("product-create", input, JSON.stringify(input));
+      const inputWithCat = input as unknown as { categoryId?: unknown; category?: unknown };
+      const categoryId =
+        typeof inputWithCat.categoryId === "string" && inputWithCat.categoryId.trim() !== ""
+          ? inputWithCat.categoryId.trim()
+          : typeof inputWithCat.category === "string" && inputWithCat.category.trim() !== ""
+          ? inputWithCat.category.trim()
+          : undefined;
       const response = (await runner({
         storeId: cleanStoreId,
         operation: "products.create",
@@ -158,7 +190,9 @@ export function createShopifyGatewayAdapter(
             descriptionHtml: input.descriptionHtml,
             vendor: input.vendor,
             productType: input.productType,
+            ...(categoryId ? { categoryId } : {}),
             tags: input.tags,
+            collectionsToJoin: input.collectionsToJoin,
             media: input.media?.map((m) => ({
               originalSource: m.originalSource,
               alt: m.alt,
@@ -198,7 +232,7 @@ export function createShopifyGatewayAdapter(
 
     async updateProduct(input: UpdateProductInput): Promise<UpdateProductOutput> {
       const current = (await runner({
-        storeId,
+        storeId: cleanStoreId,
         operation: "products.get",
         payload: { id: input.productId },
       })) as ShopifyProductsGetResponse;
@@ -214,14 +248,16 @@ export function createShopifyGatewayAdapter(
           image.id && !previousManagedMediaIds.includes(image.id) ? [image.id] : []
         ),
       );
-      const requestId = getRequestId(
-        `product-update-${stableRequestSuffix(JSON.stringify({
+      const requestId = resolveRequestId(
+        "product-update",
+        input,
+        JSON.stringify({
           ...input,
           tags: nextTags,
-        }))}`,
+        }),
       );
       const response = (await runner({
-        storeId,
+        storeId: cleanStoreId,
         operation: "products.update",
         mode,
         requestId,
@@ -235,6 +271,7 @@ export function createShopifyGatewayAdapter(
             vendor: input.vendor,
             productType: input.productType,
             tags: nextTags,
+            collectionsToJoin: input.collectionsToJoin,
             media: input.media?.map((media) => ({
               originalSource: media.originalSource,
               alt: media.alt,
@@ -258,7 +295,7 @@ export function createShopifyGatewayAdapter(
         },
       })) as ShopifyProductsUpdateResponse;
       const refreshed = (await runner({
-        storeId,
+        storeId: cleanStoreId,
         operation: "products.get",
         payload: { id: input.productId },
       })) as ShopifyProductsGetResponse;
@@ -286,8 +323,10 @@ export function createShopifyGatewayAdapter(
         return { createdCount: 0 };
       }
 
-      const requestId = getRequestId(
-        `variants-bulk-create-${stableRequestSuffix(JSON.stringify({ productId, variants }))}`,
+      const requestId = resolveRequestId(
+        "variants-bulk-create",
+        { productId, variants },
+        JSON.stringify({ productId, variants }),
       );
       const response = (await runner({
         storeId: cleanStoreId,
@@ -316,9 +355,8 @@ export function createShopifyGatewayAdapter(
     },
 
     async uploadFile(input: UploadFileInput): Promise<UploadFileOutput> {
-      const requestId = getRequestId(
-        `files-create-${stableRequestSuffix(input.originalSource)}`,
-      );
+      const opKey = input.filename ? `files-create-${input.filename}` : "files-create";
+      const requestId = resolveRequestId(opKey, input, input.originalSource);
       const response = (await runner({
         storeId: cleanStoreId,
         operation: "files.create",
@@ -348,13 +386,13 @@ export function createShopifyGatewayAdapter(
       if (!inputs || inputs.length === 0) {
         return [];
       }
-      const requestId = getRequestId(
-        `files-bulk-create-${stableRequestSuffix(
-          inputs.map((input) => input.originalSource).join("\n"),
-        )}`,
+      const requestId = resolveRequestId(
+        "files-bulk-create",
+        inputs,
+        inputs.map((input) => input.originalSource).join("\n"),
       );
       const response = (await runner({
-        storeId,
+        storeId: cleanStoreId,
         operation: "files.bulkCreate",
         mode,
         requestId,
@@ -376,9 +414,10 @@ export function createShopifyGatewayAdapter(
     },
 
     async setProductMetafield(input: SetMetafieldInput): Promise<SetMetafieldOutput> {
-      const requestId = getRequestId(
-        `metafields-set-${stableRequestSuffix(JSON.stringify(input))}`,
-      );
+      const opKey = input.key
+        ? `metafields-set-${input.namespace ? `${input.namespace}-` : ""}${input.key}`
+        : "metafields-set";
+      const requestId = resolveRequestId(opKey, input, JSON.stringify(input));
       const response = (await runner({
         storeId: cleanStoreId,
         operation: "metafields.set",
