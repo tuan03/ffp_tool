@@ -3,9 +3,6 @@ import { promisify } from "node:util";
 import fs from "node:fs/promises";
 import path from "node:path";
 
-import { loadServerEnvironment } from "../../src/config/server-environment";
-import { DEFAULT_SEO_PIPELINE_STAGES, createSeoPipeline } from "../../src/modules/seo-content/internal/pipeline";
-import { getDefaultSiteNicheResolver } from "../../src/modules/seo-content/internal/site-niche/site-niche-runtime";
 import type { SeoPipelineContext } from "../../src/modules/seo-content/internal/domain-types";
 import type { SeoContentOutput } from "../../src/modules/seo-content/types";
 
@@ -16,6 +13,7 @@ import {
   type SerializedSeoOutput,
   type SmokeStageTrace,
 } from "./e2e-smoke-helpers";
+import { loadSmokePipelineRuntime } from "./runtime-loader";
 
 const executeFile = promisify(execFile);
 const TESTING_DIRECTORY = path.resolve(process.cwd(), "testing", "module-seo-content");
@@ -265,7 +263,7 @@ async function openReport(reportPath: string): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  loadServerEnvironment();
+  const pipelineRuntime = await loadSmokePipelineRuntime();
   const { fixturePath, shouldOpen } = parseArguments(process.argv.slice(2));
   const repositoryRoot = process.cwd();
   const startedAt = new Date();
@@ -273,9 +271,9 @@ async function main(): Promise<void> {
   const input = parseSmokeInput(rawFixture, repositoryRoot);
   await validateLocalImageFiles(input);
   const traces: StageSnapshot[] = [];
-  const pipeline = createSeoPipeline({
-    siteNicheResolver: getDefaultSiteNicheResolver(),
-    stages: createTracingStages(DEFAULT_SEO_PIPELINE_STAGES, (trace) => {
+  const pipeline = pipelineRuntime.createSeoPipeline({
+    siteNicheResolver: pipelineRuntime.siteNicheResolver,
+    stages: createTracingStages(pipelineRuntime.stages, (trace) => {
       traces.push(snapshotTrace(trace));
       console.log(`[${trace.stageName.toUpperCase()}] completed`);
     }),

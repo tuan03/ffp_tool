@@ -10,6 +10,7 @@ import {
 } from "./e2e-smoke-helpers";
 import { createInitialContext } from "../../src/modules/seo-content/internal/pipeline-context";
 import type { SeoPipelineStage } from "../../src/modules/seo-content/internal/pipeline";
+import { loadSmokePipelineRuntime } from "./runtime-loader";
 
 const REPOSITORY_ROOT = path.resolve("D:/workspace/ffp-tool");
 
@@ -128,4 +129,33 @@ test("traces each wrapped SEO stage in pipeline order", async () => {
 
   assert.equal(context.source.handle, "music-rug");
   assert.deepEqual(tracedNames, ["b1", "b2", "b3", "b4", "b5", "b6"]);
+});
+
+test("loads default stages only after server environment initialization", async () => {
+  let environmentLoaded = false;
+  const expectedStages: readonly SeoPipelineStage[] = [];
+  const runtime = await loadSmokePipelineRuntime({
+    loadEnvironment() {
+      environmentLoaded = true;
+    },
+    async loadPipelineModule() {
+      assert.equal(environmentLoaded, true);
+      return {
+        DEFAULT_SEO_PIPELINE_STAGES: expectedStages,
+        createSeoPipeline: () => {
+          throw new Error("Not used in this test");
+        },
+      };
+    },
+    async loadSiteNicheRuntime() {
+      assert.equal(environmentLoaded, true);
+      return {
+        getDefaultSiteNicheResolver: () => ({
+          resolve: async () => ({ niche: "rug", source: "fallback" as const }),
+        }),
+      };
+    },
+  });
+
+  assert.equal(runtime.stages, expectedStages);
 });
