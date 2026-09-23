@@ -27,11 +27,10 @@ async function main(): Promise<void> {
   const initialContext = createInitialContext(sampleInput);
   const contextWithB1 = evolveContext(initialContext, {
     productUnderstanding: {
-      ocrTexts: ["TRICK OR TREAT"],
-      detectedEntities: ["black cat", "pumpkin"],
-      dominantColors: ["black", "orange"],
-      visualStyle: "vintage retro",
-      productCategory: "t-shirt",
+      typography: { visibleTexts: ["TRICK OR TREAT"], styleSummary: "vintage retro lettering" },
+      visualEntities: "Black cat and pumpkin graphic.",
+      sceneContext: "Unknown",
+      physicalProductIdentity: "t-shirt",
     },
   });
 

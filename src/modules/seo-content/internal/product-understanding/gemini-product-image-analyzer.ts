@@ -12,39 +12,27 @@ import { GeminiGeneratorError } from "./gemini-content-generator";
 
 export const GEMINI_B1_SYSTEM_INSTRUCTION = `You are an evidence extraction system for ecommerce product images.
 
-Your task is to inspect the supplied product image and return structured visual evidence only.
+Your task is to inspect the supplied product-image batch and return structured evidence only.
 
 Rules:
-1. OCR:
-   - ocrTexts must contain only text visibly present on the product/design.
+1. Product anchoring:
+   - Use niche and title to identify the sold product, not incidental objects in its setting.
+   - Product/design detail belongs only in typography, visualEntities, and physicalProductIdentity.
+   - Background furniture, rooms, people and props belong only in sceneContext.
+2. Typography:
+   - typography.visibleTexts contains only text visibly present on the product/design.
    - Never infer OCR text from title, description, niche, filename or alt text.
    - Never correct spelling found in the image.
    - Preserve visible wording, casing and punctuation where possible.
    - Exclude website UI, watermarks, image-editor overlays and unrelated background text unless they are part of the sold product/design.
    - If no reliable visible text exists, return [].
 
-2. detectedEntities:
-   - Return concrete visible subjects, motifs or design elements.
-   - Examples: black cat, pumpkin, butterfly, moon, daisy.
-   - Do not invent invisible concepts.
-   - Do not include generic terms such as image, background or design.
-
-3. dominantColors:
-   - Return the major visually dominant colors.
-   - Use common normalized color names.
-   - Order them from most visually prominent to least prominent.
-
-4. visualStyle:
-   - Return one concise style phrase.
-   - Examples: vintage retro illustration, minimalist typography, cute cartoon, gothic floral.
-   - Do not return a sentence.
-   - Return "unknown" when evidence is insufficient.
-
-5. productCategory:
-   - Identify the physical product shown.
-   - Examples: t-shirt, hoodie, ceramic mug, leather handbag.
-   - Use the provided product context only to resolve genuine visual ambiguity.
-   - Return "unknown" if it cannot be determined reliably.
+   - typography.styleSummary states the visual treatment of that product text.
+3. visualEntities is one rich, product-design-only English summary. Do not list scene objects.
+4. sceneContext is one English description of the placement/space only.
+5. physicalProductIdentity is the physical blank/object (for example "area rug"), never Shopify category or product type.
+   - Decide it from cross-batch evidence, not the first image or repeated backgrounds.
+   - Return "unknown" where evidence is insufficient.
 
 The supplied title, description and niche are contextual hints only.
 They are never evidence for OCR.
@@ -77,23 +65,22 @@ export class GeminiProductImageAnalyzer implements ProductImageAnalyzer {
   }
 
   async analyze(input: ProductImageAnalyzerInput): Promise<ProductImageAnalysis> {
-    const imagePayload = await prepareProductImagePayload(input.image, {
+    const prepared = await Promise.allSettled(input.images.map((image) => prepareProductImagePayload(image, {
       fetchTimeoutMs: this.timeoutMs,
-    });
+    })));
+    const imagePayloads = prepared.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
+    if (imagePayloads.length === 0) {
+      throw new GeminiGeneratorError("No readable product images were available for B1 analysis");
+    }
 
-    const prompt = `Analyze this ecommerce product image.
+    const prompt = `Analyze this ecommerce product image batch (${imagePayloads.length} readable images in supplied order).
 
 Product context:
 Title: ${input.title || ""}
 Description: ${input.description || ""}
 Niche: ${input.niche || ""}
 
-Extract:
-- visible product/design text
-- visible entities and motifs
-- dominant colors
-- visual style
-- physical product category
+Extract exactly the four requested evidence groups.
 
 Use product context only for disambiguation.
 Visual evidence has priority over metadata.`;
@@ -105,7 +92,7 @@ Visual evidence has priority over metadata.`;
       try {
         const response = await this.generator.generateProductImageAnalysis({
           prompt,
-          imagePayload,
+      imagePayloads,
           systemInstruction: this.systemInstruction,
           model: this.model,
           maxOutputTokens: this.maxOutputTokens,

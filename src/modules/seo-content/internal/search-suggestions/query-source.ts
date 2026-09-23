@@ -3,6 +3,7 @@ export const QUERY_SOURCE = {
   CATEGORY_SEED: "category_seed",
   NICHE_SEED: "niche_seed",
   TITLE_SEED: "title_seed",
+  SCENE_CONTEXT_SEED: "scene_context_seed",
   FALLBACK_SEED: "fallback_seed",
   GOOGLE_AUTOCOMPLETE: "google_autocomplete",
 } as const;
@@ -19,7 +20,8 @@ const SOURCE_PRECEDENCE: Readonly<Record<QuerySource, number>> = {
   [QUERY_SOURCE.CATEGORY_SEED]: 4,
   [QUERY_SOURCE.NICHE_SEED]: 3,
   [QUERY_SOURCE.TITLE_SEED]: 2,
-  [QUERY_SOURCE.FALLBACK_SEED]: 1,
+  [QUERY_SOURCE.SCENE_CONTEXT_SEED]: 1,
+  [QUERY_SOURCE.FALLBACK_SEED]: 0,
 };
 
 export function shouldUpgradeSource(

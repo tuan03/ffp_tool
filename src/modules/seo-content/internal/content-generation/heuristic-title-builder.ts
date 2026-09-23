@@ -52,10 +52,10 @@ export function isKeywordGroundedForPrimarySurface(
   const corpus = [
     facts.originalTitle,
     facts.originalDescription,
-    facts.visualStyle ?? "",
+    facts.typographyStyleSummary ?? "",
     facts.niche ?? "",
-    ...facts.entities,
-    ...facts.ocrTexts,
+    facts.visualEntities ?? "",
+    ...facts.typographyVisibleTexts,
   ]
     .join(" ")
     .toLowerCase();
@@ -165,12 +165,12 @@ export function buildHeuristicProductTitle(input: TitleBuilderInput): string {
   }
 
   // Case 5: No grounded primary keyword -> Rebuild strictly from B1 facts
-  let fallbackTitle = toTitleCase(facts.productCategory ?? "Specialty Product");
-  if (facts.entities.length > 0) {
-    fallbackTitle = `${toTitleCase(facts.entities[0])} ${fallbackTitle}`;
+  let fallbackTitle = toTitleCase(facts.physicalProductIdentity ?? "Specialty Product");
+  if (facts.visualEntities) {
+    fallbackTitle = `${toTitleCase(facts.visualEntities.split(/[.;]/)[0])} ${fallbackTitle}`;
   }
-  if (facts.visualStyle && !fallbackTitle.toLowerCase().includes(facts.visualStyle.toLowerCase())) {
-    fallbackTitle = `${toTitleCase(facts.visualStyle)} ${fallbackTitle}`;
+  if (facts.typographyStyleSummary && !fallbackTitle.toLowerCase().includes(facts.typographyStyleSummary.toLowerCase())) {
+    fallbackTitle = `${toTitleCase(facts.typographyStyleSummary)} ${fallbackTitle}`;
   }
   if (facts.personalizationSupported) {
     fallbackTitle = `Personalized ${fallbackTitle}`;

@@ -129,18 +129,16 @@ export function evaluateCandidateRelevance(params: {
 
   // Build list of contextual anchors from product
   const anchors: string[] = [];
-  const categoryRaw = productContext.productUnderstanding?.productCategory?.toLowerCase().trim();
+  const categoryRaw = productContext.productUnderstanding?.physicalProductIdentity?.toLowerCase().trim();
   if (categoryRaw) {
     anchors.push(categoryRaw);
     const catAliases = KNOWN_PRODUCT_CATEGORIES[categoryRaw] ?? [];
     anchors.push(...catAliases);
   }
 
-  for (const entity of productContext.productUnderstanding?.detectedEntities ?? []) {
-    const trimmed = entity.toLowerCase().trim();
-    if (trimmed) {
-      anchors.push(trimmed);
-    }
+  const visualEntities = productContext.productUnderstanding?.visualEntities?.toLowerCase().trim();
+  if (visualEntities && visualEntities !== "unknown") {
+    anchors.push(visualEntities);
   }
 
   for (const aud of productContext.shoppingContext?.targetAudience ?? []) {

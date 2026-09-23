@@ -18,11 +18,10 @@ async function main() {
   };
 
   const productUnderstanding: ProductUnderstanding = {
-    ocrTexts: [],
-    detectedEntities: ["black cat", "halloween cat"],
-    dominantColors: ["black"],
-    visualStyle: "vintage",
-    productCategory: "t-shirt",
+    typography: { visibleTexts: [], styleSummary: "vintage lettering" },
+    visualEntities: "Black cat Halloween graphic.",
+    sceneContext: "Unknown",
+    physicalProductIdentity: "t-shirt",
   };
 
   const shoppingContext: ShoppingContext = {

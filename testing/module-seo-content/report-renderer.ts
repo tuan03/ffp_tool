@@ -133,19 +133,18 @@ function renderLengthMeter(value: string, maxLength: number): string {
 
 function renderB1(summary: Record<string, unknown>): string {
   const understanding = recordAt(summary, "productUnderstanding");
-  const ocrTexts = stringsAt(understanding, "ocrTexts");
-  const entities = stringsAt(understanding, "detectedEntities");
-  const colors = stringsAt(understanding, "dominantColors");
+  const typography = recordAt(understanding, "typography");
+  const visibleTexts = stringsAt(typography, "visibleTexts");
   return `<div class="stage-layout b1-layout">
     <div class="insight-grid">
-      ${renderMetric("Product category", stringAt(understanding, "productCategory"))}
-      ${renderMetric("Visual style", stringAt(understanding, "visualStyle"))}
-      ${renderMetric("Detected entities", entities.length ? String(entities.length) : undefined)}
-      ${renderMetric("OCR snippets", ocrTexts.length ? String(ocrTexts.length) : undefined)}
+      ${renderMetric("Định danh phôi sản phẩm", stringAt(understanding, "physicalProductIdentity"))}
+      ${renderMetric("Typography", visibleTexts.length ? `${visibleTexts.length} text snippets` : undefined)}
+      ${renderMetric("Thực thể thị giác", stringAt(understanding, "visualEntities"))}
+      ${renderMetric("Bối cảnh không gian", stringAt(understanding, "sceneContext"))}
     </div>
-    <div class="field-group"><h3>OCR text found on the image</h3><div class="chips">${renderChips(ocrTexts, "chip blue")}</div></div>
-    <div class="field-group"><h3>Visual entities</h3><div class="chips">${renderChips(entities, "chip purple")}</div></div>
-    <div class="field-group"><h3>Dominant colours</h3><div class="color-list">${renderColorSwatches(colors)}</div></div>
+    <div class="field-group"><h3>Typography — chữ hiển thị trên sản phẩm</h3><div class="chips">${renderChips(visibleTexts, "chip blue")}</div><p class="runtime-note">${escapeHtml(stringAt(typography, "styleSummary") ?? "Unknown")}</p></div>
+    <div class="field-group"><h3>Visual Entities — chi tiết thiết kế của sản phẩm</h3><p class="runtime-note">${escapeHtml(stringAt(understanding, "visualEntities") ?? "Unknown")}</p></div>
+    <div class="field-group"><h3>Bối cảnh không gian — chỉ dùng để khám phá tìm kiếm</h3><p class="runtime-note">${escapeHtml(stringAt(understanding, "sceneContext") ?? "Unknown")}</p></div>
   </div>`;
 }
 

@@ -134,7 +134,11 @@ export class GoogleSearchSuggestionsCollector
 
         seenSuggestionKeys.add(key);
         suggestedQueries.push(normalized);
-        querySources[normalized] = QUERY_SOURCE.GOOGLE_AUTOCOMPLETE;
+        // Preserve scene provenance through Google expansion so B4 can reject a
+        // suggestion that has no source/product/design evidence beyond the setting.
+        querySources[normalized] = seed.source === QUERY_SOURCE.SCENE_CONTEXT_SEED
+          ? QUERY_SOURCE.SCENE_CONTEXT_SEED
+          : QUERY_SOURCE.GOOGLE_AUTOCOMPLETE;
         seedAcceptedCount++;
       }
     }

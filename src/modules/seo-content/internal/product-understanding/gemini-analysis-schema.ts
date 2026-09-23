@@ -4,40 +4,24 @@ export const GEMINI_PRODUCT_IMAGE_ANALYSIS_SCHEMA = {
   type: "object",
   additionalProperties: false,
   required: [
-    "ocrTexts",
-    "detectedEntities",
-    "dominantColors",
-    "visualStyle",
-    "productCategory",
+    "typography",
+    "visualEntities",
+    "sceneContext",
+    "physicalProductIdentity",
   ],
   properties: {
-    ocrTexts: {
-      type: "array",
-      maxItems: 20,
-      items: {
-        type: "string",
+    typography: {
+      type: "object",
+      additionalProperties: false,
+      required: ["visibleTexts", "styleSummary"],
+      properties: {
+        visibleTexts: { type: "array", maxItems: 20, items: { type: "string" } },
+        styleSummary: { type: "string" },
       },
     },
-    detectedEntities: {
-      type: "array",
-      maxItems: 12,
-      items: {
-        type: "string",
-      },
-    },
-    dominantColors: {
-      type: "array",
-      maxItems: 6,
-      items: {
-        type: "string",
-      },
-    },
-    visualStyle: {
-      type: "string",
-    },
-    productCategory: {
-      type: "string",
-    },
+    visualEntities: { type: "string" },
+    sceneContext: { type: "string" },
+    physicalProductIdentity: { type: "string" },
   },
 } as const;
 
@@ -49,11 +33,10 @@ export class GeminiSchemaValidationError extends Error {
 }
 
 const ALLOWED_SCHEMA_PROPERTIES: ReadonlySet<string> = new Set([
-  "ocrTexts",
-  "detectedEntities",
-  "dominantColors",
-  "visualStyle",
-  "productCategory",
+  "typography",
+  "visualEntities",
+  "sceneContext",
+  "physicalProductIdentity",
 ]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -116,37 +99,35 @@ export function parseGeminiProductImageAnalysis(raw: unknown): ProductImageAnaly
     }
   }
 
-  if (!("ocrTexts" in parsed) || !isStringArray(parsed.ocrTexts)) {
-    throw new GeminiSchemaValidationError("Missing or invalid 'ocrTexts' array in Gemini response");
+  if (!("typography" in parsed) || !isRecord(parsed.typography)) {
+    throw new GeminiSchemaValidationError("Missing or invalid 'typography' object in Gemini response");
+  }
+  if (Object.keys(parsed.typography).some((key) => key !== "visibleTexts" && key !== "styleSummary")) {
+    throw new GeminiSchemaValidationError("Unexpected property in 'typography' object");
+  }
+  if (!isStringArray(parsed.typography.visibleTexts) || typeof parsed.typography.styleSummary !== "string") {
+    throw new GeminiSchemaValidationError("Missing or invalid typography fields in Gemini response");
+  }
+  for (const field of ["visualEntities", "sceneContext", "physicalProductIdentity"] as const) {
+    if (!(field in parsed) || typeof parsed[field] !== "string") {
+      throw new GeminiSchemaValidationError(`Missing or invalid '${field}' string in Gemini response`);
+    }
   }
 
-  if (!("detectedEntities" in parsed) || !isStringArray(parsed.detectedEntities)) {
-    throw new GeminiSchemaValidationError("Missing or invalid 'detectedEntities' array in Gemini response");
+  const visualEntities = parsed.visualEntities;
+  const sceneContext = parsed.sceneContext;
+  const physicalProductIdentity = parsed.physicalProductIdentity;
+  if (typeof visualEntities !== "string" || typeof sceneContext !== "string" || typeof physicalProductIdentity !== "string") {
+    throw new GeminiSchemaValidationError("Invalid product evidence response");
   }
-
-  if (!("dominantColors" in parsed) || !isStringArray(parsed.dominantColors)) {
-    throw new GeminiSchemaValidationError("Missing or invalid 'dominantColors' array in Gemini response");
-  }
-
-  if (!("visualStyle" in parsed) || typeof parsed.visualStyle !== "string") {
-    throw new GeminiSchemaValidationError("Missing or invalid 'visualStyle' string in Gemini response");
-  }
-
-  if (!("productCategory" in parsed) || typeof parsed.productCategory !== "string") {
-    throw new GeminiSchemaValidationError("Missing or invalid 'productCategory' string in Gemini response");
-  }
-
-  const ocrTexts = cleanStringList(parsed.ocrTexts);
-  const detectedEntities = cleanStringList(parsed.detectedEntities);
-  const dominantColors = cleanStringList(parsed.dominantColors);
-  const visualStyle = parsed.visualStyle.trim() || "unspecified";
-  const productCategory = parsed.productCategory.trim() || "unknown";
 
   return Object.freeze({
-    ocrTexts,
-    detectedEntities,
-    dominantColors,
-    visualStyle,
-    productCategory,
+    typography: Object.freeze({
+      visibleTexts: cleanStringList(parsed.typography.visibleTexts),
+      styleSummary: parsed.typography.styleSummary.trim() || "unknown",
+    }),
+    visualEntities: visualEntities.trim() || "unknown",
+    sceneContext: sceneContext.trim() || "unknown",
+    physicalProductIdentity: physicalProductIdentity.trim() || "unknown",
   });
 }

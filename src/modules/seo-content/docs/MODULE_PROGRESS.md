@@ -2,7 +2,7 @@
 
 > **Ngày cập nhật:** 23/09/2026  
 > **Vị trí module:** `src/modules/seo-content`  
-> **Trạng thái tổng thể:** Đã hoàn thành 100% toàn bộ pipeline **B1 → B2 → B3 → B4 → B5 → B6**, hoàn tất xây dựng **bộ 3 Adapter chuyên dụng** kết nối với các module khác (Customization Normalizer, Auto SEO, Pinterest POD), cắm thành công vào Gateway và nghiệm thu kiểm thử sạch 100% (**271/271 unit tests module PASS**, 554/554 tests web PASS, Typecheck 0 lỗi, Build sạch cả Production lẫn Mock).  
+> **Trạng thái tổng thể:** Đã hoàn thành pipeline **B1 → B2 → B3 → B4 → B5 → B6**, có 3 adapter chuyên dụng (Customization Normalizer, Auto SEO, Pinterest POD) và Gateway integration. Luôn xác nhận số liệu kiểm thử bằng lần chạy `npm test`, `npm run typecheck`, `npm run build` và `npm run build:mock` hiện tại thay vì dùng số liệu lịch sử trong tài liệu.
 > **Quy trình thực hiện:** 2-Agent Workflow (ChatGPT Web: Planner & Reviewer | Antigravity: Worker & Coder) kết hợp nghiêm ngặt quy tắc kiến trúc `AGENTS.md`.
 
 ---
@@ -29,11 +29,9 @@ Module **SEO + Content** được đóng gói độc lập theo đúng tiêu chu
 * **Mục tiêu**: Đọc hiểu sâu thiết kế, chi tiết đồ họa và thuộc tính của sản phẩm từ ảnh/mockup.
 * **Logic cốt lõi**:
   * Tích hợp **Gemini 2.5 Flash Vision** (`@google/genai` Vertex AI client):
-    * Nhận diện chữ trên thiết kế (**OCR texts**).
-    * Nhận diện thực thể hình ảnh (**detected entities**: icon, vật thể, giao diện...).
-    * Trích xuất gam màu chủ đạo (**dominant colors**).
-    * Nhận diện phong cách mỹ thuật (**visual style**).
-    * Phân loại sản phẩm (**product category**).
+    * Nhận batch ảnh theo đúng thứ tự và dùng `niche`/title làm neo để nhận diện đúng sản phẩm được bán.
+    * Trả đúng 4 nhóm evidence: **Typography** (text + styling), **Visual Entities** (summary thiết kế), **Scene Context** (không gian đặt sản phẩm) và **Physical Product Identity** (phôi/vật thể vật lý).
+    * Không còn frequency-vote màu/background hoặc chọn category theo ảnh đầu tiên; B1 không ghi Shopify taxonomy/category/product type.
   * Hỗ trợ nạp ảnh linh hoạt: Đọc trực tiếp file cục bộ qua `node:fs` hoặc nạp URL/Data URI.
   * Bộ phân tích dự phòng tất định (**Deterministic Heuristic Fallback**): Tự động trích xuất tín hiệu từ `title`, `niche`, `description` khi offline hoặc không có API key.
 * **Contract đầu ra**: `context.productUnderstanding`.
@@ -53,7 +51,7 @@ Module **SEO + Content** được đóng gói độc lập theo đúng tiêu chu
   * **Google Suggest Client (`UnofficialGoogleSuggestClient`)**: Truy vấn trực tiếp Google Autocomplete API (`suggestqueries.google.com`) với ngôn ngữ và quốc gia cấu hình (mặc định `en`/`us`).
   * **Bộ đệm thông minh (`InMemoryGoogleSuggestCache`)**: Hỗ trợ cơ chế LRU + TTL, tránh gọi trùng lặp và tiết kiệm quota.
   * **Circuit Breaker**: Tự động ngắt batch khi phát hiện rate limit (429) hoặc bị chặn (403).
-  * **Bộ chọn hạt giống (`search-seed-selector.ts`)**: Ưu tiên chọn top Buyer Intent Seeds từ B2 kết hợp Niche Seed, Category Seed từ B1 (tối đa 6 seeds).
+  * **Bộ chọn hạt giống (`search-seed-selector.ts`)**: Ưu tiên Buyer Intent, Physical Product Identity và Visual Entities; scene seed giữ provenance riêng và chỉ dùng để khám phá.
   * **Chuẩn hóa & Khử trùng (`search-suggestions-normalizer.ts`)**: Chuẩn hóa Unicode NFKC, loại bỏ URL, ký tự điều khiển và trùng lặp chuỗi.
   * **Fallback tất định (`FallbackSearchSuggestionsCollector`)**: Bảo đảm tính bất biến offline trong automated tests (zero-network).
 * **Contract đầu ra**: `context.searchResearch` (`seedKeywords`, `suggestedQueries`, `querySources`).
@@ -88,7 +86,7 @@ Module **SEO + Content** được đóng gói độc lập theo đúng tiêu chu
 ### 🟢 Stage B5 — Sinh nội dung chuẩn SEO (Content Generation)
 * **Mục tiêu**: Tạo trọn bộ nội dung thương mại điện tử chuẩn SEO (Title, Description HTML, Meta SEO Title, Meta SEO Description, URL Slug) dựa trên Fact Sheet chân thực và phân bổ từ khóa đa tầng.
 * **Logic cốt lõi**:
-  * **Fact Sheet Bất biến (`content-fact-sheet.ts`)**: Trích xuất dữ kiện có căn cứ (Grounded Facts) từ B1-B4, ngăn chặn hoàn toàn ảo giác (anti-hallucination).
+  * **Fact Sheet Bất biến (`content-fact-sheet.ts`)**: Chỉ trích xuất Physical Product Identity, Typography và Visual Entities từ B1; không đưa Scene Context vào copywriting.
   * **Bộ phân bổ từ khóa 3 tầng (`keyword-allocator.ts`)**:
     * **Tier 1 (Primary/Focus Keyword)**: Dành riêng cho SEO Title, H1 và URL Slug.
     * **Tier 2 (Secondary Keywords)**: Tối đa 2-3 từ khóa tích hợp tự nhiên vào Bullet Points và phần mở đầu mô tả.
@@ -232,7 +230,7 @@ src/modules/seo-content/
 
 ### 6.1. Kiểm thử tự động (Automated Verification)
 * **Unit Tests module SEO Content (`npx tsx --test src/modules/seo-content/__tests__/*.test.ts`)**:
-  * **271/271 tests PASS 100%** (0 failed, 0 skipped).
+  * Chạy `npm test` để lấy kết quả hiện tại; suite phải zero-network ở các unit test SEO Content.
   * Stage B1 Tests: 43 tests (Gemini Vision, OCR, Fallback, Payloads, Retries).
   * Stage B2 Tests: 33 tests (Shopping Context, Audience, Occasions, Buyer Intent Seeds).
   * Stage B3 Tests: 39 tests (Google Suggest Client, LRU Cache, Circuit Breaker, Normalizer, Collector).
@@ -258,7 +256,7 @@ src/modules/seo-content/
 
 ### 6.2. Kiểm thử trực quan thực tế (Visual Inspection qua `b1-visual-inspect.ts`)
 Đã thực thi script trực quan `npx tsx src/modules/seo-content/scripts/b1-visual-inspect.ts` chạy trọn vẹn toàn bộ 6 bước B1 $\rightarrow$ B6:
-1. **B1**: Nhận diện OCR, thực thể thị giác, gam màu, phong cách và phân loại.
+1. **B1**: Trích xuất Typography, Visual Entities, Scene Context và Physical Product Identity từ batch ảnh, neo theo niche/title.
 2. **B2**: Xác định khách hàng mục tiêu, dịp mua sắm, công năng sử dụng, hạt giống ý định.
 3. **B3**: Thu thập 31 gợi ý từ Google Autocomplete API kèm nguồn gốc xuất xứ.
 4. **B4**: Phê duyệt 34 từ khóa hàng đầu kèm điểm liên quan, phân cụm ngữ nghĩa, loại bỏ 2 từ khóa trùng lặp ngữ nghĩa.

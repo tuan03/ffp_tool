@@ -24,10 +24,9 @@ export class HeuristicContentGenerator implements ContentGenerator {
     });
 
     // 2. Build Intro
-    const category = facts.productCategory || "item";
-    const entityClause =
-      facts.entities.length > 0 ? ` featuring ${facts.entities.slice(0, 2).join(" and ")}` : "";
-    const styleClause = facts.visualStyle ? ` with a ${facts.visualStyle} aesthetic` : "";
+    const category = facts.physicalProductIdentity || "item";
+    const entityClause = facts.visualEntities ? ` featuring ${facts.visualEntities}` : "";
+    const styleClause = facts.typographyStyleSummary ? ` with ${facts.typographyStyleSummary}` : "";
 
     const intro = `Elevate your collection with this distinctive ${category}${entityClause}${styleClause}. Carefully designed to combine character, visual appeal, and everyday functionality.`;
 
@@ -35,14 +34,11 @@ export class HeuristicContentGenerator implements ContentGenerator {
     const bullets: GeneratedBullet[] = [];
 
     // Bullet 1: Design / Art
-    if (facts.entities.length > 0 || facts.colors.length > 0) {
-      const colorText =
-        facts.colors.length > 0 ? ` enriched with ${facts.colors.slice(0, 3).join(", ")} tones` : "";
-      const entityText =
-        facts.entities.length > 0 ? `showcasing ${facts.entities.join(" & ")} artwork` : "vibrant graphics";
+    if (facts.visualEntities || facts.typographyStyleSummary) {
+      const entityText = facts.visualEntities ? `showcasing ${facts.visualEntities}` : "with verified design details";
       bullets.push({
         label: "Design",
-        text: `Features expressive artwork ${entityText}${colorText}, crafted to stand out.`,
+        text: `Features expressive artwork ${entityText}, crafted to stand out.`,
       });
     } else {
       bullets.push({

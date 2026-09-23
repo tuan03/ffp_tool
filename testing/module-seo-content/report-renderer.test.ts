@@ -19,11 +19,10 @@ const summary = {
       effectiveNiche: "personalized music rugs",
       summary: {
         productUnderstanding: {
-          ocrTexts: ["Song Title", "Artist"],
-          detectedEntities: ["music player", "rug"],
-          dominantColors: ["black", "warm beige"],
-          visualStyle: "modern minimalist",
-          productCategory: "area rug",
+          typography: { visibleTexts: ["Song Title", "Artist"], styleSummary: "white media-player labels" },
+          visualEntities: "Media player interface with a cloud-head portrait.",
+          sceneContext: "Home studio with guitars and monitor speakers.",
+          physicalProductIdentity: "area rug",
         },
       },
     },
@@ -82,6 +81,8 @@ test("renders stage summaries as scannable cards instead of raw JSON", () => {
   assert.doesNotMatch(report, /"productUnderstanding"/);
   assert.match(report, /Vision & product understanding/);
   assert.match(report, /Song Title/);
+  assert.match(report, /Định danh phôi sản phẩm/);
+  assert.doesNotMatch(report, /Dominant colours|Product category|Visual style/);
   assert.match(report, /custom music rug/);
   assert.match(report, /SEO preview/);
   assert.match(report, /music-rug-1\.webp/);

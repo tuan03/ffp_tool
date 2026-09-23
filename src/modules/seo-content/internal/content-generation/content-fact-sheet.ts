@@ -18,8 +18,8 @@ export function detectPersonalizationEvidence(
   if (PERSONALIZATION_PATTERN.test(source.niche)) return true;
   if (source.handle && PERSONALIZATION_PATTERN.test(source.handle)) return true;
 
-  if (understanding?.ocrTexts) {
-    for (const ocr of understanding.ocrTexts) {
+  if (understanding?.typography.visibleTexts) {
+    for (const ocr of understanding.typography.visibleTexts) {
       if (PERSONALIZATION_PATTERN.test(ocr)) return true;
     }
   }
@@ -46,14 +46,13 @@ export function buildContentFactSheet(
     originalDescription: source.description.trim(),
     existingHandle: source.handle,
     niche: (context.effectiveNiche ?? source.niche)?.trim() || undefined,
-    productCategory:
-      productUnderstanding?.productCategory?.trim() ||
+    physicalProductIdentity:
+      productUnderstanding?.physicalProductIdentity?.trim() ||
       (context.effectiveNiche ?? source.niche)?.trim() ||
       "product",
-    ocrTexts: productUnderstanding?.ocrTexts ?? [],
-    entities: productUnderstanding?.detectedEntities ?? [],
-    colors: productUnderstanding?.dominantColors ?? [],
-    visualStyle: productUnderstanding?.visualStyle?.trim() || undefined,
+    typographyVisibleTexts: productUnderstanding?.typography.visibleTexts ?? [],
+    typographyStyleSummary: productUnderstanding?.typography.styleSummary?.trim() || undefined,
+    visualEntities: productUnderstanding?.visualEntities?.trim() || undefined,
     targetAudience: shoppingContext?.targetAudience ?? [],
     occasions: shoppingContext?.suitableOccasions ?? [],
     useCases: shoppingContext?.useCases ?? [],

@@ -3,13 +3,15 @@ import type { StoredEmbedding } from "./conflict-control/seo-conflict-corpus";
 
 export type SeoStageName = "b1" | "b2" | "b3" | "b4" | "b5" | "b6";
 
-/** B1: Kết quả phân tích sản phẩm và hình ảnh (OCR, Vision, Theme) */
+/** B1: Evidence anchored to the sold product; never a Shopify taxonomy mapping. */
 export interface ProductUnderstanding {
-  readonly ocrTexts: readonly string[];
-  readonly detectedEntities: readonly string[];
-  readonly dominantColors: readonly string[];
-  readonly visualStyle: string;
-  readonly productCategory: string;
+  readonly typography: {
+    readonly visibleTexts: readonly string[];
+    readonly styleSummary: string;
+  };
+  readonly visualEntities: string;
+  readonly sceneContext: string;
+  readonly physicalProductIdentity: string;
 }
 
 /** B2: Bối cảnh mua sắm, chân dung khách hàng & dịp sử dụng */
@@ -18,6 +20,9 @@ export interface ShoppingContext {
   readonly suitableOccasions: readonly string[];
   readonly useCases: readonly string[];
   readonly buyerIntentKeywords: readonly string[];
+  /** Scene-derived discovery clues, deliberately excluded from grounded product facts. */
+  readonly contextualAudienceHints?: readonly string[];
+  readonly sceneSearchSeeds?: readonly string[];
 }
 
 /** B3: Tập dữ liệu nghiên cứu từ khóa mở rộng (Google Suggest, Long-tail) */

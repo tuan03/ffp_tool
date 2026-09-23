@@ -39,9 +39,10 @@ function buildFactualCorpus(facts: ContentFactSheet): string {
     facts.originalTitle,
     facts.originalDescription,
     facts.niche ?? "",
-    facts.productCategory ?? "",
-    ...facts.ocrTexts,
-    ...facts.entities,
+    facts.physicalProductIdentity ?? "",
+    facts.typographyStyleSummary ?? "",
+    facts.visualEntities ?? "",
+    ...facts.typographyVisibleTexts,
   ];
   return pieces.join(" ").toLowerCase();
 }

@@ -31,10 +31,10 @@ export function buildImageProcessingInput(context: SeoPipelineContext): ImagePro
     productHandle: context.contentResult?.productHandle ?? context.source.handle ?? "",
     primaryKeyword: context.contentGenerationMetadata?.primaryKeyword,
     secondaryKeywords: context.contentGenerationMetadata?.secondaryKeywords,
-    productCategory: context.productUnderstanding?.productCategory,
-    entities: context.productUnderstanding?.detectedEntities ?? [],
-    dominantColors: context.productUnderstanding?.dominantColors,
-    visualStyle: context.productUnderstanding?.visualStyle,
+    physicalProductIdentity: context.productUnderstanding?.physicalProductIdentity,
+    typographyVisibleTexts: context.productUnderstanding?.typography.visibleTexts ?? [],
+    typographyStyleSummary: context.productUnderstanding?.typography.styleSummary,
+    visualEntities: context.productUnderstanding?.visualEntities,
   };
 }
 

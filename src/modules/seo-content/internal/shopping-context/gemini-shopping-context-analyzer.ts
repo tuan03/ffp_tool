@@ -28,9 +28,7 @@ Important rules:
 
 1. Evidence grounding:
 - Prefer explicit product evidence over generic assumptions.
-- Product category, OCR text and detected entities are strong evidence.
-- Visual style is supporting evidence.
-- Dominant colors are weak evidence and must not independently determine audience or demographic characteristics.
+- Physical product identity, typography and visual entities are product-grounded evidence.
 - The handle is low-priority metadata.
 
 2. Audience:
@@ -131,20 +129,7 @@ export class GeminiShoppingContextAnalyzer implements ShoppingContextAnalyzer {
   public buildPrompt(input: ShoppingContextAnalysisInput): string {
     const { source, productUnderstanding: pu } = input;
 
-    const ocrText =
-      pu?.ocrTexts && pu.ocrTexts.length > 0
-        ? pu.ocrTexts.join(", ")
-        : "none";
-
-    const entities =
-      pu?.detectedEntities && pu.detectedEntities.length > 0
-        ? pu.detectedEntities.join(", ")
-        : "none";
-
-    const colors =
-      pu?.dominantColors && pu.dominantColors.length > 0
-        ? pu.dominantColors.join(", ")
-        : "none";
+    const typography = pu?.typography.visibleTexts.join(", ") || "none";
 
     return `Analyze the shopping context for this ecommerce product.
 
@@ -155,11 +140,10 @@ Description: ${source.description || "unspecified"}
 Handle: ${source.handle || "unspecified"}
 
 PRODUCT UNDERSTANDING
-Category: ${pu?.productCategory || "unspecified"}
-OCR text: ${ocrText}
-Detected entities: ${entities}
-Dominant colors: ${colors}
-Visual style: ${pu?.visualStyle || "unspecified"}
+Physical product identity: ${pu?.physicalProductIdentity || "unknown"}
+Typography visible text: ${typography}
+Typography styling: ${pu?.typography.styleSummary || "unknown"}
+Visual entities: ${pu?.visualEntities || "unknown"}
 
 Return:
 - target audiences
