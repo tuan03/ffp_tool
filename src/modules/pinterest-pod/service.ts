@@ -31,7 +31,9 @@ import type {
   SavePinterestTokenResponse,
   SeoHandoverResponse,
 } from "./types";
-import { FACTORY_PRINT_STANDARDS } from "./types";
+import { FACTORY_PRINT_STANDARDS, inferProductTypeFromNiche } from "./types";
+
+export { inferProductTypeFromNiche };
 
 const DEFAULT_POLL_INTERVAL_MS = 1500;
 const DEFAULT_POLL_TIMEOUT_MS = 300_000;
@@ -193,17 +195,22 @@ export async function startDiscoveryJob(
     readonly logs?: readonly string[];
   }
 
+  const product = input.product ?? inferProductTypeFromNiche(input.niche);
+  const poolSize = input.candidatePoolSize ?? input.task5_max_downloads ?? input.top_images ?? 40;
+
   const raw = await requestJson<StartJobRawResponse>(
     "/api/pinterest-pod/jobs",
     {
       method: "POST",
       body: JSON.stringify({
         niche: input.niche,
-        product: input.product,
+        product,
         workflow_stage: input.workflow_stage ?? "crawl_and_review",
-        candidatePoolSize: input.candidatePoolSize ?? 15,
+        candidatePoolSize: poolSize,
+        task5_max_downloads: poolSize,
+        top_images: poolSize,
         referenceImages: input.referenceImages ?? [],
-        ...(input.ai_background_variants ? { ai_background_variants: input.ai_background_variants } : {}),
+        ...(input.ai_background_variants !== undefined ? { ai_background_variants: input.ai_background_variants } : {}),
       }),
       signal: options?.signal,
     },
@@ -347,6 +354,8 @@ export async function startProductionJob(
     readonly status: string;
   }
 
+  const product = input.product ?? (input.niche ? inferProductTypeFromNiche(input.niche) : undefined);
+
   const raw = await requestJson<ProduceRawResponse>(
     "/api/pinterest-pod/jobs/produce",
     {
@@ -354,12 +363,12 @@ export async function startProductionJob(
       body: JSON.stringify({
         jobId: input.jobId,
         selected_candidates: input.selected_candidates,
-        ...(input.product ? { product: input.product } : {}),
+        ...(product ? { product } : {}),
         ...(input.niche ? { niche: input.niche } : {}),
         ...(input.design_mode ? { design_mode: input.design_mode } : {}),
         ...(input.referenceImages ? { referenceImages: input.referenceImages } : {}),
         ...(input.room_template_urls ? { room_template_urls: input.room_template_urls } : {}),
-        ...(input.ai_background_variants ? { ai_background_variants: input.ai_background_variants } : {}),
+        ...(input.ai_background_variants !== undefined ? { ai_background_variants: input.ai_background_variants } : {}),
       }),
       signal: options?.signal,
     },
@@ -737,16 +746,21 @@ export class RealPinterestPodClient implements PinterestPodClient {
   }
 
   public async createJob(input: CreateJobInput): Promise<CreateJobOutput> {
+    const product = input.product ?? inferProductTypeFromNiche(input.niche);
+    const poolSize = input.candidatePoolSize ?? input.task5_max_downloads ?? input.top_images ?? 40;
     return fetchJson<CreateJobOutput>(
       "/api/pinterest-pod/jobs",
       {
         method: "POST",
         body: JSON.stringify({
           niche: input.niche,
-          product: input.product,
+          product,
           workflow_stage: input.workflow_stage ?? "crawl_and_review",
-          candidatePoolSize: input.candidatePoolSize ?? 15,
+          candidatePoolSize: poolSize,
+          task5_max_downloads: poolSize,
+          top_images: poolSize,
           referenceImages: input.referenceImages ?? [],
+          ...(input.ai_background_variants !== undefined ? { ai_background_variants: input.ai_background_variants } : {}),
         }),
       },
       "PINTEREST_JOB_CREATION_FAILED",
@@ -762,6 +776,7 @@ export class RealPinterestPodClient implements PinterestPodClient {
   }
 
   public async produce(input: ProduceInput): Promise<ProduceOutput> {
+    const product = input.product ?? (input.niche ? inferProductTypeFromNiche(input.niche) : undefined);
     return fetchJson<ProduceOutput>(
       "/api/pinterest-pod/jobs/produce",
       {
@@ -769,11 +784,12 @@ export class RealPinterestPodClient implements PinterestPodClient {
         body: JSON.stringify({
           jobId: input.jobId,
           selected_candidates: input.selected_candidates,
-          product: input.product,
-          niche: input.niche,
+          ...(product ? { product } : {}),
+          ...(input.niche ? { niche: input.niche } : {}),
           design_mode: input.design_mode ?? "direct_print",
           ...(input.referenceImages ? { referenceImages: input.referenceImages } : {}),
           ...(input.room_template_urls ? { room_template_urls: input.room_template_urls } : {}),
+          ...(input.ai_background_variants !== undefined ? { ai_background_variants: input.ai_background_variants } : {}),
         }),
       },
       "PINTEREST_PRODUCE_FAILED",

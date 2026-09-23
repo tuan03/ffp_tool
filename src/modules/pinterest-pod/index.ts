@@ -56,6 +56,7 @@ export {
 
 export {
   FACTORY_PRINT_STANDARDS,
+  inferProductTypeFromNiche,
   POD_SIZE_PRESETS,
   STOREFRONT_DISPLAY_STANDARD,
 } from "./types";

@@ -249,7 +249,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--timeout", type=int, default=int(env("PINTEREST_TIMEOUT", "30") or 30))
     parser.add_argument("--vision-mode", choices=["auto", "required", "off"], default="auto")
     parser.add_argument("--crawl-purpose", choices=["product", "inspiration"], default="product")
-    parser.add_argument("--vision-model", default=env("GEMINI_VISION_MODEL", env("GEMINI_ANALYSIS_MODEL", "gemini-2.5-flash")))
+    parser.add_argument("--vision-model", default=env("GEMINI_VISION_MODEL", "gemini-2.5-flash"))
     parser.add_argument("--gemini-backend", choices=["auto", "enterprise", "api-key"], default="auto")
     parser.add_argument("--vision-batch-size", type=int, default=5)
     parser.add_argument("--no-vision-cache", action="store_true")

@@ -32,7 +32,7 @@ class Task5TrendConfig:
     max_trends: int = 20
     min_semantic_fit: float = 35.0
     gemini_backend: str = "auto"
-    gemini_model: str = "gemini-2.5-flash"
+    gemini_model: str = "gemini-2.5-pro"
     token_path: Path | None = None
     cancel_event: Event | None = None
 
@@ -51,7 +51,7 @@ class Task5CrawlerConfig:
     crawl_purpose: str = "inspiration"
     product_focus: str = "auto"
     gemini_backend: str = "auto"
-    vision_model: str = "gemini-2.5-flash"
+    vision_model: str = "gemini-2.5-pro"
     refresh_vision_cache: bool = True
     cancel_event: Event | None = None
 

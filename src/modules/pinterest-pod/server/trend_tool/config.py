@@ -36,7 +36,8 @@ class PipelineConfig:
     trend_max_queries_per_trend: int = 6
     desired_output_count: int = 5
     gemini_backend: str = "auto"
-    gemini_model: str = "gemini-2.5-flash"
+    gemini_model: str = "gemini-2.5-pro"
+    vision_model: str = "gemini-2.5-flash"
     task5_token_path: Path | None = None
     task5_provider: str = "pinterest-browser"
     task5_max_images_per_query: int = 12
@@ -85,13 +86,42 @@ class PipelineConfig:
     mockup_count: int = 5
 
 
+def infer_product_type(niche: str) -> str:
+    """Automatically infer product type ('blanket', 'rug', or 'custom') from niche keywords:
+    * If niche contains 'blanket', 'throw', 'quilt' -> 'blanket' (preset 10000x11000 px).
+    * If niche contains 'rug', 'carpet', 'mat' -> 'rug' (preset 4000x6400 px).
+    * If niche contains 'custom' -> 'custom' (preset 4000x6400 px).
+    * Otherwise -> 'rug' (default 4000x6400 px).
+    """
+    lower = (niche or "").lower().strip()
+    if any(kw in lower for kw in ("blanket", "throw", "quilt")):
+        return "blanket"
+    if any(kw in lower for kw in ("rug", "carpet", "mat")):
+        return "rug"
+    if "custom" in lower:
+        return "custom"
+    return "rug"
+
+
 def product_preset(name: str) -> ProductTarget:
-    normalized = name.lower().strip()
+    normalized = (name or "").lower().strip()
     if normalized == "blanket":
         return ProductTarget(name="blanket", width_px=10000, height_px=11000)
     if normalized == "custom":
         return ProductTarget(name="custom", width_px=4000, height_px=6400, allow_custom_shape=True)
+    if normalized == "rug":
+        return ProductTarget(name="rug", width_px=4000, height_px=6400)
+    inferred = infer_product_type(normalized)
+    if inferred == "blanket":
+        return ProductTarget(name="blanket", width_px=10000, height_px=11000)
+    if inferred == "custom":
+        return ProductTarget(name="custom", width_px=4000, height_px=6400, allow_custom_shape=True)
     return ProductTarget(name="rug", width_px=4000, height_px=6400)
+
+
+def product_preset_from_niche(niche: str) -> ProductTarget:
+    ptype = infer_product_type(niche)
+    return product_preset(ptype)
 
 
 def restore_pipeline_config(raw_cfg: dict, fallback_root: Path) -> PipelineConfig:

@@ -64,7 +64,7 @@ class GeminiSemanticAnalyzer:
         self,
         *,
         niche: str,
-        model: str = "gemini-2.5-flash",
+        model: str = "gemini-2.5-pro",
         backend: str = "auto",
         batch_size: int = 20,
         cache: JsonCache | None = None,
