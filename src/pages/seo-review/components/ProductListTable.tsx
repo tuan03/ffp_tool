@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { Fragment, useState } from "react";
 
+import { sanitizeHtmlDescription } from "../sanitize-html";
 import { SeoSerpPreview } from "./SeoSerpPreview";
 import { SourceBadge } from "./SourceBadge";
 import type { SeoProcessingStatus, SeoProductUiViewModel } from "../types";
@@ -140,7 +141,8 @@ export function ProductListTable({
                 />
               </th>
               <th scope="col" className="p-2 w-8 text-center" title="Mở rộng / Thu gọn chi tiết">
-                {/* Expand icon header */}
+                <span className="text-[10px] text-slate-500 font-mono">↕</span>
+                <span className="sr-only">Mở rộng chi tiết</span>
               </th>
               <th scope="col" className="py-3 px-2 w-14 text-center">
                 Ảnh
@@ -177,7 +179,7 @@ export function ProductListTable({
               const filledAltCount = product.images.filter((img) => img.alt.value.trim().length > 0).length;
 
               return (
-                <tbody key={product.id} className="group">
+                <Fragment key={product.id}>
                   <tr
                     className={`transition hover:bg-slate-800/40 ${
                       isSelected ? "bg-cyan-950/20" : ""
@@ -434,7 +436,7 @@ export function ProductListTable({
                             {product.images.length === 0 ? (
                               <p className="text-xs text-slate-500 italic">Chưa có ảnh.</p>
                             ) : (
-                              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5">
+                              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5 max-h-72 overflow-y-auto pr-1">
                                 {product.images.map((img, idx) => {
                                   const copyId = `tbl-img-${product.id}-${idx}`;
                                   return (
@@ -520,7 +522,9 @@ export function ProductListTable({
                             {currentDescMode === "formatted" ? (
                               <div
                                 className="prose prose-invert prose-xs max-w-none p-3 rounded-lg bg-slate-900 border border-slate-800 max-h-52 overflow-y-auto leading-relaxed text-slate-300 text-xs"
-                                dangerouslySetInnerHTML={{ __html: product.productDescription.value }}
+                                dangerouslySetInnerHTML={{
+                                  __html: sanitizeHtmlDescription(product.productDescription.value),
+                                }}
                               />
                             ) : (
                               <div className="relative">
@@ -568,7 +572,7 @@ export function ProductListTable({
                       </td>
                     </tr>
                   )}
-                </tbody>
+                </Fragment>
               );
             })}
           </tbody>

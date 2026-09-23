@@ -1,69 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { filterSeoProducts, findNextProductInList } from "../review-navigation";
+import { sanitizeHtmlDescription } from "../sanitize-html";
 import { getInitialSampleViewModels } from "../seo-content-ui-adapter";
 import type {
   ReviewDecision,
   SeoProductUiViewModel,
-  SeoReviewFilterState,
   SeoReviewViewMode,
 } from "../types";
-
-// Helper replicating the view mode and filtering logic used in SeoReviewPage
-function filterProducts(
-  products: readonly SeoProductUiViewModel[],
-  filter: SeoReviewFilterState,
-): readonly SeoProductUiViewModel[] {
-  return products.filter((p) => {
-    // 1. Search query
-    if (filter.searchQuery.trim()) {
-      const query = filter.searchQuery.toLowerCase().trim();
-      const titleMatch = p.productTitle.value.toLowerCase().includes(query);
-      const handleMatch = p.handle.value.toLowerCase().includes(query);
-      const asinMatch = p.asin ? p.asin.toLowerCase().includes(query) : false;
-      if (!titleMatch && !handleMatch && !asinMatch) {
-        return false;
-      }
-    }
-
-    // 2. SEO Status filter
-    if (filter.statusFilter !== "all" && p.seoStatus.value !== filter.statusFilter) {
-      return false;
-    }
-
-    // 3. Review Decision filter
-    if (filter.decisionFilter !== "all" && p.reviewDecision !== filter.decisionFilter) {
-      return false;
-    }
-
-    // 4. Only Mock data filter
-    if (filter.onlyMockData) {
-      const hasMock =
-        p.productTitle.source === "mock" ||
-        p.productDescription.source === "mock" ||
-        p.seoTitle.source === "mock" ||
-        p.seoDescription.source === "mock" ||
-        p.handle.source === "mock" ||
-        p.images.some((img) => img.alt.source === "mock" || img.webpUrl.source === "mock");
-      if (!hasMock) {
-        return false;
-      }
-    }
-
-    return true;
-  });
-}
-
-function advanceProduct(
-  filteredProducts: readonly SeoProductUiViewModel[],
-  currentId: string,
-): SeoProductUiViewModel | null {
-  const currentIndex = filteredProducts.findIndex((p) => p.id === currentId);
-  if (currentIndex >= 0 && currentIndex < filteredProducts.length - 1) {
-    return filteredProducts[currentIndex + 1] ?? null;
-  }
-  return null;
-}
 
 test("SeoReviewViewMode: supports cards, table, and split view modes", () => {
   const modes: SeoReviewViewMode[] = ["cards", "table", "split"];
@@ -73,7 +18,7 @@ test("SeoReviewViewMode: supports cards, table, and split view modes", () => {
   assert.ok(modes.includes("split"));
 });
 
-test("filterProducts: filters by decision (pending, approved, rejected)", () => {
+test("filterSeoProducts: filters by decision (pending, approved, rejected)", () => {
   const sample = getInitialSampleViewModels();
   const modified: SeoProductUiViewModel[] = [
     { ...sample[0]!, reviewDecision: "pending" as ReviewDecision },
@@ -81,7 +26,7 @@ test("filterProducts: filters by decision (pending, approved, rejected)", () => 
     { ...sample[2]!, reviewDecision: "rejected" as ReviewDecision },
   ];
 
-  const pendingOnly = filterProducts(modified, {
+  const pendingOnly = filterSeoProducts(modified, {
     searchQuery: "",
     statusFilter: "all",
     decisionFilter: "pending",
@@ -90,7 +35,7 @@ test("filterProducts: filters by decision (pending, approved, rejected)", () => 
   assert.equal(pendingOnly.length, 1);
   assert.equal(pendingOnly[0]!.id, modified[0]!.id);
 
-  const approvedOnly = filterProducts(modified, {
+  const approvedOnly = filterSeoProducts(modified, {
     searchQuery: "",
     statusFilter: "all",
     decisionFilter: "approved",
@@ -99,7 +44,7 @@ test("filterProducts: filters by decision (pending, approved, rejected)", () => 
   assert.equal(approvedOnly.length, 1);
   assert.equal(approvedOnly[0]!.id, modified[1]!.id);
 
-  const rejectedOnly = filterProducts(modified, {
+  const rejectedOnly = filterSeoProducts(modified, {
     searchQuery: "",
     statusFilter: "all",
     decisionFilter: "rejected",
@@ -109,7 +54,7 @@ test("filterProducts: filters by decision (pending, approved, rejected)", () => 
   assert.equal(rejectedOnly[0]!.id, modified[2]!.id);
 });
 
-test("filterProducts: searches by title, handle, or ASIN", () => {
+test("filterSeoProducts: searches by title, handle, or ASIN", () => {
   const sample = getInitialSampleViewModels();
   const testItem: SeoProductUiViewModel = {
     ...sample[0]!,
@@ -121,7 +66,7 @@ test("filterProducts: searches by title, handle, or ASIN", () => {
   const list = [testItem];
 
   // Match title
-  const byTitle = filterProducts(list, {
+  const byTitle = filterSeoProducts(list, {
     searchQuery: "leather",
     statusFilter: "all",
     decisionFilter: "all",
@@ -130,7 +75,7 @@ test("filterProducts: searches by title, handle, or ASIN", () => {
   assert.equal(byTitle.length, 1);
 
   // Match handle
-  const byHandle = filterProducts(list, {
+  const byHandle = filterSeoProducts(list, {
     searchQuery: "vintage-leather",
     statusFilter: "all",
     decisionFilter: "all",
@@ -139,7 +84,7 @@ test("filterProducts: searches by title, handle, or ASIN", () => {
   assert.equal(byHandle.length, 1);
 
   // Match ASIN
-  const byAsin = filterProducts(list, {
+  const byAsin = filterSeoProducts(list, {
     searchQuery: "B09TESTASIN",
     statusFilter: "all",
     decisionFilter: "all",
@@ -148,7 +93,7 @@ test("filterProducts: searches by title, handle, or ASIN", () => {
   assert.equal(byAsin.length, 1);
 
   // No match
-  const noMatch = filterProducts(list, {
+  const noMatch = filterSeoProducts(list, {
     searchQuery: "non-existent-product",
     statusFilter: "all",
     decisionFilter: "all",
@@ -157,20 +102,37 @@ test("filterProducts: searches by title, handle, or ASIN", () => {
   assert.equal(noMatch.length, 0);
 });
 
-test("advanceProduct: correctly advances to next product in split review stream", () => {
+test("findNextProductInList: advances through sequential review stream without getting stuck", () => {
   const sample = getInitialSampleViewModels();
   assert.ok(sample.length >= 3);
 
-  const nextFromFirst = advanceProduct(sample, sample[0]!.id);
+  // 1. Advance from first item -> returns second item
+  const nextFromFirst = findNextProductInList(sample, sample[0]!.id);
   assert.equal(nextFromFirst?.id, sample[1]!.id);
 
-  const nextFromSecond = advanceProduct(sample, sample[1]!.id);
+  // 2. Advance from middle item -> returns third item
+  const nextFromSecond = findNextProductInList(sample, sample[1]!.id);
   assert.equal(nextFromSecond?.id, sample[2]!.id);
 
-  // Last product returns null (cannot advance further)
-  const last = sample[sample.length - 1]!;
-  const nextFromLast = advanceProduct(sample, last.id);
-  assert.equal(nextFromLast, null);
+  // 3. Advance from the last product -> falls back to previous item so user is never stuck
+  const lastIndex = sample.length - 1;
+  const last = sample[lastIndex]!;
+  const fallbackFromLast = findNextProductInList(sample, last.id);
+  assert.equal(fallbackFromLast?.id, sample[lastIndex - 1]!.id);
+
+  // 4. Advance when item was already filtered out / not in list -> returns first available item
+  const outOfListId = "non-existent-id";
+  const fallbackOutOfList = findNextProductInList(sample, outOfListId);
+  assert.equal(fallbackOutOfList?.id, sample[0]!.id);
+
+  // 5. Sole remaining item in list -> returns null (all reviewed)
+  const singleItem = [sample[0]!];
+  const nextFromSingle = findNextProductInList(singleItem, sample[0]!.id);
+  assert.equal(nextFromSingle, null);
+
+  // 6. Empty list -> returns null
+  const emptyResult = findNextProductInList([], "any-id");
+  assert.equal(emptyResult, null);
 });
 
 test("table expand logic: toggle single and toggle all", () => {
@@ -203,4 +165,41 @@ test("table expand logic: toggle single and toggle all", () => {
     expanded = new Set(sample.map((p) => p.id));
   }
   assert.equal(expanded.size, 0);
+});
+
+test("sanitizeHtmlDescription: strips malicious scripts, frames, and event handlers", () => {
+  // 1. Plain text remains intact
+  const plain = "This is a simple plain text description.";
+  assert.equal(sanitizeHtmlDescription(plain), plain);
+
+  // 2. Safe semantic HTML remains intact
+  const safeHtml = "<p>Premium <strong>handmade</strong> leather bag with <em>brass</em> buckles.</p>";
+  const sanitizedSafe = sanitizeHtmlDescription(safeHtml);
+  assert.ok(sanitizedSafe.includes("<strong>handmade</strong>"));
+  assert.ok(sanitizedSafe.includes("<em>brass</em>"));
+
+  // 3. Malicious <script> tag is completely stripped
+  const maliciousScript = "<p>Great product</p><script>alert('pwned')</script>";
+  const cleanScript = sanitizeHtmlDescription(maliciousScript);
+  assert.ok(!cleanScript.includes("<script"));
+  assert.ok(!cleanScript.includes("alert"));
+  assert.ok(cleanScript.includes("<p>Great product</p>"));
+
+  // 4. Malicious <iframe> tag is removed
+  const maliciousIframe = '<p>Description</p><iframe src="https://evil.com"></iframe>';
+  const cleanIframe = sanitizeHtmlDescription(maliciousIframe);
+  assert.ok(!cleanIframe.includes("<iframe"));
+  assert.ok(!cleanIframe.includes("evil.com"));
+
+  // 5. Dangerous inline event handlers (onerror, onclick, onload) are stripped
+  const inlineXss = '<img src="x" onerror="alert(1)" /><button onclick="steal()">Click</button>';
+  const cleanHandlers = sanitizeHtmlDescription(inlineXss);
+  assert.ok(!cleanHandlers.includes("onerror"));
+  assert.ok(!cleanHandlers.includes("onclick"));
+  assert.ok(!cleanHandlers.includes("alert(1)"));
+
+  // 6. javascript: pseudo-protocol is sanitized
+  const jsLink = '<a href="javascript:alert(1)">Click for free coupon</a>';
+  const cleanLink = sanitizeHtmlDescription(jsLink);
+  assert.ok(!cleanLink.includes("javascript:alert"));
 });

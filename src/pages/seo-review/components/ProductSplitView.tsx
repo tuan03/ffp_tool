@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 
+import { sanitizeHtmlDescription } from "../sanitize-html";
 import { SeoSerpPreview } from "./SeoSerpPreview";
 import { SourceBadge } from "./SourceBadge";
 import type { SeoProcessingStatus, SeoProductUiViewModel } from "../types";
@@ -34,12 +35,15 @@ export function ProductSplitView({
   const [descriptionTab, setDescriptionTab] = useState<"formatted" | "raw">("formatted");
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
-  // If no active product but products exist, auto-select the first one
+  // If no active product or activeProduct is not in the filtered products list, auto-select first item
   useEffect(() => {
-    if (!activeProduct && products.length > 0) {
-      const first = products[0];
-      if (first) {
-        onSelectActive(first);
+    if (products.length > 0) {
+      const isCurrentInList = activeProduct && products.some((p) => p.id === activeProduct.id);
+      if (!isCurrentInList) {
+        const first = products[0];
+        if (first) {
+          onSelectActive(first);
+        }
       }
     }
   }, [activeProduct, products, onSelectActive]);
@@ -54,6 +58,11 @@ export function ProductSplitView({
       if (prev) {
         onSelectActive(prev);
       }
+    } else if (activeIndex === -1 && products.length > 0) {
+      const first = products[0];
+      if (first) {
+        onSelectActive(first);
+      }
     }
   }
 
@@ -63,8 +72,39 @@ export function ProductSplitView({
       if (next) {
         onSelectActive(next);
       }
+    } else if (activeIndex === -1 && products.length > 0) {
+      const first = products[0];
+      if (first) {
+        onSelectActive(first);
+      }
     }
   }
+
+  // Keyboard navigation: ArrowLeft/ArrowUp for Prev, ArrowRight/ArrowDown for Next
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      const activeTag = document.activeElement?.tagName?.toLowerCase();
+      if (
+        activeTag === "input" ||
+        activeTag === "textarea" ||
+        activeTag === "select" ||
+        (document.activeElement as HTMLElement)?.isContentEditable
+      ) {
+        return;
+      }
+
+      if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+        e.preventDefault();
+        handlePrev();
+      } else if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+        e.preventDefault();
+        handleNext();
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [activeIndex, products, onSelectActive]);
 
   function handleCopy(text: string, key: string) {
     if (typeof navigator !== "undefined" && navigator.clipboard) {
@@ -244,21 +284,21 @@ export function ProductSplitView({
                 <button
                   type="button"
                   onClick={handlePrev}
-                  disabled={activeIndex <= 0}
+                  disabled={activeIndex <= 0 && activeIndex !== -1}
                   className="p-1.5 rounded-lg border border-slate-800 bg-slate-900 text-slate-300 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed text-xs transition"
-                  title="Sản phẩm trước"
+                  title="Sản phẩm trước (Phím tắt: ← hoặc ↑)"
                 >
                   ◀
                 </button>
                 <span className="text-xs font-mono text-slate-400 px-1">
-                  {activeIndex + 1} / {products.length}
+                  {activeIndex >= 0 ? activeIndex + 1 : (products.length > 0 ? 1 : 0)} / {products.length}
                 </span>
                 <button
                   type="button"
                   onClick={handleNext}
                   disabled={activeIndex >= products.length - 1}
                   className="p-1.5 rounded-lg border border-slate-800 bg-slate-900 text-slate-300 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed text-xs transition"
-                  title="Sản phẩm kế tiếp"
+                  title="Sản phẩm kế tiếp (Phím tắt: → hoặc ↓)"
                 >
                   ▶
                 </button>
@@ -302,7 +342,7 @@ export function ProductSplitView({
                 {activeProduct.images.length === 0 ? (
                   <p className="text-xs text-slate-500 italic">Chưa có hình ảnh.</p>
                 ) : (
-                  <div className="space-y-2">
+                  <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
                     {activeProduct.images.map((img, idx) => {
                       const copyId = `split-img-${idx}`;
                       return (
@@ -386,7 +426,9 @@ export function ProductSplitView({
                 {descriptionTab === "formatted" ? (
                   <div
                     className="prose prose-invert prose-xs max-w-none p-3 rounded-lg bg-slate-900 border border-slate-800 max-h-56 overflow-y-auto leading-relaxed text-slate-300 text-xs"
-                    dangerouslySetInnerHTML={{ __html: activeProduct.productDescription.value }}
+                    dangerouslySetInnerHTML={{
+                      __html: sanitizeHtmlDescription(activeProduct.productDescription.value),
+                    }}
                   />
                 ) : (
                   <div className="relative">

@@ -1,5 +1,6 @@
 import { useState } from "react";
 
+import { sanitizeHtmlDescription } from "../sanitize-html";
 import { SeoSerpPreview } from "./SeoSerpPreview";
 import { SourceBadge } from "./SourceBadge";
 import type { SeoProcessingStatus, SeoProductUiViewModel } from "../types";
@@ -278,7 +279,7 @@ export function ProductCardList({
                     Không có hình ảnh cho sản phẩm này.
                   </div>
                 ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5 max-h-72 overflow-y-auto pr-1">
                     {product.images.map((img, idx) => {
                       const altLen = img.alt.value.length;
                       const copyId = `${product.id}-img-${idx}`;
@@ -400,7 +401,9 @@ export function ProductCardList({
                   currentDescMode === "formatted" ? (
                     <div
                       className="prose prose-invert prose-xs max-w-none p-3 rounded-lg bg-slate-900 border border-slate-800 max-h-64 overflow-y-auto leading-relaxed text-slate-300 text-xs"
-                      dangerouslySetInnerHTML={{ __html: product.productDescription.value }}
+                      dangerouslySetInnerHTML={{
+                        __html: sanitizeHtmlDescription(product.productDescription.value),
+                      }}
                     />
                   ) : (
                     <div className="relative">
@@ -423,10 +426,11 @@ export function ProductCardList({
                     className="text-xs text-slate-400 line-clamp-2 leading-relaxed bg-slate-900/60 p-2.5 rounded-lg border border-slate-800/60 cursor-pointer hover:text-slate-300"
                     onClick={() => toggleDescExpanded(product.id)}
                     title="Bấm để mở rộng toàn bộ mô tả"
-                    dangerouslySetInnerHTML={{
-                      __html: product.productDescription.value.replace(/<[^>]+>/g, " "),
-                    }}
-                  />
+                  >
+                    {product.productDescription.value.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim() || (
+                      <span className="text-rose-400 italic">Chưa có mô tả sản phẩm</span>
+                    )}
+                  </div>
                 )}
               </div>
             </div>

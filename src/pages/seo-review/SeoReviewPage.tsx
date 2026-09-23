@@ -6,6 +6,7 @@ import { ProductEditModal } from "./components/ProductEditModal";
 import { ProductListTable } from "./components/ProductListTable";
 import { ProductSplitView } from "./components/ProductSplitView";
 import { SeoBatchToolbar } from "./components/SeoBatchToolbar";
+import { filterSeoProducts, findNextProductInList } from "./review-navigation";
 import type {
   SeoProductEditInput,
   SeoProductUiViewModel,
@@ -109,62 +110,34 @@ export function SeoReviewPage(): React.JSX.Element {
     }
   }, [viewMode]);
 
-  // Keep activeProduct in sync if products are updated
-  useEffect(() => {
-    if (activeProduct) {
-      const updated = products.find((p) => p.id === activeProduct.id);
-      if (updated) {
-        setActiveProduct(updated);
-      }
-    } else if (products.length > 0) {
-      const first = products[0];
-      if (first) {
-        setActiveProduct(first);
-      }
-    }
-  }, [products, activeProduct]);
-
   // Filtered products list
   const filteredProducts = useMemo(() => {
-    return products.filter((p) => {
-      // 1. Search query
-      if (filter.searchQuery.trim()) {
-        const query = filter.searchQuery.toLowerCase().trim();
-        const titleMatch = p.productTitle.value.toLowerCase().includes(query);
-        const handleMatch = p.handle.value.toLowerCase().includes(query);
-        const asinMatch = p.asin ? p.asin.toLowerCase().includes(query) : false;
-        if (!titleMatch && !handleMatch && !asinMatch) {
-          return false;
-        }
-      }
-
-      // 2. SEO Status filter
-      if (filter.statusFilter !== "all" && p.seoStatus.value !== filter.statusFilter) {
-        return false;
-      }
-
-      // 3. Review Decision filter
-      if (filter.decisionFilter !== "all" && p.reviewDecision !== filter.decisionFilter) {
-        return false;
-      }
-
-      // 4. Only Mock data filter
-      if (filter.onlyMockData) {
-        const hasMock =
-          p.productTitle.source === "mock" ||
-          p.productDescription.source === "mock" ||
-          p.seoTitle.source === "mock" ||
-          p.seoDescription.source === "mock" ||
-          p.handle.source === "mock" ||
-          p.images.some((img) => img.alt.source === "mock" || img.webpUrl.source === "mock");
-        if (!hasMock) {
-          return false;
-        }
-      }
-
-      return true;
-    });
+    return filterSeoProducts(products, filter);
   }, [products, filter]);
+
+  // Keep activeProduct synchronized with filteredProducts
+  useEffect(() => {
+    if (filteredProducts.length === 0) {
+      if (activeProduct !== null) {
+        setActiveProduct(null);
+      }
+      return;
+    }
+
+    if (activeProduct) {
+      const match = filteredProducts.find((p) => p.id === activeProduct.id);
+      if (match) {
+        if (match !== activeProduct) {
+          setActiveProduct(match);
+        }
+      } else {
+        // Active product was filtered out or removed; select the first visible filtered product
+        setActiveProduct(filteredProducts[0] ?? null);
+      }
+    } else {
+      setActiveProduct(filteredProducts[0] ?? null);
+    }
+  }, [filteredProducts, activeProduct]);
 
   // Stats calculation
   const stats = useMemo(() => {
@@ -262,12 +235,11 @@ export function SeoReviewPage(): React.JSX.Element {
   }
 
   function advanceToNextProduct(currentId: string) {
-    const currentIndex = filteredProducts.findIndex((p) => p.id === currentId);
-    if (currentIndex >= 0 && currentIndex < filteredProducts.length - 1) {
-      const next = filteredProducts[currentIndex + 1];
-      if (next) {
-        setActiveProduct(next);
-      }
+    const next = findNextProductInList(filteredProducts, currentId);
+    if (next && next.id !== currentId) {
+      setActiveProduct(next);
+    } else if (filteredProducts.length <= 1) {
+      setActiveProduct(null);
     }
   }
 
@@ -461,6 +433,7 @@ export function SeoReviewPage(): React.JSX.Element {
       {/* Batch Actions & Filters Toolbar */}
       <SeoBatchToolbar
         totalCount={products.length}
+        filteredCount={filteredProducts.length}
         pendingCount={stats.pending}
         approvedCount={stats.approved}
         rejectedCount={stats.rejected}

@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+
+import { sanitizeHtmlDescription } from "../sanitize-html";
 import { SourceBadge } from "./SourceBadge";
 import type { SeoProductUiViewModel } from "../types";
 
@@ -243,7 +245,9 @@ export function ProductDetailDrawer({
               {descriptionTab === "formatted" ? (
                 <div
                   className="prose prose-invert prose-xs max-w-none p-4 rounded-lg bg-slate-900 border border-slate-800 max-h-72 overflow-y-auto leading-relaxed text-slate-300"
-                  dangerouslySetInnerHTML={{ __html: product.productDescription.value }}
+                  dangerouslySetInnerHTML={{
+                    __html: sanitizeHtmlDescription(product.productDescription.value),
+                  }}
                 />
               ) : (
                 <div className="relative">

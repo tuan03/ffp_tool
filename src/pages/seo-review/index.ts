@@ -6,6 +6,8 @@ export {
   getDisplayValue,
   getInitialSampleViewModels,
 } from "./seo-content-ui-adapter";
+export { sanitizeHtmlDescription } from "./sanitize-html";
+export { filterSeoProducts, findNextProductInList } from "./review-navigation";
 export type {
   DisplayField,
   FieldSource,

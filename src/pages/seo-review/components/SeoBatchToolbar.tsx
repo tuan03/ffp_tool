@@ -2,6 +2,7 @@ import type { SeoReviewFilterState, SeoReviewViewMode } from "../types";
 
 export interface SeoBatchToolbarProps {
   readonly totalCount: number;
+  readonly filteredCount?: number;
   readonly pendingCount?: number;
   readonly approvedCount?: number;
   readonly rejectedCount?: number;
@@ -22,6 +23,7 @@ export interface SeoBatchToolbarProps {
 
 export function SeoBatchToolbar({
   totalCount,
+  filteredCount,
   pendingCount = 0,
   approvedCount = 0,
   rejectedCount = 0,
@@ -171,7 +173,11 @@ export function SeoBatchToolbar({
           <span className="text-slate-400 font-mono">
             {selectedCount > 0 ? (
               <span className="text-cyan-400 font-semibold">
-                Đã chọn {selectedCount}/{totalCount} sản phẩm
+                Đã chọn {selectedCount}/{filteredCount !== undefined ? filteredCount : totalCount} sản phẩm
+              </span>
+            ) : filteredCount !== undefined && filteredCount !== totalCount ? (
+              <span>
+                Hiển thị <strong className="text-cyan-400 font-semibold">{filteredCount}</strong> / {totalCount} sản phẩm
               </span>
             ) : (
               <span>Tổng cộng: {totalCount} sản phẩm</span>
