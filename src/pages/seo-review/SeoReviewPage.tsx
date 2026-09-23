@@ -1,15 +1,20 @@
 import { useEffect, useMemo, useState } from "react";
+
+import { ProductCardList } from "./components/ProductCardList";
 import { ProductDetailDrawer } from "./components/ProductDetailDrawer";
 import { ProductEditModal } from "./components/ProductEditModal";
 import { ProductListTable } from "./components/ProductListTable";
+import { ProductSplitView } from "./components/ProductSplitView";
 import { SeoBatchToolbar } from "./components/SeoBatchToolbar";
 import type {
   SeoProductEditInput,
   SeoProductUiViewModel,
   SeoReviewFilterState,
+  SeoReviewViewMode,
 } from "./types";
 
 const SESSION_STORAGE_KEY = "ffp_seo_review_session_v1";
+const VIEW_MODE_STORAGE_KEY = "ffp_seo_review_view_mode";
 
 export function SeoReviewPage(): React.JSX.Element {
   const [products, setProducts] = useState<readonly SeoProductUiViewModel[]>(() => {
@@ -39,6 +44,22 @@ export function SeoReviewPage(): React.JSX.Element {
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<SeoProductUiViewModel | null>(null);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+
+  const [viewMode, setViewMode] = useState<SeoReviewViewMode>(() => {
+    if (typeof window !== "undefined" && window.sessionStorage) {
+      try {
+        const saved = window.sessionStorage.getItem(VIEW_MODE_STORAGE_KEY);
+        if (saved === "cards" || saved === "table" || saved === "split") {
+          return saved;
+        }
+      } catch {
+        // ignore
+      }
+    }
+    return "cards";
+  });
+
+  const [expandedTableIds, setExpandedTableIds] = useState<ReadonlySet<string>>(new Set());
 
   const [filter, setFilter] = useState<SeoReviewFilterState>({
     searchQuery: "",
@@ -77,12 +98,28 @@ export function SeoReviewPage(): React.JSX.Element {
     }
   }, [products]);
 
+  // Persist view mode preference to sessionStorage
+  useEffect(() => {
+    if (typeof window !== "undefined" && window.sessionStorage) {
+      try {
+        window.sessionStorage.setItem(VIEW_MODE_STORAGE_KEY, viewMode);
+      } catch {
+        // Storage limit
+      }
+    }
+  }, [viewMode]);
+
   // Keep activeProduct in sync if products are updated
   useEffect(() => {
     if (activeProduct) {
       const updated = products.find((p) => p.id === activeProduct.id);
       if (updated) {
         setActiveProduct(updated);
+      }
+    } else if (products.length > 0) {
+      const first = products[0];
+      if (first) {
+        setActiveProduct(first);
       }
     }
   }, [products, activeProduct]);
@@ -175,6 +212,31 @@ export function SeoReviewPage(): React.JSX.Element {
     setSelectedIds(new Set());
   }
 
+  // Table row accordion expansion handlers
+  function handleToggleExpandTable(id: string) {
+    setExpandedTableIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  }
+
+  function handleToggleExpandAllTable() {
+    if (filteredProducts.length > 0 && filteredProducts.every((p) => expandedTableIds.has(p.id))) {
+      setExpandedTableIds(new Set());
+    } else {
+      setExpandedTableIds(new Set(filteredProducts.map((p) => p.id)));
+    }
+  }
+
+  const isAllExpanded =
+    filteredProducts.length > 0 &&
+    filteredProducts.every((p) => expandedTableIds.has(p.id));
+
   // Individual Actions
   function handleViewProduct(product: SeoProductUiViewModel) {
     setActiveProduct(product);
@@ -197,6 +259,26 @@ export function SeoReviewPage(): React.JSX.Element {
           : p,
       ),
     );
+  }
+
+  function advanceToNextProduct(currentId: string) {
+    const currentIndex = filteredProducts.findIndex((p) => p.id === currentId);
+    if (currentIndex >= 0 && currentIndex < filteredProducts.length - 1) {
+      const next = filteredProducts[currentIndex + 1];
+      if (next) {
+        setActiveProduct(next);
+      }
+    }
+  }
+
+  function handleApproveAndNext(id: string) {
+    handleApproveProduct(id);
+    advanceToNextProduct(id);
+  }
+
+  function handleRejectAndNext(id: string) {
+    handleRejectProduct(id);
+    advanceToNextProduct(id);
   }
 
   // Batch Actions
@@ -379,9 +461,16 @@ export function SeoReviewPage(): React.JSX.Element {
       {/* Batch Actions & Filters Toolbar */}
       <SeoBatchToolbar
         totalCount={products.length}
+        pendingCount={stats.pending}
+        approvedCount={stats.approved}
+        rejectedCount={stats.rejected}
         selectedCount={selectedIds.size}
         filter={filter}
+        viewMode={viewMode}
+        isAllExpanded={isAllExpanded}
         onFilterChange={(newFilter) => setFilter((prev) => ({ ...prev, ...newFilter }))}
+        onViewModeChange={setViewMode}
+        onToggleExpandAll={handleToggleExpandAllTable}
         onSelectAll={handleSelectAll}
         onClearSelection={handleClearSelection}
         onApproveSelected={handleApproveSelected}
@@ -390,18 +479,76 @@ export function SeoReviewPage(): React.JSX.Element {
         onClearAll={handleClearAll}
       />
 
-      {/* Product List Table */}
-      <ProductListTable
-        products={filteredProducts}
-        selectedIds={selectedIds}
-        onToggleSelect={handleToggleSelect}
-        onToggleSelectAll={handleToggleSelectAll}
-        onViewProduct={handleViewProduct}
-        onApproveProduct={handleApproveProduct}
-        onRejectProduct={handleRejectProduct}
-      />
+      {/* Review Content View based on active viewMode */}
+      {products.length === 0 ? (
+        <div className="rounded-2xl border border-slate-800 bg-slate-900/40 p-12 text-center">
+          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-800/80 text-2xl text-slate-400 border border-slate-700/50 shadow-inner">
+            📝
+          </div>
+          <h3 className="mt-4 text-base font-bold text-slate-200">
+            Chưa có sản phẩm nào trong danh sách review
+          </h3>
+          <p className="mt-2 text-xs text-slate-400 max-w-md mx-auto leading-relaxed">
+            Danh sách đang trống. Bạn hãy sang tab <strong className="text-cyan-400">⚡ Distributed Crawler</strong> để cào sản phẩm và bấm nút <strong className="text-emerald-400">"✨ Bàn giao sang SEO Review"</strong> để tự động chuẩn hóa và đưa sản phẩm vào đây.
+          </p>
+          <div className="mt-5">
+            <a
+              href="/amazon-crawler"
+              className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600 px-4 py-2.5 text-xs font-semibold text-white shadow-lg shadow-cyan-600/20 hover:from-cyan-500 hover:to-blue-500 transition"
+            >
+              <span>⚡ Đi tới Distributed Crawler</span>
+              <span>➔</span>
+            </a>
+          </div>
+        </div>
+      ) : (
+        <>
+          {viewMode === "cards" && (
+            <ProductCardList
+              products={filteredProducts}
+              selectedIds={selectedIds}
+              onToggleSelect={handleToggleSelect}
+              onViewProduct={handleViewProduct}
+              onEditProduct={handleEditProduct}
+              onApproveProduct={handleApproveProduct}
+              onRejectProduct={handleRejectProduct}
+            />
+          )}
 
-      {/* Slide-over Detail Drawer */}
+          {viewMode === "table" && (
+            <ProductListTable
+              products={filteredProducts}
+              selectedIds={selectedIds}
+              expandedIds={expandedTableIds}
+              onToggleSelect={handleToggleSelect}
+              onToggleSelectAll={handleToggleSelectAll}
+              onToggleExpand={handleToggleExpandTable}
+              onViewProduct={handleViewProduct}
+              onEditProduct={handleEditProduct}
+              onApproveProduct={handleApproveProduct}
+              onRejectProduct={handleRejectProduct}
+            />
+          )}
+
+          {viewMode === "split" && (
+            <ProductSplitView
+              products={filteredProducts}
+              selectedIds={selectedIds}
+              activeProduct={activeProduct}
+              onSelectActive={setActiveProduct}
+              onToggleSelect={handleToggleSelect}
+              onViewProduct={handleViewProduct}
+              onEditProduct={handleEditProduct}
+              onApproveProduct={handleApproveProduct}
+              onRejectProduct={handleRejectProduct}
+              onApproveAndNext={handleApproveAndNext}
+              onRejectAndNext={handleRejectAndNext}
+            />
+          )}
+        </>
+      )}
+
+      {/* Slide-over Detail Drawer (Full inspection modal) */}
       <ProductDetailDrawer
         product={activeProduct}
         isOpen={isDrawerOpen}

@@ -15,4 +15,5 @@ export type {
   SeoProductEditInput,
   SeoProductUiViewModel,
   SeoReviewFilterState,
+  SeoReviewViewMode,
 } from "./types";

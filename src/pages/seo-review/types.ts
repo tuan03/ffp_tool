@@ -11,6 +11,8 @@ export type SeoProcessingStatus = "processing" | "completed" | "failed";
 
 export type ReviewDecision = "pending" | "approved" | "rejected";
 
+export type SeoReviewViewMode = "cards" | "table" | "split";
+
 export interface DisplayField<T> {
   readonly value: T;
   readonly source: FieldSource;
