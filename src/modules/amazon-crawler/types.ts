@@ -27,6 +27,12 @@ export interface AmazonCrawlerSettings {
   amazonZip: string;
   captchaTimeoutSeconds: number;
   maxMatrixVariants: number;
+  storeId?: string;
+  priceAddition?: number;
+  discountPercent?: number;
+  collectionId?: string;
+  collectionIds?: readonly string[];
+  productType?: string;
 }
 
 export interface AmazonCrawlerInput extends AmazonCrawlerSettings {
@@ -384,4 +390,10 @@ export const DEFAULT_AMAZON_CRAWLER_SETTINGS: AmazonCrawlerSettings = {
   amazonZip: "10001",
   captchaTimeoutSeconds: 180,
   maxMatrixVariants: 500,
+  storeId: "capozen",
+  priceAddition: 0,
+  discountPercent: 0,
+  collectionId: "",
+  collectionIds: [],
+  productType: "",
 };

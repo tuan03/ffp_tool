@@ -69,17 +69,22 @@ const PRODUCTS_GET_QUERY = `
         width
         height
       }
-      images(first: 50) {
+      media(first: 50) {
         pageInfo {
           hasNextPage
+          endCursor
         }
-        edges {
-          node {
+        nodes {
+          id
+          alt
+          mediaContentType
+          ... on MediaImage {
             id
-            url
-            altText
-            width
-            height
+            image {
+              url
+              width
+              height
+            }
           }
         }
       }
@@ -111,6 +116,7 @@ const PRODUCTS_GET_QUERY = `
             id
             title
             price
+            compareAtPrice
             sku
             barcode
             inventoryQuantity
@@ -125,6 +131,7 @@ export interface RawVariantNode {
   readonly id: string;
   readonly title: string;
   readonly price: string;
+  readonly compareAtPrice?: string | null;
   readonly sku?: string | null;
   readonly barcode?: string | null;
   readonly inventoryQuantity?: number | null;
@@ -140,7 +147,15 @@ export interface RawImageNode {
 
 export interface RawMediaNode {
   readonly id: string;
-  readonly image?: RawImageNode | null;
+  readonly alt?: string | null;
+  readonly mediaContentType?: string | null;
+  readonly image?: {
+    readonly id?: string | null;
+    readonly url?: string | null;
+    readonly altText?: string | null;
+    readonly width?: number | null;
+    readonly height?: number | null;
+  } | null;
 }
 
 export interface RawProductNode {
@@ -155,12 +170,13 @@ export interface RawProductNode {
   readonly tags?: readonly string[] | null;
   readonly onlineStoreUrl?: string | null;
   readonly featuredImage?: RawImageNode | null;
+  readonly media?: {
+    readonly pageInfo?: { readonly hasNextPage?: boolean | null; readonly endCursor?: string | null } | null;
+    readonly nodes?: readonly (RawMediaNode | null)[] | null;
+  } | null;
   readonly images?: {
     readonly pageInfo?: { readonly hasNextPage?: boolean | null } | null;
     readonly edges?: readonly { readonly node: RawImageNode }[];
-  } | null;
-  readonly media?: {
-    readonly nodes?: readonly RawMediaNode[];
   } | null;
   readonly seo?: { readonly title?: string | null; readonly description?: string | null } | null;
   readonly createdAt: string;
@@ -190,31 +206,50 @@ export function mapProductNode(node: RawProductNode): ProductSummary {
     productId: node.id,
     title: vEdge.node.title,
     price: vEdge.node.price,
+    compareAtPrice: vEdge.node.compareAtPrice ?? undefined,
     sku: vEdge.node.sku ?? undefined,
     barcode: vEdge.node.barcode ?? undefined,
     inventoryQuantity: vEdge.node.inventoryQuantity ?? undefined,
   }));
 
   const featuredImage = mapImageNode(node.featuredImage);
-  const mediaImages = (node.media?.nodes ?? [])
-    .map((media) => {
-      const image = mapImageNode(media.image);
-      return image ? { ...image, id: media.id } : undefined;
-    })
-    .filter((image): image is NonNullable<typeof image> => image !== undefined);
-  const images = mediaImages.length > 0
-    ? mediaImages
-    : node.images?.edges
-      ? node.images.edges
-          .map((edge) => mapImageNode(edge?.node))
-          .filter((image): image is ProductImageSummary => image !== undefined)
+
+  let images: ProductImageSummary[] | undefined;
+  let hasMoreImages: boolean | undefined;
+
+  if (node.media) {
+    hasMoreImages = node.media.pageInfo?.hasNextPage !== undefined
+      ? Boolean(node.media.pageInfo.hasNextPage)
       : undefined;
+    const mediaNodes = Array.isArray(node.media.nodes) ? node.media.nodes : [];
+    images = mediaNodes
+      .filter((m): m is RawMediaNode & { image: { url: string } } => {
+        return (
+          m !== null &&
+          typeof m === "object" &&
+          (m.mediaContentType === undefined || m.mediaContentType === null || m.mediaContentType === "IMAGE") &&
+          typeof m.image?.url === "string" &&
+          m.image.url.trim() !== ""
+        );
+      })
+      .map((m) => ({
+        id: m.id,
+        url: m.image.url.trim(),
+        altText: typeof m.alt === "string" ? m.alt : (m.image.altText ?? undefined),
+        width: typeof m.image.width === "number" ? m.image.width : undefined,
+        height: typeof m.image.height === "number" ? m.image.height : undefined,
+      }));
+  } else if (node.images?.edges) {
+    hasMoreImages = node.images.pageInfo?.hasNextPage !== undefined
+      ? Boolean(node.images.pageInfo.hasNextPage)
+      : undefined;
+    images = node.images.edges
+      .map((edge) => mapImageNode(edge?.node))
+      .filter((img): img is ProductImageSummary => img !== undefined);
+  }
 
   const hasMoreVariants = node.variants?.pageInfo?.hasNextPage !== undefined
     ? Boolean(node.variants.pageInfo.hasNextPage)
-    : undefined;
-  const hasMoreImages = node.images?.pageInfo?.hasNextPage !== undefined
-    ? Boolean(node.images.pageInfo.hasNextPage)
     : undefined;
 
   return {

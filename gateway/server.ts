@@ -2,7 +2,7 @@ import http from "node:http";
 
 import { GatewayDispatcher } from "./dispatcher";
 import { handleAutoSeoHttpRequest } from "./auto-seo-handler";
-import { createGatewayHttpHandler, isGatewayAuthorized, MAX_BODY_BYTES } from "./http-server";
+import { assertHostSecurity, createGatewayHttpHandler, isGatewayAuthorized, MAX_BODY_BYTES } from "./http-server";
 import { InMemoryIdempotencyStore } from "./idempotency";
 import { ShopifyGraphqlClient } from "./shopify-graphql-client";
 import { InMemoryStoreRegistry } from "./store-registry";
@@ -32,14 +32,7 @@ export function startGatewayServer(
   const authToken = options.authToken ?? env.GATEWAY_AUTH_TOKEN ?? process.env.GATEWAY_AUTH_TOKEN;
   const maxBodyBytes = options.maxBodyBytes && options.maxBodyBytes > 0 ? options.maxBodyBytes : MAX_BODY_BYTES;
 
-  const isLocalHost =
-    host === "127.0.0.1" || host === "localhost" || host === "::1" || host === "[::1]";
-  const hasAuthToken = typeof authToken === "string" && authToken.trim().length > 0;
-  if (!isLocalHost && !hasAuthToken) {
-    throw new Error(
-      `Refusing to start gateway server on host '${host}' without GATEWAY_AUTH_TOKEN. Unauthenticated public exposure is prohibited.`,
-    );
-  }
+  assertHostSecurity(host, authToken, "gateway server");
 
   const stores = loadBootstrappedStores({ env });
 

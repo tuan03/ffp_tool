@@ -71,24 +71,32 @@ const GET_COLLECTION_SOURCES_QUERY = `
   query GetCollectionSources($id: ID!) {
     collection(id: $id) {
       id
-      sources {
-        __typename
+      title
+    }
+  }
+`;
+
+const COLLECTION_ADD_PRODUCTS_MUTATION = `
+  mutation CollectionAddProducts($id: ID!, $productIds: [ID!]!) {
+    collectionAddProducts(id: $id, productIds: $productIds) {
+      collection {
         id
         title
+        productsCount {
+          count
+        }
+      }
+      userErrors {
+        field
+        message
       }
     }
   }
 `;
 
-const COLLECTION_UPDATE_MEMBERSHIP_MUTATION = `
-  mutation CollectionUpdateMembership($collection: CollectionUpdateInput!) {
-    collectionUpdate(collection: $collection) {
-      collection {
-        id
-        productsCount {
-          count
-        }
-      }
+const COLLECTION_REMOVE_PRODUCTS_MUTATION = `
+  mutation CollectionRemoveProducts($id: ID!, $productIds: [ID!]!) {
+    collectionRemoveProducts(id: $id, productIds: $productIds) {
       userErrors {
         field
         message
@@ -334,19 +342,15 @@ export async function executeCollectionsUpdateMembership(
     };
   }
 
-  // 1. Query collection sources (Shopify 2026-07 multi-source collection model)
-  interface CollectionSourcesResponse {
+  // 1. Verify collection exists
+  interface CollectionExistenceResponse {
     readonly collection: {
       readonly id: string;
-      readonly sources?: readonly {
-        readonly __typename: string;
-        readonly id: string;
-        readonly title: string;
-      }[] | null;
+      readonly title?: string;
     } | null;
   }
 
-  const sourcesRaw = await client.query<CollectionSourcesResponse>(
+  const sourcesRaw = await client.query<CollectionExistenceResponse>(
     store,
     GET_COLLECTION_SOURCES_QUERY,
     { id: collectionId },
@@ -357,72 +361,52 @@ export async function executeCollectionsUpdateMembership(
     throw new GatewayError(`Collection not found: ${collectionId}`, "SHOPIFY_NOT_FOUND", 404);
   }
 
-  // 2. Perform collectionUpdate with sourcesToUpdate (selectionsToAdd / selectionsToRemove)
-  if (productIdsToAdd.length > 0 || productIdsToRemove.length > 0) {
-    interface CollectionUpdateMembershipResponse {
-      readonly collectionUpdate: {
+  // 2. Perform collectionAddProducts and/or collectionRemoveProducts
+  if (productIdsToAdd.length > 0) {
+    interface CollectionAddProductsResponse {
+      readonly collectionAddProducts?: {
+        readonly collection: { readonly id: string; readonly productsCount?: { readonly count: number } } | null;
+        readonly userErrors: readonly MutationUserErrorItem[];
+      };
+      readonly collectionUpdate?: {
         readonly collection: { readonly id: string; readonly productsCount?: { readonly count: number } } | null;
         readonly userErrors: readonly MutationUserErrorItem[];
       };
     }
 
-    const sources = sourcesRaw.collection.sources || [];
-    const conditionsSource =
-      sources.find((s) => s.__typename === "CollectionConditionsSource");
+    const addRaw = await client.query<CollectionAddProductsResponse>(
+      store,
+      COLLECTION_ADD_PRODUCTS_MUTATION,
+      { id: collectionId, productIds: productIdsToAdd },
+      { isWrite: true, requestId: requestId ? `${requestId}:add` : undefined },
+    );
 
-    let collectionPatch: Record<string, unknown>;
+    const userErrors = addRaw.collectionAddProducts?.userErrors ?? addRaw.collectionUpdate?.userErrors ?? [];
+    if (userErrors.length > 0) {
+      throw mapUserErrorsToGatewayError(userErrors);
+    }
+  }
 
-    if (conditionsSource) {
-      collectionPatch = {
-        id: collectionId,
-        sourcesToUpdate: [
-          {
-            condition: {
-              id: conditionsSource.id,
-              inclusion: {
-                ...(productIdsToAdd.length > 0
-                  ? { selectionsToAdd: productIdsToAdd.map((prodId) => ({ productId: prodId })) }
-                  : {}),
-                ...(productIdsToRemove.length > 0
-                  ? { selectionsToRemove: productIdsToRemove.map((prodId) => ({ productId: prodId })) }
-                  : {}),
-              },
-            },
-          },
-        ],
+  if (productIdsToRemove.length > 0) {
+    interface CollectionRemoveProductsResponse {
+      readonly collectionRemoveProducts?: {
+        readonly userErrors: readonly MutationUserErrorItem[];
       };
-    } else {
-      if (productIdsToAdd.length === 0) {
-        return {
-          collectionId,
-          addedCount: 0,
-          removedCount: 0,
-        };
-      }
-      collectionPatch = {
-        id: collectionId,
-        sourcesToCreate: [
-          {
-            source: {
-              title: "Default Source",
-              inclusion: {
-                selections: productIdsToAdd.map((prodId) => ({ productId: prodId })),
-              },
-            },
-          },
-        ],
+      readonly collectionUpdate?: {
+        readonly userErrors: readonly MutationUserErrorItem[];
       };
     }
 
-    const raw = await client.query<CollectionUpdateMembershipResponse>(
+    const removeRaw = await client.query<CollectionRemoveProductsResponse>(
       store,
-      COLLECTION_UPDATE_MEMBERSHIP_MUTATION,
-      { collection: collectionPatch },
-      { isWrite: true, requestId },
+      COLLECTION_REMOVE_PRODUCTS_MUTATION,
+      { id: collectionId, productIds: productIdsToRemove },
+      { isWrite: true, requestId: requestId ? `${requestId}:remove` : undefined },
     );
 
-    if (raw.collectionUpdate.userErrors && raw.collectionUpdate.userErrors.length > 0) {
-      throw mapUserErrorsToGatewayError(raw.collectionUpdate.userErrors);
+    const userErrors = removeRaw.collectionRemoveProducts?.userErrors ?? removeRaw.collectionUpdate?.userErrors ?? [];
+    if (userErrors.length > 0) {
+      throw mapUserErrorsToGatewayError(userErrors);
     }
   }
 

@@ -219,14 +219,42 @@ function parseStoresFromPrefixedEnv(env: Record<string, string>): StoreConfig[] 
       continue;
     }
 
-    // Match STORE_<ID>_<FIELD>
-    const match = key.match(/^STORE_([A-Za-z0-9]+(?:_[A-Za-z0-9]+)*)_(STORE_ID|DOMAIN|SHOP_DOMAIN|ACCESS_TOKEN|STATIC_TOKEN|CLIENT_ID|CLIENT_SECRET|PROXY_URL|PROXY_USERNAME|PROXY_PASSWORD|API_VERSION|FAIL_CLOSED)$/);
-    if (!match) {
+    // Match STORE_<ID>_<FIELD> using longest-match-first suffix check
+    const KNOWN_FIELDS = [
+      "CLIENT_SECRET",
+      "PROXY_USERNAME",
+      "PROXY_PASSWORD",
+      "ACCESS_TOKEN",
+      "STATIC_TOKEN",
+      "SHOP_DOMAIN",
+      "FAIL_CLOSED",
+      "API_VERSION",
+      "PROXY_URL",
+      "CLIENT_ID",
+      "STORE_ID",
+      "DOMAIN",
+    ];
+
+    let matchedRawId: string | undefined;
+    let matchedField: string | undefined;
+
+    for (const field of KNOWN_FIELDS) {
+      if (key.endsWith(`_${field}`)) {
+        const rawId = key.slice(6, key.length - field.length - 1);
+        if (rawId.length > 0) {
+          matchedRawId = rawId;
+          matchedField = field;
+          break;
+        }
+      }
+    }
+
+    if (!matchedRawId || !matchedField) {
       continue;
     }
 
-    const rawId = match[1];
-    const field = match[2];
+    const rawId = matchedRawId;
+    const field = matchedField;
     if (!storeMap.has(rawId)) {
       storeMap.set(rawId, {});
     }

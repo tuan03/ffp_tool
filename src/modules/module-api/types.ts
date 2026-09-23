@@ -168,6 +168,7 @@ export interface ShopifyProductVariantInput {
   readonly compareAtPrice?: string;
   readonly sku?: string;
   readonly barcode?: string;
+  readonly inventoryTracked?: boolean;
   readonly inventoryQuantity?: number;
   readonly optionValues?: readonly ShopifyVariantOptionValueInput[];
 }
@@ -180,7 +181,9 @@ export interface ShopifyProductInput {
   readonly status?: "ACTIVE" | "ARCHIVED" | "DRAFT";
   readonly vendor?: string;
   readonly productType?: string;
+  readonly categoryId?: string;
   readonly tags?: readonly string[];
+  readonly collectionsToJoin?: readonly string[];
   readonly featuredImage?: ShopifyImageInput;
   readonly images?: readonly ShopifyImageInput[];
   readonly media?: readonly (ShopifyImageInput | { readonly originalSource?: string; readonly alt?: string; readonly mediaContentType?: "IMAGE" | "VIDEO" })[];
@@ -197,7 +200,9 @@ export interface ShopifyProductUpdateInput {
   readonly status?: "ACTIVE" | "ARCHIVED" | "DRAFT";
   readonly vendor?: string;
   readonly productType?: string;
+  readonly categoryId?: string;
   readonly tags?: readonly string[];
+  readonly collectionsToJoin?: readonly string[];
   readonly featuredImage?: ShopifyImageInput;
   readonly images?: readonly ShopifyImageInput[];
   readonly media?: readonly (ShopifyImageInput | { readonly originalSource?: string; readonly alt?: string; readonly mediaContentType?: "IMAGE" | "VIDEO" })[];
@@ -220,6 +225,9 @@ export interface ShopifyVariantUpdateInput {
   readonly compareAtPrice?: string;
   readonly sku?: string;
   readonly barcode?: string;
+  readonly inventoryTracked?: boolean;
+  /** @deprecated Updating inventoryQuantity directly via variants.update is not supported by Shopify GraphQL; Gateway rejects with SHOPIFY_INVALID_INPUT */
+  readonly inventoryQuantity?: number;
   readonly optionValues?: readonly ShopifyVariantOptionValueInput[];
 }
 

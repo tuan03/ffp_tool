@@ -135,7 +135,7 @@ class PackagedClientTests(unittest.TestCase):
             portable_config.write_text("{}", encoding="utf-8")
 
             with patch("sys.frozen", True, create=True), patch("sys.executable", str(executable)):
-                self.assertEqual(_resolve_config_path(None), portable_config)
+                self.assertEqual(_resolve_config_path(None), portable_config.resolve())
 
     def test_explicit_config_overrides_packaged_default(self) -> None:
         explicit = Path("custom-agent.json")
@@ -162,7 +162,7 @@ class PackagedClientTests(unittest.TestCase):
                 config_path=config.proxy_config_path,
             )
 
-            self.assertEqual(config.proxy_config_path, proxy_path)
+            self.assertEqual(config.proxy_config_path, proxy_path.resolve())
             self.assertEqual([assignment.name for assignment in assignments], ["direct", "fallback-1"])
             self.assertEqual(warnings, [])
 
@@ -183,7 +183,7 @@ class PackagedClientTests(unittest.TestCase):
             finally:
                 os.chdir(previous_directory)
 
-            self.assertEqual(config.proxy_config_path, proxy_path)
+            self.assertEqual(config.proxy_config_path, proxy_path.resolve())
 
 
 class DistributedCacheControlTests(unittest.IsolatedAsyncioTestCase):

@@ -139,6 +139,7 @@ export async function syncSingleProduct(
         ...(product.tags ?? []),
         ...(product.sourceKey ? [`ffp-source:${product.sourceKey}`] : []),
       ],
+      collectionsToJoin: product.collectionsToJoin,
       media: product.media,
       variants: product.variants,
     };
