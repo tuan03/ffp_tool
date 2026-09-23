@@ -14,6 +14,7 @@ interface SeoHandoffModalProps {
   readonly onPreviewImage?: (item: LightboxImageItem) => void;
   readonly handoffResult?: SeoHandoverResponse | null;
   readonly onHandoffSuccess?: (res: SeoHandoverResponse, filteredPayload: PinterestPodDeliverables) => void;
+  readonly onHandoverToSeo?: (payload: PinterestPodDeliverables) => Promise<void>;
   readonly onClose: () => void;
 }
 
@@ -27,6 +28,7 @@ export function SeoHandoffModal({
   onPreviewImage,
   handoffResult,
   onHandoffSuccess,
+  onHandoverToSeo,
   onClose,
 }: SeoHandoffModalProps): React.JSX.Element {
   // Group deliverables by product/design
@@ -177,11 +179,21 @@ export function SeoHandoffModal({
     setErrorMessage(null);
     try {
       const res = await handoverToSeo(filteredPayload);
+      if (onHandoverToSeo) {
+        await onHandoverToSeo(filteredPayload);
+      }
       setCurrentResult(res);
       setViewMode("result");
       onHandoffSuccess?.(res, filteredPayload);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
+      if (onHandoverToSeo) {
+        try {
+          await onHandoverToSeo(filteredPayload);
+        } catch {
+          // Keep fallback
+        }
+      }
       const printCount = filteredPayload.items.filter((it) => it.printMaster).length;
       const approvedCount = filteredPayload.items.reduce(
         (acc, it) => acc + (it.composedMockups?.length ?? 0),
@@ -616,6 +628,13 @@ export function SeoHandoffModal({
                 >
                   {copied ? "✓ Đã sao chép" : "Sao chép JSON"}
                 </button>
+                <a
+                  href="/seo-review"
+                  className="flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-emerald-500 to-teal-600 px-4 py-2 text-xs font-bold text-slate-950 shadow-md transition hover:from-emerald-400 hover:to-teal-500"
+                >
+                  <span>📝 Đi tới SEO Review</span>
+                  <span>➔</span>
+                </a>
                 <button
                   type="button"
                   onClick={onClose}

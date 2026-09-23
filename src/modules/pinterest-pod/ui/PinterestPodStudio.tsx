@@ -8,6 +8,7 @@ import type {
   JobStatus,
   PinterestAuthStatus,
   PinterestPodClient,
+  PinterestPodDeliverables,
   PinterestProductType,
   PodRecentRunItem,
   ReferenceImage,
@@ -26,9 +27,13 @@ import { RoomTemplateManagerModal } from "./components/RoomTemplateManagerModal"
 
 interface PinterestPodStudioProps {
   readonly client?: PinterestPodClient;
+  readonly onHandoverToSeo?: (payload: PinterestPodDeliverables) => Promise<void>;
 }
 
-export function PinterestPodStudio({ client: injectedClient }: PinterestPodStudioProps = {}): React.JSX.Element {
+export function PinterestPodStudio({
+  client: injectedClient,
+  onHandoverToSeo,
+}: PinterestPodStudioProps = {}): React.JSX.Element {
   const client = useMemo(() => injectedClient ?? realPinterestPodClient, [injectedClient]);
 
   // Auth State
@@ -920,6 +925,7 @@ export function PinterestPodStudio({ client: injectedClient }: PinterestPodStudi
               summaryMetrics={summaryMetrics}
               seoPayload={seoPayload}
               onPreviewImage={setPreviewImage}
+              onHandoverToSeo={onHandoverToSeo}
             />
           )}
         </div>

@@ -6,6 +6,7 @@
  */
 
 import type { CrawlProduct } from "../../modules/customization-normalizer";
+import type { PodDeliverableItem } from "../../modules/pinterest-pod";
 
 export type FieldSource = "real" | "mock";
 
@@ -52,6 +53,9 @@ export interface SeoProductUiViewModel {
 
   // Crawl source product (if originated from Amazon Crawler)
   readonly sourceCrawlProduct?: CrawlProduct;
+
+  // Pinterest POD source item (if originated from Pinterest POD Studio)
+  readonly sourcePinterestItem?: PodDeliverableItem;
 
   // Shopify Store Sync State
   readonly shopifySyncStatus?: ShopifySyncStatus;

@@ -1,7 +1,9 @@
 import type { CrawlProduct } from "../../modules/customization-normalizer";
+import type { PodDeliverableItem } from "../../modules/pinterest-pod";
 import type {
   AutoSeoItemResult,
   CustomizationSeoItemResult,
+  PinterestPodSeoItemResult,
   SeoContentImageOutput,
   SeoContentOutput,
 } from "../../modules/seo-content";
@@ -244,6 +246,40 @@ export function adaptAutoSeoItemToViewModel(
   }
 
   return adaptSeoOutputToViewModel(item.seoOutput, options);
+}
+
+/**
+ * Adapts PinterestPodSeoItemResult (from pinterest-pod-adapter) to SeoProductUiViewModel.
+ */
+export function adaptPinterestPodItemToViewModel(
+  item: PinterestPodSeoItemResult,
+): SeoProductUiViewModel {
+  const podItem = item.sourceItem;
+  const niche = (podItem.trendKeywords && podItem.trendKeywords.length > 0)
+    ? podItem.trendKeywords[0]
+    : podItem.productType || "POD";
+
+  const options: AdaptSeoOutputOptions = {
+    id: item.designId || `pod-${Date.now()}`,
+    productId: item.designId,
+    niche,
+    defaultStatus: item.success ? "completed" : "failed",
+    isStatusReal: true,
+  };
+
+  if (!item.success) {
+    return {
+      ...adaptSeoOutputToViewModel(undefined, options),
+      sourcePinterestItem: podItem,
+      rejectionReason: item.error || "SEO Content processing failed for Pinterest POD item",
+    };
+  }
+
+  const baseViewModel = adaptSeoOutputToViewModel(item.seoOutput, options);
+  return {
+    ...baseViewModel,
+    sourcePinterestItem: podItem,
+  };
 }
 
 /**

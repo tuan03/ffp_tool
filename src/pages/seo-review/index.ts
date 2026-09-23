@@ -2,6 +2,7 @@ export { SeoReviewPage } from "./SeoReviewPage";
 export {
   adaptAutoSeoItemToViewModel,
   adaptCustomizationItemToViewModel,
+  adaptPinterestPodItemToViewModel,
   adaptSeoOutputToViewModel,
   getDisplayValue,
   getInitialSampleViewModels,

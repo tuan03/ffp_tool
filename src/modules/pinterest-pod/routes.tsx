@@ -1,12 +1,15 @@
 import type { RouteObject } from "react-router-dom";
-import type { PinterestPodClient } from "./types";
+import type { PinterestPodClient, PinterestPodDeliverables } from "./types";
 import { PinterestPodStudio } from "./ui/PinterestPodStudio";
 
-export function createPinterestPodRoutes(client?: PinterestPodClient): readonly RouteObject[] {
+export function createPinterestPodRoutes(
+  client?: PinterestPodClient,
+  onHandoverToSeo?: (payload: PinterestPodDeliverables) => Promise<void>,
+): readonly RouteObject[] {
   return [
     {
       path: "pinterest-pod",
-      element: <PinterestPodStudio client={client} />,
+      element: <PinterestPodStudio client={client} onHandoverToSeo={onHandoverToSeo} />,
     },
   ];
 }

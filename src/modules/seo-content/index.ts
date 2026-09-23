@@ -37,6 +37,15 @@ export type {
   AutoSeoItemResult,
   AutoSeoSourceProduct,
 } from "./auto-seo-adapter";
+export {
+  fromPinterestPodItem,
+  runPinterestPodSeoPipeline,
+} from "./pinterest-pod-adapter";
+export type {
+  PinterestPodSeoBatchResult,
+  PinterestPodSeoItemResult,
+  PinterestPodSeoOptions,
+} from "./pinterest-pod-adapter";
 export type {
   SeoContentImageInput,
   SeoContentImageOutput,

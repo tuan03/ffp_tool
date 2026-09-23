@@ -23,6 +23,14 @@ export type {
   HandoverAutoSeoToSeoInput,
   HandoverAutoSeoToSeoResult,
 } from "./auto-seo-to-seo-pipeline";
+export {
+  handoverPinterestToSeo,
+} from "./pinterest-to-seo-pipeline";
+export type {
+  HandoverPinterestToSeoDependencies,
+  HandoverPinterestToSeoInput,
+  HandoverPinterestToSeoResult,
+} from "./pinterest-to-seo-pipeline";
 export type {
   ApplyApprovedProductUpdatesInput,
   ApplyApprovedProductUpdatesResult,

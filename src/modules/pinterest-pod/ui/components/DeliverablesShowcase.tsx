@@ -15,6 +15,7 @@ interface DeliverablesShowcaseProps {
   readonly summaryMetrics?: SummaryMetrics;
   readonly seoPayload?: PinterestPodDeliverables;
   readonly onPreviewImage?: (item: LightboxImageItem) => void;
+  readonly onHandoverToSeo?: (payload: PinterestPodDeliverables) => Promise<void>;
 }
 
 type TabKey = "cmyk" | "mockups" | "cutouts" | "comparison";
@@ -24,6 +25,7 @@ export function DeliverablesShowcase({
   summaryMetrics,
   seoPayload,
   onPreviewImage,
+  onHandoverToSeo,
 }: DeliverablesShowcaseProps): React.JSX.Element {
   const [activeTab, setActiveTab] = useState<TabKey>("cmyk");
   const [mockupViewMode, setMockupViewMode] = useState<"by_product" | "all">("by_product");
@@ -863,6 +865,7 @@ export function DeliverablesShowcase({
           onDeselectAllMockups={handleDeselectAllMockups}
           onPreviewImage={onPreviewImage}
           handoffResult={handoffResult}
+          onHandoverToSeo={onHandoverToSeo}
           onHandoffSuccess={(res) => {
             setHandoffResult(res);
             setHandoffToast(res.message);

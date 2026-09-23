@@ -36,6 +36,9 @@ export interface SeoReviewPushProductItem {
   readonly handle: string;
   readonly images: readonly SeoReviewPushImageItem[];
   readonly sourceCrawlProduct?: CrawlProduct;
+  readonly tags?: readonly string[];
+  readonly vendor?: string;
+  readonly productType?: string;
 }
 
 export interface PushSeoReviewProductResult {
@@ -279,6 +282,9 @@ export async function pushSeoReviewProductToShopify(
         title: product.seoTitle,
         description: product.seoDescription,
       },
+      tags: product.tags ? [...product.tags] : undefined,
+      vendor: product.vendor,
+      productType: product.productType,
       media: product.images.map((img) => ({
         originalSource: img.previewUrl,
         alt: img.alt,

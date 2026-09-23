@@ -42,6 +42,11 @@ function toPushProductItem(vm: SeoProductUiViewModel): SeoReviewPushProductItem 
       alt: img.alt.value,
     })),
     sourceCrawlProduct: vm.sourceCrawlProduct,
+    productType: vm.sourcePinterestItem?.productType || (vm.sourceCrawlProduct?.productType ? String(vm.sourceCrawlProduct.productType) : undefined),
+    tags: vm.sourcePinterestItem
+      ? ["pod", "pinterest-pod", ...(vm.sourcePinterestItem.trendKeywords || [])]
+      : undefined,
+    vendor: vm.sourcePinterestItem ? "FFP Store" : undefined,
   };
 }
 
@@ -781,14 +786,21 @@ export function SeoReviewPage({
             Chưa có sản phẩm nào trong danh sách review
           </h3>
           <p className="mt-2 text-xs text-slate-400 max-w-md mx-auto leading-relaxed">
-            Danh sách đang trống. Bạn hãy sang tab <strong className="text-cyan-400">⚡ Distributed Crawler</strong> để cào sản phẩm và bấm nút <strong className="text-emerald-400">"✨ Bàn giao sang SEO Review"</strong> để tự động chuẩn hóa và đưa sản phẩm vào đây.
+            Danh sách đang trống. Bạn hãy sang tab <strong className="text-cyan-400">⚡ Distributed Crawler</strong> hoặc <strong className="text-pink-400">🎨 Pinterest POD Studio</strong> để cào/tạo sản phẩm và bấm nút <strong className="text-emerald-400">"✨ Bàn giao sang SEO"</strong> để tự động chuẩn hóa và đưa sản phẩm vào đây.
           </p>
-          <div className="mt-5">
+          <div className="mt-5 flex items-center justify-center gap-3">
             <a
               href="/amazon-crawler"
               className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600 px-4 py-2.5 text-xs font-semibold text-white shadow-lg shadow-cyan-600/20 hover:from-cyan-500 hover:to-blue-500 transition"
             >
-              <span>⚡ Đi tới Distributed Crawler</span>
+              <span>⚡ Distributed Crawler</span>
+              <span>➔</span>
+            </a>
+            <a
+              href="/pinterest-pod"
+              className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-pink-600 to-rose-600 px-4 py-2.5 text-xs font-semibold text-white shadow-lg shadow-pink-600/20 hover:from-pink-500 hover:to-rose-500 transition"
+            >
+              <span>🎨 Pinterest POD Studio</span>
               <span>➔</span>
             </a>
           </div>
