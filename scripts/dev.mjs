@@ -4,6 +4,8 @@ import { networkInterfaces } from "node:os";
 
 import { getLanIpv4Addresses } from "./dev-network.mjs";
 
+process.env.VITE_CONFIG_NATIVE_IGNORE_WARNING = "true";
+
 function spawnNpmScript(scriptName) {
   if (process.platform === "win32") {
     return spawn(process.env.ComSpec ?? "cmd.exe", ["/d", "/s", "/c", `npm run ${scriptName}`], { stdio: "inherit" });
