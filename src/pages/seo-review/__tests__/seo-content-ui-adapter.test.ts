@@ -10,9 +10,13 @@ import {
   adaptAutoSeoItemToViewModel,
   adaptCustomizationItemToViewModel,
   adaptSeoOutputToViewModel,
+  adaptViewModelToApprovedUpdate,
+  adaptViewModelsToApprovedUpdates,
   getDisplayValue,
   getInitialSampleViewModels,
 } from "../seo-content-ui-adapter";
+import { hasWritableChanges } from "../../../modules/orchestrator";
+import type { SeoProductUiViewModel } from "../types";
 
 test("getDisplayValue: preserves valid real values and tags with source 'real'", () => {
   const str = getDisplayValue("Gothic Area Rug", "Fallback Title");
@@ -275,3 +279,167 @@ test("adaptAutoSeoItemToViewModel: handles failed AutoSeoItemResult and records 
   assert.equal(vm.seoStatus.value, "failed");
   assert.equal(vm.rejectionReason, "SEO Content Generation timed out after 30s");
 });
+
+test("adaptAutoSeoItemToViewModel: preserves storeId from sourceProduct, item, or fallback", () => {
+  const itemWithSourceStore: AutoSeoItemResult = {
+    productId: "gid://shopify/Product/111",
+    handle: "p1-handle",
+    sourceProduct: {
+      id: "gid://shopify/Product/111",
+      title: "Store 1 Product",
+      storeId: "store-alpha",
+    },
+    seoInput: { title: "P1", description: "", niche: "", handle: "p1-handle", images: [] },
+    success: true,
+  };
+  const vm1 = adaptAutoSeoItemToViewModel(itemWithSourceStore);
+  assert.equal(vm1.storeId, "store-alpha");
+
+  const itemWithItemStore: AutoSeoItemResult = {
+    productId: "gid://shopify/Product/222",
+    handle: "p2-handle",
+    storeId: "store-beta",
+    sourceProduct: {
+      id: "gid://shopify/Product/222",
+      title: "Store 2 Product",
+    },
+    seoInput: { title: "P2", description: "", niche: "", handle: "p2-handle", images: [] },
+    success: true,
+  };
+  const vm2 = adaptAutoSeoItemToViewModel(itemWithItemStore);
+  assert.equal(vm2.storeId, "store-beta");
+
+  const itemWithoutStore: AutoSeoItemResult = {
+    productId: "gid://shopify/Product/333",
+    handle: "p3-handle",
+    sourceProduct: {
+      id: "gid://shopify/Product/333",
+      title: "Fallback Product",
+    },
+    seoInput: { title: "P3", description: "", niche: "", handle: "p3-handle", images: [] },
+    success: true,
+  };
+  const vm3 = adaptAutoSeoItemToViewModel(itemWithoutStore, "store-fallback");
+  assert.equal(vm3.storeId, "store-fallback");
+});
+
+test("adaptCustomizationItemToViewModel: preserves storeId from fallbackStoreId", () => {
+  const item: CustomizationSeoItemResult = {
+    productId: "gid://shopify/Product/444",
+    sourceProduct: {
+      id: "gid://shopify/Product/444",
+      title: "Customization Product",
+    },
+    seoInput: { title: "CP", description: "", niche: "", handle: "", images: [] },
+    success: true,
+  };
+
+  const vm = adaptCustomizationItemToViewModel(item, "store-gamma");
+  assert.equal(vm.storeId, "store-gamma");
+});
+
+test("adaptViewModelToApprovedUpdate: correctly extracts patch with title, descriptionHtml, handle, and seo", () => {
+  const sample = getInitialSampleViewModels()[0];
+  const update = adaptViewModelToApprovedUpdate(sample);
+
+  assert.equal(update.productId, sample.productId);
+  assert.equal(update.patch.title, sample.productTitle.value);
+  assert.equal(update.patch.descriptionHtml, sample.productDescription.value);
+  assert.equal(update.patch.handle, sample.handle.value);
+  assert.equal(update.patch.seo?.title, sample.seoTitle.value);
+  assert.equal(update.patch.seo?.description, sample.seoDescription.value);
+});
+
+test("adaptViewModelToApprovedUpdate: handles omitted/whitespace fields cleanly without creating empty sub-objects", () => {
+  const sparseVm: SeoProductUiViewModel = {
+    id: "sparse-1",
+    productId: "gid://shopify/Product/555",
+    productTitle: { value: "Sparse Title", source: "real" },
+    productDescription: { value: "   ", source: "mock" },
+    seoTitle: { value: "Sparse SEO Title", source: "real" },
+    seoDescription: { value: "", source: "mock" },
+    handle: { value: "sparse-handle", source: "real" },
+    seoStatus: { value: "completed", source: "real" },
+    reviewDecision: "pending",
+    updatedAt: Date.now(),
+    images: [],
+  };
+
+  const update = adaptViewModelToApprovedUpdate(sparseVm);
+  assert.equal(update.productId, "gid://shopify/Product/555");
+  assert.equal(update.patch.title, "Sparse Title");
+  assert.equal(update.patch.handle, "sparse-handle");
+  assert.equal(update.patch.descriptionHtml, undefined);
+  assert.equal(update.patch.seo?.title, "Sparse SEO Title");
+  assert.equal(update.patch.seo?.description, undefined);
+});
+
+test("adaptViewModelsToApprovedUpdates: maps array of view models to ApprovedProductUpdate array", () => {
+  const samples = getInitialSampleViewModels().slice(0, 2);
+  const updates = adaptViewModelsToApprovedUpdates(samples);
+
+  assert.equal(updates.length, 2);
+  assert.equal(updates[0].productId, samples[0].productId);
+  assert.equal(updates[1].productId, samples[1].productId);
+  assert.equal(updates[0].patch.title, samples[0].productTitle.value);
+  assert.equal(updates[1].patch.title, samples[1].productTitle.value);
+});
+
+test("adaptCustomizationItemToViewModel: extracts storeId and productId from sourceProduct.pipeline.shopify", () => {
+  const item: CustomizationSeoItemResult = {
+    asin: "B09CRAWLER1",
+    sourceProduct: {
+      id: "crawl-101",
+      title: "Crawled Custom Product",
+      pipeline: {
+        shopify: {
+          storeId: "store-crawler-live",
+          productId: "gid://shopify/Product/888999",
+        },
+      },
+    },
+    seoInput: { title: "CCP", description: "", niche: "", handle: "", images: [] },
+    success: true,
+  };
+
+  const vm = adaptCustomizationItemToViewModel(item, "store-fallback-ignored");
+  assert.equal(vm.storeId, "store-crawler-live");
+  assert.equal(vm.productId, "gid://shopify/Product/888999");
+  assert.equal(vm.id, "gid://shopify/Product/888999");
+});
+
+test("hasWritableChanges: accurately detects writable patches vs empty patches", () => {
+  assert.equal(hasWritableChanges({ title: "Valid Title" }), true);
+  assert.equal(hasWritableChanges({ descriptionHtml: "<p>Valid</p>" }), true);
+  assert.equal(hasWritableChanges({ handle: "valid-handle" }), true);
+  assert.equal(hasWritableChanges({ seo: { title: "SEO Title" } }), true);
+  assert.equal(hasWritableChanges({ seo: { description: "SEO Desc" } }), true);
+
+  // Empty / undefined patches
+  assert.equal(hasWritableChanges({}), false);
+  assert.equal(hasWritableChanges(null), false);
+  assert.equal(hasWritableChanges(undefined), false);
+  assert.equal(hasWritableChanges({ seo: {} }), false);
+  assert.equal(hasWritableChanges({ seo: { title: undefined, description: undefined } }), false);
+  assert.equal(hasWritableChanges({ title: undefined, handle: undefined }), false);
+});
+
+test("adaptViewModelToApprovedUpdate: empty view model produces patch that hasWritableChanges flags as false", () => {
+  const emptyVm: SeoProductUiViewModel = {
+    id: "empty-prod-1",
+    productId: "gid://shopify/Product/000",
+    productTitle: { value: "   ", source: "mock" },
+    productDescription: { value: "", source: "mock" },
+    seoTitle: { value: "", source: "mock" },
+    seoDescription: { value: "  ", source: "mock" },
+    handle: { value: "   ", source: "mock" },
+    seoStatus: { value: "failed", source: "real" },
+    reviewDecision: "pending",
+    updatedAt: Date.now(),
+    images: [],
+  };
+
+  const update = adaptViewModelToApprovedUpdate(emptyVm);
+  assert.equal(hasWritableChanges(update.patch), false);
+});
+

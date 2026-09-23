@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 
+import type { ApplyApprovedProductUpdatesResult } from "../../modules/orchestrator";
 import { ImageZoomModal } from "./components/ImageZoomModal";
 import { ProductCardList } from "./components/ProductCardList";
 import { ProductDetailDrawer } from "./components/ProductDetailDrawer";
@@ -19,7 +20,15 @@ import type {
 const SESSION_STORAGE_KEY = "ffp_seo_review_session_v1";
 const VIEW_MODE_STORAGE_KEY = "ffp_seo_review_view_mode";
 
-export function SeoReviewPage(): React.JSX.Element {
+export interface SeoReviewPageProps {
+  readonly onSyncApprovedProducts?: (
+    items: readonly SeoProductUiViewModel[],
+  ) => Promise<ApplyApprovedProductUpdatesResult>;
+}
+
+export function SeoReviewPage({
+  onSyncApprovedProducts,
+}: SeoReviewPageProps = {}): React.JSX.Element {
   const [products, setProducts] = useState<readonly SeoProductUiViewModel[]>(() => {
     if (typeof window !== "undefined" && window.sessionStorage) {
       try {
@@ -27,11 +36,15 @@ export function SeoReviewPage(): React.JSX.Element {
         if (saved) {
           const parsed = JSON.parse(saved);
           if (Array.isArray(parsed) && parsed.length > 0) {
-            // Filter out any leftover fake sample data from previous sessions
-            const realOnly = parsed.filter(
-              (p: { id?: string }) =>
-                p && typeof p.id === "string" && !p.id.startsWith("sample-prod-"),
-            );
+            // Filter out any leftover fake sample data from previous sessions and clear stuck syncing states
+            const realOnly = parsed
+              .filter(
+                (p: { id?: string }) =>
+                  p && typeof p.id === "string" && !p.id.startsWith("sample-prod-"),
+              )
+              .map((p: SeoProductUiViewModel) =>
+                p.isSyncing ? { ...p, isSyncing: false } : p,
+              );
             return realOnly;
           }
         }
@@ -47,6 +60,10 @@ export function SeoReviewPage(): React.JSX.Element {
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<SeoProductUiViewModel | null>(null);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [syncFeedback, setSyncFeedback] = useState<{
+    type: "success" | "error" | "warning";
+    message: string;
+  } | null>(null);
 
   // High-Resolution Image Zoom Modal State
   const [zoomState, setZoomState] = useState<{
@@ -242,15 +259,127 @@ export function SeoReviewPage(): React.JSX.Element {
     setIsDrawerOpen(true);
   }
 
-  function handleApproveProduct(id: string) {
+  async function handleApproveProduct(id: string): Promise<void> {
+    const target = products.find((p) => p.id === id);
+    if (!target) return;
+    if (target.isSyncing) return; // Prevent duplicate clicks
+
+    // Fallback if sync handler is not provided
+    if (!onSyncApprovedProducts) {
+      setProducts((prev) =>
+        prev.map((p) =>
+          p.id === id
+            ? {
+                ...p,
+                reviewDecision: "approved",
+                isSyncing: false,
+                syncError: undefined,
+                lastSyncedAt: Date.now(),
+                updatedAt: Date.now(),
+              }
+            : p,
+        ),
+      );
+      setSelectedIds((prev) => {
+        if (!prev.has(id)) return prev;
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+      setSyncFeedback({
+        type: "success",
+        message: `Đã phê duyệt sản phẩm "${target.productTitle.value}".`,
+      });
+      return;
+    }
+
+    // Set syncing state
     setProducts((prev) =>
       prev.map((p) =>
-        p.id === id ? { ...p, reviewDecision: "approved", updatedAt: Date.now() } : p,
+        p.id === id ? { ...p, isSyncing: true, syncError: undefined } : p,
       ),
     );
+
+    try {
+      const result = await onSyncApprovedProducts([target]);
+      const targetId = (target.productId || target.id).trim();
+      const itemResult =
+        result.items.find(
+          (i) =>
+            i.productId === targetId ||
+            i.productId === target.id ||
+            i.productId === target.productId,
+        ) ?? result.items[0];
+
+      if (itemResult?.ok) {
+        setProducts((prev) =>
+          prev.map((p) =>
+            p.id === id
+              ? {
+                  ...p,
+                  reviewDecision: "approved",
+                  isSyncing: false,
+                  syncError: undefined,
+                  lastSyncedAt: Date.now(),
+                  updatedAt: Date.now(),
+                }
+              : p,
+          ),
+        );
+        setSelectedIds((prev) => {
+          if (!prev.has(id)) return prev;
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
+        setSyncFeedback({
+          type: "success",
+          message: `✓ Đã phê duyệt và đồng bộ "${target.productTitle.value}" lên Shopify thành công!`,
+        });
+      } else {
+        const errorMsg = itemResult?.error || "Đồng bộ sản phẩm lên Shopify thất bại.";
+        setProducts((prev) =>
+          prev.map((p) =>
+            p.id === id
+              ? {
+                  ...p,
+                  isSyncing: false,
+                  syncError: errorMsg,
+                  updatedAt: Date.now(),
+                }
+              : p,
+          ),
+        );
+        setSyncFeedback({
+          type: "error",
+          message: `✕ Lỗi khi đồng bộ "${target.productTitle.value}" lên Shopify: ${errorMsg}`,
+        });
+      }
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      setProducts((prev) =>
+        prev.map((p) =>
+          p.id === id
+            ? {
+                ...p,
+                isSyncing: false,
+                syncError: errorMsg,
+                updatedAt: Date.now(),
+              }
+            : p,
+        ),
+      );
+      setSyncFeedback({
+        type: "error",
+        message: `✕ Lỗi khi đồng bộ "${target.productTitle.value}" lên Shopify: ${errorMsg}`,
+      });
+    }
   }
 
   function handleRejectProduct(id: string, reason = "Nội dung SEO chưa đạt yêu cầu") {
+    const target = products.find((p) => p.id === id);
+    if (!target || target.isSyncing) return;
+
     setProducts((prev) =>
       prev.map((p) =>
         p.id === id
@@ -258,6 +387,12 @@ export function SeoReviewPage(): React.JSX.Element {
           : p,
       ),
     );
+    setSelectedIds((prev) => {
+      if (!prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
   }
 
   function advanceToNextProduct(currentId: string) {
@@ -269,9 +404,9 @@ export function SeoReviewPage(): React.JSX.Element {
     }
   }
 
-  function handleApproveAndNext(id: string) {
-    handleApproveProduct(id);
+  async function handleApproveAndNext(id: string): Promise<void> {
     advanceToNextProduct(id);
+    await handleApproveProduct(id);
   }
 
   function handleRejectAndNext(id: string) {
@@ -280,19 +415,160 @@ export function SeoReviewPage(): React.JSX.Element {
   }
 
   // Batch Actions
-  function handleApproveSelected() {
+  async function handleApproveSelected(): Promise<void> {
+    const targets = products.filter(
+      (p) => selectedIds.has(p.id) && !p.isSyncing,
+    );
+    if (targets.length === 0) return;
+
+    if (!onSyncApprovedProducts) {
+      setProducts((prev) =>
+        prev.map((p) =>
+          selectedIds.has(p.id)
+            ? {
+                ...p,
+                reviewDecision: "approved",
+                isSyncing: false,
+                syncError: undefined,
+                lastSyncedAt: Date.now(),
+                updatedAt: Date.now(),
+              }
+            : p,
+        ),
+      );
+      setSelectedIds(new Set());
+      setSyncFeedback({
+        type: "success",
+        message: `Đã phê duyệt ${targets.length} sản phẩm đã chọn.`,
+      });
+      return;
+    }
+
+    const targetIdSet = new Set(targets.map((t) => t.id));
+
     setProducts((prev) =>
       prev.map((p) =>
-        selectedIds.has(p.id) ? { ...p, reviewDecision: "approved", updatedAt: Date.now() } : p,
+        targetIdSet.has(p.id)
+          ? { ...p, isSyncing: true, syncError: undefined }
+          : p,
       ),
     );
-    setSelectedIds(new Set());
+
+    try {
+      const result = await onSyncApprovedProducts(targets);
+      const resultMap = new Map<string, { ok: boolean; error?: string }>();
+      for (const item of result.items) {
+        resultMap.set(item.productId, item);
+      }
+
+      let successCount = 0;
+      let failCount = 0;
+      const successfulIds = new Set<string>();
+
+      for (const target of targets) {
+        const pId = (target.productId || target.id).trim();
+        const itemRes =
+          resultMap.get(pId) ??
+          resultMap.get(target.id) ??
+          (target.productId ? resultMap.get(target.productId.trim()) : undefined);
+
+        if (itemRes?.ok) {
+          successCount++;
+          successfulIds.add(target.id);
+        } else {
+          failCount++;
+        }
+      }
+
+      setProducts((prev) =>
+        prev.map((p) => {
+          if (!targetIdSet.has(p.id)) return p;
+
+          const pId = (p.productId || p.id).trim();
+          const itemRes =
+            resultMap.get(pId) ??
+            resultMap.get(p.id) ??
+            (p.productId ? resultMap.get(p.productId.trim()) : undefined);
+
+          if (itemRes?.ok) {
+            return {
+              ...p,
+              reviewDecision: "approved",
+              isSyncing: false,
+              syncError: undefined,
+              lastSyncedAt: Date.now(),
+              updatedAt: Date.now(),
+            };
+          } else {
+            const err = itemRes?.error || "Đồng bộ lên Shopify thất bại.";
+            return {
+              ...p,
+              isSyncing: false,
+              syncError: err,
+              updatedAt: Date.now(),
+            };
+          }
+        }),
+      );
+
+      // Deselect only successful items; keep failing items selected for review/retry
+      setSelectedIds((prev) => {
+        const next = new Set<string>();
+        for (const id of prev) {
+          if (!successfulIds.has(id)) {
+            next.add(id);
+          }
+        }
+        return next;
+      });
+
+      if (failCount === 0) {
+        setSyncFeedback({
+          type: "success",
+          message: `✓ Đã phê duyệt và đồng bộ thành công ${successCount} sản phẩm lên Shopify!`,
+        });
+      } else if (successCount > 0) {
+        setSyncFeedback({
+          type: "warning",
+          message: `Đã đồng bộ ${successCount}/${targets.length} sản phẩm thành công. ${failCount} sản phẩm gặp lỗi đồng bộ.`,
+        });
+      } else {
+        setSyncFeedback({
+          type: "error",
+          message: `✕ Đồng bộ thất bại cho cả ${targets.length} sản phẩm đã chọn. Vui lòng kiểm tra lỗi chi tiết trên từng sản phẩm.`,
+        });
+      }
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      setProducts((prev) =>
+        prev.map((p) =>
+          targetIdSet.has(p.id)
+            ? {
+                ...p,
+                isSyncing: false,
+                syncError: errorMsg,
+                updatedAt: Date.now(),
+              }
+            : p,
+        ),
+      );
+      setSyncFeedback({
+        type: "error",
+        message: `✕ Lỗi trong quá trình đồng bộ hàng loạt lên Shopify: ${errorMsg}`,
+      });
+    }
   }
 
   function handleRejectSelected() {
+    const targets = products.filter(
+      (p) => selectedIds.has(p.id) && !p.isSyncing,
+    );
+    if (targets.length === 0) return;
+    const targetIdSet = new Set(targets.map((t) => t.id));
+
     setProducts((prev) =>
       prev.map((p) =>
-        selectedIds.has(p.id)
+        targetIdSet.has(p.id)
           ? {
               ...p,
               reviewDecision: "rejected",
@@ -302,11 +578,20 @@ export function SeoReviewPage(): React.JSX.Element {
           : p,
       ),
     );
-    setSelectedIds(new Set());
+    setSelectedIds((prev) => {
+      const next = new Set<string>();
+      for (const id of prev) {
+        if (!targetIdSet.has(id)) {
+          next.add(id);
+        }
+      }
+      return next;
+    });
   }
 
   // Edit Handlers
   function handleEditProduct(product: SeoProductUiViewModel) {
+    if (product.isSyncing) return;
     setEditingProduct(product);
     setIsEditModalOpen(true);
   }
@@ -456,6 +741,33 @@ export function SeoReviewPage(): React.JSX.Element {
         </div>
       ) : null}
 
+      {/* Sync Feedback Notification Banner */}
+      {syncFeedback ? (
+        <div
+          className={`flex items-center justify-between rounded-xl border p-4 text-xs font-medium animate-fadeIn ${
+            syncFeedback.type === "success"
+              ? "border-emerald-500/40 bg-emerald-950/40 text-emerald-200"
+              : syncFeedback.type === "warning"
+                ? "border-amber-500/40 bg-amber-950/40 text-amber-200"
+                : "border-rose-500/40 bg-rose-950/40 text-rose-200"
+          }`}
+        >
+          <div className="flex items-center gap-2.5">
+            <span className="text-base flex-shrink-0">
+              {syncFeedback.type === "success" ? "✓" : syncFeedback.type === "warning" ? "⚠️" : "✕"}
+            </span>
+            <p className="leading-relaxed">{syncFeedback.message}</p>
+          </div>
+          <button
+            type="button"
+            className="ml-4 rounded-lg px-2.5 py-1 text-xs opacity-75 hover:opacity-100 transition"
+            onClick={() => setSyncFeedback(null)}
+          >
+            ✕ Đóng
+          </button>
+        </div>
+      ) : null}
+
       {/* Batch Actions & Filters Toolbar */}
       <SeoBatchToolbar
         totalCount={products.length}
@@ -467,6 +779,7 @@ export function SeoReviewPage(): React.JSX.Element {
         filter={filter}
         viewMode={viewMode}
         isAllExpanded={isAllExpanded}
+        isSyncing={products.some((p) => selectedIds.has(p.id) && p.isSyncing)}
         onFilterChange={(newFilter) => setFilter((prev) => ({ ...prev, ...newFilter }))}
         onViewModeChange={setViewMode}
         onToggleExpandAll={handleToggleExpandAllTable}
@@ -557,8 +870,7 @@ export function SeoReviewPage(): React.JSX.Element {
         onClose={() => setIsDrawerOpen(false)}
         onEdit={handleEditProduct}
         onApprove={(id) => {
-          handleApproveProduct(id);
-          setIsDrawerOpen(false);
+          void handleApproveProduct(id);
         }}
         onReject={(id) => {
           handleRejectProduct(id);

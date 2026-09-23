@@ -1,8 +1,11 @@
 export { SeoReviewPage } from "./SeoReviewPage";
+export type { SeoReviewPageProps } from "./SeoReviewPage";
 export {
   adaptAutoSeoItemToViewModel,
   adaptCustomizationItemToViewModel,
   adaptSeoOutputToViewModel,
+  adaptViewModelToApprovedUpdate,
+  adaptViewModelsToApprovedUpdates,
   getDisplayValue,
   getInitialSampleViewModels,
 } from "./seo-content-ui-adapter";

@@ -5,6 +5,7 @@ export {
 } from "./auto-seo-module-api-client";
 export {
   applyApprovedProductUpdates,
+  hasWritableChanges,
 } from "./auto-seo-approved-product-update";
 export {
   handoverCrawlerToSeo,

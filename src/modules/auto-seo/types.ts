@@ -19,6 +19,7 @@ export interface ShopifyProductVariant {
 
 export interface ShopifyProductForAutoSeoUi {
   readonly id: string;
+  readonly storeId?: string;
   readonly title: string;
   readonly handle: string;
   readonly description?: string;
@@ -148,4 +149,5 @@ export interface AutoSeoClient {
 
 export type AutoSeoHandoverHandler = (
   products: readonly ShopifyProductForAutoSeoUi[],
+  storeId?: string,
 ) => Promise<void>;

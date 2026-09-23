@@ -12,6 +12,7 @@ export type { AutoSeoSourceProduct };
 
 export interface HandoverAutoSeoToSeoInput {
   readonly workflowId?: string;
+  readonly storeId?: string;
   readonly products: readonly AutoSeoSourceProduct[];
   readonly defaultNiche?: string;
   readonly concurrency?: number;
@@ -23,6 +24,7 @@ export interface HandoverAutoSeoToSeoDependencies {
 
 export interface HandoverAutoSeoToSeoResult {
   readonly workflowId: string;
+  readonly storeId?: string;
   readonly total: number;
   readonly successful: number;
   readonly failed: number;
@@ -38,11 +40,13 @@ export async function handoverAutoSeoToSeo(
   dependencies: HandoverAutoSeoToSeoDependencies = {},
 ): Promise<HandoverAutoSeoToSeoResult> {
   const workflowId = input.workflowId || `auto-seo-handover-${Date.now()}`;
-  const products = input.products ?? [];
+  const storeId = input.storeId;
+  const rawProducts = input.products ?? [];
 
-  if (products.length === 0) {
+  if (rawProducts.length === 0) {
     return {
       workflowId,
+      storeId,
       total: 0,
       successful: 0,
       failed: 0,
@@ -50,6 +54,11 @@ export async function handoverAutoSeoToSeo(
       seoOutputs: [],
     };
   }
+
+  const products = rawProducts.map((p) => ({
+    ...p,
+    storeId: (p as { storeId?: string }).storeId || storeId,
+  }));
 
   const seoOptions: AutoSeoAdapterOptions = {
     runner: dependencies.seoRunner,
@@ -64,6 +73,7 @@ export async function handoverAutoSeoToSeo(
 
   return {
     workflowId,
+    storeId,
     total: seoBatchResult.total,
     successful: seoBatchResult.successful,
     failed: seoBatchResult.failed,

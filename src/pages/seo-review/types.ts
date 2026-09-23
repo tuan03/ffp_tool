@@ -28,6 +28,7 @@ export interface SeoImageUiViewModel {
 
 export interface SeoProductUiViewModel {
   readonly id: string;
+  readonly storeId?: string;
   readonly productId?: string;
   readonly asin?: string;
   readonly sourceNiche?: string;
@@ -45,6 +46,11 @@ export interface SeoProductUiViewModel {
   readonly reviewDecision: ReviewDecision;
   readonly rejectionReason?: string;
   readonly updatedAt: number;
+
+  // Syncing State (Cách 1: Sync ngay khi duyệt)
+  readonly isSyncing?: boolean;
+  readonly syncError?: string;
+  readonly lastSyncedAt?: number;
 }
 
 export interface SeoReviewFilterState {

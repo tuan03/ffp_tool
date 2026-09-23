@@ -267,6 +267,25 @@ export function ProductSplitView({
                   <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
                     {renderReviewBadge(product.reviewDecision)}
                     {renderSeoStatusBadge(product.seoStatus.value, product.seoStatus.source === "mock")}
+                    {product.isSyncing && (
+                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-cyan-950/70 text-cyan-300 border border-cyan-800/60">
+                        <svg className="animate-spin h-2.5 w-2.5 text-cyan-400" viewBox="0 0 24 24" fill="none">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                        </svg>
+                        <span>Syncing</span>
+                      </span>
+                    )}
+                    {product.lastSyncedAt && !product.isSyncing && (
+                      <span className="text-[10px] text-emerald-400 font-medium" title={`Shopify Synced: ${new Date(product.lastSyncedAt).toLocaleString()}`}>
+                        ✓ Synced
+                      </span>
+                    )}
+                    {product.syncError && !product.isSyncing && (
+                      <span className="text-[10px] text-rose-400 font-medium" title={product.syncError}>
+                        ⚠️ Lỗi sync
+                      </span>
+                    )}
                   </div>
                 </div>
               </div>
@@ -334,6 +353,26 @@ export function ProductSplitView({
                   {renderSeoStatusBadge(activeProduct.seoStatus.value, activeProduct.seoStatus.source === "mock")}
                 </div>
               </div>
+
+              {activeProduct.lastSyncedAt && (
+                <div className="rounded-lg border border-emerald-900/60 bg-emerald-950/40 p-2.5 text-xs text-emerald-300 flex items-center justify-between">
+                  <span className="flex items-center gap-1.5 font-medium">
+                    <span>✓</span> Đã đồng bộ lên Shopify thành công
+                  </span>
+                  <span className="font-mono text-[11px] text-emerald-400/80">
+                    {new Date(activeProduct.lastSyncedAt).toLocaleTimeString()}
+                  </span>
+                </div>
+              )}
+
+              {activeProduct.syncError && (
+                <div className="rounded-lg border border-rose-900/60 bg-rose-950/40 p-3 text-xs text-rose-200 flex items-start gap-2">
+                  <span className="text-sm">⚠️</span>
+                  <div>
+                    <span className="font-bold">Lỗi đồng bộ Shopify:</span> {activeProduct.syncError}
+                  </div>
+                </div>
+              )}
 
               {activeProduct.rejectionReason && (
                 <div className="rounded-lg border border-rose-900/60 bg-rose-950/30 p-2.5 text-xs text-rose-300">
@@ -499,8 +538,39 @@ export function ProductSplitView({
               <div className="flex items-center gap-2">
                 <button
                   type="button"
+                  onClick={() => onApproveProduct(activeProduct.id)}
+                  disabled={activeProduct.isSyncing}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 ${
+                    activeProduct.isSyncing
+                      ? "bg-slate-800 text-slate-400 border border-slate-700 cursor-not-allowed"
+                      : activeProduct.reviewDecision === "approved"
+                        ? "bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 cursor-pointer"
+                        : "bg-emerald-600/20 text-emerald-300 hover:bg-emerald-600/30 border border-emerald-500/30 cursor-pointer"
+                  }`}
+                  title={activeProduct.isSyncing ? "Đang đồng bộ..." : "Phê duyệt sản phẩm hiện tại"}
+                >
+                  {activeProduct.isSyncing ? (
+                    <>
+                      <svg className="animate-spin h-3.5 w-3.5 text-cyan-400" viewBox="0 0 24 24" fill="none">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                      </svg>
+                      <span>Đang sync...</span>
+                    </>
+                  ) : (
+                    <span>✓ Duyệt</span>
+                  )}
+                </button>
+
+                <button
+                  type="button"
                   onClick={() => onRejectAndNext(activeProduct.id)}
-                  className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-rose-950/80 text-rose-300 hover:bg-rose-900 border border-rose-800 transition cursor-pointer"
+                  disabled={activeProduct.isSyncing}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
+                    activeProduct.isSyncing
+                      ? "bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed"
+                      : "bg-rose-950/80 text-rose-300 hover:bg-rose-900 border border-rose-800 cursor-pointer"
+                  }`}
                   title="Từ chối và tự động chuyển sang sản phẩm kế tiếp"
                 >
                   ✕ Từ chối & Tiếp ➔
@@ -509,10 +579,28 @@ export function ProductSplitView({
                 <button
                   type="button"
                   onClick={() => onApproveAndNext(activeProduct.id)}
-                  className="px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-emerald-600 text-white hover:bg-emerald-500 shadow-md shadow-emerald-900/30 transition cursor-pointer"
-                  title="Phê duyệt và tự động chuyển sang sản phẩm kế tiếp"
+                  disabled={activeProduct.isSyncing}
+                  className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 ${
+                    activeProduct.isSyncing
+                      ? "bg-slate-800 text-slate-400 border border-slate-700 cursor-not-allowed"
+                      : "bg-emerald-600 text-white hover:bg-emerald-500 shadow-md shadow-emerald-900/30 cursor-pointer"
+                  }`}
+                  title={activeProduct.isSyncing ? "Đang đồng bộ..." : "Phê duyệt và tự động chuyển sang sản phẩm kế tiếp"}
                 >
-                  ✓ Phê duyệt & Tiếp ➔
+                  {activeProduct.isSyncing ? (
+                    <>
+                      <svg className="animate-spin h-3.5 w-3.5 text-cyan-400" viewBox="0 0 24 24" fill="none">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                      </svg>
+                      <span>Đang đồng bộ...</span>
+                    </>
+                  ) : (
+                    <>
+                      <span>✓</span>
+                      <span>Phê duyệt & Tiếp ➔</span>
+                    </>
+                  )}
                 </button>
               </div>
             </div>

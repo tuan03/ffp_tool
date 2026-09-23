@@ -6,6 +6,10 @@ import type {
 } from "../../modules/seo-content";
 import { seoContentMockData } from "../../modules/seo-content";
 import type {
+  ApprovedProductPatch,
+  ApprovedProductUpdate,
+} from "../../modules/orchestrator";
+import type {
   DisplayField,
   FieldSource,
   ReviewDecision,
@@ -49,6 +53,7 @@ export function getDisplayValue<T>(
 
 export interface AdaptSeoOutputOptions {
   readonly id?: string;
+  readonly storeId?: string;
   readonly productId?: string;
   readonly asin?: string;
   readonly niche?: string;
@@ -157,6 +162,7 @@ export function adaptSeoOutputToViewModel(
 
   return {
     id: safeId,
+    storeId: options.storeId,
     productId: options.productId,
     asin: options.asin,
     sourceNiche: options.niche,
@@ -177,10 +183,26 @@ export function adaptSeoOutputToViewModel(
  */
 export function adaptCustomizationItemToViewModel(
   item: CustomizationSeoItemResult,
+  fallbackStoreId?: string,
 ): SeoProductUiViewModel {
+  const sourceProduct = item.sourceProduct as {
+    storeId?: string;
+    pipeline?: { shopify?: { storeId?: string; productId?: string } };
+  };
+
+  const storeId =
+    sourceProduct?.storeId ||
+    sourceProduct?.pipeline?.shopify?.storeId ||
+    fallbackStoreId;
+
+  const productId =
+    item.productId ||
+    sourceProduct?.pipeline?.shopify?.productId;
+
   const options: AdaptSeoOutputOptions = {
-    id: item.productId || item.asin || `item-${Date.now()}`,
-    productId: item.productId,
+    id: productId || item.productId || item.asin || `item-${Date.now()}`,
+    storeId,
+    productId,
     asin: item.asin,
     niche: item.sourceProduct.categories?.[0] || "Custom Product",
     defaultStatus: item.success ? "completed" : "failed",
@@ -202,8 +224,13 @@ export function adaptCustomizationItemToViewModel(
  */
 export function adaptAutoSeoItemToViewModel(
   item: AutoSeoItemResult,
+  fallbackStoreId?: string,
 ): SeoProductUiViewModel {
   const sourceProduct = item.sourceProduct;
+  const storeId =
+    (sourceProduct as { storeId?: string })?.storeId ||
+    item.storeId ||
+    fallbackStoreId;
   const firstTag = Array.isArray(sourceProduct.tags) && typeof sourceProduct.tags[0] === "string"
     ? sourceProduct.tags[0]
     : undefined;
@@ -211,6 +238,7 @@ export function adaptAutoSeoItemToViewModel(
 
   const options: AdaptSeoOutputOptions = {
     id: item.productId || `item-${Date.now()}`,
+    storeId,
     productId: item.productId,
     niche,
     defaultStatus: item.success ? "completed" : "failed",
@@ -239,6 +267,7 @@ export function getInitialSampleViewModels(): readonly SeoProductUiViewModel[] {
   // 1. Fully populated from seoContentMockData (Real)
   const item1 = adaptSeoOutputToViewModel(seoContentMockData, {
     id: "sample-prod-101",
+    storeId: "store-us-primary",
     productId: "gid://shopify/Product/98412351",
     asin: "B09MUSIC01",
     niche: "Vintage Rugs",
@@ -266,6 +295,7 @@ export function getInitialSampleViewModels(): readonly SeoProductUiViewModel[] {
 
   const item2 = adaptSeoOutputToViewModel(partialOutput, {
     id: "sample-prod-102",
+    storeId: "store-us-primary",
     productId: "gid://shopify/Product/98412352",
     asin: "B08COFFIN2",
     niche: "Gothic Home Décor",
@@ -281,6 +311,7 @@ export function getInitialSampleViewModels(): readonly SeoProductUiViewModel[] {
     },
     {
       id: "sample-prod-103",
+      storeId: "store-us-primary",
       productId: "gid://shopify/Product/98412353",
       asin: "B07STARMAG",
       niche: "Pillows & Cushions",
@@ -293,6 +324,7 @@ export function getInitialSampleViewModels(): readonly SeoProductUiViewModel[] {
   const item4: SeoProductUiViewModel = {
     ...adaptSeoOutputToViewModel(undefined, {
       id: "sample-prod-104",
+      storeId: "store-us-primary",
       productId: "gid://shopify/Product/98412354",
       asin: "B01FAIL004",
       niche: "Apparel",
@@ -304,4 +336,59 @@ export function getInitialSampleViewModels(): readonly SeoProductUiViewModel[] {
   };
 
   return [item1, item2, item3, item4];
+}
+
+/**
+ * Maps a single SeoProductUiViewModel to the ApprovedProductUpdate structure
+ * expected by applyApprovedProductUpdates in orchestrator.
+ */
+export function adaptViewModelToApprovedUpdate(
+  viewModel: SeoProductUiViewModel,
+): ApprovedProductUpdate {
+  const rawId = viewModel.productId || viewModel.id;
+  const productId = rawId.trim();
+
+  const patch: ApprovedProductPatch = {};
+
+  const title = viewModel.productTitle?.value?.trim();
+  if (title) {
+    (patch as Record<string, unknown>).title = title;
+  }
+
+  const descriptionHtml = viewModel.productDescription?.value?.trim();
+  if (descriptionHtml) {
+    (patch as Record<string, unknown>).descriptionHtml = descriptionHtml;
+  }
+
+  const handle = viewModel.handle?.value?.trim();
+  if (handle) {
+    (patch as Record<string, unknown>).handle = handle;
+  }
+
+  const seoTitle = viewModel.seoTitle?.value?.trim();
+  const seoDescription = viewModel.seoDescription?.value?.trim();
+  if (seoTitle || seoDescription) {
+    const seoObj: Record<string, string> = {};
+    if (seoTitle) {
+      seoObj.title = seoTitle;
+    }
+    if (seoDescription) {
+      seoObj.description = seoDescription;
+    }
+    (patch as Record<string, unknown>).seo = seoObj;
+  }
+
+  return {
+    productId,
+    patch,
+  };
+}
+
+/**
+ * Maps multiple SeoProductUiViewModel items to ApprovedProductUpdate array.
+ */
+export function adaptViewModelsToApprovedUpdates(
+  viewModels: readonly SeoProductUiViewModel[],
+): readonly ApprovedProductUpdate[] {
+  return viewModels.map(adaptViewModelToApprovedUpdate);
 }

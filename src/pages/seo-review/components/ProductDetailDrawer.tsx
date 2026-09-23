@@ -121,6 +121,27 @@ export function ProductDetailDrawer({
               </div>
             </div>
 
+            {product.lastSyncedAt && (
+              <div className="rounded-xl border border-emerald-900/60 bg-emerald-950/40 p-3.5 text-xs text-emerald-300 flex items-center justify-between">
+                <span className="flex items-center gap-1.5 font-medium">
+                  <span>✓</span> Đã đồng bộ lên Shopify thành công
+                </span>
+                <span className="font-mono text-emerald-400">
+                  {new Date(product.lastSyncedAt).toLocaleString()}
+                </span>
+              </div>
+            )}
+
+            {product.syncError && (
+              <div className="rounded-xl border border-rose-900/60 bg-rose-950/40 p-3.5 text-xs text-rose-200 flex items-start gap-2.5">
+                <span className="text-base flex-shrink-0">⚠️</span>
+                <div>
+                  <div className="font-bold text-rose-100">Lỗi đồng bộ lên Shopify:</div>
+                  <div className="mt-0.5 text-rose-300">{product.syncError}</div>
+                </div>
+              </div>
+            )}
+
             {/* Rejection notice if present */}
             {product.rejectionReason && (
               <div className="rounded-xl border border-rose-900/60 bg-rose-950/30 p-3.5 text-xs text-rose-300">
@@ -370,7 +391,12 @@ export function ProductDetailDrawer({
             <button
               type="button"
               onClick={() => onEdit(product)}
-              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold bg-slate-800 text-slate-200 hover:bg-slate-700 border border-slate-700 transition cursor-pointer"
+              disabled={product.isSyncing}
+              className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold transition ${
+                product.isSyncing
+                  ? "bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed"
+                  : "bg-slate-800 text-slate-200 hover:bg-slate-700 border border-slate-700 cursor-pointer"
+              }`}
             >
               ✏️ Chỉnh sửa
             </button>
@@ -379,7 +405,12 @@ export function ProductDetailDrawer({
               <button
                 type="button"
                 onClick={() => onReject(product.id)}
-                className="px-4 py-2 rounded-lg text-sm font-semibold bg-rose-950/60 text-rose-300 hover:bg-rose-900/80 border border-rose-800 transition cursor-pointer"
+                disabled={product.isSyncing}
+                className={`px-4 py-2 rounded-lg text-sm font-semibold transition ${
+                  product.isSyncing
+                    ? "bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed"
+                    : "bg-rose-950/60 text-rose-300 hover:bg-rose-900/80 border border-rose-800 cursor-pointer"
+                }`}
               >
                 ✕ Từ chối (Reject)
               </button>
@@ -387,9 +418,29 @@ export function ProductDetailDrawer({
               <button
                 type="button"
                 onClick={() => onApprove(product.id)}
-                className="px-4 py-2 rounded-lg text-sm font-semibold bg-emerald-600 text-white hover:bg-emerald-500 shadow-md shadow-emerald-900/30 transition cursor-pointer"
+                disabled={product.isSyncing}
+                className={`px-4 py-2 rounded-lg text-sm font-semibold transition flex items-center gap-2 ${
+                  product.isSyncing
+                    ? "bg-slate-800 text-slate-400 border border-slate-700 cursor-not-allowed"
+                    : product.reviewDecision === "approved"
+                      ? "bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 cursor-pointer"
+                      : "bg-emerald-600 text-white hover:bg-emerald-500 shadow-md shadow-emerald-900/30 cursor-pointer"
+                }`}
               >
-                ✓ Phê duyệt (Approve)
+                {product.isSyncing ? (
+                  <>
+                    <svg className="animate-spin h-4 w-4 text-cyan-400" viewBox="0 0 24 24" fill="none">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                    </svg>
+                    <span>Đang đồng bộ Shopify...</span>
+                  </>
+                ) : (
+                  <>
+                    <span>✓</span>
+                    <span>{product.reviewDecision === "approved" ? "Đã duyệt (Đồng bộ lại)" : "Phê duyệt (Approve)"}</span>
+                  </>
+                )}
               </button>
             </div>
           </div>

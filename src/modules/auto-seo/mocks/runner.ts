@@ -76,11 +76,15 @@ export class MockAutoSeoClient implements AutoSeoClient {
     if (targetStoreId === "capozen") {
       return {
         ...cloned,
+        storeId: "capozen",
         vendor: "Capozen",
         title: `[Capozen] ${cloned.title}`,
       };
     }
-    return cloned;
+    return {
+      ...cloned,
+      storeId: targetStoreId || cloned.storeId || "store-us-primary",
+    };
   }
 
   public getCachedDetail(productId: string, storeId?: string): ShopifyProductForAutoSeoUi | undefined {
@@ -112,12 +116,17 @@ export class MockAutoSeoClient implements AutoSeoClient {
     if (targetStoreId === "capozen") {
       const capozenProducts = mockShopifyProducts.map((p) => ({
         ...(JSON.parse(JSON.stringify(p)) as ShopifyProductForAutoSeoUi),
+        storeId: "capozen",
         vendor: "Capozen",
         title: `[Capozen] ${p.title}`,
       }));
       return capozenProducts;
     }
-    return JSON.parse(JSON.stringify(mockShopifyProducts)) as ShopifyProductForAutoSeoUi[];
+    const cloned = JSON.parse(JSON.stringify(mockShopifyProducts)) as ShopifyProductForAutoSeoUi[];
+    return cloned.map((p) => ({
+      ...p,
+      storeId: targetStoreId || p.storeId || "store-us-primary",
+    }));
   }
 
   public async getStoreInfo(storeId?: string): Promise<{ storeId: string; shopDomain: string }> {

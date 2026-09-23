@@ -354,6 +354,19 @@ export function ProductListTable({
                           product.seoStatus.source === "mock",
                         )}
                       </div>
+                      {product.lastSyncedAt && (
+                        <div className="text-[10px] text-emerald-400 font-medium">
+                          ✓ Synced
+                        </div>
+                      )}
+                      {product.syncError && (
+                        <div
+                          className="text-[10px] text-rose-400 font-medium truncate max-w-[100px] mx-auto cursor-help"
+                          title={product.syncError}
+                        >
+                          ⚠️ Lỗi sync
+                        </div>
+                      )}
                     </td>
 
                     {/* Actions */}
@@ -361,26 +374,39 @@ export function ProductListTable({
                       <div className="flex items-center justify-end gap-1">
                         <button
                           type="button"
-                          title="Phê duyệt nhanh"
+                          title={product.isSyncing ? "Đang đồng bộ..." : "Phê duyệt nhanh"}
                           onClick={() => onApproveProduct(product.id)}
-                          className={`p-1.5 rounded-lg text-xs font-semibold transition cursor-pointer ${
-                            product.reviewDecision === "approved"
-                              ? "bg-emerald-600/30 text-emerald-300 border border-emerald-500/40"
-                              : "text-emerald-400 hover:bg-emerald-950/60 border border-emerald-800/40 hover:border-emerald-600"
+                          disabled={product.isSyncing}
+                          className={`p-1.5 rounded-lg text-xs font-semibold transition ${
+                            product.isSyncing
+                              ? "bg-slate-800 text-slate-400 cursor-not-allowed border border-slate-700"
+                              : product.reviewDecision === "approved"
+                                ? "bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 cursor-pointer"
+                                : "text-emerald-400 hover:bg-emerald-950/60 border border-emerald-800/40 hover:border-emerald-600 cursor-pointer"
                           }`}
                           aria-label="Phê duyệt"
                         >
-                          ✓
+                          {product.isSyncing ? (
+                            <svg className="animate-spin h-3.5 w-3.5 text-cyan-400" viewBox="0 0 24 24" fill="none">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                            </svg>
+                          ) : (
+                            "✓"
+                          )}
                         </button>
 
                         <button
                           type="button"
                           title="Từ chối nhanh"
                           onClick={() => onRejectProduct(product.id)}
-                          className={`p-1.5 rounded-lg text-xs font-semibold transition cursor-pointer ${
-                            product.reviewDecision === "rejected"
-                              ? "bg-rose-950 text-rose-300 border border-rose-700"
-                              : "text-rose-400 hover:bg-rose-950/60 border border-rose-800/40 hover:border-rose-600"
+                          disabled={product.isSyncing}
+                          className={`p-1.5 rounded-lg text-xs font-semibold transition ${
+                            product.isSyncing
+                              ? "text-slate-500 border border-slate-800 cursor-not-allowed"
+                              : product.reviewDecision === "rejected"
+                                ? "bg-rose-950 text-rose-300 border border-rose-700 cursor-pointer"
+                                : "text-rose-400 hover:bg-rose-950/60 border border-rose-800/40 hover:border-rose-600 cursor-pointer"
                           }`}
                           aria-label="Từ chối"
                         >
@@ -389,9 +415,14 @@ export function ProductListTable({
 
                         <button
                           type="button"
-                          title="Chỉnh sửa nội dung"
+                          title={product.isSyncing ? "Không thể chỉnh sửa khi đang đồng bộ" : "Chỉnh sửa nội dung"}
                           onClick={() => onEditProduct(product)}
-                          className="p-1.5 rounded-lg text-xs font-medium text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 border border-slate-700 transition cursor-pointer"
+                          disabled={product.isSyncing}
+                          className={`p-1.5 rounded-lg text-xs font-medium border transition ${
+                            product.isSyncing
+                              ? "text-slate-500 border-slate-800 cursor-not-allowed bg-slate-900"
+                              : "text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 border-slate-700 cursor-pointer"
+                          }`}
                         >
                           ✏️
                         </button>
@@ -575,28 +606,71 @@ export function ProductListTable({
                           </div>
 
                           {/* Quick Bottom Actions */}
-                          <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800/80">
-                            <button
-                              type="button"
-                              onClick={() => onEditProduct(product)}
-                              className="px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-300 transition cursor-pointer"
-                            >
-                              ✏️ Chỉnh sửa nội dung
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => onRejectProduct(product.id)}
-                              className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-rose-950/70 text-rose-300 hover:bg-rose-900 border border-rose-800 transition cursor-pointer"
-                            >
-                              ✕ Từ chối
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => onApproveProduct(product.id)}
-                              className="px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-emerald-600 text-white hover:bg-emerald-500 shadow-md shadow-emerald-900/30 transition cursor-pointer"
-                            >
-                              ✓ Phê duyệt
-                            </button>
+                          <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-800/80">
+                            <div className="flex items-center gap-2">
+                              {product.syncError && (
+                                <span className="text-xs text-rose-300 bg-rose-950/40 border border-rose-900/60 px-2.5 py-1 rounded-lg">
+                                  <span className="font-bold">⚠️ Lỗi sync:</span> {product.syncError}
+                                </span>
+                              )}
+                              {product.lastSyncedAt && (
+                                <span className="text-xs text-emerald-300 bg-emerald-950/40 border border-emerald-900/60 px-2.5 py-1 rounded-lg">
+                                  <span className="font-bold">✓ Đã sync Shopify:</span>{" "}
+                                  {new Date(product.lastSyncedAt).toLocaleString()}
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => onEditProduct(product)}
+                                disabled={product.isSyncing}
+                                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${
+                                  product.isSyncing
+                                    ? "bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700"
+                                    : "bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 cursor-pointer"
+                                }`}
+                              >
+                                ✏️ Chỉnh sửa nội dung
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => onRejectProduct(product.id)}
+                                disabled={product.isSyncing}
+                                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
+                                  product.isSyncing
+                                    ? "bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed"
+                                    : "bg-rose-950/70 text-rose-300 hover:bg-rose-900 border border-rose-800 cursor-pointer"
+                                }`}
+                              >
+                                ✕ Từ chối
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => onApproveProduct(product.id)}
+                                disabled={product.isSyncing}
+                                className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 ${
+                                  product.isSyncing
+                                    ? "bg-slate-800 text-slate-400 border border-slate-700 cursor-not-allowed"
+                                    : "bg-emerald-600 text-white hover:bg-emerald-500 shadow-md shadow-emerald-900/30 cursor-pointer"
+                                }`}
+                              >
+                                {product.isSyncing ? (
+                                  <>
+                                    <svg className="animate-spin h-3.5 w-3.5 text-cyan-400" viewBox="0 0 24 24" fill="none">
+                                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                                    </svg>
+                                    <span>Đang đồng bộ...</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <span>✓</span>
+                                    <span>Phê duyệt</span>
+                                  </>
+                                )}
+                              </button>
+                            </div>
                           </div>
                         </div>
                       </td>

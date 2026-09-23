@@ -25,9 +25,11 @@ import type {
 
 function mapShopifyProductToUi(
   product: ShopifyProduct,
+  storeId?: string,
 ): ShopifyProductForAutoSeoUi {
   return {
     id: product.id,
+    storeId: storeId ?? (product as unknown as { storeId?: string }).storeId,
     title: product.title,
     handle: product.handle,
     description: product.description,
@@ -324,7 +326,7 @@ export class AutoSeoModuleApiClient implements AutoSeoClient {
             !seenProductIds.has(product.id.trim())
           ) {
             seenProductIds.add(product.id.trim());
-            products.push(mapShopifyProductToUi(product));
+            products.push(mapShopifyProductToUi(product, store.storeId));
           }
         }
 
@@ -461,7 +463,7 @@ export class AutoSeoModuleApiClient implements AutoSeoClient {
         );
       }
 
-      const uiProduct = mapShopifyProductToUi(product);
+      const uiProduct = mapShopifyProductToUi(product, storeId);
       const currentVersion = this.detailVersions.get(cacheKey) ?? 0;
       if (requestVersion >= currentVersion) {
         this.detailVersions.set(cacheKey, requestVersion);

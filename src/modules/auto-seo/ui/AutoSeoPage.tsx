@@ -296,11 +296,17 @@ export function AutoSeoPage({
         selectedProductIds,
       });
 
+      const effectiveStoreId = selectedStoreId || storeInfo.storeId;
+      const productsWithStore = hydratedProducts.map((p) => ({
+        ...p,
+        storeId: p.storeId || effectiveStoreId,
+      }));
+
       setAutoSeoOutput(result);
-      setAutoSeoLastHydratedProducts(hydratedProducts);
+      setAutoSeoLastHydratedProducts(productsWithStore);
 
       if (onHandoverToSeo) {
-        await onHandoverToSeo(hydratedProducts);
+        await onHandoverToSeo(productsWithStore, effectiveStoreId);
         navigate("/seo-review");
       }
     } catch (err) {
@@ -321,7 +327,22 @@ export function AutoSeoPage({
     setErrorMessage(null);
 
     try {
-      await onHandoverToSeo(lastHydratedProducts);
+      let effectiveStoreId = selectedStoreId || lastHydratedProducts.find((p) => p.storeId)?.storeId;
+      if (!effectiveStoreId) {
+        try {
+          const info = await activeClient.getStoreInfo();
+          if (info?.storeId) {
+            effectiveStoreId = info.storeId;
+          }
+        } catch {
+          // Ignore error resolving store info
+        }
+      }
+      const productsWithStore = lastHydratedProducts.map((p) => ({
+        ...p,
+        storeId: p.storeId || effectiveStoreId,
+      }));
+      await onHandoverToSeo(productsWithStore, effectiveStoreId);
       navigate("/seo-review");
     } catch (err) {
       setErrorMessage(
