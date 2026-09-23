@@ -1,6 +1,8 @@
 export {
   createCustomizationGatewayAdapter,
   createShopifyGatewayAdapter,
+  isShopifyProductGid,
+  normalizeShopifyProductGid,
   resolveShopifyProductForSync,
 } from "./gateway-adapter";
 export type {
@@ -93,6 +95,7 @@ export type {
   ShopifyProduct,
   ShopifyProductBulkUpdateItem,
   ShopifyProductInput,
+  ShopifyProductMetafieldInput,
   ShopifyProductUpdateInput,
   ShopifyProductVariant,
   ShopifyProductsBulkUpdateData,

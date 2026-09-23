@@ -41,7 +41,8 @@ const EXTENSION_MIME_MAP: Readonly<Record<string, SupportedImageMimeType>> = {
 
 export function detectMimeTypeFromFilename(filenameOrUrl: string): SupportedImageMimeType | undefined {
   const clean = filenameOrUrl.split(/[?#]/)[0] ?? "";
-  const ext = path.extname(clean).toLowerCase();
+  const dotIndex = clean.lastIndexOf(".");
+  const ext = dotIndex !== -1 ? clean.slice(dotIndex).toLowerCase() : "";
   return EXTENSION_MIME_MAP[ext];
 }
 
@@ -64,7 +65,14 @@ export async function prepareProductImagePayload(
   // Priority 1: localFilePath
   if (image.localFilePath && image.localFilePath.trim()) {
     const rawPath = image.localFilePath.trim();
-    const resolvedPath = path.resolve(rawPath);
+    let resolvedPath = rawPath;
+    try {
+      if (typeof path !== "undefined" && typeof path.resolve === "function") {
+        resolvedPath = path.resolve(rawPath);
+      }
+    } catch {
+      resolvedPath = rawPath;
+    }
     const mimeType = detectMimeTypeFromFilename(resolvedPath);
     if (!mimeType) {
       throw new InvalidImagePayloadError(

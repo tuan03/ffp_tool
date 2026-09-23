@@ -65,16 +65,21 @@ export function createDefaultKeywordConflictAnalyzer(
             arg.endsWith(".test.mjs"),
         )));
 
+  const isBrowser =
+    typeof window !== "undefined" && typeof window.document !== "undefined";
+
   const isTestEnvironment = env?.NODE_ENV === "test" || isTestRunner;
 
   // Resolve conflict corpus: injected dependency -> configured file path -> empty corpus
   const conflictCorpus: SeoConflictCorpus =
     dependencies?.conflictCorpus ??
-    (corpusPath
-      ? new FileSeoConflictCorpus({ filePath: corpusPath })
-      : isTestEnvironment
-        ? new EmptySeoConflictCorpus()
-        : new FileSeoConflictCorpus());
+    (isBrowser
+      ? new EmptySeoConflictCorpus()
+      : corpusPath
+        ? new FileSeoConflictCorpus({ filePath: corpusPath })
+        : isTestEnvironment
+          ? new EmptySeoConflictCorpus()
+          : new FileSeoConflictCorpus());
 
   // If explicitly local/fallback or in test environment without explicit vertex override
   if (
@@ -136,8 +141,12 @@ export function createB4ConflictControlStage(
   };
 }
 
-export const b4ConflictControlStage: SeoPipelineStage =
-  createB4ConflictControlStage();
+export const b4ConflictControlStage: SeoPipelineStage = {
+  name: "b4",
+  async execute(context: SeoPipelineContext): Promise<SeoPipelineContext> {
+    return executeB4ConflictControl(context);
+  },
+};
 
 export async function executeB4ConflictControl(
   context: SeoPipelineContext,

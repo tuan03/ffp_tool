@@ -47,6 +47,7 @@ export type {
   PinterestPodDeliverables,
   PinterestPodSeoBatchResult,
   PinterestPodSeoItemResult,
+  PinterestPodSeoOptions,
   PodComposedMockupSpec,
   PodCutoutSpec,
   PodDeliverableItem,

@@ -1,6 +1,9 @@
-import * as path from "node:path";
-
 import { cleanSlug } from "../content-generation/slug-utils";
+
+function getBasename(filePathOrName: string): string {
+  const parts = filePathOrName.split(/[/\\]/);
+  return parts[parts.length - 1] || filePathOrName;
+}
 
 export interface WebpFilenameOptions {
   readonly productHandle?: string;
@@ -24,7 +27,7 @@ export function generateWebpFilename(options: WebpFilenameOptions): string {
 
   let stem = "";
   if (productHandle && productHandle.trim().length > 0) {
-    const raw = path.basename(productHandle.trim());
+    const raw = getBasename(productHandle.trim());
     const slug = cleanSlug(raw, 80);
     if (slug && slug !== "product") {
       stem = slug;
@@ -32,7 +35,7 @@ export function generateWebpFilename(options: WebpFilenameOptions): string {
   }
 
   if (!stem && primaryKeyword && primaryKeyword.trim().length > 0) {
-    const raw = path.basename(primaryKeyword.trim());
+    const raw = getBasename(primaryKeyword.trim());
     const slug = cleanSlug(raw, 80);
     if (slug && slug !== "product") {
       stem = slug;
@@ -40,7 +43,7 @@ export function generateWebpFilename(options: WebpFilenameOptions): string {
   }
 
   if (!stem && productTitle && productTitle.trim().length > 0) {
-    const raw = path.basename(productTitle.trim());
+    const raw = getBasename(productTitle.trim());
     const slug = cleanSlug(raw, 80);
     if (slug && slug !== "product") {
       stem = slug;
@@ -53,8 +56,7 @@ export function generateWebpFilename(options: WebpFilenameOptions): string {
 
   // Ensure stem is safe from path traversal: extract basename and sanitize
   const safeStem =
-    path
-      .basename(stem)
+    getBasename(stem)
       .replace(/[^a-z0-9-]+/g, "-")
       .replace(/^-+|-+$/g, "") || "product-image";
 

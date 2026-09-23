@@ -1,6 +1,8 @@
 import { NavLink, Outlet } from "react-router-dom";
 
 import { environment } from "../config/environment";
+import { NotificationPermissionBadge } from "./components/NotificationPermissionBadge";
+import { NotificationToastContainer } from "./components/NotificationToastContainer";
 
 export function AppLayout(): React.JSX.Element {
   return (
@@ -19,20 +21,6 @@ export function AppLayout(): React.JSX.Element {
             </NavLink>
 
             <nav className="flex items-center gap-2 text-xs font-medium">
-
-              <NavLink
-                to="/product-crawler"
-                className={({ isActive }) =>
-                  `rounded-lg px-3 py-1.5 transition ${
-                    isActive
-                      ? "bg-slate-800 font-semibold text-cyan-300"
-                      : "text-slate-400 hover:bg-slate-800/60 hover:text-slate-200"
-                  }`
-                }
-              >
-                🛒 Product Crawler
-              </NavLink>
-
               <NavLink
                 to="/amazon-crawler"
                 className={({ isActive }) =>
@@ -73,7 +61,7 @@ export function AppLayout(): React.JSX.Element {
               </NavLink>
 
               <NavLink
-                to="/workflow-demo"
+                to="/seo-review"
                 className={({ isActive }) =>
                   `rounded-lg px-3 py-1.5 transition ${
                     isActive
@@ -82,24 +70,28 @@ export function AppLayout(): React.JSX.Element {
                   }`
                 }
               >
-                ⚙️ Workflow Demo
+                📝 SEO Review
               </NavLink>
             </nav>
           </div>
 
-          <div className="flex items-center gap-2">
-            <span className="text-[11px] text-slate-500 font-mono">env:</span>
-            <span
-              className={`rounded-full px-2.5 py-0.5 text-xs font-semibold uppercase ${
-                environment === "mock"
-                  ? "bg-amber-950/70 border border-amber-800 text-amber-300"
-                  : environment === "production"
-                    ? "bg-emerald-950/70 border border-emerald-800 text-emerald-300"
-                    : "bg-cyan-950/70 border border-cyan-800 text-cyan-300"
-              }`}
-            >
-              {environment}
-            </span>
+          <div className="flex items-center gap-3">
+            <NotificationPermissionBadge />
+
+            <div className="flex items-center gap-1.5 border-l border-slate-800 pl-3">
+              <span className="text-[11px] text-slate-500 font-mono">env:</span>
+              <span
+                className={`rounded-full px-2.5 py-0.5 text-xs font-semibold uppercase ${
+                  environment === "mock"
+                    ? "bg-amber-950/70 border border-amber-800 text-amber-300"
+                    : environment === "production"
+                      ? "bg-emerald-950/70 border border-emerald-800 text-emerald-300"
+                      : "bg-cyan-950/70 border border-cyan-800 text-cyan-300"
+                }`}
+              >
+                {environment}
+              </span>
+            </div>
           </div>
         </div>
       </header>
@@ -108,6 +100,9 @@ export function AppLayout(): React.JSX.Element {
       <main className="flex-1 w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
         <Outlet />
       </main>
+
+      {/* Floating In-App Toast Container */}
+      <NotificationToastContainer />
     </div>
   );
 }

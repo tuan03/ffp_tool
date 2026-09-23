@@ -112,24 +112,15 @@ interface PipelineTimings {
   totalMs?: number;
 }
 
-if (!storeId) {
-  throw new Error("GATEWAY_STORE_ID is required for the Shopify pipeline worker.");
-}
-
 const configuredStores = loadBootstrappedStores({ env });
-const baseStore = configuredStores.find((store) => store.storeId === storeId);
-if (!baseStore) {
-  throw new Error(`Shopify store '${storeId}' was not found in server configuration.`);
-}
-const shopAdminHandle = baseStore.shopDomain.replace(/\.myshopify\.com$/i, "");
-const proxyStores = configuredStores.filter(
-  (store) => store.storeId.startsWith(`${storeId}--`) && store.proxy?.url && store.proxy.failClosed !== false,
-);
-if (proxyStores.length === 0) {
-  throw new Error(
-    "No enabled Shopify proxy profiles were found. Configure SHOPIFY_PROXY_CONFIG or config/amazon-crawler-profiles.json.",
-  );
-}
+const baseStore = storeId ? configuredStores.find((store) => store.storeId === storeId) : undefined;
+const shopAdminHandle = baseStore ? baseStore.shopDomain.replace(/\.myshopify\.com$/i, "") : "";
+const proxyStores = storeId
+  ? configuredStores.filter(
+      (store) => store.storeId.startsWith(`${storeId}--`) && store.proxy?.url && store.proxy.failClosed !== false,
+    )
+  : [];
+const effectiveStores = proxyStores.length > 0 ? proxyStores : (baseStore ? [baseStore] : []);
 
 let gatewayServer: ReturnType<typeof startGatewayServer> | undefined;
 if (!env.SHOPIFY_GATEWAY_URL) {
@@ -762,8 +753,10 @@ async function processClaim(
 }
 
 async function workerLoop(workerIndex: number): Promise<void> {
-  const proxyStore = proxyStores[workerIndex % proxyStores.length];
-  const proxyProfile = proxyStore.storeId.slice(`${storeId}--`.length);
+  const proxyStore = effectiveStores[workerIndex % effectiveStores.length];
+  const proxyProfile = storeId && proxyStore.storeId.startsWith(`${storeId}--`)
+    ? proxyStore.storeId.slice(`${storeId}--`.length)
+    : "direct";
   const workerId = `${hostname()}-${process.pid}-${workerIndex + 1}`;
   for (;;) {
     try {
@@ -832,9 +825,18 @@ process.on("SIGINT", stop);
 process.on("SIGTERM", stop);
 
 async function main(): Promise<void> {
+  if (!storeId || !baseStore) {
+    console.warn(
+      `[Shopify pipeline] ${!storeId ? "GATEWAY_STORE_ID is not configured" : `Shopify store '${storeId}' was not found in server configuration`}. Pipeline worker will remain idle.`,
+    );
+    await new Promise(() => {});
+    return;
+  }
   await waitForCoordinator();
   console.log(
-    `[Shopify pipeline] ${workerCount} workers, ${proxyStores.length} fail-closed proxy profiles, store ${storeId}.`,
+    proxyStores.length > 0
+      ? `[Shopify pipeline] ${workerCount} workers, ${proxyStores.length} fail-closed proxy profiles, store ${storeId}.`
+      : `[Shopify pipeline] ${workerCount} workers running in direct mode (no proxy profiles configured), store ${storeId}.`,
   );
   const workers = Array.from({ length: workerCount }, (_, index) => workerLoop(index));
   await Promise.all(workers);

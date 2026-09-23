@@ -389,6 +389,10 @@ export interface AmazonCrawlerClientsLoader {
   (): Promise<AmazonCrawlerClientSummary[]>;
 }
 
+export type AmazonCrawlerHandoverHandler = (
+  products: readonly AmazonCrawlerProduct[],
+) => Promise<void> | void;
+
 export interface ImageProcessingProfile {
   slug: string;
   name: string;

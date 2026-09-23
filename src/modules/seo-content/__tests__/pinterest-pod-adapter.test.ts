@@ -65,27 +65,19 @@ describe("Pinterest POD Adapter: fromPinterestPodItem & fromPinterestPodBatch", 
     assert.ok(seoInput.description.includes("Lifestyle Room Context: living room setting (Spacious modern living room with leather couch)"));
     assert.ok(seoInput.description.includes("bedroom setting (Cozy minimalist bedroom with hardwood floor)"));
 
-    // Kiểm tra trích xuất hình ảnh: White Bg -> Mockups -> Print Master RGB -> Transparent
-    assert.equal(seoInput.images.length, 5);
+    // Kiểm tra trích xuất hình ảnh: CHỈ lấy các ảnh AI Mockup (AI_background) cho Storefront
+    assert.equal(seoInput.images.length, 2);
 
-    // 1. Phôi nền trắng
-    assert.equal(seoInput.images[0].url, "/api/pinterest-pod/assets/wf_001/design_101_white.jpg");
-    assert.equal(seoInput.images[0].localFilePath, "temp/pinterest_pod/wf_001/design_101_white.jpg");
-    assert.ok(seoInput.images[0].alt?.includes("Clean White Background"));
+    // 1 & 2. Composed Mockups do AI render
+    assert.equal(seoInput.images[0].url, "/api/pinterest-pod/assets/wf_001/mockup_room_01_design_101.jpg");
+    assert.ok(seoInput.images[0].alt?.includes("styled in living room"));
+    assert.equal(seoInput.images[1].url, "/api/pinterest-pod/assets/wf_001/mockup_room_02_design_101.jpg");
+    assert.ok(seoInput.images[1].alt?.includes("styled in bedroom"));
 
-    // 2 & 3. Composed Mockups
-    assert.equal(seoInput.images[1].url, "/api/pinterest-pod/assets/wf_001/mockup_room_01_design_101.jpg");
-    assert.ok(seoInput.images[1].alt?.includes("styled in living room"));
-    assert.equal(seoInput.images[2].url, "/api/pinterest-pod/assets/wf_001/mockup_room_02_design_101.jpg");
-    assert.ok(seoInput.images[2].alt?.includes("styled in bedroom"));
-
-    // 4. Print Master RGB
-    assert.equal(seoInput.images[3].url, "/api/pinterest-pod/assets/wf_001/design_101_rgb_4k.png");
-    assert.ok(seoInput.images[3].alt?.includes("300 DPI"));
-
-    // 5. Transparent Cutout
-    assert.equal(seoInput.images[4].url, "/api/pinterest-pod/assets/wf_001/design_101_cutout.png");
-    assert.ok(seoInput.images[4].alt?.includes("Isolated Transparent"));
+    // Đảm bảo file in xưởng và phôi trắng không bị đưa vào media storefront
+    assert.ok(!seoInput.images.some((img) => img.url.includes("cmyk") || img.url.includes("rgb")));
+    assert.ok(!seoInput.images.some((img) => img.url.includes("white.jpg")));
+    assert.ok(!seoInput.images.some((img) => img.url.includes("cutout.png")));
   });
 
   it("suy luận đúng niche cho sản phẩm blanket và custom", () => {

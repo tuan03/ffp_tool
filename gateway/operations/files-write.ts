@@ -6,6 +6,7 @@ import { GatewayError, mapUserErrorsToGatewayError, type MutationUserErrorItem }
 import { createStoreTransport } from "../proxy-transport";
 import type { ShopifyGraphqlClient } from "../shopify-graphql-client";
 import type { HttpTransport, StoreConfig } from "../types";
+import { isLocalOrPrivateUrl, stageLocalMedia } from "./staged-uploads";
 
 export const FILE_CREATE_MUTATION = `
   mutation FileCreate($files: [FileCreateInput!]!) {
@@ -106,9 +107,10 @@ export async function executeFilesStageBinary(
   const value = payload && typeof payload === "object" ? payload as Record<string, unknown> : {};
   const filename = typeof value.filename === "string" ? value.filename.trim() : "";
   const mimeType = typeof value.mimeType === "string" ? value.mimeType.trim() : "";
+  const rawResource = typeof value.resource === "string" ? value.resource.trim().toUpperCase() : "";
   const contentBase64 = typeof value.contentBase64 === "string" ? value.contentBase64.trim() : "";
-  if (!filename || !/^image\/(?:jpeg|png|webp)$/i.test(mimeType) || !contentBase64) {
-    throw new GatewayError("filename, supported image mimeType and contentBase64 are required", "SHOPIFY_USER_ERROR", 400);
+  if (!filename || !contentBase64) {
+    throw new GatewayError("filename and contentBase64 are required", "SHOPIFY_USER_ERROR", 400);
   }
   let content: Buffer;
   try {
@@ -116,9 +118,25 @@ export async function executeFilesStageBinary(
   } catch (error: unknown) {
     throw new GatewayError("contentBase64 is invalid", "SHOPIFY_USER_ERROR", 400, undefined, error);
   }
-  if (content.length === 0 || content.length > 20 * 1024 * 1024) {
-    throw new GatewayError("Staged image must be between 1 byte and 20 MB", "SHOPIFY_USER_ERROR", 400);
+
+  const isGenericFile = rawResource === "FILE" || content.length > 20 * 1024 * 1024 || (Boolean(mimeType) && !/^image\/(?:jpeg|png|webp)$/i.test(mimeType));
+  const resource = isGenericFile ? "FILE" : "IMAGE";
+  const maxBytes = isGenericFile ? 1024 * 1024 * 1024 : 20 * 1024 * 1024;
+
+  if (content.length === 0 || content.length > maxBytes) {
+    throw new GatewayError(
+      `Staged ${isGenericFile ? "file" : "image"} must be between 1 byte and ${isGenericFile ? "1 GB" : "20 MB"}`,
+      "SHOPIFY_USER_ERROR",
+      400,
+    );
   }
+
+  if (!isGenericFile && (!mimeType || !/^image\/(?:jpeg|png|webp)$/i.test(mimeType))) {
+    throw new GatewayError("filename, supported image mimeType and contentBase64 are required", "SHOPIFY_USER_ERROR", 400);
+  }
+
+  const resolvedMimeType = mimeType || (isGenericFile ? "application/octet-stream" : "image/jpeg");
+
   if (mode === "preview") {
     return { resourceUrl: `https://cdn.shopify.com/staged/${encodeURIComponent(filename)}` };
   }
@@ -128,9 +146,9 @@ export async function executeFilesStageBinary(
     {
       input: [{
         filename,
-        mimeType,
+        mimeType: resolvedMimeType,
         httpMethod: "POST",
-        resource: "IMAGE",
+        resource,
         fileSize: String(content.length),
       }],
     },
@@ -150,7 +168,7 @@ export async function executeFilesStageBinary(
   for (const parameter of target.parameters) {
     form.append(parameter.name, parameter.value);
   }
-  form.append("file", new Blob([Uint8Array.from(content)], { type: mimeType }), filename);
+  form.append("file", new Blob([Uint8Array.from(content)], { type: resolvedMimeType }), filename);
   const transport = uploadTransport ?? createStoreTransport(store);
   let upload: Response;
   try {
@@ -329,8 +347,16 @@ export async function executeFilesCreate(
     };
   }
 
+  let resolvedSource = originalSource;
+  if (mode === "apply" && isLocalOrPrivateUrl(originalSource)) {
+    resolvedSource = await stageLocalMedia(store, client, originalSource, {
+      requestId,
+      resource: contentType === "FILE" ? "FILE" : undefined,
+    });
+  }
+
   const fileInput: Record<string, unknown> = {
-    originalSource,
+    originalSource: resolvedSource,
     contentType,
   };
   if (filename) {

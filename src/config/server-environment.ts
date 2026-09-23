@@ -5,12 +5,14 @@ let hasLoadedServerEnvironment = false;
 
 /** Loads server-only root .env.local values without exposing them to Vite clients. */
 export function loadServerEnvironment(): void {
+  if (typeof window !== "undefined") return;
   if (hasLoadedServerEnvironment) return;
   hasLoadedServerEnvironment = true;
   if (
-    process.env.NODE_ENV === "test" ||
-    process.execArgv.includes("--test") ||
-    process.argv.some((argument) => argument.endsWith(".test.ts") || argument.endsWith(".test.js"))
+    typeof process === "undefined" ||
+    process.env?.NODE_ENV === "test" ||
+    (Array.isArray(process.execArgv) && process.execArgv.includes("--test")) ||
+    (Array.isArray(process.argv) && process.argv.some((argument) => argument.endsWith(".test.ts") || argument.endsWith(".test.js")))
   ) {
     return;
   }

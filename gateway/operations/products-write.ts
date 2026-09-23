@@ -2,6 +2,7 @@ import { GatewayError, mapUserErrorsToGatewayError, type MutationUserErrorItem }
 import type { ShopifyGraphqlClient } from "../shopify-graphql-client";
 import type { GatewayErrorCode, ProductImageSummary, ProductSummary, ProductVariantSummary, StoreConfig } from "../types";
 import { mapProductNode, type RawProductNode } from "./products";
+import { ensureMediaPubliclyAccessible } from "./staged-uploads";
 
 const PRODUCT_CREATE_MUTATION = `
   mutation ProductCreate($product: ProductCreateInput!, $media: [CreateMediaInput!]) {
@@ -559,6 +560,31 @@ export async function executeProductsCreate(
     }
   }
 
+  if (Array.isArray(productInput.metafields) && productInput.metafields.length > 0) {
+    const validMetafields = (productInput.metafields as readonly Record<string, unknown>[])
+      .filter((m) => m && typeof m === "object")
+      .map((m) => {
+        const namespace = typeof m.namespace === "string" && m.namespace.trim() !== "" ? m.namespace.trim() : "custom";
+        const key = typeof m.key === "string" ? m.key.trim() : "";
+        let valStr: string;
+        if (typeof m.value === "string") {
+          valStr = m.value;
+        } else if (typeof m.value === "object" && m.value !== null) {
+          valStr = JSON.stringify(m.value);
+        } else if (m.value !== undefined && m.value !== null) {
+          valStr = String(m.value);
+        } else {
+          valStr = "";
+        }
+        const type = typeof m.type === "string" && m.type.trim() !== "" ? m.type.trim() : "single_line_text_field";
+        return { namespace, key, value: valStr, type };
+      })
+      .filter((m) => m.key !== "");
+    if (validMetafields.length > 0) {
+      input.metafields = validMetafields;
+    }
+  }
+
   if (Array.isArray(productInput.productOptions) && productInput.productOptions.length > 0) {
     input.productOptions = (productInput.productOptions as readonly { name: string; values?: unknown[] }[]).map((opt) => ({
       name: opt.name,
@@ -605,7 +631,11 @@ export async function executeProductsCreate(
     };
   }
 
-  const mediaList = extractMediaInputs(productInput.featuredImage, productInput.images, productInput.media);
+  const rawMediaList = extractMediaInputs(productInput.featuredImage, productInput.images, productInput.media);
+  const { mediaList, urlMap } = mode === "apply"
+    ? await ensureMediaPubliclyAccessible(store, client, rawMediaList, { requestId })
+    : { mediaList: rawMediaList, urlMap: new Map<string, string>() };
+
   const createVariables: Record<string, unknown> = { product: input };
   if (mediaList.length > 0) {
     createVariables.media = mediaList;
@@ -643,7 +673,11 @@ export async function executeProductsCreate(
         tracked: isTracked,
       };
       vInput.inventoryPolicy = isTracked ? "DENY" : "CONTINUE";
-      if (typeof v.mediaUrl === "string" && v.mediaUrl.trim()) vInput.mediaSrc = [v.mediaUrl.trim()];
+      if (typeof v.mediaUrl === "string" && v.mediaUrl.trim()) {
+        const rawMed = v.mediaUrl.trim();
+        const resolvedMed = urlMap.get(rawMed) ?? rawMed;
+        vInput.mediaSrc = [resolvedMed];
+      }
       if (Array.isArray(v.optionValues)) {
         vInput.optionValues = (v.optionValues as readonly Record<string, unknown>[]).map((ov) => {
           const optVal: Record<string, unknown> = {};
@@ -984,9 +1018,13 @@ export async function executeProductsUpdate(
     };
   }
 
+  const { mediaList: finalMediaList } = mode === "apply"
+    ? await ensureMediaPubliclyAccessible(store, client, mediaList, { requestId })
+    : { mediaList };
+
   const updateVariables: Record<string, unknown> = { product: input };
-  if (mediaList.length > 0) {
-    updateVariables.media = mediaList;
+  if (finalMediaList.length > 0) {
+    updateVariables.media = finalMediaList;
   }
 
   const raw = await client.query<ProductUpdateResponse>(

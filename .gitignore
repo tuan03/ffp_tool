@@ -8,6 +8,9 @@ Tool_crawer_New_update/
 .env.*
 .env.shopify
 *.tsbuildinfo
+.DS_Store
+stores.local.json
+stores.config.json
 *zip
 
 # Python & Local Server Artifacts
@@ -23,6 +26,7 @@ src/modules/pinterest-pod/server/.env
 **/.*oauth*.json
 pinterest_oauth_tokens.json
 
+# Amazon Distributed Crawler & Local Data Artifacts
 # Crawler & Gateway runtime/data
 .runtime/
 exports/
@@ -34,9 +38,6 @@ client-data/
 installer-output/
 config/amazon-crawler-profiles.json
 config/amazon-crawler-agent.json
-.DS_Store
-stores.local.json
-stores.config.json
 
 #=== [start] - module SEO Content - Lth Loi ===
 .agents

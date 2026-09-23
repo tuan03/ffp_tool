@@ -25,9 +25,23 @@ import type {
   SeoContentRunOptions,
 } from "./types";
 
-loadServerEnvironment();
+let defaultPipeline: ReturnType<typeof createSeoPipeline> | undefined;
 
-const defaultPipeline = createSeoPipeline({ siteNicheResolver: getDefaultSiteNicheResolver() });
+function getDefaultPipeline(): ReturnType<typeof createSeoPipeline> {
+  if (!defaultPipeline) {
+    if (typeof window === "undefined") {
+      try {
+        loadServerEnvironment();
+      } catch {
+        // Ignore in environments where .env files aren't readable
+      }
+    }
+    defaultPipeline = createSeoPipeline({
+      siteNicheResolver: getDefaultSiteNicheResolver(),
+    });
+  }
+  return defaultPipeline;
+}
 
 /**
  * Executes the SEO + Content pipeline for a single product.
@@ -36,7 +50,7 @@ const defaultPipeline = createSeoPipeline({ siteNicheResolver: getDefaultSiteNic
  * B1 (Understanding) -> B2 (Context) -> B3 (Search) -> B4 (Conflict) -> B5 (Content) -> B6 (Images).
  */
 export async function runSeoContent(input: SeoContentInput): Promise<SeoContentOutput> {
-  return defaultPipeline.execute(input);
+  return getDefaultPipeline().execute(input);
 }
 
 export function runSeoContentDetailed(
@@ -97,8 +111,8 @@ export async function runSeoContentDetailed(
   });
   const execution = await pipeline.executeDetailed(input);
   const generator = execution.context.contentGenerationMetadata?.generator ?? "heuristic";
-  const hasGeminiConfiguration = Boolean(process.env.GOOGLE_CLOUD_PROJECT?.trim());
-  const configuredEmbeddingProvider = process.env.SEO_EMBEDDING_PROVIDER?.trim().toLowerCase();
+  const hasGeminiConfiguration = typeof process !== "undefined" && Boolean(process.env?.GOOGLE_CLOUD_PROJECT?.trim());
+  const configuredEmbeddingProvider = typeof process !== "undefined" ? process.env?.SEO_EMBEDDING_PROVIDER?.trim().toLowerCase() : undefined;
   const fallbackStages = [...new Set([...observedFallbackStages, ...execution.fallbackStages])];
   const usedLocalEmbeddingFallback = hasGeminiConfiguration
     && !["local", "fallback"].includes(configuredEmbeddingProvider ?? "")

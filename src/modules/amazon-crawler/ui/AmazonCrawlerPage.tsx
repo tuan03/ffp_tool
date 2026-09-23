@@ -1,9 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
+
+import { notifyUser } from "../../../shared/utils";
 
 import {
   type AmazonCrawlerCacheClearer,
   type AmazonCrawlerClientSummary,
   type AmazonCrawlerClientsLoader,
+  type AmazonCrawlerHandoverHandler,
+  type AmazonCrawlerOutput,
   type AmazonCrawlerProgress,
   type AmazonCrawlerRunner,
   type AmazonCrawlerSettings,
@@ -22,8 +27,8 @@ import {
   startCrawlerJob,
   toggleCrawlerAdvancedOpen,
   toggleCrawlerBatchJsonOpen,
-  updateCrawlerSetting,
   updateCrawlerSession,
+  updateCrawlerSetting,
   useAmazonCrawlerSession,
 } from "./crawler-session";
 import { firstProductMediaUrl, resolveSelectedProduct } from "./product-selection";
@@ -33,7 +38,8 @@ interface AmazonCrawlerPageProps {
   clearAmazonCrawlerCache: AmazonCrawlerCacheClearer;
   loadAmazonCrawlerClients: AmazonCrawlerClientsLoader;
   runAmazonCrawler: AmazonCrawlerRunner;
-  retryAmazonCrawlerSyncs: AmazonCrawlerSyncRetrier;
+  onHandoverToSeo?: AmazonCrawlerHandoverHandler;
+  retryAmazonCrawlerSyncs?: AmazonCrawlerSyncRetrier;
   imageProcessingProfiles?: ImageProcessingProfileManager;
 }
 
@@ -84,7 +90,7 @@ function NumberSetting({
         min={min}
         type="number"
         value={value}
-        onChange={(event) => onChange(Math.min(max, Math.max(min, Number(event.target.value))))}
+        onChange={(event) => onChange(Number(event.target.value))}
       />
     </label>
   );
@@ -92,17 +98,19 @@ function NumberSetting({
 
 function moneyLabel(raw: string | undefined, amount: number | undefined): string {
   if (raw) return raw;
-  return amount === undefined ? "—" : `$${amount.toFixed(2)}`;
+  if (amount !== undefined) return `$${amount.toFixed(2)}`;
+  return "—";
 }
 
 function optionLabel(options: Record<string, string>): string {
-  const entries = Object.entries(options);
-  return entries.length === 0 ? "Default" : entries.map(([name, value]) => `${name}: ${value}`).join(" · ");
+  const pairs = Object.entries(options);
+  if (pairs.length === 0) return "Default";
+  return pairs.map(([key, val]) => `${key}: ${val}`).join(" · ");
 }
 
 function progressPhaseLabel(phase: AmazonCrawlerProgress["phase"]): string {
   const labels: Record<AmazonCrawlerProgress["phase"], string> = {
-    queued: "Đang chờ",
+    queued: "Chờ xử lý",
     product: "Sản phẩm / variant",
     variant_matrix: "Quét variant matrix",
     customization: "Amazon Customize",
@@ -116,7 +124,15 @@ function progressPhaseLabel(phase: AmazonCrawlerProgress["phase"]): string {
   return labels[phase];
 }
 
-export function AmazonCrawlerPage({ clearAmazonCrawlerCache, imageProcessingProfiles, loadAmazonCrawlerClients, retryAmazonCrawlerSyncs, runAmazonCrawler }: AmazonCrawlerPageProps): React.JSX.Element {
+export function AmazonCrawlerPage({
+  clearAmazonCrawlerCache,
+  imageProcessingProfiles,
+  loadAmazonCrawlerClients,
+  onHandoverToSeo,
+  retryAmazonCrawlerSyncs,
+  runAmazonCrawler,
+}: AmazonCrawlerPageProps): React.JSX.Element {
+  const navigate = useNavigate();
   const session = useAmazonCrawlerSession();
   const {
     urlText,
@@ -136,6 +152,8 @@ export function AmazonCrawlerPage({ clearAmazonCrawlerCache, imageProcessingProf
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
   const [isClearingCache, setIsClearingCache] = useState(false);
   const [cacheMessage, setCacheMessage] = useState<string | null>(null);
+  const [isHandingOver, setIsHandingOver] = useState(false);
+  const [handoverError, setHandoverError] = useState<string | null>(null);
   const [clients, setClients] = useState<AmazonCrawlerClientSummary[]>([]);
   const [clientError, setClientError] = useState<string | null>(null);
   const [isLoadingClients, setIsLoadingClients] = useState(true);
@@ -161,8 +179,19 @@ export function AmazonCrawlerPage({ clearAmazonCrawlerCache, imageProcessingProf
     () => resolveSelectedProduct(resultProducts, selectedProductId),
     [resultProducts, selectedProductId],
   );
-  const selectedPipelineTimings = formatPipelineTimings(selectedProduct?.pipeline?.shopify.timings);
   const activeMediaUrl = selectedMediaUrl ?? firstProductMediaUrl(selectedProduct);
+  const selectedPipelineTimings = formatPipelineTimings(selectedProduct?.pipeline?.shopify.timings);
+
+  useEffect(() => {
+    if (selectedProductId && resultProducts.some((product) => product.id === selectedProductId)) return;
+    const firstProduct = resultProducts[0] ?? null;
+    if (firstProduct) {
+      updateCrawlerSession({
+        selectedProductId: firstProduct.id,
+        selectedMediaUrl: firstProductMediaUrl(firstProduct),
+      });
+    }
+  }, [resultProducts, selectedProductId]);
 
   useEffect(() => {
     let isMounted = true;
@@ -397,7 +426,7 @@ export function AmazonCrawlerPage({ clearAmazonCrawlerCache, imageProcessingProf
   }
 
   async function handleRetrySyncs(): Promise<void> {
-    if (!output || isRetryingSync) return;
+    if (!output || isRetryingSync || !retryAmazonCrawlerSyncs) return;
     setIsRetryingSync(true);
     setSyncMessage(null);
     try {
@@ -412,8 +441,23 @@ export function AmazonCrawlerPage({ clearAmazonCrawlerCache, imageProcessingProf
         });
       }
       setSyncMessage(`Đã đưa ${retried.retried} product lỗi trở lại hàng đợi Shopify.`);
+      notifyUser({
+        title: "🛍️ Shopify Sync Retry hoàn tất",
+        message: `Đã đưa ${retried.retried} sản phẩm lỗi trở lại hàng đợi Shopify.`,
+        type: "info",
+        sound: "chime",
+        url: "/amazon-crawler",
+      });
     } catch (caught: unknown) {
-      setSyncMessage(caught instanceof Error ? caught.message : "Không thể retry Shopify sync.");
+      const errorMsg = caught instanceof Error ? caught.message : "Không thể retry Shopify sync.";
+      setSyncMessage(errorMsg);
+      notifyUser({
+        title: "❌ Shopify Sync Retry thất bại",
+        message: errorMsg,
+        type: "error",
+        sound: "alert",
+        url: "/amazon-crawler",
+      });
     } finally {
       setIsRetryingSync(false);
     }
@@ -442,6 +486,35 @@ export function AmazonCrawlerPage({ clearAmazonCrawlerCache, imageProcessingProf
       setCacheMessage(caught instanceof Error ? `Không thể xóa cache: ${caught.message}` : "Không thể xóa cache.");
     } finally {
       setIsClearingCache(false);
+    }
+  }
+
+  async function handleHandover(): Promise<void> {
+    if (!onHandoverToSeo || resultProducts.length === 0 || isHandingOver) return;
+    setIsHandingOver(true);
+    setHandoverError(null);
+    try {
+      await onHandoverToSeo(resultProducts);
+      notifyUser({
+        title: "📦 Bàn giao sang SEO Review",
+        message: `Đã bàn giao ${resultProducts.length} sản phẩm sang bộ phận SEO Review thành công!`,
+        type: "success",
+        sound: "chime",
+        url: "/seo-review",
+      });
+      navigate("/seo-review");
+    } catch (caught: unknown) {
+      const msg = caught instanceof Error ? caught.message : String(caught);
+      setHandoverError(`Lỗi khi bàn giao sang SEO Review: ${msg}`);
+      notifyUser({
+        title: "❌ Bàn giao SEO thất bại",
+        message: msg,
+        type: "error",
+        sound: "alert",
+        url: "/amazon-crawler",
+      });
+    } finally {
+      setIsHandingOver(false);
     }
   }
 
@@ -1061,15 +1134,40 @@ export function AmazonCrawlerPage({ clearAmazonCrawlerCache, imageProcessingProf
       <div className="flex flex-wrap gap-3">
         <button className="rounded-lg bg-cyan-400 px-5 py-2 font-semibold text-slate-950 disabled:opacity-50" disabled={urls.length === 0 || isRunning} type="button" onClick={() => void handleStart()}>Start ({urls.length})</button>
         <button className="rounded-lg border border-rose-400 px-5 py-2 font-semibold text-rose-300 disabled:opacity-50" disabled={!isRunning} type="button" onClick={handleStop}>Stop</button>
-        {output === null ? null : (
+        {output === null && resultProducts.length === 0 ? null : (
           <>
+            {onHandoverToSeo ? (
+              <button
+                className="flex items-center gap-2 rounded-lg bg-emerald-500 px-5 py-2 font-semibold text-slate-950 shadow-sm transition-colors hover:bg-emerald-400 disabled:opacity-50"
+                disabled={isRunning || isHandingOver || resultProducts.length === 0}
+                type="button"
+                onClick={() => void handleHandover()}
+              >
+                {isHandingOver ? (
+                  <>
+                    <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-slate-950 border-r-transparent" />
+                    <span>Đang xử lý SEO ({resultProducts.length} SP)...</span>
+                  </>
+                ) : (
+                  <>
+                    <span>✨ Bàn giao sang SEO Review ({resultProducts.length})</span>
+                  </>
+                )}
+              </button>
+            ) : null}
             <button className="rounded-lg border border-cyan-500 px-5 py-2 font-semibold text-cyan-300" type="button" onClick={handleDownload}>Tải JSON</button>
-            <button className="rounded-lg border border-slate-600 px-5 py-2 font-semibold text-slate-300 hover:border-rose-500 hover:text-rose-300 disabled:opacity-50" disabled={isRunning} type="button" onClick={resetCrawlerOutput}>Xóa kết quả</button>
+            <button className="rounded-lg border border-slate-600 px-5 py-2 font-semibold text-slate-300 hover:border-rose-500 hover:text-rose-300 disabled:opacity-50" disabled={isRunning || isHandingOver} type="button" onClick={resetCrawlerOutput}>Xóa kết quả</button>
           </>
         )}
         <button className="rounded-lg border border-amber-500 px-5 py-2 font-semibold text-amber-300 disabled:opacity-50" disabled={isRunning || isClearingCache} type="button" onClick={() => void handleClearCache()}>{isClearingCache ? "Đang xóa cache..." : "Xóa cache"}</button>
       </div>
       {cacheMessage === null ? null : <p className="text-sm text-amber-200">{cacheMessage}</p>}
+      {handoverError === null ? null : (
+        <div className="rounded-xl border border-rose-600 bg-rose-950/40 p-4 text-sm text-rose-200">
+          <p className="font-semibold text-rose-300">Không thể bàn giao sang SEO Review</p>
+          <p className="mt-1">{handoverError}</p>
+        </div>
+      )}
 
       {progress === null ? null : (
         <div className={`space-y-4 rounded-xl border p-4 ${progress.phase === "captcha" ? "border-amber-400 bg-amber-950/30" : "border-slate-700 bg-slate-950/50"}`}>
@@ -1148,18 +1246,37 @@ export function AmazonCrawlerPage({ clearAmazonCrawlerCache, imageProcessingProf
 
       {output === null && resultProducts.length === 0 ? null : (
         <section className="space-y-4">
-          {output ? <div className="grid gap-3 rounded-xl border border-slate-700 bg-slate-950/40 p-4 sm:grid-cols-4">
-            <p><span className="block text-xs text-slate-400">Products</span>{output.statistics.products}</p>
-            <p><span className="block text-xs text-slate-400">Source variants</span>{output.statistics.sourceVariants}</p>
-            <p><span className="block text-xs text-slate-400">Final variants</span>{output.statistics.finalVariants}</p>
-            <p><span className="block text-xs text-slate-400">Errors</span>{output.errors.length}</p>
-          </div> : <p className="rounded-xl border border-cyan-800 bg-cyan-950/20 p-3 text-sm text-cyan-200">Product sẽ xuất hiện tại đây ngay khi từng nhóm split hoàn tất; chuẩn hóa và Shopify tiếp tục chạy ở server.</p>}
+          {output ? (
+            <div className="grid gap-3 rounded-xl border border-slate-700 bg-slate-950/40 p-4 sm:grid-cols-4">
+              <p><span className="block text-xs text-slate-400">Products</span>{output.statistics.products}</p>
+              <p><span className="block text-xs text-slate-400">Source variants</span>{output.statistics.sourceVariants}</p>
+              <p><span className="block text-xs text-slate-400">Final variants</span>{output.statistics.finalVariants}</p>
+              <p><span className="block text-xs text-slate-400">Errors</span>{output.errors.length}</p>
+            </div>
+          ) : (
+            <p className="rounded-xl border border-cyan-800 bg-cyan-950/20 p-3 text-sm text-cyan-200">
+              Product sẽ xuất hiện tại đây ngay khi từng nhóm split hoàn tất; chuẩn hóa và Shopify tiếp tục chạy ở server.
+            </p>
+          )}
           {resultProducts.length === 0 ? (
             <p className="rounded-xl border border-slate-700 p-6 text-slate-400">Không có sản phẩm hợp lệ trong kết quả crawl.</p>
           ) : (
             <div className="grid items-start gap-5 lg:grid-cols-[minmax(17rem,22rem)_minmax(0,1fr)]">
               <aside className="max-h-[70vh] space-y-2 overflow-auto rounded-xl border border-slate-700 bg-slate-950/40 p-3">
-                <h2 className="px-2 pb-2 text-sm font-semibold text-slate-200">Tất cả sản phẩm</h2>
+                <div className="flex items-center justify-between px-2 pb-2">
+                  <h2 className="text-sm font-semibold text-slate-200">Tất cả sản phẩm</h2>
+                  {onHandoverToSeo ? (
+                    <button
+                      className="rounded bg-emerald-500 hover:bg-emerald-400 px-2 py-1 text-xs font-semibold text-slate-950 disabled:opacity-50 transition-colors"
+                      disabled={isRunning || isHandingOver}
+                      type="button"
+                      onClick={() => void handleHandover()}
+                      title="Bàn giao toàn bộ sản phẩm sang SEO Review"
+                    >
+                      {isHandingOver ? "Đang xử lý..." : "Bàn giao SEO ➔"}
+                    </button>
+                  ) : null}
+                </div>
                 {resultProducts.map((product) => {
                   const isSelected = product.id === selectedProduct?.id;
                   return (
@@ -1186,7 +1303,9 @@ export function AmazonCrawlerPage({ clearAmazonCrawlerCache, imageProcessingProf
                 })}
               </aside>
 
-              {selectedProduct === null ? null : (
+              {selectedProduct === null ? (
+                <div className="rounded-xl border border-slate-700 p-8 text-center text-slate-400">Chọn một sản phẩm để xem chi tiết.</div>
+              ) : (
                 <article className="min-w-0 space-y-5 rounded-xl border border-slate-700 bg-slate-950/30 p-4 sm:p-5">
                   <div className="grid gap-5 xl:grid-cols-[minmax(16rem,22rem)_minmax(0,1fr)]">
                     <div>
@@ -1205,10 +1324,10 @@ export function AmazonCrawlerPage({ clearAmazonCrawlerCache, imageProcessingProf
                         </div>
                       ) : null}
                     </div>
+
                     <div className="min-w-0">
-                      <p className="text-xs font-medium uppercase tracking-wide text-cyan-300">{selectedProduct.parentAsin}</p>
-                      <h2 className="mt-1 text-xl font-bold text-slate-100">{selectedProduct.title}</h2>
-                      <p className="mt-2 text-sm text-slate-400">Amazon title: {selectedProduct.sourceTitle}</p>
+                      <h3 className="text-xl font-bold text-slate-100">{selectedProduct.title}</h3>
+                      <p className="mt-2 font-mono text-xs text-cyan-300">ASIN gốc: {selectedProduct.parentAsin}</p>
                       <dl className="mt-4 grid gap-x-5 gap-y-2 text-sm sm:grid-cols-2">
                         <div><dt className="text-slate-500">Matrix</dt><dd>{selectedProduct.variantMatrix.discoveredCount}/{selectedProduct.variantMatrix.expectedCount} · {selectedProduct.variantMatrix.complete ? "Complete" : "Incomplete"}</dd></div>
                         <div><dt className="text-slate-500">Preset</dt><dd>{selectedProduct.preset ?? "—"}</dd></div>

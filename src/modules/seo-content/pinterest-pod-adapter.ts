@@ -75,14 +75,20 @@ export interface PinterestPodAdapterOptions {
 }
 
 /**
+ * Alias tương thích ngược cho PinterestPodAdapterOptions.
+ */
+export type PinterestPodSeoOptions = PinterestPodAdapterOptions;
+
+/**
  * Kết quả xử lý SEO cho từng mẫu thiết kế / sản phẩm riêng lẻ của Pinterest POD.
  */
 export interface PinterestPodSeoItemResult {
   readonly designId: string;
   readonly sourceCandidateId?: string;
   readonly productType: string;
-  readonly handle: string;
-  readonly deliverableItem: PodDeliverableItem;
+  readonly handle?: string;
+  readonly deliverableItem?: PodDeliverableItem;
+  readonly sourceItem: PodDeliverableItem;
   readonly seoInput: SeoContentInput;
   readonly seoOutput?: SeoContentOutput;
   readonly success: boolean;
@@ -90,40 +96,41 @@ export interface PinterestPodSeoItemResult {
 }
 
 /**
- * Kết quả tổng hợp của toàn bộ lô thành phẩm Pinterest POD sau khi qua Pipeline SEO.
+ * Kết quả xử lý tổng hợp theo lô (batch) từ Pinterest POD qua Pipeline SEO.
  */
 export interface PinterestPodSeoBatchResult {
-  readonly workflowId: string;
+  readonly workflowId?: string;
   readonly total: number;
   readonly successful: number;
   readonly failed: number;
-  /** Danh sách chi tiết kết quả từng sản phẩm */
   readonly items: readonly PinterestPodSeoItemResult[];
-  /** Danh sách JSON thuần các sản phẩm đã chuẩn hóa SEO (sẵn sàng đẩy lên Shopify hoặc review) */
   readonly seoOutputs: readonly SeoContentOutput[];
 }
 
 /**
- * Hàm slugify an toàn cho handle Shopify.
+ * Chuyển đổi text thô thành URL slug chuẩn SEO.
  */
-function slugify(text: string): string {
-  return text
-    .toLowerCase()
+function slugify(text: string, maxLength = 60): string {
+  const normalized = text
+    .replace(/[đĐ]/g, "d")
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
+
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+  return normalized.slice(0, maxLength).replace(/-+$/g, "");
 }
 
-/**
- * Suy luận ngành hàng (niche) từ loại sản phẩm và từ khóa trend.
- */
 function inferNiche(
   productType: string,
   trendKeywords?: readonly string[],
   defaultNiche = "Home Decor",
 ): string {
-  const normType = productType.toLowerCase();
+  const normType = (productType || "").toLowerCase();
   let baseCategory = defaultNiche;
   if (normType.includes("rug")) {
     baseCategory = "Home Decor > Rugs & Area Rugs";
@@ -140,7 +147,7 @@ function inferNiche(
 }
 
 /**
- * Tạo mô tả giàu ngữ cảnh (Rich Contextual Description) từ thông tin Pinterest POD:
+ * Sinh nội dung mô tả gốc ban đầu dựa vào thông tin Pinterest POD bàn giao.
  * Kết hợp tiêu đề gốc, từ khóa trend, và mô tả không gian phòng do AI Vision nhận diện.
  */
 function buildDescription(item: PodDeliverableItem): string {
@@ -204,17 +211,9 @@ function extractImages(item: PodDeliverableItem): SeoContentImageInput[] {
 
   const title = item.originalPinTitle || item.designId;
 
-  // 1. Ảnh chính đại diện: Phôi nền trắng sạch 1:1 chuẩn sàn thương mại điện tử
-  if (item.cutoutProduct?.whiteBgUrl) {
-    addImage(
-      item.cutoutProduct.whiteBgUrl,
-      `${title} - Clean White Background Product View`,
-      item.cutoutProduct.localFilePath,
-    );
-  }
-
-  // 2. Ảnh phối cảnh phòng sống động do AI render (Composed Mockups)
-  if (Array.isArray(item.composedMockups)) {
+  // 1. Ảnh quảng bá Storefront: CHỈ lấy các ảnh phối cảnh AI Mockup (AI_background) do AI render
+  const hasMockups = Array.isArray(item.composedMockups) && item.composedMockups.some((m) => Boolean(m?.mockupUrl));
+  if (hasMockups && Array.isArray(item.composedMockups)) {
     for (const mockup of item.composedMockups) {
       if (!mockup?.mockupUrl) continue;
       const scene = mockup.detectedSceneType || "living room";
@@ -222,25 +221,17 @@ function extractImages(item: PodDeliverableItem): SeoContentImageInput[] {
       const alt = desc ? `${title} styled in ${scene}: ${desc}` : `${title} in ${scene} setting`;
       addImage(mockup.mockupUrl, alt, mockup.localFilePath);
     }
-  }
-
-  // 3. Ảnh thiết kế in ấn xưởng hệ màu RGB / chi tiết họa tiết
-  if (item.printMaster?.rgbUrl) {
+  } else if (item.cutoutProduct?.whiteBgUrl) {
+    // Dự phòng an toàn: nếu chưa có mockup AI nào, lấy tạm ảnh phôi trắng để không bị trống ảnh sản phẩm
     addImage(
-      item.printMaster.rgbUrl,
-      `${title} - High Resolution Print Graphic Detail (300 DPI)`,
-      item.printMaster.localFilePath,
-    );
-  }
-
-  // 4. Ảnh phôi trong suốt (nếu có và chưa được thêm)
-  if (item.cutoutProduct?.transparentUrl) {
-    addImage(
-      item.cutoutProduct.transparentUrl,
-      `${title} - Isolated Transparent Product Cutout`,
+      item.cutoutProduct.whiteBgUrl,
+      `${title} - Clean White Background Product View`,
       item.cutoutProduct.localFilePath,
     );
   }
+
+  // Chú ý: Ảnh bản in (item.printMaster) được lưu độc quyền vào Shopify Metafields,
+  // tuyệt đối không đưa vào mảng images của storefront để tránh lộ file xưởng và tránh lỗi dung lượng 20MB.
 
   return images;
 }
@@ -298,24 +289,32 @@ export function fromPinterestPodBatch(
  * Nhận gói bàn giao từ Pinterest POD, tự động chuyển đổi và thực thi Pipeline SEO B1 → B6,
  * trả về kết quả batch tổng hợp đầy đủ và danh sách `seoOutputs` chuẩn hóa.
  *
- * @param deliverables Gói thành phẩm từ Pinterest POD.
+ * @param deliverables Gói thành phẩm từ Pinterest POD (hoặc mảng items).
  * @param options Tùy chọn runner, concurrency, default niche.
  * @returns Kết quả batch tổng hợp kèm danh sách JSON `seoOutputs`.
  */
 export async function runPinterestPodSeoPipeline(
-  deliverables: PinterestPodDeliverables,
+  deliverables: PinterestPodDeliverables | readonly PodDeliverableItem[],
   options: PinterestPodAdapterOptions = {},
 ): Promise<PinterestPodSeoBatchResult> {
   const runner = options.runner || runSeoContent;
   const concurrency = Math.max(1, Math.min(options.concurrency || 3, 10));
-  const rawItems = deliverables && Array.isArray(deliverables.items) ? deliverables.items : [];
+
+  const rawItems: readonly PodDeliverableItem[] = Array.isArray(deliverables)
+    ? deliverables
+    : deliverables && "items" in deliverables && Array.isArray(deliverables.items)
+      ? deliverables.items
+      : [];
+  const workflowId = !Array.isArray(deliverables) && deliverables && "workflowId" in deliverables
+    ? deliverables.workflowId
+    : "unknown_workflow";
 
   const items: PinterestPodSeoItemResult[] = [];
   const seoOutputs: SeoContentOutput[] = [];
 
   for (let i = 0; i < rawItems.length; i += concurrency) {
     const chunk = rawItems.slice(i, i + concurrency);
-    const chunkPromises = chunk.map(async (deliverableItem): Promise<PinterestPodSeoItemResult> => {
+    const chunkPromises = chunk.map(async (deliverableItem: PodDeliverableItem): Promise<PinterestPodSeoItemResult> => {
       const seoInput = fromPinterestPodItem(deliverableItem, options.defaultNiche);
       const designId = deliverableItem.designId || "";
       const sourceCandidateId = deliverableItem.sourceCandidateId;
@@ -330,6 +329,7 @@ export async function runPinterestPodSeoPipeline(
           productType,
           handle,
           deliverableItem,
+          sourceItem: deliverableItem,
           seoInput,
           seoOutput,
           success: true,
@@ -342,6 +342,7 @@ export async function runPinterestPodSeoPipeline(
           productType,
           handle,
           deliverableItem,
+          sourceItem: deliverableItem,
           seoInput,
           success: false,
           error: errorMessage,
@@ -362,7 +363,7 @@ export async function runPinterestPodSeoPipeline(
   const failed = items.length - successful;
 
   return {
-    workflowId: deliverables?.workflowId || "unknown_workflow",
+    workflowId,
     total: items.length,
     successful,
     failed,

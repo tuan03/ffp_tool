@@ -1,11 +1,8 @@
-import Database from "better-sqlite3";
-import fs from "node:fs";
-import path from "node:path";
-
 import { validateSafeUrl } from "../image-processing/image-source-loader";
 import { GoogleGenAIVertexContentGenerator } from "../product-understanding/gemini-content-generator";
 import {
   type HomepageNicheAnalyzer,
+  InMemorySiteNicheCache,
   type RenderedHomepageRenderer,
   type SiteNicheCache,
   SiteNicheResolver,
@@ -118,23 +115,50 @@ export function parseNicheResponse(rawText: string): string {
   return niche.trim();
 }
 
-class SqliteSiteNicheCache implements SiteNicheCache {
-  private readonly db: Database.Database;
+type BetterSqlite3Database = {
+  exec(sql: string): void;
+  prepare(sql: string): {
+    get(...params: unknown[]): unknown;
+    run(...params: unknown[]): unknown;
+  };
+};
 
-  public constructor() {
-    const cachePath = path.resolve(process.cwd(), ".local-data", "seo-content-niche.sqlite3");
-    fs.mkdirSync(path.dirname(cachePath), { recursive: true });
-    this.db = new Database(cachePath);
-    this.db.exec("CREATE TABLE IF NOT EXISTS site_niche_cache (domain TEXT PRIMARY KEY, niche TEXT NOT NULL, expires_at INTEGER NOT NULL)");
+class SqliteSiteNicheCache implements SiteNicheCache {
+  private dbPromise: Promise<BetterSqlite3Database> | undefined;
+
+  private async getDb(): Promise<BetterSqlite3Database> {
+    if (!this.dbPromise) {
+      this.dbPromise = (async () => {
+        const dynamicImport = new Function("specifier", "return import(specifier)") as (
+          specifier: string,
+        ) => Promise<unknown>;
+        const [databaseModule, fsModule, pathModule] = await Promise.all([
+          dynamicImport("better-sqlite3") as Promise<{ default?: new (filename: string) => BetterSqlite3Database } | (new (filename: string) => BetterSqlite3Database)>,
+          dynamicImport("node:fs") as Promise<{ default?: typeof import("node:fs") } & typeof import("node:fs")>,
+          dynamicImport("node:path") as Promise<{ default?: typeof import("node:path") } & typeof import("node:path")>,
+        ]);
+        const Database = (typeof databaseModule === "function" ? databaseModule : (databaseModule as { default: new (filename: string) => BetterSqlite3Database }).default);
+        const path = pathModule.default ?? pathModule;
+        const fs = fsModule.default ?? fsModule;
+        const cachePath = path.resolve(process.cwd(), ".local-data", "seo-content-niche.sqlite3");
+        fs.mkdirSync(path.dirname(cachePath), { recursive: true });
+        const db = new Database(cachePath);
+        db.exec("CREATE TABLE IF NOT EXISTS site_niche_cache (domain TEXT PRIMARY KEY, niche TEXT NOT NULL, expires_at INTEGER NOT NULL)");
+        return db;
+      })();
+    }
+    return this.dbPromise;
   }
 
   public async get(domain: string): Promise<string | undefined> {
-    const row = this.db.prepare("SELECT niche FROM site_niche_cache WHERE domain = ? AND expires_at > ?").get(domain, Date.now()) as { niche?: string } | undefined;
+    const db = await this.getDb();
+    const row = db.prepare("SELECT niche FROM site_niche_cache WHERE domain = ? AND expires_at > ?").get(domain, Date.now()) as { niche?: string } | undefined;
     return row?.niche;
   }
 
   public async set(domain: string, niche: string): Promise<void> {
-    this.db.prepare("INSERT INTO site_niche_cache(domain, niche, expires_at) VALUES (?, ?, ?) ON CONFLICT(domain) DO UPDATE SET niche = excluded.niche, expires_at = excluded.expires_at").run(domain, niche, Date.now() + 86_400_000);
+    const db = await this.getDb();
+    db.prepare("INSERT INTO site_niche_cache(domain, niche, expires_at) VALUES (?, ?, ?) ON CONFLICT(domain) DO UPDATE SET niche = excluded.niche, expires_at = excluded.expires_at").run(domain, niche, Date.now() + 86_400_000);
   }
 }
 
@@ -213,10 +237,28 @@ class GeminiHomepageNicheAnalyzer implements HomepageNicheAnalyzer {
 let defaultResolver: SiteNicheResolver | undefined;
 
 export function getDefaultSiteNicheResolver(): SiteNicheResolver {
+  if (typeof window !== "undefined") {
+    defaultResolver ??= new SiteNicheResolver({
+      cache: new InMemorySiteNicheCache(),
+      renderer: {
+        async render(): Promise<string> {
+          throw new Error("Homepage rendering is not supported in the browser");
+        },
+      },
+      analyzer: {
+        async analyze(): Promise<string> {
+          throw new Error("Homepage analysis is not supported in the browser");
+        },
+      },
+    });
+    return defaultResolver;
+  }
+
   const isTestEnvironment =
-    process.env.NODE_ENV === "test" ||
-    process.execArgv.includes("--test") ||
-    process.argv.some((argument) => argument.endsWith(".test.ts") || argument.endsWith(".test.js"));
+    typeof process !== "undefined" &&
+    (process.env?.NODE_ENV === "test" ||
+      (Array.isArray(process.execArgv) && process.execArgv.includes("--test")) ||
+      (Array.isArray(process.argv) && process.argv.some((argument) => argument.endsWith(".test.ts") || argument.endsWith(".test.js"))));
   defaultResolver ??= new SiteNicheResolver({
     cache: new SqliteSiteNicheCache(),
     renderer: isTestEnvironment
