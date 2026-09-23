@@ -1034,11 +1034,11 @@ test("inferProductTypeFromNiche correctly infers blanket, rug, custom, and defau
   assert.equal(inferProductTypeFromNiche("custom wooden wall art"), "custom");
   assert.equal(inferProductTypeFromNiche("CUSTOM PRINT DESIGN"), "custom");
 
-  // Other niches default to rug
-  assert.equal(inferProductTypeFromNiche("leather bag"), "rug");
-  assert.equal(inferProductTypeFromNiche("table wood aesthetic"), "rug");
-  assert.equal(inferProductTypeFromNiche("abstract wall art"), "rug");
-  assert.equal(inferProductTypeFromNiche(""), "rug");
+  // Other niches default to custom
+  assert.equal(inferProductTypeFromNiche("leather bag"), "custom");
+  assert.equal(inferProductTypeFromNiche("table wood aesthetic"), "custom");
+  assert.equal(inferProductTypeFromNiche("abstract wall art"), "custom");
+  assert.equal(inferProductTypeFromNiche(""), "custom");
 });
 
 test("RealPinterestPodClient.createJob infers product and forwards crawlCount parameters", async () => {

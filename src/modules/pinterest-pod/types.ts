@@ -24,7 +24,7 @@ export function inferProductTypeFromNiche(niche: string): PodProductType {
   if (lower.includes("custom")) {
     return "custom";
   }
-  return "rug";
+  return "custom";
 }
 
 /** Workflow stage for job execution */

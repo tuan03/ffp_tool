@@ -115,6 +115,7 @@ class ProductVisionFilter:
             flat_artwork_score=0.80 if is_off else 0.0,
             printability_score=0.75 if is_off else 0.0,
             reject_reason_code="" if is_off else "VISION_UNAVAILABLE",
+            error=reason,
             is_multi_panel_or_swatch=False,
             has_commercial_metadata_text=False,
             is_single_clean_artwork=is_off,
@@ -340,6 +341,7 @@ Image metadata:
             is_multi_panel_or_swatch = bool(item.get("is_multi_panel_or_swatch") or item.get("is_collage"))
             has_commercial_metadata_text = bool(item.get("has_commercial_metadata_text"))
             is_single_clean_artwork = bool(item.get("is_single_clean_artwork", True))
+            reject_reason_code = str(item.get("reject_reason_code") or "").strip()
 
             if is_multi_panel_or_swatch:
                 accepted = False
@@ -360,6 +362,8 @@ Image metadata:
                 accepted = False
                 source_role = "reject"
                 printability_score = min(printability_score, 0.2)
+                if not reject_reason_code:
+                    reject_reason_code = "REJECT_NOT_SINGLE_PRODUCT"
 
             output[image_id] = VisionResult(
                 image_id=image_id,

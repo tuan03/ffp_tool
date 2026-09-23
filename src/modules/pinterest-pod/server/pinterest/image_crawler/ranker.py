@@ -119,8 +119,12 @@ def inspiration_reject_reason(candidate: ImageCandidate, vision: VisionResult, p
         return "REJECT_LOW_MOTIF_CLARITY"
     if vision.trend_relevance < policy.min_trend_relevance:
         return "REJECT_LOW_TREND_RELEVANCE"
-    if vision.is_collage or main_subject == "collage" or product_type == "collage":
+    if vision.is_collage or main_subject == "collage" or product_type == "collage" or getattr(vision, "is_multi_panel_or_swatch", False):
         return "REJECT_COLLAGE"
+    if getattr(vision, "has_commercial_metadata_text", False):
+        return "REJECT_TEXT_BLOCK"
+    if hasattr(vision, "is_single_clean_artwork") and not vision.is_single_clean_artwork:
+        return "REJECT_NOT_SINGLE_PRODUCT"
     if vision.reject_reason_code:
         return vision.reject_reason_code
     if main_subject in {"text", "logo"} or product_type in {"not_usable", "unknown"}:
