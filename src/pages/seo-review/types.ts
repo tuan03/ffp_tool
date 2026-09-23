@@ -63,7 +63,7 @@ export interface SeoProductUiViewModel {
 export interface SeoReviewFilterState {
   readonly searchQuery: string;
   readonly statusFilter: "all" | SeoProcessingStatus;
-  readonly decisionFilter: "all" | ReviewDecision;
+  readonly decisionFilter: "all" | ReviewDecision | "sync_failed";
   readonly onlyMockData: boolean;
 }
 

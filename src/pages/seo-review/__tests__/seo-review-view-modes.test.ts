@@ -239,3 +239,31 @@ test("ImageZoom navigation bounds: wraps around correctly", () => {
   const nextFromMiddle = 1 < totalImages - 1 ? 1 + 1 : 0;
   assert.equal(nextFromMiddle, 2);
 });
+
+test("filterSeoProducts: filters by decisionFilter 'sync_failed' correctly", () => {
+  const sample = getInitialSampleViewModels();
+  const modified: SeoProductUiViewModel[] = [
+    { ...sample[0]!, reviewDecision: "approved", shopifySyncStatus: "synced" },
+    {
+      ...sample[1]!,
+      reviewDecision: "approved",
+      shopifySyncStatus: "failed",
+      shopifySyncError: "Shopify Gateway 504 Timeout",
+      shopifySyncedAt: Date.now(),
+    },
+    { ...sample[2]!, reviewDecision: "pending", shopifySyncStatus: "idle" },
+  ];
+
+  const failedOnly = filterSeoProducts(modified, {
+    searchQuery: "",
+    statusFilter: "all",
+    decisionFilter: "sync_failed",
+    onlyMockData: false,
+  });
+
+  assert.equal(failedOnly.length, 1);
+  assert.equal(failedOnly[0]!.id, modified[1]!.id);
+  assert.equal(failedOnly[0]!.shopifySyncStatus, "failed");
+  assert.equal(failedOnly[0]!.shopifySyncError, "Shopify Gateway 504 Timeout");
+});
+

@@ -6,6 +6,7 @@ export interface SeoBatchToolbarProps {
   readonly pendingCount?: number;
   readonly approvedCount?: number;
   readonly rejectedCount?: number;
+  readonly syncFailedCount?: number;
   readonly selectedCount: number;
   readonly filter: SeoReviewFilterState;
   readonly viewMode: SeoReviewViewMode;
@@ -27,6 +28,7 @@ export function SeoBatchToolbar({
   pendingCount = 0,
   approvedCount = 0,
   rejectedCount = 0,
+  syncFailedCount = 0,
   selectedCount,
   filter,
   viewMode,
@@ -117,6 +119,21 @@ export function SeoBatchToolbar({
               <span>Từ chối</span>
               <span className="text-[10px] opacity-80">({rejectedCount})</span>
             </button>
+            {syncFailedCount > 0 && (
+              <button
+                type="button"
+                onClick={() => onFilterChange({ decisionFilter: "sync_failed" })}
+                className={`px-2.5 py-1 rounded-lg font-medium transition cursor-pointer flex items-center gap-1 ${
+                  filter.decisionFilter === "sync_failed"
+                    ? "bg-rose-900/90 text-rose-200 font-bold shadow-sm border border-rose-600"
+                    : "text-rose-400 hover:text-rose-200"
+                }`}
+                title="Lọc các sản phẩm gặp lỗi khi đẩy lên Shopify"
+              >
+                <span>⚠️ Lỗi đẩy</span>
+                <span className="text-[10px] opacity-90">({syncFailedCount})</span>
+              </button>
+            )}
           </div>
 
           {/* View Mode Toggle: Cards vs Table vs Split */}

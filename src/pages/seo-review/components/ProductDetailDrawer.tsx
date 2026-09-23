@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 
 import { sanitizeHtmlDescription } from "../sanitize-html";
 import { buildProductZoomImages } from "../zoom-image-helper";
+import { ShopifySyncErrorBanner } from "./ShopifySyncErrorBanner";
 import { SourceBadge } from "./SourceBadge";
 import type { SeoProductUiViewModel, ZoomImageItem } from "../types";
 
@@ -170,6 +171,16 @@ export function ProductDetailDrawer({
               <div className="rounded-xl border border-rose-900/60 bg-rose-950/30 p-3.5 text-xs text-rose-300">
                 <span className="font-bold">Lý do từ chối / lỗi:</span> {product.rejectionReason}
               </div>
+            )}
+
+            {/* Shopify Sync Error Banner */}
+            {product.shopifySyncStatus === "failed" && (
+              <ShopifySyncErrorBanner
+                error={product.shopifySyncError}
+                syncedAt={product.shopifySyncedAt}
+                onRetry={onRetrySync ? () => onRetrySync(product.id) : undefined}
+                showDetailsByDefault={true}
+              />
             )}
 
             {/* 1. Product Title & Handle */}

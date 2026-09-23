@@ -67,8 +67,12 @@ export function filterSeoProducts(
       return false;
     }
 
-    // 3. Review Decision filter
-    if (filter.decisionFilter !== "all" && p.reviewDecision !== filter.decisionFilter) {
+    // 3. Review Decision filter / Sync Failed filter
+    if (filter.decisionFilter === "sync_failed") {
+      if (p.shopifySyncStatus !== "failed") {
+        return false;
+      }
+    } else if (filter.decisionFilter !== "all" && p.reviewDecision !== filter.decisionFilter) {
       return false;
     }
 

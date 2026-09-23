@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { sanitizeHtmlDescription } from "../sanitize-html";
 import { buildProductZoomImages } from "../zoom-image-helper";
 import { SeoSerpPreview } from "./SeoSerpPreview";
+import { ShopifySyncErrorBanner } from "./ShopifySyncErrorBanner";
 import { SourceBadge } from "./SourceBadge";
 import type { SeoProcessingStatus, SeoProductUiViewModel, ZoomImageItem } from "../types";
 
@@ -19,6 +20,7 @@ export interface ProductSplitViewProps {
   readonly onApproveAndNext: (id: string) => void;
   readonly onRejectAndNext: (id: string) => void;
   readonly onRetrySync?: (id: string) => void;
+  readonly onViewSyncError?: (product: SeoProductUiViewModel) => void;
   readonly onZoomImage?: (images: readonly ZoomImageItem[], initialIndex?: number) => void;
 }
 
@@ -35,6 +37,7 @@ export function ProductSplitView({
   onApproveAndNext,
   onRejectAndNext,
   onRetrySync,
+  onViewSyncError,
   onZoomImage,
 }: ProductSplitViewProps): React.JSX.Element {
   const [descriptionTab, setDescriptionTab] = useState<"formatted" | "raw">("formatted");
@@ -201,7 +204,20 @@ export function ProductSplitView({
       return (
         <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-rose-500/15 text-rose-300 border border-rose-500/30">
           <span className="h-1.5 w-1.5 rounded-full bg-rose-400" />
-          <span title={product.shopifySyncError || "Lỗi đồng bộ Shopify"}>Lỗi đẩy</span>
+          <span>Lỗi đẩy</span>
+          {onViewSyncError && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onViewSyncError(product);
+              }}
+              className="text-[10px] font-bold text-cyan-300 hover:text-white underline ml-0.5 cursor-pointer"
+              title="Xem thông báo lỗi chi tiết"
+            >
+              Chi tiết
+            </button>
+          )}
           {onRetrySync ? (
             <button
               type="button"
@@ -398,6 +414,15 @@ export function ProductSplitView({
                 <div className="rounded-lg border border-rose-900/60 bg-rose-950/30 p-2.5 text-xs text-rose-300">
                   <span className="font-bold">Lý do từ chối:</span> {activeProduct.rejectionReason}
                 </div>
+              )}
+
+              {/* Shopify Sync Error Banner */}
+              {activeProduct.shopifySyncStatus === "failed" && (
+                <ShopifySyncErrorBanner
+                  error={activeProduct.shopifySyncError}
+                  syncedAt={activeProduct.shopifySyncedAt}
+                  onRetry={onRetrySync ? () => onRetrySync(activeProduct.id) : undefined}
+                />
               )}
 
               {/* 1. Google SERP Preview */}

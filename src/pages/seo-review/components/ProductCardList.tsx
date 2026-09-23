@@ -3,6 +3,7 @@ import { useState } from "react";
 import { sanitizeHtmlDescription } from "../sanitize-html";
 import { buildProductZoomImages } from "../zoom-image-helper";
 import { SeoSerpPreview } from "./SeoSerpPreview";
+import { ShopifySyncErrorBanner } from "./ShopifySyncErrorBanner";
 import { SourceBadge } from "./SourceBadge";
 import type { SeoProcessingStatus, SeoProductUiViewModel, ZoomImageItem } from "../types";
 
@@ -15,6 +16,7 @@ export interface ProductCardListProps {
   readonly onApproveProduct: (id: string) => void;
   readonly onRejectProduct: (id: string) => void;
   readonly onRetrySync?: (id: string) => void;
+  readonly onViewSyncError?: (product: SeoProductUiViewModel) => void;
   readonly onZoomImage?: (images: readonly ZoomImageItem[], initialIndex?: number) => void;
 }
 
@@ -27,6 +29,7 @@ export function ProductCardList({
   onApproveProduct,
   onRejectProduct,
   onRetrySync,
+  onViewSyncError,
   onZoomImage,
 }: ProductCardListProps): React.JSX.Element {
   const [expandedDescIds, setExpandedDescIds] = useState<ReadonlySet<string>>(new Set());
@@ -140,7 +143,20 @@ export function ProductCardList({
       return (
         <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-rose-500/15 text-rose-300 border border-rose-500/30">
           <span className="h-1.5 w-1.5 rounded-full bg-rose-400" />
-          <span title={product.shopifySyncError || "Lỗi đồng bộ Shopify"}>Lỗi đẩy Store</span>
+          <span>Lỗi đẩy Store</span>
+          {onViewSyncError && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onViewSyncError(product);
+              }}
+              className="text-xs font-semibold text-cyan-300 hover:text-white underline ml-0.5 cursor-pointer"
+              title="Xem thông báo lỗi chi tiết"
+            >
+              Chi tiết
+            </button>
+          )}
           {onRetrySync ? (
             <button
               type="button"
@@ -545,6 +561,16 @@ export function ProductCardList({
                   </div>
                 )}
               </div>
+
+              {/* Shopify Sync Error Banner */}
+              {product.shopifySyncStatus === "failed" && (
+                <ShopifySyncErrorBanner
+                  error={product.shopifySyncError}
+                  syncedAt={product.shopifySyncedAt}
+                  onRetry={onRetrySync ? () => onRetrySync(product.id) : undefined}
+                  className="mt-3.5"
+                />
+              )}
             </div>
           </div>
         );

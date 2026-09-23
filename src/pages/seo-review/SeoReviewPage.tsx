@@ -13,6 +13,7 @@ import { ProductEditModal } from "./components/ProductEditModal";
 import { ProductListTable } from "./components/ProductListTable";
 import { ProductSplitView } from "./components/ProductSplitView";
 import { SeoBatchToolbar } from "./components/SeoBatchToolbar";
+import { ShopifySyncErrorModal } from "./components/ShopifySyncErrorModal";
 import { filterSeoProducts, findNextProductInList } from "./review-navigation";
 import type {
   SeoProductEditInput,
@@ -83,6 +84,8 @@ export function SeoReviewPage({
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<SeoProductUiViewModel | null>(null);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [errorModalProduct, setErrorModalProduct] = useState<SeoProductUiViewModel | null>(null);
+  const [isDismissedErrorBanner, setIsDismissedErrorBanner] = useState(false);
 
   // High-Resolution Image Zoom Modal State
   const [zoomState, setZoomState] = useState<{
@@ -431,6 +434,27 @@ export function SeoReviewPage({
     void triggerPushToShopify(syncingTarget);
   }
 
+  function handleViewSyncError(product: SeoProductUiViewModel) {
+    setErrorModalProduct(product);
+  }
+
+  function handleRetryAllFailed() {
+    const failedTargets = products.filter((p) => p.shopifySyncStatus === "failed");
+    if (failedTargets.length === 0) return;
+
+    const retryingTargets = failedTargets.map((t) => ({
+      ...t,
+      shopifySyncStatus: "syncing" as const,
+      shopifySyncError: undefined,
+      updatedAt: Date.now(),
+    }));
+
+    const retryingMap = new Map(retryingTargets.map((t) => [t.id, t]));
+    setProducts((prev) => prev.map((p) => retryingMap.get(p.id) ?? p));
+
+    void triggerBatchPushToShopify(retryingTargets);
+  }
+
   function handleRejectProduct(id: string, reason = "Nội dung SEO chưa đạt yêu cầu") {
     setProducts((prev) =>
       prev.map((p) =>
@@ -632,13 +656,70 @@ export function SeoReviewPage({
             </div>
           )}
           {stats.syncFailed > 0 && (
-            <div className="rounded-lg bg-slate-900 border border-rose-800/60 px-3 py-1.5 text-center">
+            <button
+              type="button"
+              onClick={() =>
+                setFilter((prev) => ({
+                  ...prev,
+                  decisionFilter: prev.decisionFilter === "sync_failed" ? "all" : "sync_failed",
+                }))
+              }
+              className={`rounded-lg bg-slate-900 border px-3 py-1.5 text-center cursor-pointer transition ${
+                filter.decisionFilter === "sync_failed"
+                  ? "border-rose-500 bg-rose-950/80 ring-1 ring-rose-500"
+                  : "border-rose-800/60 hover:border-rose-600"
+              }`}
+              title="Bấm để lọc xem danh sách sản phẩm bị lỗi đẩy Store"
+            >
               <div className="text-[10px] text-rose-400 font-semibold uppercase">Lỗi đẩy</div>
               <div className="text-sm font-bold text-rose-300 font-mono">{stats.syncFailed}</div>
-            </div>
+            </button>
           )}
         </div>
       </div>
+
+      {/* Top Shopify Sync Failure Alert Banner */}
+      {stats.syncFailed > 0 && !isDismissedErrorBanner && (
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-xl border border-rose-500/50 bg-rose-950/50 p-4 text-rose-200 animate-fadeIn shadow-lg shadow-rose-950/30">
+          <div className="flex items-center gap-3">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-rose-500/20 text-rose-300 font-bold text-lg">
+              ⚠️
+            </span>
+            <div>
+              <p className="font-semibold text-rose-100">
+                Có {stats.syncFailed} sản phẩm gặp lỗi khi đẩy lên Shopify Store!
+              </p>
+              <p className="text-xs text-rose-300/80">
+                Dữ liệu chưa được đồng bộ hoàn tất. Bạn có thể lọc riêng để kiểm tra lỗi hoặc thử lại tất cả.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              type="button"
+              onClick={() => setFilter((prev) => ({ ...prev, decisionFilter: "sync_failed" }))}
+              className="rounded-lg bg-rose-900/60 hover:bg-rose-800/70 border border-rose-700/60 px-3 py-1.5 text-xs font-semibold text-rose-200 transition cursor-pointer"
+            >
+              🔍 Lọc sản phẩm lỗi ({stats.syncFailed})
+            </button>
+            <button
+              type="button"
+              onClick={handleRetryAllFailed}
+              className="rounded-lg bg-rose-600 hover:bg-rose-500 px-3 py-1.5 text-xs font-bold text-white shadow-md shadow-rose-900/40 transition flex items-center gap-1.5 cursor-pointer"
+            >
+              <span>🔄 Thử lại tất cả</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsDismissedErrorBanner(true)}
+              className="rounded-lg bg-slate-900/60 hover:bg-slate-800 px-2 py-1.5 text-xs text-slate-400 hover:text-slate-200 transition"
+              title="Đóng thông báo này"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Handover Success Banner */}
       {handoffBanner ? (
@@ -673,6 +754,7 @@ export function SeoReviewPage({
         pendingCount={stats.pending}
         approvedCount={stats.approved}
         rejectedCount={stats.rejected}
+        syncFailedCount={stats.syncFailed}
         selectedCount={selectedIds.size}
         filter={filter}
         viewMode={viewMode}
@@ -723,6 +805,7 @@ export function SeoReviewPage({
               onRejectProduct={handleRejectProduct}
               onZoomImage={handleOpenZoomImage}
               onRetrySync={handleRetrySync}
+              onViewSyncError={handleViewSyncError}
             />
           )}
 
@@ -740,6 +823,7 @@ export function SeoReviewPage({
               onRejectProduct={handleRejectProduct}
               onZoomImage={handleOpenZoomImage}
               onRetrySync={handleRetrySync}
+              onViewSyncError={handleViewSyncError}
             />
           )}
 
@@ -758,6 +842,7 @@ export function SeoReviewPage({
               onRejectAndNext={handleRejectAndNext}
               onZoomImage={handleOpenZoomImage}
               onRetrySync={handleRetrySync}
+              onViewSyncError={handleViewSyncError}
             />
           )}
         </>
@@ -788,6 +873,14 @@ export function SeoReviewPage({
         onClose={() => setIsEditModalOpen(false)}
         onSave={handleSaveEdit}
         onZoomImage={handleOpenZoomImage}
+      />
+
+      {/* Shopify Sync Error Details Modal */}
+      <ShopifySyncErrorModal
+        isOpen={Boolean(errorModalProduct)}
+        product={errorModalProduct}
+        onClose={() => setErrorModalProduct(null)}
+        onRetry={handleRetrySync}
       />
 
       {/* High-Resolution Image Zoom Lightbox */}
