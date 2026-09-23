@@ -23,8 +23,12 @@ import type {
   ShopifyFilesCreateResponse,
   ShopifyFilesBulkCreateInput,
   ShopifyFilesBulkCreateResponse,
+  ShopifyFilesDeleteInput,
+  ShopifyFilesDeleteResponse,
   ShopifyMetafieldsSetInput,
   ShopifyMetafieldsSetResponse,
+  ShopifyMetafieldsGetInput,
+  ShopifyMetafieldsGetResponse,
   ShopifyOperation,
   ShopifyProductsBulkUpdateInput,
   ShopifyProductsBulkUpdateResponse,
@@ -57,6 +61,7 @@ const READ_OPERATIONS: ReadonlySet<ShopifyOperation> = new Set([
   "connection.test",
   "products.list",
   "products.get",
+  "metafields.get",
   "collections.list",
   "collections.get",
   "stores.list",
@@ -76,7 +81,9 @@ const ALL_OPERATIONS: ReadonlySet<ShopifyOperation> = new Set([
   "variants.bulkCreate",
   "files.create",
   "files.bulkCreate",
+  "files.delete",
   "metafields.set",
+  "metafields.get",
   "collections.list",
   "collections.get",
   "collections.create",
@@ -632,7 +639,9 @@ export async function runModuleApi(input: ShopifyVariantsBulkUpdateInput): Promi
 export async function runModuleApi(input: ShopifyVariantsBulkCreateInput): Promise<ShopifyVariantsBulkCreateResponse>;
 export async function runModuleApi(input: ShopifyFilesCreateInput): Promise<ShopifyFilesCreateResponse>;
 export async function runModuleApi(input: ShopifyFilesBulkCreateInput): Promise<ShopifyFilesBulkCreateResponse>;
+export async function runModuleApi(input: ShopifyFilesDeleteInput): Promise<ShopifyFilesDeleteResponse>;
 export async function runModuleApi(input: ShopifyMetafieldsSetInput): Promise<ShopifyMetafieldsSetResponse>;
+export async function runModuleApi(input: ShopifyMetafieldsGetInput): Promise<ShopifyMetafieldsGetResponse>;
 export async function runModuleApi(input: ShopifyCollectionsListInput): Promise<ShopifyCollectionsListResponse>;
 export async function runModuleApi(input: ShopifyCollectionsGetInput): Promise<ShopifyCollectionsGetResponse>;
 export async function runModuleApi(input: ShopifyCollectionsCreateInput): Promise<ShopifyCollectionsCreateResponse>;

@@ -426,3 +426,89 @@ export async function executeFilesBulkCreate(
   };
 }
 
+export const FILE_DELETE_MUTATION = `
+  mutation FileDelete($fileIds: [ID!]!) {
+    fileDelete(fileIds: $fileIds) {
+      deletedFileIds
+      userErrors {
+        field
+        message
+      }
+    }
+  }
+`;
+
+export interface FilesDeletePayload {
+  readonly fileIds: readonly string[];
+}
+
+export interface FilesDeleteData {
+  readonly success: boolean;
+  readonly deletedFileIds: readonly string[];
+  readonly userErrors?: readonly MutationUserErrorItem[];
+}
+
+interface RawFileDeleteResponse {
+  readonly fileDelete?: {
+    readonly deletedFileIds: readonly string[] | null;
+    readonly userErrors?: readonly MutationUserErrorItem[];
+  } | null;
+}
+
+export async function executeFilesDelete(
+  client: ShopifyGraphqlClient,
+  store: StoreConfig,
+  payload: unknown,
+  executionMode: "preview" | "apply",
+): Promise<FilesDeleteData> {
+  const p = payload as Record<string, unknown> | null;
+  if (!p || !Array.isArray(p.fileIds)) {
+    throw new GatewayError("fileIds array is required", "SHOPIFY_USER_ERROR", 400);
+  }
+
+  const fileIds = (p.fileIds as unknown[]).map(String).filter((id) => id.trim().length > 0);
+  if (fileIds.length === 0) {
+    return {
+      success: true,
+      deletedFileIds: [],
+    };
+  }
+
+  if (executionMode === "preview") {
+    return {
+      success: true,
+      deletedFileIds: fileIds,
+    };
+  }
+
+  const allDeleted: string[] = [];
+  const chunkSize = 250;
+
+  for (let i = 0; i < fileIds.length; i += chunkSize) {
+    const chunk = fileIds.slice(i, i + chunkSize);
+    const raw = await client.query<RawFileDeleteResponse>(
+      store,
+      FILE_DELETE_MUTATION,
+      { fileIds: chunk },
+      { isWrite: true },
+    );
+
+    if (!raw?.fileDelete) {
+      throw new GatewayError("Shopify returned empty fileDelete response", "SHOPIFY_USER_ERROR", 502);
+    }
+
+    if (raw.fileDelete.userErrors && raw.fileDelete.userErrors.length > 0) {
+      throw mapUserErrorsToGatewayError(raw.fileDelete.userErrors);
+    }
+
+    if (raw.fileDelete.deletedFileIds) {
+      allDeleted.push(...raw.fileDelete.deletedFileIds);
+    }
+  }
+
+  return {
+    success: true,
+    deletedFileIds: allDeleted,
+  };
+}
+

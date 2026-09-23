@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  createCustomizationGatewayAdapter,
   createModuleApiRunner,
   createShopifyGatewayAdapter,
   DEFAULT_GATEWAY_URL,
@@ -12,7 +13,7 @@ import {
   ShopifyApiError,
   shopifyApiMockData,
 } from "..";
-import type { ModuleApiRunner, ShopifyApiInput, ShopifyApiResponse } from "..";
+import type { ModuleApiRunner, ShopifyApiInput, ShopifyApiResponse, ShopifyProduct } from "..";
 import { syncSingleProduct } from "../../shopify-sync";
 
 test("Module API selects mock runner in mock environment", async () => {
@@ -3157,6 +3158,104 @@ test("resolveShopifyProductForSync returns no product when a stale mapping has n
   assert.equal(resolved.match, "none");
   assert.equal(resolved.product, undefined);
   assert.equal(resolved.staleMappedProductId, "gid://shopify/Product/deleted");
+});
+
+test("createCustomizationGatewayAdapter successfully routes calls to runner", async () => {
+  const calls: string[] = [];
+  const fakeRunner = (async (input: ShopifyApiInput) => {
+    calls.push(input.operation);
+    if (input.operation === "metafields.get") {
+      return {
+        success: true,
+        storeId: input.storeId,
+        operation: input.operation,
+        data: {
+          id: "gid://shopify/Metafield/mf-1",
+          value: "{\"test\":true}",
+          namespace: "custom",
+          key: "amazon_customizer",
+          type: "json",
+        },
+      };
+    }
+    if (input.operation === "metafields.set") {
+      return {
+        success: true,
+        storeId: input.storeId,
+        operation: input.operation,
+        data: {
+          success: true,
+          metafieldId: "gid://shopify/Metafield/mf-1",
+          metafields: [],
+        },
+      };
+    }
+    if (input.operation === "files.delete") {
+      return {
+        success: true,
+        storeId: input.storeId,
+        operation: input.operation,
+        data: {
+          success: true,
+          deletedFileIds: (input.payload as { fileIds: string[] }).fileIds,
+        },
+      };
+    }
+    if (input.operation === "products.get") {
+      return {
+        success: true,
+        storeId: input.storeId,
+        operation: input.operation,
+        data: {
+          product: {
+            id: (input.payload as { id: string }).id,
+            title: "Sample Product",
+            handle: "sample-product",
+            status: "ACTIVE",
+          } as unknown as ShopifyProduct,
+        },
+      };
+    }
+    throw new Error(`Unexpected operation: ${input.operation}`);
+  }) as ModuleApiRunner;
+
+  const adapter = createCustomizationGatewayAdapter("capozen", {
+    runner: fakeRunner,
+  });
+
+  const getRes = await adapter.getMetafield({
+    ownerId: "gid://shopify/Product/100",
+    namespace: "custom",
+    key: "amazon_customizer",
+  });
+  assert.equal(getRes.id, "gid://shopify/Metafield/mf-1");
+  assert.equal(getRes.value, "{\"test\":true}");
+
+  const setRes = await adapter.setMetafield({
+    ownerId: "gid://shopify/Product/100",
+    namespace: "custom",
+    key: "amazon_customizer",
+    value: "{\"test\":true}",
+  });
+  assert.equal(setRes.success, true);
+  assert.equal(setRes.metafieldId, "gid://shopify/Metafield/mf-1");
+
+  const delRes = await adapter.deleteFiles({
+    fileIds: ["gid://shopify/MediaImage/file-1"],
+  });
+  assert.deepEqual(delRes.deletedFileIds, ["gid://shopify/MediaImage/file-1"]);
+
+  const prodRes = await adapter.getProduct?.({
+    id: "gid://shopify/Product/100",
+  });
+  assert.equal(prodRes?.product?.title, "Sample Product");
+
+  assert.deepEqual(calls, [
+    "metafields.get",
+    "metafields.set",
+    "files.delete",
+    "products.get",
+  ]);
 });
 
 

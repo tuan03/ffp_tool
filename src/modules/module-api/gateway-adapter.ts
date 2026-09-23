@@ -11,7 +11,10 @@ import type {
   ShopifyProductsUpdateResponse,
   ShopifyProduct,
   ShopifyVariantsBulkCreateResponse,
+  ShopifyFilesDeleteResponse,
+  ShopifyMetafieldsGetResponse,
 } from "./types";
+import type { CustomizationGateway } from "../customization-manager";
 import type {
   CreateProductInput,
   CreateProductOutput,
@@ -396,6 +399,144 @@ export function createShopifyGatewayAdapter(
         success: response?.data?.success ?? false,
         metafieldId: response?.data?.metafieldId ?? response?.data?.metafields?.[0]?.id,
       };
+    },
+  };
+}
+
+export function createCustomizationGatewayAdapter(
+  storeId: string,
+  options: ShopifyGatewayAdapterOptions = {},
+): CustomizationGateway {
+  const runner = options.runner ?? runModuleApi;
+  const mode = options.mode ?? "apply";
+  const getRequestId =
+    options.getRequestId ??
+    ((operation: string) =>
+      `req-${operation}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+
+  const cleanStoreId = storeId.trim();
+  if (!cleanStoreId) {
+    throw new Error("storeId is required to create CustomizationGateway adapter.");
+  }
+
+  return {
+    async getMetafield(input) {
+      const response = (await runner({
+        storeId: cleanStoreId,
+        operation: "metafields.get",
+        mode,
+        payload: {
+          ownerId: input.ownerId,
+          namespace: input.namespace,
+          key: input.key,
+        },
+      })) as ShopifyMetafieldsGetResponse;
+
+      return {
+        id: response.data.id,
+        value: response.data.value,
+        namespace: response.data.namespace,
+        key: response.data.key,
+        type: response.data.type,
+      };
+    },
+
+    async setMetafield(input) {
+      const requestId = getRequestId(
+        `metafields-set-${stableRequestSuffix(JSON.stringify(input))}`,
+      );
+      const response = (await runner({
+        storeId: cleanStoreId,
+        operation: "metafields.set",
+        mode,
+        requestId,
+        payload: {
+          ownerId: input.ownerId,
+          namespace: input.namespace,
+          key: input.key,
+          value: input.value,
+          type: input.type,
+        },
+      })) as ShopifyMetafieldsSetResponse;
+
+      return {
+        success: response.data.success,
+        metafieldId: response.data.metafieldId ?? response.data.metafields?.[0]?.id,
+      };
+    },
+
+    async deleteMetafield(input) {
+      const ownerId = input.ownerId;
+      if (!ownerId) {
+        return { success: true };
+      }
+      const requestId = getRequestId(
+        `metafields-delete-${stableRequestSuffix(JSON.stringify(input))}`,
+      );
+      const response = (await runner({
+        storeId: cleanStoreId,
+        operation: "metafields.set",
+        mode,
+        requestId,
+        payload: {
+          ownerId,
+          namespace: input.namespace,
+          key: input.key,
+          value: "",
+          type: "json",
+        },
+      })) as ShopifyMetafieldsSetResponse;
+
+      return {
+        success: response.data.success,
+      };
+    },
+
+    async deleteFiles(input) {
+      const response = (await runner({
+        storeId: cleanStoreId,
+        operation: "files.delete",
+        mode,
+        payload: {
+          fileIds: input.fileIds,
+        },
+      })) as ShopifyFilesDeleteResponse;
+
+      return {
+        deletedFileIds: response.data.deletedFileIds,
+        userErrors: response.data.userErrors?.map((u) => u.message),
+      };
+    },
+
+    async queryFiles(_input) {
+      return { files: [] };
+    },
+
+    async getProduct(input) {
+      try {
+        const response = (await runner({
+          storeId: cleanStoreId,
+          operation: "products.get",
+          payload: {
+            id: input.id,
+          },
+        })) as ShopifyProductsGetResponse;
+
+        if (!response.data || !response.data.product) {
+          return { product: null };
+        }
+
+        return {
+          product: {
+            id: response.data.product.id,
+            title: response.data.product.title,
+            handle: response.data.product.handle,
+            status: response.data.product.status,
+          },
+        };
+      } catch {
+        return { product: null };
+      }
     },
   };
 }
