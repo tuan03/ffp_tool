@@ -166,6 +166,12 @@ def _normalize_boxes(raw_boxes: Any) -> list[list[int]]:
     return result
 
 
+def _boxes_overlap(b1: list[int], b2: list[int]) -> bool:
+    y1_min, x1_min, y1_max, x1_max = b1
+    y2_min, x2_min, y2_max, x2_max = b2
+    return not (y1_max < y2_min or y1_min > y2_max or x1_max < x2_min or x1_min > x2_max)
+
+
 def detect_infographic_chrome_boxes(img_pil: Image.Image) -> list[list[int]]:
     """Resilient computer vision detection for infographic text banners and headers.
 
@@ -207,17 +213,57 @@ def composite_infographic_hybrid(
     """Overlays native high-resolution chrome, text banners, headers, and hardware zoom panels from the original template over the generated image.
 
     Guarantees 100% crisp typography, clean vector banners, and untouched hardware callout panels without offset or duplicate banner artifacts.
+    Also detects and wipes any hallucinated duplicate banners drawn on the generated image canvas.
     """
     w, h = template_img.size
     gen_resized = generated_img.resize((w, h), Image.Resampling.LANCZOS)
 
     norm_chrome_boxes = _normalize_boxes(chrome_boxes)
+    template_detected = detect_infographic_chrome_boxes(template_img)
     if not norm_chrome_boxes:
-        norm_chrome_boxes = detect_infographic_chrome_boxes(template_img)
+        norm_chrome_boxes = template_detected
+    else:
+        # Refine approximate bounding boxes with exact CV pixel detection from template
+        merged_boxes: list[list[int]] = []
+        used_detected = set()
+        for cbox in norm_chrome_boxes:
+            matched_dbox = None
+            for idx, dbox in enumerate(template_detected):
+                if _boxes_overlap(cbox, dbox):
+                    matched_dbox = dbox
+                    used_detected.add(idx)
+                    break
+            if matched_dbox:
+                merged_boxes.append(matched_dbox)
+            else:
+                merged_boxes.append(cbox)
+        for idx, dbox in enumerate(template_detected):
+            if idx not in used_detected:
+                merged_boxes.append(dbox)
+        norm_chrome_boxes = merged_boxes
+
     if not norm_chrome_boxes:
         return gen_resized
 
     result = gen_resized.copy()
+
+    # Step 1: Detect hallucinated duplicate banners on generated image and wipe them with clean template background
+    gen_detected_boxes = detect_infographic_chrome_boxes(gen_resized)
+    for gbox in gen_detected_boxes:
+        # If the generated image has a banner where the template does NOT have a chrome box,
+        # it is a hallucinated duplicate banner. Replace it with the template's background!
+        has_match = any(_boxes_overlap(gbox, tbox) for tbox in norm_chrome_boxes)
+        if not has_match:
+            gymin, gxmin, gymax, gxmax = gbox
+            gleft = max(0, int((gxmin - 8) * w / 1000.0))
+            gtop = max(0, int((gymin - 8) * h / 1000.0))
+            gright = min(w, int((gxmax + 8) * w / 1000.0))
+            gbottom = min(h, int((gymax + 8) * h / 1000.0))
+            if gright > gleft and gbottom > gtop:
+                clean_bg = template_img.crop((gleft, gtop, gright, gbottom))
+                result.paste(clean_bg, (gleft, gtop))
+
+    # Step 2: Overlay native template chrome boxes with crisp vector sharpness
     for cbox in norm_chrome_boxes:
         cymin, cxmin, cymax, cxmax = cbox
         cleft = max(0, int(cxmin * w / 1000.0))
@@ -502,10 +548,8 @@ def build_direct_ai_mockup(
                 room_template=room_img,
                 reference_analysis=reference_analysis,
             )
-            if room_img is not None and reference_analysis:
-                c_boxes = reference_analysis.get("chrome_boxes_norm_0_1000")
-                if not c_boxes:
-                    c_boxes = detect_infographic_chrome_boxes(room_img)
+            if room_img is not None:
+                c_boxes = (reference_analysis.get("chrome_boxes_norm_0_1000") if reference_analysis else None) or detect_infographic_chrome_boxes(room_img)
                 if c_boxes:
                     generated = composite_infographic_hybrid(
                         room_img,
@@ -882,6 +926,11 @@ def direct_ai_lifestyle_prompt(
         has_text_banner = is_infographic or bool(chrome_boxes) or any(k in ref_text for k in banner_keywords)
 
         banner_lock = ""
+        zero_hallucination_rule = (
+            "- ZERO HALLUCINATIONS / DO NOT INVENT A NEW SCENE: You MUST preserve 100% of the composition, room/studio environment, furniture, background, and lighting from Image 2 (EXCEPT text banners, callouts, or typography which MUST NOT be painted on canvas). Do NOT invent a different room, sofa, or street!\n"
+            if has_text_banner
+            else "- ZERO HALLUCINATIONS / DO NOT INVENT A NEW SCENE: You MUST preserve 100% of the composition, room/street environment, furniture, background, text callouts, charts, and lighting from Image 2. Do NOT invent a different room, sofa, or street!\n"
+        )
         if has_text_banner:
             banner_lock = (
                 "- STRICT NO-TEXT-BANNER MANDATE (CRITICAL - AVOID DUPLICATE BANNER ARTIFACTS): "
@@ -893,14 +942,14 @@ def direct_ai_lifestyle_prompt(
             )
             # Sanitize any directive or preserve string telling the model to render the text box
             directive = re.sub(
-                r"(?:[^\.]*?\b(?:banner|text box|header|carried or lifted)\b[^\.]*\.?)",
+                r"(?:[^\.]*?\b(?:banner|text box|header|carried or lifted|callout|typography|pa logo)\b[^\.]*\.?)",
                 "",
                 directive,
                 flags=re.I,
             ).strip()
-            directive += " DO NOT draw or generate any text banner or typography on the canvas; leave the background completely plain and empty."
+            directive += " DO NOT draw or generate any text banner, header, or typography on the canvas; leave the background completely plain and empty in those regions."
             preserve = re.sub(
-                r"(?:[^\.]*?\b(?:banner|text box|header|carried or lifted)\b[^\.]*\.?)",
+                r"(?:[^\.]*?\b(?:banner|text box|header|carried or lifted|callout|typography|pa logo)\b[^\.]*\.?)",
                 "",
                 preserve,
                 flags=re.I,
@@ -934,7 +983,7 @@ def direct_ai_lifestyle_prompt(
             f"CRITICAL MANDATORY TEMPLATE REPLACEMENT DIRECTIVE ({scene_title}):\n"
             f"- Image 1: Commercial print artwork.\n"
             f"- Image 2: EXACT reference template / commercial shot to preserve and adapt.\n"
-            f"- ZERO HALLUCINATIONS / DO NOT INVENT A NEW SCENE: You MUST preserve 100% of the composition, room/street environment, furniture, background, text callouts, charts, and lighting from Image 2. Do NOT invent a different room, sofa, or street!\n"
+            f"{zero_hallucination_rule}"
             f"- External Context/Infographic Chrome to Preserve 100%: {preserve}\n"
             f"- Product Printable Canvas Area: {placement_zone}\n"
             f"{silhouette_rule}"
@@ -946,17 +995,30 @@ def direct_ai_lifestyle_prompt(
             f"- Obey visual physics: Maintain realistic contact shadows, depth-of-field, and lighting temperature from Image 2."
         )
         placement = placement_zone or f"Positioned exactly as demonstrated in Image 2 ({scene_title})."
-        listing_requirement = f"STRICT TEMPLATE PRESERVATION: Retain the exact composition, graphics, text, and scene from Image 2 ({scene_title}). Replace only the designated product surface."
-        constraints = (
-            "Preserve all external elements from Image 2. Retain exact product silhouette. "
-            "Anatomically perfect hands (5 fingers). Absolutely zero stray colored dots (purple/green dots), "
-            "no distorted lettering, no superimposed photographer watermarks, no bleed-through of prior prints from Image 2."
+        listing_requirement = (
+            f"STRICT TEMPLATE PRESERVATION: Retain the composition, product geometry, and clean background from Image 2 ({scene_title}). DO NOT generate text banners on canvas (banners are composited post-generation). Replace only the designated product surface."
+            if has_text_banner
+            else f"STRICT TEMPLATE PRESERVATION: Retain the exact composition, graphics, text, and scene from Image 2 ({scene_title}). Replace only the designated product surface."
         )
         if has_text_banner:
-            constraints += (
-                " STRICT NO TEXT BANNERS: Absolutely zero drawn text banners, zero text boxes, "
-                "no 'CAN BE CARRIED OR LIFTED' or header lettering painted on the canvas. Leave background plain."
+            constraints = (
+                "STRICT NO TEXT BANNERS: Absolutely zero drawn text banners, zero text boxes, "
+                "no 'CAN BE CARRIED OR LIFTED' or header lettering painted on the canvas. Leave all background areas around product plain, clean, and empty. "
+                "Preserve all physical elements from Image 2. Retain exact product silhouette. "
+                "Anatomically perfect hands (5 fingers). Absolutely zero stray colored dots (purple/green dots), "
+                "no superimposed photographer watermarks, no bleed-through of prior prints from Image 2."
             )
+        else:
+            constraints = (
+                "Preserve all external elements from Image 2. Retain exact product silhouette. "
+                "Anatomically perfect hands (5 fingers). Absolutely zero stray colored dots (purple/green dots), "
+                "no distorted lettering, no superimposed photographer watermarks, no bleed-through of prior prints from Image 2."
+            )
+        composition_rule = (
+            "Composition: Match the exact framing, perspective, and arrangement of Image 2. Replace only the product carrier surface. Leave infographic text banner areas clean, plain, and empty."
+            if has_text_banner
+            else "Composition: Match the exact framing, perspective, and arrangement of Image 2. Replace only the product carrier surface."
+        )
         coordinated_products = "None (adhere strictly to the product items present in Image 2)."
 
         return f"""
@@ -967,7 +1029,7 @@ Placement: {placement}.
 Photorealism requirements: The product must have authentic 3D geometry, natural lighting, visible physical thickness, physically correct occlusion, soft contact shadows, and realistic surface finish. It must look like an actual camera photograph, not a 2D collage, poster, sticker, rendering, or graphic illustration.
 Coordinated products: {coordinated_products}
 Listing-shot requirement: {listing_requirement}
-Composition: Match the exact framing, perspective, and arrangement of Image 2. Replace only the product carrier surface.
+{composition_rule}
 Constraints: {constraints}
 Retry correction: {correction or "None. Strictly preserve Image 2 layout and replace only the product artwork."}
 """.strip()

@@ -61,11 +61,21 @@ NON_PRINTABLE_GATE_REGEX = re.compile(
 
 def build_smart_queries(trend: str) -> list[QuerySpec]:
     clean = trend.strip()
+    # Strip redundant trailing pattern keywords to form clean base
+    base = re.sub(
+        r"\b(?:surface\s+pattern\s+design|seamless\s+pattern\s+vector|textile\s+print\s+flat|pattern\s+design\s+flat|seamless\s+pattern|surface\s+pattern|pattern\s+design|textile\s+print|pattern)\b",
+        "",
+        clean,
+        flags=re.I,
+    ).strip()
+    base = re.sub(r"\s+", " ", base)
+    if not base:
+        base = clean
     return [
-        QuerySpec(query=f"{clean} surface pattern design", intent="surface_pattern", priority=1),
-        QuerySpec(query=f"{clean} seamless pattern vector", intent="seamless_vector", priority=2),
-        QuerySpec(query=f"{clean} textile print flat", intent="textile_flat", priority=3),
-        QuerySpec(query=f"{clean} pattern design flat", intent="pattern_flat", priority=4),
+        QuerySpec(query=f"{base} surface pattern design", intent="surface_pattern", priority=1),
+        QuerySpec(query=f"{base} seamless pattern vector", intent="seamless_vector", priority=2),
+        QuerySpec(query=f"{base} textile print flat", intent="textile_flat", priority=3),
+        QuerySpec(query=f"{base} pattern design flat", intent="pattern_flat", priority=4),
         QuerySpec(query=clean, intent="trend_raw", priority=5),
     ]
 
@@ -128,15 +138,18 @@ def generate_niche_core_candidates(
                 if itm not in results:
                     results.append(itm)
 
+    # General surface pattern expansion templates for any arbitrary niche
+    base_term = re.sub(r"\b(?:bag|rug|blanket|throw|quilt|t-shirt|shirt|hoodie|case|mug|pillow|mat)s?\b", "", clean_niche).strip()
+    base_term = re.sub(r"\s+", " ", base_term) or clean_niche
+
     general_templates = [
-        f"{clean_niche} surface pattern",
-        f"vintage {clean_niche} pattern",
-        f"botanical floral {clean_niche}",
-        f"bohemian {clean_niche} pattern",
-        f"geometric {clean_niche} design",
-        f"distressed {clean_niche} pattern",
-        f"folk art {clean_niche}",
-        f"minimalist {clean_niche} illustration",
+        f"vintage {base_term} floral",
+        f"tooled {base_term} texture",
+        f"bohemian {base_term} pattern",
+        f"geometric {base_term} design",
+        f"distressed {base_term} pattern",
+        f"folk art {base_term}",
+        f"minimalist {base_term} illustration",
     ]
     for tmpl in general_templates:
         if tmpl not in results:
@@ -215,6 +228,21 @@ class GeminiSemanticAnalyzer:
             return json.loads(match.group(0))
 
     def _heuristic_item(self, candidate: TrendCandidate) -> TrendPackageItem:
+        hard_reject = self._hard_reject_reason(candidate.name)
+        if hard_reject:
+            return TrendPackageItem(
+                trend_id="trend_" + candidate.candidate_id[:12],
+                trend=candidate.name,
+                trend_strength=candidate.strength,
+                relationship="IRRELEVANT",
+                semantic_fit=0.0,
+                queries=build_smart_queries(candidate.name),
+                reason=hard_reject,
+                sources=[candidate.source],
+                source_metrics=candidate.metrics,
+                tags=["rejected_non_printable"],
+            )
+
         text_norm = normalize_text(candidate.name)
         is_niche_core = candidate.source == "product_niche_core" or candidate.metrics.get("track") == "niche_core"
         if is_niche_core:
@@ -344,7 +372,7 @@ Candidates:
                 continue
             key = fingerprint(
                 {
-                    "kind": "trend-semantic-v3",
+                    "kind": "trend-semantic-v4",
                     "niche": self.niche,
                     "model": self.model,
                     "candidate": {
@@ -399,7 +427,7 @@ Candidates:
                 item, reject = self._item_from_raw(candidate, raw_item)
                 cache_key = fingerprint(
                     {
-                        "kind": "trend-semantic-v3",
+                        "kind": "trend-semantic-v4",
                         "niche": self.niche,
                         "model": self.model,
                         "candidate": {
@@ -445,11 +473,19 @@ Candidates:
         return ""
 
     def _item_from_raw(self, candidate: TrendCandidate, raw: dict[str, Any]) -> tuple[TrendPackageItem, bool]:
+        hard_reject = self._hard_reject_reason(candidate.name)
         relationship = str(raw.get("relationship") or "IRRELEVANT").strip().upper()
         if relationship not in RELATIONSHIPS:
             relationship = "IRRELEVANT"
         semantic_fit = clamp(raw.get("semantic_fit"), default=0.0)
         reject = bool(raw.get("reject")) or relationship == "IRRELEVANT" or semantic_fit <= 0
+        reason = truncate_text(raw.get("reason"), 500)
+
+        if hard_reject:
+            reject = True
+            relationship = "IRRELEVANT"
+            semantic_fit = 0.0
+            reason = hard_reject
 
         queries = build_smart_queries(candidate.name)
 

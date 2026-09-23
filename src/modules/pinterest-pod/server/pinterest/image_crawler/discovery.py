@@ -320,13 +320,18 @@ class PinterestBrowserProvider(DiscoveryProvider):
     def _extract_pins_from_pws(payload: Any) -> list[dict[str, Any]]:
         pins: list[dict[str, Any]] = []
         seen_pin_ids: set[str] = set()
+        seen_urls: set[str] = set()
 
         def walk(val: Any) -> None:
             if isinstance(val, dict):
-                images = val.get("images")
-                val_id = str(val.get("id") or "").strip()
+                type_name = str(val.get("__typename") or val.get("type") or "").lower()
+                if type_name in {"user", "board", "userprofile"}:
+                    return
+
+                images = val.get("images") or (val.get("media", {}).get("images") if isinstance(val.get("media"), dict) else None)
+                val_id = str(val.get("id") or val.get("pin_id") or "").strip()
                 if isinstance(images, dict):
-                    orig_obj = images.get("orig") or images.get("1200x") or images.get("736x")
+                    orig_obj = images.get("orig") or images.get("originals") or images.get("1200x") or images.get("736x")
                     url = ""
                     width = None
                     height = None
@@ -339,21 +344,36 @@ class PinterestBrowserProvider(DiscoveryProvider):
                     if not url:
                         url, width, height = largest_image_from_payload(images)
                     if url and "i.pinimg.com" in url and re.search(r"\.(jpg|jpeg|png|webp)($|\?)", url, re.I):
+                        # Filter out avatars, icons, and small thumbnails
+                        if "/avatars/" in url.lower() or "_rs/" in url.lower():
+                            return
+                        try:
+                            w_int = int(width) if width is not None else None
+                            h_int = int(height) if height is not None else None
+                        except Exception:
+                            w_int, h_int = None, None
+                        if (w_int is not None and w_int < 150) or (h_int is not None and h_int < 150):
+                            return
+
+                        norm_url = normalize_pinimg_url(url)
                         pin_id = val_id if (val_id and val_id.isdigit()) else ""
-                        dedupe_key = pin_id or url
-                        if dedupe_key not in seen_pin_ids:
-                            seen_pin_ids.add(dedupe_key)
-                            title = str(val.get("title") or val.get("grid_title") or val.get("alt_text") or "")
-                            description = str(val.get("description") or "")
-                            pins.append({
-                                "pin_id": pin_id,
-                                "pin_url": f"https://www.pinterest.com/pin/{pin_id}/" if pin_id else "",
-                                "image_url": normalize_pinimg_url(url),
-                                "title": title,
-                                "description": description,
-                                "width": width,
-                                "height": height,
-                            })
+                        if (pin_id and pin_id in seen_pin_ids) or (norm_url in seen_urls):
+                            return
+                        if pin_id:
+                            seen_pin_ids.add(pin_id)
+                        seen_urls.add(norm_url)
+
+                        title = str(val.get("title") or val.get("grid_title") or val.get("alt_text") or "")
+                        description = str(val.get("description") or "")
+                        pins.append({
+                            "pin_id": pin_id,
+                            "pin_url": f"https://www.pinterest.com/pin/{pin_id}/" if pin_id else "",
+                            "image_url": norm_url,
+                            "title": title,
+                            "description": description,
+                            "width": width,
+                            "height": height,
+                        })
                 for child in val.values():
                     walk(child)
             elif isinstance(val, list):
@@ -488,15 +508,25 @@ class PinterestBrowserProvider(DiscoveryProvider):
                     f"Pinterest browser profile is signed out. Run browser login first: {self.user_data_dir}"
                 )
 
-            # Pass 1: Fast-Path SSR Extraction via <script id="__PWS_INITIAL_PROPS__"> or <script id="__PWS_DATA__">
+            # Pass 1: Fast-Path SSR Extraction via <script id="__PWS_INITIAL_PROPS__">, <script id="__PWS_DATA__">, or window state
             try:
                 pws_raw = page.evaluate(
                     """
                     () => {
                       const el = document.getElementById('__PWS_INITIAL_PROPS__') ||
                                  document.getElementById('__PWS_DATA__') ||
+                                 document.querySelector('script[type="application/json"][id*="PWS"]') ||
                                  document.querySelector('script[id*="PWS"]');
-                      return el ? el.textContent : null;
+                      if (el && el.textContent) return el.textContent;
+                      if (typeof window !== 'undefined') {
+                        if (typeof window.__PWS_DATA__ === 'object' && window.__PWS_DATA__ !== null) {
+                          try { return JSON.stringify(window.__PWS_DATA__); } catch (e) {}
+                        }
+                        if (typeof window.__INITIAL_DATA__ === 'object' && window.__INITIAL_DATA__ !== null) {
+                          try { return JSON.stringify(window.__INITIAL_DATA__); } catch (e) {}
+                        }
+                      }
+                      return null;
                     }
                     """
                 )
@@ -571,6 +601,40 @@ class PinterestBrowserProvider(DiscoveryProvider):
                             query,
                         )
                         break
+
+            # Pass 3: HTML regex fallback if both Pass 1 and Pass 2 yielded 0 pins
+            if not output:
+                try:
+                    html_content = page.content()
+                    pattern = r'https?:\\?/\\?/i\.pinimg\.com/(?:originals|736x|564x|474x)/[^"\\\s)]+?\.(?:jpg|jpeg|png|webp)(?:\?[^"\\\s)]*)?'
+                    for match in re.finditer(pattern, html_content, flags=re.I):
+                        img_url = normalize_pinimg_url(match.group(0))
+                        if img_url in seen_images or "/avatars/" in img_url.lower() or "_rs/" in img_url.lower():
+                            continue
+                        seen_images.add(img_url)
+                        output.append(
+                            SearchResult(
+                                result_id=stable_id(self.name, trend.trend_id, query, img_url),
+                                query=query,
+                                trend_id=trend.trend_id,
+                                trend=trend.trend,
+                                image_url=img_url,
+                                source=self.name,
+                                raw={
+                                    "search_url": url,
+                                    "index": len(output),
+                                    "pass": "pass3_html_regex",
+                                    "profile_dir": str(self.user_data_dir),
+                                    "headless": self.headless,
+                                },
+                            )
+                        )
+                        if len(output) >= target_limit:
+                            break
+                    if output:
+                        LOG.info("Pass 3 (HTML Regex Fallback) rescued %d pins for query %r.", len(output), query)
+                except Exception as html_exc:
+                    LOG.debug("Pass 3 HTML regex fallback bypassed: %s", html_exc)
 
             signed_out = page.evaluate(
                 """
