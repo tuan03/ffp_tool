@@ -1,3 +1,4 @@
+import type { CrawlProduct } from "../../modules/customization-normalizer";
 import type {
   AutoSeoItemResult,
   CustomizationSeoItemResult,
@@ -12,6 +13,7 @@ import type {
   SeoImageUiViewModel,
   SeoProcessingStatus,
   SeoProductUiViewModel,
+  ShopifySyncStatus,
 } from "./types";
 
 /**
@@ -55,6 +57,9 @@ export interface AdaptSeoOutputOptions {
   readonly defaultStatus?: SeoProcessingStatus;
   readonly initialDecision?: ReviewDecision;
   readonly isStatusReal?: boolean;
+  readonly sourceCrawlProduct?: CrawlProduct;
+  readonly shopifySyncStatus?: ShopifySyncStatus;
+  readonly shopifyAdminUrl?: string;
 }
 
 /**
@@ -169,6 +174,9 @@ export function adaptSeoOutputToViewModel(
     seoStatus: seoStatusField,
     reviewDecision: options.initialDecision || "pending",
     updatedAt: Date.now(),
+    sourceCrawlProduct: options.sourceCrawlProduct,
+    shopifySyncStatus: options.shopifySyncStatus || "idle",
+    shopifyAdminUrl: options.shopifyAdminUrl,
   };
 }
 
@@ -185,6 +193,7 @@ export function adaptCustomizationItemToViewModel(
     niche: item.sourceProduct.categories?.[0] || "Custom Product",
     defaultStatus: item.success ? "completed" : "failed",
     isStatusReal: true,
+    sourceCrawlProduct: item.sourceProduct,
   };
 
   if (!item.success) {

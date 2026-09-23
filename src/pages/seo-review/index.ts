@@ -20,5 +20,6 @@ export type {
   SeoProductUiViewModel,
   SeoReviewFilterState,
   SeoReviewViewMode,
+  ShopifySyncStatus,
   ZoomImageItem,
 } from "./types";

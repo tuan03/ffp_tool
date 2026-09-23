@@ -28,6 +28,18 @@ export type {
   ApplyApprovedProductUpdatesResult,
   ApprovedProductPatch,
   ApprovedProductUpdate,
-  ApprovedProductUpdateItemResult,
 } from "./auto-seo-approved-product-update";
+export {
+  buildShopifyAdminUrl,
+  pushSeoReviewProductsBatch,
+  pushSeoReviewProductToShopify,
+  resolvePrimaryShopifyStore,
+} from "./seo-review-shopify-sync";
+export type {
+  PushSeoReviewProductResult,
+  PushSeoReviewProductsOptions,
+  ResolvedShopifyStoreInfo,
+  SeoReviewPushImageItem,
+  SeoReviewPushProductItem,
+} from "./seo-review-shopify-sync";
 export type { WorkflowDependencies, WorkflowInput, WorkflowOutput } from "./types";

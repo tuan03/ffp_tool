@@ -14,6 +14,7 @@ export interface ProductCardListProps {
   readonly onEditProduct: (product: SeoProductUiViewModel) => void;
   readonly onApproveProduct: (id: string) => void;
   readonly onRejectProduct: (id: string) => void;
+  readonly onRetrySync?: (id: string) => void;
   readonly onZoomImage?: (images: readonly ZoomImageItem[], initialIndex?: number) => void;
 }
 
@@ -25,6 +26,7 @@ export function ProductCardList({
   onEditProduct,
   onApproveProduct,
   onRejectProduct,
+  onRetrySync,
   onZoomImage,
 }: ProductCardListProps): React.JSX.Element {
   const [expandedDescIds, setExpandedDescIds] = useState<ReadonlySet<string>>(new Set());
@@ -100,6 +102,61 @@ export function ProductCardList({
         ⏳ Pending
       </span>
     );
+  }
+
+  function renderShopifySyncBadge(product: SeoProductUiViewModel) {
+    if (product.shopifySyncStatus === "syncing") {
+      return (
+        <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-sky-500/10 text-sky-400 border border-sky-500/30 animate-pulse">
+          <svg className="animate-spin h-3 w-3 text-sky-400" viewBox="0 0 24 24" fill="none">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+          </svg>
+          <span>Đang đẩy Store...</span>
+        </span>
+      );
+    }
+    if (product.shopifySyncStatus === "synced") {
+      return (
+        <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+          <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+          <span>Đã đẩy Store</span>
+          {product.shopifyAdminUrl ? (
+            <a
+              href={product.shopifyAdminUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-emerald-400 hover:text-emerald-200 underline inline-flex items-center gap-0.5 ml-0.5"
+              title="Mở sản phẩm trên Shopify Admin"
+              onClick={(e) => e.stopPropagation()}
+            >
+              Shopify ↗
+            </a>
+          ) : null}
+        </span>
+      );
+    }
+    if (product.shopifySyncStatus === "failed") {
+      return (
+        <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-rose-500/15 text-rose-300 border border-rose-500/30">
+          <span className="h-1.5 w-1.5 rounded-full bg-rose-400" />
+          <span title={product.shopifySyncError || "Lỗi đồng bộ Shopify"}>Lỗi đẩy Store</span>
+          {onRetrySync ? (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onRetrySync(product.id);
+              }}
+              className="text-xs font-semibold text-rose-300 hover:text-white underline ml-1 cursor-pointer"
+            >
+              Thử lại
+            </button>
+          ) : null}
+        </span>
+      );
+    }
+    return null;
   }
 
   if (products.length === 0) {
@@ -203,25 +260,55 @@ export function ProductCardList({
 
               {/* Status and Action Buttons */}
               <div className="flex flex-wrap items-center justify-between lg:justify-end gap-3 pt-2 lg:pt-0 border-t lg:border-t-0 border-slate-800/60">
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   {renderSeoStatusBadge(product.seoStatus.value, product.seoStatus.source === "mock")}
                   {renderReviewBadge(product.reviewDecision)}
+                  {renderShopifySyncBadge(product)}
                 </div>
 
                 <div className="flex items-center gap-1.5">
                   <button
                     type="button"
-                    title="Phê duyệt sản phẩm"
+                    title={product.shopifySyncStatus === "syncing" ? "Đang đẩy lên Shopify Store..." : "Phê duyệt sản phẩm và đồng bộ lên Store"}
+                    disabled={product.shopifySyncStatus === "syncing"}
                     onClick={() => onApproveProduct(product.id)}
                     className={`inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer ${
-                      product.reviewDecision === "approved"
-                        ? "bg-emerald-600/30 text-emerald-300 border border-emerald-500/40"
-                        : "bg-emerald-600 text-white hover:bg-emerald-500 shadow-md shadow-emerald-900/30"
+                      product.shopifySyncStatus === "syncing"
+                        ? "bg-sky-600/30 text-sky-200 border border-sky-500/30 cursor-not-allowed"
+                        : product.shopifySyncStatus === "synced"
+                          ? "bg-emerald-600/30 text-emerald-300 border border-emerald-500/40"
+                          : product.reviewDecision === "approved"
+                            ? "bg-emerald-600/30 text-emerald-300 border border-emerald-500/40"
+                            : "bg-emerald-600 text-white hover:bg-emerald-500 shadow-md shadow-emerald-900/30"
                     }`}
                   >
-                    <span>✓</span>
-                    <span>Duyệt</span>
+                    {product.shopifySyncStatus === "syncing" ? (
+                      <>
+                        <svg className="animate-spin h-3.5 w-3.5 text-sky-300" viewBox="0 0 24 24" fill="none">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                        </svg>
+                        <span>Đang đẩy</span>
+                      </>
+                    ) : (
+                      <>
+                        <span>✓</span>
+                        <span>{product.shopifySyncStatus === "synced" ? "Đã đẩy" : "Duyệt"}</span>
+                      </>
+                    )}
                   </button>
+
+                  {product.shopifySyncStatus === "failed" && onRetrySync ? (
+                    <button
+                      type="button"
+                      title="Thử lại đẩy lên Store"
+                      onClick={() => onRetrySync(product.id)}
+                      className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-amber-500/20 text-amber-300 hover:bg-amber-500/30 border border-amber-500/40 transition cursor-pointer"
+                    >
+                      <span>🔄</span>
+                      <span>Thử lại</span>
+                    </button>
+                  ) : null}
 
                   <button
                     type="button"

@@ -1,5 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
-
+import { environment } from "../../config/environment";
+import { getModuleApiRunner, type ModuleApiRunner } from "../../modules/module-api";
+import {
+  pushSeoReviewProductsBatch,
+  pushSeoReviewProductToShopify,
+  type SeoReviewPushProductItem,
+} from "../../modules/orchestrator";
 import { ImageZoomModal } from "./components/ImageZoomModal";
 import { ProductCardList } from "./components/ProductCardList";
 import { ProductDetailDrawer } from "./components/ProductDetailDrawer";
@@ -19,7 +25,37 @@ import type {
 const SESSION_STORAGE_KEY = "ffp_seo_review_session_v1";
 const VIEW_MODE_STORAGE_KEY = "ffp_seo_review_view_mode";
 
-export function SeoReviewPage(): React.JSX.Element {
+function toPushProductItem(vm: SeoProductUiViewModel): SeoReviewPushProductItem {
+  return {
+    id: vm.id,
+    productId: vm.productId,
+    productTitle: vm.productTitle.value,
+    productDescription: vm.productDescription.value,
+    seoTitle: vm.seoTitle.value,
+    seoDescription: vm.seoDescription.value,
+    handle: vm.handle.value,
+    images: vm.images.map((img) => ({
+      id: img.id,
+      previewUrl: img.previewUrl.value,
+      alt: img.alt.value,
+    })),
+    sourceCrawlProduct: vm.sourceCrawlProduct,
+  };
+}
+
+export interface SeoReviewPageProps {
+  readonly moduleApiRunner?: ModuleApiRunner;
+  readonly storeId?: string;
+}
+
+export function SeoReviewPage({
+  moduleApiRunner: injectedRunner,
+  storeId,
+}: SeoReviewPageProps = {}): React.JSX.Element {
+  const runner = useMemo(
+    () => injectedRunner || getModuleApiRunner(environment),
+    [injectedRunner],
+  );
   const [products, setProducts] = useState<readonly SeoProductUiViewModel[]>(() => {
     if (typeof window !== "undefined" && window.sessionStorage) {
       try {
@@ -172,6 +208,9 @@ export function SeoReviewPage(): React.JSX.Element {
     const pending = products.filter((p) => p.reviewDecision === "pending").length;
     const approved = products.filter((p) => p.reviewDecision === "approved").length;
     const rejected = products.filter((p) => p.reviewDecision === "rejected").length;
+    const synced = products.filter((p) => p.shopifySyncStatus === "synced").length;
+    const syncing = products.filter((p) => p.shopifySyncStatus === "syncing").length;
+    const syncFailed = products.filter((p) => p.shopifySyncStatus === "failed").length;
     const hasMock = products.filter((p) =>
       p.productTitle.source === "mock" ||
       p.seoTitle.source === "mock" ||
@@ -179,7 +218,7 @@ export function SeoReviewPage(): React.JSX.Element {
       p.handle.source === "mock",
     ).length;
 
-    return { total, completed, pending, approved, rejected, hasMock };
+    return { total, completed, pending, approved, rejected, synced, syncing, syncFailed, hasMock };
   }, [products]);
 
   // Selection handlers
@@ -236,6 +275,119 @@ export function SeoReviewPage(): React.JSX.Element {
     filteredProducts.length > 0 &&
     filteredProducts.every((p) => expandedTableIds.has(p.id));
 
+  // Push to Shopify Store handlers
+  async function triggerPushToShopify(targetProduct: SeoProductUiViewModel) {
+    try {
+      const result = await pushSeoReviewProductToShopify(
+        toPushProductItem(targetProduct),
+        {
+          moduleApiRunner: runner,
+          storeId,
+        },
+      );
+
+      setProducts((prev) =>
+        prev.map((p) => {
+          if (p.id !== targetProduct.id) return p;
+          if (result.success) {
+            return {
+              ...p,
+              shopifySyncStatus: "synced",
+              productId: result.productId ?? p.productId,
+              handle: result.productHandle
+                ? { value: result.productHandle, source: "real" }
+                : p.handle,
+              shopifyAdminUrl: result.adminUrl ?? p.shopifyAdminUrl,
+              shopifySyncedAt: Date.now(),
+              shopifySyncError: undefined,
+              updatedAt: Date.now(),
+            };
+          } else {
+            return {
+              ...p,
+              shopifySyncStatus: "failed",
+              shopifySyncError: result.error || "Lỗi khi đẩy sản phẩm lên Shopify",
+              updatedAt: Date.now(),
+            };
+          }
+        }),
+      );
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      setProducts((prev) =>
+        prev.map((p) =>
+          p.id === targetProduct.id
+            ? {
+                ...p,
+                shopifySyncStatus: "failed",
+                shopifySyncError: message,
+                updatedAt: Date.now(),
+              }
+            : p,
+        ),
+      );
+    }
+  }
+
+  async function triggerBatchPushToShopify(targets: readonly SeoProductUiViewModel[]) {
+    try {
+      const pushItems = targets.map(toPushProductItem);
+      const results = await pushSeoReviewProductsBatch(
+        pushItems,
+        {
+          moduleApiRunner: runner,
+          storeId,
+        },
+        3,
+      );
+
+      const resultMap = new Map(results.map((r) => [r.id, r]));
+
+      setProducts((prev) =>
+        prev.map((p) => {
+          const res = resultMap.get(p.id);
+          if (!res) return p;
+          if (res.success) {
+            return {
+              ...p,
+              shopifySyncStatus: "synced",
+              productId: res.productId ?? p.productId,
+              handle: res.productHandle
+                ? { value: res.productHandle, source: "real" }
+                : p.handle,
+              shopifyAdminUrl: res.adminUrl ?? p.shopifyAdminUrl,
+              shopifySyncedAt: Date.now(),
+              shopifySyncError: undefined,
+              updatedAt: Date.now(),
+            };
+          } else {
+            return {
+              ...p,
+              shopifySyncStatus: "failed",
+              shopifySyncError: res.error || "Lỗi khi đẩy sản phẩm lên Shopify",
+              updatedAt: Date.now(),
+            };
+          }
+        }),
+      );
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      const targetIds = new Set(targets.map((t) => t.id));
+      setProducts((prev) =>
+        prev.map((p) =>
+          targetIds.has(p.id)
+            ? {
+                ...p,
+                shopifySyncStatus: "failed",
+                shopifySyncError: message,
+                updatedAt: Date.now(),
+              }
+            : p,
+        ),
+      );
+    }
+  }
+
   // Individual Actions
   function handleViewProduct(product: SeoProductUiViewModel) {
     setActiveProduct(product);
@@ -243,11 +395,40 @@ export function SeoReviewPage(): React.JSX.Element {
   }
 
   function handleApproveProduct(id: string) {
+    const target = products.find((p) => p.id === id);
+    if (!target) return;
+
+    const approvedTarget: SeoProductUiViewModel = {
+      ...target,
+      reviewDecision: "approved",
+      shopifySyncStatus: "syncing",
+      shopifySyncError: undefined,
+      updatedAt: Date.now(),
+    };
+
     setProducts((prev) =>
-      prev.map((p) =>
-        p.id === id ? { ...p, reviewDecision: "approved", updatedAt: Date.now() } : p,
-      ),
+      prev.map((p) => (p.id === id ? approvedTarget : p)),
     );
+
+    void triggerPushToShopify(approvedTarget);
+  }
+
+  function handleRetrySync(id: string) {
+    const target = products.find((p) => p.id === id);
+    if (!target) return;
+
+    const syncingTarget: SeoProductUiViewModel = {
+      ...target,
+      shopifySyncStatus: "syncing",
+      shopifySyncError: undefined,
+      updatedAt: Date.now(),
+    };
+
+    setProducts((prev) =>
+      prev.map((p) => (p.id === id ? syncingTarget : p)),
+    );
+
+    void triggerPushToShopify(syncingTarget);
   }
 
   function handleRejectProduct(id: string, reason = "Nội dung SEO chưa đạt yêu cầu") {
@@ -281,12 +462,25 @@ export function SeoReviewPage(): React.JSX.Element {
 
   // Batch Actions
   function handleApproveSelected() {
+    const targets = products.filter((p) => selectedIds.has(p.id));
+    if (targets.length === 0) return;
+
+    const approvedTargets = targets.map((t) => ({
+      ...t,
+      reviewDecision: "approved" as const,
+      shopifySyncStatus: "syncing" as const,
+      shopifySyncError: undefined,
+      updatedAt: Date.now(),
+    }));
+
+    const approvedMap = new Map(approvedTargets.map((t) => [t.id, t]));
+
     setProducts((prev) =>
-      prev.map((p) =>
-        selectedIds.has(p.id) ? { ...p, reviewDecision: "approved", updatedAt: Date.now() } : p,
-      ),
+      prev.map((p) => approvedMap.get(p.id) ?? p),
     );
     setSelectedIds(new Set());
+
+    void triggerBatchPushToShopify(approvedTargets);
   }
 
   function handleRejectSelected() {
@@ -427,6 +621,22 @@ export function SeoReviewPage(): React.JSX.Element {
             <div className="text-[10px] text-rose-500 font-semibold uppercase">Từ chối</div>
             <div className="text-sm font-bold text-rose-400 font-mono">{stats.rejected}</div>
           </div>
+          <div className="rounded-lg bg-slate-900 border border-teal-800/60 px-3 py-1.5 text-center">
+            <div className="text-[10px] text-teal-400 font-semibold uppercase">Đã đẩy Store</div>
+            <div className="text-sm font-bold text-teal-300 font-mono">{stats.synced}</div>
+          </div>
+          {stats.syncing > 0 && (
+            <div className="rounded-lg bg-slate-900 border border-blue-800/60 px-3 py-1.5 text-center animate-pulse">
+              <div className="text-[10px] text-blue-400 font-semibold uppercase">Đang đẩy...</div>
+              <div className="text-sm font-bold text-blue-300 font-mono">{stats.syncing}</div>
+            </div>
+          )}
+          {stats.syncFailed > 0 && (
+            <div className="rounded-lg bg-slate-900 border border-rose-800/60 px-3 py-1.5 text-center">
+              <div className="text-[10px] text-rose-400 font-semibold uppercase">Lỗi đẩy</div>
+              <div className="text-sm font-bold text-rose-300 font-mono">{stats.syncFailed}</div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -512,6 +722,7 @@ export function SeoReviewPage(): React.JSX.Element {
               onApproveProduct={handleApproveProduct}
               onRejectProduct={handleRejectProduct}
               onZoomImage={handleOpenZoomImage}
+              onRetrySync={handleRetrySync}
             />
           )}
 
@@ -528,6 +739,7 @@ export function SeoReviewPage(): React.JSX.Element {
               onApproveProduct={handleApproveProduct}
               onRejectProduct={handleRejectProduct}
               onZoomImage={handleOpenZoomImage}
+              onRetrySync={handleRetrySync}
             />
           )}
 
@@ -545,6 +757,7 @@ export function SeoReviewPage(): React.JSX.Element {
               onApproveAndNext={handleApproveAndNext}
               onRejectAndNext={handleRejectAndNext}
               onZoomImage={handleOpenZoomImage}
+              onRetrySync={handleRetrySync}
             />
           )}
         </>
@@ -565,6 +778,7 @@ export function SeoReviewPage(): React.JSX.Element {
           setIsDrawerOpen(false);
         }}
         onZoomImage={handleOpenZoomImage}
+        onRetrySync={handleRetrySync}
       />
 
       {/* Edit Modal */}

@@ -186,7 +186,7 @@ export function AppRoutes({
           ...autoSeoRoutes,
           {
             path: "seo-review",
-            element: <SeoReviewPage />,
+            element: <SeoReviewPage moduleApiRunner={moduleApiRunner} />,
           },
           {
             path: "workflow-demo",

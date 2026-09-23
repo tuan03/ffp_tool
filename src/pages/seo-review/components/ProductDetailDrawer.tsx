@@ -12,6 +12,7 @@ export interface ProductDetailDrawerProps {
   readonly onEdit: (product: SeoProductUiViewModel) => void;
   readonly onApprove: (id: string) => void;
   readonly onReject: (id: string) => void;
+  readonly onRetrySync?: (id: string) => void;
   readonly onZoomImage?: (images: readonly ZoomImageItem[], initialIndex?: number) => void;
 }
 
@@ -22,6 +23,7 @@ export function ProductDetailDrawer({
   onEdit,
   onApprove,
   onReject,
+  onRetrySync,
   onZoomImage,
 }: ProductDetailDrawerProps): React.JSX.Element | null {
   const [descriptionTab, setDescriptionTab] = useState<"formatted" | "raw">("formatted");
@@ -94,8 +96,8 @@ export function ProductDetailDrawer({
           {/* Drawer Body - Scrollable */}
           <div className="flex-1 overflow-y-auto p-6 space-y-6 text-sm text-slate-300">
             {/* Review Status Banner */}
-            <div className="flex items-center justify-between rounded-xl border border-slate-800 bg-slate-950/60 p-4">
-              <div className="flex items-center gap-3">
+            <div className="flex flex-wrap items-center justify-between rounded-xl border border-slate-800 bg-slate-950/60 p-4 gap-3">
+              <div className="flex items-center gap-3 flex-wrap">
                 <span className="text-xs font-semibold uppercase text-slate-400">Trạng thái:</span>
                 {product.reviewDecision === "approved" ? (
                   <span className="px-2.5 py-1 rounded text-xs font-bold bg-emerald-950 text-emerald-300 border border-emerald-700">
@@ -108,6 +110,48 @@ export function ProductDetailDrawer({
                 ) : (
                   <span className="px-2.5 py-1 rounded text-xs font-bold bg-slate-800 text-slate-300 border border-slate-700">
                     ⏳ CHỜ REVIEW (Pending)
+                  </span>
+                )}
+
+                {/* Shopify Store Sync Badge */}
+                {product.shopifySyncStatus === "syncing" && (
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-sky-500/10 text-sky-400 border border-sky-500/30 animate-pulse">
+                    <svg className="animate-spin h-3.5 w-3.5 text-sky-400" viewBox="0 0 24 24" fill="none">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                    </svg>
+                    <span>Đang đồng bộ Store...</span>
+                  </span>
+                )}
+                {product.shopifySyncStatus === "synced" && (
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+                    <span className="h-2 w-2 rounded-full bg-emerald-400" />
+                    <span>Đã đẩy Shopify Store</span>
+                    {product.shopifyAdminUrl && (
+                      <a
+                        href={product.shopifyAdminUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-emerald-400 hover:text-emerald-200 underline inline-flex items-center gap-0.5 ml-1"
+                      >
+                        Shopify Admin ↗
+                      </a>
+                    )}
+                  </span>
+                )}
+                {product.shopifySyncStatus === "failed" && (
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-rose-500/15 text-rose-300 border border-rose-500/30">
+                    <span className="h-2 w-2 rounded-full bg-rose-400" />
+                    <span title={product.shopifySyncError}>Lỗi đồng bộ Store</span>
+                    {onRetrySync && (
+                      <button
+                        type="button"
+                        onClick={() => onRetrySync(product.id)}
+                        className="text-xs font-semibold text-rose-300 hover:text-white underline ml-1 cursor-pointer"
+                      >
+                        Thử lại
+                      </button>
+                    )}
                   </span>
                 )}
               </div>
@@ -376,20 +420,61 @@ export function ProductDetailDrawer({
             </button>
 
             <div className="flex items-center gap-3">
+              {product.shopifyAdminUrl && (
+                <a
+                  href={product.shopifyAdminUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-3.5 py-2 rounded-lg text-sm font-semibold bg-emerald-950/60 text-emerald-300 hover:bg-emerald-900/80 border border-emerald-800 transition inline-flex items-center gap-1.5"
+                >
+                  Shopify Admin ↗
+                </a>
+              )}
+
+              {product.shopifySyncStatus === "failed" && onRetrySync && (
+                <button
+                  type="button"
+                  onClick={() => onRetrySync(product.id)}
+                  className="px-3.5 py-2 rounded-lg text-sm font-semibold bg-amber-500/20 text-amber-300 hover:bg-amber-500/30 border border-amber-500/40 transition cursor-pointer"
+                >
+                  🔄 Thử lại đẩy Store
+                </button>
+              )}
+
               <button
                 type="button"
                 onClick={() => onReject(product.id)}
                 className="px-4 py-2 rounded-lg text-sm font-semibold bg-rose-950/60 text-rose-300 hover:bg-rose-900/80 border border-rose-800 transition cursor-pointer"
               >
-                ✕ Từ chối (Reject)
+                ✕ Từ chối
               </button>
 
               <button
                 type="button"
+                disabled={product.shopifySyncStatus === "syncing"}
                 onClick={() => onApprove(product.id)}
-                className="px-4 py-2 rounded-lg text-sm font-semibold bg-emerald-600 text-white hover:bg-emerald-500 shadow-md shadow-emerald-900/30 transition cursor-pointer"
+                className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition cursor-pointer ${
+                  product.shopifySyncStatus === "syncing"
+                    ? "bg-sky-600/30 text-sky-200 border border-sky-500/40 cursor-not-allowed"
+                    : product.shopifySyncStatus === "synced"
+                      ? "bg-emerald-600/30 text-emerald-300 border border-emerald-500/40"
+                      : "bg-emerald-600 text-white hover:bg-emerald-500 shadow-md shadow-emerald-900/30"
+                }`}
               >
-                ✓ Phê duyệt (Approve)
+                {product.shopifySyncStatus === "syncing" ? (
+                  <>
+                    <svg className="animate-spin h-4 w-4 text-sky-300" viewBox="0 0 24 24" fill="none">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                    </svg>
+                    <span>Đang đẩy Store...</span>
+                  </>
+                ) : (
+                  <>
+                    <span>✓</span>
+                    <span>{product.shopifySyncStatus === "synced" ? "Đã đẩy Shopify" : "Phê duyệt (Approve)"}</span>
+                  </>
+                )}
               </button>
             </div>
           </div>

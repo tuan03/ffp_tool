@@ -5,6 +5,8 @@
  * Tracks data provenance ("real" vs "mock") per field to ensure transparent reviews.
  */
 
+import type { CrawlProduct } from "../../modules/customization-normalizer";
+
 export type FieldSource = "real" | "mock";
 
 export type SeoProcessingStatus = "processing" | "completed" | "failed";
@@ -12,6 +14,8 @@ export type SeoProcessingStatus = "processing" | "completed" | "failed";
 export type ReviewDecision = "pending" | "approved" | "rejected";
 
 export type SeoReviewViewMode = "cards" | "table" | "split";
+
+export type ShopifySyncStatus = "idle" | "syncing" | "synced" | "failed";
 
 export interface DisplayField<T> {
   readonly value: T;
@@ -45,6 +49,15 @@ export interface SeoProductUiViewModel {
   readonly reviewDecision: ReviewDecision;
   readonly rejectionReason?: string;
   readonly updatedAt: number;
+
+  // Crawl source product (if originated from Amazon Crawler)
+  readonly sourceCrawlProduct?: CrawlProduct;
+
+  // Shopify Store Sync State
+  readonly shopifySyncStatus?: ShopifySyncStatus;
+  readonly shopifyAdminUrl?: string;
+  readonly shopifySyncError?: string;
+  readonly shopifySyncedAt?: number;
 }
 
 export interface SeoReviewFilterState {

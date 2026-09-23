@@ -18,6 +18,7 @@ export interface ProductSplitViewProps {
   readonly onRejectProduct: (id: string) => void;
   readonly onApproveAndNext: (id: string) => void;
   readonly onRejectAndNext: (id: string) => void;
+  readonly onRetrySync?: (id: string) => void;
   readonly onZoomImage?: (images: readonly ZoomImageItem[], initialIndex?: number) => void;
 }
 
@@ -33,6 +34,7 @@ export function ProductSplitView({
   onRejectProduct,
   onApproveAndNext,
   onRejectAndNext,
+  onRetrySync,
   onZoomImage,
 }: ProductSplitViewProps): React.JSX.Element {
   const [descriptionTab, setDescriptionTab] = useState<"formatted" | "raw">("formatted");
@@ -163,6 +165,61 @@ export function ProductSplitView({
     );
   }
 
+  function renderShopifySyncBadge(product: SeoProductUiViewModel) {
+    if (product.shopifySyncStatus === "syncing") {
+      return (
+        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-sky-500/10 text-sky-400 border border-sky-500/30 animate-pulse">
+          <svg className="animate-spin h-2.5 w-2.5 text-sky-400" viewBox="0 0 24 24" fill="none">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+          </svg>
+          <span>Đang đẩy...</span>
+        </span>
+      );
+    }
+    if (product.shopifySyncStatus === "synced") {
+      return (
+        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+          <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+          <span>Đã đẩy Store</span>
+          {product.shopifyAdminUrl ? (
+            <a
+              href={product.shopifyAdminUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-emerald-400 hover:text-emerald-200 underline ml-0.5"
+              title="Mở sản phẩm trên Shopify Admin"
+              onClick={(e) => e.stopPropagation()}
+            >
+              Shopify ↗
+            </a>
+          ) : null}
+        </span>
+      );
+    }
+    if (product.shopifySyncStatus === "failed") {
+      return (
+        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-rose-500/15 text-rose-300 border border-rose-500/30">
+          <span className="h-1.5 w-1.5 rounded-full bg-rose-400" />
+          <span title={product.shopifySyncError || "Lỗi đồng bộ Shopify"}>Lỗi đẩy</span>
+          {onRetrySync ? (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onRetrySync(product.id);
+              }}
+              className="text-[10px] font-bold text-rose-300 hover:text-white underline ml-0.5 cursor-pointer"
+            >
+              Thử lại
+            </button>
+          ) : null}
+        </span>
+      );
+    }
+    return null;
+  }
+
   if (products.length === 0) {
     return (
       <div className="rounded-2xl border border-slate-800 bg-slate-900/40 p-12 text-center">
@@ -267,6 +324,7 @@ export function ProductSplitView({
                   <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
                     {renderReviewBadge(product.reviewDecision)}
                     {renderSeoStatusBadge(product.seoStatus.value, product.seoStatus.source === "mock")}
+                    {renderShopifySyncBadge(product)}
                   </div>
                 </div>
               </div>
@@ -325,10 +383,11 @@ export function ProductSplitView({
             {/* Inspector Body - Scrollable */}
             <div className="p-5 space-y-4 overflow-y-auto flex-1 text-sm text-slate-300">
               {/* Status Banner */}
-              <div className="flex items-center justify-between rounded-xl border border-slate-800 bg-slate-950/60 p-3">
-                <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center justify-between rounded-xl border border-slate-800 bg-slate-950/60 p-3 gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   <span className="text-xs text-slate-400">Trạng thái:</span>
                   {renderReviewBadge(activeProduct.reviewDecision)}
+                  {renderShopifySyncBadge(activeProduct)}
                 </div>
                 <div className="flex items-center gap-2">
                   {renderSeoStatusBadge(activeProduct.seoStatus.value, activeProduct.seoStatus.source === "mock")}
@@ -506,13 +565,42 @@ export function ProductSplitView({
                   ✕ Từ chối & Tiếp ➔
                 </button>
 
+                {activeProduct.shopifySyncStatus === "failed" && onRetrySync ? (
+                  <button
+                    type="button"
+                    title="Thử lại đẩy lên Store"
+                    onClick={() => onRetrySync(activeProduct.id)}
+                    className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-amber-500/20 text-amber-300 hover:bg-amber-500/30 border border-amber-500/40 transition cursor-pointer"
+                  >
+                    🔄 Thử lại đẩy Store
+                  </button>
+                ) : null}
+
                 <button
                   type="button"
+                  disabled={activeProduct.shopifySyncStatus === "syncing"}
                   onClick={() => onApproveAndNext(activeProduct.id)}
-                  className="px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-emerald-600 text-white hover:bg-emerald-500 shadow-md shadow-emerald-900/30 transition cursor-pointer"
-                  title="Phê duyệt và tự động chuyển sang sản phẩm kế tiếp"
+                  className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer ${
+                    activeProduct.shopifySyncStatus === "syncing"
+                      ? "bg-sky-600/30 text-sky-200 border border-sky-500/40 cursor-not-allowed"
+                      : "bg-emerald-600 text-white hover:bg-emerald-500 shadow-md shadow-emerald-900/30"
+                  }`}
+                  title="Phê duyệt và tự động đẩy lên Shopify Store"
                 >
-                  ✓ Phê duyệt & Tiếp ➔
+                  {activeProduct.shopifySyncStatus === "syncing" ? (
+                    <>
+                      <svg className="animate-spin h-3.5 w-3.5 text-sky-300" viewBox="0 0 24 24" fill="none">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                      </svg>
+                      <span>Đang đẩy Store...</span>
+                    </>
+                  ) : (
+                    <>
+                      <span>✓</span>
+                      <span>{activeProduct.shopifySyncStatus === "synced" ? "Đã duyệt & Đẩy (Tiếp ➔)" : "Phê duyệt & Tiếp ➔"}</span>
+                    </>
+                  )}
                 </button>
               </div>
             </div>
