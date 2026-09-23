@@ -2,6 +2,7 @@ import { GatewayError, mapUserErrorsToGatewayError, type MutationUserErrorItem }
 import type { ShopifyGraphqlClient } from "../shopify-graphql-client";
 import type { GatewayErrorCode, ProductImageSummary, ProductSummary, ProductVariantSummary, StoreConfig } from "../types";
 import { mapProductNode, type RawProductNode } from "./products";
+import { ensureMediaPubliclyAccessible } from "./staged-uploads";
 
 const PRODUCT_CREATE_MUTATION = `
   mutation ProductCreate($product: ProductCreateInput!, $media: [CreateMediaInput!]) {
@@ -605,7 +606,11 @@ export async function executeProductsCreate(
     };
   }
 
-  const mediaList = extractMediaInputs(productInput.featuredImage, productInput.images, productInput.media);
+  const rawMediaList = extractMediaInputs(productInput.featuredImage, productInput.images, productInput.media);
+  const { mediaList, urlMap } = mode === "apply"
+    ? await ensureMediaPubliclyAccessible(store, client, rawMediaList, { requestId })
+    : { mediaList: rawMediaList, urlMap: new Map<string, string>() };
+
   const createVariables: Record<string, unknown> = { product: input };
   if (mediaList.length > 0) {
     createVariables.media = mediaList;
@@ -643,7 +648,11 @@ export async function executeProductsCreate(
         tracked: isTracked,
       };
       vInput.inventoryPolicy = isTracked ? "DENY" : "CONTINUE";
-      if (typeof v.mediaUrl === "string" && v.mediaUrl.trim()) vInput.mediaSrc = [v.mediaUrl.trim()];
+      if (typeof v.mediaUrl === "string" && v.mediaUrl.trim()) {
+        const rawMed = v.mediaUrl.trim();
+        const resolvedMed = urlMap.get(rawMed) ?? rawMed;
+        vInput.mediaSrc = [resolvedMed];
+      }
       if (Array.isArray(v.optionValues)) {
         vInput.optionValues = (v.optionValues as readonly Record<string, unknown>[]).map((ov) => {
           const optVal: Record<string, unknown> = {};
@@ -984,9 +993,13 @@ export async function executeProductsUpdate(
     };
   }
 
+  const { mediaList: finalMediaList } = mode === "apply"
+    ? await ensureMediaPubliclyAccessible(store, client, mediaList, { requestId })
+    : { mediaList };
+
   const updateVariables: Record<string, unknown> = { product: input };
-  if (mediaList.length > 0) {
-    updateVariables.media = mediaList;
+  if (finalMediaList.length > 0) {
+    updateVariables.media = finalMediaList;
   }
 
   const raw = await client.query<ProductUpdateResponse>(
