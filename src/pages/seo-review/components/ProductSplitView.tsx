@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 
 import { sanitizeHtmlDescription } from "../sanitize-html";
+import { buildProductZoomImages } from "../zoom-image-helper";
 import { SeoSerpPreview } from "./SeoSerpPreview";
 import { SourceBadge } from "./SourceBadge";
-import type { SeoProcessingStatus, SeoProductUiViewModel } from "../types";
+import type { SeoProcessingStatus, SeoProductUiViewModel, ZoomImageItem } from "../types";
 
 export interface ProductSplitViewProps {
   readonly products: readonly SeoProductUiViewModel[];
@@ -17,6 +18,7 @@ export interface ProductSplitViewProps {
   readonly onRejectProduct: (id: string) => void;
   readonly onApproveAndNext: (id: string) => void;
   readonly onRejectAndNext: (id: string) => void;
+  readonly onZoomImage?: (images: readonly ZoomImageItem[], initialIndex?: number) => void;
 }
 
 export function ProductSplitView({
@@ -31,6 +33,7 @@ export function ProductSplitView({
   onRejectProduct,
   onApproveAndNext,
   onRejectAndNext,
+  onZoomImage,
 }: ProductSplitViewProps): React.JSX.Element {
   const [descriptionTab, setDescriptionTab] = useState<"formatted" | "raw">("formatted");
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
@@ -219,14 +222,28 @@ export function ProductSplitView({
                 </div>
 
                 {/* Thumbnail */}
-                <div className="relative h-11 w-11 flex-shrink-0 overflow-hidden rounded-lg border border-slate-800 bg-slate-950 flex items-center justify-center text-slate-600">
+                <div className="relative h-11 w-11 flex-shrink-0 overflow-hidden rounded-lg border border-slate-800 bg-slate-950 flex items-center justify-center text-slate-600 group">
                   {firstImage ? (
-                    <img
-                      src={firstImage}
-                      alt={product.productTitle.value}
-                      className="h-full w-full object-cover"
-                      loading="lazy"
-                    />
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onZoomImage?.(buildProductZoomImages(product), 0);
+                      }}
+                      className="h-full w-full block cursor-zoom-in relative focus:outline-none focus:ring-1 focus:ring-cyan-500 rounded-lg"
+                      title="Nhấn để phóng to ảnh"
+                      aria-label="Phóng to ảnh sản phẩm"
+                    >
+                      <img
+                        src={firstImage}
+                        alt={product.productTitle.value}
+                        className="h-full w-full object-cover transition-transform duration-200 group-hover:scale-105"
+                        loading="lazy"
+                      />
+                      <span className="absolute inset-0 bg-slate-950/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white text-[10px]">
+                        🔍
+                      </span>
+                    </button>
                   ) : (
                     <span className="text-sm">📷</span>
                   )}
@@ -350,13 +367,24 @@ export function ProductSplitView({
                           key={img.id}
                           className="flex items-start gap-3 p-2.5 rounded-lg bg-slate-900/90 border border-slate-800"
                         >
-                          <div className="h-12 w-12 flex-shrink-0 overflow-hidden rounded border border-slate-800 bg-slate-950">
+                          <div className="h-12 w-12 flex-shrink-0 overflow-hidden rounded border border-slate-800 bg-slate-950 group relative">
                             {img.previewUrl.value ? (
-                              <img
-                                src={img.previewUrl.value}
-                                alt={img.alt.value}
-                                className="h-full w-full object-cover"
-                              />
+                              <button
+                                type="button"
+                                onClick={() => onZoomImage?.(buildProductZoomImages(activeProduct), idx)}
+                                className="h-full w-full block cursor-zoom-in relative focus:outline-none focus:ring-1 focus:ring-cyan-500 rounded"
+                                title="Nhấn để phóng to ảnh"
+                                aria-label={`Phóng to ảnh #${idx + 1}`}
+                              >
+                                <img
+                                  src={img.previewUrl.value}
+                                  alt={img.alt.value}
+                                  className="h-full w-full object-cover transition-transform duration-200 group-hover:scale-105"
+                                />
+                                <span className="absolute inset-0 bg-slate-950/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white text-[10px]">
+                                  🔍
+                                </span>
+                              </button>
                             ) : (
                               <span className="text-sm">📷</span>
                             )}

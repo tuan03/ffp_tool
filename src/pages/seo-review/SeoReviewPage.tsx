@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 
+import { ImageZoomModal } from "./components/ImageZoomModal";
 import { ProductCardList } from "./components/ProductCardList";
 import { ProductDetailDrawer } from "./components/ProductDetailDrawer";
 import { ProductEditModal } from "./components/ProductEditModal";
@@ -12,6 +13,7 @@ import type {
   SeoProductUiViewModel,
   SeoReviewFilterState,
   SeoReviewViewMode,
+  ZoomImageItem,
 } from "./types";
 
 const SESSION_STORAGE_KEY = "ffp_seo_review_session_v1";
@@ -45,6 +47,30 @@ export function SeoReviewPage(): React.JSX.Element {
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<SeoProductUiViewModel | null>(null);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+
+  // High-Resolution Image Zoom Modal State
+  const [zoomState, setZoomState] = useState<{
+    isOpen: boolean;
+    images: readonly ZoomImageItem[];
+    initialIndex: number;
+  }>({
+    isOpen: false,
+    images: [],
+    initialIndex: 0,
+  });
+
+  function handleOpenZoomImage(images: readonly ZoomImageItem[], initialIndex = 0) {
+    if (images.length === 0) return;
+    setZoomState({
+      isOpen: true,
+      images,
+      initialIndex,
+    });
+  }
+
+  function handleCloseZoomImage() {
+    setZoomState((prev) => ({ ...prev, isOpen: false }));
+  }
 
   const [viewMode, setViewMode] = useState<SeoReviewViewMode>(() => {
     if (typeof window !== "undefined" && window.sessionStorage) {
@@ -485,6 +511,7 @@ export function SeoReviewPage(): React.JSX.Element {
               onEditProduct={handleEditProduct}
               onApproveProduct={handleApproveProduct}
               onRejectProduct={handleRejectProduct}
+              onZoomImage={handleOpenZoomImage}
             />
           )}
 
@@ -500,6 +527,7 @@ export function SeoReviewPage(): React.JSX.Element {
               onEditProduct={handleEditProduct}
               onApproveProduct={handleApproveProduct}
               onRejectProduct={handleRejectProduct}
+              onZoomImage={handleOpenZoomImage}
             />
           )}
 
@@ -516,6 +544,7 @@ export function SeoReviewPage(): React.JSX.Element {
               onRejectProduct={handleRejectProduct}
               onApproveAndNext={handleApproveAndNext}
               onRejectAndNext={handleRejectAndNext}
+              onZoomImage={handleOpenZoomImage}
             />
           )}
         </>
@@ -535,6 +564,7 @@ export function SeoReviewPage(): React.JSX.Element {
           handleRejectProduct(id);
           setIsDrawerOpen(false);
         }}
+        onZoomImage={handleOpenZoomImage}
       />
 
       {/* Edit Modal */}
@@ -543,6 +573,15 @@ export function SeoReviewPage(): React.JSX.Element {
         isOpen={isEditModalOpen}
         onClose={() => setIsEditModalOpen(false)}
         onSave={handleSaveEdit}
+        onZoomImage={handleOpenZoomImage}
+      />
+
+      {/* High-Resolution Image Zoom Lightbox */}
+      <ImageZoomModal
+        isOpen={zoomState.isOpen}
+        images={zoomState.images}
+        initialIndex={zoomState.initialIndex}
+        onClose={handleCloseZoomImage}
       />
     </div>
   );

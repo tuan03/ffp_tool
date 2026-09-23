@@ -1,11 +1,13 @@
 import { useState } from "react";
-import type { SeoProductEditInput, SeoProductUiViewModel } from "../types";
+import { buildProductZoomImages } from "../zoom-image-helper";
+import type { SeoProductEditInput, SeoProductUiViewModel, ZoomImageItem } from "../types";
 
 export interface ProductEditModalProps {
   readonly product: SeoProductUiViewModel | null;
   readonly isOpen: boolean;
   readonly onClose: () => void;
   readonly onSave: (id: string, updatedFields: SeoProductEditInput) => void;
+  readonly onZoomImage?: (images: readonly ZoomImageItem[], initialIndex?: number) => void;
 }
 
 export function ProductEditModal({
@@ -13,6 +15,7 @@ export function ProductEditModal({
   isOpen,
   onClose,
   onSave,
+  onZoomImage,
 }: ProductEditModalProps): React.JSX.Element | null {
   if (!isOpen || !product) {
     return null;
@@ -24,19 +27,24 @@ export function ProductEditModal({
       product={product}
       onClose={onClose}
       onSave={onSave}
+      onZoomImage={onZoomImage}
     />
   );
+}
+
+interface EditModalInnerProps {
+  readonly product: SeoProductUiViewModel;
+  readonly onClose: () => void;
+  readonly onSave: (id: string, updatedFields: SeoProductEditInput) => void;
+  readonly onZoomImage?: (images: readonly ZoomImageItem[], initialIndex?: number) => void;
 }
 
 function EditModalInner({
   product,
   onClose,
   onSave,
-}: {
-  readonly product: SeoProductUiViewModel;
-  readonly onClose: () => void;
-  readonly onSave: (id: string, updatedFields: SeoProductEditInput) => void;
-}) {
+  onZoomImage,
+}: EditModalInnerProps): React.JSX.Element {
   const [productTitle, setProductTitle] = useState(product.productTitle.value);
   const [productDescription, setProductDescription] = useState(product.productDescription.value);
   const [seoTitle, setSeoTitle] = useState(product.seoTitle.value);
@@ -197,11 +205,22 @@ function EditModalInner({
                   imageAlts.find((a) => a.id === img.id)?.alt || "";
                 return (
                   <div key={img.id} className="flex items-center gap-3">
-                    <img
-                      src={img.previewUrl.value}
-                      alt={currentAlt}
-                      className="h-10 w-10 rounded border border-slate-700 object-cover flex-shrink-0"
-                    />
+                    <button
+                      type="button"
+                      onClick={() => onZoomImage?.(buildProductZoomImages(product), idx)}
+                      className="h-10 w-10 rounded border border-slate-700 overflow-hidden flex-shrink-0 cursor-zoom-in group relative focus:outline-none focus:ring-1 focus:ring-cyan-500"
+                      title="Nhấn để phóng to ảnh"
+                      aria-label={`Phóng to ảnh #${idx + 1}`}
+                    >
+                      <img
+                        src={img.previewUrl.value}
+                        alt={currentAlt}
+                        className="h-full w-full object-cover group-hover:scale-105 transition-transform"
+                      />
+                      <span className="absolute inset-0 bg-slate-950/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white text-[9px]">
+                        🔍
+                      </span>
+                    </button>
                     <input
                       type="text"
                       value={currentAlt}

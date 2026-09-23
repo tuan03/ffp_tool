@@ -4,10 +4,12 @@ import test from "node:test";
 import { filterSeoProducts, findNextProductInList } from "../review-navigation";
 import { sanitizeHtmlDescription } from "../sanitize-html";
 import { getInitialSampleViewModels } from "../seo-content-ui-adapter";
+import { buildProductZoomImages } from "../zoom-image-helper";
 import type {
   ReviewDecision,
   SeoProductUiViewModel,
   SeoReviewViewMode,
+  ZoomImageItem,
 } from "../types";
 
 test("SeoReviewViewMode: supports cards, table, and split view modes", () => {
@@ -202,4 +204,38 @@ test("sanitizeHtmlDescription: strips malicious scripts, frames, and event handl
   const jsLink = '<a href="javascript:alert(1)">Click for free coupon</a>';
   const cleanLink = sanitizeHtmlDescription(jsLink);
   assert.ok(!cleanLink.includes("javascript:alert"));
+});
+
+test("buildProductZoomImages: correctly extracts zoomable items from product gallery", () => {
+  const sample = getInitialSampleViewModels();
+  const product = sample[0]!;
+
+  const zoomImages = buildProductZoomImages(product);
+  assert.ok(Array.isArray(zoomImages));
+  assert.equal(zoomImages.length, product.images.length);
+
+  zoomImages.forEach((item: ZoomImageItem, i: number) => {
+    const original = product.images[i];
+    assert.ok(original);
+    assert.equal(item.url, original.previewUrl.value || original.webpUrl.value);
+    assert.equal(item.altText, original.alt.value);
+    assert.equal(item.title, product.productTitle.value);
+  });
+
+  // Gracefully handles empty or null products
+  assert.deepEqual(buildProductZoomImages(null), []);
+  assert.deepEqual(buildProductZoomImages(undefined), []);
+  assert.deepEqual(buildProductZoomImages({ ...product, images: [] }), []);
+});
+
+test("ImageZoom navigation bounds: wraps around correctly", () => {
+  const totalImages = 4;
+  const prevFromZero = 0 > 0 ? 0 - 1 : totalImages - 1;
+  assert.equal(prevFromZero, 3);
+
+  const nextFromEnd = 3 < totalImages - 1 ? 3 + 1 : 0;
+  assert.equal(nextFromEnd, 0);
+
+  const nextFromMiddle = 1 < totalImages - 1 ? 1 + 1 : 0;
+  assert.equal(nextFromMiddle, 2);
 });

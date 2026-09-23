@@ -62,3 +62,9 @@ export interface SeoProductEditInput {
   readonly handle: string;
   readonly imageAlts: readonly { readonly id: string; readonly alt: string }[];
 }
+
+export interface ZoomImageItem {
+  readonly url: string;
+  readonly altText?: string;
+  readonly title?: string;
+}

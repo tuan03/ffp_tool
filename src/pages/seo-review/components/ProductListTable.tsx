@@ -1,9 +1,10 @@
 import { Fragment, useState } from "react";
 
 import { sanitizeHtmlDescription } from "../sanitize-html";
+import { buildProductZoomImages } from "../zoom-image-helper";
 import { SeoSerpPreview } from "./SeoSerpPreview";
 import { SourceBadge } from "./SourceBadge";
-import type { SeoProcessingStatus, SeoProductUiViewModel } from "../types";
+import type { SeoProcessingStatus, SeoProductUiViewModel, ZoomImageItem } from "../types";
 
 export interface ProductListTableProps {
   readonly products: readonly SeoProductUiViewModel[];
@@ -16,6 +17,7 @@ export interface ProductListTableProps {
   readonly onEditProduct: (product: SeoProductUiViewModel) => void;
   readonly onApproveProduct: (id: string) => void;
   readonly onRejectProduct: (id: string) => void;
+  readonly onZoomImage?: (images: readonly ZoomImageItem[], initialIndex?: number) => void;
 }
 
 export function ProductListTable({
@@ -29,6 +31,7 @@ export function ProductListTable({
   onEditProduct,
   onApproveProduct,
   onRejectProduct,
+  onZoomImage,
 }: ProductListTableProps): React.JSX.Element {
   const [descViewMode, setDescViewMode] = useState<Record<string, "formatted" | "raw">>({});
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
@@ -211,18 +214,29 @@ export function ProductListTable({
 
                     {/* Thumbnail */}
                     <td className="py-3 px-2">
-                      <div className="relative h-12 w-12 overflow-hidden rounded-lg border border-slate-800 bg-slate-950 flex items-center justify-center text-slate-600">
+                      <div className="relative h-12 w-12 overflow-hidden rounded-lg border border-slate-800 bg-slate-950 flex items-center justify-center text-slate-600 group">
                         {firstImage ? (
-                          <img
-                            src={firstImage}
-                            alt={product.images[0]?.alt.value || product.productTitle.value}
-                            className="h-full w-full object-cover"
-                            loading="lazy"
-                            onError={(e) => {
-                              const target = e.currentTarget;
-                              target.style.display = "none";
-                            }}
-                          />
+                          <button
+                            type="button"
+                            onClick={() => onZoomImage?.(buildProductZoomImages(product), 0)}
+                            className="h-full w-full block cursor-zoom-in relative focus:outline-none focus:ring-1 focus:ring-cyan-500 rounded-lg"
+                            title="Nhấn để phóng to ảnh"
+                            aria-label="Phóng to ảnh sản phẩm"
+                          >
+                            <img
+                              src={firstImage}
+                              alt={product.images[0]?.alt.value || product.productTitle.value}
+                              className="h-full w-full object-cover transition-transform duration-200 group-hover:scale-105"
+                              loading="lazy"
+                              onError={(e) => {
+                                const target = e.currentTarget;
+                                target.style.display = "none";
+                              }}
+                            />
+                            <span className="absolute inset-0 bg-slate-950/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white text-[10px]">
+                              🔍
+                            </span>
+                          </button>
                         ) : (
                           <span className="text-base" title="Không có ảnh">📷</span>
                         )}
@@ -444,13 +458,29 @@ export function ProductListTable({
                                       key={img.id}
                                       className="flex items-start gap-2.5 p-2 rounded-lg bg-slate-900 border border-slate-800"
                                     >
-                                      <div className="h-11 w-11 flex-shrink-0 overflow-hidden rounded border border-slate-800 bg-slate-950">
+                                      <div className="h-11 w-11 flex-shrink-0 overflow-hidden rounded border border-slate-800 bg-slate-950 group relative">
                                         {img.previewUrl.value ? (
-                                          <img
-                                            src={img.previewUrl.value}
-                                            alt={img.alt.value}
-                                            className="h-full w-full object-cover"
-                                          />
+                                          <button
+                                            type="button"
+                                            onClick={() => onZoomImage?.(buildProductZoomImages(product), idx)}
+                                            className="h-full w-full block cursor-zoom-in relative focus:outline-none focus:ring-1 focus:ring-cyan-500 rounded"
+                                            title="Nhấn để phóng to ảnh"
+                                            aria-label={`Phóng to ảnh #${idx + 1}`}
+                                          >
+                                            <img
+                                              src={img.previewUrl.value}
+                                              alt={img.alt.value}
+                                              className="h-full w-full object-cover transition-transform duration-200 group-hover:scale-105"
+                                              loading="lazy"
+                                              onError={(e) => {
+                                                const target = e.currentTarget;
+                                                target.style.display = "none";
+                                              }}
+                                            />
+                                            <span className="absolute inset-0 bg-slate-950/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white text-[10px]">
+                                              🔍
+                                            </span>
+                                          </button>
                                         ) : (
                                           <span className="text-sm">📷</span>
                                         )}

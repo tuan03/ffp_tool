@@ -1,9 +1,10 @@
 import { useState } from "react";
 
 import { sanitizeHtmlDescription } from "../sanitize-html";
+import { buildProductZoomImages } from "../zoom-image-helper";
 import { SeoSerpPreview } from "./SeoSerpPreview";
 import { SourceBadge } from "./SourceBadge";
-import type { SeoProcessingStatus, SeoProductUiViewModel } from "../types";
+import type { SeoProcessingStatus, SeoProductUiViewModel, ZoomImageItem } from "../types";
 
 export interface ProductCardListProps {
   readonly products: readonly SeoProductUiViewModel[];
@@ -13,6 +14,7 @@ export interface ProductCardListProps {
   readonly onEditProduct: (product: SeoProductUiViewModel) => void;
   readonly onApproveProduct: (id: string) => void;
   readonly onRejectProduct: (id: string) => void;
+  readonly onZoomImage?: (images: readonly ZoomImageItem[], initialIndex?: number) => void;
 }
 
 export function ProductCardList({
@@ -23,6 +25,7 @@ export function ProductCardList({
   onEditProduct,
   onApproveProduct,
   onRejectProduct,
+  onZoomImage,
 }: ProductCardListProps): React.JSX.Element {
   const [expandedDescIds, setExpandedDescIds] = useState<ReadonlySet<string>>(new Set());
   const [descViewMode, setDescViewMode] = useState<Record<string, "formatted" | "raw">>({});
@@ -145,18 +148,29 @@ export function ProductCardList({
                 </div>
 
                 {/* Thumbnail */}
-                <div className="relative h-14 w-14 flex-shrink-0 overflow-hidden rounded-xl border border-slate-800 bg-slate-950 flex items-center justify-center text-slate-600 shadow-inner">
+                <div className="relative h-14 w-14 flex-shrink-0 overflow-hidden rounded-xl border border-slate-800 bg-slate-950 flex items-center justify-center text-slate-600 shadow-inner group">
                   {firstImage ? (
-                    <img
-                      src={firstImage}
-                      alt={product.images[0]?.alt.value || product.productTitle.value}
-                      className="h-full w-full object-cover"
-                      loading="lazy"
-                      onError={(e) => {
-                        const target = e.currentTarget;
-                        target.style.display = "none";
-                      }}
-                    />
+                    <button
+                      type="button"
+                      onClick={() => onZoomImage?.(buildProductZoomImages(product), 0)}
+                      className="h-full w-full block cursor-zoom-in relative focus:outline-none focus:ring-1 focus:ring-cyan-500 rounded-xl"
+                      title="Nhấn để phóng to ảnh sản phẩm"
+                      aria-label="Phóng to ảnh sản phẩm"
+                    >
+                      <img
+                        src={firstImage}
+                        alt={product.images[0]?.alt.value || product.productTitle.value}
+                        className="h-full w-full object-cover transition-transform duration-200 group-hover:scale-105"
+                        loading="lazy"
+                        onError={(e) => {
+                          const target = e.currentTarget;
+                          target.style.display = "none";
+                        }}
+                      />
+                      <span className="absolute inset-0 bg-slate-950/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white text-xs">
+                        🔍
+                      </span>
+                    </button>
                   ) : (
                     <span className="text-xl" title="Không có ảnh">📷</span>
                   )}
@@ -288,18 +302,29 @@ export function ProductCardList({
                           key={img.id}
                           className="flex items-start gap-2.5 p-2 rounded-lg bg-slate-900/90 border border-slate-800/80"
                         >
-                          <div className="relative h-12 w-12 flex-shrink-0 overflow-hidden rounded-md border border-slate-800 bg-slate-950 flex items-center justify-center">
+                          <div className="relative h-12 w-12 flex-shrink-0 overflow-hidden rounded-md border border-slate-800 bg-slate-950 flex items-center justify-center group">
                             {img.previewUrl.value ? (
-                              <img
-                                src={img.previewUrl.value}
-                                alt={img.alt.value}
-                                className="h-full w-full object-cover"
-                                loading="lazy"
-                                onError={(e) => {
-                                  const target = e.currentTarget;
-                                  target.style.display = "none";
-                                }}
-                              />
+                              <button
+                                type="button"
+                                onClick={() => onZoomImage?.(buildProductZoomImages(product), idx)}
+                                className="h-full w-full block cursor-zoom-in relative focus:outline-none focus:ring-1 focus:ring-cyan-500 rounded-md"
+                                title="Nhấn để phóng to ảnh"
+                                aria-label={`Phóng to ảnh #${idx + 1}`}
+                              >
+                                <img
+                                  src={img.previewUrl.value}
+                                  alt={img.alt.value}
+                                  className="h-full w-full object-cover transition-transform duration-200 group-hover:scale-105"
+                                  loading="lazy"
+                                  onError={(e) => {
+                                    const target = e.currentTarget;
+                                    target.style.display = "none";
+                                  }}
+                                />
+                                <span className="absolute inset-0 bg-slate-950/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white text-[10px]">
+                                  🔍
+                                </span>
+                              </button>
                             ) : (
                               <span className="text-sm">📷</span>
                             )}

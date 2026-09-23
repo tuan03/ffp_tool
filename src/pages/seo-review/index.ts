@@ -8,6 +8,8 @@ export {
 } from "./seo-content-ui-adapter";
 export { sanitizeHtmlDescription } from "./sanitize-html";
 export { filterSeoProducts, findNextProductInList } from "./review-navigation";
+export { buildProductZoomImages } from "./zoom-image-helper";
+export { ImageZoomModal } from "./components/ImageZoomModal";
 export type {
   DisplayField,
   FieldSource,
@@ -18,4 +20,5 @@ export type {
   SeoProductUiViewModel,
   SeoReviewFilterState,
   SeoReviewViewMode,
+  ZoomImageItem,
 } from "./types";
