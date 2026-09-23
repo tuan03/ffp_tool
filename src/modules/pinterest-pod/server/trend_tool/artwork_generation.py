@@ -30,13 +30,15 @@ def generate_flat_artwork(
     target: ProductTarget,
     *,
     backend: str,
-    model: str = "imagen-3.0-generate-002",
+    model: str = "gemini-2.5-flash-image",
     image_size: str = "2K",
     attempts: int = 2,
     reference_brief: dict[str, object] | None = None,
     correction: str = "",
 ) -> ArtworkGenerationRecord:
     destination.parent.mkdir(parents=True, exist_ok=True)
+    if "imagen-3" in model.lower():
+        model = "gemini-2.5-flash-image"
     try:
         client = create_gemini_client(backend)
         with Image.open(source) as opened:

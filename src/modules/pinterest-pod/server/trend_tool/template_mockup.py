@@ -592,16 +592,11 @@ def generate_direct_ai_lifestyle(
     room_template: Image.Image | None = None,
     reference_analysis: dict[str, Any] | None = None,
 ) -> Image.Image:
-    if room_template is not None:
-        return generate_reference_template_composite(
-            client,
-            artwork,
-            room_template,
-            target,
-            model="gemini-2.5-flash",
-        )
-
     from google.genai import types
+
+    image_model = model.strip() if model else ""
+    if not image_model or "imagen-3" in image_model.lower():
+        image_model = "gemini-2.5-flash-image"
 
     config = types.GenerateContentConfig(
         response_modalities=["IMAGE"],
@@ -620,21 +615,43 @@ def generate_direct_ai_lifestyle(
     )
     parts.append(types.Part.from_text(text=prompt_str))
 
-    response = client.models.generate_content(
-        model=model,
-        contents=[
-            types.Content(
-                role="user",
-                parts=parts,
+    try:
+        response = client.models.generate_content(
+            model=image_model,
+            contents=[
+                types.Content(
+                    role="user",
+                    parts=parts,
+                )
+            ],
+            config=config,
+        )
+        image_bytes, _ = extract_image_bytes(response)
+        if image_bytes:
+            with Image.open(io.BytesIO(image_bytes)) as generated:
+                return generated.convert("RGB")
+    except Exception as exc:
+        LOG.warning("Multimodal generative AI lifestyle call failed (%s); evaluating fallback", exc)
+        if room_template is not None:
+            # Fallback to intelligent geometric luminance composite
+            return generate_reference_template_composite(
+                client,
+                artwork,
+                room_template,
+                target,
+                model="gemini-2.5-flash",
             )
-        ],
-        config=config,
-    )
-    image_bytes, _ = extract_image_bytes(response)
-    if not image_bytes:
-        raise RuntimeError("direct AI lifestyle generation returned no image.")
-    with Image.open(io.BytesIO(image_bytes)) as generated:
-        return generated.convert("RGB")
+        raise
+
+    if room_template is not None:
+        return generate_reference_template_composite(
+            client,
+            artwork,
+            room_template,
+            target,
+            model="gemini-2.5-flash",
+        )
+    raise RuntimeError("direct AI lifestyle generation returned no image.")
 
 
 def direct_ai_lifestyle_prompt(
@@ -645,11 +662,21 @@ def direct_ai_lifestyle_prompt(
     has_room_template: bool = False,
     reference_analysis: dict[str, Any] | None = None,
 ) -> str:
-    product = target.name.strip().lower()
+    raw_target = target.name.strip().lower()
+    active_niche = (getattr(target, "niche", "") or "").strip().lower()
+    if raw_target in {"custom", "product"} and active_niche:
+        product = active_niche
+    else:
+        product = raw_target
+
     coordinated_products = ""
     scene_title = reference_analysis.get("scene_title", "Reference Listing Shot") if reference_analysis else ""
 
-    if product == "blanket":
+    is_bag = any(k in product for k in ("bag", "handbag", "tote", "purse", "backpack", "clutch", "leather"))
+    is_blanket = any(k in product for k in ("blanket", "throw", "quilt"))
+    is_rug = any(k in product for k in ("rug", "carpet", "mat")) and not is_bag
+
+    if is_blanket:
         product_rule = (
             "Create one full-size premium soft throw blanket. Treat the attached image as its exact print artwork reference, "
             "not as a flat image to paste over furniture. Faithfully reproduce its motifs, illustrations, color palette, and pattern language "
@@ -672,7 +699,7 @@ def direct_ai_lifestyle_prompt(
             "no chair cover, towel, scarf, placemat, rug, wall hanging, no garbled or distorted lettering, "
             "no superimposed photographer watermarks, brand logos, or UI overlays."
         )
-    elif product == "rug":
+    elif is_rug:
         shape = target.rug_shape.strip().lower() if target.rug_shape else "rectangle"
         product_rule = (
             f"Create one full-size {shape} floor rug. Treat the attached image as its exact print artwork reference, "
@@ -682,9 +709,28 @@ def direct_ai_lifestyle_prompt(
             f"No rectangular rug when the required silhouette is {shape}, no blanket, bath mat, doormat, wall hanging, "
             "no superimposed photographer watermarks, brand logos, or UI overlays."
         )
+    elif is_bag:
+        product_rule = (
+            f"Create one premium, luxury {product}. Treat the attached image as its exact print artwork reference, "
+            "not as a flat sticker or cardboard cutout. Faithfully reproduce its motifs, colors, illustrations, and pattern language "
+            "seamlessly across the main leather or fabric body panels of the bag. "
+            "Show authentic material grain, precise artisan stitching, edge paint, polished metallic hardware (zippers, buckles, clasps), "
+            "and structured 3D volume with realistic lighting and contact shadows."
+        )
+        avoid = (
+            "No flat 2D sticker slapped on, no cardboard cutout, no floor rug, no blanket, no distorted hardware, "
+            "no garbled lettering, no superimposed photographer watermarks, brand logos, or UI overlays."
+        )
     else:
-        product_rule = "Create one full-size product using the attached image as its faithful print artwork reference."
-        avoid = pose.avoid
+        product_rule = (
+            f"Create one premium commercial {product}. Treat the attached image as its faithful print artwork reference. "
+            "Reproduce its motifs, color palette, and visual identity seamlessly integrated into the product surface "
+            "with authentic 3D material textures, natural depth, fine craftsmanship, and realistic contact shadows."
+        )
+        avoid = (
+            "No flat 2D stickers, no distorted logos, no low resolution, no garbled lettering, "
+            "no superimposed photographer watermarks or UI overlays."
+        )
 
     if pose.name == "bed_full_showcase":
         coordinated_products = (
@@ -709,12 +755,12 @@ def direct_ai_lifestyle_prompt(
 
         product_rule = (
             f"STRICT TEMPLATE PRESERVATION MANDATE: Render the new print artwork from Image 1 onto the product carrier shown in Image 2. "
-            f"Faithfully reproduce its motifs, colors, and layout across the fabric with realistic cloth texture, folds, and seams as defined in Image 2. "
+            f"Faithfully reproduce its motifs, colors, and layout across the surface with realistic material texture, folds, and seams as defined in Image 2. "
             f"Zero remnants or bleed-through of any old patterns from Image 2."
         )
         scene_desc = (
             f"CRITICAL MANDATORY TEMPLATE REPLACEMENT DIRECTIVE ({scene_title}):\n"
-            f"- Image 1: Commercial textile print artwork.\n"
+            f"- Image 1: Commercial print artwork.\n"
             f"- Image 2: EXACT reference template / commercial shot to preserve and adapt.\n"
             f"- ZERO HALLUCINATIONS / DO NOT INVENT A NEW SCENE: You MUST preserve 100% of the composition, room environment, furniture, background, text callouts, charts, and lighting from Image 2. Do NOT invent a different room, sofa, or layout!\n"
             f"- External Context/Infographic Chrome to Preserve 100%: {preserve}\n"
@@ -733,7 +779,7 @@ Use case: final ecommerce lifestyle product photograph adapting a reference temp
 {product_rule}
 {scene_desc}
 Placement: {placement}.
-Photorealism requirements: The textile must have real cloth geometry, natural gravity, visible thickness and edge binding, broad folds plus fine weave, physically correct occlusion behind furniture, soft contact shadows, and lighting that follows the folded surface. It must look like an actual camera photograph, not a 2D collage, poster, sticker, rendering, or graphic illustration.
+Photorealism requirements: The product must have authentic 3D geometry, natural lighting, visible physical thickness, physically correct occlusion, soft contact shadows, and realistic surface finish. It must look like an actual camera photograph, not a 2D collage, poster, sticker, rendering, or graphic illustration.
 Coordinated products: {coordinated_products}
 Listing-shot requirement: {listing_requirement}
 Composition: Match the exact framing, perspective, and arrangement of Image 2. Replace only the product carrier surface.
@@ -743,10 +789,10 @@ Retry correction: {correction or "None. Strictly preserve Image 2 layout and rep
     elif has_room_template:
         scene_desc = (
             "CRITICAL REFERENCE ROOM TEMPLATE COMPOSITING INSTRUCTION:\n"
-            "- You are provided with TWO reference images: Image 1 is the textile print artwork. Image 2 is the exact reference room scene photograph.\n"
+            "- You are provided with TWO reference images: Image 1 is the print artwork. Image 2 is the exact reference scene photograph.\n"
             "- PRESERVE THE ROOM EXACTLY: You MUST retain the exact walls, flooring, furniture layout, camera perspective, ambient color temperature, and lighting direction from Image 2.\n"
             "- Do NOT generate a random new room. Keep the exact furniture geometry and ambient room lighting from Image 2.\n"
-            f"- Seamlessly composite and drape the {product} (faithfully displaying the print artwork from Image 1) onto the appropriate floor or furniture surface in Image 2, casting realistic contact shadows and obeying the room's light sources."
+            f"- Seamlessly composite the {product} (faithfully displaying the print artwork from Image 1) onto the appropriate surface in Image 2, casting realistic contact shadows and obeying the room's light sources."
         )
         placement = pose.placement
         listing_requirement = f"Preserve Image 2 room scene and layout. Place {product} naturally."
@@ -759,7 +805,7 @@ Use case: final ecommerce lifestyle product photograph compositing onto referenc
 {product_rule}
 {scene_desc}
 Placement: {placement}.
-Photorealism requirements: The textile must have real cloth geometry, natural gravity, visible thickness and edge binding, broad folds plus fine weave, physically correct occlusion behind furniture, soft contact shadows, and lighting that follows the folded surface. It must look like an actual camera photograph, not a 2D collage, poster, sticker, rendering, or graphic illustration.
+Photorealism requirements: The product must have authentic 3D geometry, natural lighting, visible thickness, physically correct occlusion, soft contact shadows, and realistic surface finish. It must look like an actual camera photograph, not a 2D collage, poster, sticker, rendering, or graphic illustration.
 Coordinated products: {coordinated_products}
 Listing-shot requirement: {listing_requirement}
 Composition: Match the exact framing, perspective, and arrangement of Image 2.
@@ -775,7 +821,7 @@ Use case: final ecommerce lifestyle product photograph.
 {product_rule}
 {scene_desc}
 Placement: {placement}.
-Photorealism requirements: The textile must have real cloth geometry, natural gravity, visible thickness and edge binding, broad folds plus fine weave, physically correct occlusion behind furniture, soft contact shadows, and lighting that follows the folded surface. It must look like an actual camera photograph, not a 2D collage, poster, sticker, rendering, or graphic illustration.
+Photorealism requirements: The product must have authentic 3D geometry, natural lighting, visible physical thickness, physically correct occlusion, soft contact shadows, and realistic surface finish. It must look like an actual camera photograph, not a 2D collage, poster, sticker, rendering, or graphic illustration.
 Coordinated products: {coordinated_products or "None."}
 Listing-shot requirement: {pose.display_rule or placement}
 Composition: Follow the requested listing-shot framing. Make the product full-size and plausible, with the artwork readable wherever the pose is intended to show it.
@@ -784,9 +830,19 @@ Retry correction: {correction or "None. Render one credible, realistic product p
 """.strip()
 
 
-def template_pose_for_index(target: ProductTarget, index: int) -> TemplatePose:
-    product = target.name.strip().lower()
-    if product == "blanket":
+def template_pose_for_index(target: ProductTarget, index: int, niche: str = "") -> TemplatePose:
+    raw_target = target.name.strip().lower()
+    active_niche = (getattr(target, "niche", "") or niche).strip().lower()
+    if raw_target in {"custom", "product"} and active_niche:
+        product = active_niche
+    else:
+        product = raw_target
+
+    is_bag = any(k in product for k in ("bag", "handbag", "tote", "purse", "backpack", "clutch", "leather"))
+    is_blanket = any(k in product for k in ("blanket", "throw", "quilt"))
+    is_rug = any(k in product for k in ("rug", "carpet", "mat")) and not is_bag
+
+    if is_blanket:
         poses = (
             TemplatePose(
                 "held_open_showcase",
@@ -859,7 +915,45 @@ def template_pose_for_index(target: ProductTarget, index: int) -> TemplatePose:
                 "WIDE INTERIOR SHOT: aspirational architectural showcase proving how the blanket transforms luxury living spaces.",
             ),
         )
-    else:
+    elif is_bag:
+        poses = (
+            TemplatePose(
+                "studio_pedestal",
+                "a luxurious, minimalist commercial photography studio with a travertine marble pedestal and warm soft directional rim lighting",
+                f"the {product} stands upright on the pedestal showcasing its structured form, polished metallic hardware, fine artisan stitching, and the print artwork seamlessly displayed across its main front body panel",
+                "no cartoon illustration, no flat 2D sticker overlay, no floor rug, no blanket, no watermark",
+                "STUDIO HERO SHOT: pristine commercial catalog shot highlighting bag silhouette and print details.",
+            ),
+            TemplatePose(
+                "lifestyle_cafe_table",
+                "a chic sunlit Parisian or Scandinavian cafe with a round marble table beside a tall window",
+                f"the {product} rests gracefully on the cafe table beside a ceramic coffee cup and sunglasses in soft morning light",
+                "no flat 2D sticker, no distorted perspective, no rug on floor",
+                "CAFE LIFESTYLE SHOT: elegant daytime setting demonstrating authentic everyday luxury.",
+            ),
+            TemplatePose(
+                "boutique_shelf",
+                "an exclusive designer boutique showroom with warm ambient backlit natural oak shelving",
+                f"the {product} is featured as the centerpiece on the boutique shelf with gentle shadows and realistic leather texture",
+                "no flat 2D sticker, no distorted logos",
+                "BOUTIQUE DISPLAY SHOT: high-end retail showcase emphasizing product desirability.",
+            ),
+            TemplatePose(
+                "editorial_model_arm",
+                "an elegant, editorial fashion setting with a neutral textured wall and soft flattering window light",
+                f"the {product} is carried naturally by the top handle by a stylish model in neutral minimalist attire, showcasing the bag's proportions, drape, and vibrant print",
+                "no distorted limbs, no flat stickers, no blurry face distracting from the bag",
+                "EDITORIAL ON-MODEL SHOT: aspirational fashion editorial shot proving real-world scale and look.",
+            ),
+            TemplatePose(
+                "flatlay_styling",
+                "a premium marble vanity or tabletop with soft diffused daylight photographed from an overhead 45-degree angle",
+                f"the {product} is styled with complementary accessories (designer sunglasses, silk scarf, brass keychain), highlighting fine leather grain and print craftsmanship",
+                "no cluttered mess, no flat sticker paste",
+                "CURATED FLATLAY SHOT: artfully arranged overhead vignette for social proof and conversion.",
+            ),
+        )
+    elif is_rug:
         poses = (
             TemplatePose("living_room_center", "a bright living room photographed at standing eye level", "the rug lies centered under a coffee table with all edges visible", "no blanket, bath mat, doormat, or second rug"),
             TemplatePose("bedroom_bedside", "a calm bedroom photographed at a natural three-quarter angle", "the rug sits beside the bed with a clear floor-plane perspective", "no blanket, bath mat, doormat, or second rug"),
@@ -871,6 +965,14 @@ def template_pose_for_index(target: ProductTarget, index: int) -> TemplatePose:
             TemplatePose("sunroom_terrace", "a sun-drenched enclosed sunroom with potted plants and stone floor", "the rug is centered in the sunlit seating space with visible texture", "no blanket, bath mat, or second rug"),
             TemplatePose("nursery_cozy_corner", "a peaceful modern nursery with crib, rocking chair, and oak floor", "the rug sits open in the floor area creating a cozy focal point", "no blanket, bath mat, or second rug"),
             TemplatePose("open_concept_loft", "an urban industrial loft with brick accents and polished concrete", "the rug anchors the central conversation lounge with bold presence", "no blanket, bath mat, or second rug"),
+        )
+    else:
+        poses = (
+            TemplatePose("hero_studio_pedestal", "a clean, high-end commercial product photography studio with a minimalist pedestal and soft diffused lighting", f"the {product} is positioned as the hero subject with crisp focus, natural contact shadow, authentic material textures, and the printed artwork clearly showcased", "no flat 2D sticker, no cartoon, no watermark"),
+            TemplatePose("ambient_lifestyle", f"a stylish, contemporary interior living or workspace relevant to {product} with natural sunlight and balanced depth of field", f"the {product} is placed naturally in its everyday aspirational environment, displaying the printed design with realistic lighting and physical interaction", "no flat sticker, no distorted perspective"),
+            TemplatePose("close_up_detail", "a refined close-up perspective highlighting material craftsmanship, fine surface texture, and sharp print reproduction", f"focused on the hero detail of the {product} showcasing the seamless print quality and premium construction", "no blurry focus, no flat paste"),
+            TemplatePose("editorial_composition", "a tastefully styled editorial scene with complementary props and warm ambient lighting", f"the {product} is integrated into an elegant visual story with balanced negative space and rich color harmony", "no cluttered scene, no distorted branding"),
+            TemplatePose("in_context_lifestyle", f"an authentic, aspirational real-world setting demonstrating the {product} in use", f"the {product} naturally anchors the scene, casting soft realistic shadows and showing true-to-life scale", "no fake 2D paste, no watermark"),
         )
     return poses[(max(1, index) - 1) % len(poses)]
 

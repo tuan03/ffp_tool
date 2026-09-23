@@ -1017,16 +1017,18 @@ def run_production_from_candidates(
 
             for p_idx, print_file in enumerate(source_prints, start=1):
                 cur_target = render_target_by_print.get(path_key(print_file), config.target)
+                if not getattr(cur_target, "niche", "") and config.trend_niche:
+                    cur_target = dataclasses.replace(cur_target, niche=config.trend_niche)
                 for var_idx in range(1, variants_per_product + 1):
                     if cancel_event is not None and cancel_event.is_set():
                         raise PipelineCancelled("Production was stopped by the user.")
-                    pose = template_pose_for_index(cur_target, var_idx)
+                    pose = template_pose_for_index(cur_target, var_idx, niche=config.trend_niche)
                     pose_label = getattr(pose, "name", getattr(pose, "scene", "lifestyle"))
                     chosen_room = room_template_files[(var_idx - 1) % len(room_template_files)] if room_template_files else None
                     if chosen_room:
-                        log(progress, f"[{p_idx}/{len(source_prints)}] Tạo mockup AI kết hợp Ảnh phòng tham chiếu {var_idx}/{variants_per_product} ({chosen_room.name}).")
+                        log(progress, f"[{p_idx}/{len(source_prints)}] Tạo mockup AI kết hợp Ảnh tham chiếu {var_idx}/{variants_per_product} ({chosen_room.name}).")
                     else:
-                        log(progress, f"[{p_idx}/{len(source_prints)}] Tạo mockup phòng khách AI biến thể {var_idx}/{variants_per_product} ({pose_label}).")
+                        log(progress, f"[{p_idx}/{len(source_prints)}] Tạo mockup AI biến thể {var_idx}/{variants_per_product} ({pose_label}).")
                     try:
                         if blender_render:
                             rec = build_blender_mockup(print_file, run_dir, cur_target, pose=pose, variant=var_idx, progress=progress)

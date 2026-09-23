@@ -1528,7 +1528,7 @@ def _run_local_pipeline_worker(job_id: str, req_body: dict[str, Any], base_url: 
         product = raw_product
     else:
         product = infer_product_type_from_niche(niche)
-    target = tt_cfg.product_preset(product)
+    target = tt_cfg.product_preset(product, niche=niche)
     desired_output_count = int(req_body.get("desired_output_count") or 1)
     mockup_engine = "direct_ai"
     design_mode = str(req_body.get("design_mode") or "ai-artwork").replace("-", "_")
@@ -1546,16 +1546,16 @@ def _run_local_pipeline_worker(job_id: str, req_body: dict[str, Any], base_url: 
     except Exception:
         pass
 
-    # Resolve initial room templates if present
+    # Resolve initial room templates only if user explicitly provided them or from specific source_run_id
     initial_rt: list[Path] = []
     raw_refs = req_body.get("reference_images") or []
     src_run_id = req_body.get("source_run_id")
     src_dir = resolve_run_dir(src_run_id) if src_run_id else None
-    check_rt_dir = (src_dir or output_root) / "room_templates"
     if raw_refs:
-        initial_rt = save_room_template_images(raw_refs, check_rt_dir)
-    elif check_rt_dir.exists():
-        initial_rt = [p for p in sorted(check_rt_dir.glob("*.*")) if p.is_file() and p.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}]
+        job_rt_dir = TEMP_DIR / job_id / "room_templates"
+        initial_rt = save_room_template_images(raw_refs, job_rt_dir)
+    elif src_dir and (src_dir / "room_templates").is_dir():
+        initial_rt = [p for p in sorted((src_dir / "room_templates").glob("*.*")) if p.is_file() and p.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}]
 
     if initial_rt:
         ai_background_variants = max(1, min(10, len(initial_rt)))
@@ -1705,14 +1705,14 @@ def _run_local_pipeline_worker(job_id: str, req_body: dict[str, Any], base_url: 
 
             # Setup room template images
             raw_refs = req_body.get("reference_images") or []
-            prod_rt_dir = (target_run_dir or src_dir or output_root) / "room_templates"
+            prod_rt_dir = (target_run_dir or src_dir) / "room_templates" if (target_run_dir or src_dir) else None
             saved_templates: list[Path] = []
-            if raw_refs:
+            if raw_refs and prod_rt_dir:
                 saved_templates = save_room_template_images(raw_refs, prod_rt_dir)
-            elif src_dir and (src_dir / "room_templates").exists():
+            elif src_dir and (src_dir / "room_templates").is_dir():
                 src_rt = src_dir / "room_templates"
                 src_templates = [p for p in sorted(src_rt.glob("*.*")) if p.is_file() and p.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}]
-                if target_run_dir and target_run_dir != src_dir:
+                if target_run_dir and target_run_dir != src_dir and prod_rt_dir:
                     prod_rt_dir.mkdir(parents=True, exist_ok=True)
                     copied_templates = []
                     for st in src_templates:
@@ -1722,8 +1722,6 @@ def _run_local_pipeline_worker(job_id: str, req_body: dict[str, Any], base_url: 
                     saved_templates = copied_templates
                 else:
                     saved_templates = src_templates
-            elif prod_rt_dir.exists():
-                saved_templates = [p for p in sorted(prod_rt_dir.glob("*.*")) if p.is_file() and p.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}]
 
             if saved_templates:
                 updated_variants = max(config.task4_variants_per_product, len(saved_templates))

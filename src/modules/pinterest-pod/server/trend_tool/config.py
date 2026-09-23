@@ -13,6 +13,7 @@ class ProductTarget:
     prefer_cmyk: bool = True
     allow_custom_shape: bool = False
     rug_shape: str = "rectangle"
+    niche: str = ""
 
 
 @dataclass(frozen=True)
@@ -75,7 +76,7 @@ class PipelineConfig:
     task4_room_templates: tuple[Path, ...] = ()
     task4_variants_per_product: int = 5
     task4_quality_attempts: int = 3
-    template_mockup_model: str = "imagen-3.0-generate-002"
+    template_mockup_model: str = "gemini-2.5-flash-image"
     task4_modes: tuple[str, ...] = ("flex",)
     task4_models: tuple[str, ...] = ("pro",)
     task4_final_integration: str = "on"
@@ -100,25 +101,26 @@ def infer_product_type(niche: str) -> str:
     return "custom"
 
 
-def product_preset(name: str) -> ProductTarget:
+def product_preset(name: str, niche: str = "") -> ProductTarget:
     normalized = (name or "").lower().strip()
+    clean_niche = (niche or "").strip()
     if normalized == "blanket":
-        return ProductTarget(name="blanket", width_px=10000, height_px=11000)
+        return ProductTarget(name="blanket", width_px=10000, height_px=11000, niche=clean_niche)
     if normalized == "rug":
-        return ProductTarget(name="rug", width_px=4000, height_px=6400)
+        return ProductTarget(name="rug", width_px=4000, height_px=6400, niche=clean_niche)
     if normalized == "custom":
-        return ProductTarget(name="custom", width_px=4000, height_px=4000, allow_custom_shape=True)
+        return ProductTarget(name="custom", width_px=4000, height_px=4000, allow_custom_shape=True, niche=clean_niche)
     inferred = infer_product_type(normalized)
     if inferred == "blanket":
-        return ProductTarget(name="blanket", width_px=10000, height_px=11000)
+        return ProductTarget(name="blanket", width_px=10000, height_px=11000, niche=clean_niche)
     if inferred == "rug":
-        return ProductTarget(name="rug", width_px=4000, height_px=6400)
-    return ProductTarget(name="custom", width_px=4000, height_px=4000, allow_custom_shape=True)
+        return ProductTarget(name="rug", width_px=4000, height_px=6400, niche=clean_niche)
+    return ProductTarget(name="custom", width_px=4000, height_px=4000, allow_custom_shape=True, niche=clean_niche or normalized)
 
 
 def product_preset_from_niche(niche: str) -> ProductTarget:
     ptype = infer_product_type(niche)
-    return product_preset(ptype)
+    return product_preset(ptype, niche=niche)
 
 
 def restore_pipeline_config(raw_cfg: dict, fallback_root: Path) -> PipelineConfig:
@@ -132,6 +134,7 @@ def restore_pipeline_config(raw_cfg: dict, fallback_root: Path) -> PipelineConfi
         prefer_cmyk=bool(target_raw.get("prefer_cmyk", True)),
         allow_custom_shape=bool(target_raw.get("allow_custom_shape", False)),
         rug_shape=str(target_raw.get("rug_shape", "rectangle")),
+        niche=str(target_raw.get("niche", raw_cfg.get("trend_niche", ""))),
     )
     valid_fields = {f.name: f for f in dataclasses.fields(PipelineConfig)}
     kwargs: dict[str, object] = {}

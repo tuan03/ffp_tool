@@ -173,6 +173,7 @@ For each Pinterest trend candidate:
    - visual_relevance: does the trend have rich aesthetic motifs, color palettes, textures, or repeat patterns?
    - printability_potential: can these visual elements be translated into a flat 2D surface pattern or direct print for POD merchandise?
    - design_transferability: can this motif be printed onto POD products (bags, textiles, apparel, home decor, accessories)?
+   - niche_aesthetic_compatibility: does this trend's mood, elegance, and aesthetic vocabulary genuinely match the target niche '{self.niche}'? (For premium items like leather bags, footwear, or apparel, prioritize sophisticated motifs: botanical, vintage floral, monogram, geometric, embossed textures, folk art, artisanal prints. If '{self.niche}' is NOT explicitly holiday-themed, severely penalize or reject novelty kids' Halloween/holiday party crafts or temporary decorations).
 
 REJECT explicitly (set reject=true and relationship=IRRELEVANT):
 - Beauty, nails, hair, makeup, skincare, cosmetics, manicures.
@@ -180,9 +181,10 @@ REJECT explicitly (set reject=true and relationship=IRRELEVANT):
 - Personal fashion outfits (OOTD, shoes, apparel styling).
 - Text-only memes, quotes, celebrity gossip, workout routines.
 - Trends without distinct visual motifs or surface patterns.
+- Mismatched seasonal novelty themes when the user requested a specific non-holiday niche (e.g. children's Halloween DIY activities when user asked for leather bag).
 
 PRIORITIZE:
-- Surface patterns (floral, botanical, geometric, checkerboard, plaid, abstract, boho, vintage, celestial, cottagecore, seasonal/holiday decor).
+- Surface patterns (floral, botanical, geometric, checkerboard, plaid, abstract, boho, vintage, celestial, cottagecore).
 - Textile prints, folk art, retro illustrations, tapestry designs.
 
 Return only JSON:
