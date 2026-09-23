@@ -374,6 +374,15 @@ export function resetCrawlerOutput(): void {
   notifyListeners();
 }
 
+export function resetCrawlerSettings(): void {
+  sessionState = {
+    ...sessionState,
+    settings: { ...DEFAULT_AMAZON_CRAWLER_SETTINGS },
+  };
+  persistSession(sessionState);
+  notifyListeners();
+}
+
 export function clearCrawlerSession(): void {
   abortCrawlerJob();
   sessionState = { ...DEFAULT_SESSION_STATE };

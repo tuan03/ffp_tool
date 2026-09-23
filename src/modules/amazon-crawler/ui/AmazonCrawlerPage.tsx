@@ -20,6 +20,7 @@ import {
 import {
   abortCrawlerJob,
   resetCrawlerOutput,
+  resetCrawlerSettings,
   selectCrawlerProduct,
   setCrawlerActiveTab,
   setCrawlerSelectedMediaUrl,
@@ -578,6 +579,18 @@ export function AmazonCrawlerPage({
               <span className="rounded-full bg-cyan-500/10 px-2 py-0.5 text-[11px] font-medium text-cyan-400 border border-cyan-500/20">
                 Áp dụng toàn bộ batch
               </span>
+              <button
+                className="inline-flex items-center gap-1 rounded-md border border-slate-700 bg-slate-900/90 px-2 py-0.5 text-[11px] font-medium text-slate-300 transition-colors hover:border-cyan-500 hover:bg-slate-800 hover:text-cyan-200 disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={isRunning}
+                title="Đặt lại cấu hình về mặc định"
+                type="button"
+                onClick={resetCrawlerSettings}
+              >
+                <svg className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                  <path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+                <span>Reset</span>
+              </button>
             </div>
             <p className="mt-1 text-xs text-slate-400">
               Chọn store đồng bộ, collection, loại sản phẩm (Product Type) và công thức giá bán áp dụng đồng loạt cho mọi sản phẩm trong link cào.
@@ -1034,8 +1047,9 @@ export function AmazonCrawlerPage({
               const nextProfile = event.target.value === "jeminise" ? "jeminise" : "default";
               updateSetting("profileSlug", nextProfile);
               if (nextProfile === "jeminise") {
-                updateSetting("storeId", "jeminise");
                 updateSetting("applyJeminisePreset", true);
+              } else {
+                updateSetting("applyJeminisePreset", false);
               }
             }}
           >

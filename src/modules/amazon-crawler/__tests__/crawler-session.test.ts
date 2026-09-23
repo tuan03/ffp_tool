@@ -8,6 +8,7 @@ import {
   clearCrawlerSession,
   getCrawlerSessionState,
   resetCrawlerOutput,
+  resetCrawlerSettings,
   selectCrawlerProduct,
   setCrawlerActiveTab,
   setCrawlerSelectedMediaUrl,
@@ -150,3 +151,24 @@ test("crawler session handles runner errors safely", async () => {
   assert.equal(state.isRunning, false);
   assert.equal(state.error, "Coordinator connection refused");
 });
+
+test("resetCrawlerSettings restores settings to defaults", () => {
+  clearCrawlerSession();
+  updateCrawlerSetting("storeId", "chillgen");
+  updateCrawlerSetting("productType", "Rug");
+  updateCrawlerSetting("priceAddition", 15);
+  updateCrawlerSetting("discountPercent", 20);
+
+  assert.equal(getCrawlerSessionState().settings.storeId, "chillgen");
+  assert.equal(getCrawlerSessionState().settings.productType, "Rug");
+  assert.equal(getCrawlerSessionState().settings.priceAddition, 15);
+  assert.equal(getCrawlerSessionState().settings.discountPercent, 20);
+
+  resetCrawlerSettings();
+  const resetState = getCrawlerSessionState();
+  assert.equal(resetState.settings.storeId, "capozen");
+  assert.equal(resetState.settings.productType, "");
+  assert.equal(resetState.settings.priceAddition, 0);
+  assert.equal(resetState.settings.discountPercent, 0);
+});
+
