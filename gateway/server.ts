@@ -1,6 +1,7 @@
 import http from "node:http";
 
 import { GatewayDispatcher } from "./dispatcher";
+import { handleAutoSeoHttpRequest } from "./auto-seo-handler";
 import { assertHostSecurity, createGatewayHttpHandler, isGatewayAuthorized, MAX_BODY_BYTES } from "./http-server";
 import { InMemoryIdempotencyStore } from "./idempotency";
 import { ShopifyGraphqlClient } from "./shopify-graphql-client";
@@ -149,6 +150,11 @@ export function startGatewayServer(
           }),
         );
       }
+      return;
+    }
+
+    if (url === "/api/auto-seo/run" || url.startsWith("/api/auto-seo/run?")) {
+      await handleAutoSeoHttpRequest(req, res, { authToken, maxBodyBytes });
       return;
     }
 

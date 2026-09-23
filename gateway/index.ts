@@ -18,3 +18,5 @@ export * from "./operations/files-write";
 export * from "./operations/metafields-write";
 export * from "./operations/store-management";
 export * from "./store-control-plane";
+export * from "./store-config-loader";
+export * from "./server";

@@ -6,6 +6,7 @@ import {
   createShopifyGatewayAdapter,
   DEFAULT_GATEWAY_URL,
   getModuleApiRunner,
+  resolveShopifyProductForSync,
   runMockModuleApi,
   runModuleApi,
   ShopifyApiError,
@@ -2764,6 +2765,109 @@ test("createShopifyGatewayAdapter implements ShopifyGateway interface and works 
   assert.ok(syncResult.productId);
 });
 
+test("Shopify gateway adapter preserves manual tags and tracks only crawler-managed media", async () => {
+  const updatePayloads: ShopifyApiInput[] = [];
+  let getCount = 0;
+  const runner = (async (input: ShopifyApiInput): Promise<ShopifyApiResponse> => {
+    if (input.operation === "products.get") {
+      getCount += 1;
+      const isAfterUpdate = getCount > 1;
+      return {
+        storeId: "store-managed",
+        operation: "products.get",
+        success: true,
+        data: {
+          product: {
+            id: "gid://shopify/Product/managed",
+            title: "Managed product",
+            handle: "managed-product",
+            status: "ACTIVE",
+            tags: isAfterUpdate ? ["manual-tag", "new-crawler-tag"] : ["manual-tag", "old-crawler-tag"],
+            images: isAfterUpdate
+              ? [
+                  { id: "gid://shopify/MediaImage/manual", url: "https://cdn/manual.jpg" },
+                  { id: "gid://shopify/MediaImage/new", url: "https://cdn/new.jpg" },
+                ]
+              : [
+                  { id: "gid://shopify/MediaImage/manual", url: "https://cdn/manual.jpg" },
+                  { id: "gid://shopify/MediaImage/old", url: "https://cdn/old.jpg" },
+                ],
+            variants: [{
+              id: "gid://shopify/ProductVariant/new",
+              productId: "gid://shopify/Product/managed",
+              title: "Twin",
+              price: "29.95",
+            }],
+            createdAt: "2026-09-01T00:00:00Z",
+            updatedAt: "2026-09-22T00:00:00Z",
+          },
+        },
+      };
+    }
+    if (input.operation === "products.update") {
+      updatePayloads.push(input);
+      return {
+        storeId: "store-managed",
+        operation: "products.update",
+        success: true,
+        data: {
+          product: {
+            id: "gid://shopify/Product/managed",
+            title: "Managed product",
+            handle: "managed-product",
+            status: "ACTIVE",
+            tags: ["manual-tag", "new-crawler-tag"],
+            images: [{ id: "gid://shopify/MediaImage/new", url: "https://cdn/new.jpg" }],
+            variants: [{
+              id: "gid://shopify/ProductVariant/new",
+              productId: "gid://shopify/Product/managed",
+              title: "Twin",
+              price: "29.95",
+            }],
+            createdAt: "2026-09-01T00:00:00Z",
+            updatedAt: "2026-09-22T00:00:00Z",
+          },
+        },
+      };
+    }
+    throw new Error(`Unexpected operation ${input.operation}`);
+  }) as ModuleApiRunner;
+  const adapter = createShopifyGatewayAdapter("store-managed", { runner, mode: "apply" });
+
+  const updated = await adapter.updateProduct?.({
+    productId: "gid://shopify/Product/managed",
+    title: "Managed product",
+    handle: "managed-product-seo",
+    seo: { title: "Managed SEO title", description: "Managed SEO description" },
+    descriptionHtml: "<p>Managed</p>",
+    tags: ["new-crawler-tag"],
+    media: [{ originalSource: "https://amazon/new.jpg", mediaContentType: "IMAGE" }],
+    variants: [{ price: "29.95", optionValues: [{ optionName: "Size", name: "Twin" }] }],
+    previousManagedResources: {
+      tags: ["old-crawler-tag"],
+      mediaIds: ["gid://shopify/MediaImage/old"],
+      variantIds: ["gid://shopify/ProductVariant/old"],
+    },
+  });
+
+  assert.ok(updated);
+  const updateInput = updatePayloads[0];
+  assert.ok(updateInput && updateInput.operation === "products.update");
+  assert.deepEqual(updateInput.payload.product.tags, ["manual-tag", "new-crawler-tag"]);
+  assert.equal(updateInput.payload.product.handle, "managed-product-seo");
+  assert.deepEqual(updateInput.payload.product.seo, {
+    title: "Managed SEO title",
+    description: "Managed SEO description",
+  });
+  assert.deepEqual(updateInput.payload.product.mediaIdsToDelete, ["gid://shopify/MediaImage/old"]);
+  assert.deepEqual(updateInput.payload.product.variantIdsToManage, ["gid://shopify/ProductVariant/old"]);
+  assert.deepEqual(updated.managedResources, {
+    tags: ["new-crawler-tag"],
+    mediaIds: ["gid://shopify/MediaImage/new"],
+    variantIds: ["gid://shopify/ProductVariant/new"],
+  });
+});
+
 test("createShopifyGatewayAdapter accepts runner directly as second parameter", async () => {
   const adapter = createShopifyGatewayAdapter("store-direct", runMockModuleApi);
   const prod = await adapter.createProduct({
@@ -3185,7 +3289,76 @@ test("Public contracts allow inventoryTracked on variants and categoryId on prod
   assert.equal(productPayload.payload.product.categoryId, "gid://shopify/TaxonomyCategory/123");
 });
 
+test("resolveShopifyProductForSync recovers a stale mapping from the stable source tag", async () => {
+  const calls: ShopifyApiInput[] = [];
+  const recoveredProduct = {
+    ...shopifyApiMockData.products[0],
+    id: "gid://shopify/Product/recovered",
+    tags: ["ffp-source:amazon:B0TEST:color:blue"],
+  };
+  const runner = (async (input: ShopifyApiInput) => {
+    calls.push(input);
+    if (input.operation === "products.get") {
+      const id = (input.payload as { id?: string }).id;
+      return {
+        success: true,
+        storeId: input.storeId,
+        operation: input.operation,
+        data: { product: id === recoveredProduct.id ? recoveredProduct : null },
+      };
+    }
+    if (input.operation === "products.list") {
+      return {
+        success: true,
+        storeId: input.storeId,
+        operation: input.operation,
+        data: {
+          products: [recoveredProduct],
+          pageInfo: { hasNextPage: false, hasPreviousPage: false },
+        },
+      };
+    }
+    throw new Error(`Unexpected operation ${input.operation}`);
+  }) as ModuleApiRunner;
 
+  const resolved = await resolveShopifyProductForSync({
+    runner,
+    storeId: "capozen",
+    sourceKey: "amazon:B0TEST:color:blue",
+    mappedProductId: "gid://shopify/Product/deleted",
+  });
+
+  assert.equal(resolved.match, "source_tag");
+  assert.equal(resolved.product?.id, "gid://shopify/Product/recovered");
+  assert.equal(resolved.staleMappedProductId, "gid://shopify/Product/deleted");
+  assert.deepEqual(calls.map((call) => call.operation), [
+    "products.get",
+    "products.list",
+    "products.get",
+  ]);
+});
+
+test("resolveShopifyProductForSync returns no product when a stale mapping has no source-tag match", async () => {
+  const runner = (async (input: ShopifyApiInput) => ({
+    success: true,
+    storeId: input.storeId,
+    operation: input.operation,
+    data: input.operation === "products.list"
+      ? { products: [], pageInfo: { hasNextPage: false, hasPreviousPage: false } }
+      : { product: null },
+  })) as ModuleApiRunner;
+
+  const resolved = await resolveShopifyProductForSync({
+    runner,
+    storeId: "capozen",
+    sourceKey: "amazon:B0TEST:color:missing",
+    mappedProductId: "gid://shopify/Product/deleted",
+  });
+
+  assert.equal(resolved.match, "none");
+  assert.equal(resolved.product, undefined);
+  assert.equal(resolved.staleMappedProductId, "gid://shopify/Product/deleted");
+});
 
 
 

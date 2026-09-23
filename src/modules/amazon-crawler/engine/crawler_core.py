@@ -37,6 +37,8 @@ ETSY_HOST_RE = re.compile(r"(^|\.)etsy\.com$", re.I)
 MONEY_RE = re.compile(r"(?:US\s*)?\$\s*([0-9][0-9,]*(?:\.\d{1,2})?)")
 SCHEMA_VERSION = "1.0"
 SPLIT_PRIORITIES = ("design", "color", "colour", "style", "pattern", "theme")
+InputCompletionCallback = Callable[[dict[str, Any]], None]
+ProductCompletionCallback = Callable[[dict[str, Any]], None]
 
 
 @dataclass(frozen=True)
@@ -979,8 +981,9 @@ class AmazonCrawler:
         *,
         variants: list[dict[str, Any]],
         source: str,
+        force: bool = False,
     ) -> None:
-        if not any(variant.get("customizationRaw") is not None for variant in variants):
+        if not force and not any(variant.get("customizationRaw") is not None for variant in variants):
             return
         candidates = [
             variant
@@ -1025,7 +1028,11 @@ class AmazonCrawler:
             variant["customizationComplete"] = customization_complete and customization is not None
             variant["warnings"] = warnings
 
-    def _crawl_family(self, normalized: NormalizedInput) -> dict[str, Any]:
+    def _crawl_family(
+        self,
+        normalized: NormalizedInput,
+        on_product_complete: ProductCompletionCallback | None = None,
+    ) -> dict[str, Any]:
         cache_key = f"{normalized.asin}:{self.settings.amazon_zip}:us-v1"
         cached = self.cache.load(cache_key, require_customization=True)
         if cached is not None:
@@ -1102,6 +1109,22 @@ class AmazonCrawler:
         discovered_asins = discovered_asins[:self.settings.max_matrix_variants]
         variants: list[dict[str, Any]] = []
         variant_total = len(discovered_asins)
+        preliminary_variants = [
+            {"asin": asin, "options": deepcopy(asin_options.get(asin, {}))}
+            for asin in discovered_asins
+        ]
+        preliminary_dimensions = self._source_variant_dimensions(preliminary_variants)
+        split_attribute = self._choose_split_attribute(preliminary_dimensions)
+        expected_groups: dict[str | None, set[str]] = {}
+        for asin in discovered_asins:
+            split_value = asin_options.get(asin, {}).get(split_attribute) if split_attribute else None
+            expected_groups.setdefault(split_value, set()).add(asin)
+        emitted_groups: set[str | None] = set()
+        family_customizable_hint = bool(
+            parent.get("customizationRaw") is not None
+            or parent.get("customizationFormUrl")
+            or parent.get("customizationWarnings")
+        )
         active_variants: dict[str, dict[str, str]] = {}
         active_variants_lock = threading.Lock()
 
@@ -1199,6 +1222,62 @@ class AmazonCrawler:
             item_updates={"status": "running", "variantCompleted": 0, "variantTotal": variant_total},
         )
         variant_completed = 0
+
+        def emit_completed_group(completed_asin: str) -> None:
+            if on_product_complete is None:
+                return
+            completed_options = asin_options.get(completed_asin, {})
+            split_value = completed_options.get(split_attribute) if split_attribute else None
+            if split_value in emitted_groups:
+                return
+            expected_asins = expected_groups.get(split_value, set())
+            group_variants = [
+                variant
+                for variant in variants
+                if str(variant.get("asin")) in expected_asins
+            ]
+            completed_asins = {str(variant.get("asin")) for variant in group_variants}
+            if not expected_asins or completed_asins != expected_asins:
+                return
+
+            self._retry_family_customization(
+                variants=group_variants,
+                source=normalized.source,
+                force=family_customizable_hint,
+            )
+            self._infer_consensus_prices(group_variants)
+            group_family = {
+                "parentAsin": parent_asin,
+                "canonicalUrl": f"https://www.amazon.com/dp/{parent_asin}",
+                "sourceTitle": parent["title"],
+                "description": parent.get("description"),
+                "bulletPoints": parent.get("bulletPoints", []),
+                "categories": parent.get("categories", []),
+                "productDetails": parent.get("productDetails", {}),
+                "media": parent.get("media", []),
+                "sourceVariants": group_variants,
+                "variantMatrix": {
+                    "dimensions": parent["dimensions"],
+                    "expectedCount": expected_count,
+                    "discoveredCount": len(asin_options),
+                    "complete": not is_capped and len(asin_options) >= expected_count,
+                    "safetyCap": self.settings.max_matrix_variants,
+                },
+                "customizationChecked": all(
+                    variant.get("customizationComplete") is True
+                    for variant in group_variants
+                ),
+                "diagnostics": diagnostics,
+            }
+            for product in self._products_from_family(
+                group_family,
+                split_attribute_override=split_attribute,
+            ):
+                if self._product_publish_blockers(product):
+                    continue
+                on_product_complete(product)
+                emitted_groups.add(split_value)
+
         with concurrent.futures.ThreadPoolExecutor(max_workers=self.settings.variant_threads) as executor:
             futures = {executor.submit(crawl_child, asin): asin for asin in discovered_asins}
             for future in concurrent.futures.as_completed(futures):
@@ -1221,6 +1300,7 @@ class AmazonCrawler:
                         "priceInference": {"isInferred": False, "sourceAsins": []}, "warnings": [str(error)],
                         "diagnostics": failed_diagnostics,
                     })
+                emit_completed_group(asin)
                 variant_completed += 1
                 with active_variants_lock:
                     active_variants.pop(asin, None)
@@ -1302,7 +1382,29 @@ class AmazonCrawler:
                     values.append(clean_value)
         return dimensions
 
-    def _products_from_family(self, family: dict[str, Any]) -> list[dict[str, Any]]:
+    @staticmethod
+    def _product_publish_blockers(product: dict[str, Any]) -> list[str]:
+        blockers: list[str] = []
+        matrix = product.get("variantMatrix") if isinstance(product.get("variantMatrix"), dict) else {}
+        if matrix.get("complete") is not True:
+            blockers.append("variant_matrix_incomplete")
+        source_variants = product.get("sourceVariants") if isinstance(product.get("sourceVariants"), list) else []
+        if not source_variants or any(variant.get("price") is None for variant in source_variants if isinstance(variant, dict)):
+            blockers.append("price_missing")
+        if any(
+            isinstance(variant, dict)
+            and any("customiz" in str(warning).casefold() for warning in variant.get("warnings", []))
+            for variant in source_variants
+        ):
+            blockers.append("customization_incomplete")
+        return blockers
+
+    def _products_from_family(
+        self,
+        family: dict[str, Any],
+        *,
+        split_attribute_override: str | None = None,
+    ) -> list[dict[str, Any]]:
         rebuilt_source_variants = deepcopy(family["sourceVariants"])
         for variant in rebuilt_source_variants:
             customization_raw = variant.get("customizationRaw")
@@ -1313,7 +1415,7 @@ class AmazonCrawler:
             variant["customizationFingerprint"] = customization.get("fingerprint") if customization else None
             variant["warnings"] = sorted(set(variant.get("warnings", []) + customization_warnings))
         actual_dimensions = self._source_variant_dimensions(rebuilt_source_variants)
-        split_attribute = self._choose_split_attribute(actual_dimensions)
+        split_attribute = split_attribute_override or self._choose_split_attribute(actual_dimensions)
         grouped: dict[str | None, list[dict[str, Any]]] = {}
         if split_attribute is None:
             grouped[None] = rebuilt_source_variants
@@ -1329,7 +1431,7 @@ class AmazonCrawler:
             if split_value and not title.casefold().endswith(str(split_value).casefold()):
                 title = f"{title} - {split_value}"
             source_asins = [variant["asin"] for variant in source_variants]
-            group_key = _stable_token(family["parentAsin"], split_attribute or "none", str(split_value or "none"), *sorted(source_asins))
+            group_key = _stable_token(family["parentAsin"], split_attribute or "none", str(split_value or "none"))
             fingerprints = sorted({variant["customizationFingerprint"] for variant in source_variants if variant.get("customizationFingerprint")})
             representative = next((variant for variant in source_variants if variant.get("customization") is not None), source_variants[0])
             customization = deepcopy(representative.get("customization"))
@@ -1401,6 +1503,11 @@ class AmazonCrawler:
                 } for variant in source_variants],
                 "variants": final_variants, "variantMatrix": matrix, "customization": customization,
                 "splitContext": {"attribute": split_attribute, "value": split_value, "groupKey": group_key, "sourceAsins": source_asins},
+                "sourceKey": (
+                    f"amazon:{family['parentAsin']}:"
+                    f"{str(split_attribute or 'none').strip().casefold()}:"
+                    f"{str(split_value or 'none').strip().casefold()}"
+                ),
                 "preset": preset, "warnings": sorted(set(warnings)), "diagnostics": deepcopy(family["diagnostics"]),
             })
         return products
@@ -1411,6 +1518,7 @@ class AmazonCrawler:
         job_id: str,
         sources: list[str],
         on_input_complete: InputCompletionCallback | None = None,
+        on_product_complete: ProductCompletionCallback | None = None,
         write_export: bool = True,
     ) -> dict[str, Any]:
         started_at = _now_iso()
@@ -1435,8 +1543,31 @@ class AmazonCrawler:
 
         def crawl_one(normalized: NormalizedInput) -> tuple[NormalizedInput, list[dict[str, Any]]]:
             self._check_cancelled()
-            family = self._crawl_family(normalized)
-            return normalized, self._products_from_family(family)
+            emitted_product_ids: set[str] = set()
+
+            def product_completed(product: dict[str, Any]) -> None:
+                if on_product_complete is None:
+                    return
+                emitted_product_ids.add(str(product.get("id") or ""))
+                on_product_complete({
+                    "source": normalized.source,
+                    "asin": normalized.asin,
+                    "product": deepcopy(product),
+                    "completedAt": _now_iso(),
+                })
+
+            if on_product_complete is None:
+                family = self._crawl_family(normalized)
+            else:
+                family = self._crawl_family(normalized, on_product_complete=product_completed)
+            family_products = self._products_from_family(family)
+            if on_product_complete is not None:
+                for product in family_products:
+                    product_id = str(product.get("id") or "")
+                    if product_id in emitted_product_ids or self._product_publish_blockers(product):
+                        continue
+                    product_completed(product)
+            return normalized, family_products
 
         product_worker_count = effective_product_threads(len(normalized_inputs), self.settings)
         self._report_progress(

@@ -9,6 +9,7 @@ import {
   type AmazonCrawlerProgress,
   type AmazonCrawlerRunner,
   type AmazonCrawlerSettings,
+  type AmazonCrawlerSyncRetrier,
 } from "../types";
 
 import { firstProductMediaUrl, resolveSelectedProduct } from "./product-selection";
@@ -17,6 +18,7 @@ interface AmazonCrawlerPageProps {
   clearAmazonCrawlerCache: AmazonCrawlerCacheClearer;
   loadAmazonCrawlerClients: AmazonCrawlerClientsLoader;
   runAmazonCrawler: AmazonCrawlerRunner;
+  retryAmazonCrawlerSyncs: AmazonCrawlerSyncRetrier;
 }
 
 type ResultTab = "overview" | "source" | "final" | "customize" | "json";
@@ -65,19 +67,25 @@ function progressPhaseLabel(phase: AmazonCrawlerProgress["phase"]): string {
     product: "Sản phẩm / variant",
     variant_matrix: "Quét variant matrix",
     customization: "Amazon Customize",
+    normalization: "Chuẩn hóa",
+    seo: "Tạo nội dung SEO",
+    shopify: "Đẩy Shopify",
     captcha: "Chờ CAPTCHA",
     export: "Xuất JSON",
   };
   return labels[phase];
 }
 
-export function AmazonCrawlerPage({ clearAmazonCrawlerCache, loadAmazonCrawlerClients, runAmazonCrawler }: AmazonCrawlerPageProps): React.JSX.Element {
+export function AmazonCrawlerPage({ clearAmazonCrawlerCache, loadAmazonCrawlerClients, retryAmazonCrawlerSyncs, runAmazonCrawler }: AmazonCrawlerPageProps): React.JSX.Element {
   const [urlText, setUrlText] = useState("");
   const [settings, setSettings] = useState<AmazonCrawlerSettings>(DEFAULT_AMAZON_CRAWLER_SETTINGS);
   const [isAdvancedOpen, setIsAdvancedOpen] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
   const [progress, setProgress] = useState<AmazonCrawlerProgress | null>(null);
   const [output, setOutput] = useState<AmazonCrawlerOutput | null>(null);
+  const [liveProducts, setLiveProducts] = useState<AmazonCrawlerOutput["products"]>([]);
+  const [isRetryingSync, setIsRetryingSync] = useState(false);
+  const [syncMessage, setSyncMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [controller, setController] = useState<AbortController | null>(null);
   const [activeTab, setActiveTab] = useState<ResultTab>("overview");
@@ -94,18 +102,18 @@ export function AmazonCrawlerPage({ clearAmazonCrawlerCache, loadAmazonCrawlerCl
     () => urlText.split(/\r?\n/).map((url) => url.trim()).filter(Boolean),
     [urlText],
   );
+  const resultProducts = output?.products ?? liveProducts;
   const selectedProduct = useMemo(
-    () => resolveSelectedProduct(output?.products ?? [], selectedProductId),
-    [output, selectedProductId],
+    () => resolveSelectedProduct(resultProducts, selectedProductId),
+    [resultProducts, selectedProductId],
   );
 
   useEffect(() => {
-    const firstProduct = output?.products[0] ?? null;
+    if (selectedProductId && resultProducts.some((product) => product.id === selectedProductId)) return;
+    const firstProduct = resultProducts[0] ?? null;
     setSelectedProductId(firstProduct?.id ?? null);
     setSelectedMediaUrl(firstProductMediaUrl(firstProduct));
-    setActiveTab("overview");
-    setIsBatchJsonOpen(false);
-  }, [output]);
+  }, [resultProducts, selectedProductId]);
 
   useEffect(() => {
     let isMounted = true;
@@ -132,7 +140,7 @@ export function AmazonCrawlerPage({ clearAmazonCrawlerCache, loadAmazonCrawlerCl
   }, [loadAmazonCrawlerClients]);
 
   function handleSelectProduct(productId: string): void {
-    const product = output?.products.find((candidate) => candidate.id === productId);
+    const product = resultProducts.find((candidate) => candidate.id === productId);
     setSelectedProductId(productId);
     setSelectedMediaUrl(firstProductMediaUrl(product ?? null));
     setActiveTab("overview");
@@ -149,6 +157,8 @@ export function AmazonCrawlerPage({ clearAmazonCrawlerCache, loadAmazonCrawlerCl
     setIsRunning(true);
     setError(null);
     setOutput(null);
+    setLiveProducts([]);
+    setSyncMessage(null);
     setProgress({
       phase: "queued",
       completed: 0,
@@ -169,6 +179,7 @@ export function AmazonCrawlerPage({ clearAmazonCrawlerCache, loadAmazonCrawlerCl
       const crawlerOutput = await runAmazonCrawler({
         input: { ...settings, urls },
         onProgress: setProgress,
+        onProducts: (products) => setLiveProducts([...products]),
         signal: nextController.signal,
       });
       setOutput(crawlerOutput);
@@ -181,6 +192,27 @@ export function AmazonCrawlerPage({ clearAmazonCrawlerCache, loadAmazonCrawlerCl
     } finally {
       setController(null);
       setIsRunning(false);
+    }
+  }
+
+  async function handleRetrySyncs(): Promise<void> {
+    if (!output || isRetryingSync) return;
+    setIsRetryingSync(true);
+    setSyncMessage(null);
+    try {
+      const retried = await retryAmazonCrawlerSyncs(output.jobId, {
+        onProgress: setProgress,
+        onProducts: (products) => setLiveProducts([...products]),
+      });
+      if (retried.output) {
+        setOutput(retried.output);
+        setLiveProducts([...retried.output.products]);
+      }
+      setSyncMessage(`Đã đưa ${retried.retried} product lỗi trở lại hàng đợi Shopify.`);
+    } catch (caught: unknown) {
+      setSyncMessage(caught instanceof Error ? caught.message : "Không thể retry Shopify sync.");
+    } finally {
+      setIsRetryingSync(false);
     }
   }
 
@@ -379,21 +411,21 @@ export function AmazonCrawlerPage({ clearAmazonCrawlerCache, loadAmazonCrawlerCl
       )}
       {error === null ? null : <p className="rounded-xl border border-rose-600 bg-rose-950/30 p-4 text-rose-200">{error}</p>}
 
-      {output === null ? null : (
+      {output === null && resultProducts.length === 0 ? null : (
         <section className="space-y-4">
-          <div className="grid gap-3 rounded-xl border border-slate-700 bg-slate-950/40 p-4 sm:grid-cols-4">
+          {output ? <div className="grid gap-3 rounded-xl border border-slate-700 bg-slate-950/40 p-4 sm:grid-cols-4">
             <p><span className="block text-xs text-slate-400">Products</span>{output.statistics.products}</p>
             <p><span className="block text-xs text-slate-400">Source variants</span>{output.statistics.sourceVariants}</p>
             <p><span className="block text-xs text-slate-400">Final variants</span>{output.statistics.finalVariants}</p>
             <p><span className="block text-xs text-slate-400">Errors</span>{output.errors.length}</p>
-          </div>
-          {output.products.length === 0 ? (
+          </div> : <p className="rounded-xl border border-cyan-800 bg-cyan-950/20 p-3 text-sm text-cyan-200">Product sẽ xuất hiện tại đây ngay khi từng nhóm split hoàn tất; chuẩn hóa và Shopify tiếp tục chạy ở server.</p>}
+          {resultProducts.length === 0 ? (
             <p className="rounded-xl border border-slate-700 p-6 text-slate-400">Không có sản phẩm hợp lệ trong kết quả crawl.</p>
           ) : (
             <div className="grid items-start gap-5 lg:grid-cols-[minmax(17rem,22rem)_minmax(0,1fr)]">
               <aside className="max-h-[70vh] space-y-2 overflow-auto rounded-xl border border-slate-700 bg-slate-950/40 p-3">
                 <h2 className="px-2 pb-2 text-sm font-semibold text-slate-200">Tất cả sản phẩm</h2>
-                {output.products.map((product) => {
+                {resultProducts.map((product) => {
                   const isSelected = product.id === selectedProduct?.id;
                   return (
                     <button
@@ -410,6 +442,7 @@ export function AmazonCrawlerPage({ clearAmazonCrawlerCache, loadAmazonCrawlerCl
                         <span className="mt-1 flex flex-wrap gap-1 text-[11px]">
                           {product.customization ? <span className="rounded bg-violet-900/60 px-1.5 py-0.5 text-violet-200">Customize</span> : null}
                           {product.preset ? <span className="rounded bg-cyan-900/60 px-1.5 py-0.5 text-cyan-200">{product.preset}</span> : null}
+                          {product.pipeline ? <span className={`rounded px-1.5 py-0.5 ${product.pipeline.status === "completed" ? "bg-emerald-900/60 text-emerald-200" : product.pipeline.status === "failed" || product.pipeline.status === "reconciliation_required" ? "bg-rose-900/60 text-rose-200" : "bg-blue-900/60 text-blue-200"}`}>Pipeline: {product.pipeline.status}</span> : null}
                           {product.warnings.length ? <span className="rounded bg-amber-900/60 px-1.5 py-0.5 text-amber-200">{product.warnings.length} warning</span> : null}
                         </span>
                       </span>
@@ -444,8 +477,16 @@ export function AmazonCrawlerPage({ clearAmazonCrawlerCache, loadAmazonCrawlerCl
                       <dl className="mt-4 grid gap-x-5 gap-y-2 text-sm sm:grid-cols-2">
                         <div><dt className="text-slate-500">Matrix</dt><dd>{selectedProduct.variantMatrix.discoveredCount}/{selectedProduct.variantMatrix.expectedCount} · {selectedProduct.variantMatrix.complete ? "Complete" : "Incomplete"}</dd></div>
                         <div><dt className="text-slate-500">Preset</dt><dd>{selectedProduct.preset ?? "—"}</dd></div>
+                        <div><dt className="text-slate-500">Pipeline</dt><dd>{selectedProduct.pipeline?.status ?? "Chưa nhận"}</dd></div>
+                        <div><dt className="text-slate-500">SEO</dt><dd>{selectedProduct.pipeline?.seo.status ?? "pending"}{selectedProduct.pipeline?.seo.engine ? ` · ${selectedProduct.pipeline.seo.engine}` : ""}</dd></div>
+                        <div><dt className="text-slate-500">Proxy Shopify</dt><dd>{selectedProduct.pipeline?.shopify.proxyProfile ?? "—"}</dd></div>
                       </dl>
                       <a className="mt-4 inline-block text-sm font-semibold text-cyan-300 hover:text-cyan-200" href={selectedProduct.canonicalUrl} rel="noreferrer" target="_blank">Mở trên Amazon ↗</a>
+                      {selectedProduct.pipeline?.shopify.adminUrl ? <a className="ml-4 mt-4 inline-block text-sm font-semibold text-emerald-300 hover:text-emerald-200" href={selectedProduct.pipeline.shopify.adminUrl} rel="noreferrer" target="_blank">Mở trên Shopify ↗</a> : null}
+                      {selectedProduct.pipeline?.shopify.error ? <p className="mt-3 rounded-lg border border-rose-800 bg-rose-950/30 p-3 text-sm text-rose-200">Shopify: {selectedProduct.pipeline.shopify.error}</p> : null}
+                      {selectedProduct.pipeline?.seo.fallbackStages?.length ? <p className="mt-3 rounded-lg border border-amber-800 bg-amber-950/30 p-3 text-sm text-amber-200">SEO fallback: {selectedProduct.pipeline.seo.fallbackStages.join(", ")}</p> : null}
+                      {selectedProduct.pipeline?.seo.warnings?.map((warning) => <p key={warning} className="mt-3 rounded-lg border border-amber-800 bg-amber-950/30 p-3 text-sm text-amber-200">SEO: {warning}</p>)}
+                      {selectedProduct.pipeline?.seo.error ? <p className="mt-3 rounded-lg border border-rose-800 bg-rose-950/30 p-3 text-sm text-rose-200">SEO: {selectedProduct.pipeline.seo.error}</p> : null}
                     </div>
                   </div>
 
@@ -480,9 +521,11 @@ export function AmazonCrawlerPage({ clearAmazonCrawlerCache, loadAmazonCrawlerCl
               )}
             </div>
           )}
-          {output.errors.map((crawlError) => <p key={`${crawlError.source}-${crawlError.code}`} className="rounded-lg border border-rose-700 p-3 text-rose-200">{crawlError.source}: {crawlError.message}</p>)}
-          <button className="text-sm font-semibold text-cyan-300" type="button" onClick={() => setIsBatchJsonOpen((open) => !open)}>{isBatchJsonOpen ? "Ẩn" : "Hiện"} Raw JSON toàn batch</button>
-          {isBatchJsonOpen ? <pre className="max-h-[42rem] overflow-auto rounded-xl bg-slate-950 p-4 text-xs text-cyan-100">{JSON.stringify(output, null, 2)}</pre> : null}
+          {output?.errors.map((crawlError) => <p key={`${crawlError.source}-${crawlError.code}`} className="rounded-lg border border-rose-700 p-3 text-rose-200">{crawlError.source}: {crawlError.message}</p>)}
+          {output?.status === "partial" ? <button className="rounded-lg border border-amber-600 px-3 py-2 text-sm font-semibold text-amber-200 disabled:opacity-50" disabled={isRetryingSync} type="button" onClick={() => void handleRetrySyncs()}>{isRetryingSync ? "Đang retry..." : "Retry Shopify lỗi"}</button> : null}
+          {syncMessage ? <p className="text-sm text-amber-200">{syncMessage}</p> : null}
+          {output ? <button className="text-sm font-semibold text-cyan-300" type="button" onClick={() => setIsBatchJsonOpen((open) => !open)}>{isBatchJsonOpen ? "Ẩn" : "Hiện"} Raw JSON toàn batch</button> : null}
+          {isBatchJsonOpen && output ? <pre className="max-h-[42rem] overflow-auto rounded-xl bg-slate-950 p-4 text-xs text-cyan-100">{JSON.stringify(output, null, 2)}</pre> : null}
         </section>
       )}
     </div>

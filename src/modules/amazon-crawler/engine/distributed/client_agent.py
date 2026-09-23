@@ -9,6 +9,7 @@ import random
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections import deque
 from pathlib import Path
@@ -97,7 +98,7 @@ class DistributedCrawlerAgent:
             "activeTasks": len(self.active),
             "availableSlots": self._available_slots(),
             "waitingCaptcha": self._captcha_waiting,
-            "pendingUploads": len(self.store.pending_results()),
+            "pendingUploads": len(self.store.pending_results()) + len(self.store.pending_products()),
         }
 
     def _publish_status(self) -> None:
@@ -359,6 +360,46 @@ class DistributedCrawlerAgent:
                     "type": "cancelled", "taskId": assignment["taskId"], "leaseId": assignment["leaseId"],
                 }), loop)
 
+        def product_completed(product_result: dict[str, Any]) -> None:
+            assignment = assignments_by_source.get(str(product_result.get("source") or ""))
+            if assignment is None:
+                assignment = next(
+                    (item for item in batch if item.get("asin") == product_result.get("asin")),
+                    None,
+                )
+            product = product_result.get("product")
+            if assignment is None or not isinstance(product, dict):
+                return
+            product_key = str(product.get("sourceKey") or product.get("id") or "").strip()
+            if not product_key:
+                return
+            core_payload = {
+                "sourceKey": product_key,
+                "productId": str(product.get("id") or product_key),
+                "product": product,
+            }
+            envelope = {
+                "version": "distributed-2",
+                "agentVersion": AGENT_VERSION,
+                "taskId": assignment["taskId"],
+                "jobId": assignment["jobId"],
+                "leaseId": assignment["leaseId"],
+                "clientId": self.client_id,
+                "source": assignment["source"],
+                "asin": assignment["asin"],
+                "completedAt": product_result.get("completedAt") or utc_iso(),
+                "productChecksum": payload_checksum(product),
+                **core_payload,
+            }
+            self.store.spool_product(
+                task_id=str(assignment["taskId"]),
+                product_key=product_key,
+                lease_id=str(assignment["leaseId"]),
+                checksum=payload_checksum(envelope),
+                payload=envelope,
+            )
+            loop.call_soon_threadsafe(self._publish_status)
+
         crawler = self.crawler_factory(
             root=self.project_root,
             settings=settings,
@@ -371,6 +412,7 @@ class DistributedCrawlerAgent:
                 job_id=str(first["jobId"]),
                 sources=[str(assignment["url"]) for assignment in batch],
                 on_input_complete=completed,
+                on_product_complete=product_completed,
                 write_export=False,
             )
         finally:
@@ -396,11 +438,22 @@ class DistributedCrawlerAgent:
 
     async def _upload_loop(self) -> None:
         while True:
+            pending_products = self.store.pending_products()
+            for product in pending_products:
+                try:
+                    response = await asyncio.to_thread(self._upload_product, product)
+                    if response.get("status") in {"accepted", "duplicate"}:
+                        self.store.acknowledge_product(product["taskId"], product["productKey"])
+                except Exception as error:
+                    self.store.product_failed(product["taskId"], product["productKey"], str(error))
+                    raise
             pending = self.store.pending_results()
             if not pending:
                 await asyncio.sleep(1)
                 continue
             for result in pending:
+                if self.store.has_pending_products(result["taskId"]):
+                    continue
                 try:
                     response = await asyncio.to_thread(self._upload_result, result)
                     if response.get("status") in {"accepted", "duplicate"}:
@@ -411,6 +464,29 @@ class DistributedCrawlerAgent:
                     self.store.result_failed(result["taskId"], str(error))
                     raise
             self._publish_status()
+
+    def _upload_product(self, product: dict[str, Any]) -> dict[str, Any]:
+        body = gzip.compress(json.dumps(product["payload"], ensure_ascii=False).encode("utf-8"))
+        product_key = urllib.parse.quote(str(product["productKey"]), safe="")
+        request = urllib.request.Request(
+            f"{self.config.server_url}/api/v1/worker/tasks/{product['taskId']}/products/{product_key}",
+            data=body,
+            method="PUT",
+            headers={
+                "Content-Type": "application/json",
+                "Content-Encoding": "gzip",
+                "X-Client-Id": self.client_id,
+                "X-Lease-Id": product["leaseId"],
+                "X-Result-Checksum": product["checksum"],
+            },
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=60) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as error:
+            if error.code == 409:
+                return {"status": "duplicate"}
+            raise
 
     def _upload_result(self, result: dict[str, Any]) -> dict[str, Any]:
         raw = json.dumps(result["payload"], ensure_ascii=False, separators=(",", ":")).encode("utf-8")

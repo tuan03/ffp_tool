@@ -2,20 +2,36 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import uuid
 from collections import Counter
 from datetime import timedelta
+from threading import Lock
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select, text
 from sqlalchemy.orm import selectinload
 
 from ..crawler_core import CrawlSettings, normalize_amazon_input
-from .coordinator_models import ClientRecord, CrawlJob, CrawlTask, InvalidJobInput, JobEvent, TaskAttempt, TaskResult
+from .coordinator_models import (
+    ClientRecord,
+    CrawlJob,
+    CrawlProductItem,
+    CrawlTask,
+    InvalidJobInput,
+    JobEvent,
+    ShopifyOperationIdempotency,
+    ShopifyProductLink,
+    TaskAttempt,
+    TaskResult,
+)
 from .protocol import CLIENT_OFFLINE_SECONDS, LEASE_SECONDS, MAX_CRAWL_FAILURES, settings_fingerprint, utc_iso, utc_now
 
 
 TERMINAL_TASK_STATUSES = {"completed", "failed", "cancelled"}
+TERMINAL_PRODUCT_STATUSES = {"completed", "failed", "reconciliation_required", "cancelled"}
+ACTIVE_PRODUCT_STATUSES = {"received", "normalizing", "seo", "syncing", "retry_wait"}
 
 
 def _id() -> str:
@@ -28,9 +44,31 @@ def _as_utc(value):
     return value.replace(tzinfo=utc_now().tzinfo)
 
 
+def _source_key(product: dict[str, Any]) -> str:
+    explicit = str(product.get("sourceKey") or "").strip()
+    if explicit:
+        return explicit
+    split = product.get("splitContext") if isinstance(product.get("splitContext"), dict) else {}
+    parent_asin = str(product.get("parentAsin") or "unknown").strip().upper()
+    attribute = str(split.get("attribute") or "none").strip().casefold()
+    value = str(split.get("value") or "none").strip().casefold()
+    return f"amazon:{parent_asin}:{attribute}:{value}"
+
+
+def _shopify_sync_request_id(source_key: str) -> str:
+    digest = hashlib.sha256(source_key.encode("utf-8")).hexdigest()
+    return f"product-sync:{digest}"
+
+
+def _shopify_sync_lock_key(store_id: str, source_key: str) -> int:
+    digest = hashlib.sha256(f"{store_id}\0{source_key}".encode("utf-8")).digest()
+    return int.from_bytes(digest[:8], byteorder="big", signed=True)
+
+
 class CoordinatorStore:
     def __init__(self, session_factory) -> None:
         self.sessions = session_factory
+        self._product_claim_lock = Lock()
 
     @staticmethod
     def _event(session, job_id: str, event_type: str, payload: dict[str, Any]) -> None:
@@ -49,8 +87,20 @@ class CoordinatorStore:
             job.status = "partial" if job.rejected_inputs else "completed"
             job.completed_at = utc_now()
         elif statuses.get("completed", 0) + statuses.get("failed", 0) + statuses.get("cancelled", 0) == total:
-            job.status = "partial" if statuses.get("failed", 0) or job.rejected_inputs else "completed"
-            job.completed_at = utc_now()
+            product_statuses = Counter(session.scalars(
+                select(CrawlProductItem.status).where(CrawlProductItem.job_id == job_id)
+            ).all())
+            if any(product_statuses.get(status, 0) for status in ACTIVE_PRODUCT_STATUSES):
+                job.status = "running"
+                job.started_at = job.started_at or utc_now()
+                job.completed_at = None
+            else:
+                product_failed = any(
+                    product_statuses.get(status, 0)
+                    for status in {"failed", "reconciliation_required", "cancelled"}
+                )
+                job.status = "partial" if statuses.get("failed", 0) or job.rejected_inputs or product_failed else "completed"
+                job.completed_at = utc_now()
         elif statuses.get("leased", 0) or statuses.get("running", 0) or statuses.get("completed", 0):
             job.status = "running"
             job.started_at = job.started_at or utc_now()
@@ -287,9 +337,27 @@ class CoordinatorStore:
                 return {"status": "stale", "taskId": task.id}
             if str(payload.get("jobId") or "") != task.job_id:
                 return {"status": "invalid", "taskId": task.id, "reason": "job_identity"}
+            products = payload.get("products") if isinstance(payload.get("products"), list) else []
+            retained_products: list[Any] = []
+            for product in products:
+                if isinstance(product, dict) and product.get("id"):
+                    item, _created = self._upsert_product_item(
+                        session,
+                        task=task,
+                        client_id=client_id,
+                        lease_id=lease_id,
+                        product=product,
+                        checksum=str(product.get("productChecksum") or ""),
+                    )
+                    if item.status != "completed":
+                        retained_products.append(product)
+                else:
+                    retained_products.append(product)
+            stored_payload = dict(payload)
+            stored_payload["products"] = retained_products
             session.add(TaskResult(
                 task_id=task.id, client_id=client_id, lease_id=lease_id,
-                checksum=checksum, payload=payload,
+                checksum=checksum, payload=stored_payload,
             ))
             task.status = "completed"
             task.completed_at = utc_now()
@@ -301,6 +369,487 @@ class CoordinatorStore:
             self._event(session, task.job_id, "task_completed", {"taskId": task.id, "clientId": client_id})
             self._refresh_job(session, task.job_id)
             return {"status": "accepted", "taskId": task.id}
+
+    @staticmethod
+    def _upsert_product_item(
+        session,
+        *,
+        task: CrawlTask,
+        client_id: str,
+        lease_id: str,
+        product: dict[str, Any],
+        checksum: str,
+    ) -> tuple[CrawlProductItem, bool]:
+        source_key = _source_key(product)
+        existing = session.scalar(select(CrawlProductItem).where(
+            CrawlProductItem.job_id == task.job_id,
+            CrawlProductItem.source_key == source_key,
+        ))
+        product_checksum = checksum or hashlib.sha256(
+            json.dumps(product, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        if existing is not None:
+            return existing, False
+        item = CrawlProductItem(
+            id=_id(),
+            job_id=task.job_id,
+            task_id=task.id,
+            source_key=source_key,
+            product_id=str(product.get("id") or source_key),
+            client_id=client_id,
+            lease_id=lease_id,
+            checksum=product_checksum,
+            raw_payload=product,
+            status="received",
+        )
+        session.add(item)
+        session.flush()
+        return item, True
+
+    def accept_product(
+        self,
+        task_id: str,
+        client_id: str,
+        lease_id: str,
+        product_key: str,
+        checksum: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        with self.sessions.begin() as session:
+            task = session.scalar(select(CrawlTask).where(CrawlTask.id == task_id).with_for_update())
+            if task is None:
+                return {"status": "missing"}
+            if task.status == "cancelled":
+                return {"status": "cancelled"}
+            attempt = session.scalar(select(TaskAttempt).where(
+                TaskAttempt.task_id == task.id,
+                TaskAttempt.client_id == client_id,
+                TaskAttempt.lease_id == lease_id,
+            ))
+            if attempt is None:
+                return {"status": "stale"}
+            if str(payload.get("jobId") or "") != task.job_id:
+                return {"status": "invalid", "reason": "job_identity"}
+            product = payload.get("product")
+            if not isinstance(product, dict):
+                return {"status": "invalid", "reason": "product_payload"}
+            source_key = _source_key(product)
+            if product_key not in {source_key, str(product.get("id") or "")}:
+                return {"status": "invalid", "reason": "product_identity"}
+            item, created = self._upsert_product_item(
+                session,
+                task=task,
+                client_id=client_id,
+                lease_id=lease_id,
+                product=product,
+                checksum=str(payload.get("productChecksum") or checksum),
+            )
+            if created:
+                self._event(session, task.job_id, "product_received", {
+                    "taskId": task.id,
+                    "productItemId": item.id,
+                    "sourceKey": item.source_key,
+                    "productId": item.product_id,
+                    "status": item.status,
+                })
+            self._refresh_job(session, task.job_id)
+            return {
+                "status": "accepted" if created else "duplicate",
+                "productItemId": item.id,
+                "sourceKey": item.source_key,
+            }
+
+    def claim_product_items(
+        self,
+        *,
+        worker_id: str,
+        store_id: str,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        now = utc_now()
+        claim_until = now + timedelta(seconds=90)
+        count = max(1, min(20, int(limit)))
+        claimed: list[dict[str, Any]] = []
+        with self._product_claim_lock, self.sessions.begin() as session:
+            candidates = session.scalars(
+                select(CrawlProductItem)
+                .where(
+                    (
+                        CrawlProductItem.status == "received"
+                    ) | (
+                        (CrawlProductItem.status == "retry_wait")
+                        & (CrawlProductItem.next_attempt_at <= now)
+                    ) | (
+                        CrawlProductItem.status.in_(["normalizing", "seo", "syncing"])
+                        & (CrawlProductItem.claim_expires_at < now)
+                    )
+                )
+                .order_by(CrawlProductItem.created_at)
+                .limit(min(100, count * 10))
+                .with_for_update(skip_locked=True)
+            ).all()
+            dialect_name = session.get_bind().dialect.name
+            if dialect_name == "postgresql":
+                candidates.sort(key=lambda candidate: _shopify_sync_lock_key(store_id, candidate.source_key))
+            for item in candidates:
+                if len(claimed) >= count:
+                    break
+                if dialect_name == "postgresql":
+                    session.execute(
+                        text("SELECT pg_advisory_xact_lock(:lock_key)"),
+                        {"lock_key": _shopify_sync_lock_key(store_id, item.source_key)},
+                    )
+                request_id = _shopify_sync_request_id(item.source_key)
+                operation = session.scalar(
+                    select(ShopifyOperationIdempotency)
+                    .where(
+                        ShopifyOperationIdempotency.store_id == store_id,
+                        ShopifyOperationIdempotency.request_id == request_id,
+                    )
+                    .with_for_update()
+                )
+                operation_owner = (
+                    str((operation.response_payload or {}).get("itemId") or "")
+                    if operation is not None
+                    else ""
+                )
+                if operation is not None and operation.state == "pending" and operation_owner != item.id:
+                    continue
+                if operation is None:
+                    operation = ShopifyOperationIdempotency(
+                        id=_id(),
+                        store_id=store_id,
+                        request_id=request_id,
+                        operation="product.sync",
+                        payload_hash=item.checksum,
+                        state="pending",
+                        response_payload={"itemId": item.id, "sourceKey": item.source_key},
+                    )
+                    session.add(operation)
+                else:
+                    operation.operation = "product.sync"
+                    operation.payload_hash = item.checksum
+                    operation.state = "pending"
+                    operation.response_payload = {"itemId": item.id, "sourceKey": item.source_key}
+                item.status = "normalizing"
+                item.claimed_by = worker_id
+                item.claim_expires_at = claim_until
+                item.attempt_count += 1
+                link = session.scalar(select(ShopifyProductLink).where(
+                    ShopifyProductLink.store_id == store_id,
+                    ShopifyProductLink.source_key == item.source_key,
+                ))
+                claimed.append({
+                    "id": item.id,
+                    "jobId": item.job_id,
+                    "taskId": item.task_id,
+                    "sourceKey": item.source_key,
+                    "productId": item.product_id,
+                    "checksum": item.checksum,
+                    "attempt": item.attempt_count,
+                    "product": item.raw_payload,
+                    "existingShopify": None if link is None else {
+                        "productId": link.shopify_product_id,
+                        "productHandle": link.shopify_product_handle,
+                        "normalizedChecksum": link.normalized_checksum,
+                        "managedResources": link.managed_resources,
+                    },
+                })
+                self._event(session, item.job_id, "product_normalizing", {
+                    "productItemId": item.id,
+                    "sourceKey": item.source_key,
+                    "attempt": item.attempt_count,
+                })
+                self._refresh_job(session, item.job_id)
+        return claimed
+
+    def mark_product_seo(
+        self,
+        item_id: str,
+        *,
+        worker_id: str,
+        normalized_payload: dict[str, Any],
+        seo_summary: dict[str, Any],
+    ) -> bool:
+        with self.sessions.begin() as session:
+            item = session.get(CrawlProductItem, item_id)
+            if item is None or item.claimed_by != worker_id or item.status != "normalizing":
+                return False
+            item.normalized_payload = normalized_payload
+            item.shopify_result = {"seo": seo_summary}
+            item.status = "seo"
+            item.claim_expires_at = utc_now() + timedelta(seconds=180)
+            self._event(session, item.job_id, "product_seo", {
+                "productItemId": item.id,
+                "sourceKey": item.source_key,
+                "seo": seo_summary,
+            })
+            self._refresh_job(session, item.job_id)
+            return True
+
+    def mark_product_syncing(
+        self,
+        item_id: str,
+        *,
+        worker_id: str,
+        normalized_payload: dict[str, Any],
+        proxy_profile: str,
+        seo_summary: dict[str, Any] | None = None,
+    ) -> bool:
+        with self.sessions.begin() as session:
+            item = session.get(CrawlProductItem, item_id)
+            if item is None or item.claimed_by != worker_id or item.status not in {"normalizing", "seo", "syncing"}:
+                return False
+            item.normalized_payload = normalized_payload
+            if seo_summary is not None:
+                pipeline_result = dict(item.shopify_result or {})
+                pipeline_result["seo"] = seo_summary
+                item.shopify_result = pipeline_result
+            item.proxy_profile = proxy_profile
+            item.status = "syncing"
+            item.claim_expires_at = utc_now() + timedelta(seconds=180)
+            self._event(session, item.job_id, "product_syncing", {
+                "productItemId": item.id,
+                "sourceKey": item.source_key,
+                "proxyProfile": proxy_profile,
+            })
+            self._refresh_job(session, item.job_id)
+            return True
+
+    def heartbeat_product_item(self, item_id: str, *, worker_id: str) -> bool:
+        with self.sessions.begin() as session:
+            item = session.get(CrawlProductItem, item_id)
+            if item is None or item.claimed_by != worker_id or item.status not in {"normalizing", "seo", "syncing"}:
+                return False
+            item.claim_expires_at = utc_now() + timedelta(seconds=180)
+            return True
+
+    def checkpoint_shopify_product(
+        self,
+        item_id: str,
+        *,
+        worker_id: str,
+        store_id: str,
+        normalized_checksum: str,
+        shopify_result: dict[str, Any],
+    ) -> bool:
+        """Persist a confirmed Shopify write before SEO corpus registration completes."""
+        with self.sessions.begin() as session:
+            item = session.get(CrawlProductItem, item_id)
+            if item is None or item.claimed_by != worker_id or item.status != "syncing":
+                return False
+            self._upsert_shopify_link(
+                session,
+                item=item,
+                store_id=store_id,
+                normalized_checksum=normalized_checksum,
+                shopify_result=shopify_result,
+            )
+            pipeline_result = dict(item.shopify_result or {})
+            pipeline_result.update(shopify_result)
+            item.shopify_result = pipeline_result
+            item.claim_expires_at = utc_now() + timedelta(seconds=180)
+            self._event(session, item.job_id, "product_shopify_checkpointed", {
+                "productItemId": item.id,
+                "sourceKey": item.source_key,
+                "shopifyProductId": str(shopify_result.get("productId") or "") or None,
+            })
+            return True
+
+    def complete_product_item(
+        self,
+        item_id: str,
+        *,
+        worker_id: str,
+        store_id: str,
+        normalized_checksum: str,
+        normalized_payload: dict[str, Any],
+        shopify_result: dict[str, Any],
+    ) -> bool:
+        with self.sessions.begin() as session:
+            item = session.get(CrawlProductItem, item_id)
+            if item is None or item.claimed_by != worker_id or item.status not in {"normalizing", "seo", "syncing"}:
+                return False
+            product_id = self._upsert_shopify_link(
+                session,
+                item=item,
+                store_id=store_id,
+                normalized_checksum=normalized_checksum,
+                shopify_result=shopify_result,
+            )
+            # The normalized payload is the temporary public result. The raw
+            # crawler copy is no longer needed after Shopify confirms the write.
+            item.raw_payload = {}
+            task = session.get(CrawlTask, item.task_id)
+            if task is not None and task.result is not None:
+                result_payload = dict(task.result.payload or {})
+                products = result_payload.get("products")
+                if isinstance(products, list):
+                    result_payload["products"] = [
+                        product for product in products
+                        if not (
+                            isinstance(product, dict)
+                            and (
+                                _source_key(product) == item.source_key
+                                or str(product.get("id") or "") == item.product_id
+                            )
+                        )
+                    ]
+                    task.result.payload = result_payload
+            item.normalized_payload = normalized_payload
+            item.shopify_result = shopify_result
+            item.status = "completed"
+            item.last_error = None
+            item.next_attempt_at = None
+            item.claim_expires_at = None
+            item.completed_at = utc_now()
+            operation = session.scalar(select(ShopifyOperationIdempotency).where(
+                ShopifyOperationIdempotency.store_id == store_id,
+                ShopifyOperationIdempotency.request_id == _shopify_sync_request_id(item.source_key),
+            ))
+            if operation is not None:
+                operation.state = "completed"
+                operation.response_payload = {
+                    "itemId": item.id,
+                    "sourceKey": item.source_key,
+                    "productId": product_id or None,
+                }
+            self._event(session, item.job_id, "product_completed", {
+                "productItemId": item.id,
+                "sourceKey": item.source_key,
+                "shopifyProductId": product_id or None,
+                "noOp": bool(shopify_result.get("noOp")),
+            })
+            self._refresh_job(session, item.job_id)
+            return True
+
+    @staticmethod
+    def _upsert_shopify_link(
+        session,
+        *,
+        item: CrawlProductItem,
+        store_id: str,
+        normalized_checksum: str,
+        shopify_result: dict[str, Any],
+    ) -> str:
+        product_id = str(shopify_result.get("productId") or "").strip()
+        if not product_id:
+            return ""
+        product_handle = str(shopify_result.get("productHandle") or "").strip() or None
+        link = session.scalar(select(ShopifyProductLink).where(
+            ShopifyProductLink.store_id == store_id,
+            ShopifyProductLink.source_key == item.source_key,
+        ))
+        if link is None:
+            link = ShopifyProductLink(
+                id=_id(),
+                store_id=store_id,
+                source_key=item.source_key,
+                shopify_product_id=product_id,
+                shopify_product_handle=product_handle,
+                normalized_checksum=normalized_checksum,
+                managed_resources=dict(shopify_result.get("managedResources") or {}),
+            )
+            session.add(link)
+        else:
+            link.shopify_product_id = product_id
+            link.shopify_product_handle = product_handle
+            link.normalized_checksum = normalized_checksum
+            link.managed_resources = dict(shopify_result.get("managedResources") or {})
+        return product_id
+
+    def cleanup_history(self, *, retention_minutes: int, now=None) -> dict[str, int]:
+        """Remove expired coordinator history while preserving Shopify mappings."""
+        retention = max(1, int(retention_minutes))
+        current_time = now or utc_now()
+        cutoff = current_time - timedelta(minutes=retention)
+        with self.sessions.begin() as session:
+            job_ids = list(session.scalars(select(CrawlJob.id).where(
+                CrawlJob.status.in_(["completed", "partial", "cancelled"]),
+                CrawlJob.completed_at.is_not(None),
+                CrawlJob.completed_at < cutoff,
+            )).all())
+            if job_ids:
+                task_ids = list(session.scalars(select(CrawlTask.id).where(
+                    CrawlTask.job_id.in_(job_ids),
+                )).all())
+                session.execute(delete(JobEvent).where(JobEvent.job_id.in_(job_ids)))
+                session.execute(delete(InvalidJobInput).where(InvalidJobInput.job_id.in_(job_ids)))
+                session.execute(delete(CrawlProductItem).where(CrawlProductItem.job_id.in_(job_ids)))
+                if task_ids:
+                    session.execute(delete(TaskResult).where(TaskResult.task_id.in_(task_ids)))
+                    session.execute(delete(TaskAttempt).where(TaskAttempt.task_id.in_(task_ids)))
+                session.execute(delete(CrawlTask).where(CrawlTask.job_id.in_(job_ids)))
+                session.execute(delete(CrawlJob).where(CrawlJob.id.in_(job_ids)))
+
+            operation_result = session.execute(delete(ShopifyOperationIdempotency).where(
+                ShopifyOperationIdempotency.state != "pending",
+                ShopifyOperationIdempotency.updated_at < cutoff,
+            ))
+            return {
+                "jobs": len(job_ids),
+                "idempotencyOperations": int(operation_result.rowcount or 0),
+            }
+
+    def fail_product_item(
+        self,
+        item_id: str,
+        *,
+        worker_id: str,
+        store_id: str,
+        error: dict[str, Any],
+        retryable: bool,
+        reconciliation_required: bool,
+        retry_after_seconds: int | None = None,
+    ) -> str | None:
+        with self.sessions.begin() as session:
+            item = session.get(CrawlProductItem, item_id)
+            if item is None or item.claimed_by != worker_id:
+                return None
+            if reconciliation_required:
+                next_status = "reconciliation_required"
+            elif retryable and item.attempt_count < 3:
+                next_status = "retry_wait"
+            else:
+                next_status = "failed"
+            item.status = next_status
+            item.last_error = error
+            if str(error.get("phase") or "") == "seo":
+                pipeline_result = dict(item.shopify_result or {})
+                pipeline_result["seo"] = {
+                    "status": "failed",
+                    "error": str(error.get("message") or "SEO pipeline failed."),
+                }
+                item.shopify_result = pipeline_result
+            item.claimed_by = None
+            item.claim_expires_at = None
+            if next_status == "retry_wait":
+                retry_delays = (5, 30, 120)
+                delay = retry_after_seconds or retry_delays[min(item.attempt_count - 1, len(retry_delays) - 1)]
+                item.next_attempt_at = utc_now() + timedelta(seconds=max(1, delay))
+            else:
+                item.next_attempt_at = None
+                item.completed_at = utc_now()
+            operation = session.scalar(select(ShopifyOperationIdempotency).where(
+                ShopifyOperationIdempotency.store_id == store_id,
+                ShopifyOperationIdempotency.request_id == _shopify_sync_request_id(item.source_key),
+            ))
+            if operation is not None:
+                operation.state = "pending" if next_status == "retry_wait" else next_status
+                operation.response_payload = {
+                    "itemId": item.id,
+                    "sourceKey": item.source_key,
+                    "error": error,
+                }
+            self._event(session, item.job_id, "product_failed", {
+                "productItemId": item.id,
+                "sourceKey": item.source_key,
+                "status": next_status,
+                "attempt": item.attempt_count,
+                "error": error,
+            })
+            self._refresh_job(session, item.job_id)
+            return next_status
 
     def reap_expired(self) -> dict[str, int]:
         now = utc_now()
@@ -364,6 +913,27 @@ class CoordinatorStore:
                 task.status = "cancelled"
                 task.completed_at = utc_now()
                 task.lease_expires_at = None
+            for item in session.scalars(select(CrawlProductItem).where(
+                CrawlProductItem.job_id == job_id,
+                CrawlProductItem.status.in_(["received", "normalizing", "seo", "retry_wait"]),
+            )):
+                item.status = "cancelled"
+                item.completed_at = utc_now()
+                item.claimed_by = None
+                item.claim_expires_at = None
+                request_id = _shopify_sync_request_id(item.source_key)
+                operations = session.scalars(select(ShopifyOperationIdempotency).where(
+                    ShopifyOperationIdempotency.request_id == request_id,
+                    ShopifyOperationIdempotency.state == "pending",
+                )).all()
+                for operation in operations:
+                    owner = str((operation.response_payload or {}).get("itemId") or "")
+                    if owner == item.id:
+                        operation.state = "cancelled"
+                        operation.response_payload = {
+                            "itemId": item.id,
+                            "sourceKey": item.source_key,
+                        }
             self._event(session, job_id, "job_cancelled", {})
             return self._job_snapshot(session, job)
 
@@ -407,6 +977,84 @@ class CoordinatorStore:
             ).all())
             return [self._client_snapshot(client, active_tasks=int(active_counts.get(client.id, 0))) for client in clients]
 
+    @staticmethod
+    def _product_pipeline_snapshot(item: CrawlProductItem) -> dict[str, Any]:
+        pipeline_result = dict(item.shopify_result or {})
+        seo = pipeline_result.pop("seo", None)
+        public_seo = (
+            {
+                key: seo[key]
+                for key in ("status", "engine", "fieldsApplied", "fallbackStages", "warnings", "error")
+                if key in seo
+            }
+            if isinstance(seo, dict)
+            else {
+                "status": "running" if item.status == "seo" else (
+                    "completed" if item.status in {"syncing", "completed"} else "pending"
+                ),
+            }
+        )
+        shopify = pipeline_result
+        shopify.update({
+            "attempts": item.attempt_count,
+            "proxyProfile": item.proxy_profile,
+            "error": None if item.last_error is None else str(item.last_error.get("message") or "Pipeline failed."),
+        })
+        product = dict(item.normalized_payload or item.raw_payload)
+        product["sourceKey"] = item.source_key
+        product["pipeline"] = {
+            "status": item.status,
+            "normalization": {
+                "status": "completed" if item.normalized_payload is not None else (
+                    "running" if item.status == "normalizing" else "pending"
+                ),
+                "assetsNormalized": int(shopify.get("assetsNormalized") or 0),
+            },
+            "seo": public_seo,
+            "shopify": shopify,
+        }
+        return product
+
+    def job_products(self, job_id: str) -> dict[str, Any] | None:
+        with self.sessions() as session:
+            if session.get(CrawlJob, job_id) is None:
+                return None
+            items = session.scalars(
+                select(CrawlProductItem)
+                .where(CrawlProductItem.job_id == job_id)
+                .order_by(CrawlProductItem.created_at)
+            ).all()
+            return {
+                "jobId": job_id,
+                "products": [self._product_pipeline_snapshot(item) for item in items],
+            }
+
+    def retry_failed_syncs(self, job_id: str) -> dict[str, Any] | None:
+        with self.sessions.begin() as session:
+            job = session.get(CrawlJob, job_id)
+            if job is None:
+                return None
+            items = session.scalars(select(CrawlProductItem).where(
+                CrawlProductItem.job_id == job_id,
+                CrawlProductItem.status.in_(["failed", "reconciliation_required"]),
+            )).all()
+            for item in items:
+                item.status = "received"
+                item.attempt_count = 0
+                item.next_attempt_at = None
+                item.claimed_by = None
+                item.claim_expires_at = None
+                item.last_error = None
+                item.completed_at = None
+            if items:
+                job.status = "running"
+                job.completed_at = None
+                self._event(session, job_id, "failed_product_syncs_retried", {"count": len(items)})
+            self._refresh_job(session, job_id)
+            snapshot = self._job_snapshot(session, job)
+            snapshot["retried"] = len(items)
+            return snapshot
+
     def job_results(self, job_id: str) -> dict[str, Any] | None:
         with self.sessions() as session:
             job = session.get(CrawlJob, job_id)
@@ -422,12 +1070,30 @@ class CoordinatorStore:
                 {"source": entry.source, "code": "INVALID_INPUT", "message": entry.message, "retryable": False}
                 for entry in invalid
             ]
+            pipeline_items = session.scalars(
+                select(CrawlProductItem)
+                .where(CrawlProductItem.job_id == job_id)
+                .order_by(CrawlProductItem.created_at)
+            ).all()
+            if pipeline_items:
+                for item in pipeline_items:
+                    if item.status == "completed" and item.normalized_payload is not None:
+                        product = self._product_pipeline_snapshot(item)
+                        products[str(product.get("id") or item.source_key)] = product
+                    elif item.status in {"failed", "reconciliation_required", "cancelled"}:
+                        errors.append({
+                            "source": item.source_key,
+                            "code": "SHOPIFY_RECONCILIATION_REQUIRED" if item.status == "reconciliation_required" else "PRODUCT_PIPELINE_FAILED",
+                            "message": str((item.last_error or {}).get("message") or f"Product pipeline ended with {item.status}."),
+                            "retryable": item.status in {"failed", "reconciliation_required"},
+                        })
             for task in tasks:
                 if task.result:
                     result = dict(task.result.payload)
-                    for product in result.get("products", []):
-                        if isinstance(product, dict) and product.get("id"):
-                            products[str(product["id"])] = product
+                    if not pipeline_items:
+                        for product in result.get("products", []):
+                            if isinstance(product, dict) and product.get("id"):
+                                products[str(product["id"])] = product
                     errors.extend(error for error in result.get("errors", []) if isinstance(error, dict))
                     warnings.extend(str(warning) for warning in result.get("warnings", []) if isinstance(warning, str))
                 elif task.status == "failed":
@@ -440,7 +1106,7 @@ class CoordinatorStore:
             completed_at = _as_utc(job.completed_at or utc_now())
             duration_ms = max(0, int((completed_at - started_at).total_seconds() * 1000))
             return {
-                "version": "distributed-1",
+                "version": "distributed-2",
                 "jobId": job.id,
                 "status": job.status,
                 "startedAt": utc_iso(started_at),
@@ -543,8 +1209,34 @@ class CoordinatorStore:
                 item.pop("currentAsin", None)
                 item.pop("currentOptions", None)
             progress_items.append(item)
+        product_counts = dict(session.execute(
+            select(CrawlProductItem.status, func.count(CrawlProductItem.id))
+            .where(CrawlProductItem.job_id == job.id)
+            .group_by(CrawlProductItem.status)
+        ).all())
+        retry_errors = session.scalars(
+            select(CrawlProductItem.last_error).where(
+                CrawlProductItem.job_id == job.id,
+                CrawlProductItem.status == "retry_wait",
+            )
+        ).all()
+        retry_phases = {
+            str(error.get("phase") or "shopify")
+            for error in retry_errors
+            if isinstance(error, dict)
+        }
         is_terminal = job.status in {"completed", "partial", "cancelled"}
-        phase = "export" if is_terminal else str(latest_batch_progress.get("phase") or ("product" if progress_events else "queued"))
+        has_pipeline_work = any(product_counts.get(status, 0) for status in ACTIVE_PRODUCT_STATUSES)
+        if is_terminal:
+            phase = "export"
+        elif product_counts.get("syncing", 0) or "shopify" in retry_phases:
+            phase = "shopify"
+        elif product_counts.get("seo", 0) or "seo" in retry_phases:
+            phase = "seo"
+        elif product_counts.get("normalizing", 0) or product_counts.get("received", 0):
+            phase = "normalization"
+        else:
+            phase = str(latest_batch_progress.get("phase") or ("product" if progress_events else "queued"))
         terminal_count = completed + failed + cancelled
         progress = {
             "phase": phase,
@@ -552,9 +1244,14 @@ class CoordinatorStore:
             "total": job.accepted_inputs,
             "message": (
                 f"Đã xử lý {terminal_count}/{job.accepted_inputs} link."
-                if is_terminal else str(latest_batch_progress.get("message") or f"Đang xử lý {terminal_count}/{job.accepted_inputs} link trên các client.")
+                if is_terminal else (
+                    f"Đang xử lý pipeline {phase.upper()}: {int(product_counts.get('completed', 0))}/{sum(product_counts.values())} products."
+                    if has_pipeline_work and terminal_count == job.accepted_inputs
+                    else str(latest_batch_progress.get("message") or f"Đang xử lý {terminal_count}/{job.accepted_inputs} link trên các client.")
+                )
             ),
             "items": progress_items,
+            "productCounts": product_counts,
         }
         if isinstance(latest_batch_progress.get("browserPool"), dict):
             progress["browserPool"] = latest_batch_progress["browserPool"]
@@ -563,6 +1260,7 @@ class CoordinatorStore:
             "settings": job.settings, "settingsFingerprint": settings_fingerprint(job.settings),
             "requestedInputs": job.requested_inputs, "acceptedInputs": job.accepted_inputs,
             "rejectedInputs": job.rejected_inputs, "taskCounts": counts,
+            "productCounts": product_counts,
             "progress": progress,
             "createdAt": utc_iso(job.created_at), "startedAt": utc_iso(job.started_at) if job.started_at else None,
             "completedAt": utc_iso(job.completed_at) if job.completed_at else None,

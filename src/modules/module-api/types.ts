@@ -203,6 +203,12 @@ export interface ShopifyProductUpdateInput {
   readonly tags?: readonly string[];
   readonly featuredImage?: ShopifyImageInput;
   readonly images?: readonly ShopifyImageInput[];
+  readonly media?: readonly (ShopifyImageInput | { readonly originalSource?: string; readonly alt?: string; readonly mediaContentType?: "IMAGE" | "VIDEO" })[];
+  readonly productOptions?: readonly ShopifyProductOptionInput[];
+  readonly variants?: readonly ShopifyProductVariantInput[];
+  readonly replaceMedia?: boolean;
+  readonly mediaIdsToDelete?: readonly string[];
+  readonly variantIdsToManage?: readonly string[];
   readonly seo?: ShopifySeoInput;
 }
 

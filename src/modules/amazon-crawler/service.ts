@@ -8,6 +8,7 @@ import type {
   AmazonCrawlerProgress,
   AmazonCrawlerRunOptions,
   AmazonCrawlerRunner,
+  AmazonCrawlerSyncRetrier,
 } from "./types";
 
 interface JobCreatedResponse {
@@ -143,7 +144,7 @@ export function createAmazonCrawlerRunner({
 }: AmazonCrawlerClientOptions): AmazonCrawlerRunner {
   const baseUrl = normalizeEngineUrl(engineUrl);
 
-  return async ({ input, onProgress, signal }: AmazonCrawlerRunOptions): Promise<AmazonCrawlerOutput> => {
+  return async ({ input, onProgress, onProducts, signal }: AmazonCrawlerRunOptions): Promise<AmazonCrawlerOutput> => {
     let jobId: string | null = null;
     let cancellationRequested = false;
 
@@ -196,6 +197,16 @@ export function createAmazonCrawlerRunner({
         );
         const snapshot = readSnapshot(await readJson(response));
         onProgress?.(snapshot.progress);
+        if (onProducts) {
+          const productsResponse = await fetchImplementation(
+            `${baseUrl}/api/v1/crawl-jobs/${encodeURIComponent(jobId)}/products`,
+            { signal },
+          );
+          const productsPayload = await readJson(productsResponse);
+          if (isRecord(productsPayload) && Array.isArray(productsPayload.products)) {
+            onProducts(productsPayload.products as AmazonCrawlerOutput["products"]);
+          }
+        }
 
         if (snapshot.status === "completed" || snapshot.status === "partial") {
           const resultResponse = await fetchImplementation(`${baseUrl}/api/v1/crawl-jobs/${encodeURIComponent(jobId)}/results`, { signal });
@@ -208,6 +219,58 @@ export function createAmazonCrawlerRunner({
       }
     } finally {
       signal?.removeEventListener("abort", cancelJob);
+    }
+  };
+}
+
+export function createAmazonCrawlerSyncRetrier({
+  engineUrl,
+  fetchImplementation = fetch,
+  pollIntervalMs = 700,
+}: AmazonCrawlerClientOptions): AmazonCrawlerSyncRetrier {
+  const baseUrl = normalizeEngineUrl(engineUrl);
+  return async (jobId, options = {}) => {
+    const response = await fetchImplementation(
+      `${baseUrl}/api/v1/crawl-jobs/${encodeURIComponent(jobId)}/retry-failed-syncs`,
+      { method: "POST", signal: options.signal },
+    );
+    const payload = await readJson(response);
+    if (!isRecord(payload) || typeof payload.retried !== "number") {
+      throw new AmazonCrawlerServiceError("Coordinator returned an invalid retry response.", "INVALID_ENGINE_RESPONSE");
+    }
+    if (payload.retried === 0) return { retried: 0 };
+
+    for (;;) {
+      const snapshotResponse = await fetchImplementation(
+        `${baseUrl}/api/v1/crawl-jobs/${encodeURIComponent(jobId)}`,
+        { signal: options.signal },
+      );
+      const snapshot = readSnapshot(await readJson(snapshotResponse));
+      options.onProgress?.(snapshot.progress);
+      if (options.onProducts) {
+        const productsResponse = await fetchImplementation(
+          `${baseUrl}/api/v1/crawl-jobs/${encodeURIComponent(jobId)}/products`,
+          { signal: options.signal },
+        );
+        const productsPayload = await readJson(productsResponse);
+        if (isRecord(productsPayload) && Array.isArray(productsPayload.products)) {
+          options.onProducts(productsPayload.products as AmazonCrawlerOutput["products"]);
+        }
+      }
+      if (snapshot.status === "completed" || snapshot.status === "partial") {
+        const resultResponse = await fetchImplementation(
+          `${baseUrl}/api/v1/crawl-jobs/${encodeURIComponent(jobId)}/results`,
+          { signal: options.signal },
+        );
+        return {
+          retried: payload.retried,
+          output: await readJson(resultResponse) as AmazonCrawlerOutput,
+        };
+      }
+      if (snapshot.status === "cancelled") {
+        throw new DOMException("The crawler job was cancelled.", "AbortError");
+      }
+      await wait(pollIntervalMs, options.signal);
     }
   };
 }

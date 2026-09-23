@@ -88,6 +88,19 @@ const PRODUCTS_GET_QUERY = `
           }
         }
       }
+      media(first: 50) {
+        nodes {
+          id
+          ... on MediaImage {
+            image {
+              url
+              altText
+              width
+              height
+            }
+          }
+        }
+      }
       seo {
         title
         description
@@ -133,9 +146,11 @@ export interface RawImageNode {
 export interface RawMediaNode {
   readonly id: string;
   readonly alt?: string | null;
-  readonly mediaContentType: string;
+  readonly mediaContentType?: string | null;
   readonly image?: {
+    readonly id?: string | null;
     readonly url?: string | null;
+    readonly altText?: string | null;
     readonly width?: number | null;
     readonly height?: number | null;
   } | null;
@@ -209,7 +224,7 @@ export function mapProductNode(node: RawProductNode): ProductSummary {
         return (
           m !== null &&
           typeof m === "object" &&
-          m.mediaContentType === "IMAGE" &&
+          (m.mediaContentType === undefined || m.mediaContentType === null || m.mediaContentType === "IMAGE") &&
           typeof m.image?.url === "string" &&
           m.image.url.trim() !== ""
         );
@@ -217,7 +232,7 @@ export function mapProductNode(node: RawProductNode): ProductSummary {
       .map((m) => ({
         id: m.id,
         url: m.image.url.trim(),
-        altText: typeof m.alt === "string" ? m.alt : undefined,
+        altText: typeof m.alt === "string" ? m.alt : (m.image.altText ?? undefined),
         width: typeof m.image.width === "number" ? m.image.width : undefined,
         height: typeof m.image.height === "number" ? m.image.height : undefined,
       }));

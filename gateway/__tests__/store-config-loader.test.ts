@@ -83,6 +83,47 @@ describe("Store Config Loader (Multi-Store Bootstrap)", () => {
     assert.equal(s2.proxy?.failClosed, false);
   });
 
+  it("creates fail-closed sticky store routes for enabled crawler proxy profiles", () => {
+    const proxyConfigPath = join(tempDir, "amazon-crawler-profiles.json");
+    writeFileSync(proxyConfigPath, JSON.stringify({
+      profiles: [
+        {
+          name: "US Proxy 1",
+          enabled: true,
+          proxy: {
+            server: "http://proxy-1.example.com:8000",
+            username: "proxy-user",
+            password: "proxy-password",
+          },
+        },
+        {
+          name: "Disabled Proxy",
+          enabled: false,
+          proxy: { server: "http://disabled.example.com:8000" },
+        },
+      ],
+    }), "utf-8");
+
+    const stores = loadBootstrappedStores({
+      cwd: tempDir,
+      env: {
+        GATEWAY_STORE_ID: "primary",
+        GATEWAY_SHOP_DOMAIN: "primary.myshopify.com",
+        GATEWAY_ACCESS_TOKEN: "test-token",
+        SHOPIFY_PROXY_CONFIG: proxyConfigPath,
+      },
+    });
+
+    const proxyStore = stores.find((store) => store.storeId === "primary--us-proxy-1");
+    assert.ok(proxyStore);
+    assert.equal(proxyStore.proxy?.url, "http://proxy-1.example.com:8000");
+    assert.equal(proxyStore.proxy?.username, "proxy-user");
+    assert.equal(proxyStore.proxy?.password, "proxy-password");
+    assert.equal(proxyStore.proxy?.failClosed, true);
+    assert.equal(proxyStore.throttleGroupId, "primary");
+    assert.equal(stores.some((store) => store.storeId.includes("disabled-proxy")), false);
+  });
+
   it("loads multiple stores from inline GATEWAY_STORES environment variable", () => {
     const inlineJson = JSON.stringify({
       stores: [

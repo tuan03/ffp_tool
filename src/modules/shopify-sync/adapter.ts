@@ -90,14 +90,21 @@ export function fromCustomizationNormalizerProduct(
   product: CrawlProduct,
 ): ShopifySyncProductInput {
   const title = product.title || product.sourceTitle || "Custom Product";
-  const descriptionHtml = buildProductDescriptionHtml(product);
+  const descriptionHtml = typeof product.descriptionHtml === "string"
+    ? product.descriptionHtml
+    : buildProductDescriptionHtml(product);
+  const seo = product.seo && typeof product.seo === "object"
+    ? product.seo as { readonly title?: unknown; readonly description?: unknown }
+    : undefined;
 
-  const media: ShopifyMediaInput[] = (product.media || []).map((item: ProductMediaItem) => ({
-    originalSource: item.url,
-    alt: item.alt || title,
-    mediaContentType: item.kind === "video" ? "VIDEO" : "IMAGE",
-    friendlyFileName: item.friendlyFileName,
-  }));
+  const media: ShopifyMediaInput[] = (product.media || [])
+    .filter((item: ProductMediaItem) => String(item.kind ?? "image").toLowerCase() !== "video")
+    .map((item: ProductMediaItem) => ({
+      originalSource: item.url,
+      alt: item.alt || title,
+      mediaContentType: "IMAGE",
+      friendlyFileName: item.friendlyFileName,
+    }));
 
   const tags = new Set<string>();
   if (product.parentAsin) tags.add(`asin:${product.parentAsin}`);
@@ -143,8 +150,9 @@ export function fromCustomizationNormalizerProduct(
 
   const variants: ShopifyVariantInput[] = (product.variants || [])
     .filter(isRecord)
-    .map((v) => {
-      const priceStr = formatPrice(v.price, "0.00");
+    .flatMap((v) => {
+      const priceStr = formatPrice(v.price, "");
+      if (!priceStr) return [];
       const compareAtPriceStr = formatOptionalPrice(v.compareAtPrice);
       const optionValues: Array<{ name: string; optionName: string }> = [];
 
@@ -157,7 +165,7 @@ export function fromCustomizationNormalizerProduct(
         }
       }
 
-      return {
+      return [{
         title: typeof v.title === "string" ? v.title : undefined,
         price: priceStr,
         compareAtPrice: compareAtPriceStr,
@@ -165,7 +173,7 @@ export function fromCustomizationNormalizerProduct(
         barcode: typeof v.barcode === "string" ? v.barcode : undefined,
         inventoryTracked: false, // Default to Inventory not tracked
         optionValues: optionValues.length > 0 ? optionValues : undefined,
-      };
+      }];
     });
 
   const productType =
@@ -175,8 +183,13 @@ export function fromCustomizationNormalizerProduct(
 
   return {
     id: product.id,
+    sourceKey: typeof product.sourceKey === "string" ? product.sourceKey : product.id,
     title,
     descriptionHtml,
+    handle: typeof product.handle === "string" ? product.handle : undefined,
+    seo: typeof seo?.title === "string" && typeof seo.description === "string"
+      ? { title: seo.title, description: seo.description }
+      : undefined,
     vendor: "FFP Store",
     productType,
     tags: Array.from(tags),

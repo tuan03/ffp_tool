@@ -6,4 +6,12 @@ import { shopifyGatewayDevPlugin } from "./gateway/vite-plugin";
 
 export default defineConfig({
   plugins: [react(), tailwindcss(), shopifyGatewayDevPlugin()],
+  server: {
+    proxy: {
+      "^/api/(?!shopify)": {
+        target: process.env.VITE_API_URL || "http://127.0.0.1:8765",
+        changeOrigin: true,
+      },
+    },
+  },
 });
