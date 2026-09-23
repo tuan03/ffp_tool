@@ -5201,16 +5201,26 @@ describe("Gateway: Architectural & Operational Hardening (P1)", () => {
 
   it("startGatewayServer refuses to start on 0.0.0.0 or external host without GATEWAY_AUTH_TOKEN", async () => {
     const { startGatewayServer } = await import("../server");
-    assert.throws(
-      () => {
-        startGatewayServer({ host: "0.0.0.0", port: 3190 });
-      },
-      (err: unknown) => {
-        assert.ok(err instanceof Error);
-        assert.match(err.message, /unauthenticated public exposure is prohibited/i);
-        return true;
-      },
-    );
+    const origEnv = process.env.GATEWAY_AUTH_TOKEN;
+    process.env.GATEWAY_AUTH_TOKEN = "";
+    try {
+      assert.throws(
+        () => {
+          startGatewayServer({ host: "0.0.0.0", port: 3190, authToken: "" });
+        },
+        (err: unknown) => {
+          assert.ok(err instanceof Error);
+          assert.match(err.message, /unauthenticated public exposure is prohibited/i);
+          return true;
+        },
+      );
+    } finally {
+      if (origEnv !== undefined) {
+        process.env.GATEWAY_AUTH_TOKEN = origEnv;
+      } else {
+        delete process.env.GATEWAY_AUTH_TOKEN;
+      }
+    }
   });
 
   it("startGatewayServer allows binding to 0.0.0.0 when authToken is provided", async () => {
@@ -7218,9 +7228,9 @@ describe("Gateway: Architectural & Operational Hardening (P1)", () => {
     });
 
     it("Vite dev server plugin refuses startup on 0.0.0.0, true, or LAN host without GATEWAY_AUTH_TOKEN", () => {
-      const plugin = shopifyGatewayDevPlugin();
       const origToken = process.env.GATEWAY_AUTH_TOKEN;
-      delete process.env.GATEWAY_AUTH_TOKEN;
+      process.env.GATEWAY_AUTH_TOKEN = "";
+      const plugin = shopifyGatewayDevPlugin({ authToken: "" });
 
       const invokeConfigureServer = (p: unknown, serverMock: unknown) => {
         const plugin = p as { configureServer?: ((s: unknown) => void) | { handler?: (s: unknown) => void } };
@@ -7296,7 +7306,6 @@ describe("Gateway: Architectural & Operational Hardening (P1)", () => {
         }
       }
 
-      // 5. Explicit authToken in options allows non-local host
       const securePlugin = shopifyGatewayDevPlugin({ authToken: "sec-token-123" });
       assert.doesNotThrow(() => {
         invokeConfigureServer(securePlugin, {
@@ -7304,6 +7313,90 @@ describe("Gateway: Architectural & Operational Hardening (P1)", () => {
           middlewares: { use: () => {} },
         });
       });
+    });
+
+    it("Vite dev server plugin allows same-origin requests and blocks cross-origin requests", async () => {
+      let middleware: ((req: any, res: any, next: () => void) => Promise<void>) | undefined;
+      const plugin = shopifyGatewayDevPlugin({ authToken: "test-token-123" });
+      const invokeConfigureServer = (p: unknown, serverMock: unknown) => {
+        const plugin = p as { configureServer?: ((s: unknown) => void) | { handler?: (s: unknown) => void } };
+        if (typeof plugin.configureServer === "function") {
+          plugin.configureServer(serverMock);
+        } else if (plugin.configureServer && typeof plugin.configureServer.handler === "function") {
+          plugin.configureServer.handler(serverMock);
+        }
+      };
+      invokeConfigureServer(plugin, {
+        config: { server: { host: "localhost" } },
+        middlewares: {
+          use: (fn: any) => {
+            middleware = fn;
+          },
+        },
+      });
+
+      assert.ok(middleware);
+
+      // 1. Cross-origin request without token is rejected with 401
+      const crossOriginReq = {
+        url: "/api/shopify",
+        method: "POST",
+        headers: {
+          "sec-fetch-site": "cross-site",
+          origin: "http://evil.com",
+          host: "localhost:5173",
+        },
+      };
+      let crossOriginStatus = 0;
+      let crossOriginBody = "";
+      const crossOriginRes = {
+        statusCode: 200,
+        setHeader: () => {},
+        end: (body: string) => {
+          crossOriginStatus = crossOriginRes.statusCode;
+          crossOriginBody = body;
+        },
+      };
+      await middleware(crossOriginReq, crossOriginRes, () => {});
+      assert.equal(crossOriginStatus, 401);
+      assert.match(crossOriginBody, /SHOPIFY_AUTH_FAILED/);
+
+      // 2. Spoofed origin (suffix attack) is rejected with 401
+      const spoofedReq = {
+        url: "/api/shopify",
+        method: "POST",
+        headers: {
+          origin: "http://localhost:5173.evil.com",
+          host: "localhost:5173",
+        },
+      };
+      let spoofedStatus = 0;
+      const spoofedRes = {
+        statusCode: 200,
+        setHeader: () => {},
+        end: () => {
+          spoofedStatus = spoofedRes.statusCode;
+        },
+      };
+      await middleware(spoofedReq, spoofedRes, () => {});
+      assert.equal(spoofedStatus, 401);
+
+      // 3. Same-origin request has token injected into headers
+      const sameOriginReq: any = {
+        url: "/api/shopify",
+        method: "POST",
+        headers: {
+          "sec-fetch-site": "same-origin",
+          host: "localhost:5173",
+        },
+      };
+      const sameOriginRes = {
+        statusCode: 200,
+        setHeader: () => {},
+        end: () => {},
+      };
+      await middleware(sameOriginReq, sameOriginRes, () => {});
+      assert.equal(sameOriginReq.headers["x-gateway-key"], "test-token-123");
     });
 
     it("isLocalHost correctly classifies local and non-local hostnames", () => {

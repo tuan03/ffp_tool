@@ -75,6 +75,9 @@ const seoEnvironmentKeys = [
 for (const key of seoEnvironmentKeys) {
   if (env[key]) process.env[key] = env[key];
 }
+if (env.GATEWAY_AUTH_TOKEN) {
+  process.env.GATEWAY_AUTH_TOKEN = env.GATEWAY_AUTH_TOKEN;
+}
 process.env.SEO_CONFLICT_CORPUS_PATH = process.env.SEO_CONFLICT_CORPUS_PATH
   || ".runtime/seo-conflict-corpus.json";
 env.SHOPIFY_PROXY_CONFIG = env.SHOPIFY_PROXY_CONFIG || env.AMAZON_CRAWLER_PROXY_CONFIG || "config/amazon-crawler-profiles.json";
@@ -121,7 +124,11 @@ if (proxyStores.length === 0) {
 
 let gatewayServer: ReturnType<typeof startGatewayServer> | undefined;
 if (!env.SHOPIFY_GATEWAY_URL) {
-  gatewayServer = startGatewayServer({ port: gatewayPort, host: "127.0.0.1" });
+  gatewayServer = startGatewayServer({
+    port: gatewayPort,
+    host: "127.0.0.1",
+    authToken: env.GATEWAY_AUTH_TOKEN,
+  });
 }
 
 function canonicalize(value: unknown): string {
@@ -272,7 +279,11 @@ async function processClaim(
     | undefined;
   let hasStartedShopifyWrite = false;
   try {
-    const runner = createModuleApiRunner({ gatewayUrl, timeoutMs: 180_000 });
+    const runner = createModuleApiRunner({
+      gatewayUrl,
+      timeoutMs: 180_000,
+      gatewayAuthToken: env.GATEWAY_AUTH_TOKEN,
+    });
     const reconciliationWarnings: string[] = [];
     const resolveStartedAt = Date.now();
     const resolvedProduct = await resolveShopifyProductForSync({

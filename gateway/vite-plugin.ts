@@ -15,6 +15,33 @@ export interface ShopifyGatewayDevPluginOptions {
   readonly maxBodyBytes?: number;
 }
 
+function isSameOriginRequest(headers: Record<string, string | string[] | undefined>): boolean {
+  if (headers["sec-fetch-site"] === "same-origin") {
+    return true;
+  }
+  const host = typeof headers.host === "string" ? headers.host : undefined;
+  if (!host) {
+    return false;
+  }
+  const origin = typeof headers.origin === "string" ? headers.origin : undefined;
+  if (origin) {
+    try {
+      return new URL(origin).host.toLowerCase() === host.toLowerCase();
+    } catch {
+      return false;
+    }
+  }
+  const referer = typeof headers.referer === "string" ? headers.referer : undefined;
+  if (referer) {
+    try {
+      return new URL(referer).host.toLowerCase() === host.toLowerCase();
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
 export function shopifyGatewayDevPlugin(options?: ShopifyGatewayDevPluginOptions): Plugin {
   return {
     name: "shopify-gateway-dev",
@@ -40,7 +67,16 @@ export function shopifyGatewayDevPlugin(options?: ShopifyGatewayDevPluginOptions
       const httpHandler = createGatewayHttpHandler(dispatcher, { authToken, maxBodyBytes });
 
       server.middlewares.use(async (req, res, next) => {
-        if (req.url && (req.url === "/api/shopify" || req.url.startsWith("/api/shopify?"))) {
+        const isShopify = req.url && (req.url === "/api/shopify" || req.url.startsWith("/api/shopify?"));
+        const isAutoSeo = req.url && (req.url === "/api/auto-seo/run" || req.url.startsWith("/api/auto-seo/run?"));
+
+        if (authToken && (isShopify || isAutoSeo) && isSameOriginRequest(req.headers)) {
+          if (!req.headers["x-gateway-key"]) {
+            req.headers["x-gateway-key"] = authToken;
+          }
+        }
+
+        if (isShopify) {
           if (req.method !== "POST") {
             res.statusCode = 405;
             res.setHeader("Content-Type", "application/json");

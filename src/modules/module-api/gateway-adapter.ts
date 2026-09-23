@@ -351,7 +351,8 @@ export function createShopifyGatewayAdapter(
     },
 
     async uploadFile(input: UploadFileInput): Promise<UploadFileOutput> {
-      const requestId = resolveRequestId("files-create", input, input.originalSource);
+      const opKey = input.filename ? `files-create-${input.filename}` : "files-create";
+      const requestId = resolveRequestId(opKey, input, input.originalSource);
       const response = (await runner({
         storeId: cleanStoreId,
         operation: "files.create",
@@ -409,7 +410,10 @@ export function createShopifyGatewayAdapter(
     },
 
     async setProductMetafield(input: SetMetafieldInput): Promise<SetMetafieldOutput> {
-      const requestId = resolveRequestId("metafields-set", input, JSON.stringify(input));
+      const opKey = input.key
+        ? `metafields-set-${input.namespace ? `${input.namespace}-` : ""}${input.key}`
+        : "metafields-set";
+      const requestId = resolveRequestId(opKey, input, JSON.stringify(input));
       const response = (await runner({
         storeId: cleanStoreId,
         operation: "metafields.set",

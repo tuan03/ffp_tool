@@ -450,7 +450,10 @@ export function createModuleApiRunner(
       (config as Record<string, unknown> | undefined)?.GATEWAY_AUTH_TOKEN as string | undefined ??
       (dependencies as Record<string, unknown> | undefined)?.gatewayAuthToken as string | undefined ??
       (dependencies as Record<string, unknown> | undefined)?.GATEWAY_AUTH_TOKEN as string | undefined ??
-      (typeof process !== "undefined" && process.env ? process.env.GATEWAY_AUTH_TOKEN : undefined);
+      (typeof process !== "undefined" && process.env ? process.env.GATEWAY_AUTH_TOKEN : undefined) ??
+      (typeof import.meta !== "undefined" && "env" in import.meta && (import.meta as { env?: Record<string, unknown> }).env
+        ? ((import.meta as { env?: Record<string, unknown> }).env?.VITE_GATEWAY_AUTH_TOKEN as string | undefined)
+        : undefined);
 
     if (authToken && typeof authToken === "string" && authToken.trim() !== "") {
       headers["X-Gateway-Key"] = authToken.trim();
