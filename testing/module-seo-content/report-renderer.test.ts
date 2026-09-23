@@ -27,12 +27,35 @@ const summary = {
       },
     },
     {
+      stageName: "b2" as const,
+      summary: {
+        shoppingContext: {
+          targetAudience: ["music lovers"],
+          suitableOccasions: ["gifting"],
+          useCases: ["personal decor"],
+          buyerIntentKeywords: ["personalized music rug"],
+          contextualAudienceHints: ["home studio decorators"],
+          sceneSearchSeeds: ["home studio area rug"],
+        },
+      },
+    },
+    {
       stageName: "b3" as const,
       summary: {
         searchResearch: {
           seedKeywords: ["music player rug"],
           suggestedQueries: ["custom music rug", "music decor rug"],
           querySources: { "custom music rug": "google_autocomplete" },
+        },
+      },
+    },
+    {
+      stageName: "b4" as const,
+      summary: {
+        conflictResult: {
+          approvedKeywords: ["personalized music rug"],
+          discardedKeywords: ["home studio area rug"],
+          conflictReasons: { "home studio area rug": "scene_context_only" },
         },
       },
     },
@@ -57,6 +80,13 @@ const summary = {
             { sourceUrl: "first.webp", alt: "First image", webp: { filename: "music-rug-1.webp" } },
             { sourceUrl: "second.webp", alt: "Second image", webp: { filename: "music-rug-2.webp" } },
           ],
+        },
+        imageProcessingMetadata: {
+          totalImages: 2,
+          convertedImages: 1,
+          failedConversions: 1,
+          converter: "sharp",
+          issues: [{ imageIndex: 1, code: "conversion_failed", message: "Sharp library is not available" }],
         },
       },
     },
@@ -87,6 +117,18 @@ test("renders stage summaries as scannable cards instead of raw JSON", () => {
   assert.match(report, /SEO preview/);
   assert.match(report, /music-rug-1\.webp/);
   assert.ok(report.indexOf("music-rug-1.webp") < report.indexOf("music-rug-2.webp"));
+});
+
+test("renders product-safe provenance and image conversion states without treating scene data as copy facts", () => {
+  const report = renderSmokeReport(summary, new Map([["music-rug-1.webp", "images/music-rug-1.webp"]]));
+
+  assert.match(report, /Bằng chứng sản phẩm an toàn cho copy/);
+  assert.match(report, /Scene context is discovery-only/);
+  assert.match(report, /Contextual discovery only/);
+  assert.match(report, /Scene-only context · blocked/);
+  assert.match(report, /Converted WebP/);
+  assert.match(report, /Source WebP fallback/);
+  assert.doesNotMatch(report, /sceneContext.*Safe evidence/s);
 });
 
 test("renders the product description through a restrictive safe HTML allowlist", () => {
