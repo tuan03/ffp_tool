@@ -30,17 +30,30 @@ VISUAL_TREND_TERMS = {
     "halloween", "pumpkin", "christmas", "holiday", "autumn", "fall", "spring",
     "summer", "winter", "beach", "coastal", "tropical", "celestial", "animal",
     "fruit", "mushroom", "butterfly", "cottagecore", "farmhouse", "decor",
+    "folk art", "ribbon", "wavy", "tooled", "leather", "runner",
 }
 
 
-NON_TEXTILE_STOPWORDS_REGEX = re.compile(
+# Strict Graphic Printability Gate: deterministic stopword regex
+NON_PRINTABLE_GATE_REGEX = re.compile(
     r"\b("
+    # Food / recipes / cooking / drinks / ingredients
+    r"recipes?|simmer[\s_-]*pots?|soup|salads?|crockpot|slow[\s_-]*cooker|cocktails?|smoothies?|baking|cookies?|cakes?|"
+    r"dinner[\s_-]*ideas?|meal[\s_-]*prep|snacks?|sourdough|casseroles?|pasta|breakfast|desserts?|cook(?:ing)?|"
+    # 3D architectural / physical spaces / porch / exterior / interior staging
+    r"(?:front|back|fall|halloween|christmas|farmhouse)?[\s_-]*porch(?:\s+decor)?|front[\s_-]*doors?|patio(?:\s+decor)?|"
+    r"remodel(?:ing)?|cabinetry|landscaping|curb[\s_-]*appeal|exterior[\s_-]*design|shelf[\s_-]*styling|"
+    # Beauty, skincare, nails, hair, makeup, cosmetics
     r"nails?|nail[\s_-]*art|nail[\s_-]*tech|press[\s_-]*on[\s_-]*nails?|acrylic[\s_-]*nails?|gel[\s_-]*nails?|manicure|pedicure|"
     r"hair|hair[\s_-]*styles?|hair[\s_-]*cuts?|hair[\s_-]*color|braids?|updo|"
     r"makeup|make[\s_-]*up|lipsticks?|eye[\s_-]*shadow|mascara|lip[\s_-]*gloss|skin[\s_-]*care|eye[\s_-]*lashes?|eye[\s_-]*brows?|"
+    # Tech / wallpapers
     r"wallpapers?|lock[\s_-]*screens?|phone[\s_-]*cases?|iphone[\s_-]*wallpapers?|widgets?|home[\s_-]*screens?|"
+    # Fashion styling outfits
     r"outfits?|ootd|shoes|sneakers|heels|dresses|tattoos?|piercings?|jewelry|"
-    r"quotes?|memes?|workout|gym|diet"
+    # Text memes, quotes, workouts, school crafts
+    r"quotes?|memes?|captions?|workout|gym|fitness|abs[\s_-]*routine|weight[\s_-]*loss|diet|"
+    r"garters?[\s_-]*homecoming|homecoming[\s_-]*mums?|homecoming[\s_-]*garters?|bulletin[\s_-]*boards?|school[\s_-]*crafts?"
     r")\b",
     re.IGNORECASE,
 )
@@ -50,11 +63,99 @@ def build_smart_queries(trend: str) -> list[QuerySpec]:
     clean = trend.strip()
     return [
         QuerySpec(query=f"{clean} surface pattern design", intent="surface_pattern", priority=1),
-        QuerySpec(query=f"{clean} textile pattern flat", intent="textile_flat", priority=2),
-        QuerySpec(query=f"{clean} seamless pattern vector", intent="seamless_vector", priority=3),
-        QuerySpec(query=f"{clean} pattern", intent="pattern", priority=4),
+        QuerySpec(query=f"{clean} seamless pattern vector", intent="seamless_vector", priority=2),
+        QuerySpec(query=f"{clean} textile print flat", intent="textile_flat", priority=3),
+        QuerySpec(query=f"{clean} pattern design flat", intent="pattern_flat", priority=4),
         QuerySpec(query=clean, intent="trend_raw", priority=5),
     ]
+
+
+def generate_niche_core_candidates(
+    niche: str,
+    *,
+    client: Any = None,
+    limit: int = 10,
+) -> list[TrendCandidate]:
+    """Track 1 (Product Niche Core): directly expands the user's specific niche into high-intent 2D surface pattern motifs."""
+    clean_niche = niche.strip().lower()
+    if not clean_niche:
+        return []
+
+    results: list[str] = []
+    curated: dict[str, list[str]] = {
+        "leather": [
+            "tooled leather",
+            "vintage floral embossed",
+            "distressed leather pattern",
+            "western filigree scroll",
+            "bohemian carved leather",
+            "geometric woven leather",
+            "antique botanical leather tooling",
+            "baroque acanthus leather",
+        ],
+        "bag": [
+            "tooled leather floral",
+            "vintage floral tapestry",
+            "distressed leather texture",
+            "geometric woven pattern",
+            "botanical surface print",
+            "artisan carved filigree",
+            "boho textile pattern",
+        ],
+        "rug": [
+            "bohemian runner pattern",
+            "vintage distressed oriental",
+            "moroccan geometric trellis",
+            "southwestern tribal runner",
+            "mid century abstract geometric",
+            "antique persian floral runner",
+            "scandinavian minimalist line art",
+        ],
+        "blanket": [
+            "chunky knit texture",
+            "vintage floral patchwork",
+            "cottagecore botanical print",
+            "rustic plaid herringbone",
+            "celestial tapestry pattern",
+            "retro wavy groovy pattern",
+            "folk art botanical illustration",
+        ],
+    }
+
+    for key, items in curated.items():
+        if key in clean_niche:
+            for itm in items:
+                if itm not in results:
+                    results.append(itm)
+
+    general_templates = [
+        f"{clean_niche} surface pattern",
+        f"vintage {clean_niche} pattern",
+        f"botanical floral {clean_niche}",
+        f"bohemian {clean_niche} pattern",
+        f"geometric {clean_niche} design",
+        f"distressed {clean_niche} pattern",
+        f"folk art {clean_niche}",
+        f"minimalist {clean_niche} illustration",
+    ]
+    for tmpl in general_templates:
+        if tmpl not in results:
+            results.append(tmpl)
+
+    candidates: list[TrendCandidate] = []
+    for idx, name in enumerate(results[:limit], start=1):
+        candidates.append(
+            TrendCandidate(
+                candidate_id=stable_id("niche_core", clean_niche, name),
+                name=name,
+                source="product_niche_core",
+                rank=idx,
+                strength=round(95.0 - (idx - 1) * 0.8, 2),
+                metrics={"track": "niche_core", "target_niche": clean_niche},
+                raw={"track": "niche_core", "seed_niche": clean_niche},
+            )
+        )
+    return candidates
 
 
 class GeminiSemanticAnalyzer:
@@ -115,22 +216,21 @@ class GeminiSemanticAnalyzer:
 
     def _heuristic_item(self, candidate: TrendCandidate) -> TrendPackageItem:
         text_norm = normalize_text(candidate.name)
-        home_terms = {
-            "home", "decor", "interior", "room", "living", "bedroom", "floor",
-            "style", "vintage", "retro", "modern", "boho", "minimal", "pattern",
-            "color", "textile", "cozy", "farmhouse", "mid century",
-        }
-        visual = any(term in text_norm for term in VISUAL_TREND_TERMS)
-        contextual = any(term in text_norm for term in home_terms)
-
-        if contextual or visual:
-            relationship = "DESIGN_INSPIRATION"
-            semantic_fit = 72.0 if visual else 68.0
+        is_niche_core = candidate.source == "product_niche_core" or candidate.metrics.get("track") == "niche_core"
+        if is_niche_core:
+            relationship = "DIRECT_PRODUCT"
+            semantic_fit = 92.0
+            reason = f"Track 1 (Product Niche Core): Direct surface pattern expansion for '{self.niche}'."
         else:
-            # Do not reject an unfamiliar category at the keyword stage. The
-            # crawler and image printability gate can judge its actual visuals.
-            relationship = "AUDIENCE_ADJACENT"
-            semantic_fit = 50.0
+            visual = any(term in text_norm for term in VISUAL_TREND_TERMS)
+            if visual:
+                relationship = "DESIGN_INSPIRATION"
+                semantic_fit = 80.0
+                reason = "Track 2 (Cross-Category Visual Viral Trend): High printability aesthetic motif from Pinterest."
+            else:
+                relationship = "AUDIENCE_ADJACENT"
+                semantic_fit = 55.0
+                reason = "Heuristic fallback; retain the trend for image-level visual and printability review."
 
         trend = candidate.name
         queries = build_smart_queries(trend)
@@ -141,10 +241,10 @@ class GeminiSemanticAnalyzer:
             relationship=relationship,
             semantic_fit=semantic_fit,
             queries=queries[:6],
-            reason="Heuristic fallback; retain the trend for image-level visual and printability review.",
+            reason=reason,
             sources=[candidate.source],
             source_metrics=candidate.metrics,
-            tags=[],
+            tags=["niche_core" if is_niche_core else "viral_macro"],
         )
 
     def _prompt(self, candidates: list[TrendCandidate]) -> str:
@@ -160,32 +260,33 @@ class GeminiSemanticAnalyzer:
             for item in candidates
         ]
         return f"""
-You are the visual trend intelligence layer for a Universal Print-on-Demand (POD) product tool.
+You are the 2-Track Visual Trend Intelligence Engine for a Universal Print-on-Demand (POD) product tool.
 
 Target product domain: Print-on-Demand Surface Prints & Physical Merchandise.
-Reference context / niche: {self.niche or "POD graphic prints"}
+Target reference niche: '{self.niche or "POD graphic prints"}'
 
-For each Pinterest trend candidate:
-1. Decide whether it provides strong visual, motif, or pattern inspiration for POD surface pattern design and product printing.
-2. Classify relationship as one of:
-   DIRECT_PRODUCT, DESIGN_INSPIRATION, CONTEXTUAL_USE, AUDIENCE_ADJACENT, IRRELEVANT.
-3. Score semantic_fit on 0..100:
-   - visual_relevance: does the trend have rich aesthetic motifs, color palettes, textures, or repeat patterns?
-   - printability_potential: can these visual elements be translated into a flat 2D surface pattern or direct print for POD merchandise?
-   - design_transferability: can this motif be printed onto POD products (bags, textiles, apparel, home decor, accessories)?
-   - niche_aesthetic_compatibility: does this trend's mood, elegance, and aesthetic vocabulary genuinely match the target niche '{self.niche}'? (For premium items like leather bags, footwear, or apparel, prioritize sophisticated motifs: botanical, vintage floral, monogram, geometric, embossed textures, folk art, artisanal prints. If '{self.niche}' is NOT explicitly holiday-themed, severely penalize or reject novelty kids' Halloween/holiday party crafts or temporary decorations).
+Apply the 2-Track Trend Evaluation Strategy:
+TRACK 1: Product Niche Core
+- Trends, surface patterns, or textures that directly and organically expand '{self.niche}'.
+- Prioritize high-value surface motifs: e.g. tooled leather, embossed floral, vintage distressed pattern, bohemian runner, geometric weave, antique filigree.
+- Give high semantic_fit (85-98) and classify as DIRECT_PRODUCT or DESIGN_INSPIRATION.
 
-REJECT explicitly (set reject=true and relationship=IRRELEVANT):
-- Beauty, nails, hair, makeup, skincare, cosmetics, manicures.
-- Phone wallpapers, lockscreens, device themes, tech icons.
-- Personal fashion outfits (OOTD, shoes, apparel styling).
-- Text-only memes, quotes, celebrity gossip, workout routines.
-- Trends without distinct visual motifs or surface patterns.
-- Mismatched seasonal novelty themes when the user requested a specific non-holiday niche (e.g. children's Halloween DIY activities when user asked for leather bag).
+TRACK 2: Cross-Category Visual Viral Trends
+- Viral aesthetic/macro trends from Pinterest (e.g. folk art, coquette ribbon, groovy 70s wavy, celestial, cottagecore botanicals).
+- Evaluate if their visual vocabulary can be translated into flat 2D surface pattern designs for POD merchandise.
+- If they have rich printable visual motifs, give solid semantic_fit (70-90) and classify as DESIGN_INSPIRATION.
+
+STRICT GRAPHIC PRINTABILITY GATE:
+Hard reject (set reject=true, relationship=IRRELEVANT, semantic_fit=0):
+- Food, cooking, recipes, ingredients, drinks (e.g. 'simmer pot recipes', 'soup', 'crockpot').
+- 3D physical spaces, architectural structures, home remodeling, or porch decor (e.g. 'fall porch decor', 'front porch').
+- Beauty, skincare, nails, manicures, hairstyles, makeup.
+- Text memes, quotes, workout/fitness routines, school/homecoming crafts (e.g. 'garters homecoming').
+- Any trend that lacks distinct 2D visual motifs, surface patterns, flat illustrations, or textures suitable for POD printing.
 
 PRIORITIZE:
 - Surface patterns (floral, botanical, geometric, checkerboard, plaid, abstract, boho, vintage, celestial, cottagecore).
-- Textile prints, folk art, retro illustrations, tapestry designs.
+- Textile prints, folk art, retro illustrations, tapestry designs, seamless patterns.
 
 Return only JSON:
 {{
@@ -199,7 +300,7 @@ Return only JSON:
       "visual_relevance": 90,
       "printability_potential": 86,
       "design_transferability": 86,
-      "reason": "short reason",
+      "reason": "short reason specifying Track 1 or Track 2 alignment",
       "tags": ["short tags"]
     }}
   ]
@@ -338,7 +439,7 @@ Candidates:
         text = name.strip().lower()
         if not text:
             return "empty_trend_keyword"
-        match = NON_TEXTILE_STOPWORDS_REGEX.search(text)
+        match = NON_PRINTABLE_GATE_REGEX.search(text)
         if match:
             return f"Matched non-printable stopword: '{match.group(0)}'"
         return ""

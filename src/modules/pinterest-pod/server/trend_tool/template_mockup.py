@@ -4,6 +4,7 @@ import hashlib
 import io
 import json
 import logging
+import re
 import shutil
 import time
 from dataclasses import asdict, dataclass
@@ -165,6 +166,39 @@ def _normalize_boxes(raw_boxes: Any) -> list[list[int]]:
     return result
 
 
+def detect_infographic_chrome_boxes(img_pil: Image.Image) -> list[list[int]]:
+    """Resilient computer vision detection for infographic text banners and headers.
+
+    Detects prominent graphic banners (e.g. yellow text banner 'CAN BE CARRIED OR LIFTED' in template 2)
+    to ensure hybrid overlays never miss graphic chrome.
+    """
+    try:
+        import cv2
+    except ImportError:
+        return []
+
+    img = np.array(img_pil.convert("RGB"))
+    h, w = img.shape[:2]
+    boxes: list[list[int]] = []
+
+    # 1. Detect yellow text banners (e.g. template 2 'CAN BE CARRIED OR LIFTED')
+    hsv = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
+    yellow_mask = cv2.inRange(hsv, np.array([15, 100, 100]), np.array([35, 255, 255]))
+    cnts, _ = cv2.findContours(yellow_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    for c in cnts:
+        area = cv2.contourArea(c)
+        if area > 10000:  # Large banner area
+            x, y, bw, bh = cv2.boundingRect(c)
+            if bw > bh * 1.5:
+                ymin = max(0, int((y - 4) * 1000 / h))
+                xmin = max(0, int((x - 4) * 1000 / w))
+                ymax = min(1000, int((y + bh + 4) * 1000 / h))
+                xmax = min(1000, int((x + bw + 4) * 1000 / w))
+                boxes.append([ymin, xmin, ymax, xmax])
+
+    return boxes
+
+
 def composite_infographic_hybrid(
     template_img: Image.Image,
     generated_img: Image.Image,
@@ -172,12 +206,14 @@ def composite_infographic_hybrid(
 ) -> Image.Image:
     """Overlays native high-resolution chrome, text banners, headers, and hardware zoom panels from the original template over the generated image.
 
-    Guarantees 100% crisp typography, clean vector banners, and untouched hardware callout panels.
+    Guarantees 100% crisp typography, clean vector banners, and untouched hardware callout panels without offset or duplicate banner artifacts.
     """
     w, h = template_img.size
     gen_resized = generated_img.resize((w, h), Image.Resampling.LANCZOS)
 
     norm_chrome_boxes = _normalize_boxes(chrome_boxes)
+    if not norm_chrome_boxes:
+        norm_chrome_boxes = detect_infographic_chrome_boxes(template_img)
     if not norm_chrome_boxes:
         return gen_resized
 
@@ -190,7 +226,10 @@ def composite_infographic_hybrid(
         cbottom = min(h, int(cymax * h / 1000.0))
         if cright > cleft and cbottom > ctop:
             chrome_crop = template_img.crop((cleft, ctop, cright, cbottom))
-            result.paste(chrome_crop, (cleft, ctop))
+            if chrome_crop.mode == "RGBA":
+                result.paste(chrome_crop, (cleft, ctop), chrome_crop)
+            else:
+                result.paste(chrome_crop, (cleft, ctop))
 
     return result
 
@@ -234,7 +273,7 @@ def analyze_reference_image(
         thumb_art.save(buf_art, format="JPEG", quality=75)
         buf_art_bytes = buf_art.getvalue()
 
-    hash_key = "v3_" + hashlib.sha256(buf_ref.getvalue() + buf_art_bytes + product_label.encode("utf-8")).hexdigest()[:16]
+    hash_key = "v4_" + hashlib.sha256(buf_ref.getvalue() + buf_art_bytes + product_label.encode("utf-8")).hexdigest()[:16]
 
     cache_file: Path | None = None
     if cache_dir:
@@ -245,7 +284,12 @@ def analyze_reference_image(
                 cached_dict = json.loads(cache_file.read_text(encoding="utf-8"))
                 if isinstance(cached_dict, dict) and hash_key in cached_dict:
                     val = cached_dict[hash_key]
-                    if isinstance(val, dict) and "generation_directive" in val and "external_chrome_to_preserve" in val:
+                    if (
+                        isinstance(val, dict)
+                        and "generation_directive" in val
+                        and "external_chrome_to_preserve" in val
+                        and "chrome_boxes_norm_0_1000" in val
+                    ):
                         return val
             except Exception:
                 pass
@@ -270,6 +314,7 @@ Apply the universal principles of Semantic Physics, Product Geometry, and Object
    - Set "is_infographic": true if it contains an infographic grid, multi-panel display, or graphic text banners.
    - "product_boxes_norm_0_1000": list of normalized bounding boxes [ymin, xmin, ymax, xmax] in 0..1000 scale for the product surfaces that receive the new print artwork.
    - "chrome_boxes_norm_0_1000": list of normalized bounding boxes [ymin, xmin, ymax, xmax] for all text banners, headers, callouts, and logos that must be preserved with 100% crisp vector sharpness.
+   - MANDATORY INSTRUCTION FOR 'generation_directive': If Image 2 contains text banners, headers, callouts, or infographic labels (e.g. 'CAN BE CARRIED OR LIFTED'), your 'generation_directive' MUST explicitly instruct the generative model: 'DO NOT draw, paint, or hallucinate any text banners, headers, or text boxes on the canvas. Leave the canvas/background plain and empty in those regions. High-res native text banners will be composited in post-processing. Generating text banners directly on the canvas will cause duplicate banner defects.'
 
 4. PRIOR SURFACE PRINT ELIMINATION (Zero Bleed-Through):
    - ANY graphic, illustration, motif, or old base pattern printed on the old product in Image 2 must be 100% eliminated and replaced with the new artwork from Image 1.
@@ -331,6 +376,12 @@ Analyze the images deeply and return JSON only in English with these exact keys:
             parsed["product_boxes_norm_0_1000"] = _normalize_boxes(parsed.get("product_boxes_norm_0_1000"))
             parsed["chrome_boxes_norm_0_1000"] = _normalize_boxes(parsed.get("chrome_boxes_norm_0_1000"))
             parsed["is_infographic"] = bool(parsed.get("is_infographic"))
+
+            if not parsed["chrome_boxes_norm_0_1000"]:
+                detected_cv = detect_infographic_chrome_boxes(image)
+                if detected_cv:
+                    parsed["chrome_boxes_norm_0_1000"] = detected_cv
+                    parsed["is_infographic"] = True
 
             if cache_file:
                 try:
@@ -453,6 +504,8 @@ def build_direct_ai_mockup(
             )
             if room_img is not None and reference_analysis:
                 c_boxes = reference_analysis.get("chrome_boxes_norm_0_1000")
+                if not c_boxes:
+                    c_boxes = detect_infographic_chrome_boxes(room_img)
                 if c_boxes:
                     generated = composite_infographic_hybrid(
                         room_img,
@@ -817,6 +870,44 @@ def direct_ai_lifestyle_prompt(
         directive = reference_analysis.get("generation_directive", "")
         product_form = reference_analysis.get("product_form", "")
 
+        is_infographic = bool(reference_analysis.get("is_infographic"))
+        chrome_boxes = reference_analysis.get("chrome_boxes_norm_0_1000") or []
+        banner_keywords = ("banner", "callout", "header", "carried or lifted", "product display", "infographic", "text box")
+        ref_text = (
+            str(reference_analysis.get("scene_title", "")) + " " +
+            str(visual_concept) + " " +
+            str(preserve) + " " +
+            str(directive)
+        ).lower()
+        has_text_banner = is_infographic or bool(chrome_boxes) or any(k in ref_text for k in banner_keywords)
+
+        banner_lock = ""
+        if has_text_banner:
+            banner_lock = (
+                "- STRICT NO-TEXT-BANNER MANDATE (CRITICAL - AVOID DUPLICATE BANNER ARTIFACTS): "
+                "Image 2 contains graphic text banners, headers, callouts, or typography (e.g. 'CAN BE CARRIED OR LIFTED', 'PRODUCT DISPLAY', feature tags, or logos). "
+                "You MUST NOT DRAW, RENDER, PAINT, OR HALLUCINATE ANY TEXT BANNERS, HEADERS, CALLOUTS, LABELS, OR TEXT BOXES on the plain canvas or background! "
+                "Leave all background areas around the product completely plain, solid, uniform, and empty (e.g. pure clean studio background). "
+                "Native high-resolution vector text banners and infographic chrome will be composited in post-processing. "
+                "Drawing text banners directly on the canvas will cause severe duplicate/offset banner errors.\n"
+            )
+            # Sanitize any directive or preserve string telling the model to render the text box
+            directive = re.sub(
+                r"(?:[^\.]*?\b(?:banner|text box|header|carried or lifted)\b[^\.]*\.?)",
+                "",
+                directive,
+                flags=re.I,
+            ).strip()
+            directive += " DO NOT draw or generate any text banner or typography on the canvas; leave the background completely plain and empty."
+            preserve = re.sub(
+                r"(?:[^\.]*?\b(?:banner|text box|header|carried or lifted)\b[^\.]*\.?)",
+                "",
+                preserve,
+                flags=re.I,
+            ).strip()
+            if not preserve:
+                preserve = "Clean studio background (text banners composited via post-processing overlay)."
+
         silhouette_rule = f"- Exact Product Silhouette & Form: {product_form}\n" if product_form else ""
         if is_bag:
             bag_lock = (
@@ -849,6 +940,7 @@ def direct_ai_lifestyle_prompt(
             f"{silhouette_rule}"
             f"{bag_lock}"
             f"{anatomy_lock}"
+            f"{banner_lock}"
             f"{eliminate_section}"
             f"- Tailored Synthesis Directive:\n{directive}\n"
             f"- Obey visual physics: Maintain realistic contact shadows, depth-of-field, and lighting temperature from Image 2."
@@ -860,6 +952,11 @@ def direct_ai_lifestyle_prompt(
             "Anatomically perfect hands (5 fingers). Absolutely zero stray colored dots (purple/green dots), "
             "no distorted lettering, no superimposed photographer watermarks, no bleed-through of prior prints from Image 2."
         )
+        if has_text_banner:
+            constraints += (
+                " STRICT NO TEXT BANNERS: Absolutely zero drawn text banners, zero text boxes, "
+                "no 'CAN BE CARRIED OR LIFTED' or header lettering painted on the canvas. Leave background plain."
+            )
         coordinated_products = "None (adhere strictly to the product items present in Image 2)."
 
         return f"""

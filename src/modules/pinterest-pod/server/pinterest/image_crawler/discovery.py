@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import html
 import atexit
+import json
 import logging
+import os
 import re
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -224,7 +226,7 @@ class PinterestBrowserProvider(DiscoveryProvider):
         self.timeout = timeout
         self.scrolls = max(1, int(scrolls))
         self.user_data_dir = browser_profile_dir(user_data_dir)
-        self.headless = bool_env("PINTEREST_BROWSER_HEADLESS", False) if headless is None else headless
+        self.headless = bool_env("PINTEREST_BROWSER_HEADLESS", True) if headless is None else headless
         self._playwright = None
         self._context = None
         atexit.register(self.close)
@@ -314,35 +316,57 @@ class PinterestBrowserProvider(DiscoveryProvider):
                 pass
             setattr(self, attr, None)
 
-    def search(
-        self,
-        *,
-        query: str,
-        trend: TrendPackageItem,
-        limit: int,
-        region: str,
-        locale: str,
-    ) -> list[SearchResult]:
-        try:
-            context = self._ensure_context()
-            page = context.new_page()
-        except Exception:
-            self.close()
-            raise
-        page.set_default_timeout(max(10_000, self.timeout * 1000))
-        try:
-            url = f"https://www.pinterest.com/search/pins/?q={quote_plus(query)}"
-            page.goto(url, wait_until="domcontentloaded", timeout=max(20_000, self.timeout * 1000))
-            page.wait_for_timeout(3500)
-            if re.search(r"/login|/signup", page.url, re.I):
-                raise RuntimeError(
-                    f"Pinterest browser profile is signed out. Run browser login first: {self.user_data_dir}"
-                )
-            for _ in range(self.scrolls):
-                page.mouse.wheel(0, 1800)
-                page.wait_for_timeout(1200)
+    @staticmethod
+    def _extract_pins_from_pws(payload: Any) -> list[dict[str, Any]]:
+        pins: list[dict[str, Any]] = []
+        seen_pin_ids: set[str] = set()
 
-            raw_items = page.evaluate(
+        def walk(val: Any) -> None:
+            if isinstance(val, dict):
+                images = val.get("images")
+                val_id = str(val.get("id") or "").strip()
+                if isinstance(images, dict):
+                    orig_obj = images.get("orig") or images.get("1200x") or images.get("736x")
+                    url = ""
+                    width = None
+                    height = None
+                    if isinstance(orig_obj, dict):
+                        url = str(orig_obj.get("url") or "")
+                        width = orig_obj.get("width")
+                        height = orig_obj.get("height")
+                    elif isinstance(orig_obj, str):
+                        url = orig_obj
+                    if not url:
+                        url, width, height = largest_image_from_payload(images)
+                    if url and "i.pinimg.com" in url and re.search(r"\.(jpg|jpeg|png|webp)($|\?)", url, re.I):
+                        pin_id = val_id if (val_id and val_id.isdigit()) else ""
+                        dedupe_key = pin_id or url
+                        if dedupe_key not in seen_pin_ids:
+                            seen_pin_ids.add(dedupe_key)
+                            title = str(val.get("title") or val.get("grid_title") or val.get("alt_text") or "")
+                            description = str(val.get("description") or "")
+                            pins.append({
+                                "pin_id": pin_id,
+                                "pin_url": f"https://www.pinterest.com/pin/{pin_id}/" if pin_id else "",
+                                "image_url": normalize_pinimg_url(url),
+                                "title": title,
+                                "description": description,
+                                "width": width,
+                                "height": height,
+                            })
+                for child in val.values():
+                    walk(child)
+            elif isinstance(val, list):
+                for child in val:
+                    walk(child)
+
+        walk(payload)
+        return pins
+
+    @staticmethod
+    def _extract_dom_items(page: Any) -> list[dict[str, Any]]:
+        try:
+            items = page.evaluate(
                 """
                 () => {
                   const pinAnchors = Array.from(document.querySelectorAll('a[href*="/pin/"]'));
@@ -377,24 +401,25 @@ class PinterestBrowserProvider(DiscoveryProvider):
                 }
                 """
             )
-            signed_out = page.evaluate(
-                """
-                () => /login|signup/i.test(location.pathname) ||
-                  Array.from(document.querySelectorAll('button, a')).some((el) =>
-                    /log in|sign up/i.test(el.textContent || '')
-                  )
-                """
-            )
-            if signed_out and not raw_items:
-                raise RuntimeError(
-                    f"Pinterest browser profile appears signed out. Run browser login first: {self.user_data_dir}"
-                )
-        finally:
-            page.close()
+            return items if isinstance(items, list) else []
+        except Exception:
+            return []
 
-        output: list[SearchResult] = []
-        seen: set[str] = set()
-        for index, item in enumerate(raw_items if isinstance(raw_items, list) else []):
+    def _ingest_dom_items(
+        self,
+        raw_items: list[Any],
+        output: list[SearchResult],
+        seen_images: set[str],
+        query: str,
+        trend: TrendPackageItem,
+        search_url: str,
+        target_limit: int,
+    ) -> None:
+        if not isinstance(raw_items, list):
+            return
+        for item in raw_items:
+            if len(output) >= target_limit:
+                break
             if not isinstance(item, dict):
                 continue
             image_url = normalize_pinimg_url(str(item.get("src") or ""))
@@ -404,15 +429,15 @@ class PinterestBrowserProvider(DiscoveryProvider):
             height = int(item.get("height") or 0)
             if width < 150 or height < 150:
                 continue
-            if image_url in seen:
+            if image_url in seen_images:
                 continue
-            seen.add(image_url)
+            seen_images.add(image_url)
             pin_url = str(item.get("href") or "")
             pin_id_match = re.search(r"/pin/(\d+)", pin_url)
             pin_id = pin_id_match.group(1) if pin_id_match else ""
             output.append(
                 SearchResult(
-                    result_id=stable_id(self.name, trend.trend_id, query, image_url),
+                    result_id=stable_id(self.name, trend.trend_id, query, pin_id or image_url),
                     query=query,
                     trend_id=trend.trend_id,
                     trend=trend.trend,
@@ -424,16 +449,145 @@ class PinterestBrowserProvider(DiscoveryProvider):
                     width=width,
                     height=height,
                     raw={
-                        "search_url": url,
-                        "index": index,
+                        "search_url": search_url,
+                        "index": len(output),
+                        "pass": "pass2_dom",
                         "profile_dir": str(self.user_data_dir),
                         "headless": self.headless,
                     },
                 )
             )
-            if len(output) >= limit:
-                break
-        return output
+
+    def search(
+        self,
+        *,
+        query: str,
+        trend: TrendPackageItem,
+        limit: int,
+        region: str,
+        locale: str,
+    ) -> list[SearchResult]:
+        target_limit = max(1, int(limit))
+        try:
+            context = self._ensure_context()
+            page = context.new_page()
+        except Exception:
+            self.close()
+            raise
+        page.set_default_timeout(max(10_000, self.timeout * 1000))
+        output: list[SearchResult] = []
+        seen_images: set[str] = set()
+
+        try:
+            url = f"https://www.pinterest.com/search/pins/?q={quote_plus(query)}"
+            page.goto(url, wait_until="domcontentloaded", timeout=max(20_000, self.timeout * 1000))
+            page.wait_for_timeout(1000)
+
+            if re.search(r"/login|/signup", page.url, re.I):
+                raise RuntimeError(
+                    f"Pinterest browser profile is signed out. Run browser login first: {self.user_data_dir}"
+                )
+
+            # Pass 1: Fast-Path SSR Extraction via <script id="__PWS_INITIAL_PROPS__"> or <script id="__PWS_DATA__">
+            try:
+                pws_raw = page.evaluate(
+                    """
+                    () => {
+                      const el = document.getElementById('__PWS_INITIAL_PROPS__') ||
+                                 document.getElementById('__PWS_DATA__') ||
+                                 document.querySelector('script[id*="PWS"]');
+                      return el ? el.textContent : null;
+                    }
+                    """
+                )
+                if pws_raw:
+                    pws_json = json.loads(pws_raw)
+                    extracted_pins = self._extract_pins_from_pws(pws_json)
+                    for item in extracted_pins:
+                        img_url = item["image_url"]
+                        if img_url in seen_images:
+                            continue
+                        seen_images.add(img_url)
+                        output.append(
+                            SearchResult(
+                                result_id=stable_id(self.name, trend.trend_id, query, item["pin_id"] or img_url),
+                                query=query,
+                                trend_id=trend.trend_id,
+                                trend=trend.trend,
+                                image_url=img_url,
+                                pin_url=item["pin_url"],
+                                pin_id=item["pin_id"],
+                                title=item["title"],
+                                description=item["description"],
+                                source=self.name,
+                                width=item["width"],
+                                height=item["height"],
+                                raw={
+                                    "search_url": url,
+                                    "index": len(output),
+                                    "pass": "pass1_ssr",
+                                    "profile_dir": str(self.user_data_dir),
+                                    "headless": self.headless,
+                                },
+                            )
+                        )
+                        if len(output) >= target_limit:
+                            break
+
+                    if len(output) >= target_limit:
+                        LOG.info(
+                            "Pass 1 (Fast-Path SSR) extracted %d pins (target: %d) for query %r in ~1.5s. Fast exit.",
+                            len(output),
+                            target_limit,
+                            query,
+                        )
+                        return output
+                    elif output:
+                        LOG.info(
+                            "Pass 1 (Fast-Path SSR) extracted partial %d pins (target: %d). Proceeding to Pass 2 DOM fallback.",
+                            len(output),
+                            target_limit,
+                        )
+            except Exception as ssr_exc:
+                LOG.debug("Pass 1 SSR extraction bypassed: %s", ssr_exc)
+
+            # Pass 2: Early-Exit DOM Fallback with smart adaptive scroll (max 1-2 scrolls)
+            dom_items = self._extract_dom_items(page)
+            self._ingest_dom_items(dom_items, output, seen_images, query, trend, url, target_limit)
+
+            if len(output) < target_limit:
+                max_adaptive_scrolls = min(2, max(1, self.scrolls))
+                for scroll_step in range(max_adaptive_scrolls):
+                    page.mouse.wheel(0, 1800)
+                    page.wait_for_timeout(900)
+                    dom_items = self._extract_dom_items(page)
+                    self._ingest_dom_items(dom_items, output, seen_images, query, trend, url, target_limit)
+                    if len(output) >= target_limit:
+                        LOG.info(
+                            "Pass 2 (Smart DOM) reached %d pins at scroll %d/%d for query %r. Early exit.",
+                            len(output),
+                            scroll_step + 1,
+                            max_adaptive_scrolls,
+                            query,
+                        )
+                        break
+
+            signed_out = page.evaluate(
+                """
+                () => /login|signup/i.test(location.pathname) ||
+                  Array.from(document.querySelectorAll('button, a')).some((el) =>
+                    /log in|sign up/i.test(el.textContent || '')
+                  )
+                """
+            )
+            if signed_out and not output:
+                raise RuntimeError(
+                    f"Pinterest browser profile appears signed out. Run browser login first: {self.user_data_dir}"
+                )
+        finally:
+            page.close()
+
+        return output[:target_limit]
 
 
 class PinterestSearchPageProvider(DiscoveryProvider):

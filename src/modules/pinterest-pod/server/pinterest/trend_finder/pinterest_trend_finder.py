@@ -24,7 +24,7 @@ if __package__ in {None, ""}:
     )
     from pinterest.trend_finder.models import TrendCandidate
     from pinterest.trend_finder.pinterest_client import PinterestApiError, PinterestClient
-    from pinterest.trend_finder.semantic_analyzer import GeminiSemanticAnalyzer
+    from pinterest.trend_finder.semantic_analyzer import GeminiSemanticAnalyzer, generate_niche_core_candidates
 else:
     from ..shared.cache import JsonCache
     from ..shared.models import TrendPackage
@@ -41,7 +41,7 @@ else:
     )
     from .models import TrendCandidate
     from .pinterest_client import PinterestApiError, PinterestClient
-    from .semantic_analyzer import GeminiSemanticAnalyzer
+    from .semantic_analyzer import GeminiSemanticAnalyzer, generate_niche_core_candidates
 
 
 LOG = logging.getLogger("pinterest.trend_finder")
@@ -100,10 +100,25 @@ def collect_pinterest_trends(
     trend_type: str,
     interest: str,
     limit: int,
+    niche: str = "",
 ) -> tuple[list[TrendCandidate], dict[str, Any], dict[str, str]]:
     raw: dict[str, Any] = {}
     errors: dict[str, str] = {}
 
+    candidates: list[TrendCandidate] = []
+    seen: set[str] = set()
+
+    # Track 1 (Product Niche Core): ensure trends directly expand the user's specific niche
+    if niche.strip():
+        niche_core = generate_niche_core_candidates(niche.strip(), limit=max(8, limit // 3))
+        for cand in niche_core:
+            key = normalize_text(cand.name)
+            if key not in seen:
+                seen.add(key)
+                candidates.append(cand)
+        LOG.info("Track 1 (Product Niche Core): generated %d candidates for niche %r", len(candidates), niche)
+
+    # Track 2 (Cross-Category Visual Viral Trends): collect from Pinterest API
     endpoints: list[tuple[str, str, dict[str, Any]]] = [
         (
             "trending_keywords",
@@ -141,9 +156,6 @@ def collect_pinterest_trends(
             if "WinError 10013" in str(exc):
                 LOG.error("Stopping Pinterest collection early because Windows is blocking outbound HTTPS.")
                 break
-
-    candidates: list[TrendCandidate] = []
-    seen: set[str] = set()
 
     keyword_items = payload_items(raw.get("trending_keywords"), ("trends", "items", "keywords"))
     if keyword_items:
@@ -340,6 +352,7 @@ def main() -> int:
             trend_type=args.trend_type,
             interest=args.interest,
             limit=max(1, min(50, args.keyword_limit)),
+            niche=args.niche,
         )
         write_json(output_dir / "trends_raw.json", raw)
     except Exception as exc:
