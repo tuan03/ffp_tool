@@ -5,8 +5,13 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Any
+
+try:
+    from datetime import UTC  # type: ignore[attr-defined]
+except ImportError:
+    UTC = timezone.utc
 
 from . import AGENT_VERSION, PROTOCOL_VERSION
 

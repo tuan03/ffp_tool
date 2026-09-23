@@ -130,7 +130,7 @@ class PackagedClientTests(unittest.TestCase):
 
     def test_double_clicked_packaged_agent_uses_config_beside_executable(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            executable = Path(directory) / "FFPAmazonCrawlerAgent.exe"
+            executable = Path(directory).resolve() / "FFPAmazonCrawlerAgent.exe"
             portable_config = executable.parent / "agent.json"
             portable_config.write_text("{}", encoding="utf-8")
 
@@ -144,7 +144,7 @@ class PackagedClientTests(unittest.TestCase):
 
     def test_portable_agent_discovers_proxy_config_beside_agent_config(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            portable_root = Path(directory)
+            portable_root = Path(directory).resolve()
             config_path = portable_root / "agent.json"
             proxy_path = portable_root / "amazon-crawler-profiles.json"
             config_path.write_text(json.dumps({"serverUrl": "http://127.0.0.1:8766"}), encoding="utf-8")
@@ -168,7 +168,7 @@ class PackagedClientTests(unittest.TestCase):
 
     def test_relative_agent_config_discovers_proxy_config_in_same_directory(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
+            root = Path(directory).resolve()
             config_directory = root / "config"
             config_directory.mkdir()
             config_path = config_directory / "agent.json"
