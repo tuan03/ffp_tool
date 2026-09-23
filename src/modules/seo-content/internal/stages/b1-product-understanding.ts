@@ -73,12 +73,13 @@ export function createB1ProductUnderstandingStage(
     name: "b1",
     async execute(context: SeoPipelineContext): Promise<SeoPipelineContext> {
       const source = context.source;
+      const niche = context.effectiveNiche ?? source.niche;
       const images = source.images ?? [];
 
       const textSignals = extractTextProductSignals({
         title: source.title ?? "",
         description: source.description ?? "",
-        niche: source.niche ?? "",
+        niche,
       });
 
       const successfulAnalyses: ProductImageAnalysis[] = [];
@@ -91,7 +92,7 @@ export function createB1ProductUnderstandingStage(
                 image,
                 title: source.title ?? "",
                 description: source.description ?? "",
-                niche: source.niche ?? "",
+                niche,
               }),
             ),
           ),

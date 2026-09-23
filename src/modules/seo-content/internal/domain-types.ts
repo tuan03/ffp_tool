@@ -84,6 +84,8 @@ export interface ImageProcessingResult {
 /** Context tích lũy chạy xuyên suốt qua 6 Stage của Pipeline */
 export interface SeoPipelineContext {
   readonly source: SeoContentInput;
+  /** Derived from the storefront homepage; source.niche remains the fallback input. */
+  readonly effectiveNiche?: string;
   readonly productUnderstanding?: ProductUnderstanding;
   readonly shoppingContext?: ShoppingContext;
   readonly searchResearch?: SearchResearchResult;

@@ -1,7 +1,12 @@
+import { loadServerEnvironment } from "../../config/server-environment";
+
 import { createSeoPipeline } from "./internal/pipeline";
+import { getDefaultSiteNicheResolver } from "./internal/site-niche/site-niche-runtime";
 import type { SeoContentInput, SeoContentOutput } from "./types";
 
-const defaultPipeline = createSeoPipeline();
+loadServerEnvironment();
+
+const defaultPipeline = createSeoPipeline({ siteNicheResolver: getDefaultSiteNicheResolver() });
 
 /**
  * Executes the SEO + Content pipeline for a single product.

@@ -128,7 +128,7 @@ export function createB4ConflictControlStage(
         searchResearch: context.searchResearch,
         productUnderstanding: context.productUnderstanding,
         shoppingContext: context.shoppingContext,
-        source: context.source,
+        source: { ...context.source, niche: context.effectiveNiche ?? context.source.niche },
       });
 
       return evolveContext(context, { conflictResult });
@@ -227,4 +227,3 @@ export async function retryOnCorpusRevisionConflict<T>(
     }
   }
 }
-

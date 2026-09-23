@@ -76,10 +76,11 @@ export function createB3SearchSuggestionsStage(
         createDefaultSearchSuggestionsCollector();
 
       const source = context.source;
+      const niche = context.effectiveNiche ?? source.niche;
 
       const searchResearch = await collector.collect({
         source: {
-          niche: source.niche,
+          niche,
           title: source.title,
           description: source.description,
           handle: source.handle,

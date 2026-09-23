@@ -77,10 +77,11 @@ export function createB2ShoppingContextStage(
     name: "b2",
     async execute(context: SeoPipelineContext): Promise<SeoPipelineContext> {
       const source = context.source;
+      const niche = context.effectiveNiche ?? source.niche;
 
       const shoppingContext = await analyzer.analyze({
         source: {
-          niche: source.niche ?? "",
+          niche,
           title: source.title ?? "",
           description: source.description ?? "",
           handle: source.handle ?? "",

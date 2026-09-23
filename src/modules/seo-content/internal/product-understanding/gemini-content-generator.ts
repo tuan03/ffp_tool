@@ -19,6 +19,8 @@ export interface GeminiStructuredTextRequest {
   readonly maxOutputTokens?: number;
   readonly timeoutMs?: number;
   readonly temperature?: number;
+  /** Set to zero for short deterministic classifications that do not need model reasoning tokens. */
+  readonly thinkingBudget?: number;
 }
 
 export interface GeminiAnalysisResponse {
@@ -325,6 +327,9 @@ export class GoogleGenAIVertexContentGenerator implements GeminiContentGenerator
           temperature: request.temperature ?? 0,
           candidateCount: 1,
           maxOutputTokens: request.maxOutputTokens || 2048,
+          ...(request.thinkingBudget === undefined
+            ? {}
+            : { thinkingConfig: { thinkingBudget: request.thinkingBudget } }),
         },
       });
 

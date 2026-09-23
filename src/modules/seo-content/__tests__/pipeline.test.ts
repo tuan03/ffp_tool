@@ -70,6 +70,33 @@ test("SEO Pipeline strictly preserves source data across all stages without loss
   }
 });
 
+test("SEO Pipeline exposes inferred niche only through effectiveNiche and preserves manual source niche", async () => {
+  let observedContext: SeoPipelineContext | undefined;
+  const pipeline = createSeoPipeline({
+    stages: [{
+      name: "b1",
+      async execute(context: SeoPipelineContext): Promise<SeoPipelineContext> {
+        observedContext = context;
+        return context;
+      },
+    }],
+    siteNicheResolver: {
+      async resolve() {
+        return { niche: "personalized children's rugs", source: "inferred" as const };
+      },
+    },
+  });
+
+  await pipeline.execute({
+    ...seoContentMockInput,
+    niche: "manual fallback niche",
+    siteDomain: "chillgen.com",
+  });
+
+  assert.equal(observedContext?.source.niche, "manual fallback niche");
+  assert.equal(observedContext?.effectiveNiche, "personalized children's rugs");
+});
+
 test("SEO Pipeline context enforces immutability and new object references at each transition", async () => {
   const initial = createInitialContext(seoContentMockInput);
   assert.ok(Object.isFrozen(initial));

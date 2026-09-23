@@ -45,10 +45,10 @@ export function buildContentFactSheet(
     originalTitle: source.title.trim(),
     originalDescription: source.description.trim(),
     existingHandle: source.handle,
-    niche: source.niche?.trim() || undefined,
+    niche: (context.effectiveNiche ?? source.niche)?.trim() || undefined,
     productCategory:
       productUnderstanding?.productCategory?.trim() ||
-      source.niche?.trim() ||
+      (context.effectiveNiche ?? source.niche)?.trim() ||
       "product",
     ocrTexts: productUnderstanding?.ocrTexts ?? [],
     entities: productUnderstanding?.detectedEntities ?? [],
