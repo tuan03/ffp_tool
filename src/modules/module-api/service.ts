@@ -75,6 +75,7 @@ const ALL_OPERATIONS: ReadonlySet<ShopifyOperation> = new Set([
   "variants.bulkUpdate",
   "variants.bulkCreate",
   "files.create",
+  "files.bulkCreate",
   "metafields.set",
   "collections.list",
   "collections.get",

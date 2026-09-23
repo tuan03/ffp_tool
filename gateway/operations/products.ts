@@ -83,6 +83,19 @@ const PRODUCTS_GET_QUERY = `
           }
         }
       }
+      media(first: 50) {
+        nodes {
+          id
+          ... on MediaImage {
+            image {
+              url
+              altText
+              width
+              height
+            }
+          }
+        }
+      }
       seo {
         title
         description
@@ -125,6 +138,11 @@ export interface RawImageNode {
   readonly height?: number | null;
 }
 
+export interface RawMediaNode {
+  readonly id: string;
+  readonly image?: RawImageNode | null;
+}
+
 export interface RawProductNode {
   readonly id: string;
   readonly title: string;
@@ -140,6 +158,9 @@ export interface RawProductNode {
   readonly images?: {
     readonly pageInfo?: { readonly hasNextPage?: boolean | null } | null;
     readonly edges?: readonly { readonly node: RawImageNode }[];
+  } | null;
+  readonly media?: {
+    readonly nodes?: readonly RawMediaNode[];
   } | null;
   readonly seo?: { readonly title?: string | null; readonly description?: string | null } | null;
   readonly createdAt: string;
@@ -175,11 +196,19 @@ export function mapProductNode(node: RawProductNode): ProductSummary {
   }));
 
   const featuredImage = mapImageNode(node.featuredImage);
-  const images = node.images?.edges
-    ? node.images.edges
-        .map((edge) => mapImageNode(edge?.node))
-        .filter((img): img is ProductImageSummary => img !== undefined)
-    : undefined;
+  const mediaImages = (node.media?.nodes ?? [])
+    .map((media) => {
+      const image = mapImageNode(media.image);
+      return image ? { ...image, id: media.id } : undefined;
+    })
+    .filter((image): image is NonNullable<typeof image> => image !== undefined);
+  const images = mediaImages.length > 0
+    ? mediaImages
+    : node.images?.edges
+      ? node.images.edges
+          .map((edge) => mapImageNode(edge?.node))
+          .filter((image): image is ProductImageSummary => image !== undefined)
+      : undefined;
 
   const hasMoreVariants = node.variants?.pageInfo?.hasNextPage !== undefined
     ? Boolean(node.variants.pageInfo.hasNextPage)

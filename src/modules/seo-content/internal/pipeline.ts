@@ -23,6 +23,12 @@ export const DEFAULT_SEO_PIPELINE_STAGES: readonly SeoPipelineStage[] = Object.f
 export interface SeoPipeline {
   readonly stages: readonly SeoPipelineStage[];
   execute(input: SeoContentInput): Promise<SeoContentOutput>;
+  executeDetailed(input: SeoContentInput): Promise<{
+    readonly output: SeoContentOutput;
+    readonly context: SeoPipelineContext;
+    readonly fallbackStages: readonly string[];
+    readonly warnings: readonly string[];
+  }>;
 }
 
 export function createSeoPipeline(
@@ -34,10 +40,10 @@ export function createSeoPipeline(
 
   const stages = customStages ?? DEFAULT_SEO_PIPELINE_STAGES;
 
-  return {
-    stages,
-    async execute(input: SeoContentInput): Promise<SeoContentOutput> {
+  async function executeDetailed(input: SeoContentInput) {
       let currentContext = createInitialContext(input);
+      const fallbackStages: string[] = [];
+      const warnings: string[] = [];
 
       for (const stage of stages) {
         try {
@@ -55,6 +61,8 @@ export function createSeoPipeline(
         } catch (error: unknown) {
           const stageError = wrapStageError(stage.name, error);
           if (stageError.isRecoverable) {
+            fallbackStages.push(stage.name);
+            warnings.push(stageError.message);
             console.warn(
               `[SEO Pipeline] Non-fatal warning in stage ${stage.name}: ${stageError.message}`,
             );
@@ -64,7 +72,19 @@ export function createSeoPipeline(
         }
       }
 
-      return finalizePipelineOutput(currentContext);
+      return {
+        output: finalizePipelineOutput(currentContext),
+        context: currentContext,
+        fallbackStages,
+        warnings,
+      };
+  }
+
+  return {
+    stages,
+    async execute(input: SeoContentInput): Promise<SeoContentOutput> {
+      return (await executeDetailed(input)).output;
     },
+    executeDetailed,
   };
 }

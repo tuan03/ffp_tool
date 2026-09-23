@@ -6,6 +6,7 @@ import {
   createAmazonCrawlerCacheClearer,
   createAmazonCrawlerClientsLoader,
   createAmazonCrawlerRunner,
+  createAmazonCrawlerSyncRetrier,
   DEFAULT_AMAZON_CRAWLER_SETTINGS,
   getAmazonCrawlerRunner,
   serializeAmazonCrawlerInput,
@@ -190,6 +191,44 @@ test("cache clearer sends DELETE and validates the engine response", async () =>
   });
   assert.deepEqual(await clearCache(), { removedFiles: 3, removedBytes: 2048 });
   assert.deepEqual(requests, [{ url: "http://engine.test/api/v1/clients/cache", method: "DELETE" }]);
+});
+
+test("Shopify sync retry resumes polling and returns the refreshed job output", async () => {
+  const productsSeen: string[][] = [];
+  let snapshotCount = 0;
+  const retrySyncs = createAmazonCrawlerSyncRetrier({
+    engineUrl: "http://coordinator.test",
+    pollIntervalMs: 0,
+    fetchImplementation: async (request, init) => {
+      const url = String(request);
+      if (init?.method === "POST") return jsonResponse({ retried: 1 });
+      if (url.endsWith("/products")) {
+        return jsonResponse({ products: [{ ...amazonCrawlerMockOutput.products[0], pipeline: {
+          status: snapshotCount > 1 ? "completed" : "syncing",
+          normalization: { status: "completed", assetsNormalized: 0 },
+          seo: { status: "completed", engine: "heuristic" },
+          shopify: { attempts: 2 },
+        } }] });
+      }
+      if (url.endsWith("/results")) {
+        return jsonResponse({ ...amazonCrawlerMockOutput, jobId: "job-retry", status: "completed" });
+      }
+      snapshotCount += 1;
+      return jsonResponse({
+        id: "job-retry",
+        status: snapshotCount > 1 ? "completed" : "running",
+        progress: { phase: "shopify", completed: snapshotCount > 1 ? 1 : 0, total: 1 },
+      });
+    },
+  });
+
+  const retried = await retrySyncs("job-retry", {
+    onProducts: (products) => productsSeen.push(products.map((product) => product.id)),
+  });
+
+  assert.equal(retried.retried, 1);
+  assert.equal(retried.output?.status, "completed");
+  assert.equal(productsSeen.length, 2);
 });
 
 test("mock Customize contract omits raw and duplicate fields while exposing pricing migration", () => {

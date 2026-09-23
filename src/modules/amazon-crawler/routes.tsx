@@ -6,6 +6,7 @@ import type {
   AmazonCrawlerClientsLoader,
   AmazonCrawlerHandoverHandler,
   AmazonCrawlerRunner,
+  AmazonCrawlerSyncRetrier,
 } from "./types";
 
 export function amazonCrawlerRoutes(
@@ -13,6 +14,7 @@ export function amazonCrawlerRoutes(
   clearAmazonCrawlerCache: AmazonCrawlerCacheClearer,
   loadAmazonCrawlerClients: AmazonCrawlerClientsLoader,
   onHandoverToSeo?: AmazonCrawlerHandoverHandler,
+  retryAmazonCrawlerSyncs: AmazonCrawlerSyncRetrier = async () => ({ retried: 0 }),
 ): RouteObject[] {
   return [
     {
@@ -22,6 +24,7 @@ export function amazonCrawlerRoutes(
           clearAmazonCrawlerCache={clearAmazonCrawlerCache}
           loadAmazonCrawlerClients={loadAmazonCrawlerClients}
           onHandoverToSeo={onHandoverToSeo}
+          retryAmazonCrawlerSyncs={retryAmazonCrawlerSyncs}
           runAmazonCrawler={runAmazonCrawler}
         />
       ),

@@ -38,6 +38,18 @@ CREATE TABLE IF NOT EXISTS pending_results (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS pending_products (
+    task_id TEXT NOT NULL,
+    product_key TEXT NOT NULL,
+    lease_id TEXT NOT NULL,
+    checksum TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY(task_id, product_key)
+);
 """
 
 
@@ -152,6 +164,82 @@ class ClientStore:
             }
             for row in rows
         ]
+
+    def spool_product(
+        self,
+        *,
+        task_id: str,
+        product_key: str,
+        lease_id: str,
+        checksum: str,
+        payload: dict[str, Any],
+    ) -> None:
+        now = utc_iso()
+        with self._connection() as connection:
+            connection.execute(
+                """INSERT INTO pending_products(
+                       task_id, product_key, lease_id, checksum, payload_json, created_at, updated_at
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(task_id, product_key) DO UPDATE SET
+                     lease_id=excluded.lease_id, checksum=excluded.checksum,
+                     payload_json=excluded.payload_json, attempts=0, last_error=NULL,
+                     updated_at=excluded.updated_at""",
+                (
+                    task_id,
+                    product_key,
+                    lease_id,
+                    checksum,
+                    json.dumps(payload, ensure_ascii=False),
+                    now,
+                    now,
+                ),
+            )
+            connection.commit()
+
+    def pending_products(self, limit: int = 50) -> list[dict[str, Any]]:
+        with self._connection() as connection:
+            rows = connection.execute(
+                """SELECT task_id, product_key, lease_id, checksum, payload_json, attempts
+                   FROM pending_products ORDER BY created_at LIMIT ?""",
+                (limit,),
+            ).fetchall()
+        return [
+            {
+                "taskId": row["task_id"],
+                "productKey": row["product_key"],
+                "leaseId": row["lease_id"],
+                "checksum": row["checksum"],
+                "payload": json.loads(row["payload_json"]),
+                "attempts": row["attempts"],
+            }
+            for row in rows
+        ]
+
+    def acknowledge_product(self, task_id: str, product_key: str) -> None:
+        with self._connection() as connection:
+            connection.execute(
+                "DELETE FROM pending_products WHERE task_id=? AND product_key=?",
+                (task_id, product_key),
+            )
+            connection.commit()
+
+    def has_pending_products(self, task_id: str) -> bool:
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT 1 FROM pending_products WHERE task_id=? LIMIT 1",
+                (task_id,),
+            ).fetchone()
+        return row is not None
+
+    def product_failed(self, task_id: str, product_key: str, error: str) -> None:
+        with self._connection() as connection:
+            connection.execute(
+                """UPDATE pending_products
+                   SET attempts=attempts+1, last_error=?, updated_at=?
+                   WHERE task_id=? AND product_key=?""",
+                (error[:2000], utc_iso(), task_id, product_key),
+            )
+            connection.commit()
 
     def acknowledge_result(self, task_id: str) -> None:
         with self._connection() as connection:

@@ -37,9 +37,10 @@ export class ShopifyGraphqlClient {
       typeof options?.timeoutMs === "number" && options.timeoutMs > 0
         ? options.timeoutMs
         : defaultTimeoutMs;
+    const throttleGroupId = store.throttleGroupId ?? store.storeId;
 
     for (let attempt = 0; attempt <= maxAttempts; attempt++) {
-      const throttleStatus = this.throttleManager.check(store.storeId);
+      const throttleStatus = this.throttleManager.check(throttleGroupId);
       if (throttleStatus.isThrottled) {
         const retryAfterSec = Math.ceil(throttleStatus.retryAfterMs / 1000);
         if (attempt < maxAttempts && throttleStatus.retryAfterMs <= 30000) {
@@ -144,7 +145,7 @@ export class ShopifyGraphqlClient {
       if (response.status === 429) {
         const retryAfterHeader = response.headers.get("Retry-After");
         const retryAfterSec = retryAfterHeader ? Number.parseInt(retryAfterHeader, 10) || 2 : 2;
-        this.throttleManager.recordHttp429(store.storeId, retryAfterSec);
+        this.throttleManager.recordHttp429(throttleGroupId, retryAfterSec);
         const waitMs = retryAfterSec * 1000;
         if (attempt < maxAttempts && waitMs <= 30000) {
           await new Promise((resolve) => setTimeout(resolve, waitMs));
@@ -180,13 +181,13 @@ export class ShopifyGraphqlClient {
       }
 
       if (parsed?.extensions?.cost) {
-        this.throttleManager.recordCost(store.storeId, parsed.extensions.cost);
+        this.throttleManager.recordCost(throttleGroupId, parsed.extensions.cost);
       }
 
       if (parsed?.errors && parsed.errors.length > 0) {
         const mappedError = mapGraphqlErrorsToGatewayError(parsed.errors, parsed.extensions?.cost);
         if (mappedError.code === "SHOPIFY_THROTTLED") {
-          this.throttleManager.recordThrottled(store.storeId, mappedError.retryAfterSeconds);
+          this.throttleManager.recordThrottled(throttleGroupId, mappedError.retryAfterSeconds);
           const waitMs = (mappedError.retryAfterSeconds ?? 1) * 1000;
           if (attempt < maxAttempts && waitMs <= 30000) {
             await new Promise((resolve) => setTimeout(resolve, waitMs));

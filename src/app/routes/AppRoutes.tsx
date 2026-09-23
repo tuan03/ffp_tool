@@ -27,6 +27,9 @@ import type {
 import { createPinterestPodRoutes, getPinterestPodClient } from "../../modules/pinterest-pod";
 import { createProductCrawlerRoutes, getProductCrawlerClient } from "../../modules/product-crawler";
 import { getSeoContentRunner } from "../../modules/seo-content";
+import type {
+  AmazonCrawlerSyncRetrier,
+} from "../../modules/amazon-crawler";
 import { HomePage } from "../../pages/home/HomePage";
 import { NotFoundPage } from "../../pages/not-found/NotFoundPage";
 import {
@@ -41,12 +44,14 @@ interface AppRoutesProps {
   clearAmazonCrawlerCache: AmazonCrawlerCacheClearer;
   loadAmazonCrawlerClients: AmazonCrawlerClientsLoader;
   runAmazonCrawler: AmazonCrawlerRunner;
+  retryAmazonCrawlerSyncs: AmazonCrawlerSyncRetrier;
   runWorkflow(input: WorkflowInput): Promise<WorkflowOutput>;
 }
 
 export function AppRoutes({
   clearAmazonCrawlerCache,
   loadAmazonCrawlerClients,
+  retryAmazonCrawlerSyncs,
   runAmazonCrawler,
   runWorkflow,
 }: AppRoutesProps): React.JSX.Element {
@@ -164,6 +169,7 @@ export function AppRoutes({
       clearAmazonCrawlerCache,
       loadAmazonCrawlerClients,
       handleHandoverToSeo,
+      retryAmazonCrawlerSyncs,
     );
 
     return createBrowserRouter([
@@ -193,7 +199,7 @@ export function AppRoutes({
         ],
       },
     ]);
-  }, [clearAmazonCrawlerCache, loadAmazonCrawlerClients, runAmazonCrawler, runWorkflow]);
+  }, [clearAmazonCrawlerCache, loadAmazonCrawlerClients, retryAmazonCrawlerSyncs, runAmazonCrawler, runWorkflow]);
 
   return <RouterProvider router={router} />;
 }

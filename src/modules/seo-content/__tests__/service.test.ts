@@ -4,9 +4,11 @@ import test from "node:test";
 import type { SeoContentInput, SeoContentWebpAsset } from "../types";
 
 import {
+  createSeoContentPipelineSummary,
   getSeoContentRunner,
   runMockSeoContent,
   runSeoContent,
+  runSeoContentDetailed,
   seoContentMockData,
   seoContentMockInput,
 } from "..";
@@ -30,6 +32,32 @@ test("SEO + Content baseline service produces valid output conforming to public 
   assert.equal(result.images[0].webp.filename, `${seoContentMockInput.handle}-1.webp`);
   assert.equal(result.images[0].webp.localFilePath, seoContentMockInput.images[0].localFilePath);
   assert.equal(result.images[0].webp.url, seoContentMockInput.images[0].url);
+});
+
+test("SEO detailed runner supports alt-only processing without image binaries or local files", async () => {
+  const result = await runSeoContentDetailed({
+    ...seoContentMockInput,
+    images: [{ url: "https://example.com/original.jpg", alt: "Original product view" }],
+  }, { imageMode: "alt_only" });
+
+  assert.equal(result.output.images.length, 1);
+  assert.equal(result.output.images[0].sourceUrl, "https://example.com/original.jpg");
+  assert.equal("webp" in result.output.images[0], false);
+  assert.ok(result.metadata.fieldsApplied.includes("media.alt"));
+  assert.ok(Array.isArray(result.metadata.approvedKeywords));
+  assert.match(result.metadata.engine, /^(gemini|heuristic|mixed)$/);
+
+  const publicSummary = createSeoContentPipelineSummary(result);
+  assert.deepEqual(Object.keys(publicSummary).sort(), [
+    "engine",
+    "fallbackStages",
+    "fieldsApplied",
+    "status",
+    "warnings",
+  ]);
+  assert.equal(JSON.stringify(publicSummary).includes("approvedEmbeddings"), false);
+  assert.equal(JSON.stringify(publicSummary).includes("approvedKeywords"), false);
+  assert.equal(JSON.stringify(publicSummary).includes("corpusRevision"), false);
 });
 
 test("SEO + Content baseline service handles empty images and fallback values", async () => {

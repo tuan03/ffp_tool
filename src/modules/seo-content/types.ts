@@ -36,3 +36,61 @@ export interface SeoContentOutput {
   readonly images: readonly SeoContentImageOutput[];
   readonly productHandle: string;
 }
+
+export type SeoContentEngine = "gemini" | "heuristic" | "mixed";
+
+export interface SeoContentRunMetadata {
+  readonly engine: SeoContentEngine;
+  readonly fieldsApplied: readonly string[];
+  readonly fallbackStages: readonly string[];
+  readonly warnings: readonly string[];
+  readonly approvedKeywords: readonly string[];
+  readonly approvedEmbeddings?: Readonly<Record<string, {
+    readonly values: readonly number[];
+    readonly provider: string;
+    readonly model: string;
+    readonly taskType: string;
+    readonly dimensions: number;
+    readonly vectorSpaceId?: string;
+    readonly reusableAcrossRuns?: boolean;
+  }>>;
+  readonly corpusRevision?: number;
+}
+
+export interface SeoContentDetailedOutput {
+  readonly output: SeoContentOutput;
+  readonly metadata: SeoContentRunMetadata;
+}
+
+export interface SeoContentAltOnlyImageOutput {
+  readonly sourceUrl: string;
+  readonly alt: string;
+}
+
+export interface SeoContentAltOnlyOutput {
+  readonly productTitle: string;
+  readonly productDescription: string;
+  readonly productSeoTitle: string;
+  readonly productSeoDescription: string;
+  readonly images: readonly SeoContentAltOnlyImageOutput[];
+  readonly productHandle: string;
+}
+
+export interface SeoContentAltOnlyDetailedOutput {
+  readonly output: SeoContentAltOnlyOutput;
+  readonly metadata: SeoContentRunMetadata;
+}
+
+export type SeoContentDetailedResult = SeoContentDetailedOutput | SeoContentAltOnlyDetailedOutput;
+
+export interface SeoContentPipelineSummary {
+  readonly status: "completed";
+  readonly engine: SeoContentEngine;
+  readonly fieldsApplied: readonly string[];
+  readonly fallbackStages: readonly string[];
+  readonly warnings: readonly string[];
+}
+
+export interface SeoContentRunOptions {
+  readonly imageMode?: "full" | "alt_only";
+}

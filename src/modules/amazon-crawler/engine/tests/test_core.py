@@ -774,8 +774,11 @@ class CoreTests(unittest.TestCase):
         family = {
             "parentAsin": "B012345678", "canonicalUrl": "https://www.amazon.com/dp/B012345678", "sourceTitle": "Bedding",
             "description": None, "bulletPoints": [], "media": [],
-            "sourceVariants": [source_variant("B012345678", "Ocean", "Twin")],
-            "variantMatrix": {"dimensions": {"Design": ["Ocean"], "Size": ["Twin"]}, "expectedCount": 1, "discoveredCount": 1, "complete": True, "safetyCap": 500},
+            "sourceVariants": [
+                source_variant("B012345678", "Ocean", "Twin"),
+                source_variant("B012345679", "Forest", "Twin"),
+            ],
+            "variantMatrix": {"dimensions": {"Design": ["Ocean", "Forest"], "Size": ["Twin"]}, "expectedCount": 2, "discoveredCount": 2, "complete": True, "safetyCap": 500},
             "diagnostics": {"fetchMode": "http", "attempts": 1, "captchaEncountered": False, "locationFallbackUsed": False, "matrixSwept": False, "cacheHit": False},
         }
         with tempfile.TemporaryDirectory() as directory:
@@ -789,7 +792,7 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(list((root / "exports").glob("*.tmp")), [])
         self.assertEqual(output["status"], "partial")
         self.assertEqual(output["statistics"]["rejectedInputs"], 1)
-        self.assertEqual(len(output["products"]), 1)
+        self.assertEqual(len(output["products"]), 2)
 
     def test_cancelled_batch_does_not_write_export(self) -> None:
         cancel_event = threading.Event()
@@ -828,6 +831,114 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(callbacks[0]["asin"], "B012345678")
         self.assertEqual(callbacks[0]["status"], "completed")
         self.assertEqual(len(callbacks[0]["products"]), 1)
+
+    def test_product_callback_is_forwarded_before_input_completion(self) -> None:
+        family = {
+            "parentAsin": "B012345678", "canonicalUrl": "https://www.amazon.com/dp/B012345678", "sourceTitle": "Bedding",
+            "description": None, "bulletPoints": [], "categories": [], "productDetails": {}, "media": [],
+            "sourceVariants": [source_variant("B012345678", "Ocean", "Twin")],
+            "variantMatrix": {"dimensions": {"Design": ["Ocean"], "Size": ["Twin"]}, "expectedCount": 1, "discoveredCount": 1, "complete": True, "safetyCap": 500},
+            "diagnostics": {"fetchMode": "http", "attempts": 1, "captchaEncountered": False, "locationFallbackUsed": False, "matrixSwept": False, "cacheHit": False},
+        }
+
+        class StreamingFixtureCrawler(FixtureCrawler):
+            def _crawl_family(self, normalized, on_product_complete=None):
+                crawled = super()._crawl_family(normalized)
+                if on_product_complete is not None:
+                    on_product_complete(
+                        self._products_from_family(
+                            crawled,
+                            split_attribute_override="Design",
+                        )[0]
+                    )
+                return crawled
+
+        callback_order: list[str] = []
+        with tempfile.TemporaryDirectory() as directory:
+            crawler = StreamingFixtureCrawler(
+                family,
+                root=Path(directory),
+                settings=CrawlSettings(),
+                browser_pool=FakeBrowser(PRODUCT_HTML),
+            )
+            crawler.run(
+                job_id="streaming-job",
+                sources=["B012345678"],
+                on_product_complete=lambda payload: callback_order.append(f"product:{payload['product']['sourceKey']}"),
+                on_input_complete=lambda _payload: callback_order.append("input"),
+                write_export=False,
+            )
+
+        self.assertEqual(callback_order[0], "product:amazon:B012345678:design:ocean")
+        self.assertEqual(callback_order[-1], "input")
+
+    def test_split_group_is_emitted_while_a_different_group_is_still_crawling(self) -> None:
+        ocean_emitted = threading.Event()
+        forest_finished_before_ocean = False
+
+        class ConcurrentGroupCrawler(AmazonCrawler):
+            def _fetch_parsed(self, normalized: NormalizedInput) -> tuple[dict, dict]:
+                nonlocal forest_finished_before_ocean
+                options_by_asin = {
+                    "B012345678": {"Design": "Ocean", "Size": "Twin"},
+                    "B012345679": {"Design": "Forest", "Size": "Twin"},
+                }
+                if normalized.asin == "B012345679":
+                    forest_finished_before_ocean = not ocean_emitted.wait(timeout=1)
+                parsed = {
+                    "asin": normalized.asin,
+                    "parentAsin": "B0PARENT00",
+                    "url": normalized.canonical_url,
+                    "title": "Bedding",
+                    "description": None,
+                    "bulletPoints": [],
+                    "categories": [],
+                    "productDetails": {},
+                    "price": {"raw": "$20.00", "amount": 20.0, "currency": "USD"},
+                    "media": [],
+                    "dimensions": {"Design": ["Ocean", "Forest"], "Size": ["Twin"]},
+                    "asinOptions": options_by_asin,
+                    "customizationRaw": None,
+                    "customizationWarnings": [],
+                    "customizationFormUrl": None,
+                }
+                diagnostics = {
+                    "fetchMode": "http", "attempts": 1, "captchaEncountered": False,
+                    "locationFallbackUsed": False, "amazonZip": "10001", "usProfileApplied": True,
+                    "matrixSwept": False, "cacheHit": False,
+                }
+                return parsed, diagnostics
+
+        emitted: list[str] = []
+        with tempfile.TemporaryDirectory() as directory:
+            crawler = ConcurrentGroupCrawler(
+                root=Path(directory),
+                settings=CrawlSettings(variant_threads=2),
+                browser_pool=FakeBrowser(PRODUCT_HTML),
+            )
+
+            def product_completed(product: dict[str, object]) -> None:
+                emitted.append(str(product["sourceKey"]))
+                if str(product["sourceKey"]).endswith(":ocean"):
+                    ocean_emitted.set()
+
+            crawler._crawl_family(
+                normalize_amazon_input("B012345678"),
+                on_product_complete=product_completed,
+            )
+
+        self.assertIn("amazon:B0PARENT00:design:ocean", emitted)
+        self.assertFalse(forest_finished_before_ocean)
+
+    def test_incomplete_or_priceless_product_is_blocked_from_live_publish(self) -> None:
+        product = {
+            "variantMatrix": {"complete": False},
+            "sourceVariants": [{"price": None, "warnings": []}],
+        }
+        self.assertEqual(
+            AmazonCrawler._product_publish_blockers(product),
+            ["variant_matrix_incomplete", "price_missing"],
+        )
 
 
 if __name__ == "__main__":

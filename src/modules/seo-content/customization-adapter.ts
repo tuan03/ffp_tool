@@ -1,6 +1,7 @@
 import type { CrawlProduct, CustomizationNormalizerOutput } from "../customization-normalizer";
 import { runSeoContent } from "./service";
 import type {
+  SeoContentAltOnlyOutput,
   SeoContentImageInput,
   SeoContentInput,
   SeoContentOutput,
@@ -90,7 +91,12 @@ export function fromCustomizationProduct(
 
   if (Array.isArray(product.media)) {
     for (const item of product.media) {
-      if (item && typeof item.url === "string" && item.url.trim().length > 0) {
+      if (
+        item
+        && String(item.kind ?? "image").toLowerCase() !== "video"
+        && typeof item.url === "string"
+        && item.url.trim().length > 0
+      ) {
         const trimmedUrl = item.url.trim();
         if (!seenUrls.has(trimmedUrl)) {
           seenUrls.add(trimmedUrl);
@@ -114,6 +120,73 @@ export function fromCustomizationProduct(
     handle,
     ...(product.id ? { productId: product.id } : {}),
     ...(product.canonicalUrl ? { url: product.canonicalUrl } : {}),
+  };
+}
+
+export interface ApplySeoContentOptions {
+  readonly ensureUniqueHandle?: boolean;
+  readonly existingShopifyHandle?: string;
+}
+
+function slugifyHandlePart(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function stableHandleHash(value: string): string {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16).padStart(8, "0");
+}
+
+function resolveProductHandle(
+  product: CrawlProduct,
+  generatedHandle: string,
+  options?: ApplySeoContentOptions,
+): string {
+  const existingHandle = options?.existingShopifyHandle?.trim();
+  if (existingHandle) return existingHandle;
+  if (!options?.ensureUniqueHandle) return generatedHandle;
+
+  const identity = String(product.sourceKey || product.id || product.parentAsin || product.asin || "product");
+  const splitValue = identity.split(":").at(-1) ?? identity;
+  const readableSuffix = slugifyHandlePart(splitValue).slice(0, 24) || "product";
+  const suffix = `${readableSuffix}-${stableHandleHash(identity)}`;
+  const maxHandleLength = 80;
+  const base = slugifyHandlePart(generatedHandle) || "product";
+  const availableBaseLength = Math.max(1, maxHandleLength - suffix.length - 1);
+  const trimmedBase = base.slice(0, availableBaseLength).replace(/-+$/g, "") || "product";
+  return `${trimmedBase}-${suffix}`;
+}
+
+export function applySeoContentToCustomizationProduct(
+  product: CrawlProduct,
+  seoOutput: SeoContentOutput | SeoContentAltOnlyOutput,
+  options?: ApplySeoContentOptions,
+): CrawlProduct {
+  const altBySourceUrl = new Map(
+    seoOutput.images.map((image) => [image.sourceUrl, image.alt] as const),
+  );
+  return {
+    ...product,
+    title: seoOutput.productTitle,
+    descriptionHtml: seoOutput.productDescription,
+    handle: resolveProductHandle(product, seoOutput.productHandle, options),
+    seo: {
+      title: seoOutput.productSeoTitle,
+      description: seoOutput.productSeoDescription,
+    },
+    media: product.media?.map((media) => {
+      if (String(media.kind ?? "image").toLowerCase() === "video") return { ...media };
+      const alt = altBySourceUrl.get(media.url.trim());
+      return alt ? { ...media, alt } : { ...media };
+    }),
   };
 }
 

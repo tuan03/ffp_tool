@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import type http from "node:http";
-import type Database from "better-sqlite3";
+import type { DatabaseSync } from "node:sqlite";
 
 import { getAutoSeoDb } from "./auto-seo-db";
 import { calculateSha256, canonicalizeJson } from "./canonical-json";
@@ -37,7 +37,7 @@ export interface AutoSeoRunResult {
 }
 
 export interface AutoSeoHandlerOptions {
-  readonly db?: Database.Database;
+  readonly db?: DatabaseSync;
   readonly seoContentRunner?: SeoContentRunner;
 }
 
@@ -133,7 +133,7 @@ export function validateAutoSeoRunInput(body: unknown): AutoSeoRunRequest {
 }
 
 export function executeAutoSeoBackup(
-  db: Database.Database,
+  db: DatabaseSync,
   request: AutoSeoRunRequest,
 ): { readonly backupIds: string[]; readonly productIds: string[] } {
   const backupIds: string[] = [];
@@ -182,7 +182,7 @@ export function executeAutoSeoBackup(
 }
 
 export function updateDownstreamStatus(
-  db: Database.Database,
+  db: DatabaseSync,
   workflowId: string,
   backupIds: readonly string[],
   status: "SENT" | "FAILED",
@@ -224,17 +224,14 @@ export async function handleAutoSeoRun(
   const db = options?.db ?? getAutoSeoDb();
   const runner = options?.seoContentRunner ?? runSeoContent;
 
-  // Execute backup in a single transaction
-  const backupTx = db.transaction((req: AutoSeoRunRequest) => {
-    return executeAutoSeoBackup(db, req);
-  });
-
   let backupIds: string[] = [];
+  db.exec("BEGIN IMMEDIATE");
   try {
-    const backupResult = backupTx(request);
+    const backupResult = executeAutoSeoBackup(db, request);
+    db.exec("COMMIT");
     backupIds = [...backupResult.backupIds];
   } catch (dbError) {
-    // Transaction rolled back automatically by better-sqlite3; stop here with no downstream call
+    db.exec("ROLLBACK");
     throw dbError;
   }
 

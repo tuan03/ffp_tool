@@ -13,6 +13,8 @@ import type {
   ShopifySyncProductResult,
   UploadFileInput,
   UploadFileOutput,
+  UpdateProductInput,
+  UpdateProductOutput,
 } from "./types";
 
 export function createDryRunGateway(): ShopifyGateway {
@@ -25,6 +27,14 @@ export function createDryRunGateway(): ShopifyGateway {
       return {
         productId: "gid://shopify/Product/dry-run-preview-id",
         productHandle: slug || "dry-run-preview-handle",
+      };
+    },
+
+    async updateProduct(input: UpdateProductInput): Promise<UpdateProductOutput> {
+      return {
+        productId: input.productId,
+        productHandle: "dry-run-preview-handle",
+        createdVariantsCount: input.variants?.length ?? 0,
       };
     },
 
@@ -77,10 +87,23 @@ export async function syncSingleProduct(
   product: ShopifySyncProductInput,
   options: ShopifySyncOptions = {},
 ): Promise<ShopifySyncProductResult> {
+  const syncStartedAt = Date.now();
+  let productWriteMs = 0;
+  let variantsMs = 0;
+  let assetUploadMs = 0;
+  let metafieldMs = 0;
+  const getTimings = () => ({
+    productWriteMs,
+    variantsMs,
+    assetUploadMs,
+    metafieldMs,
+    totalMs: Date.now() - syncStartedAt,
+  });
   const dryRun = Boolean(options.dryRun);
   const warnings: string[] = [];
 
   let gateway: ShopifyGateway;
+  let writtenProduct: CreateProductOutput | undefined;
 
   if (options.gateway) {
     gateway = options.gateway;
@@ -99,42 +122,71 @@ export async function syncSingleProduct(
       warnings,
       error:
         "ShopifyGateway is required. Please provide a ShopifyGateway implementation via options.gateway.",
+      timings: getTimings(),
     };
   }
 
   try {
     // 1. Create Product & Media Gallery & Options/Variants
-    const createdProduct = await gateway.createProduct({
+    const productWriteInput = {
       title: product.title,
       descriptionHtml: product.descriptionHtml,
+      handle: product.handle,
+      seo: product.seo,
       vendor: product.vendor,
       productType: product.productType,
-      tags: product.tags,
+      tags: [
+        ...(product.tags ?? []),
+        ...(product.sourceKey ? [`ffp-source:${product.sourceKey}`] : []),
+      ],
       media: product.media,
       variants: product.variants,
-    });
+    };
+    const productWriteStartedAt = Date.now();
+    try {
+      if (options.existingProductId) {
+        if (!gateway.updateProduct) {
+          throw new Error("ShopifyGateway does not support updating an existing product.");
+        }
+        writtenProduct = await gateway.updateProduct({
+          productId: options.existingProductId,
+          previousManagedResources: options.existingManagedResources,
+          ...productWriteInput,
+        });
+      } else {
+        writtenProduct = await gateway.createProduct({
+          ...productWriteInput,
+          status: "ACTIVE",
+        });
+      }
+    } finally {
+      productWriteMs = Date.now() - productWriteStartedAt;
+    }
 
     // 2. Create Variants (if not already bulk-created by createProduct)
-    let variantsCount = createdProduct.createdVariantsCount ?? 0;
-    if (variantsCount === 0 && product.variants && product.variants.length > 0) {
-      try {
-        const variantResult = await gateway.createVariants(
-          createdProduct.productId,
-          product.variants,
-        );
-        variantsCount = variantResult.createdCount;
-      } catch (varErr: unknown) {
-        // If variants were already established or failed standalone, report cleanly
-        const varErrDetail = varErr instanceof Error ? varErr.message : String(varErr);
-        warnings.push(`Variants creation note: ${varErrDetail}`);
-      }
+    const variantsStartedAt = Date.now();
+    let variantsCount = writtenProduct.createdVariantsCount ?? 0;
+    if (!options.existingProductId && variantsCount === 0 && product.variants && product.variants.length > 0) {
+      const variantResult = await gateway.createVariants(
+        writtenProduct.productId,
+        product.variants,
+      );
+      variantsCount = variantResult.createdCount;
     }
+    const expectedVariantsCount = product.variants?.length ?? 0;
+    if (expectedVariantsCount > 0 && variantsCount !== expectedVariantsCount) {
+      throw new Error(
+        `Shopify variants incomplete: synchronized ${variantsCount}/${expectedVariantsCount}.`,
+      );
+    }
+    variantsMs = Date.now() - variantsStartedAt;
 
     // 3. Process Customization if present
     let assetsUploadedCount = 0;
     let metafieldSet = false;
 
     if (product.customization && product.customization.hasCustomization) {
+      const assetUploadStartedAt = Date.now();
       const rawAssets = product.customization.assets || [];
       const replacements = new Map<string, string>();
 
@@ -167,9 +219,26 @@ export async function syncSingleProduct(
               const orig = item.originalSource || chunk[idx]?.url;
               if (item.shopifyCdnUrl && orig) {
                 replacements.set(orig, item.shopifyCdnUrl);
-                assetsUploadedCount += 1;
               }
             });
+
+            const missingAssets = chunk.filter((asset) => !replacements.has(asset.url));
+            for (const asset of missingAssets) {
+              try {
+                const uploaded = await gateway.uploadFile({
+                  originalSource: asset.url,
+                  filename: asset.friendlyFileName || "amzcustom-asset.png",
+                  alt: asset.alt || "Customization Asset",
+                });
+                replacements.set(asset.url, uploaded.shopifyCdnUrl);
+              } catch (singleErr: unknown) {
+                const singleDetail =
+                  singleErr instanceof Error ? singleErr.message : String(singleErr);
+                warnings.push(
+                  `Failed to retry customization asset ${asset.url}: ${singleDetail}`,
+                );
+              }
+            }
           } catch (batchErr: unknown) {
             const errDetail =
               batchErr instanceof Error ? batchErr.message : String(batchErr);
@@ -184,7 +253,6 @@ export async function syncSingleProduct(
                   alt: asset.alt || "Customization Asset",
                 });
                 replacements.set(asset.url, uploaded.shopifyCdnUrl);
-                assetsUploadedCount += 1;
               } catch (singleErr: unknown) {
                 const singleDetail =
                   singleErr instanceof Error ? singleErr.message : String(singleErr);
@@ -205,7 +273,6 @@ export async function syncSingleProduct(
               alt: asset.alt || "Customization Asset",
             });
             replacements.set(asset.url, uploaded.shopifyCdnUrl);
-            assetsUploadedCount += 1;
           } catch (uploadError: unknown) {
             const errDetail =
               uploadError instanceof Error ? uploadError.message : String(uploadError);
@@ -214,6 +281,15 @@ export async function syncSingleProduct(
             );
           }
         }
+      }
+
+      assetsUploadedCount = replacements.size;
+      assetUploadMs = Date.now() - assetUploadStartedAt;
+
+      if (assetsUploadedCount !== uniqueAssets.length) {
+        throw new Error(
+          `Customization assets incomplete: uploaded ${assetsUploadedCount}/${uniqueAssets.length}.`,
+        );
       }
 
       // Reconstruct customizer config replacing old Amazon URLs with Shopify CDN URLs
@@ -249,9 +325,10 @@ export async function syncSingleProduct(
       }
 
       // 4. Set Metafield custom.amazon_customizer
+      const customizationMetafieldStartedAt = Date.now();
       try {
         const metaResult = await gateway.setProductMetafield({
-          productId: createdProduct.productId,
+          productId: writtenProduct.productId,
           namespace: "custom",
           key: "amazon_customizer",
           type: "json",
@@ -263,13 +340,32 @@ export async function syncSingleProduct(
           metaError instanceof Error ? metaError.message : String(metaError);
         warnings.push(`Failed to set custom.amazon_customizer metafield: ${errDetail}`);
       }
+      if (!metafieldSet) {
+        throw new Error("Failed to set required custom.amazon_customizer metafield.");
+      }
+      metafieldMs += Date.now() - customizationMetafieldStartedAt;
+    }
+
+    if (product.sourceKey) {
+      const sourceMetafieldStartedAt = Date.now();
+      const sourceMetafield = await gateway.setProductMetafield({
+        productId: writtenProduct.productId,
+        namespace: "custom",
+        key: "ffp_source_key",
+        type: "json",
+        value: JSON.stringify({ sourceKey: product.sourceKey }),
+      });
+      if (!sourceMetafield.success) {
+        throw new Error("Failed to set required custom.ffp_source_key metafield.");
+      }
+      metafieldMs += Date.now() - sourceMetafieldStartedAt;
     }
 
     return {
       success: true,
       sourceId: product.id,
-      productId: createdProduct.productId,
-      productHandle: createdProduct.productHandle,
+      productId: writtenProduct.productId,
+      productHandle: writtenProduct.productHandle,
       title: product.title,
       variantsCount,
       mediaCount: product.media?.length || 0,
@@ -277,12 +373,16 @@ export async function syncSingleProduct(
       metafieldSet,
       dryRun,
       warnings,
+      managedResources: writtenProduct.managedResources,
+      timings: getTimings(),
     };
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     return {
       success: false,
       sourceId: product.id,
+      productId: writtenProduct?.productId,
+      productHandle: writtenProduct?.productHandle,
       title: product.title,
       variantsCount: 0,
       mediaCount: product.media?.length || 0,
@@ -291,6 +391,8 @@ export async function syncSingleProduct(
       dryRun,
       warnings,
       error: msg,
+      reconciliationRequired: writtenProduct !== undefined,
+      timings: getTimings(),
     };
   }
 }

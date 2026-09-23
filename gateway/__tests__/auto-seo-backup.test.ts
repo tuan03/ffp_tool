@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
+import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
-import Database from "better-sqlite3";
 
 import { initAutoSeoDbSchema } from "../auto-seo-db";
 import { calculateSha256, canonicalizeJson } from "../canonical-json";
@@ -15,9 +15,9 @@ import {
 } from "../auto-seo-handler";
 import { runSeoContent } from "../seo-content";
 
-function createTestDb(): Database.Database {
-  const db = new Database(":memory:");
-  db.pragma("foreign_keys = ON");
+function createTestDb(): DatabaseSync {
+  const db = new DatabaseSync(":memory:");
+  db.exec("PRAGMA foreign_keys = ON");
   initAutoSeoDbSchema(db);
   return db;
 }
@@ -110,7 +110,7 @@ test("1. one product -> one INSERT in SQLite", async () => {
 
   assert.equal(res.backedUpCount, 1);
   assert.equal(mockRunner.calls.length, 1);
-  const rows = db.prepare("SELECT * FROM auto_seo_product_backups").all() as BackupRow[];
+  const rows = db.prepare("SELECT * FROM auto_seo_product_backups").all() as unknown as BackupRow[];
   assert.equal(rows.length, 1);
   assert.equal(rows[0]?.workflow_id, "wf-1");
   assert.equal(rows[0]?.product_id, "prod-1");
@@ -138,7 +138,7 @@ test("2. 3 products -> 3 INSERTs in SQLite", async () => {
 
   assert.equal(res.backedUpCount, 3);
   assert.equal(mockRunner.calls.length, 1);
-  const rows = db.prepare("SELECT * FROM auto_seo_product_backups").all() as BackupRow[];
+  const rows = db.prepare("SELECT * FROM auto_seo_product_backups").all() as unknown as BackupRow[];
   assert.equal(rows.length, 3);
 });
 
@@ -161,7 +161,7 @@ test("3. same workflow_id across rows", async () => {
     seoContentRunner: mockRunner.runner,
   });
 
-  const rows = db.prepare("SELECT * FROM auto_seo_product_backups").all() as BackupRow[];
+  const rows = db.prepare("SELECT * FROM auto_seo_product_backups").all() as unknown as BackupRow[];
   assert.equal(rows.length, 2);
   for (const row of rows) {
     assert.equal(row.workflow_id, "wf-consistent-123");
@@ -187,7 +187,7 @@ test("4. each product gets own product_id", async () => {
     seoContentRunner: mockRunner.runner,
   });
 
-  const rows = db.prepare("SELECT * FROM auto_seo_product_backups ORDER BY id ASC").all() as BackupRow[];
+  const rows = db.prepare("SELECT * FROM auto_seo_product_backups ORDER BY id ASC").all() as unknown as BackupRow[];
   assert.equal(rows[0]?.product_id, "gid://shopify/Product/100");
   assert.equal(rows[1]?.product_id, "gid://shopify/Product/200");
 });
@@ -215,7 +215,7 @@ test("5. snapshot_json contains exact full product object", async () => {
     { db, seoContentRunner: mockRunner.runner },
   );
 
-  const row = db.prepare("SELECT * FROM auto_seo_product_backups WHERE product_id = ?").get("prod-exact") as BackupRow;
+  const row = db.prepare("SELECT * FROM auto_seo_product_backups WHERE product_id = ?").get("prod-exact") as unknown as BackupRow;
   assert.ok(row);
   const parsed = JSON.parse(row.snapshot_json);
 
@@ -244,7 +244,7 @@ test("6. SHA-256 generated from full canonical JSON", async () => {
     { db, seoContentRunner: mockRunner.runner },
   );
 
-  const row = db.prepare("SELECT * FROM auto_seo_product_backups WHERE product_id = ?").get("prod-sha") as BackupRow;
+  const row = db.prepare("SELECT * FROM auto_seo_product_backups WHERE product_id = ?").get("prod-sha") as unknown as BackupRow;
   assert.ok(row);
   assert.equal(row.snapshot_json, expectedCanonical);
   assert.equal(row.snapshot_sha256, expectedSha256);
@@ -356,7 +356,7 @@ test("10. runner executes only after SQLite commit", async () => {
 
   const runner: SeoContentRunner = async (input: SeoContentInput) => {
     // When runner is called, the database transaction has already committed!
-    const rows = db.prepare("SELECT * FROM auto_seo_product_backups WHERE workflow_id = ?").all("wf-order") as BackupRow[];
+    const rows = db.prepare("SELECT * FROM auto_seo_product_backups WHERE workflow_id = ?").all("wf-order") as unknown as BackupRow[];
     rowCountDuringRunnerCall = rows.length;
     rowStatusDuringRunnerCall = rows[0]?.downstream_status ?? null;
     return { success: true, processedCount: input.products.length };
@@ -377,7 +377,7 @@ test("10. runner executes only after SQLite commit", async () => {
   assert.equal(rowStatusDuringRunnerCall, "NOT_SENT");
 
   // After handleAutoSeoRun finishes, row is updated to 'SENT' and downstream_http_status is null
-  const finalRow = db.prepare("SELECT * FROM auto_seo_product_backups WHERE workflow_id = ?").get("wf-order") as BackupRow;
+  const finalRow = db.prepare("SELECT * FROM auto_seo_product_backups WHERE workflow_id = ?").get("wf-order") as unknown as BackupRow;
   assert.equal(finalRow.downstream_status, "SENT");
   assert.equal(finalRow.downstream_http_status, null);
   assert.ok(typeof finalRow.downstream_sent_at === "string" && finalRow.downstream_sent_at.length > 0);
@@ -435,7 +435,7 @@ test("12. success:true => SENT", async () => {
   assert.equal(res.downstreamStatus, "SENT");
   assert.equal(res.downstreamHttpStatus, null);
 
-  const row = db.prepare("SELECT * FROM auto_seo_product_backups WHERE workflow_id = ?").get("wf-sent") as BackupRow;
+  const row = db.prepare("SELECT * FROM auto_seo_product_backups WHERE workflow_id = ?").get("wf-sent") as unknown as BackupRow;
   assert.ok(row);
   assert.equal(row.downstream_status, "SENT");
   assert.equal(row.downstream_http_status, null);
@@ -464,7 +464,7 @@ test("13. success:false => FAILED and backup rows remain", async () => {
   assert.equal(res.downstreamError, "Model quota exceeded");
 
   // Backup row remains in database
-  const row = db.prepare("SELECT * FROM auto_seo_product_backups WHERE workflow_id = ?").get("wf-returned-false") as BackupRow;
+  const row = db.prepare("SELECT * FROM auto_seo_product_backups WHERE workflow_id = ?").get("wf-returned-false") as unknown as BackupRow;
   assert.ok(row);
   assert.equal(row.downstream_status, "FAILED");
   assert.equal(row.downstream_http_status, null);
@@ -494,7 +494,7 @@ test("14. runner throw => FAILED and backup rows remain", async () => {
   assert.equal(res.downstreamError, "SEO generation crashed with unhandled exception");
 
   // Backup row remains in database
-  const row = db.prepare("SELECT * FROM auto_seo_product_backups WHERE workflow_id = ?").get("wf-failed-downstream") as BackupRow;
+  const row = db.prepare("SELECT * FROM auto_seo_product_backups WHERE workflow_id = ?").get("wf-failed-downstream") as unknown as BackupRow;
   assert.ok(row);
   assert.equal(row.downstream_status, "FAILED");
   assert.equal(row.downstream_http_status, null);
@@ -632,7 +632,7 @@ test("19. status update failure does not rerun SEO Content & throws error", asyn
   assert.equal(mockRunner.calls.length, 1);
 
   // Committed backup row remains in SQLite database with original 'NOT_SENT' status
-  const row = db.prepare("SELECT * FROM auto_seo_product_backups WHERE workflow_id = ?").get("wf-update-fail") as BackupRow;
+  const row = db.prepare("SELECT * FROM auto_seo_product_backups WHERE workflow_id = ?").get("wf-update-fail") as unknown as BackupRow;
   assert.ok(row);
   assert.equal(row.downstream_status, "NOT_SENT");
 });
@@ -651,7 +651,7 @@ test("20. created_at is ISO UTC format YYYY-MM-DDTHH:MM:SS.sssZ", async () => {
     { db, seoContentRunner: mockRunner.runner },
   );
 
-  const row = db.prepare("SELECT * FROM auto_seo_product_backups WHERE workflow_id = ?").get("wf-created-at") as BackupRow;
+  const row = db.prepare("SELECT * FROM auto_seo_product_backups WHERE workflow_id = ?").get("wf-created-at") as unknown as BackupRow;
   assert.ok(row);
   assert.ok(typeof row.created_at === "string");
   // Check exact ISO UTC format with milliseconds: YYYY-MM-DDTHH:MM:SS.sssZ

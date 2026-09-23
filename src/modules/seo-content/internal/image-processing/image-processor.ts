@@ -161,3 +161,49 @@ export class DefaultImageProcessor implements ImageProcessor {
     return "sharp";
   }
 }
+
+/** Generates SEO alt text without downloading, converting, or writing images. */
+export class AltOnlyImageProcessor implements ImageProcessor {
+  async process(input: ImageProcessingInput): Promise<ImageProcessingResultWithMetadata> {
+    const previousAlts: string[] = [];
+    const processedImages = input.images.map((sourceImage, index) => {
+      const alt = generateAltText({
+        sourceAlt: sourceImage.alt,
+        sourceTitle: input.sourceTitle,
+        productTitle: input.productTitle,
+        primaryKeyword: input.primaryKeyword,
+        secondaryKeywords: input.secondaryKeywords,
+        productCategory: input.productCategory,
+        entities: input.entities,
+        dominantColors: input.dominantColors,
+        visualStyle: input.visualStyle,
+        imageIndex: index,
+        previousAlts,
+      });
+      previousAlts.push(alt);
+      return {
+        sourceUrl: sourceImage.url,
+        alt,
+        webp: {
+          filename: generateWebpFilename({
+            productHandle: input.productHandle,
+            productTitle: input.productTitle,
+            primaryKeyword: input.primaryKeyword,
+            index,
+          }),
+          url: sourceImage.url,
+        },
+      };
+    });
+    return {
+      processedImages,
+      metadata: {
+        totalImages: processedImages.length,
+        convertedImages: 0,
+        failedConversions: 0,
+        converter: "unavailable",
+        issues: [],
+      },
+    };
+  }
+}

@@ -631,6 +631,28 @@ test("Group L: Retry — GeminiShoppingContextAnalyzer retries once on retryable
   assert.deepEqual(result.targetAudience, ["cat lovers"]);
 });
 
+test("Group L: GeminiShoppingContextAnalyzer forwards the configured output token budget", async () => {
+  const fakeGenerator = new FakeGeminiContentGenerator();
+  fakeGenerator.setTextHandler(async () => ({
+    rawText: JSON.stringify({
+      targetAudience: ["gift shoppers"],
+      suitableOccasions: ["birthday"],
+      useCases: ["gifting"],
+      buyerIntentKeywords: ["personalized gift"],
+    }),
+  }));
+  const analyzer = new GeminiShoppingContextAnalyzer({
+    generator: fakeGenerator,
+    maxOutputTokens: 8192,
+  });
+
+  await analyzer.analyze({
+    source: { niche: "gifts", title: "Personalized Gift", description: "", handle: "" },
+  });
+
+  assert.equal(fakeGenerator.textCalls[0]?.maxOutputTokens, 8192);
+});
+
 test("Group L: Non-retryable — throws immediately without retry on non-retryable error (403)", async () => {
   let callCount = 0;
   const fakeGenerator = new FakeGeminiContentGenerator();

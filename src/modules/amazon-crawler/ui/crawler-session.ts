@@ -2,6 +2,7 @@ import { useSyncExternalStore } from "react";
 
 import type {
   AmazonCrawlerOutput,
+  AmazonCrawlerProduct,
   AmazonCrawlerProgress,
   AmazonCrawlerRunner,
   AmazonCrawlerSettings,
@@ -196,12 +197,14 @@ export interface StartCrawlerJobOptions {
   runAmazonCrawler: AmazonCrawlerRunner;
   urls: readonly string[];
   settings?: AmazonCrawlerSettings;
+  onProducts?: (products: readonly AmazonCrawlerProduct[]) => void;
 }
 
 export async function startCrawlerJob({
   runAmazonCrawler,
   urls,
   settings,
+  onProducts,
 }: StartCrawlerJobOptions): Promise<AmazonCrawlerOutput | null> {
   if (urls.length === 0 || sessionState.isRunning) return null;
 
@@ -244,6 +247,7 @@ export async function startCrawlerJob({
         sessionState = { ...sessionState, progress: nextProgress };
         notifyListeners();
       },
+      onProducts,
       signal: controller.signal,
     });
 

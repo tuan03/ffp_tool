@@ -52,6 +52,7 @@ import {
 import {
   b3SearchSuggestionsStage,
   createB3SearchSuggestionsStage,
+  createDefaultSearchSuggestionsCollector,
   executeB3SearchSuggestions,
 } from "../internal/stages/b3-search-suggestions";
 import { createSeoPipeline } from "../internal/pipeline";
@@ -404,6 +405,24 @@ test("Group J: Transient failure on one seed does not discard successful suggest
   assert.equal(result.seedKeywords.length, 3);
   assert.ok(result.suggestedQueries.includes("seed1 suggestion 1"));
   assert.ok(result.suggestedQueries.includes("seed3 suggestion 1"));
+});
+
+test("Default Google collector reports partial network failure so the server pipeline can retry", async () => {
+  const collector = createDefaultSearchSuggestionsCollector({
+    client: {
+      async getSuggestions(): Promise<readonly string[]> {
+        throw new GoogleSuggestError("Transient 503 error", { status: 503, isRetryable: true });
+      },
+    },
+    onPartialFailure: (failedCount, totalCount) => {
+      throw new Error(`Google Suggest incomplete: ${failedCount}/${totalCount}`);
+    },
+  });
+
+  await assert.rejects(
+    () => collector.collect({ source: { niche: "cat mug" } }),
+    /Google Suggest incomplete: 1\/1/,
+  );
 });
 
 // ---------------------------------------------------------------------------

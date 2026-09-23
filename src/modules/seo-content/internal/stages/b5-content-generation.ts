@@ -37,7 +37,9 @@ const DEFAULT_CONSTRAINTS: ContentConstraints = {
   preserveExistingHandle: true,
 };
 
-export function createDefaultB5Generator(): FallbackContentGenerator | HeuristicContentGenerator {
+export function createDefaultB5Generator(options?: {
+  readonly onFallback?: (reason: string, error?: unknown) => void;
+}): FallbackContentGenerator | HeuristicContentGenerator {
   const heuristic = new HeuristicContentGenerator();
   const projectId =
     typeof process !== "undefined" && process.env
@@ -46,9 +48,20 @@ export function createDefaultB5Generator(): FallbackContentGenerator | Heuristic
 
   if (projectId) {
     try {
-      const vertexSdk = new GoogleGenAIVertexContentGenerator({ projectId });
-      const geminiGenerator = new GeminiSeoContentGenerator(vertexSdk);
-      return new FallbackContentGenerator(geminiGenerator, heuristic);
+      const configuredMaxOutputTokens = Number(process.env.AI_MAX_OUTPUT_TOKENS ?? 2048);
+      const maxOutputTokens = Number.isFinite(configuredMaxOutputTokens)
+        ? Math.max(512, Math.min(8192, Math.trunc(configuredMaxOutputTokens)))
+        : 2048;
+      const vertexSdk = new GoogleGenAIVertexContentGenerator({
+        projectId,
+        location: process.env.GOOGLE_CLOUD_LOCATION || "global",
+        defaultModel:
+          process.env.GEMINI_ANALYSIS_MODEL
+          || process.env.GEMINI_MODEL
+          || "gemini-2.5-flash",
+      });
+      const geminiGenerator = new GeminiSeoContentGenerator(vertexSdk, { maxOutputTokens });
+      return new FallbackContentGenerator(geminiGenerator, heuristic, options?.onFallback);
     } catch {
       return heuristic;
     }
@@ -156,3 +169,12 @@ export const b5ContentGenerationStage: SeoPipelineStage = {
   name: "b5",
   execute: executeB5ContentGeneration,
 };
+
+export function createB5ContentGenerationStage(
+  options: B5ContentGenerationOptions = {},
+): SeoPipelineStage {
+  return {
+    name: "b5",
+    execute: (context) => executeB5ContentGeneration(context, options),
+  };
+}

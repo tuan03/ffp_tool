@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { HeuristicContentGenerator } from "../internal/content-generation/heuristic-content-generator";
 import { GeminiSeoContentGenerator } from "../internal/content-generation/gemini-content-generator";
 import { FallbackContentGenerator } from "../internal/content-generation/fallback-content-generator";
+import { checkClaimGrounding } from "../internal/content-generation/claim-guard";
 import { FakeGeminiContentGenerator } from "../internal/product-understanding/gemini-content-generator";
 import type {
   ContentConstraints,
@@ -216,6 +217,81 @@ test("Fallback Decorator: seamlessly recovers to heuristic when primary Gemini f
   assert.equal(fallbackTriggered, true);
   assert.equal(res.generator, "heuristic");
   assert.ok(!res.draft.productTitle.includes("Genuine Leather"));
+});
+
+test("Gemini SEO generator forwards the configured output token budget", async () => {
+  const fakeSdk = new FakeGeminiContentGenerator();
+  fakeSdk.setTextHandler(async () => ({
+    rawText: JSON.stringify({
+      productTitle: "Personalized Music Rug",
+      intro: "A personalized music rug.",
+      bullets: [
+        { label: "Design", text: "Music-inspired artwork." },
+        { label: "Use", text: "Designed for home decor." },
+      ],
+      guidance: [],
+      closing: "A memorable personalized accent.",
+      productSeoTitle: "Personalized Music Rug",
+      productSeoDescription: "Create a personalized music rug for your space.",
+    }),
+  }));
+  const generator = new GeminiSeoContentGenerator(fakeSdk, { maxOutputTokens: 8192 });
+
+  await generator.generate({
+    facts: {
+      originalTitle: "Personalized Music Rug",
+      originalDescription: "Personalized rug with music-inspired artwork.",
+      productCategory: "rug",
+      ocrTexts: [],
+      entities: ["music artwork"],
+      colors: [],
+      targetAudience: ["music fans"],
+      occasions: [],
+      useCases: ["home decor"],
+      personalizationSupported: true,
+    },
+    keywords: {
+      primary: "personalized music rug",
+      secondary: [],
+      supportingKeywords: [],
+      framingConcepts: [],
+      targetedKeywords: ["personalized music rug"],
+    },
+    constraints: DEFAULT_CONSTRAINTS,
+  });
+
+  assert.equal(fakeSdk.textCalls[0]?.maxOutputTokens, 8192);
+});
+
+test("Heuristic generator does not publish unsupported high-risk claims from SEO keywords", async () => {
+  const facts: ContentFactSheet = {
+    originalTitle: "Inspirational Tote Bag",
+    originalDescription: "Printed tote bag with an inspirational design.",
+    productCategory: "tote bag",
+    ocrTexts: [],
+    entities: ["inspirational quote"],
+    colors: ["black"],
+    targetAudience: ["women"],
+    occasions: [],
+    useCases: ["everyday carry"],
+    personalizationSupported: false,
+  };
+  const generator = new HeuristicContentGenerator();
+
+  const draft = await generator.generate({
+    facts,
+    keywords: {
+      primary: "inspirational tote bag",
+      secondary: ["handmade gift for women", "black quote tote"],
+      supportingKeywords: [],
+      framingConcepts: [],
+      targetedKeywords: ["inspirational tote bag", "handmade gift for women", "black quote tote"],
+    },
+    constraints: DEFAULT_CONSTRAINTS,
+  });
+
+  assert.deepEqual(checkClaimGrounding(draft, facts), []);
+  assert.doesNotMatch(JSON.stringify(draft), /hand-?made/i);
 });
 
 test("Title Policy T1: Good source title + primary already represented preserves title", async () => {

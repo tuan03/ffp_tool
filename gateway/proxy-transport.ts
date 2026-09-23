@@ -1,4 +1,4 @@
-import { ProxyAgent } from "undici";
+import { fetch as undiciFetch, ProxyAgent } from "undici";
 import { GatewayError, sanitizeErrorMessage } from "./errors";
 import type { HttpTransport, StoreConfig } from "./types";
 
@@ -31,6 +31,7 @@ function getOrCreateProxyAgent(normalizedUrl: string): ProxyAgent {
 export function createStoreTransport(
   store: StoreConfig,
   baseTransport: HttpTransport = globalThis.fetch,
+  proxyTransport: HttpTransport = undiciFetch as unknown as HttpTransport,
 ): HttpTransport {
   const proxy = store.proxy;
   if (!proxy || !proxy.url) {
@@ -79,7 +80,7 @@ export function createStoreTransport(
       };
 
       return await (baseTransport === globalThis.fetch
-        ? (globalThis.fetch(url, requestInit) as Promise<Response>)
+        ? proxyTransport(url, requestInit)
         : baseTransport(url, requestInit));
     } catch (proxyError: unknown) {
       if (

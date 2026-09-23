@@ -6062,6 +6062,197 @@ describe("Gateway: Architectural & Operational Hardening (P1)", () => {
     assert.equal(prod.hasMoreImages, false);
   });
 
+  it("uses the undici-compatible transport with ProxyAgent instead of Node global fetch", async () => {
+    const store: StoreConfig = {
+      storeId: "proxy-compatible-fetch",
+      shopDomain: "proxy-compatible-fetch.myshopify.com",
+      apiVersion: "2026-07",
+      auth: { type: "static", staticToken: "tok" },
+      proxy: {
+        url: "http://proxy.internal:8080",
+        username: "proxyuser",
+        password: "proxypassword",
+        failClosed: true,
+      },
+    };
+    let proxyTransportCalled = false;
+    let capturedInit: RequestInit | undefined;
+    const proxyTransport: HttpTransport = async (_url, init) => {
+      proxyTransportCalled = true;
+      capturedInit = init;
+      return createMockResponse({ ok: true });
+    };
+
+    const transport = createStoreTransport(store, globalThis.fetch, proxyTransport);
+    await transport("https://example.com/graphql");
+
+    assert.equal(proxyTransportCalled, true);
+    assert.ok((capturedInit as Record<string, unknown> | undefined)?.dispatcher);
+  });
+
+  it("products.update synchronizes managed variants without changing manual variants", async () => {
+    let capturedVariants: unknown;
+    let deletedVariantIds: unknown;
+    const fakeTransport: HttpTransport = async (_url, options) => {
+      const body = JSON.parse(options?.body as string) as { query: string; variables: Record<string, unknown> };
+      if (body.query.includes("PipelineProductState")) {
+        return createMockResponse({ data: { node: {
+          media: { nodes: [] },
+          variants: { nodes: [
+            { id: "gid://shopify/ProductVariant/manual" },
+            { id: "gid://shopify/ProductVariant/old-1" },
+            { id: "gid://shopify/ProductVariant/old-2" },
+          ] },
+        } } });
+      }
+      if (body.query.includes("productUpdate(")) {
+        return createMockResponse({ data: { productUpdate: {
+          product: {
+            id: "gid://shopify/Product/sync-variants",
+            title: "Synced product",
+            handle: "synced-product",
+            status: "ACTIVE",
+            variants: { edges: [] },
+            createdAt: "2026-09-01",
+            updatedAt: "2026-09-22",
+          },
+          userErrors: [],
+        } } });
+      }
+      if (body.query.includes("ProductVariantsBulkUpdateForSync")) {
+        capturedVariants = body.variables.variants;
+        return createMockResponse({ data: { productVariantsBulkUpdate: {
+          productVariants: [
+            {
+              id: "gid://shopify/ProductVariant/old-1", title: "Twin", price: "29.95",
+              inventoryItem: { sku: "TWIN" },
+            },
+          ],
+          userErrors: [],
+        } } });
+      }
+      if (body.query.includes("ProductVariantsBulkDeleteForSync")) {
+        deletedVariantIds = body.variables.variantsIds;
+        return createMockResponse({ data: { productVariantsBulkDelete: {
+          product: { id: "gid://shopify/Product/sync-variants" },
+          userErrors: [],
+        } } });
+      }
+      return createMockResponse({});
+    };
+    const registry = new InMemoryStoreRegistry([{
+      storeId: "store-sync-variants",
+      shopDomain: "sync-variants.myshopify.com",
+      apiVersion: "2026-07",
+      auth: { type: "static", staticToken: "tok" },
+    }]);
+    const client = new ShopifyGraphqlClient({
+      tokenProvider: new StaticAccessTokenProvider(),
+      throttleManager: new InMemoryThrottleManager(),
+      baseTransport: fakeTransport,
+    });
+    const dispatcher = new GatewayDispatcher({ storeRegistry: registry, graphqlClient: client });
+
+    const response = await dispatcher.dispatch({
+      storeId: "store-sync-variants",
+      operation: "products.update",
+      mode: "apply",
+      requestId: "req-sync-variants",
+      payload: {
+        id: "gid://shopify/Product/sync-variants",
+        product: {
+          variantIdsToManage: [
+            "gid://shopify/ProductVariant/old-1",
+            "gid://shopify/ProductVariant/old-2",
+          ],
+          variants: [
+            { price: "29.95", sku: "TWIN", optionValues: [{ optionName: "Size", name: "Twin" }] },
+          ],
+        },
+      },
+    });
+
+    assert.equal(response.success, true);
+    assert.deepEqual(capturedVariants, [
+      {
+        id: "gid://shopify/ProductVariant/old-1",
+        price: "29.95",
+        inventoryItem: { sku: "TWIN", tracked: false },
+        inventoryPolicy: "CONTINUE",
+        optionValues: [{ optionName: "Size", name: "Twin" }],
+      },
+    ]);
+    assert.deepEqual(deletedVariantIds, ["gid://shopify/ProductVariant/old-2"]);
+    const product = (response as { data: { product: ProductSummary } }).data.product;
+    assert.equal(product.variants.length, 1);
+    assert.equal(product.variants[0]?.sku, "TWIN");
+  });
+
+  it("products.update reports reconciliation when managed variant synchronization fails after product update", async () => {
+    const fakeTransport: HttpTransport = async (_url, options) => {
+      const body = JSON.parse(options?.body as string) as { query: string };
+      if (body.query.includes("PipelineProductState")) {
+        return createMockResponse({ data: { node: {
+          media: { nodes: [] },
+          variants: { nodes: [{ id: "gid://shopify/ProductVariant/old-1" }] },
+        } } });
+      }
+      if (body.query.includes("productUpdate(")) {
+        return createMockResponse({ data: { productUpdate: {
+          product: {
+            id: "gid://shopify/Product/partial-variants",
+            title: "Partial variants",
+            handle: "partial-variants",
+            status: "ACTIVE",
+            variants: { edges: [] },
+            createdAt: "2026-09-01",
+            updatedAt: "2026-09-22",
+          },
+          userErrors: [],
+        } } });
+      }
+      if (body.query.includes("ProductVariantsBulkUpdateForSync")) {
+        return createMockResponse({ data: { productVariantsBulkUpdate: {
+          productVariants: null,
+          userErrors: [{ field: ["variants", "0"], message: "Invalid option value" }],
+        } } });
+      }
+      return createMockResponse({});
+    };
+    const registry = new InMemoryStoreRegistry([{
+      storeId: "store-partial-variants",
+      shopDomain: "partial-variants.myshopify.com",
+      apiVersion: "2026-07",
+      auth: { type: "static", staticToken: "tok" },
+    }]);
+    const client = new ShopifyGraphqlClient({
+      tokenProvider: new StaticAccessTokenProvider(),
+      throttleManager: new InMemoryThrottleManager(),
+      baseTransport: fakeTransport,
+    });
+    const dispatcher = new GatewayDispatcher({ storeRegistry: registry, graphqlClient: client });
+
+    await assert.rejects(
+      () => dispatcher.dispatch({
+        storeId: "store-partial-variants",
+        operation: "products.update",
+        mode: "apply",
+        requestId: "req-partial-variants",
+        payload: {
+          id: "gid://shopify/Product/partial-variants",
+          product: { variants: [{ price: "29.95", optionValues: [{ optionName: "Size", name: "Twin" }] }] },
+        },
+      }),
+      (error: unknown) => {
+        assert.ok(error instanceof GatewayError);
+        assert.equal(error.code, "SHOPIFY_PARTIAL_WRITE");
+        assert.equal(error.reconciliationRequired, true);
+        assert.equal(error.details?.updatedProductId, "gid://shopify/Product/partial-variants");
+        return true;
+      },
+    );
+  });
+
   describe("Gateway: variants.bulkCreate, files.create, and metafields.set", () => {
     function setupTestGateway(mockGraphqlDataOrTransport: unknown) {
       const registry = new InMemoryStoreRegistry([

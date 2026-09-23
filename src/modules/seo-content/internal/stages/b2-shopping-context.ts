@@ -27,7 +27,9 @@ export interface B2ShoppingContextDependencies {
  * falling back to HeuristicShoppingContextAnalyzer with an observability warning log.
  * If not configured, uses HeuristicShoppingContextAnalyzer directly.
  */
-export function createDefaultShoppingContextAnalyzer(): ShoppingContextAnalyzer {
+export function createDefaultShoppingContextAnalyzer(options?: {
+  readonly onFallback?: (error: unknown) => void;
+}): ShoppingContextAnalyzer {
   const env = typeof process !== "undefined" && process.env ? process.env : undefined;
   const projectId = env?.GOOGLE_CLOUD_PROJECT;
 
@@ -40,6 +42,10 @@ export function createDefaultShoppingContextAnalyzer(): ShoppingContextAnalyzer 
     env?.GEMINI_ANALYSIS_MODEL ||
     env?.GEMINI_MODEL ||
     "gemini-2.5-flash";
+  const configuredMaxOutputTokens = Number(env?.AI_MAX_OUTPUT_TOKENS ?? 2048);
+  const maxOutputTokens = Number.isFinite(configuredMaxOutputTokens)
+    ? Math.max(512, Math.min(8192, Math.trunc(configuredMaxOutputTokens)))
+    : 2048;
 
   const generator = new GoogleGenAIVertexContentGenerator({
     projectId,
@@ -50,12 +56,14 @@ export function createDefaultShoppingContextAnalyzer(): ShoppingContextAnalyzer 
   const geminiAnalyzer = new GeminiShoppingContextAnalyzer({
     generator,
     model,
+    maxOutputTokens,
   });
 
   return new FallbackShoppingContextAnalyzer({
     primary: geminiAnalyzer,
     fallback: heuristicShoppingContextAnalyzer,
     onFallback: (error, input) => {
+      options?.onFallback?.(error);
       const errMsg = error instanceof Error ? error.message : String(error);
       const title = input.source.title || "untitled";
       console.warn(
