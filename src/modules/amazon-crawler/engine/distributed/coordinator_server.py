@@ -771,12 +771,14 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
                         active_tasks=len(running),
                         available_slots=int(message.get("availableSlots") or 0),
                     )
-                    await asyncio.to_thread(
+                    cancelled_job_ids = await asyncio.to_thread(
                         store.heartbeat,
                         client_id,
                         running,
                         str(message.get("status") or "online"),
                     )
+                    for cancelled_job_id in cancelled_job_ids:
+                        await websocket.send_json({"type": "cancel", "jobId": cancelled_job_id})
                     await assign(int(message.get("availableSlots") or 0))
                 elif message_type == "ready":
                     await manager.update_available_slots(client_id, int(message.get("availableSlots") or 0))

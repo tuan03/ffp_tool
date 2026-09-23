@@ -308,6 +308,13 @@ export async function startCrawlerJob({
 
 export function abortCrawlerJob(): void {
   if (activeController) {
+    sessionState = {
+      ...sessionState,
+      progress: sessionState.progress
+        ? { ...sessionState.progress, message: "Đang yêu cầu coordinator dừng tất cả crawler agent..." }
+        : sessionState.progress,
+    };
+    notifyListeners();
     activeController.abort();
     activeController = null;
   }

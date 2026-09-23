@@ -159,6 +159,101 @@ test("runner posts coordinator cancellation when polling is aborted", async () =
   assert.equal(cancelCalled, true);
 });
 
+test("runner waits for coordinator cancellation confirmation before reporting an abort", async () => {
+  const controller = new AbortController();
+  let releaseCancellation = (): void => undefined;
+  let runSettled = false;
+  const cancellationGate = new Promise<void>((resolve) => {
+    releaseCancellation = resolve;
+  });
+  const run = createAmazonCrawlerRunner({
+    engineUrl: "http://engine.test",
+    pollIntervalMs: 10_000,
+    fetchImplementation: async (_request, init) => {
+      const url = String(_request);
+      if (url.endsWith("/clients")) return jsonResponse([{ id: "client-a", displayName: "A", status: "online", isConnected: true, maxConcurrentInputs: 1, activeTasks: 0 }]);
+      if (url.endsWith("/cancel")) {
+        await cancellationGate;
+        return jsonResponse({ jobId: "job-cancel", status: "cancelled" });
+      }
+      if (init?.method === "POST") return jsonResponse({ id: "job-cancel" }, 202);
+      controller.abort();
+      return jsonResponse({
+        id: "job-cancel",
+        status: "running",
+        progress: { completed: 0, total: 1 },
+        taskCounts: { running: 1 },
+      });
+    },
+  });
+
+  const runPromise = run({ input, signal: controller.signal }).finally(() => {
+    runSettled = true;
+  });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(runSettled, false);
+  releaseCancellation();
+  await assert.rejects(runPromise, { name: "AbortError" });
+});
+
+test("runner reports when coordinator cannot confirm cancellation", async () => {
+  const controller = new AbortController();
+  const run = createAmazonCrawlerRunner({
+    engineUrl: "http://engine.test",
+    pollIntervalMs: 10_000,
+    fetchImplementation: async (_request, init) => {
+      const url = String(_request);
+      if (url.endsWith("/clients")) return jsonResponse([{ id: "client-a", displayName: "A", status: "online", isConnected: true, maxConcurrentInputs: 1, activeTasks: 0 }]);
+      if (url.endsWith("/cancel")) return jsonResponse({ detail: "Coordinator unavailable" }, 503);
+      if (init?.method === "POST") return jsonResponse({ id: "job-cancel" }, 202);
+      controller.abort();
+      return jsonResponse({
+        id: "job-cancel",
+        status: "running",
+        progress: { completed: 0, total: 1 },
+        taskCounts: { running: 1 },
+      });
+    },
+  });
+
+  await assert.rejects(run({ input, signal: controller.signal }), {
+    code: "CANCEL_CONFIRMATION_FAILED",
+  });
+});
+
+test("runner cancels the server job when stop is pressed while job creation is in flight", async () => {
+  const controller = new AbortController();
+  let releaseCreation = (): void => undefined;
+  let cancelCalled = false;
+  const creationGate = new Promise<void>((resolve) => {
+    releaseCreation = resolve;
+  });
+  const run = createAmazonCrawlerRunner({
+    engineUrl: "http://engine.test",
+    fetchImplementation: async (_request, init) => {
+      const url = String(_request);
+      if (url.endsWith("/clients")) return jsonResponse([{ id: "client-a", displayName: "A", status: "online", isConnected: true, maxConcurrentInputs: 1, activeTasks: 0 }]);
+      if (url.endsWith("/cancel")) {
+        cancelCalled = true;
+        return jsonResponse({ jobId: "job-create-race", status: "cancelled" });
+      }
+      if (init?.method === "POST") {
+        await creationGate;
+        return jsonResponse({ id: "job-create-race" }, 202);
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    },
+  });
+
+  const runPromise = run({ input, signal: controller.signal });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  controller.abort();
+  releaseCreation();
+
+  await assert.rejects(runPromise, { name: "AbortError" });
+  assert.equal(cancelCalled, true);
+});
+
 test("runner refuses to create a job when no crawler client is available", async () => {
   let createCalled = false;
   const run = createAmazonCrawlerRunner({

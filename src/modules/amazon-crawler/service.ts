@@ -148,16 +148,24 @@ export function createAmazonCrawlerRunner({
 
   return async ({ input, onProgress, onProducts, signal }: AmazonCrawlerRunOptions): Promise<AmazonCrawlerOutput> => {
     let jobId: string | null = null;
-    let cancellationRequested = false;
+    let cancellationPromise: Promise<void> | null = null;
 
-    const cancelJob = (): void => {
-      if (jobId === null || cancellationRequested) return;
-      cancellationRequested = true;
-      void fetchImplementation(`${baseUrl}/api/v1/crawl-jobs/${encodeURIComponent(jobId)}/cancel`, {
-        method: "POST",
-      }).catch(() => undefined);
+    const cancelJob = (): Promise<void> => {
+      if (jobId === null) return Promise.resolve();
+      if (cancellationPromise) return cancellationPromise;
+      cancellationPromise = (async () => {
+        const response = await fetchImplementation(
+          `${baseUrl}/api/v1/crawl-jobs/${encodeURIComponent(jobId)}/cancel`,
+          { method: "POST" },
+        );
+        await readJson(response);
+      })();
+      return cancellationPromise;
     };
-    signal?.addEventListener("abort", cancelJob, { once: true });
+    const handleAbort = (): void => {
+      void cancelJob();
+    };
+    signal?.addEventListener("abort", handleAbort, { once: true });
 
     try {
       if (signal?.aborted) throw new DOMException("The crawler job was cancelled.", "AbortError");
@@ -175,7 +183,6 @@ export function createAmazonCrawlerRunner({
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(input),
-          signal,
         });
       } catch (error: unknown) {
         if (error instanceof DOMException && error.name === "AbortError") throw error;
@@ -190,7 +197,6 @@ export function createAmazonCrawlerRunner({
 
       for (;;) {
         if (signal?.aborted) {
-          cancelJob();
           throw new DOMException("The crawler job was cancelled.", "AbortError");
         }
         const response = await fetchImplementation(
@@ -219,8 +225,20 @@ export function createAmazonCrawlerRunner({
         }
         await wait(pollIntervalMs, signal);
       }
+    } catch (caught: unknown) {
+      if (signal?.aborted && jobId !== null) {
+        try {
+          await cancelJob();
+        } catch {
+          throw new AmazonCrawlerServiceError(
+            "Không thể xác nhận coordinator đã dừng các crawler agent. Vui lòng thử Stop lại hoặc kiểm tra kết nối server.",
+            "CANCEL_CONFIRMATION_FAILED",
+          );
+        }
+      }
+      throw caught;
     } finally {
-      signal?.removeEventListener("abort", cancelJob);
+      signal?.removeEventListener("abort", handleAbort);
     }
   };
 }

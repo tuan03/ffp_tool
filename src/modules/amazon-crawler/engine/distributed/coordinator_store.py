@@ -177,13 +177,14 @@ class CoordinatorStore:
             client.last_seen_at = now
             return self._client_snapshot(client)
 
-    def heartbeat(self, client_id: str, running: list[dict[str, Any]], status: str = "online") -> None:
+    def heartbeat(self, client_id: str, running: list[dict[str, Any]], status: str = "online") -> list[str]:
         now = utc_now()
         lease_until = now + timedelta(seconds=LEASE_SECONDS)
+        cancelled_job_ids: set[str] = set()
         with self.sessions.begin() as session:
             client = session.get(ClientRecord, client_id)
             if client is None:
-                return
+                return []
             client.status = status if status in {"online", "busy", "waiting_captcha", "paused"} else "online"
             client.last_seen_at = now
             for active in running:
@@ -193,6 +194,14 @@ class CoordinatorStore:
                 if task and task.lease_id == lease_id and task.assigned_client_id == client_id and task.status in {"leased", "running"}:
                     task.status = "running"
                     task.lease_expires_at = lease_until
+                elif (
+                    task
+                    and task.status == "cancelled"
+                    and task.lease_id == lease_id
+                    and task.assigned_client_id == client_id
+                ):
+                    cancelled_job_ids.add(task.job_id)
+        return sorted(cancelled_job_ids)
 
     def mark_client_disconnected(self, client_id: str) -> None:
         with self.sessions.begin() as session:

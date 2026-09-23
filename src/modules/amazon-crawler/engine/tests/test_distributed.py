@@ -3,6 +3,7 @@ from __future__ import annotations
 import gzip
 import json
 import tempfile
+import threading
 import unittest
 import asyncio
 import base64
@@ -322,6 +323,86 @@ class ClientStoreTests(unittest.TestCase):
 
 
 class ClientAgentTests(unittest.IsolatedAsyncioTestCase):
+    def test_job_cancellation_sets_every_registered_batch_event(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            config = AgentConfig(
+                server_url="http://127.0.0.1:9999",
+                display_name="test-agent",
+                max_concurrent_inputs=2,
+                limits=AgentLimits(),
+                data_directory=Path(directory),
+            )
+            agent = DistributedCrawlerAgent(project_root=Path(directory), config=config)
+            first_event = threading.Event()
+            second_event = threading.Event()
+
+            agent._register_cancel_event("job-1", first_event)
+            agent._register_cancel_event("job-1", second_event)
+            agent._cancel_job("job-1")
+
+            self.assertTrue(first_event.is_set())
+            self.assertTrue(second_event.is_set())
+
+    async def test_cancelled_batch_discards_late_products_and_results(self) -> None:
+        class FakeBrowserPool:
+            def close(self) -> None:
+                pass
+
+        class LateCallbackCrawler:
+            def __init__(self, **_kwargs: object) -> None:
+                self.browser_pool = FakeBrowserPool()
+
+            def run(self, **kwargs: object) -> dict[str, object]:
+                kwargs["on_product_complete"]({
+                    "source": "B0FR4MSS2H",
+                    "asin": "B0FR4MSS2H",
+                    "product": {"id": "late-product", "sourceKey": "amazon:late"},
+                })
+                kwargs["on_input_complete"]({
+                    "source": "B0FR4MSS2H",
+                    "asin": "B0FR4MSS2H",
+                    "status": "completed",
+                    "products": [{"id": "late-product"}],
+                    "errors": [],
+                    "warnings": [],
+                    "completedAt": "2026-09-23T00:00:00Z",
+                    "durationMs": 1,
+                })
+                return {"status": "completed"}
+
+        with tempfile.TemporaryDirectory() as directory:
+            config = AgentConfig(
+                server_url="http://127.0.0.1:9999",
+                display_name="test-agent",
+                max_concurrent_inputs=1,
+                limits=AgentLimits(),
+                data_directory=Path(directory),
+            )
+            agent = DistributedCrawlerAgent(
+                project_root=Path(directory),
+                config=config,
+                crawler_factory=LateCallbackCrawler,
+            )
+            assignment = {
+                "taskId": "task-1",
+                "jobId": "job-1",
+                "leaseId": "lease-1",
+                "source": "B0FR4MSS2H",
+                "asin": "B0FR4MSS2H",
+                "url": "https://www.amazon.com/dp/B0FR4MSS2H",
+                "settings": {},
+                "settingsFingerprint": "settings-1",
+            }
+            cancel_event = threading.Event()
+            cancel_event.set()
+
+            await asyncio.to_thread(agent._run_batch, [assignment], cancel_event, asyncio.get_running_loop())
+            completion = await asyncio.wait_for(agent.completion_queue.get(), timeout=1)
+
+            self.assertEqual(completion["type"], "cancelled")
+            self.assertEqual(agent.store.pending_products(), [])
+            self.assertEqual(agent.store.pending_results(), [])
+
     async def test_crawler_receives_agent_proxy_config_path(self) -> None:
         captured: dict[str, object] = {}
 
@@ -730,6 +811,19 @@ class CoordinatorStoreTests(unittest.TestCase):
 
         self.assertEqual(len(first), 2)
         self.assertEqual(second, [])
+
+    def test_heartbeat_reissues_cancel_for_a_cancelled_running_job(self) -> None:
+        job = self.store.create_job({"urls": ["B0FR4MSS2H"]})
+        self.store.register_client(client_hello(slots=1))
+        lease = self.store.lease_tasks("client-a", 1)[0]
+        self.store.cancel_job(str(job["id"]))
+
+        cancelled_job_ids = self.store.heartbeat("client-a", [{
+            "taskId": lease["taskId"],
+            "leaseId": lease["leaseId"],
+        }], "busy")
+
+        self.assertEqual(cancelled_job_ids, [job["id"]])
 
     def test_job_snapshot_exposes_latest_detailed_progress_for_each_task(self) -> None:
         job = self.store.create_job({"urls": ["B0FR4MSS2H"]})
