@@ -9,6 +9,9 @@ import {
   requestNotificationPermission,
   playNotificationSound,
   flashTabTitle,
+  isNotificationSoundMuted,
+  setNotificationSoundMuted,
+  isSecureOrigin,
   type AppNotification,
 } from "../app-notifier";
 
@@ -52,6 +55,7 @@ test("environment safety when browser APIs are absent", async () => {
   // Verifies safe execution without throwing in Node/SSR environment
   assert.equal(isNotificationSupported(), false);
   assert.equal(getNotificationPermissionStatus(), "unsupported");
+  assert.equal(isSecureOrigin(), false);
   const permission = await requestNotificationPermission();
   assert.equal(permission, "unsupported");
 
@@ -62,4 +66,12 @@ test("environment safety when browser APIs are absent", async () => {
     playNotificationSound("none");
     flashTabTitle("Tab Title");
   });
+});
+
+test("sound mute state toggles correctly", () => {
+  assert.equal(isNotificationSoundMuted(), false);
+  setNotificationSoundMuted(true);
+  assert.equal(isNotificationSoundMuted(), true);
+  setNotificationSoundMuted(false);
+  assert.equal(isNotificationSoundMuted(), false);
 });

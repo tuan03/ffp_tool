@@ -29,7 +29,37 @@ export interface NotifyOptions {
   readonly tag?: string;
 }
 
-export type NotificationPermissionStatus = "granted" | "denied" | "default" | "unsupported";
+export type NotificationPermissionStatus =
+  | "granted"
+  | "denied"
+  | "default"
+  | "unsupported"
+  | "insecure-context";
+
+// Sound Mute State
+let isSoundMuted = false;
+try {
+  if (typeof window !== "undefined" && window.localStorage) {
+    isSoundMuted = window.localStorage.getItem("ffp_sound_muted") === "true";
+  }
+} catch {
+  // ignore
+}
+
+export function isNotificationSoundMuted(): boolean {
+  return isSoundMuted;
+}
+
+export function setNotificationSoundMuted(muted: boolean): void {
+  isSoundMuted = muted;
+  try {
+    if (typeof window !== "undefined" && window.localStorage) {
+      window.localStorage.setItem("ffp_sound_muted", String(muted));
+    }
+  } catch {
+    // ignore
+  }
+}
 
 // In-App Notification Subscribers
 type NotificationListener = (notification: AppNotification) => void;
@@ -65,8 +95,9 @@ function getAudioContext(): AudioContext | null {
 /**
  * Plays a pleasant synthesized notification chime or warning alert tone.
  */
-export function playNotificationSound(type: SoundType = "chime"): void {
+export function playNotificationSound(type: SoundType = "chime", force = false): void {
   if (type === "none") return;
+  if (isSoundMuted && !force) return;
   const ctx = getAudioContext();
   if (!ctx) return;
 
@@ -132,10 +163,23 @@ export function isNotificationSupported(): boolean {
 }
 
 /**
+ * Checks whether the current page is served from a secure context (HTTPS, localhost, 127.0.0.1).
+ */
+export function isSecureOrigin(): boolean {
+  if (typeof window === "undefined") return false;
+  if (typeof window.isSecureContext === "boolean") {
+    return window.isSecureContext;
+  }
+  const host = window.location.hostname;
+  return host === "localhost" || host === "127.0.0.1" || window.location.protocol === "https:";
+}
+
+/**
  * Returns current permission status for browser notifications.
  */
 export function getNotificationPermissionStatus(): NotificationPermissionStatus {
   if (!isNotificationSupported()) return "unsupported";
+  if (!isSecureOrigin()) return "insecure-context";
   return Notification.permission;
 }
 
@@ -144,6 +188,7 @@ export function getNotificationPermissionStatus(): NotificationPermissionStatus 
  */
 export async function requestNotificationPermission(): Promise<NotificationPermissionStatus> {
   if (!isNotificationSupported()) return "unsupported";
+  if (!isSecureOrigin()) return "insecure-context";
   try {
     const permission = await Notification.requestPermission();
     // Warm up audio context upon user permission interaction

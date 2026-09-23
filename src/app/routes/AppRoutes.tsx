@@ -32,7 +32,6 @@ import { getSeoContentRunner } from "../../modules/seo-content";
 import type {
   AmazonCrawlerSyncRetrier,
 } from "../../modules/amazon-crawler";
-import { HomePage } from "../../pages/home/HomePage";
 import { NotFoundPage } from "../../pages/not-found/NotFoundPage";
 import {
   adaptAutoSeoItemToViewModel,
@@ -240,10 +239,6 @@ export function AppRoutes({
           {
             path: "seo-review",
             element: <SeoReviewPage moduleApiRunner={moduleApiRunner} />,
-          },
-          {
-            path: "workflow-demo",
-            element: <HomePage runWorkflow={runWorkflow} />,
           },
           {
             path: "*",
