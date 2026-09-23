@@ -95,6 +95,7 @@ export type {
   ShopifyProduct,
   ShopifyProductBulkUpdateItem,
   ShopifyProductInput,
+  ShopifyProductMetafieldInput,
   ShopifyProductUpdateInput,
   ShopifyProductVariant,
   ShopifyProductsBulkUpdateData,

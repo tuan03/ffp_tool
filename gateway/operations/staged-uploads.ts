@@ -246,7 +246,7 @@ export async function stageLocalMedia(
   store: StoreConfig,
   client: ShopifyGraphqlClient,
   originalSource: string,
-  options?: { readonly alt?: string; readonly requestId?: string },
+  options?: { readonly alt?: string; readonly requestId?: string; readonly resource?: "IMAGE" | "FILE" },
 ): Promise<string> {
   if (!isLocalOrPrivateUrl(originalSource)) {
     return originalSource;
@@ -262,6 +262,7 @@ export async function stageLocalMedia(
       filename,
       mimeType: contentType,
       contentBase64,
+      resource: options?.resource ?? (buffer.length > 20 * 1024 * 1024 ? "FILE" : "IMAGE"),
     },
     "apply",
     options?.requestId,

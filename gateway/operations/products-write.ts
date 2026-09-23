@@ -560,6 +560,31 @@ export async function executeProductsCreate(
     }
   }
 
+  if (Array.isArray(productInput.metafields) && productInput.metafields.length > 0) {
+    const validMetafields = (productInput.metafields as readonly Record<string, unknown>[])
+      .filter((m) => m && typeof m === "object")
+      .map((m) => {
+        const namespace = typeof m.namespace === "string" && m.namespace.trim() !== "" ? m.namespace.trim() : "custom";
+        const key = typeof m.key === "string" ? m.key.trim() : "";
+        let valStr: string;
+        if (typeof m.value === "string") {
+          valStr = m.value;
+        } else if (typeof m.value === "object" && m.value !== null) {
+          valStr = JSON.stringify(m.value);
+        } else if (m.value !== undefined && m.value !== null) {
+          valStr = String(m.value);
+        } else {
+          valStr = "";
+        }
+        const type = typeof m.type === "string" && m.type.trim() !== "" ? m.type.trim() : "single_line_text_field";
+        return { namespace, key, value: valStr, type };
+      })
+      .filter((m) => m.key !== "");
+    if (validMetafields.length > 0) {
+      input.metafields = validMetafields;
+    }
+  }
+
   if (Array.isArray(productInput.productOptions) && productInput.productOptions.length > 0) {
     input.productOptions = (productInput.productOptions as readonly { name: string; values?: unknown[] }[]).map((opt) => ({
       name: opt.name,

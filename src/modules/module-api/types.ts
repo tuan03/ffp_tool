@@ -176,6 +176,14 @@ export interface ShopifyProductVariantInput {
   readonly optionValues?: readonly ShopifyVariantOptionValueInput[];
 }
 
+export interface ShopifyProductMetafieldInput {
+  readonly namespace: string;
+  readonly key: string;
+  readonly value: string;
+  readonly type?: string;
+  readonly ownerId?: string;
+}
+
 export interface ShopifyProductInput {
   readonly title: string;
   readonly handle?: string;
@@ -193,6 +201,7 @@ export interface ShopifyProductInput {
   readonly productOptions?: readonly ShopifyProductOptionInput[];
   readonly variants?: readonly ShopifyProductVariantInput[];
   readonly seo?: ShopifySeoInput;
+  readonly metafields?: readonly ShopifyProductMetafieldInput[];
 }
 
 export interface ShopifyProductUpdateInput {
@@ -213,6 +222,7 @@ export interface ShopifyProductUpdateInput {
   readonly variants?: readonly ShopifyProductVariantInput[];
   readonly replaceMedia?: boolean;
   readonly mediaIdsToDelete?: readonly string[];
+  readonly metafields?: readonly ShopifyProductMetafieldInput[];
   readonly variantIdsToManage?: readonly string[];
   readonly seo?: ShopifySeoInput;
 }

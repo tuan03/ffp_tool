@@ -217,6 +217,7 @@ export function createShopifyGatewayAdapter(
             ...(categoryId ? { categoryId } : {}),
             tags: input.tags,
             collectionsToJoin: input.collectionsToJoin,
+            metafields: input.metafields,
             media: input.media?.map((m) => ({
               originalSource: m.originalSource,
               alt: m.alt,
@@ -390,7 +391,7 @@ export function createShopifyGatewayAdapter(
           originalSource: input.originalSource,
           filename: input.filename,
           alt: input.alt,
-          contentType: "IMAGE",
+          contentType: input.contentType ?? "IMAGE",
         },
       })) as ShopifyFilesCreateResponse;
 

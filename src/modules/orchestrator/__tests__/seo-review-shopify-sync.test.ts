@@ -88,6 +88,20 @@ function createMockRunner(
       } as unknown as ShopifyApiResponse;
     }
 
+    if (input.operation === "files.create") {
+      const filename = input.payload?.filename || "print-file.png";
+      return {
+        storeId: input.storeId || "capozen",
+        operation: "files.create",
+        success: true,
+        data: {
+          fileId: "gid://shopify/GenericFile/file-777",
+          shopifyCdnUrl: `https://cdn.shopify.com/s/files/1/0000/0000/files/${filename}`,
+          fileStatus: "READY",
+        },
+      } as unknown as ShopifyApiResponse;
+    }
+
     if (input.operation === "metafields.set") {
       return {
         storeId: input.storeId || "capozen",
@@ -467,5 +481,100 @@ describe("seo-review-shopify-sync", () => {
     assert.equal(result.success, true);
     assert.equal(result.productId, "gid://shopify/Product/existing-synced-555");
     assert.equal(didUpdateExisting, true);
+  });
+
+  it("pushes Pinterest POD product with printMaster metafields and only AI mockups in media", async () => {
+    let capturedMetafields: unknown[] | undefined;
+    let capturedMedia: unknown[] | undefined;
+
+    const runner = createMockRunner(async (input) => {
+      if (input.operation === "products.create") {
+        const payload = input.payload as { product?: { metafields?: unknown[]; media?: unknown[] } };
+        capturedMetafields = payload.product?.metafields;
+        capturedMedia = payload.product?.media;
+        return {
+          storeId: "capozen",
+          operation: "products.create",
+          success: true,
+          data: {
+            product: {
+              id: "gid://shopify/Product/pod-created-888",
+              title: "Washed Persian Medallion Rug",
+              handle: "washed-persian-medallion-rug",
+            },
+          },
+        } as unknown as ShopifyApiResponse;
+      }
+      return undefined;
+    });
+
+    const podItem: SeoReviewPushProductItem = {
+      id: "pod-rug-101",
+      productTitle: "Washed Persian Medallion Rug",
+      productDescription: "<p>Vintage aesthetic boho rug</p>",
+      seoTitle: "Washed Persian Medallion Rug | Boho Living Room Decor",
+      seoDescription: "Shop the washed persian medallion rug with fast shipping.",
+      handle: "washed-persian-medallion-rug",
+      tags: ["pod", "pinterest-pod", "vintage boho rug"],
+      vendor: "FFP Store",
+      productType: "rug",
+      images: [
+        {
+          previewUrl: "https://example.com/mockup_room_01.jpg",
+          alt: "Washed Persian Medallion Rug styled in living room",
+        },
+        {
+          previewUrl: "https://example.com/mockup_room_02.jpg",
+          alt: "Washed Persian Medallion Rug styled in bedroom",
+        },
+      ],
+      metafields: [
+        {
+          namespace: "custom",
+          key: "print_file_url",
+          value: "http://127.0.0.1:8768/api/pinterest-pod/assets/wf_001/design_101_cmyk_300dpi.jpg",
+          type: "single_line_text_field",
+        },
+        {
+          namespace: "custom",
+          key: "print_specs",
+          value: JSON.stringify({
+            designId: "design_rug_101",
+            productType: "rug",
+            dpi: 300,
+            widthPx: 4000,
+            heightPx: 6400,
+            colorMode: "CMYK",
+          }),
+          type: "json",
+        },
+      ],
+    };
+
+    const result = await pushSeoReviewProductToShopify(podItem, { moduleApiRunner: runner });
+
+    assert.equal(result.success, true);
+    assert.equal(result.productId, "gid://shopify/Product/pod-created-888");
+
+    // 1. Verify media only contains the 2 AI mockups, no print master
+    assert.ok(Array.isArray(capturedMedia));
+    assert.equal(capturedMedia?.length, 2);
+    assert.ok(!capturedMedia?.some((m) => JSON.stringify(m).includes("cmyk_300dpi")));
+
+    // 2. Verify metafields are properly included for print master storage and uploaded to Shopify CDN (only print_file_url and print_specs)
+    assert.ok(Array.isArray(capturedMetafields));
+    assert.equal(capturedMetafields?.length, 2);
+    const printFileMeta = capturedMetafields?.find((m: any) => m.key === "print_file_url") as any;
+    assert.ok(printFileMeta);
+    assert.ok(printFileMeta.value.includes("cdn.shopify.com"));
+    assert.ok(printFileMeta.value.includes("design_101_cmyk_300dpi.jpg"));
+
+    const printSpecsMeta = capturedMetafields?.find((m: any) => m.key === "print_specs") as any;
+    assert.ok(printSpecsMeta);
+    assert.ok(printSpecsMeta.value.includes("4000"));
+    assert.ok(printSpecsMeta.value.includes("cdn.shopify.com"));
+
+    const printFileRef = capturedMetafields?.find((m: any) => m.key === "print_file");
+    assert.equal(printFileRef, undefined);
   });
 });

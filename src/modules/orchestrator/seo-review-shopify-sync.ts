@@ -15,6 +15,7 @@ import {
   fromCustomizationNormalizerProduct,
   syncSingleProduct,
   type ShopifyManagedResources,
+  type ShopifyMetafieldInput,
 } from "../shopify-sync";
 
 export interface SeoReviewPushImageItem {
@@ -39,6 +40,7 @@ export interface SeoReviewPushProductItem {
   readonly tags?: readonly string[];
   readonly vendor?: string;
   readonly productType?: string;
+  readonly metafields?: readonly ShopifyMetafieldInput[];
 }
 
 export interface PushSeoReviewProductResult {
@@ -115,6 +117,65 @@ export async function pushSeoReviewProductToShopify(
     const store = resolvedStore || (await resolvePrimaryShopifyStore(moduleApiRunner, options.storeId));
     const targetStoreId = store.storeId;
     const shopAdminHandle = store.shopAdminHandle;
+
+    let finalMetafields = product.metafields ? [...product.metafields] : undefined;
+
+    // By default, always upload the print master file to Shopify Files so it has a permanent Shopify CDN URL!
+    if (finalMetafields && finalMetafields.length > 0) {
+      const printUrlMetaIndex = finalMetafields.findIndex(
+        (m) => m.namespace === "custom" && m.key === "print_file_url" && Boolean(m.value && m.value.trim()),
+      );
+
+      if (printUrlMetaIndex >= 0) {
+        const rawPrintSource = finalMetafields[printUrlMetaIndex].value.trim();
+        try {
+          const rawFilename = rawPrintSource.split("/").pop()?.split("?")[0] || `${product.handle}-print-master.png`;
+          const uploadGateway = createShopifyGatewayAdapter(targetStoreId, {
+            runner: moduleApiRunner,
+            mode,
+            getRequestId: (op) => `seo-review-upload-${product.id}-${op}-${Date.now()}`,
+          });
+
+          const uploaded = await uploadGateway.uploadFile({
+            originalSource: rawPrintSource,
+            filename: rawFilename,
+            contentType: "FILE",
+            alt: `${product.productTitle} - High Resolution Print Graphic (300 DPI)`,
+          });
+
+          if (uploaded?.shopifyCdnUrl) {
+            const cdnUrl = uploaded.shopifyCdnUrl;
+            const fileId = uploaded.fileId;
+
+            finalMetafields[printUrlMetaIndex] = {
+              ...finalMetafields[printUrlMetaIndex],
+              value: cdnUrl,
+            };
+
+            const printSpecsIndex = finalMetafields.findIndex(
+              (m) => m.namespace === "custom" && m.key === "print_specs" && Boolean(m.value),
+            );
+            if (printSpecsIndex >= 0) {
+              try {
+                const parsed = JSON.parse(finalMetafields[printSpecsIndex].value) as Record<string, unknown>;
+                parsed.shopifyCdnUrl = cdnUrl;
+                if (fileId) parsed.shopifyFileId = fileId;
+                parsed.cmykUrl = cdnUrl;
+                parsed.rgbUrl = cdnUrl;
+                finalMetafields[printSpecsIndex] = {
+                  ...finalMetafields[printSpecsIndex],
+                  value: JSON.stringify(parsed),
+                };
+              } catch {
+                // ignore json error
+              }
+            }
+          }
+        } catch (uploadError) {
+          console.warn("[Shopify Sync] Could not upload print file to Shopify Files, using original source:", uploadError);
+        }
+      }
+    }
 
     // Case 1: Product has full crawled product data from Amazon Crawler
     if (product.sourceCrawlProduct) {
@@ -258,6 +319,26 @@ export async function pushSeoReviewProductToShopify(
       const finalProductId = updated?.id || normalizedProductId;
       const finalHandle = updated?.handle || product.handle;
 
+      if (finalMetafields && finalMetafields.length > 0 && finalProductId) {
+        try {
+          await moduleApiRunner({
+            storeId: targetStoreId,
+            operation: "metafields.set",
+            mode,
+            requestId: `seo-review-metafields-${product.id}-${Date.now()}`,
+            payload: {
+              ownerId: finalProductId,
+              metafields: finalMetafields.map((m) => ({
+                ...m,
+                ownerId: finalProductId,
+              })),
+            },
+          });
+        } catch {
+          // Gracefully continue so product sync remains successful
+        }
+      }
+
       return {
         id: product.id,
         success: true,
@@ -285,6 +366,7 @@ export async function pushSeoReviewProductToShopify(
       tags: product.tags ? [...product.tags] : undefined,
       vendor: product.vendor,
       productType: product.productType,
+      metafields: finalMetafields,
       media: product.images.map((img) => ({
         originalSource: img.previewUrl,
         alt: img.alt,

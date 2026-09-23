@@ -28,6 +28,32 @@ const SESSION_STORAGE_KEY = "ffp_seo_review_session_v1";
 const VIEW_MODE_STORAGE_KEY = "ffp_seo_review_view_mode";
 
 function toPushProductItem(vm: SeoProductUiViewModel): SeoReviewPushProductItem {
+  const printMaster = vm.sourcePinterestItem?.printMaster;
+  const metafields = printMaster ? [
+    {
+      namespace: "custom",
+      key: "print_file_url",
+      value: printMaster.cmykUrl || printMaster.rgbUrl || printMaster.localFilePath || "",
+      type: "single_line_text_field",
+    },
+    {
+      namespace: "custom",
+      key: "print_specs",
+      value: JSON.stringify({
+        designId: vm.sourcePinterestItem?.designId,
+        productType: vm.sourcePinterestItem?.productType,
+        dpi: printMaster.dpi || 300,
+        widthPx: printMaster.widthPx,
+        heightPx: printMaster.heightPx,
+        colorMode: printMaster.colorMode || "CMYK",
+        cmykUrl: printMaster.cmykUrl,
+        rgbUrl: printMaster.rgbUrl,
+        localFilePath: printMaster.localFilePath,
+      }),
+      type: "json",
+    },
+  ] : undefined;
+
   return {
     id: vm.id,
     productId: vm.productId,
@@ -48,6 +74,7 @@ function toPushProductItem(vm: SeoProductUiViewModel): SeoReviewPushProductItem 
       ? ["pod", "pinterest-pod", ...(vm.sourcePinterestItem.trendKeywords || [])]
       : undefined,
     vendor: vm.sourcePinterestItem ? "FFP Store" : undefined,
+    metafields,
   };
 }
 

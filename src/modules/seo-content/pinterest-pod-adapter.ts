@@ -211,17 +211,9 @@ function extractImages(item: PodDeliverableItem): SeoContentImageInput[] {
 
   const title = item.originalPinTitle || item.designId;
 
-  // 1. Ảnh chính đại diện: Phôi nền trắng sạch 1:1 chuẩn sàn thương mại điện tử
-  if (item.cutoutProduct?.whiteBgUrl) {
-    addImage(
-      item.cutoutProduct.whiteBgUrl,
-      `${title} - Clean White Background Product View`,
-      item.cutoutProduct.localFilePath,
-    );
-  }
-
-  // 2. Ảnh phối cảnh phòng sống động do AI render (Composed Mockups)
-  if (Array.isArray(item.composedMockups)) {
+  // 1. Ảnh quảng bá Storefront: CHỈ lấy các ảnh phối cảnh AI Mockup (AI_background) do AI render
+  const hasMockups = Array.isArray(item.composedMockups) && item.composedMockups.some((m) => Boolean(m?.mockupUrl));
+  if (hasMockups && Array.isArray(item.composedMockups)) {
     for (const mockup of item.composedMockups) {
       if (!mockup?.mockupUrl) continue;
       const scene = mockup.detectedSceneType || "living room";
@@ -229,25 +221,17 @@ function extractImages(item: PodDeliverableItem): SeoContentImageInput[] {
       const alt = desc ? `${title} styled in ${scene}: ${desc}` : `${title} in ${scene} setting`;
       addImage(mockup.mockupUrl, alt, mockup.localFilePath);
     }
-  }
-
-  // 3. Ảnh thiết kế in ấn xưởng hệ màu RGB / chi tiết họa tiết
-  if (item.printMaster?.rgbUrl) {
+  } else if (item.cutoutProduct?.whiteBgUrl) {
+    // Dự phòng an toàn: nếu chưa có mockup AI nào, lấy tạm ảnh phôi trắng để không bị trống ảnh sản phẩm
     addImage(
-      item.printMaster.rgbUrl,
-      `${title} - High Resolution Print Graphic Detail (300 DPI)`,
-      item.printMaster.localFilePath,
-    );
-  }
-
-  // 4. Ảnh phôi trong suốt (nếu có và chưa được thêm)
-  if (item.cutoutProduct?.transparentUrl) {
-    addImage(
-      item.cutoutProduct.transparentUrl,
-      `${title} - Isolated Transparent Product Cutout`,
+      item.cutoutProduct.whiteBgUrl,
+      `${title} - Clean White Background Product View`,
       item.cutoutProduct.localFilePath,
     );
   }
+
+  // Chú ý: Ảnh bản in (item.printMaster) được lưu độc quyền vào Shopify Metafields,
+  // tuyệt đối không đưa vào mảng images của storefront để tránh lộ file xưởng và tránh lỗi dung lượng 20MB.
 
   return images;
 }

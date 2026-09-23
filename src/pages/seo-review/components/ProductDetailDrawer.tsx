@@ -418,6 +418,62 @@ export function ProductDetailDrawer({
                 </div>
               )}
             </div>
+
+            {/* Print Master Specification (Shopify Metafields) */}
+            {product.sourcePinterestItem?.printMaster && (
+              <div className="rounded-xl border border-indigo-900/50 bg-indigo-950/20 p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="text-base">🖨️</span>
+                    <h3 className="font-semibold text-indigo-300 text-sm">
+                      Bản In Xưởng (Shopify Metafields)
+                    </h3>
+                  </div>
+                  <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                    {product.sourcePinterestItem.printMaster.dpi || 300} DPI • {product.sourcePinterestItem.printMaster.colorMode || "CMYK"}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  <div className="bg-slate-900/80 p-2.5 rounded border border-slate-800">
+                    <span className="text-slate-400 block text-[11px]">Độ phân giải:</span>
+                    <span className="font-mono font-medium text-slate-200">
+                      {product.sourcePinterestItem.printMaster.widthPx} × {product.sourcePinterestItem.printMaster.heightPx} px
+                    </span>
+                  </div>
+                  <div className="bg-slate-900/80 p-2.5 rounded border border-slate-800">
+                    <span className="text-slate-400 block text-[11px]">Metafield đích:</span>
+                    <span className="font-mono font-medium text-indigo-300">
+                      custom.print_specs
+                    </span>
+                  </div>
+                </div>
+
+                <div className="text-[11px] text-slate-400 bg-slate-950/60 p-2.5 rounded border border-slate-800/80 space-y-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-400 font-medium">Link file in gốc:</span>
+                    {product.sourcePinterestItem.printMaster.cmykUrl || product.sourcePinterestItem.printMaster.rgbUrl ? (
+                      <button
+                        type="button"
+                        onClick={() => handleCopy(
+                          product.sourcePinterestItem?.printMaster?.cmykUrl || product.sourcePinterestItem?.printMaster?.rgbUrl || "",
+                          "print-master-url"
+                        )}
+                        className="text-xs text-indigo-400 hover:text-indigo-300 transition"
+                      >
+                        {copiedKey === "print-master-url" ? "✓ Đã copy" : "Copy Link"}
+                      </button>
+                    ) : null}
+                  </div>
+                  <p className="font-mono text-slate-300 truncate text-[10px]">
+                    {product.sourcePinterestItem.printMaster.cmykUrl || product.sourcePinterestItem.printMaster.rgbUrl || product.sourcePinterestItem.printMaster.localFilePath || "Đang tạo..."}
+                  </p>
+                  <p className="text-[10px] text-indigo-400/80 italic pt-1">
+                    ✓ File in xưởng được bảo mật tuyệt đối, không hiển thị lên trang bán hàng cho khách xem.
+                  </p>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Drawer Footer Actions */}
