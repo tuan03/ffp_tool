@@ -150,6 +150,51 @@ def build_template_mockup(
     return TemplateMockupRecord(print_path, None, None, None, model, pose.name, "failed", last_error, {}, variant=variant)
 
 
+def _normalize_boxes(raw_boxes: Any) -> list[list[int]]:
+    if not isinstance(raw_boxes, list):
+        return []
+    result: list[list[int]] = []
+    for b in raw_boxes:
+        if isinstance(b, (list, tuple)) and len(b) == 4:
+            try:
+                coords = [int(float(x)) for x in b]
+                if 0 <= coords[0] < coords[2] <= 1000 and 0 <= coords[1] < coords[3] <= 1000:
+                    result.append(coords)
+            except (ValueError, TypeError):
+                continue
+    return result
+
+
+def composite_infographic_hybrid(
+    template_img: Image.Image,
+    generated_img: Image.Image,
+    chrome_boxes: list[list[int]] | None = None,
+) -> Image.Image:
+    """Overlays native high-resolution chrome, text banners, headers, and hardware zoom panels from the original template over the generated image.
+
+    Guarantees 100% crisp typography, clean vector banners, and untouched hardware callout panels.
+    """
+    w, h = template_img.size
+    gen_resized = generated_img.resize((w, h), Image.Resampling.LANCZOS)
+
+    norm_chrome_boxes = _normalize_boxes(chrome_boxes)
+    if not norm_chrome_boxes:
+        return gen_resized
+
+    result = gen_resized.copy()
+    for cbox in norm_chrome_boxes:
+        cymin, cxmin, cymax, cxmax = cbox
+        cleft = max(0, int(cxmin * w / 1000.0))
+        ctop = max(0, int(cymin * h / 1000.0))
+        cright = min(w, int(cxmax * w / 1000.0))
+        cbottom = min(h, int(cymax * h / 1000.0))
+        if cright > cleft and cbottom > ctop:
+            chrome_crop = template_img.crop((cleft, ctop, cright, cbottom))
+            result.paste(chrome_crop, (cleft, ctop))
+
+    return result
+
+
 def analyze_reference_image(
     client: Any,
     image: Image.Image,
@@ -162,11 +207,20 @@ def analyze_reference_image(
     """Dynamically analyze any reference image with open-ended visual intelligence.
 
     Applies the universal principles of Spatial Physics and Object-Print Separation:
-    1. External Context & Infographic Chrome -> Preserve 100%.
-    2. Product Physical Carrier / Substrate -> Geometry & Physics retained as printable canvas.
-    3. Prior Surface Print Graphics -> 100% eliminated and replaced with new artwork.
+    1. Product Silhouette & Form Factor -> 100% geometry and hardware locked (no tote/bowler hallucinations).
+    2. Infographic Chrome & Typography -> Detected for hybrid native high-res preservation.
+    3. Human Anatomy -> Enforces 5-finger anatomical precision and natural wrist articulation.
+    4. Prior Surface Print Graphics -> 100% eliminated and replaced with new artwork.
+    5. Zero Visual Artifacts -> Strictly forbids floating colored dots, dead pixels, and watermarks.
     """
     from google.genai import types
+
+    raw_target = (target.name or "").strip().lower()
+    active_niche = (getattr(target, "niche", "") or "").strip().lower()
+    if raw_target in {"custom", "product"} and active_niche:
+        product_label = active_niche
+    else:
+        product_label = raw_target or active_niche or "POD commercial product"
 
     # Deterministic content hash for caching (combining reference image and artwork thumbnail)
     thumb_ref = image.resize((min(image.width, 256), min(image.height, 256)))
@@ -180,7 +234,7 @@ def analyze_reference_image(
         thumb_art.save(buf_art, format="JPEG", quality=75)
         buf_art_bytes = buf_art.getvalue()
 
-    hash_key = hashlib.sha256(buf_ref.getvalue() + buf_art_bytes).hexdigest()[:16]
+    hash_key = "v3_" + hashlib.sha256(buf_ref.getvalue() + buf_art_bytes + product_label.encode("utf-8")).hexdigest()[:16]
 
     cache_file: Path | None = None
     if cache_dir:
@@ -196,73 +250,61 @@ def analyze_reference_image(
             except Exception:
                 pass
 
-    if artwork is not None:
-        analysis_prompt = f"""
-You are an elite creative director and commercial photographer specializing in Print-on-Demand (POD) e-commerce products ({target.name}).
-You are analyzing an exemplary commercial marketing image (Reference Image 2) to adapt it for a new {target.name} that will feature the new print artwork (Image 1).
+    analysis_prompt = f"""
+You are an elite creative director and commercial photographer specializing in Print-on-Demand (POD) e-commerce products ({product_label}).
+You are analyzing an exemplary commercial marketing image (Reference Image 2) to adapt it for a new {product_label} that will feature the new print artwork (Image 1).
 
-Apply the universal principles of Semantic Physics and Object-Print Separation:
-1. PRODUCT SUBSTRATE VS BACKGROUND DISAMBIGUATION:
-   - Identify what is the physical PRODUCT itself versus the surrounding CANVAS/BACKGROUND:
-     The product carrier is the physical mat/rug with physical thickness, rounded/squared contours, memory foam/fabric texture, and contact drop shadow—EVEN IF the old product in Image 2 is solid black, dark gray, or unpatterned!
-     In studio infographics, the product often rests on a contrasting background (e.g. a black mat lying on a clean white background with a drop shadow, or rugs on a wooden floor).
-     NEVER confuse the body of a solid-colored product (e.g. a black mat) with the scene background! The background is what surrounds the product (e.g. the white studio backdrop).
-     Any base color, graphic stripes, diagonal lines, speaker icons, or novelty graphics on the old product are PRIOR SURFACE PRINTS to be 100% replaced.
+Apply the universal principles of Semantic Physics, Product Geometry, and Object-Print Separation:
+1. MANDATORY PRODUCT FORM FACTOR & SILHOUETTE LOCK:
+   - Identify the EXACT physical carrier and geometry in Image 2 (e.g. structured satchel / handbag with dual short rolled top-handles, woven plush throw blanket, rectangular floor rug, ceramic mug).
+   - NEVER alter, distort, or misclassify the product form (e.g. if Image 2 shows a structured top-handle handbag/satchel with short rolled handles, you MUST NEVER call it or describe it as a tote bag, shoulder bag, or bowler bag; do NOT lengthen handles into shoulder straps).
+   - Non-printed structural parts (handles, zippers, straps, buckles, hardware, edge trim, lining) MUST be preserved in their exact style, color, and finish.
 
-2. EXTERNAL CONTEXT & CHROME (Preserve 100%):
-   - Any visual element located OUTSIDE or AROUND the product carrier:
-     - True background environment (e.g. clean white studio backdrop, room walls, flooring, lighting).
-     - External text callouts and brand logos on the background (e.g. 'Quick-Dry Microfiber Surface Memory Foam Cushion', 'G' logo, size chart tables).
-   - INTERACTIVE PROPS & OCCLUSIONS:
-     - When a human hand/finger is pressing into the cushion (demonstrating softness/memory foam), the hand/finger and its physical indentation MUST BE PRESERVED. The new artwork must realistically indent under the finger's pressure!
-     - When furniture legs or pets rest on top of the rug, they are preserved as physical occlusions.
+2. HUMAN ANATOMY & MODEL INTERACTION:
+   - If human models, hands, or limbs are visible holding or interacting with the product:
+     - The hands, fingers, and wrists MUST be natural and anatomically flawless: exactly 5 distinct fingers, natural joint articulation, relaxed wrists, no dislocated joints, no floating handles.
+     - The model's exact pose, grip, arm position, and clothing from Image 2 must be preserved faithfully.
 
-3. INSET DETAIL / MAGNIFIED CUTOUTS (Multi-Zone Synchronization):
-   - When the reference image features a circular or rectangular INSET / CLOSE-UP CUTOUT demonstrating material features (e.g. a magnified view of the memory foam cushion with finger indentation):
-     - The inset cutout ALSO depicts the product surface!
-     - The new print artwork from Image 1 must be applied coherently to BOTH the main product carrier AND the magnified inset cutout, maintaining consistent pattern scale and realistic fabric creasing under the finger's pressure.
+3. INFOGRAPHIC & MULTI-PANEL CHROME DETECTION:
+   - Determine if Image 2 is an INFOGRAPHIC, SPEC SHEET, MULTI-PANEL DISPLAY, or contains text banners/callouts (e.g. headers like 'PRODUCT DISPLAY', labels like 'Metal Buckle', 'Removable & Adjustable Strap', 'Exquisite Zipper', 'PU Leather Handbag', 'CAN BE CARRIED OR LIFTED', or logos).
+   - Set "is_infographic": true if it contains an infographic grid, multi-panel display, or graphic text banners.
+   - "product_boxes_norm_0_1000": list of normalized bounding boxes [ymin, xmin, ymax, xmax] in 0..1000 scale for the product surfaces that receive the new print artwork.
+   - "chrome_boxes_norm_0_1000": list of normalized bounding boxes [ymin, xmin, ymax, xmax] for all text banners, headers, callouts, and logos that must be preserved with 100% crisp vector sharpness.
 
-4. PRIOR SURFACE PRINT ARTIFACTS (Must be 100% eliminated & replaced):
-   - ANY graphic, color, line, icon, or button printed on the old product in Image 2 (e.g. old black base color, white diagonal graphic lines, speaker icon, novelty music buttons, fake album cover borders).
-   - They MUST NOT bleed through or appear as background layers behind the new product.
-   - The entire physical surface area of the product carrier (main mat + circular inset) must be 100% covered by the NEW print artwork from Image 1 (edge-to-edge full bleed).
+4. PRIOR SURFACE PRINT ELIMINATION (Zero Bleed-Through):
+   - ANY graphic, illustration, motif, or old base pattern printed on the old product in Image 2 must be 100% eliminated and replaced with the new artwork from Image 1.
+   - The new print must cover the printable product surfaces with edge-to-edge coverage, realistic material grain, and accurate 3D perspective.
+
+5. ZERO VISUAL ARTIFACTS:
+   - Absolutely zero stray colored dots (purple/green/cyan/red dots), circular sensor blemishes, pixel noise, or watermarks.
 
 Analyze the images deeply and return JSON only in English with these exact keys:
 {{
   "scene_title": "Short descriptive title (3-6 words)",
   "visual_concept": "2-3 sentences explaining the commercial marketing concept, camera angle, and intention",
-  "external_chrome_to_preserve": "Specific visual elements outside the product that must be kept intact (true background, text callouts, logo, human hand/finger pressing into the mat)",
-  "prior_surface_print_to_eliminate": "Specific graphic motifs, lines, icons, or old base colors on the product in Image 2 that MUST NOT appear on the new product",
-  "product_canvas_area": "Precise description of the physical product surfaces (both main mat body and inset circle) that serve as the canvas for the new artwork",
-  "generation_directive": "A complete, self-contained prompt for the generative image model. Instruct it step-by-step to compose the image using Image 1 (new artwork) and Image 2 (reference composition). Explicitly command it to preserve the true background, text callouts, logo, and pressing finger from Image 2, while rendering the new artwork from Image 1 across the entire product canvas area with zero bleed-through of any old black mat colors, white lines, or speaker icons",
+  "is_infographic": false,
+  "product_boxes_norm_0_1000": [],
+  "chrome_boxes_norm_0_1000": [],
+  "product_form": "Precise description of the physical product form and hardware geometry",
+  "external_chrome_to_preserve": "Specific visual elements outside the printable surface to keep intact (background, text banners, hardware, human hands)",
+  "prior_surface_print_to_eliminate": "Specific graphic motifs, old illustrations, or old colors from Image 2 to eliminate 100%",
+  "product_canvas_area": "Precise description of the physical product surfaces that serve as the canvas for the new artwork",
+  "generation_directive": "A complete, self-contained prompt for the generative image model. Instruct it step-by-step to compose the image using Image 1 (new artwork) and Image 2 (reference composition). Explicitly enforce the exact product silhouette (e.g. structured satchel with short handles, NOT a tote), 5-finger anatomical precision, zero dislocated wrists, zero colored dots, and exact scene preservation.",
   "qa_checklist": [
-    "criterion 1: Verify all external context/infographic chrome is intact",
-    "criterion 2: Verify the new artwork is rendered across the entire product canvas area",
-    "criterion 3: Verify NO leftover graphic artifacts, old black shapes, or white lines from Image 2 appear"
+    "criterion 1: Verify product silhouette and geometry exactly match Image 2",
+    "criterion 2: Verify the new artwork is rendered across the designated product canvas area",
+    "criterion 3: Verify zero leftover graphic artifacts or bleed-through from Image 2 appear",
+    "criterion 4: Verify human hands and anatomy are natural and flawless if present"
   ]
 }}
 """
+    if artwork is not None:
         contents_parts = [
             image_part(artwork, max_side=1024, max_bytes=2_000_000),
             image_part(image, max_side=1024, max_bytes=2_000_000),
             types.Part.from_text(text=analysis_prompt),
         ]
     else:
-        analysis_prompt = f"""
-You are an expert creative director and commercial e-commerce photographer specializing in Print-on-Demand (POD) home decor products ({target.name}).
-Analyze this reference listing image in depth.
-Apply the universal principles of Spatial Physics: separate the external context/infographic chrome, the physical product substrate, and any prior surface print.
-Return JSON only in English with these exact keys:
-{{
-  "scene_title": "Short descriptive title (3-6 words)",
-  "visual_concept": "2-3 sentences explaining the commercial concept",
-  "external_chrome_to_preserve": "Specific elements outside the product to preserve",
-  "prior_surface_print_to_eliminate": "Old surface graphics to eliminate",
-  "product_canvas_area": "Physical product area to receive new artwork",
-  "generation_directive": "Prompt instruction for image generation",
-  "qa_checklist": ["criterion 1", "criterion 2", "criterion 3"]
-}}
-"""
         contents_parts = [
             image_part(image, max_side=1024, max_bytes=2_000_000),
             types.Part.from_text(text=analysis_prompt),
@@ -286,6 +328,10 @@ Return JSON only in English with these exact keys:
             if not isinstance(parsed, dict) or "generation_directive" not in parsed:
                 raise ValueError(f"Invalid reference analysis JSON: {raw_text[:200]}")
 
+            parsed["product_boxes_norm_0_1000"] = _normalize_boxes(parsed.get("product_boxes_norm_0_1000"))
+            parsed["chrome_boxes_norm_0_1000"] = _normalize_boxes(parsed.get("chrome_boxes_norm_0_1000"))
+            parsed["is_infographic"] = bool(parsed.get("is_infographic"))
+
             if cache_file:
                 try:
                     all_cached = json.loads(cache_file.read_text(encoding="utf-8")) if cache_file.exists() else {}
@@ -305,11 +351,16 @@ Return JSON only in English with these exact keys:
     return {
         "scene_title": "Exemplary Listing Reference",
         "visual_concept": "Commercial product presentation showcasing the product in an authentic setting.",
-        "elements_to_preserve": "Overall camera angle, lighting, background architecture, and surrounding props.",
-        "product_placement_zone": f"In the exact position where the {target.name} appears in Image 2.",
+        "is_infographic": False,
+        "product_boxes_norm_0_1000": [],
+        "chrome_boxes_norm_0_1000": [],
+        "product_form": f"Physical {product_label} matching Image 2",
+        "external_chrome_to_preserve": "Overall camera angle, lighting, background architecture, and surrounding props.",
+        "product_canvas_area": f"In the exact position where the {product_label} appears in Image 2.",
         "generation_directive": (
             f"Faithfully preserve the scene composition, lighting, camera angle, and background objects from Image 2. "
-            f"Replace the {target.name} with the new design using the exact artwork, palette, and motifs from Image 1."
+            f"Replace the {product_label} with the new design using the exact artwork, palette, and motifs from Image 1. "
+            f"Preserve the exact product silhouette, handle structure, and hardware. Anatomically perfect hands."
         ),
         "qa_checklist": [
             "Artwork from Image 1 is recognizably displayed on the product",
@@ -400,6 +451,14 @@ def build_direct_ai_mockup(
                 room_template=room_img,
                 reference_analysis=reference_analysis,
             )
+            if room_img is not None and reference_analysis:
+                c_boxes = reference_analysis.get("chrome_boxes_norm_0_1000")
+                if c_boxes:
+                    generated = composite_infographic_hybrid(
+                        room_img,
+                        generated,
+                        chrome_boxes=c_boxes,
+                    )
             candidate_path.parent.mkdir(parents=True, exist_ok=True)
             generated.save(candidate_path)
             best_candidate_path = candidate_path
@@ -519,7 +578,12 @@ def generate_reference_template_composite(
     w, h = template.size
     box_2d = [150, 150, 850, 850]  # fallback default box in 0..1000 scale
 
-    product_hint = target.name if target.name and target.name not in {"custom", "product"} else "product"
+    active_niche = (getattr(target, "niche", "") or "").strip().lower()
+    raw_name = (target.name or "").strip().lower()
+    if raw_name in {"custom", "product"} and active_niche:
+        product_hint = active_niche
+    else:
+        product_hint = raw_name or active_niche or "product"
     prompt = (
         f"Identify the primary printable surface or product placement zone on this {product_hint} image "
         f"(e.g., for a handbag/tote, this is the main front body face, excluding handles/straps/zippers; "
@@ -719,7 +783,8 @@ def direct_ai_lifestyle_prompt(
         )
         avoid = (
             "No flat 2D sticker slapped on, no cardboard cutout, no floor rug, no blanket, no distorted hardware, "
-            "no garbled lettering, no superimposed photographer watermarks, brand logos, or UI overlays."
+            "no tote bag when satchel is shown, no bowler bag, no dislocated wrists or deformed fingers, "
+            "no floating colored dots, no garbled lettering, no superimposed photographer watermarks, brand logos, or UI overlays."
         )
     else:
         product_rule = (
@@ -750,7 +815,23 @@ def direct_ai_lifestyle_prompt(
         placement_zone = reference_analysis.get("product_canvas_area") or reference_analysis.get("product_placement_zone", "")
         prior_eliminate = reference_analysis.get("prior_surface_print_to_eliminate", "")
         directive = reference_analysis.get("generation_directive", "")
+        product_form = reference_analysis.get("product_form", "")
 
+        silhouette_rule = f"- Exact Product Silhouette & Form: {product_form}\n" if product_form else ""
+        if is_bag:
+            bag_lock = (
+                "- STRICT BAG SILHOUETTE & HARDWARE LOCK: Preserve the exact physical bag shape, proportions, and handle construction from Image 2. "
+                "If Image 2 shows a structured handbag / satchel with dual short rolled top-handles, DO NOT draw a tote bag, DO NOT draw a bowler bag, "
+                "and DO NOT lengthen the handles into shoulder straps.\n"
+            )
+        else:
+            bag_lock = ""
+
+        anatomy_lock = (
+            "- HUMAN ANATOMY & PHOTOREALISM MANDATE: Any human models, hands, or arms visible MUST have anatomically perfect hands with exactly 5 distinct fingers, "
+            "natural joint articulation, relaxed wrists, and realistic skin texture. Zero dislocated wrists, zero rubber limbs, zero floating handles.\n"
+            "- ZERO ARTIFACTS: Absolutely zero stray colored dots (purple/green/cyan/red dots), zero sensor noise, zero circular pixel blemishes, zero watermarks.\n"
+        )
         eliminate_section = f"- Prior Surface Graphics to Eliminate (Zero Bleed-Through): {prior_eliminate}\n" if prior_eliminate else ""
 
         product_rule = (
@@ -762,16 +843,23 @@ def direct_ai_lifestyle_prompt(
             f"CRITICAL MANDATORY TEMPLATE REPLACEMENT DIRECTIVE ({scene_title}):\n"
             f"- Image 1: Commercial print artwork.\n"
             f"- Image 2: EXACT reference template / commercial shot to preserve and adapt.\n"
-            f"- ZERO HALLUCINATIONS / DO NOT INVENT A NEW SCENE: You MUST preserve 100% of the composition, room environment, furniture, background, text callouts, charts, and lighting from Image 2. Do NOT invent a different room, sofa, or layout!\n"
+            f"- ZERO HALLUCINATIONS / DO NOT INVENT A NEW SCENE: You MUST preserve 100% of the composition, room/street environment, furniture, background, text callouts, charts, and lighting from Image 2. Do NOT invent a different room, sofa, or street!\n"
             f"- External Context/Infographic Chrome to Preserve 100%: {preserve}\n"
             f"- Product Printable Canvas Area: {placement_zone}\n"
+            f"{silhouette_rule}"
+            f"{bag_lock}"
+            f"{anatomy_lock}"
             f"{eliminate_section}"
             f"- Tailored Synthesis Directive:\n{directive}\n"
             f"- Obey visual physics: Maintain realistic contact shadows, depth-of-field, and lighting temperature from Image 2."
         )
         placement = placement_zone or f"Positioned exactly as demonstrated in Image 2 ({scene_title})."
         listing_requirement = f"STRICT TEMPLATE PRESERVATION: Retain the exact composition, graphics, text, and scene from Image 2 ({scene_title}). Replace only the designated product surface."
-        constraints = "Preserve all external elements from Image 2. Strictly no distorted lettering, no superimposed photographer watermarks, no bleed-through of prior prints from Image 2."
+        constraints = (
+            "Preserve all external elements from Image 2. Retain exact product silhouette. "
+            "Anatomically perfect hands (5 fingers). Absolutely zero stray colored dots (purple/green dots), "
+            "no distorted lettering, no superimposed photographer watermarks, no bleed-through of prior prints from Image 2."
+        )
         coordinated_products = "None (adhere strictly to the product items present in Image 2)."
 
         return f"""
