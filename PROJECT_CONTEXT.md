@@ -364,7 +364,7 @@ The real SEO + Content module (`src/modules/seo-content/`) is **100% implemented
 - **Complete Pipeline B1 → B6**:
   - **B1**: Product-anchored understanding (Gemini Vision batch analysis returns Typography, Visual Entities, Scene Context and Physical Product Identity; deterministic identity-only fallback).
   - **B2**: Shopping Context (Target audience, suitable occasions, use cases, buyer intent keywords).
-  - **B3**: Search Suggestions (Google Autocomplete API client, in-memory LRU cache, circuit breaker, normalizer, fallback collector).
+  - **B3**: Search Suggestions (Gemini-generated prefix probes for product-grounded seeds, Google Autocomplete API client, in-memory LRU cache, circuit breaker, normalizer, fallback collector).
   - **B4**: Conflict Control (Vector-first hybrid engine with Vertex `text-embedding-004` & local TF-IDF, representative clustering, atomic file-locked conflict corpus).
   - **B5**: Content Generation (Dual-engine Gemini LLM & heuristic generator, anti-hallucination fact sheets, length fitters, semantic HTML Shopify description).
   - **B6**: Image Processing & Alt Text (Sharp WebP converter, magic bytes validator, SSRF redirect hop inspector, gallery alt uniqueness budget reservation).
@@ -701,6 +701,12 @@ Example concept:
 ```
 
 B3 should mainly **collect and lightly normalize** search data.
+
+For each product-grounded seed, Gemini may generate up to two safe prefix probes
+(for example, `music player ru`) before calling Google Autocomplete. The original
+seed is always queried; scene-context seeds never receive Gemini probes. Probe
+metadata remains trace-only and must not become a B4/B5 keyword candidate unless
+Google itself returns it as a suggestion.
 
 B3 should not be responsible for final primary-keyword selection or final content generation.
 

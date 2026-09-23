@@ -46,6 +46,10 @@ const summary = {
           seedKeywords: ["music player rug"],
           suggestedQueries: ["custom music rug", "music decor rug"],
           querySources: { "custom music rug": "google_autocomplete" },
+          autocompleteProbes: [
+            { query: "music player rug", parentSeed: "music player rug", kind: "original" },
+            { query: "music player ru", parentSeed: "music player rug", kind: "gemini_variant" },
+          ],
         },
       },
     },
@@ -114,6 +118,9 @@ test("renders stage summaries as scannable cards instead of raw JSON", () => {
   assert.match(report, /Định danh phôi sản phẩm/);
   assert.doesNotMatch(report, /Dominant colours|Product category|Visual style/);
   assert.match(report, /custom music rug/);
+  assert.match(report, /Google Autocomplete queries/);
+  assert.match(report, /Gemini probe/);
+  assert.match(report, /Query thăm dò/);
   assert.match(report, /SEO preview/);
   assert.match(report, /music-rug-1\.webp/);
   assert.ok(report.indexOf("music-rug-1.webp") < report.indexOf("music-rug-2.webp"));

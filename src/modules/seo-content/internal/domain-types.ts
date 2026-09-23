@@ -30,6 +30,14 @@ export interface SearchResearchResult {
   readonly seedKeywords: readonly string[];
   readonly suggestedQueries: readonly string[];
   readonly querySources: Readonly<Record<string, string>>;
+  /** Actual Google Autocomplete requests. Probe variants are discovery-only. */
+  readonly autocompleteProbes?: readonly AutocompleteProbe[];
+}
+
+export interface AutocompleteProbe {
+  readonly query: string;
+  readonly parentSeed: string;
+  readonly kind: "original" | "gemini_variant";
 }
 
 export interface KeywordCluster {
