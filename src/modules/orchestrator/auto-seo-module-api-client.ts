@@ -6,6 +6,7 @@ import type {
   AutoSeoClient,
   AutoSeoOutput,
   AutoSeoSelectionInput,
+  AutoSeoStoreOption,
   ShopifyProductForAutoSeoUi,
   ShopifyProductImage,
   ShopifyProductVariant,
@@ -125,7 +126,9 @@ export class AutoSeoModuleApiClient implements AutoSeoClient {
   private readonly detailCache = new Map<string, ShopifyProductForAutoSeoUi>();
   private readonly detailVersions = new Map<string, number>();
   private readonly inFlightRequests = new Map<string, Promise<ShopifyProductForAutoSeoUi>>();
+  private readonly storeSummaryCache = new Map<string, ShopifyStoreSummary>();
   private cachedStoreSummary?: ShopifyStoreSummary;
+  private activeStoreId?: string;
   private versionSequence = 0;
 
   public constructor(private readonly moduleApiRunner: ModuleApiRunner) {}
@@ -142,19 +145,78 @@ export class AutoSeoModuleApiClient implements AutoSeoClient {
 
   public clearCache(): void {
     this.clearDetailCache();
+    this.storeSummaryCache.clear();
     this.cachedStoreSummary = undefined;
+    this.activeStoreId = undefined;
   }
 
-  public async getStoreInfo(): Promise<{ storeId: string; shopDomain: string }> {
-    const store = await this.resolveStore();
+  public setActiveStoreId(storeId: string): void {
+    this.activeStoreId = storeId.trim();
+  }
+
+  public getActiveStoreId(): string | undefined {
+    return this.activeStoreId;
+  }
+
+  public async listStores(): Promise<readonly AutoSeoStoreOption[]> {
+    let response: ShopifyStoresListResponse;
+    try {
+      response = await this.moduleApiRunner({
+        operation: "stores.list",
+        payload: {},
+      });
+    } catch (error) {
+      if (error instanceof AppError) {
+        throw error;
+      }
+      throw new AppError(
+        error instanceof Error ? error.message : "Failed to load Shopify stores",
+        "AUTO_SEO_STORE_INFO_UNAVAILABLE",
+        error,
+      );
+    }
+
+    const stores = response?.data?.stores ?? [];
+    const validStores: AutoSeoStoreOption[] = [];
+    for (const s of stores) {
+      if (
+        s &&
+        typeof s.storeId === "string" &&
+        s.storeId.trim() !== "" &&
+        typeof s.shopDomain === "string" &&
+        s.shopDomain.trim() !== ""
+      ) {
+        const norm: ShopifyStoreSummary = {
+          ...s,
+          storeId: s.storeId.trim(),
+          shopDomain: s.shopDomain.trim(),
+        };
+        this.storeSummaryCache.set(norm.storeId, norm);
+        validStores.push({
+          storeId: norm.storeId,
+          shopDomain: norm.shopDomain,
+        });
+      }
+    }
+
+    return validStores;
+  }
+
+  public async getStoreInfo(storeId?: string): Promise<{ storeId: string; shopDomain: string }> {
+    const store = await this.resolveStore(storeId);
     return {
       storeId: store.storeId,
       shopDomain: store.shopDomain,
     };
   }
 
-  private async resolveStore(): Promise<ShopifyStoreSummary> {
-    if (this.cachedStoreSummary) {
+  private async resolveStore(targetStoreId?: string): Promise<ShopifyStoreSummary> {
+    const effectiveTargetId = targetStoreId?.trim() || this.activeStoreId?.trim();
+
+    if (effectiveTargetId && this.storeSummaryCache.has(effectiveTargetId)) {
+      return this.storeSummaryCache.get(effectiveTargetId)!;
+    }
+    if (!effectiveTargetId && this.cachedStoreSummary) {
       return this.cachedStoreSummary;
     }
 
@@ -175,18 +237,36 @@ export class AutoSeoModuleApiClient implements AutoSeoClient {
       );
     }
 
-    const stores = response?.data?.stores;
-    // For the current single-store flow: use the first available store.
-    // TODO: Multi-store selection must be explicit in a future phase.
-    const store = stores?.find(
-      (s) =>
+    const stores = response?.data?.stores ?? [];
+    for (const s of stores) {
+      if (
         s &&
         typeof s.storeId === "string" &&
         s.storeId.trim() !== "" &&
         typeof s.shopDomain === "string" &&
-        s.shopDomain.trim() !== "",
-    );
+        s.shopDomain.trim() !== ""
+      ) {
+        const norm: ShopifyStoreSummary = {
+          ...s,
+          storeId: s.storeId.trim(),
+          shopDomain: s.shopDomain.trim(),
+        };
+        this.storeSummaryCache.set(norm.storeId, norm);
+      }
+    }
 
+    if (effectiveTargetId) {
+      const match = this.storeSummaryCache.get(effectiveTargetId);
+      if (match) {
+        return match;
+      }
+      throw new AppError(
+        `No valid Shopify store found for: ${effectiveTargetId}`,
+        "AUTO_SEO_STORE_INFO_UNAVAILABLE",
+      );
+    }
+
+    const store = Array.from(this.storeSummaryCache.values())[0];
     if (!store) {
       throw new AppError(
         "No valid Shopify store found",
@@ -194,19 +274,14 @@ export class AutoSeoModuleApiClient implements AutoSeoClient {
       );
     }
 
-    const normalizedStore: ShopifyStoreSummary = {
-      ...store,
-      storeId: store.storeId.trim(),
-      shopDomain: store.shopDomain.trim(),
-    };
-
-    this.cachedStoreSummary = normalizedStore;
-    return normalizedStore;
+    this.cachedStoreSummary = store;
+    return store;
   }
 
-  public async loadProducts(): Promise<readonly ShopifyProductForAutoSeoUi[]> {
+  public async loadProducts(storeId?: string): Promise<readonly ShopifyProductForAutoSeoUi[]> {
     try {
-      const store = await this.resolveStore();
+      const store = await this.resolveStore(storeId);
+      this.activeStoreId = store.storeId;
       const products: ShopifyProductForAutoSeoUi[] = [];
       const seenProductIds = new Set<string>();
       const seenCursors = new Set<string>();
@@ -389,13 +464,14 @@ export class AutoSeoModuleApiClient implements AutoSeoClient {
   public async hydrateSelectedProductsFresh(
     productIds: readonly string[],
     concurrency = 5,
+    storeId?: string,
   ): Promise<readonly ShopifyProductForAutoSeoUi[]> {
     if (productIds.length === 0) {
       return [];
     }
 
     const uniqueIds = Array.from(new Set(productIds.map((id) => id.trim())));
-    const store = await this.resolveStore();
+    const store = await this.resolveStore(storeId);
     const productMap = new Map<string, ShopifyProductForAutoSeoUi>();
 
     await runWithConcurrency(uniqueIds, concurrency, async (id) => {
@@ -419,6 +495,7 @@ export class AutoSeoModuleApiClient implements AutoSeoClient {
   public async hydrateSelectedProducts(
     productIds: readonly string[],
     concurrency = 5,
+    storeId?: string,
   ): Promise<readonly ShopifyProductForAutoSeoUi[]> {
     if (productIds.length === 0) {
       return [];
@@ -438,7 +515,7 @@ export class AutoSeoModuleApiClient implements AutoSeoClient {
     }
 
     if (idsToFetch.length > 0) {
-      const store = await this.resolveStore();
+      const store = await this.resolveStore(storeId);
       await runWithConcurrency(idsToFetch, concurrency, async (id) => {
         const detail = await this.loadProductDetail(store.storeId, id);
         productMap.set(id, detail);

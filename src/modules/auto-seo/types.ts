@@ -111,12 +111,20 @@ export interface AutoSeoBackupResponse {
   readonly downstreamError?: string | null;
 }
 
+export interface AutoSeoStoreOption {
+  readonly storeId: string;
+  readonly shopDomain: string;
+}
+
 export interface AutoSeoClient {
-  getStoreInfo(): Promise<{
+  listStores?(): Promise<readonly AutoSeoStoreOption[]>;
+  setActiveStoreId?(storeId: string): void;
+  getActiveStoreId?(): string | undefined;
+  getStoreInfo(storeId?: string): Promise<{
     storeId: string;
     shopDomain: string;
   }>;
-  loadProducts(): Promise<readonly ShopifyProductForAutoSeoUi[]>;
+  loadProducts(storeId?: string): Promise<readonly ShopifyProductForAutoSeoUi[]>;
   loadProductDetail(productId: string): Promise<ShopifyProductForAutoSeoUi>;
   loadProductDetail(storeId: string, productId: string): Promise<ShopifyProductForAutoSeoUi>;
   loadProductDetailFresh?(productId: string): Promise<ShopifyProductForAutoSeoUi>;
@@ -126,10 +134,12 @@ export interface AutoSeoClient {
   hydrateSelectedProductsFresh(
     productIds: readonly string[],
     concurrency?: number,
+    storeId?: string,
   ): Promise<readonly ShopifyProductForAutoSeoUi[]>;
   hydrateSelectedProducts?(
     productIds: readonly string[],
     concurrency?: number,
+    storeId?: string,
   ): Promise<readonly ShopifyProductForAutoSeoUi[]>;
   getCachedDetail?(productId: string): ShopifyProductForAutoSeoUi | undefined;
   clearCache?(): void;

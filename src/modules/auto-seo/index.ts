@@ -26,6 +26,7 @@ export type {
   AutoSeoProductCandidate,
   AutoSeoProductImage,
   AutoSeoSelectionInput,
+  AutoSeoStoreOption,
   ProductReviewDecision,
   SeoContentInputPayload,
   ShopifyProductForAutoSeoUi,

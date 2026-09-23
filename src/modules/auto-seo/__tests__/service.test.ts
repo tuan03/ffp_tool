@@ -599,3 +599,32 @@ test("23. mapShopifyProductToAutoSeoCandidate maps null image altText/width/heig
   assert.equal(candidate.images[0]?.altText, undefined);
   assert.equal(candidate.images[0]?.position, 1);
 });
+
+test("24. MockAutoSeoClient supports multi-store listStores, active store, and store-specific products", async () => {
+  const client = new MockAutoSeoClient();
+  const stores = await client.listStores!();
+  assert.equal(stores.length, 2);
+  assert.equal(stores[0].storeId, "store-chillgen-mock");
+  assert.equal(stores[1].storeId, "capozen");
+
+  // Default store
+  const defaultInfo = await client.getStoreInfo();
+  assert.equal(defaultInfo.storeId, "store-chillgen-mock");
+
+  // Switch to Capozen
+  client.setActiveStoreId!("capozen");
+  assert.equal(client.getActiveStoreId!(), "capozen");
+
+  const capozenInfo = await client.getStoreInfo();
+  assert.equal(capozenInfo.storeId, "capozen");
+  assert.equal(capozenInfo.shopDomain, "capozen.myshopify.com");
+
+  const capozenProducts = await client.loadProducts("capozen");
+  assert.ok(capozenProducts.length > 0);
+  assert.ok(capozenProducts.every((p) => p.vendor === "Capozen" && p.title.startsWith("[Capozen]")));
+
+  // Passing explicit storeId to getStoreInfo
+  const chillgenInfo = await client.getStoreInfo("store-chillgen-mock");
+  assert.equal(chillgenInfo.storeId, "store-chillgen-mock");
+});
+

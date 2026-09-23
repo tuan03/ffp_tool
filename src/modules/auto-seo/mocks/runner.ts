@@ -7,9 +7,21 @@ import type {
   AutoSeoOutput,
   AutoSeoProductCandidate,
   AutoSeoSelectionInput,
+  AutoSeoStoreOption,
   ShopifyProductForAutoSeoUi,
 } from "../types";
 import { autoSeoMockProducts, mockShopifyProducts } from "./data";
+
+export const mockAutoSeoStores: readonly AutoSeoStoreOption[] = [
+  {
+    storeId: "store-chillgen-mock",
+    shopDomain: "chillgen-mock.myshopify.com",
+  },
+  {
+    storeId: "capozen",
+    shopDomain: "capozen.myshopify.com",
+  },
+];
 
 function cloneMockProduct(
   product: AutoSeoProductCandidate,
@@ -38,6 +50,19 @@ export async function runMockAutoSeo(
 
 export class MockAutoSeoClient implements AutoSeoClient {
   private readonly detailCache = new Map<string, ShopifyProductForAutoSeoUi>();
+  private activeStoreId = "store-chillgen-mock";
+
+  public async listStores(): Promise<readonly AutoSeoStoreOption[]> {
+    return JSON.parse(JSON.stringify(mockAutoSeoStores)) as AutoSeoStoreOption[];
+  }
+
+  public setActiveStoreId(storeId: string): void {
+    this.activeStoreId = storeId.trim();
+  }
+
+  public getActiveStoreId(): string | undefined {
+    return this.activeStoreId;
+  }
 
   public getCachedDetail(productId: string): ShopifyProductForAutoSeoUi | undefined {
     const cached = this.detailCache.get(productId);
@@ -50,16 +75,34 @@ export class MockAutoSeoClient implements AutoSeoClient {
 
   public clearCache(): void {
     this.clearDetailCache();
+    this.activeStoreId = "store-chillgen-mock";
   }
 
-  public async loadProducts(): Promise<readonly ShopifyProductForAutoSeoUi[]> {
+  public async loadProducts(storeId?: string): Promise<readonly ShopifyProductForAutoSeoUi[]> {
+    const targetStoreId = (storeId ?? this.activeStoreId).trim();
+    if (targetStoreId === "capozen") {
+      const capozenProducts = mockShopifyProducts.map((p) => ({
+        ...(JSON.parse(JSON.stringify(p)) as ShopifyProductForAutoSeoUi),
+        vendor: "Capozen",
+        title: `[Capozen] ${p.title}`,
+      }));
+      return capozenProducts;
+    }
     return JSON.parse(JSON.stringify(mockShopifyProducts)) as ShopifyProductForAutoSeoUi[];
   }
 
-  public async getStoreInfo(): Promise<{ storeId: string; shopDomain: string }> {
+  public async getStoreInfo(storeId?: string): Promise<{ storeId: string; shopDomain: string }> {
+    const targetStoreId = (storeId ?? this.activeStoreId).trim();
+    const matched = mockAutoSeoStores.find((s) => s.storeId === targetStoreId);
+    if (matched) {
+      return {
+        storeId: matched.storeId,
+        shopDomain: matched.shopDomain,
+      };
+    }
     return {
-      storeId: "store-chillgen-mock",
-      shopDomain: "chillgen-mock.myshopify.com",
+      storeId: targetStoreId || "store-chillgen-mock",
+      shopDomain: `${targetStoreId || "chillgen-mock"}.myshopify.com`,
     };
   }
 
@@ -116,6 +159,7 @@ export class MockAutoSeoClient implements AutoSeoClient {
   public async hydrateSelectedProducts(
     productIds: readonly string[],
     concurrency = 5,
+    _storeId?: string,
   ): Promise<readonly ShopifyProductForAutoSeoUi[]> {
     if (productIds.length === 0) {
       return [];
@@ -165,6 +209,7 @@ export class MockAutoSeoClient implements AutoSeoClient {
   public async hydrateSelectedProductsFresh(
     productIds: readonly string[],
     concurrency = 5,
+    _storeId?: string,
   ): Promise<readonly ShopifyProductForAutoSeoUi[]> {
     if (productIds.length === 0) {
       return [];

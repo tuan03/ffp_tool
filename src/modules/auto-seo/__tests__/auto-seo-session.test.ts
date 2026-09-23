@@ -6,6 +6,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { MockAutoSeoClient } from "../mocks/runner";
 import type { ShopifyProductForAutoSeoUi } from "../types";
 import { AutoSeoPage } from "../ui/AutoSeoPage";
+import { AutoSeoToolbar } from "../ui/components/AutoSeoToolbar";
 import {
   clearAutoSeoSession,
   getAutoSeoSessionState,
@@ -14,6 +15,7 @@ import {
   setAutoSeoProducts,
   setAutoSeoSearchQuery,
   setAutoSeoSelectedProductIds,
+  setAutoSeoSelectedStoreId,
   setAutoSeoStatusFilter,
   subscribeAutoSeoSession,
   updateAutoSeoSession,
@@ -122,4 +124,67 @@ test("auto-seo session: AutoSeoPage remount preserves session products and does 
   assert.ok(html.includes("Test Gothic Mug"));
   assert.equal(loadCount, 0); // Did not trigger loadProducts because products already in session!
 });
+
+test("auto-seo session: AutoSeoPage does NOT auto-load products on mount when session has no products", () => {
+  clearAutoSeoSession();
+
+  let loadCount = 0;
+  const dummyClient = new MockAutoSeoClient();
+  dummyClient.loadProducts = async () => {
+    loadCount++;
+    return [];
+  };
+
+  const html = renderToStaticMarkup(React.createElement(AutoSeoPage, { client: dummyClient }));
+  assert.equal(loadCount, 0, "Must NOT auto-load products on mount");
+  assert.ok(html.includes("Chưa có sản phẩm nào được tải"));
+  assert.ok(html.includes("Tải sản phẩm"));
+});
+
+test("auto-seo session: tracks selectedStoreId and setAutoSeoSelectedStoreId", () => {
+  clearAutoSeoSession();
+  assert.equal(getAutoSeoSessionState().selectedStoreId, undefined);
+
+  setAutoSeoSelectedStoreId("store-cool-stuff");
+  assert.equal(getAutoSeoSessionState().selectedStoreId, "store-cool-stuff");
+
+  setAutoSeoSelectedStoreId("capozen");
+  assert.equal(getAutoSeoSessionState().selectedStoreId, "capozen");
+
+  clearAutoSeoSession();
+  assert.equal(getAutoSeoSessionState().selectedStoreId, undefined);
+});
+
+test("auto-seo: AutoSeoToolbar renders store select dropdown with available stores", () => {
+  const stores = [
+    { storeId: "store-chillgen-mock", shopDomain: "chillgen-mock.myshopify.com" },
+    { storeId: "capozen", shopDomain: "capozen.myshopify.com" },
+  ];
+
+  let selectedStore = "store-chillgen-mock";
+  const html = renderToStaticMarkup(
+    React.createElement(AutoSeoToolbar, {
+      isLoadingProducts: false,
+      isRunningAutoSeo: false,
+      totalProductsCount: 0,
+      selectedCount: 0,
+      visibleProductsCount: 0,
+      onLoadProducts: () => {},
+      onSelectAll: () => {},
+      onClearSelection: () => {},
+      onRunAutoSeo: () => {},
+      stores,
+      selectedStoreId: selectedStore,
+      onSelectStore: (id) => {
+        selectedStore = id;
+      },
+    }),
+  );
+
+  assert.ok(html.includes("auto-seo-store-select"));
+  assert.ok(html.includes("store-chillgen-mock (chillgen-mock.myshopify.com)"));
+  assert.ok(html.includes("capozen (capozen.myshopify.com)"));
+  assert.ok(html.includes("Tải sản phẩm"));
+});
+
 

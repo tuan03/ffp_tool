@@ -926,3 +926,157 @@ test("19. clearDetailCache: clears detail cache while preserving store summary",
   assert.equal(storeFetchCount, 1, "Store summary should remain cached across clearDetailCache");
 });
 
+test("20. listStores: lists all valid stores from stores.list operation", async () => {
+  const runner = createTestRunner(async (input) => {
+    assert.equal(input.operation, "stores.list");
+    return {
+      storeId: "system",
+      operation: "stores.list",
+      success: true,
+      data: {
+        stores: [
+          { storeId: "store-a", shopDomain: "store-a.myshopify.com", authType: "static" },
+          { storeId: "store-b", shopDomain: "store-b.myshopify.com", authType: "client_credentials" },
+          { storeId: "   ", shopDomain: "" }, // invalid, should be filtered
+        ],
+        total: 2,
+      },
+    } as unknown as ShopifyApiResponse;
+  });
+
+  const client = createAutoSeoModuleApiClient(runner);
+  const stores = await client.listStores!();
+  assert.equal(stores.length, 2);
+  assert.deepEqual(stores[0], { storeId: "store-a", shopDomain: "store-a.myshopify.com" });
+  assert.deepEqual(stores[1], { storeId: "store-b", shopDomain: "store-b.myshopify.com" });
+});
+
+test("21. loadProducts(storeId): queries products.list specifically for that store", async () => {
+  const capturedStoreIds: string[] = [];
+
+  const runner = createTestRunner(async (input) => {
+    if (input.operation === "stores.list") {
+      return {
+        storeId: "system",
+        operation: "stores.list",
+        success: true,
+        data: {
+          stores: [
+            { storeId: "store-alpha", shopDomain: "alpha.myshopify.com", authType: "static" },
+            { storeId: "store-beta", shopDomain: "beta.myshopify.com", authType: "static" },
+          ],
+          total: 2,
+        },
+      } as unknown as ShopifyApiResponse;
+    }
+
+    if (input.operation === "products.list") {
+      capturedStoreIds.push(input.storeId || "");
+      return {
+        storeId: input.storeId,
+        operation: "products.list",
+        success: true,
+        data: {
+          products: [createMockProduct({ id: `gid://shopify/Product/${input.storeId}-1` })],
+          pageInfo: { hasNextPage: false, hasPreviousPage: false },
+        },
+      } as unknown as ShopifyApiResponse;
+    }
+
+    throw new Error("Unexpected operation");
+  });
+
+  const client = createAutoSeoModuleApiClient(runner);
+
+  // Load for store-beta explicitly
+  const products = await client.loadProducts("store-beta");
+  assert.equal(products.length, 1);
+  assert.equal(capturedStoreIds.length, 1);
+  assert.equal(capturedStoreIds[0], "store-beta");
+  assert.equal(client.getActiveStoreId?.(), "store-beta");
+
+  // Subsequent getStoreInfo without args reflects the active store
+  const storeInfo = await client.getStoreInfo();
+  assert.equal(storeInfo.storeId, "store-beta");
+  assert.equal(storeInfo.shopDomain, "beta.myshopify.com");
+});
+
+test("22. setActiveStoreId and getStoreInfo(storeId): resolves targeted store summary", async () => {
+  const runner = createTestRunner(async (input) => {
+    if (input.operation === "stores.list") {
+      return {
+        storeId: "system",
+        operation: "stores.list",
+        success: true,
+        data: {
+          stores: [
+            { storeId: "capozen", shopDomain: "capozen.myshopify.com", authType: "static" },
+            { storeId: "store-chillgen", shopDomain: "chillgen.myshopify.com", authType: "static" },
+          ],
+          total: 2,
+        },
+      } as unknown as ShopifyApiResponse;
+    }
+    throw new Error("Unexpected");
+  });
+
+  const client = createAutoSeoModuleApiClient(runner);
+
+  const info1 = await client.getStoreInfo("store-chillgen");
+  assert.equal(info1.storeId, "store-chillgen");
+  assert.equal(info1.shopDomain, "chillgen.myshopify.com");
+
+  client.setActiveStoreId?.("capozen");
+  assert.equal(client.getActiveStoreId?.(), "capozen");
+
+  const info2 = await client.getStoreInfo();
+  assert.equal(info2.storeId, "capozen");
+});
+
+test("23. hydrateSelectedProductsFresh(ids, concurrency, storeId): uses provided storeId for products.get", async () => {
+  const getRequests: { storeId?: string; id: string }[] = [];
+
+  const runner = createTestRunner(async (input) => {
+    if (input.operation === "stores.list") {
+      return {
+        storeId: "system",
+        operation: "stores.list",
+        success: true,
+        data: {
+          stores: [
+            { storeId: "store-target", shopDomain: "target.myshopify.com", authType: "static" },
+          ],
+          total: 1,
+        },
+      } as unknown as ShopifyApiResponse;
+    }
+
+    if (input.operation === "products.get") {
+      getRequests.push({ storeId: input.storeId, id: input.payload.id });
+      return {
+        storeId: input.storeId,
+        operation: "products.get",
+        success: true,
+        data: {
+          product: createMockProduct({ id: input.payload.id, title: `Target Product ${input.payload.id}` }),
+        },
+      } as unknown as ShopifyApiResponse;
+    }
+
+    throw new Error("Unexpected");
+  });
+
+  const client = createAutoSeoModuleApiClient(runner);
+  const hydrated = await client.hydrateSelectedProductsFresh(
+    ["gid://shopify/Product/100", "gid://shopify/Product/101"],
+    2,
+    "store-target",
+  );
+
+  assert.equal(hydrated.length, 2);
+  assert.equal(getRequests.length, 2);
+  assert.equal(getRequests[0].storeId, "store-target");
+  assert.equal(getRequests[1].storeId, "store-target");
+});
+
+

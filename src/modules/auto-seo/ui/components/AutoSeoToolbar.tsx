@@ -1,3 +1,5 @@
+import type { AutoSeoStoreOption } from "../../types";
+
 export interface AutoSeoToolbarProps {
   isLoadingProducts: boolean;
   isRunningAutoSeo: boolean;
@@ -8,6 +10,10 @@ export interface AutoSeoToolbarProps {
   onSelectAll(): void;
   onClearSelection(): void;
   onRunAutoSeo(): void;
+  stores?: readonly AutoSeoStoreOption[];
+  selectedStoreId?: string;
+  onSelectStore?(storeId: string): void;
+  isLoadingStores?: boolean;
 }
 
 export function AutoSeoToolbar({
@@ -20,6 +26,10 @@ export function AutoSeoToolbar({
   onSelectAll,
   onClearSelection,
   onRunAutoSeo,
+  stores,
+  selectedStoreId,
+  onSelectStore,
+  isLoadingStores = false,
 }: AutoSeoToolbarProps): React.JSX.Element {
   return (
     <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-5 shadow-lg backdrop-blur-sm space-y-4">
@@ -36,9 +46,36 @@ export function AutoSeoToolbar({
           </p>
         </div>
 
-        {/* Status Count Pill */}
-        <div className="flex md:flex-col items-center md:items-end justify-between gap-1 border-t md:border-t-0 border-slate-800 pt-3 md:pt-0">
-          <span className="text-xs text-slate-400">Trạng thái chọn:</span>
+        {/* Store Selector & Status Count Pill */}
+        <div className="flex flex-col sm:flex-row items-start sm:items-center md:items-end justify-between gap-3 border-t md:border-t-0 border-slate-800 pt-3 md:pt-0">
+          <div className="flex items-center gap-2">
+            <label
+              htmlFor="auto-seo-store-select"
+              className="text-xs font-medium text-slate-300 whitespace-nowrap flex items-center gap-1.5"
+            >
+              <span>🏪</span> Cửa hàng:
+            </label>
+            <select
+              id="auto-seo-store-select"
+              value={selectedStoreId || ""}
+              onChange={(e) => onSelectStore?.(e.target.value)}
+              disabled={isLoadingStores || isLoadingProducts || !stores || stores.length === 0}
+              className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-1.5 text-xs font-medium text-slate-200 focus:border-cyan-500 focus:outline-hidden disabled:opacity-50 cursor-pointer min-w-[190px]"
+            >
+              {isLoadingStores ? (
+                <option value="">Đang tải danh sách cửa hàng...</option>
+              ) : stores && stores.length > 0 ? (
+                stores.map((s) => (
+                  <option key={s.storeId} value={s.storeId}>
+                    {s.storeId} ({s.shopDomain})
+                  </option>
+                ))
+              ) : (
+                <option value="">Không có cửa hàng nào</option>
+              )}
+            </select>
+          </div>
+
           <div className="flex items-center gap-2">
             <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-800 px-3 py-1 text-xs font-semibold text-slate-200 border border-slate-700">
               <span className={`h-2 w-2 rounded-full ${selectedCount > 0 ? "bg-cyan-400" : "bg-slate-500"}`} />
@@ -54,8 +91,8 @@ export function AutoSeoToolbar({
           <button
             type="button"
             onClick={onLoadProducts}
-            disabled={isLoadingProducts}
-            className="inline-flex items-center gap-2 rounded-lg bg-slate-800 px-3.5 py-2 text-xs font-semibold text-slate-200 border border-slate-700 hover:bg-slate-700 hover:text-white transition disabled:opacity-50"
+            disabled={isLoadingProducts || isLoadingStores || (selectedStoreId !== undefined && !selectedStoreId)}
+            className="inline-flex items-center gap-2 rounded-lg bg-cyan-700 hover:bg-cyan-600 px-3.5 py-2 text-xs font-semibold text-white shadow-xs transition disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isLoadingProducts ? (
               <>
@@ -64,7 +101,7 @@ export function AutoSeoToolbar({
               </>
             ) : (
               <>
-                <span>↻</span> Tải sản phẩm (Shopify)
+                <span>↻</span> Tải sản phẩm
               </>
             )}
           </button>

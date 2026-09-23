@@ -96,7 +96,7 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
         </div>
         <h3 className="text-base font-semibold text-slate-200">Chưa có sản phẩm nào được tải</h3>
         <p className="text-xs text-slate-400 max-w-md mx-auto mt-1">
-          Bấm nút <strong>&quot;Tải sản phẩm (Shopify)&quot;</strong> ở trên để lấy danh sách sản phẩm từ cửa hàng.
+          Bấm nút <strong>&quot;Tải sản phẩm&quot;</strong> ở trên để lấy danh sách sản phẩm từ cửa hàng.
         </p>
       </div>
     );
