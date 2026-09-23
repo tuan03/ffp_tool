@@ -54,6 +54,12 @@ class CrawlSettings:
     amazon_zip: str = "10001"
     captcha_timeout_seconds: int = 180
     max_matrix_variants: int = 500
+    store_id: str = ""
+    price_addition: float = 0.0
+    discount_percent: float = 0.0
+    collection_id: str = ""
+    collection_ids: tuple[str, ...] = ()
+    product_type: str = ""
 
     @classmethod
     def from_api(cls, payload: dict[str, Any]) -> "CrawlSettings":
@@ -69,9 +75,25 @@ class CrawlSettings:
                 raise ValueError(f"{key} must be between {minimum} and {maximum}.")
             return value
 
+        def safe_float(key: str, default: float) -> float:
+            try:
+                return float(payload.get(key, default))
+            except (ValueError, TypeError):
+                return default
+
         zip_code = str(payload.get("amazonZip") or "10001").strip()
         if not re.fullmatch(r"\d{5}(?:-\d{4})?", zip_code):
             raise ValueError("amazonZip must be a US ZIP code.")
+
+        raw_col_ids = payload.get("collectionIds")
+        col_ids: list[str] = []
+        if isinstance(raw_col_ids, (list, tuple)):
+            col_ids = [str(c).strip() for c in raw_col_ids if str(c).strip()]
+        single_col_id = str(payload.get("collectionId") or "").strip()
+        if single_col_id and single_col_id not in col_ids:
+            col_ids.insert(0, single_col_id)
+        effective_col_id = col_ids[0] if col_ids else ""
+
         return cls(
             profile_slug=profile,
             apply_jeminise_preset=bool(payload.get("applyJeminisePreset", False)),
@@ -84,6 +106,12 @@ class CrawlSettings:
             amazon_zip=zip_code,
             captcha_timeout_seconds=bounded("captchaTimeoutSeconds", 180, 30, 900),
             max_matrix_variants=bounded("maxMatrixVariants", 500, 1, 5000),
+            store_id=str(payload.get("storeId") or "").strip(),
+            price_addition=max(0.0, safe_float("priceAddition", 0.0)),
+            discount_percent=max(0.0, min(100.0, safe_float("discountPercent", 0.0))),
+            collection_id=effective_col_id,
+            collection_ids=tuple(col_ids),
+            product_type=str(payload.get("productType") or "").strip(),
         )
 
     def api_dict(self) -> dict[str, Any]:
@@ -95,6 +123,12 @@ class CrawlSettings:
             "browserTabs": values["browser_tabs"], "headless": values["headless"],
             "amazonZip": values["amazon_zip"], "captchaTimeoutSeconds": values["captcha_timeout_seconds"],
             "maxMatrixVariants": values["max_matrix_variants"],
+            "storeId": values["store_id"],
+            "priceAddition": values["price_addition"],
+            "discountPercent": values["discount_percent"],
+            "collectionId": values["collection_id"],
+            "collectionIds": list(values["collection_ids"]),
+            "productType": values["product_type"],
         }
 
 

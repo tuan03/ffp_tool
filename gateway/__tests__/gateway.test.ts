@@ -1120,9 +1120,19 @@ describe("Gateway: Operations & Dispatcher", () => {
         });
       }
 
-      if (query.includes("collectionUpdate")) {
+      if (query.includes("collectionUpdate") || query.includes("collectionAddProducts") || query.includes("collectionRemoveProducts")) {
         return createMockResponse({
           data: {
+            collectionAddProducts: {
+              collection: {
+                id: "gid://shopify/Collection/77",
+                productsCount: { count: 1 },
+              },
+              userErrors: [],
+            },
+            collectionRemoveProducts: {
+              userErrors: [],
+            },
             collectionUpdate: {
               collection: {
                 id: "gid://shopify/Collection/77",
@@ -2368,10 +2378,17 @@ describe("Gateway: HTTP Server Handler & E2E Integration with module-api", () =>
         });
       }
 
-      if (body.query.includes("CollectionUpdateMembership")) {
+      if (body.query.includes("CollectionAddProducts") || body.query.includes("CollectionUpdateMembership")) {
         updateVariables = body.variables;
         return createMockResponse({
           data: {
+            collectionAddProducts: {
+              collection: {
+                id: "gid://shopify/Collection/subcol-1",
+                productsCount: { count: 1 },
+              },
+              userErrors: [],
+            },
             collectionUpdate: {
               collection: {
                 id: "gid://shopify/Collection/subcol-1",
@@ -2413,11 +2430,8 @@ describe("Gateway: HTTP Server Handler & E2E Integration with module-api", () =>
     });
 
     assert.equal(result.success, true);
-    // Verified that it used sourcesToCreate rather than corrupting sourcesToUpdate with CollectionSubCollectionsSource
     assert.ok(updateVariables);
-    const colInput = (updateVariables as { collection: Record<string, unknown> }).collection;
-    assert.ok(colInput.sourcesToCreate);
-    assert.equal(colInput.sourcesToUpdate, undefined);
+    assert.deepEqual(updateVariables.productIds, ["gid://shopify/Product/prod-1"]);
   });
 
   it("strictly enforces mode 'preview' or 'apply' on write operations and rejects omitted/invalid mode with 400", async () => {
@@ -3018,7 +3032,7 @@ describe("Gateway: HTTP Server Handler & E2E Integration with module-api", () =>
     );
   });
 
-  it("handles collections.updateMembership cleanly as no-op when !conditionsSource and productIdsToRemove requested without productIdsToAdd", async () => {
+  it("handles collections.updateMembership cleanly with productIdsToRemove", async () => {
     let callCount = 0;
     const transport: HttpTransport = async (_url, init) => {
       callCount++;
@@ -3028,7 +3042,22 @@ describe("Gateway: HTTP Server Handler & E2E Integration with module-api", () =>
           data: {
             collection: {
               id: "gid://shopify/Collection/manual-1",
-              sources: [],
+              title: "Manual Collection",
+            },
+          },
+        });
+      }
+      if (body.query.includes("CollectionRemoveProducts") || body.query.includes("CollectionUpdateMembership")) {
+        return createMockResponse({
+          data: {
+            collectionRemoveProducts: {
+              userErrors: [],
+            },
+            collectionUpdate: {
+              collection: {
+                id: "gid://shopify/Collection/manual-1",
+              },
+              userErrors: [],
             },
           },
         });
@@ -3066,9 +3095,8 @@ describe("Gateway: HTTP Server Handler & E2E Integration with module-api", () =>
     const data = result.data as any;
     assert.equal(data.collectionId, "gid://shopify/Collection/manual-1");
     assert.equal(data.addedCount, 0);
-    assert.equal(data.removedCount, 0);
-    // Only 1 call to query sources; NO mutation call was made
-    assert.equal(callCount, 1);
+    assert.equal(data.removedCount, 1);
+    assert.equal(callCount, 2);
   });
 
   it("safely normalizes missing or malformed product image and url fields", async () => {

@@ -183,6 +183,7 @@ export interface ShopifyProductInput {
   readonly productType?: string;
   readonly categoryId?: string;
   readonly tags?: readonly string[];
+  readonly collectionsToJoin?: readonly string[];
   readonly featuredImage?: ShopifyImageInput;
   readonly images?: readonly ShopifyImageInput[];
   readonly media?: readonly (ShopifyImageInput | { readonly originalSource?: string; readonly alt?: string; readonly mediaContentType?: "IMAGE" | "VIDEO" })[];
@@ -201,6 +202,7 @@ export interface ShopifyProductUpdateInput {
   readonly productType?: string;
   readonly categoryId?: string;
   readonly tags?: readonly string[];
+  readonly collectionsToJoin?: readonly string[];
   readonly featuredImage?: ShopifyImageInput;
   readonly images?: readonly ShopifyImageInput[];
   readonly media?: readonly (ShopifyImageInput | { readonly originalSource?: string; readonly alt?: string; readonly mediaContentType?: "IMAGE" | "VIDEO" })[];

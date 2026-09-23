@@ -192,6 +192,7 @@ export function createShopifyGatewayAdapter(
             productType: input.productType,
             ...(categoryId ? { categoryId } : {}),
             tags: input.tags,
+            collectionsToJoin: input.collectionsToJoin,
             media: input.media?.map((m) => ({
               originalSource: m.originalSource,
               alt: m.alt,
@@ -269,6 +270,7 @@ export function createShopifyGatewayAdapter(
             vendor: input.vendor,
             productType: input.productType,
             tags: nextTags,
+            collectionsToJoin: input.collectionsToJoin,
             media: input.media?.map((media) => ({
               originalSource: media.originalSource,
               alt: media.alt,

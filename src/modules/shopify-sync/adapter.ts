@@ -88,6 +88,7 @@ function formatOptionalPrice(value: unknown): string | undefined {
 
 export function fromCustomizationNormalizerProduct(
   product: CrawlProduct,
+  options?: { readonly vendor?: string; readonly productType?: string },
 ): ShopifySyncProductInput {
   const title = product.title || product.sourceTitle || "Custom Product";
   const descriptionHtml = typeof product.descriptionHtml === "string"
@@ -177,7 +178,9 @@ export function fromCustomizationNormalizerProduct(
     });
 
   const productType =
-    product.categories && product.categories.length > 0
+    typeof options?.productType === "string" && options.productType.trim() !== ""
+      ? options.productType.trim()
+      : product.categories && product.categories.length > 0
       ? String(product.categories[product.categories.length - 1])
       : "Custom Product";
 
@@ -190,7 +193,7 @@ export function fromCustomizationNormalizerProduct(
     seo: typeof seo?.title === "string" && typeof seo.description === "string"
       ? { title: seo.title, description: seo.description }
       : undefined,
-    vendor: "FFP Store",
+    vendor: options?.vendor ?? "FFP Store",
     productType,
     tags: Array.from(tags),
     media,
@@ -202,9 +205,10 @@ export function fromCustomizationNormalizerProduct(
 
 export function fromCustomizationNormalizerBatch(
   batch: CustomizationNormalizerOutput,
+  options?: { readonly vendor?: string; readonly productType?: string },
 ): ShopifySyncBatchInput {
   return {
     jobId: batch.jobId,
-    products: batch.products.map(fromCustomizationNormalizerProduct),
+    products: batch.products.map((product) => fromCustomizationNormalizerProduct(product, options)),
   };
 }

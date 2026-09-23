@@ -394,7 +394,10 @@ export async function executeProductsCreate(
         productInput.status === "ACTIVE" || productInput.status === "ARCHIVED" || productInput.status === "DRAFT"
           ? productInput.status
           : "DRAFT",
-      vendor: typeof productInput.vendor === "string" ? productInput.vendor : undefined,
+      vendor:
+        typeof productInput.vendor === "string" && productInput.vendor.trim() !== ""
+          ? productInput.vendor.trim()
+          : (store.storeId.split("--")[0]?.trim() || "").toUpperCase() || undefined,
       productType: typeof productInput.productType === "string" ? productInput.productType : undefined,
       tags: Array.isArray(productInput.tags) ? (productInput.tags as string[]) : [],
       onlineStoreUrl:
@@ -482,8 +485,13 @@ export async function executeProductsCreate(
   if (typeof productInput.status === "string" && productInput.status.trim() !== "") {
     input.status = productInput.status.trim();
   }
-  if (typeof productInput.vendor === "string") {
-    input.vendor = productInput.vendor;
+  if (typeof productInput.vendor === "string" && productInput.vendor.trim() !== "") {
+    input.vendor = productInput.vendor.trim();
+  } else {
+    const baseStoreName = store.storeId.split("--")[0]?.trim();
+    if (baseStoreName) {
+      input.vendor = baseStoreName.toUpperCase();
+    }
   }
   if (typeof productInput.productType === "string") {
     input.productType = productInput.productType;
@@ -493,6 +501,15 @@ export async function executeProductsCreate(
   }
   if (Array.isArray(productInput.tags)) {
     input.tags = productInput.tags;
+  }
+  const rawCollections = productInput.collectionsToJoin ?? productInput.collectionIds;
+  if (Array.isArray(rawCollections)) {
+    const validColIds = (rawCollections as unknown[])
+      .filter((c): c is string => typeof c === "string" && c.trim() !== "")
+      .map((c) => c.trim());
+    if (validColIds.length > 0) {
+      input.collectionsToJoin = validColIds;
+    }
   }
   if (productInput.seo && typeof productInput.seo === "object") {
     const seoObj = productInput.seo as Record<string, unknown>;

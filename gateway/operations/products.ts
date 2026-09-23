@@ -116,6 +116,7 @@ const PRODUCTS_GET_QUERY = `
             id
             title
             price
+            compareAtPrice
             sku
             barcode
             inventoryQuantity
@@ -130,6 +131,7 @@ export interface RawVariantNode {
   readonly id: string;
   readonly title: string;
   readonly price: string;
+  readonly compareAtPrice?: string | null;
   readonly sku?: string | null;
   readonly barcode?: string | null;
   readonly inventoryQuantity?: number | null;
@@ -204,6 +206,7 @@ export function mapProductNode(node: RawProductNode): ProductSummary {
     productId: node.id,
     title: vEdge.node.title,
     price: vEdge.node.price,
+    compareAtPrice: vEdge.node.compareAtPrice ?? undefined,
     sku: vEdge.node.sku ?? undefined,
     barcode: vEdge.node.barcode ?? undefined,
     inventoryQuantity: vEdge.node.inventoryQuantity ?? undefined,

@@ -96,6 +96,15 @@ test("fromCustomizationNormalizerProduct adapts normalized crawl product into Sh
   assertStrict.ok(adapted.customization?.hasCustomization);
   assertStrict.equal(adapted.customization?.assets?.length, 1);
   assertStrict.equal(adapted.customization?.assets?.[0].friendlyFileName, "base-preview.jpg");
+  assertStrict.equal(adapted.vendor, "FFP Store");
+
+  const adaptedChillgen = fromCustomizationNormalizerProduct(crawlProduct, { vendor: "CHILLGEN", productType: "Rug" });
+  assertStrict.equal(adaptedChillgen.vendor, "CHILLGEN");
+  assertStrict.equal(adaptedChillgen.productType, "Rug");
+
+  const adaptedJeminise = fromCustomizationNormalizerProduct(crawlProduct, { vendor: "JEMINISE", productType: "Blanket" });
+  assertStrict.equal(adaptedJeminise.vendor, "JEMINISE");
+  assertStrict.equal(adaptedJeminise.productType, "Blanket");
 
   // Test Money object support as produced by amazon-crawler
   const moneyProduct = {

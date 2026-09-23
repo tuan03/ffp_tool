@@ -76,6 +76,21 @@ export function shopifyGatewayDevPlugin(options?: ShopifyGatewayDevPluginOptions
           }
         }
 
+        if (isShopify || isAutoSeo) {
+          try {
+            const freshStores = loadBootstrappedStores({ env: loadLocalEnv() });
+            for (const store of freshStores) {
+              if (!storeRegistry.getStore(store.storeId)) {
+                storeRegistry.registerStore(store);
+              } else {
+                storeRegistry.updateStore(store);
+              }
+            }
+          } catch {
+            // non-fatal env sync in dev
+          }
+        }
+
         if (isShopify) {
           if (req.method !== "POST") {
             res.statusCode = 405;
