@@ -9,6 +9,7 @@ import type {
 } from "../types";
 import { DEFAULT_AMAZON_CRAWLER_SETTINGS } from "../types";
 import { firstProductMediaUrl, resolveSelectedProduct } from "./product-selection";
+import { notifyUser } from "../../../shared/utils";
 
 export type ResultTab = "overview" | "source" | "final" | "customize" | "json";
 
@@ -240,11 +241,24 @@ export async function startCrawlerJob({
   persistSession(sessionState);
   notifyListeners();
 
+  let didAlertCaptcha = false;
+
   try {
     const crawlerOutput = await runAmazonCrawler({
       input: { ...jobSettings, urls },
       onProgress: (nextProgress) => {
         sessionState = { ...sessionState, progress: nextProgress };
+        if (nextProgress.phase === "captcha" && !didAlertCaptcha) {
+          didAlertCaptcha = true;
+          notifyUser({
+            title: "⚠️ Amazon Crawler: Cần giải CAPTCHA!",
+            message: "Amazon yêu cầu giải CAPTCHA để tiếp tục cào. Vui lòng mở crawler agent để giải.",
+            type: "warning",
+            sound: "alert",
+            url: "/amazon-crawler",
+            tag: "amazon-captcha",
+          });
+        }
         notifyListeners();
       },
       onProducts,
@@ -264,6 +278,16 @@ export async function startCrawlerJob({
     };
     persistSession(sessionState);
     notifyListeners();
+
+    notifyUser({
+      title: "⚡ Distributed Crawler: Hoàn tất cào sản phẩm!",
+      message: `Đã cào thành công ${crawlerOutput.products.length} sản phẩm từ Amazon. Bạn có thể kiểm tra và chuyển tiếp sang SEO Review.`,
+      type: "success",
+      sound: "chime",
+      url: "/amazon-crawler",
+      tag: `crawler-finished-${crawlerOutput.jobId}`,
+    });
+
     return crawlerOutput;
   } catch (caught: unknown) {
     const errorMessage =
@@ -280,6 +304,17 @@ export async function startCrawlerJob({
     };
     persistSession(sessionState);
     notifyListeners();
+
+    if (!(caught instanceof DOMException && caught.name === "AbortError")) {
+      notifyUser({
+        title: "❌ Distributed Crawler Thất bại",
+        message: errorMessage,
+        type: "error",
+        sound: "alert",
+        url: "/amazon-crawler",
+      });
+    }
+
     return null;
   } finally {
     if (activeController === controller) {

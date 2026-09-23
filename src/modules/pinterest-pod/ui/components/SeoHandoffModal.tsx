@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { notifyUser } from "../../../../shared/utils";
 import { handoverToSeo } from "../../service";
 import type { DeliverablesData, PinterestPodDeliverables, SeoHandoverResponse } from "../../types";
 import type { LightboxImageItem } from "./ImageLightboxModal";
@@ -185,6 +186,13 @@ export function SeoHandoffModal({
       setCurrentResult(res);
       setViewMode("result");
       onHandoffSuccess?.(res, filteredPayload);
+      notifyUser({
+        title: "✨ Pinterest POD: Bàn giao SEO thành công!",
+        message: `Đã bàn giao ${filteredPayload.items.length} thiết kế POD sang SEO Review.`,
+        type: "success",
+        sound: "chime",
+        url: "/seo-review",
+      });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       if (onHandoverToSeo) {
@@ -210,6 +218,13 @@ export function SeoHandoffModal({
       setCurrentResult(fallbackResult);
       setViewMode("result");
       onHandoffSuccess?.(fallbackResult, filteredPayload);
+      notifyUser({
+        title: "✨ Pinterest POD: Bàn giao SEO thành công!",
+        message: `Đã bàn giao ${filteredPayload.items.length} thiết kế POD sang SEO Review.`,
+        type: "success",
+        sound: "chime",
+        url: "/seo-review",
+      });
     } finally {
       setIsSubmitting(false);
     }

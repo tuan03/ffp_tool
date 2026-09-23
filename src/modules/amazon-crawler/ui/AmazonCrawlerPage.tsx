@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
+import { notifyUser } from "../../../shared/utils";
+
 import {
   DEFAULT_AMAZON_CRAWLER_SETTINGS,
   type AmazonCrawlerCacheClearer,
@@ -218,8 +220,23 @@ export function AmazonCrawlerPage({
         setLiveProducts([...retried.output.products]);
       }
       setSyncMessage(`Đã đưa ${retried.retried} product lỗi trở lại hàng đợi Shopify.`);
+      notifyUser({
+        title: "🛍️ Shopify Sync Retry hoàn tất",
+        message: `Đã đưa ${retried.retried} sản phẩm lỗi trở lại hàng đợi Shopify.`,
+        type: "info",
+        sound: "chime",
+        url: "/amazon-crawler",
+      });
     } catch (caught: unknown) {
-      setSyncMessage(caught instanceof Error ? caught.message : "Không thể retry Shopify sync.");
+      const errorMsg = caught instanceof Error ? caught.message : "Không thể retry Shopify sync.";
+      setSyncMessage(errorMsg);
+      notifyUser({
+        title: "❌ Shopify Sync Retry thất bại",
+        message: errorMsg,
+        type: "error",
+        sound: "alert",
+        url: "/amazon-crawler",
+      });
     } finally {
       setIsRetryingSync(false);
     }
@@ -257,10 +274,24 @@ export function AmazonCrawlerPage({
     setHandoverError(null);
     try {
       await onHandoverToSeo(resultProducts);
+      notifyUser({
+        title: "📦 Bàn giao sang SEO Review",
+        message: `Đã bàn giao ${resultProducts.length} sản phẩm sang bộ phận SEO Review thành công!`,
+        type: "success",
+        sound: "chime",
+        url: "/seo-review",
+      });
       navigate("/seo-review");
     } catch (caught: unknown) {
       const msg = caught instanceof Error ? caught.message : String(caught);
       setHandoverError(`Lỗi khi bàn giao sang SEO Review: ${msg}`);
+      notifyUser({
+        title: "❌ Bàn giao SEO thất bại",
+        message: msg,
+        type: "error",
+        sound: "alert",
+        url: "/amazon-crawler",
+      });
     } finally {
       setIsHandingOver(false);
     }

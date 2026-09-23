@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { notifyUser } from "../../../shared/utils";
 import { inferProductTypeFromNiche, packageDeliverablesForSeo, realPinterestPodClient } from "../service";
 import type {
   CandidateItem,
@@ -427,6 +428,14 @@ export function PinterestPodStudio({
         setCurrentStage(2);
         stopPolling();
         void loadRecentRuns();
+        notifyUser({
+          title: "🎨 Pinterest POD Studio: Đã quét xong ứng viên!",
+          message: `Đã tìm thấy ${detail.candidates?.length ?? 0} mẫu thiết kế cho niche "${detail.niche || niche}". Vui lòng vào kiểm duyệt và chọn mẫu sản xuất.`,
+          type: "success",
+          sound: "chime",
+          url: "/pinterest-pod",
+          tag: `pod-review-${targetJobId}`,
+        });
         setTimeout(() => {
           if (isMountedRef.current) {
             stage2Ref.current?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -437,6 +446,14 @@ export function PinterestPodStudio({
         setIsProducing(false);
         stopPolling();
         void loadRecentRuns();
+        notifyUser({
+          title: "🎉 Pinterest POD Studio: Sản xuất hoàn tất!",
+          message: `Đã hoàn tất sản xuất file in CMYK 300 DPI và mockup AI cho job ${targetJobId}. Sẵn sàng xuất xưởng và bàn giao sang SEO.`,
+          type: "success",
+          sound: "chime",
+          url: "/pinterest-pod",
+          tag: `pod-completed-${targetJobId}`,
+        });
         setTimeout(() => {
           if (isMountedRef.current) {
             stage3Ref.current?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -446,6 +463,15 @@ export function PinterestPodStudio({
         setIsProducing(false);
         stopPolling();
         void loadRecentRuns();
+        if (detail.status === "failed") {
+          notifyUser({
+            title: "❌ Pinterest POD Studio: Tác vụ thất bại",
+            message: detail.error || "Quá trình quét hoặc sản xuất gặp lỗi.",
+            type: "error",
+            sound: "alert",
+            url: "/pinterest-pod",
+          });
+        }
         if (detail.error) {
           setErrorMessage(detail.error);
           window.scrollTo({ top: 0, behavior: "smooth" });

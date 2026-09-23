@@ -6,6 +6,7 @@ import {
   pushSeoReviewProductToShopify,
   type SeoReviewPushProductItem,
 } from "../../modules/orchestrator";
+import { notifyUser } from "../../shared/utils";
 import { ImageZoomModal } from "./components/ImageZoomModal";
 import { ProductCardList } from "./components/ProductCardList";
 import { ProductDetailDrawer } from "./components/ProductDetailDrawer";
@@ -159,6 +160,19 @@ export function SeoReviewPage({
     return null;
   });
 
+  // Notify approver when new products arrive from other pipelines
+  useEffect(() => {
+    if (handoffBanner && handoffBanner.count > 0) {
+      notifyUser({
+        title: "📥 Sản phẩm mới cần kiểm duyệt!",
+        message: `Hệ thống vừa nhận ${handoffBanner.count} sản phẩm từ ${handoffBanner.source || "hệ thống"}. Vui lòng kiểm tra và duyệt nội dung SEO.`,
+        type: "info",
+        sound: "chime",
+        url: "/seo-review",
+      });
+    }
+  }, []);
+
   // Persist review state to sessionStorage
   useEffect(() => {
     if (typeof window !== "undefined" && window.sessionStorage) {
@@ -295,6 +309,24 @@ export function SeoReviewPage({
         },
       );
 
+      if (result.success) {
+        notifyUser({
+          title: "🛍️ Shopify Sync thành công!",
+          message: `Sản phẩm "${targetProduct.productTitle.value}" đã được đồng bộ lên Store chính.`,
+          type: "success",
+          sound: "chime",
+          url: "/seo-review",
+        });
+      } else {
+        notifyUser({
+          title: "❌ Shopify Sync thất bại",
+          message: result.error || "Lỗi khi đẩy sản phẩm lên Shopify",
+          type: "error",
+          sound: "alert",
+          url: "/seo-review",
+        });
+      }
+
       setProducts((prev) =>
         prev.map((p) => {
           if (p.id !== targetProduct.id) return p;
@@ -323,6 +355,13 @@ export function SeoReviewPage({
       );
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
+      notifyUser({
+        title: "❌ Shopify Sync thất bại",
+        message,
+        type: "error",
+        sound: "alert",
+        url: "/seo-review",
+      });
       setProducts((prev) =>
         prev.map((p) =>
           p.id === targetProduct.id
@@ -351,6 +390,34 @@ export function SeoReviewPage({
       );
 
       const resultMap = new Map(results.map((r) => [r.id, r]));
+
+      const successCount = results.filter((r) => r.success).length;
+      const failCount = results.length - successCount;
+      if (failCount === 0) {
+        notifyUser({
+          title: "🛍️ Shopify Sync: Đẩy hàng loạt thành công!",
+          message: `Đã đồng bộ toàn bộ ${successCount} sản phẩm lên Shopify Store chính.`,
+          type: "success",
+          sound: "chime",
+          url: "/seo-review",
+        });
+      } else if (successCount > 0) {
+        notifyUser({
+          title: "⚠️ Shopify Sync: Đã đẩy một phần",
+          message: `Đã đồng bộ ${successCount}/${results.length} sản phẩm lên Store. Có ${failCount} sản phẩm gặp lỗi cần retry.`,
+          type: "warning",
+          sound: "alert",
+          url: "/seo-review",
+        });
+      } else {
+        notifyUser({
+          title: "❌ Shopify Sync Thất bại",
+          message: `Cả ${failCount} sản phẩm đều không thể đồng bộ lên Shopify Store.`,
+          type: "error",
+          sound: "alert",
+          url: "/seo-review",
+        });
+      }
 
       setProducts((prev) =>
         prev.map((p) => {
@@ -381,6 +448,13 @@ export function SeoReviewPage({
       );
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
+      notifyUser({
+        title: "❌ Shopify Sync gặp lỗi hệ thống",
+        message,
+        type: "error",
+        sound: "alert",
+        url: "/seo-review",
+      });
       const targetIds = new Set(targets.map((t) => t.id));
       setProducts((prev) =>
         prev.map((p) =>

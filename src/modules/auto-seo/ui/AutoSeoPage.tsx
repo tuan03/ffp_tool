@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppError } from "../../../shared/errors/app-error";
+import { notifyUser } from "../../../shared/utils";
 import { mapShopifyProductToAutoSeoCandidate } from "../shopify-adapter";
 import type {
   AutoSeoClient,
@@ -224,14 +225,28 @@ export function AutoSeoPage({
       setAutoSeoOutput(result);
       setAutoSeoLastHydratedProducts(hydratedProducts);
 
+      notifyUser({
+        title: "✨ Auto SEO: Tối ưu hóa hoàn tất!",
+        message: `Đã tạo nội dung Auto SEO thành công cho ${result.selectedCount} sản phẩm. Đã sẵn sàng kiểm duyệt tại SEO Review.`,
+        type: "success",
+        sound: "chime",
+        url: "/seo-review",
+      });
+
       if (onHandoverToSeo) {
         await onHandoverToSeo(hydratedProducts);
         navigate("/seo-review");
       }
     } catch (err) {
-      setErrorMessage(
-        err instanceof Error ? err.message : "Đã xảy ra lỗi khi chạy Auto SEO.",
-      );
+      const errText = err instanceof Error ? err.message : "Đã xảy ra lỗi khi chạy Auto SEO.";
+      setErrorMessage(errText);
+      notifyUser({
+        title: "❌ Auto SEO thất bại",
+        message: errText,
+        type: "error",
+        sound: "alert",
+        url: "/auto-seo",
+      });
     } finally {
       setIsRunningAutoSeo(false);
     }
@@ -247,11 +262,24 @@ export function AutoSeoPage({
 
     try {
       await onHandoverToSeo(lastHydratedProducts);
+      notifyUser({
+        title: "📦 Auto SEO: Bàn giao SEO thành công!",
+        message: `Đã bàn giao ${lastHydratedProducts.length} sản phẩm sang SEO Review.`,
+        type: "success",
+        sound: "chime",
+        url: "/seo-review",
+      });
       navigate("/seo-review");
     } catch (err) {
-      setErrorMessage(
-        err instanceof Error ? err.message : "Đã xảy ra lỗi khi bàn giao sang SEO Content.",
-      );
+      const errText = err instanceof Error ? err.message : "Đã xảy ra lỗi khi bàn giao sang SEO Content.";
+      setErrorMessage(errText);
+      notifyUser({
+        title: "❌ Bàn giao SEO thất bại",
+        message: errText,
+        type: "error",
+        sound: "alert",
+        url: "/auto-seo",
+      });
     } finally {
       setIsSendingToSeo(false);
     }
