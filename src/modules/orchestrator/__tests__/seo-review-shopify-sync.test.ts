@@ -340,4 +340,132 @@ describe("seo-review-shopify-sync", () => {
     assert.equal(results[1]?.success, true);
     assert.equal(results[1]?.productId, "gid://shopify/Product/2");
   });
+
+  it("safely handles raw ASIN in product.productId without crashing with invalid ID error, creating product", async () => {
+    const executedOperations: string[] = [];
+    const runner = createMockRunner(async (input) => {
+      executedOperations.push(input.operation);
+      if (input.operation === "products.get") {
+        const id = (input.payload as { id?: string }).id;
+        if (id && !id.startsWith("gid://shopify/")) {
+          throw new Error(`Variable $id of type ID! was provided invalid value "${id}"`);
+        }
+      }
+      if (input.operation === "products.list") {
+        return {
+          storeId: "capozen",
+          operation: "products.list",
+          success: true,
+          data: { products: [] },
+        } as unknown as ShopifyApiResponse;
+      }
+      return undefined;
+    });
+
+    const mockCrawlProduct: CrawlProduct = {
+      id: "B0H829WFC2",
+      asin: "B0H829WFC2",
+      title: "Classroom Shaped Rug",
+      description: "Personalized notebook rug",
+      variants: [],
+      media: [],
+    };
+
+    const item: SeoReviewPushProductItem = {
+      id: "crawler-review-asin-1",
+      productId: "B0H829WFC2", // ASIN passed from crawler/UI
+      productTitle: "Personalized Composition Notebook Classroom Shaped Rug",
+      productDescription: "<p>Durable classroom rug.</p>",
+      seoTitle: "Personalized Notebook Rug",
+      seoDescription: "Custom shaped rug for classrooms.",
+      handle: "personalized-composition-notebook-classroom-shaped-rug",
+      images: [],
+      sourceCrawlProduct: mockCrawlProduct,
+    };
+
+    const result = await pushSeoReviewProductToShopify(item, { moduleApiRunner: runner });
+
+    assert.equal(result.success, true);
+    assert.equal(result.productId, "gid://shopify/Product/new-created-999");
+    assert.ok(executedOperations.includes("products.create"));
+  });
+
+  it("reconciles existing Shopify product via source tag when crawled product was already synced by Distributed Crawler", async () => {
+    const existingShopifyProduct = {
+      id: "gid://shopify/Product/existing-synced-555",
+      title: "Personalized Composition Notebook Classroom Shaped Rug",
+      handle: "personalized-composition-notebook-classroom-shaped-rug",
+      tags: ["ffp-source:amazon:B0H829WFC2:none:none"],
+      variants: [{ id: "gid://shopify/ProductVariant/v555", price: "45.00" }],
+      images: [{ id: "gid://shopify/ProductImage/img555", src: "https://example.com/rug.jpg" }],
+    };
+
+    let didUpdateExisting = false;
+    const runner = createMockRunner(async (input) => {
+      if (input.operation === "products.list") {
+        return {
+          storeId: "capozen",
+          operation: "products.list",
+          success: true,
+          data: { products: [existingShopifyProduct] },
+        } as unknown as ShopifyApiResponse;
+      }
+      if (input.operation === "products.get") {
+        const id = (input.payload as { id?: string }).id;
+        if (id === existingShopifyProduct.id) {
+          return {
+            storeId: "capozen",
+            operation: "products.get",
+            success: true,
+            data: { product: existingShopifyProduct },
+          } as unknown as ShopifyApiResponse;
+        }
+      }
+      if (input.operation === "products.update") {
+        if (input.payload.id === existingShopifyProduct.id) {
+          didUpdateExisting = true;
+          return {
+            storeId: "capozen",
+            operation: "products.update",
+            success: true,
+            data: {
+              product: {
+                ...existingShopifyProduct,
+                title: input.payload.product.title,
+              },
+            },
+          } as unknown as ShopifyApiResponse;
+        }
+      }
+      return undefined;
+    });
+
+    const mockCrawlProduct: CrawlProduct = {
+      id: "B0H829WFC2",
+      asin: "B0H829WFC2",
+      sourceKey: "amazon:B0H829WFC2:none:none",
+      title: "Classroom Shaped Rug",
+      description: "Personalized notebook rug",
+      variants: [{ id: "v1", price: 45.0 }],
+      media: [],
+    };
+
+    const item: SeoReviewPushProductItem = {
+      id: "crawler-review-asin-2",
+      productId: "B0H829WFC2", // ASIN passed from crawler/UI
+      productTitle: "Updated Approved Rug Title",
+      productDescription: "<p>Updated description</p>",
+      seoTitle: "Updated SEO Title",
+      seoDescription: "Updated SEO Description",
+      handle: "personalized-composition-notebook-classroom-shaped-rug",
+      images: [],
+      sourceCrawlProduct: mockCrawlProduct,
+    };
+
+    const result = await pushSeoReviewProductToShopify(item, { moduleApiRunner: runner });
+
+    assert.equal(result.success, true);
+    assert.equal(result.productId, "gid://shopify/Product/existing-synced-555");
+    assert.equal(didUpdateExisting, true);
+  });
 });

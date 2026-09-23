@@ -1,6 +1,9 @@
 import type { CrawlProduct } from "../customization-normalizer";
 import {
   createShopifyGatewayAdapter,
+  isShopifyProductGid,
+  normalizeShopifyProductGid,
+  resolveShopifyProductForSync,
   type ModuleApiRunner,
   type ShopifyProductsUpdateResponse,
 } from "../module-api";
@@ -11,6 +14,7 @@ import {
 import {
   fromCustomizationNormalizerProduct,
   syncSingleProduct,
+  type ShopifyManagedResources,
 } from "../shopify-sync";
 
 export interface SeoReviewPushImageItem {
@@ -24,6 +28,7 @@ export interface SeoReviewPushImageItem {
 export interface SeoReviewPushProductItem {
   readonly id: string;
   readonly productId?: string;
+  readonly asin?: string;
   readonly productTitle: string;
   readonly productDescription: string;
   readonly seoTitle: string;
@@ -137,9 +142,58 @@ export async function pushSeoReviewProductToShopify(
         getRequestId: (op) => `seo-review-${product.id}-${op}-${Date.now()}`,
       });
 
+      // 1. Identify any existing valid Shopify Product GID
+      const crawlPipelineShopify = crawl as {
+        pipeline?: { shopify?: { productId?: string } };
+        shopify?: { productId?: string };
+      };
+      const crawlShopifyId = crawlPipelineShopify.pipeline?.shopify?.productId || crawlPipelineShopify.shopify?.productId;
+      const candidateShopifyId = normalizeShopifyProductGid(product.productId) || normalizeShopifyProductGid(crawlShopifyId);
+
+      // 2. Discover/reconcile existing Shopify product via sourceKey or mapping
+      let existingProductId: string | undefined = candidateShopifyId;
+      let existingManagedResources: ShopifyManagedResources | undefined;
+
+      const candidateSourceKeys = [
+        typeof crawl.sourceKey === "string" ? crawl.sourceKey.trim() : "",
+        typeof crawl.asin === "string" ? crawl.asin.trim() : "",
+        typeof crawl.parentAsin === "string" ? crawl.parentAsin.trim() : "",
+        typeof product.asin === "string" ? product.asin.trim() : "",
+        typeof crawl.id === "string" ? crawl.id.trim() : "",
+        typeof product.id === "string" ? product.id.trim() : "",
+      ].filter((k) => k.length > 0 && !k.startsWith("sample-prod-") && !k.startsWith("crawler-review-"));
+
+      const sourceKey = candidateSourceKeys[0];
+      if (sourceKey) {
+        try {
+          const resolved = await resolveShopifyProductForSync({
+            runner: moduleApiRunner,
+            storeId: targetStoreId,
+            sourceKey,
+            mappedProductId: candidateShopifyId,
+          });
+          if (resolved.product) {
+            existingProductId = resolved.product.id;
+            existingManagedResources = {
+              tags: resolved.product.tags,
+              mediaIds: resolved.product.images?.flatMap((img) => (img.id ? [img.id] : [])) ?? [],
+              variantIds: resolved.product.variants?.map((v) => v.id) ?? [],
+            };
+          } else if (resolved.match === "none" && !candidateShopifyId) {
+            existingProductId = undefined;
+          }
+        } catch {
+          // If resolution fails (e.g. offline/mock runner), proceed with candidateShopifyId if valid
+        }
+      }
+
+      // Ensure existingProductId is strictly a valid Shopify GID or undefined (never pass raw ASIN)
+      const validExistingProductId = isShopifyProductGid(existingProductId) ? existingProductId : undefined;
+
       const syncResult = await syncSingleProduct(fromCustomizationNormalizerProduct(enrichedCrawlProduct), {
         gateway,
-        existingProductId: product.productId,
+        existingProductId: validExistingProductId,
+        existingManagedResources,
       });
 
       if (!syncResult.success) {
@@ -150,7 +204,7 @@ export async function pushSeoReviewProductToShopify(
         };
       }
 
-      const finalProductId = syncResult.productId || product.productId;
+      const finalProductId = syncResult.productId || validExistingProductId || normalizeShopifyProductGid(product.productId);
       const finalHandle = syncResult.productHandle || product.handle;
 
       return {
@@ -163,15 +217,15 @@ export async function pushSeoReviewProductToShopify(
     }
 
     // Case 2: Product has existing Shopify Product ID (e.g. from Auto SEO or prior sync)
-    if (product.productId && product.productId.trim() !== "") {
-      const cleanProductId = product.productId.trim();
+    const normalizedProductId = normalizeShopifyProductGid(product.productId);
+    if (normalizedProductId) {
       const response = (await moduleApiRunner({
         storeId: targetStoreId,
         mode,
         requestId: `seo-review-update-${product.id}-${Date.now()}`,
         operation: "products.update",
         payload: {
-          id: cleanProductId,
+          id: normalizedProductId,
           product: {
             title: product.productTitle,
             descriptionHtml: product.productDescription,
@@ -198,7 +252,7 @@ export async function pushSeoReviewProductToShopify(
       }
 
       const updated = response.data.product;
-      const finalProductId = updated?.id || cleanProductId;
+      const finalProductId = updated?.id || normalizedProductId;
       const finalHandle = updated?.handle || product.handle;
 
       return {

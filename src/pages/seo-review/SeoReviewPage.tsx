@@ -30,6 +30,7 @@ function toPushProductItem(vm: SeoProductUiViewModel): SeoReviewPushProductItem 
   return {
     id: vm.id,
     productId: vm.productId,
+    asin: vm.asin,
     productTitle: vm.productTitle.value,
     productDescription: vm.productDescription.value,
     seoTitle: vm.seoTitle.value,

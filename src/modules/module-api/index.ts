@@ -1,5 +1,7 @@
 export {
   createShopifyGatewayAdapter,
+  isShopifyProductGid,
+  normalizeShopifyProductGid,
   resolveShopifyProductForSync,
 } from "./gateway-adapter";
 export type {

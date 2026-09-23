@@ -186,14 +186,24 @@ export function adaptSeoOutputToViewModel(
 export function adaptCustomizationItemToViewModel(
   item: CustomizationSeoItemResult,
 ): SeoProductUiViewModel {
+  const crawlPipelineShopify = item.sourceProduct as {
+    pipeline?: { shopify?: { productId?: string; adminUrl?: string } };
+    shopify?: { productId?: string; adminUrl?: string };
+  };
+  const crawlShopify = crawlPipelineShopify?.pipeline?.shopify || crawlPipelineShopify?.shopify;
+  const existingShopifyId = crawlShopify?.productId;
+  const effectiveProductId = existingShopifyId || item.productId;
+
   const options: AdaptSeoOutputOptions = {
     id: item.productId || item.asin || `item-${Date.now()}`,
-    productId: item.productId,
+    productId: effectiveProductId,
     asin: item.asin,
     niche: item.sourceProduct.categories?.[0] || "Custom Product",
     defaultStatus: item.success ? "completed" : "failed",
     isStatusReal: true,
     sourceCrawlProduct: item.sourceProduct,
+    shopifyAdminUrl: crawlShopify?.adminUrl,
+    shopifySyncStatus: crawlShopify?.productId ? "synced" : "idle",
   };
 
   if (!item.success) {
