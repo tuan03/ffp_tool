@@ -17,7 +17,7 @@ if __package__ in {None, ""}:
     from pinterest.image_crawler.vision_filter import ProductVisionFilter
     from pinterest.shared.cache import JsonCache
     from pinterest.shared.models import ImageCandidate, RankedImage, SearchResult
-    from pinterest.shared.product_policy import generate_product_policy
+    from pinterest.shared.product_policy import ProductPolicy, generate_product_policy
     from pinterest.shared.utils import configure_logging, dataclass_to_dict, env, html_page, utc_now_iso, write_csv, write_json
     from pinterest.trend_finder.semantic_analyzer import build_smart_queries
 else:
@@ -28,7 +28,7 @@ else:
     from .vision_filter import ProductVisionFilter
     from ..shared.cache import JsonCache
     from ..shared.models import ImageCandidate, RankedImage, SearchResult
-    from ..shared.product_policy import generate_product_policy
+    from ..shared.product_policy import ProductPolicy, generate_product_policy
     from ..shared.utils import configure_logging, dataclass_to_dict, env, html_page, utc_now_iso, write_csv, write_json
     from ..trend_finder.semantic_analyzer import build_smart_queries
 
@@ -292,6 +292,17 @@ def main() -> int:
         backend=args.gemini_backend,
         output_path=output_dir / "product_policy.json",
     )
+    if args.crawl_purpose == "inspiration" and (product_policy.require_physical_product or product_policy.require_floor_textile):
+        product_policy = ProductPolicy(
+            policy_id=product_policy.policy_id,
+            display_name=product_policy.display_name,
+            target_keywords=product_policy.target_keywords,
+            accepted_types=product_policy.accepted_types,
+            excluded_types=product_policy.excluded_types,
+            require_floor_textile=False,
+            require_physical_product=False,
+            reject_collage=product_policy.reject_collage,
+        )
 
     vision = ProductVisionFilter(
         niche=package.niche,

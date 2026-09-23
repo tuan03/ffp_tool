@@ -137,12 +137,17 @@ class ProductVisionFilter:
             return f"""
 You are a strict TREND ARTWORK / VISUAL INSPIRATION gate for a Pinterest crawler.
 
-Target downstream product: {self.product_policy.display_name}
-Trend/niche context: {self.niche}
+Target downstream POD product: {self.product_policy.display_name} (Surface pattern / illustration will be printed onto this product)
+Niche / trend query context: {self.niche}
 
-For every image, decide whether it is a useful visual source for creating a new printable rug/blanket artwork.
+IMPORTANT CONTEXT:
+The candidate images being evaluated are SURFACE PATTERNS, SEAMLESS DESIGNS, and PRINTABLE ARTWORKS.
+Do NOT expect or require the image to be a physical {self.product_policy.display_name}!
+The artwork will be printed on the downstream product during manufacturing.
+
+For every image, decide whether it is a high-quality, clean visual source for creating a new printable artwork or pattern.
 Accept images that have clear motifs, pattern direction, color palette, illustration style, composition, or texture that can transfer to a print product.
-Reject images that are mostly screenshots, memes, text blocks, watermarks, brand logos, celebrity/IP characters, collage boards, blurry thumbnails, room-only photos, or images where the trend idea is not visually inspectable.
+Reject images that are mostly screenshots, memes, text blocks, watermarks, brand logos, celebrity/IP characters, multi-panel grids/swatch sheets, blurry thumbnails, room-only photos, or images where the trend idea is not visually inspectable.
 
 Return only JSON:
 {{
@@ -175,7 +180,7 @@ Return only JSON:
       "reject_reason_code": "",
       "product_confidence": 0.95,
       "product_visibility": 85,
-      "trend_relevance": 80,
+      "trend_relevance": 85,
       "commercial_quality": 75,
       "aesthetic": "short printable style and palette",
       "detected_product": "usable visual source description",
@@ -189,6 +194,8 @@ For inspiration mode:
 - product_present means a usable visual pattern/artwork is present.
 - product_role PRIMARY means the motif/artwork/pattern is the main subject.
 - product_visibility means motif/artwork clarity.
+- trend_relevance (0..100): Evaluates how well this visual artwork/pattern matches the candidate's `trend` or `query` from image metadata.
+  IMPORTANT: Do NOT penalize the image for not being the physical downstream product (e.g. {self.product_policy.display_name}). The image is SUPPOSED to be a surface pattern/artwork design to be printed onto that product! If the pattern matches the trend/query motif (e.g. floral bouquet for 'homecoming bouquet ideas'), score trend_relevance high (80-95).
 - commercial_quality means print/ecommerce suitability.
 - is_multi_panel_or_swatch: MANDATORY true if the image is divided into multiple panels, grid tiles, swatch squares (e.g. 4, 9, 12, 20 pattern blocks), collage sheets, or multi-item showcases. If true, set is_collage=true, accepted=false, is_single_clean_artwork=false, flat_artwork_score=0.0, printability_score=0.0, reject_reason_code="REJECT_COLLAGE".
 - has_commercial_metadata_text: MANDATORY true if the image contains commercial text, file type labels (e.g. "AI/EPS/PNG/JPG"), dimension specs (e.g. "12x12 in", "300 DPI"), pack count headers (e.g. "20 SEAMLESS PATTERNS"), watermark, pricing, or web links. If true, set accepted=false, is_single_clean_artwork=false, printability_score=0.0, reject_reason_code="REJECT_TEXT_BLOCK".
@@ -361,9 +368,15 @@ Image metadata:
             if not is_single_clean_artwork:
                 accepted = False
                 source_role = "reject"
-                printability_score = min(printability_score, 0.2)
                 if not reject_reason_code:
                     reject_reason_code = "REJECT_NOT_SINGLE_PRODUCT"
+
+            trend_relevance_raw = clamp(item.get("trend_relevance"))
+            if self.crawl_purpose == "inspiration" and accepted:
+                # If Gemini accepted the pattern as a clean printable artwork, don't let a low score
+                # from downstream physical product confusion zero out trend_relevance.
+                if trend_relevance_raw < 50.0:
+                    trend_relevance_raw = max(trend_relevance_raw, 85.0)
 
             output[image_id] = VisionResult(
                 image_id=image_id,
@@ -372,7 +385,7 @@ Image metadata:
                 product_role=role,
                 product_confidence=clamp01(item.get("product_confidence")),
                 product_visibility=clamp(item.get("product_visibility")),
-                trend_relevance=clamp(item.get("trend_relevance")),
+                trend_relevance=trend_relevance_raw,
                 commercial_quality=clamp(item.get("commercial_quality")),
                 aesthetic=truncate_text(item.get("aesthetic"), 220),
                 detected_product=truncate_text(item.get("detected_product"), 220),

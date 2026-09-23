@@ -87,11 +87,15 @@ def policy_reject_reason(candidate: ImageCandidate, vision: VisionResult, policy
 
 
 def score_image(candidate: ImageCandidate, vision: VisionResult, is_direct_printable: bool = False) -> float:
+    effective_trend_relevance = vision.trend_relevance
+    if effective_trend_relevance < 50.0 and (is_direct_printable or vision.flat_artwork_score >= 0.60):
+        effective_trend_relevance = max(effective_trend_relevance, candidate.semantic_fit, 80.0)
+
     score = (
         candidate.trend_strength * 0.20
         + candidate.semantic_fit * 0.12
         + vision.product_visibility * 0.18
-        + vision.trend_relevance * 0.16
+        + effective_trend_relevance * 0.16
         + vision.commercial_quality * 0.14
         + vision.product_confidence * 100.0 * 0.05
         + vision.confidence * 100.0 * 0.05
@@ -107,7 +111,12 @@ def score_image(candidate: ImageCandidate, vision: VisionResult, is_direct_print
     return round(max(0.0, min(100.0, score)), 2)
 
 
-def inspiration_reject_reason(candidate: ImageCandidate, vision: VisionResult, policy: PolicyConfig) -> str:
+def inspiration_reject_reason(
+    candidate: ImageCandidate,
+    vision: VisionResult,
+    policy: PolicyConfig,
+    is_direct_printable: bool = False,
+) -> str:
     role = str(vision.product_role or "").upper()
     main_subject = normalized(vision.main_subject)
     product_type = normalized(vision.target_product_type)
@@ -117,7 +126,16 @@ def inspiration_reject_reason(candidate: ImageCandidate, vision: VisionResult, p
         return "REJECT_INSPIRATION_ROLE_NOT_ACCEPTED"
     if vision.product_visibility < policy.min_product_visibility:
         return "REJECT_LOW_MOTIF_CLARITY"
-    if vision.trend_relevance < policy.min_trend_relevance:
+
+    effective_trend_relevance = vision.trend_relevance
+    if effective_trend_relevance < policy.min_trend_relevance and (
+        is_direct_printable
+        or vision.flat_artwork_score >= 0.60
+        or candidate.semantic_fit >= 50.0
+    ):
+        effective_trend_relevance = max(effective_trend_relevance, candidate.semantic_fit, 80.0)
+
+    if effective_trend_relevance < policy.min_trend_relevance:
         return "REJECT_LOW_TREND_RELEVANCE"
     if vision.is_collage or main_subject == "collage" or product_type == "collage" or getattr(vision, "is_multi_panel_or_swatch", False):
         return "REJECT_COLLAGE"
@@ -185,7 +203,7 @@ def rank_images(
 
         score = score_image(candidate, vision, is_direct_printable=is_direct_printable)
         reject_reason = (
-            inspiration_reject_reason(candidate, vision, policy)
+            inspiration_reject_reason(candidate, vision, policy, is_direct_printable=is_direct_printable)
             if inspiration_mode
             else policy_reject_reason(candidate, vision, policy)
         )
@@ -237,7 +255,7 @@ def rank_images(
                 product_role=vision.product_role,
                 product_confidence=vision.product_confidence,
                 product_visibility=vision.product_visibility,
-                trend_relevance=vision.trend_relevance,
+                trend_relevance=max(vision.trend_relevance, candidate.semantic_fit if is_direct_printable else 0.0),
                 commercial_quality=vision.commercial_quality,
                 trend_strength=candidate.trend_strength,
                 semantic_fit=candidate.semantic_fit,
