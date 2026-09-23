@@ -111,8 +111,8 @@ export async function runSeoContentDetailed(
   });
   const execution = await pipeline.executeDetailed(input);
   const generator = execution.context.contentGenerationMetadata?.generator ?? "heuristic";
-  const hasGeminiConfiguration = Boolean(process.env.GOOGLE_CLOUD_PROJECT?.trim());
-  const configuredEmbeddingProvider = process.env.SEO_EMBEDDING_PROVIDER?.trim().toLowerCase();
+  const hasGeminiConfiguration = typeof process !== "undefined" && Boolean(process.env?.GOOGLE_CLOUD_PROJECT?.trim());
+  const configuredEmbeddingProvider = typeof process !== "undefined" ? process.env?.SEO_EMBEDDING_PROVIDER?.trim().toLowerCase() : undefined;
   const fallbackStages = [...new Set([...observedFallbackStages, ...execution.fallbackStages])];
   const usedLocalEmbeddingFallback = hasGeminiConfiguration
     && !["local", "fallback"].includes(configuredEmbeddingProvider ?? "")
