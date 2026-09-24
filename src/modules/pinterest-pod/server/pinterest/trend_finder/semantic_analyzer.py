@@ -59,6 +59,35 @@ NON_PRINTABLE_GATE_REGEX = re.compile(
 )
 
 
+PRODUCT_CONTAINER_PATTERN = re.compile(
+    r"\b(?:"
+    r"leather\s+bag|tote\s+bag|shoulder\s+bag|crossbody\s+bag|messenger\s+bag|"
+    r"leather\s+purse|leather\s+backpack|satchel\s+bag|leather\s+satchel|"
+    r"bag|purse|tote|backpack|satchel|crossbody|handbag|clutch|briefcase|weekender|fringe\s+bag|"
+    r"area\s+rug|runner\s+rug|floor\s+rug|throw\s+rug|floor\s+carpet|accent\s+rug|"
+    r"rug|carpet|doormat|bath\s+mat|mat|"
+    r"throw\s+blanket|fleece\s+blanket|woven\s+blanket|quilted\s+blanket|"
+    r"blanket|throw|quilt|comforter|"
+    r"coffee\s+mug|ceramic\s+mug|travel\s+mug|coffee\s+cup|"
+    r"mug|cup|tumbler"
+    r")\b",
+    flags=re.IGNORECASE,
+)
+
+
+def extract_design_theme(trend: str, niche: str = "") -> str:
+    clean = trend.strip()
+    theme = PRODUCT_CONTAINER_PATTERN.sub("", clean)
+    if niche:
+        niche_clean = re.sub(r"\b(?:design|pattern|artwork|style|print)\b", "", niche, flags=re.I).strip()
+        if niche_clean:
+            for word in niche_clean.split():
+                if len(word) > 2:
+                    theme = re.sub(rf"\b{re.escape(word)}\b", "", theme, flags=re.I)
+    theme = re.sub(r"\s+", " ", theme).strip()
+    return theme if len(theme) >= 3 else clean
+
+
 def build_smart_queries(trend: str, niche: str = "") -> list[QuerySpec]:
     clean = trend.strip()
     # Strip redundant trailing pattern keywords to form clean base
@@ -72,35 +101,23 @@ def build_smart_queries(trend: str, niche: str = "") -> list[QuerySpec]:
     if not base:
         base = clean
 
+    theme = extract_design_theme(trend, niche)
+
     queries: list[QuerySpec] = []
     # Priority 1: Pure natural user search query - directly matching Pinterest trending pins
     queries.append(QuerySpec(query=clean, intent="trend_raw", priority=1))
 
-    # Priority 2: Cross-niche mashup if trend does not already mention the niche
-    clean_lower = clean.lower()
-    niche_clean = niche.strip()
-    niche_lower = niche_clean.lower()
-    if niche_clean:
-        clean_words = set(re.findall(r"\w+", clean_lower))
-        niche_words = [w for w in re.findall(r"\w+", niche_lower) if len(w) > 2]
-        head_noun = niche_words[-1] if niche_words else ""
-        if niche_lower in clean_lower or (head_noun and head_noun in clean_words):
-            queries.append(QuerySpec(query=f"{base} aesthetic", intent="trend_aesthetic", priority=2))
-        else:
-            missing_words = [w for w in re.findall(r"\w+", niche_clean) if w.lower() not in clean_words]
-            mashup = f"{clean} {' '.join(missing_words)}".strip() if missing_words else f"{clean} {niche_clean}".strip()
-            queries.append(QuerySpec(query=mashup, intent="trend_niche_mashup", priority=2))
-    else:
-        queries.append(QuerySpec(query=f"{base} aesthetic", intent="trend_aesthetic", priority=2))
+    # Priority 2: Aesthetic & styling reference query
+    queries.append(QuerySpec(query=f"{base} aesthetic", intent="trend_aesthetic", priority=2))
 
-    # Priority 3: Commercial design and inspiration ideas
-    queries.append(QuerySpec(query=f"{base} design ideas", intent="trend_design", priority=3))
+    # Priority 3: Direct Printable Seamless Pattern query (without product container to find 2D printable patterns)
+    queries.append(QuerySpec(query=f"{theme} seamless pattern", intent="surface_pattern", priority=3))
 
-    # Priority 4: Artwork & graphic print query
-    queries.append(QuerySpec(query=f"{base} artwork print", intent="trend_artwork", priority=4))
+    # Priority 4: Printable Vector & Graphic Artwork query
+    queries.append(QuerySpec(query=f"{theme} vector artwork print", intent="trend_artwork", priority=4))
 
     # Priority 5: Pattern & surface print query
-    queries.append(QuerySpec(query=f"{base} pattern print", intent="surface_pattern", priority=5))
+    queries.append(QuerySpec(query=f"{theme} pattern design flat", intent="surface_pattern_design", priority=5))
 
     return queries
 
