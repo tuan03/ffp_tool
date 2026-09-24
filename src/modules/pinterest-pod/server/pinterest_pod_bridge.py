@@ -1633,6 +1633,9 @@ def _run_local_pipeline_worker(job_id: str, req_body: dict[str, Any], base_url: 
         task5_max_downloads=task5_max_downloads,
         task5_top_images=task5_top_images,
         task5_max_images_per_query=task5_max_images_per_query,
+        trend_interest=str(req_body.get("interest") or req_body.get("interests") or "").strip(),
+        custom_queries=tuple(str(q).strip() for q in (req_body.get("custom_queries") or []) if str(q).strip()),
+        selected_clusters=tuple(req_body.get("selected_clusters") or []),
     )
 
     def log_progress(msg: str) -> None:
@@ -1657,6 +1660,7 @@ def _run_local_pipeline_worker(job_id: str, req_body: dict[str, Any], base_url: 
             if raw_refs:
                 saved_templates = save_room_template_images(raw_refs, review_pkg.run_dir / "room_templates")
                 log_progress(f"Đã lưu {len(saved_templates)} ảnh phòng tham chiếu vào thư mục run.")
+            candidates = [c.to_dict() if hasattr(c, "to_dict") else dict(c) for c in review_pkg.candidates]
             rejected_images = []
             rej_path = review_pkg.crawl_dir / "rejected_images.json"
             if rej_path.exists():
@@ -2113,6 +2117,9 @@ def create_pod_job(payload: dict[str, Any], base_url: str, api_url: str = DEFAUL
         "task5_max_downloads": crawl_count,
         "task5_top_images": crawl_count,
         "task5_max_images_per_query": max(12, crawl_count // 4),
+        "selected_clusters": payload.get("selected_clusters") or payload.get("selectedClusters") or [],
+        "custom_queries": payload.get("custom_queries") or payload.get("customQueries") or [],
+        "interest": payload.get("interest") or payload.get("interests") or "",
     }
     if product == "custom":
         req_body["width_px"] = print_spec["width_px"]
@@ -4165,6 +4172,16 @@ def rescue_pod_candidate(job_id: str, candidate_id: str, base_url: str = "") -> 
     rescued_cand["recommended"] = True
     rescued_cand["is_direct_printable"] = False
     rescued_cand["reason"] = "Mẫu đã được người dùng giải cứu (Rescue). Ý tưởng đột phá sẵn sàng đưa vào sản xuất bóc tách hoa văn Stage 2."
+
+    lp = rescued_cand.get("local_path") or rescued_cand.get("path")
+    if lp and base_url:
+        fname = Path(lp).name
+        rescued_cand.setdefault("thumbnail_url", f"{base_url.rstrip('/')}/api/pinterest-pod/assets/{safe_job_id}/{fname}")
+        rescued_cand.setdefault("image_url", rescued_cand["thumbnail_url"])
+    elif not rescued_cand.get("image_url"):
+        rescued_cand["image_url"] = "https://i.pinimg.com/originals/10/7a/bc/107abc_anatolian_tribal.jpg"
+    if not rescued_cand.get("thumbnail_url"):
+        rescued_cand["thumbnail_url"] = rescued_cand.get("image_url", "")
 
     candidates.append(rescued_cand)
     job["total_candidates"] = len(candidates)

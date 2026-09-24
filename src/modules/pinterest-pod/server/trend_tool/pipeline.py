@@ -1259,31 +1259,59 @@ def prepare_discovery(
     niche = config.trend_niche.strip()
     if not niche:
         raise RuntimeError("A Pinterest Trends niche is required.")
-    log(progress, f"Finding Pinterest trends for niche '{niche}'.")
-    try:
-        package_path = run_task5_trend_finder(
-            Task5TrendConfig(
-                niche=niche,
-                output_dir=run_dir / "task5_trends",
-                region=config.trend_region,
-                trend_type=config.trend_type,
-                interest=config.trend_interest,
-                keyword_limit=config.trend_keyword_limit,
-                max_trends=config.trend_max_trends,
-                min_semantic_fit=config.trend_min_semantic_fit,
-                gemini_backend=config.gemini_backend,
-                gemini_model=config.gemini_model,
-                token_path=config.task5_token_path,
-                cancel_event=cancel_event,
-            ),
-            progress=progress,
-        )
-    except RuntimeError as exc:
-        if not is_task5_auth_error(exc):
-            raise
-        message = f"Pinterest trend discovery failed. Fix Pinterest Trends API credentials/permissions and retry. Details: {exc}"
-        log(progress, message)
-        raise RuntimeError(message) from exc
+    if config.custom_queries:
+        log(progress, f"Sử dụng {len(config.custom_queries)} câu truy vấn hoa văn 2D mục tiêu đã chọn từ cụm xu hướng.")
+        task5_trends_dir = run_dir / "task5_trends"
+        task5_trends_dir.mkdir(parents=True, exist_ok=True)
+        package_path = task5_trends_dir / "trend_package.json"
+        trends_list = []
+        for idx, q in enumerate(config.custom_queries, start=1):
+            trends_list.append({
+                "trend_id": f"cluster_query_{idx:03d}",
+                "trend": q,
+                "trend_strength": 90.0,
+                "relationship": "fused_cluster_query",
+                "semantic_fit": 85.0,
+                "queries": [{"query": q, "intent": "artwork_pattern", "priority": 1}],
+                "reason": "Targeted fused pattern query from Tier 2 theme cluster discovery",
+                "sources": ["pinterest_cluster_discovery"],
+                "tags": ["pattern", "vector", "surface_design"],
+            })
+        trend_pkg_data = {
+            "schema_version": "1.0.0",
+            "generated_at": datetime.now().isoformat(),
+            "niche": niche,
+            "region": config.trend_region,
+            "source": {"generator": "pinterest_pod_theme_clusters", "niche": niche},
+            "trends": trends_list,
+        }
+        write_json(package_path, trend_pkg_data)
+    else:
+        log(progress, f"Finding Pinterest trends for niche '{niche}'.")
+        try:
+            package_path = run_task5_trend_finder(
+                Task5TrendConfig(
+                    niche=niche,
+                    output_dir=run_dir / "task5_trends",
+                    region=config.trend_region,
+                    trend_type=config.trend_type,
+                    interest=config.trend_interest,
+                    keyword_limit=config.trend_keyword_limit,
+                    max_trends=config.trend_max_trends,
+                    min_semantic_fit=config.trend_min_semantic_fit,
+                    gemini_backend=config.gemini_backend,
+                    gemini_model=config.gemini_model,
+                    token_path=config.task5_token_path,
+                    cancel_event=cancel_event,
+                ),
+                progress=progress,
+            )
+        except RuntimeError as exc:
+            if not is_task5_auth_error(exc):
+                raise
+            message = f"Pinterest trend discovery failed. Fix Pinterest Trends API credentials/permissions and retry. Details: {exc}"
+            log(progress, message)
+            raise RuntimeError(message) from exc
 
     discovered_queries = queries_from_trend_package(package_path, max_queries_per_trend=config.trend_max_queries_per_trend)
     log(progress, f"Loaded {len(discovered_queries)} querie(s) from trend package.")

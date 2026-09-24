@@ -1350,4 +1350,23 @@ test("RealPinterestPodClient.createJob serializes discovery clusters and custom 
   }
 });
 
+test("MockPinterestPodClient.createJob preserves selected_clusters in getJobDetail", async () => {
+  const customCluster = {
+    cluster_id: "cluster_test_custom",
+    theme_name: "Custom Ghost Aesthetic",
+    fused_queries: ["custom ghost pattern vector"],
+  };
+
+  const job = await mockPinterestPodClient.createJob({
+    niche: "custom ghost",
+    selected_clusters: [customCluster],
+  });
+
+  const detail = await mockPinterestPodClient.getJobDetail(job.jobId);
+  assert.equal(detail.ok, true);
+  assert.ok(detail.clusters && detail.clusters.length > 0);
+  assert.equal(detail.clusters[0].cluster_id, "cluster_test_custom");
+  assert.equal(detail.clusters[0].theme_name, "Custom Ghost Aesthetic");
+});
+
 

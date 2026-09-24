@@ -85,6 +85,8 @@ class PipelineConfig:
     remove_white_background: bool = False
     export_cmyk: bool = True
     mockup_count: int = 5
+    custom_queries: tuple[str, ...] = ()
+    selected_clusters: tuple[dict, ...] = ()
 
 
 def infer_product_type(niche: str) -> str:

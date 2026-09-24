@@ -46,6 +46,7 @@ def collect_results(
     max_queries_per_trend: int,
     timeout: int,
     locale: str,
+    max_downloads: int | None = None,
 ) -> tuple[list[SearchResult], dict]:
     package = load_trend_package(package_path)
     provider = provider_from_name(provider_name, timeout=timeout)
@@ -58,6 +59,7 @@ def collect_results(
         "errors": [],
     }
     results: list[SearchResult] = []
+    early_exit_threshold = max(35, int((max_downloads or 40) * 1.8)) if max_downloads else None
 
     for trend in package.trends[:max_trends]:
         trend_queries = list(trend.queries) if trend.queries else build_smart_queries(trend.trend, package.niche)
@@ -80,6 +82,9 @@ def collect_results(
                         "count": len(found),
                     }
                 )
+                if early_exit_threshold and len(results) >= early_exit_threshold:
+                    LOG.info("Đã thu thập đủ %d kết quả tìm kiếm cho mục tiêu %d ảnh. Dừng tìm kiếm sớm (Early-exit).", len(results), max_downloads)
+                    break
             except Exception as exc:
                 LOG.warning("Search failed for %r: %s", query.query, exc)
                 audit["queries"].append(
@@ -140,7 +145,10 @@ def build_candidates(
     }
     target_count = min(max_downloads, len(results))
     LOG.info("Starting download of up to %d candidate images...", target_count)
-    for idx, result in enumerate(results[:max_downloads], start=1):
+    for idx, result in enumerate(results, start=1):
+        if len(downloaded) >= max_downloads:
+            LOG.info("Đã tải đủ số lượng mục tiêu (%d/%d ảnh). Dừng tải sớm (Early-exit).", len(downloaded), max_downloads)
+            break
         trend = trends.get(result.trend_id)
         if trend is None:
             continue
@@ -150,16 +158,15 @@ def build_candidates(
         if candidate.download_error or not has_file:
             stats["download_failed"] += 1
             LOG.warning(
-                "Image %d/%d download error (%s): %s",
+                "Image %d download error (%s): %s",
                 idx,
-                target_count,
                 candidate.image_id[:8],
                 candidate.download_error or "File missing on disk",
             )
         else:
             stats["downloaded"] += 1
-            if idx % 3 == 0 or idx == target_count:
-                LOG.info("Downloaded %d/%d images (%s)", stats["downloaded"], target_count, candidate.image_id[:10])
+            if len(downloaded) % 3 == 0 or len(downloaded) == target_count:
+                LOG.info("Downloaded %d/%d images (%s)", len(downloaded), target_count, candidate.image_id[:10])
             downloaded.append(candidate)
 
     LOG.info("Download finished: %d succeeded, %d failed. Deduping...", stats["downloaded"], stats["download_failed"])
@@ -286,6 +293,7 @@ def main() -> int:
         max_queries_per_trend=max(1, args.max_queries_per_trend),
         timeout=args.timeout,
         locale=args.locale,
+        max_downloads=max(1, args.max_downloads),
     )
 
     candidates, download_rejected, download_stats = build_candidates(

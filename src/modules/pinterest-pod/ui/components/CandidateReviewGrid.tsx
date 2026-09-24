@@ -45,6 +45,14 @@ export function CandidateReviewGrid({
   const [activeTab, setActiveTab] = useState<MainTab>("passed");
   const [activeFilter, setActiveFilter] = useState<FilterType>("all");
   const [sortBy, setSortBy] = useState<SortType>("default");
+  const [rescueBanner, setRescueBanner] = useState<string | null>(null);
+
+  const handleRescue = (cand: CandidateItem): void => {
+    onRescueCandidate?.(cand);
+    setRescueBanner(
+      `Đã giải cứu thành công mẫu "${(cand.title || "Ứng viên").slice(0, 35)}..."! Mẫu đã được chuyển sang danh sách Ứng viên Hợp lệ (Ý tưởng đột phá).`,
+    );
+  };
 
   const selectedCount = selectedIds.length;
   const recommendedCount = useMemo(() => candidates.filter((c) => c.recommended).length, [candidates]);
@@ -125,6 +133,23 @@ export function CandidateReviewGrid({
           <span>{isProducing ? "Đang gửi lệnh..." : `Sản xuất File In & Mockup (${selectedCount})`}</span>
         </button>
       </div>
+
+      {/* Rescue Feedback Banner */}
+      {rescueBanner && (
+        <div className="flex items-center justify-between gap-3 rounded-xl border border-emerald-500/60 bg-emerald-950/40 p-3.5 text-xs text-emerald-200 shadow-lg">
+          <div className="flex items-center gap-2">
+            <span className="text-base">🎉</span>
+            <span className="font-semibold">{rescueBanner}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setActiveTab("passed")}
+            className="shrink-0 rounded-lg bg-emerald-500 hover:bg-emerald-400 px-3 py-1 font-bold text-slate-950 transition cursor-pointer"
+          >
+            Xem trong tab Hợp lệ →
+          </button>
+        </div>
+      )}
 
       {/* Main Mode Tabs: Passed Candidates vs. Rejected Images (Rescue) */}
       <div className="flex items-center gap-2 border-b border-slate-800 pb-2">
@@ -396,7 +421,7 @@ export function CandidateReviewGrid({
                     isSelected={false}
                     onToggle={() => {}}
                     onPreview={onPreviewCandidate}
-                    onRescue={onRescueCandidate}
+                    onRescue={handleRescue}
                   />
                 );
               })}

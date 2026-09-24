@@ -328,7 +328,7 @@ export class MockPinterestPodClient implements PinterestPodClient {
       referenceImageCount: input.referenceImages?.length ?? 0,
       candidates: [...mockCandidates],
       rejectedCandidates: [...mockRejectedCandidates],
-      clusters: [...mockThemeClusters],
+      clusters: (input.selected_clusters as readonly ThemeCluster[]) ?? [...mockThemeClusters],
       createdAt: Date.now(),
     };
 
@@ -393,6 +393,7 @@ export class MockPinterestPodClient implements PinterestPodClient {
             current_message: `Đang cào Pinterest niche: "${job.niche}"...`,
           },
           logs: [...job.logs],
+          clusters: [...job.clusters],
         };
       }
     }

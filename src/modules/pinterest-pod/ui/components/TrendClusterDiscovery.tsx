@@ -8,7 +8,10 @@ export interface TrendClusterDiscoveryProps {
   readonly onToggleCluster: (clusterId: string) => void;
   readonly onSelectAllClusters: () => void;
   readonly onDeselectAllClusters?: () => void;
-  readonly onStartCrawlWithClusters: (selectedClusters: readonly ThemeCluster[]) => void;
+  readonly onStartCrawlWithClusters: (
+    selectedClusters: readonly ThemeCluster[],
+    restoredKeywords?: readonly TrendingKeywordItem[],
+  ) => void;
   readonly onClose?: () => void;
   readonly isCrawling?: boolean;
 }
@@ -310,7 +313,7 @@ export function TrendClusterDiscovery({
 
         <button
           type="button"
-          onClick={() => onStartCrawlWithClusters(selectedClusters)}
+          onClick={() => onStartCrawlWithClusters(selectedClusters, restoredKeywords)}
           disabled={isCrawling || !hasSelection}
           className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 px-6 py-2.5 text-sm font-bold text-white shadow-lg shadow-cyan-500/25 transition hover:from-cyan-400 hover:to-blue-500 hover:shadow-cyan-500/40 disabled:cursor-not-allowed disabled:opacity-50 ml-auto cursor-pointer"
         >

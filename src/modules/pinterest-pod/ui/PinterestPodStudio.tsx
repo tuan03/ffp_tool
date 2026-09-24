@@ -15,6 +15,7 @@ import type {
   SummaryMetrics,
   ThemeCluster,
   TrendDiscoveryResult,
+  TrendingKeywordItem,
 } from "../types";
 import { CandidateReviewGrid } from "./components/CandidateReviewGrid";
 import { DeliverablesShowcase } from "./components/DeliverablesShowcase";
@@ -540,9 +541,16 @@ export function PinterestPodStudio({ client: injectedClient }: PinterestPodStudi
     setSelectedClusterIds(new Set());
   }
 
-  async function handleStartCrawlWithClusters(selectedClusters: readonly ThemeCluster[]): Promise<void> {
-    const queries = selectedClusters.flatMap((c) => c.fused_queries ?? c.sample_queries ?? []);
-    await handleStartCrawl(queries);
+  async function handleStartCrawlWithClusters(
+    selectedClusters: readonly ThemeCluster[],
+    restoredKws?: readonly TrendingKeywordItem[],
+  ): Promise<void> {
+    const clusterQueries = selectedClusters.flatMap((c) => c.fused_queries ?? c.sample_queries ?? []);
+    const restoredQueries = (restoredKws ?? []).map(
+      (k) => k.suggested_fused_query || `${k.keyword} seamless pattern vector`,
+    );
+    const combinedQueries = Array.from(new Set([...clusterQueries, ...restoredQueries]));
+    await handleStartCrawl(combinedQueries);
   }
 
   // Start Crawl (Stage 1 action)
