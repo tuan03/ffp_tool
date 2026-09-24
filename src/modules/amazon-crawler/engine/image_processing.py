@@ -244,16 +244,25 @@ def _image_candidates(url: str) -> list[str]:
 
 def _download_image(url: str) -> bytes:
     error: Exception | None = None
-    for candidate in _image_candidates(url):
-        try:
-            request = urllib.request.Request(candidate, headers={"User-Agent": "Mozilla/5.0", "Accept": "image/avif,image/webp,image/*,*/*;q=0.8"})
-            with urllib.request.urlopen(request, timeout=30) as response:
-                content = response.read(20 * 1024 * 1024 + 1)
-            if len(content) > 20 * 1024 * 1024:
-                raise ValueError("Image exceeds the 20 MB processing limit.")
-            return content
-        except Exception as caught:
-            error = caught
+    candidates = _image_candidates(url)
+    for attempt in range(3):
+        for candidate in candidates:
+            try:
+                request = urllib.request.Request(candidate, headers={
+                    "User-Agent": "Mozilla/5.0",
+                    "Accept": "image/avif,image/webp,image/*,*/*;q=0.8",
+                    "Referer": "https://www.amazon.com/",
+                    "Connection": "close",
+                })
+                with urllib.request.urlopen(request, timeout=30) as response:
+                    content = response.read(20 * 1024 * 1024 + 1)
+                if len(content) > 20 * 1024 * 1024:
+                    raise ValueError("Image exceeds the 20 MB processing limit.")
+                return content
+            except Exception as caught:
+                error = caught
+        if attempt < 2:
+            time.sleep(0.5 * (attempt + 1))
     raise RuntimeError(f"Unable to download image {url}: {error}")
 
 

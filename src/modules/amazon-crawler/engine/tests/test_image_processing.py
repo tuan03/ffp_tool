@@ -4,13 +4,14 @@ import base64
 import json
 import tempfile
 import unittest
+import urllib.error
 from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
 
 from PIL import Image
 
-from engine.image_processing import ImageProcessingService, ImageProfileStore, process_image_bytes
+from engine.image_processing import ImageProcessingService, ImageProfileStore, _download_image, process_image_bytes
 
 
 def image_bytes(size: tuple[int, int] = (400, 200), color: str = "#336699") -> bytes:
@@ -20,6 +21,48 @@ def image_bytes(size: tuple[int, int] = (400, 200), color: str = "#336699") -> b
 
 
 class ImageProcessingTests(unittest.TestCase):
+    def test_image_download_retries_transient_connection_reset(self) -> None:
+        class ImageResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args: object) -> None:
+                return None
+
+            def read(self, _size: int) -> bytes:
+                return b"image-content"
+
+        with (
+            patch(
+                "engine.image_processing.urllib.request.urlopen",
+                side_effect=[urllib.error.URLError(ConnectionResetError(10054, "reset")), ImageResponse()],
+            ) as urlopen,
+            patch("engine.image_processing.time.sleep") as sleep,
+        ):
+            content = _download_image("https://example.test/image.jpg")
+
+        self.assertEqual(content, b"image-content")
+        self.assertEqual(urlopen.call_count, 2)
+        sleep.assert_called_once()
+
+    def test_amazon_image_download_sends_origin_headers(self) -> None:
+        class ImageResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args: object) -> None:
+                return None
+
+            def read(self, _size: int) -> bytes:
+                return b"image-content"
+
+        with patch("engine.image_processing.urllib.request.urlopen", return_value=ImageResponse()) as urlopen:
+            _download_image("https://m.media-amazon.com/images/I/example.jpg")
+
+        request = urlopen.call_args.args[0]
+        self.assertEqual(request.get_header("Referer"), "https://www.amazon.com/")
+        self.assertEqual(request.get_header("Connection"), "close")
+
     def test_processes_to_configured_jpeg_canvas_deterministically(self) -> None:
         profile = {
             "slug": "test", "enabled": True, "randomPixels": 25,
