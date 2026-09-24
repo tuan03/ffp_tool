@@ -3,7 +3,7 @@ import test from "node:test";
 
 import { DEFAULT_AMAZON_CRAWLER_SETTINGS } from "../types";
 import type { AmazonCrawlerJobSnapshot } from "../types";
-import { describeJobCancellation } from "../ui/job-cancellation";
+import { describeJobCancellation, isActiveJobStopping } from "../ui/job-cancellation";
 
 function createJob(overrides: Partial<AmazonCrawlerJobSnapshot> = {}): AmazonCrawlerJobSnapshot {
   return {
@@ -80,4 +80,22 @@ test("cancellation message identifies received agent and pipeline acknowledgemen
 test("cancelled job message confirms final completion", () => {
   const job = createJob({ status: "cancelled", completedAt: "2026-09-24T00:03:00.000Z" });
   assert.match(describeJobCancellation(job) ?? "", /Đã dừng hoàn tất/);
+});
+
+test("Stop button does not show a stopping label when both job IDs are null", () => {
+  assert.equal(isActiveJobStopping({
+    activeJobId: null,
+    controlledJobId: null,
+    isCancellationPending: false,
+  }), false);
+  assert.equal(isActiveJobStopping({
+    activeJobId: "job-1",
+    controlledJobId: "job-1",
+    isCancellationPending: false,
+  }), true);
+  assert.equal(isActiveJobStopping({
+    activeJobId: null,
+    controlledJobId: null,
+    isCancellationPending: true,
+  }), true);
 });

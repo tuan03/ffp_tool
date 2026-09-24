@@ -29,6 +29,15 @@ export function formatCancellationPhase(phase: ProductPipelineStatus | "pipeline
   return CANCELLATION_PHASE_LABELS[phase];
 }
 
+export function isActiveJobStopping(input: {
+  readonly activeJobId: string | null;
+  readonly controlledJobId: string | null;
+  readonly isCancellationPending: boolean;
+}): boolean {
+  return input.isCancellationPending
+    || (input.controlledJobId !== null && input.controlledJobId === input.activeJobId);
+}
+
 export function describeJobCancellation(job: AmazonCrawlerJobSnapshot, now = Date.now()): string | null {
   if (job.status === "cancelled") {
     return job.completedAt

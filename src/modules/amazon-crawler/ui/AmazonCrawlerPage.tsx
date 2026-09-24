@@ -29,7 +29,7 @@ import {
   useAmazonCrawlerSession,
 } from "./crawler-session";
 import { firstProductMediaUrl, resolveSelectedProduct } from "./product-selection";
-import { describeJobCancellation, formatCancellationPhase } from "./job-cancellation";
+import { describeJobCancellation, formatCancellationPhase, isActiveJobStopping } from "./job-cancellation";
 import { formatPipelineTimings } from "./pipeline-timings";
 
 interface AmazonCrawlerPageProps {
@@ -154,6 +154,7 @@ export function AmazonCrawlerPage({ amazonCrawlerJobs, clearAmazonCrawlerCache, 
   const [jobControlMessage, setJobControlMessage] = useState<string | null>(null);
   const [jobControlTone, setJobControlTone] = useState<JobControlTone>("info");
   const [controlledJobId, setControlledJobId] = useState<string | null>(null);
+  const [cancellationJobId, setCancellationJobId] = useState<string | null>(null);
   const [imageProfiles, setImageProfiles] = useState<ImageProcessingProfile[]>([]);
   const [editingImageProfile, setEditingImageProfile] = useState<ImageProcessingProfile | null>(null);
   const [isImageProfileEditorOpen, setIsImageProfileEditorOpen] = useState(false);
@@ -181,6 +182,11 @@ export function AmazonCrawlerPage({ amazonCrawlerJobs, clearAmazonCrawlerCache, 
   const connectedClients = clients.filter((client) => client.isConnected && client.status !== "offline");
   const activeManagedJob = activeJobId ? jobs.find((job) => job.jobId === activeJobId) : undefined;
   const isCancellationPending = activeManagedJob?.status === "cancelling";
+  const isActiveStopPending = isActiveJobStopping({
+    activeJobId,
+    controlledJobId,
+    isCancellationPending,
+  });
 
   useEffect(() => {
     let isMounted = true;
@@ -272,6 +278,24 @@ export function AmazonCrawlerPage({ amazonCrawlerJobs, clearAmazonCrawlerCache, 
       setJobControlMessage(caught instanceof Error ? caught.message : "Không tải được kết quả job.");
     });
   }, [activeJobId, amazonCrawlerJobs, jobs]);
+
+  useEffect(() => {
+    if (!cancellationJobId) return;
+    const cancellationJob = jobs.find((job) => job.jobId === cancellationJobId);
+    if (!cancellationJob) return;
+    if (cancellationJob.status === "cancelling") {
+      setJobControlTone("info");
+      setJobControlMessage(describeJobCancellation(cancellationJob));
+      return;
+    }
+    if (cancellationJob.status === "cancelled") {
+      setJobControlTone("success");
+      setJobControlMessage(describeJobCancellation(cancellationJob));
+    } else {
+      setJobControlMessage(null);
+    }
+    setCancellationJobId(null);
+  }, [cancellationJobId, jobs]);
 
   useEffect(() => {
     if (!imageProcessingProfiles) return;
@@ -474,12 +498,15 @@ export function AmazonCrawlerPage({ amazonCrawlerJobs, clearAmazonCrawlerCache, 
 
   async function handleStart(): Promise<void> {
     setSyncMessage(null);
+    setCancellationJobId(null);
+    setJobControlMessage(null);
     await startCrawlerJob({ runAmazonCrawler, urls, settings });
   }
 
   async function handleStop(): Promise<void> {
     if (activeJobId && amazonCrawlerJobs) {
       setControlledJobId(activeJobId);
+      setCancellationJobId(activeJobId);
       setJobControlTone("info");
       setJobControlMessage("Đang gửi yêu cầu dừng tới coordinator...");
       try {
@@ -487,6 +514,7 @@ export function AmazonCrawlerPage({ amazonCrawlerJobs, clearAmazonCrawlerCache, 
         setJobs((current) => current.map((job) => job.jobId === stopped.jobId ? stopped : job));
         setJobControlMessage(describeJobCancellation(stopped));
       } catch (caught: unknown) {
+        setCancellationJobId(null);
         setJobControlTone("error");
         setJobControlMessage(caught instanceof Error ? caught.message : "Không gửi được yêu cầu dừng job.");
       } finally {
@@ -503,6 +531,7 @@ export function AmazonCrawlerPage({ amazonCrawlerJobs, clearAmazonCrawlerCache, 
     try {
       await amazonCrawlerJobs.delete(jobId);
       setJobs((current) => current.filter((job) => job.jobId !== jobId));
+      if (cancellationJobId === jobId) setCancellationJobId(null);
       setJobControlTone("success");
       setJobControlMessage("Đã hủy và xóa job. Tombstone sẽ chặn mọi agent cũ upload lại.");
       if (activeJobId === jobId) {
@@ -524,6 +553,7 @@ export function AmazonCrawlerPage({ amazonCrawlerJobs, clearAmazonCrawlerCache, 
       return;
     }
     setControlledJobId(jobId);
+    setCancellationJobId(jobId);
     setJobControlTone("info");
     setJobControlMessage("Đang gửi yêu cầu dừng tới coordinator...");
     try {
@@ -531,6 +561,7 @@ export function AmazonCrawlerPage({ amazonCrawlerJobs, clearAmazonCrawlerCache, 
       setJobs((current) => current.map((job) => job.jobId === stopped.jobId ? stopped : job));
       setJobControlMessage(describeJobCancellation(stopped));
     } catch (caught: unknown) {
+      setCancellationJobId(null);
       setJobControlTone("error");
       setJobControlMessage(caught instanceof Error ? caught.message : "Không dừng được job.");
     } finally {
@@ -541,6 +572,7 @@ export function AmazonCrawlerPage({ amazonCrawlerJobs, clearAmazonCrawlerCache, 
   async function handleRunAgain(job: AmazonCrawlerJobSnapshot): Promise<void> {
     if (!amazonCrawlerJobs || controlledJobId) return;
     setControlledJobId(job.jobId);
+    setCancellationJobId(null);
     try {
       const replacement = await amazonCrawlerJobs.replace(job.jobId, {
         ...settings,
@@ -1289,7 +1321,7 @@ export function AmazonCrawlerPage({ amazonCrawlerJobs, clearAmazonCrawlerCache, 
 
       <div className="flex flex-wrap gap-3">
         <button className="rounded-lg bg-cyan-400 px-5 py-2 font-semibold text-slate-950 disabled:opacity-50" disabled={urls.length === 0 || isRunning} type="button" onClick={() => void handleStart()}>Start ({urls.length})</button>
-        <button className="rounded-lg border border-rose-400 px-5 py-2 font-semibold text-rose-300 disabled:opacity-50" disabled={!isRunning || controlledJobId !== null || isCancellationPending} type="button" onClick={() => void handleStop()}>{controlledJobId === activeJobId || isCancellationPending ? "Đang dừng..." : "Stop"}</button>
+        <button className="rounded-lg border border-rose-400 px-5 py-2 font-semibold text-rose-300 disabled:opacity-50" disabled={!isRunning || controlledJobId !== null || isCancellationPending} type="button" onClick={() => void handleStop()}>{isActiveStopPending ? "Đang dừng..." : "Stop"}</button>
         {output === null ? null : (
           <>
             <button className="rounded-lg border border-cyan-500 px-5 py-2 font-semibold text-cyan-300" type="button" onClick={handleDownload}>Tải JSON</button>
