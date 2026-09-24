@@ -29,6 +29,7 @@ export type {
   ShopifyGateway,
   ShopifyManagedResources,
   ShopifyMediaInput,
+  ShopifyMetafieldInput,
   ShopifyProductCustomizerInput,
   ShopifySeoInput,
   ShopifySyncBatchInput,

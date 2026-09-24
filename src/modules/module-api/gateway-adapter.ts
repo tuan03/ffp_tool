@@ -53,6 +53,20 @@ function escapeShopifySearch(value: string): string {
   return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
 
+export function isShopifyProductGid(id?: string | null): boolean {
+  if (!id || typeof id !== "string") return false;
+  const trimmed = id.trim();
+  return trimmed.startsWith("gid://shopify/Product/") || /^\d+$/.test(trimmed);
+}
+
+export function normalizeShopifyProductGid(id?: string | null): string | undefined {
+  if (!id || typeof id !== "string") return undefined;
+  const trimmed = id.trim();
+  if (trimmed.startsWith("gid://shopify/Product/")) return trimmed;
+  if (/^\d+$/.test(trimmed)) return `gid://shopify/Product/${trimmed}`;
+  return undefined;
+}
+
 export async function resolveShopifyProductForSync(
   input: ResolveShopifyProductForSyncInput,
 ): Promise<ResolvedShopifyProductForSync> {
@@ -64,13 +78,20 @@ export async function resolveShopifyProductForSync(
   }
 
   if (mappedProductId) {
-    const mappedResponse = await input.runner({
-      storeId,
-      operation: "products.get",
-      payload: { id: mappedProductId },
-    }) as ShopifyProductsGetResponse;
-    if (mappedResponse.data.product) {
-      return { product: mappedResponse.data.product, match: "mapping" };
+    const validMappedId = normalizeShopifyProductGid(mappedProductId);
+    if (validMappedId) {
+      try {
+        const mappedResponse = await input.runner({
+          storeId,
+          operation: "products.get",
+          payload: { id: validMappedId },
+        }) as ShopifyProductsGetResponse;
+        if (mappedResponse.data.product) {
+          return { product: mappedResponse.data.product, match: "mapping" };
+        }
+      } catch {
+        // Fall back to source tag lookup if products.get fails for mappedProductId
+      }
     }
   }
 
@@ -196,6 +217,7 @@ export function createShopifyGatewayAdapter(
             ...(categoryId ? { categoryId } : {}),
             tags: input.tags,
             collectionsToJoin: input.collectionsToJoin,
+            metafields: input.metafields,
             media: input.media?.map((m) => ({
               originalSource: m.originalSource,
               alt: m.alt,
@@ -369,7 +391,7 @@ export function createShopifyGatewayAdapter(
           originalSource: input.originalSource,
           filename: input.filename,
           alt: input.alt,
-          contentType: "IMAGE",
+          contentType: input.contentType ?? "IMAGE",
         },
       })) as ShopifyFilesCreateResponse;
 

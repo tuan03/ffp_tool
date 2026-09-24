@@ -1,12 +1,23 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppError } from "../../../shared/errors/app-error";
+import { notifyUser } from "../../../shared/utils";
 import { mapShopifyProductToAutoSeoCandidate } from "../shopify-adapter";
 import type {
   AutoSeoClient,
+  AutoSeoHandoverHandler,
   AutoSeoOutput,
   ShopifyProductForAutoSeoUi,
   ShopifyStatusFilter,
 } from "../types";
+import {
+  setAutoSeoLastHydratedProducts,
+  setAutoSeoOutput,
+  setAutoSeoProducts,
+  setAutoSeoSearchQuery,
+  setAutoSeoSelectedProductIds,
+  setAutoSeoStatusFilter,
+  useAutoSeoSession,
+} from "./auto-seo-session";
 import { AutoSeoOutputPanel } from "./components/AutoSeoOutputPanel";
 import { AutoSeoToolbar } from "./components/AutoSeoToolbar";
 import {
@@ -21,27 +32,36 @@ export interface AutoSeoPageProps {
   client: AutoSeoClient;
   initialProducts?: readonly ShopifyProductForAutoSeoUi[];
   initialSelectedProductIds?: readonly string[];
+  onHandoverToSeo?: AutoSeoHandoverHandler;
+  navigate?: (path: string) => void;
 }
 
 export function AutoSeoPage({
   client,
   initialProducts,
   initialSelectedProductIds,
+  onHandoverToSeo,
+  navigate: customNavigate,
 }: AutoSeoPageProps): React.JSX.Element {
+  const navigate = customNavigate ?? ((path: string) => {
+    if (typeof window !== "undefined") {
+      window.location.assign(path);
+    }
+  });
   const activeClient = client;
 
-  const [products, setProducts] = useState<readonly ShopifyProductForAutoSeoUi[]>(
-    () => initialProducts ?? [],
-  );
-  const [selectedProductIds, setSelectedProductIds] = useState<string[]>(() => {
-    if (initialSelectedProductIds !== undefined) {
-      return [...initialSelectedProductIds];
-    }
-    return [];
-  });
+  const session = useAutoSeoSession();
 
-  const [searchQuery, setSearchQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState<ShopifyStatusFilter>("all");
+  const products = initialProducts ?? session.products;
+  const [testSelectedProductIds, setTestSelectedProductIds] = useState<string[] | undefined>(
+    initialSelectedProductIds ? [...initialSelectedProductIds] : undefined,
+  );
+  const selectedProductIds = testSelectedProductIds ?? session.selectedProductIds;
+
+  const searchQuery = session.searchQuery;
+  const statusFilter = session.statusFilter;
+  const output = session.output;
+  const lastHydratedProducts = session.lastHydratedProducts;
 
   const [isLoadingProducts, setIsLoadingProducts] = useState(false);
   const [isRunningAutoSeo, setIsRunningAutoSeo] = useState(false);
@@ -52,8 +72,7 @@ export function AutoSeoPage({
   const [isDetailLoading, setIsDetailLoading] = useState(false);
   const [detailErrorMessage, setDetailErrorMessage] = useState<string | null>(null);
   const activeDetailIdRef = useRef<string | null>(null);
-
-  const [output, setOutput] = useState<AutoSeoOutput | null>(null);
+  const [isSendingToSeo, setIsSendingToSeo] = useState(false);
 
   const filteredProducts = useMemo(() => {
     return filterAutoSeoProducts(products, {
@@ -68,8 +87,9 @@ export function AutoSeoPage({
 
     try {
       const fetchedProducts = await activeClient.loadProducts();
-      setProducts(fetchedProducts);
-      setSelectedProductIds([]);
+      setAutoSeoProducts(fetchedProducts);
+      setAutoSeoSelectedProductIds([]);
+      setTestSelectedProductIds(undefined);
     } catch (err) {
       setErrorMessage(
         err instanceof Error ? err.message : "Không thể tải danh sách sản phẩm từ Shopify.",
@@ -79,12 +99,12 @@ export function AutoSeoPage({
     }
   }, [activeClient]);
 
-  // Load products on initial mount
+  // Load products on initial mount only if not already loaded in session or provided as props
   useEffect(() => {
-    if (!initialProducts) {
+    if (!initialProducts && (!session.hasLoadedInitially || session.products.length === 0)) {
       void handleLoadProducts();
     }
-  }, [handleLoadProducts, initialProducts]);
+  }, [handleLoadProducts, initialProducts, session.hasLoadedInitially, session.products.length]);
 
   // Open & hydrate product detail drawer
   const openProductDetail = useCallback(
@@ -127,20 +147,32 @@ export function AutoSeoPage({
 
   // Toggle selection
   const handleToggleSelect = (productId: string): void => {
-    setSelectedProductIds((curr) =>
-      curr.includes(productId) ? curr.filter((id) => id !== productId) : [...curr, productId],
-    );
+    const next = selectedProductIds.includes(productId)
+      ? selectedProductIds.filter((id) => id !== productId)
+      : [...selectedProductIds, productId];
+    if (testSelectedProductIds !== undefined) {
+      setTestSelectedProductIds(next);
+    }
+    setAutoSeoSelectedProductIds(next);
   };
 
   // Select all currently visible / filtered products
   const handleSelectAll = useCallback((): void => {
-    setSelectedProductIds((current) => selectAllVisibleProducts(current, filteredProducts));
-  }, [filteredProducts]);
+    const next = selectAllVisibleProducts(selectedProductIds, filteredProducts);
+    if (testSelectedProductIds !== undefined) {
+      setTestSelectedProductIds(next);
+    }
+    setAutoSeoSelectedProductIds(next);
+  }, [filteredProducts, selectedProductIds, testSelectedProductIds]);
 
   // Clear selection for currently visible / filtered products
   const handleClearSelection = useCallback((): void => {
-    setSelectedProductIds((current) => clearVisibleProductsSelection(current, filteredProducts));
-  }, [filteredProducts]);
+    const next = clearVisibleProductsSelection(selectedProductIds, filteredProducts);
+    if (testSelectedProductIds !== undefined) {
+      setTestSelectedProductIds(next);
+    }
+    setAutoSeoSelectedProductIds(next);
+  }, [filteredProducts, selectedProductIds, testSelectedProductIds]);
 
   // Open detail modal
   const handleOpenDetail = (product: ShopifyProductForAutoSeoUi): void => {
@@ -190,13 +222,66 @@ export function AutoSeoPage({
         selectedProductIds,
       });
 
-      setOutput(result);
+      setAutoSeoOutput(result);
+      setAutoSeoLastHydratedProducts(hydratedProducts);
+
+      notifyUser({
+        title: "✨ Auto SEO: Tối ưu hóa hoàn tất!",
+        message: `Đã tạo nội dung Auto SEO thành công cho ${result.selectedCount} sản phẩm. Đã sẵn sàng kiểm duyệt tại SEO Review.`,
+        type: "success",
+        sound: "chime",
+        url: "/seo-review",
+      });
+
+      if (onHandoverToSeo) {
+        await onHandoverToSeo(hydratedProducts);
+        navigate("/seo-review");
+      }
     } catch (err) {
-      setErrorMessage(
-        err instanceof Error ? err.message : "Đã xảy ra lỗi khi chạy Auto SEO.",
-      );
+      const errText = err instanceof Error ? err.message : "Đã xảy ra lỗi khi chạy Auto SEO.";
+      setErrorMessage(errText);
+      notifyUser({
+        title: "❌ Auto SEO thất bại",
+        message: errText,
+        type: "error",
+        sound: "alert",
+        url: "/auto-seo",
+      });
     } finally {
       setIsRunningAutoSeo(false);
+    }
+  };
+
+  const handleSendToSeo = async (): Promise<void> => {
+    if (!onHandoverToSeo || lastHydratedProducts.length === 0) {
+      return;
+    }
+
+    setIsSendingToSeo(true);
+    setErrorMessage(null);
+
+    try {
+      await onHandoverToSeo(lastHydratedProducts);
+      notifyUser({
+        title: "📦 Auto SEO: Bàn giao SEO thành công!",
+        message: `Đã bàn giao ${lastHydratedProducts.length} sản phẩm sang SEO Review.`,
+        type: "success",
+        sound: "chime",
+        url: "/seo-review",
+      });
+      navigate("/seo-review");
+    } catch (err) {
+      const errText = err instanceof Error ? err.message : "Đã xảy ra lỗi khi bàn giao sang SEO Content.";
+      setErrorMessage(errText);
+      notifyUser({
+        title: "❌ Bàn giao SEO thất bại",
+        message: errText,
+        type: "error",
+        sound: "alert",
+        url: "/auto-seo",
+      });
+    } finally {
+      setIsSendingToSeo(false);
     }
   };
 
@@ -255,9 +340,9 @@ export function AutoSeoPage({
         products={products}
         selectedProductIds={selectedProductIds}
         searchQuery={searchQuery}
-        onSearchQueryChange={setSearchQuery}
+        onSearchQueryChange={setAutoSeoSearchQuery}
         statusFilter={statusFilter}
-        onStatusFilterChange={setStatusFilter}
+        onStatusFilterChange={setAutoSeoStatusFilter}
         filteredProducts={filteredProducts}
         onToggleSelect={handleToggleSelect}
         onOpenDetail={handleOpenDetail}
@@ -280,7 +365,9 @@ export function AutoSeoPage({
       {/* Output Panel: Prepared SEO Content Inputs */}
       <AutoSeoOutputPanel
         output={output}
-        onClearOutput={() => setOutput(null)}
+        onClearOutput={() => setAutoSeoOutput(null)}
+        onSendToSeoContent={onHandoverToSeo && lastHydratedProducts.length > 0 ? () => void handleSendToSeo() : undefined}
+        isSendingToSeo={isSendingToSeo}
       />
     </div>
   );

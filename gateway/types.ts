@@ -19,6 +19,8 @@ export interface StoreConfig {
   readonly apiVersion: string;
   readonly auth: StoreAuthConfig;
   readonly proxy?: StoreProxyConfig;
+  readonly productTypes?: readonly string[];
+  readonly defaultProductType?: string;
 }
 
 export type GatewayErrorCode =

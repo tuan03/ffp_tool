@@ -345,28 +345,32 @@ class ImageProcessingService:
         metadata_path = self.cache_root / f"{key}.json"
         with self._locks_guard:
             lock = self._locks.setdefault(key, threading.Lock())
-        with lock:
-            is_fresh = output_path.exists() and time.time() - output_path.stat().st_mtime < self.cache_ttl_seconds
-            if not is_fresh:
-                logo_path = self.profiles.logo_path(profile["slug"], profile["revision"])
-                source_content = _download_image(url)
-                processed = process_image_bytes(
-                    source_content,
-                    profile,
-                    logo_content=logo_path.read_bytes() if logo_path else None,
-                    seed=key,
-                )
-                temporary = output_path.with_suffix(".tmp")
-                temporary.write_bytes(processed)
-                temporary.replace(output_path)
-                metadata_path.write_text(
-                    json.dumps({"sourcePerceptualHash": _perceptual_hash_bytes(source_content)}),
-                    encoding="utf-8",
-                )
-            try:
-                source_hash = str(json.loads(metadata_path.read_text(encoding="utf-8"))["sourcePerceptualHash"])
-            except (OSError, KeyError, TypeError, json.JSONDecodeError):
-                source_hash = _perceptual_hash_bytes(output_path.read_bytes())
+        try:
+            with lock:
+                is_fresh = output_path.exists() and time.time() - output_path.stat().st_mtime < self.cache_ttl_seconds
+                if not is_fresh:
+                    logo_path = self.profiles.logo_path(profile["slug"], profile["revision"])
+                    source_content = _download_image(url)
+                    processed = process_image_bytes(
+                        source_content,
+                        profile,
+                        logo_content=logo_path.read_bytes() if logo_path else None,
+                        seed=key,
+                    )
+                    temporary = output_path.with_suffix(".tmp")
+                    temporary.write_bytes(processed)
+                    temporary.replace(output_path)
+                    metadata_path.write_text(
+                        json.dumps({"sourcePerceptualHash": _perceptual_hash_bytes(source_content)}),
+                        encoding="utf-8",
+                    )
+                try:
+                    source_hash = str(json.loads(metadata_path.read_text(encoding="utf-8"))["sourcePerceptualHash"])
+                except (OSError, KeyError, TypeError, json.JSONDecodeError):
+                    source_hash = _perceptual_hash_bytes(output_path.read_bytes())
+        finally:
+            with self._locks_guard:
+                self._locks.pop(key, None)
         result = deepcopy(media)
         result["processedFileToken"] = key
         result["processedContentType"] = "image/jpeg"

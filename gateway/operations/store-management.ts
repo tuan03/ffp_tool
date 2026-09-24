@@ -8,6 +8,8 @@ export interface GatewayStoreSummary {
   readonly apiVersion?: string;
   readonly authType: "static" | "client_credentials";
   readonly connected?: boolean;
+  readonly productTypes?: readonly string[];
+  readonly defaultProductType?: string;
 }
 
 export function toStoreSummary(config: StoreConfig, connected?: boolean): GatewayStoreSummary {
@@ -17,6 +19,8 @@ export function toStoreSummary(config: StoreConfig, connected?: boolean): Gatewa
     apiVersion: config.apiVersion,
     authType: config.auth.type,
     connected,
+    productTypes: config.productTypes,
+    defaultProductType: config.defaultProductType,
   };
 }
 

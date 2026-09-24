@@ -7,7 +7,19 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint, create_engine
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    JSON,
+    String,
+    Text,
+    UniqueConstraint,
+    create_engine,
+    event,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, sessionmaker
@@ -259,7 +271,15 @@ def create_database_engine(url: str | None = None):
         if sqlite_database and sqlite_database != ":memory:":
             Path(sqlite_database).expanduser().resolve().parent.mkdir(parents=True, exist_ok=True)
         engine_options["poolclass"] = NullPool
-    return create_engine(selected, **engine_options)
+    engine = create_engine(selected, **engine_options)
+    if selected.startswith("sqlite"):
+        @event.listens_for(engine, "connect")
+        def _set_sqlite_pragma(dbapi_connection, connection_record):
+            cursor = dbapi_connection.cursor()
+            cursor.execute("PRAGMA journal_mode=WAL;")
+            cursor.execute("PRAGMA busy_timeout=10000;")
+            cursor.close()
+    return engine
 
 
 def create_session_factory(engine):

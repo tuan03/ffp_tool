@@ -21,6 +21,7 @@ export type {
   AutoSeoBackupRequest,
   AutoSeoBackupResponse,
   AutoSeoClient,
+  AutoSeoHandoverHandler,
   AutoSeoOutput,
   AutoSeoProductCandidate,
   AutoSeoProductImage,

@@ -30,6 +30,8 @@ export class ShopifyGraphqlClient {
     const maxRetries = 2;
     let maxAttempts = maxRetries;
     let hasRetriedAuth = false;
+    let throttleWaitAttempts = 0;
+    const maxThrottleWaitAttempts = 10;
 
     const isWrite = Boolean(options?.isWrite);
     const defaultTimeoutMs = isWrite ? 60_000 : 30_000;
@@ -43,8 +45,14 @@ export class ShopifyGraphqlClient {
       const throttleStatus = this.throttleManager.check(throttleGroupId);
       if (throttleStatus.isThrottled) {
         const retryAfterSec = Math.ceil(throttleStatus.retryAfterMs / 1000);
-        if (attempt < maxAttempts && throttleStatus.retryAfterMs <= 30000) {
-          await new Promise((resolve) => setTimeout(resolve, throttleStatus.retryAfterMs));
+        if (throttleStatus.retryAfterMs > 30000) {
+          throw new GatewayError("Store is currently throttled", "SHOPIFY_THROTTLED", 429, retryAfterSec);
+        }
+        if (throttleWaitAttempts < maxThrottleWaitAttempts) {
+          throttleWaitAttempts++;
+          maxAttempts++;
+          const jitterMs = Math.floor(Math.random() * 200) + 50;
+          await new Promise((resolve) => setTimeout(resolve, throttleStatus.retryAfterMs + jitterMs));
           continue;
         }
         throw new GatewayError("Store is currently throttled", "SHOPIFY_THROTTLED", 429, retryAfterSec);
@@ -147,8 +155,19 @@ export class ShopifyGraphqlClient {
         const retryAfterSec = retryAfterHeader ? Number.parseInt(retryAfterHeader, 10) || 2 : 2;
         this.throttleManager.recordHttp429(throttleGroupId, retryAfterSec);
         const waitMs = retryAfterSec * 1000;
-        if (attempt < maxAttempts && waitMs <= 30000) {
-          await new Promise((resolve) => setTimeout(resolve, waitMs));
+        if (waitMs > 30000) {
+          throw new GatewayError(
+            "Shopify API rate limit exceeded (HTTP 429)",
+            "SHOPIFY_THROTTLED",
+            429,
+            retryAfterSec,
+          );
+        }
+        if (throttleWaitAttempts < maxThrottleWaitAttempts) {
+          throttleWaitAttempts++;
+          maxAttempts++;
+          const jitterMs = Math.floor(Math.random() * 200) + 50;
+          await new Promise((resolve) => setTimeout(resolve, waitMs + jitterMs));
           continue;
         }
         throw new GatewayError(
@@ -189,8 +208,14 @@ export class ShopifyGraphqlClient {
         if (mappedError.code === "SHOPIFY_THROTTLED") {
           this.throttleManager.recordThrottled(throttleGroupId, mappedError.retryAfterSeconds);
           const waitMs = (mappedError.retryAfterSeconds ?? 1) * 1000;
-          if (attempt < maxAttempts && waitMs <= 30000) {
-            await new Promise((resolve) => setTimeout(resolve, waitMs));
+          if (waitMs > 30000) {
+            throw mappedError;
+          }
+          if (throttleWaitAttempts < maxThrottleWaitAttempts) {
+            throttleWaitAttempts++;
+            maxAttempts++;
+            const jitterMs = Math.floor(Math.random() * 200) + 50;
+            await new Promise((resolve) => setTimeout(resolve, waitMs + jitterMs));
             continue;
           }
         }

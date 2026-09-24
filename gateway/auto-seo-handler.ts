@@ -2,7 +2,11 @@ import crypto from "node:crypto";
 import type http from "node:http";
 import type { DatabaseSync } from "node:sqlite";
 
-import { getAutoSeoDb } from "./auto-seo-db";
+import {
+  getAutoSeoDb,
+  INSERT_AUTO_SEO_BACKUP_SQL,
+  INSERT_AUTO_SEO_BACKUP_UPSERT_SQL,
+} from "./auto-seo-db";
 import { calculateSha256, canonicalizeJson } from "./canonical-json";
 import { isGatewayAuthorized, MAX_BODY_BYTES } from "./http-server";
 import { runSeoContent } from "./seo-content";
@@ -25,6 +29,7 @@ export interface AutoSeoRunRequest {
   readonly storeId: string;
   readonly shopDomain: string;
   readonly products: readonly AutoSeoProductPayload[];
+  readonly onConflict?: "error" | "update";
 }
 
 export interface AutoSeoRunResult {
@@ -39,6 +44,7 @@ export interface AutoSeoRunResult {
 export interface AutoSeoHandlerOptions {
   readonly db?: DatabaseSync;
   readonly seoContentRunner?: SeoContentRunner;
+  readonly onConflict?: "error" | "update";
 }
 
 function formatIsoDateTime(dateStr?: string): string | null {
@@ -129,31 +135,25 @@ export function validateAutoSeoRunInput(body: unknown): AutoSeoRunRequest {
     storeId: req.storeId.trim(),
     shopDomain: req.shopDomain.trim(),
     products: req.products,
+    onConflict:
+      req.onConflict === "update" || req.onConflict === "error"
+        ? req.onConflict
+        : undefined,
   };
 }
 
 export function executeAutoSeoBackup(
   db: DatabaseSync,
   request: AutoSeoRunRequest,
+  options?: { readonly onConflict?: "error" | "update" },
 ): { readonly backupIds: string[]; readonly productIds: string[] } {
   const backupIds: string[] = [];
   const productIds: string[] = [];
 
-  const insertStmt = db.prepare(`
-    INSERT INTO auto_seo_product_backups (
-      backup_id,
-      workflow_id,
-      store_id,
-      shop_domain,
-      product_id,
-      product_handle,
-      product_title,
-      shopify_updated_at,
-      snapshot_json,
-      snapshot_sha256,
-      downstream_status
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'NOT_SENT')
-  `);
+  const shouldUpsert = request.onConflict === "update" || options?.onConflict === "update";
+  const insertStmt = db.prepare(
+    shouldUpsert ? INSERT_AUTO_SEO_BACKUP_UPSERT_SQL : INSERT_AUTO_SEO_BACKUP_SQL,
+  );
 
   for (const product of request.products) {
     const canonicalJson = canonicalizeJson(product);
@@ -227,7 +227,9 @@ export async function handleAutoSeoRun(
   let backupIds: string[] = [];
   db.exec("BEGIN IMMEDIATE");
   try {
-    const backupResult = executeAutoSeoBackup(db, request);
+    const backupResult = executeAutoSeoBackup(db, request, {
+      onConflict: options?.onConflict ?? request.onConflict,
+    });
     db.exec("COMMIT");
     backupIds = [...backupResult.backupIds];
   } catch (dbError) {

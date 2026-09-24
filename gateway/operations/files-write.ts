@@ -6,6 +6,7 @@ import { GatewayError, mapUserErrorsToGatewayError, type MutationUserErrorItem }
 import { createStoreTransport } from "../proxy-transport";
 import type { ShopifyGraphqlClient } from "../shopify-graphql-client";
 import type { HttpTransport, StoreConfig } from "../types";
+import { isLocalOrPrivateUrl, stageLocalMedia } from "./staged-uploads";
 
 export const FILE_CREATE_MUTATION = `
   mutation FileCreate($files: [FileCreateInput!]!) {
@@ -106,19 +107,43 @@ export async function executeFilesStageBinary(
   const value = payload && typeof payload === "object" ? payload as Record<string, unknown> : {};
   const filename = typeof value.filename === "string" ? value.filename.trim() : "";
   const mimeType = typeof value.mimeType === "string" ? value.mimeType.trim() : "";
+  const rawResource = typeof value.resource === "string" ? value.resource.trim().toUpperCase() : "";
   const contentBase64 = typeof value.contentBase64 === "string" ? value.contentBase64.trim() : "";
-  if (!filename || !/^image\/(?:jpeg|png|webp)$/i.test(mimeType) || !contentBase64) {
-    throw new GatewayError("filename, supported image mimeType and contentBase64 are required", "SHOPIFY_USER_ERROR", 400);
+  const rawContent = value.content;
+  if (!filename || (!contentBase64 && !rawContent)) {
+    throw new GatewayError("filename and contentBase64 are required", "SHOPIFY_USER_ERROR", 400);
   }
   let content: Buffer;
-  try {
-    content = Buffer.from(contentBase64, "base64");
-  } catch (error: unknown) {
-    throw new GatewayError("contentBase64 is invalid", "SHOPIFY_USER_ERROR", 400, undefined, error);
+  if (Buffer.isBuffer(rawContent) || rawContent instanceof Uint8Array) {
+    content = Buffer.from(rawContent);
+  } else if (contentBase64) {
+    try {
+      content = Buffer.from(contentBase64, "base64");
+    } catch (error: unknown) {
+      throw new GatewayError("contentBase64 is invalid", "SHOPIFY_USER_ERROR", 400, undefined, error);
+    }
+  } else {
+    throw new GatewayError("contentBase64 is invalid", "SHOPIFY_USER_ERROR", 400);
   }
-  if (content.length === 0 || content.length > 20 * 1024 * 1024) {
-    throw new GatewayError("Staged image must be between 1 byte and 20 MB", "SHOPIFY_USER_ERROR", 400);
+
+  const isGenericFile = rawResource === "FILE" || content.length > 20 * 1024 * 1024 || (Boolean(mimeType) && !/^image\/(?:jpeg|png|webp)$/i.test(mimeType));
+  const resource = isGenericFile ? "FILE" : "IMAGE";
+  const maxBytes = isGenericFile ? 1024 * 1024 * 1024 : 20 * 1024 * 1024;
+
+  if (content.length === 0 || content.length > maxBytes) {
+    throw new GatewayError(
+      `Staged ${isGenericFile ? "file" : "image"} must be between 1 byte and ${isGenericFile ? "1 GB" : "20 MB"}`,
+      "SHOPIFY_USER_ERROR",
+      400,
+    );
   }
+
+  if (!isGenericFile && (!mimeType || !/^image\/(?:jpeg|png|webp)$/i.test(mimeType))) {
+    throw new GatewayError("filename, supported image mimeType and contentBase64 are required", "SHOPIFY_USER_ERROR", 400);
+  }
+
+  const resolvedMimeType = mimeType || (isGenericFile ? "application/octet-stream" : "image/jpeg");
+
   if (mode === "preview") {
     return { resourceUrl: `https://cdn.shopify.com/staged/${encodeURIComponent(filename)}` };
   }
@@ -128,9 +153,9 @@ export async function executeFilesStageBinary(
     {
       input: [{
         filename,
-        mimeType,
+        mimeType: resolvedMimeType,
         httpMethod: "POST",
-        resource: "IMAGE",
+        resource,
         fileSize: String(content.length),
       }],
     },
@@ -150,7 +175,7 @@ export async function executeFilesStageBinary(
   for (const parameter of target.parameters) {
     form.append(parameter.name, parameter.value);
   }
-  form.append("file", new Blob([Uint8Array.from(content)], { type: mimeType }), filename);
+  form.append("file", new Blob([Uint8Array.from(content)], { type: resolvedMimeType }), filename);
   const transport = uploadTransport ?? createStoreTransport(store);
   let upload: Response;
   try {
@@ -316,8 +341,9 @@ export async function executeFilesCreate(
   const filename = typeof p.filename === "string" && p.filename.trim() !== "" ? p.filename.trim() : undefined;
   const alt = typeof p.alt === "string" && p.alt.trim() !== "" ? p.alt.trim() : undefined;
   const contentType = p.contentType === "FILE" || p.contentType === "IMAGE" ? p.contentType : "IMAGE";
-  const pollIntervalMs = typeof p.pollIntervalMs === "number" && p.pollIntervalMs >= 0 ? p.pollIntervalMs : 500;
-  const maxPollAttempts = typeof p.maxPollAttempts === "number" && p.maxPollAttempts > 0 ? p.maxPollAttempts : 8;
+  const hasCustomPoll = typeof p.pollIntervalMs === "number" || typeof p.maxPollAttempts === "number";
+  const pollIntervalMs = typeof p.pollIntervalMs === "number" && p.pollIntervalMs >= 0 ? p.pollIntervalMs : 1000;
+  const maxPollAttempts = typeof p.maxPollAttempts === "number" && p.maxPollAttempts > 0 ? p.maxPollAttempts : 30;
 
   if (mode === "preview") {
     const safeFilename = filename || "mock-file.jpg";
@@ -329,8 +355,16 @@ export async function executeFilesCreate(
     };
   }
 
+  let resolvedSource = originalSource;
+  if (mode === "apply" && isLocalOrPrivateUrl(originalSource)) {
+    resolvedSource = await stageLocalMedia(store, client, originalSource, {
+      requestId,
+      resource: contentType === "FILE" ? "FILE" : undefined,
+    });
+  }
+
   const fileInput: Record<string, unknown> = {
-    originalSource,
+    originalSource: resolvedSource,
     contentType,
   };
   if (filename) {
@@ -369,8 +403,11 @@ export async function executeFilesCreate(
 
   if (fileStatus !== "READY" || !url) {
     for (let attempt = 0; attempt < maxPollAttempts; attempt++) {
-      if (pollIntervalMs > 0) {
-        await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+      const waitTime = hasCustomPoll
+        ? pollIntervalMs
+        : Math.min(3000, Math.floor(1000 * Math.pow(1.15, attempt)));
+      if (waitTime > 0) {
+        await new Promise((resolve) => setTimeout(resolve, waitTime));
       }
 
       const polled = await client.query<FileNodeQueryResponse>(
@@ -430,8 +467,9 @@ export async function executeFilesBulkCreate(
     throw new GatewayError("files array is required and must not be empty", "SHOPIFY_USER_ERROR", 400);
   }
 
-  const pollIntervalMs = typeof p.pollIntervalMs === "number" && p.pollIntervalMs >= 0 ? p.pollIntervalMs : 500;
-  const maxPollAttempts = typeof p.maxPollAttempts === "number" && p.maxPollAttempts > 0 ? p.maxPollAttempts : 12;
+  const hasCustomPoll = typeof p.pollIntervalMs === "number" || typeof p.maxPollAttempts === "number";
+  const pollIntervalMs = typeof p.pollIntervalMs === "number" && p.pollIntervalMs >= 0 ? p.pollIntervalMs : 1000;
+  const maxPollAttempts = typeof p.maxPollAttempts === "number" && p.maxPollAttempts > 0 ? p.maxPollAttempts : 30;
 
   if (mode === "preview") {
     const mockFiles: FilesBulkCreateItemResult[] = rawFiles.map((f, idx) => {
@@ -518,8 +556,11 @@ export async function executeFilesBulkCreate(
       break;
     }
 
-    if (pollIntervalMs > 0) {
-      await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+    const waitTime = hasCustomPoll
+      ? pollIntervalMs
+      : Math.min(3000, Math.floor(1000 * Math.pow(1.15, attempt)));
+    if (waitTime > 0) {
+      await new Promise((resolve) => setTimeout(resolve, waitTime));
     }
 
     const ids = pending.map((p) => p.fileId as string);

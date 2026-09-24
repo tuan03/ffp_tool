@@ -13,13 +13,34 @@ import type {
   ImageProcessingProfileManager,
 } from "../../modules/amazon-crawler";
 import { createAutoSeoRoutes } from "../../modules/auto-seo";
+import type { ShopifyProductForAutoSeoUi } from "../../modules/auto-seo";
+import { getCustomizationNormalizerRunner } from "../../modules/customization-normalizer";
+import type { CrawlProduct } from "../../modules/customization-normalizer";
 import { getModuleApiRunner } from "../../modules/module-api";
-import { createAutoSeoModuleApiClient } from "../../modules/orchestrator";
+import {
+  createAutoSeoModuleApiClient,
+  handoverAutoSeoToSeo,
+  handoverCrawlerToSeo,
+  handoverPinterestToSeo,
+} from "../../modules/orchestrator";
+import type {
+  AutoSeoSourceProduct,
+  WorkflowInput,
+  WorkflowOutput,
+} from "../../modules/orchestrator";
 import { createPinterestPodRoutes, getPinterestPodClient } from "../../modules/pinterest-pod";
+import type { PinterestPodDeliverables } from "../../modules/pinterest-pod";
 import { createProductCrawlerRoutes, getProductCrawlerClient } from "../../modules/product-crawler";
-import type { WorkflowInput, WorkflowOutput } from "../../modules/orchestrator";
-import { HomePage } from "../../pages/home/HomePage";
+import { getSeoContentRunner } from "../../modules/seo-content";
 import { NotFoundPage } from "../../pages/not-found/NotFoundPage";
+import {
+  adaptAutoSeoItemToViewModel,
+  adaptCustomizationItemToViewModel,
+  adaptPinterestPodItemToViewModel,
+  SeoReviewPage,
+} from "../../pages/seo-review";
+import type { SeoProductUiViewModel } from "../../pages/seo-review";
+import type { AmazonCrawlerProduct } from "../../modules/amazon-crawler";
 
 interface AppRoutesProps {
   amazonCrawlerJobs: AmazonCrawlerJobController;
@@ -34,24 +55,176 @@ interface AppRoutesProps {
 export function AppRoutes({
   amazonCrawlerJobs,
   clearAmazonCrawlerCache,
+  imageProcessingProfiles,
   loadAmazonCrawlerClients,
   retryAmazonCrawlerSyncs,
-  imageProcessingProfiles,
   runAmazonCrawler,
   runWorkflow,
 }: AppRoutesProps): React.JSX.Element {
   const router = useMemo(() => {
     const podClient = getPinterestPodClient(environment);
-    const podRoutes = createPinterestPodRoutes(podClient);
     const crawlerClient = getProductCrawlerClient(environment);
     const crawlerRoutes = createProductCrawlerRoutes(crawlerClient);
     const moduleApiRunner = getModuleApiRunner(environment);
     const autoSeoClient = createAutoSeoModuleApiClient(moduleApiRunner);
-    const autoSeoRoutes = createAutoSeoRoutes(autoSeoClient);
+    const seoRunner = getSeoContentRunner(environment);
+
+    const handlePinterestHandover = async (
+      payload: PinterestPodDeliverables,
+    ): Promise<void> => {
+      const result = await handoverPinterestToSeo(
+        {
+          deliverables: payload,
+          defaultNiche: payload.items[0]?.trendKeywords?.[0] || payload.productType || "home decor",
+        },
+        {
+          seoRunner,
+        },
+      );
+
+      const newViewModels = result.items.map((item) =>
+        adaptPinterestPodItemToViewModel(item),
+      );
+
+      if (typeof window !== "undefined" && window.sessionStorage) {
+        try {
+          const storageKey = "ffp_seo_review_session_v1";
+          const existingRaw = window.sessionStorage.getItem(storageKey);
+          let existingList: readonly SeoProductUiViewModel[] = [];
+          if (existingRaw) {
+            const parsed = JSON.parse(existingRaw) as unknown;
+            if (Array.isArray(parsed)) {
+              existingList = parsed as SeoProductUiViewModel[];
+            }
+          }
+          const existingFiltered = existingList.filter(
+            (ex) =>
+              !ex.id.startsWith("sample-prod-") &&
+              !newViewModels.some((nv) => nv.id === ex.id),
+          );
+          const merged = [...newViewModels, ...existingFiltered];
+          window.sessionStorage.setItem(storageKey, JSON.stringify(merged));
+          window.sessionStorage.setItem(
+            "ffp_seo_review_handoff_banner",
+            JSON.stringify({
+              count: newViewModels.length,
+              timestamp: Date.now(),
+              source: "Pinterest POD Studio",
+            }),
+          );
+        } catch {
+          // Ignore storage quota limits
+        }
+      }
+    };
+
+    const podRoutes = createPinterestPodRoutes(podClient, handlePinterestHandover);
+
+    const handleAutoSeoHandover = async (
+      shopifyProducts: readonly ShopifyProductForAutoSeoUi[],
+    ): Promise<void> => {
+      const result = await handoverAutoSeoToSeo(
+        {
+          products: shopifyProducts as unknown as AutoSeoSourceProduct[],
+        },
+        {
+          seoRunner,
+        },
+      );
+
+      const newViewModels = result.items.map((item) =>
+        adaptAutoSeoItemToViewModel(item),
+      );
+
+      if (typeof window !== "undefined" && window.sessionStorage) {
+        try {
+          const storageKey = "ffp_seo_review_session_v1";
+          const existingRaw = window.sessionStorage.getItem(storageKey);
+          let existingList: readonly SeoProductUiViewModel[] = [];
+          if (existingRaw) {
+            const parsed = JSON.parse(existingRaw) as unknown;
+            if (Array.isArray(parsed)) {
+              existingList = parsed as SeoProductUiViewModel[];
+            }
+          }
+          const existingFiltered = existingList.filter(
+            (ex) =>
+              !ex.id.startsWith("sample-prod-") &&
+              !newViewModels.some((nv) => nv.id === ex.id),
+          );
+          const merged = [...newViewModels, ...existingFiltered];
+          window.sessionStorage.setItem(storageKey, JSON.stringify(merged));
+          window.sessionStorage.setItem(
+            "ffp_seo_review_handoff_banner",
+            JSON.stringify({
+              count: newViewModels.length,
+              timestamp: Date.now(),
+              source: "Auto SEO",
+            }),
+          );
+        } catch {
+          // Ignore storage quota limits
+        }
+      }
+    };
+
+    const autoSeoRoutes = createAutoSeoRoutes(autoSeoClient, handleAutoSeoHandover);
+
+    const handleHandoverToSeo = async (
+      crawlerProducts: readonly AmazonCrawlerProduct[],
+    ): Promise<void> => {
+      const normalizer = getCustomizationNormalizerRunner(environment);
+
+      const result = await handoverCrawlerToSeo(
+        {
+          products: crawlerProducts as unknown as CrawlProduct[],
+        },
+        {
+          normalizer,
+          seoRunner,
+        },
+      );
+
+      const newViewModels = result.items.map((item) =>
+        adaptCustomizationItemToViewModel(item),
+      );
+
+      if (typeof window !== "undefined" && window.sessionStorage) {
+        try {
+          const storageKey = "ffp_seo_review_session_v1";
+          const existingRaw = window.sessionStorage.getItem(storageKey);
+          let existingList: readonly SeoProductUiViewModel[] = [];
+          if (existingRaw) {
+            const parsed = JSON.parse(existingRaw) as unknown;
+            if (Array.isArray(parsed)) {
+              existingList = parsed as SeoProductUiViewModel[];
+            }
+          }
+          const existingFiltered = existingList.filter(
+            (ex) =>
+              !ex.id.startsWith("sample-prod-") &&
+              !newViewModels.some((nv) => nv.id === ex.id),
+          );
+          const merged = [...newViewModels, ...existingFiltered];
+          window.sessionStorage.setItem(storageKey, JSON.stringify(merged));
+          window.sessionStorage.setItem(
+            "ffp_seo_review_handoff_banner",
+            JSON.stringify({
+              count: newViewModels.length,
+              timestamp: Date.now(),
+            }),
+          );
+        } catch {
+          // Ignore storage quota limits
+        }
+      }
+    };
+
     const distributedCrawlerRoutes = amazonCrawlerRoutes(
       runAmazonCrawler,
       clearAmazonCrawlerCache,
       loadAmazonCrawlerClients,
+      handleHandoverToSeo,
       retryAmazonCrawlerSyncs,
       imageProcessingProfiles,
       amazonCrawlerJobs,
@@ -70,8 +243,8 @@ export function AppRoutes({
           ...podRoutes,
           ...autoSeoRoutes,
           {
-            path: "workflow-demo",
-            element: <HomePage runWorkflow={runWorkflow} />,
+            path: "seo-review",
+            element: <SeoReviewPage moduleApiRunner={moduleApiRunner} />,
           },
           {
             path: "*",

@@ -58,7 +58,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0
         config.data_directory.mkdir(parents=True, exist_ok=True)
         project_root.mkdir(parents=True, exist_ok=True)
-        if arguments.no_tray:
+        if arguments.no_tray or sys.platform != "win32":
             agent = DistributedCrawlerAgent(
                 project_root=project_root,
                 config=config,

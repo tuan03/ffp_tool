@@ -8,6 +8,7 @@ export {
   runSeoContent,
   runSeoContentDetailed,
 } from "./service";
+export { FileSeoConflictCorpus } from "./internal/conflict-control/file-seo-conflict-corpus";
 export { CorpusRevisionConflictError } from "./internal/conflict-control/corpus-errors";
 export { SeoCorpusCommitCoordinator } from "./corpus-commit-coordinator";
 export type {
@@ -47,6 +48,7 @@ export type {
   PinterestPodDeliverables,
   PinterestPodSeoBatchResult,
   PinterestPodSeoItemResult,
+  PinterestPodSeoOptions,
   PodComposedMockupSpec,
   PodCutoutSpec,
   PodDeliverableItem,

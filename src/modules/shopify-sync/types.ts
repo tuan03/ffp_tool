@@ -133,6 +133,14 @@ export interface ShopifySyncBatchOutput {
   readonly results: readonly ShopifySyncProductResult[];
 }
 
+export interface ShopifyMetafieldInput {
+  readonly namespace: string;
+  readonly key: string;
+  readonly value: string;
+  readonly type?: string;
+  readonly ownerId?: string;
+}
+
 export interface CreateProductInput {
   readonly title: string;
   readonly handle?: string;
@@ -145,6 +153,7 @@ export interface CreateProductInput {
   readonly collectionsToJoin?: readonly string[];
   readonly media?: readonly ShopifyMediaInput[];
   readonly variants?: readonly CreateVariantItem[];
+  readonly metafields?: readonly ShopifyMetafieldInput[];
 }
 
 export interface CreateProductOutput {
@@ -178,7 +187,8 @@ export interface CreateVariantsOutput {
 export interface UploadFileInput {
   readonly originalSource: string;
   readonly filename: string;
-  readonly alt: string;
+  readonly alt?: string;
+  readonly contentType?: "IMAGE" | "FILE";
 }
 
 export interface UploadFileOutput {

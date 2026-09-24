@@ -8,19 +8,22 @@ export function isWebpBuffer(buffer: unknown): boolean {
     return false;
   }
 
-  if (Buffer.isBuffer(buffer)) {
-    if (buffer.length < 12) return false;
-    const riff = buffer.subarray(0, 4).toString("ascii");
-    const webp = buffer.subarray(8, 12).toString("ascii");
-    return riff === "RIFF" && webp === "WEBP";
-  }
-
-  if (buffer instanceof Uint8Array) {
-    if (buffer.length < 12) return false;
-    const slice = Buffer.from(buffer.buffer, buffer.byteOffset, buffer.byteLength);
-    const riff = slice.subarray(0, 4).toString("ascii");
-    const webp = slice.subarray(8, 12).toString("ascii");
-    return riff === "RIFF" && webp === "WEBP";
+  if (
+    buffer instanceof Uint8Array ||
+    (typeof Buffer !== "undefined" && typeof Buffer.isBuffer === "function" && Buffer.isBuffer(buffer))
+  ) {
+    const bytes = buffer as Uint8Array;
+    if (bytes.length < 12) return false;
+    return (
+      bytes[0] === 0x52 && // 'R'
+      bytes[1] === 0x49 && // 'I'
+      bytes[2] === 0x46 && // 'F'
+      bytes[3] === 0x46 && // 'F'
+      bytes[8] === 0x57 && // 'W'
+      bytes[9] === 0x45 && // 'E'
+      bytes[10] === 0x42 && // 'B'
+      bytes[11] === 0x50 // 'P'
+    );
   }
 
   return false;
@@ -29,7 +32,24 @@ export function isWebpBuffer(buffer: unknown): boolean {
 /**
  * Deterministic valid 1x1 WebP binary fixture for testing (42 bytes).
  */
-export const VALID_1X1_WEBP_BUFFER: Buffer = Buffer.from(
-  "UklGRiIAAABXRUJQVlA4IBYAAAAwAQCdASoBAAEADsD+JaQAA3AAAAAA",
-  "base64",
-);
+const VALID_1X1_WEBP_BASE64 =
+  "UklGRiIAAABXRUJQVlA4IBYAAAAwAQCdASoBAAEADsD+JaQAA3AAAAAA";
+
+function createValid1x1WebpBuffer(): Buffer {
+  if (typeof Buffer !== "undefined" && typeof Buffer.from === "function") {
+    return Buffer.from(VALID_1X1_WEBP_BASE64, "base64");
+  }
+
+  if (typeof atob === "function") {
+    const binary = atob(VALID_1X1_WEBP_BASE64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return bytes as unknown as Buffer;
+  }
+
+  return new Uint8Array(42) as unknown as Buffer;
+}
+
+export const VALID_1X1_WEBP_BUFFER: Buffer = createValid1x1WebpBuffer();

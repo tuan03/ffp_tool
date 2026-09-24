@@ -6,6 +6,7 @@ import type {
   SetMetafieldInput,
   SetMetafieldOutput,
   ShopifyGateway,
+  ShopifyManagedResources,
   ShopifySyncBatchInput,
   ShopifySyncBatchOutput,
   ShopifySyncOptions,
@@ -402,10 +403,38 @@ export async function syncSingleProduct(
     };
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
+    const errObj = (err && typeof err === "object") ? (err as Record<string, unknown>) : undefined;
+    const details = (errObj?.details && typeof errObj.details === "object")
+      ? (errObj.details as Record<string, unknown>)
+      : undefined;
+
+    const extractedProductId =
+      writtenProduct?.productId ??
+      (typeof details?.createdProductId === "string" ? details.createdProductId : undefined) ??
+      (typeof details?.updatedProductId === "string" ? details.updatedProductId : undefined) ??
+      (typeof details?.productId === "string" ? details.productId : undefined) ??
+      (typeof errObj?.createdProductId === "string" ? errObj.createdProductId : undefined) ??
+      (typeof errObj?.productId === "string" ? errObj.productId : undefined) ??
+      (() => {
+        const match = typeof msg === "string" ? msg.match(/Product (?:created|updated) \((gid:\/\/shopify\/Product\/[^)]+)\)/) : null;
+        return match ? match[1] : undefined;
+      })();
+
+    const isPartialWrite =
+      errObj?.code === "SHOPIFY_PARTIAL_WRITE" ||
+      errObj?.code === "SHOPIFY_UNKNOWN_WRITE_STATE" ||
+      details?.reconciliationRequired === true ||
+      errObj?.reconciliationRequired === true;
+
+    const reconciliationRequired =
+      writtenProduct !== undefined ||
+      isPartialWrite ||
+      Boolean(extractedProductId);
+
     return {
       success: false,
       sourceId: product.id,
-      productId: writtenProduct?.productId,
+      productId: extractedProductId,
       productHandle: writtenProduct?.productHandle,
       title: product.title,
       variantsCount: 0,
@@ -415,7 +444,8 @@ export async function syncSingleProduct(
       dryRun,
       warnings,
       error: msg,
-      reconciliationRequired: writtenProduct !== undefined,
+      reconciliationRequired,
+      managedResources: writtenProduct?.managedResources ?? (details?.managedResources as ShopifyManagedResources | undefined),
       timings: getTimings(),
     };
   }

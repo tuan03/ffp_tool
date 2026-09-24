@@ -19,15 +19,31 @@ import type {
   SeoContentAltOnlyDetailedOutput,
   SeoContentDetailedOutput,
   SeoContentDetailedResult,
+  SeoContentDependencies,
   SeoContentInput,
   SeoContentOutput,
   SeoContentPipelineSummary,
   SeoContentRunOptions,
 } from "./types";
+import type { SeoConflictCorpus } from "./internal/conflict-control/seo-conflict-corpus";
 
-loadServerEnvironment();
+let defaultPipeline: ReturnType<typeof createSeoPipeline> | undefined;
 
-const defaultPipeline = createSeoPipeline({ siteNicheResolver: getDefaultSiteNicheResolver() });
+function getDefaultPipeline(): ReturnType<typeof createSeoPipeline> {
+  if (!defaultPipeline) {
+    if (typeof window === "undefined") {
+      try {
+        loadServerEnvironment();
+      } catch {
+        // Ignore in environments where .env files aren't readable
+      }
+    }
+    defaultPipeline = createSeoPipeline({
+      siteNicheResolver: getDefaultSiteNicheResolver(),
+    });
+  }
+  return defaultPipeline;
+}
 
 /**
  * Executes the SEO + Content pipeline for a single product.
@@ -36,16 +52,24 @@ const defaultPipeline = createSeoPipeline({ siteNicheResolver: getDefaultSiteNic
  * B1 (Understanding) -> B2 (Context) -> B3 (Search) -> B4 (Conflict) -> B5 (Content) -> B6 (Images).
  */
 export async function runSeoContent(input: SeoContentInput): Promise<SeoContentOutput> {
-  return defaultPipeline.execute(input);
+  return getDefaultPipeline().execute(input);
 }
 
 export function runSeoContentDetailed(
   input: SeoContentInput,
-  options: { readonly imageMode: "alt_only"; readonly signal?: AbortSignal },
+  options: {
+    readonly imageMode: "alt_only";
+    readonly dependencies?: SeoContentDependencies;
+    readonly signal?: AbortSignal;
+  },
 ): Promise<SeoContentAltOnlyDetailedOutput>;
 export function runSeoContentDetailed(
   input: SeoContentInput,
-  options?: { readonly imageMode?: "full"; readonly signal?: AbortSignal },
+  options?: {
+    readonly imageMode?: "full";
+    readonly dependencies?: SeoContentDependencies;
+    readonly signal?: AbortSignal;
+  },
 ): Promise<SeoContentDetailedOutput>;
 export function runSeoContentDetailed(
   input: SeoContentInput,
@@ -81,7 +105,11 @@ export async function runSeoContentDetailed(
         },
       }),
     }),
-    createB4ConflictControlStage(),
+    createB4ConflictControlStage(
+      options.dependencies?.conflictCorpus
+        ? { conflictCorpus: options.dependencies.conflictCorpus as SeoConflictCorpus }
+        : (input.storeId ? { conflictCorpus: new FileSeoConflictCorpus({ storeId: input.storeId }) } : undefined),
+    ),
     createB5ContentGenerationStage({
       generator: createDefaultB5Generator({
         onFallback: (reason, error) => observeFallback("b5", error ?? reason),
@@ -97,8 +125,8 @@ export async function runSeoContentDetailed(
   });
   const execution = await pipeline.executeDetailed(input, { signal: options.signal });
   const generator = execution.context.contentGenerationMetadata?.generator ?? "heuristic";
-  const hasGeminiConfiguration = Boolean(process.env.GOOGLE_CLOUD_PROJECT?.trim());
-  const configuredEmbeddingProvider = process.env.SEO_EMBEDDING_PROVIDER?.trim().toLowerCase();
+  const hasGeminiConfiguration = typeof process !== "undefined" && Boolean(process.env?.GOOGLE_CLOUD_PROJECT?.trim());
+  const configuredEmbeddingProvider = typeof process !== "undefined" ? process.env?.SEO_EMBEDDING_PROVIDER?.trim().toLowerCase() : undefined;
   const fallbackStages = [...new Set([...observedFallbackStages, ...execution.fallbackStages])];
   const usedLocalEmbeddingFallback = hasGeminiConfiguration
     && !["local", "fallback"].includes(configuredEmbeddingProvider ?? "")
@@ -142,7 +170,7 @@ export async function registerSeoContentKeywords(
   input: SeoContentInput,
   detailed: SeoContentDetailedResult,
 ): Promise<{ readonly revision: number }> {
-  const corpus = new FileSeoConflictCorpus();
+  const corpus = new FileSeoConflictCorpus({ storeId: input.storeId });
   return registerProductKeywords(
     corpus,
     {
@@ -163,8 +191,9 @@ export async function unregisterSeoContentKeywords(
   input: SeoContentInput,
   detailed: SeoContentDetailedResult,
 ): Promise<void> {
-  const corpus = new FileSeoConflictCorpus();
+  const corpus = new FileSeoConflictCorpus({ storeId: input.storeId });
   await corpus.removeProduct({
+    storeId: input.storeId,
     productId: input.productId,
     handle: detailed.output.productHandle,
     url: input.url ?? `/products/${detailed.output.productHandle}`,

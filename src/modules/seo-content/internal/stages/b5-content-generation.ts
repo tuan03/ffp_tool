@@ -41,7 +41,10 @@ export function createDefaultB5Generator(options?: {
   readonly onFallback?: (reason: string, error?: unknown) => void;
 }): FallbackContentGenerator | HeuristicContentGenerator {
   const heuristic = new HeuristicContentGenerator();
-  const projectId = process.env.GOOGLE_CLOUD_PROJECT;
+  const projectId =
+    typeof process !== "undefined" && process.env
+      ? process.env.GOOGLE_CLOUD_PROJECT
+      : undefined;
 
   if (projectId) {
     try {

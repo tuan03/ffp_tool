@@ -5,6 +5,8 @@ import { networkInterfaces } from "node:os";
 import { getLanIpv4Addresses } from "./dev-network.mjs";
 import { getDevelopmentProcessSpecs } from "./dev-processes.mjs";
 
+process.env.VITE_CONFIG_NATIVE_IGNORE_WARNING = "true";
+
 function assertPortAvailable(port) {
   return new Promise((resolve, reject) => {
     const server = createServer();

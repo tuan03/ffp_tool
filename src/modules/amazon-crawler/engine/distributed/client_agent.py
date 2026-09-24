@@ -683,7 +683,7 @@ class DistributedCrawlerAgent:
                     continue
                 try:
                     response = await asyncio.to_thread(self._upload_result, result)
-                    if response.get("status") in {"accepted", "duplicate"}:
+                    if response.get("status") in {"accepted", "duplicate", "cancelled"}:
                         self.store.acknowledge_result(result["taskId"])
                         self.active.pop(result["taskId"], None)
                         await self.outbound_queue.put({"type": "ready", "availableSlots": self._available_slots()})

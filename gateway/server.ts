@@ -9,6 +9,8 @@ import { InMemoryStoreRegistry } from "./store-registry";
 import { loadBootstrappedStores, loadLocalEnv } from "./store-config-loader";
 import { InMemoryThrottleManager } from "./throttle-manager";
 import { CompositeTokenProvider } from "./token-provider";
+import { StoreControlPlane } from "./store-control-plane";
+import { handleStoreRegistrationHttpRequest, handleProxyCheckHttpRequest } from "./store-control-handler";
 
 export interface GatewayServerOptions {
   readonly port?: number;
@@ -43,6 +45,12 @@ export function startGatewayServer(
   const idempotencyStore = new InMemoryIdempotencyStore();
   const dispatcher = new GatewayDispatcher({ storeRegistry, graphqlClient, idempotencyStore });
   const httpHandler = createGatewayHttpHandler(dispatcher, { authToken, maxBodyBytes });
+  const storeControlPlane = new StoreControlPlane({
+    storeRegistry,
+    tokenProvider,
+    graphqlClient,
+    persistConfigFile: "stores.local.json",
+  });
 
   const server = http.createServer(async (req, res) => {
     const url = req.url || "/";
@@ -155,6 +163,16 @@ export function startGatewayServer(
 
     if (url === "/api/auto-seo/run" || url.startsWith("/api/auto-seo/run?")) {
       await handleAutoSeoHttpRequest(req, res, { authToken, maxBodyBytes });
+      return;
+    }
+
+    if (url === "/api/stores/register" || url.startsWith("/api/stores/register?")) {
+      await handleStoreRegistrationHttpRequest(req, res, storeControlPlane, { authToken, maxBodyBytes });
+      return;
+    }
+
+    if (url === "/api/proxy/check" || url.startsWith("/api/proxy/check?")) {
+      await handleProxyCheckHttpRequest(req, res, { authToken, maxBodyBytes });
       return;
     }
 

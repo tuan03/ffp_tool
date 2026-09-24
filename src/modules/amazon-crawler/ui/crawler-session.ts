@@ -2,12 +2,14 @@ import { useSyncExternalStore } from "react";
 
 import type {
   AmazonCrawlerOutput,
+  AmazonCrawlerProduct,
   AmazonCrawlerProgress,
   AmazonCrawlerRunner,
   AmazonCrawlerSettings,
 } from "../types";
 import { DEFAULT_AMAZON_CRAWLER_SETTINGS } from "../types";
 import { firstProductMediaUrl, resolveSelectedProduct } from "./product-selection";
+import { notifyUser } from "../../../shared/utils";
 
 export type ResultTab = "overview" | "source" | "final" | "customize" | "json";
 
@@ -204,12 +206,14 @@ export interface StartCrawlerJobOptions {
   runAmazonCrawler: AmazonCrawlerRunner;
   urls: readonly string[];
   settings?: AmazonCrawlerSettings;
+  onProducts?: (products: readonly AmazonCrawlerProduct[]) => void;
 }
 
 export async function startCrawlerJob({
   runAmazonCrawler,
   urls,
   settings,
+  onProducts,
 }: StartCrawlerJobOptions): Promise<AmazonCrawlerOutput | null> {
   if (urls.length === 0 || sessionState.isRunning) return null;
 
@@ -246,11 +250,24 @@ export async function startCrawlerJob({
   persistSession(sessionState);
   notifyListeners();
 
+  let didAlertCaptcha = false;
+
   try {
     const crawlerOutput = await runAmazonCrawler({
       input: { ...jobSettings, urls },
       onProgress: (nextProgress) => {
         sessionState = { ...sessionState, progress: nextProgress };
+        if (nextProgress.phase === "captcha" && !didAlertCaptcha) {
+          didAlertCaptcha = true;
+          notifyUser({
+            title: "⚠️ Amazon Crawler: Cần giải CAPTCHA!",
+            message: "Amazon yêu cầu giải CAPTCHA để tiếp tục cào. Vui lòng mở crawler agent để giải.",
+            type: "warning",
+            sound: "alert",
+            url: "/amazon-crawler",
+            tag: "amazon-captcha",
+          });
+        }
         notifyListeners();
       },
       onProducts: (products) => {
@@ -293,6 +310,16 @@ export async function startCrawlerJob({
     };
     persistSession(sessionState);
     notifyListeners();
+
+    notifyUser({
+      title: "⚡ Distributed Crawler: Hoàn tất cào sản phẩm!",
+      message: `Đã cào thành công ${crawlerOutput.products.length} sản phẩm từ Amazon. Bạn có thể kiểm tra và chuyển tiếp sang SEO Review.`,
+      type: "success",
+      sound: "chime",
+      url: "/amazon-crawler",
+      tag: `crawler-finished-${crawlerOutput.jobId}`,
+    });
+
     return crawlerOutput;
   } catch (caught: unknown) {
     const isAbort = caught instanceof DOMException && caught.name === "AbortError";
@@ -313,6 +340,17 @@ export async function startCrawlerJob({
     };
     persistSession(sessionState);
     notifyListeners();
+
+    if (!(caught instanceof DOMException && caught.name === "AbortError")) {
+      notifyUser({
+        title: "❌ Distributed Crawler Thất bại",
+        message: errorMessage ?? "Không thể chạy Amazon crawler.",
+        type: "error",
+        sound: "alert",
+        url: "/amazon-crawler",
+      });
+    }
+
     return null;
   } finally {
     if (activeController === controller) {
@@ -346,6 +384,15 @@ export function resetCrawlerOutput(): void {
     selectedMediaUrl: null,
     activeTab: "overview",
     isBatchJsonOpen: false,
+  };
+  persistSession(sessionState);
+  notifyListeners();
+}
+
+export function resetCrawlerSettings(): void {
+  sessionState = {
+    ...sessionState,
+    settings: { ...DEFAULT_AMAZON_CRAWLER_SETTINGS },
   };
   persistSession(sessionState);
   notifyListeners();
