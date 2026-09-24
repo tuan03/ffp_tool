@@ -59,7 +59,7 @@ NON_PRINTABLE_GATE_REGEX = re.compile(
 )
 
 
-def build_smart_queries(trend: str) -> list[QuerySpec]:
+def build_smart_queries(trend: str, niche: str = "") -> list[QuerySpec]:
     clean = trend.strip()
     # Strip redundant trailing pattern keywords to form clean base
     base = re.sub(
@@ -71,13 +71,38 @@ def build_smart_queries(trend: str) -> list[QuerySpec]:
     base = re.sub(r"\s+", " ", base)
     if not base:
         base = clean
-    return [
-        QuerySpec(query=f"{base} surface pattern design", intent="surface_pattern", priority=1),
-        QuerySpec(query=f"{base} seamless pattern vector", intent="seamless_vector", priority=2),
-        QuerySpec(query=f"{base} textile print flat", intent="textile_flat", priority=3),
-        QuerySpec(query=f"{base} pattern design flat", intent="pattern_flat", priority=4),
-        QuerySpec(query=clean, intent="trend_raw", priority=5),
-    ]
+
+    queries: list[QuerySpec] = []
+    # Priority 1: Pure natural user search query - directly matching Pinterest trending pins
+    queries.append(QuerySpec(query=clean, intent="trend_raw", priority=1))
+
+    # Priority 2: Cross-niche mashup if trend does not already mention the niche
+    clean_lower = clean.lower()
+    niche_clean = niche.strip()
+    niche_lower = niche_clean.lower()
+    if niche_clean:
+        clean_words = set(re.findall(r"\w+", clean_lower))
+        niche_words = [w for w in re.findall(r"\w+", niche_lower) if len(w) > 2]
+        head_noun = niche_words[-1] if niche_words else ""
+        if niche_lower in clean_lower or (head_noun and head_noun in clean_words):
+            queries.append(QuerySpec(query=f"{base} aesthetic", intent="trend_aesthetic", priority=2))
+        else:
+            missing_words = [w for w in re.findall(r"\w+", niche_clean) if w.lower() not in clean_words]
+            mashup = f"{clean} {' '.join(missing_words)}".strip() if missing_words else f"{clean} {niche_clean}".strip()
+            queries.append(QuerySpec(query=mashup, intent="trend_niche_mashup", priority=2))
+    else:
+        queries.append(QuerySpec(query=f"{base} aesthetic", intent="trend_aesthetic", priority=2))
+
+    # Priority 3: Commercial design and inspiration ideas
+    queries.append(QuerySpec(query=f"{base} design ideas", intent="trend_design", priority=3))
+
+    # Priority 4: Artwork & graphic print query
+    queries.append(QuerySpec(query=f"{base} artwork print", intent="trend_artwork", priority=4))
+
+    # Priority 5: Pattern & surface print query
+    queries.append(QuerySpec(query=f"{base} pattern print", intent="surface_pattern", priority=5))
+
+    return queries
 
 
 def generate_niche_core_candidates(
@@ -85,81 +110,103 @@ def generate_niche_core_candidates(
     *,
     client: Any = None,
     limit: int = 10,
+    model: str = "gemini-2.5-flash",
+    backend: str = "auto",
 ) -> list[TrendCandidate]:
-    """Track 1 (Product Niche Core): directly expands the user's specific niche into high-intent 2D surface pattern motifs."""
-    clean_niche = niche.strip().lower()
+    """Track 1 (Product Niche Core): dynamically expands the user's specific niche into high-intent visual design motifs."""
+    clean_niche = niche.strip()
     if not clean_niche:
         return []
 
     results: list[str] = []
-    curated: dict[str, list[str]] = {
-        "leather": [
-            "tooled leather",
-            "vintage floral embossed",
-            "distressed leather pattern",
-            "western filigree scroll",
-            "bohemian carved leather",
-            "geometric woven leather",
-            "antique botanical leather tooling",
-            "baroque acanthus leather",
-        ],
-        "bag": [
-            "tooled leather floral",
-            "vintage floral tapestry",
-            "distressed leather texture",
-            "geometric woven pattern",
-            "botanical surface print",
-            "artisan carved filigree",
-            "boho textile pattern",
-        ],
-        "rug": [
-            "bohemian runner pattern",
-            "vintage distressed oriental",
-            "moroccan geometric trellis",
-            "southwestern tribal runner",
-            "mid century abstract geometric",
-            "antique persian floral runner",
-            "scandinavian minimalist line art",
-        ],
-        "blanket": [
-            "chunky knit texture",
-            "vintage floral patchwork",
-            "cottagecore botanical print",
-            "rustic plaid herringbone",
-            "celestial tapestry pattern",
-            "retro wavy groovy pattern",
-            "folk art botanical illustration",
-        ],
-    }
 
-    for key, items in curated.items():
-        if key in clean_niche:
-            for itm in items:
-                if itm not in results:
-                    results.append(itm)
+    # 1. Try Gemini dynamic trend expansion first (completely un-hardcoded)
+    gemini_client = client
+    if gemini_client is None:
+        try:
+            from google import genai
 
-    # General surface pattern expansion templates for any arbitrary niche
-    base_term = re.sub(r"\b(?:bag|rug|blanket|throw|quilt|t-shirt|shirt|hoodie|case|mug|pillow|mat)s?\b", "", clean_niche).strip()
-    base_term = re.sub(r"\s+", " ", base_term) or clean_niche
+            api_key = env("GEMINI_API_KEY") or env("GOOGLE_API_KEY")
+            project = env("GOOGLE_CLOUD_PROJECT")
+            location = env("GOOGLE_CLOUD_LOCATION", "us-central1")
+            use_enterprise = env("GOOGLE_GENAI_USE_ENTERPRISE", "").lower() in {"1", "true", "yes"}
+            if backend == "api-key" or (backend == "auto" and api_key and not use_enterprise):
+                gemini_client = genai.Client(api_key=api_key)
+            elif backend in {"enterprise", "auto"}:
+                if project:
+                    gemini_client = genai.Client(vertexai=True, project=project, location=location)
+                else:
+                    gemini_client = genai.Client(vertexai=True, location=location)
+            elif api_key:
+                gemini_client = genai.Client(api_key=api_key)
+        except Exception as exc:
+            LOG.debug("Gemini client init for niche core: %s", exc)
 
-    general_templates = [
-        f"vintage {base_term} floral",
-        f"tooled {base_term} texture",
-        f"bohemian {base_term} pattern",
-        f"geometric {base_term} design",
-        f"distressed {base_term} pattern",
-        f"folk art {base_term}",
-        f"minimalist {base_term} illustration",
-    ]
-    for tmpl in general_templates:
-        if tmpl not in results:
-            results.append(tmpl)
+    if gemini_client is not None:
+        try:
+            from google.genai import types
+
+            prompt = f"""You are a Pinterest commercial trend intelligence engine for Print-on-Demand (POD) and lifestyle merchandise.
+Target product or niche: '{clean_niche}'
+
+Generate {limit} highly trending, diverse visual aesthetics, design motifs, and product styling themes that consumers actively search for on Pinterest for this product.
+Focus on high commercial appeal, distinct visual styles, and real Pinterest search phrasing.
+Examples:
+- If niche is 'leather bag': 'Quiet Luxury leather bag', 'Vintage distressed leather bag', 'Minimalist chic leather tote', 'Dark academia leather satchel', 'Y2K leather baguette bag', 'Bohemian fringe leather purse', 'Botanical stamped leather bag', 'Western cowgirl leather bag'
+- If niche is 'coffee mug': 'Coquette bow ceramic mug', 'Vintage botanical wildflower coffee mug', 'Cute ghost reading books mug', 'Retro groovy quote coffee cup', 'Minimalist line art ceramic mug', 'Cottagecore mushroom mug'
+- If niche is 'rug': 'Vintage distressed oriental runner rug', 'Boho moroccan geometric area rug', 'Checkerboard wavy aesthetic rug', 'Minimalist japandi neutral area rug', 'Moss green nature floor rug'
+- If niche is 'blanket': 'Chunky knit throw blanket', 'Cottagecore floral patchwork blanket', 'Celestial tarot woven tapestry blanket', 'Retro groovy checkerboard blanket'
+
+Return JSON only:
+{{
+  "trends": [
+    "specific aesthetic / design theme 1",
+    "specific aesthetic / design theme 2"
+  ]
+}}"""
+            response = gemini_client.models.generate_content(
+                model=model,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    temperature=0.3,
+                    response_mime_type="application/json",
+                ),
+            )
+            raw_text = getattr(response, "text", "") or "{}"
+            raw_text = re.sub(r"^```(?:json)?", "", raw_text.strip(), flags=re.I).strip()
+            raw_text = re.sub(r"```$", "", raw_text).strip()
+            parsed = json.loads(raw_text)
+            trend_list = parsed.get("trends", []) if isinstance(parsed, dict) else (parsed if isinstance(parsed, list) else [])
+            for t in trend_list:
+                t_str = str(t).strip()
+                if t_str and t_str not in results:
+                    results.append(t_str)
+            if results:
+                LOG.info("Track 1 (Product Niche Core): Gemini dynamically generated %d trends for %r", len(results), clean_niche)
+        except Exception as exc:
+            LOG.warning("Dynamic Gemini expansion for niche core failed (%s); using universal heuristic fallback", exc)
+
+    # 2. Universal heuristic fallback (completely dynamic, zero hardcoding of specific product types)
+    if not results:
+        fallback_templates = [
+            f"aesthetic {clean_niche}",
+            f"vintage {clean_niche} design",
+            f"minimalist {clean_niche}",
+            f"boho {clean_niche} style",
+            f"retro {clean_niche} illustration",
+            f"botanical {clean_niche} print",
+            f"modern {clean_niche} artwork",
+            f"cottagecore {clean_niche}",
+            f"celestial {clean_niche}",
+            f"handcrafted {clean_niche}",
+        ]
+        results.extend(fallback_templates)
 
     candidates: list[TrendCandidate] = []
     for idx, name in enumerate(results[:limit], start=1):
         candidates.append(
             TrendCandidate(
-                candidate_id=stable_id("niche_core", clean_niche, name),
+                candidate_id=stable_id("niche_core", clean_niche.lower(), name.lower()),
                 name=name,
                 source="product_niche_core",
                 rank=idx,
@@ -205,8 +252,10 @@ class GeminiSemanticAnalyzer:
         try:
             if self.backend == "api-key" or (self.backend == "auto" and api_key and not use_enterprise):
                 return genai.Client(api_key=api_key)
-            if self.backend in {"enterprise", "auto"} and project:
-                return genai.Client(vertexai=True, project=project, location=location)
+            if self.backend in {"enterprise", "auto"}:
+                if project:
+                    return genai.Client(vertexai=True, project=project, location=location)
+                return genai.Client(vertexai=True, location=location)
             if api_key:
                 return genai.Client(api_key=api_key)
         except Exception as exc:
@@ -214,7 +263,7 @@ class GeminiSemanticAnalyzer:
         return None
 
     @staticmethod
-    def _parse_json(text: str) -> dict[str, Any]:
+    def _parse_json(text: str) -> Any:
         text = text.strip()
         if text.startswith("```"):
             text = re.sub(r"^```(?:json)?", "", text, flags=re.I).strip()
@@ -222,13 +271,13 @@ class GeminiSemanticAnalyzer:
         try:
             return json.loads(text)
         except json.JSONDecodeError:
-            match = re.search(r"\{.*\}", text, re.S)
+            match = re.search(r"(\{.*\}|\[.*\])", text, re.S)
             if not match:
                 raise
             return json.loads(match.group(0))
 
     def _heuristic_item(self, candidate: TrendCandidate) -> TrendPackageItem:
-        hard_reject = self._hard_reject_reason(candidate.name)
+        hard_reject = self._hard_reject_reason(candidate.name, is_niche_core=candidate.source == "product_niche_core")
         if hard_reject:
             return TrendPackageItem(
                 trend_id="trend_" + candidate.candidate_id[:12],
@@ -236,7 +285,7 @@ class GeminiSemanticAnalyzer:
                 trend_strength=candidate.strength,
                 relationship="IRRELEVANT",
                 semantic_fit=0.0,
-                queries=build_smart_queries(candidate.name),
+                queries=build_smart_queries(candidate.name, self.niche),
                 reason=hard_reject,
                 sources=[candidate.source],
                 source_metrics=candidate.metrics,
@@ -261,7 +310,7 @@ class GeminiSemanticAnalyzer:
                 reason = "Heuristic fallback; retain the trend for image-level visual and printability review."
 
         trend = candidate.name
-        queries = build_smart_queries(trend)
+        queries = build_smart_queries(trend, self.niche)
         return TrendPackageItem(
             trend_id="trend_" + candidate.candidate_id[:12],
             trend=trend,
@@ -360,7 +409,7 @@ Candidates:
         pending: list[TrendCandidate] = []
 
         for candidate in candidates:
-            hard_reject = self._hard_reject_reason(candidate.name)
+            hard_reject = self._hard_reject_reason(candidate.name, is_niche_core=candidate.source == "product_niche_core")
             if hard_reject:
                 rejected.append({
                     "candidate_id": candidate.candidate_id,
@@ -398,7 +447,12 @@ Candidates:
             raw_items: list[dict[str, Any]]
             try:
                 raw = self._call_gemini(batch)
-                raw_items = [item for item in raw.get("items", []) if isinstance(item, dict)]
+                if isinstance(raw, list):
+                    raw_items = [item for item in raw if isinstance(item, dict)]
+                elif isinstance(raw, dict):
+                    raw_items = [item for item in raw.get("items", []) if isinstance(item, dict)]
+                else:
+                    raw_items = []
             except Exception as exc:
                 LOG.warning("Gemini semantic batch failed; using heuristic fallback: %s", exc)
                 raw_items = []
@@ -463,17 +517,19 @@ Candidates:
         return accepted, rejected
 
     @staticmethod
-    def _hard_reject_reason(name: str) -> str:
+    def _hard_reject_reason(name: str, is_niche_core: bool = False) -> str:
         text = name.strip().lower()
         if not text:
             return "empty_trend_keyword"
+        if is_niche_core:
+            return ""
         match = NON_PRINTABLE_GATE_REGEX.search(text)
         if match:
             return f"Matched non-printable stopword: '{match.group(0)}'"
         return ""
 
     def _item_from_raw(self, candidate: TrendCandidate, raw: dict[str, Any]) -> tuple[TrendPackageItem, bool]:
-        hard_reject = self._hard_reject_reason(candidate.name)
+        hard_reject = self._hard_reject_reason(candidate.name, is_niche_core=candidate.source == "product_niche_core")
         relationship = str(raw.get("relationship") or "IRRELEVANT").strip().upper()
         if relationship not in RELATIONSHIPS:
             relationship = "IRRELEVANT"
@@ -487,7 +543,7 @@ Candidates:
             semantic_fit = 0.0
             reason = hard_reject
 
-        queries = build_smart_queries(candidate.name)
+        queries = build_smart_queries(candidate.name, self.niche)
 
         tags = raw.get("tags") or raw.get("semantic_tags") or []
         if not isinstance(tags, list):

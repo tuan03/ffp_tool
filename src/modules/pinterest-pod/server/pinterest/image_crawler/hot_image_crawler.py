@@ -60,9 +60,7 @@ def collect_results(
     results: list[SearchResult] = []
 
     for trend in package.trends[:max_trends]:
-        trend_queries = list(trend.queries)
-        if not any("pattern" in q.query.lower() or "textile" in q.query.lower() for q in trend_queries):
-            trend_queries = build_smart_queries(trend.trend)
+        trend_queries = list(trend.queries) if trend.queries else build_smart_queries(trend.trend, package.niche)
         for query in sorted(trend_queries, key=lambda item: item.priority)[:max_queries_per_trend]:
             LOG.info("Search: [%s] %s", trend.trend_id, query.query)
             try:

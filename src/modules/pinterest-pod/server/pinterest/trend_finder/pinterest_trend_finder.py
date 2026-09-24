@@ -101,6 +101,8 @@ def collect_pinterest_trends(
     interest: str,
     limit: int,
     niche: str = "",
+    gemini_model: str = "gemini-2.5-flash",
+    gemini_backend: str = "auto",
 ) -> tuple[list[TrendCandidate], dict[str, Any], dict[str, str]]:
     raw: dict[str, Any] = {}
     errors: dict[str, str] = {}
@@ -110,7 +112,12 @@ def collect_pinterest_trends(
 
     # Track 1 (Product Niche Core): ensure trends directly expand the user's specific niche
     if niche.strip():
-        niche_core = generate_niche_core_candidates(niche.strip(), limit=max(8, limit // 3))
+        niche_core = generate_niche_core_candidates(
+            niche.strip(),
+            limit=max(8, limit // 3),
+            model=gemini_model,
+            backend=gemini_backend,
+        )
         for cand in niche_core:
             key = normalize_text(cand.name)
             if key not in seen:
@@ -353,6 +360,8 @@ def main() -> int:
             interest=args.interest,
             limit=max(1, min(50, args.keyword_limit)),
             niche=args.niche,
+            gemini_model=args.gemini_model,
+            gemini_backend=args.gemini_backend,
         )
         write_json(output_dir / "trends_raw.json", raw)
     except Exception as exc:
