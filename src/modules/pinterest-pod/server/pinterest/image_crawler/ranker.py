@@ -43,8 +43,13 @@ def policy_reject_reason(candidate: ImageCandidate, vision: VisionResult, policy
         or vision.reject_reason_code
     )
 
+    is_blurry_code = vision.reject_reason_code in {"REJECT_BLURRY", "REJECT_LOW_RES"}
+
     if not vision.product_present or not vision.accepted:
-        return vision.reject_reason_code or "REJECT_NOT_TARGET_PRODUCT"
+        if is_blurry_code and vision.product_present:
+            pass  # Allow through for downstream AI upscaling
+        else:
+            return vision.reject_reason_code or "REJECT_NOT_TARGET_PRODUCT"
     if role not in policy.accepted_roles:
         return "REJECT_ROLE_NOT_ACCEPTED"
     if vision.product_visibility < policy.min_product_visibility:
@@ -118,10 +123,20 @@ def inspiration_reject_reason(
     role = str(vision.product_role or "").upper()
     main_subject = normalized(vision.main_subject)
     product_type = normalized(vision.target_product_type)
+    is_blurry_code = vision.reject_reason_code in {"REJECT_BLURRY", "REJECT_LOW_RES"}
+
     if not vision.accepted or not vision.product_present:
-        return vision.reject_reason_code or "REJECT_NOT_PRINTABLE_INSPIRATION"
+        if is_blurry_code and (vision.product_present or role in {"PRIMARY", "SECONDARY"}):
+            pass  # Allowed for AI upscaling downstream
+        else:
+            return vision.reject_reason_code or "REJECT_NOT_PRINTABLE_INSPIRATION"
+
     if role not in policy.accepted_roles and role != "UNVERIFIED":
-        return "REJECT_INSPIRATION_ROLE_NOT_ACCEPTED"
+        if role == "SECONDARY" and vision.product_present:
+            pass  # Styled shots or secondary placements are valid inspiration
+        else:
+            return "REJECT_INSPIRATION_ROLE_NOT_ACCEPTED"
+
     if vision.product_visibility < policy.min_product_visibility:
         return "REJECT_LOW_MOTIF_CLARITY"
 
@@ -140,9 +155,17 @@ def inspiration_reject_reason(
     if getattr(vision, "has_commercial_metadata_text", False):
         return "REJECT_TEXT_BLOCK"
     if vision.reject_reason_code:
-        return vision.reject_reason_code
-    if main_subject in {"text", "logo"} or product_type == "not_usable":
-        return f"REJECT_MAIN_SUBJECT_{main_subject.upper() or product_type.upper()}"
+        if is_blurry_code and (vision.product_present or role in {"PRIMARY", "SECONDARY"}):
+            pass  # Soft focus/low resolution can be enhanced by downstream AI
+        else:
+            return vision.reject_reason_code
+    if main_subject in {"text", "logo"}:
+        return f"REJECT_MAIN_SUBJECT_{main_subject.upper()}"
+    if product_type == "not_usable":
+        if is_blurry_code:
+            pass
+        else:
+            return f"REJECT_MAIN_SUBJECT_{product_type.upper()}"
     return ""
 
 
@@ -161,6 +184,13 @@ def rank_images(
     crawl_purpose: str = "product",
 ) -> tuple[list[RankedImage], list[dict]]:
     accepted_roles = accepted_roles or {"PRIMARY", "SECONDARY", "UNVERIFIED"}
+    inspiration_mode = (crawl_purpose or "product").strip().lower().replace("-", "_") == "inspiration"
+    if inspiration_mode:
+        if "SECONDARY" not in accepted_roles:
+            accepted_roles = set(accepted_roles) | {"SECONDARY"}
+        min_product_visibility = min(min_product_visibility, 40.0)
+        min_trend_relevance = min(min_trend_relevance, 40.0)
+
     product_policy = product_policy or infer_product_policy(niche, product_focus)
     policy = PolicyConfig(
         niche=niche,

@@ -157,8 +157,7 @@ REJECT ONLY images that are:
 - Heavy commercial metadata text, pricing, promotional banners, file format specs (e.g. "AI/EPS/PNG", "$29.99"). Set has_commercial_metadata_text=true, reject_reason_code="REJECT_TEXT_BLOCK".
 - Hands holding items with prominent nails/manicures (reject_reason_code="REJECT_HANDS_OR_NAILS").
 - Phone frames / lockscreens with clock/battery UI (reject_reason_code="REJECT_PHONE_WALLPAPER").
-- Memes, quotes, plain text without graphic design (reject_reason_code="REJECT_TEXT_BLOCK").
-- Blurry thumbnails, low resolution, or illegible images (reject_reason_code="REJECT_BLURRY").
+- Completely illegible or corrupted files where no shape, design, or motif is discernible (reject_reason_code="REJECT_ILLEGIBLE"). Do NOT reject images for soft focus, film grain, or moderate resolution, as our pipeline enhances and upscales design assets in production.
 - Brand logos / watermarks obscuring the design (reject_reason_code="REJECT_LOGO" or "REJECT_WATERMARK").
 - Completely unrelated subjects (e.g. food/cooking recipes, gym fitness workouts).
 
@@ -369,6 +368,29 @@ Image metadata:
                 source_role = "reject"
                 if not reject_reason_code:
                     reject_reason_code = "REJECT_TEXT_BLOCK"
+
+            # Soft-focus, film grain, or low-res inspiration can be enhanced/upscaled by downstream AI.
+            # Do not hard-reject candidates if the product, pattern, or motif is present.
+            if reject_reason_code in {"REJECT_BLURRY", "REJECT_LOW_RES"}:
+                if product_present or role in {"PRIMARY", "SECONDARY"}:
+                    accepted = True
+                    reject_reason_code = ""
+                    if str(item.get("target_product_type") or "").strip().lower() in {"not_usable", "unknown"}:
+                        item["target_product_type"] = "style_reference"
+
+            if self.crawl_purpose == "inspiration" and reject_reason_code in {
+                "REJECT_PRODUCT_PHOTO",
+                "REJECT_LIFESTYLE_PRODUCT_PHOTO",
+                "REJECT_PRODUCT_DESIGN_NOT_PATTERN",
+                "REJECT_NOT_ARTWORK",
+                "REJECT_3D_ROOM_SCENE",
+                "REJECT_NOT_SINGLE_PRODUCT",
+            }:
+                if product_present or role in {"PRIMARY", "SECONDARY"}:
+                    accepted = True
+                    reject_reason_code = ""
+                    if str(item.get("target_product_type") or "").strip().lower() in {"not_usable", "unknown"}:
+                        item["target_product_type"] = "style_reference"
 
             trend_relevance_raw = clamp(item.get("trend_relevance"))
             if self.crawl_purpose == "inspiration" and accepted:
