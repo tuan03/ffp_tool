@@ -40,6 +40,7 @@ from pinterest_pod_bridge import (
     check_service_health,
     create_pod_job,
     delete_pod_job,
+    discover_pinterest_trends,
     exchange_pinterest_oauth_code,
     generate_pinterest_oauth_url,
     get_cached_asset_file,
@@ -48,6 +49,7 @@ from pinterest_pod_bridge import (
     launch_pinterest_login,
     list_recent_jobs_and_runs,
     produce_pod_job,
+    rescue_pod_candidate,
     save_manual_pinterest_token,
     send_windows_desktop_notification,
 )
@@ -239,6 +241,30 @@ class PinterestPodHandler(BaseHTTPRequestHandler):
                 self.send_json({"ok": False, "message": str(exc)}, 500)
             return
 
+        # Trend Discovery: GET /api/pinterest-pod/trends/discover
+        if path == "/api/pinterest-pod/trends/discover":
+            try:
+                query_params = urllib.parse.parse_qs(url_parts.query)
+                niche = (query_params.get("niche") or [""])[0].strip()
+                trend_type = (query_params.get("trend_type") or ["growing"])[0].strip()
+                region = (query_params.get("region") or ["US"])[0].strip()
+                interest = (query_params.get("interest") or [""])[0].strip()
+                product = (query_params.get("product") or [""])[0].strip()
+                res = discover_pinterest_trends({
+                    "niche": niche,
+                    "trend_type": trend_type,
+                    "region": region,
+                    "interest": interest,
+                    "product": product,
+                })
+                self.send_json(res)
+            except ValueError as exc:
+                self.send_json({"ok": False, "message": str(exc)}, 400)
+            except Exception as exc:
+                logger.exception("Error discovering trends in GET")
+                self.send_json({"ok": False, "message": str(exc)}, 500)
+            return
+
         # Job status: /api/pinterest-pod/jobs/:jobId
         pod_job_match = re.fullmatch(r"/api/pinterest-pod/jobs/([a-zA-Z0-9_-]+)", path)
         if pod_job_match:
@@ -287,6 +313,38 @@ class PinterestPodHandler(BaseHTTPRequestHandler):
 
         host = self.headers.get("Host") or f"{HOST}:{PORT}"
         base_url = f"http://{host}"
+
+        # Trend Discovery: POST /api/pinterest-pod/trends/discover
+        if path == "/api/pinterest-pod/trends/discover":
+            try:
+                res = discover_pinterest_trends(payload)
+                self.send_json(res)
+            except ValueError as exc:
+                self.send_json({"ok": False, "message": str(exc)}, 400)
+            except Exception as exc:
+                logger.exception("Error discovering trends in POST")
+                self.send_json({"ok": False, "message": str(exc)}, 500)
+            return
+
+        # Rescue Candidate: POST /api/pinterest-pod/jobs/:jobId/rescue
+        rescue_match = re.fullmatch(r"/api/pinterest-pod/jobs/([a-zA-Z0-9_-]+)/rescue", path)
+        if rescue_match:
+            try:
+                job_id = rescue_match.group(1)
+                candidate_id = str(payload.get("candidate_id") or payload.get("candidateId") or payload.get("id") or "").strip()
+                if not candidate_id:
+                    self.send_json({"ok": False, "message": "Thiếu candidate_id để giải cứu."}, 400)
+                    return
+                res = rescue_pod_candidate(job_id, candidate_id, base_url)
+                self.send_json(res)
+            except LookupError as exc:
+                self.send_json({"ok": False, "message": str(exc)}, 404)
+            except ValueError as exc:
+                self.send_json({"ok": False, "message": str(exc)}, 400)
+            except Exception as exc:
+                logger.exception("Error rescuing candidate in POST")
+                self.send_json({"ok": False, "message": str(exc)}, 500)
+            return
 
         # Create Job (Stage 1 Start): POST /api/pinterest-pod/jobs
         if path in {"/api/pinterest-pod/jobs", "/api/pinterest-pod/stage1/start"}:

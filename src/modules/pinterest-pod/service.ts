@@ -30,6 +30,9 @@ import type {
   SavePinterestTokenPayload,
   SavePinterestTokenResponse,
   SeoHandoverResponse,
+  ThemeCluster,
+  TrendDiscoveryInput,
+  TrendDiscoveryResult,
 } from "./types";
 import { FACTORY_PRINT_STANDARDS, inferProductTypeFromNiche } from "./types";
 
@@ -182,6 +185,42 @@ export async function getOAuthAuthorizeUrl(
   );
 }
 
+/** Discover Pinterest Trends & AI Theme Clusters (Tier 1 & Tier 2) */
+export async function discoverTrends(
+  input: TrendDiscoveryInput,
+  options?: { readonly baseUrl?: string; readonly signal?: AbortSignal },
+): Promise<TrendDiscoveryResult> {
+  return requestJson<TrendDiscoveryResult>(
+    "/api/pinterest-pod/trends/discover",
+    {
+      method: "POST",
+      body: JSON.stringify(input),
+      signal: options?.signal,
+    },
+    "PINTEREST_POD_DISCOVER_TRENDS_FAILED",
+    options?.baseUrl,
+  );
+}
+
+/** Rescue a candidate that was categorized as rejected */
+export async function rescueCandidate(
+  jobId: string,
+  candidateId: string,
+  options?: { readonly baseUrl?: string; readonly signal?: AbortSignal },
+): Promise<{ readonly ok: boolean; readonly candidate: PodCandidate }> {
+  const safeJobId = encodeURIComponent(jobId.trim());
+  return requestJson<{ readonly ok: boolean; readonly candidate: PodCandidate }>(
+    `/api/pinterest-pod/jobs/${safeJobId}/rescue`,
+    {
+      method: "POST",
+      body: JSON.stringify({ candidate_id: candidateId }),
+      signal: options?.signal,
+    },
+    "PINTEREST_POD_RESCUE_CANDIDATE_FAILED",
+    options?.baseUrl,
+  );
+}
+
 /** Submit Stage 1 discovery job */
 export async function startDiscoveryJob(
   input: PinterestDiscoveryInput,
@@ -206,6 +245,12 @@ export async function startDiscoveryJob(
         niche: input.niche,
         product,
         workflow_stage: input.workflow_stage ?? "crawl_and_review",
+        ...(input.trend_type ? { trend_type: input.trend_type } : {}),
+        ...(input.interest ? { interest: input.interest } : {}),
+        ...(input.interests ? { interests: input.interests } : {}),
+        ...(input.region ? { region: input.region } : {}),
+        ...(input.selected_clusters ? { selected_clusters: input.selected_clusters } : {}),
+        ...(input.custom_queries ? { custom_queries: input.custom_queries } : {}),
         candidatePoolSize: poolSize,
         task5_max_downloads: poolSize,
         top_images: poolSize,
@@ -745,6 +790,28 @@ export class RealPinterestPodClient implements PinterestPodClient {
     return getOAuthAuthorizeUrl(redirectUri);
   }
 
+  public async discoverTrends(input: TrendDiscoveryInput): Promise<TrendDiscoveryResult> {
+    return fetchJson<TrendDiscoveryResult>(
+      "/api/pinterest-pod/trends/discover",
+      {
+        method: "POST",
+        body: JSON.stringify(input),
+      },
+      "PINTEREST_DISCOVER_TRENDS_FAILED",
+    );
+  }
+
+  public async rescueCandidate(jobId: string, candidateId: string): Promise<{ readonly ok: boolean; readonly candidate: PodCandidate }> {
+    return fetchJson<{ readonly ok: boolean; readonly candidate: PodCandidate }>(
+      `/api/pinterest-pod/jobs/${encodeURIComponent(jobId)}/rescue`,
+      {
+        method: "POST",
+        body: JSON.stringify({ candidate_id: candidateId }),
+      },
+      "PINTEREST_RESCUE_CANDIDATE_FAILED",
+    );
+  }
+
   public async createJob(input: CreateJobInput): Promise<CreateJobOutput> {
     const product = input.product ?? inferProductTypeFromNiche(input.niche);
     const poolSize = input.candidatePoolSize ?? input.task5_max_downloads ?? input.top_images ?? 40;
@@ -756,6 +823,12 @@ export class RealPinterestPodClient implements PinterestPodClient {
           niche: input.niche,
           product,
           workflow_stage: input.workflow_stage ?? "crawl_and_review",
+          ...(input.trend_type ? { trend_type: input.trend_type } : {}),
+          ...(input.interest ? { interest: input.interest } : {}),
+          ...(input.interests ? { interests: input.interests } : {}),
+          ...(input.region ? { region: input.region } : {}),
+          ...(input.selected_clusters ? { selected_clusters: input.selected_clusters } : {}),
+          ...(input.custom_queries ? { custom_queries: input.custom_queries } : {}),
           candidatePoolSize: poolSize,
           task5_max_downloads: poolSize,
           top_images: poolSize,
@@ -832,16 +905,14 @@ export class RealPinterestPodClient implements PinterestPodClient {
 /** Hand over final deliverables to the SEO Module */
 export async function handoverToSeo(
   payload: PinterestPodDeliverables,
-  customBaseUrl?: string,
 ): Promise<SeoHandoverResponse> {
-  return requestJson<SeoHandoverResponse>(
+  return fetchJson<SeoHandoverResponse>(
     "/api/pinterest-pod/handover-seo",
     {
       method: "POST",
       body: JSON.stringify(payload),
     },
     "PINTEREST_POD_SEO_HANDOVER_FAILED",
-    customBaseUrl,
   );
 }
 

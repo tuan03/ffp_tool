@@ -30,6 +30,9 @@ import type {
   SavePinterestTokenResponse,
   SeoHandoverResponse,
   SummaryMetrics,
+  ThemeCluster,
+  TrendDiscoveryInput,
+  TrendDiscoveryResult,
 } from "../types";
 import { FACTORY_PRINT_STANDARDS, inferProductTypeFromNiche } from "../types";
 import {
@@ -40,10 +43,14 @@ import {
   mockCandidates,
   mockDeliverables,
   mockPinterestAuthStatus,
+  mockRejectedCandidates,
+  mockRejectedKeywords,
   mockSeoDeliverables,
   mockStage1DiscoveryOutput,
   mockStage2ProductionOutput,
   mockSummaryMetrics,
+  mockThemeClusters,
+  mockTrendDiscoveryResult,
 } from "./data";
 
 interface InMemoryMockJob {
@@ -56,6 +63,9 @@ interface InMemoryMockJob {
   logs: string[];
   referenceImageCount: number;
   variants?: number;
+  candidates: PodCandidate[];
+  rejectedCandidates: PodCandidate[];
+  clusters: readonly ThemeCluster[];
   createdAt: number;
 }
 
@@ -247,6 +257,56 @@ export class MockPinterestPodClient implements PinterestPodClient {
     };
   }
 
+  public async discoverTrends(input: TrendDiscoveryInput): Promise<TrendDiscoveryResult> {
+    return {
+      ok: true,
+      niche: input.niche || mockTrendDiscoveryResult.niche,
+      clusters: mockThemeClusters.map((c) => ({ ...c })),
+      rejected_keywords: mockRejectedKeywords.map((k) => ({ ...k })),
+      total_keywords: mockTrendDiscoveryResult.total_keywords,
+    };
+  }
+
+  public async rescueCandidate(jobId: string, candidateId: string): Promise<{ readonly ok: boolean; readonly candidate: PodCandidate }> {
+    const job = this.jobs.get(jobId);
+    let rescued: PodCandidate | undefined;
+    if (job) {
+      const idx = job.rejectedCandidates.findIndex((c) => c.id === candidateId || c.image_id === candidateId);
+      if (idx !== -1) {
+        const orig = job.rejectedCandidates[idx];
+        rescued = {
+          ...orig,
+          candidate_category: "breakthrough_concept",
+          is_breakthrough_concept: true,
+          is_rejected: false,
+          recommended: true,
+          reason: `Mẫu đã được người dùng giải cứu (Rescue). Ý tưởng đột phá sẵn sàng đưa vào sản xuất bóc tách hoa văn Stage 2.`,
+        };
+        job.rejectedCandidates.splice(idx, 1);
+        job.candidates.push(rescued);
+      }
+    }
+    if (!rescued) {
+      rescued = {
+        id: candidateId,
+        image_id: candidateId,
+        title: "Rescued Breakthrough Candidate",
+        pin_url: "https://pinterest.com",
+        image_url: createMockSvgDataUri("RESCUED CANDIDATE", "Mẫu đã giải cứu thành công", "#1e1b4b", "#38bdf8"),
+        image_score: 88.0,
+        printability_score: 85.0,
+        flat_artwork_score: 82.0,
+        is_direct_printable: false,
+        is_breakthrough_concept: true,
+        candidate_category: "breakthrough_concept",
+        is_rejected: false,
+        recommended: true,
+        reason: "Mẫu đã được người dùng giải cứu. Chuẩn bị đưa vào sản xuất Stage 2.",
+      };
+    }
+    return { ok: true, candidate: rescued };
+  }
+
   public async createJob(input: CreateJobInput): Promise<CreateJobOutput> {
     const jobId = `job_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
     const now = new Date().toLocaleTimeString("vi-VN", { hour12: false });
@@ -266,6 +326,9 @@ export class MockPinterestPodClient implements PinterestPodClient {
       selectedCandidateIds: [],
       logs: initialLogs,
       referenceImageCount: input.referenceImages?.length ?? 0,
+      candidates: [...mockCandidates],
+      rejectedCandidates: [...mockRejectedCandidates],
+      clusters: [...mockThemeClusters],
       createdAt: Date.now(),
     };
 
@@ -299,6 +362,9 @@ export class MockPinterestPodClient implements PinterestPodClient {
         },
         logs: [...initialMockLogs],
         candidates: [...mockCandidates],
+        rejected_candidates: [...mockRejectedCandidates],
+        rejectedCandidates: [...mockRejectedCandidates],
+        clusters: [...mockThemeClusters],
       };
     }
 
@@ -309,7 +375,7 @@ export class MockPinterestPodClient implements PinterestPodClient {
         job.status = "ready_for_review";
         job.logs.push(
           `[${now}] Pinterest Trends: Phát hiện 8 từ khóa hot và quét 30 ghim liên quan.`,
-          `[${now}] AI Vision: Đã chấm điểm chất lượng và độ phẳng cho ${mockCandidates.length} ứng viên.`,
+          `[${now}] AI Vision: Đã chấm điểm chất lượng và độ phẳng cho ${job.candidates.length} ứng viên (${job.rejectedCandidates.length} ảnh bị loại).`,
           `[${now}] Sẵn sàng duyệt mẫu ứng viên. Mời bạn chọn mẫu để tiến hành sản xuất.`,
         );
       } else {
@@ -339,14 +405,17 @@ export class MockPinterestPodClient implements PinterestPodClient {
         status: "ready_for_review",
         niche: job.niche,
         product: job.product,
-        total_candidates: mockCandidates.length,
+        total_candidates: job.candidates.length,
         stepper: {
           current_step: 2,
           percent: 40,
-          current_message: `Đã quét & chấm điểm Vision AI (${mockCandidates.length} ứng viên). Mời bạn duyệt mẫu để sản xuất.`,
+          current_message: `Đã quét & chấm điểm Vision AI (${job.candidates.length} ứng viên). Mời bạn duyệt mẫu để sản xuất.`,
         },
         logs: [...job.logs],
-        candidates: [...mockCandidates],
+        candidates: [...job.candidates],
+        rejected_candidates: [...job.rejectedCandidates],
+        rejectedCandidates: [...job.rejectedCandidates],
+        clusters: [...job.clusters],
       };
     }
 

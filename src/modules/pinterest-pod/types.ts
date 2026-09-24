@@ -54,7 +54,6 @@ export interface PodReferenceImage {
 }
 export type ReferenceImage = PodReferenceImage;
 
-/** Standard Pinterest Candidate crawled and scored by AI Vision */
 export interface PodCandidate {
   readonly id: string;
   readonly candidate_id?: string;
@@ -73,10 +72,76 @@ export interface PodCandidate {
   readonly printability_score: number;
   readonly flat_artwork_score: number;
   readonly is_direct_printable: boolean;
+  readonly is_breakthrough_concept?: boolean;
+  readonly candidate_category?: "direct_printable" | "breakthrough_concept" | "rejected";
+  readonly is_rejected?: boolean;
+  readonly reject_reason?: string;
+  readonly reject_reason_code?: string;
   readonly recommended: boolean;
   readonly reason: string;
 }
 export type CandidateItem = PodCandidate;
+
+/** Keyword item with growth metrics from Pinterest API */
+export interface TrendingKeywordItem {
+  readonly keyword: string;
+  readonly rank?: number;
+  readonly pct_growth_mom?: number;
+  readonly pct_growth_wow?: number;
+  readonly pct_growth_yoy?: number;
+  readonly monthly_searches?: number;
+  readonly is_accepted?: boolean;
+  readonly status?: "accepted" | "rejected";
+  readonly reject_reason?: string;
+  readonly reject_reason_code?: string;
+  readonly suggested_fused_query?: string;
+}
+
+/** 3-5 Diverse Theme Cluster synthesized by AI */
+export interface ThemeCluster {
+  readonly cluster_id: string;
+  readonly id?: string;
+  readonly cluster_name?: string;
+  readonly theme_name?: string;
+  readonly theme_name_vi?: string;
+  readonly description?: string;
+  readonly visual_style?: string;
+  readonly keywords?: readonly TrendingKeywordItem[];
+  readonly sample_motifs?: readonly string[];
+  readonly sample_queries?: readonly string[];
+  readonly fused_queries?: readonly string[];
+  readonly avg_growth_mom?: number;
+  readonly avg_growth_wow?: number;
+  readonly growth_mom_avg?: number;
+  readonly recommended?: boolean;
+  readonly selected?: boolean;
+}
+
+/** Trend Discovery Input */
+export interface TrendDiscoveryInput {
+  readonly niche: string;
+  readonly product?: PinterestProductType | string;
+  readonly trend_type?: "growing" | "seasonal" | "monthly" | string;
+  readonly interest?: string;
+  readonly interests?: string;
+  readonly region?: "US" | "GB" | "CA" | "DE" | string;
+}
+
+/** Trend Discovery Result */
+export interface TrendDiscoveryResult {
+  readonly ok: boolean;
+  readonly niche: string;
+  readonly product?: string;
+  readonly region?: string;
+  readonly trend_type?: string;
+  readonly clusters: readonly ThemeCluster[];
+  readonly all_keywords?: readonly TrendingKeywordItem[];
+  readonly accepted_keywords?: readonly TrendingKeywordItem[];
+  readonly rejected_keywords: readonly TrendingKeywordItem[];
+  readonly total_keywords: number;
+  readonly accepted_count?: number;
+  readonly rejected_count?: number;
+}
 
 /** Stepper progress information for UI display */
 export interface PodJobStepper {
@@ -224,6 +289,12 @@ export interface PinterestDiscoveryInput {
   readonly niche: string;
   readonly product?: PodProductType;
   readonly workflow_stage?: PodWorkflowStage;
+  readonly trend_type?: "growing" | "seasonal" | "monthly" | string;
+  readonly interest?: string;
+  readonly interests?: string;
+  readonly region?: "US" | "GB" | "CA" | "DE" | string;
+  readonly selected_clusters?: readonly string[] | readonly ThemeCluster[];
+  readonly custom_queries?: readonly string[];
   readonly candidatePoolSize?: number;
   readonly task5_max_downloads?: number;
   readonly top_images?: number;
@@ -241,6 +312,8 @@ export interface PinterestDiscoveryOutput {
   readonly stepper: PodJobStepper;
   readonly logs: readonly string[];
   readonly candidates: readonly PodCandidate[];
+  readonly rejected_candidates?: readonly PodCandidate[];
+  readonly clusters?: readonly ThemeCluster[];
 }
 
 export interface CreateJobOutput {
@@ -295,6 +368,9 @@ export interface PodJobStatusResponse {
   readonly stepper?: PodJobStepper;
   readonly logs?: readonly string[];
   readonly candidates?: readonly PodCandidate[];
+  readonly rejected_candidates?: readonly PodCandidate[];
+  readonly rejectedCandidates?: readonly PodCandidate[];
+  readonly clusters?: readonly ThemeCluster[];
   readonly selected_candidates?: readonly string[];
   readonly summaryMetrics?: PodSummaryMetrics;
   readonly summary_metrics?: PodSummaryMetrics;
@@ -430,8 +506,10 @@ export interface PinterestPodClient {
   launchLogin(timeout?: number): Promise<PinterestLaunchLoginOutput>;
   saveOAuthToken?(payload: SavePinterestTokenPayload): Promise<SavePinterestTokenResponse>;
   getOAuthAuthorizeUrl?(redirectUri?: string): Promise<{ readonly ok: boolean; readonly auth_url: string }>;
+  discoverTrends(input: TrendDiscoveryInput): Promise<TrendDiscoveryResult>;
   createJob(input: CreateJobInput): Promise<CreateJobOutput>;
   getJobDetail(jobId: string): Promise<JobDetailResponse>;
+  rescueCandidate(jobId: string, candidateId: string): Promise<{ readonly ok: boolean; readonly candidate: PodCandidate }>;
   produce(input: ProduceInput): Promise<ProduceOutput>;
   cancelJob(jobId: string): Promise<CancelJobOutput>;
   getStatus(): Promise<PodStatusResponse>;

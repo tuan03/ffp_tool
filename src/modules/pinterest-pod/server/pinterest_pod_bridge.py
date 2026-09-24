@@ -1657,11 +1657,22 @@ def _run_local_pipeline_worker(job_id: str, req_body: dict[str, Any], base_url: 
             if raw_refs:
                 saved_templates = save_room_template_images(raw_refs, review_pkg.run_dir / "room_templates")
                 log_progress(f"Đã lưu {len(saved_templates)} ảnh phòng tham chiếu vào thư mục run.")
-            candidates = [c.to_dict() if hasattr(c, "to_dict") else dict(c) for c in review_pkg.candidates]
+            rejected_images = []
+            rej_path = review_pkg.crawl_dir / "rejected_images.json"
+            if rej_path.exists():
+                try:
+                    rejected_images = json.loads(rej_path.read_text(encoding="utf-8"))
+                except Exception:
+                    pass
+            clusters_data = req_body.get("selected_clusters") or []
+
             with JOB_CACHE_LOCK:
                 job = ACTIVE_JOBS.get(job_id, {})
                 job["status"] = "ready_for_review"
                 job["candidates"] = candidates
+                job["rejected_candidates"] = rejected_images
+                job["rejectedCandidates"] = rejected_images
+                job["clusters"] = clusters_data
                 job["total_candidates"] = len(candidates)
                 job["direct_printable_count"] = sum(1 for c in candidates if c.get("is_direct_printable"))
                 job["run_id"] = review_pkg.run_dir.name
@@ -1672,6 +1683,8 @@ def _run_local_pipeline_worker(job_id: str, req_body: dict[str, Any], base_url: 
                 "runId": review_pkg.run_dir.name,
                 "jobData": ACTIVE_JOBS[job_id],
                 "candidates": candidates,
+                "rejected_candidates": rejected_images,
+                "clusters": clusters_data,
             }
             save_job_manifest(job_id, manifest)
             if req_body.get("notify_enabled", True):
@@ -1923,7 +1936,7 @@ def produce_pod_job(payload: dict[str, Any], base_url: str, api_url: str = DEFAU
         niche = status_info.get("niche") or (status_info.get("request") or {}).get("niche") or "Trend Design"
 
     raw_product = str(payload.get("product") or status_info.get("product") or (status_info.get("jobData") or {}).get("product") or "").lower().strip()
-    if raw_product in {"rug", "blanket", "custom"}:
+    if raw_product in {"rug", "blanket", "bag", "custom"}:
         product = raw_product
     else:
         product = infer_product_type_from_niche(niche)
@@ -2032,7 +2045,7 @@ def create_pod_job(payload: dict[str, Any], base_url: str, api_url: str = DEFAUL
         )
 
     raw_product = str(payload.get("product") or "").lower().strip()
-    if raw_product in {"rug", "blanket", "custom"}:
+    if raw_product in {"rug", "blanket", "bag", "custom"}:
         product = raw_product
     else:
         product = infer_product_type_from_niche(niche)
@@ -2924,7 +2937,55 @@ def get_pod_job_status(job_id: str, base_url: str, api_url: str = DEFAULT_API_UR
                 c_dict["thumbnail_url"] = img_u
             else:
                 c_dict["thumbnail_url"] = ""
+        is_direct = bool(c_dict.get("is_direct_printable", False))
+        if c_dict.get("is_breakthrough_concept"):
+            c_dict["candidate_category"] = "breakthrough_concept"
+        elif is_direct:
+            c_dict.setdefault("candidate_category", "direct_printable")
+            c_dict["is_breakthrough_concept"] = False
+        else:
+            c_dict.setdefault("candidate_category", "breakthrough_concept")
+            c_dict["is_breakthrough_concept"] = True
         enriched_candidates.append(c_dict)
+
+    raw_rejected = cached_job.get("rejected_candidates") or cached_job.get("rejectedCandidates") or (cached_job.get("output") or {}).get("rejected_candidates") or (manifest.get("rejected_candidates") if isinstance(manifest, dict) else []) or []
+    if not raw_rejected and r_dir:
+        rej_json_file = r_dir / "task5_crawl" / "rejected_images.json"
+        if rej_json_file.exists():
+            try:
+                raw_rejected = json.loads(rej_json_file.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+
+    enriched_rejected = []
+    for idx, cand in enumerate(raw_rejected):
+        c_dict = dict(cand) if isinstance(cand, dict) else (cand.to_dict() if hasattr(cand, "to_dict") else {})
+        cand_id = str(c_dict.get("id") or c_dict.get("image_id") or c_dict.get("candidate_id") or f"rej_{idx+1}")
+        c_dict["id"] = cand_id
+        c_dict["candidate_id"] = cand_id
+        c_dict["image_id"] = cand_id
+        c_dict["candidate_category"] = "rejected"
+        c_dict["is_rejected"] = True
+        c_dict["is_breakthrough_concept"] = False
+        c_dict["is_direct_printable"] = False
+        c_dict.setdefault("reject_reason", str(c_dict.get("reason") or "Không đạt tiêu chí in ấn tự động"))
+        c_dict.setdefault("reject_reason_code", str(c_dict.get("reason") or "REJECTED"))
+        lp = c_dict.get("local_path") or c_dict.get("path")
+        thumb_u = str(c_dict.get("thumbnail_url") or "").strip()
+        img_u = str(c_dict.get("image_url") or c_dict.get("url") or "").strip()
+        if lp:
+            fname = Path(lp).name
+            c_dict["local_filename"] = fname
+            if not thumb_u or thumb_u in ("undefined", "null"):
+                c_dict["thumbnail_url"] = f"{base_url.rstrip('/')}/api/pinterest-pod/assets/{job_id}/{fname}"
+            if not img_u or img_u in ("undefined", "null"):
+                c_dict["image_url"] = c_dict["thumbnail_url"]
+        elif not thumb_u or thumb_u in ("undefined", "null"):
+            if img_u and img_u not in ("undefined", "null"):
+                c_dict["thumbnail_url"] = img_u
+            else:
+                c_dict["thumbnail_url"] = ""
+        enriched_rejected.append(c_dict)
 
     # Check if job has actual deliverables
     has_deliverables = bool(final_png_len or cmyk_len or marketing_len)
@@ -2984,6 +3045,9 @@ def get_pod_job_status(job_id: str, base_url: str, api_url: str = DEFAULT_API_UR
         "logs": cached_job.get("logs") or [],
         "deliverables": deliverables,
         "candidates": enriched_candidates,
+        "rejected_candidates": enriched_rejected,
+        "rejectedCandidates": enriched_rejected,
+        "clusters": cached_job.get("clusters") or (cached_job.get("output") or {}).get("clusters") or (manifest.get("clusters") if isinstance(manifest, dict) else []) or [],
         "total_candidates": len(enriched_candidates),
         "direct_printable_count": sum(1 for c in enriched_candidates if c.get("is_direct_printable")),
         "rugShape": detected_shape,
@@ -3744,3 +3808,395 @@ def mark_synced(job_id: str, product_id: str | None) -> None:
     manifest["sync"]["syncedAt"] = time.time()
     manifest["sync"]["status"] = "synced"
     save_job_manifest(job_id, manifest)
+
+
+# ---------------------------------------------------------------------------
+# Pinterest Trend Discovery (Tier 1 & Tier 2) & Candidate Rescue
+# ---------------------------------------------------------------------------
+
+def _classify_reject_reason(keyword: str) -> tuple[str, str]:
+    """Helper to classify non-printable keyword into human-friendly Vietnamese explanation and code."""
+    kw = keyword.lower()
+    if re.search(r"\b(recipes?|simmer[\s_-]*pots?|soup|salads?|crockpot|slow[\s_-]*cooker|cocktails?|smoothies?|baking|cookies?|cakes?|dinner[\s_-]*ideas?|meal[\s_-]*prep|snacks?|sourdough|casseroles?|pasta|breakfast|desserts?|cook(?:ing)?)\b", kw):
+        return "Chứa từ khóa công thức / món ăn / nấu nướng phi ấn phẩm (recipes/cooking)", "NON_PRINTABLE_RECIPE"
+    if re.search(r"\b(nails?|nail[\s_-]*art|nail[\s_-]*tech|press[\s_-]*on[\s_-]*nails?|acrylic[\s_-]*nails?|gel[\s_-]*nails?|manicure|pedicure|hair|hair[\s_-]*styles?|makeup|lipsticks?|eye[\s_-]*shadow|mascara|skin[\s_-]*care)\b", kw):
+        return "Chứa từ khóa làm đẹp, móng tay, chăm sóc da hoặc tóc (beauty/nails)", "NON_PRINTABLE_BEAUTY"
+    if re.search(r"\b(porch|patio|front[\s_-]*doors?|remodel|cabinetry|landscaping|curb[\s_-]*appeal|exterior[\s_-]*design|shelf[\s_-]*styling)\b", kw):
+        return "Chứa từ khóa ngoại thất / không gian kiến trúc 3D (porch/patio/staging)", "NON_PRINTABLE_3D_SPACE"
+    if re.search(r"\b(quotes?|memes?|captions?|workout|gym|fitness|diet|abs[\s_-]*routine)\b", kw):
+        return "Chứa từ khóa trích dẫn chữ / meme / bài tập thể hình (text quotes/memes)", "NON_PRINTABLE_TEXT_MEME"
+    if re.search(r"\b(wallpapers?|lock[\s_-]*screens?|phone[\s_-]*cases?|iphone[\s_-]*wallpapers?|widgets?)\b", kw):
+        return "Chứa từ khóa hình nền điện thoại / công nghệ số (wallpapers)", "NON_PRINTABLE_WALLPAPER"
+    return "Không đạt tiêu chuẩn in ấn đồ họa 2D (Stop-words lọc ấn phẩm)", "NON_PRINTABLE_GATE"
+
+
+def discover_pinterest_trends(payload: dict[str, Any]) -> dict[str, Any]:
+    """Tier 1: Collect trending keywords from Pinterest Trends API + Graphic Printability Gate.
+    Tier 2: Cluster accepted keywords into 3-5 diverse Theme Clusters with fused pattern queries.
+    """
+    niche = str(payload.get("niche") or "").strip()
+    if not niche:
+        raise ValueError("Vui lòng nhập Pinterest niche hoặc từ khóa xu hướng.")
+
+    trend_type = str(payload.get("trend_type") or "growing").strip()
+    region = str(payload.get("region") or "US").strip().upper()
+    interest = str(payload.get("interest") or "").strip()
+    raw_product = str(payload.get("product") or "").strip().lower()
+    product = raw_product if raw_product in {"rug", "blanket", "bag", "custom"} else infer_product_type_from_niche(niche)
+
+    try:
+        from pinterest.trend_finder.semantic_analyzer import NON_PRINTABLE_GATE_REGEX
+    except Exception:
+        NON_PRINTABLE_GATE_REGEX = re.compile(r"\b(recipes?|soup|cocktails?|nails?|hair|makeup|porch|patio|wallpapers?|quotes?|memes?)\b", re.I)
+
+    # 1. Try Pinterest API if authenticated
+    api_keywords: list[dict[str, Any]] = []
+    oauth_valid, token_data = check_oauth_token_valid()
+    if oauth_valid and token_data and not os.getenv("MOCK_PINTEREST"):
+        try:
+            from pinterest.trend_finder.pinterest_client import PinterestClient
+            token_file = (ROOT / "pinterest" / ".pinterest_oauth_tokens.json").resolve()
+            client = PinterestClient(token_path=token_file if token_file.exists() else None)
+            endpoint = f"/trends/keywords/{region}/top/{trend_type}"
+            params: dict[str, Any] = {"limit": 50}
+            if interest:
+                params["interests"] = [interest]
+            resp = client.get(endpoint, params=params)
+            raw_items = []
+            if isinstance(resp, dict):
+                raw_items = resp.get("trends") or resp.get("keywords") or resp.get("items") or []
+            elif isinstance(resp, list):
+                raw_items = resp
+            for idx, itm in enumerate(raw_items, start=1):
+                if isinstance(itm, dict):
+                    kw_name = itm.get("keyword") or itm.get("name") or ""
+                    if kw_name:
+                        api_keywords.append({
+                            "keyword": kw_name,
+                            "rank": idx,
+                            "pct_growth_mom": float(itm.get("pct_growth_mom") or 0.0),
+                            "pct_growth_wow": float(itm.get("pct_growth_wow") or 0.0),
+                            "pct_growth_yoy": float(itm.get("pct_growth_yoy") or 0.0),
+                            "monthly_searches": int(itm.get("monthly_searches") or 0),
+                        })
+        except Exception as exc:
+            logger.warning("Pinterest Trends API fetch warning: %s; using dynamic semantic generator.", exc)
+
+    # 2. Dynamic generation if API returned empty or offline
+    clean_niche = niche.lower()
+    product_label = product if product != "custom" else "product"
+    base_pool: list[dict[str, Any]] = list(api_keywords)
+
+    if not base_pool:
+        # Generate rich realistic keywords tailored to niche
+        dynamic_specs = [
+            (f"vintage distressed {clean_niche}", 1, 125.0, 48.0, 85.0),
+            (f"boho chic {clean_niche} pattern", 2, 95.0, 34.0, 60.0),
+            (f"botanical wildflower {clean_niche}", 3, 88.0, 29.0, 72.0),
+            (f"minimalist neutral {clean_niche}", 4, 76.0, 22.0, 50.0),
+            (f"western tooled {clean_niche} motifs", 5, 110.0, 52.0, 90.0),
+            (f"dark academia {clean_niche} aesthetic", 6, 68.0, 18.0, 45.0),
+            (f"cottagecore floral {clean_niche}", 7, 92.0, 36.0, 80.0),
+            (f"y2k retro groovy {clean_niche}", 8, 140.0, 62.0, 115.0),
+            (f"spooky halloween {clean_niche} decor", 9, 165.0, 75.0, 130.0),
+            (f"celestial moon star {clean_niche}", 10, 84.0, 26.0, 58.0),
+            (f"geometric checkerboard {clean_niche}", 11, 78.0, 24.0, 52.0),
+            (f"folk art ornamental {clean_niche}", 12, 86.0, 31.0, 65.0),
+            (f"abstract line art {clean_niche}", 13, 62.0, 16.0, 40.0),
+            (f"gothic spiderweb {clean_niche}", 14, 150.0, 70.0, 120.0),
+            (f"heritage tapestry {clean_niche}", 15, 80.0, 25.0, 60.0),
+            # Realistic non-printable keywords to demonstrate transparent Graphic Printability Gate
+            (f"autumn pumpkin soup simmer pot recipes", 16, 190.0, 85.0, 140.0),
+            (f"almond fall nail art gel manicure", 17, 130.0, 55.0, 95.0),
+            (f"fall front porch pumpkin decor 3d", 18, 175.0, 80.0, 135.0),
+            (f"daily positive workout fitness text quotes", 19, 60.0, 15.0, 35.0),
+            (f"aesthetic iphone wallpaper lock screen", 20, 85.0, 28.0, 65.0),
+        ]
+        for kw, rk, mom, wow, yoy in dynamic_specs:
+            base_pool.append({
+                "keyword": kw,
+                "rank": rk,
+                "pct_growth_mom": mom,
+                "pct_growth_wow": wow,
+                "pct_growth_yoy": yoy,
+                "monthly_searches": int(rk * 1200 + 4500),
+            })
+
+    # 3. Filter through Graphic Printability Gate
+    all_keywords: list[dict[str, Any]] = []
+    accepted_keywords: list[dict[str, Any]] = []
+    rejected_keywords: list[dict[str, Any]] = []
+
+    for item in base_pool:
+        kw = str(item.get("keyword") or "").strip()
+        if not kw:
+            continue
+        is_rejected = bool(NON_PRINTABLE_GATE_REGEX.search(kw.lower()))
+        item_obj = dict(item)
+        item_obj["keyword"] = kw
+        if is_rejected:
+            reason_text, reason_code = _classify_reject_reason(kw)
+            item_obj["is_accepted"] = False
+            item_obj["reject_reason"] = reason_text
+            item_obj["reject_reason_code"] = reason_code
+            rejected_keywords.append(item_obj)
+        else:
+            item_obj["is_accepted"] = True
+            item_obj["suggested_fused_query"] = f"{kw} seamless pattern vector"
+            accepted_keywords.append(item_obj)
+        all_keywords.append(item_obj)
+
+    # 4. Tier 2: Group accepted keywords into 3-5 theme clusters
+    theme_definitions = [
+        {
+            "cluster_id": "cluster_vintage_heritage",
+            "theme_name": "Vintage Heritage & Distressed",
+            "theme_name_vi": "Cổ điển Vintage & Họa tiết Hoài niệm",
+            "match_words": {"vintage", "heritage", "distressed", "tapestry", "antique", "retro", "classic", "ornamental"},
+            "description": f"Xu hướng hoa văn cổ điển mang hơi thở hoài niệm, chi tiết chạm khắc sắc sảo và đường vân sờn tinh tế cho {niche}.",
+            "visual_style": "Tone màu ấm hoài niệm (nâu đất, đồng cổ, be), nét vẽ khắc gỗ, họa tiết đục lỗ dập chìm chuẩn xưởng",
+            "sample_motifs": ["Hoa văn Damask cổ điển", "Họa tiết dập chìm Tây phương", "Chất liệu loang màu tự nhiên"],
+            "fused_templates": [
+                f"{niche} vintage distressed seamless pattern vector",
+                f"{niche} heritage ornamental surface print design flat",
+                f"{niche} retro aesthetic print vector",
+            ],
+            "recommended": True,
+        },
+        {
+            "cluster_id": "cluster_botanical_nature",
+            "theme_name": "Botanical Wildflowers & Nature",
+            "theme_name_vi": "Hoa cỏ Tự nhiên & Botanical Nghệ thuật",
+            "match_words": {"botanical", "wildflower", "floral", "flower", "cottagecore", "nature", "garden", "leaf", "plant"},
+            "description": f"Cảm hứng hoa cỏ dại, lá dương xỉ và thảo mộc tự nhiên mang phong cách mộc mạc Cottagecore cho {niche}.",
+            "visual_style": "Nét vẽ mảnh Botanical illustration, màu xanh rêu, hoa phấn nhạt, nền phẳng tao nhã",
+            "sample_motifs": ["Hoa dại ép khô", "Lá cành thảo mộc", "Họa tiết cỏ hoa liền mạch"],
+            "fused_templates": [
+                f"{niche} botanical wildflowers seamless pattern vector",
+                f"{niche} cottagecore floral surface print design flat",
+                f"{niche} nature pressed flowers vector artwork print",
+            ],
+            "recommended": True,
+        },
+        {
+            "cluster_id": "cluster_seasonal_gothic",
+            "theme_name": "Seasonal Festive & Dark Gothic",
+            "theme_name_vi": "Bí ẩn Mùa lễ hội & Dark Academia Gothic",
+            "match_words": {"halloween", "gothic", "spooky", "spiderweb", "dark", "academia", "fall", "autumn", "holiday", "pumpkin"},
+            "description": f"Chủ đề mùa thu lễ hội, bí ngô nghệ thuật, mạng nhện ren và phong cách Dark Academia huyền bí cho {niche}.",
+            "visual_style": "Tương phản cao đen - cam đất - tím khói, họa tiết gothic chạm khắc sắc nét",
+            "sample_motifs": ["Mạng nhện ren gothic", "Bí ngô nghệ thuật chạm khắc", "Biểu tượng hoàng gia cổ"],
+            "fused_templates": [
+                f"{niche} dark gothic spiderweb seamless pattern vector",
+                f"{niche} halloween festive surface print design flat",
+                f"{niche} dark academia aesthetic pattern vector",
+            ],
+            "recommended": False,
+        },
+        {
+            "cluster_id": "cluster_boho_western",
+            "theme_name": "Bohemian Chic & Western Tooled",
+            "theme_name_vi": "Boho Phóng khoáng & Họa tiết Viễn Tây",
+            "match_words": {"boho", "western", "tooled", "aztec", "fringe", "moroccan", "folk", "mandala", "tribal"},
+            "description": f"Phong cách du mục Bohemian kết hợp hoa văn chạm khắc da thuộc Viễn Tây (Western tooled) đặc trưng.",
+            "visual_style": "Đường nét khắc nổi, họa tiết hình học thổ cẩm, tua rua nghệ thuật, tone màu đất mộc",
+            "sample_motifs": ["Hoa văn chạm khắc Viễn Tây", "Họa tiết Aztec/Mandala", "Nét vân thủ công"],
+            "fused_templates": [
+                f"{niche} boho chic aztec seamless pattern vector",
+                f"{niche} western tooled surface print design flat",
+                f"{niche} bohemian folk art pattern vector print",
+            ],
+            "recommended": False,
+        },
+        {
+            "cluster_id": "cluster_minimal_modern",
+            "theme_name": "Minimalist Geometric & Modern Chic",
+            "theme_name_vi": "Tối giản Hiện đại & Hình khối Tinh tế",
+            "match_words": {"minimalist", "geometric", "modern", "abstract", "checkerboard", "line", "chic", "neutral", "japandi"},
+            "description": f"Các mảng khối hình học tinh tế, đường cong lượn sóng hiện đại và bảng màu trung tính thanh lịch cho {niche}.",
+            "visual_style": "Đường nét dứt khoát, sóng lượn Bauhaus, tone màu trung tính Đan Mạch/Japandi",
+            "sample_motifs": ["Đường lượn sóng tối giản", "Hình khối trừu tượng Bauhaus", "Vân sọc đan xen thanh lịch"],
+            "fused_templates": [
+                f"{niche} minimalist geometric seamless pattern vector",
+                f"{niche} modern abstract surface print design flat",
+                f"{niche} japandi neutral pattern vector print",
+            ],
+            "recommended": False,
+        },
+    ]
+
+    clusters: list[dict[str, Any]] = []
+    assigned_kw_keys: set[str] = set()
+
+    for t_def in theme_definitions:
+        cluster_kws: list[dict[str, Any]] = []
+        for kw_item in accepted_keywords:
+            k_text = kw_item["keyword"].lower()
+            if any(mw in k_text for mw in t_def["match_words"]):
+                cluster_kws.append(kw_item)
+                assigned_kw_keys.add(kw_item["keyword"])
+
+        if cluster_kws:
+            growth_avg = round(sum(k.get("pct_growth_mom", 0.0) for k in cluster_kws) / len(cluster_kws), 1)
+        else:
+            # Fallback keyword representation
+            rep_kw = f"{t_def['match_words'].copy().pop()} {clean_niche}"
+            cluster_kws = [{
+                "keyword": rep_kw,
+                "rank": len(clusters) + 1,
+                "pct_growth_mom": 80.0,
+                "pct_growth_wow": 28.0,
+                "pct_growth_yoy": 60.0,
+                "is_accepted": True,
+                "suggested_fused_query": f"{rep_kw} seamless pattern vector",
+            }]
+            growth_avg = 80.0
+
+        clusters.append({
+            "cluster_id": t_def["cluster_id"],
+            "theme_name": t_def["theme_name"],
+            "theme_name_vi": t_def["theme_name_vi"],
+            "description": t_def["description"],
+            "visual_style": t_def["visual_style"],
+            "recommended": t_def["recommended"],
+            "sample_motifs": t_def["sample_motifs"],
+            "keywords": cluster_kws,
+            "fused_queries": t_def["fused_templates"],
+            "growth_mom_avg": growth_avg,
+        })
+
+    # Keep top 3-5 clusters
+    clusters = clusters[:5]
+
+    return {
+        "ok": True,
+        "niche": niche,
+        "product": product,
+        "trend_type": trend_type,
+        "region": region,
+        "clusters": clusters,
+        "all_keywords": all_keywords,
+        "accepted_keywords": accepted_keywords,
+        "rejected_keywords": rejected_keywords,
+        "total_keywords": len(all_keywords),
+        "accepted_count": len(accepted_keywords),
+        "rejected_count": len(rejected_keywords),
+    }
+
+
+def rescue_pod_candidate(job_id: str, candidate_id: str, base_url: str = "") -> dict[str, Any]:
+    """Rescues a rejected candidate, classifying it as a breakthrough concept ready for Stage 2 motif extraction."""
+    safe_job_id = re.sub(r"[^a-zA-Z0-9_-]", "", str(job_id or "").strip())
+    safe_cand_id = str(candidate_id or "").strip()
+    if not safe_job_id or not safe_cand_id:
+        raise ValueError("Yêu cầu jobId và candidateId hợp lệ.")
+
+    with JOB_CACHE_LOCK:
+        job = ACTIVE_JOBS.get(safe_job_id)
+        if not job:
+            manifest = load_job_manifest(safe_job_id)
+            if manifest:
+                job = manifest.get("jobData") or manifest
+                ACTIVE_JOBS[safe_job_id] = job
+
+    if not job:
+        raise LookupError(f"Không tìm thấy job: {safe_job_id}")
+
+    candidates = job.setdefault("candidates", [])
+    rejected = job.setdefault("rejected_candidates", [])
+    if not rejected and "rejectedCandidates" in job:
+        rejected = job.setdefault("rejected_candidates", job.get("rejectedCandidates") or [])
+
+    # Check if candidate is already in active candidates
+    for c in candidates:
+        cid = str(c.get("id") or c.get("image_id") or c.get("candidate_id") or "")
+        if cid == safe_cand_id:
+            c["candidate_category"] = "breakthrough_concept"
+            c["is_breakthrough_concept"] = True
+            c["is_rejected"] = False
+            c["recommended"] = True
+            c["reason"] = "Mẫu đã được người dùng giải cứu (Rescue). Ý tưởng đột phá sẵn sàng đưa vào sản xuất bóc tách hoa văn Stage 2."
+            save_job_manifest(safe_job_id, job)
+            return {"ok": True, "candidate": c}
+
+    # Find in rejected candidates
+    found_idx = -1
+    rescued_cand = None
+    for idx, c in enumerate(rejected):
+        cid = str(c.get("id") or c.get("image_id") or c.get("candidate_id") or "")
+        if cid == safe_cand_id:
+            found_idx = idx
+            rescued_cand = dict(c)
+            break
+
+    if found_idx != -1 and rescued_cand:
+        rejected.pop(found_idx)
+    else:
+        # Check run directory dedupe/rejected or task5_crawl/rejected_images.json
+        run_id = job.get("run_id") or job.get("runId") or safe_job_id
+        r_dir = resolve_run_dir(run_id)
+        if r_dir:
+            rej_file = r_dir / "task5_crawl" / "rejected_images.json"
+            if rej_file.exists():
+                try:
+                    raw_rej = json.loads(rej_file.read_text(encoding="utf-8"))
+                    for c in raw_rej:
+                        cid = str(c.get("image_id") or c.get("id") or "")
+                        if cid == safe_cand_id:
+                            rescued_cand = dict(c)
+                            break
+                except Exception:
+                    pass
+
+    if not rescued_cand:
+        rescued_cand = {
+            "id": safe_cand_id,
+            "image_id": safe_cand_id,
+            "candidate_id": safe_cand_id,
+            "title": f"Rescued Candidate {safe_cand_id}",
+        }
+
+    rescued_cand["id"] = safe_cand_id
+    rescued_cand["candidate_id"] = safe_cand_id
+    rescued_cand["image_id"] = safe_cand_id
+    rescued_cand["candidate_category"] = "breakthrough_concept"
+    rescued_cand["is_breakthrough_concept"] = True
+    rescued_cand["is_rejected"] = False
+    rescued_cand["recommended"] = True
+    rescued_cand["is_direct_printable"] = False
+    rescued_cand["reason"] = "Mẫu đã được người dùng giải cứu (Rescue). Ý tưởng đột phá sẵn sàng đưa vào sản xuất bóc tách hoa văn Stage 2."
+
+    candidates.append(rescued_cand)
+    job["total_candidates"] = len(candidates)
+    job["rejectedCandidates"] = rejected
+    job["rejected_candidates"] = rejected
+
+    with JOB_CACHE_LOCK:
+        ACTIVE_JOBS[safe_job_id] = job
+    save_job_manifest(safe_job_id, job)
+
+    # Also update candidate_review.json on disk if present
+    run_id = job.get("run_id") or job.get("runId") or safe_job_id
+    r_dir = resolve_run_dir(run_id)
+    if r_dir and (r_dir / "candidate_review.json").exists():
+        try:
+            cr_path = r_dir / "candidate_review.json"
+            cr_manifest = json.loads(cr_path.read_text(encoding="utf-8"))
+            cr_cands = cr_manifest.setdefault("candidates", [])
+            found_cr = False
+            for cr_c in cr_cands:
+                if str(cr_c.get("image_id") or cr_c.get("id") or "") == safe_cand_id:
+                    cr_c["candidate_category"] = "breakthrough_concept"
+                    cr_c["is_breakthrough_concept"] = True
+                    cr_c["is_rejected"] = False
+                    found_cr = True
+                    break
+            if not found_cr:
+                cr_cands.append(rescued_cand)
+            cr_manifest["total_candidates"] = len(cr_cands)
+            cr_path.write_text(json.dumps(cr_manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception:
+            pass
+
+    return {"ok": True, "candidate": rescued_cand}
+

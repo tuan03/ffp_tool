@@ -1178,4 +1178,176 @@ test("MockPinterestPodClient.produce with reference images determines mockup out
   assert.equal(completed.deliverables?.comparison_rows?.[0]?.ai_background_urls?.length, 3);
 });
 
+test("MockPinterestPodClient.discoverTrends returns theme clusters and rejected keywords", async () => {
+  const result = await mockPinterestPodClient.discoverTrends({
+    niche: "vintage distressed rug",
+    product: "rug",
+    trend_type: "growing",
+    region: "US",
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.niche, "vintage distressed rug");
+  assert.ok(result.clusters.length >= 3);
+  assert.ok(result.rejected_keywords.length > 0);
+
+  const cluster1 = result.clusters[0];
+  assert.ok(cluster1.cluster_id.length > 0);
+  assert.ok(cluster1.cluster_name || cluster1.theme_name);
+  assert.ok((cluster1.fused_queries ?? cluster1.sample_queries ?? []).length > 0);
+
+  const rej1 = result.rejected_keywords[0];
+  assert.ok(rej1.keyword.length > 0);
+  assert.ok(rej1.reject_reason && rej1.reject_reason.length > 0);
+});
+
+test("RealPinterestPodClient.discoverTrends posts to backend and parses result", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+
+  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input.toString();
+    const body = init?.body ? (JSON.parse(init.body.toString()) as Record<string, unknown>) : {};
+    calls.push({ url, body });
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        niche: "gothic celestial tarot",
+        product: "bag",
+        trend_type: "seasonal",
+        region: "US",
+        clusters: [
+          {
+            cluster_id: "cluster_gothic",
+            theme_name: "Gothic Celestial",
+            fused_queries: ["gothic celestial seamless pattern vector"],
+            recommended: true,
+          },
+        ],
+        rejected_keywords: [
+          {
+            keyword: "pumpkin soup recipe",
+            reject_reason: "Công thức món ăn (Food / recipes)",
+          },
+        ],
+        total_keywords: 15,
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  };
+
+  try {
+    const res = await realPinterestPodClient.discoverTrends({
+      niche: "gothic celestial tarot",
+      product: "bag",
+      trend_type: "seasonal",
+      region: "US",
+    });
+
+    assert.equal(res.ok, true);
+    assert.equal(calls.length, 1);
+    assert.ok(calls[0].url.includes("/api/pinterest-pod/trends/discover"));
+    assert.equal(calls[0].body.niche, "gothic celestial tarot");
+    assert.equal(calls[0].body.product, "bag");
+    assert.equal(calls[0].body.trend_type, "seasonal");
+    assert.equal(calls[0].body.region, "US");
+    assert.equal(res.clusters[0].cluster_id, "cluster_gothic");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("MockPinterestPodClient.rescueCandidate restores candidate to breakthrough concept", async () => {
+  const job = await mockPinterestPodClient.createJob({
+    niche: "retro groovy pumpkin",
+  });
+
+  const detail = await mockPinterestPodClient.getJobDetail(job.jobId);
+  const targetRej = detail.rejected_candidates?.[0] ?? detail.rejectedCandidates?.[0];
+  const targetId = targetRej?.id || "mock_rej_101";
+
+  const rescueRes = await mockPinterestPodClient.rescueCandidate(job.jobId, targetId);
+  assert.equal(rescueRes.ok, true);
+  assert.equal(rescueRes.candidate.candidate_category, "breakthrough_concept");
+  assert.equal(rescueRes.candidate.is_breakthrough_concept, true);
+  assert.equal(rescueRes.candidate.is_rejected, false);
+  assert.equal(rescueRes.candidate.recommended, true);
+});
+
+test("RealPinterestPodClient.rescueCandidate posts to rescue endpoint and returns rescued candidate", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+
+  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input.toString();
+    const body = init?.body ? (JSON.parse(init.body.toString()) as Record<string, unknown>) : {};
+    calls.push({ url, body });
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        candidate: {
+          id: "cand_rescue_999",
+          title: "Rescued Lifestyle Concept",
+          image_url: "https://example.com/rescued.jpg",
+          candidate_category: "breakthrough_concept",
+          is_breakthrough_concept: true,
+          is_rejected: false,
+          recommended: true,
+          printability_score: 85,
+        },
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  };
+
+  try {
+    const res = await realPinterestPodClient.rescueCandidate("job_test_123", "cand_rescue_999");
+    assert.equal(res.ok, true);
+    assert.equal(calls.length, 1);
+    assert.ok(calls[0].url.includes("/api/pinterest-pod/jobs/job_test_123/rescue"));
+    assert.equal(res.candidate.candidate_category, "breakthrough_concept");
+    assert.equal(res.candidate.is_breakthrough_concept, true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("RealPinterestPodClient.createJob serializes discovery clusters and custom queries", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+
+  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input.toString();
+    const body = init?.body ? (JSON.parse(init.body.toString()) as Record<string, unknown>) : {};
+    calls.push({ url, body });
+    return new Response(
+      JSON.stringify({ ok: true, jobId: "job_created_with_clusters", status: "running" }),
+      { status: 201, headers: { "Content-Type": "application/json" } },
+    );
+  };
+
+  try {
+    const res = await realPinterestPodClient.createJob({
+      niche: "cottagecore botanical floral",
+      product: "blanket",
+      trend_type: "growing",
+      interest: "home_decor",
+      region: "US",
+      selected_clusters: ["cluster_botanical"],
+      custom_queries: ["cottagecore botanical floral seamless pattern vector"],
+    });
+
+    assert.equal(res.ok, true);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].body.product, "blanket");
+    assert.equal(calls[0].body.trend_type, "growing");
+    assert.equal(calls[0].body.interest, "home_decor");
+    assert.equal(calls[0].body.region, "US");
+    assert.deepEqual(calls[0].body.selected_clusters, ["cluster_botanical"]);
+    assert.deepEqual(calls[0].body.custom_queries, ["cottagecore botanical floral seamless pattern vector"]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 

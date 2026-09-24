@@ -5,10 +5,14 @@ export {
   mockCandidates,
   mockDeliverables,
   mockPinterestAuthStatus,
+  mockRejectedCandidates,
+  mockRejectedKeywords,
   mockSeoDeliverables,
   mockStage1DiscoveryOutput,
   mockStage2ProductionOutput,
   mockSummaryMetrics,
+  mockThemeClusters,
+  mockTrendDiscoveryResult,
 } from "./mocks/data";
 
 export {
@@ -36,6 +40,7 @@ export type { PinterestPodModuleRunner } from "./runtime";
 export {
   buildSeoDeliverables,
   cancelJob,
+  discoverTrends,
   getAssetUrl,
   getAuthStatus,
   getJobStatus,
@@ -47,6 +52,7 @@ export {
   pollProductionJob,
   realPinterestPodClient,
   RealPinterestPodClient,
+  rescueCandidate,
   runDiscovery,
   runProduction,
   saveOAuthToken,
@@ -113,5 +119,9 @@ export type {
   SeoHandoverResponse,
   StepperState,
   SummaryMetrics,
+  ThemeCluster,
+  TrendDiscoveryInput,
+  TrendDiscoveryResult,
+  TrendingKeywordItem,
   WorkflowStage,
 } from "./types";

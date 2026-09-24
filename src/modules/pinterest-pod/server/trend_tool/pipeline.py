@@ -82,6 +82,11 @@ class CandidateReviewItem:
     motifs: list[str]
     source_role: str
     candidate_index: int | None = None
+    candidate_category: str = "direct_printable"
+    is_breakthrough_concept: bool = False
+    is_rejected: bool = False
+    reject_reason: str = ""
+    reject_reason_code: str = ""
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -513,6 +518,9 @@ def run_crawl_and_review_stage(
                 printability_score=printability_score,
                 classification=classification,
                 is_direct_printable=is_direct,
+                candidate_category="direct_printable" if is_direct else "breakthrough_concept",
+                is_breakthrough_concept=not is_direct,
+                is_rejected=False,
                 recommended=False,
                 width=int(meta.get("width") or 0) or None,
                 height=int(meta.get("height") or 0) or None,
@@ -865,16 +873,26 @@ def run_production_from_candidates(
         design_source = source_path
         applied_design_mode = "direct"
 
-        cand_is_direct = (
-            bool(meta.get("is_direct_printable", False))
-            or str(meta.get("classification", "")).strip().lower() in {"flat pattern", "digital pattern", "direct printable"}
+        cand_is_breakthrough = (
+            bool(meta.get("is_breakthrough_concept", False))
+            or str(meta.get("candidate_category", "")).strip().lower() == "breakthrough_concept"
         )
-        should_redraw = (not is_direct_mode) and (not cand_is_direct)
+        cand_is_direct = (
+            not cand_is_breakthrough
+            and (
+                bool(meta.get("is_direct_printable", False))
+                or str(meta.get("classification", "")).strip().lower() in {"flat pattern", "digital pattern", "direct printable"}
+            )
+        )
+        should_redraw = cand_is_breakthrough or ((not is_direct_mode) and (not cand_is_direct))
 
         if should_redraw:
             generated_path = run_dir / "generated_artwork" / f"{base}_gemini.png"
             generated_path.parent.mkdir(parents=True, exist_ok=True)
-            log(progress, f"[{index}/{len(resolved_sources)}] Tái tạo tranh phẳng AI qua Gemini từ ảnh tham chiếu.")
+            if cand_is_breakthrough:
+                log(progress, f"[{index}/{len(resolved_sources)}] Ý tưởng đột phá (Breakthrough Concept): Gemini bóc tách hoa văn phẳng, loại bỏ tay cầm/khóa kéo/đổ bóng 3D.")
+            else:
+                log(progress, f"[{index}/{len(resolved_sources)}] Tái tạo tranh phẳng AI qua Gemini từ ảnh tham chiếu.")
             generation = generate_flat_artwork(
                 source_path,
                 generated_path,

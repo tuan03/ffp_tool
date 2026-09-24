@@ -1,4 +1,6 @@
+import { useState } from "react";
 import type { JobStatus, PinterestProductType, ReferenceImage } from "../../types";
+import { inferProductTypeFromNiche } from "../../types";
 import { ReferenceDropzone } from "./ReferenceDropzone";
 
 interface ProductOption {
@@ -13,42 +15,42 @@ const PRODUCT_OPTIONS: readonly ProductOption[] = [
   {
     type: "bag",
     label: "Túi / Tote (Bag)",
-    icon: "🎒",
-    desc: "Túi tote, túi xách, ba lô",
+    icon: "👜",
+    desc: "Túi tote, túi xách, ba lô, clutch",
     standard: "4500 x 5400 px @ 300 DPI",
   },
   {
     type: "rug",
     label: "Thảm (Rug)",
     icon: "🛋️",
-    desc: "Thảm sàn, thảm trang trí",
+    desc: "Thảm sàn, thảm trang trí, thảm cửa",
     standard: "4000 x 6400 px @ 300 DPI",
   },
   {
     type: "blanket",
     label: "Chăn (Blanket)",
     icon: "🛏️",
-    desc: "Chăn nỉ sofa, throw blanket",
+    desc: "Chăn nỉ sofa, throw blanket, quilt",
     standard: "10000 x 11000 px @ 300 DPI",
   },
   {
     type: "custom",
     label: "Tùy biến (Custom)",
     icon: "📐",
-    desc: "Phôi tổng hợp hoặc tùy chỉnh",
+    desc: "Phôi tổng hợp hoặc tùy chỉnh theo yêu cầu",
     standard: "4000 x 6400 px @ 300 DPI",
   },
 ];
 
 const SUGGESTED_CHIPS = [
+  "Leather bag vintage",
   "Halloween spooky cute",
-  "Cottagecore botanical",
+  "Vintage distressed rug",
+  "Cottagecore floral blanket",
   "Gothic celestial tarot",
   "Retro groovy 70s",
-  "Vintage floral tapestry",
-  "Witchy black cat",
-  "Whimsical forest mushroom",
   "Boho geometric abstract",
+  "Dark academia aesthetic",
 ] as const;
 
 export interface InitFormProps {
@@ -61,11 +63,21 @@ export interface InitFormProps {
   readonly jobStatus: JobStatus;
   readonly onStartCrawl: () => void;
   readonly onStopJob: () => void;
-  /** Optional for backward compatibility with existing callers */
+  /** Optional product override or selection */
   readonly product?: PinterestProductType;
   readonly onProductChange?: (product: PinterestProductType) => void;
   readonly aiBackgroundVariants?: number;
   readonly onAiBackgroundVariantsChange?: (count: number) => void;
+  /** Advanced Pinterest API settings */
+  readonly trendType?: "growing" | "monthly" | "seasonal";
+  readonly onTrendTypeChange?: (trendType: "growing" | "monthly" | "seasonal") => void;
+  readonly interest?: string;
+  readonly onInterestChange?: (interest: string) => void;
+  readonly region?: string;
+  readonly onRegionChange?: (region: string) => void;
+  /** Trend discovery trigger */
+  readonly onDiscoverTrends?: () => void;
+  readonly isDiscoveringTrends?: boolean;
 }
 
 export function InitForm({
@@ -78,102 +90,118 @@ export function InitForm({
   jobStatus,
   onStartCrawl,
   onStopJob,
-  product = "bag",
+  product,
   onProductChange,
+  trendType = "growing",
+  onTrendTypeChange,
+  interest = "",
+  onInterestChange,
+  region = "US",
+  onRegionChange,
+  onDiscoverTrends,
+  isDiscoveringTrends = false,
 }: InitFormProps): React.JSX.Element {
-  const isBusy = jobStatus === "running" || jobStatus === "producing";
-  const selectedProduct = product ?? "bag";
-  const expectedMockupCount = referenceImages.length > 0 ? referenceImages.length : 5;
+  const [isAdvancedOpen, setIsAdvancedOpen] = useState(false);
+  const [overrideProduct, setOverrideProduct] = useState(false);
+
+  const isBusy = jobStatus === "running" || jobStatus === "producing" || isDiscoveringTrends;
+  const inferredProduct = niche.trim() ? inferProductTypeFromNiche(niche) : "bag";
+  const activeProduct = overrideProduct && product ? product : inferredProduct;
+
+  const currentProductOption = PRODUCT_OPTIONS.find((p) => p.type === activeProduct) ?? PRODUCT_OPTIONS[0];
+
+  const handleSelectProduct = (newProduct: PinterestProductType): void => {
+    setOverrideProduct(true);
+    onProductChange?.(newProduct);
+  };
+
+  const handleResetToAutoInferred = (): void => {
+    setOverrideProduct(false);
+    onProductChange?.(inferredProduct);
+  };
 
   return (
     <section className="flex flex-col gap-5 rounded-xl border border-slate-800 bg-slate-900/90 p-5 shadow-xl">
+      {/* Header */}
       <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-        <h2 className="text-base font-bold text-slate-100 flex items-center gap-2">
-          <span>⚙️</span>
-          <span>Khởi tạo Job Cào Pinterest POD</span>
-        </h2>
-        <span className="rounded bg-slate-800 px-2 py-0.5 text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
-          Giai đoạn 1
+        <div className="flex items-center gap-2">
+          <span className="text-xl">✨</span>
+          <div>
+            <h2 className="text-base font-bold text-slate-100 flex items-center gap-2">
+              Khởi tạo Khám phá & Sản xuất Pinterest POD
+            </h2>
+            <p className="text-xs text-slate-400">
+              Nhập từ khóa niche để khám phá cụm xu hướng AI và tự động tạo file in CMYK 300 DPI
+            </p>
+          </div>
+        </div>
+        <span className="rounded bg-cyan-950/80 border border-cyan-800/60 px-2.5 py-1 text-[11px] font-bold text-cyan-300">
+          Tier 1 & 2 Discovery
         </span>
       </div>
 
-      {/* 1. Target Product Blank Selection (Decoupled from Niche) */}
-      <div className="flex flex-col gap-2">
-        <div className="flex items-center justify-between">
-          <label className="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
-            <span>🎯 1. Phôi sản phẩm POD đích:</span>
-            <span className="text-cyan-400 font-bold uppercase">{selectedProduct}</span>
-          </label>
-          <span className="text-[11px] text-slate-400">Chọn loại sản phẩm bạn muốn sản xuất</span>
-        </div>
-
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-          {PRODUCT_OPTIONS.map((opt) => {
-            const isSelected = selectedProduct === opt.type;
-            return (
-              <button
-                key={opt.type}
-                type="button"
-                disabled={isBusy}
-                onClick={() => onProductChange?.(opt.type)}
-                className={`flex flex-col items-start gap-1 rounded-xl border p-2.5 text-left transition ${
-                  isSelected
-                    ? "border-cyan-500 bg-cyan-950/40 text-cyan-200 ring-1 ring-cyan-500/50 shadow-md"
-                    : "border-slate-800 bg-slate-950/60 text-slate-400 hover:border-slate-700 hover:bg-slate-900/80 hover:text-slate-200"
-                } disabled:cursor-not-allowed disabled:opacity-50`}
-              >
-                <div className="flex w-full items-center justify-between">
-                  <span className="text-base">{opt.icon}</span>
-                  {isSelected && (
-                    <span className="rounded-full bg-cyan-500/20 px-1.5 py-0.2 text-[9px] font-bold text-cyan-300">
-                      ✓ Đã chọn
-                    </span>
-                  )}
-                </div>
-                <strong className={`text-xs font-bold ${isSelected ? "text-cyan-200" : "text-slate-200"}`}>
-                  {opt.label}
-                </strong>
-                <span className="text-[10px] text-slate-400 line-clamp-1">{opt.desc}</span>
-                <span className="text-[9px] font-medium text-slate-500">{opt.standard}</span>
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* 2. Visual Trend Motif & Design Keywords */}
+      {/* 1. Primary Niche Input */}
       <div className="flex flex-col gap-2">
         <div className="flex items-center justify-between">
           <label htmlFor="niche-input" className="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
-            <span>🎨 2. Chủ đề / Họa tiết xu hướng (Visual Motif)</span>
+            <span>🎯 1. Từ khóa Pinterest Niche / Chủ đề xu hướng:</span>
             <span className="text-rose-400">*</span>
           </label>
+          <span className="text-[11px] text-slate-400">Nhập bất kỳ sản phẩm hoặc phong cách nghệ thuật</span>
         </div>
 
-        <div className="rounded-lg border border-cyan-900/30 bg-cyan-950/20 px-3 py-1.5 text-[11px] text-cyan-300">
-          💡 <strong>Mẹo POD:</strong> Bạn chỉ cần nhập phong cách, chủ đề nghệ thuật (VD: <em>Halloween, Gothic, Cottagecore...</em>) mà không cần nhập chữ <em>bag</em> hay <em>rug</em>. Pinterest sẽ cào các hoa văn nghệ thuật 2D đẹp nhất, sau đó AI sẽ tự động ốp lên phôi <strong>{selectedProduct.toUpperCase()}</strong> của bạn!
+        <div className="relative">
+          <input
+            id="niche-input"
+            type="text"
+            value={niche}
+            onChange={(e) => onNicheChange(e.target.value)}
+            placeholder="Ví dụ: leather bag, halloween, vintage distressed rug, cozy blanket, gothic celestial..."
+            disabled={isBusy}
+            className="w-full rounded-xl border border-slate-700 bg-slate-950 pl-3.5 pr-28 py-3 text-sm text-slate-100 placeholder-slate-500 focus:border-cyan-400 focus:outline-none focus:ring-1 focus:ring-cyan-400 disabled:opacity-50 font-medium"
+          />
+          {niche.trim() && (
+            <div className="absolute right-2.5 top-1/2 -translate-y-1/2 flex items-center gap-1.5 rounded-lg bg-slate-800/90 border border-slate-700 px-2 py-1 text-[11px] text-cyan-300 font-semibold shadow">
+              <span>{currentProductOption.icon}</span>
+              <span>{currentProductOption.label.split(" ")[0]}</span>
+            </div>
+          )}
         </div>
 
-        <input
-          id="niche-input"
-          type="text"
-          value={niche}
-          onChange={(e) => onNicheChange(e.target.value)}
-          placeholder="Ví dụ: Halloween spooky cute, Gothic celestial, Cottagecore botanical, Retro 70s..."
-          disabled={isBusy}
-          className="rounded-lg border border-slate-700 bg-slate-950 px-3.5 py-2 text-sm text-slate-100 placeholder-slate-500 focus:border-cyan-400 focus:outline-none focus:ring-1 focus:ring-cyan-400 disabled:opacity-50"
-        />
+        {/* Auto Inferred Product Type Badge Notice */}
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-cyan-900/40 bg-cyan-950/20 px-3.5 py-2 text-xs text-slate-300">
+          <div className="flex items-center gap-2">
+            <span className="text-base">{currentProductOption.icon}</span>
+            <span>
+              Phôi sản phẩm đích: <strong className="text-cyan-300">{currentProductOption.label}</strong>
+              <span className="text-slate-400 ml-1.5 font-normal">({currentProductOption.standard})</span>
+            </span>
+          </div>
+          {overrideProduct ? (
+            <button
+              type="button"
+              onClick={handleResetToAutoInferred}
+              className="text-[11px] text-amber-300 hover:text-amber-200 underline font-medium"
+            >
+              (Đang chọn thủ công - Bấm để tự động theo từ khóa)
+            </button>
+          ) : (
+            <span className="text-[11px] text-emerald-400 font-medium">
+              ✓ Tự động nhận diện theo từ khóa
+            </span>
+          )}
+        </div>
 
         {/* Quick Chips */}
         <div className="flex flex-wrap items-center gap-1.5 pt-1">
-          <span className="text-[11px] font-medium text-slate-400">Gợi ý xu hướng:</span>
+          <span className="text-[11px] font-medium text-slate-400">Gợi ý xu hướng hot:</span>
           {SUGGESTED_CHIPS.map((chip) => (
             <button
               key={chip}
               type="button"
               disabled={isBusy}
               onClick={() => onNicheChange(chip)}
-              className="rounded-full border border-slate-700 bg-slate-800/80 px-2.5 py-0.5 text-[11px] text-slate-300 transition hover:border-cyan-500 hover:bg-slate-700 hover:text-cyan-300 disabled:opacity-50"
+              className="rounded-full border border-slate-800 bg-slate-800/60 px-2.5 py-0.5 text-[11px] text-slate-300 transition hover:border-cyan-500 hover:bg-slate-700 hover:text-cyan-300 disabled:opacity-50"
             >
               {chip}
             </button>
@@ -181,72 +209,218 @@ export function InitForm({
         </div>
       </div>
 
-      {/* 3. Pinterest Crawl Count Slider */}
-      <div className="flex flex-col gap-1.5 rounded-lg border border-slate-800 bg-slate-950/60 p-3">
-        <div className="flex items-center justify-between">
-          <label htmlFor="crawl-count-input" className="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
-            <span>📥 Số lượng ảnh cào từ Pinterest:</span>
-            <span className="text-cyan-400 font-bold">{crawlCount} ảnh</span>
-          </label>
-          <span className="text-[11px] text-slate-400">10 – 80 ảnh (Mặc định 40)</span>
-        </div>
-        <div className="flex items-center gap-3 pt-1">
-          <input
-            id="crawl-count-input"
-            type="range"
-            min={10}
-            max={80}
-            step={5}
-            value={crawlCount}
-            onChange={(e) => onCrawlCountChange?.(Number(e.target.value))}
-            disabled={isBusy}
-            className="flex-1 accent-cyan-400 h-2 bg-slate-700 rounded-lg cursor-pointer disabled:opacity-50"
-          />
-          <span className="w-10 text-center text-xs font-bold text-cyan-300 bg-slate-800 px-2 py-0.5 rounded border border-slate-700">
-            {crawlCount}
+      {/* Main Action Buttons */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+        <button
+          type="button"
+          onClick={onDiscoverTrends ?? onStartCrawl}
+          disabled={isBusy || !niche.trim()}
+          className="flex flex-col items-center justify-center gap-0.5 rounded-xl bg-gradient-to-r from-cyan-600 via-blue-600 to-indigo-600 p-3 text-white shadow-lg shadow-cyan-500/20 transition hover:from-cyan-500 hover:to-indigo-500 hover:shadow-cyan-500/35 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <div className="flex items-center gap-2 text-sm font-bold">
+            <span>✨</span>
+            <span>{isDiscoveringTrends ? "Đang phân tích xu hướng..." : "Khám phá Xu hướng (Tier 1 & 2)"}</span>
+          </div>
+          <span className="text-[10px] text-cyan-200/90 font-normal">
+            Phân tích cụm chủ đề AI, lọc từ khóa phi ấn phẩm & chọn cụm cào
           </span>
-        </div>
-        <p className="text-[11px] text-slate-400">
-          Vision AI sẽ thu thập {crawlCount} ảnh Pinterest theo chủ đề &quot;{niche || "xu hướng"}&quot;, sau đó lọc trùng lặp và chấm điểm nét tự động để đề xuất danh sách ứng viên in ấn tốt nhất.
-        </p>
-      </div>
+        </button>
 
-      {/* 4. Reference Images Dropzone & Mockup Output Notice */}
-      <div className="flex flex-col gap-2">
-        <ReferenceDropzone
-          images={referenceImages}
-          onChange={onReferenceImagesChange}
-          disabled={isBusy}
-          maxImages={10}
-        />
-        <p className="text-[11px] text-slate-400 px-1">
-          {referenceImages.length > 0
-            ? `✓ Đã nạp ${referenceImages.length} ảnh phòng/bối cảnh tham chiếu: Hệ thống sẽ render chính xác ${referenceImages.length} mockup AI tương ứng.`
-            : `Chưa nạp ảnh bối cảnh tham chiếu: Hệ thống sẽ tự động tạo ${expectedMockupCount} mockup lifestyle với bối cảnh cao cấp ngẫu nhiên.`}
-        </p>
-      </div>
-
-      {/* Action Buttons */}
-      <div className="flex items-center gap-3 pt-2">
         <button
           type="button"
           onClick={onStartCrawl}
           disabled={isBusy || !niche.trim()}
-          className="flex-1 flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 px-4 py-2.5 text-sm font-bold text-white shadow-lg shadow-cyan-500/25 transition hover:from-cyan-400 hover:to-blue-500 hover:shadow-cyan-500/40 disabled:cursor-not-allowed disabled:opacity-50"
+          className="flex flex-col items-center justify-center gap-0.5 rounded-xl border border-emerald-500/50 bg-emerald-950/30 p-3 text-emerald-300 shadow transition hover:border-emerald-400 hover:bg-emerald-900/40 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
         >
-          <span>▶</span>
-          <span>{isBusy ? "Đang xử lý..." : `Bắt đầu cào ảnh cho ${selectedProduct.toUpperCase()}`}</span>
+          <div className="flex items-center gap-2 text-sm font-bold">
+            <span>⚡</span>
+            <span>{jobStatus === "running" ? "Đang cào dữ liệu..." : "Quick Auto Crawl (Cào nhanh)"}</span>
+          </div>
+          <span className="text-[10px] text-emerald-400/80 font-normal">
+            Cào trực tiếp {crawlCount} ảnh Pinterest & chấm điểm AI tức thì
+          </span>
         </button>
+      </div>
 
-        {isBusy && (
+      {isBusy && (
+        <div className="flex items-center justify-between rounded-lg border border-slate-700 bg-slate-950/70 p-3">
+          <div className="flex items-center gap-2 text-xs text-slate-300">
+            <span className="h-2 w-2 rounded-full bg-cyan-400 animate-ping" />
+            <span>Tiến trình đang chạy ngầm... Bạn có thể theo dõi thanh trạng thái bên dưới.</span>
+          </div>
           <button
             type="button"
             onClick={onStopJob}
-            className="flex items-center justify-center gap-1.5 rounded-xl border border-rose-600/60 bg-rose-950/40 px-4 py-2.5 text-sm font-semibold text-rose-300 shadow transition hover:bg-rose-900/60 hover:text-white"
+            className="flex items-center gap-1 rounded-lg border border-rose-700/60 bg-rose-950/40 px-3 py-1.5 text-xs font-semibold text-rose-300 transition hover:bg-rose-900/60 hover:text-white"
           >
             <span>⏹</span>
             <span>Dừng Job</span>
           </button>
+        </div>
+      )}
+
+      {/* Collapsible Advanced Pinterest Settings */}
+      <div className="flex flex-col rounded-xl border border-slate-800 bg-slate-950/60">
+        <button
+          type="button"
+          onClick={() => setIsAdvancedOpen((prev) => !prev)}
+          className="flex items-center justify-between p-3.5 text-left text-xs font-semibold text-slate-300 hover:text-white transition"
+        >
+          <div className="flex items-center gap-2">
+            <span>⚙️</span>
+            <span>Cài đặt nâng cao Pinterest API (Tùy chọn)</span>
+            <span className="rounded bg-slate-800 px-2 py-0.5 text-[10px] text-cyan-300 font-mono">
+              {region} • {trendType} • {crawlCount} ảnh
+            </span>
+          </div>
+          <span className="text-slate-400 text-sm font-bold">
+            {isAdvancedOpen ? "▲" : "▼"}
+          </span>
+        </button>
+
+        {isAdvancedOpen && (
+          <div className="flex flex-col gap-4 border-t border-slate-800 p-4 pt-3">
+            {/* Override Product Type Selector */}
+            <div className="flex flex-col gap-2">
+              <label className="text-xs font-semibold text-slate-300 flex items-center justify-between">
+                <span>📦 Ghi đè loại phôi sản phẩm:</span>
+                <span className="text-[11px] text-slate-400">Chọn phôi in xưởng mong muốn</span>
+              </label>
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                {PRODUCT_OPTIONS.map((opt) => {
+                  const isSelected = activeProduct === opt.type;
+                  return (
+                    <button
+                      key={opt.type}
+                      type="button"
+                      disabled={isBusy}
+                      onClick={() => handleSelectProduct(opt.type)}
+                      className={`flex flex-col items-start gap-1 rounded-xl border p-2 text-left transition ${
+                        isSelected
+                          ? "border-cyan-500 bg-cyan-950/40 text-cyan-200 ring-1 ring-cyan-500/50 shadow"
+                          : "border-slate-800 bg-slate-900/60 text-slate-400 hover:border-slate-700 hover:bg-slate-800/70 hover:text-slate-200"
+                      } disabled:cursor-not-allowed disabled:opacity-50`}
+                    >
+                      <div className="flex w-full items-center justify-between">
+                        <span className="text-base">{opt.icon}</span>
+                        {isSelected && (
+                          <span className="rounded-full bg-cyan-500/20 px-1 py-0.2 text-[8px] font-bold text-cyan-300">
+                            ✓ Đang chọn
+                          </span>
+                        )}
+                      </div>
+                      <strong className={`text-xs font-bold ${isSelected ? "text-cyan-200" : "text-slate-200"}`}>
+                        {opt.label}
+                      </strong>
+                      <span className="text-[9px] text-slate-400 line-clamp-1">{opt.standard}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Pinterest API Filters: Trend Type, Interest, Region */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              {/* Trend Type */}
+              <div className="flex flex-col gap-1.5">
+                <label htmlFor="trend-type-select" className="text-xs font-semibold text-slate-300">
+                  📈 Loại xu hướng (Trend Type)
+                </label>
+                <select
+                  id="trend-type-select"
+                  value={trendType}
+                  onChange={(e) => onTrendTypeChange?.(e.target.value as "growing" | "monthly" | "seasonal")}
+                  disabled={isBusy}
+                  className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs text-slate-200 focus:border-cyan-400 focus:outline-none disabled:opacity-50"
+                >
+                  <option value="growing">Đang tăng trưởng mạnh (Growing)</option>
+                  <option value="monthly">Xu hướng hàng tháng (Monthly)</option>
+                  <option value="seasonal">Xu hướng theo mùa vụ (Seasonal)</option>
+                </select>
+              </div>
+
+              {/* Interest */}
+              <div className="flex flex-col gap-1.5">
+                <label htmlFor="interest-select" className="text-xs font-semibold text-slate-300">
+                  🏷️ Ngành hàng (Pinterest Interest)
+                </label>
+                <select
+                  id="interest-select"
+                  value={interest}
+                  onChange={(e) => onInterestChange?.(e.target.value)}
+                  disabled={isBusy}
+                  className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs text-slate-200 focus:border-cyan-400 focus:outline-none disabled:opacity-50"
+                >
+                  <option value="">Tất cả ngành hàng (Tự động)</option>
+                  <option value="womens_fashion">Thời trang & Phụ kiện (womens_fashion)</option>
+                  <option value="home_decor">Trang trí nội thất (home_decor)</option>
+                  <option value="art">Nghệ thuật & Thiết kế (art)</option>
+                  <option value="diy_and_crafts">Thủ công DIY (diy_and_crafts)</option>
+                </select>
+              </div>
+
+              {/* Region */}
+              <div className="flex flex-col gap-1.5">
+                <label htmlFor="region-select" className="text-xs font-semibold text-slate-300">
+                  🌍 Thị trường / Quốc gia (Region)
+                </label>
+                <select
+                  id="region-select"
+                  value={region}
+                  onChange={(e) => onRegionChange?.(e.target.value)}
+                  disabled={isBusy}
+                  className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs text-slate-200 focus:border-cyan-400 focus:outline-none disabled:opacity-50"
+                >
+                  <option value="US">Hoa Kỳ (United States - US) 🇺🇸</option>
+                  <option value="GB">Vương Quốc Anh (United Kingdom - GB) 🇬🇧</option>
+                  <option value="CA">Canada (CA) 🇨🇦</option>
+                  <option value="DE">Đức (Germany - DE) 🇩🇪</option>
+                  <option value="FR">Pháp (France - FR) 🇫🇷</option>
+                  <option value="AU">Úc (Australia - AU) 🇦🇺</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Crawl Count Slider */}
+            <div className="flex flex-col gap-1.5 rounded-lg border border-slate-800 bg-slate-900/60 p-3">
+              <div className="flex items-center justify-between">
+                <label htmlFor="crawl-count-input" className="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
+                  <span>📥 Số lượng ảnh cào từ Pinterest:</span>
+                  <span className="text-cyan-400 font-bold">{crawlCount} ảnh</span>
+                </label>
+                <span className="text-[11px] text-slate-400">10 – 80 ảnh (Mặc định 40 ảnh trong 30-45s)</span>
+              </div>
+              <div className="flex items-center gap-3 pt-1">
+                <input
+                  id="crawl-count-input"
+                  type="range"
+                  min={10}
+                  max={80}
+                  step={5}
+                  value={crawlCount}
+                  onChange={(e) => onCrawlCountChange?.(Number(e.target.value))}
+                  disabled={isBusy}
+                  className="flex-1 accent-cyan-400 h-2 bg-slate-700 rounded-lg cursor-pointer disabled:opacity-50"
+                />
+                <span className="w-10 text-center text-xs font-bold text-cyan-300 bg-slate-800 px-2 py-0.5 rounded border border-slate-700">
+                  {crawlCount}
+                </span>
+              </div>
+            </div>
+
+            {/* Room Reference Images Dropzone */}
+            <div className="flex flex-col gap-2">
+              <label className="text-xs font-semibold text-slate-300">
+                🖼️ Ảnh phòng / Bối cảnh mẫu tham chiếu (Tùy chọn cho Mockup AI):
+              </label>
+              <ReferenceDropzone
+                images={referenceImages}
+                onChange={onReferenceImagesChange}
+                disabled={isBusy}
+                maxImages={10}
+              />
+            </div>
+          </div>
         )}
       </div>
     </section>

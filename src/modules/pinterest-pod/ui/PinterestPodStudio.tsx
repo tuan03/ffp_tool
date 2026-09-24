@@ -13,6 +13,8 @@ import type {
   ReferenceImage,
   StepperState,
   SummaryMetrics,
+  ThemeCluster,
+  TrendDiscoveryResult,
 } from "../types";
 import { CandidateReviewGrid } from "./components/CandidateReviewGrid";
 import { DeliverablesShowcase } from "./components/DeliverablesShowcase";
@@ -23,6 +25,7 @@ import { PinterestAuthModal } from "./components/PinterestAuthModal";
 import { ProgressAndLogs } from "./components/ProgressAndLogs";
 import { RecentRunsAccordion } from "./components/RecentRunsAccordion";
 import { RoomTemplateManagerModal } from "./components/RoomTemplateManagerModal";
+import { TrendClusterDiscovery } from "./components/TrendClusterDiscovery";
 
 interface PinterestPodStudioProps {
   readonly client?: PinterestPodClient;
@@ -40,6 +43,14 @@ export function PinterestPodStudio({ client: injectedClient }: PinterestPodStudi
   const [product, setProduct] = useState<PinterestProductType>("bag");
   const [crawlCount, setCrawlCount] = useState(40);
   const [referenceImages, setReferenceImages] = useState<readonly ReferenceImage[]>([]);
+  const [trendType, setTrendType] = useState<"growing" | "monthly" | "seasonal">("growing");
+  const [interest, setInterest] = useState<string>("");
+  const [region, setRegion] = useState<string>("US");
+
+  // Trend Discovery State (Tier 1 & 2)
+  const [trendDiscoveryResult, setTrendDiscoveryResult] = useState<TrendDiscoveryResult | null>(null);
+  const [isDiscoveringTrends, setIsDiscoveringTrends] = useState(false);
+  const [selectedClusterIds, setSelectedClusterIds] = useState<ReadonlySet<string>>(new Set());
 
   // Job State
   const [jobId, setJobId] = useState<string | null>(null);
@@ -47,6 +58,7 @@ export function PinterestPodStudio({ client: injectedClient }: PinterestPodStudi
   const [stepper, setStepper] = useState<StepperState | undefined>(undefined);
   const [logs, setLogs] = useState<readonly string[]>([]);
   const [candidates, setCandidates] = useState<readonly CandidateItem[]>([]);
+  const [rejectedCandidates, setRejectedCandidates] = useState<readonly CandidateItem[]>([]);
   const [selectedCandidateIds, setSelectedCandidateIds] = useState<readonly string[]>([]);
   const [deliverables, setDeliverables] = useState<DeliverablesData | undefined>(undefined);
   const [summaryMetrics, setSummaryMetrics] = useState<SummaryMetrics | undefined>(undefined);
@@ -168,6 +180,17 @@ export function PinterestPodStudio({ client: injectedClient }: PinterestPodStudi
         setCandidates([]);
         setSelectedCandidateIds([]);
       }
+      const rawRejected = detail.rejected_candidates ?? detail.rejectedCandidates ?? [];
+      if (rawRejected.length > 0) {
+        const normalizedRejected = rawRejected.map((c, idx) => ({
+          ...c,
+          id: c.id || c.candidate_id || c.image_id || `rej_${idx + 1}`,
+          is_rejected: true,
+        }));
+        setRejectedCandidates(normalizedRejected);
+      } else {
+        setRejectedCandidates([]);
+      }
       if (detail.deliverables) {
         setDeliverables(detail.deliverables);
       } else {
@@ -251,6 +274,7 @@ export function PinterestPodStudio({ client: injectedClient }: PinterestPodStudi
           // Ignore
         }
         setCandidates([]);
+        setRejectedCandidates([]);
         setSelectedCandidateIds([]);
         setDeliverables(undefined);
         setJobStatus("idle");
@@ -274,6 +298,8 @@ export function PinterestPodStudio({ client: injectedClient }: PinterestPodStudi
     }
     setJobStatus("idle");
     setCandidates([]);
+    setRejectedCandidates([]);
+    setTrendDiscoveryResult(null);
     setSelectedCandidateIds([]);
     setDeliverables(undefined);
     setSummaryMetrics(undefined);
@@ -393,6 +419,15 @@ export function PinterestPodStudio({ client: injectedClient }: PinterestPodStudi
           return normalized.filter((c) => c.recommended).map((c) => c.id);
         });
       }
+      const rawRejected = detail.rejected_candidates ?? detail.rejectedCandidates ?? [];
+      if (rawRejected.length > 0) {
+        const normalizedRejected = rawRejected.map((c, idx) => ({
+          ...c,
+          id: c.id || c.candidate_id || c.image_id || `rej_${idx + 1}`,
+          is_rejected: true,
+        }));
+        setRejectedCandidates(normalizedRejected);
+      }
       if (detail.deliverables) {
         setDeliverables(detail.deliverables);
       }
@@ -456,21 +491,79 @@ export function PinterestPodStudio({ client: injectedClient }: PinterestPodStudi
     }
   }
 
+  // Trend Discovery Trigger (Tier 1 & 2)
+  async function handleDiscoverTrends(): Promise<void> {
+    if (!niche.trim()) return;
+    setIsDiscoveringTrends(true);
+    setErrorMessage(null);
+    try {
+      const effectiveProduct = product || (niche.trim() ? inferProductTypeFromNiche(niche) : "bag");
+      const result = await client.discoverTrends({
+        niche: niche.trim(),
+        product: effectiveProduct,
+        trend_type: trendType,
+        interest: interest || undefined,
+        region: region || undefined,
+      });
+      if (!isMountedRef.current) return;
+      setTrendDiscoveryResult(result);
+      const recIds = new Set(result.clusters.filter((c) => c.recommended).map((c) => c.cluster_id || c.id || ""));
+      setSelectedClusterIds(recIds.size > 0 ? recIds : new Set(result.clusters.slice(0, 3).map((c) => c.cluster_id || c.id || "")));
+    } catch (err) {
+      if (!isMountedRef.current) return;
+      setErrorMessage(err instanceof Error ? err.message : "Khám phá xu hướng thất bại");
+    } finally {
+      if (isMountedRef.current) {
+        setIsDiscoveringTrends(false);
+      }
+    }
+  }
+
+  function handleToggleCluster(clusterId: string): void {
+    setSelectedClusterIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(clusterId)) {
+        next.delete(clusterId);
+      } else {
+        next.add(clusterId);
+      }
+      return next;
+    });
+  }
+
+  function handleSelectAllClusters(): void {
+    if (!trendDiscoveryResult) return;
+    setSelectedClusterIds(new Set(trendDiscoveryResult.clusters.map((c) => c.cluster_id || c.id || "")));
+  }
+
+  function handleDeselectAllClusters(): void {
+    setSelectedClusterIds(new Set());
+  }
+
+  async function handleStartCrawlWithClusters(selectedClusters: readonly ThemeCluster[]): Promise<void> {
+    const queries = selectedClusters.flatMap((c) => c.fused_queries ?? c.sample_queries ?? []);
+    await handleStartCrawl(queries);
+  }
+
   // Start Crawl (Stage 1 action)
-  async function handleStartCrawl(): Promise<void> {
+  async function handleStartCrawl(customQueries?: readonly string[]): Promise<void> {
     if (!niche.trim()) return;
 
     setErrorMessage(null);
     setJobStatus("running");
     setCurrentStage(1);
     setCandidates([]);
+    setRejectedCandidates([]);
     setSelectedCandidateIds([]);
     setDeliverables(undefined);
     setSummaryMetrics(undefined);
     setStepper({
       current_step: 1,
       percent: 15,
-      current_message: `Đang quét từ khóa và cào ảnh niche "${niche}"...`,
+      current_message:
+        customQueries && customQueries.length > 0
+          ? `Đang cào dữ liệu cho ${customQueries.length} query mục tiêu theo cụm xu hướng...`
+          : `Đang quét từ khóa và cào ảnh niche "${niche}"...`,
     });
 
     const effectiveProduct = product || (niche.trim() ? inferProductTypeFromNiche(niche) : "bag");
@@ -478,6 +571,10 @@ export function PinterestPodStudio({ client: injectedClient }: PinterestPodStudi
     const effectiveVariants = referenceImages.length > 0 ? referenceImages.length : 5;
 
     try {
+      const selectedClustersList = trendDiscoveryResult
+        ? trendDiscoveryResult.clusters.filter((c) => selectedClusterIds.has(c.cluster_id || c.id || ""))
+        : undefined;
+
       const created = await client.createJob({
         niche: niche.trim(),
         product: effectiveProduct,
@@ -487,6 +584,11 @@ export function PinterestPodStudio({ client: injectedClient }: PinterestPodStudi
         top_images: crawlCount,
         referenceImages,
         ai_background_variants: effectiveVariants,
+        trend_type: trendType,
+        interest: interest || undefined,
+        region: region || undefined,
+        selected_clusters: selectedClustersList,
+        custom_queries: customQueries,
       });
 
       setJobId(created.jobId);
@@ -511,6 +613,38 @@ export function PinterestPodStudio({ client: injectedClient }: PinterestPodStudi
       setErrorMessage(err instanceof Error ? err.message : "Không thể khởi tạo job cào Pinterest");
       setJobStatus("idle");
     }
+  }
+
+  // Rescue a rejected candidate
+  async function handleRescueCandidate(candidate: CandidateItem): Promise<void> {
+    const candId = candidate.id || candidate.candidate_id || candidate.image_id || "";
+    if (!candId) return;
+
+    if (jobId) {
+      try {
+        await client.rescueCandidate(jobId, candId);
+      } catch {
+        // Ignore network error; fallback to optimistic update
+      }
+    }
+
+    const rescued: CandidateItem = {
+      ...candidate,
+      id: candId,
+      is_rejected: false,
+      candidate_category: "breakthrough_concept",
+      is_breakthrough_concept: true,
+      recommended: true,
+      reason: candidate.reason || "Đã giải cứu bởi người dùng (AI sẽ tách chi tiết hoa văn khi in xưởng)",
+    };
+
+    setRejectedCandidates((prev) => prev.filter((c) => (c.id || c.candidate_id || c.image_id) !== candId));
+    setCandidates((prev) => {
+      const exists = prev.some((c) => (c.id || c.candidate_id || c.image_id) === candId);
+      if (exists) return prev;
+      return [rescued, ...prev];
+    });
+    setSelectedCandidateIds((prev) => [...prev, candId]);
   }
 
   // Stop Job
@@ -722,6 +856,20 @@ export function PinterestPodStudio({ client: injectedClient }: PinterestPodStudi
             </div>
           )}
 
+          {/* Trend & Keyword Discovery (Tier 1 & 2) Showcase */}
+          {trendDiscoveryResult && (
+            <TrendClusterDiscovery
+              discoveryResult={trendDiscoveryResult}
+              selectedClusterIds={selectedClusterIds}
+              onToggleCluster={handleToggleCluster}
+              onSelectAllClusters={handleSelectAllClusters}
+              onDeselectAllClusters={handleDeselectAllClusters}
+              onStartCrawlWithClusters={(clusters) => void handleStartCrawlWithClusters(clusters)}
+              isCrawling={jobStatus === "running"}
+              onClose={() => setTrendDiscoveryResult(null)}
+            />
+          )}
+
           {/* 2-Columns Layout: Form (Left) & Progress/Logs (Right) */}
           <div className="grid grid-cols-1 gap-6 lg:grid-cols-12 items-start">
             {/* Left Column: Form Khởi Tạo & Lịch Sử Job */}
@@ -738,6 +886,14 @@ export function PinterestPodStudio({ client: injectedClient }: PinterestPodStudi
                 jobStatus={jobStatus}
                 onStartCrawl={() => void handleStartCrawl()}
                 onStopJob={() => void handleStopJob()}
+                trendType={trendType}
+                onTrendTypeChange={setTrendType}
+                interest={interest}
+                onInterestChange={setInterest}
+                region={region}
+                onRegionChange={setRegion}
+                onDiscoverTrends={() => void handleDiscoverTrends()}
+                isDiscoveringTrends={isDiscoveringTrends}
               />
 
               <RecentRunsAccordion
@@ -812,6 +968,7 @@ export function PinterestPodStudio({ client: injectedClient }: PinterestPodStudi
 
           <CandidateReviewGrid
             candidates={candidates}
+            rejectedCandidates={rejectedCandidates}
             selectedIds={selectedCandidateIds}
             onToggleCandidate={handleToggleCandidate}
             onSelectAll={handleSelectAll}
@@ -824,6 +981,7 @@ export function PinterestPodStudio({ client: injectedClient }: PinterestPodStudi
             onRemoveRoomTemplate={handleRemoveRoomTemplate}
             onUseCandidateAsRoomTemplate={handleUseCandidateAsRoomTemplate}
             onOpenRoomManager={() => setIsRoomManagerOpen(true)}
+            onRescueCandidate={(candidate) => void handleRescueCandidate(candidate)}
           />
         </div>
       )}
