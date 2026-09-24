@@ -127,7 +127,7 @@ class TestTemplateMockupRefactoring(unittest.TestCase):
         self.assertNotIn("DO NOT DRAW, RENDER, PAINT, OR HALLUCINATE ANY TEXT BANNERS", prompt)
 
     def test_direct_ai_lifestyle_prompt_infographic_template(self) -> None:
-        """Requirement 4: For infographic templates, ensure instructions tell Imagen not to paint text in banner areas."""
+        """Requirement: For infographic templates, ensure instructions tell Imagen to render end-to-end with crisp typography."""
         analysis = {
             "scene_title": "Handbag Spec Sheet",
             "visual_concept": "Handbag with feature callouts and banner on solid white background.",
@@ -135,6 +135,24 @@ class TestTemplateMockupRefactoring(unittest.TestCase):
             "is_plain_background": True,
             "product_boxes_norm_0_1000": [self.product_box],
             "chrome_boxes_norm_0_1000": [self.safe_chrome],
+            "product_instances": [
+                {
+                    "instance_id": 1,
+                    "box_2d": [100, 100, 500, 500],
+                    "position": "top-left",
+                    "pose_and_presentation": "handbag held by handle",
+                }
+            ],
+            "infographic_text_elements": [
+                {
+                    "element_id": "banner_1",
+                    "banner_text": "CAN BE CARRIED OR LIFTED",
+                    "element_type": "banner",
+                    "position": "bottom-left",
+                    "visual_style": "yellow banner",
+                }
+            ],
+            "exclusion_zones": [[750, 0, 850, 500]],
             "product_form": "Structured leather satchel with rolled top handles",
             "external_chrome_to_preserve": "Clean white studio background",
             "generation_directive": "Display satchel on solid background.",
@@ -148,9 +166,11 @@ class TestTemplateMockupRefactoring(unittest.TestCase):
             reference_analysis=analysis,
         )
 
-        self.assertIn("STRICT INFOGRAPHIC TEMPLATE PRESERVATION MANDATE", prompt)
-        self.assertIn("STRICT NO-TEXT-BANNER MANDATE", prompt)
-        self.assertIn("MUST NOT DRAW, RENDER, PAINT, OR HALLUCINATE ANY TEXT BANNERS", prompt)
+        self.assertIn("STRICT INFOGRAPHIC SPEC SHEET MANDATE", prompt)
+        self.assertIn("STRICT INFOGRAPHIC SPEC SHEET & TYPOGRAPHY MANDATE", prompt)
+        self.assertIn("CAN BE CARRIED OR LIFTED", prompt)
+        self.assertIn("MANDATORY SPATIAL LAYOUT ANCHORING", prompt)
+        self.assertIn("EXCLUSION ZONES", prompt)
 
     def test_normalize_boxes_edge_cases(self) -> None:
         """Test _normalize_boxes on invalid, empty, or boundary coordinates."""
@@ -277,8 +297,8 @@ class TestTemplateMockupRefactoring(unittest.TestCase):
         self.assertIn("STRICT PHOTOGRAPHIC LIFESTYLE INTEGRATION MANDATE", prompt)
         self.assertNotIn("STRICT NO-TEXT-BANNER MANDATE", prompt)
 
-    def test_infographic_empty_chrome_boxes_still_suppresses_text(self) -> None:
-        """An infographic template with empty chrome_boxes still instructs Imagen not to paint text banners."""
+    def test_infographic_empty_chrome_boxes_end_to_end(self) -> None:
+        """An infographic template with empty chrome_boxes still instructs Imagen to render spec sheet cleanly."""
         analysis = {
             "scene_title": "Clean Infographic Template",
             "visual_concept": "Product on solid white studio background.",
@@ -297,9 +317,22 @@ class TestTemplateMockupRefactoring(unittest.TestCase):
             has_room_template=True,
             reference_analysis=analysis,
         )
-        self.assertIn("STRICT INFOGRAPHIC TEMPLATE PRESERVATION MANDATE", prompt)
-        self.assertIn("STRICT NO-TEXT-BANNER MANDATE", prompt)
-        self.assertIn("MUST NOT DRAW, RENDER, PAINT, OR HALLUCINATE ANY TEXT BANNERS", prompt)
+        self.assertIn("STRICT INFOGRAPHIC SPEC SHEET MANDATE", prompt)
+        self.assertIn("STRICT INFOGRAPHIC SPEC SHEET & TYPOGRAPHY MANDATE", prompt)
+
+    def test_composite_margin_snapping(self) -> None:
+        """Chrome box near border is snapped to margin in composite_infographic_hybrid."""
+        tpl = Image.new("RGB", (1000, 1000), color=(255, 255, 255))
+        gen = Image.new("RGB", (1000, 1000), color=(0, 0, 0))
+        near_left_box = [800, 15, 860, 480]  # xmin <= 25 -> snapped to 0
+        result = composite_infographic_hybrid(
+            tpl,
+            gen,
+            chrome_boxes=[near_left_box],
+            product_boxes=[self.product_box],
+        )
+        # Pixel at x=5, y=820 should be white from tpl
+        self.assertEqual(result.getpixel((5, 820)), (255, 255, 255))
 
     def test_composite_skips_colliding_with_float_product_boxes(self) -> None:
         """Collision detection works when product boxes are normalized floats in 0..1 scale."""
