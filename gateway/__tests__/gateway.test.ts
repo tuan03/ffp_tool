@@ -8081,6 +8081,194 @@ describe("Gateway: Architectural & Operational Hardening (P1)", () => {
       assert.equal(product.images[1]?.id, "gid://shopify/MediaImage/img-2");
       assert.equal(product.images[1]?.altText, "Image 2");
     });
+
+    it("products.update with replaceMedia: true paginates through >300 existing media items across 4 pages and deletes them in chunks of 250", async () => {
+      // 320 media items total: Page 1 (100), Page 2 (100), Page 3 (100), Page 4 (20)
+      const deletedBatches: string[][] = [];
+      const dispatcher = setupTestGateway(async (_url: string, init?: RequestInit) => {
+        const body = JSON.parse(init?.body as string);
+        if (body.query.includes("PipelineProductState(")) {
+          return createMockResponse({
+            data: {
+              node: {
+                media: {
+                  pageInfo: { hasNextPage: true, endCursor: "cursor-page-1" },
+                  nodes: Array.from({ length: 100 }, (_, i) => ({ id: `gid://shopify/MediaImage/${i + 1}` })),
+                },
+                variants: { nodes: [] },
+              },
+            },
+          });
+        }
+        if (body.query.includes("PipelineProductMedia(")) {
+          if (body.variables.after === "cursor-page-1") {
+            return createMockResponse({
+              data: {
+                node: {
+                  media: {
+                    pageInfo: { hasNextPage: true, endCursor: "cursor-page-2" },
+                    nodes: Array.from({ length: 100 }, (_, i) => ({ id: `gid://shopify/MediaImage/${101 + i}` })),
+                  },
+                },
+              },
+            });
+          }
+          if (body.variables.after === "cursor-page-2") {
+            return createMockResponse({
+              data: {
+                node: {
+                  media: {
+                    pageInfo: { hasNextPage: true, endCursor: "cursor-page-3" },
+                    nodes: Array.from({ length: 100 }, (_, i) => ({ id: `gid://shopify/MediaImage/${201 + i}` })),
+                  },
+                },
+              },
+            });
+          }
+          if (body.variables.after === "cursor-page-3") {
+            return createMockResponse({
+              data: {
+                node: {
+                  media: {
+                    pageInfo: { hasNextPage: false, endCursor: null },
+                    nodes: Array.from({ length: 20 }, (_, i) => ({ id: `gid://shopify/MediaImage/${301 + i}` })),
+                  },
+                },
+              },
+            });
+          }
+        }
+        if (body.query.includes("ProductUpdate(")) {
+          return createMockResponse({
+            data: {
+              productUpdate: {
+                product: {
+                  id: "gid://shopify/Product/123",
+                  title: "Updated Title",
+                  handle: "updated-title",
+                  description: "Desc",
+                  descriptionHtml: "<p>Desc</p>",
+                  status: "ACTIVE",
+                  vendor: "Vendor",
+                  productType: "Type",
+                  tags: [],
+                  onlineStoreUrl: null,
+                  featuredImage: null,
+                  images: { pageInfo: { hasNextPage: false }, edges: [] },
+                  media: { nodes: [] },
+                  seo: { title: null, description: null },
+                  createdAt: "2026-01-01T00:00:00Z",
+                  updatedAt: "2026-01-02T00:00:00Z",
+                  variants: { pageInfo: { hasNextPage: false }, edges: [] },
+                },
+                userErrors: [],
+              },
+            },
+          });
+        }
+        if (body.query.includes("ProductMediaDelete(")) {
+          deletedBatches.push(body.variables.mediaIds);
+          return createMockResponse({
+            data: {
+              productDeleteMedia: {
+                deletedMediaIds: body.variables.mediaIds,
+                userErrors: [],
+              },
+            },
+          });
+        }
+        return createMockResponse({});
+      });
+
+      const res = await dispatcher.dispatch({
+        storeId: "store-test",
+        operation: "products.update",
+        mode: "apply",
+        requestId: "req-replace-media-1",
+        payload: {
+          id: "gid://shopify/Product/123",
+          product: {
+            replaceMedia: true,
+            media: [
+              { originalSource: "https://example.com/new-img.jpg" },
+            ],
+          },
+        },
+      });
+
+      assert.equal(res.success, true);
+      // Total 320 media items deleted in 2 chunks: chunk 1 (250 items), chunk 2 (70 items)
+      assert.equal(deletedBatches.length, 2);
+      assert.equal(deletedBatches[0]?.length, 250);
+      assert.equal(deletedBatches[1]?.length, 70);
+      assert.equal(deletedBatches[0]?.[0], "gid://shopify/MediaImage/1");
+      assert.equal(deletedBatches[1]?.[69], "gid://shopify/MediaImage/320");
+    });
+
+    it("ClientCredentialsTokenProvider retries on HTTP 429 with backoff and throws SHOPIFY_THROTTLED when wait > 30s", async () => {
+      const sleepCalls: number[] = [];
+      let attempts = 0;
+      const provider = new ClientCredentialsTokenProvider({
+        transport: async () => {
+          attempts++;
+          if (attempts <= 2) {
+            return new Response(JSON.stringify({ error: "rate_limited" }), {
+              status: 429,
+              headers: { "Retry-After": "2", "Content-Type": "application/json" },
+            });
+          }
+          return new Response(JSON.stringify({ access_token: "shpat_new_token_123", expires_in: 86400 }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        },
+        sleep: async (ms) => {
+          sleepCalls.push(ms);
+        },
+      });
+
+      const token = await provider.getToken({
+        storeId: "store-oauth",
+        shopDomain: "store-oauth.myshopify.com",
+        apiVersion: "2026-07",
+        auth: { type: "client_credentials", clientId: "cid", clientSecret: "csec" },
+      });
+
+      assert.equal(token, "shpat_new_token_123");
+      assert.equal(attempts, 3);
+      assert.equal(sleepCalls.length, 2);
+      assert.ok(sleepCalls[0] >= 2000);
+
+      // Verify immediate SHOPIFY_THROTTLED when Retry-After > 30s
+      const longWaitProvider = new ClientCredentialsTokenProvider({
+        transport: async () => {
+          return new Response(JSON.stringify({ error: "rate_limited" }), {
+            status: 429,
+            headers: { "Retry-After": "60", "Content-Type": "application/json" },
+          });
+        },
+        sleep: async () => {
+          assert.fail("Should not sleep when Retry-After > 30s");
+        },
+      });
+
+      await assert.rejects(
+        () =>
+          longWaitProvider.getToken({
+            storeId: "store-oauth-long",
+            shopDomain: "store-oauth-long.myshopify.com",
+            apiVersion: "2026-07",
+            auth: { type: "client_credentials", clientId: "cid", clientSecret: "csec" },
+          }),
+        (err: unknown) => {
+          const gErr = err as GatewayError;
+          assert.equal(gErr.code, "SHOPIFY_THROTTLED");
+          assert.equal(gErr.httpStatus, 429);
+          assert.equal(gErr.retryAfterSeconds, 60);
+          return true;
+        },
+      );
+    });
   });
 });
 

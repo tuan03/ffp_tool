@@ -330,35 +330,41 @@ export async function executeVariantsBulkUpdate(
     groupIndex++;
 
     try {
-      const raw = await client.query<ProductVariantsBulkUpdateResponse>(
-        store,
-        PRODUCT_VARIANTS_BULK_UPDATE_MUTATION,
-        {
-          productId,
-          variants: group.map((g) => g.variantInput),
-        },
-        { isWrite: true, requestId: childRequestId },
-      );
-
-      if (!raw || !raw.productVariantsBulkUpdate) {
-        throw new GatewayError(
-          `Failed to update variants for product ${productId}: productVariantsBulkUpdate returned no data`,
-          "SHOPIFY_USER_ERROR",
-          400,
+      const groupVariants = group.map((g) => g.variantInput);
+      for (let i = 0; i < groupVariants.length; i += 250) {
+        const chunk = groupVariants.slice(i, i + 250);
+        const subGroup = group.slice(i, i + 250);
+        const chunkReqId = childRequestId ? `${childRequestId}:${Math.floor(i / 250)}` : undefined;
+        const raw = await client.query<ProductVariantsBulkUpdateResponse>(
+          store,
+          PRODUCT_VARIANTS_BULK_UPDATE_MUTATION,
+          {
+            productId,
+            variants: chunk,
+          },
+          { isWrite: true, requestId: chunkReqId },
         );
-      }
 
-      if (raw.productVariantsBulkUpdate.userErrors && raw.productVariantsBulkUpdate.userErrors.length > 0) {
-        throw mapUserErrorsToGatewayError(raw.productVariantsBulkUpdate.userErrors);
-      }
-
-      if (raw.productVariantsBulkUpdate.productVariants && raw.productVariantsBulkUpdate.productVariants.length > 0) {
-        for (const v of raw.productVariantsBulkUpdate.productVariants) {
-          updatedVariantIds.push(v.id);
+        if (!raw || !raw.productVariantsBulkUpdate) {
+          throw new GatewayError(
+            `Failed to update variants for product ${productId}: productVariantsBulkUpdate returned no data`,
+            "SHOPIFY_USER_ERROR",
+            400,
+          );
         }
-      } else {
-        for (const g of group) {
-          updatedVariantIds.push(g.id);
+
+        if (raw.productVariantsBulkUpdate.userErrors && raw.productVariantsBulkUpdate.userErrors.length > 0) {
+          throw mapUserErrorsToGatewayError(raw.productVariantsBulkUpdate.userErrors);
+        }
+
+        if (raw.productVariantsBulkUpdate.productVariants && raw.productVariantsBulkUpdate.productVariants.length > 0) {
+          for (const v of raw.productVariantsBulkUpdate.productVariants) {
+            updatedVariantIds.push(v.id);
+          }
+        } else {
+          for (const g of subGroup) {
+            updatedVariantIds.push(g.id);
+          }
         }
       }
     } catch (err: unknown) {
@@ -518,27 +524,34 @@ export async function executeVariantsBulkCreate(
     };
   }
 
-  const raw = await client.query<ProductVariantsBulkCreateResponse>(
-    store,
-    PRODUCT_VARIANTS_BULK_CREATE_MUTATION,
-    { productId, variants: variantsInput },
-    { isWrite: true, requestId },
-  );
+  const mappedVariants: ProductVariantSummary[] = [];
+  for (let i = 0; i < variantsInput.length; i += 250) {
+    const chunk = variantsInput.slice(i, i + 250);
+    const chunkReqId = requestId ? `${requestId}:${Math.floor(i / 250)}` : undefined;
+    const raw = await client.query<ProductVariantsBulkCreateResponse>(
+      store,
+      PRODUCT_VARIANTS_BULK_CREATE_MUTATION,
+      { productId, variants: chunk },
+      { isWrite: true, requestId: chunkReqId },
+    );
 
-  if (raw.productVariantsBulkCreate.userErrors && raw.productVariantsBulkCreate.userErrors.length > 0) {
-    throw mapUserErrorsToGatewayError(raw.productVariantsBulkCreate.userErrors);
+    if (raw.productVariantsBulkCreate.userErrors && raw.productVariantsBulkCreate.userErrors.length > 0) {
+      throw mapUserErrorsToGatewayError(raw.productVariantsBulkCreate.userErrors);
+    }
+
+    for (const node of raw.productVariantsBulkCreate.productVariants ?? []) {
+      mappedVariants.push({
+        id: node.id,
+        productId,
+        title: node.title,
+        price: node.price,
+        compareAtPrice: node.compareAtPrice ?? undefined,
+        barcode: node.barcode ?? undefined,
+        sku: node.inventoryItem?.sku ?? undefined,
+        inventoryQuantity: node.inventoryQuantity ?? undefined,
+      });
+    }
   }
-
-  const mappedVariants: ProductVariantSummary[] = (raw.productVariantsBulkCreate.productVariants ?? []).map((node) => ({
-    id: node.id,
-    productId,
-    title: node.title,
-    price: node.price,
-    compareAtPrice: node.compareAtPrice ?? undefined,
-    barcode: node.barcode ?? undefined,
-    sku: node.inventoryItem?.sku ?? undefined,
-    inventoryQuantity: node.inventoryQuantity ?? undefined,
-  }));
 
   return {
     createdCount: mappedVariants.length,

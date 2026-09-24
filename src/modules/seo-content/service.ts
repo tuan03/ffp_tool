@@ -19,11 +19,13 @@ import type {
   SeoContentAltOnlyDetailedOutput,
   SeoContentDetailedOutput,
   SeoContentDetailedResult,
+  SeoContentDependencies,
   SeoContentInput,
   SeoContentOutput,
   SeoContentPipelineSummary,
   SeoContentRunOptions,
 } from "./types";
+import type { SeoConflictCorpus } from "./internal/conflict-control/seo-conflict-corpus";
 
 let defaultPipeline: ReturnType<typeof createSeoPipeline> | undefined;
 
@@ -55,11 +57,11 @@ export async function runSeoContent(input: SeoContentInput): Promise<SeoContentO
 
 export function runSeoContentDetailed(
   input: SeoContentInput,
-  options: { readonly imageMode: "alt_only" },
+  options: { readonly imageMode: "alt_only"; readonly dependencies?: SeoContentDependencies },
 ): Promise<SeoContentAltOnlyDetailedOutput>;
 export function runSeoContentDetailed(
   input: SeoContentInput,
-  options?: { readonly imageMode?: "full" },
+  options?: { readonly imageMode?: "full"; readonly dependencies?: SeoContentDependencies },
 ): Promise<SeoContentDetailedOutput>;
 export function runSeoContentDetailed(
   input: SeoContentInput,
@@ -95,7 +97,11 @@ export async function runSeoContentDetailed(
         },
       }),
     }),
-    createB4ConflictControlStage(),
+    createB4ConflictControlStage(
+      options.dependencies?.conflictCorpus
+        ? { conflictCorpus: options.dependencies.conflictCorpus as SeoConflictCorpus }
+        : (input.storeId ? { conflictCorpus: new FileSeoConflictCorpus({ storeId: input.storeId }) } : undefined),
+    ),
     createB5ContentGenerationStage({
       generator: createDefaultB5Generator({
         onFallback: (reason, error) => observeFallback("b5", error ?? reason),
@@ -156,7 +162,7 @@ export async function registerSeoContentKeywords(
   input: SeoContentInput,
   detailed: SeoContentDetailedResult,
 ): Promise<{ readonly revision: number }> {
-  const corpus = new FileSeoConflictCorpus();
+  const corpus = new FileSeoConflictCorpus({ storeId: input.storeId });
   return registerProductKeywords(
     corpus,
     {
@@ -177,8 +183,9 @@ export async function unregisterSeoContentKeywords(
   input: SeoContentInput,
   detailed: SeoContentDetailedResult,
 ): Promise<void> {
-  const corpus = new FileSeoConflictCorpus();
+  const corpus = new FileSeoConflictCorpus({ storeId: input.storeId });
   await corpus.removeProduct({
+    storeId: input.storeId,
     productId: input.productId,
     handle: detailed.output.productHandle,
     url: input.url ?? `/products/${detailed.output.productHandle}`,

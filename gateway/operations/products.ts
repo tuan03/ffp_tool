@@ -82,18 +82,6 @@ const PRODUCTS_GET_QUERY = `
             id
             image {
               url
-              width
-              height
-            }
-          }
-        }
-      }
-      media(first: 50) {
-        nodes {
-          id
-          ... on MediaImage {
-            image {
-              url
               altText
               width
               height

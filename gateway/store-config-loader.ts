@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { copyFileSync, existsSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { GatewayError } from "./errors";
@@ -160,12 +160,27 @@ function parseStoreRawItem(item: unknown): StoreConfig | undefined {
     }
   }
 
+  const rawProductTypes = obj.productTypes ?? obj.product_types;
+  const productTypes = Array.isArray(rawProductTypes)
+    ? rawProductTypes.map((t) => String(t).trim()).filter(Boolean)
+    : typeof rawProductTypes === "string"
+    ? rawProductTypes.split(",").map((t) => t.trim()).filter(Boolean)
+    : undefined;
+
+  const rawDefaultType = obj.defaultProductType ?? obj.default_product_type;
+  const defaultProductType =
+    typeof rawDefaultType === "string" && rawDefaultType.trim()
+      ? rawDefaultType.trim()
+      : undefined;
+
   return {
     storeId,
     shopDomain,
     apiVersion,
     auth,
     proxy,
+    productTypes: productTypes && productTypes.length > 0 ? productTypes : undefined,
+    defaultProductType,
   };
 }
 
@@ -471,3 +486,149 @@ export function loadBootstrappedStores(options?: StoreBootstrapOptions): StoreCo
 
   return Array.from(storesByStoreId.values());
 }
+
+let configMutex = Promise.resolve();
+
+async function withConfigMutex<T>(fn: () => Promise<T> | T): Promise<T> {
+  const next = configMutex.then(async () => fn());
+  configMutex = next.then(() => {}, () => {});
+  return next;
+}
+
+function atomicWriteFileSync(filePath: string, data: string): void {
+  const tmpPath = `${filePath}.${Date.now()}.${Math.random().toString(36).slice(2, 8)}.tmp`;
+  try {
+    writeFileSync(tmpPath, data, "utf-8");
+    renameSync(tmpPath, filePath);
+  } catch (err) {
+    if (existsSync(tmpPath)) {
+      try {
+        unlinkSync(tmpPath);
+      } catch {
+        // ignore unlink error
+      }
+    }
+    throw err;
+  }
+}
+
+/**
+ * Persists a StoreConfig safely into stores.local.json.
+ */
+export function persistStoreToConfigFile(
+  store: StoreConfig,
+  options?: { configFile?: string; cwd?: string },
+): Promise<void> {
+  return withConfigMutex(() => {
+    const cwd = options?.cwd || process.cwd();
+    const targetFile = options?.configFile || "stores.local.json";
+    const filePath = resolve(cwd, targetFile);
+
+    let storesList: unknown[] = [];
+    if (existsSync(filePath)) {
+      try {
+        const content = readFileSync(filePath, "utf-8");
+        const parsed = JSON.parse(content);
+        if (Array.isArray(parsed)) {
+          storesList = parsed;
+        } else if (parsed && typeof parsed === "object" && Array.isArray((parsed as Record<string, unknown>).stores)) {
+          storesList = (parsed as Record<string, unknown>).stores as unknown[];
+        } else {
+          const backupPath = `${filePath}.${Date.now()}.corrupt.bak`;
+          try {
+            copyFileSync(filePath, backupPath);
+            console.warn(`[StoreConfigLoader] Non-array store config detected. Created backup at: ${backupPath}`);
+          } catch {}
+          storesList = [];
+        }
+      } catch (parseErr) {
+        const backupPath = `${filePath}.${Date.now()}.corrupt.bak`;
+        try {
+          copyFileSync(filePath, backupPath);
+          console.warn(`[StoreConfigLoader] Corrupted store config detected. Created backup at: ${backupPath}`, parseErr);
+        } catch {}
+        storesList = [];
+      }
+    }
+
+    const storeEntry: Record<string, unknown> = {
+      storeId: store.storeId,
+      shopDomain: store.shopDomain,
+      apiVersion: store.apiVersion || "2026-07",
+      auth: { ...store.auth },
+    };
+
+    if (store.proxy && store.proxy.url) {
+      storeEntry.proxy = {
+        url: store.proxy.url,
+        ...(store.proxy.username ? { username: store.proxy.username } : {}),
+        ...(store.proxy.password ? { password: store.proxy.password } : {}),
+        ...(store.proxy.failClosed !== undefined ? { failClosed: store.proxy.failClosed } : { failClosed: true }),
+      };
+    }
+
+    if (store.productTypes && store.productTypes.length > 0) {
+      storeEntry.productTypes = [...store.productTypes];
+    }
+    if (store.defaultProductType) {
+      storeEntry.defaultProductType = store.defaultProductType;
+    }
+
+    const existingIndex = storesList.findIndex(
+      (item) => item && typeof item === "object" && (item as Record<string, unknown>).storeId === store.storeId,
+    );
+
+    if (existingIndex >= 0) {
+      storesList[existingIndex] = storeEntry;
+    } else {
+      storesList.push(storeEntry);
+    }
+
+    atomicWriteFileSync(filePath, JSON.stringify(storesList, null, 2) + "\n");
+  });
+}
+
+/**
+ * Removes a StoreConfig by storeId from stores.local.json.
+ */
+export function removeStoreFromConfigFile(
+  storeId: string,
+  options?: { configFile?: string; cwd?: string },
+): Promise<boolean> {
+  return withConfigMutex(() => {
+    const cwd = options?.cwd || process.cwd();
+    const targetFile = options?.configFile || "stores.local.json";
+    const filePath = resolve(cwd, targetFile);
+
+    if (!existsSync(filePath)) {
+      return false;
+    }
+
+    try {
+      const content = readFileSync(filePath, "utf-8");
+      const parsed = JSON.parse(content);
+      if (Array.isArray(parsed)) {
+        const filtered = parsed.filter(
+          (item) => item && typeof item === "object" && (item as Record<string, unknown>).storeId !== storeId,
+        );
+        if (filtered.length !== parsed.length) {
+          atomicWriteFileSync(filePath, JSON.stringify(filtered, null, 2) + "\n");
+          return true;
+        }
+      } else if (parsed && typeof parsed === "object" && Array.isArray((parsed as Record<string, unknown>).stores)) {
+        const stores = (parsed as Record<string, unknown>).stores as unknown[];
+        const filtered = stores.filter(
+          (item) => item && typeof item === "object" && (item as Record<string, unknown>).storeId !== storeId,
+        );
+        if (filtered.length !== stores.length) {
+          atomicWriteFileSync(filePath, JSON.stringify({ ...parsed, stores: filtered }, null, 2) + "\n");
+          return true;
+        }
+      }
+    } catch {
+      // Ignore read/write error on disconnect
+    }
+    return false;
+  });
+}
+

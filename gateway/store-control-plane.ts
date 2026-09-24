@@ -4,6 +4,7 @@ import type { ShopifyGraphqlClient } from "./shopify-graphql-client";
 import type { TokenProvider } from "./token-provider";
 import type { StoreAuthConfig, StoreConfig, StoreProxyConfig } from "./types";
 import { toStoreSummary, type GatewayStoreSummary } from "./operations/store-management";
+import { persistStoreToConfigFile, removeStoreFromConfigFile } from "./store-config-loader";
 
 export type StoreAuthInput =
   | {
@@ -22,6 +23,9 @@ export interface RegisterStoreInput {
   readonly apiVersion?: string;
   readonly auth: StoreAuthInput;
   readonly proxy?: StoreProxyConfig;
+  readonly skipVerify?: boolean;
+  readonly productTypes?: readonly string[];
+  readonly defaultProductType?: string;
 }
 
 export interface UpdateStoreCredentialsInput {
@@ -51,6 +55,7 @@ export interface StoreControlPlaneOptions {
   readonly storeRegistry: StoreRegistry;
   readonly tokenProvider: TokenProvider;
   readonly graphqlClient: ShopifyGraphqlClient;
+  readonly persistConfigFile?: string | boolean;
 }
 
 const PREFLIGHT_STORE_CONNECTION_QUERY = `
@@ -117,11 +122,13 @@ export class StoreControlPlane {
   private readonly tokenProvider: TokenProvider;
   private readonly graphqlClient: ShopifyGraphqlClient;
   private readonly verifiedStoreIds = new Set<string>();
+  private readonly persistConfigFile?: string | boolean;
 
   public constructor(options: StoreControlPlaneOptions) {
     this.storeRegistry = options.storeRegistry;
     this.tokenProvider = options.tokenProvider;
     this.graphqlClient = options.graphqlClient;
+    this.persistConfigFile = options.persistConfigFile;
   }
 
   /**
@@ -163,6 +170,27 @@ export class StoreControlPlane {
   }
 
   /**
+   * Safely discovers distinct product types configured on Shopify without throwing errors.
+   */
+  private async discoverShopifyProductTypes(storeConfig: StoreConfig): Promise<string[]> {
+    try {
+      const response = await this.graphqlClient.query<{
+        productTypes?: { edges?: ReadonlyArray<{ node?: string | null }> | null };
+      }>(
+        storeConfig,
+        `query GetProductTypes { productTypes(first: 50) { edges { node } } }`,
+        {},
+        { isWrite: false },
+      );
+      return (response.productTypes?.edges ?? [])
+        .map((e) => e?.node?.trim())
+        .filter((t): t is string => Boolean(t));
+    } catch {
+      return [];
+    }
+  }
+
+  /**
    * Registers a store after strict domain normalization and preflight credential verification.
    */
   public async registerStore(input: RegisterStoreInput): Promise<StoreRegistrationResult> {
@@ -194,22 +222,57 @@ export class StoreControlPlane {
     this.tokenProvider.invalidate?.(storeId);
 
     // Preflight verification before persisting
-    await this.verifyStoreCredentials(candidateConfig);
+    let discoveredTypes: string[] = [];
+    if (input.skipVerify !== true) {
+      await this.verifyStoreCredentials(candidateConfig);
+      discoveredTypes = await this.discoverShopifyProductTypes(candidateConfig);
+    }
+
+    const mergedProductTypes =
+      input.productTypes && input.productTypes.length > 0
+        ? input.productTypes
+        : discoveredTypes.length > 0
+        ? discoveredTypes
+        : undefined;
+
+    const defaultProductType =
+      input.defaultProductType ||
+      (mergedProductTypes && mergedProductTypes.length > 0 ? mergedProductTypes[0] : undefined);
+
+    const finalConfig: StoreConfig = {
+      ...candidateConfig,
+      productTypes: mergedProductTypes,
+      defaultProductType,
+    };
 
     // Persist to registry
     try {
-      await this.storeRegistry.registerStore(candidateConfig);
+      await this.storeRegistry.registerStore(finalConfig);
     } catch (persistErr: unknown) {
       this.tokenProvider.invalidate?.(storeId);
       throw persistErr;
     }
 
-    this.verifiedStoreIds.add(candidateConfig.storeId);
+    await this.persistStoreToConfigFile(finalConfig);
+
+    this.verifiedStoreIds.add(finalConfig.storeId);
 
     return {
-      store: toStoreSummary(candidateConfig, true),
+      store: toStoreSummary(finalConfig, true),
       registered: true,
     };
+  }
+
+  private async persistStoreToConfigFile(storeConfig: StoreConfig): Promise<void> {
+    if (this.persistConfigFile) {
+      try {
+        const file = typeof this.persistConfigFile === "string" ? this.persistConfigFile : "stores.local.json";
+        await persistStoreToConfigFile(storeConfig, { configFile: file });
+      } catch (fileErr: unknown) {
+        // Non-fatal warning if persisting to file fails
+        console.warn("[StoreControlPlane] Warning: Failed to persist store to config file:", fileErr);
+      }
+    }
   }
 
   /**
@@ -264,6 +327,8 @@ export class StoreControlPlane {
       throw persistErr;
     }
 
+    await this.persistStoreToConfigFile(candidateConfig);
+
     this.verifiedStoreIds.add(candidateConfig.storeId);
 
     return {
@@ -289,6 +354,14 @@ export class StoreControlPlane {
     const exists = await this.storeRegistry.hasStore(trimmedId);
     if (exists) {
       await this.storeRegistry.removeStore(trimmedId);
+      if (this.persistConfigFile) {
+        try {
+          const file = typeof this.persistConfigFile === "string" ? this.persistConfigFile : "stores.local.json";
+          removeStoreFromConfigFile(trimmedId, { configFile: file });
+        } catch {
+          // ignore file remove error
+        }
+      }
     }
 
     // Invalidate token cache after removal
@@ -297,6 +370,55 @@ export class StoreControlPlane {
     return {
       storeId: trimmedId,
       disconnected: exists,
+    };
+  }
+
+  /**
+   * Preflight tests store credentials against Shopify without registering or persisting.
+   */
+  public async testStoreConnection(
+    input: RegisterStoreInput,
+  ): Promise<{
+    connected: boolean;
+    shopDomain: string;
+    storeId: string;
+    productTypes?: readonly string[];
+    defaultProductType?: string;
+  }> {
+    if (!input || typeof input !== "object") {
+      throw new GatewayError("Input must be an object", "SHOPIFY_INVALID_INPUT", 400);
+    }
+    const storeId = typeof input.storeId === "string" ? input.storeId.trim() : "test-store";
+    const normalizedDomain = normalizeShopDomain(input.shopDomain);
+    const storeAuth = mapAuthInputToStoreAuthConfig(input.auth);
+    const apiVersion =
+      typeof input.apiVersion === "string" && input.apiVersion.trim() !== ""
+        ? input.apiVersion.trim()
+        : "2026-07";
+
+    const candidateConfig: StoreConfig = {
+      storeId,
+      shopDomain: normalizedDomain,
+      apiVersion,
+      auth: storeAuth,
+      proxy: input.proxy,
+    };
+
+    await this.verifyStoreCredentials(candidateConfig);
+    const discoveredTypes = await this.discoverShopifyProductTypes(candidateConfig);
+    const mergedTypes =
+      input.productTypes && input.productTypes.length > 0
+        ? input.productTypes
+        : discoveredTypes.length > 0
+        ? discoveredTypes
+        : undefined;
+
+    return {
+      connected: true,
+      shopDomain: normalizedDomain,
+      storeId,
+      productTypes: mergedTypes,
+      defaultProductType: input.defaultProductType || mergedTypes?.[0],
     };
   }
 

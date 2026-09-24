@@ -495,7 +495,7 @@ class DistributedCrawlerAgent:
             for product in pending_products:
                 try:
                     response = await asyncio.to_thread(self._upload_product, product)
-                    if response.get("status") in {"accepted", "duplicate"}:
+                    if response.get("status") in {"accepted", "duplicate", "cancelled"}:
                         self.store.acknowledge_product(product["taskId"], product["productKey"])
                 except Exception as error:
                     self.store.product_failed(product["taskId"], product["productKey"], str(error))
@@ -509,7 +509,7 @@ class DistributedCrawlerAgent:
                     continue
                 try:
                     response = await asyncio.to_thread(self._upload_result, result)
-                    if response.get("status") in {"accepted", "duplicate"}:
+                    if response.get("status") in {"accepted", "duplicate", "cancelled"}:
                         self.store.acknowledge_result(result["taskId"])
                         self.active.pop(result["taskId"], None)
                         await self.outbound_queue.put({"type": "ready", "availableSlots": self._available_slots()})
@@ -537,8 +537,9 @@ class DistributedCrawlerAgent:
             with urllib.request.urlopen(request, timeout=60) as response:
                 return json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as error:
-            if error.code == 409:
-                return {"status": "duplicate"}
+            if error.code in {404, 409}:
+                self.store.acknowledge_product(product["taskId"], product["productKey"])
+                return {"status": "cancelled"}
             raise
 
     def _upload_result(self, result: dict[str, Any]) -> dict[str, Any]:

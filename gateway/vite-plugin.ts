@@ -9,6 +9,8 @@ import { InMemoryStoreRegistry } from "./store-registry";
 import { loadBootstrappedStores, loadLocalEnv } from "./store-config-loader";
 import { InMemoryThrottleManager } from "./throttle-manager";
 import { CompositeTokenProvider } from "./token-provider";
+import { StoreControlPlane } from "./store-control-plane";
+import { handleStoreRegistrationHttpRequest, handleProxyCheckHttpRequest } from "./store-control-handler";
 
 export interface ShopifyGatewayDevPluginOptions {
   readonly authToken?: string;
@@ -65,18 +67,26 @@ export function shopifyGatewayDevPlugin(options?: ShopifyGatewayDevPluginOptions
       const idempotencyStore = new InMemoryIdempotencyStore();
       const dispatcher = new GatewayDispatcher({ storeRegistry, graphqlClient, idempotencyStore });
       const httpHandler = createGatewayHttpHandler(dispatcher, { authToken, maxBodyBytes });
+      const storeControlPlane = new StoreControlPlane({
+        storeRegistry,
+        tokenProvider,
+        graphqlClient,
+        persistConfigFile: "stores.local.json",
+      });
 
       server.middlewares.use(async (req, res, next) => {
         const isShopify = req.url && (req.url === "/api/shopify" || req.url.startsWith("/api/shopify?"));
         const isAutoSeo = req.url && (req.url === "/api/auto-seo/run" || req.url.startsWith("/api/auto-seo/run?"));
+        const isStoreRegister = req.url && (req.url === "/api/stores/register" || req.url.startsWith("/api/stores/register?"));
+        const isProxyCheck = req.url && (req.url === "/api/proxy/check" || req.url.startsWith("/api/proxy/check?"));
 
-        if (authToken && (isShopify || isAutoSeo) && isSameOriginRequest(req.headers)) {
+        if (authToken && (isShopify || isAutoSeo || isStoreRegister || isProxyCheck) && isSameOriginRequest(req.headers)) {
           if (!req.headers["x-gateway-key"]) {
             req.headers["x-gateway-key"] = authToken;
           }
         }
 
-        if (isShopify || isAutoSeo) {
+        if (isShopify || isAutoSeo || isStoreRegister) {
           try {
             const freshStores = loadBootstrappedStores({ env: loadLocalEnv() });
             for (const store of freshStores) {
@@ -188,6 +198,10 @@ export function shopifyGatewayDevPlugin(options?: ShopifyGatewayDevPluginOptions
               }),
             );
           }
+        } else if (isStoreRegister) {
+          await handleStoreRegistrationHttpRequest(req, res, storeControlPlane, { authToken, maxBodyBytes });
+        } else if (isProxyCheck) {
+          await handleProxyCheckHttpRequest(req, res, { authToken, maxBodyBytes });
         } else if (req.url && (req.url === "/api/auto-seo/run" || req.url.startsWith("/api/auto-seo/run?"))) {
           await handleAutoSeoHttpRequest(req, res, { authToken, maxBodyBytes });
         } else {

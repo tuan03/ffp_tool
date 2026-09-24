@@ -15,6 +15,7 @@ export interface SeoContentInput {
   readonly handle: string;
   readonly productId?: string;
   readonly url?: string;
+  readonly storeId?: string;
 }
 
 export interface SeoContentWebpAsset {
@@ -93,6 +94,11 @@ export interface SeoContentPipelineSummary {
   readonly warnings: readonly string[];
 }
 
+export interface SeoContentDependencies {
+  readonly conflictCorpus?: unknown;
+}
+
 export interface SeoContentRunOptions {
   readonly imageMode?: "full" | "alt_only";
+  readonly dependencies?: SeoContentDependencies;
 }

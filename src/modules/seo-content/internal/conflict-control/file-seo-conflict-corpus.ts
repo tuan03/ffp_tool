@@ -29,6 +29,7 @@ import { withFileLock } from "./corpus-file-lock";
 
 export interface FileSeoConflictCorpusConfig {
   readonly filePath?: string;
+  readonly storeId?: string;
   readonly thresholds?: CatalogConflictThresholds;
   readonly lockTimeoutMs?: number;
   readonly maxRegisteredKeywordsPerProduct?: number;
@@ -46,7 +47,7 @@ export interface FileSeoConflictCorpusConfig {
  * - Zero-network execution when isolated in test temp folders.
  */
 export class FileSeoConflictCorpus implements SeoConflictCorpus {
-  private readonly filePath: string;
+  public readonly filePath: string;
   private readonly thresholds: CatalogConflictThresholds;
   private readonly lockTimeoutMs: number;
   private readonly maxRegisteredKeywords: number;
@@ -62,13 +63,18 @@ export class FileSeoConflictCorpus implements SeoConflictCorpus {
       typeof path !== "undefined" &&
       typeof path.resolve === "function";
 
+    const cleanStoreId = typeof config?.storeId === "string" ? config.storeId.trim() : "";
     this.filePath =
       config?.filePath ??
-      (typeof process !== "undefined" && process.env?.SEO_CONFLICT_CORPUS_PATH
-        ? process.env.SEO_CONFLICT_CORPUS_PATH
-        : isNode
-          ? path.resolve(process.cwd(), "data/seo-content/conflict-corpus.json")
-          : "data/seo-content/conflict-corpus.json");
+      (cleanStoreId
+        ? (isNode
+            ? path.resolve(process.cwd(), `.runtime/seo-conflict-corpus-${cleanStoreId}.json`)
+            : `.runtime/seo-conflict-corpus-${cleanStoreId}.json`)
+        : typeof process !== "undefined" && process.env?.SEO_CONFLICT_CORPUS_PATH
+          ? process.env.SEO_CONFLICT_CORPUS_PATH
+          : isNode
+            ? path.resolve(process.cwd(), "data/seo-content/conflict-corpus.json")
+            : "data/seo-content/conflict-corpus.json");
 
     this.thresholds = config?.thresholds ?? DEFAULT_CATALOG_CONFLICT_THRESHOLDS;
     this.lockTimeoutMs = config?.lockTimeoutMs ?? 5000;
@@ -225,10 +231,20 @@ export class FileSeoConflictCorpus implements SeoConflictCorpus {
     const conflicts: ExistingSeoTarget[] = [];
 
     for (const product of corpus.products) {
+      // 0. Store isolation: products from different stores never conflict
+      if (
+        lookup.owner?.storeId &&
+        product.storeId &&
+        lookup.owner.storeId.trim() !== product.storeId.trim()
+      ) {
+        continue;
+      }
+
       // 1. Self-conflict check: ignore if this is the same product identity
       if (
         lookup.owner &&
         isSameProduct(lookup.owner, {
+          storeId: product.storeId,
           productId: product.productId,
           handle: product.handle,
           url: product.url,
@@ -400,6 +416,7 @@ export class FileSeoConflictCorpus implements SeoConflictCorpus {
       const nowIso = new Date().toISOString();
 
       const updatedProduct: SeoCorpusProduct = {
+        storeId: registration.identity.storeId,
         productKey,
         productId: registration.identity.productId,
         handle: registration.identity.handle,

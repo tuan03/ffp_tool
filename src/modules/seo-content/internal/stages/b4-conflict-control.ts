@@ -178,6 +178,7 @@ export async function registerProductKeywords(
   }
 
   const identity: SeoProductIdentity = {
+    storeId: product.storeId,
     productId: product.productId,
     handle: product.handle,
     url: product.url ?? (product.handle ? `/products/${product.handle}` : undefined),

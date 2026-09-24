@@ -26,6 +26,7 @@ import {
 import {
   applySeoContentToCustomizationProduct,
   createSeoContentPipelineSummary,
+  FileSeoConflictCorpus,
   fromCustomizationProduct,
   registerSeoContentKeywords,
   runSeoContentDetailed,
@@ -85,13 +86,13 @@ for (const key of seoEnvironmentKeys) {
 if (env.GATEWAY_AUTH_TOKEN) {
   process.env.GATEWAY_AUTH_TOKEN = env.GATEWAY_AUTH_TOKEN;
 }
+const storeId = env.GATEWAY_STORE_ID?.trim();
 process.env.SEO_CONFLICT_CORPUS_PATH = process.env.SEO_CONFLICT_CORPUS_PATH
-  || ".runtime/seo-conflict-corpus.json";
+  || (storeId ? `.runtime/seo-conflict-corpus-${storeId}.json` : ".runtime/seo-conflict-corpus.json");
 env.SHOPIFY_PROXY_CONFIG = env.SHOPIFY_PROXY_CONFIG || env.AMAZON_CRAWLER_PROXY_CONFIG || "config/amazon-crawler-profiles.json";
 process.env.SHOPIFY_PROXY_CONFIG = env.SHOPIFY_PROXY_CONFIG;
 const coordinatorUrl = (env.SHOPIFY_PIPELINE_COORDINATOR_URL || "http://127.0.0.1:8766").replace(/\/+$/, "");
 const pipelineToken = env.SHOPIFY_PIPELINE_TOKEN?.trim();
-const storeId = env.GATEWAY_STORE_ID?.trim();
 const workerCount = Math.max(1, Math.min(16, Number(env.SHOPIFY_PIPELINE_WORKERS || 4)));
 const gatewayPort = Math.max(1, Number(env.GATEWAY_PORT || 3001));
 const gatewayUrl = (env.SHOPIFY_GATEWAY_URL || `http://127.0.0.1:${gatewayPort}/api/shopify`).replace(/\/+$/, "");
@@ -297,6 +298,7 @@ async function failClaim(
     readonly reconciliationRequired?: boolean;
     readonly phase?: "normalization" | "seo" | "image_processing" | "shopify";
     readonly timings?: PipelineTimings;
+    readonly createdProductId?: string;
   },
 ): Promise<void> {
   const message = error instanceof Error ? error.message : String(error);
@@ -309,6 +311,7 @@ async function failClaim(
     error: { message, phase: options?.phase, timings: options?.timings },
     retryable: options?.retryable ?? false,
     reconciliationRequired: options?.reconciliationRequired ?? false,
+    ...(options?.createdProductId ? { createdProductId: options.createdProductId } : {}),
   });
 }
 
@@ -374,10 +377,15 @@ async function processClaim(
       }
     | undefined;
   let hasStartedShopifyWrite = false;
+  const claimStoreId = typeof claim.settings?.storeId === "string" && claim.settings.storeId.trim()
+    ? claim.settings.storeId.trim()
+    : storeId;
+  let existingProductId: string | undefined;
+  let existingProductHandle: string | undefined;
+  let existingManagedResources: ShopifyManagedResources | undefined;
+  let finalChecksum: string | undefined;
+
   try {
-    const claimStoreId = typeof claim.settings?.storeId === "string" && claim.settings.storeId.trim()
-      ? claim.settings.storeId.trim()
-      : storeId;
     const claimStoreConfig = configuredStores.find((store) => store.storeId === claimStoreId);
     const claimAdminHandle = claimStoreConfig?.shopDomain
       ? claimStoreConfig.shopDomain.replace(/\.myshopify\.com$/i, "")
@@ -432,9 +440,9 @@ async function processClaim(
         `Stored Shopify product ${resolvedProduct.staleMappedProductId} was missing; created a replacement product.`,
       );
     }
-    let existingProductId = resolvedProduct.product?.id;
-    let existingProductHandle = resolvedProduct.product?.handle;
-    let existingManagedResources: ShopifyManagedResources | undefined = resolvedProduct.match === "mapping"
+    existingProductId = resolvedProduct.product?.id;
+    existingProductHandle = resolvedProduct.product?.handle;
+    existingManagedResources = resolvedProduct.match === "mapping"
       ? claim.existingShopify?.managedResources
       : resolvedProduct.product
         ? {
@@ -459,8 +467,14 @@ async function processClaim(
           const input = {
             ...fromCustomizationProduct(baseNormalizedProduct),
             siteDomain: claimStoreConfig?.shopDomain,
+            storeId: claimStoreId,
           };
-          const execution = await runSeoContentDetailed(input, { imageMode: "alt_only" });
+          const execution = await runSeoContentDetailed(input, {
+            imageMode: "alt_only",
+            dependencies: {
+              conflictCorpus: new FileSeoConflictCorpus({ storeId: claimStoreId }),
+            },
+          });
           const product = applySeoContentToCustomizationProduct(
             baseNormalizedProduct,
             execution.output,
@@ -471,6 +485,7 @@ async function processClaim(
             input: {
               ...fromCustomizationProduct(product),
               siteDomain: claimStoreConfig?.shopDomain,
+              storeId: claimStoreId,
             },
             execution: {
               ...execution,
@@ -528,7 +543,7 @@ async function processClaim(
       return;
     }
     timings.imageProcessingMs = Date.now() - imageStartedAt;
-    const finalChecksum = checksum({
+    finalChecksum = checksum({
       product: seoProduct,
       imageProfileRevision: imageResponse.profile.revision,
       customProductType: customProductType ?? null,
@@ -671,6 +686,23 @@ async function processClaim(
     }
 
       if (!syncResult.success) {
+        const createdProductId = syncResult.productId;
+        if (createdProductId) {
+          try {
+            await postJson(`/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/shopify-checkpoint`, {
+              workerId,
+              storeId: claimStoreId,
+              normalizedChecksum: finalChecksum,
+              shopify: {
+                productId: createdProductId,
+                productHandle: syncResult.productHandle,
+                managedResources: syncResult.managedResources ?? existingManagedResources ?? {},
+              },
+            });
+          } catch (checkpointErr: unknown) {
+            console.warn(`[Shopify pipeline] Failed to post checkpoint for partially created product ${createdProductId}:`, checkpointErr);
+          }
+        }
         if (isProxyOrNetworkFailure(syncResult.error || "")) {
           proxyCooldownUntil.set(effectiveProxyStoreId, Date.now() + 30_000);
         }
@@ -685,6 +717,7 @@ async function processClaim(
           reconciliationRequired: syncResult.reconciliationRequired,
           phase: "shopify",
           timings,
+          createdProductId,
         });
         return;
       }
@@ -733,12 +766,48 @@ async function processClaim(
     logPhase(claim.sourceKey, "total", timings.totalMs);
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
+    const errObj = (error && typeof error === "object") ? (error as Record<string, unknown>) : undefined;
+    const details = (errObj?.details && typeof errObj.details === "object") ? (errObj.details as Record<string, unknown>) : undefined;
+    const extractedProductId =
+      existingProductId ??
+      (typeof details?.createdProductId === "string" ? details.createdProductId : undefined) ??
+      (typeof details?.updatedProductId === "string" ? details.updatedProductId : undefined) ??
+      (typeof details?.productId === "string" ? details.productId : undefined) ??
+      (typeof errObj?.createdProductId === "string" ? errObj.createdProductId : undefined) ??
+      (typeof errObj?.productId === "string" ? errObj.productId : undefined) ??
+      (() => {
+        const match = typeof message === "string" ? message.match(/Product (?:created|updated) \((gid:\/\/shopify\/Product\/[^)]+)\)/) : null;
+        return match ? match[1] : undefined;
+      })();
+
     if (isProxyOrNetworkFailure(message)) {
       proxyCooldownUntil.set(proxyStoreId, Date.now() + 30_000);
     }
-    const reconciliationRequired = /unknown write state|partial write|reconciliation/i.test(message);
-    if (reservedSeo && !hasStartedShopifyWrite) {
+    const isPartialWrite =
+      errObj?.code === "SHOPIFY_PARTIAL_WRITE" ||
+      errObj?.code === "SHOPIFY_UNKNOWN_WRITE_STATE" ||
+      details?.reconciliationRequired === true ||
+      errObj?.reconciliationRequired === true ||
+      Boolean(extractedProductId);
+    const reconciliationRequired = isPartialWrite || /unknown write state|partial write|reconciliation/i.test(message);
+    if (reservedSeo && !hasStartedShopifyWrite && !reconciliationRequired) {
       await unregisterSeoContentKeywords(reservedSeo.input, reservedSeo.execution).catch(() => undefined);
+    }
+    if (extractedProductId) {
+      try {
+        await postJson(`/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/shopify-checkpoint`, {
+          workerId,
+          storeId: claimStoreId,
+          normalizedChecksum: finalChecksum ?? checksum(claim.product),
+          shopify: {
+            productId: extractedProductId,
+            productHandle: existingProductHandle,
+            managedResources: existingManagedResources ?? {},
+          },
+        });
+      } catch (checkpointErr: unknown) {
+        console.warn(`[Shopify pipeline] Failed to post checkpoint in outer catch for ${extractedProductId}:`, checkpointErr);
+      }
     }
     timings.totalMs = Date.now() - pipelineStartedAt;
     await failClaim(claim, workerId, error, {
@@ -746,6 +815,7 @@ async function processClaim(
       reconciliationRequired,
       phase: "shopify",
       timings,
+      createdProductId: extractedProductId,
     });
   } finally {
     clearInterval(heartbeat);

@@ -34,6 +34,7 @@ import {
 } from "./crawler-session";
 import { firstProductMediaUrl, resolveSelectedProduct } from "./product-selection";
 import { formatPipelineTimings } from "./pipeline-timings";
+import { AddStoreModal } from "./components/AddStoreModal";
 
 interface AmazonCrawlerPageProps {
   clearAmazonCrawlerCache: AmazonCrawlerCacheClearer;
@@ -59,16 +60,30 @@ const COMMON_PRODUCT_TYPES = [
   { label: "Sign (Biển hiệu)", value: "Sign" },
 ];
 
-const QUICK_PRODUCT_TYPE_PILLS = [
-  "Rug",
-  "Blanket",
-  "Quilt",
-  "Comforter",
-  "Pillow",
-  "Doormat",
-  "Canvas",
-  "T-Shirt",
-];
+export interface StoreProfile {
+  readonly storeId: string;
+  readonly shopDomain: string;
+  readonly productTypes?: readonly string[];
+  readonly defaultProductType?: string;
+}
+
+export const DEFAULT_STORE_PRODUCT_TYPES: Record<
+  string,
+  { productTypes: string[]; defaultProductType: string }
+> = {
+  capozen: {
+    productTypes: ["Rug", "Doormat", "Area Rug"],
+    defaultProductType: "Rug",
+  },
+  chillgen: {
+    productTypes: ["Rug", "Doormat"],
+    defaultProductType: "Rug",
+  },
+  jeminise: {
+    productTypes: ["Blanket", "Bedding Set", "Quilt", "Comforter", "Pillow"],
+    defaultProductType: "Blanket",
+  },
+};
 function NumberSetting({
   label,
   value,
@@ -163,13 +178,79 @@ export function AmazonCrawlerPage({
   const [isImageProfileEditorOpen, setIsImageProfileEditorOpen] = useState(false);
   const [imageProfileMessage, setImageProfileMessage] = useState<string | null>(null);
   const [imageProfilePreview, setImageProfilePreview] = useState<string | null>(null);
-  const [availableStores, setAvailableStores] = useState<Array<{ storeId: string; shopDomain: string }>>([
-    { storeId: "capozen", shopDomain: "capozen.myshopify.com" },
-    { storeId: "jeminise", shopDomain: "b6-theme-test.myshopify.com" },
+  const [availableStores, setAvailableStores] = useState<Array<StoreProfile>>([
+    {
+      storeId: "capozen",
+      shopDomain: "capozen.myshopify.com",
+      productTypes: ["Rug", "Doormat", "Area Rug"],
+      defaultProductType: "Rug",
+    },
+    {
+      storeId: "jeminise",
+      shopDomain: "b6-theme-test.myshopify.com",
+      productTypes: ["Blanket", "Bedding Set", "Quilt", "Comforter", "Pillow"],
+      defaultProductType: "Blanket",
+    },
   ]);
+  const [customStoreProductTypes, setCustomStoreProductTypes] = useState<Record<string, string[]>>(() => {
+    try {
+      const raw = localStorage.getItem("ffp_store_product_types");
+      return raw ? JSON.parse(raw) : {};
+    } catch {
+      return {};
+    }
+  });
+  const [newProductTypeInput, setNewProductTypeInput] = useState("");
+  const [isAddingNewType, setIsAddingNewType] = useState(false);
+  const [isAddStoreOpen, setIsAddStoreOpen] = useState(false);
   const [availableCollections, setAvailableCollections] = useState<Array<{ id: string; title: string; productsCount?: number }>>([]);
   const [isLoadingCollections, setIsLoadingCollections] = useState(false);
   const [isCollectionListOpen, setIsCollectionListOpen] = useState(false);
+
+  useEffect(() => {
+    let isMounted = true;
+    async function fetchStores(): Promise<void> {
+      try {
+        const res = await fetch("/api/shopify", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ operation: "stores.list", payload: {} }),
+        });
+        const data = await res.json();
+        if (data.success && Array.isArray(data.data?.stores) && isMounted) {
+          const fetchedStores: StoreProfile[] = data.data.stores.map((s: Record<string, unknown>) => ({
+            storeId: String(s.storeId || ""),
+            shopDomain: String(s.shopDomain || ""),
+            productTypes: Array.isArray(s.productTypes) ? (s.productTypes as string[]) : undefined,
+            defaultProductType: typeof s.defaultProductType === "string" ? s.defaultProductType : undefined,
+          })).filter((s: StoreProfile) => Boolean(s.storeId && s.shopDomain));
+
+          if (fetchedStores.length > 0) {
+            setAvailableStores((prev) => {
+              const map = new Map<string, StoreProfile>();
+              for (const s of prev) map.set(s.storeId.toLowerCase(), s);
+              for (const s of fetchedStores) {
+                const existing = map.get(s.storeId.toLowerCase());
+                map.set(s.storeId.toLowerCase(), {
+                  storeId: s.storeId,
+                  shopDomain: s.shopDomain,
+                  productTypes: s.productTypes || existing?.productTypes,
+                  defaultProductType: s.defaultProductType || existing?.defaultProductType,
+                });
+              }
+              return Array.from(map.values());
+            });
+          }
+        }
+      } catch {
+        // Keep default stores if fetch fails
+      }
+    }
+    void fetchStores();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   const urls = useMemo(
     () => urlText.split(/\r?\n/).map((url) => url.trim()).filter(Boolean),
@@ -417,6 +498,114 @@ export function AmazonCrawlerPage({
     });
   }
 
+  const currentStoreId = (settings.storeId || "capozen").trim().toLowerCase();
+
+  const currentStoreProductTypes = useMemo(() => {
+    if (customStoreProductTypes[currentStoreId] && customStoreProductTypes[currentStoreId].length > 0) {
+      return customStoreProductTypes[currentStoreId];
+    }
+    const matchedStore = availableStores.find((s) => s.storeId.toLowerCase() === currentStoreId);
+    if (matchedStore?.productTypes && matchedStore.productTypes.length > 0) {
+      return matchedStore.productTypes;
+    }
+    if (DEFAULT_STORE_PRODUCT_TYPES[currentStoreId]?.productTypes) {
+      return DEFAULT_STORE_PRODUCT_TYPES[currentStoreId].productTypes;
+    }
+    return ["Rug", "Blanket", "Quilt", "T-Shirt", "Tumbler"];
+  }, [availableStores, customStoreProductTypes, currentStoreId]);
+
+  function handleStoreChange(nextStore: string): void {
+    const nextStoreLower = nextStore.trim().toLowerCase();
+    updateSetting("storeId", nextStore);
+    updateSetting("collectionId", "");
+    updateSetting("collectionIds", []);
+
+    const storeDef = availableStores.find((s) => s.storeId.toLowerCase() === nextStoreLower);
+    const customTypes = customStoreProductTypes[nextStoreLower];
+    const defaultType =
+      storeDef?.defaultProductType ||
+      DEFAULT_STORE_PRODUCT_TYPES[nextStoreLower]?.defaultProductType ||
+      customTypes?.[0] ||
+      storeDef?.productTypes?.[0] ||
+      DEFAULT_STORE_PRODUCT_TYPES[nextStoreLower]?.productTypes?.[0];
+
+    if (defaultType) {
+      updateSetting("productType", defaultType);
+    }
+  }
+
+  function handleAddProductType(newType: string): void {
+    const trimmed = newType.trim();
+    if (!trimmed) return;
+    const existing = currentStoreProductTypes;
+    if (existing.some((t) => t.toLowerCase() === trimmed.toLowerCase())) {
+      updateSetting("productType", trimmed);
+      setIsAddingNewType(false);
+      setNewProductTypeInput("");
+      return;
+    }
+    const updated = [...existing, trimmed];
+    const newCustomMap = { ...customStoreProductTypes, [currentStoreId]: updated };
+    setCustomStoreProductTypes(newCustomMap);
+    try {
+      localStorage.setItem("ffp_store_product_types", JSON.stringify(newCustomMap));
+    } catch {}
+    updateSetting("productType", trimmed);
+    setIsAddingNewType(false);
+    setNewProductTypeInput("");
+  }
+
+  function handleRemoveProductType(typeToRemove: string): void {
+    const existing = currentStoreProductTypes;
+    const updated = existing.filter((t) => t.toLowerCase() !== typeToRemove.toLowerCase());
+    const newCustomMap = { ...customStoreProductTypes, [currentStoreId]: updated };
+    setCustomStoreProductTypes(newCustomMap);
+    try {
+      localStorage.setItem("ffp_store_product_types", JSON.stringify(newCustomMap));
+    } catch {}
+    if (settings.productType?.toLowerCase() === typeToRemove.toLowerCase()) {
+      updateSetting("productType", updated[0] || "");
+    }
+  }
+
+  const detectedProductNiche = useMemo(() => {
+    const sampleTitle = selectedProduct?.title || resultProducts[0]?.title || "";
+    if (!sampleTitle) return null;
+    const titleLower = sampleTitle.toLowerCase();
+
+    if (/\b(blanket|fleece|throw|chăn)\b/i.test(titleLower)) {
+      return { niche: "Blanket", targetStore: "jeminise", label: "Chăn / Blanket" };
+    }
+    if (/\b(quilt|comforter|duvet|bedding|ga giường)\b/i.test(titleLower)) {
+      return { niche: "Bedding/Quilt", targetStore: "jeminise", label: "Chăn ga / Quilt" };
+    }
+    if (/\b(rug|area rug|carpet|doormat|runner rug|floor mat|thảm)\b/i.test(titleLower)) {
+      return { niche: "Rug", targetStore: "capozen", label: "Thảm / Rug" };
+    }
+    if (/\b(tumbler|skinny tumbler|travel mug|coffee mug|cup|ly giữ nhiệt)\b/i.test(titleLower)) {
+      return { niche: "Tumbler", targetStore: "dizzy", label: "Ly giữ nhiệt / Tumbler" };
+    }
+    if (/\b(t-shirt|tee|hoodie|sweatshirt|áo thun|áo nỉ)\b/i.test(titleLower)) {
+      return { niche: "Apparel", targetStore: "dizzy", label: "Áo / T-Shirt" };
+    }
+    if (/\b(pillow|pillowcase|cushion|gối)\b/i.test(titleLower)) {
+      return { niche: "Pillow", targetStore: "jeminise", label: "Gối / Pillow" };
+    }
+    return null;
+  }, [selectedProduct?.title, resultProducts]);
+
+  const isNicheMismatch = useMemo(() => {
+    if (!detectedProductNiche) return false;
+    const currentType = (settings.productType || "").toLowerCase();
+    const currentTypes = currentStoreProductTypes.map((t) => t.toLowerCase());
+    const detectedNicheLower = detectedProductNiche.niche.toLowerCase();
+
+    const matchesCurrentType = currentType.includes(detectedNicheLower) || detectedNicheLower.includes(currentType);
+    const matchesStore = currentTypes.some((t) => t.includes(detectedNicheLower) || detectedNicheLower.includes(t));
+
+    return !matchesCurrentType && !matchesStore;
+  }, [detectedProductNiche, settings.productType, currentStoreProductTypes]);
+
   async function handleStart(): Promise<void> {
     setSyncMessage(null);
     await startCrawlerJob({ runAmazonCrawler, urls, settings });
@@ -567,116 +756,114 @@ export function AmazonCrawlerPage({
 
       {/* Cấu hình Đồng bộ Shopify, Phân loại & Định giá */}
       <section className="rounded-2xl border border-slate-700/80 bg-slate-950/70 p-5 sm:p-6 shadow-xl space-y-5">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-3.5">
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-emerald-500/20 text-emerald-400 text-xs font-bold border border-emerald-500/30">
-                ⚡
-              </span>
-              <h2 className="text-base font-bold text-slate-100 tracking-tight">
-                Cấu hình Shopify Store, Phân loại &amp; Định giá
-              </h2>
-              <span className="rounded-full bg-cyan-500/10 px-2 py-0.5 text-[11px] font-medium text-cyan-400 border border-cyan-500/20">
-                Áp dụng toàn bộ batch
-              </span>
-              <button
-                className="inline-flex items-center gap-1 rounded-md border border-slate-700 bg-slate-900/90 px-2 py-0.5 text-[11px] font-medium text-slate-300 transition-colors hover:border-cyan-500 hover:bg-slate-800 hover:text-cyan-200 disabled:cursor-not-allowed disabled:opacity-50"
-                disabled={isRunning}
-                title="Đặt lại cấu hình về mặc định"
-                type="button"
-                onClick={resetCrawlerSettings}
-              >
-                <svg className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                  <path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-                <span>Reset</span>
-              </button>
-            </div>
-            <p className="mt-1 text-xs text-slate-400">
-              Chọn store đồng bộ, collection, loại sản phẩm (Product Type) và công thức giá bán áp dụng đồng loạt cho mọi sản phẩm trong link cào.
-            </p>
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-3">
+          <div className="flex items-center gap-2">
+            <h2 className="text-sm font-semibold text-slate-100 tracking-tight">
+              Cấu hình Shopify &amp; Định giá
+            </h2>
+            <button
+              className="inline-flex items-center gap-1 rounded-md border border-slate-700 bg-slate-900/90 px-2 py-0.5 text-[11px] font-medium text-slate-400 transition-colors hover:border-slate-500 hover:text-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
+              disabled={isRunning}
+              title="Đặt lại cấu hình về mặc định"
+              type="button"
+              onClick={resetCrawlerSettings}
+            >
+              <svg className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                <path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              <span>Reset</span>
+            </button>
           </div>
           {settings.storeId && (
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="rounded-md bg-cyan-950 px-2.5 py-1 text-xs font-mono text-cyan-300 border border-cyan-800">
-                🏬 Store: {settings.storeId}
-              </span>
-              <span className="rounded-md bg-purple-950 px-2.5 py-1 text-xs font-mono text-purple-300 border border-purple-800">
-                🏷️ Vendor: {(settings.storeId.split("--")[0] || settings.storeId).trim().toUpperCase()}
-              </span>
-              {settings.productType && (
-                <span className="rounded-md bg-emerald-950 px-2.5 py-1 text-xs font-mono text-emerald-300 border border-emerald-800">
-                  📦 Type: {settings.productType}
-                </span>
-              )}
-              {selectedCollections.length > 0 && (
-                <span className="rounded-md bg-amber-950 px-2.5 py-1 text-xs font-mono text-amber-300 border border-amber-800">
-                  📁 Collections: {selectedCollections.length} đã chọn
-                </span>
-              )}
+            <div className="flex items-center gap-2 text-xs text-slate-400 font-mono">
+              <span>{settings.storeId}</span>
+              {settings.productType && <span>• {settings.productType}</span>}
+              {selectedCollections.length > 0 && <span>• {selectedCollections.length} collections</span>}
             </div>
           )}
         </div>
 
+        {/* Niche Mismatch Warning Banner */}
+        {isNicheMismatch && detectedProductNiche && (
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-500/30 bg-amber-950/30 p-3 text-xs text-amber-200">
+            <div className="flex items-center gap-2">
+              <span className="text-amber-400">⚠️</span>
+              <span>
+                Link cào có vẻ là <strong className="text-white">{detectedProductNiche.label}</strong>, nhưng store đang chọn là <strong className="font-mono text-amber-100">{currentStoreId}</strong>.
+              </span>
+            </div>
+            {detectedProductNiche.targetStore && detectedProductNiche.targetStore !== currentStoreId && (
+              <button
+                type="button"
+                onClick={() => handleStoreChange(detectedProductNiche.targetStore)}
+                className="inline-flex items-center gap-1 rounded-md bg-amber-500 px-2.5 py-1 text-xs font-semibold text-slate-950 hover:bg-amber-400 transition-colors"
+              >
+                Chuyển sang {detectedProductNiche.targetStore} →
+              </button>
+            )}
+          </div>
+        )}
+
         {/* Row 1: Store, Collection & Product Type */}
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {/* Store selector */}
-          <div className="space-y-1.5 rounded-xl border border-slate-800 bg-slate-900/40 p-3.5">
-            <label className="grid gap-1.5 text-sm text-slate-300">
-              <span className="font-medium text-slate-200 flex items-center justify-between">
-                <span>Shopify Store đích</span>
-                <span className="text-[11px] font-mono text-purple-400">
-                  Vendor: {((settings.storeId || "capozen").split("--")[0] || "CAPOZEN").trim().toUpperCase()}
+          <div className="space-y-2 rounded-xl border border-slate-800 bg-slate-900/40 p-3.5">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <label className="text-sm font-medium text-slate-200">
+                  Shopify Store
+                </label>
+                <span className="text-[11px] font-mono text-slate-400" title="Shopify Vendor">
+                  ({((settings.storeId || "capozen").split("--")[0] || "CAPOZEN").trim().toUpperCase()})
                 </span>
-              </span>
-              <select
-                className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-slate-100 outline-none focus:border-cyan-400 text-sm"
-                value={settings.storeId || "capozen"}
-                onChange={(e) => {
-                  const nextStore = e.target.value;
-                  updateSetting("storeId", nextStore);
-                  updateSetting("collectionId", "");
-                  updateSetting("collectionIds", []);
-                  if (nextStore === "chillgen" && !settings.productType) {
-                    updateSetting("productType", "Rug");
-                  }
-                }}
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsAddStoreOpen(true)}
+                className="inline-flex items-center gap-1.5 rounded-md border border-cyan-500/50 bg-cyan-500/10 px-2.5 py-1 text-xs font-semibold text-cyan-300 shadow-sm transition-all hover:border-cyan-400 hover:bg-cyan-500/20 hover:text-white"
+                title="Thêm và kết nối Shopify Store mới"
               >
-                {availableStores.map((s) => (
-                  <option key={s.storeId} value={s.storeId}>
-                    {s.storeId} ({s.shopDomain})
-                  </option>
-                ))}
-              </select>
-            </label>
-            <p className="text-[11px] text-slate-400 leading-relaxed">
-              Store nhận sync. Vendor trên Shopify tự động gán là:{" "}
-              <strong className="text-purple-300 font-mono">
-                {((settings.storeId || "capozen").split("--")[0] || "CAPOZEN").trim().toUpperCase()}
-              </strong>
-            </p>
+                <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
+                  <path d="M12 4v16m8-8H4" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+                <span>Thêm store</span>
+              </button>
+            </div>
+            <select
+              className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-slate-100 outline-none focus:border-slate-500 text-sm"
+              value={settings.storeId || "capozen"}
+              onChange={(e) => {
+                handleStoreChange(e.target.value);
+              }}
+            >
+              {availableStores.map((s) => (
+                <option key={s.storeId} value={s.storeId}>
+                  {s.storeId} ({s.shopDomain})
+                </option>
+              ))}
+            </select>
           </div>
 
           {/* Collection multi-selector */}
           <div className="space-y-2 rounded-xl border border-slate-800 bg-slate-900/40 p-3.5">
             <div className="flex items-center justify-between">
               <label className="text-sm font-medium text-slate-200 flex items-center gap-1.5">
-                <span>Collections đích</span>
+                <span>Collections</span>
                 {selectedCollections.length > 0 && (
-                  <span className="text-xs text-amber-400 font-mono font-semibold">
+                  <span className="text-xs text-slate-300 font-mono">
                     ({selectedCollections.length})
                   </span>
                 )}
                 {isLoadingCollections && (
-                  <span className="text-[11px] text-cyan-400 animate-pulse font-normal">Đang tải...</span>
+                  <span className="text-[11px] text-slate-400 animate-pulse font-normal">Đang tải...</span>
                 )}
               </label>
-              <div className="flex items-center gap-2 text-[11px]">
+              <div className="flex items-center gap-2 text-xs">
                 {selectedCollections.length > 0 ? (
                   <button
                     type="button"
                     onClick={handleClearCollections}
-                    className="text-rose-400 hover:text-rose-300 transition-colors font-medium"
+                    className="text-slate-400 hover:text-rose-400 transition-colors"
                   >
                     Bỏ chọn hết
                   </button>
@@ -685,7 +872,7 @@ export function AmazonCrawlerPage({
                     <button
                       type="button"
                       onClick={handleSelectAllCollections}
-                      className="text-cyan-400 hover:text-cyan-300 transition-colors font-medium"
+                      className="text-slate-400 hover:text-slate-200 transition-colors"
                     >
                       Chọn tất cả
                     </button>
@@ -700,13 +887,13 @@ export function AmazonCrawlerPage({
                 {selectedCollections.map((col) => (
                   <span
                     key={col.id}
-                    className="inline-flex items-center gap-1 rounded bg-amber-950/80 border border-amber-700/70 px-2 py-0.5 text-xs text-amber-200 font-medium"
+                    className="inline-flex items-center gap-1 rounded bg-slate-800 border border-slate-700 px-2 py-0.5 text-xs text-slate-200"
                   >
                     <span className="truncate max-w-[130px]">{col.title}</span>
                     <button
                       type="button"
                       onClick={() => toggleCollection(col.id)}
-                      className="text-amber-400 hover:text-amber-100 font-bold ml-0.5 text-xs"
+                      className="text-slate-400 hover:text-rose-400 ml-0.5 text-xs"
                       title="Bỏ chọn"
                     >
                       ✕
@@ -719,7 +906,7 @@ export function AmazonCrawlerPage({
             {/* Add Collection dropdown */}
             <div className="grid grid-cols-[1fr_auto] gap-1.5">
               <select
-                className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-slate-100 outline-none focus:border-cyan-400 disabled:opacity-50 text-sm cursor-pointer"
+                className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-slate-100 outline-none focus:border-slate-500 disabled:opacity-50 text-sm cursor-pointer"
                 disabled={isLoadingCollections || availableCollections.length === 0}
                 value=""
                 onChange={(e) => {
@@ -733,7 +920,7 @@ export function AmazonCrawlerPage({
                   const isSelected = activeCollectionIds.includes(c.id);
                   return (
                     <option key={c.id} value={c.id}>
-                      {isSelected ? "✓ [Đã chọn] " : "+ "}{c.title} ({c.productsCount ?? 0} sp)
+                      {isSelected ? "✓ " : "+ "}{c.title} ({c.productsCount ?? 0})
                     </option>
                   );
                 })}
@@ -743,7 +930,7 @@ export function AmazonCrawlerPage({
                 onClick={() => setIsCollectionListOpen(!isCollectionListOpen)}
                 className={`rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors ${
                   isCollectionListOpen
-                    ? "border-cyan-500 bg-cyan-950 text-cyan-200"
+                    ? "border-slate-600 bg-slate-700 text-white"
                     : "border-slate-700 bg-slate-800 text-slate-300 hover:bg-slate-700"
                 }`}
                 title="Bật/tắt danh sách checklist"
@@ -766,78 +953,137 @@ export function AmazonCrawlerPage({
                         type="checkbox"
                         checked={isChecked}
                         onChange={() => toggleCollection(c.id)}
-                        className="rounded border-slate-700 text-cyan-500 focus:ring-0 cursor-pointer"
+                        className="rounded border-slate-700 text-slate-400 focus:ring-0 cursor-pointer"
                       />
-                      <span className={`truncate flex-1 ${isChecked ? "text-amber-200 font-medium" : ""}`}>
+                      <span className={`truncate flex-1 ${isChecked ? "text-white font-medium" : ""}`}>
                         {c.title}
                       </span>
                       <span className="text-[10px] text-slate-500 font-mono">
-                        {c.productsCount ?? 0} sp
+                        {c.productsCount ?? 0}
                       </span>
                     </label>
                   );
                 })}
               </div>
             )}
-
-            <p className="text-[11px] text-slate-400 leading-relaxed">
-              Tự động thêm sản phẩm vào tất cả các bộ sưu tập được chọn.
-            </p>
           </div>
 
           {/* Product Type selector */}
           <div className="space-y-2 rounded-xl border border-slate-800 bg-slate-900/40 p-3.5 sm:col-span-2 lg:col-span-1">
             <div className="flex items-center justify-between">
               <label className="text-sm font-medium text-slate-200">
-                Loại sản phẩm (Product Type)
+                Loại sản phẩm
               </label>
               {settings.productType ? (
                 <button
                   type="button"
                   onClick={() => updateSetting("productType", "")}
-                  className="text-[11px] text-rose-400 hover:text-rose-300 transition-colors"
+                  className="text-xs text-slate-400 hover:text-rose-400 transition-colors"
                 >
-                  Xóa / Theo gốc
+                  Theo gốc Amazon
                 </button>
               ) : (
-                <span className="text-[11px] text-slate-400 font-mono">
-                  Theo Amazon
+                <span className="text-xs text-slate-500">
+                  Mặc định Amazon
                 </span>
               )}
             </div>
 
-            {/* Quick Pills */}
-            <div className="flex flex-wrap gap-1">
-              {QUICK_PRODUCT_TYPE_PILLS.map((pill) => {
+            {/* Store-Scoped Quick Pills & Inline Add */}
+            <div className="flex flex-wrap items-center gap-1.5">
+              {currentStoreProductTypes.map((pill) => {
                 const isActive = settings.productType?.toLowerCase() === pill.toLowerCase();
                 return (
-                  <button
-                    key={pill}
-                    type="button"
-                    className={`rounded px-1.5 py-0.5 text-[11px] font-medium transition-colors ${
-                      isActive
-                        ? "bg-emerald-500 text-slate-950 font-semibold shadow-sm"
-                        : "bg-slate-800/80 text-slate-300 hover:bg-slate-700 hover:text-slate-100"
-                    }`}
-                    onClick={() => updateSetting("productType", isActive ? "" : pill)}
-                  >
-                    {pill}
-                  </button>
+                  <div key={pill} className="group relative inline-flex items-center">
+                    <button
+                      type="button"
+                      className={`rounded px-2.5 py-1 text-xs font-medium transition-colors ${
+                        isActive
+                          ? "bg-slate-100 text-slate-950 font-semibold shadow-sm"
+                          : "bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-slate-100"
+                      }`}
+                      onClick={() => updateSetting("productType", isActive ? "" : pill)}
+                    >
+                      {pill}
+                    </button>
+                    {currentStoreProductTypes.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleRemoveProductType(pill);
+                        }}
+                        className="hidden group-hover:inline-flex ml-0.5 text-[10px] text-slate-500 hover:text-rose-400 px-0.5"
+                        title={`Bỏ loại '${pill}' khỏi store ${currentStoreId}`}
+                      >
+                        ×
+                      </button>
+                    )}
+                  </div>
                 );
               })}
+
+              {/* Inline Add Button or Input */}
+              {isAddingNewType ? (
+                <div className="inline-flex items-center gap-1 rounded bg-slate-800 px-2 py-0.5 text-xs border border-slate-600 shadow-sm">
+                  <input
+                    type="text"
+                    autoFocus
+                    placeholder="Loại mới..."
+                    value={newProductTypeInput}
+                    onChange={(e) => setNewProductTypeInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        handleAddProductType(newProductTypeInput);
+                      } else if (e.key === "Escape") {
+                        setIsAddingNewType(false);
+                        setNewProductTypeInput("");
+                      }
+                    }}
+                    className="w-20 bg-transparent text-xs text-slate-100 outline-none placeholder:text-slate-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => handleAddProductType(newProductTypeInput)}
+                    className="text-xs text-slate-300 font-bold hover:text-white"
+                  >
+                    ✓
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsAddingNewType(false);
+                      setNewProductTypeInput("");
+                    }}
+                    className="text-xs text-slate-400 hover:text-slate-200"
+                  >
+                    ✕
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setIsAddingNewType(true)}
+                  className="rounded border border-dashed border-slate-700 bg-slate-900/60 px-2 py-0.5 text-xs text-slate-400 hover:border-slate-500 hover:text-slate-200 transition-colors"
+                  title={`Thêm loại sản phẩm mới cho store ${currentStoreId}`}
+                >
+                  + Thêm
+                </button>
+              )}
             </div>
 
             {/* Dropdown & Direct Text Input Combo */}
             <div className="grid grid-cols-[1fr_auto] gap-1.5">
               <input
                 type="text"
-                placeholder="VD: Rug, Blanket, Quilt..."
-                className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-slate-100 outline-none focus:border-cyan-400 text-sm font-medium placeholder:text-slate-500"
+                placeholder="Hoặc nhập loại khác..."
+                className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-slate-100 outline-none focus:border-slate-500 text-sm placeholder:text-slate-500"
                 value={settings.productType || ""}
                 onChange={(e) => updateSetting("productType", e.target.value)}
               />
               <select
-                className="rounded-lg border border-slate-700 bg-slate-800 px-2 py-1.5 text-slate-200 outline-none focus:border-cyan-400 text-xs cursor-pointer"
+                className="rounded-lg border border-slate-700 bg-slate-800 px-2 py-1.5 text-slate-200 outline-none focus:border-slate-500 text-xs cursor-pointer"
                 value={
                   COMMON_PRODUCT_TYPES.some((t) => t.value === settings.productType)
                     ? settings.productType
@@ -849,7 +1095,7 @@ export function AmazonCrawlerPage({
                   }
                 }}
               >
-                <option value="">Mẫu...</option>
+                <option value="">Mẫu khác...</option>
                 {COMMON_PRODUCT_TYPES.map((t) => (
                   <option key={t.value} value={t.value}>
                     {t.label}
@@ -857,9 +1103,6 @@ export function AmazonCrawlerPage({
                 ))}
               </select>
             </div>
-            <p className="text-[11px] text-slate-400 leading-relaxed">
-              Loại sp hiển thị trên Shopify (Chillgen: <span className="text-cyan-300 font-mono">Rug</span>, Jeminise: <span className="text-cyan-300 font-mono">Blanket</span>).
-            </p>
           </div>
         </div>
 
@@ -884,7 +1127,7 @@ export function AmazonCrawlerPage({
                     type="button"
                     className={`rounded px-2 py-0.5 text-xs font-semibold transition-colors ${
                       settings.priceAddition === btn.value
-                        ? "bg-cyan-500 text-slate-950 shadow-sm"
+                        ? "bg-slate-100 text-slate-950 shadow-sm"
                         : "bg-slate-800 text-slate-300 hover:bg-slate-700"
                     }`}
                     onClick={() => updateSetting("priceAddition", btn.value)}
@@ -901,7 +1144,7 @@ export function AmazonCrawlerPage({
                 step="0.01"
                 min="0"
                 placeholder="0.00"
-                className="w-full rounded-lg border border-slate-700 bg-slate-900 pl-7 pr-3 py-2 text-slate-100 outline-none focus:border-cyan-400 font-mono text-sm"
+                className="w-full rounded-lg border border-slate-700 bg-slate-900 pl-7 pr-3 py-2 text-slate-100 outline-none focus:border-slate-500 font-mono text-sm"
                 value={settings.priceAddition ?? 0}
                 onChange={(e) => {
                   const val = Math.max(0, Number(e.target.value) || 0);
@@ -909,24 +1152,21 @@ export function AmazonCrawlerPage({
                 }}
               />
             </div>
-            <p className="text-[11px] text-slate-400">
-              Số tiền cộng vào giá gốc Amazon trước khi bán (VD: +$6.95).
-            </p>
           </div>
 
           {/* Compare-At Discount % */}
           <div className="space-y-2 rounded-xl border border-slate-800 bg-slate-900/40 p-3.5">
             <div className="flex items-center justify-between">
               <label className="text-sm font-medium text-slate-200">
-                Giảm giá so sánh (% Compare-At)
+                Giá gạch ngang (Compare-At)
               </label>
-              <span className="text-xs font-mono text-cyan-300 font-semibold">
+              <span className="text-xs font-mono text-slate-300 font-semibold">
                 {settings.discountPercent ?? 0}%
               </span>
             </div>
             <div className="grid grid-cols-[1fr_auto] gap-2">
               <select
-                className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-slate-100 outline-none focus:border-cyan-400 text-sm"
+                className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-slate-100 outline-none focus:border-slate-500 text-sm"
                 value={
                   [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95].includes(
                     settings.discountPercent ?? 0
@@ -959,7 +1199,7 @@ export function AmazonCrawlerPage({
                   min="0"
                   max="95"
                   placeholder="%"
-                  className="w-20 rounded-lg border border-slate-700 bg-slate-900 px-2 py-2 pr-6 text-slate-100 outline-none focus:border-cyan-400 font-mono text-sm text-right"
+                  className="w-20 rounded-lg border border-slate-700 bg-slate-900 px-2 py-2 pr-6 text-slate-100 outline-none focus:border-slate-500 font-mono text-sm text-right"
                   value={settings.discountPercent ?? 0}
                   onChange={(e) => {
                     const val = Math.min(95, Math.max(0, Number(e.target.value) || 0));
@@ -969,9 +1209,6 @@ export function AmazonCrawlerPage({
                 <span className="absolute right-2 top-2 text-xs text-slate-500 pointer-events-none">%</span>
               </div>
             </div>
-            <p className="text-[11px] text-slate-400">
-              Tạo giá gạch ngang sao cho giá bán đã giảm đúng % này so với giá gốc.
-            </p>
           </div>
         </div>
 
@@ -984,53 +1221,24 @@ export function AmazonCrawlerPage({
           const compareAt = discount > 0 && discount < 100 ? selling / (1 - discount / 100) : undefined;
 
           return (
-            <div className="rounded-xl border border-cyan-900/60 bg-gradient-to-r from-slate-900/90 via-slate-900 to-cyan-950/30 p-4 text-xs text-slate-300 shadow-inner">
-              <div className="flex flex-wrap items-center justify-between gap-2 mb-2 pb-2 border-b border-slate-800/80">
-                <span className="font-semibold text-slate-200 flex items-center gap-1.5">
-                  <span className="text-cyan-400 font-bold">📊 Xem trước kết quả</span>
-                  <span className="text-slate-400 font-normal">(Ví dụ sản phẩm Amazon có giá gốc $20.00):</span>
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-800 bg-slate-900/50 px-4 py-2.5 text-xs text-slate-400">
+              <div className="flex flex-wrap items-center gap-3">
+                <span className="text-slate-300">
+                  Ví dụ gốc $20.00:
                 </span>
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="rounded bg-slate-800 px-2 py-0.5 text-[11px] text-slate-300">
-                    Store: <strong className="text-cyan-300">{settings.storeId || "capozen"}</strong>
-                  </span>
-                  <span className="rounded bg-slate-800 px-2 py-0.5 text-[11px] text-slate-300">
-                    Vendor: <strong className="text-purple-300">{((settings.storeId || "capozen").split("--")[0] || "CAPOZEN").trim().toUpperCase()}</strong>
-                  </span>
-                  <span className="rounded bg-slate-800 px-2 py-0.5 text-[11px] text-slate-300">
-                    Type: <strong className="text-emerald-300">{settings.productType || "(Gốc Amazon)"}</strong>
-                  </span>
-                  <span className="rounded bg-slate-800 px-2 py-0.5 text-[11px] text-slate-300">
-                    Collections:{" "}
-                    <strong className="text-amber-300">
-                      {selectedCollections.length > 0
-                        ? selectedCollections.map((c) => c.title).join(", ")
-                        : "(Không gán)"}
-                    </strong>
-                  </span>
-                </div>
-              </div>
-              <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 text-sm">
-                <span>
-                  Giá bán thực tế:{" "}
-                  <strong className="text-emerald-400 font-mono font-bold">${selling.toFixed(2)}</strong>{" "}
-                  <span className="text-xs text-slate-500">($20.00 + ${addition.toFixed(2)})</span>
+                <span className="text-slate-200 font-mono">
+                  Bán <strong className="text-white">${selling.toFixed(2)}</strong>
                 </span>
                 {compareAt !== undefined && (
-                  <span>
-                    Giá gạch ngang (Compare-At):{" "}
-                    <strong className="text-amber-400 font-mono line-through font-bold">${compareAt.toFixed(2)}</strong>
+                  <span className="text-slate-400 font-mono">
+                    Gạch ngang: <span className="line-through">${compareAt.toFixed(2)}</span>
+                    <span className="ml-1 text-slate-300 font-semibold">(-{discount}%)</span>
                   </span>
                 )}
-                {discount > 0 ? (
-                  <span className="rounded-md bg-rose-950/90 border border-rose-800 px-2 py-0.5 text-xs text-rose-300 font-bold tracking-wide">
-                    Khách thấy: Tiết kiệm {discount}%
-                  </span>
-                ) : (
-                  <span className="text-xs text-slate-500">
-                    (Không áp dụng gạch ngang)
-                  </span>
-                )}
+              </div>
+              <div className="flex items-center gap-2 font-mono text-[11px] text-slate-500">
+                <span>{settings.storeId || "capozen"}</span>
+                {settings.productType && <span>• {settings.productType}</span>}
               </div>
             </div>
           );
@@ -1406,6 +1614,41 @@ export function AmazonCrawlerPage({
           {isBatchJsonOpen && output ? <pre className="max-h-[42rem] overflow-auto rounded-xl bg-slate-950 p-4 text-xs text-cyan-100">{JSON.stringify(output, null, 2)}</pre> : null}
         </section>
       )}
+
+      <AddStoreModal
+        isOpen={isAddStoreOpen}
+        onClose={() => setIsAddStoreOpen(false)}
+        onStoreAdded={(newStore) => {
+          setAvailableStores((prev) => {
+            const filtered = prev.filter((s) => s.storeId.toLowerCase() !== newStore.storeId.toLowerCase());
+            return [
+              ...filtered,
+              {
+                storeId: newStore.storeId,
+                shopDomain: newStore.shopDomain,
+                productTypes: newStore.productTypes,
+                defaultProductType: newStore.defaultProductType,
+              },
+            ];
+          });
+          if (newStore.productTypes && newStore.productTypes.length > 0) {
+            const newMap = {
+              ...customStoreProductTypes,
+              [newStore.storeId.toLowerCase()]: [...newStore.productTypes],
+            };
+            setCustomStoreProductTypes(newMap);
+            try {
+              localStorage.setItem("ffp_store_product_types", JSON.stringify(newMap));
+            } catch {}
+          }
+          handleStoreChange(newStore.storeId);
+          notifyUser({
+            title: "Store mới đã kết nối",
+            message: `Store ${newStore.storeId} (${newStore.shopDomain}) đã sẵn sàng hoạt động!`,
+            type: "success",
+          });
+        }}
+      />
     </div>
   );
 }

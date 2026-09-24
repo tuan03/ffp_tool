@@ -253,7 +253,6 @@ export async function stageLocalMedia(
   }
 
   const { buffer, contentType, filename } = await resolveLocalImageBytes(originalSource);
-  const contentBase64 = buffer.toString("base64");
 
   const stageResult = await executeFilesStageBinary(
     store,
@@ -261,7 +260,7 @@ export async function stageLocalMedia(
     {
       filename,
       mimeType: contentType,
-      contentBase64,
+      content: buffer,
       resource: options?.resource ?? (buffer.length > 20 * 1024 * 1024 ? "FILE" : "IMAGE"),
     },
     "apply",
@@ -274,6 +273,23 @@ export async function stageLocalMedia(
 export interface EnsureMediaResult {
   readonly mediaList: readonly CreateMediaInputItem[];
   readonly urlMap: ReadonlyMap<string, string>;
+}
+
+async function mapConcurrent<T, R>(
+  items: readonly T[],
+  concurrency: number,
+  fn: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let currentIndex = 0;
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+    while (currentIndex < items.length) {
+      const idx = currentIndex++;
+      results[idx] = await fn(items[idx], idx);
+    }
+  });
+  await Promise.all(workers);
+  return results;
 }
 
 /**
@@ -293,8 +309,10 @@ export async function ensureMediaPubliclyAccessible(
   const urlMap = new Map<string, string>();
   const stagedPromiseCache = new Map<string, Promise<string>>();
 
-  const updatedMediaList = await Promise.all(
-    mediaList.map(async (item) => {
+  const updatedMediaList = await mapConcurrent(
+    mediaList,
+    4,
+    async (item) => {
       const rawUrl = item.originalSource;
       if (!isLocalOrPrivateUrl(rawUrl)) {
         urlMap.set(rawUrl, rawUrl);
@@ -316,7 +334,7 @@ export async function ensureMediaPubliclyAccessible(
         ...item,
         originalSource: stagedUrl,
       };
-    }),
+    },
   );
 
   return { mediaList: updatedMediaList, urlMap };

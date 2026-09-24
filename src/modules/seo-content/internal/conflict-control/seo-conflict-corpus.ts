@@ -9,6 +9,7 @@ export interface StoredEmbedding {
 }
 
 export interface SeoProductIdentity {
+  readonly storeId?: string;
   readonly productId?: string;
   readonly handle?: string;
   readonly url?: string;
@@ -62,6 +63,7 @@ export interface SeoCorpusKeyword {
 }
 
 export interface SeoCorpusProduct {
+  readonly storeId?: string;
   readonly productKey: string;
   readonly productId?: string;
   readonly handle?: string;
@@ -175,6 +177,11 @@ export function isSameProduct(
   if (!a || !b) {
     return false;
   }
+  const storeA = a.storeId ? a.storeId.trim() : undefined;
+  const storeB = b.storeId ? b.storeId.trim() : undefined;
+  if (storeA && storeB && storeA !== storeB) {
+    return false;
+  }
   const idA = a.productId ? a.productId.trim() : undefined;
   const idB = b.productId ? b.productId.trim() : undefined;
   if (idA && idB) {
@@ -201,16 +208,20 @@ export function isSameProduct(
  * productId -> handle -> url.
  */
 export function computeProductKey(identity: SeoProductIdentity): string {
+  const storePrefix =
+    identity.storeId && identity.storeId.trim().length > 0
+      ? `store:${identity.storeId.trim()}:`
+      : "";
   if (identity.productId && identity.productId.trim().length > 0) {
-    return `id:${identity.productId.trim()}`;
+    return `${storePrefix}id:${identity.productId.trim()}`;
   }
   const normHandle = normalizeIdentifier(identity.handle);
   if (normHandle) {
-    return `handle:${normHandle}`;
+    return `${storePrefix}handle:${normHandle}`;
   }
   const normUrl = normalizeIdentifier(identity.url);
   if (normUrl) {
-    return `url:${normUrl}`;
+    return `${storePrefix}url:${normUrl}`;
   }
-  return `unknown:${Date.now()}`;
+  return `${storePrefix}unknown:${Date.now()}`;
 }

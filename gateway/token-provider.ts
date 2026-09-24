@@ -28,6 +28,7 @@ export interface ClientCredentialsTokenProviderOptions {
   readonly transport?: HttpTransport;
   readonly clock?: () => number;
   readonly timeoutMs?: number;
+  readonly sleep?: (ms: number) => Promise<void>;
 }
 
 export class ClientCredentialsTokenProvider implements TokenProvider {
@@ -35,6 +36,7 @@ export class ClientCredentialsTokenProvider implements TokenProvider {
   private readonly inFlight = new Map<string, Promise<string>>();
   private readonly baseTransport: HttpTransport;
   private readonly clock: () => number;
+  private readonly sleep: (ms: number) => Promise<void>;
   private readonly defaultTtlMs = 86_400_000; // 24 hours
   private readonly safetyBufferMs = 300_000; // 5 minutes
   private readonly timeoutMs: number;
@@ -42,6 +44,7 @@ export class ClientCredentialsTokenProvider implements TokenProvider {
   public constructor(options?: ClientCredentialsTokenProviderOptions) {
     this.baseTransport = options?.transport ?? globalThis.fetch;
     this.clock = options?.clock ?? Date.now;
+    this.sleep = options?.sleep ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)));
     this.timeoutMs = options?.timeoutMs && options.timeoutMs > 0 ? options.timeoutMs : 15_000;
   }
 
@@ -84,37 +87,88 @@ export class ClientCredentialsTokenProvider implements TokenProvider {
     const transport = createStoreTransport(store, this.baseTransport);
     const tokenUrl = `https://${store.shopDomain}/admin/oauth/access_token`;
 
-    const abortController = new AbortController();
-    const timeoutId = setTimeout(() => abortController.abort(), this.timeoutMs);
-
+    const maxRetries = 3;
+    let attempt = 0;
     let response: Response;
-    try {
-      response = await transport(tokenUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Accept: "application/json",
-        },
-        body: JSON.stringify({
-          client_id: clientId,
-          client_secret: clientSecret,
-          grant_type: "client_credentials",
-        }),
-        signal: abortController.signal,
-      });
-    } catch (networkErr: unknown) {
-      if (abortController.signal.aborted || (networkErr instanceof Error && networkErr.name === "AbortError")) {
+
+    while (true) {
+      attempt++;
+      const abortController = new AbortController();
+      const timeoutId = setTimeout(() => abortController.abort(), this.timeoutMs);
+
+      try {
+        response = await transport(tokenUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json",
+          },
+          body: JSON.stringify({
+            client_id: clientId,
+            client_secret: clientSecret,
+            grant_type: "client_credentials",
+          }),
+          signal: abortController.signal,
+        });
+      } catch (networkErr: unknown) {
+        if (abortController.signal.aborted || (networkErr instanceof Error && networkErr.name === "AbortError")) {
+          throw new GatewayError(
+            "Shopify OAuth token exchange timed out",
+            "SHOPIFY_NETWORK_ERROR",
+            504,
+            undefined,
+            networkErr,
+          );
+        }
+        throw new GatewayError("Failed to reach Shopify OAuth endpoint", "SHOPIFY_NETWORK_ERROR", 502, undefined, networkErr);
+      } finally {
+        clearTimeout(timeoutId);
+      }
+
+      if (response.status === 429) {
+        const retryAfterHeader = response.headers?.get?.("retry-after") ?? undefined;
+        let retryAfterSec = retryAfterHeader ? Number.parseFloat(retryAfterHeader) : NaN;
+        if (Number.isNaN(retryAfterSec) && retryAfterHeader) {
+          const parsedDate = Date.parse(retryAfterHeader);
+          if (!Number.isNaN(parsedDate)) {
+            retryAfterSec = Math.max(0, (parsedDate - this.clock()) / 1000);
+          }
+        }
+        if (Number.isNaN(retryAfterSec) || retryAfterSec <= 0) {
+          retryAfterSec = 2;
+        }
+
+        if (retryAfterSec > 30) {
+          throw new GatewayError(
+            "Shopify OAuth rate limit exceeded",
+            "SHOPIFY_THROTTLED",
+            429,
+            Math.ceil(retryAfterSec),
+            undefined,
+            undefined,
+            true,
+          );
+        }
+
+        if (attempt <= maxRetries) {
+          const jitterMs = Math.floor(Math.random() * 250);
+          const waitMs = Math.round(retryAfterSec * 1000) + jitterMs;
+          await this.sleep(waitMs);
+          continue;
+        }
+
         throw new GatewayError(
-          "Shopify OAuth token exchange timed out",
-          "SHOPIFY_NETWORK_ERROR",
-          504,
+          "Shopify OAuth rate limit exceeded",
+          "SHOPIFY_THROTTLED",
+          429,
+          Math.ceil(retryAfterSec),
           undefined,
-          networkErr,
+          undefined,
+          true,
         );
       }
-      throw new GatewayError("Failed to reach Shopify OAuth endpoint", "SHOPIFY_NETWORK_ERROR", 502, undefined, networkErr);
-    } finally {
-      clearTimeout(timeoutId);
+
+      break;
     }
 
     if (!response.ok) {
@@ -191,7 +245,7 @@ export class CompositeTokenProvider implements TokenProvider {
   private readonly staticProvider = new StaticAccessTokenProvider();
   private readonly clientCredsProvider: ClientCredentialsTokenProvider;
 
-  public constructor(options?: { transport?: HttpTransport; clock?: () => number }) {
+  public constructor(options?: ClientCredentialsTokenProviderOptions) {
     this.clientCredsProvider = new ClientCredentialsTokenProvider(options);
   }
 

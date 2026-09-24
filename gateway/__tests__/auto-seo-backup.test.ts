@@ -660,3 +660,40 @@ test("20. created_at is ISO UTC format YYYY-MM-DDTHH:MM:SS.sssZ", async () => {
   const parsedTime = Date.parse(row.created_at);
   assert.equal(Number.isNaN(parsedTime), false);
 });
+
+test("21. onConflict update upserts row on (workflow_id, store_id, product_id) conflict", async () => {
+  const db = createTestDb();
+  const mockRunner = createMockSeoContentRunner();
+
+  // First run
+  await handleAutoSeoRun(
+    {
+      workflowId: "wf-upsert-1",
+      storeId: "store-1",
+      shopDomain: "test.myshopify.com",
+      products: [createMockProduct({ id: "prod-1", title: "Initial Title" })],
+      onConflict: "update",
+    },
+    { db, seoContentRunner: mockRunner.runner },
+  );
+
+  let rows = db.prepare("SELECT * FROM auto_seo_product_backups WHERE workflow_id = ?").all("wf-upsert-1") as unknown as BackupRow[];
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0]?.product_title, "Initial Title");
+
+  // Second run with updated title and onConflict: 'update'
+  await handleAutoSeoRun(
+    {
+      workflowId: "wf-upsert-1",
+      storeId: "store-1",
+      shopDomain: "test.myshopify.com",
+      products: [createMockProduct({ id: "prod-1", title: "Updated Title" })],
+      onConflict: "update",
+    },
+    { db, seoContentRunner: mockRunner.runner },
+  );
+
+  rows = db.prepare("SELECT * FROM auto_seo_product_backups WHERE workflow_id = ?").all("wf-upsert-1") as unknown as BackupRow[];
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0]?.product_title, "Updated Title");
+});

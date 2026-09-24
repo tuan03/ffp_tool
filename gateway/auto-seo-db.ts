@@ -59,6 +59,83 @@ export function initAutoSeoDbSchema(db: DatabaseSync): void {
   `);
 }
 
+export const INSERT_AUTO_SEO_BACKUP_SQL = `
+  INSERT INTO auto_seo_product_backups (
+    backup_id,
+    workflow_id,
+    store_id,
+    shop_domain,
+    product_id,
+    product_handle,
+    product_title,
+    shopify_updated_at,
+    snapshot_json,
+    snapshot_sha256,
+    downstream_status
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'NOT_SENT')
+`;
+
+export const INSERT_AUTO_SEO_BACKUP_UPSERT_SQL = `
+  INSERT INTO auto_seo_product_backups (
+    backup_id,
+    workflow_id,
+    store_id,
+    shop_domain,
+    product_id,
+    product_handle,
+    product_title,
+    shopify_updated_at,
+    snapshot_json,
+    snapshot_sha256,
+    downstream_status
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'NOT_SENT')
+  ON CONFLICT(workflow_id, store_id, product_id) DO UPDATE SET
+    backup_id = excluded.backup_id,
+    shop_domain = excluded.shop_domain,
+    product_handle = excluded.product_handle,
+    product_title = excluded.product_title,
+    shopify_updated_at = excluded.shopify_updated_at,
+    snapshot_json = excluded.snapshot_json,
+    snapshot_sha256 = excluded.snapshot_sha256,
+    downstream_status = 'NOT_SENT',
+    downstream_http_status = NULL,
+    downstream_error = NULL,
+    downstream_sent_at = NULL,
+    created_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+`;
+
+export interface AutoSeoProductBackupRecord {
+  readonly backupId: string;
+  readonly workflowId: string;
+  readonly storeId: string;
+  readonly shopDomain: string;
+  readonly productId: string;
+  readonly productHandle: string;
+  readonly productTitle: string;
+  readonly shopifyUpdatedAt?: string | null;
+  readonly snapshotJson: string;
+  readonly snapshotSha256: string;
+}
+
+export function upsertAutoSeoProductBackup(
+  db: DatabaseSync,
+  record: AutoSeoProductBackupRecord,
+): void {
+  const stmt = db.prepare(INSERT_AUTO_SEO_BACKUP_UPSERT_SQL);
+  stmt.run(
+    record.backupId,
+    record.workflowId,
+    record.storeId,
+    record.shopDomain,
+    record.productId,
+    record.productHandle,
+    record.productTitle,
+    record.shopifyUpdatedAt ?? null,
+    record.snapshotJson,
+    record.snapshotSha256,
+  );
+}
+
 export function getAutoSeoDb(options?: AutoSeoDbOptions): DatabaseSync {
   if (activeDb) {
     return activeDb;
