@@ -350,6 +350,67 @@ class TestTemplateMockupRefactoring(unittest.TestCase):
         # Collision with float product box must be skipped (remain black)
         self.assertEqual(result.getpixel((250, 300)), (0, 0, 0))
 
+    def test_direct_ai_lifestyle_prompt_infographic_hybrid_mode(self) -> None:
+        """When hybrid_mode=True, prompt instructs Imagen not to draw text banners on canvas."""
+        analysis = {
+            "scene_title": "Infographic Hybrid Template",
+            "visual_concept": "Clean spec sheet on white background.",
+            "is_infographic": True,
+            "is_plain_background": True,
+            "product_boxes_norm_0_1000": [self.product_box],
+            "chrome_boxes_norm_0_1000": [self.safe_chrome],
+            "product_form": "Structured leather bag",
+            "external_chrome_to_preserve": "Yellow text banners and studio backdrop",
+            "generation_directive": "Preserve studio backdrop.",
+        }
+        prompt = direct_ai_lifestyle_prompt(
+            self.target,
+            self.pose,
+            "",
+            has_room_template=True,
+            reference_analysis=analysis,
+            hybrid_mode=True,
+        )
+        self.assertIn("STRICT NO-TEXT-BANNER MANDATE", prompt)
+        self.assertIn("MUST NOT DRAW, RENDER, PAINT, OR HALLUCINATE ANY TEXT BANNERS", prompt)
+        self.assertIn("STRICT INFOGRAPHIC TEMPLATE PRESERVATION MANDATE", prompt)
+
+    def test_composite_isolation_gate_shrinks_slight_overlap(self) -> None:
+        """Non-Product Isolation Gate shrinks a chrome box that slightly overlaps product edge."""
+        tpl = Image.new("RGB", (1000, 1000), color=(255, 255, 255))
+        gen = Image.new("RGB", (1000, 1000), color=(0, 0, 0))
+        # Product box: [150, 40, 465, 460]
+        prod_box = [150, 40, 465, 460]
+        # Chrome box overlapping slightly on top (y: 455..520, x: 40..460) -> overlap in y: 455..465 (10px)
+        slight_overlap_box = [455, 40, 520, 460]
+        result = composite_infographic_hybrid(
+            tpl,
+            gen,
+            chrome_boxes=[slight_overlap_box],
+            product_boxes=[prod_box],
+        )
+        # Pixel at y=460 (inside product) should remain black (gen)
+        self.assertEqual(result.getpixel((200, 460)), (0, 0, 0))
+        # Pixel at y=480 (below product, inside shrunk chrome box) should be white (tpl)
+        self.assertEqual(result.getpixel((200, 480)), (255, 255, 255))
+
+    def test_composite_ribbon_banner_auto_expansion(self) -> None:
+        """Horizontal ribbon banner starting at left margin auto-expands to prevent text truncation."""
+        tpl = Image.new("RGB", (1000, 1000), color=(255, 255, 255))
+        gen = Image.new("RGB", (1000, 1000), color=(0, 0, 0))
+        # Ribbon banner truncated at xmax=375: [800, 10, 850, 375]
+        # Product is positioned at xmin=600: [600, 600, 900, 900]
+        ribbon_box = [800, 10, 850, 375]
+        prod_box = [600, 600, 900, 900]
+        result = composite_infographic_hybrid(
+            tpl,
+            gen,
+            chrome_boxes=[ribbon_box],
+            product_boxes=[prod_box],
+        )
+        # Pixel at x=450, y=825 (expanded area beyond 375) should be white (tpl)
+        self.assertEqual(result.getpixel((450, 825)), (255, 255, 255))
+
 
 if __name__ == "__main__":
     unittest.main()
