@@ -21,11 +21,20 @@ from ..image_processing import ImageProcessingService, normalize_profile, proces
 from . import PROTOCOL_VERSION, SUPPORTED_PROTOCOL_VERSIONS
 from .coordinator_models import Base, create_database_engine, create_session_factory
 from .coordinator_store import ActiveJobExistsError, CoordinatorStore
-from .protocol import HEARTBEAT_INTERVAL_SECONDS, LEASE_SECONDS, payload_checksum, require_message
+from .protocol import HEARTBEAT_INTERVAL_SECONDS, LEASE_SECONDS, payload_checksum, require_message, utc_iso
 
 
 class ResultPayloadTooLarge(ValueError):
     pass
+
+
+def debug_event(event: str, **details: Any) -> None:
+    print(json.dumps({
+        "timestamp": utc_iso(),
+        "component": "crawler-coordinator",
+        "event": event,
+        **details,
+    }, ensure_ascii=False), flush=True)
 
 
 def positive_environment_integer(name: str, default: int) -> int:
@@ -305,6 +314,17 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
         if snapshot is None:
             raise HTTPException(status_code=404, detail="Crawl job was not found.")
         cache_generation = store.current_cache_generation()
+        cancellation = snapshot.get("cancellation") or {}
+        debug_event(
+            "stop_requested",
+            jobId=job_id,
+            cancellationId=cancellation.get("id"),
+            cacheGeneration=cache_generation,
+            connectedClientIds=sorted(connected_client_ids),
+            pendingAgentCount=len(cancellation.get("pendingAgents") or []),
+            pendingPipelineItemCount=int(cancellation.get("pendingPipelineItems") or 0),
+            pendingCleanupCount=len(cancellation.get("pendingCleanupAgents") or []),
+        )
         await manager.broadcast({
             "type": "cancel",
             "jobId": job_id,
@@ -852,6 +872,21 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
                 "acknowledgedCancelIntents": acknowledged_intents,
                 "requiredCacheGeneration": required_cache_generation,
             })
+            if is_cache_ready:
+                recovered_jobs = await asyncio.to_thread(
+                    store.acknowledge_client_cache_generation,
+                    client_id,
+                    client_cache_generation,
+                )
+                if recovered_jobs:
+                    purged = await asyncio.to_thread(store.purge_stopped_jobs)
+                    debug_event(
+                        "stop_cleanup_recovered_on_connect",
+                        clientId=client_id,
+                        cacheGeneration=client_cache_generation,
+                        jobIds=recovered_jobs,
+                        purgedJobs=purged,
+                    )
             for cancelled_job_id in acknowledged_intents:
                 await manager.broadcast({
                     "type": "cancel",
@@ -918,10 +953,33 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
                     acknowledged_generation = max(0, int(message.get("cacheGeneration") or 0))
                     if acknowledged_generation >= required_cache_generation:
                         is_cache_ready = True
+                        recovered_jobs = await asyncio.to_thread(
+                            store.acknowledge_client_cache_generation,
+                            client_id,
+                            acknowledged_generation,
+                        )
+                        if recovered_jobs:
+                            purged = await asyncio.to_thread(store.purge_stopped_jobs)
+                            debug_event(
+                                "stop_cleanup_recovered_from_generation_ack",
+                                clientId=client_id,
+                                cacheGeneration=acknowledged_generation,
+                                jobIds=recovered_jobs,
+                                purgedJobs=purged,
+                            )
                         acknowledged_slots = max(0, int(message.get("availableSlots") or 0))
                         await manager.update_available_slots(client_id, acknowledged_slots)
                         await assign(acknowledged_slots)
                 elif message_type == "stop_cleanup_ack":
+                    debug_event(
+                        "stop_cleanup_ack_received",
+                        clientId=client_id,
+                        jobId=str(message.get("jobId") or ""),
+                        cacheGeneration=max(0, int(message.get("cacheGeneration") or 0)),
+                        removedFiles=int(message.get("removedFiles") or 0),
+                        removedBytes=int(message.get("removedBytes") or 0),
+                        error=str(message.get("error") or "") or None,
+                    )
                     acknowledged = await asyncio.to_thread(
                         store.acknowledge_stop_cleanup,
                         client_id,
@@ -930,7 +988,13 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
                         error=str(message.get("error") or "") or None,
                     )
                     if acknowledged:
-                        await asyncio.to_thread(store.purge_stopped_jobs)
+                        purged = await asyncio.to_thread(store.purge_stopped_jobs)
+                        debug_event(
+                            "stop_completed",
+                            clientId=client_id,
+                            jobId=str(message.get("jobId") or ""),
+                            purgedJobs=purged,
+                        )
         except (WebSocketDisconnect, asyncio.TimeoutError):
             pass
         except ValueError as error:

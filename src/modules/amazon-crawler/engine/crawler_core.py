@@ -9,6 +9,7 @@ import html as html_module
 import http.cookiejar
 import json
 import os
+import queue
 import re
 import tempfile
 import threading
@@ -603,7 +604,14 @@ def parse_product_html(html: str, requested_asin: str, url: str) -> dict[str, An
 
 
 class HttpFetcher:
-    def __init__(self, *, zip_code: str = "10001", retries: int = 3, assignments: list[ProxyAssignment] | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        zip_code: str = "10001",
+        retries: int = 3,
+        assignments: list[ProxyAssignment] | None = None,
+        cancel_event: threading.Event | None = None,
+    ) -> None:
         self.zip_code = zip_code
         self.retries = retries
         self.assignments = assignments or [ProxyAssignment(index=0, name="profile-1")]
@@ -617,6 +625,46 @@ class HttpFetcher:
             for assignment in self.assignments
         }
         self._thread_diagnostics = threading.local()
+        self.cancel_event = cancel_event
+
+    def _check_cancelled(self) -> None:
+        if self.cancel_event is not None and self.cancel_event.is_set():
+            raise InterruptedError("HTTP fetch was cancelled.")
+
+    def _read_response(
+        self,
+        opener: urllib.request.OpenerDirector,
+        request: urllib.request.Request,
+        *,
+        timeout: float,
+    ) -> tuple[bytes, int | None]:
+        """Read urllib in a daemon thread so Stop can release the crawler promptly."""
+        outcome: queue.Queue[tuple[bytes, int | None] | Exception] = queue.Queue(maxsize=1)
+
+        def read() -> None:
+            try:
+                with opener.open(request, timeout=timeout) as response:
+                    outcome.put((response.read(), getattr(response, "status", None)))
+            except Exception as error:
+                outcome.put(error)
+
+        threading.Thread(target=read, name="amazon-http-request", daemon=True).start()
+        while True:
+            self._check_cancelled()
+            try:
+                response = outcome.get(timeout=0.1)
+            except queue.Empty:
+                continue
+            if isinstance(response, Exception):
+                raise response
+            return response
+
+    def _wait_before_retry(self, seconds: float) -> None:
+        if self.cancel_event is not None:
+            if self.cancel_event.wait(seconds):
+                self._check_cancelled()
+            return
+        time.sleep(seconds)
 
     def last_diagnostics(self) -> list[dict[str, Any]]:
         return deepcopy(getattr(self._thread_diagnostics, "attempts", []))
@@ -662,12 +710,12 @@ class HttpFetcher:
                 "Sec-Fetch-Dest": "document", "Sec-Fetch-Mode": "navigate", "Sec-Fetch-Site": "none", "Sec-Fetch-User": "?1",
             }
             for attempt in range(3):
+                self._check_cancelled()
                 jar = http.cookiejar.CookieJar()
                 opener = self._opener(assignment, jar)
                 try:
                     home_request = urllib.request.Request(f"{AMAZON_ORIGIN}/?language=en_US&currency=USD", headers=headers)
-                    with opener.open(home_request, timeout=12) as response:
-                        response.read()
+                    self._read_response(opener, home_request, timeout=12)
                     payload = urllib.parse.urlencode({
                         "locationType": "LOCATION_INPUT", "zipCode": self.zip_code, "storeContext": "generic",
                         "deviceType": "web", "pageType": "Gateway", "actionSource": "glow",
@@ -678,8 +726,8 @@ class HttpFetcher:
                         "Origin": AMAZON_ORIGIN, "Referer": f"{AMAZON_ORIGIN}/", "X-Requested-With": "XMLHttpRequest",
                     }
                     request = urllib.request.Request(f"{AMAZON_ORIGIN}/gp/delivery/ajax/address-change.html", data=payload, headers=location_headers)
-                    with opener.open(request, timeout=12) as response:
-                        result = json.loads(response.read().decode("utf-8", errors="replace"))
+                    response_body, _ = self._read_response(opener, request, timeout=12)
+                    result = json.loads(response_body.decode("utf-8", errors="replace"))
                     if not result.get("isAddressUpdated") and not result.get("successful"):
                         raise RuntimeError(f"Amazon rejected US ZIP {self.zip_code}: {result}")
                     cookies = {cookie.name: cookie.value for cookie in jar if cookie.name not in {"i18n-prefs", "lc-main", "sp-cdn"}}
@@ -691,7 +739,7 @@ class HttpFetcher:
                     return cookie_header
                 except Exception as error:
                     last_error = error
-                    time.sleep(0.7 * (attempt + 1))
+                    self._wait_before_retry(0.7 * (attempt + 1))
             self._session_failures[assignment.index] = time.monotonic()
             self._us_profile_applied[assignment.index] = False
             return DEFAULT_HEADERS["Cookie"]
@@ -727,6 +775,7 @@ class HttpFetcher:
             else available_assignments * self.retries
         )
         for attempt, assignment in enumerate(route_assignments, start=1):
+            self._check_cancelled()
             candidate = candidates[(attempt - 1) % len(candidates)]
             started = time.monotonic()
             trace: dict[str, Any] = {
@@ -744,9 +793,13 @@ class HttpFetcher:
                             f"HTTP could not confirm Amazon US delivery ZIP {self.zip_code} for this profile."
                         )
                     request = urllib.request.Request(candidate, headers={**DEFAULT_HEADERS, "Cookie": cookie_header})
-                    with self._opener(assignment).open(request, timeout=90) as response:
-                        body = response.read().decode("utf-8", errors="replace")
-                        trace["httpStatus"] = getattr(response, "status", None)
+                    response_body, response_status = self._read_response(
+                        self._opener(assignment),
+                        request,
+                        timeout=90,
+                    )
+                    body = response_body.decode("utf-8", errors="replace")
+                    trace["httpStatus"] = response_status
                     if html_is_captcha(body):
                         raise RuntimeError("Amazon CAPTCHA/bot-check page detected.")
                     if html_is_location_blocked(body):
@@ -773,7 +826,7 @@ class HttpFetcher:
             diagnostics.append(trace)
             self._thread_diagnostics.attempts = diagnostics
             if attempt < len(route_assignments):
-                time.sleep(0.25 * attempt)
+                self._wait_before_retry(0.25 * attempt)
         raise HttpFetchError(f"HTTP fetch failed after {len(diagnostics)} network attempts: {error}", diagnostics)
 
 
@@ -823,7 +876,11 @@ class AmazonCrawler:
             settings.browser_profiles,
             config_path=proxy_config_path,
         )
-        self.fetcher = fetcher or HttpFetcher(zip_code=settings.amazon_zip, assignments=proxy_assignments)
+        self.fetcher = fetcher or HttpFetcher(
+            zip_code=settings.amazon_zip,
+            assignments=proxy_assignments,
+            cancel_event=self.cancel_event,
+        )
         self._http_slots = threading.BoundedSemaphore(settings.urllib_threads)
         self.cache = RawFamilyCache(root / ".runtime" / "cache")
         self.browser_pool = browser_pool or PlaywrightPool(

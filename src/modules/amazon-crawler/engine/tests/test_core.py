@@ -4,6 +4,7 @@ import json
 import tempfile
 import threading
 import unittest
+import urllib.request
 from copy import deepcopy
 from pathlib import Path
 
@@ -255,6 +256,44 @@ def source_variant(asin: str, design: str, size: str, customization: dict | None
 
 
 class CoreTests(unittest.TestCase):
+    def test_http_response_wait_is_interrupted_by_stop_event(self) -> None:
+        request_started = threading.Event()
+        release_request = threading.Event()
+        cancel_event = threading.Event()
+
+        class BlockingResponse:
+            status = 200
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args: object) -> None:
+                return None
+
+            def read(self) -> bytes:
+                request_started.set()
+                release_request.wait(timeout=2)
+                return b"late response"
+
+        class BlockingOpener:
+            def open(self, *_args: object, **_kwargs: object) -> BlockingResponse:
+                return BlockingResponse()
+
+        fetcher = HttpFetcher(cancel_event=cancel_event)
+        timer = threading.Timer(0.05, cancel_event.set)
+        timer.start()
+        try:
+            with self.assertRaisesRegex(InterruptedError, "cancelled"):
+                fetcher._read_response(
+                    BlockingOpener(),
+                    urllib.request.Request("https://example.test"),
+                    timeout=90,
+                )
+            self.assertTrue(request_started.is_set())
+        finally:
+            release_request.set()
+            timer.cancel()
+
     def test_default_settings_match_four_proxy_concurrency_profile(self) -> None:
         settings = CrawlSettings.from_api({})
 

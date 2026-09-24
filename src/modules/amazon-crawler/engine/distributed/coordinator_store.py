@@ -1293,6 +1293,22 @@ class CoordinatorStore:
                 self._refresh_job(session, job_id)
             return not error
 
+    def acknowledge_client_cache_generation(self, client_id: str, cache_generation: int) -> list[str]:
+        """Complete pending Stop cleanups proven by a reconnect generation ACK."""
+        with self.sessions.begin() as session:
+            cleanups = session.scalars(select(JobStopClientCleanup).where(
+                JobStopClientCleanup.client_id == client_id,
+                JobStopClientCleanup.status == "pending",
+                JobStopClientCleanup.cache_generation <= cache_generation,
+            )).all()
+            job_ids = sorted({cleanup.job_id for cleanup in cleanups})
+            for cleanup in cleanups:
+                cleanup.status = "completed"
+                cleanup.error = None
+            for job_id in job_ids:
+                self._refresh_job(session, job_id)
+            return job_ids
+
     def acknowledge_task_cancel(self, client_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         task_id = str(payload.get("taskId") or "")
         lease_id = str(payload.get("leaseId") or "")

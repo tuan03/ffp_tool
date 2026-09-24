@@ -93,6 +93,20 @@ class DistributedCrawlerAgent:
         self._captcha_waiting = False
         self._pending_stop_cleanups: dict[str, int] = {}
         self._cache_cleanup_lock = asyncio.Lock()
+        self._running_crawlers: dict[str, Any] = {}
+        self._running_crawlers_lock = threading.Lock()
+        self._debug_log_lock = threading.Lock()
+        self._debug_log_path = config.data_directory / "agent-debug.jsonl"
+
+    def _debug_event(self, event: str, **details: Any) -> None:
+        payload = {"timestamp": utc_iso(), "event": event, "clientId": self.client_id, **details}
+        try:
+            with self._debug_log_lock:
+                self._debug_log_path.parent.mkdir(parents=True, exist_ok=True)
+                with self._debug_log_path.open("a", encoding="utf-8") as stream:
+                    stream.write(json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n")
+        except OSError:
+            return
 
     def status_snapshot(self) -> dict[str, Any]:
         return {
@@ -157,6 +171,20 @@ class DistributedCrawlerAgent:
             events = list(self.cancel_events.get(job_id, set()))
         for event in events:
             event.set()
+        with self._running_crawlers_lock:
+            crawler = self._running_crawlers.get(job_id)
+        self._debug_event(
+            "stop_signal_applied",
+            jobId=job_id,
+            cancelEventCount=len(events),
+            hasRunningCrawler=crawler is not None,
+        )
+        if crawler is not None:
+            threading.Thread(
+                target=crawler.browser_pool.close,
+                name=f"stop-browser-{job_id[:8]}",
+                daemon=True,
+            ).start()
 
     def set_paused(self, is_paused: bool) -> None:
         self._paused = is_paused
@@ -303,6 +331,18 @@ class DistributedCrawlerAgent:
                     self._publish_status()
             elif message_type == "cancel":
                 job_id = str(payload.get("jobId") or "")
+                generation = max(0, int(payload.get("cacheGeneration") or 0))
+                self._debug_event(
+                    "stop_received",
+                    jobId=job_id,
+                    cacheGeneration=generation,
+                    activeTaskIds=sorted(
+                        task_id
+                        for task_id, assignment in self.active.items()
+                        if str(assignment.get("jobId") or "") == job_id
+                    ),
+                    executingTaskIds=sorted(self.executing_task_ids),
+                )
                 self._cancel_job(job_id)
                 for assignment in list(self.active.values()):
                     if str(assignment.get("jobId") or "") != job_id:
@@ -312,7 +352,6 @@ class DistributedCrawlerAgent:
                         "taskId": assignment["taskId"],
                         "leaseId": assignment["leaseId"],
                     })
-                generation = max(0, int(payload.get("cacheGeneration") or 0))
                 current_generation = self._pending_stop_cleanups.get(job_id, 0)
                 if job_id and generation > current_generation:
                     self._pending_stop_cleanups[job_id] = generation
@@ -342,6 +381,7 @@ class DistributedCrawlerAgent:
             return result
 
     async def _complete_stop_cleanup(self, job_id: str, generation: int) -> None:
+        started_at = time.monotonic()
         local_tasks = {
             str(task.get("taskId") or ""): task
             for task in self.store.local_tasks()
@@ -380,10 +420,23 @@ class DistributedCrawlerAgent:
             or bool(job_task_ids & self.executing_task_ids)
         ):
             await asyncio.sleep(0.1)
+        self._debug_event(
+            "stop_execution_drained",
+            jobId=job_id,
+            cacheGeneration=generation,
+            durationMs=round((time.monotonic() - started_at) * 1000),
+        )
         self.store.discard_job(job_id)
         while self._pending_stop_cleanups.get(job_id) == generation:
             try:
                 cache_result = await self._ensure_cache_generation(generation)
+                self._debug_event(
+                    "stop_cleanup_completed",
+                    jobId=job_id,
+                    cacheGeneration=generation,
+                    durationMs=round((time.monotonic() - started_at) * 1000),
+                    **cache_result,
+                )
                 await self.outbound_queue.put({
                     "type": "stop_cleanup_ack",
                     "jobId": job_id,
@@ -396,6 +449,12 @@ class DistributedCrawlerAgent:
                 self._publish_status()
                 return
             except Exception as error:
+                self._debug_event(
+                    "stop_cleanup_failed",
+                    jobId=job_id,
+                    cacheGeneration=generation,
+                    error=str(error),
+                )
                 await self.outbound_queue.put({
                     "type": "stop_cleanup_ack",
                     "jobId": job_id,
@@ -614,6 +673,8 @@ class DistributedCrawlerAgent:
             cancel_event=cancel_event,
             proxy_config_path=self.config.proxy_config_path,
         )
+        with self._running_crawlers_lock:
+            self._running_crawlers[str(first["jobId"])] = crawler
         try:
             crawler.run(
                 job_id=str(first["jobId"]),
@@ -627,6 +688,9 @@ class DistributedCrawlerAgent:
                 for assignment in batch:
                     enqueue_cancelled(assignment)
             crawler.browser_pool.close()
+            with self._running_crawlers_lock:
+                if self._running_crawlers.get(str(first["jobId"])) is crawler:
+                    self._running_crawlers.pop(str(first["jobId"]), None)
             self._captcha_waiting = False
             loop.call_soon_threadsafe(self._publish_status)
 

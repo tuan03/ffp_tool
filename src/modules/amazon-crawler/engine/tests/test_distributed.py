@@ -476,6 +476,38 @@ class ClientAgentTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(first_event.is_set())
             self.assertTrue(second_event.is_set())
 
+    def test_job_cancellation_closes_running_browser_pool(self) -> None:
+        browser_closed = threading.Event()
+
+        class BrowserPool:
+            def close(self) -> None:
+                browser_closed.set()
+
+        class RunningCrawler:
+            browser_pool = BrowserPool()
+
+        with tempfile.TemporaryDirectory() as directory:
+            config = AgentConfig(
+                server_url="http://127.0.0.1:9999",
+                display_name="test-agent",
+                max_concurrent_inputs=1,
+                limits=AgentLimits(),
+                data_directory=Path(directory),
+            )
+            agent = DistributedCrawlerAgent(project_root=Path(directory), config=config)
+            with agent._running_crawlers_lock:
+                agent._running_crawlers["job-1"] = RunningCrawler()
+
+            agent._cancel_job("job-1")
+
+            self.assertTrue(browser_closed.wait(timeout=1))
+            debug_events = [
+                json.loads(line)
+                for line in (Path(directory) / "agent-debug.jsonl").read_text(encoding="utf-8").splitlines()
+            ]
+            self.assertEqual(debug_events[-1]["event"], "stop_signal_applied")
+            self.assertTrue(debug_events[-1]["hasRunningCrawler"])
+
     async def test_cancel_message_immediately_acknowledges_receipt_for_active_task(self) -> None:
         class FakeWebSocket:
             def __init__(self) -> None:
@@ -1061,6 +1093,24 @@ class CoordinatorStoreTests(unittest.TestCase):
             "jobId": job["id"],
             "leaseId": lease["leaseId"],
         }])["discardTaskIds"], [lease["taskId"]])
+
+    def test_cache_generation_ack_recovers_stop_cleanup_after_agent_reconnect(self) -> None:
+        job = self.store.create_job({"urls": ["B0FR4MSS2H"]})
+        self.store.register_client(client_hello(slots=1))
+        lease = self.store.lease_tasks("client-a", 1)[0]
+        self.store.cancel_job(str(job["id"]), {"client-a"})
+        generation = self.store.current_cache_generation()
+        self.store.acknowledge_task_cancel("client-a", {
+            "taskId": lease["taskId"],
+            "leaseId": lease["leaseId"],
+        })
+
+        recovered_jobs = self.store.acknowledge_client_cache_generation("client-a", generation)
+
+        self.assertEqual(recovered_jobs, [str(job["id"])])
+        snapshot = self.store.get_job(str(job["id"]))
+        self.assertEqual(snapshot["status"], "cancelled")
+        self.assertEqual(snapshot["cancellation"]["pendingCleanupAgents"], [])
 
     def test_terminal_stop_does_not_wait_for_offline_agent(self) -> None:
         job = self.store.create_job({"urls": ["B0FR4MSS2H"]})
