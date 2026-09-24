@@ -20,6 +20,7 @@ export interface ProductListTableProps {
   readonly onRejectProduct: (id: string) => void;
   readonly onRetrySync?: (id: string) => void;
   readonly onViewSyncError?: (product: SeoProductUiViewModel) => void;
+  readonly onRollbackProduct?: (id: string) => void;
   readonly onZoomImage?: (images: readonly ZoomImageItem[], initialIndex?: number) => void;
 }
 
@@ -36,6 +37,7 @@ export function ProductListTable({
   onRejectProduct,
   onRetrySync,
   onViewSyncError,
+  onRollbackProduct,
   onZoomImage,
 }: ProductListTableProps): React.JSX.Element {
   const [descViewMode, setDescViewMode] = useState<Record<string, "formatted" | "raw">>({});
@@ -429,6 +431,33 @@ export function ProductListTable({
                         )}
                       </div>
                       <div>{renderShopifySyncBadge(product)}</div>
+                      <div>{renderShopifySyncBadge(product)}</div>
+                      {product.lastSyncedAt && product.reviewDecision === "approved" && (
+                        <div className="text-[10px] text-emerald-400 font-medium">
+                          ✓ Synced
+                        </div>
+                      )}
+                      {product.lastRevertedAt && product.reviewDecision !== "approved" && (
+                        <div className="text-[10px] text-amber-400 font-medium">
+                          ↩ Đã hoàn tác
+                        </div>
+                      )}
+                      {product.syncError && (
+                        <div
+                          className="text-[10px] text-rose-400 font-medium truncate max-w-[100px] mx-auto cursor-help"
+                          title={product.syncError}
+                        >
+                          ⚠️ Lỗi sync
+                        </div>
+                      )}
+                      {product.revertError && (
+                        <div
+                          className="text-[10px] text-rose-400 font-medium truncate max-w-[100px] mx-auto cursor-help"
+                          title={product.revertError}
+                        >
+                          ⚠️ Lỗi hoàn tác
+                        </div>
+                      )}
                     </td>
 
                     {/* Actions */}
@@ -437,25 +466,25 @@ export function ProductListTable({
                         <button
                           type="button"
                           title={
-                            product.shopifySyncStatus === "syncing"
-                              ? "Đang đẩy lên Shopify Store..."
-                              : "Phê duyệt nhanh và đẩy lên Store"
+                            product.isSyncing
+                              ? "Đang đồng bộ..."
+                              : product.isReverting
+                                ? "Đang hoàn tác..."
+                                : "Phê duyệt nhanh"
                           }
-                          disabled={product.shopifySyncStatus === "syncing"}
                           onClick={() => onApproveProduct(product.id)}
-                          className={`p-1.5 rounded-lg text-xs font-semibold transition cursor-pointer ${
-                            product.shopifySyncStatus === "syncing"
-                              ? "text-sky-400 bg-sky-950/40 border border-sky-800/40 cursor-not-allowed"
-                              : product.shopifySyncStatus === "synced"
-                                ? "bg-emerald-600/30 text-emerald-300 border border-emerald-500/40"
-                                : product.reviewDecision === "approved"
-                                  ? "bg-emerald-600/30 text-emerald-300 border border-emerald-500/40"
-                                  : "text-emerald-400 hover:bg-emerald-950/60 border border-emerald-800/40 hover:border-emerald-600"
+                          disabled={product.isSyncing || product.isReverting}
+                          className={`p-1.5 rounded-lg text-xs font-semibold transition ${
+                            product.isSyncing || product.isReverting
+                              ? "bg-slate-800 text-slate-400 cursor-not-allowed border border-slate-700"
+                              : product.reviewDecision === "approved"
+                                ? "bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 cursor-pointer"
+                                : "text-emerald-400 hover:bg-emerald-950/60 border border-emerald-800/40 hover:border-emerald-600 cursor-pointer"
                           }`}
                           aria-label="Phê duyệt"
                         >
-                          {product.shopifySyncStatus === "syncing" ? (
-                            <svg className="animate-spin h-3.5 w-3.5 text-sky-400" viewBox="0 0 24 24" fill="none">
+                          {product.isSyncing ? (
+                             <svg className="animate-spin h-3.5 w-3.5 text-cyan-400" viewBox="0 0 24 24" fill="none">
                               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
                             </svg>
@@ -476,14 +505,47 @@ export function ProductListTable({
                           </button>
                         ) : null}
 
+                        {/* Nút Hoàn tác dữ liệu cũ (chỉ hiện khi đã duyệt/sync và có bản backup) */}
+                        {Boolean(product.originalBackup) &&
+                          (product.reviewDecision === "approved" || Boolean(product.lastSyncedAt)) && (
+                            <button
+                              type="button"
+                              title={
+                                product.isReverting
+                                  ? "Đang hoàn tác dữ liệu cũ lên Shopify..."
+                                  : "Hoàn tác dữ liệu cũ lên Shopify"
+                              }
+                              onClick={() => onRollbackProduct?.(product.id)}
+                              disabled={product.isSyncing || product.isReverting}
+                              className={`p-1.5 rounded-lg text-xs font-semibold transition ${
+                                product.isSyncing || product.isReverting
+                                  ? "bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700"
+                                  : "text-amber-400 hover:bg-amber-950/60 border border-amber-800/40 hover:border-amber-600 cursor-pointer"
+                              }`}
+                              aria-label="Hoàn tác dữ liệu cũ"
+                            >
+                              {product.isReverting ? (
+                                <svg className="animate-spin h-3.5 w-3.5 text-amber-400" viewBox="0 0 24 24" fill="none">
+                                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                                </svg>
+                              ) : (
+                                "↩"
+                              )}
+                            </button>
+                          )}
+
                         <button
                           type="button"
                           title="Từ chối nhanh"
                           onClick={() => onRejectProduct(product.id)}
-                          className={`p-1.5 rounded-lg text-xs font-semibold transition cursor-pointer ${
-                            product.reviewDecision === "rejected"
-                              ? "bg-rose-950 text-rose-300 border border-rose-700"
-                              : "text-rose-400 hover:bg-rose-950/60 border border-rose-800/40 hover:border-rose-600"
+                          disabled={product.isSyncing || product.isReverting}
+                          className={`p-1.5 rounded-lg text-xs font-semibold transition ${
+                            product.isSyncing || product.isReverting
+                              ? "text-slate-500 border border-slate-800 cursor-not-allowed"
+                              : product.reviewDecision === "rejected"
+                                ? "bg-rose-950 text-rose-300 border border-rose-700 cursor-pointer"
+                                : "text-rose-400 hover:bg-rose-950/60 border border-rose-800/40 hover:border-rose-600 cursor-pointer"
                           }`}
                           aria-label="Từ chối"
                         >
@@ -492,9 +554,18 @@ export function ProductListTable({
 
                         <button
                           type="button"
-                          title="Chỉnh sửa nội dung"
+                          title={
+                            product.isSyncing || product.isReverting
+                              ? "Không thể chỉnh sửa khi đang đồng bộ hoặc hoàn tác"
+                              : "Chỉnh sửa nội dung"
+                          }
                           onClick={() => onEditProduct(product)}
-                          className="p-1.5 rounded-lg text-xs font-medium text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 border border-slate-700 transition cursor-pointer"
+                          disabled={product.isSyncing || product.isReverting}
+                          className={`p-1.5 rounded-lg text-xs font-medium border transition ${
+                            product.isSyncing || product.isReverting
+                              ? "text-slate-500 border-slate-800 cursor-not-allowed bg-slate-900"
+                              : "text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 border-slate-700 cursor-pointer"
+                          }`}
                         >
                           ✏️
                         </button>
@@ -688,28 +759,115 @@ export function ProductListTable({
                           </div>
 
                           {/* Quick Bottom Actions */}
-                          <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800/80">
-                            <button
-                              type="button"
-                              onClick={() => onEditProduct(product)}
-                              className="px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-300 transition cursor-pointer"
-                            >
-                              ✏️ Chỉnh sửa nội dung
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => onRejectProduct(product.id)}
-                              className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-rose-950/70 text-rose-300 hover:bg-rose-900 border border-rose-800 transition cursor-pointer"
-                            >
-                              ✕ Từ chối
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => onApproveProduct(product.id)}
-                              className="px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-emerald-600 text-white hover:bg-emerald-500 shadow-md shadow-emerald-900/30 transition cursor-pointer"
-                            >
-                              ✓ Phê duyệt
-                            </button>
+                          <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-800/80">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              {product.syncError && (
+                                <span className="text-xs text-rose-300 bg-rose-950/40 border border-rose-900/60 px-2.5 py-1 rounded-lg">
+                                  <span className="font-bold">⚠️ Lỗi sync:</span> {product.syncError}
+                                </span>
+                              )}
+                              {product.revertError && (
+                                <span className="text-xs text-rose-300 bg-rose-950/40 border border-rose-900/60 px-2.5 py-1 rounded-lg">
+                                  <span className="font-bold">⚠️ Lỗi hoàn tác:</span> {product.revertError}
+                                </span>
+                              )}
+                              {product.lastSyncedAt && product.reviewDecision === "approved" && (
+                                <span className="text-xs text-emerald-300 bg-emerald-950/40 border border-emerald-900/60 px-2.5 py-1 rounded-lg">
+                                  <span className="font-bold">✓ Đã sync Shopify:</span>{" "}
+                                  {new Date(product.lastSyncedAt).toLocaleString()}
+                                </span>
+                              )}
+                              {product.lastRevertedAt && product.reviewDecision !== "approved" && (
+                                <span className="text-xs text-amber-300 bg-amber-950/40 border border-amber-900/60 px-2.5 py-1 rounded-lg">
+                                  <span className="font-bold">↩ Đã hoàn tác gốc:</span>{" "}
+                                  {new Date(product.lastRevertedAt).toLocaleString()}
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-2">
+                              {/* Nút Hoàn tác dữ liệu cũ */}
+                              {Boolean(product.originalBackup) &&
+                                (product.reviewDecision === "approved" || Boolean(product.lastSyncedAt)) && (
+                                  <button
+                                    type="button"
+                                    onClick={() => onRollbackProduct?.(product.id)}
+                                    disabled={product.isSyncing || product.isReverting}
+                                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 ${
+                                      product.isReverting
+                                        ? "bg-slate-800 text-slate-400 border border-slate-700 cursor-not-allowed"
+                                        : product.isSyncing
+                                          ? "bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed"
+                                          : "bg-amber-500/15 text-amber-300 hover:bg-amber-500/25 border border-amber-500/30 cursor-pointer shadow-sm shadow-amber-950/40"
+                                    }`}
+                                    title="Hoàn tác sản phẩm về dữ liệu gốc đã backup lên Shopify"
+                                  >
+                                    {product.isReverting ? (
+                                      <>
+                                        <svg className="animate-spin h-3.5 w-3.5 text-amber-400" viewBox="0 0 24 24" fill="none">
+                                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                                        </svg>
+                                        <span>Đang hoàn tác...</span>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <span>↩</span>
+                                        <span>Hoàn tác dữ liệu cũ</span>
+                                      </>
+                                    )}
+                                  </button>
+                                )}
+
+                              <button
+                                type="button"
+                                onClick={() => onEditProduct(product)}
+                                disabled={product.isSyncing || product.isReverting}
+                                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${
+                                  product.isSyncing || product.isReverting
+                                    ? "bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700"
+                                    : "bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 cursor-pointer"
+                                }`}
+                              >
+                                ✏️ Chỉnh sửa nội dung
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => onRejectProduct(product.id)}
+                                disabled={product.isSyncing || product.isReverting}
+                                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
+                                  product.isSyncing || product.isReverting
+                                    ? "bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed"
+                                    : "bg-rose-950/70 text-rose-300 hover:bg-rose-900 border border-rose-800 cursor-pointer"
+                                }`}
+                              >
+                                ✕ Từ chối
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => onApproveProduct(product.id)}
+                                disabled={product.isSyncing || product.isReverting}
+                                className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 ${
+                                  product.isSyncing || product.isReverting
+                                    ? "bg-slate-800 text-slate-400 border border-slate-700 cursor-not-allowed"
+                                    : "bg-emerald-600 text-white hover:bg-emerald-500 shadow-md shadow-emerald-900/30 cursor-pointer"
+                                }`}
+                              >
+                                {product.isSyncing ? (
+                                  <>
+                                    <svg className="animate-spin h-3.5 w-3.5 text-cyan-400" viewBox="0 0 24 24" fill="none">
+                                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                                    </svg>
+                                    <span>Đang đồng bộ...</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <span>✓</span>
+                                    <span>Phê duyệt</span>
+                                  </>
+                                )}
+                              </button>
+                            </div>
                           </div>
                         </div>
                       </td>

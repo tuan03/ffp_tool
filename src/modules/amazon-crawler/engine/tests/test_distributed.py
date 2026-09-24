@@ -138,7 +138,7 @@ class PackagedClientTests(unittest.TestCase):
 
     def test_double_clicked_packaged_agent_uses_config_beside_executable(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            executable = Path(directory) / "FFPAmazonCrawlerAgent.exe"
+            executable = Path(directory).resolve() / "FFPAmazonCrawlerAgent.exe"
             portable_config = executable.parent / "agent.json"
             portable_config.write_text("{}", encoding="utf-8")
 

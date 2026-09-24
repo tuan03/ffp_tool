@@ -1,9 +1,14 @@
 export { SeoReviewPage } from "./SeoReviewPage";
+export type { SeoReviewPageProps } from "./SeoReviewPage";
 export {
   adaptAutoSeoItemToViewModel,
   adaptCustomizationItemToViewModel,
   adaptPinterestPodItemToViewModel,
   adaptSeoOutputToViewModel,
+  adaptViewModelToApprovedUpdate,
+  adaptViewModelsToApprovedUpdates,
+  adaptViewModelToRollbackUpdate,
+  adaptViewModelsToRollbackUpdates,
   getDisplayValue,
   getInitialSampleViewModels,
 } from "./seo-content-ui-adapter";
@@ -17,6 +22,7 @@ export type {
   ReviewDecision,
   SeoImageUiViewModel,
   SeoProcessingStatus,
+  SeoProductBackup,
   SeoProductEditInput,
   SeoProductUiViewModel,
   SeoReviewFilterState,

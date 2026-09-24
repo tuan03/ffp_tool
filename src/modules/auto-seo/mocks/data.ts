@@ -54,6 +54,7 @@ export const autoSeoMockProducts: readonly AutoSeoProductCandidate[] = [
 export const mockShopifyProducts: readonly ShopifyProductForAutoSeoUi[] = [
   {
     id: "gid://shopify/Product/8123456789001",
+    storeId: "store-us-primary",
     title: "Custom Music Album Area Rug",
     handle: "personalized-music-album-area-rug",
     status: "ACTIVE",
@@ -115,6 +116,7 @@ export const mockShopifyProducts: readonly ShopifyProductForAutoSeoUi[] = [
   },
   {
     id: "gid://shopify/Product/8123456789002",
+    storeId: "store-us-primary",
     title: "Personalized Family Name Flannel Blanket",
     handle: "personalized-family-name-flannel-blanket",
     status: "ACTIVE",
@@ -162,6 +164,7 @@ export const mockShopifyProducts: readonly ShopifyProductForAutoSeoUi[] = [
   },
   {
     id: "gid://shopify/Product/8123456789003",
+    storeId: "store-us-primary",
     title: "Boho Medallion Floral Woven Runner",
     handle: "boho-medallion-floral-woven-runner",
     status: "ACTIVE",
@@ -205,6 +208,7 @@ export const mockShopifyProducts: readonly ShopifyProductForAutoSeoUi[] = [
   },
   {
     id: "gid://shopify/Product/8123456789004",
+    storeId: "store-us-primary",
     title: "Retro Vinyl Record Round Area Rug",
     handle: "retro-vinyl-record-round-area-rug",
     status: "DRAFT",
@@ -248,6 +252,7 @@ export const mockShopifyProducts: readonly ShopifyProductForAutoSeoUi[] = [
   },
   {
     id: "gid://shopify/Product/8123456789005",
+    storeId: "store-us-primary",
     title: "Minimalist Linen Table Runner Sample",
     handle: "minimalist-linen-table-runner-sample",
     status: "ARCHIVED",

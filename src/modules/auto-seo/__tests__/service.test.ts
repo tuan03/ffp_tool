@@ -599,3 +599,58 @@ test("23. mapShopifyProductToAutoSeoCandidate maps null image altText/width/heig
   assert.equal(candidate.images[0]?.altText, undefined);
   assert.equal(candidate.images[0]?.position, 1);
 });
+
+test("24. MockAutoSeoClient supports multi-store listStores, active store, and store-specific products", async () => {
+  const client = new MockAutoSeoClient();
+  const stores = await client.listStores!();
+  assert.equal(stores.length, 2);
+  assert.equal(stores[0].storeId, "store-chillgen-mock");
+  assert.equal(stores[1].storeId, "capozen");
+
+  // Default store
+  const defaultInfo = await client.getStoreInfo();
+  assert.equal(defaultInfo.storeId, "store-chillgen-mock");
+
+  // Switch to Capozen
+  client.setActiveStoreId!("capozen");
+  assert.equal(client.getActiveStoreId!(), "capozen");
+
+  const capozenInfo = await client.getStoreInfo();
+  assert.equal(capozenInfo.storeId, "capozen");
+  assert.equal(capozenInfo.shopDomain, "capozen.myshopify.com");
+
+  const capozenProducts = await client.loadProducts("capozen");
+  assert.ok(capozenProducts.length > 0);
+  assert.ok(capozenProducts.every((p) => p.vendor === "Capozen" && p.title.startsWith("[Capozen]")));
+
+  // Passing explicit storeId to getStoreInfo
+  const chillgenInfo = await client.getStoreInfo("store-chillgen-mock");
+  assert.equal(chillgenInfo.storeId, "store-chillgen-mock");
+});
+
+test("25. MockAutoSeoClient scopes detail and hydration by storeId", async () => {
+  const client = new MockAutoSeoClient();
+  const sampleId = "gid://shopify/Product/8123456789001";
+
+  // Load detail for default store (ChillGen)
+  const chillgenDetail = await client.loadProductDetail(sampleId);
+  assert.equal(chillgenDetail.vendor, "CHILLGEN");
+  assert.ok(!chillgenDetail.title.startsWith("[Capozen]"));
+
+  // Load detail for Capozen store
+  const capozenDetail = await client.loadProductDetail("capozen", sampleId);
+  assert.equal(capozenDetail.vendor, "Capozen");
+  assert.ok(capozenDetail.title.startsWith("[Capozen]"));
+
+  // Verify cached details are properly isolated
+  const cachedChillgen = client.getCachedDetail?.(sampleId, "store-chillgen-mock");
+  assert.equal(cachedChillgen?.vendor, "CHILLGEN");
+
+  const cachedCapozen = client.getCachedDetail?.(sampleId, "capozen");
+  assert.equal(cachedCapozen?.vendor, "Capozen");
+
+  // Verify hydration for Capozen
+  const hydrated = await client.hydrateSelectedProductsFresh([sampleId], 2, "capozen");
+  assert.equal(hydrated.length, 1);
+  assert.equal(hydrated[0].vendor, "Capozen");
+});

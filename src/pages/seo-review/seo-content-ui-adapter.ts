@@ -9,11 +9,16 @@ import type {
 } from "../../modules/seo-content";
 import { seoContentMockData } from "../../modules/seo-content";
 import type {
+  ApprovedProductPatch,
+  ApprovedProductUpdate,
+} from "../../modules/orchestrator";
+import type {
   DisplayField,
   FieldSource,
   ReviewDecision,
   SeoImageUiViewModel,
   SeoProcessingStatus,
+  SeoProductBackup,
   SeoProductUiViewModel,
   ShopifySyncStatus,
 } from "./types";
@@ -53,6 +58,7 @@ export function getDisplayValue<T>(
 
 export interface AdaptSeoOutputOptions {
   readonly id?: string;
+  readonly storeId?: string;
   readonly productId?: string;
   readonly asin?: string;
   readonly niche?: string;
@@ -62,6 +68,7 @@ export interface AdaptSeoOutputOptions {
   readonly sourceCrawlProduct?: CrawlProduct;
   readonly shopifySyncStatus?: ShopifySyncStatus;
   readonly shopifyAdminUrl?: string;
+  readonly originalBackup?: SeoProductBackup;
 }
 
 /**
@@ -164,6 +171,7 @@ export function adaptSeoOutputToViewModel(
 
   return {
     id: safeId,
+    storeId: options.storeId,
     productId: options.productId,
     asin: options.asin,
     sourceNiche: options.niche,
@@ -179,6 +187,7 @@ export function adaptSeoOutputToViewModel(
     sourceCrawlProduct: options.sourceCrawlProduct,
     shopifySyncStatus: options.shopifySyncStatus || "idle",
     shopifyAdminUrl: options.shopifyAdminUrl,
+    originalBackup: options.originalBackup,
   };
 }
 
@@ -187,17 +196,65 @@ export function adaptSeoOutputToViewModel(
  */
 export function adaptCustomizationItemToViewModel(
   item: CustomizationSeoItemResult,
+  fallbackStoreId?: string,
 ): SeoProductUiViewModel {
-  const crawlPipelineShopify = item.sourceProduct as {
-    pipeline?: { shopify?: { productId?: string; adminUrl?: string } };
-    shopify?: { productId?: string; adminUrl?: string };
+  const sourceProduct = item.sourceProduct as {
+    storeId?: string;
+    pipeline?: { shopify?: { storeId?: string; productId?: string; adminUrl?: string } };
+    shopify?: { storeId?: string; productId?: string; adminUrl?: string };
+    sourceDescriptionHtml?: string;
+    descriptionHtml?: string;
+    seo?: { title?: string; description?: string };
+    seoTitle?: string;
+    seoDescription?: string;
   };
-  const crawlShopify = crawlPipelineShopify?.pipeline?.shopify || crawlPipelineShopify?.shopify;
+  const crawlShopify = sourceProduct.pipeline?.shopify || sourceProduct.shopify;
   const existingShopifyId = crawlShopify?.productId;
   const effectiveProductId = existingShopifyId || item.productId;
 
+  const storeId =
+    sourceProduct.storeId ||
+    crawlShopify?.storeId ||
+    fallbackStoreId;
+
+  const rawTitle = (item.sourceProduct.title || item.sourceProduct.sourceTitle || item.seoInput?.title || "").trim();
+  const rawDesc = (
+    sourceProduct.sourceDescriptionHtml ||
+    sourceProduct.descriptionHtml ||
+    item.sourceProduct.description ||
+    item.seoInput?.description ||
+    ""
+  ).trim();
+  const rawHandle = (typeof item.sourceProduct.handle === "string" ? item.sourceProduct.handle.trim() : undefined) || item.seoInput?.handle || undefined;
+
+  const originalSeo = sourceProduct.seo;
+  const directSeoTitle = sourceProduct.seoTitle;
+  const directSeoDescription = sourceProduct.seoDescription;
+
+  const customSeoTitle = typeof directSeoTitle === "string" && directSeoTitle.trim().length > 0
+    ? directSeoTitle.trim()
+    : typeof originalSeo?.title === "string" && originalSeo.title.trim().length > 0
+      ? originalSeo.title.trim()
+      : undefined;
+
+  const customSeoDescription = typeof directSeoDescription === "string" && directSeoDescription.trim().length > 0
+    ? directSeoDescription.trim()
+    : typeof originalSeo?.description === "string" && originalSeo.description.trim().length > 0
+      ? originalSeo.description.trim()
+      : undefined;
+
+  const originalBackup: SeoProductBackup = {
+    productTitle: rawTitle || "Custom Product",
+    productDescription: rawDesc,
+    handle: rawHandle,
+    seoTitle: customSeoTitle,
+    seoDescription: customSeoDescription,
+    backedUpAt: Date.now(),
+  };
+
   const options: AdaptSeoOutputOptions = {
-    id: item.productId || item.asin || `item-${Date.now()}`,
+    id: effectiveProductId || item.asin || `item-${Date.now()}`,
+    storeId,
     productId: effectiveProductId,
     asin: item.asin,
     niche: item.sourceProduct.categories?.[0] || "Custom Product",
@@ -206,6 +263,7 @@ export function adaptCustomizationItemToViewModel(
     sourceCrawlProduct: item.sourceProduct,
     shopifyAdminUrl: crawlShopify?.adminUrl,
     shopifySyncStatus: crawlShopify?.productId ? "synced" : "idle",
+    originalBackup,
   };
 
   if (!item.success) {
@@ -223,19 +281,78 @@ export function adaptCustomizationItemToViewModel(
  */
 export function adaptAutoSeoItemToViewModel(
   item: AutoSeoItemResult,
+  fallbackStoreId?: string,
 ): SeoProductUiViewModel {
   const sourceProduct = item.sourceProduct;
+  const storeId =
+    (sourceProduct as { storeId?: string })?.storeId ||
+    item.storeId ||
+    fallbackStoreId;
   const firstTag = Array.isArray(sourceProduct.tags) && typeof sourceProduct.tags[0] === "string"
     ? sourceProduct.tags[0]
     : undefined;
   const niche = firstTag || sourceProduct.productType || "Shopify Product";
 
+  const rawTitle = typeof sourceProduct.sourceTitle === "string" && sourceProduct.sourceTitle.trim().length > 0
+    ? sourceProduct.sourceTitle
+    : typeof sourceProduct.title === "string" && sourceProduct.title.trim().length > 0
+      ? sourceProduct.title
+      : item.seoInput?.title || "";
+
+  let rawDesc = "";
+  if (typeof sourceProduct.sourceDescriptionHtml === "string" && sourceProduct.sourceDescriptionHtml.trim().length > 0) {
+    rawDesc = sourceProduct.sourceDescriptionHtml.trim();
+  } else if (typeof sourceProduct.descriptionHtml === "string" && sourceProduct.descriptionHtml.trim().length > 0) {
+    rawDesc = sourceProduct.descriptionHtml.trim();
+  } else if (typeof sourceProduct.description === "string" && sourceProduct.description.trim().length > 0) {
+    rawDesc = sourceProduct.description.trim();
+  } else if (typeof item.seoInput?.description === "string") {
+    rawDesc = item.seoInput.description.trim();
+  }
+
+  const rawHandle = typeof sourceProduct.handle === "string" && sourceProduct.handle.trim().length > 0
+    ? sourceProduct.handle.trim()
+    : item.handle || item.seoInput?.handle || undefined;
+
+  const originalSeo = (sourceProduct as { seo?: { title?: string; description?: string } })?.seo;
+  const directSeoTitle = (sourceProduct as { seoTitle?: string })?.seoTitle;
+  const directSeoDescription = (sourceProduct as { seoDescription?: string })?.seoDescription;
+  const sourceSeoTitle = (sourceProduct as { sourceSeoTitle?: string })?.sourceSeoTitle;
+  const sourceSeoDescription = (sourceProduct as { sourceSeoDescription?: string })?.sourceSeoDescription;
+
+  const rawSeoTitle = typeof directSeoTitle === "string" && directSeoTitle.trim().length > 0
+    ? directSeoTitle.trim()
+    : typeof sourceSeoTitle === "string" && sourceSeoTitle.trim().length > 0
+      ? sourceSeoTitle.trim()
+      : typeof originalSeo?.title === "string" && originalSeo.title.trim().length > 0
+        ? originalSeo.title.trim()
+        : undefined;
+
+  const rawSeoDescription = typeof directSeoDescription === "string" && directSeoDescription.trim().length > 0
+    ? directSeoDescription.trim()
+    : typeof sourceSeoDescription === "string" && sourceSeoDescription.trim().length > 0
+      ? sourceSeoDescription.trim()
+      : typeof originalSeo?.description === "string" && originalSeo.description.trim().length > 0
+        ? originalSeo.description.trim()
+        : undefined;
+
+  const originalBackup: SeoProductBackup = {
+    productTitle: rawTitle.trim() || "Untitled Product",
+    productDescription: rawDesc.trim(),
+    handle: rawHandle,
+    seoTitle: rawSeoTitle,
+    seoDescription: rawSeoDescription,
+    backedUpAt: Date.now(),
+  };
+
   const options: AdaptSeoOutputOptions = {
     id: item.productId || `item-${Date.now()}`,
+    storeId,
     productId: item.productId,
     niche,
     defaultStatus: item.success ? "completed" : "failed",
     isStatusReal: true,
+    originalBackup,
   };
 
   if (!item.success) {
@@ -294,11 +411,20 @@ export function getInitialSampleViewModels(): readonly SeoProductUiViewModel[] {
   // 1. Fully populated from seoContentMockData (Real)
   const item1 = adaptSeoOutputToViewModel(seoContentMockData, {
     id: "sample-prod-101",
+    storeId: "store-us-primary",
     productId: "gid://shopify/Product/98412351",
     asin: "B09MUSIC01",
     niche: "Vintage Rugs",
     defaultStatus: "completed",
     isStatusReal: true,
+    originalBackup: {
+      productTitle: "Vintage Oriental Area Rug 5x7 Living Room Carpet",
+      productDescription: "<p>Original rug description before AI SEO rewrite.</p>",
+      handle: "vintage-oriental-area-rug-5x7",
+      seoTitle: "Vintage Oriental Area Rug 5x7",
+      seoDescription: "Original vintage oriental area rug 5x7 living room carpet.",
+      backedUpAt: Date.now(),
+    },
   });
 
   // 2. Partial Item: missing SEO Description & WebP URLs (Mock fallback tagged)
@@ -321,11 +447,20 @@ export function getInitialSampleViewModels(): readonly SeoProductUiViewModel[] {
 
   const item2 = adaptSeoOutputToViewModel(partialOutput, {
     id: "sample-prod-102",
+    storeId: "store-us-primary",
     productId: "gid://shopify/Product/98412352",
     asin: "B08COFFIN2",
     niche: "Gothic Home Décor",
     defaultStatus: "completed",
     isStatusReal: true,
+    originalBackup: {
+      productTitle: "Mini Coffin Shelf Black Wood",
+      productDescription: "<p>Small wooden gothic coffin shelf for crystals and curios.</p>",
+      handle: "mini-coffin-shelf-black-wood",
+      seoTitle: "Mini Coffin Shelf Black Wood",
+      seoDescription: "Original miniature black wood coffin shelf for curio collection.",
+      backedUpAt: Date.now(),
+    },
   });
 
   // 3. Item currently Processing
@@ -336,11 +471,18 @@ export function getInitialSampleViewModels(): readonly SeoProductUiViewModel[] {
     },
     {
       id: "sample-prod-103",
+      storeId: "store-us-primary",
       productId: "gid://shopify/Product/98412353",
       asin: "B07STARMAG",
       niche: "Pillows & Cushions",
       defaultStatus: "processing",
       isStatusReal: true,
+      originalBackup: {
+        productTitle: "Celestial Star Velvet Pillow Blue",
+        productDescription: "<p>Midnight navy velvet star shaped decorative cushion.</p>",
+        handle: "celestial-star-velvet-pillow-blue",
+        backedUpAt: Date.now(),
+      },
     },
   );
 
@@ -348,15 +490,151 @@ export function getInitialSampleViewModels(): readonly SeoProductUiViewModel[] {
   const item4: SeoProductUiViewModel = {
     ...adaptSeoOutputToViewModel(undefined, {
       id: "sample-prod-104",
+      storeId: "store-us-primary",
       productId: "gid://shopify/Product/98412354",
       asin: "B01FAIL004",
       niche: "Apparel",
       defaultStatus: "failed",
       isStatusReal: true,
       initialDecision: "rejected",
+      originalBackup: {
+        productTitle: "Graphic Cotton T-Shirt Unisex",
+        productDescription: "<p>Original retro print t-shirt.</p>",
+        handle: "graphic-cotton-t-shirt-unisex",
+        backedUpAt: Date.now(),
+      },
     }),
     rejectionReason: "Vision API quota exhausted on 3 image inputs. Retry needed.",
   };
 
   return [item1, item2, item3, item4];
+}
+
+/**
+ * Maps a single SeoProductUiViewModel to the ApprovedProductUpdate structure
+ * expected by applyApprovedProductUpdates in orchestrator.
+ */
+export function adaptViewModelToApprovedUpdate(
+  viewModel: SeoProductUiViewModel,
+): ApprovedProductUpdate {
+  const rawId = viewModel.productId || viewModel.id;
+  const productId = rawId.trim();
+
+  const patch: ApprovedProductPatch = {};
+
+  const title = viewModel.productTitle?.value?.trim();
+  if (title) {
+    (patch as Record<string, unknown>).title = title;
+  }
+
+  const descriptionHtml = viewModel.productDescription?.value?.trim();
+  if (descriptionHtml) {
+    (patch as Record<string, unknown>).descriptionHtml = descriptionHtml;
+  }
+
+  const handle = viewModel.handle?.value?.trim();
+  if (handle) {
+    (patch as Record<string, unknown>).handle = handle;
+  }
+
+  const seoTitle = viewModel.seoTitle?.value?.trim();
+  const seoDescription = viewModel.seoDescription?.value?.trim();
+  if (seoTitle || seoDescription) {
+    const seoObj: Record<string, string> = {};
+    if (seoTitle) {
+      seoObj.title = seoTitle;
+    }
+    if (seoDescription) {
+      seoObj.description = seoDescription;
+    }
+    (patch as Record<string, unknown>).seo = seoObj;
+  }
+
+  return {
+    productId,
+    patch,
+  };
+}
+
+/**
+ * Maps multiple SeoProductUiViewModel items to ApprovedProductUpdate array.
+ */
+export function adaptViewModelsToApprovedUpdates(
+  viewModels: readonly SeoProductUiViewModel[],
+): readonly ApprovedProductUpdate[] {
+  return viewModels.map(adaptViewModelToApprovedUpdate);
+}
+
+/**
+ * Maps a single SeoProductUiViewModel to the rollback ApprovedProductUpdate structure
+ * using its backed-up original product data.
+ */
+export function adaptViewModelToRollbackUpdate(
+  viewModel: SeoProductUiViewModel,
+): ApprovedProductUpdate | null {
+  const backup = viewModel.originalBackup;
+  if (!backup) {
+    return null;
+  }
+
+  const rawId = viewModel.productId || viewModel.id;
+  const productId = rawId.trim();
+  if (!productId) {
+    return null;
+  }
+
+  const patch: ApprovedProductPatch = {};
+
+  const title = backup.productTitle?.trim();
+  if (title) {
+    (patch as Record<string, unknown>).title = title;
+  }
+
+  if (backup.productDescription !== undefined) {
+    (patch as Record<string, unknown>).descriptionHtml = backup.productDescription.trim();
+  }
+
+  const handle = backup.handle?.trim();
+  if (handle) {
+    (patch as Record<string, unknown>).handle = handle;
+  }
+
+  // Restore SEO: if original had explicit custom seoTitle / seoDescription, restore them;
+  // otherwise revert seoTitle to original product title and seoDescription to empty string
+  // so Shopify clears any AI SEO overrides applied during approval.
+  const seoTitle = backup.seoTitle !== undefined && backup.seoTitle.trim().length > 0
+    ? backup.seoTitle.trim()
+    : title || undefined;
+
+  const seoDescription = backup.seoDescription !== undefined
+    ? backup.seoDescription.trim()
+    : "";
+
+  const seoObj: Record<string, string> = {};
+  if (seoTitle !== undefined) {
+    seoObj.title = seoTitle;
+  }
+  seoObj.description = seoDescription;
+  (patch as Record<string, unknown>).seo = seoObj;
+
+  return {
+    productId,
+    patch,
+  };
+}
+
+/**
+ * Maps multiple SeoProductUiViewModel items to rollback ApprovedProductUpdate array.
+ */
+export function adaptViewModelsToRollbackUpdates(
+  viewModels: readonly SeoProductUiViewModel[],
+): readonly ApprovedProductUpdate[] {
+  const updates: ApprovedProductUpdate[] = [];
+  for (const vm of viewModels) {
+    const update = adaptViewModelToRollbackUpdate(vm);
+    if (update) {
+      updates.push(update);
+    }
+  }
+  return updates;
 }

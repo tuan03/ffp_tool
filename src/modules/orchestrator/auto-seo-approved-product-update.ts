@@ -36,7 +36,7 @@ export interface ApplyApprovedProductUpdatesResult {
   readonly items: readonly ApprovedProductUpdateItemResult[];
 }
 
-function hasWritableChanges(patch: ApprovedProductPatch | undefined | null): boolean {
+export function hasWritableChanges(patch: ApprovedProductPatch | undefined | null): boolean {
   if (!patch || typeof patch !== "object") {
     return false;
   }

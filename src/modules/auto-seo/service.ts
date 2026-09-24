@@ -154,13 +154,14 @@ export async function hydrateSelectedProducts(
   client: AutoSeoClient,
   productIds: readonly string[],
   concurrency = 5,
+  storeId?: string,
 ): Promise<readonly ShopifyProductForAutoSeoUi[]> {
   if (typeof client.hydrateSelectedProductsFresh === "function") {
-    return client.hydrateSelectedProductsFresh(productIds, concurrency);
+    return client.hydrateSelectedProductsFresh(productIds, concurrency, storeId);
   }
 
   if (typeof client.hydrateSelectedProducts === "function") {
-    return client.hydrateSelectedProducts(productIds, concurrency);
+    return client.hydrateSelectedProducts(productIds, concurrency, storeId);
   }
 
   if (productIds.length === 0) {
@@ -172,7 +173,7 @@ export async function hydrateSelectedProducts(
 
   const idsToFetch: string[] = [];
   for (const id of uniqueIds) {
-    const cached = client.getCachedDetail?.(id);
+    const cached = client.getCachedDetail?.(id, storeId);
     if (cached) {
       productMap.set(id, cached);
     } else {
@@ -183,7 +184,9 @@ export async function hydrateSelectedProducts(
   if (idsToFetch.length > 0) {
     await mapWithConcurrency(idsToFetch, concurrency, async (id) => {
       try {
-        const detail = await client.loadProductDetail(id);
+        const detail = storeId
+          ? await client.loadProductDetail(storeId, id)
+          : await client.loadProductDetail(id);
         productMap.set(id, detail);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);

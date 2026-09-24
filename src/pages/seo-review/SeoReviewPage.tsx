@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+
 import { environment } from "../../config/environment";
 import { getModuleApiRunner, type ModuleApiRunner } from "../../modules/module-api";
 import {
@@ -6,6 +7,7 @@ import {
   pushSeoReviewProductToShopify,
   type SeoReviewPushProductItem,
 } from "../../modules/orchestrator";
+import type { ApplyApprovedProductUpdatesResult } from "../../modules/orchestrator";
 import { notifyUser } from "../../shared/utils";
 import { ImageZoomModal } from "./components/ImageZoomModal";
 import { ProductCardList } from "./components/ProductCardList";
@@ -81,11 +83,19 @@ function toPushProductItem(vm: SeoProductUiViewModel): SeoReviewPushProductItem 
 export interface SeoReviewPageProps {
   readonly moduleApiRunner?: ModuleApiRunner;
   readonly storeId?: string;
+  readonly onSyncApprovedProducts?: (
+    items: readonly SeoProductUiViewModel[],
+  ) => Promise<ApplyApprovedProductUpdatesResult>;
+  readonly onRollbackApprovedProducts?: (
+    items: readonly SeoProductUiViewModel[],
+  ) => Promise<ApplyApprovedProductUpdatesResult>;
 }
 
 export function SeoReviewPage({
   moduleApiRunner: injectedRunner,
   storeId,
+  onSyncApprovedProducts,
+  onRollbackApprovedProducts,
 }: SeoReviewPageProps = {}): React.JSX.Element {
   const runner = useMemo(
     () => injectedRunner || getModuleApiRunner(environment),
@@ -98,11 +108,18 @@ export function SeoReviewPage({
         if (saved) {
           const parsed = JSON.parse(saved);
           if (Array.isArray(parsed) && parsed.length > 0) {
-            // Filter out any leftover fake sample data from previous sessions
-            const realOnly = parsed.filter(
-              (p: { id?: string }) =>
-                p && typeof p.id === "string" && !p.id.startsWith("sample-prod-"),
-            );
+            // Filter out any leftover fake sample data from previous sessions and clear stuck syncing/reverting states
+            const realOnly = parsed
+              .filter(
+                (p: { id?: string }) =>
+                  p && typeof p.id === "string" && !p.id.startsWith("sample-prod-"),
+              )
+              .map((p: SeoProductUiViewModel) => {
+                let updated = p;
+                if (updated.isSyncing) updated = { ...updated, isSyncing: false };
+                if (updated.isReverting) updated = { ...updated, isReverting: false };
+                return updated;
+              });
             return realOnly;
           }
         }
@@ -120,6 +137,10 @@ export function SeoReviewPage({
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [errorModalProduct, setErrorModalProduct] = useState<SeoProductUiViewModel | null>(null);
   const [isDismissedErrorBanner, setIsDismissedErrorBanner] = useState(false);
+  const [syncFeedback, setSyncFeedback] = useState<{
+    type: "success" | "error" | "warning";
+    message: string;
+  } | null>(null);
 
   // High-Resolution Image Zoom Modal State
   const [zoomState, setZoomState] = useState<{
@@ -504,25 +525,6 @@ export function SeoReviewPage({
     setIsDrawerOpen(true);
   }
 
-  function handleApproveProduct(id: string) {
-    const target = products.find((p) => p.id === id);
-    if (!target) return;
-
-    const approvedTarget: SeoProductUiViewModel = {
-      ...target,
-      reviewDecision: "approved",
-      shopifySyncStatus: "syncing",
-      shopifySyncError: undefined,
-      updatedAt: Date.now(),
-    };
-
-    setProducts((prev) =>
-      prev.map((p) => (p.id === id ? approvedTarget : p)),
-    );
-
-    void triggerPushToShopify(approvedTarget);
-  }
-
   function handleRetrySync(id: string) {
     const target = products.find((p) => p.id === id);
     if (!target) return;
@@ -562,7 +564,129 @@ export function SeoReviewPage({
     void triggerBatchPushToShopify(retryingTargets);
   }
 
+  async function handleApproveProduct(id: string): Promise<void> {
+    const target = products.find((p) => p.id === id);
+    if (!target) return;
+    if (target.isSyncing || target.isReverting) return; // Prevent duplicate clicks
+
+    // Fallback if sync handler is not provided
+    if (!onSyncApprovedProducts) {
+      setProducts((prev) =>
+        prev.map((p) =>
+          p.id === id
+            ? {
+                ...p,
+                reviewDecision: "approved",
+                isSyncing: false,
+                syncError: undefined,
+                lastSyncedAt: Date.now(),
+                updatedAt: Date.now(),
+              }
+            : p,
+        ),
+      );
+      setSelectedIds((prev) => {
+        if (!prev.has(id)) return prev;
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+      setSyncFeedback({
+        type: "success",
+        message: `Đã phê duyệt sản phẩm "${target.productTitle.value}".`,
+      });
+      return;
+    }
+
+    // Set syncing state
+    setProducts((prev) =>
+      prev.map((p) =>
+        p.id === id ? { ...p, isSyncing: true, syncError: undefined } : p,
+      ),
+    );
+
+    try {
+      const result = await onSyncApprovedProducts([target]);
+      const targetId = (target.productId || target.id).trim();
+      const itemResult =
+        result.items.find(
+          (i) =>
+            i.productId === targetId ||
+            i.productId === target.id ||
+            i.productId === target.productId,
+        ) ?? result.items[0];
+
+      if (itemResult?.ok) {
+        setProducts((prev) =>
+          prev.map((p) =>
+            p.id === id
+              ? {
+                  ...p,
+                  reviewDecision: "approved",
+                  isSyncing: false,
+                  syncError: undefined,
+                  revertError: undefined,
+                  lastSyncedAt: Date.now(),
+                  lastRevertedAt: undefined,
+                  updatedAt: Date.now(),
+                }
+              : p,
+          ),
+        );
+        setSelectedIds((prev) => {
+          if (!prev.has(id)) return prev;
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
+        setSyncFeedback({
+          type: "success",
+          message: `✓ Đã phê duyệt và đồng bộ "${target.productTitle.value}" lên Shopify thành công!`,
+        });
+      } else {
+        const errorMsg = itemResult?.error || "Đồng bộ sản phẩm lên Shopify thất bại.";
+        setProducts((prev) =>
+          prev.map((p) =>
+            p.id === id
+              ? {
+                  ...p,
+                  isSyncing: false,
+                  syncError: errorMsg,
+                  updatedAt: Date.now(),
+                }
+              : p,
+          ),
+        );
+        setSyncFeedback({
+          type: "error",
+          message: `✕ Lỗi khi đồng bộ "${target.productTitle.value}" lên Shopify: ${errorMsg}`,
+        });
+      }
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      setProducts((prev) =>
+        prev.map((p) =>
+          p.id === id
+            ? {
+                ...p,
+                isSyncing: false,
+                syncError: errorMsg,
+                updatedAt: Date.now(),
+              }
+            : p,
+        ),
+      );
+      setSyncFeedback({
+        type: "error",
+        message: `✕ Lỗi khi đồng bộ "${target.productTitle.value}" lên Shopify: ${errorMsg}`,
+      });
+    }
+  }
+
   function handleRejectProduct(id: string, reason = "Nội dung SEO chưa đạt yêu cầu") {
+    const target = products.find((p) => p.id === id);
+    if (!target || target.isSyncing || target.isReverting) return;
+
     setProducts((prev) =>
       prev.map((p) =>
         p.id === id
@@ -570,6 +694,12 @@ export function SeoReviewPage({
           : p,
       ),
     );
+    setSelectedIds((prev) => {
+      if (!prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
   }
 
   function advanceToNextProduct(currentId: string) {
@@ -581,9 +711,9 @@ export function SeoReviewPage({
     }
   }
 
-  function handleApproveAndNext(id: string) {
-    handleApproveProduct(id);
+  async function handleApproveAndNext(id: string): Promise<void> {
     advanceToNextProduct(id);
+    await handleApproveProduct(id);
   }
 
   function handleRejectAndNext(id: string) {
@@ -592,32 +722,164 @@ export function SeoReviewPage({
   }
 
   // Batch Actions
-  function handleApproveSelected() {
-    const targets = products.filter((p) => selectedIds.has(p.id));
+  async function handleApproveSelected(): Promise<void> {
+    const targets = products.filter(
+      (p) => selectedIds.has(p.id) && !p.isSyncing && !p.isReverting,
+    );
     if (targets.length === 0) return;
 
-    const approvedTargets = targets.map((t) => ({
-      ...t,
-      reviewDecision: "approved" as const,
-      shopifySyncStatus: "syncing" as const,
-      shopifySyncError: undefined,
-      updatedAt: Date.now(),
-    }));
+    if (!onSyncApprovedProducts) {
+      setProducts((prev) =>
+        prev.map((p) =>
+          selectedIds.has(p.id)
+            ? {
+                ...p,
+                reviewDecision: "approved",
+                isSyncing: false,
+                syncError: undefined,
+                revertError: undefined,
+                lastSyncedAt: Date.now(),
+                lastRevertedAt: undefined,
+                updatedAt: Date.now(),
+              }
+            : p,
+        ),
+      );
+      setSelectedIds(new Set());
+      setSyncFeedback({
+        type: "success",
+        message: `Đã phê duyệt ${targets.length} sản phẩm đã chọn.`,
+      });
+      return;
+    }
 
-    const approvedMap = new Map(approvedTargets.map((t) => [t.id, t]));
+    const targetIdSet = new Set(targets.map((t) => t.id));
 
     setProducts((prev) =>
-      prev.map((p) => approvedMap.get(p.id) ?? p),
+      prev.map((p) =>
+        targetIdSet.has(p.id)
+          ? { ...p, isSyncing: true, syncError: undefined }
+          : p,
+      ),
     );
-    setSelectedIds(new Set());
 
-    void triggerBatchPushToShopify(approvedTargets);
+    try {
+      const result = await onSyncApprovedProducts(targets);
+      const resultMap = new Map<string, { ok: boolean; error?: string }>();
+      for (const item of result.items) {
+        resultMap.set(item.productId, item);
+      }
+
+      let successCount = 0;
+      let failCount = 0;
+      const successfulIds = new Set<string>();
+
+      for (const target of targets) {
+        const pId = (target.productId || target.id).trim();
+        const itemRes =
+          resultMap.get(pId) ??
+          resultMap.get(target.id) ??
+          (target.productId ? resultMap.get(target.productId.trim()) : undefined);
+
+        if (itemRes?.ok) {
+          successCount++;
+          successfulIds.add(target.id);
+        } else {
+          failCount++;
+        }
+      }
+
+      setProducts((prev) =>
+        prev.map((p) => {
+          if (!targetIdSet.has(p.id)) return p;
+
+          const pId = (p.productId || p.id).trim();
+          const itemRes =
+            resultMap.get(pId) ??
+            resultMap.get(p.id) ??
+            (p.productId ? resultMap.get(p.productId.trim()) : undefined);
+
+          if (itemRes?.ok) {
+            return {
+              ...p,
+              reviewDecision: "approved",
+              isSyncing: false,
+              syncError: undefined,
+              revertError: undefined,
+              lastSyncedAt: Date.now(),
+              lastRevertedAt: undefined,
+              updatedAt: Date.now(),
+            };
+          } else {
+            const err = itemRes?.error || "Đồng bộ lên Shopify thất bại.";
+            return {
+              ...p,
+              isSyncing: false,
+              syncError: err,
+              updatedAt: Date.now(),
+            };
+          }
+        }),
+      );
+
+      // Deselect only successful items; keep failing items selected for review/retry
+      setSelectedIds((prev) => {
+        const next = new Set<string>();
+        for (const id of prev) {
+          if (!successfulIds.has(id)) {
+            next.add(id);
+          }
+        }
+        return next;
+      });
+
+      if (failCount === 0) {
+        setSyncFeedback({
+          type: "success",
+          message: `✓ Đã phê duyệt và đồng bộ thành công ${successCount} sản phẩm lên Shopify!`,
+        });
+      } else if (successCount > 0) {
+        setSyncFeedback({
+          type: "warning",
+          message: `Đã đồng bộ ${successCount}/${targets.length} sản phẩm thành công. ${failCount} sản phẩm gặp lỗi đồng bộ.`,
+        });
+      } else {
+        setSyncFeedback({
+          type: "error",
+          message: `✕ Đồng bộ thất bại cho cả ${targets.length} sản phẩm đã chọn. Vui lòng kiểm tra lỗi chi tiết trên từng sản phẩm.`,
+        });
+      }
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      setProducts((prev) =>
+        prev.map((p) =>
+          targetIdSet.has(p.id)
+            ? {
+                ...p,
+                isSyncing: false,
+                syncError: errorMsg,
+                updatedAt: Date.now(),
+              }
+            : p,
+        ),
+      );
+      setSyncFeedback({
+        type: "error",
+        message: `✕ Lỗi trong quá trình đồng bộ hàng loạt lên Shopify: ${errorMsg}`,
+      });
+    }
   }
 
   function handleRejectSelected() {
+    const targets = products.filter(
+      (p) => selectedIds.has(p.id) && !p.isSyncing && !p.isReverting,
+    );
+    if (targets.length === 0) return;
+    const targetIdSet = new Set(targets.map((t) => t.id));
+
     setProducts((prev) =>
       prev.map((p) =>
-        selectedIds.has(p.id)
+        targetIdSet.has(p.id)
           ? {
               ...p,
               reviewDecision: "rejected",
@@ -627,11 +889,280 @@ export function SeoReviewPage({
           : p,
       ),
     );
-    setSelectedIds(new Set());
+    setSelectedIds((prev) => {
+      const next = new Set<string>();
+      for (const id of prev) {
+        if (!targetIdSet.has(id)) {
+          next.add(id);
+        }
+      }
+      return next;
+    });
+  }
+
+  function restoreProductFromBackup(p: SeoProductUiViewModel): SeoProductUiViewModel {
+    if (!p.originalBackup) return p;
+    const backup = p.originalBackup;
+    const fallbackHandle = (backup.handle || backup.productTitle)
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+
+    return {
+      ...p,
+      productTitle: { value: backup.productTitle, source: "real" },
+      productDescription: { value: backup.productDescription, source: "real" },
+      handle: { value: backup.handle ?? fallbackHandle, source: "real" },
+      seoTitle: {
+        value: backup.seoTitle ?? (backup.productTitle.length > 70 ? backup.productTitle.slice(0, 67) + "..." : backup.productTitle),
+        source: "real",
+      },
+      seoDescription: {
+        value: backup.seoDescription ?? "",
+        source: "real",
+      },
+      reviewDecision: "pending",
+      isReverting: false,
+      revertError: undefined,
+      syncError: undefined,
+      lastSyncedAt: undefined,
+      lastRevertedAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+  }
+
+  async function handleRollbackProduct(id: string): Promise<void> {
+    const target = products.find((p) => p.id === id);
+    if (!target) return;
+    if (target.isSyncing || target.isReverting) return;
+    if (target.reviewDecision !== "approved" && !target.lastSyncedAt) return;
+
+    if (!target.originalBackup) {
+      setSyncFeedback({
+        type: "error",
+        message: `Không có dữ liệu gốc đã lưu để hoàn tác cho sản phẩm "${target.productTitle.value}".`,
+      });
+      return;
+    }
+
+    if (!onRollbackApprovedProducts) {
+      setProducts((prev) =>
+        prev.map((p) => (p.id === id ? restoreProductFromBackup(p) : p)),
+      );
+      setSyncFeedback({
+        type: "success",
+        message: `✓ Đã hoàn tác dữ liệu gốc cho sản phẩm "${target.originalBackup.productTitle}".`,
+      });
+      return;
+    }
+
+    setProducts((prev) =>
+      prev.map((p) =>
+        p.id === id ? { ...p, isReverting: true, revertError: undefined } : p,
+      ),
+    );
+
+    try {
+      const result = await onRollbackApprovedProducts([target]);
+      const targetId = (target.productId || target.id).trim();
+      const itemResult =
+        result.items.find(
+          (i) =>
+            i.productId === targetId ||
+            i.productId === target.id ||
+            i.productId === target.productId,
+        ) ?? result.items[0];
+
+      if (itemResult?.ok) {
+        setProducts((prev) =>
+          prev.map((p) => (p.id === id ? restoreProductFromBackup(p) : p)),
+        );
+        setSyncFeedback({
+          type: "success",
+          message: `✓ Đã hoàn tác dữ liệu gốc của "${target.originalBackup.productTitle}" lên Shopify thành công!`,
+        });
+      } else {
+        const errorMsg = itemResult?.error || "Hoàn tác sản phẩm lên Shopify thất bại.";
+        setProducts((prev) =>
+          prev.map((p) =>
+            p.id === id
+              ? {
+                  ...p,
+                  isReverting: false,
+                  revertError: errorMsg,
+                  updatedAt: Date.now(),
+                }
+              : p,
+          ),
+        );
+        setSyncFeedback({
+          type: "error",
+          message: `✕ Lỗi khi hoàn tác "${target.productTitle.value}" lên Shopify: ${errorMsg}`,
+        });
+      }
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      setProducts((prev) =>
+        prev.map((p) =>
+          p.id === id
+            ? {
+                ...p,
+                isReverting: false,
+                revertError: errorMsg,
+                updatedAt: Date.now(),
+              }
+            : p,
+        ),
+      );
+      setSyncFeedback({
+        type: "error",
+        message: `✕ Lỗi khi hoàn tác "${target.productTitle.value}" lên Shopify: ${errorMsg}`,
+      });
+    }
+  }
+
+  async function handleRollbackSelected(): Promise<void> {
+    const targets = products.filter(
+      (p) =>
+        selectedIds.has(p.id) &&
+        Boolean(p.originalBackup) &&
+        (p.reviewDecision === "approved" || Boolean(p.lastSyncedAt)) &&
+        !p.isSyncing &&
+        !p.isReverting,
+    );
+    if (targets.length === 0) return;
+
+    if (!onRollbackApprovedProducts) {
+      const targetIdSet = new Set(targets.map((t) => t.id));
+      setProducts((prev) =>
+        prev.map((p) => (targetIdSet.has(p.id) ? restoreProductFromBackup(p) : p)),
+      );
+      setSelectedIds((prev) => {
+        const next = new Set<string>();
+        for (const id of prev) {
+          if (!targetIdSet.has(id)) {
+            next.add(id);
+          }
+        }
+        return next;
+      });
+      setSyncFeedback({
+        type: "success",
+        message: `✓ Đã hoàn tác dữ liệu gốc cho ${targets.length} sản phẩm đã chọn.`,
+      });
+      return;
+    }
+
+    const targetIdSet = new Set(targets.map((t) => t.id));
+
+    setProducts((prev) =>
+      prev.map((p) =>
+        targetIdSet.has(p.id)
+          ? { ...p, isReverting: true, revertError: undefined }
+          : p,
+      ),
+    );
+
+    try {
+      const result = await onRollbackApprovedProducts(targets);
+      const resultMap = new Map<string, { ok: boolean; error?: string }>();
+      for (const item of result.items) {
+        resultMap.set(item.productId, item);
+      }
+
+      let successCount = 0;
+      let failCount = 0;
+      const successfulIds = new Set<string>();
+
+      for (const target of targets) {
+        const pId = (target.productId || target.id).trim();
+        const itemRes =
+          resultMap.get(pId) ??
+          resultMap.get(target.id) ??
+          (target.productId ? resultMap.get(target.productId.trim()) : undefined);
+
+        if (itemRes?.ok) {
+          successCount++;
+          successfulIds.add(target.id);
+        } else {
+          failCount++;
+        }
+      }
+
+      setProducts((prev) =>
+        prev.map((p) => {
+          if (!targetIdSet.has(p.id)) return p;
+
+          const pId = (p.productId || p.id).trim();
+          const itemRes =
+            resultMap.get(pId) ??
+            resultMap.get(p.id) ??
+            (p.productId ? resultMap.get(p.productId.trim()) : undefined);
+
+          if (itemRes?.ok) {
+            return restoreProductFromBackup(p);
+          } else {
+            const err = itemRes?.error || "Hoàn tác lên Shopify thất bại.";
+            return {
+              ...p,
+              isReverting: false,
+              revertError: err,
+              updatedAt: Date.now(),
+            };
+          }
+        }),
+      );
+
+      setSelectedIds((prev) => {
+        const next = new Set<string>();
+        for (const id of prev) {
+          if (!successfulIds.has(id)) {
+            next.add(id);
+          }
+        }
+        return next;
+      });
+
+      if (failCount === 0) {
+        setSyncFeedback({
+          type: "success",
+          message: `✓ Đã hoàn tác dữ liệu gốc và đồng bộ thành công ${successCount} sản phẩm lên Shopify!`,
+        });
+      } else if (successCount > 0) {
+        setSyncFeedback({
+          type: "warning",
+          message: `Đã hoàn tác ${successCount}/${targets.length} sản phẩm thành công. ${failCount} sản phẩm gặp lỗi hoàn tác.`,
+        });
+      } else {
+        setSyncFeedback({
+          type: "error",
+          message: `✕ Hoàn tác thất bại cho cả ${targets.length} sản phẩm đã chọn. Vui lòng kiểm tra lỗi chi tiết trên từng sản phẩm.`,
+        });
+      }
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      setProducts((prev) =>
+        prev.map((p) =>
+          targetIdSet.has(p.id)
+            ? {
+                ...p,
+                isReverting: false,
+                revertError: errorMsg,
+                updatedAt: Date.now(),
+              }
+            : p,
+        ),
+      );
+      setSyncFeedback({
+        type: "error",
+        message: `✕ Lỗi trong quá trình hoàn tác hàng loạt lên Shopify: ${errorMsg}`,
+      });
+    }
   }
 
   // Edit Handlers
   function handleEditProduct(product: SeoProductUiViewModel) {
+    if (product.isSyncing || product.isReverting) return;
     setEditingProduct(product);
     setIsEditModalOpen(true);
   }
@@ -715,6 +1246,21 @@ export function SeoReviewPage({
       }
     }
   }
+
+  const canRollbackSelectedCount = useMemo(() => {
+    return products.filter(
+      (p) =>
+        selectedIds.has(p.id) &&
+        Boolean(p.originalBackup) &&
+        (p.reviewDecision === "approved" || Boolean(p.lastSyncedAt)) &&
+        !p.isSyncing &&
+        !p.isReverting,
+    ).length;
+  }, [products, selectedIds]);
+
+  const isRevertingSelected = useMemo(() => {
+    return products.some((p) => selectedIds.has(p.id) && p.isReverting);
+  }, [products, selectedIds]);
 
   return (
     <div className="space-y-6">
@@ -854,6 +1400,33 @@ export function SeoReviewPage({
         </div>
       ) : null}
 
+      {/* Sync Feedback Notification Banner */}
+      {syncFeedback ? (
+        <div
+          className={`flex items-center justify-between rounded-xl border p-4 text-xs font-medium animate-fadeIn ${
+            syncFeedback.type === "success"
+              ? "border-emerald-500/40 bg-emerald-950/40 text-emerald-200"
+              : syncFeedback.type === "warning"
+                ? "border-amber-500/40 bg-amber-950/40 text-amber-200"
+                : "border-rose-500/40 bg-rose-950/40 text-rose-200"
+          }`}
+        >
+          <div className="flex items-center gap-2.5">
+            <span className="text-base flex-shrink-0">
+              {syncFeedback.type === "success" ? "✓" : syncFeedback.type === "warning" ? "⚠️" : "✕"}
+            </span>
+            <p className="leading-relaxed">{syncFeedback.message}</p>
+          </div>
+          <button
+            type="button"
+            className="ml-4 rounded-lg px-2.5 py-1 text-xs opacity-75 hover:opacity-100 transition"
+            onClick={() => setSyncFeedback(null)}
+          >
+            ✕ Đóng
+          </button>
+        </div>
+      ) : null}
+
       {/* Batch Actions & Filters Toolbar */}
       <SeoBatchToolbar
         totalCount={products.length}
@@ -863,9 +1436,12 @@ export function SeoReviewPage({
         rejectedCount={stats.rejected}
         syncFailedCount={stats.syncFailed}
         selectedCount={selectedIds.size}
+        canRollbackCount={canRollbackSelectedCount}
         filter={filter}
         viewMode={viewMode}
         isAllExpanded={isAllExpanded}
+        isSyncing={products.some((p) => selectedIds.has(p.id) && p.isSyncing)}
+        isReverting={isRevertingSelected}
         onFilterChange={(newFilter) => setFilter((prev) => ({ ...prev, ...newFilter }))}
         onViewModeChange={setViewMode}
         onToggleExpandAll={handleToggleExpandAllTable}
@@ -873,6 +1449,7 @@ export function SeoReviewPage({
         onClearSelection={handleClearSelection}
         onApproveSelected={handleApproveSelected}
         onRejectSelected={handleRejectSelected}
+        onRollbackSelected={handleRollbackSelected}
         onExportApprovedJson={handleExportApprovedJson}
         onClearAll={handleClearAll}
       />
@@ -917,6 +1494,7 @@ export function SeoReviewPage({
               onEditProduct={handleEditProduct}
               onApproveProduct={handleApproveProduct}
               onRejectProduct={handleRejectProduct}
+              onRollbackProduct={handleRollbackProduct}
               onZoomImage={handleOpenZoomImage}
               onRetrySync={handleRetrySync}
               onViewSyncError={handleViewSyncError}
@@ -935,6 +1513,7 @@ export function SeoReviewPage({
               onEditProduct={handleEditProduct}
               onApproveProduct={handleApproveProduct}
               onRejectProduct={handleRejectProduct}
+              onRollbackProduct={handleRollbackProduct}
               onZoomImage={handleOpenZoomImage}
               onRetrySync={handleRetrySync}
               onViewSyncError={handleViewSyncError}
@@ -952,6 +1531,7 @@ export function SeoReviewPage({
               onEditProduct={handleEditProduct}
               onApproveProduct={handleApproveProduct}
               onRejectProduct={handleRejectProduct}
+              onRollbackProduct={handleRollbackProduct}
               onApproveAndNext={handleApproveAndNext}
               onRejectAndNext={handleRejectAndNext}
               onZoomImage={handleOpenZoomImage}
@@ -969,12 +1549,14 @@ export function SeoReviewPage({
         onClose={() => setIsDrawerOpen(false)}
         onEdit={handleEditProduct}
         onApprove={(id) => {
-          handleApproveProduct(id);
-          setIsDrawerOpen(false);
+          void handleApproveProduct(id);
         }}
         onReject={(id) => {
           handleRejectProduct(id);
           setIsDrawerOpen(false);
+        }}
+        onRollback={(id) => {
+          void handleRollbackProduct(id);
         }}
         onZoomImage={handleOpenZoomImage}
         onRetrySync={handleRetrySync}

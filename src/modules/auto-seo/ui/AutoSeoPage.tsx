@@ -6,6 +6,7 @@ import type {
   AutoSeoClient,
   AutoSeoHandoverHandler,
   AutoSeoOutput,
+  AutoSeoStoreOption,
   ShopifyProductForAutoSeoUi,
   ShopifyStatusFilter,
 } from "../types";
@@ -15,6 +16,7 @@ import {
   setAutoSeoProducts,
   setAutoSeoSearchQuery,
   setAutoSeoSelectedProductIds,
+  setAutoSeoSelectedStoreId,
   setAutoSeoStatusFilter,
   useAutoSeoSession,
 } from "./auto-seo-session";
@@ -63,6 +65,10 @@ export function AutoSeoPage({
   const output = session.output;
   const lastHydratedProducts = session.lastHydratedProducts;
 
+  const [availableStores, setAvailableStores] = useState<readonly AutoSeoStoreOption[]>([]);
+  const [isLoadingStores, setIsLoadingStores] = useState(false);
+  const selectedStoreId = session.selectedStoreId;
+
   const [isLoadingProducts, setIsLoadingProducts] = useState(false);
   const [isRunningAutoSeo, setIsRunningAutoSeo] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -72,7 +78,53 @@ export function AutoSeoPage({
   const [isDetailLoading, setIsDetailLoading] = useState(false);
   const [detailErrorMessage, setDetailErrorMessage] = useState<string | null>(null);
   const activeDetailIdRef = useRef<string | null>(null);
+  const loadRequestIdRef = useRef(0);
+  const selectedStoreIdRef = useRef(selectedStoreId);
+  selectedStoreIdRef.current = selectedStoreId;
   const [isSendingToSeo, setIsSendingToSeo] = useState(false);
+
+  // Load available stores on mount
+  useEffect(() => {
+    let isMounted = true;
+    async function loadStores(): Promise<void> {
+      setIsLoadingStores(true);
+      try {
+        let storeOptions: readonly AutoSeoStoreOption[] = [];
+        if (activeClient.listStores) {
+          storeOptions = await activeClient.listStores();
+        }
+        if (storeOptions.length === 0) {
+          const info = await activeClient.getStoreInfo();
+          if (info && info.storeId) {
+            storeOptions = [{ storeId: info.storeId, shopDomain: info.shopDomain }];
+          }
+        }
+
+        if (isMounted && storeOptions.length > 0) {
+          setAvailableStores(storeOptions);
+          const currentStoreId = selectedStoreIdRef.current;
+          if (!currentStoreId || !storeOptions.some((s) => s.storeId === currentStoreId)) {
+            const firstStoreId = storeOptions[0].storeId;
+            setAutoSeoSelectedStoreId(firstStoreId);
+            activeClient.setActiveStoreId?.(firstStoreId);
+          } else {
+            activeClient.setActiveStoreId?.(currentStoreId);
+          }
+        }
+      } catch {
+        // Fallback silently if stores cannot be listed
+      } finally {
+        if (isMounted) {
+          setIsLoadingStores(false);
+        }
+      }
+    }
+
+    void loadStores();
+    return () => {
+      isMounted = false;
+    };
+  }, [activeClient]);
 
   const filteredProducts = useMemo(() => {
     return filterAutoSeoProducts(products, {
@@ -81,37 +133,57 @@ export function AutoSeoPage({
     });
   }, [products, searchQuery, statusFilter]);
 
+  const handleSelectStore = useCallback((storeId: string): void => {
+    if (storeId === selectedStoreId) {
+      return;
+    }
+    loadRequestIdRef.current++;
+    setIsLoadingProducts(false);
+    setErrorMessage(null);
+    setAutoSeoSelectedStoreId(storeId);
+    activeClient.setActiveStoreId?.(storeId);
+    activeClient.clearDetailCache?.();
+    setAutoSeoProducts([]);
+    setAutoSeoSelectedProductIds([]);
+    setTestSelectedProductIds(undefined);
+    setAutoSeoOutput(null);
+    setAutoSeoLastHydratedProducts([]);
+  }, [activeClient, selectedStoreId]);
+
   const handleLoadProducts = useCallback(async (): Promise<void> => {
+    const currentRequestId = ++loadRequestIdRef.current;
+    const targetStoreId = selectedStoreId;
     setIsLoadingProducts(true);
     setErrorMessage(null);
 
     try {
-      const fetchedProducts = await activeClient.loadProducts();
-      setAutoSeoProducts(fetchedProducts);
-      setAutoSeoSelectedProductIds([]);
-      setTestSelectedProductIds(undefined);
+      const fetchedProducts = await activeClient.loadProducts(targetStoreId);
+      if (currentRequestId === loadRequestIdRef.current) {
+        setAutoSeoProducts(fetchedProducts);
+        setAutoSeoSelectedProductIds([]);
+        setTestSelectedProductIds(undefined);
+      }
     } catch (err) {
-      setErrorMessage(
-        err instanceof Error ? err.message : "Không thể tải danh sách sản phẩm từ Shopify.",
-      );
+      if (currentRequestId === loadRequestIdRef.current) {
+        setErrorMessage(
+          err instanceof Error ? err.message : "Không thể tải danh sách sản phẩm từ Shopify.",
+        );
+      }
     } finally {
-      setIsLoadingProducts(false);
+      if (currentRequestId === loadRequestIdRef.current) {
+        setIsLoadingProducts(false);
+      }
     }
-  }, [activeClient]);
+  }, [activeClient, selectedStoreId]);
 
-  // Load products on initial mount only if not already loaded in session or provided as props
-  useEffect(() => {
-    if (!initialProducts && (!session.hasLoadedInitially || session.products.length === 0)) {
-      void handleLoadProducts();
-    }
-  }, [handleLoadProducts, initialProducts, session.hasLoadedInitially, session.products.length]);
+  // Do NOT automatically load products on mount; user must click "Tải sản phẩm" button.
 
   // Open & hydrate product detail drawer
   const openProductDetail = useCallback(
     async (product: ShopifyProductForAutoSeoUi): Promise<void> => {
       activeDetailIdRef.current = product.id;
 
-      const cached = activeClient.getCachedDetail?.(product.id);
+      const cached = activeClient.getCachedDetail?.(product.id, selectedStoreId);
       if (cached) {
         setActiveProduct(cached);
         setIsDetailOpen(true);
@@ -126,7 +198,9 @@ export function AutoSeoPage({
       setDetailErrorMessage(null);
 
       try {
-        const fullProduct = await activeClient.loadProductDetail(product.id);
+        const fullProduct = selectedStoreId
+          ? await activeClient.loadProductDetail(selectedStoreId, product.id)
+          : await activeClient.loadProductDetail(product.id);
         if (activeDetailIdRef.current === product.id) {
           setActiveProduct(fullProduct);
         }
@@ -142,7 +216,7 @@ export function AutoSeoPage({
         }
       }
     },
-    [activeClient],
+    [activeClient, selectedStoreId],
   );
 
   // Toggle selection
@@ -192,11 +266,12 @@ export function AutoSeoPage({
       const hydratedProducts = await activeClient.hydrateSelectedProductsFresh(
         selectedProductIds,
         5,
+        selectedStoreId,
       );
 
       const workflowId = `auto_seo_${Date.now()}`;
 
-      const storeInfo = await activeClient.getStoreInfo();
+      const storeInfo = await activeClient.getStoreInfo(selectedStoreId);
       if (!storeInfo) {
         throw new AppError("Không thể xác định thông tin cửa hàng Shopify.", "AUTO_SEO_STORE_INFO_UNAVAILABLE");
       }
@@ -222,8 +297,14 @@ export function AutoSeoPage({
         selectedProductIds,
       });
 
+      const effectiveStoreId = selectedStoreId || storeInfo.storeId;
+      const productsWithStore = hydratedProducts.map((p) => ({
+        ...p,
+        storeId: p.storeId || effectiveStoreId,
+      }));
+
       setAutoSeoOutput(result);
-      setAutoSeoLastHydratedProducts(hydratedProducts);
+      setAutoSeoLastHydratedProducts(productsWithStore);
 
       notifyUser({
         title: "✨ Auto SEO: Tối ưu hóa hoàn tất!",
@@ -234,7 +315,7 @@ export function AutoSeoPage({
       });
 
       if (onHandoverToSeo) {
-        await onHandoverToSeo(hydratedProducts);
+        await onHandoverToSeo(productsWithStore, effectiveStoreId);
         navigate("/seo-review");
       }
     } catch (err) {
@@ -261,7 +342,20 @@ export function AutoSeoPage({
     setErrorMessage(null);
 
     try {
-      await onHandoverToSeo(lastHydratedProducts);
+      let effectiveStoreId = selectedStoreId || lastHydratedProducts.find((product) => product.storeId)?.storeId;
+      if (!effectiveStoreId) {
+        try {
+          const storeInfo = await activeClient.getStoreInfo();
+          effectiveStoreId = storeInfo?.storeId;
+        } catch {
+          // The handover can still continue when the store is already present on each product.
+        }
+      }
+      const productsWithStore = lastHydratedProducts.map((product) => ({
+        ...product,
+        storeId: product.storeId || effectiveStoreId,
+      }));
+      await onHandoverToSeo(productsWithStore, effectiveStoreId);
       notifyUser({
         title: "📦 Auto SEO: Bàn giao SEO thành công!",
         message: `Đã bàn giao ${lastHydratedProducts.length} sản phẩm sang SEO Review.`,
@@ -333,6 +427,10 @@ export function AutoSeoPage({
         onSelectAll={handleSelectAll}
         onClearSelection={handleClearSelection}
         onRunAutoSeo={() => void handleRunAutoSeo()}
+        stores={availableStores}
+        selectedStoreId={selectedStoreId}
+        onSelectStore={handleSelectStore}
+        isLoadingStores={isLoadingStores}
       />
 
       {/* Product Selection Table */}
@@ -346,6 +444,7 @@ export function AutoSeoPage({
         filteredProducts={filteredProducts}
         onToggleSelect={handleToggleSelect}
         onOpenDetail={handleOpenDetail}
+        isLoading={isLoadingProducts}
       />
 
       {/* PDP Detail Drawer */}

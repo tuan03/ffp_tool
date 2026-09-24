@@ -23,6 +23,7 @@ export interface AutoSeoProductImageInput {
  */
 export interface AutoSeoSourceProduct {
   readonly id?: string;
+  readonly storeId?: string;
   readonly productId?: string;
   readonly title?: string;
   readonly sourceTitle?: string;
@@ -57,6 +58,7 @@ export interface AutoSeoAdapterOptions {
  */
 export interface AutoSeoItemResult {
   readonly productId: string;
+  readonly storeId?: string;
   readonly handle: string;
   readonly sourceProduct: AutoSeoSourceProduct;
   readonly seoInput: SeoContentInput;
@@ -244,11 +246,15 @@ export async function runAutoSeoPipeline(
         : mappedInput;
       const productId = seoInput.productId ?? "";
       const handle = seoInput.handle;
+      const storeId = typeof product.storeId === "string" && product.storeId.trim().length > 0
+        ? product.storeId.trim()
+        : undefined;
 
       try {
         const seoOutput = await runner(seoInput);
         return {
           productId,
+          storeId,
           handle,
           sourceProduct: product,
           seoInput,
@@ -259,6 +265,7 @@ export async function runAutoSeoPipeline(
         const errorMessage = err instanceof Error ? err.message : String(err);
         return {
           productId,
+          storeId,
           handle,
           sourceProduct: product,
           seoInput,

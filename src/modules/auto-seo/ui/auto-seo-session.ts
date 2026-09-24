@@ -6,6 +6,7 @@ import type {
 } from "../types";
 
 export interface AutoSeoSessionState {
+  selectedStoreId?: string;
   products: readonly ShopifyProductForAutoSeoUi[];
   selectedProductIds: readonly string[];
   searchQuery: string;
@@ -16,6 +17,7 @@ export interface AutoSeoSessionState {
 }
 
 interface PersistedAutoSeoSession {
+  selectedStoreId?: string;
   products: readonly ShopifyProductForAutoSeoUi[];
   selectedProductIds: readonly string[];
   searchQuery: string;
@@ -27,6 +29,7 @@ interface PersistedAutoSeoSession {
 const STORAGE_KEY = "ffp_auto_seo_session_v1";
 
 export const DEFAULT_AUTO_SEO_SESSION_STATE: AutoSeoSessionState = {
+  selectedStoreId: undefined,
   products: [],
   selectedProductIds: [],
   searchQuery: "",
@@ -48,6 +51,10 @@ function readPersistedSession(): AutoSeoSessionState {
     const parsed = JSON.parse(raw) as Partial<PersistedAutoSeoSession>;
     if (!parsed || typeof parsed !== "object") return { ...DEFAULT_AUTO_SEO_SESSION_STATE };
 
+    const selectedStoreId =
+      typeof parsed.selectedStoreId === "string" && parsed.selectedStoreId.trim() !== ""
+        ? parsed.selectedStoreId.trim()
+        : undefined;
     const products = Array.isArray(parsed.products) ? parsed.products : [];
     const selectedProductIds = Array.isArray(parsed.selectedProductIds)
       ? (parsed.selectedProductIds.filter((id) => typeof id === "string") as string[])
@@ -62,6 +69,7 @@ function readPersistedSession(): AutoSeoSessionState {
 
     return {
       ...DEFAULT_AUTO_SEO_SESSION_STATE,
+      selectedStoreId,
       products,
       selectedProductIds,
       searchQuery,
@@ -79,6 +87,7 @@ function persistSession(state: AutoSeoSessionState): void {
 
   try {
     const dataToSave: PersistedAutoSeoSession = {
+      selectedStoreId: state.selectedStoreId,
       products: state.products,
       selectedProductIds: state.selectedProductIds,
       searchQuery: state.searchQuery,
@@ -129,6 +138,10 @@ export function updateAutoSeoSession(
   sessionState = { ...sessionState, ...patch };
   persistSession(sessionState);
   notifyListeners();
+}
+
+export function setAutoSeoSelectedStoreId(selectedStoreId?: string): void {
+  updateAutoSeoSession({ selectedStoreId });
 }
 
 export function setAutoSeoProducts(products: readonly ShopifyProductForAutoSeoUi[]): void {

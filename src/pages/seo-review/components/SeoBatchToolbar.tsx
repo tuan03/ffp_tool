@@ -8,9 +8,12 @@ export interface SeoBatchToolbarProps {
   readonly rejectedCount?: number;
   readonly syncFailedCount?: number;
   readonly selectedCount: number;
+  readonly canRollbackCount?: number;
   readonly filter: SeoReviewFilterState;
   readonly viewMode: SeoReviewViewMode;
   readonly isAllExpanded?: boolean;
+  readonly isSyncing?: boolean;
+  readonly isReverting?: boolean;
   readonly onFilterChange: (newFilter: Partial<SeoReviewFilterState>) => void;
   readonly onViewModeChange: (mode: SeoReviewViewMode) => void;
   readonly onToggleExpandAll?: () => void;
@@ -18,6 +21,7 @@ export interface SeoBatchToolbarProps {
   readonly onClearSelection: () => void;
   readonly onApproveSelected: () => void;
   readonly onRejectSelected: () => void;
+  readonly onRollbackSelected?: () => void;
   readonly onExportApprovedJson: () => void;
   readonly onClearAll: () => void;
 }
@@ -30,9 +34,12 @@ export function SeoBatchToolbar({
   rejectedCount = 0,
   syncFailedCount = 0,
   selectedCount,
+  canRollbackCount = 0,
   filter,
   viewMode,
   isAllExpanded = false,
+  isSyncing = false,
+  isReverting = false,
   onFilterChange,
   onViewModeChange,
   onToggleExpandAll,
@@ -40,6 +47,7 @@ export function SeoBatchToolbar({
   onClearSelection,
   onApproveSelected,
   onRejectSelected,
+  onRollbackSelected,
   onExportApprovedJson,
   onClearAll,
 }: SeoBatchToolbarProps): React.JSX.Element {
@@ -255,15 +263,68 @@ export function SeoBatchToolbar({
               <button
                 type="button"
                 onClick={onApproveSelected}
-                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg font-semibold bg-emerald-600/20 text-emerald-300 hover:bg-emerald-600/30 border border-emerald-500/30 transition cursor-pointer"
+                disabled={isSyncing || isReverting}
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold transition ${
+                  isSyncing || isReverting
+                    ? "bg-slate-800 text-slate-400 border border-slate-700 cursor-not-allowed"
+                    : "bg-emerald-600/20 text-emerald-300 hover:bg-emerald-600/30 border border-emerald-500/30 cursor-pointer"
+                }`}
               >
-                ✓ Duyệt ({selectedCount})
+                {isSyncing ? (
+                  <>
+                    <svg className="animate-spin h-3.5 w-3.5 text-cyan-400" viewBox="0 0 24 24" fill="none">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                    </svg>
+                    <span>Đang sync ({selectedCount})...</span>
+                  </>
+                ) : (
+                  <>
+                    <span>✓ Duyệt ({selectedCount})</span>
+                  </>
+                )}
               </button>
+
+              {/* Nút Hoàn tác hàng loạt */}
+              {canRollbackCount > 0 && onRollbackSelected && (
+                <button
+                  type="button"
+                  onClick={onRollbackSelected}
+                  disabled={isSyncing || isReverting}
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold transition ${
+                    isReverting
+                      ? "bg-slate-800 text-slate-400 border border-slate-700 cursor-not-allowed"
+                      : isSyncing
+                        ? "bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed"
+                        : "bg-amber-500/15 text-amber-300 hover:bg-amber-500/25 border border-amber-500/30 cursor-pointer shadow-sm shadow-amber-950/40"
+                  }`}
+                  title="Hoàn tác các sản phẩm đã chọn về dữ liệu gốc và đồng bộ lên Shopify"
+                >
+                  {isReverting ? (
+                    <>
+                      <svg className="animate-spin h-3.5 w-3.5 text-amber-400" viewBox="0 0 24 24" fill="none">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                      </svg>
+                      <span>Đang hoàn tác ({canRollbackCount})...</span>
+                    </>
+                  ) : (
+                    <>
+                      <span>↩ Hoàn tác ({canRollbackCount})</span>
+                    </>
+                  )}
+                </button>
+              )}
 
               <button
                 type="button"
                 onClick={onRejectSelected}
-                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg font-semibold bg-rose-600/20 text-rose-300 hover:bg-rose-600/30 border border-rose-500/30 transition cursor-pointer"
+                disabled={isSyncing || isReverting}
+                className={`inline-flex items-center gap-1 px-3 py-1.5 rounded-lg font-semibold transition ${
+                  isSyncing || isReverting
+                    ? "bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed"
+                    : "bg-rose-600/20 text-rose-300 hover:bg-rose-600/30 border border-rose-500/30 cursor-pointer"
+                }`}
               >
                 ✕ Từ chối ({selectedCount})
               </button>
