@@ -28,6 +28,7 @@ import {
   updateCrawlerSession,
   useAmazonCrawlerSession,
 } from "./crawler-session";
+import { clearCrawlerCacheAndOutput } from "./cache-clear";
 import { firstProductMediaUrl, resolveSelectedProduct } from "./product-selection";
 import {
   describeJobCancellation,
@@ -618,7 +619,7 @@ export function AmazonCrawlerPage({ amazonCrawlerJobs, clearAmazonCrawlerCache, 
     setIsClearingCache(true);
     setCacheMessage(null);
     try {
-      const result = await clearAmazonCrawlerCache();
+      const result = await clearCrawlerCacheAndOutput(clearAmazonCrawlerCache);
       const megabytes = result.removedBytes / (1024 * 1024);
       setCacheMessage(`Đã xóa ${result.removedFiles} cache file (${megabytes.toFixed(2)} MB).`);
     } catch (caught: unknown) {
