@@ -91,6 +91,8 @@ class DistributedCrawlerAgent:
         self.connection_status = "offline"
         self._paused = self.store.is_paused()
         self._captcha_waiting = False
+        self._pending_stop_cleanups: dict[str, int] = {}
+        self._cache_cleanup_lock = asyncio.Lock()
 
     def status_snapshot(self) -> dict[str, Any]:
         return {
@@ -212,6 +214,14 @@ class DistributedCrawlerAgent:
                 await self.assignment_queue.put(assignment)
         acknowledged = [str(value) for value in acknowledgement.get("acknowledgedCancelIntents") or []]
         self.store.acknowledge_cancel_intents(acknowledged)
+        required_generation = max(0, int(acknowledgement.get("requiredCacheGeneration") or 0))
+        if required_generation > self.store.cache_generation():
+            await self._ensure_cache_generation(required_generation)
+            await self.outbound_queue.put({
+                "type": "cache_generation_ack",
+                "cacheGeneration": required_generation,
+                "availableSlots": self._available_slots(),
+            })
         await self.outbound_queue.put({"type": "ready", "availableSlots": self._available_slots()})
         self._publish_status()
 
@@ -236,6 +246,7 @@ class DistributedCrawlerAgent:
                         limits=self.config.limits,
                         local_tasks=self.store.local_tasks(),
                         cancel_intents=self.store.cancel_intents(),
+                        cache_generation=self.store.cache_generation(),
                     )))
                     acknowledgement = json.loads(await asyncio.wait_for(websocket.recv(), timeout=15))
                     if acknowledgement.get("type") != "hello_ack":
@@ -301,6 +312,11 @@ class DistributedCrawlerAgent:
                         "taskId": assignment["taskId"],
                         "leaseId": assignment["leaseId"],
                     })
+                generation = max(0, int(payload.get("cacheGeneration") or 0))
+                current_generation = self._pending_stop_cleanups.get(job_id, 0)
+                if job_id and generation > current_generation:
+                    self._pending_stop_cleanups[job_id] = generation
+                    asyncio.create_task(self._complete_stop_cleanup(job_id, generation))
             elif message_type == "pause":
                 self.set_paused(bool(payload.get("paused", True)))
             elif message_type == "clear_cache":
@@ -316,6 +332,77 @@ class DistributedCrawlerAgent:
                 "type": "cache_cleared", "requestId": request_id,
                 "removedFiles": 0, "removedBytes": 0, "error": str(error),
             }
+
+    async def _ensure_cache_generation(self, generation: int) -> dict[str, Any]:
+        async with self._cache_cleanup_lock:
+            if self.store.cache_generation() >= generation:
+                return {"removedFiles": 0, "removedBytes": 0}
+            result = await asyncio.to_thread(RawFamilyCache(self.project_root / ".runtime" / "cache").clear)
+            self.store.set_cache_generation(generation)
+            return result
+
+    async def _complete_stop_cleanup(self, job_id: str, generation: int) -> None:
+        local_tasks = {
+            str(task.get("taskId") or ""): task
+            for task in self.store.local_tasks()
+            if str(task.get("jobId") or "") == job_id
+        }
+        job_task_ids = {
+            task_id
+            for task_id, assignment in self.active.items()
+            if str(assignment.get("jobId") or "") == job_id
+        } | set(local_tasks)
+        acknowledged_task_ids: set[str] = set()
+        for task_id, assignment in list(self.active.items()):
+            if str(assignment.get("jobId") or "") != job_id or task_id in self.executing_task_ids:
+                continue
+            self.active.pop(task_id, None)
+            self.store.discard_task(task_id)
+            await self.outbound_queue.put({
+                "type": "cancel_ack",
+                "taskId": task_id,
+                "leaseId": assignment["leaseId"],
+            })
+            acknowledged_task_ids.add(task_id)
+        for task_id, local_task in local_tasks.items():
+            if task_id in acknowledged_task_ids or task_id in self.active or task_id in self.executing_task_ids:
+                continue
+            await self.outbound_queue.put({
+                "type": "cancel_ack",
+                "taskId": task_id,
+                "leaseId": local_task["leaseId"],
+            })
+        while (
+            any(
+                str(assignment.get("jobId") or "") == job_id
+                for assignment in self.active.values()
+            )
+            or bool(job_task_ids & self.executing_task_ids)
+        ):
+            await asyncio.sleep(0.1)
+        self.store.discard_job(job_id)
+        while self._pending_stop_cleanups.get(job_id) == generation:
+            try:
+                cache_result = await self._ensure_cache_generation(generation)
+                await self.outbound_queue.put({
+                    "type": "stop_cleanup_ack",
+                    "jobId": job_id,
+                    "cacheGeneration": generation,
+                    **cache_result,
+                    "error": None,
+                })
+                self._pending_stop_cleanups.pop(job_id, None)
+                await self.outbound_queue.put({"type": "ready", "availableSlots": self._available_slots()})
+                self._publish_status()
+                return
+            except Exception as error:
+                await self.outbound_queue.put({
+                    "type": "stop_cleanup_ack",
+                    "jobId": job_id,
+                    "cacheGeneration": generation,
+                    "error": str(error),
+                })
+                await asyncio.sleep(1)
 
     async def _heartbeat_loop(self) -> None:
         while True:
@@ -334,7 +421,7 @@ class DistributedCrawlerAgent:
             await asyncio.sleep(HEARTBEAT_INTERVAL_SECONDS)
 
     def _available_slots(self) -> int:
-        if self._paused:
+        if self._paused or self._pending_stop_cleanups:
             return 0
         return max(0, self.config.max_concurrent_inputs - len(self.active))
 

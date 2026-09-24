@@ -215,6 +215,26 @@ class ClientStore:
             )
             connection.commit()
 
+    def cache_generation(self) -> int:
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT value FROM agent_state WHERE key='cache_generation'"
+            ).fetchone()
+        if row is None:
+            return 0
+        try:
+            return max(0, int(row["value"]))
+        except (TypeError, ValueError):
+            return 0
+
+    def set_cache_generation(self, generation: int) -> None:
+        with self._connection() as connection:
+            connection.execute(
+                "INSERT OR REPLACE INTO agent_state(key, value) VALUES ('cache_generation', ?)",
+                (str(max(0, int(generation))),),
+            )
+            connection.commit()
+
     def cancel_job(self, job_id: str) -> None:
         with self._connection() as connection:
             connection.execute("UPDATE leases SET status='cancelled', updated_at=? WHERE job_id=?", (utc_iso(), job_id))

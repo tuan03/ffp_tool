@@ -295,9 +295,10 @@ export async function startCrawlerJob({
     notifyListeners();
     return crawlerOutput;
   } catch (caught: unknown) {
+    const isAbort = caught instanceof DOMException && caught.name === "AbortError";
     const errorMessage =
-      caught instanceof DOMException && caught.name === "AbortError"
-        ? "Job đã được dừng an toàn."
+      isAbort
+        ? null
         : caught instanceof Error
           ? caught.message
           : "Không thể chạy Amazon crawler.";
@@ -305,7 +306,7 @@ export async function startCrawlerJob({
     sessionState = {
       ...sessionState,
       isRunning: false,
-      activeJobId: caught instanceof DOMException && caught.name === "AbortError"
+      activeJobId: isAbort
         ? null
         : sessionState.activeJobId,
       error: errorMessage,

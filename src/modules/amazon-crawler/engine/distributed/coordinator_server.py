@@ -20,7 +20,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from ..image_processing import ImageProcessingService, normalize_profile, process_image_bytes
 from . import PROTOCOL_VERSION, SUPPORTED_PROTOCOL_VERSIONS
 from .coordinator_models import Base, create_database_engine, create_session_factory
-from .coordinator_store import CoordinatorStore
+from .coordinator_store import ActiveJobExistsError, CoordinatorStore
 from .protocol import HEARTBEAT_INTERVAL_SECONDS, LEASE_SECONDS, payload_checksum, require_message
 
 
@@ -195,6 +195,7 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
             next_cleanup_at = 0.0
             while not stop.is_set():
                 await asyncio.to_thread(store.reap_expired)
+                await asyncio.to_thread(store.purge_stopped_jobs)
                 loop_time = asyncio.get_running_loop().time()
                 if loop_time >= next_cleanup_at:
                     await asyncio.to_thread(
@@ -257,6 +258,11 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
             return store.create_job(enriched_payload)
         except KeyError as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
+        except ActiveJobExistsError as error:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Job {error.job_id} đang chạy hoặc đang dừng. Hãy chờ Stop hoàn tất.",
+            ) from error
         except ValueError as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
 
@@ -294,26 +300,29 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
 
     @app.post("/api/v1/crawl-jobs/{job_id}/cancel")
     async def cancel_job(job_id: str) -> dict[str, Any]:
-        snapshot = store.cancel_job(job_id)
+        connected_client_ids = await manager.connected_client_ids()
+        snapshot = store.cancel_job(job_id, connected_client_ids)
         if snapshot is None:
             raise HTTPException(status_code=404, detail="Crawl job was not found.")
+        cache_generation = store.current_cache_generation()
         await manager.broadcast({
             "type": "cancel",
             "jobId": job_id,
             "cancellationId": (snapshot.get("cancellation") or {}).get("id"),
+            "discard": True,
+            "cacheGeneration": cache_generation,
         })
+        await asyncio.to_thread(image_service.clear_cache)
+        await asyncio.to_thread(store.purge_stopped_jobs)
         return snapshot
 
     @app.post("/api/v1/crawl-jobs/{job_id}/replace", status_code=202)
     async def replace_job(job_id: str, payload: dict[str, Any]) -> dict[str, Any]:
-        cancelled = store.cancel_job(job_id)
-        if cancelled is None:
+        source_job = store.get_job(job_id)
+        if source_job is None:
             raise HTTPException(status_code=404, detail="Crawl job was not found.")
-        await manager.broadcast({
-            "type": "cancel",
-            "jobId": job_id,
-            "cancellationId": (cancelled.get("cancellation") or {}).get("id"),
-        })
+        if source_job.get("status") not in {"completed", "partial"}:
+            raise HTTPException(status_code=409, detail="Chỉ có thể chạy lại job đã hoàn tất.")
         try:
             enriched_payload = dict(payload)
             image_profile = image_service.profiles.load(str(payload.get("imageProfileSlug") or "default"))
@@ -324,9 +333,14 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
             replacement = store.create_job(enriched_payload)
         except KeyError as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
+        except ActiveJobExistsError as error:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Job {error.job_id} đang chạy hoặc đang dừng. Hãy chờ Stop hoàn tất.",
+            ) from error
         except ValueError as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
-        return {"cancelledJob": cancelled, "replacementJob": replacement}
+        return {"replacementJob": replacement}
 
     @app.delete("/api/v1/crawl-jobs/{job_id}")
     async def delete_job(job_id: str) -> Response:
@@ -698,16 +712,30 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
                 status_code=422,
                 detail="storeId, normalizedChecksum and shopify are required.",
             )
-        updated = store.checkpoint_shopify_product(
+        stop_requested = store.checkpoint_shopify_product(
             item_id,
             worker_id=str(payload.get("workerId") or ""),
             store_id=store_id,
             normalized_checksum=normalized_checksum,
             shopify_result=shopify_result,
         )
-        if not updated:
+        if stop_requested is None:
             raise HTTPException(status_code=409, detail="Pipeline item claim is stale.")
-        return {"status": "syncing"}
+        return {"status": "checkpointed", "stopRequested": stop_requested}
+
+    @app.post("/api/v1/internal/product-pipeline/{item_id}/shopify-write-started")
+    def mark_shopify_write_started(
+        item_id: str,
+        payload: dict[str, Any],
+        x_pipeline_key: str | None = Header(default=None, alias="X-Pipeline-Key"),
+    ) -> dict[str, str]:
+        require_pipeline_key(x_pipeline_key)
+        if not store.mark_shopify_write_started(
+            item_id,
+            worker_id=str(payload.get("workerId") or ""),
+        ):
+            raise HTTPException(status_code=409, detail="Pipeline item was stopped before Shopify write.")
+        return {"status": "shopify_writing"}
 
     @app.post("/api/v1/internal/product-pipeline/{item_id}/heartbeat")
     def heartbeat_product_pipeline(
@@ -730,6 +758,7 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
         require_pipeline_key(x_pipeline_key)
         if not store.acknowledge_product_cancel(item_id, worker_id=str(payload.get("workerId") or "")):
             raise HTTPException(status_code=409, detail="Pipeline cancellation acknowledgement is stale.")
+        store.purge_stopped_jobs()
         return {"status": "cancelled"}
 
     @app.post("/api/v1/internal/product-pipeline/{item_id}/complete")
@@ -797,15 +826,20 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
             client_id = client["id"]
             cancel_intents = [str(value) for value in list(hello.get("cancelIntents") or []) if str(value)]
             acknowledged_intents: list[str] = []
+            stop_clients = await manager.connected_client_ids()
+            stop_clients.add(client_id)
             for job_id in cancel_intents:
-                cancelled = await asyncio.to_thread(store.cancel_job, job_id)
+                cancelled = await asyncio.to_thread(store.cancel_job, job_id, stop_clients)
                 if cancelled is not None:
                     acknowledged_intents.append(job_id)
             local_tasks = [value for value in list(hello.get("localTasks") or []) if isinstance(value, dict)]
             reconciliation = await asyncio.to_thread(store.reconcile_tasks, client_id, local_tasks)
             await manager.add(client_id, websocket)
             maximum_slots = int(client.get("maxConcurrentInputs") or 0)
-            available_slots = max(0, int(hello.get("availableSlots") or 0))
+            required_cache_generation = await asyncio.to_thread(store.current_cache_generation)
+            client_cache_generation = max(0, int(hello.get("cacheGeneration") or 0))
+            is_cache_ready = client_cache_generation >= required_cache_generation
+            available_slots = max(0, int(hello.get("availableSlots") or 0)) if is_cache_ready else 0
             await manager.update_runtime(
                 client_id,
                 active_tasks=max(0, maximum_slots - available_slots),
@@ -816,17 +850,26 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
                 "heartbeatIntervalSeconds": HEARTBEAT_INTERVAL_SECONDS, "leaseSeconds": LEASE_SECONDS,
                 **reconciliation,
                 "acknowledgedCancelIntents": acknowledged_intents,
+                "requiredCacheGeneration": required_cache_generation,
             })
             for cancelled_job_id in acknowledged_intents:
-                await manager.broadcast({"type": "cancel", "jobId": cancelled_job_id})
+                await manager.broadcast({
+                    "type": "cancel",
+                    "jobId": cancelled_job_id,
+                    "discard": True,
+                    "cacheGeneration": required_cache_generation,
+                })
 
             async def assign(slots: int) -> None:
+                if not is_cache_ready:
+                    return
                 leases = await asyncio.to_thread(store.lease_tasks, client_id, slots)
                 await manager.reserve_tasks(client_id, len(leases))
                 for lease in leases:
                     await websocket.send_json(lease)
 
-            await assign(int(hello.get("availableSlots") or 0))
+            if is_cache_ready:
+                await assign(int(hello.get("availableSlots") or 0))
             while True:
                 message = require_message(await websocket.receive_json())
                 message_type = message["type"]
@@ -844,11 +887,18 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
                         str(message.get("status") or "online"),
                     )
                     for cancelled_job_id in cancelled_job_ids:
-                        await websocket.send_json({"type": "cancel", "jobId": cancelled_job_id})
-                    await assign(int(message.get("availableSlots") or 0))
+                        await websocket.send_json({
+                            "type": "cancel",
+                            "jobId": cancelled_job_id,
+                            "discard": True,
+                            "cacheGeneration": await asyncio.to_thread(store.current_cache_generation),
+                        })
+                    if is_cache_ready:
+                        await assign(int(message.get("availableSlots") or 0))
                 elif message_type == "ready":
                     await manager.update_available_slots(client_id, int(message.get("availableSlots") or 0))
-                    await assign(int(message.get("availableSlots") or 0))
+                    if is_cache_ready:
+                        await assign(int(message.get("availableSlots") or 0))
                 elif message_type == "progress":
                     await asyncio.to_thread(store.update_progress, client_id, message)
                 elif message_type == "task_failed":
@@ -864,6 +914,23 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
                     await websocket.send_json({"type": "cancel_received_ack", "taskId": message.get("taskId"), **response})
                 elif message_type == "cache_cleared":
                     await manager.record_cache_response(client_id, message)
+                elif message_type == "cache_generation_ack":
+                    acknowledged_generation = max(0, int(message.get("cacheGeneration") or 0))
+                    if acknowledged_generation >= required_cache_generation:
+                        is_cache_ready = True
+                        acknowledged_slots = max(0, int(message.get("availableSlots") or 0))
+                        await manager.update_available_slots(client_id, acknowledged_slots)
+                        await assign(acknowledged_slots)
+                elif message_type == "stop_cleanup_ack":
+                    acknowledged = await asyncio.to_thread(
+                        store.acknowledge_stop_cleanup,
+                        client_id,
+                        job_id=str(message.get("jobId") or ""),
+                        cache_generation=max(0, int(message.get("cacheGeneration") or 0)),
+                        error=str(message.get("error") or "") or None,
+                    )
+                    if acknowledged:
+                        await asyncio.to_thread(store.purge_stopped_jobs)
         except (WebSocketDisconnect, asyncio.TimeoutError):
             pass
         except ValueError as error:
@@ -872,6 +939,7 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
             if client_id:
                 await manager.remove(client_id, websocket)
                 await asyncio.to_thread(store.mark_client_disconnected, client_id)
+                await asyncio.to_thread(store.purge_stopped_jobs)
 
     return app
 

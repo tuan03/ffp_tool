@@ -106,6 +106,7 @@ def hello_message(
     limits: AgentLimits,
     local_tasks: list[dict[str, Any]] | None = None,
     cancel_intents: list[str] | None = None,
+    cache_generation: int = 0,
 ) -> dict[str, Any]:
     return {
         "type": "hello",
@@ -131,4 +132,5 @@ def hello_message(
         },
         "localTasks": list(local_tasks or []),
         "cancelIntents": list(cancel_intents or []),
+        "cacheGeneration": max(0, int(cache_generation)),
     }

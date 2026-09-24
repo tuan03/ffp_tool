@@ -28,6 +28,8 @@ function createJob(overrides: Partial<AmazonCrawlerJobSnapshot> = {}): AmazonCra
       pendingAgents: [],
       pendingPipeline: [],
       pendingPipelineItems: 0,
+      pendingCleanupAgents: [],
+      cacheGeneration: null,
       isExecutionConfirmed: false,
     },
     ...overrides,
@@ -79,6 +81,23 @@ test("cancellation message identifies received agent and pipeline acknowledgemen
   assert.match(message, /2 phút trước/);
   assert.match(message, /May Sang đã nhận lệnh/);
   assert.match(message, /pipeline đã nhận lệnh, đang kết thúc bước tạo nội dung SEO/);
+});
+
+test("cancellation message reports agent cache cleanup", () => {
+  const job = createJob({
+    cancellation: {
+      ...createJob().cancellation,
+      pendingCleanupAgents: [{
+        clientId: "agent-1",
+        displayName: "May Sang",
+        status: "pending",
+        error: null,
+      }],
+      cacheGeneration: 3,
+    },
+  });
+
+  assert.match(describeJobCancellation(job) ?? "", /May Sang đang đóng crawler và dọn cache/);
 });
 
 test("cancellation message treats timezone-less coordinator timestamps as UTC", () => {

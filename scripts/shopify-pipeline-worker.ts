@@ -391,11 +391,14 @@ async function processClaim(
     seo: { status: "running" },
   });
 
+  let hasStartedShopifyWrite = false;
+  let isDrainingAfterWrite = false;
   const heartbeat = setInterval(() => {
     void postJson<{ status: string }>(`/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/heartbeat`, {
       workerId,
     }).then((response) => {
       if (response.status === "cancelled") cancellationController.abort();
+      if (response.status === "draining") isDrainingAfterWrite = true;
     }).catch((error: unknown) => {
       if (error instanceof CoordinatorRequestError && [404, 409].includes(error.status)) {
         cancellationController.abort();
@@ -410,7 +413,6 @@ async function processClaim(
         readonly execution: Awaited<ReturnType<typeof runSeoContentDetailed>>;
       }
     | undefined;
-  let hasStartedShopifyWrite = false;
   try {
     throwIfCancelled();
     const claimStoreId = typeof claim.settings?.storeId === "string" && claim.settings.storeId.trim()
@@ -662,7 +664,6 @@ async function processClaim(
         mode: "apply",
         getRequestId: (operation) => `pipeline-${claim.id}-${finalChecksum}-${operation}`,
       });
-      hasStartedShopifyWrite = true;
       const baseInput = fromCustomizationNormalizerProduct(shopifyProduct, {
         vendor: storeVendor,
         productType: customProductType,
@@ -696,19 +697,21 @@ async function processClaim(
         };
       }
 
+      await postJson(`/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/shopify-write-started`, {
+        workerId,
+      }, cancellationController.signal);
+      hasStartedShopifyWrite = true;
+
       syncResult = await syncSingleProduct(syncInput, {
         gateway,
         existingProductId,
         existingManagedResources,
-        signal: cancellationController.signal,
       });
-      throwIfCancelled();
     }
 
     if (syncResult.success && syncResult.productId && collectionIds.length > 0) {
       for (const colId of collectionIds) {
         try {
-          throwIfCancelled();
           await runner({
             storeId: effectiveProxyStoreId,
             operation: "collections.updateMembership",
@@ -748,9 +751,10 @@ async function processClaim(
     timings.shopifySyncMs = Date.now() - syncStartedAt;
     logPhase(claim.sourceKey, "shopify-sync", timings.shopifySyncMs);
 
+    let stopRequested = isDrainingAfterWrite;
     if (syncResult.productId) {
-      throwIfCancelled();
-      await postJson(`/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/shopify-checkpoint`, {
+      const checkpoint = await postJson<{ status: string; stopRequested: boolean }>(
+        `/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/shopify-checkpoint`, {
         workerId,
         storeId: claimStoreId,
         normalizedChecksum: finalChecksum,
@@ -760,11 +764,19 @@ async function processClaim(
           managedResources: syncResult.managedResources ?? existingManagedResources ?? {},
         },
       });
+      stopRequested = stopRequested || checkpoint.stopRequested;
     }
     existingProductId = syncResult.productId ?? existingProductId;
     existingProductHandle = syncResult.productHandle ?? existingProductHandle;
     existingManagedResources = syncResult.managedResources ?? existingManagedResources;
     timings.totalMs = Date.now() - pipelineStartedAt;
+
+    if (stopRequested) {
+      await postJson(`/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/cancelled`, {
+        workerId,
+      });
+      return;
+    }
 
     throwIfCancelled();
     await postJson(`/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/complete`, {
@@ -791,7 +803,18 @@ async function processClaim(
     });
     logPhase(claim.sourceKey, "total", timings.totalMs);
   } catch (error: unknown) {
-    if (error instanceof PipelineCancelledError || cancellationController.signal.aborted) {
+    const wasStoppedByCoordinator = error instanceof CoordinatorRequestError && error.status === 409;
+    let shouldAcknowledgeStop = error instanceof PipelineCancelledError
+      || cancellationController.signal.aborted
+      || wasStoppedByCoordinator;
+    if (!shouldAcknowledgeStop && hasStartedShopifyWrite) {
+      const cancellationState = await postJson<{ status: string }>(
+        `/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/heartbeat`,
+        { workerId },
+      ).catch(() => null);
+      shouldAcknowledgeStop = cancellationState?.status === "draining";
+    }
+    if (shouldAcknowledgeStop) {
       if (reservedSeo && !hasStartedShopifyWrite) {
         await unregisterSeoContentKeywords(reservedSeo.input, reservedSeo.execution).catch(() => undefined);
       }

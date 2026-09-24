@@ -127,6 +127,19 @@ function readJobSnapshot(value: unknown): AmazonCrawlerJobSnapshot {
         }];
       })
     : [];
+  const pendingCleanupAgents = Array.isArray(cancellation.pendingCleanupAgents)
+    ? cancellation.pendingCleanupAgents.flatMap((pendingCleanup) => {
+        if (!isRecord(pendingCleanup) || typeof pendingCleanup.clientId !== "string") return [];
+        return [{
+          clientId: pendingCleanup.clientId,
+          displayName: typeof pendingCleanup.displayName === "string"
+            ? pendingCleanup.displayName
+            : pendingCleanup.clientId,
+          status: typeof pendingCleanup.status === "string" ? pendingCleanup.status : "pending",
+          error: typeof pendingCleanup.error === "string" ? pendingCleanup.error : null,
+        }];
+      })
+    : [];
   return {
     jobId: core.id,
     status: core.status,
@@ -147,6 +160,8 @@ function readJobSnapshot(value: unknown): AmazonCrawlerJobSnapshot {
       pendingAgents,
       pendingPipeline,
       pendingPipelineItems: typeof cancellation.pendingPipelineItems === "number" ? cancellation.pendingPipelineItems : 0,
+      pendingCleanupAgents,
+      cacheGeneration: typeof cancellation.cacheGeneration === "number" ? cancellation.cacheGeneration : null,
       isExecutionConfirmed: cancellation.isExecutionConfirmed === true,
     },
   };
@@ -220,6 +235,7 @@ export function createAmazonCrawlerRunner({
           `${baseUrl}/api/v1/crawl-jobs/${encodeURIComponent(jobId)}/cancel`,
           { method: "POST" },
         );
+        if (response.status === 404) return;
         await readJson(response);
       })();
       return cancellationPromise;
@@ -266,6 +282,9 @@ export function createAmazonCrawlerRunner({
           `${baseUrl}/api/v1/crawl-jobs/${encodeURIComponent(jobId)}`,
           { signal },
         );
+        if (response.status === 404) {
+          throw new DOMException("The crawler job was stopped and removed.", "AbortError");
+        }
         const snapshot = readSnapshot(await readJson(response));
         onProgress?.(snapshot.progress);
         if (onProducts) {

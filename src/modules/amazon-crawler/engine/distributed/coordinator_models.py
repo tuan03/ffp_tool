@@ -80,6 +80,30 @@ class DeletedCrawlJob(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
 
 
+class CoordinatorState(Base):
+    __tablename__ = "coordinator_state"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[str] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+
+class JobStopClientCleanup(Base):
+    __tablename__ = "job_stop_client_cleanup"
+    __table_args__ = (
+        UniqueConstraint("job_id", "client_id", name="uq_job_stop_client_cleanup"),
+    )
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    job_id: Mapped[str] = mapped_column(String(40), index=True)
+    client_id: Mapped[str] = mapped_column(String(64), index=True)
+    cache_generation: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(32), default="pending", index=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+
 class CrawlTask(Base):
     __tablename__ = "crawl_tasks"
     __table_args__ = (

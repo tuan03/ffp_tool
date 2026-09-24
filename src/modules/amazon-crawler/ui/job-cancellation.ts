@@ -6,6 +6,8 @@ const CANCELLATION_PHASE_LABELS: Record<ProductPipelineStatus | "pipeline", stri
   seo: "tạo nội dung SEO",
   image_processing: "xử lý ảnh",
   syncing: "đồng bộ Shopify",
+  shopify_writing: "ghi dữ liệu Shopify",
+  stopping_after_write: "hoàn tất lần ghi Shopify đang chạy",
   cancelling: "hủy pipeline",
   retry_wait: "chờ thử lại pipeline",
   completed: "hoàn tất pipeline",
@@ -69,6 +71,11 @@ export function describeJobCancellation(job: AmazonCrawlerJobSnapshot, now = Dat
     details.push(pendingItem.receivedAt
       ? `pipeline đã nhận lệnh, đang kết thúc bước ${phase} cho ${pendingItem.sourceKey}`
       : `đang chờ pipeline nhận lệnh dừng ở bước ${phase} cho ${pendingItem.sourceKey}`);
+  }
+  for (const cleanup of job.cancellation.pendingCleanupAgents) {
+    details.push(cleanup.error
+      ? `${cleanup.displayName} đang thử lại việc dọn cache (${cleanup.error})`
+      : `${cleanup.displayName} đang đóng crawler và dọn cache`);
   }
 
   const elapsed = formatElapsedTime(job.cancellation.requestedAt, now);

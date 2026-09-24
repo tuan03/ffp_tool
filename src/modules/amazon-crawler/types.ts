@@ -88,6 +88,8 @@ export type ProductPipelineStatus =
   | "seo"
   | "image_processing"
   | "syncing"
+  | "shopify_writing"
+  | "stopping_after_write"
   | "cancelling"
   | "retry_wait"
   | "completed"
@@ -391,6 +393,13 @@ export interface AmazonCrawlerCancellationSummary {
   pendingAgents: readonly AmazonCrawlerPendingAgentCancellation[];
   pendingPipeline: readonly AmazonCrawlerPendingPipelineCancellation[];
   pendingPipelineItems: number;
+  pendingCleanupAgents: readonly {
+    clientId: string;
+    displayName: string;
+    status: string;
+    error: string | null;
+  }[];
+  cacheGeneration: number | null;
   isExecutionConfirmed: boolean;
 }
 

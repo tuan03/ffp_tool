@@ -130,7 +130,7 @@ test("crawler session handles cancellation via abortCrawlerJob", async () => {
   assert.equal(result, null);
   const state = getCrawlerSessionState();
   assert.equal(state.isRunning, false);
-  assert.equal(state.error, "Job đã được dừng an toàn.");
+  assert.equal(state.error, null);
 });
 
 test("crawler session handles runner errors safely", async () => {
