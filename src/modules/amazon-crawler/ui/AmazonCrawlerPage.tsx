@@ -29,7 +29,12 @@ import {
   useAmazonCrawlerSession,
 } from "./crawler-session";
 import { firstProductMediaUrl, resolveSelectedProduct } from "./product-selection";
-import { describeJobCancellation, formatCancellationPhase, isActiveJobStopping } from "./job-cancellation";
+import {
+  describeJobCancellation,
+  formatCancellationPhase,
+  isActiveJobStopping,
+  shouldShowStandaloneJobControlMessage,
+} from "./job-cancellation";
 import { formatPipelineTimings } from "./pipeline-timings";
 
 interface AmazonCrawlerPageProps {
@@ -254,14 +259,10 @@ export function AmazonCrawlerPage({ amazonCrawlerJobs, clearAmazonCrawlerCache, 
     const isActive = ["queued", "running", "waiting_captcha", "cancelling"].includes(activeJob.status);
     updateCrawlerSession({ progress: activeJob.progress, isRunning: isActive });
     if (activeJob.status === "cancelling") {
-      setJobControlTone("info");
-      setJobControlMessage(describeJobCancellation(activeJob));
       return;
     }
     if (activeJob.status === "cancelled") {
       updateCrawlerSession({ activeJobId: null, isRunning: false, error: null });
-      setJobControlTone("success");
-      setJobControlMessage(describeJobCancellation(activeJob));
       return;
     }
     if (isActive || (activeJob.status !== "completed" && activeJob.status !== "partial")) return;
@@ -284,15 +285,7 @@ export function AmazonCrawlerPage({ amazonCrawlerJobs, clearAmazonCrawlerCache, 
     const cancellationJob = jobs.find((job) => job.jobId === cancellationJobId);
     if (!cancellationJob) return;
     if (cancellationJob.status === "cancelling") {
-      setJobControlTone("info");
-      setJobControlMessage(describeJobCancellation(cancellationJob));
       return;
-    }
-    if (cancellationJob.status === "cancelled") {
-      setJobControlTone("success");
-      setJobControlMessage(describeJobCancellation(cancellationJob));
-    } else {
-      setJobControlMessage(null);
     }
     setCancellationJobId(null);
   }, [cancellationJobId, jobs]);
@@ -507,12 +500,10 @@ export function AmazonCrawlerPage({ amazonCrawlerJobs, clearAmazonCrawlerCache, 
     if (activeJobId && amazonCrawlerJobs) {
       setControlledJobId(activeJobId);
       setCancellationJobId(activeJobId);
-      setJobControlTone("info");
-      setJobControlMessage("Đang gửi yêu cầu dừng tới coordinator...");
+      setJobControlMessage(null);
       try {
         const stopped = await amazonCrawlerJobs.cancel(activeJobId);
         setJobs((current) => current.map((job) => job.jobId === stopped.jobId ? stopped : job));
-        setJobControlMessage(describeJobCancellation(stopped));
       } catch (caught: unknown) {
         setCancellationJobId(null);
         setJobControlTone("error");
@@ -554,12 +545,10 @@ export function AmazonCrawlerPage({ amazonCrawlerJobs, clearAmazonCrawlerCache, 
     }
     setControlledJobId(jobId);
     setCancellationJobId(jobId);
-    setJobControlTone("info");
-    setJobControlMessage("Đang gửi yêu cầu dừng tới coordinator...");
+    setJobControlMessage(null);
     try {
       const stopped = await amazonCrawlerJobs.cancel(jobId);
       setJobs((current) => current.map((job) => job.jobId === stopped.jobId ? stopped : job));
-      setJobControlMessage(describeJobCancellation(stopped));
     } catch (caught: unknown) {
       setCancellationJobId(null);
       setJobControlTone("error");
@@ -1311,8 +1300,8 @@ export function AmazonCrawlerPage({ amazonCrawlerJobs, clearAmazonCrawlerCache, 
               })}
             </div>
           )}
-          {jobControlMessage ? (
-            <p className={`text-sm ${jobControlTone === "success" ? "text-emerald-300" : jobControlTone === "error" ? "text-rose-300" : "text-amber-200"}`}>
+          {shouldShowStandaloneJobControlMessage(jobControlTone, jobControlMessage) ? (
+            <p className={`text-sm ${jobControlTone === "success" ? "text-emerald-300" : "text-rose-300"}`}>
               {jobControlMessage}
             </p>
           ) : null}

@@ -3,7 +3,11 @@ import test from "node:test";
 
 import { DEFAULT_AMAZON_CRAWLER_SETTINGS } from "../types";
 import type { AmazonCrawlerJobSnapshot } from "../types";
-import { describeJobCancellation, isActiveJobStopping } from "../ui/job-cancellation";
+import {
+  describeJobCancellation,
+  isActiveJobStopping,
+  shouldShowStandaloneJobControlMessage,
+} from "../ui/job-cancellation";
 
 function createJob(overrides: Partial<AmazonCrawlerJobSnapshot> = {}): AmazonCrawlerJobSnapshot {
   return {
@@ -110,4 +114,11 @@ test("Stop button does not show a stopping label when both job IDs are null", ()
     controlledJobId: null,
     isCancellationPending: true,
   }), true);
+});
+
+test("standalone job control area hides informational cancellation progress", () => {
+  assert.equal(shouldShowStandaloneJobControlMessage("info", "Đang nhả 1 task"), false);
+  assert.equal(shouldShowStandaloneJobControlMessage("success", "Đã xóa job"), true);
+  assert.equal(shouldShowStandaloneJobControlMessage("error", "Không dừng được job"), true);
+  assert.equal(shouldShowStandaloneJobControlMessage("error", null), false);
 });

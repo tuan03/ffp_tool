@@ -43,6 +43,13 @@ export function isActiveJobStopping(input: {
     || (input.controlledJobId !== null && input.controlledJobId === input.activeJobId);
 }
 
+export function shouldShowStandaloneJobControlMessage(
+  tone: "info" | "success" | "error",
+  message: string | null,
+): boolean {
+  return message !== null && tone !== "info";
+}
+
 export function describeJobCancellation(job: AmazonCrawlerJobSnapshot, now = Date.now()): string | null {
   if (job.status === "cancelled") {
     return job.completedAt
