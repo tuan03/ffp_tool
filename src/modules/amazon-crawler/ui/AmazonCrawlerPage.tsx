@@ -4,6 +4,8 @@ import {
   type AmazonCrawlerCacheClearer,
   type AmazonCrawlerClientSummary,
   type AmazonCrawlerClientsLoader,
+  type AmazonCrawlerJobController,
+  type AmazonCrawlerJobSnapshot,
   type AmazonCrawlerProgress,
   type AmazonCrawlerRunner,
   type AmazonCrawlerSettings,
@@ -30,6 +32,7 @@ import { firstProductMediaUrl, resolveSelectedProduct } from "./product-selectio
 import { formatPipelineTimings } from "./pipeline-timings";
 
 interface AmazonCrawlerPageProps {
+  amazonCrawlerJobs?: AmazonCrawlerJobController;
   clearAmazonCrawlerCache: AmazonCrawlerCacheClearer;
   loadAmazonCrawlerClients: AmazonCrawlerClientsLoader;
   runAmazonCrawler: AmazonCrawlerRunner;
@@ -116,13 +119,14 @@ function progressPhaseLabel(phase: AmazonCrawlerProgress["phase"]): string {
   return labels[phase];
 }
 
-export function AmazonCrawlerPage({ clearAmazonCrawlerCache, imageProcessingProfiles, loadAmazonCrawlerClients, retryAmazonCrawlerSyncs, runAmazonCrawler }: AmazonCrawlerPageProps): React.JSX.Element {
+export function AmazonCrawlerPage({ amazonCrawlerJobs, clearAmazonCrawlerCache, imageProcessingProfiles, loadAmazonCrawlerClients, retryAmazonCrawlerSyncs, runAmazonCrawler }: AmazonCrawlerPageProps): React.JSX.Element {
   const session = useAmazonCrawlerSession();
   const {
     urlText,
     settings,
     isAdvancedOpen,
     isRunning,
+    activeJobId,
     progress,
     output,
     liveProducts,
@@ -139,6 +143,9 @@ export function AmazonCrawlerPage({ clearAmazonCrawlerCache, imageProcessingProf
   const [clients, setClients] = useState<AmazonCrawlerClientSummary[]>([]);
   const [clientError, setClientError] = useState<string | null>(null);
   const [isLoadingClients, setIsLoadingClients] = useState(true);
+  const [jobs, setJobs] = useState<readonly AmazonCrawlerJobSnapshot[]>([]);
+  const [jobControlMessage, setJobControlMessage] = useState<string | null>(null);
+  const [controlledJobId, setControlledJobId] = useState<string | null>(null);
   const [imageProfiles, setImageProfiles] = useState<ImageProcessingProfile[]>([]);
   const [editingImageProfile, setEditingImageProfile] = useState<ImageProcessingProfile | null>(null);
   const [isImageProfileEditorOpen, setIsImageProfileEditorOpen] = useState(false);
@@ -187,6 +194,49 @@ export function AmazonCrawlerPage({ clearAmazonCrawlerCache, imageProcessingProf
       window.clearInterval(intervalId);
     };
   }, [loadAmazonCrawlerClients]);
+
+  useEffect(() => {
+    if (!amazonCrawlerJobs) return;
+    let isMounted = true;
+    async function refreshJobs(): Promise<void> {
+      try {
+        const nextJobs = await amazonCrawlerJobs?.list(25) ?? [];
+        if (isMounted) setJobs(nextJobs);
+      } catch (caught: unknown) {
+        if (isMounted) setJobControlMessage(caught instanceof Error ? caught.message : "Không tải được danh sách job.");
+      }
+    }
+    void refreshJobs();
+    const intervalId = window.setInterval(() => void refreshJobs(), 3_000);
+    return () => {
+      isMounted = false;
+      window.clearInterval(intervalId);
+    };
+  }, [amazonCrawlerJobs]);
+
+  useEffect(() => {
+    if (!activeJobId || !amazonCrawlerJobs) return;
+    const activeJob = jobs.find((job) => job.jobId === activeJobId);
+    if (!activeJob) return;
+    const isActive = ["queued", "running", "waiting_captcha", "cancelling"].includes(activeJob.status);
+    updateCrawlerSession({ progress: activeJob.progress, isRunning: isActive });
+    if (activeJob.status === "cancelled") {
+      updateCrawlerSession({ activeJobId: null, isRunning: false, error: "Job đã được dừng và các agent đã nhả task." });
+      return;
+    }
+    if (isActive || (activeJob.status !== "completed" && activeJob.status !== "partial")) return;
+    void amazonCrawlerJobs.get(activeJobId).then((completedJob) => {
+      if (!completedJob.result) return;
+      updateCrawlerSession({
+        activeJobId: null,
+        output: completedJob.result,
+        liveProducts: [...completedJob.result.products],
+        isRunning: false,
+      });
+    }).catch((caught: unknown) => {
+      setJobControlMessage(caught instanceof Error ? caught.message : "Không tải được kết quả job.");
+    });
+  }, [activeJobId, amazonCrawlerJobs, jobs]);
 
   useEffect(() => {
     if (!imageProcessingProfiles) return;
@@ -392,8 +442,75 @@ export function AmazonCrawlerPage({ clearAmazonCrawlerCache, imageProcessingProf
     await startCrawlerJob({ runAmazonCrawler, urls, settings });
   }
 
-  function handleStop(): void {
+  async function handleStop(): Promise<void> {
+    if (activeJobId && amazonCrawlerJobs) {
+      setControlledJobId(activeJobId);
+      setJobControlMessage("Đã ghi nhận yêu cầu dừng, đang chờ agent xác nhận...");
+      try {
+        const stopped = await amazonCrawlerJobs.cancel(activeJobId);
+        setJobs((current) => current.map((job) => job.jobId === stopped.jobId ? stopped : job));
+      } catch (caught: unknown) {
+        setJobControlMessage(caught instanceof Error ? caught.message : "Không gửi được yêu cầu dừng job.");
+      } finally {
+        setControlledJobId(null);
+      }
+      return;
+    }
     abortCrawlerJob();
+  }
+
+  async function handleDeleteJob(jobId: string): Promise<void> {
+    if (!amazonCrawlerJobs || !window.confirm("Hủy và xóa vĩnh viễn job này khỏi coordinator? Sản phẩm đã ghi lên Shopify sẽ được giữ nguyên.")) return;
+    setControlledJobId(jobId);
+    try {
+      await amazonCrawlerJobs.delete(jobId);
+      setJobs((current) => current.filter((job) => job.jobId !== jobId));
+      setJobControlMessage("Đã hủy và xóa job. Tombstone sẽ chặn mọi agent cũ upload lại.");
+      if (activeJobId === jobId) {
+        abortCrawlerJob();
+        updateCrawlerSession({ activeJobId: null, isRunning: false });
+      }
+    } catch (caught: unknown) {
+      setJobControlMessage(caught instanceof Error ? caught.message : "Không xóa được job.");
+    } finally {
+      setControlledJobId(null);
+    }
+  }
+
+  async function handleStopJob(jobId: string): Promise<void> {
+    if (!amazonCrawlerJobs || controlledJobId) return;
+    if (jobId === activeJobId) {
+      await handleStop();
+      return;
+    }
+    setControlledJobId(jobId);
+    setJobControlMessage("Đã ghi nhận yêu cầu dừng, đang chờ agent xác nhận...");
+    try {
+      const stopped = await amazonCrawlerJobs.cancel(jobId);
+      setJobs((current) => current.map((job) => job.jobId === stopped.jobId ? stopped : job));
+    } catch (caught: unknown) {
+      setJobControlMessage(caught instanceof Error ? caught.message : "Không dừng được job.");
+    } finally {
+      setControlledJobId(null);
+    }
+  }
+
+  async function handleRunAgain(job: AmazonCrawlerJobSnapshot): Promise<void> {
+    if (!amazonCrawlerJobs || controlledJobId) return;
+    setControlledJobId(job.jobId);
+    try {
+      const replacement = await amazonCrawlerJobs.replace(job.jobId, {
+        ...settings,
+        urls: urls.length > 0 ? urls : job.inputs,
+      });
+      updateCrawlerSession({ activeJobId: replacement.jobId, isRunning: true, progress: replacement.progress, error: null });
+      setJobs((current) => [replacement, ...current.map((currentJob) => currentJob.jobId === job.jobId ? { ...currentJob, status: "cancelling" as const } : currentJob)]);
+      setJobControlMessage(`Đã tạo replacement job ${replacement.jobId.slice(0, 8)}.`);
+    } catch (caught: unknown) {
+      setJobControlMessage(caught instanceof Error ? caught.message : "Không tạo được replacement job.");
+    } finally {
+      setControlledJobId(null);
+    }
   }
 
   async function handleRetrySyncs(): Promise<void> {
@@ -1058,9 +1175,54 @@ export function AmazonCrawlerPage({ clearAmazonCrawlerCache, imageProcessingProf
         </div>
       ) : null}
 
+      {amazonCrawlerJobs ? (
+        <section className="space-y-3 rounded-xl border border-slate-700 bg-slate-950/50 p-4">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h2 className="font-semibold text-slate-100">Job đang chạy và gần đây</h2>
+              <p className="text-xs text-slate-400">Stop chỉ hoàn tất khi agent và pipeline đã nhả task; agent offline sẽ bị chặn upload khi kết nối lại.</p>
+            </div>
+            <span className="text-xs text-slate-500">Tự làm mới mỗi 3 giây</span>
+          </div>
+          {jobs.length === 0 ? <p className="text-sm text-slate-400">Chưa có job trên coordinator.</p> : (
+            <div className="grid gap-2">
+              {jobs.slice(0, 10).map((job) => {
+                const isActiveJob = ["queued", "running", "waiting_captcha", "cancelling"].includes(job.status);
+                const pendingCount = job.cancellation.pendingAgents.reduce((total, agent) => total + agent.taskCount, 0)
+                  + job.cancellation.pendingPipelineItems;
+                return (
+                  <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-800 bg-slate-900/70 px-3 py-2" key={job.jobId}>
+                    <div className="min-w-0">
+                      <p className="font-mono text-xs text-cyan-300">{job.jobId}</p>
+                      <p className="text-sm text-slate-300">
+                        {job.status} · {job.progress.completed}/{job.progress.total} link
+                        {pendingCount > 0 ? ` · chờ ${pendingCount} xác nhận dừng` : ""}
+                      </p>
+                      {job.cancellation.pendingAgents.length > 0 ? (
+                        <p className="text-xs text-amber-300">
+                          Chưa xác nhận: {job.cancellation.pendingAgents.map((agent) => `${agent.displayName} (${agent.taskCount})`).join(", ")}
+                        </p>
+                      ) : null}
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {isActiveJob ? (
+                        <button className="rounded border border-rose-500 px-3 py-1 text-xs font-semibold text-rose-300 disabled:opacity-50" disabled={controlledJobId !== null} type="button" onClick={() => void handleStopJob(job.jobId)}>Stop</button>
+                      ) : null}
+                      <button className="rounded border border-cyan-600 px-3 py-1 text-xs font-semibold text-cyan-300 disabled:opacity-50" disabled={controlledJobId !== null} type="button" onClick={() => void handleRunAgain(job)}>Run again</button>
+                      <button className="rounded border border-slate-600 px-3 py-1 text-xs font-semibold text-slate-300 disabled:opacity-50" disabled={controlledJobId !== null} type="button" onClick={() => void handleDeleteJob(job.jobId)}>Delete</button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          {jobControlMessage ? <p className="text-sm text-amber-200">{jobControlMessage}</p> : null}
+        </section>
+      ) : null}
+
       <div className="flex flex-wrap gap-3">
         <button className="rounded-lg bg-cyan-400 px-5 py-2 font-semibold text-slate-950 disabled:opacity-50" disabled={urls.length === 0 || isRunning} type="button" onClick={() => void handleStart()}>Start ({urls.length})</button>
-        <button className="rounded-lg border border-rose-400 px-5 py-2 font-semibold text-rose-300 disabled:opacity-50" disabled={!isRunning} type="button" onClick={handleStop}>Stop</button>
+        <button className="rounded-lg border border-rose-400 px-5 py-2 font-semibold text-rose-300 disabled:opacity-50" disabled={!isRunning || controlledJobId !== null} type="button" onClick={() => void handleStop()}>{controlledJobId === activeJobId ? "Đang dừng..." : "Stop"}</button>
         {output === null ? null : (
           <>
             <button className="rounded-lg border border-cyan-500 px-5 py-2 font-semibold text-cyan-300" type="button" onClick={handleDownload}>Tải JSON</button>

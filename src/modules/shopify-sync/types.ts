@@ -10,6 +10,7 @@ export interface ShopifySeoInput {
 }
 
 export interface ShopifySyncOptions {
+  readonly signal?: AbortSignal;
   readonly dryRun?: boolean;
   readonly credentials?: ShopifyCredentials;
   readonly priceMultiplier?: number;

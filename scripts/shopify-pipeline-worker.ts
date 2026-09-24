@@ -160,20 +160,35 @@ function pipelineHeaders(): Record<string, string> {
   };
 }
 
-async function postJson<TResponse>(path: string, body: Record<string, unknown>): Promise<TResponse> {
+async function postJson<TResponse>(path: string, body: Record<string, unknown>, signal?: AbortSignal): Promise<TResponse> {
   const response = await fetch(`${coordinatorUrl}${path}`, {
     method: "POST",
     headers: pipelineHeaders(),
     body: JSON.stringify(body),
+    signal,
   });
   const payload: unknown = await response.json().catch(() => null);
   if (!response.ok) {
     const message = payload && typeof payload === "object" && "detail" in payload
       ? String((payload as { detail?: unknown }).detail)
       : `Coordinator returned HTTP ${response.status}.`;
-    throw new Error(message);
+    throw new CoordinatorRequestError(message, response.status);
   }
   return payload as TResponse;
+}
+
+class CoordinatorRequestError extends Error {
+  public constructor(message: string, public readonly status: number) {
+    super(message);
+    this.name = "CoordinatorRequestError";
+  }
+}
+
+class PipelineCancelledError extends Error {
+  public constructor() {
+    super("Product pipeline claim was cancelled.");
+    this.name = "PipelineCancelledError";
+  }
 }
 
 interface ProcessedImageMedia {
@@ -337,6 +352,10 @@ async function processClaim(
 ): Promise<void> {
   const pipelineStartedAt = Date.now();
   const timings: PipelineTimings = {};
+  const cancellationController = new AbortController();
+  const throwIfCancelled = (): void => {
+    if (cancellationController.signal.aborted) throw new PipelineCancelledError();
+  };
   const blockers = productBlockers(claim.product);
   if (blockers.length > 0) {
     await failClaim(claim, workerId, new Error(blockers.join(" ")), {
@@ -370,10 +389,16 @@ async function processClaim(
   });
 
   const heartbeat = setInterval(() => {
-    void postJson(`/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/heartbeat`, {
+    void postJson<{ status: string }>(`/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/heartbeat`, {
       workerId,
-    }).catch(() => undefined);
-  }, 30_000);
+    }).then((response) => {
+      if (response.status === "cancelled") cancellationController.abort();
+    }).catch((error: unknown) => {
+      if (error instanceof CoordinatorRequestError && [404, 409].includes(error.status)) {
+        cancellationController.abort();
+      }
+    });
+  }, 2_000);
   heartbeat.unref();
 
   let reservedSeo:
@@ -384,6 +409,7 @@ async function processClaim(
     | undefined;
   let hasStartedShopifyWrite = false;
   try {
+    throwIfCancelled();
     const claimStoreId = typeof claim.settings?.storeId === "string" && claim.settings.storeId.trim()
       ? claim.settings.storeId.trim()
       : storeId;
@@ -430,6 +456,7 @@ async function processClaim(
       sourceKey: claim.sourceKey,
       mappedProductId: claim.existingShopify?.productId,
     });
+    throwIfCancelled();
     timings.shopifyResolveMs = Date.now() - resolveStartedAt;
     logPhase(claim.sourceKey, "shopify-resolve", timings.shopifyResolveMs);
     if (resolvedProduct.staleMappedProductId && resolvedProduct.match === "source_tag") {
@@ -490,6 +517,7 @@ async function processClaim(
         },
         register: async (seo) => registerSeoContentKeywords(seo.input, seo.execution),
       });
+      throwIfCancelled();
       reservedSeo = {
         input: prepared.execution.input,
         execution: prepared.execution.execution,
@@ -537,6 +565,7 @@ async function processClaim(
       return;
     }
     timings.imageProcessingMs = Date.now() - imageStartedAt;
+    throwIfCancelled();
     const finalChecksum = checksum({
       product: seoProduct,
       imageProfileRevision: imageResponse.profile.revision,
@@ -567,6 +596,7 @@ async function processClaim(
         return;
       }
       timings.imageUploadMs = Date.now() - uploadStartedAt;
+      throwIfCancelled();
     }
     const imageProcessingSummary = {
       status: "completed",
@@ -655,12 +685,15 @@ async function processClaim(
         gateway,
         existingProductId,
         existingManagedResources,
+        signal: cancellationController.signal,
       });
+      throwIfCancelled();
     }
 
     if (syncResult.success && syncResult.productId && collectionIds.length > 0) {
       for (const colId of collectionIds) {
         try {
+          throwIfCancelled();
           await runner({
             storeId: effectiveProxyStoreId,
             operation: "collections.updateMembership",
@@ -701,6 +734,7 @@ async function processClaim(
     logPhase(claim.sourceKey, "shopify-sync", timings.shopifySyncMs);
 
     if (syncResult.productId) {
+      throwIfCancelled();
       await postJson(`/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/shopify-checkpoint`, {
         workerId,
         storeId: claimStoreId,
@@ -717,6 +751,7 @@ async function processClaim(
     existingManagedResources = syncResult.managedResources ?? existingManagedResources;
     timings.totalMs = Date.now() - pipelineStartedAt;
 
+    throwIfCancelled();
     await postJson(`/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/complete`, {
       workerId,
       storeId: claimStoreId,
@@ -741,6 +776,15 @@ async function processClaim(
     });
     logPhase(claim.sourceKey, "total", timings.totalMs);
   } catch (error: unknown) {
+    if (error instanceof PipelineCancelledError || cancellationController.signal.aborted) {
+      if (reservedSeo && !hasStartedShopifyWrite) {
+        await unregisterSeoContentKeywords(reservedSeo.input, reservedSeo.execution).catch(() => undefined);
+      }
+      await postJson(`/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/cancelled`, {
+        workerId,
+      }).catch(() => undefined);
+      return;
+    }
     const message = error instanceof Error ? error.message : String(error);
     if (isProxyOrNetworkFailure(message)) {
       proxyCooldownUntil.set(proxyStoreId, Date.now() + 30_000);

@@ -1,8 +1,8 @@
 import { clearMockAmazonCrawlerCache, runMockAmazonCrawler } from "./mocks/runner";
-import { createAmazonCrawlerCacheClearer, createAmazonCrawlerClientsLoader, createAmazonCrawlerRunner, createAmazonCrawlerSyncRetrier, createImageProcessingProfileManager } from "./service";
+import { createAmazonCrawlerCacheClearer, createAmazonCrawlerClientsLoader, createAmazonCrawlerJobController, createAmazonCrawlerRunner, createAmazonCrawlerSyncRetrier, createImageProcessingProfileManager } from "./service";
 
 import type { AppEnvironment } from "../../shared/types";
-import type { AmazonCrawlerCacheClearer, AmazonCrawlerClientsLoader, AmazonCrawlerRunner, AmazonCrawlerSyncRetrier, ImageProcessingProfileManager } from "./types";
+import type { AmazonCrawlerCacheClearer, AmazonCrawlerClientsLoader, AmazonCrawlerJobController, AmazonCrawlerRunner, AmazonCrawlerSyncRetrier, ImageProcessingProfileManager } from "./types";
 
 export function getAmazonCrawlerRunner(environment: AppEnvironment, engineUrl: string): AmazonCrawlerRunner {
   return environment === "mock" ? runMockAmazonCrawler : createAmazonCrawlerRunner({ engineUrl });
@@ -12,6 +12,17 @@ export function getAmazonCrawlerClientsLoader(environment: AppEnvironment, engin
   return environment === "mock"
     ? async () => [{ id: "mock-client", displayName: "Mock crawler", status: "online", isConnected: true, maxConcurrentInputs: 4, activeTasks: 0, leasedTasks: 0, availableSlots: 4, lastSeenAt: new Date(0).toISOString() }]
     : createAmazonCrawlerClientsLoader({ engineUrl });
+}
+
+export function getAmazonCrawlerJobController(environment: AppEnvironment, engineUrl: string): AmazonCrawlerJobController {
+  if (environment !== "mock") return createAmazonCrawlerJobController({ engineUrl });
+  return {
+    list: async () => [],
+    get: async () => { throw new Error("Mock job was not found."); },
+    cancel: async () => { throw new Error("Mock job was not found."); },
+    replace: async () => { throw new Error("Mock job was not found."); },
+    delete: async () => undefined,
+  };
 }
 
 export function getAmazonCrawlerCacheClearer(environment: AppEnvironment, engineUrl: string): AmazonCrawlerCacheClearer {

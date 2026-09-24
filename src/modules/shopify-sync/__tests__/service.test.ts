@@ -425,6 +425,33 @@ test("syncSingleProduct leverages uploadFilesBatch and deduplicates asset URLs",
   assertStrict.ok(!operationsCalled.some((op) => op.startsWith("uploadFile:")));
 });
 
+test("syncSingleProduct does not start a Shopify mutation after cancellation", async () => {
+  const controller = new AbortController();
+  let mutationCalls = 0;
+  const gateway: ShopifyGateway = {
+    createProduct: async () => {
+      mutationCalls += 1;
+      return { productId: "product-1", productHandle: "product-1" };
+    },
+    createVariants: async () => ({ createdCount: 0 }),
+    uploadFile: async () => ({
+      fileId: "gid://shopify/MediaImage/cancelled-test",
+      shopifyCdnUrl: "https://example.test/file.jpg",
+    }),
+    setProductMetafield: async () => ({ success: true }),
+  };
+  controller.abort();
+
+  const result = await syncSingleProduct(shopifySyncMockData.products[0], {
+    gateway,
+    signal: controller.signal,
+  });
+
+  assertStrict.equal(result.success, false);
+  assertStrict.equal(mutationCalls, 0);
+  assertStrict.match(result.error ?? "", /cancelled/i);
+});
+
 test("syncSingleProduct retries assets omitted from a partial batch response", async () => {
   const individuallyUploaded: string[] = [];
   const gateway = {

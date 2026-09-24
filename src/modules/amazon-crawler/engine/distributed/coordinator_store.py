@@ -16,6 +16,8 @@ from sqlalchemy.orm import selectinload
 from ..crawler_core import CrawlSettings, normalize_amazon_input
 from .coordinator_models import (
     ClientRecord,
+    CrawlJobControl,
+    DeletedCrawlJob,
     CrawlJob,
     CrawlProductItem,
     CrawlTask,
@@ -32,6 +34,8 @@ from .protocol import CLIENT_OFFLINE_SECONDS, LEASE_SECONDS, MAX_CRAWL_FAILURES,
 TERMINAL_TASK_STATUSES = {"completed", "failed", "cancelled"}
 TERMINAL_PRODUCT_STATUSES = {"completed", "failed", "reconciliation_required", "cancelled"}
 ACTIVE_PRODUCT_STATUSES = {"received", "normalizing", "seo", "image_processing", "syncing", "retry_wait"}
+CANCELLABLE_PRODUCT_STATUSES = ACTIVE_PRODUCT_STATUSES | {"cancelling"}
+TOMBSTONE_RETENTION_DAYS = 30
 
 
 def _id() -> str:
@@ -83,6 +87,31 @@ class CoordinatorStore:
         total = sum(statuses.values())
         if job.status == "cancelled":
             return
+        if job.status == "cancelling":
+            pending_tasks = session.scalar(select(func.count(CrawlTask.id)).where(
+                CrawlTask.job_id == job_id,
+                CrawlTask.status == "cancelling",
+            )) or 0
+            pending_products = session.scalar(select(func.count(CrawlProductItem.id)).where(
+                CrawlProductItem.job_id == job_id,
+                CrawlProductItem.status == "cancelling",
+            )) or 0
+            pending_attempts = session.scalar(
+                select(func.count(TaskAttempt.id))
+                .join(CrawlTask, TaskAttempt.task_id == CrawlTask.id)
+                .where(
+                    CrawlTask.job_id == job_id,
+                    TaskAttempt.status.in_(["cancelling", "cancelled_unconfirmed"]),
+                )
+            ) or 0
+            if not pending_tasks and not pending_products and not pending_attempts:
+                job.status = "cancelled"
+                job.completed_at = utc_now()
+                control = session.get(CrawlJobControl, job_id)
+                if control is not None:
+                    control.state = "cancelled"
+                    control.cancelled_at = job.completed_at
+            return
         if total == 0:
             job.status = "partial" if job.rejected_inputs else "completed"
             job.completed_at = utc_now()
@@ -128,6 +157,12 @@ class CoordinatorStore:
                 requested_inputs=len(raw_urls),
             )
             session.add(job)
+            session.add(CrawlJobControl(
+                job_id=job.id,
+                state="active",
+                priority=max(0, min(100, int(payload.get("schedulerPriority") or 0))),
+                replacement_of_job_id=str(payload.get("replacementOfJobId") or "").strip() or None,
+            ))
             seen_asins: set[str] = set()
             accepted = 0
             rejected = 0
@@ -196,7 +231,7 @@ class CoordinatorStore:
                     task.lease_expires_at = lease_until
                 elif (
                     task
-                    and task.status == "cancelled"
+                    and task.status in {"cancelling", "cancelled"}
                     and task.lease_id == lease_id
                     and task.assigned_client_id == client_id
                 ):
@@ -223,7 +258,7 @@ class CoordinatorStore:
             active_count = session.scalar(
                 select(func.count(CrawlTask.id)).where(
                     CrawlTask.assigned_client_id == client_id,
-                    CrawlTask.status.in_(["leased", "running"]),
+                    CrawlTask.status.in_(["leased", "running", "cancelling"]),
                 )
             ) or 0
             count = min(count, max(0, client.max_concurrent_inputs - int(active_count)))
@@ -232,8 +267,9 @@ class CoordinatorStore:
             tasks = session.scalars(
                 select(CrawlTask)
                 .join(CrawlJob, CrawlTask.job_id == CrawlJob.id)
+                .outerjoin(CrawlJobControl, CrawlJobControl.job_id == CrawlJob.id)
                 .where(CrawlTask.status == "queued", CrawlJob.status.in_(["queued", "running"]))
-                .order_by(CrawlJob.created_at, CrawlTask.ordinal)
+                .order_by(func.coalesce(CrawlJobControl.priority, 0).desc(), CrawlJob.created_at, CrawlTask.ordinal)
                 .limit(count)
                 .with_for_update(skip_locked=True)
             ).all()
@@ -286,7 +322,7 @@ class CoordinatorStore:
                 task.lease_expires_at = None
                 self._refresh_job(session, task.job_id)
                 return
-            if task.status in TERMINAL_TASK_STATUSES:
+            if task.status in TERMINAL_TASK_STATUSES or task.status == "cancelling":
                 return
             if task.assigned_client_id != client_id or task.lease_id != lease_id:
                 return
@@ -305,7 +341,9 @@ class CoordinatorStore:
             task = session.get(CrawlTask, task_id)
             if task is None:
                 return {"status": "missing"}
-            if task.status in TERMINAL_TASK_STATUSES:
+            if task.status in TERMINAL_TASK_STATUSES or task.status == "cancelling":
+                if task.status == "cancelling":
+                    return {"status": "cancelled"}
                 return {"status": "duplicate"}
             if task.assigned_client_id != client_id or task.lease_id != lease_id:
                 return {"status": "stale"}
@@ -335,7 +373,7 @@ class CoordinatorStore:
                 return {"status": "missing"}
             if task.status == "completed" or task.result is not None:
                 return {"status": "duplicate", "taskId": task.id}
-            if task.status == "cancelled":
+            if task.status in {"cancelling", "cancelled"}:
                 return {"status": "cancelled", "taskId": task.id}
             attempt = session.scalar(select(TaskAttempt).where(
                 TaskAttempt.task_id == task.id,
@@ -428,7 +466,7 @@ class CoordinatorStore:
             task = session.scalar(select(CrawlTask).where(CrawlTask.id == task_id).with_for_update())
             if task is None:
                 return {"status": "missing"}
-            if task.status == "cancelled":
+            if task.status in {"cancelling", "cancelled"}:
                 return {"status": "cancelled"}
             attempt = session.scalar(select(TaskAttempt).where(
                 TaskAttempt.task_id == task.id,
@@ -819,15 +857,20 @@ class CoordinatorStore:
                     session.execute(delete(TaskResult).where(TaskResult.task_id.in_(task_ids)))
                     session.execute(delete(TaskAttempt).where(TaskAttempt.task_id.in_(task_ids)))
                 session.execute(delete(CrawlTask).where(CrawlTask.job_id.in_(job_ids)))
+                session.execute(delete(CrawlJobControl).where(CrawlJobControl.job_id.in_(job_ids)))
                 session.execute(delete(CrawlJob).where(CrawlJob.id.in_(job_ids)))
 
             operation_result = session.execute(delete(ShopifyOperationIdempotency).where(
                 ShopifyOperationIdempotency.state != "pending",
                 ShopifyOperationIdempotency.updated_at < cutoff,
             ))
+            tombstone_result = session.execute(delete(DeletedCrawlJob).where(
+                DeletedCrawlJob.expires_at < current_time,
+            ))
             return {
                 "jobs": len(job_ids),
                 "idempotencyOperations": int(operation_result.rowcount or 0),
+                "tombstones": int(tombstone_result.rowcount or 0),
             }
 
     def fail_product_item(
@@ -910,7 +953,7 @@ class CoordinatorStore:
                     offline += 1
             tasks = session.scalars(
                 select(CrawlTask).where(
-                    CrawlTask.status.in_(["leased", "running"]),
+                    CrawlTask.status.in_(["leased", "running", "cancelling"]),
                     CrawlTask.lease_expires_at.is_not(None),
                     CrawlTask.lease_expires_at < now,
                 )
@@ -918,6 +961,17 @@ class CoordinatorStore:
             job_ids: set[str] = set()
             for task in tasks:
                 old_lease = task.lease_id
+                if task.status == "cancelling":
+                    task.status = "cancelled"
+                    task.completed_at = now
+                    task.lease_expires_at = None
+                    job_ids.add(task.job_id)
+                    if old_lease:
+                        attempt = session.scalar(select(TaskAttempt).where(TaskAttempt.lease_id == old_lease))
+                        if attempt:
+                            attempt.status = "cancelled_unconfirmed"
+                            attempt.finished_at = now
+                    continue
                 # Repair tasks reopened by a delayed progress message from an
                 # older coordinator version. Never requeue work whose result is
                 # already durable.
@@ -953,20 +1007,43 @@ class CoordinatorStore:
             job = session.get(CrawlJob, job_id)
             if job is None:
                 return None
-            job.status = "cancelled"
-            job.completed_at = utc_now()
-            for task in session.scalars(select(CrawlTask).where(CrawlTask.job_id == job_id, CrawlTask.status.not_in(TERMINAL_TASK_STATUSES))):
-                task.status = "cancelled"
-                task.completed_at = utc_now()
-                task.lease_expires_at = None
+            if job.status in {"completed", "partial", "cancelled"}:
+                return self._job_snapshot(session, job)
+            now = utc_now()
+            control = session.get(CrawlJobControl, job_id)
+            if control is None:
+                control = CrawlJobControl(job_id=job_id, state="active")
+                session.add(control)
+            if not control.cancellation_id:
+                control.cancellation_id = _id()
+                control.cancel_requested_at = now
+            control.state = "cancelling"
+            job.status = "cancelling"
+            job.completed_at = None
+            for task in session.scalars(select(CrawlTask).where(
+                CrawlTask.job_id == job_id,
+                CrawlTask.status.not_in(TERMINAL_TASK_STATUSES),
+            )):
+                if task.status in {"leased", "running"} and task.lease_id:
+                    task.status = "cancelling"
+                    attempt = session.scalar(select(TaskAttempt).where(TaskAttempt.lease_id == task.lease_id))
+                    if attempt is not None:
+                        attempt.status = "cancelling"
+                else:
+                    task.status = "cancelled"
+                    task.completed_at = now
+                    task.lease_expires_at = None
             for item in session.scalars(select(CrawlProductItem).where(
                 CrawlProductItem.job_id == job_id,
-                CrawlProductItem.status.in_(["received", "normalizing", "seo", "image_processing", "retry_wait"]),
+                CrawlProductItem.status.in_(list(ACTIVE_PRODUCT_STATUSES)),
             )):
-                item.status = "cancelled"
-                item.completed_at = utc_now()
-                item.claimed_by = None
-                item.claim_expires_at = None
+                if item.claimed_by and item.status in {"normalizing", "seo", "image_processing", "syncing"}:
+                    item.status = "cancelling"
+                else:
+                    item.status = "cancelled"
+                    item.completed_at = now
+                    item.claimed_by = None
+                    item.claim_expires_at = None
                 request_id = _shopify_sync_request_id(item.source_key)
                 operations = session.scalars(select(ShopifyOperationIdempotency).where(
                     ShopifyOperationIdempotency.request_id == request_id,
@@ -980,8 +1057,149 @@ class CoordinatorStore:
                             "itemId": item.id,
                             "sourceKey": item.source_key,
                         }
-            self._event(session, job_id, "job_cancelled", {})
+            self._event(session, job_id, "job_cancel_requested", {
+                "cancellationId": control.cancellation_id,
+            })
+            self._refresh_job(session, job_id)
             return self._job_snapshot(session, job)
+
+    def acknowledge_task_cancel(self, client_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        task_id = str(payload.get("taskId") or "")
+        lease_id = str(payload.get("leaseId") or "")
+        with self.sessions.begin() as session:
+            task = session.get(CrawlTask, task_id)
+            if task is None:
+                return {"status": "discarded"}
+            if task.status == "cancelled":
+                return {"status": "duplicate", "jobId": task.job_id}
+            if (
+                task.status != "cancelling"
+                or task.assigned_client_id != client_id
+                or task.lease_id != lease_id
+            ):
+                return {"status": "stale", "jobId": task.job_id}
+            now = utc_now()
+            task.status = "cancelled"
+            task.completed_at = now
+            task.lease_expires_at = None
+            attempt = session.scalar(select(TaskAttempt).where(TaskAttempt.lease_id == lease_id))
+            if attempt is not None:
+                attempt.status = "cancelled"
+                attempt.finished_at = now
+            self._event(session, task.job_id, "task_cancel_acknowledged", {
+                "taskId": task.id,
+                "clientId": client_id,
+            })
+            self._refresh_job(session, task.job_id)
+            return {"status": "cancelled", "jobId": task.job_id}
+
+    def reconcile_tasks(self, client_id: str, local_tasks: list[dict[str, Any]]) -> dict[str, list[str]]:
+        resume: list[str] = []
+        discard: list[str] = []
+        cancelled_jobs: set[str] = set()
+        refreshed_job_ids: set[str] = set()
+        now = utc_now()
+        with self.sessions.begin() as session:
+            for local in local_tasks:
+                task_id = str(local.get("taskId") or "")
+                lease_id = str(local.get("leaseId") or "")
+                job_id = str(local.get("jobId") or "")
+                task = session.get(CrawlTask, task_id)
+                job = session.get(CrawlJob, job_id) if job_id else None
+                if task is None or job is None or session.get(DeletedCrawlJob, job_id) is not None:
+                    discard.append(task_id)
+                    continue
+                if job.status in {"cancelling", "cancelled"} or task.status in {"cancelling", "cancelled"}:
+                    discard.append(task_id)
+                    cancelled_jobs.add(job_id)
+                    if task.assigned_client_id == client_id and task.lease_id == lease_id:
+                        task.status = "cancelled"
+                        task.completed_at = task.completed_at or now
+                        task.lease_expires_at = None
+                        attempt = session.scalar(select(TaskAttempt).where(TaskAttempt.lease_id == lease_id))
+                        if attempt is not None:
+                            attempt.status = "cancelled"
+                            attempt.finished_at = attempt.finished_at or now
+                        refreshed_job_ids.add(job_id)
+                    continue
+                if (
+                    task.job_id == job_id
+                    and task.assigned_client_id == client_id
+                    and task.lease_id == lease_id
+                    and task.status in {"leased", "running"}
+                ):
+                    task.lease_expires_at = now + timedelta(seconds=LEASE_SECONDS)
+                    resume.append(task_id)
+                    continue
+                discard.append(task_id)
+            for refreshed_job_id in refreshed_job_ids:
+                self._refresh_job(session, refreshed_job_id)
+        return {
+            "resumeTaskIds": resume,
+            "discardTaskIds": discard,
+            "cancelledJobIds": sorted(cancelled_jobs),
+        }
+
+    def product_cancellation_state(self, item_id: str, *, worker_id: str) -> str | None:
+        with self.sessions.begin() as session:
+            item = session.get(CrawlProductItem, item_id)
+            if item is None or item.claimed_by != worker_id:
+                return None
+            if item.status == "cancelling":
+                return "cancelled"
+            if item.status not in {"normalizing", "seo", "image_processing", "syncing"}:
+                return None
+            item.claim_expires_at = utc_now() + timedelta(seconds=180)
+            return "active"
+
+    def acknowledge_product_cancel(self, item_id: str, *, worker_id: str) -> bool:
+        with self.sessions.begin() as session:
+            item = session.get(CrawlProductItem, item_id)
+            if item is None or item.claimed_by != worker_id or item.status != "cancelling":
+                return False
+            item.status = "cancelled"
+            item.claimed_by = None
+            item.claim_expires_at = None
+            item.completed_at = utc_now()
+            self._event(session, item.job_id, "product_cancel_acknowledged", {
+                "productItemId": item.id,
+                "workerId": worker_id,
+            })
+            self._refresh_job(session, item.job_id)
+            return True
+
+    def delete_job(self, job_id: str) -> bool:
+        with self.sessions.begin() as session:
+            existing_tombstone = session.get(DeletedCrawlJob, job_id)
+            job = session.get(CrawlJob, job_id)
+            if job is None:
+                return existing_tombstone is not None
+        snapshot = self.cancel_job(job_id)
+        if snapshot is None:
+            return False
+        with self.sessions.begin() as session:
+            job = session.get(CrawlJob, job_id)
+            if job is None:
+                return True
+            control = session.get(CrawlJobControl, job_id)
+            cancellation_id = control.cancellation_id if control and control.cancellation_id else _id()
+            session.merge(DeletedCrawlJob(
+                job_id=job_id,
+                cancellation_id=cancellation_id,
+                deleted_at=utc_now(),
+                expires_at=utc_now() + timedelta(days=TOMBSTONE_RETENTION_DAYS),
+            ))
+            task_ids = session.scalars(select(CrawlTask.id).where(CrawlTask.job_id == job_id)).all()
+            session.execute(delete(JobEvent).where(JobEvent.job_id == job_id))
+            session.execute(delete(InvalidJobInput).where(InvalidJobInput.job_id == job_id))
+            session.execute(delete(CrawlProductItem).where(CrawlProductItem.job_id == job_id))
+            if task_ids:
+                session.execute(delete(TaskResult).where(TaskResult.task_id.in_(task_ids)))
+                session.execute(delete(TaskAttempt).where(TaskAttempt.task_id.in_(task_ids)))
+            session.execute(delete(CrawlTask).where(CrawlTask.job_id == job_id))
+            session.execute(delete(CrawlJobControl).where(CrawlJobControl.job_id == job_id))
+            session.delete(job)
+            return True
 
     def retry_failed(self, job_id: str) -> dict[str, Any] | None:
         with self.sessions.begin() as session:
@@ -1018,7 +1236,7 @@ class CoordinatorStore:
             clients = session.scalars(select(ClientRecord).order_by(ClientRecord.display_name)).all()
             active_counts = dict(session.execute(
                 select(CrawlTask.assigned_client_id, func.count(CrawlTask.id))
-                .where(CrawlTask.status.in_(["leased", "running"]))
+                .where(CrawlTask.status.in_(["leased", "running", "cancelling"]))
                 .group_by(CrawlTask.assigned_client_id)
             ).all())
             return [self._client_snapshot(client, active_tasks=int(active_counts.get(client.id, 0))) for client in clients]
@@ -1236,7 +1454,7 @@ class CoordinatorStore:
             task_progress = latest_progress.get(task.id, {})
             raw_items = task_progress.get("items") if isinstance(task_progress.get("items"), list) else []
             item = next((dict(value) for value in raw_items if isinstance(value, dict)), {})
-            public_status = task.status if task.status in TERMINAL_TASK_STATUSES else ("running" if task.status in {"leased", "running"} else "queued")
+            public_status = task.status if task.status in TERMINAL_TASK_STATUSES | {"cancelling"} else ("running" if task.status in {"leased", "running"} else "queued")
             item.update({
                 "source": task.source,
                 "asin": task.asin,
@@ -1312,13 +1530,41 @@ class CoordinatorStore:
         }
         if isinstance(latest_batch_progress.get("browserPool"), dict):
             progress["browserPool"] = latest_batch_progress["browserPool"]
+        control = session.get(CrawlJobControl, job.id)
+        pending_attempts = session.execute(
+            select(TaskAttempt.client_id, func.count(TaskAttempt.id))
+            .join(CrawlTask, TaskAttempt.task_id == CrawlTask.id)
+            .where(
+                CrawlTask.job_id == job.id,
+                TaskAttempt.status.in_(["cancelling", "cancelled_unconfirmed"]),
+            )
+            .group_by(TaskAttempt.client_id)
+        ).all()
+        pending_agents = []
+        for client_id, task_count in pending_attempts:
+            client = session.get(ClientRecord, client_id)
+            pending_agents.append({
+                "clientId": client_id,
+                "displayName": client.display_name if client else client_id,
+                "status": client.status if client else "offline",
+                "taskCount": int(task_count),
+            })
         return {
             "id": job.id, "externalRequestId": job.external_request_id, "status": job.status,
             "settings": job.settings, "settingsFingerprint": settings_fingerprint(job.settings),
+            "inputs": [task.source for task in tasks],
             "requestedInputs": job.requested_inputs, "acceptedInputs": job.accepted_inputs,
             "rejectedInputs": job.rejected_inputs, "taskCounts": counts,
             "productCounts": product_counts,
             "progress": progress,
+            "replacementOfJobId": control.replacement_of_job_id if control else None,
+            "cancellation": {
+                "id": control.cancellation_id if control else None,
+                "requestedAt": utc_iso(control.cancel_requested_at) if control and control.cancel_requested_at else None,
+                "pendingAgents": pending_agents,
+                "pendingPipelineItems": int(product_counts.get("cancelling", 0)),
+                "isExecutionConfirmed": not pending_agents and not product_counts.get("cancelling", 0),
+            },
             "createdAt": utc_iso(job.created_at), "startedAt": utc_iso(job.started_at) if job.started_at else None,
             "completedAt": utc_iso(job.completed_at) if job.completed_at else None,
         }

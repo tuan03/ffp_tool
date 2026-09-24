@@ -5,6 +5,7 @@ import {
   amazonCrawlerRoutes,
   createAmazonCrawlerCacheClearer,
   createAmazonCrawlerClientsLoader,
+  createAmazonCrawlerJobController,
   createAmazonCrawlerRunner,
   createAmazonCrawlerSyncRetrier,
   createImageProcessingProfileManager,
@@ -320,6 +321,49 @@ test("cache clearer sends DELETE and validates the engine response", async () =>
   });
   assert.deepEqual(await clearCache(), { removedFiles: 3, removedBytes: 2048 });
   assert.deepEqual(requests, [{ url: "http://engine.test/api/v1/clients/cache", method: "DELETE" }]);
+});
+
+test("job controller lists, cancels, replaces and deletes coordinator jobs", async () => {
+  const requests: Array<{ url: string; method: string }> = [];
+  const snapshot = (jobId: string, status = "running") => ({
+    id: jobId,
+    status,
+    inputs: ["B0MOCK0001"],
+    settings: DEFAULT_AMAZON_CRAWLER_SETTINGS,
+    progress: { phase: "product", completed: 0, total: 1, message: "Running" },
+    createdAt: "2026-09-24T00:00:00Z",
+    startedAt: "2026-09-24T00:00:01Z",
+    completedAt: null,
+    replacementOfJobId: null,
+    cancellation: {
+      id: status === "cancelling" ? "cancel-1" : null,
+      requestedAt: status === "cancelling" ? "2026-09-24T00:00:02Z" : null,
+      pendingAgents: [],
+      pendingPipelineItems: 0,
+      isExecutionConfirmed: status !== "cancelling",
+    },
+  });
+  const jobs = createAmazonCrawlerJobController({
+    engineUrl: "http://coordinator.test",
+    fetchImplementation: async (request, init) => {
+      const url = String(request);
+      const method = init?.method ?? "GET";
+      requests.push({ url, method });
+      if (method === "DELETE") return new Response(null, { status: 204 });
+      if (url.endsWith("/replace")) {
+        return jsonResponse({ replacementJob: snapshot("job-2") }, 202);
+      }
+      if (url.endsWith("/cancel")) return jsonResponse(snapshot("job-1", "cancelling"), 202);
+      if (url.includes("?limit=")) return jsonResponse([snapshot("job-1")]);
+      return jsonResponse(snapshot("job-1"));
+    },
+  });
+
+  assert.equal((await jobs.list())[0]?.jobId, "job-1");
+  assert.equal((await jobs.cancel("job-1")).status, "cancelling");
+  assert.equal((await jobs.replace("job-1", input)).jobId, "job-2");
+  await jobs.delete("job-1");
+  assert.equal(requests.at(-1)?.method, "DELETE");
 });
 
 test("Shopify sync retry resumes polling and returns the refreshed job output", async () => {

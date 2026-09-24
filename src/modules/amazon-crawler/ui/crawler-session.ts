@@ -16,6 +16,7 @@ export interface AmazonCrawlerSessionState {
   settings: AmazonCrawlerSettings;
   isAdvancedOpen: boolean;
   isRunning: boolean;
+  activeJobId: string | null;
   progress: AmazonCrawlerProgress | null;
   output: AmazonCrawlerOutput | null;
   liveProducts: AmazonCrawlerOutput["products"];
@@ -35,6 +36,7 @@ interface PersistedCrawlerSession {
   selectedProductId: string | null;
   selectedMediaUrl: string | null;
   isBatchJsonOpen: boolean;
+  activeJobId: string | null;
 }
 
 const STORAGE_KEY = "ffp_amazon_crawler_session_v1";
@@ -44,6 +46,7 @@ const DEFAULT_SESSION_STATE: AmazonCrawlerSessionState = {
   settings: DEFAULT_AMAZON_CRAWLER_SETTINGS,
   isAdvancedOpen: false,
   isRunning: false,
+  activeJobId: null,
   progress: null,
   output: null,
   liveProducts: [],
@@ -90,6 +93,7 @@ function readPersistedSession(): AmazonCrawlerSessionState {
       selectedProductId: selectedProduct?.id ?? null,
       selectedMediaUrl: parsed.selectedMediaUrl ?? firstProductMediaUrl(selectedProduct),
       isBatchJsonOpen: typeof parsed.isBatchJsonOpen === "boolean" ? parsed.isBatchJsonOpen : false,
+      activeJobId: typeof parsed.activeJobId === "string" ? parsed.activeJobId : null,
     };
   } catch {
     return { ...DEFAULT_SESSION_STATE };
@@ -109,6 +113,7 @@ function persistSession(state: AmazonCrawlerSessionState): void {
       selectedProductId: state.selectedProductId,
       selectedMediaUrl: state.selectedMediaUrl,
       isBatchJsonOpen: state.isBatchJsonOpen,
+      activeJobId: state.activeJobId,
     };
     window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify(dataToSave));
   } catch {
@@ -265,6 +270,11 @@ export async function startCrawlerJob({
         };
         notifyListeners();
       },
+      onJobCreated: (jobId) => {
+        sessionState = { ...sessionState, activeJobId: jobId };
+        persistSession(sessionState);
+        notifyListeners();
+      },
       signal: controller.signal,
     });
 
@@ -274,6 +284,7 @@ export async function startCrawlerJob({
       output: crawlerOutput,
       liveProducts: [...crawlerOutput.products],
       isRunning: false,
+      activeJobId: null,
       error: null,
       selectedProductId: firstProduct?.id ?? null,
       selectedMediaUrl: firstProductMediaUrl(firstProduct),
@@ -294,6 +305,9 @@ export async function startCrawlerJob({
     sessionState = {
       ...sessionState,
       isRunning: false,
+      activeJobId: caught instanceof DOMException && caught.name === "AbortError"
+        ? null
+        : sessionState.activeJobId,
       error: errorMessage,
     };
     persistSession(sessionState);

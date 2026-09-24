@@ -101,6 +101,11 @@ export async function syncSingleProduct(
   });
   const dryRun = Boolean(options.dryRun);
   const warnings: string[] = [];
+  const throwIfCancelled = (): void => {
+    if (options.signal?.aborted) {
+      throw new DOMException("Shopify sync was cancelled.", "AbortError");
+    }
+  };
 
   let gateway: ShopifyGateway;
   let writtenProduct: CreateProductOutput | undefined;
@@ -127,6 +132,7 @@ export async function syncSingleProduct(
   }
 
   try {
+    throwIfCancelled();
     // 1. Create Product & Media Gallery & Options/Variants
     const productWriteInput = {
       title: product.title,
@@ -149,12 +155,14 @@ export async function syncSingleProduct(
         if (!gateway.updateProduct) {
           throw new Error("ShopifyGateway does not support updating an existing product.");
         }
+        throwIfCancelled();
         writtenProduct = await gateway.updateProduct({
           productId: options.existingProductId,
           previousManagedResources: options.existingManagedResources,
           ...productWriteInput,
         });
       } else {
+        throwIfCancelled();
         writtenProduct = await gateway.createProduct({
           ...productWriteInput,
           status: "ACTIVE",
@@ -168,6 +176,7 @@ export async function syncSingleProduct(
     const variantsStartedAt = Date.now();
     let variantsCount = writtenProduct.createdVariantsCount ?? 0;
     if (!options.existingProductId && variantsCount === 0 && product.variants && product.variants.length > 0) {
+      throwIfCancelled();
       const variantResult = await gateway.createVariants(
         writtenProduct.productId,
         product.variants,
@@ -214,6 +223,7 @@ export async function syncSingleProduct(
         for (let i = 0; i < uniqueAssets.length; i += BATCH_SIZE) {
           const chunk = uniqueAssets.slice(i, i + BATCH_SIZE);
           try {
+            throwIfCancelled();
             const batchOutputs = await gateway.uploadFilesBatch(
               chunk.map((a) => ({
                 originalSource: a.url,
@@ -232,6 +242,7 @@ export async function syncSingleProduct(
             const missingAssets = chunk.filter((asset) => !replacements.has(asset.url));
             for (const asset of missingAssets) {
               try {
+                throwIfCancelled();
                 const uploaded = await gateway.uploadFile({
                   originalSource: asset.url,
                   filename: asset.friendlyFileName || "amzcustom-asset.png",
@@ -254,6 +265,7 @@ export async function syncSingleProduct(
             );
             for (const asset of chunk) {
               try {
+                throwIfCancelled();
                 const uploaded = await gateway.uploadFile({
                   originalSource: asset.url,
                   filename: asset.friendlyFileName || "amzcustom-asset.png",
@@ -274,6 +286,7 @@ export async function syncSingleProduct(
         // Fallback to sequential uploads when uploadFilesBatch is not available
         for (const asset of uniqueAssets) {
           try {
+            throwIfCancelled();
             const uploaded = await gateway.uploadFile({
               originalSource: asset.url,
               filename: asset.friendlyFileName || "amzcustom-asset.png",
@@ -336,6 +349,7 @@ export async function syncSingleProduct(
       // 4. Set Metafield custom.amazon_customizer
       const customizationMetafieldStartedAt = Date.now();
       try {
+        throwIfCancelled();
         const metaResult = await gateway.setProductMetafield({
           productId: writtenProduct.productId,
           namespace: "custom",
@@ -357,6 +371,7 @@ export async function syncSingleProduct(
 
     if (product.sourceKey) {
       const sourceMetafieldStartedAt = Date.now();
+      throwIfCancelled();
       const sourceMetafield = await gateway.setProductMetafield({
         productId: writtenProduct.productId,
         namespace: "custom",

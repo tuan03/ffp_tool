@@ -3,6 +3,7 @@ export type AmazonCrawlerProfile = "default" | "jeminise";
 export type AmazonCrawlerJobStatus =
   | "queued"
   | "running"
+  | "cancelling"
   | "waiting_captcha"
   | "completed"
   | "partial"
@@ -50,7 +51,7 @@ export interface AmazonCrawlerProgressItem {
   source: string;
   asin: string;
   phase: AmazonCrawlerProgress["phase"];
-  status: "queued" | "running" | "completed" | "failed" | "cancelled";
+  status: "queued" | "running" | "cancelling" | "completed" | "failed" | "cancelled";
   message: string;
   variantCompleted: number;
   variantTotal: number;
@@ -87,6 +88,7 @@ export type ProductPipelineStatus =
   | "seo"
   | "image_processing"
   | "syncing"
+  | "cancelling"
   | "retry_wait"
   | "completed"
   | "failed"
@@ -336,6 +338,7 @@ export interface AmazonCrawlerRunOptions {
   input: AmazonCrawlerInput;
   onProgress?: (progress: AmazonCrawlerProgress) => void;
   onProducts?: (products: readonly AmazonCrawlerProduct[]) => void;
+  onJobCreated?: (jobId: string) => void;
   signal?: AbortSignal;
 }
 
@@ -356,6 +359,36 @@ export interface AmazonCrawlerJobSnapshot {
   progress: AmazonCrawlerProgress;
   result: AmazonCrawlerOutput | null;
   error: string | null;
+  inputs: readonly string[];
+  settings: AmazonCrawlerSettings;
+  createdAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
+  replacementOfJobId: string | null;
+  cancellation: AmazonCrawlerCancellationSummary;
+}
+
+export interface AmazonCrawlerPendingAgentCancellation {
+  clientId: string;
+  displayName: string;
+  status: AmazonCrawlerClientStatus;
+  taskCount: number;
+}
+
+export interface AmazonCrawlerCancellationSummary {
+  id: string | null;
+  requestedAt: string | null;
+  pendingAgents: readonly AmazonCrawlerPendingAgentCancellation[];
+  pendingPipelineItems: number;
+  isExecutionConfirmed: boolean;
+}
+
+export interface AmazonCrawlerJobController {
+  list(limit?: number): Promise<readonly AmazonCrawlerJobSnapshot[]>;
+  get(jobId: string): Promise<AmazonCrawlerJobSnapshot>;
+  cancel(jobId: string): Promise<AmazonCrawlerJobSnapshot>;
+  replace(jobId: string, input: AmazonCrawlerInput): Promise<AmazonCrawlerJobSnapshot>;
+  delete(jobId: string): Promise<void>;
 }
 
 export interface AmazonCrawlerRunner {

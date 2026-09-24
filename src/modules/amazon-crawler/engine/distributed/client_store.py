@@ -50,6 +50,14 @@ CREATE TABLE IF NOT EXISTS pending_products (
     updated_at TEXT NOT NULL,
     PRIMARY KEY(task_id, product_key)
 );
+CREATE TABLE IF NOT EXISTS cancel_intents (
+    job_id TEXT PRIMARY KEY,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS agent_state (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 """
 
 
@@ -108,6 +116,29 @@ class ClientStore:
             ).fetchall()
         return [json.loads(row["payload_json"]) for row in rows]
 
+    def local_tasks(self) -> list[dict[str, str]]:
+        with self._connection() as connection:
+            rows = connection.execute(
+                "SELECT task_id, job_id, lease_id, status FROM leases ORDER BY updated_at"
+            ).fetchall()
+        return [
+            {
+                "taskId": str(row["task_id"]),
+                "jobId": str(row["job_id"]),
+                "leaseId": str(row["lease_id"]),
+                "status": str(row["status"]),
+            }
+            for row in rows
+        ]
+
+    def assignment(self, task_id: str) -> dict[str, Any] | None:
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT payload_json FROM leases WHERE task_id=?",
+                (task_id,),
+            ).fetchone()
+        return json.loads(row["payload_json"]) if row else None
+
     def mark_running(self, task_ids: list[str]) -> None:
         if not task_ids:
             return
@@ -122,6 +153,66 @@ class ClientStore:
     def complete_lease(self, task_id: str) -> None:
         with self._connection() as connection:
             connection.execute("DELETE FROM leases WHERE task_id = ?", (task_id,))
+            connection.commit()
+
+    def discard_task(self, task_id: str) -> None:
+        """Remove local state after the coordinator confirms a task no longer exists."""
+        with self._connection() as connection:
+            connection.execute("DELETE FROM pending_products WHERE task_id = ?", (task_id,))
+            connection.execute("DELETE FROM pending_results WHERE task_id = ?", (task_id,))
+            connection.execute("DELETE FROM leases WHERE task_id = ?", (task_id,))
+            connection.commit()
+
+    def discard_job(self, job_id: str) -> None:
+        with self._connection() as connection:
+            task_rows = connection.execute(
+                "SELECT task_id FROM leases WHERE job_id=?",
+                (job_id,),
+            ).fetchall()
+            task_ids = [str(row["task_id"]) for row in task_rows]
+            for task_id in task_ids:
+                connection.execute("DELETE FROM pending_products WHERE task_id=?", (task_id,))
+                connection.execute("DELETE FROM pending_results WHERE task_id=?", (task_id,))
+            connection.execute("DELETE FROM leases WHERE job_id=?", (job_id,))
+            connection.commit()
+
+    def add_cancel_intent(self, job_id: str) -> None:
+        if not job_id:
+            return
+        with self._connection() as connection:
+            connection.execute(
+                "INSERT OR REPLACE INTO cancel_intents(job_id, created_at) VALUES (?, ?)",
+                (job_id, utc_iso()),
+            )
+            connection.commit()
+
+    def cancel_intents(self) -> list[str]:
+        with self._connection() as connection:
+            rows = connection.execute("SELECT job_id FROM cancel_intents ORDER BY created_at").fetchall()
+        return [str(row["job_id"]) for row in rows]
+
+    def acknowledge_cancel_intents(self, job_ids: list[str]) -> None:
+        if not job_ids:
+            return
+        placeholders = ",".join("?" for _ in job_ids)
+        with self._connection() as connection:
+            connection.execute(
+                f"DELETE FROM cancel_intents WHERE job_id IN ({placeholders})",
+                tuple(job_ids),
+            )
+            connection.commit()
+
+    def is_paused(self) -> bool:
+        with self._connection() as connection:
+            row = connection.execute("SELECT value FROM agent_state WHERE key='paused'").fetchone()
+        return bool(row and row["value"] == "1")
+
+    def set_paused(self, is_paused: bool) -> None:
+        with self._connection() as connection:
+            connection.execute(
+                "INSERT OR REPLACE INTO agent_state(key, value) VALUES ('paused', ?)",
+                ("1" if is_paused else "0",),
+            )
             connection.commit()
 
     def cancel_job(self, job_id: str) -> None:

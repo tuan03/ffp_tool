@@ -8,6 +8,7 @@ import unittest
 import asyncio
 import base64
 import os
+import urllib.error
 from datetime import timedelta
 from io import BytesIO
 from pathlib import Path
@@ -46,7 +47,7 @@ from engine.proxy_profiles import resolve_proxy_assignments
 def client_hello(client_id: str = "client-a", slots: int = 2) -> dict[str, object]:
     return {
         "type": "hello",
-        "protocolVersion": "3",
+        "protocolVersion": "4",
         "agentVersion": "1.0.0",
         "clientId": client_id,
         "displayName": client_id,
@@ -252,6 +253,20 @@ class DistributedCacheControlTests(unittest.IsolatedAsyncioTestCase):
 
 
 class ClientStoreTests(unittest.TestCase):
+    def test_pause_and_cancel_intents_survive_agent_restart(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "agent.sqlite3"
+            store = ClientStore(path)
+            store.set_paused(True)
+            store.add_cancel_intent("job-1")
+
+            restarted = ClientStore(path)
+
+            self.assertTrue(restarted.is_paused())
+            self.assertEqual(restarted.cancel_intents(), ["job-1"])
+            restarted.acknowledge_cancel_intents(["job-1"])
+            self.assertEqual(restarted.cancel_intents(), [])
+
     def test_identity_and_pending_result_survive_agent_restart(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "agent.sqlite3"
@@ -323,6 +338,111 @@ class ClientStoreTests(unittest.TestCase):
 
 
 class ClientAgentTests(unittest.IsolatedAsyncioTestCase):
+    async def test_product_upload_not_found_is_acknowledged_as_cancelled(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            config = AgentConfig(
+                server_url="http://127.0.0.1:9999",
+                display_name="test-agent",
+                max_concurrent_inputs=1,
+                limits=AgentLimits(),
+                data_directory=Path(directory),
+            )
+            agent = DistributedCrawlerAgent(project_root=Path(directory), config=config)
+            product = {
+                "taskId": "missing-task",
+                "productKey": "amazon:B012345678:none:none",
+                "leaseId": "expired-lease",
+                "checksum": "checksum",
+                "payload": {"product": {"id": "product-1"}},
+            }
+            agent.store.spool_product(
+                task_id=product["taskId"],
+                product_key=product["productKey"],
+                lease_id=product["leaseId"],
+                checksum=product["checksum"],
+                payload=product["payload"],
+            )
+            not_found = urllib.error.HTTPError(
+                "http://127.0.0.1:9999/product",
+                404,
+                "Not Found",
+                {},
+                None,
+            )
+
+            with patch("urllib.request.urlopen", side_effect=not_found):
+                response = agent._upload_product(product)
+
+            self.assertEqual(response, {"status": "cancelled"})
+
+    async def test_transient_product_upload_failure_does_not_stop_upload_loop(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            config = AgentConfig(
+                server_url="http://127.0.0.1:9999",
+                display_name="test-agent",
+                max_concurrent_inputs=1,
+                limits=AgentLimits(),
+                data_directory=Path(directory),
+            )
+            agent = DistributedCrawlerAgent(project_root=Path(directory), config=config)
+            agent.store.spool_product(
+                task_id="task-1",
+                product_key="amazon:B012345678:none:none",
+                lease_id="lease-1",
+                checksum="checksum",
+                payload={"product": {"id": "product-1"}},
+            )
+
+            with (
+                patch.object(agent, "_upload_product", side_effect=OSError("temporary network failure")),
+                patch("engine.distributed.client_agent.asyncio.sleep", side_effect=asyncio.CancelledError),
+            ):
+                with self.assertRaises(asyncio.CancelledError):
+                    await agent._upload_loop()
+
+            pending = agent.store.pending_products()
+            self.assertEqual(len(pending), 1)
+            self.assertEqual(pending[0]["attempts"], 1)
+
+    async def test_missing_server_task_discards_all_local_task_state(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            config = AgentConfig(
+                server_url="http://127.0.0.1:9999",
+                display_name="test-agent",
+                max_concurrent_inputs=1,
+                limits=AgentLimits(),
+                data_directory=Path(directory),
+            )
+            agent = DistributedCrawlerAgent(project_root=Path(directory), config=config)
+            assignment = {
+                "taskId": "missing-task",
+                "jobId": "old-job",
+                "leaseId": "expired-lease",
+                "settingsFingerprint": "settings-1",
+            }
+            agent.store.save_assignment(assignment)
+            for product_key in ("amazon:B012345678:color:red", "amazon:B012345678:color:blue"):
+                agent.store.spool_product(
+                    task_id="missing-task",
+                    product_key=product_key,
+                    lease_id="expired-lease",
+                    checksum=product_key,
+                    payload={"product": {"id": product_key}},
+                )
+            agent.active["missing-task"] = assignment
+
+            with (
+                patch.object(agent, "_upload_product", return_value={"status": "cancelled"}) as upload,
+                patch("engine.distributed.client_agent.asyncio.sleep", side_effect=asyncio.CancelledError),
+            ):
+                with self.assertRaises(asyncio.CancelledError):
+                    await agent._upload_loop()
+
+            self.assertEqual(upload.call_count, 1)
+            self.assertEqual(agent.store.pending_products(), [])
+            self.assertEqual(agent.store.recover_assignments(), [])
+            self.assertNotIn("missing-task", agent.active)
+
     def test_job_cancellation_sets_every_registered_batch_event(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             config = AgentConfig(
@@ -596,7 +716,7 @@ class ClientAgentTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(hello["type"], "hello")
             await websocket.send(json.dumps({
                 "type": "hello_ack",
-                "protocolVersion": "3",
+                "protocolVersion": "4",
                 "heartbeatIntervalSeconds": 10,
                 "leaseSeconds": 60,
             }))
@@ -824,6 +944,140 @@ class CoordinatorStoreTests(unittest.TestCase):
         }], "busy")
 
         self.assertEqual(cancelled_job_ids, [job["id"]])
+
+    def test_cancel_waits_for_agent_ack_and_rejects_late_result(self) -> None:
+        job = self.store.create_job({"urls": ["B0FR4MSS2H"]})
+        self.store.register_client(client_hello(slots=1))
+        lease = self.store.lease_tasks("client-a", 1)[0]
+
+        cancelling = self.store.cancel_job(str(job["id"]))
+
+        self.assertEqual(cancelling["status"], "cancelling")
+        self.assertEqual(cancelling["taskCounts"], {"cancelling": 1})
+        rejected = self.store.accept_result(
+            lease["taskId"],
+            "client-a",
+            lease["leaseId"],
+            "late-checksum",
+            {"jobId": job["id"], "products": []},
+        )
+        self.assertEqual(rejected["status"], "cancelled")
+
+        acknowledged = self.store.acknowledge_task_cancel("client-a", {
+            "taskId": lease["taskId"],
+            "leaseId": lease["leaseId"],
+        })
+
+        self.assertEqual(acknowledged["status"], "cancelled")
+        snapshot = self.store.get_job(str(job["id"]))
+        self.assertEqual(snapshot["status"], "cancelled")
+        self.assertTrue(snapshot["cancellation"]["isExecutionConfirmed"])
+
+    def test_reconciliation_resumes_valid_lease_and_discards_cancelled_lease(self) -> None:
+        job = self.store.create_job({"urls": ["B0FR4MSS2H"]})
+        self.store.register_client(client_hello(slots=1))
+        lease = self.store.lease_tasks("client-a", 1)[0]
+        local_task = {
+            "taskId": lease["taskId"],
+            "jobId": job["id"],
+            "leaseId": lease["leaseId"],
+            "status": "running",
+        }
+
+        active = self.store.reconcile_tasks("client-a", [local_task])
+        self.assertEqual(active["resumeTaskIds"], [lease["taskId"]])
+
+        self.store.cancel_job(str(job["id"]))
+        cancelled = self.store.reconcile_tasks("client-a", [local_task])
+        self.assertEqual(cancelled["discardTaskIds"], [lease["taskId"]])
+        self.assertEqual(cancelled["cancelledJobIds"], [job["id"]])
+        snapshot = self.store.get_job(str(job["id"]))
+        self.assertEqual(snapshot["status"], "cancelled")
+        self.assertTrue(snapshot["cancellation"]["isExecutionConfirmed"])
+
+    def test_expired_cancel_lease_remains_unconfirmed_until_agent_reconnects(self) -> None:
+        job = self.store.create_job({"urls": ["B0FR4MSS2H"]})
+        self.store.register_client(client_hello(slots=1))
+        lease = self.store.lease_tasks("client-a", 1)[0]
+        self.store.cancel_job(str(job["id"]))
+        with self.sessions.begin() as session:
+            task = session.get(CrawlTask, lease["taskId"])
+            task.lease_expires_at = utc_now() - timedelta(seconds=1)
+
+        self.store.reap_expired()
+
+        pending = self.store.get_job(str(job["id"]))
+        self.assertEqual(pending["status"], "cancelling")
+        self.assertFalse(pending["cancellation"]["isExecutionConfirmed"])
+        self.assertEqual(pending["cancellation"]["pendingAgents"][0]["taskCount"], 1)
+
+        self.store.reconcile_tasks("client-a", [{
+            "taskId": lease["taskId"],
+            "jobId": job["id"],
+            "leaseId": lease["leaseId"],
+        }])
+        confirmed = self.store.get_job(str(job["id"]))
+        self.assertEqual(confirmed["status"], "cancelled")
+        self.assertTrue(confirmed["cancellation"]["isExecutionConfirmed"])
+
+    def test_expired_pipeline_claim_remains_cancelling_until_worker_acknowledges(self) -> None:
+        job = self.store.create_job({"urls": ["B0FR4MSS2H"]})
+        self.store.register_client(client_hello(slots=1))
+        lease = self.store.lease_tasks("client-a", 1)[0]
+        product = {
+            "id": "product-cancel",
+            "sourceKey": "amazon:B0FR4MSS2H:design:cancel",
+            "parentAsin": "B0FR4MSS2H",
+            "title": "Cancel pipeline product",
+        }
+        self.store.accept_product(
+            lease["taskId"], "client-a", lease["leaseId"], product["sourceKey"], "checksum-1",
+            {"jobId": job["id"], "product": product, "productChecksum": "checksum-1"},
+        )
+        self.store.accept_result(
+            lease["taskId"], "client-a", lease["leaseId"], "result-checksum",
+            {"jobId": job["id"], "products": [product], "errors": [], "warnings": []},
+        )
+        claim = self.store.claim_product_items(worker_id="worker-1", store_id="store-1", limit=1)[0]
+        self.store.cancel_job(str(job["id"]))
+        with self.sessions.begin() as session:
+            item = session.get(CrawlProductItem, claim["id"])
+            item.claim_expires_at = utc_now() - timedelta(seconds=1)
+
+        self.store.reap_expired()
+
+        pending = self.store.get_job(str(job["id"]))
+        self.assertEqual(pending["status"], "cancelling")
+        self.assertEqual(pending["cancellation"]["pendingPipelineItems"], 1)
+        self.assertTrue(self.store.acknowledge_product_cancel(claim["id"], worker_id="worker-1"))
+        self.assertEqual(self.store.get_job(str(job["id"]))["status"], "cancelled")
+
+    def test_delete_job_is_idempotent_and_leaves_discard_tombstone(self) -> None:
+        job = self.store.create_job({"urls": ["B0FR4MSS2H"]})
+
+        self.assertTrue(self.store.delete_job(str(job["id"])))
+        self.assertIsNone(self.store.get_job(str(job["id"])))
+        self.assertTrue(self.store.delete_job(str(job["id"])))
+        reconciliation = self.store.reconcile_tasks("client-a", [{
+            "taskId": "old-task",
+            "jobId": job["id"],
+            "leaseId": "old-lease",
+        }])
+        self.assertEqual(reconciliation["discardTaskIds"], ["old-task"])
+
+    def test_replacement_priority_runs_before_older_standard_job(self) -> None:
+        older = self.store.create_job({"urls": ["B0FR4MSS2H"]})
+        replacement = self.store.create_job({
+            "urls": ["B0HG4NRG98"],
+            "replacementOfJobId": older["id"],
+            "schedulerPriority": 100,
+        })
+        self.store.register_client(client_hello(slots=1))
+
+        lease = self.store.lease_tasks("client-a", 1)[0]
+
+        self.assertEqual(lease["jobId"], replacement["id"])
+        self.assertEqual(self.store.get_job(str(replacement["id"]))["replacementOfJobId"], older["id"])
 
     def test_job_snapshot_exposes_latest_detailed_progress_for_each_task(self) -> None:
         job = self.store.create_job({"urls": ["B0FR4MSS2H"]})
@@ -1480,7 +1734,7 @@ class CoordinatorApiTests(unittest.TestCase):
                 health = client.get("/api/v1/health").json()
                 self.assertEqual(health["status"], "ok")
                 self.assertEqual(health["apiVersion"], "v1")
-                self.assertEqual(health["workerProtocolVersion"], "3")
+                self.assertEqual(health["workerProtocolVersion"], "4")
                 job = client.post("/api/v1/crawl-jobs", json={"urls": ["B0FR4MSS2H"]}).json()
                 with client.websocket_connect("/api/v1/worker/connect") as websocket:
                     websocket.send_json(client_hello(slots=1))

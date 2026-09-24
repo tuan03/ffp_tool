@@ -13,7 +13,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, Header, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Header, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
@@ -297,8 +297,50 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
         snapshot = store.cancel_job(job_id)
         if snapshot is None:
             raise HTTPException(status_code=404, detail="Crawl job was not found.")
-        await manager.broadcast({"type": "cancel", "jobId": job_id})
+        await manager.broadcast({
+            "type": "cancel",
+            "jobId": job_id,
+            "cancellationId": (snapshot.get("cancellation") or {}).get("id"),
+        })
         return snapshot
+
+    @app.post("/api/v1/crawl-jobs/{job_id}/replace", status_code=202)
+    async def replace_job(job_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        cancelled = store.cancel_job(job_id)
+        if cancelled is None:
+            raise HTTPException(status_code=404, detail="Crawl job was not found.")
+        await manager.broadcast({
+            "type": "cancel",
+            "jobId": job_id,
+            "cancellationId": (cancelled.get("cancellation") or {}).get("id"),
+        })
+        try:
+            enriched_payload = dict(payload)
+            image_profile = image_service.profiles.load(str(payload.get("imageProfileSlug") or "default"))
+            enriched_payload["imageProfileSlug"] = image_profile["slug"]
+            enriched_payload["imageProfileRevision"] = image_profile["revision"]
+            enriched_payload["replacementOfJobId"] = job_id
+            enriched_payload["schedulerPriority"] = 100
+            replacement = store.create_job(enriched_payload)
+        except KeyError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        return {"cancelledJob": cancelled, "replacementJob": replacement}
+
+    @app.delete("/api/v1/crawl-jobs/{job_id}")
+    async def delete_job(job_id: str) -> Response:
+        snapshot = store.cancel_job(job_id)
+        if snapshot is not None:
+            await manager.broadcast({
+                "type": "cancel",
+                "jobId": job_id,
+                "cancellationId": (snapshot.get("cancellation") or {}).get("id"),
+                "discard": True,
+            })
+        if not store.delete_job(job_id):
+            raise HTTPException(status_code=404, detail="Crawl job was not found.")
+        return Response(status_code=204)
 
     @app.post("/api/v1/crawl-jobs/{job_id}/retry-failed")
     def retry_failed(job_id: str) -> dict[str, Any]:
@@ -674,9 +716,21 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
         x_pipeline_key: str | None = Header(default=None, alias="X-Pipeline-Key"),
     ) -> dict[str, Any]:
         require_pipeline_key(x_pipeline_key)
-        if not store.heartbeat_product_item(item_id, worker_id=str(payload.get("workerId") or "")):
+        state = store.product_cancellation_state(item_id, worker_id=str(payload.get("workerId") or ""))
+        if state is None:
             raise HTTPException(status_code=409, detail="Pipeline item claim is stale.")
-        return {"status": "ok"}
+        return {"status": state}
+
+    @app.post("/api/v1/internal/product-pipeline/{item_id}/cancelled")
+    def acknowledge_product_pipeline_cancel(
+        item_id: str,
+        payload: dict[str, Any],
+        x_pipeline_key: str | None = Header(default=None, alias="X-Pipeline-Key"),
+    ) -> dict[str, str]:
+        require_pipeline_key(x_pipeline_key)
+        if not store.acknowledge_product_cancel(item_id, worker_id=str(payload.get("workerId") or "")):
+            raise HTTPException(status_code=409, detail="Pipeline cancellation acknowledgement is stale.")
+        return {"status": "cancelled"}
 
     @app.post("/api/v1/internal/product-pipeline/{item_id}/complete")
     def complete_product_pipeline(
@@ -741,6 +795,14 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
                 return
             client = await asyncio.to_thread(store.register_client, hello)
             client_id = client["id"]
+            cancel_intents = [str(value) for value in list(hello.get("cancelIntents") or []) if str(value)]
+            acknowledged_intents: list[str] = []
+            for job_id in cancel_intents:
+                cancelled = await asyncio.to_thread(store.cancel_job, job_id)
+                if cancelled is not None:
+                    acknowledged_intents.append(job_id)
+            local_tasks = [value for value in list(hello.get("localTasks") or []) if isinstance(value, dict)]
+            reconciliation = await asyncio.to_thread(store.reconcile_tasks, client_id, local_tasks)
             await manager.add(client_id, websocket)
             maximum_slots = int(client.get("maxConcurrentInputs") or 0)
             available_slots = max(0, int(hello.get("availableSlots") or 0))
@@ -752,7 +814,11 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
             await websocket.send_json({
                 "type": "hello_ack", "protocolVersion": PROTOCOL_VERSION,
                 "heartbeatIntervalSeconds": HEARTBEAT_INTERVAL_SECONDS, "leaseSeconds": LEASE_SECONDS,
+                **reconciliation,
+                "acknowledgedCancelIntents": acknowledged_intents,
             })
+            for cancelled_job_id in acknowledged_intents:
+                await manager.broadcast({"type": "cancel", "jobId": cancelled_job_id})
 
             async def assign(slots: int) -> None:
                 leases = await asyncio.to_thread(store.lease_tasks, client_id, slots)
@@ -788,6 +854,10 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
                 elif message_type == "task_failed":
                     response = await asyncio.to_thread(store.fail_task, client_id, message)
                     await websocket.send_json({"type": "task_failed_ack", "taskId": message.get("taskId"), **response})
+                    await assign(1)
+                elif message_type == "cancel_ack":
+                    response = await asyncio.to_thread(store.acknowledge_task_cancel, client_id, message)
+                    await websocket.send_json({"type": "cancel_ack_received", "taskId": message.get("taskId"), **response})
                     await assign(1)
                 elif message_type == "cache_cleared":
                     await manager.record_cache_response(client_id, message)

@@ -101,6 +101,8 @@ def hello_message(
     available_slots: int,
     max_concurrent_inputs: int,
     limits: AgentLimits,
+    local_tasks: list[dict[str, Any]] | None = None,
+    cancel_intents: list[str] | None = None,
 ) -> dict[str, Any]:
     return {
         "type": "hello",
@@ -124,4 +126,6 @@ def hello_message(
             "browserTabs": limits.browser_tabs,
             "headless": limits.headless,
         },
+        "localTasks": list(local_tasks or []),
+        "cancelIntents": list(cancel_intents or []),
     }

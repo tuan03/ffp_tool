@@ -76,6 +76,29 @@ class TrayApplication:
             if callable(startfile):
                 startfile(str(self.data_directory))
 
+    def _toggle_pause(self, _icon: Any, _item: Any) -> None:
+        loop = self._loop
+        if loop is not None and loop.is_running():
+            loop.call_soon_threadsafe(self.agent.set_paused, not bool(self.agent.status_snapshot().get("isPaused")))
+
+    def _stop_local_work(self, _icon: Any, _item: Any) -> None:
+        should_stop = True
+        if os.name == "nt":
+            import ctypes
+
+            response = ctypes.windll.user32.MessageBoxW(
+                0,
+                "Stop and permanently discard every local crawler task? The cancellation will be sent to the coordinator when it reconnects.",
+                "FFP Amazon Crawler",
+                0x00000004 | 0x00000030,
+            )
+            should_stop = response == 6
+        if not should_stop:
+            return
+        loop = self._loop
+        if loop is not None and loop.is_running():
+            loop.call_soon_threadsafe(self.agent.stop_and_discard_local_work)
+
     def _exit(self, icon: Any, _item: Any) -> None:
         self._stop_agent()
         icon.stop()
@@ -97,6 +120,8 @@ class TrayApplication:
 
         menu = pystray.Menu(
             pystray.MenuItem(lambda _item: self.status_text, None, enabled=False),
+            pystray.MenuItem("Pause / Resume", self._toggle_pause),
+            pystray.MenuItem("Stop & discard local work", self._stop_local_work),
             pystray.MenuItem("Open data folder", self._open_data_directory),
             pystray.MenuItem("Exit", self._exit),
         )

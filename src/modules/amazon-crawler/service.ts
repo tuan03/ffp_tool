@@ -4,6 +4,7 @@ import type {
   AmazonCrawlerClientSummary,
   AmazonCrawlerClientsLoader,
   AmazonCrawlerJobSnapshot,
+  AmazonCrawlerJobController,
   AmazonCrawlerOutput,
   AmazonCrawlerProgress,
   AmazonCrawlerRunOptions,
@@ -12,6 +13,7 @@ import type {
   ImageProcessingProfile,
   ImageProcessingProfileManager,
 } from "./types";
+import { DEFAULT_AMAZON_CRAWLER_SETTINGS } from "./types";
 
 interface JobCreatedResponse {
   jobId: string;
@@ -90,6 +92,49 @@ function readSnapshot(value: unknown): CoordinatorSnapshot {
   };
 }
 
+function readJobSnapshot(value: unknown): AmazonCrawlerJobSnapshot {
+  const core = readSnapshot(value);
+  if (!isRecord(value)) {
+    throw new AmazonCrawlerServiceError("Coordinator returned an invalid job snapshot.", "INVALID_ENGINE_RESPONSE");
+  }
+  const cancellation = isRecord(value.cancellation) ? value.cancellation : {};
+  const pendingAgents = Array.isArray(cancellation.pendingAgents)
+    ? cancellation.pendingAgents.flatMap((pendingAgent) => {
+        if (!isRecord(pendingAgent) || typeof pendingAgent.clientId !== "string") return [];
+        return [{
+          clientId: pendingAgent.clientId,
+          displayName: typeof pendingAgent.displayName === "string" ? pendingAgent.displayName : pendingAgent.clientId,
+          status: typeof pendingAgent.status === "string"
+            ? pendingAgent.status as AmazonCrawlerClientSummary["status"]
+            : "offline" as const,
+          taskCount: typeof pendingAgent.taskCount === "number" ? pendingAgent.taskCount : 0,
+        }];
+      })
+    : [];
+  return {
+    jobId: core.id,
+    status: core.status,
+    progress: core.progress,
+    result: null,
+    error: null,
+    inputs: Array.isArray(value.inputs) ? value.inputs.filter((input): input is string => typeof input === "string") : [],
+    settings: isRecord(value.settings)
+      ? { ...DEFAULT_AMAZON_CRAWLER_SETTINGS, ...value.settings } as AmazonCrawlerJobSnapshot["settings"]
+      : DEFAULT_AMAZON_CRAWLER_SETTINGS,
+    createdAt: typeof value.createdAt === "string" ? value.createdAt : new Date(0).toISOString(),
+    startedAt: typeof value.startedAt === "string" ? value.startedAt : null,
+    completedAt: typeof value.completedAt === "string" ? value.completedAt : null,
+    replacementOfJobId: typeof value.replacementOfJobId === "string" ? value.replacementOfJobId : null,
+    cancellation: {
+      id: typeof cancellation.id === "string" ? cancellation.id : null,
+      requestedAt: typeof cancellation.requestedAt === "string" ? cancellation.requestedAt : null,
+      pendingAgents,
+      pendingPipelineItems: typeof cancellation.pendingPipelineItems === "number" ? cancellation.pendingPipelineItems : 0,
+      isExecutionConfirmed: cancellation.isExecutionConfirmed === true,
+    },
+  };
+}
+
 const AVAILABLE_CLIENT_STATUSES = new Set(["online", "busy", "waiting_captcha"]);
 
 function readClients(value: unknown): AmazonCrawlerClientSummary[] {
@@ -146,7 +191,7 @@ export function createAmazonCrawlerRunner({
 }: AmazonCrawlerClientOptions): AmazonCrawlerRunner {
   const baseUrl = normalizeEngineUrl(engineUrl);
 
-  return async ({ input, onProgress, onProducts, signal }: AmazonCrawlerRunOptions): Promise<AmazonCrawlerOutput> => {
+  return async ({ input, onProgress, onProducts, onJobCreated, signal }: AmazonCrawlerRunOptions): Promise<AmazonCrawlerOutput> => {
     let jobId: string | null = null;
     let cancellationPromise: Promise<void> | null = null;
 
@@ -194,6 +239,7 @@ export function createAmazonCrawlerRunner({
 
       const created = readJobCreated(await readJson(createResponse));
       jobId = created.jobId;
+      onJobCreated?.(jobId);
 
       for (;;) {
         if (signal?.aborted) {
@@ -240,6 +286,53 @@ export function createAmazonCrawlerRunner({
     } finally {
       signal?.removeEventListener("abort", handleAbort);
     }
+  };
+}
+
+export function createAmazonCrawlerJobController({
+  engineUrl,
+  fetchImplementation = fetch,
+}: AmazonCrawlerClientOptions): AmazonCrawlerJobController {
+  const baseUrl = normalizeEngineUrl(engineUrl);
+  const jobUrl = (jobId: string): string => `${baseUrl}/api/v1/crawl-jobs/${encodeURIComponent(jobId)}`;
+  return {
+    async list(limit = 50) {
+      const payload = await readJson(await fetchImplementation(`${baseUrl}/api/v1/crawl-jobs?limit=${Math.max(1, Math.min(500, limit))}`));
+      if (!Array.isArray(payload)) {
+        throw new AmazonCrawlerServiceError("Coordinator returned an invalid job list.", "INVALID_ENGINE_RESPONSE");
+      }
+      return payload.map(readJobSnapshot);
+    },
+    async get(jobId) {
+      const snapshot = readJobSnapshot(await readJson(await fetchImplementation(jobUrl(jobId))));
+      if (snapshot.status === "completed" || snapshot.status === "partial") {
+        const result = await readJson(await fetchImplementation(`${jobUrl(jobId)}/results`));
+        return { ...snapshot, result: result as AmazonCrawlerOutput };
+      }
+      return snapshot;
+    },
+    async cancel(jobId) {
+      const response = await fetchImplementation(`${jobUrl(jobId)}/cancel`, { method: "POST" });
+      return readJobSnapshot(await readJson(response));
+    },
+    async replace(jobId, input) {
+      const response = await fetchImplementation(`${jobUrl(jobId)}/replace`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...input,
+          externalRequestId: `replace-${jobId}-${globalThis.crypto.randomUUID()}`,
+        }),
+      });
+      const payload = await readJson(response);
+      if (!isRecord(payload) || !isRecord(payload.replacementJob)) {
+        throw new AmazonCrawlerServiceError("Coordinator returned an invalid replacement job.", "INVALID_ENGINE_RESPONSE");
+      }
+      return readJobSnapshot(payload.replacementJob);
+    },
+    async delete(jobId) {
+      await readJson(await fetchImplementation(jobUrl(jobId), { method: "DELETE" }));
+    },
   };
 }
 

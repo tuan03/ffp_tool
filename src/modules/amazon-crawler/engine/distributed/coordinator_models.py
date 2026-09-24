@@ -57,6 +57,29 @@ class CrawlJob(Base):
     tasks: Mapped[list["CrawlTask"]] = relationship(back_populates="job", cascade="all, delete-orphan")
 
 
+class CrawlJobControl(Base):
+    __tablename__ = "crawl_job_controls"
+
+    job_id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    state: Mapped[str] = mapped_column(String(32), default="active", index=True)
+    priority: Mapped[int] = mapped_column(Integer, default=0, index=True)
+    replacement_of_job_id: Mapped[str | None] = mapped_column(String(40), nullable=True, index=True)
+    cancellation_id: Mapped[str | None] = mapped_column(String(40), nullable=True, index=True)
+    cancel_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+
+class DeletedCrawlJob(Base):
+    __tablename__ = "deleted_crawl_jobs"
+
+    job_id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    cancellation_id: Mapped[str] = mapped_column(String(40), index=True)
+    deleted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
+
 class CrawlTask(Base):
     __tablename__ = "crawl_tasks"
     __table_args__ = (
