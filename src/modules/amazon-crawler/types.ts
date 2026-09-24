@@ -389,6 +389,31 @@ export interface AmazonCrawlerClientsLoader {
   (): Promise<AmazonCrawlerClientSummary[]>;
 }
 
+export interface AmazonCrawlerJobSummary {
+  id: string;
+  status: AmazonCrawlerJobStatus;
+  createdAt: string;
+  startedAt?: string | null;
+  completedAt?: string | null;
+  acceptedInputs: number;
+  productCounts?: Record<string, number>;
+  progress?: AmazonCrawlerProgress;
+}
+
+export interface AmazonCrawlerHydratedJob {
+  jobId: string;
+  status: AmazonCrawlerJobStatus;
+  progress?: AmazonCrawlerProgress;
+  products: AmazonCrawlerProduct[];
+  output?: AmazonCrawlerOutput | null;
+  settings?: AmazonCrawlerSettings;
+}
+
+export interface AmazonCrawlerJobLoader {
+  loadJob(jobId?: string): Promise<AmazonCrawlerHydratedJob | null>;
+  listRecentJobs(limit?: number): Promise<AmazonCrawlerJobSummary[]>;
+}
+
 export type AmazonCrawlerHandoverHandler = (
   products: readonly AmazonCrawlerProduct[],
 ) => Promise<void> | void;

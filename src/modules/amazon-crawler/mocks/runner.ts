@@ -1,6 +1,13 @@
 import { amazonCrawlerMockOutput } from "./data";
 
-import type { AmazonCrawlerCacheClearResult, AmazonCrawlerOutput, AmazonCrawlerRunOptions } from "../types";
+import type {
+  AmazonCrawlerCacheClearResult,
+  AmazonCrawlerHydratedJob,
+  AmazonCrawlerJobLoader,
+  AmazonCrawlerJobSummary,
+  AmazonCrawlerOutput,
+  AmazonCrawlerRunOptions,
+} from "../types";
 
 export async function clearMockAmazonCrawlerCache(): Promise<AmazonCrawlerCacheClearResult> {
   return { removedFiles: 0, removedBytes: 0 };
@@ -49,4 +56,28 @@ export async function runMockAmazonCrawler({
   const output = structuredClone(amazonCrawlerMockOutput);
   output.settings = mockSettings;
   return output;
+}
+
+export function createMockAmazonCrawlerJobLoader(): AmazonCrawlerJobLoader {
+  return {
+    async loadJob(jobId?: string): Promise<AmazonCrawlerHydratedJob | null> {
+      return {
+        jobId: jobId || "mock-job-001",
+        status: "completed",
+        products: [...amazonCrawlerMockOutput.products],
+        output: structuredClone(amazonCrawlerMockOutput),
+        settings: { ...amazonCrawlerMockOutput.settings },
+      };
+    },
+    async listRecentJobs(): Promise<AmazonCrawlerJobSummary[]> {
+      return [
+        {
+          id: "mock-job-001",
+          status: "completed",
+          createdAt: new Date().toISOString(),
+          acceptedInputs: 1,
+        },
+      ];
+    },
+  };
 }

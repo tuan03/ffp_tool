@@ -7,6 +7,7 @@ import {
   abortCrawlerJob,
   clearCrawlerSession,
   getCrawlerSessionState,
+  hydrateCrawlerSessionFromJob,
   resetCrawlerOutput,
   selectCrawlerProduct,
   setCrawlerActiveTab,
@@ -149,4 +150,23 @@ test("crawler session handles runner errors safely", async () => {
   const state = getCrawlerSessionState();
   assert.equal(state.isRunning, false);
   assert.equal(state.error, "Coordinator connection refused");
+});
+
+test("hydrateCrawlerSessionFromJob restores products, lastJobId, and resolves selection", () => {
+  clearCrawlerSession();
+
+  hydrateCrawlerSessionFromJob({
+    jobId: "job-restored-999",
+    status: "completed",
+    products: amazonCrawlerMockOutput.products,
+    output: amazonCrawlerMockOutput,
+    settings: amazonCrawlerMockOutput.settings,
+  });
+
+  const state = getCrawlerSessionState();
+  assert.equal(state.lastJobId, "job-restored-999");
+  assert.equal(state.isRunning, false);
+  assert.equal(state.output?.jobId, amazonCrawlerMockOutput.jobId);
+  assert.equal(state.liveProducts.length, amazonCrawlerMockOutput.products.length);
+  assert.equal(state.selectedProductId, amazonCrawlerMockOutput.products[0]?.id);
 });

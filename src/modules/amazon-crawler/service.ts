@@ -3,15 +3,22 @@ import type {
   AmazonCrawlerCacheClearer,
   AmazonCrawlerClientSummary,
   AmazonCrawlerClientsLoader,
+  AmazonCrawlerHydratedJob,
+  AmazonCrawlerJobLoader,
   AmazonCrawlerJobSnapshot,
+  AmazonCrawlerJobSummary,
   AmazonCrawlerOutput,
+  AmazonCrawlerProduct,
   AmazonCrawlerProgress,
   AmazonCrawlerRunOptions,
   AmazonCrawlerRunner,
+  AmazonCrawlerSettings,
+  AmazonCrawlerStatistics,
   AmazonCrawlerSyncRetrier,
   ImageProcessingProfile,
   ImageProcessingProfileManager,
 } from "./types";
+import { DEFAULT_AMAZON_CRAWLER_SETTINGS } from "./types";
 
 interface JobCreatedResponse {
   jobId: string;
@@ -394,3 +401,135 @@ export function createImageProcessingProfileManager({
     },
   };
 }
+
+export function createAmazonCrawlerJobLoader({
+  engineUrl,
+  fetchImplementation = fetch,
+}: AmazonCrawlerClientOptions): AmazonCrawlerJobLoader {
+  const baseUrl = normalizeEngineUrl(engineUrl);
+  return {
+    async loadJob(jobId?: string): Promise<AmazonCrawlerHydratedJob | null> {
+      try {
+        let targetJobId = jobId;
+        let jobSnapshot: CoordinatorSnapshot | null = null;
+        let jobSettings: AmazonCrawlerSettings | undefined = undefined;
+
+        if (!targetJobId) {
+          const recentResponse = await fetchImplementation(`${baseUrl}/api/v1/crawl-jobs?limit=5`);
+          const recentJobs = await readJson(recentResponse);
+          if (Array.isArray(recentJobs) && recentJobs.length > 0) {
+            const candidate = recentJobs.find((j: unknown) => isRecord(j) && typeof j.id === "string") as Record<string, unknown> | undefined;
+            if (candidate) {
+              targetJobId = candidate.id as string;
+              if (candidate.settings && isRecord(candidate.settings)) {
+                jobSettings = candidate.settings as unknown as AmazonCrawlerSettings;
+              }
+            }
+          }
+        }
+
+        if (!targetJobId) return null;
+
+        const snapshotResponse = await fetchImplementation(`${baseUrl}/api/v1/crawl-jobs/${encodeURIComponent(targetJobId)}`);
+        if (!snapshotResponse.ok) return null;
+        const snapshotRaw = await readJson(snapshotResponse);
+        if (!isRecord(snapshotRaw)) return null;
+        jobSnapshot = readSnapshot(snapshotRaw);
+        if (snapshotRaw.settings && isRecord(snapshotRaw.settings)) {
+          jobSettings = snapshotRaw.settings as unknown as AmazonCrawlerSettings;
+        }
+
+        let products: AmazonCrawlerProduct[] = [];
+        try {
+          const productsResponse = await fetchImplementation(`${baseUrl}/api/v1/crawl-jobs/${encodeURIComponent(targetJobId)}/products`);
+          if (productsResponse.ok) {
+            const productsPayload = await readJson(productsResponse);
+            if (isRecord(productsPayload) && Array.isArray(productsPayload.products)) {
+              products = productsPayload.products as AmazonCrawlerProduct[];
+            }
+          }
+        } catch {
+          // ignore product fetch failure
+        }
+
+        let output: AmazonCrawlerOutput | null = null;
+        if (jobSnapshot.status === "completed" || jobSnapshot.status === "partial") {
+          try {
+            const resultsResponse = await fetchImplementation(`${baseUrl}/api/v1/crawl-jobs/${encodeURIComponent(targetJobId)}/results`);
+            if (resultsResponse.ok) {
+              output = await readJson(resultsResponse) as AmazonCrawlerOutput;
+              if (output && Array.isArray(output.products) && output.products.length > products.length) {
+                products = output.products;
+              }
+            }
+          } catch {
+            // ignore results failure
+          }
+        }
+
+        if (!output && products.length > 0) {
+          const stats: AmazonCrawlerStatistics = {
+            requestedInputs: products.length,
+            acceptedInputs: products.length,
+            rejectedInputs: 0,
+            products: products.length,
+            sourceVariants: products.reduce((acc, p) => acc + (p.sourceVariants?.length || 0), 0),
+            finalVariants: products.reduce((acc, p) => acc + (p.variants?.length || 0), 0),
+            durationMs: 0,
+          };
+          output = {
+            version: "1.0",
+            jobId: targetJobId,
+            status: (jobSnapshot.status === "completed" || jobSnapshot.status === "partial" || jobSnapshot.status === "cancelled")
+              ? jobSnapshot.status
+              : "completed",
+            startedAt: new Date().toISOString(),
+            completedAt: new Date().toISOString(),
+            settings: jobSettings ?? DEFAULT_AMAZON_CRAWLER_SETTINGS,
+            statistics: stats,
+            products,
+            errors: [],
+            warnings: [],
+            exportFilename: null,
+          };
+        }
+
+        return {
+          jobId: targetJobId,
+          status: jobSnapshot.status,
+          progress: jobSnapshot.progress,
+          products,
+          output,
+          settings: jobSettings,
+        };
+      } catch (error: unknown) {
+        if (error instanceof AmazonCrawlerServiceError) throw error;
+        return null;
+      }
+    },
+
+    async listRecentJobs(limit: number = 10): Promise<AmazonCrawlerJobSummary[]> {
+      try {
+        const response = await fetchImplementation(`${baseUrl}/api/v1/crawl-jobs?limit=${limit}`);
+        const payload = await readJson(response);
+        if (!Array.isArray(payload)) return [];
+        return payload.map((j: unknown) => {
+          const rec = isRecord(j) ? j : {};
+          return {
+            id: String(rec.id || ""),
+            status: (rec.status as AmazonCrawlerJobSummary["status"]) || "queued",
+            createdAt: String(rec.createdAt || ""),
+            startedAt: rec.startedAt ? String(rec.startedAt) : null,
+            completedAt: rec.completedAt ? String(rec.completedAt) : null,
+            acceptedInputs: typeof rec.acceptedInputs === "number" ? rec.acceptedInputs : 0,
+            productCounts: isRecord(rec.productCounts) ? (rec.productCounts as Record<string, number>) : undefined,
+            progress: isRecord(rec.progress) ? ((rec.progress as unknown) as AmazonCrawlerProgress) : undefined,
+          };
+        });
+      } catch {
+        return [];
+      }
+    },
+  };
+}
+
