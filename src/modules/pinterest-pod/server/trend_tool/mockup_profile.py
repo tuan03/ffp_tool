@@ -26,6 +26,14 @@ class MockupProductProfile:
 
 def mockup_profile_for_target(target: ProductTarget) -> MockupProductProfile:
     name = target.name.strip().lower()
+    if name in {"bag", "tote", "backpack", "purse", "handbag", "satchel"}:
+        return MockupProductProfile(
+            product_type="a high quality tote bag or canvas handbag",
+            scene_requirement="photographed naturally carried by a stylish person outdoors or resting on a wooden chair/cafe table in an aesthetic lifestyle scene",
+            material_requirement="it must read as premium durable canvas or leather bag with realistic texture and stitching",
+            allowed_pose="standing upright or held by handles with the printed design clearly visible and unwarped",
+            forbidden_presentations=("floor rug", "doormat", "blanket", "bed", "wall hanging", "coaster"),
+        )
     if name == "blanket":
         return MockupProductProfile(
             product_type="a full-size soft woven throw blanket",

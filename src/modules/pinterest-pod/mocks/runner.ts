@@ -64,8 +64,13 @@ function buildMockDeliverablesForJob(job: InMemoryMockJob): {
   summaryMetrics: SummaryMetrics;
 } {
   const isBlanket = job.product === "blanket";
-  const dimText = isBlanket ? "10000x11000px - 300 DPI" : "4000x6400px - 300 DPI";
-  const prodLabel = isBlanket ? "Chăn Blanket" : "Thảm Rug";
+  const isBag = job.product === "bag";
+  const dimText = isBlanket
+    ? "10000x11000px - 300 DPI"
+    : isBag
+    ? "4500x5400px - 300 DPI"
+    : "4000x6400px - 300 DPI";
+  const prodLabel = isBlanket ? "Chăn Blanket" : isBag ? "Túi Bag" : "Thảm Rug";
 
   const selectedCandidates =
     job.selectedCandidateIds.length > 0
@@ -347,7 +352,8 @@ export class MockPinterestPodClient implements PinterestPodClient {
 
     if (job.status === "producing") {
       const isBlanket = job.product === "blanket";
-      const dim = isBlanket ? "10000x11000px" : "4000x6400px";
+      const isBag = job.product === "bag";
+      const dim = isBlanket ? "10000x11000px" : isBag ? "4500x5400px" : "4000x6400px";
 
       if (job.pollCount >= 2) {
         job.status = "completed";

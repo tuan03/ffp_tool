@@ -1030,12 +1030,16 @@ test("inferProductTypeFromNiche correctly infers blanket, rug, custom, and defau
   assert.equal(inferProductTypeFromNiche("boho door mat"), "rug");
   assert.equal(inferProductTypeFromNiche("PERSIAN RUG"), "rug");
 
+  // Bag keywords: bag, tote, backpack, purse, satchel
+  assert.equal(inferProductTypeFromNiche("leather bag"), "bag");
+  assert.equal(inferProductTypeFromNiche("canvas tote bag"), "bag");
+  assert.equal(inferProductTypeFromNiche("vintage backpack"), "bag");
+
   // Custom keyword: custom
   assert.equal(inferProductTypeFromNiche("custom wooden wall art"), "custom");
   assert.equal(inferProductTypeFromNiche("CUSTOM PRINT DESIGN"), "custom");
 
   // Other niches default to custom
-  assert.equal(inferProductTypeFromNiche("leather bag"), "custom");
   assert.equal(inferProductTypeFromNiche("table wood aesthetic"), "custom");
   assert.equal(inferProductTypeFromNiche("abstract wall art"), "custom");
   assert.equal(inferProductTypeFromNiche(""), "custom");

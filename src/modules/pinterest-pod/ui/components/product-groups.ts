@@ -31,6 +31,7 @@ export interface ProductGroup {
 export function buildProductGroups(
   deliverables: DeliverablesData,
   seoPayload?: PinterestPodDeliverables,
+  fallbackProductType: string = "bag",
 ): readonly ProductGroup[] {
   if (seoPayload && seoPayload.items.length > 0) {
     return seoPayload.items.map((item, idx) => {
@@ -97,7 +98,7 @@ export function buildProductGroups(
       return {
         id: `design_${idx + 1}`,
         title: row.product_label || `Sản phẩm #${idx + 1}`,
-        productType: "rug",
+        productType: fallbackProductType,
         cmykUrl: row.final_print_url,
         rgbUrl: deliverables.final_png_images?.[idx]?.url || row.final_print_url,
         previewUrl,
@@ -105,8 +106,8 @@ export function buildProductGroups(
           deliverables.print_cmyk_images?.[idx]?.filename || `design_${idx + 1}_cmyk_300dpi.jpg`,
         label: "CMYK 300 DPI",
         badge: "✓ Chuẩn in xưởng: 300 DPI (CMYK)",
-        widthPx: 4000,
-        heightPx: 6400,
+        widthPx: fallbackProductType === "blanket" ? 10000 : 4500,
+        heightPx: fallbackProductType === "blanket" ? 11000 : 5400,
         dpi: 300,
         mockups,
       };
@@ -120,15 +121,15 @@ export function buildProductGroups(
     return {
       id: `design_${idx + 1}`,
       title: `Sản phẩm #${idx + 1}`,
-      productType: "rug",
+      productType: fallbackProductType,
       cmykUrl: p.url,
       rgbUrl: deliverables.final_png_images?.[idx]?.url || p.url,
       previewUrl,
       cmykFilename: p.filename,
       label: "CMYK 300 DPI",
       badge: "✓ Chuẩn in xưởng: 300 DPI (CMYK)",
-      widthPx: 4000,
-      heightPx: 6400,
+      widthPx: fallbackProductType === "blanket" ? 10000 : 4500,
+      heightPx: fallbackProductType === "blanket" ? 11000 : 5400,
       dpi: 300,
       mockups: deliverables.lifestyle_mockups ?? [],
     };

@@ -36,8 +36,8 @@ export function PinterestPodStudio({ client: injectedClient }: PinterestPodStudi
   const [isLoggingIn, setIsLoggingIn] = useState(false);
 
   // Form State
-  const [niche, setNiche] = useState("vintage distressed rug");
-  const [product, setProduct] = useState<PinterestProductType>("rug");
+  const [niche, setNiche] = useState("Halloween spooky cute");
+  const [product, setProduct] = useState<PinterestProductType>("bag");
   const [crawlCount, setCrawlCount] = useState(40);
   const [referenceImages, setReferenceImages] = useState<readonly ReferenceImage[]>([]);
 
@@ -473,7 +473,7 @@ export function PinterestPodStudio({ client: injectedClient }: PinterestPodStudi
       current_message: `Đang quét từ khóa và cào ảnh niche "${niche}"...`,
     });
 
-    const effectiveProduct = inferProductTypeFromNiche(niche);
+    const effectiveProduct = product || (niche.trim() ? inferProductTypeFromNiche(niche) : "bag");
     setProduct(effectiveProduct);
     const effectiveVariants = referenceImages.length > 0 ? referenceImages.length : 5;
 
@@ -728,10 +728,7 @@ export function PinterestPodStudio({ client: injectedClient }: PinterestPodStudi
             <div className="lg:col-span-6 flex flex-col gap-6">
               <InitForm
                 niche={niche}
-                onNicheChange={(val) => {
-                  setNiche(val);
-                  setProduct(inferProductTypeFromNiche(val));
-                }}
+                onNicheChange={setNiche}
                 crawlCount={crawlCount}
                 onCrawlCountChange={setCrawlCount}
                 product={product}

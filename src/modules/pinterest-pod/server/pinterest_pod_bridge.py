@@ -177,6 +177,15 @@ POD_PRINT_SPECS: dict[str, dict[str, Any]] = {
         "label": "10000 x 11000 px @ 300 DPI (CMYK)",
         "badge": "✓ Chuẩn in xưởng: 10000 x 11000 px @ 300 DPI (CMYK)",
     },
+    "bag": {
+        "width_px": 4500,
+        "height_px": 5400,
+        "dpi": 300,
+        "color_mode": "CMYK",
+        "aspect_ratio": "5:6",
+        "label": "4500 x 5400 px @ 300 DPI (CMYK)",
+        "badge": "✓ Chuẩn in xưởng: 4500 x 5400 px @ 300 DPI (CMYK)",
+    },
     "custom": {
         "width_px": 4000,
         "height_px": 4000,
@@ -203,11 +212,14 @@ DEFAULT_ARTWORK_IMAGE_SIZE = "2K"
 
 def infer_product_type_from_niche(niche: str) -> str:
     """Automatically infer product type from niche keyword:
+    * If niche contains 'bag', 'tote', 'backpack', 'purse', 'handbag', 'satchel' -> 'bag' (preset 4500x5400 px).
     * If niche contains 'blanket', 'throw', 'quilt' -> 'blanket' (preset 10000x11000 px).
     * If niche contains 'rug', 'carpet', 'mat' -> 'rug' (preset 4000x6400 px).
     * Otherwise -> 'custom' (universal 4000x4000 px).
     """
     lower = (niche or "").lower().strip()
+    if any(kw in lower for kw in ("bag", "tote", "backpack", "purse", "handbag", "satchel")):
+        return "bag"
     if any(kw in lower for kw in ("blanket", "throw", "quilt")):
         return "blanket"
     if any(kw in lower for kw in ("rug", "carpet", "mat")):
@@ -1524,7 +1536,7 @@ def _run_local_pipeline_worker(job_id: str, req_body: dict[str, Any], base_url: 
 
     niche = str(req_body.get("niche") or "").strip()
     raw_product = str(req_body.get("product") or "").lower().strip()
-    if raw_product in {"rug", "blanket", "custom"}:
+    if raw_product in {"rug", "blanket", "bag", "custom"}:
         product = raw_product
     else:
         product = infer_product_type_from_niche(niche)

@@ -88,12 +88,15 @@ class PipelineConfig:
 
 
 def infer_product_type(niche: str) -> str:
-    """Automatically infer product type ('blanket', 'rug', or 'custom') from niche keywords:
+    """Automatically infer product type ('bag', 'blanket', 'rug', or 'custom') from niche keywords:
+    * If niche contains 'bag', 'tote', 'backpack', 'purse', 'handbag', 'satchel' -> 'bag' (preset 4500x5400 px).
     * If niche contains 'blanket', 'throw', 'quilt' -> 'blanket' (preset 10000x11000 px).
     * If niche contains 'rug', 'carpet', 'mat' -> 'rug' (preset 4000x6400 px).
     * Otherwise -> 'custom' (universal 4000x4000 px).
     """
     lower = (niche or "").lower().strip()
+    if any(kw in lower for kw in ("bag", "tote", "backpack", "purse", "handbag", "satchel")):
+        return "bag"
     if any(kw in lower for kw in ("blanket", "throw", "quilt")):
         return "blanket"
     if any(kw in lower for kw in ("rug", "carpet", "mat")):
@@ -104,6 +107,8 @@ def infer_product_type(niche: str) -> str:
 def product_preset(name: str, niche: str = "") -> ProductTarget:
     normalized = (name or "").lower().strip()
     clean_niche = (niche or "").strip()
+    if normalized in {"bag", "tote", "backpack", "purse", "handbag", "satchel"}:
+        return ProductTarget(name="bag", width_px=4500, height_px=5400, niche=clean_niche)
     if normalized == "blanket":
         return ProductTarget(name="blanket", width_px=10000, height_px=11000, niche=clean_niche)
     if normalized == "rug":
@@ -111,6 +116,8 @@ def product_preset(name: str, niche: str = "") -> ProductTarget:
     if normalized == "custom":
         return ProductTarget(name="custom", width_px=4000, height_px=4000, allow_custom_shape=True, niche=clean_niche)
     inferred = infer_product_type(normalized)
+    if inferred == "bag":
+        return ProductTarget(name="bag", width_px=4500, height_px=5400, niche=clean_niche)
     if inferred == "blanket":
         return ProductTarget(name="blanket", width_px=10000, height_px=11000, niche=clean_niche)
     if inferred == "rug":

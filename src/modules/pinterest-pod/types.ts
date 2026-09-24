@@ -3,18 +3,22 @@ import type { AppEnvironment } from "../../shared/types";
 export type { AppEnvironment };
 
 /** Supported product types for Pinterest POD pipeline */
-export type PodProductType = "rug" | "blanket" | "custom";
+export type PodProductType = "bag" | "rug" | "blanket" | "custom";
 export type PinterestProductType = PodProductType;
 
 /**
- * Automatically infers product type ('blanket', 'rug', or 'custom') from niche keywords:
+ * Automatically infers product type ('bag', 'blanket', 'rug', or 'custom') from niche keywords:
+ * - If niche contains 'bag', 'tote', 'backpack', 'purse', 'satchel' -> 'bag' (preset 4500x5400 px)
  * - If niche contains 'blanket', 'throw', 'quilt' -> 'blanket' (preset 10000x11000 px)
  * - If niche contains 'rug', 'carpet', 'mat' -> 'rug' (preset 4000x6400 px)
  * - If niche contains 'custom' -> 'custom' (preset 4000x6400 px)
- * - Otherwise -> 'rug' (default 4000x6400 px)
+ * - Otherwise -> 'custom' (preset 4000x6400 px)
  */
 export function inferProductTypeFromNiche(niche: string): PodProductType {
   const lower = (niche ?? "").toLowerCase().trim();
+  if (lower.includes("bag") || lower.includes("tote") || lower.includes("backpack") || lower.includes("purse") || lower.includes("satchel")) {
+    return "bag";
+  }
   if (lower.includes("blanket") || lower.includes("throw") || lower.includes("quilt")) {
     return "blanket";
   }
@@ -459,6 +463,15 @@ export interface PodStorefrontStandard {
 
 /** Standard factory specifications lookup by product type */
 export const FACTORY_PRINT_STANDARDS: Readonly<Record<PodProductType, PodFactoryPrintStandard>> = {
+  bag: {
+    widthPx: 4500,
+    heightPx: 5400,
+    dpi: 300,
+    colorMode: "CMYK",
+    aspectRatio: "5:6",
+    label: "4500 x 5400 px @ 300 DPI (CMYK)",
+    badge: "✓ Chuẩn in xưởng: 4500 x 5400 px @ 300 DPI (CMYK)",
+  },
   rug: {
     widthPx: 4000,
     heightPx: 6400,
