@@ -373,12 +373,23 @@ export interface AmazonCrawlerPendingAgentCancellation {
   displayName: string;
   status: AmazonCrawlerClientStatus;
   taskCount: number;
+  receivedTaskCount: number;
+  hasReceived: boolean;
+}
+
+export interface AmazonCrawlerPendingPipelineCancellation {
+  itemId: string;
+  sourceKey: string;
+  phase: ProductPipelineStatus | "pipeline";
+  workerId: string | null;
+  receivedAt: string | null;
 }
 
 export interface AmazonCrawlerCancellationSummary {
   id: string | null;
   requestedAt: string | null;
   pendingAgents: readonly AmazonCrawlerPendingAgentCancellation[];
+  pendingPipeline: readonly AmazonCrawlerPendingPipelineCancellation[];
   pendingPipelineItems: number;
   isExecutionConfirmed: boolean;
 }

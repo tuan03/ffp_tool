@@ -62,3 +62,28 @@ test("corpus coordinator releases its queue after a non-revision failure", async
   });
   assert.equal(recovered.execution.productId, "healthy");
 });
+
+test("corpus coordinator removes a cancelled operation while it waits in the commit queue", async () => {
+  const coordinator = new SeoCorpusCommitCoordinator();
+  let releaseFirst: (() => void) | undefined;
+  const first = coordinator.prepare({
+    runSeo: async () => ({ productId: "first", observedRevision: 0 }),
+    register: async () => new Promise<void>((resolve) => { releaseFirst = resolve; }),
+  });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  const controller = new AbortController();
+  let didRegisterCancelled = false;
+  const cancelled = coordinator.prepare({
+    signal: controller.signal,
+    runSeo: async () => ({ productId: "cancelled", observedRevision: 0 }),
+    register: async () => { didRegisterCancelled = true; },
+  });
+  controller.abort();
+
+  await assert.rejects(cancelled, (error: unknown) => error instanceof Error && error.name === "AbortError");
+  releaseFirst?.();
+  await first;
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(didRegisterCancelled, false);
+});

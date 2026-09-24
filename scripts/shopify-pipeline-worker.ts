@@ -208,10 +208,10 @@ interface ImageProcessingResponse {
   readonly processed: number;
 }
 
-async function loadProcessedImage(token: string): Promise<Buffer> {
+async function loadProcessedImage(token: string, signal: AbortSignal): Promise<Buffer> {
   const response = await fetch(
     `${coordinatorUrl}/api/v1/internal/image-processing/files/${encodeURIComponent(token)}`,
-    { headers: pipelineToken ? { "X-Pipeline-Key": pipelineToken } : {} },
+    { headers: pipelineToken ? { "X-Pipeline-Key": pipelineToken } : {}, signal },
   );
   if (!response.ok) {
     throw new Error(`Coordinator processed image download failed with HTTP ${response.status}.`);
@@ -224,15 +224,17 @@ async function stageProcessedMedia(
   runner: ReturnType<typeof createModuleApiRunner>,
   proxyStoreId: string,
   requestPrefix: string,
+  signal: AbortSignal,
 ): Promise<CrawlProduct> {
   const stagedMedia: ProcessedImageMedia[] = [];
   for (const [index, rawMedia] of (product.media ?? []).entries()) {
+    if (signal.aborted) throw new PipelineCancelledError();
     const media = rawMedia as ProcessedImageMedia;
     if (!media.processedFileToken) {
       stagedMedia.push(media);
       continue;
     }
-    const content = await loadProcessedImage(media.processedFileToken);
+    const content = await loadProcessedImage(media.processedFileToken, signal);
     const response = await runner({
       storeId: proxyStoreId,
       operation: "files.stageBinary",
@@ -244,6 +246,7 @@ async function stageProcessedMedia(
         contentBase64: content.toString("base64"),
       },
     }) as ShopifyFilesStageBinaryResponse;
+    if (signal.aborted) throw new PipelineCancelledError();
     stagedMedia.push({
       ...media,
       processedUrl: response.data.resourceUrl,
@@ -491,12 +494,16 @@ async function processClaim(
     let prepared: SeoCorpusCommitResult<PreparedSeo>;
     try {
       prepared = await seoCorpusCommitCoordinator.prepare<PreparedSeo>({
+        signal: cancellationController.signal,
         runSeo: async () => {
           const input = {
             ...fromCustomizationProduct(baseNormalizedProduct),
             siteDomain: claimStoreConfig?.shopDomain,
           };
-          const execution = await runSeoContentDetailed(input, { imageMode: "alt_only" });
+          const execution = await runSeoContentDetailed(input, {
+            imageMode: "alt_only",
+            signal: cancellationController.signal,
+          });
           const product = applySeoContentToCustomizationProduct(
             baseNormalizedProduct,
             execution.output,
@@ -523,6 +530,9 @@ async function processClaim(
         execution: prepared.execution.execution,
       };
     } catch (error: unknown) {
+      if (cancellationController.signal.aborted || (error instanceof Error && error.name === "AbortError")) {
+        throw new PipelineCancelledError();
+      }
       timings.totalMs = Date.now() - pipelineStartedAt;
       await failClaim(claim, workerId, error, { retryable: true, phase: "seo", timings });
       return;
@@ -557,8 +567,11 @@ async function processClaim(
         product: seoProduct,
         profileSlug: imageProfileSlug,
         profileRevision: claim.settings.imageProfileRevision,
-      });
+      }, cancellationController.signal);
     } catch (error: unknown) {
+      if (cancellationController.signal.aborted || (error instanceof Error && error.name === "AbortError")) {
+        throw new PipelineCancelledError();
+      }
       timings.imageProcessingMs = Date.now() - imageStartedAt;
       timings.totalMs = Date.now() - pipelineStartedAt;
       await failClaim(claim, workerId, error, { retryable: true, phase: "image_processing", timings });
@@ -588,8 +601,10 @@ async function processClaim(
           runner,
           effectiveProxyStoreId,
           `pipeline-${claim.id}-${finalChecksum}`,
+          cancellationController.signal,
         );
       } catch (error: unknown) {
+        if (cancellationController.signal.aborted || error instanceof PipelineCancelledError) throw error;
         timings.imageUploadMs = Date.now() - uploadStartedAt;
         timings.totalMs = Date.now() - pipelineStartedAt;
         await failClaim(claim, workerId, error, { retryable: true, phase: "image_processing", timings });

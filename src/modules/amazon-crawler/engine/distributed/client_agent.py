@@ -293,6 +293,14 @@ class DistributedCrawlerAgent:
             elif message_type == "cancel":
                 job_id = str(payload.get("jobId") or "")
                 self._cancel_job(job_id)
+                for assignment in list(self.active.values()):
+                    if str(assignment.get("jobId") or "") != job_id:
+                        continue
+                    await self.outbound_queue.put({
+                        "type": "cancel_received",
+                        "taskId": assignment["taskId"],
+                        "leaseId": assignment["leaseId"],
+                    })
             elif message_type == "pause":
                 self.set_paused(bool(payload.get("paused", True)))
             elif message_type == "clear_cache":

@@ -341,6 +341,7 @@ test("job controller lists, cancels, replaces and deletes coordinator jobs", asy
       id: status === "cancelling" ? "cancel-1" : null,
       requestedAt: status === "cancelling" ? "2026-09-24T00:00:02Z" : null,
       pendingAgents: [],
+      pendingPipeline: [],
       pendingPipelineItems: 0,
       isExecutionConfirmed: status !== "cancelling",
     },

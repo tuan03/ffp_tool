@@ -463,6 +463,43 @@ class ClientAgentTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(first_event.is_set())
             self.assertTrue(second_event.is_set())
 
+    async def test_cancel_message_immediately_acknowledges_receipt_for_active_task(self) -> None:
+        class FakeWebSocket:
+            def __init__(self) -> None:
+                self.messages = iter([json.dumps({"type": "cancel", "jobId": "job-1"})])
+
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self) -> str:
+                try:
+                    return next(self.messages)
+                except StopIteration as error:
+                    raise StopAsyncIteration from error
+
+        with tempfile.TemporaryDirectory() as directory:
+            config = AgentConfig(
+                server_url="http://127.0.0.1:9999",
+                display_name="test-agent",
+                max_concurrent_inputs=1,
+                limits=AgentLimits(),
+                data_directory=Path(directory),
+            )
+            agent = DistributedCrawlerAgent(project_root=Path(directory), config=config)
+            agent.active["task-1"] = {
+                "taskId": "task-1",
+                "jobId": "job-1",
+                "leaseId": "lease-1",
+            }
+
+            await agent._receiver(FakeWebSocket())
+
+            self.assertEqual(await agent.outbound_queue.get(), {
+                "type": "cancel_received",
+                "taskId": "task-1",
+                "leaseId": "lease-1",
+            })
+
     async def test_cancelled_batch_discards_late_products_and_results(self) -> None:
         class FakeBrowserPool:
             def close(self) -> None:
@@ -954,6 +991,15 @@ class CoordinatorStoreTests(unittest.TestCase):
 
         self.assertEqual(cancelling["status"], "cancelling")
         self.assertEqual(cancelling["taskCounts"], {"cancelling": 1})
+        self.assertFalse(cancelling["cancellation"]["pendingAgents"][0]["hasReceived"])
+        received = self.store.acknowledge_task_cancel_received("client-a", {
+            "taskId": lease["taskId"],
+            "leaseId": lease["leaseId"],
+        })
+        self.assertEqual(received["status"], "received")
+        received_snapshot = self.store.get_job(str(job["id"]))
+        self.assertEqual(received_snapshot["status"], "cancelling")
+        self.assertTrue(received_snapshot["cancellation"]["pendingAgents"][0]["hasReceived"])
         rejected = self.store.accept_result(
             lease["taskId"],
             "client-a",
@@ -1049,6 +1095,14 @@ class CoordinatorStoreTests(unittest.TestCase):
         pending = self.store.get_job(str(job["id"]))
         self.assertEqual(pending["status"], "cancelling")
         self.assertEqual(pending["cancellation"]["pendingPipelineItems"], 1)
+        self.assertEqual(pending["cancellation"]["pendingPipeline"][0]["phase"], "normalizing")
+        self.assertIsNone(pending["cancellation"]["pendingPipeline"][0]["receivedAt"])
+        self.assertEqual(
+            self.store.product_cancellation_state(claim["id"], worker_id="worker-1"),
+            "cancelled",
+        )
+        received = self.store.get_job(str(job["id"]))
+        self.assertIsNotNone(received["cancellation"]["pendingPipeline"][0]["receivedAt"])
         self.assertTrue(self.store.acknowledge_product_cancel(claim["id"], worker_id="worker-1"))
         self.assertEqual(self.store.get_job(str(job["id"]))["status"], "cancelled")
 

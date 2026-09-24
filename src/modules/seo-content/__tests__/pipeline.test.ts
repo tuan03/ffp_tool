@@ -38,3 +38,24 @@ test("pipeline preserves source and carries inferred effective niche into the B1
   assert.equal(output.productTitle, "Music Rug");
   assert.equal(input.niche, "manual rug");
 });
+
+test("pipeline rejects promptly when Stop arrives during a long-running stage", async () => {
+  const controller = new AbortController();
+  const pipeline = createSeoPipeline([{
+    name: "b1",
+    async execute() {
+      return new Promise<never>(() => undefined);
+    },
+  }]);
+  const execution = pipeline.execute({
+    title: "Long product",
+    description: "Long-running stage",
+    niche: "rugs",
+    handle: "long-product",
+    images: [],
+  }, { signal: controller.signal });
+
+  controller.abort();
+
+  await assert.rejects(execution, (error: unknown) => error instanceof Error && error.name === "AbortError");
+});

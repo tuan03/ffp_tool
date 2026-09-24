@@ -108,6 +108,22 @@ function readJobSnapshot(value: unknown): AmazonCrawlerJobSnapshot {
             ? pendingAgent.status as AmazonCrawlerClientSummary["status"]
             : "offline" as const,
           taskCount: typeof pendingAgent.taskCount === "number" ? pendingAgent.taskCount : 0,
+          receivedTaskCount: typeof pendingAgent.receivedTaskCount === "number" ? pendingAgent.receivedTaskCount : 0,
+          hasReceived: pendingAgent.hasReceived === true,
+        }];
+      })
+    : [];
+  const pendingPipeline = Array.isArray(cancellation.pendingPipeline)
+    ? cancellation.pendingPipeline.flatMap((pendingItem) => {
+        if (!isRecord(pendingItem) || typeof pendingItem.itemId !== "string" || typeof pendingItem.sourceKey !== "string") return [];
+        return [{
+          itemId: pendingItem.itemId,
+          sourceKey: pendingItem.sourceKey,
+          phase: typeof pendingItem.phase === "string"
+            ? pendingItem.phase as AmazonCrawlerJobSnapshot["cancellation"]["pendingPipeline"][number]["phase"]
+            : "pipeline" as const,
+          workerId: typeof pendingItem.workerId === "string" ? pendingItem.workerId : null,
+          receivedAt: typeof pendingItem.receivedAt === "string" ? pendingItem.receivedAt : null,
         }];
       })
     : [];
@@ -129,6 +145,7 @@ function readJobSnapshot(value: unknown): AmazonCrawlerJobSnapshot {
       id: typeof cancellation.id === "string" ? cancellation.id : null,
       requestedAt: typeof cancellation.requestedAt === "string" ? cancellation.requestedAt : null,
       pendingAgents,
+      pendingPipeline,
       pendingPipelineItems: typeof cancellation.pendingPipelineItems === "number" ? cancellation.pendingPipelineItems : 0,
       isExecutionConfirmed: cancellation.isExecutionConfirmed === true,
     },

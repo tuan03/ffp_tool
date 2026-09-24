@@ -101,7 +101,7 @@ class CoordinatorStore:
                 .join(CrawlTask, TaskAttempt.task_id == CrawlTask.id)
                 .where(
                     CrawlTask.job_id == job_id,
-                    TaskAttempt.status.in_(["cancelling", "cancelled_unconfirmed"]),
+                    TaskAttempt.status.in_(["cancelling", "cancelling_received", "cancelled_unconfirmed"]),
                 )
             ) or 0
             if not pending_tasks and not pending_products and not pending_attempts:
@@ -1038,6 +1038,13 @@ class CoordinatorStore:
                 CrawlProductItem.status.in_(list(ACTIVE_PRODUCT_STATUSES)),
             )):
                 if item.claimed_by and item.status in {"normalizing", "seo", "image_processing", "syncing"}:
+                    pipeline_result = dict(item.shopify_result or {})
+                    pipeline_result["cancellation"] = {
+                        "phase": item.status,
+                        "requestedAt": utc_iso(now),
+                        "receivedAt": None,
+                    }
+                    item.shopify_result = pipeline_result
                     item.status = "cancelling"
                 else:
                     item.status = "cancelled"
@@ -1093,6 +1100,28 @@ class CoordinatorStore:
             self._refresh_job(session, task.job_id)
             return {"status": "cancelled", "jobId": task.job_id}
 
+    def acknowledge_task_cancel_received(self, client_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        task_id = str(payload.get("taskId") or "")
+        lease_id = str(payload.get("leaseId") or "")
+        with self.sessions.begin() as session:
+            task = session.get(CrawlTask, task_id)
+            if task is None:
+                return {"status": "discarded"}
+            if (
+                task.status != "cancelling"
+                or task.assigned_client_id != client_id
+                or task.lease_id != lease_id
+            ):
+                return {"status": "stale", "jobId": task.job_id}
+            attempt = session.scalar(select(TaskAttempt).where(TaskAttempt.lease_id == lease_id))
+            if attempt is not None and attempt.status == "cancelling":
+                attempt.status = "cancelling_received"
+                self._event(session, task.job_id, "task_cancel_received", {
+                    "taskId": task.id,
+                    "clientId": client_id,
+                })
+            return {"status": "received", "jobId": task.job_id}
+
     def reconcile_tasks(self, client_id: str, local_tasks: list[dict[str, Any]]) -> dict[str, list[str]]:
         resume: list[str] = []
         discard: list[str] = []
@@ -1146,6 +1175,11 @@ class CoordinatorStore:
             if item is None or item.claimed_by != worker_id:
                 return None
             if item.status == "cancelling":
+                pipeline_result = dict(item.shopify_result or {})
+                cancellation = dict(pipeline_result.get("cancellation") or {})
+                cancellation["receivedAt"] = cancellation.get("receivedAt") or utc_iso(utc_now())
+                pipeline_result["cancellation"] = cancellation
+                item.shopify_result = pipeline_result
                 return "cancelled"
             if item.status not in {"normalizing", "seo", "image_processing", "syncing"}:
                 return None
@@ -1532,22 +1566,44 @@ class CoordinatorStore:
             progress["browserPool"] = latest_batch_progress["browserPool"]
         control = session.get(CrawlJobControl, job.id)
         pending_attempts = session.execute(
-            select(TaskAttempt.client_id, func.count(TaskAttempt.id))
+            select(TaskAttempt.client_id, TaskAttempt.status, func.count(TaskAttempt.id))
             .join(CrawlTask, TaskAttempt.task_id == CrawlTask.id)
             .where(
                 CrawlTask.job_id == job.id,
-                TaskAttempt.status.in_(["cancelling", "cancelled_unconfirmed"]),
+                TaskAttempt.status.in_(["cancelling", "cancelling_received", "cancelled_unconfirmed"]),
             )
-            .group_by(TaskAttempt.client_id)
+            .group_by(TaskAttempt.client_id, TaskAttempt.status)
         ).all()
+        pending_agent_counts: dict[str, dict[str, int]] = {}
+        for client_id, attempt_status, task_count in pending_attempts:
+            counts_by_status = pending_agent_counts.setdefault(client_id, {})
+            counts_by_status[attempt_status] = int(task_count)
         pending_agents = []
-        for client_id, task_count in pending_attempts:
+        for client_id, counts_by_status in pending_agent_counts.items():
             client = session.get(ClientRecord, client_id)
+            task_count = sum(counts_by_status.values())
+            received_task_count = counts_by_status.get("cancelling_received", 0)
             pending_agents.append({
                 "clientId": client_id,
                 "displayName": client.display_name if client else client_id,
                 "status": client.status if client else "offline",
-                "taskCount": int(task_count),
+                "taskCount": task_count,
+                "receivedTaskCount": received_task_count,
+                "hasReceived": received_task_count == task_count,
+            })
+        pending_pipeline = []
+        for item in session.scalars(select(CrawlProductItem).where(
+            CrawlProductItem.job_id == job.id,
+            CrawlProductItem.status == "cancelling",
+        ).order_by(CrawlProductItem.created_at)):
+            pipeline_result = item.shopify_result if isinstance(item.shopify_result, dict) else {}
+            cancellation = pipeline_result.get("cancellation") if isinstance(pipeline_result.get("cancellation"), dict) else {}
+            pending_pipeline.append({
+                "itemId": item.id,
+                "sourceKey": item.source_key,
+                "phase": str(cancellation.get("phase") or "pipeline"),
+                "workerId": item.claimed_by,
+                "receivedAt": cancellation.get("receivedAt"),
             })
         return {
             "id": job.id, "externalRequestId": job.external_request_id, "status": job.status,
@@ -1562,8 +1618,9 @@ class CoordinatorStore:
                 "id": control.cancellation_id if control else None,
                 "requestedAt": utc_iso(control.cancel_requested_at) if control and control.cancel_requested_at else None,
                 "pendingAgents": pending_agents,
-                "pendingPipelineItems": int(product_counts.get("cancelling", 0)),
-                "isExecutionConfirmed": not pending_agents and not product_counts.get("cancelling", 0),
+                "pendingPipeline": pending_pipeline,
+                "pendingPipelineItems": len(pending_pipeline),
+                "isExecutionConfirmed": not pending_agents and not pending_pipeline,
             },
             "createdAt": utc_iso(job.created_at), "startedAt": utc_iso(job.started_at) if job.started_at else None,
             "completedAt": utc_iso(job.completed_at) if job.completed_at else None,

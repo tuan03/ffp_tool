@@ -12,6 +12,10 @@ import type { SiteNicheResolver } from "./site-niche/site-niche-resolver";
 
 export type { SeoPipelineStage };
 
+export interface SeoPipelineExecutionOptions {
+  readonly signal?: AbortSignal;
+}
+
 export const DEFAULT_SEO_PIPELINE_STAGES: readonly SeoPipelineStage[] = Object.freeze([
   b1ProductUnderstandingStage,
   b2ShoppingContextStage,
@@ -23,13 +27,33 @@ export const DEFAULT_SEO_PIPELINE_STAGES: readonly SeoPipelineStage[] = Object.f
 
 export interface SeoPipeline {
   readonly stages: readonly SeoPipelineStage[];
-  execute(input: SeoContentInput): Promise<SeoContentOutput>;
-  executeDetailed(input: SeoContentInput): Promise<{
+  execute(input: SeoContentInput, options?: SeoPipelineExecutionOptions): Promise<SeoContentOutput>;
+  executeDetailed(input: SeoContentInput, options?: SeoPipelineExecutionOptions): Promise<{
     readonly output: SeoContentOutput;
     readonly context: SeoPipelineContext;
     readonly fallbackStages: readonly string[];
     readonly warnings: readonly string[];
   }>;
+}
+
+function createAbortError(): Error {
+  const error = new Error("SEO pipeline execution was cancelled.");
+  error.name = "AbortError";
+  return error;
+}
+
+function throwIfAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) throw createAbortError();
+}
+
+async function awaitWithAbort<T>(promise: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+  if (!signal) return promise;
+  throwIfAborted(signal);
+  return new Promise<T>((resolve, reject) => {
+    const handleAbort = () => reject(createAbortError());
+    signal.addEventListener("abort", handleAbort, { once: true });
+    void promise.then(resolve, reject).finally(() => signal.removeEventListener("abort", handleAbort));
+  });
 }
 
 export interface SeoPipelineOptions {
@@ -56,12 +80,14 @@ export function createSeoPipeline(
 
   const stages = customStages ?? DEFAULT_SEO_PIPELINE_STAGES;
 
-  async function executeDetailed(input: SeoContentInput) {
+  async function executeDetailed(input: SeoContentInput, executionOptions: SeoPipelineExecutionOptions = {}) {
+    const { signal } = executionOptions;
+    throwIfAborted(signal);
     const resolution = siteNicheResolver
-      ? await siteNicheResolver.resolve({
+      ? await awaitWithAbort(siteNicheResolver.resolve({
           siteDomain: input.siteDomain ?? "",
           fallbackNiche: input.niche,
-        })
+        }), signal)
       : undefined;
     let currentContext = createInitialContext(input, resolution?.niche ?? input.niche);
     const fallbackStages: string[] = [];
@@ -69,7 +95,9 @@ export function createSeoPipeline(
 
       for (const stage of stages) {
         try {
-          const nextContext = await stage.execute(currentContext);
+          throwIfAborted(signal);
+          const nextContext = await awaitWithAbort<SeoPipelineContext>(stage.execute(currentContext), signal);
+          throwIfAborted(signal);
 
           if (!nextContext || typeof nextContext !== "object") {
             throw new SeoStageError(stage.name, "Stage returned an invalid context");
@@ -81,6 +109,7 @@ export function createSeoPipeline(
 
           currentContext = nextContext;
         } catch (error: unknown) {
+          if (error instanceof Error && error.name === "AbortError") throw error;
           const stageError = wrapStageError(stage.name, error);
           if (stageError.isRecoverable) {
             fallbackStages.push(stage.name);
@@ -104,8 +133,8 @@ export function createSeoPipeline(
 
   return {
     stages,
-    async execute(input: SeoContentInput): Promise<SeoContentOutput> {
-      return (await executeDetailed(input)).output;
+    async execute(input: SeoContentInput, executionOptions?: SeoPipelineExecutionOptions): Promise<SeoContentOutput> {
+      return (await executeDetailed(input, executionOptions)).output;
     },
     executeDetailed,
   };

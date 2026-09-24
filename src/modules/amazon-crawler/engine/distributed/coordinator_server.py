@@ -859,6 +859,9 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
                     response = await asyncio.to_thread(store.acknowledge_task_cancel, client_id, message)
                     await websocket.send_json({"type": "cancel_ack_received", "taskId": message.get("taskId"), **response})
                     await assign(1)
+                elif message_type == "cancel_received":
+                    response = await asyncio.to_thread(store.acknowledge_task_cancel_received, client_id, message)
+                    await websocket.send_json({"type": "cancel_received_ack", "taskId": message.get("taskId"), **response})
                 elif message_type == "cache_cleared":
                     await manager.record_cache_response(client_id, message)
         except (WebSocketDisconnect, asyncio.TimeoutError):

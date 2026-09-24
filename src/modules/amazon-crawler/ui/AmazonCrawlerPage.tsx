@@ -29,6 +29,7 @@ import {
   useAmazonCrawlerSession,
 } from "./crawler-session";
 import { firstProductMediaUrl, resolveSelectedProduct } from "./product-selection";
+import { describeJobCancellation, formatCancellationPhase } from "./job-cancellation";
 import { formatPipelineTimings } from "./pipeline-timings";
 
 interface AmazonCrawlerPageProps {
@@ -119,6 +120,12 @@ function progressPhaseLabel(phase: AmazonCrawlerProgress["phase"]): string {
   return labels[phase];
 }
 
+type JobControlTone = "info" | "success" | "error";
+
+function isNotFoundError(value: unknown): boolean {
+  return typeof value === "object" && value !== null && "status" in value && value.status === 404;
+}
+
 export function AmazonCrawlerPage({ amazonCrawlerJobs, clearAmazonCrawlerCache, imageProcessingProfiles, loadAmazonCrawlerClients, retryAmazonCrawlerSyncs, runAmazonCrawler }: AmazonCrawlerPageProps): React.JSX.Element {
   const session = useAmazonCrawlerSession();
   const {
@@ -145,6 +152,7 @@ export function AmazonCrawlerPage({ amazonCrawlerJobs, clearAmazonCrawlerCache, 
   const [isLoadingClients, setIsLoadingClients] = useState(true);
   const [jobs, setJobs] = useState<readonly AmazonCrawlerJobSnapshot[]>([]);
   const [jobControlMessage, setJobControlMessage] = useState<string | null>(null);
+  const [jobControlTone, setJobControlTone] = useState<JobControlTone>("info");
   const [controlledJobId, setControlledJobId] = useState<string | null>(null);
   const [imageProfiles, setImageProfiles] = useState<ImageProcessingProfile[]>([]);
   const [editingImageProfile, setEditingImageProfile] = useState<ImageProcessingProfile | null>(null);
@@ -171,6 +179,8 @@ export function AmazonCrawlerPage({ amazonCrawlerJobs, clearAmazonCrawlerCache, 
   const selectedPipelineTimings = formatPipelineTimings(selectedProduct?.pipeline?.shopify.timings);
   const activeMediaUrl = selectedMediaUrl ?? firstProductMediaUrl(selectedProduct);
   const connectedClients = clients.filter((client) => client.isConnected && client.status !== "offline");
+  const activeManagedJob = activeJobId ? jobs.find((job) => job.jobId === activeJobId) : undefined;
+  const isCancellationPending = activeManagedJob?.status === "cancelling";
 
   useEffect(() => {
     let isMounted = true;
@@ -198,13 +208,29 @@ export function AmazonCrawlerPage({ amazonCrawlerJobs, clearAmazonCrawlerCache, 
 
   useEffect(() => {
     if (!amazonCrawlerJobs) return;
+    const jobController = amazonCrawlerJobs;
     let isMounted = true;
     async function refreshJobs(): Promise<void> {
       try {
-        const nextJobs = await amazonCrawlerJobs?.list(25) ?? [];
+        let nextJobs = await jobController.list(25);
+        if (activeJobId && !nextJobs.some((job) => job.jobId === activeJobId)) {
+          try {
+            const activeJob = await jobController.get(activeJobId);
+            nextJobs = [activeJob, ...nextJobs];
+          } catch (caught: unknown) {
+            if (!isNotFoundError(caught)) throw caught;
+            if (!isMounted) return;
+            updateCrawlerSession({ activeJobId: null, isRunning: false, error: null });
+            setJobControlTone("info");
+            setJobControlMessage("Job không còn trên coordinator; trạng thái chạy trên giao diện đã được đồng bộ lại.");
+          }
+        }
         if (isMounted) setJobs(nextJobs);
       } catch (caught: unknown) {
-        if (isMounted) setJobControlMessage(caught instanceof Error ? caught.message : "Không tải được danh sách job.");
+        if (isMounted) {
+          setJobControlTone("error");
+          setJobControlMessage(caught instanceof Error ? caught.message : "Không tải được danh sách job.");
+        }
       }
     }
     void refreshJobs();
@@ -213,7 +239,7 @@ export function AmazonCrawlerPage({ amazonCrawlerJobs, clearAmazonCrawlerCache, 
       isMounted = false;
       window.clearInterval(intervalId);
     };
-  }, [amazonCrawlerJobs]);
+  }, [activeJobId, amazonCrawlerJobs]);
 
   useEffect(() => {
     if (!activeJobId || !amazonCrawlerJobs) return;
@@ -221,8 +247,15 @@ export function AmazonCrawlerPage({ amazonCrawlerJobs, clearAmazonCrawlerCache, 
     if (!activeJob) return;
     const isActive = ["queued", "running", "waiting_captcha", "cancelling"].includes(activeJob.status);
     updateCrawlerSession({ progress: activeJob.progress, isRunning: isActive });
+    if (activeJob.status === "cancelling") {
+      setJobControlTone("info");
+      setJobControlMessage(describeJobCancellation(activeJob));
+      return;
+    }
     if (activeJob.status === "cancelled") {
-      updateCrawlerSession({ activeJobId: null, isRunning: false, error: "Job đã được dừng và các agent đã nhả task." });
+      updateCrawlerSession({ activeJobId: null, isRunning: false, error: null });
+      setJobControlTone("success");
+      setJobControlMessage(describeJobCancellation(activeJob));
       return;
     }
     if (isActive || (activeJob.status !== "completed" && activeJob.status !== "partial")) return;
@@ -235,6 +268,7 @@ export function AmazonCrawlerPage({ amazonCrawlerJobs, clearAmazonCrawlerCache, 
         isRunning: false,
       });
     }).catch((caught: unknown) => {
+      setJobControlTone("error");
       setJobControlMessage(caught instanceof Error ? caught.message : "Không tải được kết quả job.");
     });
   }, [activeJobId, amazonCrawlerJobs, jobs]);
@@ -446,11 +480,14 @@ export function AmazonCrawlerPage({ amazonCrawlerJobs, clearAmazonCrawlerCache, 
   async function handleStop(): Promise<void> {
     if (activeJobId && amazonCrawlerJobs) {
       setControlledJobId(activeJobId);
-      setJobControlMessage("Đã ghi nhận yêu cầu dừng, đang chờ agent xác nhận...");
+      setJobControlTone("info");
+      setJobControlMessage("Đang gửi yêu cầu dừng tới coordinator...");
       try {
         const stopped = await amazonCrawlerJobs.cancel(activeJobId);
         setJobs((current) => current.map((job) => job.jobId === stopped.jobId ? stopped : job));
+        setJobControlMessage(describeJobCancellation(stopped));
       } catch (caught: unknown) {
+        setJobControlTone("error");
         setJobControlMessage(caught instanceof Error ? caught.message : "Không gửi được yêu cầu dừng job.");
       } finally {
         setControlledJobId(null);
@@ -466,12 +503,14 @@ export function AmazonCrawlerPage({ amazonCrawlerJobs, clearAmazonCrawlerCache, 
     try {
       await amazonCrawlerJobs.delete(jobId);
       setJobs((current) => current.filter((job) => job.jobId !== jobId));
+      setJobControlTone("success");
       setJobControlMessage("Đã hủy và xóa job. Tombstone sẽ chặn mọi agent cũ upload lại.");
       if (activeJobId === jobId) {
         abortCrawlerJob();
         updateCrawlerSession({ activeJobId: null, isRunning: false });
       }
     } catch (caught: unknown) {
+      setJobControlTone("error");
       setJobControlMessage(caught instanceof Error ? caught.message : "Không xóa được job.");
     } finally {
       setControlledJobId(null);
@@ -485,11 +524,14 @@ export function AmazonCrawlerPage({ amazonCrawlerJobs, clearAmazonCrawlerCache, 
       return;
     }
     setControlledJobId(jobId);
-    setJobControlMessage("Đã ghi nhận yêu cầu dừng, đang chờ agent xác nhận...");
+    setJobControlTone("info");
+    setJobControlMessage("Đang gửi yêu cầu dừng tới coordinator...");
     try {
       const stopped = await amazonCrawlerJobs.cancel(jobId);
       setJobs((current) => current.map((job) => job.jobId === stopped.jobId ? stopped : job));
+      setJobControlMessage(describeJobCancellation(stopped));
     } catch (caught: unknown) {
+      setJobControlTone("error");
       setJobControlMessage(caught instanceof Error ? caught.message : "Không dừng được job.");
     } finally {
       setControlledJobId(null);
@@ -506,8 +548,10 @@ export function AmazonCrawlerPage({ amazonCrawlerJobs, clearAmazonCrawlerCache, 
       });
       updateCrawlerSession({ activeJobId: replacement.jobId, isRunning: true, progress: replacement.progress, error: null });
       setJobs((current) => [replacement, ...current.map((currentJob) => currentJob.jobId === job.jobId ? { ...currentJob, status: "cancelling" as const } : currentJob)]);
+      setJobControlTone("success");
       setJobControlMessage(`Đã tạo replacement job ${replacement.jobId.slice(0, 8)}.`);
     } catch (caught: unknown) {
+      setJobControlTone("error");
       setJobControlMessage(caught instanceof Error ? caught.message : "Không tạo được replacement job.");
     } finally {
       setControlledJobId(null);
@@ -1189,25 +1233,43 @@ export function AmazonCrawlerPage({ amazonCrawlerJobs, clearAmazonCrawlerCache, 
             <div className="grid gap-2">
               {jobs.slice(0, 10).map((job) => {
                 const isActiveJob = ["queued", "running", "waiting_captcha", "cancelling"].includes(job.status);
-                const pendingCount = job.cancellation.pendingAgents.reduce((total, agent) => total + agent.taskCount, 0)
-                  + job.cancellation.pendingPipelineItems;
+                const cancellationMessage = describeJobCancellation(job);
                 return (
                   <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-800 bg-slate-900/70 px-3 py-2" key={job.jobId}>
                     <div className="min-w-0">
                       <p className="font-mono text-xs text-cyan-300">{job.jobId}</p>
                       <p className="text-sm text-slate-300">
                         {job.status} · {job.progress.completed}/{job.progress.total} link
-                        {pendingCount > 0 ? ` · chờ ${pendingCount} xác nhận dừng` : ""}
                       </p>
-                      {job.cancellation.pendingAgents.length > 0 ? (
-                        <p className="text-xs text-amber-300">
-                          Chưa xác nhận: {job.cancellation.pendingAgents.map((agent) => `${agent.displayName} (${agent.taskCount})`).join(", ")}
+                      {cancellationMessage ? (
+                        <p className={job.status === "cancelled" ? "text-xs text-emerald-300" : "text-xs text-amber-300"}>
+                          {cancellationMessage}
                         </p>
+                      ) : null}
+                      {job.cancellation.pendingAgents.length > 0 ? (
+                        <div className="text-xs text-slate-400">
+                          {job.cancellation.pendingAgents.map((agent) => (
+                            <p key={agent.clientId}>
+                              Agent {agent.displayName}: {agent.hasReceived ? "đã nhận lệnh, đang nhả" : "chưa nhận lệnh"} {agent.taskCount} task
+                            </p>
+                          ))}
+                        </div>
+                      ) : null}
+                      {job.cancellation.pendingPipeline.length > 0 ? (
+                        <div className="text-xs text-slate-400">
+                          {job.cancellation.pendingPipeline.map((pendingItem) => (
+                            <p key={pendingItem.itemId}>
+                              Pipeline {pendingItem.sourceKey}: {pendingItem.receivedAt ? "đã nhận lệnh, đang kết thúc" : "chưa nhận lệnh tại"} bước {formatCancellationPhase(pendingItem.phase)}
+                            </p>
+                          ))}
+                        </div>
                       ) : null}
                     </div>
                     <div className="flex flex-wrap gap-2">
-                      {isActiveJob ? (
+                      {isActiveJob && job.status !== "cancelling" ? (
                         <button className="rounded border border-rose-500 px-3 py-1 text-xs font-semibold text-rose-300 disabled:opacity-50" disabled={controlledJobId !== null} type="button" onClick={() => void handleStopJob(job.jobId)}>Stop</button>
+                      ) : job.status === "cancelling" ? (
+                        <span className="rounded border border-amber-600 px-3 py-1 text-xs font-semibold text-amber-300">Đang dừng…</span>
                       ) : null}
                       <button className="rounded border border-cyan-600 px-3 py-1 text-xs font-semibold text-cyan-300 disabled:opacity-50" disabled={controlledJobId !== null} type="button" onClick={() => void handleRunAgain(job)}>Run again</button>
                       <button className="rounded border border-slate-600 px-3 py-1 text-xs font-semibold text-slate-300 disabled:opacity-50" disabled={controlledJobId !== null} type="button" onClick={() => void handleDeleteJob(job.jobId)}>Delete</button>
@@ -1217,13 +1279,17 @@ export function AmazonCrawlerPage({ amazonCrawlerJobs, clearAmazonCrawlerCache, 
               })}
             </div>
           )}
-          {jobControlMessage ? <p className="text-sm text-amber-200">{jobControlMessage}</p> : null}
+          {jobControlMessage ? (
+            <p className={`text-sm ${jobControlTone === "success" ? "text-emerald-300" : jobControlTone === "error" ? "text-rose-300" : "text-amber-200"}`}>
+              {jobControlMessage}
+            </p>
+          ) : null}
         </section>
       ) : null}
 
       <div className="flex flex-wrap gap-3">
         <button className="rounded-lg bg-cyan-400 px-5 py-2 font-semibold text-slate-950 disabled:opacity-50" disabled={urls.length === 0 || isRunning} type="button" onClick={() => void handleStart()}>Start ({urls.length})</button>
-        <button className="rounded-lg border border-rose-400 px-5 py-2 font-semibold text-rose-300 disabled:opacity-50" disabled={!isRunning || controlledJobId !== null} type="button" onClick={() => void handleStop()}>{controlledJobId === activeJobId ? "Đang dừng..." : "Stop"}</button>
+        <button className="rounded-lg border border-rose-400 px-5 py-2 font-semibold text-rose-300 disabled:opacity-50" disabled={!isRunning || controlledJobId !== null || isCancellationPending} type="button" onClick={() => void handleStop()}>{controlledJobId === activeJobId || isCancellationPending ? "Đang dừng..." : "Stop"}</button>
         {output === null ? null : (
           <>
             <button className="rounded-lg border border-cyan-500 px-5 py-2 font-semibold text-cyan-300" type="button" onClick={handleDownload}>Tải JSON</button>

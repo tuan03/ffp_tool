@@ -41,11 +41,11 @@ export async function runSeoContent(input: SeoContentInput): Promise<SeoContentO
 
 export function runSeoContentDetailed(
   input: SeoContentInput,
-  options: { readonly imageMode: "alt_only" },
+  options: { readonly imageMode: "alt_only"; readonly signal?: AbortSignal },
 ): Promise<SeoContentAltOnlyDetailedOutput>;
 export function runSeoContentDetailed(
   input: SeoContentInput,
-  options?: { readonly imageMode?: "full" },
+  options?: { readonly imageMode?: "full"; readonly signal?: AbortSignal },
 ): Promise<SeoContentDetailedOutput>;
 export function runSeoContentDetailed(
   input: SeoContentInput,
@@ -95,7 +95,7 @@ export async function runSeoContentDetailed(
     stages: runtimeStages,
     siteNicheResolver: getDefaultSiteNicheResolver(),
   });
-  const execution = await pipeline.executeDetailed(input);
+  const execution = await pipeline.executeDetailed(input, { signal: options.signal });
   const generator = execution.context.contentGenerationMetadata?.generator ?? "heuristic";
   const hasGeminiConfiguration = Boolean(process.env.GOOGLE_CLOUD_PROJECT?.trim());
   const configuredEmbeddingProvider = process.env.SEO_EMBEDDING_PROVIDER?.trim().toLowerCase();

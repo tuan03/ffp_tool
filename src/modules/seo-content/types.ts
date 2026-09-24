@@ -95,4 +95,5 @@ export interface SeoContentPipelineSummary {
 
 export interface SeoContentRunOptions {
   readonly imageMode?: "full" | "alt_only";
+  readonly signal?: AbortSignal;
 }
