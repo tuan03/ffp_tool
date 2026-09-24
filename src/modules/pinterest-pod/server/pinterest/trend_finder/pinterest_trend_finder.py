@@ -93,6 +93,19 @@ def payload_items(payload: Any, keys: tuple[str, ...]) -> list[Any]:
     return []
 
 
+def infer_pinterest_interest(niche: str) -> str:
+    n = (niche or "").lower().strip()
+    if any(kw in n for kw in ("bag", "tote", "purse", "backpack", "satchel", "clutch", "fashion", "apparel", "shirt", "hoodie", "wallet")):
+        return "womens_fashion"
+    if any(kw in n for kw in ("rug", "carpet", "mat", "blanket", "throw", "pillow", "decor", "home", "tapestry", "curtain")):
+        return "home_decor"
+    if any(kw in n for kw in ("art", "poster", "print", "illustration", "painting")):
+        return "art"
+    if any(kw in n for kw in ("mug", "cup", "tumbler", "craft", "diy")):
+        return "diy_and_crafts"
+    return ""
+
+
 def collect_pinterest_trends(
     *,
     client: PinterestClient,
@@ -148,8 +161,10 @@ def collect_pinterest_trends(
             {"region": region},
         ),
     ]
-    if interest:
-        endpoints[0][2]["interests"] = [interest]
+
+    effective_interest = interest or infer_pinterest_interest(niche)
+    if effective_interest:
+        endpoints[0][2]["interests"] = [effective_interest]
 
     for name, path, params in endpoints:
         try:
