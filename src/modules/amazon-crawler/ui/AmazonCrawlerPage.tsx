@@ -170,6 +170,7 @@ export function AmazonCrawlerPage({ amazonCrawlerJobs, clearAmazonCrawlerCache, 
   );
   const selectedPipelineTimings = formatPipelineTimings(selectedProduct?.pipeline?.shopify.timings);
   const activeMediaUrl = selectedMediaUrl ?? firstProductMediaUrl(selectedProduct);
+  const connectedClients = clients.filter((client) => client.isConnected && client.status !== "offline");
 
   useEffect(() => {
     let isMounted = true;
@@ -576,15 +577,15 @@ export function AmazonCrawlerPage({ amazonCrawlerJobs, clearAmazonCrawlerCache, 
             <p className="text-xs text-slate-400">Tự cập nhật mỗi 5 giây · job chỉ được tạo khi có ít nhất một client online.</p>
           </div>
           <span className="rounded-full bg-slate-800 px-3 py-1 text-xs text-slate-200">
-            {clients.filter((client) => client.isConnected && ["online", "busy", "waiting_captcha"].includes(client.status)).length} online / {clients.length}
+            {connectedClients.length} đang kết nối
           </span>
         </div>
         {isLoadingClients ? <p className="mt-3 text-sm text-slate-400">Đang kiểm tra client...</p> : null}
         {clientError ? <p className="mt-3 text-sm text-rose-300">{clientError}</p> : null}
-        {!isLoadingClients && !clientError && clients.length === 0 ? <p className="mt-3 text-sm text-amber-300">Chưa có client. Hãy mở FFP Amazon Crawler Agent.</p> : null}
-        {clients.length > 0 ? (
+        {!isLoadingClients && !clientError && connectedClients.length === 0 ? <p className="mt-3 text-sm text-amber-300">Chưa có client online. Hãy mở FFP Amazon Crawler Agent.</p> : null}
+        {connectedClients.length > 0 ? (
           <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-            {clients.map((client) => (
+            {connectedClients.map((client) => (
               <article className="rounded-lg border border-slate-700 bg-slate-900/70 p-3" key={client.id}>
                 <div className="flex items-center justify-between gap-2">
                   <strong className="truncate text-sm" title={client.displayName}>{client.displayName}</strong>

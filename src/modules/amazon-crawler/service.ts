@@ -419,7 +419,9 @@ export function createAmazonCrawlerClientsLoader({
   return async () => {
     try {
       const response = await fetchImplementation(`${baseUrl}/api/v1/clients`);
-      return readClients(await readJson(response));
+      return readClients(await readJson(response)).filter(
+        (client) => client.isConnected && client.status !== "offline",
+      );
     } catch (error: unknown) {
       if (error instanceof AmazonCrawlerServiceError) throw error;
       throw new AmazonCrawlerServiceError("Không kết nối được coordinator. Hãy chạy npm run dev.", "COORDINATOR_OFFLINE");

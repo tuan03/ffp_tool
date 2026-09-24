@@ -273,9 +273,11 @@ test("client loader returns coordinator client capacity and status", async () =>
     engineUrl: "http://coordinator.test/",
     fetchImplementation: async () => jsonResponse([
       { id: "client-a", displayName: "Máy Lợi", status: "busy", isConnected: true, maxConcurrentInputs: 4, activeTasks: 2, lastSeenAt: "2026-09-22T10:00:00Z" },
+      { id: "client-b", displayName: "Máy cũ", status: "offline", isConnected: false, maxConcurrentInputs: 4, activeTasks: 0, lastSeenAt: "2026-09-21T10:00:00Z" },
     ]),
   });
   const clients = await loadClients();
+  assert.equal(clients.length, 1);
   assert.equal(clients[0]?.displayName, "Máy Lợi");
   assert.equal(clients[0]?.activeTasks, 2);
 });
