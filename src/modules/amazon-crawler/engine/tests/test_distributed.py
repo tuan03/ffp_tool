@@ -9,7 +9,7 @@ import asyncio
 import base64
 import os
 import urllib.error
-from datetime import timedelta
+from datetime import datetime, timedelta
 from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
@@ -40,7 +40,7 @@ from engine.distributed.coordinator_models import (
 )
 from engine.distributed.coordinator_server import ConnectionManager, create_coordinator_app, decompress_gzip_limited, read_request_body_limited
 from engine.distributed.coordinator_store import CoordinatorStore
-from engine.distributed.protocol import AgentLimits, hello_message, payload_checksum, settings_fingerprint, utc_now
+from engine.distributed.protocol import AgentLimits, hello_message, payload_checksum, settings_fingerprint, utc_iso, utc_now
 from engine.proxy_profiles import resolve_proxy_assignments
 
 
@@ -65,6 +65,9 @@ def client_hello(client_id: str = "client-a", slots: int = 2) -> dict[str, objec
 
 
 class AgentLimitsTests(unittest.TestCase):
+    def test_utc_iso_marks_timezone_less_database_values_as_utc(self) -> None:
+        self.assertEqual(utc_iso(datetime(2026, 9, 24, 8, 3, 10)), "2026-09-24T08:03:10Z")
+
     def test_server_settings_are_capped_by_local_machine_limits(self) -> None:
         limits = AgentLimits(
             product_threads=3,
@@ -1041,11 +1044,15 @@ class CoordinatorStoreTests(unittest.TestCase):
         self.assertEqual(snapshot["status"], "cancelled")
         self.assertTrue(snapshot["cancellation"]["isExecutionConfirmed"])
 
-    def test_expired_cancel_lease_remains_unconfirmed_until_agent_reconnects(self) -> None:
+    def test_heartbeat_confirms_an_expired_cancel_after_agent_releases_task(self) -> None:
         job = self.store.create_job({"urls": ["B0FR4MSS2H"]})
         self.store.register_client(client_hello(slots=1))
         lease = self.store.lease_tasks("client-a", 1)[0]
         self.store.cancel_job(str(job["id"]))
+        self.store.acknowledge_task_cancel_received("client-a", {
+            "taskId": lease["taskId"],
+            "leaseId": lease["leaseId"],
+        })
         with self.sessions.begin() as session:
             task = session.get(CrawlTask, lease["taskId"])
             task.lease_expires_at = utc_now() - timedelta(seconds=1)
@@ -1056,12 +1063,36 @@ class CoordinatorStoreTests(unittest.TestCase):
         self.assertEqual(pending["status"], "cancelling")
         self.assertFalse(pending["cancellation"]["isExecutionConfirmed"])
         self.assertEqual(pending["cancellation"]["pendingAgents"][0]["taskCount"], 1)
+        self.assertTrue(pending["cancellation"]["pendingAgents"][0]["hasReceived"])
 
-        self.store.reconcile_tasks("client-a", [{
+        self.store.heartbeat("client-a", [{
             "taskId": lease["taskId"],
-            "jobId": job["id"],
             "leaseId": lease["leaseId"],
-        }])
+        }], "busy")
+        still_pending = self.store.get_job(str(job["id"]))
+        self.assertEqual(still_pending["status"], "cancelling")
+
+        self.store.heartbeat("client-a", [], "online")
+        confirmed = self.store.get_job(str(job["id"]))
+        self.assertEqual(confirmed["status"], "cancelled")
+        self.assertTrue(confirmed["cancellation"]["isExecutionConfirmed"])
+
+    def test_late_cancel_ack_confirms_an_expired_cancel_lease(self) -> None:
+        job = self.store.create_job({"urls": ["B0FR4MSS2H"]})
+        self.store.register_client(client_hello(slots=1))
+        lease = self.store.lease_tasks("client-a", 1)[0]
+        self.store.cancel_job(str(job["id"]))
+        with self.sessions.begin() as session:
+            task = session.get(CrawlTask, lease["taskId"])
+            task.lease_expires_at = utc_now() - timedelta(seconds=1)
+
+        self.store.reap_expired()
+        acknowledged = self.store.acknowledge_task_cancel("client-a", {
+            "taskId": lease["taskId"],
+            "leaseId": lease["leaseId"],
+        })
+
+        self.assertEqual(acknowledged["status"], "cancelled")
         confirmed = self.store.get_job(str(job["id"]))
         self.assertEqual(confirmed["status"], "cancelled")
         self.assertTrue(confirmed["cancellation"]["isExecutionConfirmed"])

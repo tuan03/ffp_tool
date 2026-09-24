@@ -35,6 +35,15 @@ TERMINAL_TASK_STATUSES = {"completed", "failed", "cancelled"}
 TERMINAL_PRODUCT_STATUSES = {"completed", "failed", "reconciliation_required", "cancelled"}
 ACTIVE_PRODUCT_STATUSES = {"received", "normalizing", "seo", "image_processing", "syncing", "retry_wait"}
 CANCELLABLE_PRODUCT_STATUSES = ACTIVE_PRODUCT_STATUSES | {"cancelling"}
+CANCELLATION_UNCONFIRMED_ATTEMPT_STATUSES = {
+    "cancelled_unconfirmed",
+    "cancelled_received_unconfirmed",
+}
+CANCELLATION_PENDING_ATTEMPT_STATUSES = {
+    "cancelling",
+    "cancelling_received",
+    *CANCELLATION_UNCONFIRMED_ATTEMPT_STATUSES,
+}
 TOMBSTONE_RETENTION_DAYS = 30
 
 
@@ -101,7 +110,7 @@ class CoordinatorStore:
                 .join(CrawlTask, TaskAttempt.task_id == CrawlTask.id)
                 .where(
                     CrawlTask.job_id == job_id,
-                    TaskAttempt.status.in_(["cancelling", "cancelling_received", "cancelled_unconfirmed"]),
+                    TaskAttempt.status.in_(CANCELLATION_PENDING_ATTEMPT_STATUSES),
                 )
             ) or 0
             if not pending_tasks and not pending_products and not pending_attempts:
@@ -216,6 +225,11 @@ class CoordinatorStore:
         now = utc_now()
         lease_until = now + timedelta(seconds=LEASE_SECONDS)
         cancelled_job_ids: set[str] = set()
+        active_leases = {
+            (str(active.get("taskId") or ""), str(active.get("leaseId") or ""))
+            for active in running
+            if isinstance(active, dict)
+        }
         with self.sessions.begin() as session:
             client = session.get(ClientRecord, client_id)
             if client is None:
@@ -236,6 +250,28 @@ class CoordinatorStore:
                     and task.assigned_client_id == client_id
                 ):
                     cancelled_job_ids.add(task.job_id)
+            released_job_ids: set[str] = set()
+            unconfirmed_attempts = session.execute(
+                select(TaskAttempt, CrawlTask.job_id)
+                .join(CrawlTask, TaskAttempt.task_id == CrawlTask.id)
+                .where(
+                    TaskAttempt.client_id == client_id,
+                    TaskAttempt.status.in_(CANCELLATION_UNCONFIRMED_ATTEMPT_STATUSES),
+                    CrawlTask.status == "cancelled",
+                )
+            ).all()
+            for attempt, job_id in unconfirmed_attempts:
+                if (attempt.task_id, attempt.lease_id) in active_leases:
+                    continue
+                attempt.status = "cancelled"
+                attempt.finished_at = attempt.finished_at or now
+                released_job_ids.add(job_id)
+                self._event(session, job_id, "task_cancel_confirmed_by_heartbeat", {
+                    "taskId": attempt.task_id,
+                    "clientId": client_id,
+                })
+            for job_id in released_job_ids:
+                self._refresh_job(session, job_id)
         return sorted(cancelled_job_ids)
 
     def mark_client_disconnected(self, client_id: str) -> None:
@@ -969,7 +1005,11 @@ class CoordinatorStore:
                     if old_lease:
                         attempt = session.scalar(select(TaskAttempt).where(TaskAttempt.lease_id == old_lease))
                         if attempt:
-                            attempt.status = "cancelled_unconfirmed"
+                            attempt.status = (
+                                "cancelled_received_unconfirmed"
+                                if attempt.status == "cancelling_received"
+                                else "cancelled_unconfirmed"
+                            )
                             attempt.finished_at = now
                     continue
                 # Repair tasks reopened by a delayed progress message from an
@@ -1077,7 +1117,23 @@ class CoordinatorStore:
             task = session.get(CrawlTask, task_id)
             if task is None:
                 return {"status": "discarded"}
+            attempt = session.scalar(select(TaskAttempt).where(TaskAttempt.lease_id == lease_id))
             if task.status == "cancelled":
+                if (
+                    task.assigned_client_id == client_id
+                    and task.lease_id == lease_id
+                    and attempt is not None
+                    and attempt.status in CANCELLATION_UNCONFIRMED_ATTEMPT_STATUSES
+                ):
+                    now = utc_now()
+                    attempt.status = "cancelled"
+                    attempt.finished_at = attempt.finished_at or now
+                    self._event(session, task.job_id, "task_cancel_acknowledged", {
+                        "taskId": task.id,
+                        "clientId": client_id,
+                    })
+                    self._refresh_job(session, task.job_id)
+                    return {"status": "cancelled", "jobId": task.job_id}
                 return {"status": "duplicate", "jobId": task.job_id}
             if (
                 task.status != "cancelling"
@@ -1089,7 +1145,6 @@ class CoordinatorStore:
             task.status = "cancelled"
             task.completed_at = now
             task.lease_expires_at = None
-            attempt = session.scalar(select(TaskAttempt).where(TaskAttempt.lease_id == lease_id))
             if attempt is not None:
                 attempt.status = "cancelled"
                 attempt.finished_at = now
@@ -1570,7 +1625,7 @@ class CoordinatorStore:
             .join(CrawlTask, TaskAttempt.task_id == CrawlTask.id)
             .where(
                 CrawlTask.job_id == job.id,
-                TaskAttempt.status.in_(["cancelling", "cancelling_received", "cancelled_unconfirmed"]),
+                TaskAttempt.status.in_(CANCELLATION_PENDING_ATTEMPT_STATUSES),
             )
             .group_by(TaskAttempt.client_id, TaskAttempt.status)
         ).all()
@@ -1582,7 +1637,10 @@ class CoordinatorStore:
         for client_id, counts_by_status in pending_agent_counts.items():
             client = session.get(ClientRecord, client_id)
             task_count = sum(counts_by_status.values())
-            received_task_count = counts_by_status.get("cancelling_received", 0)
+            received_task_count = (
+                counts_by_status.get("cancelling_received", 0)
+                + counts_by_status.get("cancelled_received_unconfirmed", 0)
+            )
             pending_agents.append({
                 "clientId": client_id,
                 "displayName": client.display_name if client else client_id,

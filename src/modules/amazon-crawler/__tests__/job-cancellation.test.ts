@@ -77,6 +77,18 @@ test("cancellation message identifies received agent and pipeline acknowledgemen
   assert.match(message, /pipeline đã nhận lệnh, đang kết thúc bước tạo nội dung SEO/);
 });
 
+test("cancellation message treats timezone-less coordinator timestamps as UTC", () => {
+  const job = createJob({
+    cancellation: {
+      ...createJob().cancellation,
+      requestedAt: "2026-09-24T08:03:10.000000",
+    },
+  });
+
+  const message = describeJobCancellation(job, Date.parse("2026-09-24T08:03:20.000Z")) ?? "";
+  assert.match(message, /10 giây trước/);
+});
+
 test("cancelled job message confirms final completion", () => {
   const job = createJob({ status: "cancelled", completedAt: "2026-09-24T00:03:00.000Z" });
   assert.match(describeJobCancellation(job) ?? "", /Đã dừng hoàn tất/);

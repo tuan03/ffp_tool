@@ -15,9 +15,14 @@ const CANCELLATION_PHASE_LABELS: Record<ProductPipelineStatus | "pipeline", stri
   pipeline: "pipeline",
 };
 
+function parseCoordinatorTimestamp(timestamp: string): number {
+  const hasExplicitTimezone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(timestamp);
+  return Date.parse(hasExplicitTimezone ? timestamp : `${timestamp}Z`);
+}
+
 function formatElapsedTime(requestedAt: string | null, now: number): string {
   if (!requestedAt) return "vừa xong";
-  const elapsedSeconds = Math.max(0, Math.floor((now - Date.parse(requestedAt)) / 1_000));
+  const elapsedSeconds = Math.max(0, Math.floor((now - parseCoordinatorTimestamp(requestedAt)) / 1_000));
   if (!Number.isFinite(elapsedSeconds) || elapsedSeconds < 5) return "vừa xong";
   if (elapsedSeconds < 60) return `${elapsedSeconds} giây trước`;
   const elapsedMinutes = Math.floor(elapsedSeconds / 60);
@@ -41,7 +46,7 @@ export function isActiveJobStopping(input: {
 export function describeJobCancellation(job: AmazonCrawlerJobSnapshot, now = Date.now()): string | null {
   if (job.status === "cancelled") {
     return job.completedAt
-      ? `Đã dừng hoàn tất lúc ${new Date(job.completedAt).toLocaleTimeString("vi-VN")}.`
+      ? `Đã dừng hoàn tất lúc ${new Date(parseCoordinatorTimestamp(job.completedAt)).toLocaleTimeString("vi-VN")}.`
       : "Đã dừng hoàn tất.";
   }
   if (job.status !== "cancelling") return null;

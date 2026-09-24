@@ -22,7 +22,10 @@ def utc_now() -> datetime:
 
 
 def utc_iso(value: datetime | None = None) -> str:
-    return (value or utc_now()).isoformat().replace("+00:00", "Z")
+    timestamp = value or utc_now()
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.replace(tzinfo=UTC)
+    return timestamp.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 
 def canonical_json(value: Any) -> bytes:
