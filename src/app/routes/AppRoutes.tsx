@@ -8,6 +8,7 @@ import type {
   AmazonCrawlerCacheClearer,
   AmazonCrawlerClientsLoader,
   AmazonCrawlerJobController,
+  AmazonCrawlerJobLoader,
   AmazonCrawlerRunner,
   AmazonCrawlerSyncRetrier,
   ImageProcessingProfileManager,
@@ -49,6 +50,7 @@ interface AppRoutesProps {
   runAmazonCrawler: AmazonCrawlerRunner;
   retryAmazonCrawlerSyncs: AmazonCrawlerSyncRetrier;
   imageProcessingProfiles: ImageProcessingProfileManager;
+  loadAmazonCrawlerJob?: AmazonCrawlerJobLoader;
   runWorkflow(input: WorkflowInput): Promise<WorkflowOutput>;
 }
 
@@ -57,6 +59,7 @@ export function AppRoutes({
   clearAmazonCrawlerCache,
   imageProcessingProfiles,
   loadAmazonCrawlerClients,
+  loadAmazonCrawlerJob,
   retryAmazonCrawlerSyncs,
   runAmazonCrawler,
   runWorkflow,
@@ -228,6 +231,7 @@ export function AppRoutes({
       retryAmazonCrawlerSyncs,
       imageProcessingProfiles,
       amazonCrawlerJobs,
+      loadAmazonCrawlerJob,
     );
 
     return createBrowserRouter([
@@ -253,7 +257,7 @@ export function AppRoutes({
         ],
       },
     ]);
-  }, [amazonCrawlerJobs, clearAmazonCrawlerCache, imageProcessingProfiles, loadAmazonCrawlerClients, retryAmazonCrawlerSyncs, runAmazonCrawler, runWorkflow]);
+  }, [amazonCrawlerJobs, clearAmazonCrawlerCache, imageProcessingProfiles, loadAmazonCrawlerClients, loadAmazonCrawlerJob, retryAmazonCrawlerSyncs, runAmazonCrawler, runWorkflow]);
 
   return <RouterProvider router={router} />;
 }

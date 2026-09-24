@@ -14,6 +14,8 @@ import {
   type AmazonCrawlerProgress,
   type AmazonCrawlerRunner,
   type AmazonCrawlerSettings,
+  type AmazonCrawlerJobLoader,
+  type AmazonCrawlerJobSummary,
   type AmazonCrawlerSyncRetrier,
   type ImageProcessingProfile,
   type ImageProcessingProfileManager,
@@ -21,6 +23,7 @@ import {
 
 import {
   abortCrawlerJob,
+  hydrateCrawlerSessionFromJob,
   resetCrawlerOutput,
   resetCrawlerSettings,
   selectCrawlerProduct,
@@ -50,6 +53,7 @@ interface AmazonCrawlerPageProps {
   clearAmazonCrawlerCache: AmazonCrawlerCacheClearer;
   loadAmazonCrawlerClients: AmazonCrawlerClientsLoader;
   runAmazonCrawler: AmazonCrawlerRunner;
+  loadAmazonCrawlerJob?: AmazonCrawlerJobLoader;
   onHandoverToSeo?: AmazonCrawlerHandoverHandler;
   retryAmazonCrawlerSyncs?: AmazonCrawlerSyncRetrier;
   imageProcessingProfiles?: ImageProcessingProfileManager;
@@ -161,6 +165,7 @@ export function AmazonCrawlerPage({
   clearAmazonCrawlerCache,
   imageProcessingProfiles,
   loadAmazonCrawlerClients,
+  loadAmazonCrawlerJob,
   onHandoverToSeo,
   retryAmazonCrawlerSyncs,
   runAmazonCrawler,
@@ -176,6 +181,7 @@ export function AmazonCrawlerPage({
     progress,
     output,
     liveProducts,
+    lastJobId,
     error,
     activeTab,
     selectedProductId,
@@ -188,6 +194,9 @@ export function AmazonCrawlerPage({
   const [cacheMessage, setCacheMessage] = useState<string | null>(null);
   const [isHandingOver, setIsHandingOver] = useState(false);
   const [handoverError, setHandoverError] = useState<string | null>(null);
+  const [isHydratingJob, setIsHydratingJob] = useState(false);
+  const [recentJobs, setRecentJobs] = useState<AmazonCrawlerJobSummary[]>([]);
+  const [hydrateMessage, setHydrateMessage] = useState<string | null>(null);
   const [clients, setClients] = useState<AmazonCrawlerClientSummary[]>([]);
   const [clientError, setClientError] = useState<string | null>(null);
   const [isLoadingClients, setIsLoadingClients] = useState(true);
@@ -332,6 +341,99 @@ export function AmazonCrawlerPage({
       window.clearInterval(intervalId);
     };
   }, [loadAmazonCrawlerClients]);
+
+  // 1. Fetch recent jobs list from coordinator
+  useEffect(() => {
+    if (!loadAmazonCrawlerJob) return;
+    let isMounted = true;
+    void loadAmazonCrawlerJob.listRecentJobs(10).then((jobs) => {
+      if (isMounted) setRecentJobs(jobs);
+    }).catch(() => {
+      // ignore
+    });
+    return () => {
+      isMounted = false;
+    };
+  }, [loadAmazonCrawlerJob]);
+
+  // 2. Auto-hydrate on mount if currently no products (e.g. F5 or page reload)
+  useEffect(() => {
+    if (!loadAmazonCrawlerJob) return;
+    if (resultProducts.length > 0) return; // already restored from localStorage/session
+
+    let isMounted = true;
+    setIsHydratingJob(true);
+    setHydrateMessage("Đang kiểm tra và khôi phục phiên cào gần nhất từ Coordinator...");
+
+    void loadAmazonCrawlerJob.loadJob(lastJobId ?? undefined).then((hydrated) => {
+      if (!isMounted) return;
+      setIsHydratingJob(false);
+      if (hydrated) {
+        hydrateCrawlerSessionFromJob(hydrated);
+        setHydrateMessage(
+          hydrated.products.length > 0
+            ? `Đã khôi phục thành công ${hydrated.products.length} sản phẩm.`
+            : `Đã kết nối lại phiên cào ${hydrated.jobId.slice(0, 8)}.`,
+        );
+        setTimeout(() => setHydrateMessage(null), 3000);
+      } else {
+        setHydrateMessage(null);
+      }
+    }).catch(() => {
+      if (isMounted) {
+        setIsHydratingJob(false);
+        setHydrateMessage(null);
+      }
+    });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [loadAmazonCrawlerJob]);
+
+  // 3. Auto-reconnect if a job is currently running on coordinator (e.g. reload during active crawl)
+  useEffect(() => {
+    if (!loadAmazonCrawlerJob || amazonCrawlerJobs || !isRunning || !lastJobId) return;
+
+    let isMounted = true;
+    const intervalId = window.setInterval(async () => {
+      try {
+        const job = await loadAmazonCrawlerJob.loadJob(lastJobId);
+        if (!isMounted || !job) return;
+
+        hydrateCrawlerSessionFromJob(job);
+
+        if (job.status === "completed" || job.status === "partial" || job.status === "failed" || job.status === "cancelled") {
+          window.clearInterval(intervalId);
+        }
+      } catch {
+        // ignore polling error
+      }
+    }, 2000);
+
+    return () => {
+      isMounted = false;
+      window.clearInterval(intervalId);
+    };
+  }, [amazonCrawlerJobs, loadAmazonCrawlerJob, isRunning, lastJobId]);
+
+  async function handleSelectRecentJob(targetJobId: string): Promise<void> {
+    if (!loadAmazonCrawlerJob || !targetJobId) return;
+    setIsHydratingJob(true);
+    setHydrateMessage(`Đang tải dữ liệu phiên cào ${targetJobId.slice(0, 8)}...`);
+    try {
+      const job = await loadAmazonCrawlerJob.loadJob(targetJobId);
+      if (job) {
+        hydrateCrawlerSessionFromJob(job);
+        setHydrateMessage(`Đã nạp ${job.products.length} sản phẩm từ phiên cào.`);
+        setTimeout(() => setHydrateMessage(null), 3000);
+      }
+    } catch {
+      setHydrateMessage("Không thể tải phiên cào.");
+    } finally {
+      setIsHydratingJob(false);
+    }
+  }
 
   useEffect(() => {
     if (!amazonCrawlerJobs) return;
@@ -1623,7 +1725,7 @@ export function AmazonCrawlerPage({
         </section>
       ) : null}
 
-      <div className="flex flex-wrap gap-3">
+      <div className="flex flex-wrap items-center gap-3">
         <button className="rounded-lg bg-cyan-400 px-5 py-2 font-semibold text-slate-950 disabled:opacity-50" disabled={urls.length === 0 || isRunning || coordinatorActiveJob !== undefined} type="button" onClick={() => void handleStart()}>Start ({urls.length})</button>
         <button className="rounded-lg border border-rose-400 px-5 py-2 font-semibold text-rose-300 disabled:opacity-50" disabled={!isRunning || controlledJobId !== null || isCancellationPending} type="button" onClick={() => void handleStop()}>{isActiveStopPending ? "Đang dừng..." : "Stop"}</button>
         {output === null && resultProducts.length === 0 ? null : (
@@ -1652,7 +1754,36 @@ export function AmazonCrawlerPage({
           </>
         )}
         <button className="rounded-lg border border-amber-500 px-5 py-2 font-semibold text-amber-300 disabled:opacity-50" disabled={isRunning || isClearingCache} type="button" onClick={() => void handleClearCache()}>{isClearingCache ? "Đang xóa cache..." : "Xóa cache"}</button>
+
+        {recentJobs.length > 0 && (
+          <div className="flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-1.5 ml-auto">
+            <span className="text-xs text-slate-400 font-medium whitespace-nowrap">📋 Phiên cào gần đây:</span>
+            <select
+              value={lastJobId ?? ""}
+              onChange={(event) => void handleSelectRecentJob(event.target.value)}
+              className="rounded bg-slate-900 border border-slate-700 px-2 py-1 text-xs text-cyan-300 font-mono focus:border-cyan-500 focus:outline-none"
+              disabled={isRunning || isHydratingJob}
+            >
+              <option value="" disabled>-- Chọn phiên cào để xem lại --</option>
+              {recentJobs.map((job) => {
+                const timeLabel = job.createdAt ? new Date(job.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
+                const productCount = job.productCounts?.completed ?? job.acceptedInputs;
+                return (
+                  <option key={job.id} value={job.id}>
+                    {timeLabel ? `[${timeLabel}] ` : ""}{job.id.slice(0, 8)}... ({productCount} SP · {job.status})
+                  </option>
+                );
+              })}
+            </select>
+          </div>
+        )}
       </div>
+      {hydrateMessage && (
+        <div className="flex items-center gap-2 rounded-lg border border-cyan-800/80 bg-cyan-950/30 px-3 py-2 text-xs text-cyan-200">
+          {isHydratingJob && <span className="inline-block h-3 w-3 animate-spin rounded-full border border-cyan-300 border-r-transparent" />}
+          <span>{hydrateMessage}</span>
+        </div>
+      )}
       {cacheMessage === null ? null : <p className="text-sm text-amber-200">{cacheMessage}</p>}
       {handoverError === null ? null : (
         <div className="rounded-xl border border-rose-600 bg-rose-950/40 p-4 text-sm text-rose-200">

@@ -7,6 +7,7 @@ import {
   abortCrawlerJob,
   clearCrawlerSession,
   getCrawlerSessionState,
+  hydrateCrawlerSessionFromJob,
   resetCrawlerOutput,
   resetCrawlerSettings,
   selectCrawlerProduct,
@@ -171,3 +172,43 @@ test("resetCrawlerSettings restores settings to defaults", () => {
   assert.equal(resetState.settings.discountPercent, 0);
 });
 
+test("hydrateCrawlerSessionFromJob restores products, lastJobId, and resolves selection", () => {
+  clearCrawlerSession();
+
+  hydrateCrawlerSessionFromJob({
+    jobId: "job-restored-999",
+    status: "completed",
+    products: amazonCrawlerMockOutput.products,
+    output: amazonCrawlerMockOutput,
+    settings: amazonCrawlerMockOutput.settings,
+  });
+
+  const state = getCrawlerSessionState();
+  assert.equal(state.lastJobId, "job-restored-999");
+  assert.equal(state.isRunning, false);
+  assert.equal(state.output?.jobId, amazonCrawlerMockOutput.jobId);
+  assert.equal(state.liveProducts.length, amazonCrawlerMockOutput.products.length);
+  assert.equal(state.selectedProductId, amazonCrawlerMockOutput.products[0]?.id);
+});
+
+test("hydrateCrawlerSessionFromJob reconnects an active job so Stop can target it after refresh", () => {
+  clearCrawlerSession();
+
+  hydrateCrawlerSessionFromJob({
+    jobId: "job-running-123",
+    status: "running",
+    products: [],
+    output: null,
+    progress: {
+      phase: "product",
+      completed: 0,
+      total: 2,
+      message: "Đang cào sản phẩm.",
+    },
+  });
+
+  const state = getCrawlerSessionState();
+  assert.equal(state.lastJobId, "job-running-123");
+  assert.equal(state.activeJobId, "job-running-123");
+  assert.equal(state.isRunning, true);
+});

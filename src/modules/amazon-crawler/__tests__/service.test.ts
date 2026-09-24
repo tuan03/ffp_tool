@@ -6,6 +6,7 @@ import {
   createAmazonCrawlerCacheClearer,
   createAmazonCrawlerClientsLoader,
   createAmazonCrawlerJobController,
+  createAmazonCrawlerJobLoader,
   createAmazonCrawlerRunner,
   createAmazonCrawlerSyncRetrier,
   createImageProcessingProfileManager,
@@ -416,4 +417,42 @@ test("mock Customize contract omits raw and duplicate fields while exposing pric
   assert.equal(Object.hasOwn(product.customization, "rules"), false);
   assert.equal(product.customization.pricing.mode, "product_variants");
   assert.equal(product.customization.pricing.paidOptionGroups[0]?.options[1]?.price.amount, 5);
+});
+
+test("job loader loads job snapshot, products and results from coordinator", async () => {
+  const loader = createAmazonCrawlerJobLoader({
+    engineUrl: "http://engine.test",
+    fetchImplementation: async (_request) => {
+      const url = String(_request);
+      if (url.endsWith("/api/v1/crawl-jobs?limit=5")) {
+        return jsonResponse([{ id: "job-abc", status: "completed", settings: DEFAULT_AMAZON_CRAWLER_SETTINGS }]);
+      }
+      if (url.endsWith("/api/v1/crawl-jobs/job-abc")) {
+        return jsonResponse({
+          id: "job-abc",
+          status: "completed",
+          progress: { phase: "shopify", completed: 1, total: 1 },
+          settings: DEFAULT_AMAZON_CRAWLER_SETTINGS,
+        });
+      }
+      if (url.endsWith("/api/v1/crawl-jobs/job-abc/products")) {
+        return jsonResponse({ jobId: "job-abc", products: amazonCrawlerMockOutput.products });
+      }
+      if (url.endsWith("/api/v1/crawl-jobs/job-abc/results")) {
+        return jsonResponse({ ...amazonCrawlerMockOutput, jobId: "job-abc" });
+      }
+      return jsonResponse({}, 404);
+    },
+  });
+
+  const hydrated = await loader.loadJob();
+  assert.ok(hydrated);
+  assert.equal(hydrated.jobId, "job-abc");
+  assert.equal(hydrated.status, "completed");
+  assert.equal(hydrated.products.length, amazonCrawlerMockOutput.products.length);
+  assert.equal(hydrated.output?.jobId, "job-abc");
+
+  const recent = await loader.listRecentJobs(5);
+  assert.equal(recent.length, 1);
+  assert.equal(recent[0]?.id, "job-abc");
 });

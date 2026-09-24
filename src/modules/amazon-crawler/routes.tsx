@@ -6,6 +6,7 @@ import type {
   AmazonCrawlerClientsLoader,
   AmazonCrawlerHandoverHandler,
   AmazonCrawlerJobController,
+  AmazonCrawlerJobLoader,
   AmazonCrawlerRunner,
   AmazonCrawlerSyncRetrier,
   ImageProcessingProfileManager,
@@ -19,21 +20,23 @@ export function amazonCrawlerRoutes(
   retryAmazonCrawlerSyncs: AmazonCrawlerSyncRetrier = async () => ({ retried: 0 }),
   imageProcessingProfiles?: ImageProcessingProfileManager,
   amazonCrawlerJobs?: AmazonCrawlerJobController,
+  loadAmazonCrawlerJob?: AmazonCrawlerJobLoader,
 ): RouteObject[] {
   return [
-      {
-        path: "amazon-crawler",
-        element: (
-          <AmazonCrawlerPage
-            amazonCrawlerJobs={amazonCrawlerJobs}
-            clearAmazonCrawlerCache={clearAmazonCrawlerCache}
-            imageProcessingProfiles={imageProcessingProfiles}
-            loadAmazonCrawlerClients={loadAmazonCrawlerClients}
-            onHandoverToSeo={onHandoverToSeo}
-            retryAmazonCrawlerSyncs={retryAmazonCrawlerSyncs}
-            runAmazonCrawler={runAmazonCrawler}
-          />
-        ),
-      },
+    {
+      path: "amazon-crawler",
+      element: (
+        <AmazonCrawlerPage
+          amazonCrawlerJobs={amazonCrawlerJobs}
+          clearAmazonCrawlerCache={clearAmazonCrawlerCache}
+          imageProcessingProfiles={imageProcessingProfiles}
+          loadAmazonCrawlerClients={loadAmazonCrawlerClients}
+          loadAmazonCrawlerJob={loadAmazonCrawlerJob}
+          onHandoverToSeo={onHandoverToSeo}
+          retryAmazonCrawlerSyncs={retryAmazonCrawlerSyncs}
+          runAmazonCrawler={runAmazonCrawler}
+        />
+      ),
+    },
   ];
 }
