@@ -79,25 +79,39 @@ def generate_flat_artwork(
 
 
 def artwork_prompt(target: ProductTarget, reference_brief: dict[str, object] | None = None, correction: str = "") -> str:
-    product = target.name.strip().lower() or "rug"
-    textile = "soft woven blanket textile" if product == "blanket" else "flat printed rug artwork"
-    edge_rule = "Use a seamless repeat-safe composition with no border." if product == "blanket" else "Use a full-bleed composition that reaches all four edges, with no white margin."
+    product = (target.niche or target.name or "product").strip().lower()
+    if "blanket" in product or "quilt" in product:
+        item_desc = "soft woven blanket textile design"
+        edge_rule = "Use a seamless repeat-safe composition with no border."
+    elif "rug" in product or "carpet" in product or "mat" in product:
+        item_desc = "flat printed rug artwork"
+        edge_rule = "Use a full-bleed composition that reaches all four edges, with no white margin."
+    elif any(b in product for b in ("bag", "tote", "backpack", "satchel", "clutch", "purse")):
+        item_desc = f"flat 2D printable graphic artwork, surface pattern, or embroidery design for a {product}"
+        edge_rule = "Use a full-bleed or centered high-resolution printable composition suitable for bags."
+    elif any(m in product for m in ("mug", "cup", "tumbler")):
+        item_desc = f"flat 2D printable wrap graphic artwork for a {product}"
+        edge_rule = "Use a horizontal wrap composition with clean edges."
+    else:
+        item_desc = f"flat 2D printable surface artwork or graphic design for {product}"
+        edge_rule = "Use a full-bleed or centered high-resolution printable composition."
+
     brief = json.dumps(reference_brief or {}, ensure_ascii=False)
     correction_rule = f"Previous attempt failed this quality check: {correction}\nCorrect that failure completely." if correction else ""
     return f"""
-Create a new {textile} inspired by the attached reference image.
-The reference is only a source of motif, palette, texture, and composition. Do not copy its product photography or scene.
+Create a new {item_desc} inspired by the attached reference image.
+The reference is only a source of motif, palette, texture, and composition. Do not copy its product photography, background, or physical scene.
 Use only these extracted visual cues: {brief}
 {edge_rule}
 Requirements:
 - output one newly created 2D graphic artwork image for printing;
 - do not return, reproduce, or merely retouch the reference photograph;
-- reinterpret the motifs as clean illustrated shapes, with a graphic-design or vector-art appearance;
-- remove room, floor, wall, furniture, props, product edges, perspective, shadows, highlights, and camera distortion;
-- preserve the useful visual language while creating a coherent original composition;
-- fill the entire canvas with artwork;
-- no mockup, no product photograph, no frame, no text, no logo, no watermark;
-- keep details large enough for textile printing and use a vertical composition.
+- reinterpret the motifs as clean illustrated shapes, graphic artwork, or surface pattern;
+- remove room, floor, wall, furniture, props, handles, straps, zippers, product edges, perspective distortion, highlights, and camera shadows;
+- preserve the useful visual aesthetic and color palette while creating a coherent original printable composition;
+- fill the canvas or create a clean print-ready layout;
+- no mockup, no physical product photograph, no frame, no text, no logo, no watermark;
+- make details sharp, clean, and ready for high-resolution print reproduction.
 {correction_rule}
 """.strip()
 
