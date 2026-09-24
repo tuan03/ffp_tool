@@ -267,8 +267,11 @@ def generate_product_policy_with_gemini(*, target: str, niche: str, model: str, 
     use_enterprise = env("GOOGLE_GENAI_USE_ENTERPRISE", "").lower() in {"1", "true", "yes"}
     if backend == "api-key" or (backend == "auto" and api_key and not use_enterprise):
         client = genai.Client(api_key=api_key)
-    elif backend in {"enterprise", "auto"} and project:
-        client = genai.Client(vertexai=True, project=project, location=location)
+    elif backend in {"enterprise", "auto"}:
+        if project:
+            client = genai.Client(vertexai=True, project=project, location=location)
+        else:
+            client = genai.Client(vertexai=True, location=location)
     elif api_key:
         client = genai.Client(api_key=api_key)
     else:
@@ -277,7 +280,7 @@ def generate_product_policy_with_gemini(*, target: str, niche: str, model: str, 
     from google.genai import types
 
     prompt = f"""
-Create a strict image-crawling product policy for a generic ecommerce workflow.
+Create a product policy for an ecommerce and Print-on-Demand design workflow.
 
 Target product: {target}
 Search niche/query context: {niche}
@@ -290,16 +293,14 @@ Return JSON only:
   "accepted_types": ["snake_case_target_product_types"],
   "excluded_types": ["snake_case_non_target_product_types"],
   "require_floor_textile": false,
-  "require_physical_product": true,
+  "require_physical_product": false,
   "reject_collage": true
 }}
 
 Rules:
 - Do not assume the target is a rug unless the target product is actually a rug/carpet.
-- accepted_types should include "target_product" plus specific variants.
-- excluded_types should include visually adjacent but wrong products.
-- For leather bags, include handbags/tote/shoulder/crossbody/satchel variants and exclude wallets, shoes, jackets, backpacks unless target says backpack.
-- For blankets, accept blankets/throws/quilts/duvets and exclude rugs/carpets.
+- accepted_types should include "target_product", "product_design", "printable_inspiration", plus common styles and categories for {target}.
+- excluded_types should only include completely non-target product categories (e.g. if target is a bag/purse, exclude shoes, pants, hats, jewelry, furniture).
 - Keep lists concise: 4-12 items each.
 """.strip()
     response = client.models.generate_content(

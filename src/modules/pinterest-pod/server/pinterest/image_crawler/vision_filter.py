@@ -135,19 +135,32 @@ class ProductVisionFilter:
         ]
         if self.crawl_purpose == "inspiration":
             return f"""
-You are a strict TREND ARTWORK / VISUAL INSPIRATION gate for a Pinterest crawler.
+You are a strict VISUAL INSPIRATION & DESIGN QUALITY gate for a Pinterest POD merchandise crawler.
 
-Target downstream POD product: {self.product_policy.display_name} (Surface pattern / illustration will be printed onto this product)
-Niche / trend query context: {self.niche}
+Target product niche: '{self.niche}'
+Downstream product type: {self.product_policy.display_name}
 
 IMPORTANT CONTEXT:
-The candidate images being evaluated are SURFACE PATTERNS, SEAMLESS DESIGNS, and PRINTABLE ARTWORKS.
-Do NOT expect or require the image to be a physical {self.product_policy.display_name}!
-The artwork will be printed on the downstream product during manufacturing.
+The candidate images collected from Pinterest include:
+1. Physical product designs, merchandise styling, product mockups, and finished items showcasing the trend aesthetic for '{self.niche}' (e.g. bags, satchels, totes, backpacks, mugs, rugs, blankets).
+2. Surface patterns, seamless designs, illustrations, textile prints, and visual motifs inspired by or designed for '{self.niche}'.
 
-For every image, decide whether it is a high-quality, clean visual source for creating a new printable artwork or pattern.
-Accept images that have clear motifs, pattern direction, color palette, illustration style, composition, or texture that can transfer to a print product.
-Reject images that are mostly screenshots, memes, text blocks, watermarks, brand logos, celebrity/IP characters, multi-panel grids/swatch sheets, blurry thumbnails, room-only photos, or images where the trend idea is not visually inspectable.
+EVALUATION GOAL:
+Accept images that are high-quality, aesthetic visual references or printable artwork for '{self.niche}'.
+Accept images that show:
+- A distinct, attractive product design, shape, silhouette, hardware, or styling matching the trend.
+- A clear printable surface pattern, illustration, graphic artwork, or embroidery motif.
+- A rich material texture (e.g. vintage distressed leather, woven tapestry, ceramic glaze).
+
+REJECT ONLY images that are:
+- Multi-panel swatch grids or collage sheets (e.g. 4, 9, 12, 20 pattern blocks or multi-product grids). Set is_multi_panel_or_swatch=true, is_collage=true, reject_reason_code="REJECT_COLLAGE".
+- Heavy commercial metadata text, pricing, promotional banners, file format specs (e.g. "AI/EPS/PNG", "$29.99"). Set has_commercial_metadata_text=true, reject_reason_code="REJECT_TEXT_BLOCK".
+- Hands holding items with prominent nails/manicures (reject_reason_code="REJECT_HANDS_OR_NAILS").
+- Phone frames / lockscreens with clock/battery UI (reject_reason_code="REJECT_PHONE_WALLPAPER").
+- Memes, quotes, plain text without graphic design (reject_reason_code="REJECT_TEXT_BLOCK").
+- Blurry thumbnails, low resolution, or illegible images (reject_reason_code="REJECT_BLURRY").
+- Brand logos / watermarks obscuring the design (reject_reason_code="REJECT_LOGO" or "REJECT_WATERMARK").
+- Completely unrelated subjects (e.g. food/cooking recipes, gym fitness workouts).
 
 Return only JSON:
 {{
@@ -157,10 +170,10 @@ Return only JSON:
       "accepted": true,
       "product_present": true,
       "product_role": "PRIMARY|SECONDARY|INCIDENTAL|ABSENT|UNCERTAIN",
-      "main_subject": "artwork|pattern|motif|room|text|logo|collage|product|other|unknown",
-      "target_product_type": "printable_inspiration|pattern|artwork|motif|texture|not_usable|unknown",
-      "is_single_product": false,
-      "is_physical_product": false,
+      "main_subject": "product|artwork|pattern|motif|room|text|logo|collage|other|unknown",
+      "target_product_type": "product_design|printable_inspiration|pattern|artwork|motif|texture|not_usable|unknown",
+      "is_single_product": true,
+      "is_physical_product": true,
       "is_floor_textile": false,
       "is_collage": false,
       "is_multi_panel_or_swatch": false,
@@ -174,45 +187,36 @@ Return only JSON:
       "is_lifestyle_scene": false,
       "foreground_coverage": 0.9,
       "background_complexity": 0.1,
-      "flat_artwork_score": 0.9,
-      "printability_score": 0.9,
+      "flat_artwork_score": 0.8,
+      "printability_score": 0.8,
       "requires_extraction": false,
       "reject_reason_code": "",
       "product_confidence": 0.95,
       "product_visibility": 85,
       "trend_relevance": 85,
-      "commercial_quality": 75,
-      "aesthetic": "short printable style and palette",
-      "detected_product": "usable visual source description",
+      "commercial_quality": 80,
+      "aesthetic": "short style and palette",
+      "detected_product": "usable visual description",
       "reason": "visible evidence only",
       "confidence": 0.95
     }}
   ]
 }}
 
-For inspiration mode:
-- product_present means a usable visual pattern/artwork is present.
-- product_role PRIMARY means the motif/artwork/pattern is the main subject.
-- product_visibility means motif/artwork clarity.
-- trend_relevance (0..100): Evaluates how well this visual artwork/pattern matches the candidate's `trend` or `query` from image metadata.
-  IMPORTANT: Do NOT penalize the image for not being the physical downstream product (e.g. {self.product_policy.display_name}). The image is SUPPOSED to be a surface pattern/artwork design to be printed onto that product! If the pattern matches the trend/query motif (e.g. floral bouquet for 'homecoming bouquet ideas'), score trend_relevance high (80-95).
-- commercial_quality means print/ecommerce suitability.
-- is_multi_panel_or_swatch: MANDATORY true if the image is divided into multiple panels, grid tiles, swatch squares (e.g. 4, 9, 12, 20 pattern blocks), collage sheets, or multi-item showcases. If true, set is_collage=true, accepted=false, is_single_clean_artwork=false, flat_artwork_score=0.0, printability_score=0.0, reject_reason_code="REJECT_COLLAGE".
-- has_commercial_metadata_text: MANDATORY true if the image contains commercial text, file type labels (e.g. "AI/EPS/PNG/JPG"), dimension specs (e.g. "12x12 in", "300 DPI"), pack count headers (e.g. "20 SEAMLESS PATTERNS"), watermark, pricing, or web links. If true, set accepted=false, is_single_clean_artwork=false, printability_score=0.0, reject_reason_code="REJECT_TEXT_BLOCK".
-- is_single_clean_artwork: MUST BE true ONLY IF the entire image is a SINGLE, standalone, continuous printable artwork or pattern with ZERO multi-panel grids and ZERO commercial/spec text.
-- Use reject_reason_code for strong rejections:
-  REJECT_HANDS_OR_NAILS (hands, nails, fingers, manicure),
-  REJECT_PHONE_WALLPAPER (phone frame, lockscreen clock, battery, status bar),
-  REJECT_3D_ROOM_SCENE (photo of 3D interior room with perspective tilt & furniture obscuring floor),
-  REJECT_TEXT_BLOCK (text quotes, word art, meme text, file formats, specs),
-  REJECT_WATERMARK (copyright stamps, watermark across art),
-  REJECT_LOGO (brand logos),
-  REJECT_BLURRY (low resolution or illegible),
-  REJECT_COLLAGE (multi-image grid, swatch sheet, moodboard).
-- flat_artwork_score: 1.0 = completely flat 2D graphic, vector, top-down seamless repeat; 0.0 = angled 3D photo, room interior, or multi-panel swatch.
-- printability_score: 1.0 = ready for POD direct printing; 0.0 = multi-tile collage, cluttered, dirty, occluded, or text-laden.
-- source_role: artwork_source can be printed directly; style_reference is only for palette/style; extraction_required needs foreground separation; reject is unusable.
-- A 3D room photo or angled lifestyle photo is NEVER artwork_source.
+Guidelines:
+- product_present: true if a usable product design, pattern, texture, or artwork is present.
+- product_role PRIMARY: the product design, motif, or artwork is the main subject.
+- product_visibility: visual clarity of the product or motif (0..100).
+- trend_relevance (0..100): evaluates how well this visual matches the candidate's trend or query from metadata.
+- commercial_quality (0..100): print/ecommerce aesthetic quality.
+- is_single_clean_artwork: true if the image is a single clean product photo or single artwork (NOT a multi-panel grid, swatch sheet, or collage).
+- flat_artwork_score: 1.0 = completely flat 2D graphic/pattern; 0.2 = 3D physical product photo or lifestyle shot.
+- printability_score: 1.0 = ready for direct POD printing; 0.6 = product reference or motif requiring placement/extraction.
+- source_role:
+  - artwork_source: flat graphic/pattern that can be printed directly.
+  - style_reference: aesthetic product photo or lifestyle styling for inspiration.
+  - extraction_required: product photo where the motif or texture can be extracted for POD.
+  - reject: unusable, collage, text block, or spam.
 
 Image metadata:
 {json.dumps(payload, ensure_ascii=False, indent=2)}
@@ -365,11 +369,6 @@ Image metadata:
                 source_role = "reject"
                 if not reject_reason_code:
                     reject_reason_code = "REJECT_TEXT_BLOCK"
-            if not is_single_clean_artwork:
-                accepted = False
-                source_role = "reject"
-                if not reject_reason_code:
-                    reject_reason_code = "REJECT_NOT_SINGLE_PRODUCT"
 
             trend_relevance_raw = clamp(item.get("trend_relevance"))
             if self.crawl_purpose == "inspiration" and accepted:

@@ -57,8 +57,6 @@ def policy_reject_reason(candidate: ImageCandidate, vision: VisionResult, policy
             return "REJECT_COLLAGE"
         if getattr(vision, "has_commercial_metadata_text", False):
             return "REJECT_TEXT_BLOCK"
-        if hasattr(vision, "is_single_clean_artwork") and not vision.is_single_clean_artwork:
-            return "REJECT_NOT_SINGLE_PRODUCT"
         if product_policy.reject_collage and vision.is_collage:
             return "REJECT_COLLAGE"
         if product_policy.require_physical_product and not vision.is_physical_product:
@@ -141,11 +139,9 @@ def inspiration_reject_reason(
         return "REJECT_COLLAGE"
     if getattr(vision, "has_commercial_metadata_text", False):
         return "REJECT_TEXT_BLOCK"
-    if hasattr(vision, "is_single_clean_artwork") and not vision.is_single_clean_artwork:
-        return "REJECT_NOT_SINGLE_PRODUCT"
     if vision.reject_reason_code:
         return vision.reject_reason_code
-    if main_subject in {"text", "logo"} or product_type in {"not_usable", "unknown"}:
+    if main_subject in {"text", "logo"} or product_type == "not_usable":
         return f"REJECT_MAIN_SUBJECT_{main_subject.upper() or product_type.upper()}"
     return ""
 
