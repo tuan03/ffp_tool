@@ -103,6 +103,38 @@ export function TrendClusterDiscovery({
         </div>
       </div>
 
+      {/* Multi-Query Matrix Global Stats Banner */}
+      {activeResult.query_matrix_stats && (
+        <div className="flex flex-col gap-2 rounded-xl border border-cyan-500/40 bg-gradient-to-r from-cyan-950/40 via-blue-950/30 to-indigo-950/40 p-3.5 text-xs shadow-inner">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="rounded-md bg-cyan-500/20 border border-cyan-400/40 px-2.5 py-1 text-cyan-200 font-bold flex items-center gap-1.5">
+                <span>🚀 Quét Ma trận Toàn cầu:</span>
+                <span className="text-white">{activeResult.query_matrix_stats.successful_queries}/{activeResult.query_matrix_stats.total_queries} queries thành công</span>
+              </span>
+              <span className="rounded-md bg-slate-800/90 border border-slate-700/80 px-2.5 py-1 text-slate-300">
+                📊 <strong>{activeResult.query_matrix_stats.raw_keywords_count}</strong> từ khóa thô → <strong>{activeResult.query_matrix_stats.unique_keywords_count ?? activeResult.total_keywords}</strong> từ khóa độc nhất
+              </span>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-[11px] text-slate-400 font-medium">Thị trường:</span>
+              {activeResult.query_matrix_stats.markets.map((m) => (
+                <span key={m} className="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] font-bold text-cyan-300 border border-slate-700">
+                  {m === "US" ? "🇺🇸 US" : m === "CA" ? "🇨🇦 CA" : m === "DE" ? "🇩🇪 DE" : m === "FR" ? "🇫🇷 FR" : m === "ES" ? "🇪🇸 ES" : m === "IT" ? "🇮🇹 IT" : m === "GB" ? "🇬🇧 GB" : m === "AU" ? "🇦🇺 AU" : m}
+                </span>
+              ))}
+              <span className="text-[11px] text-slate-400 font-medium ml-1">Xu hướng:</span>
+              {activeResult.query_matrix_stats.trend_types.map((t) => (
+                <span key={t} className="rounded bg-indigo-950/70 px-1.5 py-0.5 text-[10px] font-bold text-indigo-300 border border-indigo-700/50">
+                  {t === "growing" ? "🔥 Tăng trưởng" : t === "monthly" ? "📅 Hàng tháng" : t === "seasonal" ? "🍂 Mùa vụ" : t}
+                </span>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Summary Chips */}
       <div className="flex flex-wrap items-center gap-2 text-xs">
         <span className="rounded-md bg-slate-800 px-2.5 py-1 text-slate-300 font-medium">
@@ -206,6 +238,46 @@ export function TrendClusterDiscovery({
                 </div>
               )}
 
+              {/* Cluster Keywords with Market & Growth Badges */}
+              {cluster.keywords && cluster.keywords.length > 0 && (
+                <div className="flex flex-col gap-1 border-t border-slate-800/80 pt-2">
+                  <div className="flex items-center justify-between text-[10px] text-slate-400 font-medium">
+                    <span>Từ khóa xu hướng trong cụm ({cluster.keywords.length}):</span>
+                    <span>Thị trường & Loại xu hướng</span>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5 pt-0.5">
+                    {cluster.keywords.slice(0, 5).map((kw) => (
+                      <div
+                        key={kw.keyword}
+                        className="flex items-center gap-1.5 rounded bg-slate-900 border border-slate-800 px-2 py-0.5 text-[11px] text-slate-200"
+                      >
+                        <span className="font-medium truncate max-w-[140px]">{kw.keyword}</span>
+                        {kw.markets && kw.markets.length > 1 && (
+                          <span className="rounded bg-amber-500/20 px-1 text-[9px] font-bold text-amber-300 border border-amber-500/30">
+                            🌍 {kw.markets.length} QG
+                          </span>
+                        )}
+                        {kw.markets && kw.markets.length === 1 && (
+                          <span className="rounded bg-slate-800 px-1 text-[9px] font-bold text-cyan-300">
+                            {kw.markets[0]}
+                          </span>
+                        )}
+                        {kw.pct_growth_mom !== undefined && (
+                          <span className="text-[10px] text-emerald-400 font-semibold">
+                            +{kw.pct_growth_mom}%
+                          </span>
+                        )}
+                      </div>
+                    ))}
+                    {cluster.keywords.length > 5 && (
+                      <span className="text-[10px] text-slate-400 self-center">
+                        +{cluster.keywords.length - 5} từ khóa khác...
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )}
+
               {/* Fused 2D Pattern Queries */}
               {fusedQueries.length > 0 && (
                 <div className="flex flex-col gap-1 border-t border-slate-800/80 pt-2.5">
@@ -276,12 +348,26 @@ export function TrendClusterDiscovery({
                   className="flex items-center justify-between gap-2 rounded-lg border border-slate-800 bg-slate-900/70 p-2.5 text-xs"
                 >
                   <div className="flex flex-col gap-0.5 truncate">
-                    <span className="font-medium text-slate-200 truncate line-through opacity-80">
-                      {kw.keyword}
-                    </span>
-                    <span className="text-[10px] text-rose-400 truncate">
-                      {kw.reject_reason || "Từ khóa phi ấn phẩm"}
-                    </span>
+                    <div className="flex items-center gap-1.5 truncate">
+                      <span className="font-medium text-slate-200 truncate line-through opacity-80">
+                        {kw.keyword}
+                      </span>
+                      {kw.markets && kw.markets.length > 1 && (
+                        <span className="rounded bg-slate-800 px-1 text-[8px] font-bold text-amber-300/80">
+                          {kw.markets.length} QG
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="text-[10px] text-rose-400 truncate">
+                        {kw.reject_reason || "Từ khóa phi ấn phẩm"}
+                      </span>
+                      {kw.markets && kw.markets.length > 0 && (
+                        <span className="rounded bg-slate-800/90 px-1 text-[8px] text-slate-400 font-mono">
+                          {kw.markets.join(", ")}
+                        </span>
+                      )}
+                    </div>
                   </div>
 
                   <button

@@ -44,7 +44,7 @@ export function PinterestPodStudio({ client: injectedClient }: PinterestPodStudi
   const [product, setProduct] = useState<PinterestProductType>("bag");
   const [crawlCount, setCrawlCount] = useState(40);
   const [referenceImages, setReferenceImages] = useState<readonly ReferenceImage[]>([]);
-  const [trendType, setTrendType] = useState<"growing" | "monthly" | "seasonal">("growing");
+  const [trendType, setTrendType] = useState<"growing" | "monthly" | "seasonal" | "ALL">("growing");
   const [interest, setInterest] = useState<string>("");
   const [region, setRegion] = useState<string>("US");
 

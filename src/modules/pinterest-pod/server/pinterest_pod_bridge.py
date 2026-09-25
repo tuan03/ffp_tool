@@ -9,6 +9,7 @@ with size variants, pricing, and print CMYK metafields.
 from __future__ import annotations
 
 import base64
+import concurrent.futures
 import copy
 import dataclasses
 import json
@@ -3845,19 +3846,52 @@ def _classify_reject_reason(keyword: str) -> tuple[str, str]:
     return "Không đạt tiêu chuẩn in ấn đồ họa 2D (Stop-words lọc ấn phẩm)", "NON_PRINTABLE_GATE"
 
 
+SUPPORTED_TREND_REGIONS: tuple[str, ...] = ("US", "CA", "DE", "FR", "ES", "IT")
+SUPPORTED_TREND_TYPES: tuple[str, ...] = ("growing", "monthly", "seasonal")
+
+
 def discover_pinterest_trends(payload: dict[str, Any]) -> dict[str, Any]:
     """Tier 1: Collect trending keywords from Pinterest Trends API + Graphic Printability Gate.
+    Supports single queries or multi-query matrix across trend types and regions (e.g. 3 x 6 = 18 calls).
     Tier 2: Cluster accepted keywords into 3-5 diverse Theme Clusters with fused pattern queries.
     """
     niche = str(payload.get("niche") or "").strip()
     if not niche:
         raise ValueError("Vui lòng nhập Pinterest niche hoặc từ khóa xu hướng.")
 
-    trend_type = str(payload.get("trend_type") or "growing").strip()
-    region = str(payload.get("region") or "US").strip().upper()
+    raw_trend_type = str(payload.get("trend_type") or "growing").strip().lower()
+    raw_region = str(payload.get("region") or "US").strip().upper()
     interest = str(payload.get("interest") or "").strip()
     raw_product = str(payload.get("product") or "").strip().lower()
     product = raw_product if raw_product in {"rug", "blanket", "bag", "custom"} else infer_product_type_from_niche(niche)
+    multi_matrix = bool(payload.get("multi_matrix"))
+
+    # Resolve target regions
+    if raw_region in {"ALL", "GLOBAL"} or multi_matrix:
+        target_regions = list(SUPPORTED_TREND_REGIONS)
+    elif isinstance(payload.get("regions"), (list, tuple)) and payload.get("regions"):
+        target_regions = [str(r).strip().upper() for r in payload.get("regions") if str(r).strip()]
+    else:
+        target_regions = [raw_region]
+
+    # Resolve target trend types
+    if raw_trend_type in {"all", "global"} or multi_matrix:
+        target_trend_types = list(SUPPORTED_TREND_TYPES)
+    elif isinstance(payload.get("trend_types"), (list, tuple)) and payload.get("trend_types"):
+        target_trend_types = [str(t).strip().lower() for t in payload.get("trend_types") if str(t).strip()]
+    else:
+        target_trend_types = [raw_trend_type]
+
+    total_planned_queries = len(target_regions) * len(target_trend_types)
+    query_stats: dict[str, Any] = {
+        "total_queries": total_planned_queries,
+        "successful_queries": 0,
+        "failed_queries": 0,
+        "markets": target_regions,
+        "trend_types": target_trend_types,
+        "raw_keywords_count": 0,
+        "unique_keywords_count": 0,
+    }
 
     try:
         from pinterest.trend_finder.semantic_analyzer import NON_PRINTABLE_GATE_REGEX, PRODUCT_CONTAINER_PATTERN
@@ -3878,38 +3912,92 @@ def discover_pinterest_trends(payload: dict[str, Any]) -> dict[str, Any]:
             flags=re.IGNORECASE,
         )
 
-    # 1. Try Pinterest API if authenticated
-    api_keywords: list[dict[str, Any]] = []
+    # 1. Try Pinterest API if authenticated (Multi-Query Matrix via ThreadPoolExecutor)
+    api_keywords_by_name: dict[str, dict[str, Any]] = {}
     oauth_valid, token_data = check_oauth_token_valid()
     if oauth_valid and token_data and not os.getenv("MOCK_PINTEREST"):
         try:
             from pinterest.trend_finder.pinterest_client import PinterestClient
             token_file = (ROOT / "pinterest" / ".pinterest_oauth_tokens.json").resolve()
             client = PinterestClient(token_path=token_file if token_file.exists() else None)
-            endpoint = f"/trends/keywords/{region}/top/{trend_type}"
-            params: dict[str, Any] = {"limit": 50}
-            if interest:
-                params["interests"] = [interest]
-            resp = client.get(endpoint, params=params)
-            raw_items = []
-            if isinstance(resp, dict):
-                raw_items = resp.get("trends") or resp.get("keywords") or resp.get("items") or []
-            elif isinstance(resp, list):
-                raw_items = resp
-            for idx, itm in enumerate(raw_items, start=1):
-                if isinstance(itm, dict):
-                    kw_name = itm.get("keyword") or itm.get("name") or ""
-                    if kw_name:
-                        api_keywords.append({
-                            "keyword": kw_name,
-                            "rank": idx,
-                            "pct_growth_mom": float(itm.get("pct_growth_mom") or 0.0),
-                            "pct_growth_wow": float(itm.get("pct_growth_wow") or 0.0),
-                            "pct_growth_yoy": float(itm.get("pct_growth_yoy") or 0.0),
-                            "monthly_searches": int(itm.get("monthly_searches") or 0),
-                        })
+
+            def fetch_single_matrix_cell(reg: str, t_type: str) -> tuple[str, str, list[dict[str, Any]], bool, str]:
+                endpoint = f"/trends/keywords/{reg}/top/{t_type}"
+                params: dict[str, Any] = {"limit": 50}
+                if interest:
+                    params["interests"] = [interest]
+                try:
+                    resp = client.get(endpoint, params=params)
+                    raw_items = []
+                    if isinstance(resp, dict):
+                        raw_items = resp.get("trends") or resp.get("keywords") or resp.get("items") or []
+                    elif isinstance(resp, list):
+                        raw_items = resp
+                    return (reg, t_type, raw_items, True, "")
+                except Exception as exc:
+                    return (reg, t_type, [], False, str(exc))
+
+            max_workers = min(max(total_planned_queries, 1), 8)
+            query_matrix_pairs = [(r, t) for r in target_regions for t in target_trend_types]
+            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures = [executor.submit(fetch_single_matrix_cell, r, t) for r, t in query_matrix_pairs]
+                for future in concurrent.futures.as_completed(futures):
+                    reg, t_type, raw_items, is_ok, err_msg = future.result()
+                    if is_ok:
+                        query_stats["successful_queries"] += 1
+                        query_stats["raw_keywords_count"] += len(raw_items)
+                        for idx, itm in enumerate(raw_items, start=1):
+                            if not isinstance(itm, dict):
+                                continue
+                            kw_name = (itm.get("keyword") or itm.get("name") or "").strip()
+                            if not kw_name:
+                                continue
+                            kw_key = kw_name.lower()
+                            mom = float(itm.get("pct_growth_mom") or 0.0)
+                            wow = float(itm.get("pct_growth_wow") or 0.0)
+                            yoy = float(itm.get("pct_growth_yoy") or 0.0)
+                            searches = int(itm.get("monthly_searches") or 0)
+
+                            if kw_key not in api_keywords_by_name:
+                                api_keywords_by_name[kw_key] = {
+                                    "keyword": kw_name,
+                                    "rank": idx,
+                                    "pct_growth_mom": mom,
+                                    "pct_growth_wow": wow,
+                                    "pct_growth_yoy": yoy,
+                                    "monthly_searches": searches,
+                                    "markets": [reg],
+                                    "trend_types": [t_type],
+                                    "occurrences": 1,
+                                }
+                            else:
+                                entry = api_keywords_by_name[kw_key]
+                                if reg not in entry["markets"]:
+                                    entry["markets"].append(reg)
+                                if t_type not in entry["trend_types"]:
+                                    entry["trend_types"].append(t_type)
+                                entry["occurrences"] += 1
+                                entry["pct_growth_mom"] = max(entry["pct_growth_mom"], mom)
+                                entry["pct_growth_wow"] = max(entry["pct_growth_wow"], wow)
+                                entry["pct_growth_yoy"] = max(entry["pct_growth_yoy"], yoy)
+                                entry["monthly_searches"] = max(entry["monthly_searches"], searches)
+                                entry["rank"] = min(entry["rank"], idx)
+                    else:
+                        query_stats["failed_queries"] += 1
+                        logger.warning("Pinterest Trends API matrix query failed for (%s, %s): %s", reg, t_type, err_msg)
         except Exception as exc:
-            logger.warning("Pinterest Trends API fetch warning: %s; using dynamic semantic generator.", exc)
+            logger.warning("Pinterest Trends multi-query matrix warning: %s; using dynamic semantic generator.", exc)
+
+    if api_keywords_by_name:
+        query_stats["unique_keywords_count"] = len(api_keywords_by_name)
+        # Prioritize multi-market viral trends, then highest MoM growth
+        api_keywords = sorted(
+            api_keywords_by_name.values(),
+            key=lambda x: (len(x.get("markets", [])), x.get("occurrences", 1), x.get("pct_growth_mom", 0.0)),
+            reverse=True,
+        )
+    else:
+        api_keywords = []
 
     # 2. Dynamic generation if API returned empty or offline
     clean_niche = niche.lower()
@@ -3941,7 +4029,13 @@ def discover_pinterest_trends(payload: dict[str, Any]) -> dict[str, Any]:
             (f"daily positive workout fitness text quotes", 19, 60.0, 15.0, 35.0),
             (f"aesthetic iphone wallpaper lock screen", 20, 85.0, 28.0, 65.0),
         ]
-        for kw, rk, mom, wow, yoy in dynamic_specs:
+        for idx, (kw, rk, mom, wow, yoy) in enumerate(dynamic_specs, start=1):
+            m_list = [target_regions[idx % len(target_regions)]]
+            if len(target_regions) > 1:
+                m_list.append(target_regions[(idx + 1) % len(target_regions)])
+            t_list = [target_trend_types[idx % len(target_trend_types)]]
+            if idx % 2 == 0 and len(target_trend_types) > 1:
+                t_list.append(target_trend_types[(idx + 1) % len(target_trend_types)])
             base_pool.append({
                 "keyword": kw,
                 "rank": rk,
@@ -3949,7 +4043,13 @@ def discover_pinterest_trends(payload: dict[str, Any]) -> dict[str, Any]:
                 "pct_growth_wow": wow,
                 "pct_growth_yoy": yoy,
                 "monthly_searches": int(rk * 1200 + 4500),
+                "markets": m_list,
+                "trend_types": t_list,
+                "occurrences": len(m_list) * len(t_list),
             })
+        query_stats["successful_queries"] = total_planned_queries
+        query_stats["raw_keywords_count"] = len(base_pool) * (len(target_regions) if len(target_regions) > 1 else 1)
+        query_stats["unique_keywords_count"] = len(base_pool)
 
     # 3. Filter through Graphic Printability Gate
     all_keywords: list[dict[str, Any]] = []
@@ -4112,8 +4212,9 @@ def discover_pinterest_trends(payload: dict[str, Any]) -> dict[str, Any]:
         "ok": True,
         "niche": niche,
         "product": product,
-        "trend_type": trend_type,
-        "region": region,
+        "trend_type": raw_trend_type,
+        "region": raw_region,
+        "query_matrix_stats": query_stats,
         "clusters": clusters,
         "all_keywords": all_keywords,
         "accepted_keywords": accepted_keywords,

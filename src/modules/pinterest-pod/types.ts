@@ -95,6 +95,9 @@ export interface TrendingKeywordItem {
   readonly reject_reason?: string;
   readonly reject_reason_code?: string;
   readonly suggested_fused_query?: string;
+  readonly markets?: readonly string[];
+  readonly trend_types?: readonly string[];
+  readonly occurrences?: number;
 }
 
 /** 3-5 Diverse Theme Cluster synthesized by AI */
@@ -117,14 +120,28 @@ export interface ThemeCluster {
   readonly selected?: boolean;
 }
 
+/** Multi-Query Matrix Statistics */
+export interface QueryMatrixStats {
+  readonly total_queries: number;
+  readonly successful_queries: number;
+  readonly failed_queries: number;
+  readonly markets: readonly string[];
+  readonly trend_types: readonly string[];
+  readonly raw_keywords_count: number;
+  readonly unique_keywords_count?: number;
+}
+
 /** Trend Discovery Input */
 export interface TrendDiscoveryInput {
   readonly niche: string;
   readonly product?: PinterestProductType | string;
-  readonly trend_type?: "growing" | "seasonal" | "monthly" | string;
+  readonly trend_type?: "growing" | "seasonal" | "monthly" | "ALL" | string;
   readonly interest?: string;
   readonly interests?: string;
-  readonly region?: "US" | "GB" | "CA" | "DE" | string;
+  readonly region?: "US" | "GB" | "CA" | "DE" | "FR" | "ES" | "IT" | "AU" | "ALL" | string;
+  readonly multi_matrix?: boolean;
+  readonly regions?: readonly string[];
+  readonly trend_types?: readonly string[];
 }
 
 /** Trend Discovery Result */
@@ -134,6 +151,7 @@ export interface TrendDiscoveryResult {
   readonly product?: string;
   readonly region?: string;
   readonly trend_type?: string;
+  readonly query_matrix_stats?: QueryMatrixStats;
   readonly clusters: readonly ThemeCluster[];
   readonly all_keywords?: readonly TrendingKeywordItem[];
   readonly accepted_keywords?: readonly TrendingKeywordItem[];

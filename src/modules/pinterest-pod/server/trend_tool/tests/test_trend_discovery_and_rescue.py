@@ -102,6 +102,32 @@ class TestPinterestTrendDiscoveryAndRescue(unittest.TestCase):
             self.assertTrue(bool(rk.get("reject_reason")))
             self.assertTrue(bool(rk.get("reject_reason_code")))
 
+    def test_discover_pinterest_trends_multi_query_matrix(self):
+        res = discover_pinterest_trends({
+            "niche": "halloween spooky cute blanket",
+            "trend_type": "ALL",
+            "region": "ALL",
+        })
+        self.assertTrue(res["ok"])
+        self.assertEqual(res["trend_type"], "all")
+        self.assertEqual(res["region"], "ALL")
+        self.assertIn("query_matrix_stats", res)
+        stats = res["query_matrix_stats"]
+        self.assertEqual(stats["total_queries"], 18)
+        self.assertGreaterEqual(stats["successful_queries"], 1)
+        self.assertEqual(len(stats["markets"]), 6)
+        self.assertEqual(len(stats["trend_types"]), 3)
+        self.assertGreater(stats["raw_keywords_count"], 0)
+        self.assertGreater(stats["unique_keywords_count"], 0)
+
+        # Keywords must contain market and trend_type metadata
+        for kw in res["accepted_keywords"]:
+            self.assertIn("markets", kw)
+            self.assertIn("trend_types", kw)
+            self.assertIn("occurrences", kw)
+            self.assertGreaterEqual(len(kw["markets"]), 1)
+            self.assertGreaterEqual(len(kw["trend_types"]), 1)
+
     def test_discover_pinterest_trends_empty_niche(self):
         with self.assertRaises(ValueError):
             discover_pinterest_trends({"niche": ""})

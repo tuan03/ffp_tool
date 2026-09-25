@@ -69,8 +69,8 @@ export interface InitFormProps {
   readonly aiBackgroundVariants?: number;
   readonly onAiBackgroundVariantsChange?: (count: number) => void;
   /** Advanced Pinterest API settings */
-  readonly trendType?: "growing" | "monthly" | "seasonal";
-  readonly onTrendTypeChange?: (trendType: "growing" | "monthly" | "seasonal") => void;
+  readonly trendType?: "growing" | "monthly" | "seasonal" | "ALL";
+  readonly onTrendTypeChange?: (trendType: "growing" | "monthly" | "seasonal" | "ALL") => void;
   readonly interest?: string;
   readonly onInterestChange?: (interest: string) => void;
   readonly region?: string;
@@ -103,6 +103,18 @@ export function InitForm({
 }: InitFormProps): React.JSX.Element {
   const [isAdvancedOpen, setIsAdvancedOpen] = useState(false);
   const [overrideProduct, setOverrideProduct] = useState(false);
+
+  const isMatrixMode = trendType === "ALL" && region.toUpperCase() === "ALL";
+
+  const handleToggleMatrixMode = (): void => {
+    if (isMatrixMode) {
+      onTrendTypeChange?.("growing");
+      onRegionChange?.("US");
+    } else {
+      onTrendTypeChange?.("ALL");
+      onRegionChange?.("ALL");
+    }
+  };
 
   const isBusy = jobStatus === "running" || jobStatus === "producing" || isDiscoveringTrends;
   const inferredProduct = niche.trim() ? inferProductTypeFromNiche(niche) : "bag";
@@ -306,6 +318,49 @@ export function InitForm({
         </div>
       </div>
 
+      {/* Multi-Query Matrix Quick Toggle Banner */}
+      <div className={`flex flex-col sm:flex-row items-center justify-between gap-3 rounded-xl border p-3.5 transition ${
+        isMatrixMode
+          ? "border-cyan-500/80 bg-gradient-to-r from-cyan-950/60 via-indigo-950/50 to-blue-950/60 shadow-lg shadow-cyan-500/10 ring-1 ring-cyan-500/40"
+          : "border-slate-800 bg-slate-950/50 hover:border-slate-700"
+      }`}>
+        <div className="flex items-center gap-2.5">
+          <span className="text-xl">🌐</span>
+          <div className="flex flex-col">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-bold text-slate-100">
+                Chế độ Quét Ma trận Toàn cầu (Multi-Market Matrix)
+              </span>
+              <span className={`rounded-full px-2 py-0.2 text-[9px] font-bold ${
+                isMatrixMode
+                  ? "bg-cyan-500/30 text-cyan-300 border border-cyan-400/50 animate-pulse"
+                  : "bg-slate-800 text-slate-400"
+              }`}>
+                {isMatrixMode ? "🔥 ĐANG BẬT: 18 API CALLS" : "1 API CALL (Đơn lẻ)"}
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-400 mt-0.5">
+              {isMatrixMode
+                ? "Quét đồng thời 3 loại xu hướng × 6 thị trường lớn (US, CA, DE, FR, ES, IT) qua Multi-Threading ~2.5s, tự động gom ~900 từ khóa & xếp hạng."
+                : "Chỉ quét 1 thị trường & 1 loại xu hướng đơn lẻ. Bấm nút bên cạnh để kích hoạt quét ma trận toàn diện 18 calls."}
+            </p>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          disabled={isBusy}
+          onClick={handleToggleMatrixMode}
+          className={`shrink-0 rounded-xl px-3.5 py-2 text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
+            isMatrixMode
+              ? "bg-cyan-500 text-slate-950 shadow hover:bg-cyan-400"
+              : "border border-cyan-800/80 bg-cyan-950/40 text-cyan-300 hover:bg-cyan-900/60 hover:text-white"
+          } disabled:opacity-50`}
+        >
+          <span>{isMatrixMode ? "✓ Đang kích hoạt 18 calls" : "🚀 Bật Quét Ma trận (18 calls)"}</span>
+        </button>
+      </div>
+
       {/* Main Action Buttons */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
         <button
@@ -319,7 +374,9 @@ export function InitForm({
             <span>{isDiscoveringTrends ? "Đang phân tích xu hướng..." : "Khám phá Xu hướng (Tier 1 & 2)"}</span>
           </div>
           <span className="text-[10px] text-cyan-200/90 font-normal">
-            Phân tích cụm chủ đề AI, lọc từ khóa phi ấn phẩm & chọn cụm cào
+            {isMatrixMode
+              ? "Quét ma trận 18 calls toàn cầu, AI lọc & nhóm 3-5 cụm chủ đề chuẩn in ấn"
+              : "Phân tích cụm chủ đề AI, lọc từ khóa phi ấn phẩm & chọn cụm cào"}
           </span>
         </button>
 
@@ -426,10 +483,11 @@ export function InitForm({
                 <select
                   id="trend-type-select"
                   value={trendType}
-                  onChange={(e) => onTrendTypeChange?.(e.target.value as "growing" | "monthly" | "seasonal")}
+                  onChange={(e) => onTrendTypeChange?.(e.target.value as "growing" | "monthly" | "seasonal" | "ALL")}
                   disabled={isBusy}
                   className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs text-slate-200 focus:border-cyan-400 focus:outline-none disabled:opacity-50"
                 >
+                  <option value="ALL">🔥 Tất cả 3 loại xu hướng (Growing + Monthly + Seasonal - Quét Ma trận)</option>
                   <option value="growing">Đang tăng trưởng mạnh (Growing)</option>
                   <option value="monthly">Xu hướng hàng tháng (Monthly)</option>
                   <option value="seasonal">Xu hướng theo mùa vụ (Seasonal)</option>
@@ -468,14 +526,39 @@ export function InitForm({
                   disabled={isBusy}
                   className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs text-slate-200 focus:border-cyan-400 focus:outline-none disabled:opacity-50"
                 >
+                  <option value="ALL">🌍 Tất cả 6 thị trường lớn (US, CA, DE, FR, ES, IT - Quét Ma trận)</option>
                   <option value="US">Hoa Kỳ (United States - US) 🇺🇸</option>
-                  <option value="GB">Vương Quốc Anh (United Kingdom - GB) 🇬🇧</option>
                   <option value="CA">Canada (CA) 🇨🇦</option>
                   <option value="DE">Đức (Germany - DE) 🇩🇪</option>
                   <option value="FR">Pháp (France - FR) 🇫🇷</option>
+                  <option value="ES">Tây Ban Nha (Spain - ES) 🇪🇸</option>
+                  <option value="IT">Ý (Italy - IT) 🇮🇹</option>
+                  <option value="GB">Vương Quốc Anh (United Kingdom - GB) 🇬🇧</option>
                   <option value="AU">Úc (Australia - AU) 🇦🇺</option>
                 </select>
               </div>
+            </div>
+
+            {/* Dynamic Matrix Execution Preview */}
+            <div className="rounded-lg border border-cyan-900/50 bg-cyan-950/20 p-2.5 text-xs text-cyan-200/90 flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <span>⚡</span>
+                <span>
+                  Kế hoạch truy vấn:{" "}
+                  <strong className="text-cyan-300">
+                    {isMatrixMode
+                      ? "18 API calls đồng thời (3 loại xu hướng × 6 thị trường lớn)"
+                      : trendType === "ALL"
+                      ? `3 API calls đồng thời (3 loại xu hướng tại ${region})`
+                      : region.toUpperCase() === "ALL"
+                      ? `6 API calls đồng thời (6 thị trường lớn cho loại ${trendType})`
+                      : `1 API call đơn lẻ (${trendType} tại ${region})`}
+                  </strong>
+                </span>
+              </div>
+              <span className="text-[11px] text-slate-400 font-mono">
+                {isMatrixMode ? "~2.5s qua Multi-Threading" : "~1.5s"}
+              </span>
             </div>
           </div>
         )}
