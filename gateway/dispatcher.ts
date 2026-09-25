@@ -31,6 +31,7 @@ import {
   executeFilesStageBinary,
 } from "./operations/files-write";
 import { executeMetafieldsGet, executeMetafieldsSet } from "./operations/metafields-write";
+import { executeAmazonAsinPreflight } from "./operations/amazon-asin-preflight";
 import {
   executeStoresGet,
   executeStoresList,
@@ -52,6 +53,7 @@ const WRITE_OPERATIONS: ReadonlySet<string> = new Set([
   "files.stageBinary",
   "files.delete",
   "metafields.set",
+  "products.preflightAmazonAsins",
   "collections.create",
   "collections.update",
   "collections.delete",
@@ -466,6 +468,8 @@ export class GatewayDispatcher {
         return executeFilesDelete(this.graphqlClient, store, payload, mode);
       case "metafields.set":
         return executeMetafieldsSet(store, this.graphqlClient, payload, mode, requestId);
+      case "products.preflightAmazonAsins":
+        return executeAmazonAsinPreflight(store, this.graphqlClient, payload, mode, requestId);
       case "collections.create":
         return executeCollectionsCreate(store, this.graphqlClient, payload, mode, requestId);
       case "collections.update":

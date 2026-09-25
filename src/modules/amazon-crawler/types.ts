@@ -43,6 +43,22 @@ export interface AmazonCrawlerInput extends AmazonCrawlerSettings {
   urls: readonly string[];
 }
 
+export interface AmazonAsinPreflightMatch {
+  readonly asin: string;
+  readonly productId: string;
+  readonly title: string;
+  readonly adminUrl: string;
+}
+
+export interface AmazonAsinPreflightResult {
+  readonly ready: boolean;
+  readonly matches: readonly AmazonAsinPreflightMatch[];
+}
+
+export interface AmazonAsinChecker {
+  (storeId: string, asins: readonly string[]): Promise<AmazonAsinPreflightResult>;
+}
+
 export interface AmazonCrawlerActiveVariant {
   asin: string;
   options: Record<string, string>;

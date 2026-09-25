@@ -1,10 +1,12 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { notifyUser } from "../../../shared/utils";
 
 import {
   type AmazonCrawlerCacheClearer,
+  type AmazonAsinChecker,
+  type AmazonAsinPreflightMatch,
   type AmazonCrawlerClientSummary,
   type AmazonCrawlerClientsLoader,
   type AmazonCrawlerHandoverHandler,
@@ -20,9 +22,11 @@ import {
   type ImageProcessingProfile,
   type ImageProcessingProfileManager,
 } from "../types";
+import { createAmazonAsinChecker } from "../service";
 
 import {
   abortCrawlerJob,
+  getCrawlerSessionState,
   hydrateCrawlerSessionFromJob,
   resetCrawlerOutput,
   resetCrawlerSettings,
@@ -46,9 +50,11 @@ import {
   shouldShowStandaloneJobControlMessage,
 } from "./job-cancellation";
 import { formatPipelineTimings } from "./pipeline-timings";
+import { runAfterAmazonAsinPreflight } from "./amazon-asin-preflight";
 import { AddStoreModal } from "./components/AddStoreModal";
 
 interface AmazonCrawlerPageProps {
+  checkAmazonAsins?: AmazonAsinChecker;
   amazonCrawlerJobs?: AmazonCrawlerJobController;
   clearAmazonCrawlerCache: AmazonCrawlerCacheClearer;
   loadAmazonCrawlerClients: AmazonCrawlerClientsLoader;
@@ -166,6 +172,7 @@ function isNotFoundError(value: unknown): boolean {
 }
 
 export function AmazonCrawlerPage({
+  checkAmazonAsins = createAmazonAsinChecker(),
   amazonCrawlerJobs,
   clearAmazonCrawlerCache,
   imageProcessingProfiles,
@@ -194,6 +201,10 @@ export function AmazonCrawlerPage({
     isBatchJsonOpen,
   } = session;
   const [isRetryingSync, setIsRetryingSync] = useState(false);
+  const preflightInFlight = useRef(false);
+  const [isCheckingAsins, setIsCheckingAsins] = useState(false);
+  const [asinPreflightError, setAsinPreflightError] = useState<string | null>(null);
+  const [asinPreflightMatches, setAsinPreflightMatches] = useState<readonly AmazonAsinPreflightMatch[]>([]);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
   const [isClearingCache, setIsClearingCache] = useState(false);
   const [cacheMessage, setCacheMessage] = useState<string | null>(null);
@@ -730,6 +741,8 @@ export function AmazonCrawlerPage({
   }, [availableStores, customStoreProductTypes, currentStoreId]);
 
   function handleStoreChange(nextStore: string): void {
+    setAsinPreflightError(null);
+    setAsinPreflightMatches([]);
     const nextStoreLower = nextStore.trim().toLowerCase();
     updateSetting("storeId", nextStore);
     updateSetting("collectionId", "");
@@ -821,11 +834,47 @@ export function AmazonCrawlerPage({
     return !matchesCurrentType && !matchesStore;
   }, [detectedProductNiche, settings.productType, currentStoreProductTypes]);
 
+  async function checkBeforeCrawl(
+    sources: readonly string[], storeId: string, startJob: () => Promise<void>,
+  ): Promise<void> {
+    if (preflightInFlight.current) return;
+    preflightInFlight.current = true;
+    setIsCheckingAsins(true);
+    setAsinPreflightError(null);
+    setAsinPreflightMatches([]);
+    const checkedUrlText = urlText;
+    try {
+      const checked = await runAfterAmazonAsinPreflight(sources, storeId, checkAmazonAsins, async () => {
+        const current = getCrawlerSessionState();
+        if (current.urlText !== checkedUrlText || (current.settings.storeId || "capozen") !== storeId) {
+          throw new Error("Link hoặc store đã thay đổi. Vui lòng bấm Start để kiểm tra lại.");
+        }
+        await startJob();
+      });
+      if (!checked.ready) {
+        setAsinPreflightError("Shopify đang lập chỉ mục custom.amazon_asin. Vui lòng thử lại sau.");
+        return;
+      }
+      if (checked.matches.length > 0) {
+        setAsinPreflightMatches(checked.matches);
+      }
+    } catch (caught: unknown) {
+      setAsinPreflightError(caught instanceof Error ? caught.message : "Không kiểm tra được ASIN trên Shopify.");
+    } finally {
+      preflightInFlight.current = false;
+      setIsCheckingAsins(false);
+    }
+  }
+
   async function handleStart(): Promise<void> {
-    setSyncMessage(null);
-    setCancellationJobId(null);
-    setJobControlMessage(null);
-    await startCrawlerJob({ runAmazonCrawler, urls, settings });
+    const sources = [...urls];
+    const jobSettings = { ...settings };
+    await checkBeforeCrawl(sources, jobSettings.storeId || "capozen", async () => {
+      setSyncMessage(null);
+      setCancellationJobId(null);
+      setJobControlMessage(null);
+      await startCrawlerJob({ runAmazonCrawler, urls: sources, settings: jobSettings });
+    });
   }
 
   async function handleStop(): Promise<void> {
@@ -901,24 +950,24 @@ export function AmazonCrawlerPage({
   }
 
   async function handleRunAgain(job: AmazonCrawlerJobSnapshot): Promise<void> {
-    if (!amazonCrawlerJobs || controlledJobId) return;
-    setControlledJobId(job.jobId);
-    setCancellationJobId(null);
-    try {
-      const replacement = await amazonCrawlerJobs.replace(job.jobId, {
-        ...settings,
-        urls: urls.length > 0 ? urls : job.inputs,
-      });
-      updateCrawlerSession({ activeJobId: replacement.jobId, isRunning: true, progress: replacement.progress, error: null });
-      setJobs((current) => [replacement, ...current]);
-      setJobControlTone("success");
-      setJobControlMessage(`Đã tạo replacement job ${replacement.jobId.slice(0, 8)}.`);
-    } catch (caught: unknown) {
-      setJobControlTone("error");
-      setJobControlMessage(caught instanceof Error ? caught.message : "Không tạo được replacement job.");
-    } finally {
-      setControlledJobId(null);
-    }
+    if (!amazonCrawlerJobs || controlledJobId || isCheckingAsins) return;
+    const sources = urls.length > 0 ? [...urls] : [...job.inputs];
+    await checkBeforeCrawl(sources, settings.storeId || "capozen", async () => {
+      setControlledJobId(job.jobId);
+      setCancellationJobId(null);
+      try {
+        const replacement = await amazonCrawlerJobs.replace(job.jobId, { ...settings, urls: sources });
+        updateCrawlerSession({ activeJobId: replacement.jobId, isRunning: true, progress: replacement.progress, error: null });
+        setJobs((current) => [replacement, ...current]);
+        setJobControlTone("success");
+        setJobControlMessage(`Đã tạo replacement job ${replacement.jobId.slice(0, 8)}.`);
+      } catch (caught: unknown) {
+        setJobControlTone("error");
+        setJobControlMessage(caught instanceof Error ? caught.message : "Không tạo được replacement job.");
+      } finally {
+        setControlledJobId(null);
+      }
+    });
   }
 
   async function handleRetrySyncs(): Promise<void> {
@@ -1056,7 +1105,11 @@ export function AmazonCrawlerPage({
           className="min-h-40 rounded-xl border border-slate-700 bg-slate-950 p-3 font-mono text-sm text-slate-100 outline-none focus:border-cyan-400"
           placeholder={"https://www.amazon.com/dp/B0...\nB0..."}
           value={urlText}
-          onChange={(event) => setCrawlerUrlText(event.target.value)}
+          onChange={(event) => {
+            setCrawlerUrlText(event.target.value);
+            setAsinPreflightError(null);
+            setAsinPreflightMatches([]);
+          }}
         />
       </label>
 
@@ -1714,7 +1767,7 @@ export function AmazonCrawlerPage({
                         <button className="rounded border border-emerald-600 px-3 py-1 text-xs font-semibold text-emerald-300" type="button" onClick={() => navigate("/seo-review")}>Kiểm duyệt SEO</button>
                       ) : ["completed", "partial"].includes(job.status) ? (
                         <>
-                          <button className="rounded border border-cyan-600 px-3 py-1 text-xs font-semibold text-cyan-300 disabled:opacity-50" disabled={controlledJobId !== null || coordinatorActiveJob !== undefined} type="button" onClick={() => void handleRunAgain(job)}>Run again</button>
+                          <button className="rounded border border-cyan-600 px-3 py-1 text-xs font-semibold text-cyan-300 disabled:opacity-50" disabled={controlledJobId !== null || coordinatorActiveJob !== undefined || isCheckingAsins} type="button" onClick={() => void handleRunAgain(job)}>Run again</button>
                           <button className="rounded border border-slate-600 px-3 py-1 text-xs font-semibold text-slate-300 disabled:opacity-50" disabled={controlledJobId !== null} type="button" onClick={() => void handleDeleteJob(job.jobId)}>Delete</button>
                         </>
                       ) : null}
@@ -1733,7 +1786,7 @@ export function AmazonCrawlerPage({
       ) : null}
 
       <div className="flex flex-wrap items-center gap-3">
-        <button className="rounded-lg bg-cyan-400 px-5 py-2 font-semibold text-slate-950 disabled:opacity-50" disabled={urls.length === 0 || isRunning || coordinatorActiveJob !== undefined} type="button" onClick={() => void handleStart()}>Start ({urls.length})</button>
+        <button className="rounded-lg bg-cyan-400 px-5 py-2 font-semibold text-slate-950 disabled:opacity-50" disabled={urls.length === 0 || isRunning || isCheckingAsins || coordinatorActiveJob !== undefined} type="button" onClick={() => void handleStart()}>{isCheckingAsins ? "Đang kiểm tra ASIN..." : `Start (${urls.length})`}</button>
         <button className="rounded-lg border border-rose-400 px-5 py-2 font-semibold text-rose-300 disabled:opacity-50" disabled={!isRunning || controlledJobId !== null || isCancellationPending} type="button" onClick={() => void handleStop()}>{isActiveStopPending ? "Đang dừng..." : "Stop"}</button>
         <button className="rounded-lg border border-emerald-500 px-5 py-2 font-semibold text-emerald-300 hover:bg-emerald-950/40" type="button" onClick={() => navigate("/seo-review")}>Mở SEO Review</button>
         {output === null && resultProducts.length === 0 ? null : (
@@ -1788,6 +1841,17 @@ export function AmazonCrawlerPage({
           </div>
         )}
       </div>
+      {asinPreflightError ? <p role="alert" className="rounded-lg border border-rose-700 bg-rose-950/40 p-3 text-sm text-rose-200">{asinPreflightError}</p> : null}
+      {asinPreflightMatches.length > 0 ? (
+        <div role="alert" className="rounded-lg border border-amber-700 bg-amber-950/30 p-3 text-sm text-amber-200">
+          <p className="font-semibold">Đã có {asinPreflightMatches.length} ASIN trên Shopify. Toàn bộ lô cào đã được chặn.</p>
+          <ul className="mt-2 space-y-1">
+            {asinPreflightMatches.map((match) => (
+              <li key={match.asin}>{match.asin} — <a className="underline" href={match.adminUrl} rel="noreferrer" target="_blank">{match.title}</a></li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
       {hydrateMessage && (
         <div className="flex items-center gap-2 rounded-lg border border-cyan-800/80 bg-cyan-950/30 px-3 py-2 text-xs text-cyan-200">
           {isHydratingJob && <span className="inline-block h-3 w-3 animate-spin rounded-full border border-cyan-300 border-r-transparent" />}

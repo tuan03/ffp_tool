@@ -1,4 +1,6 @@
 import type {
+  AmazonAsinChecker,
+  AmazonAsinPreflightResult,
   AmazonCrawlerInput,
   AmazonCrawlerCacheClearer,
   AmazonCrawlerClientSummary,
@@ -51,6 +53,36 @@ export class AmazonCrawlerServiceError extends Error {
     this.code = code;
     this.status = status;
   }
+}
+
+export function createAmazonAsinChecker(fetchImplementation: typeof fetch = fetch): AmazonAsinChecker {
+  return async (storeId, asins): Promise<AmazonAsinPreflightResult> => {
+    const response = await fetchImplementation("/api/shopify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        storeId,
+        operation: "products.preflightAmazonAsins",
+        mode: "apply",
+        requestId: `amazon-asin-preflight-${globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`}`,
+        payload: { asins },
+      }),
+    });
+    const body: unknown = await response.json().catch(() => null);
+    if (!response.ok || !isRecord(body) || body.success !== true || !isRecord(body.data)) {
+      const error = isRecord(body) && isRecord(body.error) && typeof body.error.message === "string"
+        ? body.error.message
+        : "Không kiểm tra được ASIN trên Shopify.";
+      throw new AmazonCrawlerServiceError(error, "SHOPIFY_ASIN_PREFLIGHT_FAILED", response.status);
+    }
+    const preflight = body.data;
+    if (typeof preflight.ready !== "boolean" || !Array.isArray(preflight.matches) ||
+      preflight.matches.some((match: unknown) => !isRecord(match) || typeof match.asin !== "string" ||
+        typeof match.productId !== "string" || typeof match.title !== "string" || typeof match.adminUrl !== "string")) {
+      throw new AmazonCrawlerServiceError("Shopify trả về kết quả kiểm tra ASIN không hợp lệ.", "INVALID_ENGINE_RESPONSE");
+    }
+    return preflight as unknown as AmazonAsinPreflightResult;
+  };
 }
 
 function normalizeEngineUrl(engineUrl: string): string {
