@@ -47,6 +47,13 @@ export function PinterestPodStudio({ client: injectedClient }: PinterestPodStudi
   const [trendType, setTrendType] = useState<"growing" | "monthly" | "seasonal" | "ALL">("growing");
   const [interest, setInterest] = useState<string>("");
   const [region, setRegion] = useState<string>("US");
+  const [selectedRegions, setSelectedRegions] = useState<readonly string[]>(["US", "CA", "DE", "FR", "ES", "IT"]);
+  const [selectedTrendTypes, setSelectedTrendTypes] = useState<readonly ("growing" | "monthly" | "seasonal")[]>([
+    "growing",
+    "monthly",
+    "seasonal",
+  ]);
+  const [selectedInterests, setSelectedInterests] = useState<readonly string[]>([]);
 
   // Trend Discovery State (Tier 1 & 2)
   const [trendDiscoveryResult, setTrendDiscoveryResult] = useState<TrendDiscoveryResult | null>(null);
@@ -505,6 +512,9 @@ export function PinterestPodStudio({ client: injectedClient }: PinterestPodStudi
         trend_type: trendType,
         interest: interest || undefined,
         region: region || undefined,
+        regions: selectedRegions.length > 0 ? selectedRegions : undefined,
+        trend_types: selectedTrendTypes.length > 0 ? selectedTrendTypes : undefined,
+        interests: selectedInterests.length > 0 ? selectedInterests : (interest ? [interest] : undefined),
       });
       if (!isMountedRef.current) return;
       setTrendDiscoveryResult(result);
@@ -900,6 +910,12 @@ export function PinterestPodStudio({ client: injectedClient }: PinterestPodStudi
                 onInterestChange={setInterest}
                 region={region}
                 onRegionChange={setRegion}
+                selectedRegions={selectedRegions}
+                onSelectedRegionsChange={setSelectedRegions}
+                selectedTrendTypes={selectedTrendTypes}
+                onSelectedTrendTypesChange={setSelectedTrendTypes}
+                selectedInterests={selectedInterests}
+                onSelectedInterestsChange={setSelectedInterests}
                 onDiscoverTrends={() => void handleDiscoverTrends()}
                 isDiscoveringTrends={isDiscoveringTrends}
               />

@@ -137,7 +137,7 @@ export interface TrendDiscoveryInput {
   readonly product?: PinterestProductType | string;
   readonly trend_type?: "growing" | "seasonal" | "monthly" | "ALL" | string;
   readonly interest?: string;
-  readonly interests?: string;
+  readonly interests?: readonly string[] | string;
   readonly region?: "US" | "GB" | "CA" | "DE" | "FR" | "ES" | "IT" | "AU" | "ALL" | string;
   readonly multi_matrix?: boolean;
   readonly regions?: readonly string[];

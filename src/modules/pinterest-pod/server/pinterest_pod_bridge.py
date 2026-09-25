@@ -3882,13 +3882,28 @@ def discover_pinterest_trends(payload: dict[str, Any]) -> dict[str, Any]:
     else:
         target_trend_types = [raw_trend_type]
 
-    total_planned_queries = len(target_regions) * len(target_trend_types)
+    raw_interests = payload.get("interests") or payload.get("interest") or ""
+    if isinstance(raw_interests, (list, tuple)) and raw_interests:
+        target_interests = [str(i).strip().lower() for i in raw_interests if str(i).strip()]
+    elif isinstance(raw_interests, str) and raw_interests.strip():
+        target_interests = [raw_interests.strip().lower()]
+    else:
+        target_interests = [""]
+
+    query_matrix_pairs = [
+        (r, t, it)
+        for r in target_regions
+        for t in target_trend_types
+        for it in target_interests
+    ]
+    total_planned_queries = len(query_matrix_pairs)
     query_stats: dict[str, Any] = {
         "total_queries": total_planned_queries,
         "successful_queries": 0,
         "failed_queries": 0,
         "markets": target_regions,
         "trend_types": target_trend_types,
+        "interests": [i for i in target_interests if i],
         "raw_keywords_count": 0,
         "unique_keywords_count": 0,
     }
@@ -3912,7 +3927,7 @@ def discover_pinterest_trends(payload: dict[str, Any]) -> dict[str, Any]:
             flags=re.IGNORECASE,
         )
 
-    # 1. Try Pinterest API if authenticated (Multi-Query Matrix via ThreadPoolExecutor)
+    # 1. Try Pinterest API if authenticated (Dynamic Multi-Query Matrix via ThreadPoolExecutor)
     api_keywords_by_name: dict[str, dict[str, Any]] = {}
     oauth_valid, token_data = check_oauth_token_valid()
     if oauth_valid and token_data and not os.getenv("MOCK_PINTEREST"):
@@ -3921,11 +3936,11 @@ def discover_pinterest_trends(payload: dict[str, Any]) -> dict[str, Any]:
             token_file = (ROOT / "pinterest" / ".pinterest_oauth_tokens.json").resolve()
             client = PinterestClient(token_path=token_file if token_file.exists() else None)
 
-            def fetch_single_matrix_cell(reg: str, t_type: str) -> tuple[str, str, list[dict[str, Any]], bool, str]:
+            def fetch_single_matrix_cell(reg: str, t_type: str, it_filter: str) -> tuple[str, str, str, list[dict[str, Any]], bool, str]:
                 endpoint = f"/trends/keywords/{reg}/top/{t_type}"
                 params: dict[str, Any] = {"limit": 50}
-                if interest:
-                    params["interests"] = [interest]
+                if it_filter:
+                    params["interests"] = [it_filter]
                 try:
                     resp = client.get(endpoint, params=params)
                     raw_items = []
@@ -3933,16 +3948,15 @@ def discover_pinterest_trends(payload: dict[str, Any]) -> dict[str, Any]:
                         raw_items = resp.get("trends") or resp.get("keywords") or resp.get("items") or []
                     elif isinstance(resp, list):
                         raw_items = resp
-                    return (reg, t_type, raw_items, True, "")
+                    return (reg, t_type, it_filter, raw_items, True, "")
                 except Exception as exc:
-                    return (reg, t_type, [], False, str(exc))
+                    return (reg, t_type, it_filter, [], False, str(exc))
 
-            max_workers = min(max(total_planned_queries, 1), 8)
-            query_matrix_pairs = [(r, t) for r in target_regions for t in target_trend_types]
+            max_workers = min(max(total_planned_queries, 1), 10)
             with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-                futures = [executor.submit(fetch_single_matrix_cell, r, t) for r, t in query_matrix_pairs]
+                futures = [executor.submit(fetch_single_matrix_cell, r, t, it) for r, t, it in query_matrix_pairs]
                 for future in concurrent.futures.as_completed(futures):
-                    reg, t_type, raw_items, is_ok, err_msg = future.result()
+                    reg, t_type, it_filter, raw_items, is_ok, err_msg = future.result()
                     if is_ok:
                         query_stats["successful_queries"] += 1
                         query_stats["raw_keywords_count"] += len(raw_items)
@@ -3968,6 +3982,7 @@ def discover_pinterest_trends(payload: dict[str, Any]) -> dict[str, Any]:
                                     "monthly_searches": searches,
                                     "markets": [reg],
                                     "trend_types": [t_type],
+                                    "interests": [it_filter] if it_filter else [],
                                     "occurrences": 1,
                                 }
                             else:
@@ -3976,6 +3991,8 @@ def discover_pinterest_trends(payload: dict[str, Any]) -> dict[str, Any]:
                                     entry["markets"].append(reg)
                                 if t_type not in entry["trend_types"]:
                                     entry["trend_types"].append(t_type)
+                                if it_filter and it_filter not in entry.get("interests", []):
+                                    entry.setdefault("interests", []).append(it_filter)
                                 entry["occurrences"] += 1
                                 entry["pct_growth_mom"] = max(entry["pct_growth_mom"], mom)
                                 entry["pct_growth_wow"] = max(entry["pct_growth_wow"], wow)
@@ -3984,7 +4001,7 @@ def discover_pinterest_trends(payload: dict[str, Any]) -> dict[str, Any]:
                                 entry["rank"] = min(entry["rank"], idx)
                     else:
                         query_stats["failed_queries"] += 1
-                        logger.warning("Pinterest Trends API matrix query failed for (%s, %s): %s", reg, t_type, err_msg)
+                        logger.warning("Pinterest Trends API matrix query failed for (%s, %s, %s): %s", reg, t_type, it_filter, err_msg)
         except Exception as exc:
             logger.warning("Pinterest Trends multi-query matrix warning: %s; using dynamic semantic generator.", exc)
 

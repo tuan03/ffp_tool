@@ -53,6 +53,33 @@ const SUGGESTED_CHIPS = [
   "Dark academia aesthetic",
 ] as const;
 
+export const AVAILABLE_REGIONS = [
+  { code: "US", label: "Hoa Kỳ", flag: "🇺🇸", regionGroup: "Bắc Mỹ" },
+  { code: "CA", label: "Canada", flag: "🇨🇦", regionGroup: "Bắc Mỹ" },
+  { code: "DE", label: "Đức", flag: "🇩🇪", regionGroup: "Châu Âu" },
+  { code: "FR", label: "Pháp", flag: "🇫🇷", regionGroup: "Châu Âu" },
+  { code: "ES", label: "Tây Ban Nha", flag: "🇪🇸", regionGroup: "Châu Âu" },
+  { code: "IT", label: "Ý", flag: "🇮🇹", regionGroup: "Châu Âu" },
+  { code: "MX", label: "Mexico", flag: "🇲🇽", regionGroup: "Mỹ Latinh" },
+  { code: "BR", label: "Brazil", flag: "🇧🇷", regionGroup: "Mỹ Latinh" },
+  { code: "GB", label: "Vương Quốc Anh", flag: "🇬🇧", regionGroup: "Châu Âu" },
+  { code: "AU", label: "Úc", flag: "🇦🇺", regionGroup: "Châu Đại Dương" },
+] as const;
+
+export const AVAILABLE_TREND_TYPES = [
+  { type: "growing" as const, label: "Tăng trưởng nhanh", icon: "🔥", desc: "Xu hướng tăng mạnh gần đây" },
+  { type: "monthly" as const, label: "Hàng tháng", icon: "📅", desc: "Xu hướng ổn định bền vững" },
+  { type: "seasonal" as const, label: "Theo mùa vụ", icon: "🍂", desc: "Xu hướng lễ hội & mùa" },
+] as const;
+
+export const AVAILABLE_INTERESTS = [
+  { id: "", label: "Tự động theo niche", icon: "✨" },
+  { id: "art", label: "Nghệ thuật & Thiết kế", icon: "🎨" },
+  { id: "home_decor", label: "Trang trí nội thất", icon: "🛋️" },
+  { id: "womens_fashion", label: "Thời trang & Phụ kiện", icon: "👗" },
+  { id: "diy_and_crafts", label: "Thủ công DIY", icon: "✂️" },
+] as const;
+
 export interface InitFormProps {
   readonly niche: string;
   readonly onNicheChange: (niche: string) => void;
@@ -75,6 +102,13 @@ export interface InitFormProps {
   readonly onInterestChange?: (interest: string) => void;
   readonly region?: string;
   readonly onRegionChange?: (region: string) => void;
+  /** Multi-select Dynamic Matrix support */
+  readonly selectedRegions?: readonly string[];
+  readonly onSelectedRegionsChange?: (regions: readonly string[]) => void;
+  readonly selectedTrendTypes?: readonly ("growing" | "monthly" | "seasonal")[];
+  readonly onSelectedTrendTypesChange?: (types: readonly ("growing" | "monthly" | "seasonal")[]) => void;
+  readonly selectedInterests?: readonly string[];
+  readonly onSelectedInterestsChange?: (interests: readonly string[]) => void;
   /** Trend discovery trigger */
   readonly onDiscoverTrends?: () => void;
   readonly isDiscoveringTrends?: boolean;
@@ -98,21 +132,115 @@ export function InitForm({
   onInterestChange,
   region = "US",
   onRegionChange,
+  selectedRegions,
+  onSelectedRegionsChange,
+  selectedTrendTypes,
+  onSelectedTrendTypesChange,
+  selectedInterests,
+  onSelectedInterestsChange,
   onDiscoverTrends,
   isDiscoveringTrends = false,
 }: InitFormProps): React.JSX.Element {
   const [isAdvancedOpen, setIsAdvancedOpen] = useState(false);
   const [overrideProduct, setOverrideProduct] = useState(false);
 
-  const isMatrixMode = trendType === "ALL" && region.toUpperCase() === "ALL";
+  const currentRegions = selectedRegions && selectedRegions.length > 0
+    ? selectedRegions
+    : region.toUpperCase() === "ALL"
+    ? ["US", "CA", "DE", "FR", "ES", "IT"]
+    : [region];
 
-  const handleToggleMatrixMode = (): void => {
-    if (isMatrixMode) {
-      onTrendTypeChange?.("growing");
-      onRegionChange?.("US");
+  const currentTrendTypes = selectedTrendTypes && selectedTrendTypes.length > 0
+    ? selectedTrendTypes
+    : trendType === "ALL"
+    ? (["growing", "monthly", "seasonal"] as const)
+    : ([trendType as "growing" | "monthly" | "seasonal"] as const);
+
+  const currentInterests = selectedInterests && selectedInterests.length > 0
+    ? selectedInterests
+    : (interest ? [interest] : []);
+
+  const totalCalculatedQueries = currentRegions.length * currentTrendTypes.length * (currentInterests.length || 1);
+  const estimatedSeconds = Math.max(1, Math.round(totalCalculatedQueries * 0.15 + 1.0));
+
+  const handleToggleRegion = (code: string): void => {
+    const isPresent = currentRegions.includes(code);
+    let next: string[];
+    if (isPresent) {
+      if (currentRegions.length <= 1) return;
+      next = currentRegions.filter((r) => r !== code);
     } else {
-      onTrendTypeChange?.("ALL");
+      next = [...currentRegions, code];
+    }
+    onSelectedRegionsChange?.(next);
+    if (next.length >= 6) {
       onRegionChange?.("ALL");
+    } else {
+      onRegionChange?.(next[0] || "US");
+    }
+  };
+
+  const handleToggleTrendType = (t: "growing" | "monthly" | "seasonal"): void => {
+    const isPresent = currentTrendTypes.includes(t);
+    let next: ("growing" | "monthly" | "seasonal")[];
+    if (isPresent) {
+      if (currentTrendTypes.length <= 1) return;
+      next = currentTrendTypes.filter((item) => item !== t);
+    } else {
+      next = [...currentTrendTypes, t];
+    }
+    onSelectedTrendTypesChange?.(next);
+    if (next.length === 3) {
+      onTrendTypeChange?.("ALL");
+    } else {
+      onTrendTypeChange?.(next[0] || "growing");
+    }
+  };
+
+  const handleToggleInterest = (itId: string): void => {
+    if (!itId) {
+      onSelectedInterestsChange?.([]);
+      onInterestChange?.("");
+      return;
+    }
+    const isPresent = currentInterests.includes(itId);
+    let next: string[];
+    if (isPresent) {
+      next = currentInterests.filter((item) => item !== itId);
+    } else {
+      next = [...currentInterests, itId];
+    }
+    onSelectedInterestsChange?.(next);
+    onInterestChange?.(next.length === 1 ? next[0] : "");
+  };
+
+  const handleApplyPreset = (presetName: "global" | "na" | "eu" | "single"): void => {
+    if (presetName === "global") {
+      const allR = ["US", "CA", "DE", "FR", "ES", "IT"];
+      const allT: ("growing" | "monthly" | "seasonal")[] = ["growing", "monthly", "seasonal"];
+      onSelectedRegionsChange?.(allR);
+      onSelectedTrendTypesChange?.(allT);
+      onRegionChange?.("ALL");
+      onTrendTypeChange?.("ALL");
+    } else if (presetName === "na") {
+      const naR = ["US", "CA"];
+      const naT: ("growing" | "monthly" | "seasonal")[] = ["growing", "seasonal"];
+      onSelectedRegionsChange?.(naR);
+      onSelectedTrendTypesChange?.(naT);
+      onRegionChange?.("US");
+      onTrendTypeChange?.("growing");
+    } else if (presetName === "eu") {
+      const euR = ["DE", "FR", "ES", "IT"];
+      const euT: ("growing" | "monthly" | "seasonal")[] = ["growing", "monthly"];
+      onSelectedRegionsChange?.(euR);
+      onSelectedTrendTypesChange?.(euT);
+      onRegionChange?.("DE");
+      onTrendTypeChange?.("growing");
+    } else if (presetName === "single") {
+      onSelectedRegionsChange?.(["US"]);
+      onSelectedTrendTypesChange?.(["growing"]);
+      onRegionChange?.("US");
+      onTrendTypeChange?.("growing");
     }
   };
 
@@ -318,47 +446,96 @@ export function InitForm({
         </div>
       </div>
 
-      {/* Multi-Query Matrix Quick Toggle Banner */}
-      <div className={`flex flex-col sm:flex-row items-center justify-between gap-3 rounded-xl border p-3.5 transition ${
-        isMatrixMode
-          ? "border-cyan-500/80 bg-gradient-to-r from-cyan-950/60 via-indigo-950/50 to-blue-950/60 shadow-lg shadow-cyan-500/10 ring-1 ring-cyan-500/40"
-          : "border-slate-800 bg-slate-950/50 hover:border-slate-700"
-      }`}>
-        <div className="flex items-center gap-2.5">
-          <span className="text-xl">🌐</span>
-          <div className="flex flex-col">
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-bold text-slate-100">
-                Chế độ Quét Ma trận Toàn cầu (Multi-Market Matrix)
-              </span>
-              <span className={`rounded-full px-2 py-0.2 text-[9px] font-bold ${
-                isMatrixMode
-                  ? "bg-cyan-500/30 text-cyan-300 border border-cyan-400/50 animate-pulse"
-                  : "bg-slate-800 text-slate-400"
-              }`}>
-                {isMatrixMode ? "🔥 ĐANG BẬT: 18 API CALLS" : "1 API CALL (Đơn lẻ)"}
-              </span>
+      {/* Dynamic Multi-Market Matrix Preset & Formula Bar */}
+      <div className="flex flex-col gap-3 rounded-xl border border-cyan-800/60 bg-gradient-to-r from-slate-950/80 via-cyan-950/30 to-indigo-950/40 p-4 shadow-lg">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            <span className="text-xl">🌐</span>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-xs font-bold text-slate-100">
+                  Ma trận Xu hướng Tự do (Dynamic Discovery Matrix)
+                </h3>
+                <span className="rounded-full bg-cyan-500/20 border border-cyan-400/40 px-2 py-0.2 text-[9px] font-bold text-cyan-300">
+                  {totalCalculatedQueries} API CALLS ĐỒNG THỜI
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-400 mt-0.5">
+                Tự do phối hợp {currentRegions.length} thị trường × {currentTrendTypes.length} loại xu hướng, hoàn toàn linh hoạt không cố định.
+              </p>
             </div>
-            <p className="text-[11px] text-slate-400 mt-0.5">
-              {isMatrixMode
-                ? "Quét đồng thời 3 loại xu hướng × 6 thị trường lớn (US, CA, DE, FR, ES, IT) qua Multi-Threading ~2.5s, tự động gom ~900 từ khóa & xếp hạng."
-                : "Chỉ quét 1 thị trường & 1 loại xu hướng đơn lẻ. Bấm nút bên cạnh để kích hoạt quét ma trận toàn diện 18 calls."}
-            </p>
+          </div>
+
+          {/* Quick Presets */}
+          <div className="flex flex-wrap items-center gap-1.5 self-end sm:self-center">
+            <span className="text-[10px] text-slate-400 font-medium">Chọn nhanh:</span>
+            <button
+              type="button"
+              disabled={isBusy}
+              onClick={() => handleApplyPreset("global")}
+              className={`rounded-lg px-2.5 py-1 text-[10px] font-bold border transition cursor-pointer ${
+                currentRegions.length === 6 && currentTrendTypes.length === 3
+                  ? "bg-cyan-500 text-slate-950 border-cyan-400 shadow font-extrabold"
+                  : "border-slate-800 bg-slate-800/60 text-slate-300 hover:border-cyan-500 hover:text-white"
+              }`}
+            >
+              🌍 Toàn cầu (18)
+            </button>
+            <button
+              type="button"
+              disabled={isBusy}
+              onClick={() => handleApplyPreset("na")}
+              className={`rounded-lg px-2.5 py-1 text-[10px] font-bold border transition cursor-pointer ${
+                currentRegions.length === 2 && currentRegions.includes("US") && currentRegions.includes("CA") && currentTrendTypes.length === 2
+                  ? "bg-cyan-500 text-slate-950 border-cyan-400 shadow font-extrabold"
+                  : "border-slate-800 bg-slate-800/60 text-slate-300 hover:border-cyan-500 hover:text-white"
+              }`}
+            >
+              🇺🇸 Bắc Mỹ (4)
+            </button>
+            <button
+              type="button"
+              disabled={isBusy}
+              onClick={() => handleApplyPreset("eu")}
+              className={`rounded-lg px-2.5 py-1 text-[10px] font-bold border transition cursor-pointer ${
+                currentRegions.length === 4 && currentRegions.includes("DE") && currentTrendTypes.length === 2
+                  ? "bg-cyan-500 text-slate-950 border-cyan-400 shadow font-extrabold"
+                  : "border-slate-800 bg-slate-800/60 text-slate-300 hover:border-cyan-500 hover:text-white"
+              }`}
+            >
+              🇪🇺 Châu Âu (8)
+            </button>
+            <button
+              type="button"
+              disabled={isBusy}
+              onClick={() => handleApplyPreset("single")}
+              className={`rounded-lg px-2.5 py-1 text-[10px] font-bold border transition cursor-pointer ${
+                currentRegions.length === 1 && currentTrendTypes.length === 1
+                  ? "bg-cyan-500 text-slate-950 border-cyan-400 shadow font-extrabold"
+                  : "border-slate-800 bg-slate-800/60 text-slate-300 hover:border-cyan-500 hover:text-white"
+              }`}
+            >
+              ⚡ 1 Call
+            </button>
           </div>
         </div>
 
-        <button
-          type="button"
-          disabled={isBusy}
-          onClick={handleToggleMatrixMode}
-          className={`shrink-0 rounded-xl px-3.5 py-2 text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
-            isMatrixMode
-              ? "bg-cyan-500 text-slate-950 shadow hover:bg-cyan-400"
-              : "border border-cyan-800/80 bg-cyan-950/40 text-cyan-300 hover:bg-cyan-900/60 hover:text-white"
-          } disabled:opacity-50`}
-        >
-          <span>{isMatrixMode ? "✓ Đang kích hoạt 18 calls" : "🚀 Bật Quét Ma trận (18 calls)"}</span>
-        </button>
+        {/* Live Calculation Formula */}
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-cyan-900/40 bg-slate-900/80 px-3 py-1.5 text-xs text-slate-300">
+          <div className="flex items-center gap-1.5">
+            <span className="text-cyan-400 font-bold">⚡ Công thức:</span>
+            <span>
+              <strong className="text-cyan-300">{currentRegions.length} thị trường</strong> ({currentRegions.join(", ")})
+              {" × "}
+              <strong className="text-indigo-300">{currentTrendTypes.length} loại xu hướng</strong>
+              {" = "}
+              <strong className="text-emerald-300 font-bold">{totalCalculatedQueries} API calls đồng thời</strong>
+            </span>
+          </div>
+          <span className="text-[11px] text-slate-400 font-mono">
+            ~{estimatedSeconds}s qua Multi-Threading
+          </span>
+        </div>
       </div>
 
       {/* Main Action Buttons */}
@@ -371,12 +548,14 @@ export function InitForm({
         >
           <div className="flex items-center gap-2 text-sm font-bold">
             <span>✨</span>
-            <span>{isDiscoveringTrends ? "Đang phân tích xu hướng..." : "Khám phá Xu hướng (Tier 1 & 2)"}</span>
+            <span>
+              {isDiscoveringTrends
+                ? "Đang phân tích xu hướng..."
+                : `Khám phá Xu hướng (${totalCalculatedQueries} API calls)`}
+            </span>
           </div>
           <span className="text-[10px] text-cyan-200/90 font-normal">
-            {isMatrixMode
-              ? "Quét ma trận 18 calls toàn cầu, AI lọc & nhóm 3-5 cụm chủ đề chuẩn in ấn"
-              : "Phân tích cụm chủ đề AI, lọc từ khóa phi ấn phẩm & chọn cụm cào"}
+            Quét song song {totalCalculatedQueries} cells, AI gộp dữ liệu & lọc chuẩn in ấn
           </span>
         </button>
 
@@ -422,9 +601,9 @@ export function InitForm({
         >
           <div className="flex items-center gap-2">
             <span>⚙️</span>
-            <span>Cài đặt nâng cao Pinterest API (Tùy chọn)</span>
+            <span>Cài đặt ma trận đa chiều Pinterest API ({currentRegions.length} thị trường • {currentTrendTypes.length} xu hướng)</span>
             <span className="rounded bg-slate-800 px-2 py-0.5 text-[10px] text-cyan-300 font-mono">
-              {region} • {trendType} • {activeProduct.toUpperCase()}
+              {totalCalculatedQueries} CALLS
             </span>
           </div>
           <span className="text-slate-400 text-sm font-bold">
@@ -473,91 +652,154 @@ export function InitForm({
               </div>
             </div>
 
-            {/* Pinterest API Filters: Trend Type, Interest, Region */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              {/* Trend Type */}
-              <div className="flex flex-col gap-1.5">
-                <label htmlFor="trend-type-select" className="text-xs font-semibold text-slate-300">
-                  📈 Loại xu hướng (Trend Type)
+            {/* 1. Multi-Select Regions Chips */}
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+                  <span>🌍 1. Thị trường / Quốc gia muốn quét:</span>
+                  <span className="text-cyan-400 font-bold">({currentRegions.length} nước)</span>
                 </label>
-                <select
-                  id="trend-type-select"
-                  value={trendType}
-                  onChange={(e) => onTrendTypeChange?.(e.target.value as "growing" | "monthly" | "seasonal" | "ALL")}
-                  disabled={isBusy}
-                  className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs text-slate-200 focus:border-cyan-400 focus:outline-none disabled:opacity-50"
-                >
-                  <option value="ALL">🔥 Tất cả 3 loại xu hướng (Growing + Monthly + Seasonal - Quét Ma trận)</option>
-                  <option value="growing">Đang tăng trưởng mạnh (Growing)</option>
-                  <option value="monthly">Xu hướng hàng tháng (Monthly)</option>
-                  <option value="seasonal">Xu hướng theo mùa vụ (Seasonal)</option>
-                </select>
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    disabled={isBusy}
+                    onClick={() => {
+                      onSelectedRegionsChange?.(AVAILABLE_REGIONS.map((r) => r.code));
+                      onRegionChange?.("ALL");
+                    }}
+                    className="text-[10px] text-cyan-400 hover:underline px-1 cursor-pointer"
+                  >
+                    Chọn tất cả
+                  </button>
+                  <span className="text-slate-600">|</span>
+                  <button
+                    type="button"
+                    disabled={isBusy}
+                    onClick={() => {
+                      onSelectedRegionsChange?.(["US"]);
+                      onRegionChange?.("US");
+                    }}
+                    className="text-[10px] text-slate-400 hover:underline px-1 cursor-pointer"
+                  >
+                    Chỉ US
+                  </button>
+                </div>
               </div>
 
-              {/* Interest */}
-              <div className="flex flex-col gap-1.5">
-                <label htmlFor="interest-select" className="text-xs font-semibold text-slate-300">
-                  🏷️ Ngành hàng (Pinterest Interest)
-                </label>
-                <select
-                  id="interest-select"
-                  value={interest}
-                  onChange={(e) => onInterestChange?.(e.target.value)}
-                  disabled={isBusy}
-                  className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs text-slate-200 focus:border-cyan-400 focus:outline-none disabled:opacity-50"
-                >
-                  <option value="">Tất cả ngành hàng (Tự động)</option>
-                  <option value="womens_fashion">Thời trang & Phụ kiện (womens_fashion)</option>
-                  <option value="home_decor">Trang trí nội thất (home_decor)</option>
-                  <option value="art">Nghệ thuật & Thiết kế (art)</option>
-                  <option value="diy_and_crafts">Thủ công DIY (diy_and_crafts)</option>
-                </select>
-              </div>
-
-              {/* Region */}
-              <div className="flex flex-col gap-1.5">
-                <label htmlFor="region-select" className="text-xs font-semibold text-slate-300">
-                  🌍 Thị trường / Quốc gia (Region)
-                </label>
-                <select
-                  id="region-select"
-                  value={region}
-                  onChange={(e) => onRegionChange?.(e.target.value)}
-                  disabled={isBusy}
-                  className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs text-slate-200 focus:border-cyan-400 focus:outline-none disabled:opacity-50"
-                >
-                  <option value="ALL">🌍 Tất cả 6 thị trường lớn (US, CA, DE, FR, ES, IT - Quét Ma trận)</option>
-                  <option value="US">Hoa Kỳ (United States - US) 🇺🇸</option>
-                  <option value="CA">Canada (CA) 🇨🇦</option>
-                  <option value="DE">Đức (Germany - DE) 🇩🇪</option>
-                  <option value="FR">Pháp (France - FR) 🇫🇷</option>
-                  <option value="ES">Tây Ban Nha (Spain - ES) 🇪🇸</option>
-                  <option value="IT">Ý (Italy - IT) 🇮🇹</option>
-                  <option value="GB">Vương Quốc Anh (United Kingdom - GB) 🇬🇧</option>
-                  <option value="AU">Úc (Australia - AU) 🇦🇺</option>
-                </select>
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+                {AVAILABLE_REGIONS.map((regItem) => {
+                  const isChecked = currentRegions.includes(regItem.code);
+                  return (
+                    <button
+                      key={regItem.code}
+                      type="button"
+                      disabled={isBusy}
+                      onClick={() => handleToggleRegion(regItem.code)}
+                      className={`flex items-center justify-between rounded-lg border px-2.5 py-1.5 text-xs transition cursor-pointer ${
+                        isChecked
+                          ? "border-cyan-500 bg-cyan-950/50 text-cyan-200 ring-1 ring-cyan-500/40 font-bold shadow"
+                          : "border-slate-800 bg-slate-900/60 text-slate-400 hover:border-slate-700 hover:text-slate-200"
+                      } disabled:opacity-50`}
+                    >
+                      <span className="flex items-center gap-1.5 truncate">
+                        <span>{regItem.flag}</span>
+                        <span className="truncate">{regItem.label}</span>
+                      </span>
+                      <span className={`text-[10px] font-mono px-1 rounded ${isChecked ? "bg-cyan-500/30 text-cyan-300 font-bold" : "text-slate-500"}`}>
+                        {regItem.code}
+                      </span>
+                    </button>
+                  );
+                })}
               </div>
             </div>
 
-            {/* Dynamic Matrix Execution Preview */}
-            <div className="rounded-lg border border-cyan-900/50 bg-cyan-950/20 p-2.5 text-xs text-cyan-200/90 flex flex-wrap items-center justify-between gap-2">
+            {/* 2. Multi-Select Trend Types Chips */}
+            <div className="flex flex-col gap-2">
+              <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+                <span>📈 2. Loại xu hướng (Trend Types):</span>
+                <span className="text-indigo-400 font-bold">({currentTrendTypes.length} loại)</span>
+              </label>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                {AVAILABLE_TREND_TYPES.map((tItem) => {
+                  const isChecked = currentTrendTypes.includes(tItem.type);
+                  return (
+                    <button
+                      key={tItem.type}
+                      type="button"
+                      disabled={isBusy}
+                      onClick={() => handleToggleTrendType(tItem.type)}
+                      className={`flex flex-col items-start gap-0.5 rounded-lg border p-2.5 text-left transition cursor-pointer ${
+                        isChecked
+                          ? "border-indigo-500 bg-indigo-950/40 text-indigo-200 ring-1 ring-indigo-500/40 shadow font-bold"
+                          : "border-slate-800 bg-slate-900/60 text-slate-400 hover:border-slate-700 hover:text-slate-200"
+                      } disabled:opacity-50`}
+                    >
+                      <div className="flex items-center justify-between w-full">
+                        <span className="text-xs flex items-center gap-1.5">
+                          <span>{tItem.icon}</span>
+                          <span>{tItem.label}</span>
+                        </span>
+                        {isChecked && (
+                          <span className="text-[10px] text-indigo-300 font-bold">✓ Bật</span>
+                        )}
+                      </div>
+                      <span className="text-[10px] text-slate-400 font-normal">{tItem.desc}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* 3. Interest Selection Chips */}
+            <div className="flex flex-col gap-2">
+              <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+                <span>🏷️ 3. Ngành hàng Pinterest (Interest Category):</span>
+                <span className="text-slate-400 font-normal">
+                  {currentInterests.length === 0 ? "(Tự động mở rộng theo Niche)" : `(${currentInterests.length} ngành)`}
+                </span>
+              </label>
+
+              <div className="flex flex-wrap items-center gap-1.5">
+                {AVAILABLE_INTERESTS.map((itItem) => {
+                  const isChecked = itItem.id === ""
+                    ? currentInterests.length === 0
+                    : currentInterests.includes(itItem.id);
+                  return (
+                    <button
+                      key={itItem.id}
+                      type="button"
+                      disabled={isBusy}
+                      onClick={() => handleToggleInterest(itItem.id)}
+                      className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs transition cursor-pointer ${
+                        isChecked
+                          ? "border-purple-500 bg-purple-950/50 text-purple-200 ring-1 ring-purple-500/40 font-bold shadow"
+                          : "border-slate-800 bg-slate-900/60 text-slate-400 hover:border-slate-700 hover:text-slate-200"
+                      } disabled:opacity-50`}
+                    >
+                      <span>{itItem.icon}</span>
+                      <span>{itItem.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Final Execution Calculation Notice */}
+            <div className="rounded-lg border border-cyan-900/50 bg-cyan-950/20 p-3 text-xs text-cyan-200/90 flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2">
-                <span>⚡</span>
+                <span className="text-base">🚀</span>
                 <span>
-                  Kế hoạch truy vấn:{" "}
-                  <strong className="text-cyan-300">
-                    {isMatrixMode
-                      ? "18 API calls đồng thời (3 loại xu hướng × 6 thị trường lớn)"
-                      : trendType === "ALL"
-                      ? `3 API calls đồng thời (3 loại xu hướng tại ${region})`
-                      : region.toUpperCase() === "ALL"
-                      ? `6 API calls đồng thời (6 thị trường lớn cho loại ${trendType})`
-                      : `1 API call đơn lẻ (${trendType} tại ${region})`}
-                  </strong>
+                  Tổng số truy vấn song song:{" "}
+                  <strong className="text-cyan-300 text-sm font-mono font-bold">
+                    {totalCalculatedQueries} calls
+                  </strong>{" "}
+                  ({currentRegions.length} QG × {currentTrendTypes.length} loại xu hướng × {currentInterests.length || 1} ngành)
                 </span>
               </div>
               <span className="text-[11px] text-slate-400 font-mono">
-                {isMatrixMode ? "~2.5s qua Multi-Threading" : "~1.5s"}
+                ~{estimatedSeconds}s qua Multi-Threading
               </span>
             </div>
           </div>
