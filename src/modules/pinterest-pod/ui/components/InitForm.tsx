@@ -209,13 +209,110 @@ export function InitForm({
         </div>
       </div>
 
+      {/* 2. Số lượng ảnh cào từ Pinterest (Crawl Pool Size) */}
+      <div className="flex flex-col gap-2 rounded-xl border border-slate-800 bg-slate-950/70 p-4">
+        <div className="flex flex-wrap items-center justify-between gap-1">
+          <label htmlFor="crawl-count-input" className="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
+            <span>📥 2. Số lượng ảnh cào về từ Pinterest:</span>
+            <span className="text-cyan-400 font-bold text-sm">{crawlCount} ảnh</span>
+          </label>
+          <span className="text-[11px] text-slate-400">10 – 80 ảnh (Mục tiêu 30-45 giây)</span>
+        </div>
+
+        <div className="flex items-center gap-3 pt-1">
+          <input
+            id="crawl-count-input"
+            type="range"
+            min={10}
+            max={80}
+            step={5}
+            value={crawlCount}
+            onChange={(e) => onCrawlCountChange?.(Number(e.target.value))}
+            disabled={isBusy}
+            className="flex-1 accent-cyan-400 h-2 bg-slate-700 rounded-lg cursor-pointer disabled:opacity-50"
+          />
+          <span className="w-12 text-center text-xs font-bold text-cyan-300 bg-slate-800 px-2 py-1 rounded-lg border border-slate-700">
+            {crawlCount}
+          </span>
+        </div>
+
+        {/* Quick presets */}
+        <div className="flex flex-wrap items-center gap-2 pt-1">
+          <span className="text-[10px] text-slate-400 font-medium">Chọn nhanh:</span>
+          {[
+            { count: 20, label: "20 ảnh (Cực nhanh ~15s)" },
+            { count: 40, label: "40 ảnh (Chuẩn ~30s - Đề xuất)", highlight: true },
+            { count: 60, label: "60 ảnh (~45s)" },
+            { count: 80, label: "80 ảnh (Tối đa ~60s)" },
+          ].map((preset) => (
+            <button
+              key={preset.count}
+              type="button"
+              disabled={isBusy}
+              onClick={() => onCrawlCountChange?.(preset.count)}
+              className={`rounded-lg px-2.5 py-1 text-[11px] font-semibold transition cursor-pointer ${
+                crawlCount === preset.count
+                  ? "bg-cyan-500 text-slate-950 font-bold shadow"
+                  : preset.highlight
+                  ? "border border-cyan-800/80 bg-cyan-950/40 text-cyan-300 hover:bg-cyan-900/60"
+                  : "border border-slate-800 bg-slate-800/60 text-slate-300 hover:bg-slate-700 hover:text-white"
+              } disabled:opacity-50`}
+            >
+              {preset.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* 3. Ảnh phòng / Bối cảnh mẫu tham chiếu để ghép Mockup AI */}
+      <div className="flex flex-col gap-2.5 rounded-xl border border-purple-500/30 bg-purple-950/15 p-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="text-base">🛋️</span>
+            <div>
+              <h3 className="text-xs font-bold text-purple-200 flex items-center gap-1.5">
+                <span>3. Ảnh phòng / Bối cảnh mẫu để ghép Mockup AI</span>
+                <span className="text-[10px] font-normal text-purple-400/80">(Tùy chọn)</span>
+              </h3>
+              <p className="text-[11px] text-slate-400 mt-0.5">
+                Nạp ảnh phòng chụp thực tế của bạn để AI ghép hoa văn cào được vào đúng sản phẩm trong phòng.
+              </p>
+            </div>
+          </div>
+          {referenceImages.length > 0 && (
+            <span className="rounded-full bg-purple-500/30 border border-purple-400/40 px-2 py-0.5 text-[10px] font-bold text-purple-200">
+              ✓ Đã nạp {referenceImages.length} phòng mẫu
+            </span>
+          )}
+        </div>
+
+        <ReferenceDropzone
+          images={referenceImages}
+          onChange={onReferenceImagesChange}
+          disabled={isBusy}
+          maxImages={10}
+        />
+
+        <div className="rounded-lg border border-purple-900/40 bg-purple-950/30 p-2.5 text-[11px] text-purple-200/90 leading-relaxed">
+          {referenceImages.length > 0 ? (
+            <span>
+              ✓ <strong>Chế độ ghép phòng chỉ định:</strong> AI sẽ giữ nguyên {referenceImages.length} căn phòng trên và ghép hoa văn đã chọn lên sản phẩm để render Mockup chân thực nhất.
+            </span>
+          ) : (
+            <span>
+              ℹ️ <strong>Chưa nạp ảnh phòng riêng:</strong> Hệ thống sẽ tự động tạo bối cảnh phòng cao cấp ngẫu nhiên. Ngoài ra, tại <strong>Bước 2 (Duyệt mẫu)</strong>, bạn cũng có thể bấm nút <em>&ldquo;Làm phòng&rdquo;</em> trên bất kỳ ảnh Pinterest nào cào về để dùng làm phôi bối cảnh!
+            </span>
+          )}
+        </div>
+      </div>
+
       {/* Main Action Buttons */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
         <button
           type="button"
           onClick={onDiscoverTrends ?? onStartCrawl}
           disabled={isBusy || !niche.trim()}
-          className="flex flex-col items-center justify-center gap-0.5 rounded-xl bg-gradient-to-r from-cyan-600 via-blue-600 to-indigo-600 p-3 text-white shadow-lg shadow-cyan-500/20 transition hover:from-cyan-500 hover:to-indigo-500 hover:shadow-cyan-500/35 disabled:cursor-not-allowed disabled:opacity-50"
+          className="flex flex-col items-center justify-center gap-0.5 rounded-xl bg-gradient-to-r from-cyan-600 via-blue-600 to-indigo-600 p-3 text-white shadow-lg shadow-cyan-500/20 transition hover:from-cyan-500 hover:to-indigo-500 hover:shadow-cyan-500/35 disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
         >
           <div className="flex items-center gap-2 text-sm font-bold">
             <span>✨</span>
@@ -230,7 +327,7 @@ export function InitForm({
           type="button"
           onClick={onStartCrawl}
           disabled={isBusy || !niche.trim()}
-          className="flex flex-col items-center justify-center gap-0.5 rounded-xl border border-emerald-500/50 bg-emerald-950/30 p-3 text-emerald-300 shadow transition hover:border-emerald-400 hover:bg-emerald-900/40 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+          className="flex flex-col items-center justify-center gap-0.5 rounded-xl border border-emerald-500/50 bg-emerald-950/30 p-3 text-emerald-300 shadow transition hover:border-emerald-400 hover:bg-emerald-900/40 hover:text-white disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
         >
           <div className="flex items-center gap-2 text-sm font-bold">
             <span>⚡</span>
@@ -251,7 +348,7 @@ export function InitForm({
           <button
             type="button"
             onClick={onStopJob}
-            className="flex items-center gap-1 rounded-lg border border-rose-700/60 bg-rose-950/40 px-3 py-1.5 text-xs font-semibold text-rose-300 transition hover:bg-rose-900/60 hover:text-white"
+            className="flex items-center gap-1 rounded-lg border border-rose-700/60 bg-rose-950/40 px-3 py-1.5 text-xs font-semibold text-rose-300 transition hover:bg-rose-900/60 hover:text-white cursor-pointer"
           >
             <span>⏹</span>
             <span>Dừng Job</span>
@@ -264,13 +361,13 @@ export function InitForm({
         <button
           type="button"
           onClick={() => setIsAdvancedOpen((prev) => !prev)}
-          className="flex items-center justify-between p-3.5 text-left text-xs font-semibold text-slate-300 hover:text-white transition"
+          className="flex items-center justify-between p-3.5 text-left text-xs font-semibold text-slate-300 hover:text-white transition cursor-pointer"
         >
           <div className="flex items-center gap-2">
             <span>⚙️</span>
             <span>Cài đặt nâng cao Pinterest API (Tùy chọn)</span>
             <span className="rounded bg-slate-800 px-2 py-0.5 text-[10px] text-cyan-300 font-mono">
-              {region} • {trendType} • {crawlCount} ảnh
+              {region} • {trendType} • {activeProduct.toUpperCase()}
             </span>
           </div>
           <span className="text-slate-400 text-sm font-bold">
@@ -295,7 +392,7 @@ export function InitForm({
                       type="button"
                       disabled={isBusy}
                       onClick={() => handleSelectProduct(opt.type)}
-                      className={`flex flex-col items-start gap-1 rounded-xl border p-2 text-left transition ${
+                      className={`flex flex-col items-start gap-1 rounded-xl border p-2 text-left transition cursor-pointer ${
                         isSelected
                           ? "border-cyan-500 bg-cyan-950/40 text-cyan-200 ring-1 ring-cyan-500/50 shadow"
                           : "border-slate-800 bg-slate-900/60 text-slate-400 hover:border-slate-700 hover:bg-slate-800/70 hover:text-slate-200"
@@ -379,46 +476,6 @@ export function InitForm({
                   <option value="AU">Úc (Australia - AU) 🇦🇺</option>
                 </select>
               </div>
-            </div>
-
-            {/* Crawl Count Slider */}
-            <div className="flex flex-col gap-1.5 rounded-lg border border-slate-800 bg-slate-900/60 p-3">
-              <div className="flex items-center justify-between">
-                <label htmlFor="crawl-count-input" className="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
-                  <span>📥 Số lượng ảnh cào từ Pinterest:</span>
-                  <span className="text-cyan-400 font-bold">{crawlCount} ảnh</span>
-                </label>
-                <span className="text-[11px] text-slate-400">10 – 80 ảnh (Mặc định 40 ảnh trong 30-45s)</span>
-              </div>
-              <div className="flex items-center gap-3 pt-1">
-                <input
-                  id="crawl-count-input"
-                  type="range"
-                  min={10}
-                  max={80}
-                  step={5}
-                  value={crawlCount}
-                  onChange={(e) => onCrawlCountChange?.(Number(e.target.value))}
-                  disabled={isBusy}
-                  className="flex-1 accent-cyan-400 h-2 bg-slate-700 rounded-lg cursor-pointer disabled:opacity-50"
-                />
-                <span className="w-10 text-center text-xs font-bold text-cyan-300 bg-slate-800 px-2 py-0.5 rounded border border-slate-700">
-                  {crawlCount}
-                </span>
-              </div>
-            </div>
-
-            {/* Room Reference Images Dropzone */}
-            <div className="flex flex-col gap-2">
-              <label className="text-xs font-semibold text-slate-300">
-                🖼️ Ảnh phòng / Bối cảnh mẫu tham chiếu (Tùy chọn cho Mockup AI):
-              </label>
-              <ReferenceDropzone
-                images={referenceImages}
-                onChange={onReferenceImagesChange}
-                disabled={isBusy}
-                maxImages={10}
-              />
             </div>
           </div>
         )}
