@@ -155,6 +155,24 @@ test("fromCustomizationNormalizerProduct omits variants whose Amazon selling pri
   assertStrict.notEqual(adapted.variants?.[0].price, "0.00");
 });
 
+test("fromCustomizationNormalizerProduct maps Amazon ASIN metadata without customization", () => {
+  const crawlProduct = {
+    id: "standard-product",
+    asin: "b0std00002",
+    parentAsin: "b0parent02",
+    title: "Standard product",
+    media: [],
+    variants: [],
+    customization: null,
+  } as unknown as CrawlProduct;
+
+  const adapted = fromCustomizationNormalizerProduct(crawlProduct);
+
+  assertStrict.equal(adapted.amazonAsin, "B0STD00002");
+  assertStrict.equal(adapted.amazonParentAsin, "B0PARENT02");
+  assertStrict.equal(adapted.customization, null);
+});
+
 test("replaceUrlsInObject replaces all matched URLs recursively", () => {
   const replacements = new Map<string, string>([
     ["https://amazon.com/old-base.jpg", "https://cdn.shopify.com/s/files/new-base.jpg"],
@@ -324,7 +342,7 @@ test("syncSingleProduct coordinates required operations through an injected Shop
   assertStrict.equal(typeof result.timings?.totalMs, "number");
 });
 
-test("syncSingleProduct rejects customized products with missing Amazon ASIN metadata before writing", async () => {
+test("syncSingleProduct rejects products with missing Amazon ASIN metadata before writing", async () => {
   let productWrites = 0;
   const gateway: ShopifyGateway = {
     async createProduct() {
@@ -342,7 +360,7 @@ test("syncSingleProduct rejects customized products with missing Amazon ASIN met
     },
   };
   const invalidProduct: ShopifySyncProductInput = {
-    ...shopifySyncMockData.products[0],
+    ...shopifySyncMockData.products[1],
     amazonAsin: undefined,
   };
 
@@ -415,7 +433,7 @@ test("syncSingleProduct updates the mapped Shopify product instead of creating a
       };
     },
     async setProductMetafield(input) {
-      operationsCalled.push(`metafield:${input.key}`);
+      operationsCalled.push(`metafield:${input.key}:${input.type}:${input.value}`);
       return { success: true };
     },
   };
@@ -426,7 +444,11 @@ test("syncSingleProduct updates the mapped Shopify product instead of creating a
   });
 
   assertStrict.equal(result.success, true);
-  assertStrict.deepEqual(operationsCalled, ["update:gid://shopify/Product/123"]);
+  assertStrict.deepEqual(operationsCalled, [
+    "update:gid://shopify/Product/123",
+    "metafield:amazon_asin:single_line_text_field:B0STD00002",
+    "metafield:amazon_parent_asin:single_line_text_field:B0PARENT02",
+  ]);
 });
 
 test("syncSingleProduct fails when Shopify does not persist every requested variant", async () => {

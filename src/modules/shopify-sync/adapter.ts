@@ -62,6 +62,16 @@ function normalizeAsin(value: unknown): string | undefined {
   return /^[A-Z0-9]{10}$/.test(normalized) ? normalized : undefined;
 }
 
+function firstSourceVariantAsin(product: CrawlProduct): string | undefined {
+  for (const sourceVariant of product.sourceVariants ?? []) {
+    if (isRecord(sourceVariant)) {
+      const asin = normalizeAsin(sourceVariant.asin);
+      if (asin) return asin;
+    }
+  }
+  return undefined;
+}
+
 function formatPrice(value: unknown, defaultVal = "0.00"): string {
   if (value == null) return defaultVal;
   if (typeof value === "number") return Number.isFinite(value) ? value.toFixed(2) : defaultVal;
@@ -131,13 +141,15 @@ export function fromCustomizationNormalizerProduct(
 
   let customizerInput: ShopifyProductCustomizerInput | null = null;
   const rawCustomization = product.customization;
-  let amazonAsin: string | undefined;
-  let amazonParentAsin: string | undefined;
+  const amazonAsin = normalizeAsin(product.asin)
+    ?? normalizeAsin(rawCustomization?.source?.asin)
+    ?? firstSourceVariantAsin(product);
+  const amazonParentAsin = normalizeAsin(
+    options?.amazonParentAsin ?? product.parentAsin ?? product.asin,
+  );
 
   if (rawCustomization && typeof rawCustomization === "object") {
     tags.add("has-customizer");
-    amazonAsin = normalizeAsin(rawCustomization.source?.asin);
-    amazonParentAsin = normalizeAsin(options?.amazonParentAsin ?? product.parentAsin);
 
     const assets: ShopifyCustomizationAssetInput[] = (rawCustomization.assets || []).map(
       (asset: CustomizationAsset) => ({

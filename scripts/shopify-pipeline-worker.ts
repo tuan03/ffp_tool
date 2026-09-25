@@ -99,7 +99,7 @@ const gatewayPort = Math.max(1, Number(env.GATEWAY_PORT || 3001));
 const gatewayUrl = (env.SHOPIFY_GATEWAY_URL || `http://127.0.0.1:${gatewayPort}/api/shopify`).replace(/\/+$/, "");
 const proxyCooldownUntil = new Map<string, number>();
 const seoCorpusCommitCoordinator = new SeoCorpusCommitCoordinator();
-const AMAZON_METAFIELD_SCHEMA_VERSION = 1;
+const AMAZON_METAFIELD_SCHEMA_VERSION = 2;
 
 interface PipelineTimings {
   normalizationMs?: number;
@@ -595,12 +595,8 @@ async function processClaim(
       priceAddition,
       discountPercent,
       storeVendor,
-      ...(seoProduct.customization
-        ? {
-            amazonMetafieldSchemaVersion: AMAZON_METAFIELD_SCHEMA_VERSION,
-            amazonParentAsin: claim.inputAsin,
-          }
-        : {}),
+      amazonMetafieldSchemaVersion: AMAZON_METAFIELD_SCHEMA_VERSION,
+      amazonParentAsin: claim.inputAsin,
     });
     const isNoOp = Boolean(existingProductId && lastSyncedChecksum === finalChecksum);
     let shopifyProduct = imageResponse.product;

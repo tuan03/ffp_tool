@@ -144,15 +144,11 @@ export async function syncSingleProduct(
 
   try {
     throwIfCancelled();
-    const hasCustomization = Boolean(
-      product.customization && product.customization.hasCustomization,
+    const amazonAsin = requireAmazonAsin(product.amazonAsin, "custom.amazon_asin");
+    const amazonParentAsin = requireAmazonAsin(
+      product.amazonParentAsin,
+      "custom.amazon_parent_asin",
     );
-    const amazonAsin = hasCustomization
-      ? requireAmazonAsin(product.amazonAsin, "custom.amazon_asin")
-      : undefined;
-    const amazonParentAsin = hasCustomization
-      ? requireAmazonAsin(product.amazonParentAsin, "custom.amazon_parent_asin")
-      : undefined;
 
     // 1. Create Product & Media Gallery & Options/Variants
     const productWriteInput = {
@@ -389,32 +385,30 @@ export async function syncSingleProduct(
       }
       metafieldMs += Date.now() - customizationMetafieldStartedAt;
 
-      if (!amazonAsin || !amazonParentAsin) {
-        throw new Error("Customized product Amazon ASIN metadata was not validated.");
-      }
-      const amazonMetafields = [
-        { key: "amazon_asin", value: amazonAsin },
-        { key: "amazon_parent_asin", value: amazonParentAsin },
-      ] as const;
-      for (const amazonMetafield of amazonMetafields) {
-        const amazonMetafieldStartedAt = Date.now();
-        try {
-          throwIfCancelled();
-          const amazonMetafieldResult = await gateway.setProductMetafield({
-            productId: writtenProduct.productId,
-            namespace: "custom",
-            key: amazonMetafield.key,
-            type: "single_line_text_field",
-            value: amazonMetafield.value,
-          });
-          if (!amazonMetafieldResult.success) {
-            throw new Error(
-              `Failed to set required custom.${amazonMetafield.key} metafield.`,
-            );
-          }
-        } finally {
-          metafieldMs += Date.now() - amazonMetafieldStartedAt;
+    }
+
+    const amazonMetafields = [
+      { key: "amazon_asin", value: amazonAsin },
+      { key: "amazon_parent_asin", value: amazonParentAsin },
+    ] as const;
+    for (const amazonMetafield of amazonMetafields) {
+      const amazonMetafieldStartedAt = Date.now();
+      try {
+        throwIfCancelled();
+        const amazonMetafieldResult = await gateway.setProductMetafield({
+          productId: writtenProduct.productId,
+          namespace: "custom",
+          key: amazonMetafield.key,
+          type: "single_line_text_field",
+          value: amazonMetafield.value,
+        });
+        if (!amazonMetafieldResult.success) {
+          throw new Error(
+            `Failed to set required custom.${amazonMetafield.key} metafield.`,
+          );
         }
+      } finally {
+        metafieldMs += Date.now() - amazonMetafieldStartedAt;
       }
     }
 

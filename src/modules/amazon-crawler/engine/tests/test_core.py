@@ -724,6 +724,7 @@ class CoreTests(unittest.TestCase):
             crawler = AmazonCrawler(root=Path(directory), settings=CrawlSettings(profile_slug="jeminise", apply_jeminise_preset=True), browser_pool=FakeBrowser(PRODUCT_HTML))
             products = crawler._products_from_family(family)
         self.assertEqual(len(products), 2)
+        self.assertEqual([product["asin"] for product in products], ["B012345678", "B012345679"])
         self.assertEqual(products[0]["splitContext"]["attribute"], "Design")
         self.assertTrue(products[0]["title"].startswith("Bedding - "))
         self.assertTrue(all(product["preset"] == PRESET_ID and len(product["variants"]) == 47 for product in products))

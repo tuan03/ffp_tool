@@ -67,6 +67,8 @@ export const shopifySyncMockData: ShopifySyncBatchInput = {
     },
     {
       id: "mock-product-standard-2",
+      amazonAsin: "B0STD00002",
+      amazonParentAsin: "B0PARENT02",
       title: "Custom Christian Leather Handbag For Women - C06",
       descriptionHtml: "<p>Standard Christian Handbag without customization.</p>",
       vendor: "FFP Store",
