@@ -43,6 +43,7 @@ interface PipelineClaim {
   readonly productId: string;
   readonly checksum: string;
   readonly attempt: number;
+  readonly inputAsin: string;
   readonly product: CrawlProduct;
   readonly settings: {
     readonly imageProfileSlug?: string;
@@ -98,6 +99,7 @@ const gatewayPort = Math.max(1, Number(env.GATEWAY_PORT || 3001));
 const gatewayUrl = (env.SHOPIFY_GATEWAY_URL || `http://127.0.0.1:${gatewayPort}/api/shopify`).replace(/\/+$/, "");
 const proxyCooldownUntil = new Map<string, number>();
 const seoCorpusCommitCoordinator = new SeoCorpusCommitCoordinator();
+const AMAZON_METAFIELD_SCHEMA_VERSION = 1;
 
 interface PipelineTimings {
   normalizationMs?: number;
@@ -593,6 +595,12 @@ async function processClaim(
       priceAddition,
       discountPercent,
       storeVendor,
+      ...(seoProduct.customization
+        ? {
+            amazonMetafieldSchemaVersion: AMAZON_METAFIELD_SCHEMA_VERSION,
+            amazonParentAsin: claim.inputAsin,
+          }
+        : {}),
     });
     const isNoOp = Boolean(existingProductId && lastSyncedChecksum === finalChecksum);
     let shopifyProduct = imageResponse.product;
@@ -671,6 +679,7 @@ async function processClaim(
       const baseInput = fromCustomizationNormalizerProduct(shopifyProduct, {
         vendor: storeVendor,
         productType: customProductType,
+        amazonParentAsin: claim.inputAsin,
       });
       let syncInput: ShopifySyncProductInput = {
         ...baseInput,
@@ -738,10 +747,11 @@ async function processClaim(
         const createdProductId = syncResult.productId;
         if (createdProductId) {
           try {
+            // Preserve the Shopify mapping without allowing a retry to no-op after a partial write.
             await postJson(`/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/shopify-checkpoint`, {
               workerId,
               storeId: claimStoreId,
-              normalizedChecksum: finalChecksum,
+              normalizedChecksum: `incomplete:${finalChecksum}`,
               shopify: {
                 productId: createdProductId,
                 productHandle: syncResult.productHandle,

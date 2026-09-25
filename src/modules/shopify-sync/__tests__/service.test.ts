@@ -66,6 +66,9 @@ test("fromCustomizationNormalizerProduct adapts normalized crawl product into Sh
     ],
     customization: {
       hasCustomization: true,
+      source: {
+        asin: "b0child001",
+      },
       assets: [
         {
           url: "https://m.media-amazon.com/images/I/61base.jpg",
@@ -80,6 +83,8 @@ test("fromCustomizationNormalizerProduct adapts normalized crawl product into Sh
   const adapted = fromCustomizationNormalizerProduct(crawlProduct);
 
   assertStrict.equal(adapted.id, "prod-100");
+  assertStrict.equal(adapted.amazonAsin, "B0CHILD001");
+  assertStrict.equal(adapted.amazonParentAsin, "B0GQ33XWW7");
   assertStrict.equal(adapted.title, "Personalized Handbag - C01");
   assertStrict.equal(adapted.descriptionHtml, "<p>SEO description without re-escaping</p>");
   assertStrict.equal(adapted.handle, "seo-handbag-c01");
@@ -105,6 +110,11 @@ test("fromCustomizationNormalizerProduct adapts normalized crawl product into Sh
   const adaptedJeminise = fromCustomizationNormalizerProduct(crawlProduct, { vendor: "JEMINISE", productType: "Blanket" });
   assertStrict.equal(adaptedJeminise.vendor, "JEMINISE");
   assertStrict.equal(adaptedJeminise.productType, "Blanket");
+
+  const adaptedWithInputParent = fromCustomizationNormalizerProduct(crawlProduct, {
+    amazonParentAsin: "b0input001",
+  });
+  assertStrict.equal(adaptedWithInputParent.amazonParentAsin, "B0INPUT001");
 
   // Test Money object support as produced by amazon-crawler
   const moneyProduct = {
@@ -252,8 +262,9 @@ test("syncSingleProduct records product write time when the gateway write fails"
   assertStrict.ok((result.timings?.productWriteMs ?? 0) >= 5);
 });
 
-test("syncSingleProduct coordinates the 4 operations through an injected ShopifyGateway", async () => {
+test("syncSingleProduct coordinates required operations through an injected ShopifyGateway", async () => {
   const operationsCalled: string[] = [];
+  const metafields = new Map<string, { type: string; value: string }>();
   let createdStatus: string | undefined;
 
   const fakeHiepGateway = {
@@ -273,8 +284,12 @@ test("syncSingleProduct coordinates the 4 operations through an injected Shopify
         shopifyCdnUrl: `https://cdn.shopify.com/files/${input.filename}`,
       };
     },
-    async setProductMetafield(input: { namespace: string; key: string }) {
+    async setProductMetafield(input: { namespace: string; key: string; type: string; value: string }) {
       operationsCalled.push(`setMetafield:${input.namespace}.${input.key}`);
+      metafields.set(`${input.namespace}.${input.key}`, {
+        type: input.type,
+        value: input.value,
+      });
       return { success: true, metafieldId: "gid://shopify/Metafield/hiep-m1" };
     },
   };
@@ -294,11 +309,85 @@ test("syncSingleProduct coordinates the 4 operations through an injected Shopify
   );
   assertStrict.ok(operationsCalled.some((op) => op.startsWith("uploadFile")));
   assertStrict.ok(operationsCalled.includes("setMetafield:custom.amazon_customizer"));
+  assertStrict.deepEqual(metafields.get("custom.amazon_asin"), {
+    type: "single_line_text_field",
+    value: "B0CHILD001",
+  });
+  assertStrict.deepEqual(metafields.get("custom.amazon_parent_asin"), {
+    type: "single_line_text_field",
+    value: "B0PARENT01",
+  });
   assertStrict.equal(typeof result.timings?.productWriteMs, "number");
   assertStrict.equal(typeof result.timings?.variantsMs, "number");
   assertStrict.equal(typeof result.timings?.assetUploadMs, "number");
   assertStrict.equal(typeof result.timings?.metafieldMs, "number");
   assertStrict.equal(typeof result.timings?.totalMs, "number");
+});
+
+test("syncSingleProduct rejects customized products with missing Amazon ASIN metadata before writing", async () => {
+  let productWrites = 0;
+  const gateway: ShopifyGateway = {
+    async createProduct() {
+      productWrites += 1;
+      return { productId: "unused", productHandle: "unused" };
+    },
+    async createVariants() {
+      return { createdCount: 0 };
+    },
+    async uploadFile() {
+      return { fileId: "unused", shopifyCdnUrl: "https://cdn.shopify.com/unused" };
+    },
+    async setProductMetafield() {
+      return { success: true };
+    },
+  };
+  const invalidProduct: ShopifySyncProductInput = {
+    ...shopifySyncMockData.products[0],
+    amazonAsin: undefined,
+  };
+
+  const result = await syncSingleProduct(invalidProduct, { gateway });
+
+  assertStrict.equal(result.success, false);
+  assertStrict.equal(result.reconciliationRequired, false);
+  assertStrict.match(result.error ?? "", /custom\.amazon_asin/);
+  assertStrict.equal(productWrites, 0);
+});
+
+test("syncSingleProduct requires both Amazon ASIN metafields after a customized product write", async () => {
+  const gateway: ShopifyGateway = {
+    async createProduct() {
+      throw new Error("createProduct must not run for an existing customized product");
+    },
+    async updateProduct(input) {
+      return {
+        productId: input.productId,
+        productHandle: "asin-failure",
+        createdVariantsCount: shopifySyncMockData.products[0].variants?.length ?? 0,
+      };
+    },
+    async createVariants() {
+      return { createdCount: 0 };
+    },
+    async uploadFile(input) {
+      return {
+        fileId: `gid://shopify/File/${input.filename}`,
+        shopifyCdnUrl: `https://cdn.shopify.com/${input.filename}`,
+      };
+    },
+    async setProductMetafield(input) {
+      return { success: input.key !== "amazon_parent_asin" };
+    },
+  };
+
+  const result = await syncSingleProduct(shopifySyncMockData.products[0], {
+    gateway,
+    existingProductId: "gid://shopify/Product/asin-failure",
+  });
+
+  assertStrict.equal(result.success, false);
+  assertStrict.equal(result.reconciliationRequired, true);
+  assertStrict.match(result.error ?? "", /custom\.amazon_parent_asin/);
 });
 
 test("syncSingleProduct updates the mapped Shopify product instead of creating a duplicate", async () => {

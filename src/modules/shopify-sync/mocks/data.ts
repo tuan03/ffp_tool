@@ -5,6 +5,8 @@ export const shopifySyncMockData: ShopifySyncBatchInput = {
   products: [
     {
       id: "mock-product-custom-1",
+      amazonAsin: "B0CHILD001",
+      amazonParentAsin: "B0PARENT01",
       title: "Custom Christian Leather Handbag For Women - C01",
       descriptionHtml: "<p>Faith-inspired handbag with personalized details.</p>",
       vendor: "FFP Store",
