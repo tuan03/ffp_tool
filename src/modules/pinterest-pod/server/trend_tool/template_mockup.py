@@ -823,26 +823,19 @@ def inpaint_artwork_on_template(
     active_niche = (getattr(target, "niche", "") or "").strip().lower()
     raw_name = (target.name or "").strip().lower()
     product_hint = active_niche or raw_name or "product"
+    is_bag = any(k in product_hint for k in ("bag", "handbag", "tote", "purse", "satchel", "backpack"))
 
     candidate_boxes: list[list[int]] = []
 
-    # Priority 1: Check reference_analysis product instances or boxes
+    # Priority 1: Check reference_analysis for pinpointed printable surface boxes (excluding handles/hardware)
     if reference_analysis:
-        instances = reference_analysis.get("product_instances") or []
-        for inst in instances:
-            if isinstance(inst, dict) and "box_2d" in inst and len(inst["box_2d"]) == 4:
-                pose_desc = str(inst.get("pose_and_presentation", "")).lower()
-                # Exclude purely hardware/detail shots if multiple instances exist
-                if len(instances) > 1 and any(hw in pose_desc for hw in ("zipper", "strap", "buckle", "open", "interior", "hardware")):
-                    continue
-                candidate_boxes.append(inst["box_2d"])
-        if not candidate_boxes:
-            p_boxes = reference_analysis.get("product_boxes_norm_0_1000") or []
-            for b in p_boxes:
-                if isinstance(b, (list, tuple)) and len(b) == 4:
-                    candidate_boxes.append([int(v) for v in b])
+        p_boxes = reference_analysis.get("product_boxes_norm_0_1000") or reference_analysis.get("printable_surfaces") or []
+        for b in p_boxes:
+            norm_b = _normalize_boxes([b])
+            if norm_b:
+                candidate_boxes.append(norm_b[0])
 
-    # Priority 2: Use Gemini Vision to detect printable surface boxes on the product
+    # Priority 2: Use Gemini Vision to detect printable surface boxes on the product if not already analyzed
     if not candidate_boxes and client is not None:
         try:
             prompt = (
@@ -873,14 +866,41 @@ def inpaint_artwork_on_template(
                 surfaces = data.get("surfaces") or data.get("box_2d")
                 if isinstance(surfaces, list):
                     for s in surfaces:
-                        if isinstance(s, dict) and "box_2d" in s and len(s["box_2d"]) == 4:
-                            candidate_boxes.append([int(v) for v in s["box_2d"]])
+                        norm_s = _normalize_boxes([s])
+                        if norm_s:
+                            candidate_boxes.append(norm_s[0])
                         elif isinstance(s, (int, float)) and len(surfaces) == 4:
-                            candidate_boxes.append([int(v) for v in surfaces])
+                            norm_all = _normalize_boxes([surfaces])
+                            if norm_all:
+                                candidate_boxes.append(norm_all[0])
                             break
         except Exception as exc:
             LOG.warning("Product surface detection via Gemini Vision fallback: %s", exc)
 
+    # Priority 3: Fall back to product_instances if present, smartly insetting to preserve top handles/straps
+    if not candidate_boxes and reference_analysis:
+        instances = reference_analysis.get("product_instances") or []
+        for inst in instances:
+            if isinstance(inst, dict):
+                pose_desc = str(inst.get("pose_and_presentation", "")).lower()
+                if len(instances) > 1 and any(hw in pose_desc for hw in ("zipper", "strap", "buckle", "open", "interior", "hardware")):
+                    continue
+                norm_inst = _normalize_boxes([inst.get("box_2d")])
+                if norm_inst:
+                    ib = norm_inst[0]
+                    # If bag, inset top by 20% to avoid covering top handles and hardware
+                    if is_bag:
+                        i_ymin, i_xmin, i_ymax, i_xmax = ib
+                        handle_cut = int((i_ymax - i_ymin) * 0.20)
+                        side_cut = max(2, int((i_xmax - i_xmin) * 0.05))
+                        candidate_boxes.append([i_ymin + handle_cut, i_xmin + side_cut, i_ymax - max(2, int((i_ymax - i_ymin) * 0.05)), i_xmax - side_cut])
+                    else:
+                        candidate_boxes.append(ib)
+
+    if not candidate_boxes:
+        candidate_boxes = [[150, 150, 850, 850]]
+
+    candidate_boxes = _normalize_boxes(candidate_boxes)
     if not candidate_boxes:
         candidate_boxes = [[150, 150, 850, 850]]
 
@@ -897,14 +917,17 @@ def inpaint_artwork_on_template(
         fitted_art = ImageOps.fit(artwork.convert("RGBA"), (box_w, box_h), Image.Resampling.LANCZOS)
 
         # Ambient lighting & folds extraction from original surface crop
-        crop = template.crop((left, top, right, bottom))
+        crop = template.crop((left, top, left + box_w, top + box_h))
         rgb_crop = np.asarray(crop.convert("RGB"), dtype=np.float32)
         luminance = rgb_crop[..., 0] * 0.2126 + rgb_crop[..., 1] * 0.7152 + rgb_crop[..., 2] * 0.0722
-        blur_radius = max(6, min(box_w, box_h) // 25)
+        blur_radius = max(4, min(box_w, box_h) // 25)
         blur_lum_img = Image.fromarray(luminance.astype(np.uint8)).filter(ImageFilter.GaussianBlur(radius=blur_radius))
         blur_lum = np.asarray(blur_lum_img, dtype=np.float32)
-        median = float(np.median(blur_lum)) or 128.0
-        shade = np.clip(blur_lum / max(1.0, median), 0.58, 1.42)
+        if blur_lum.size > 0 and not np.isnan(np.median(blur_lum)) and float(np.median(blur_lum)) > 0:
+            median = float(np.median(blur_lum))
+        else:
+            median = 128.0
+        shade = np.clip(blur_lum / max(1.0, median), 0.65, 1.35)
 
         art_np = np.asarray(fitted_art.convert("RGB"), dtype=np.float32)
         shaded_art = np.clip(art_np * shade[..., np.newaxis], 0, 255).astype(np.uint8)

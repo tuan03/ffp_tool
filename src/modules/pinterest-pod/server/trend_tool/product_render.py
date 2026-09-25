@@ -10,7 +10,7 @@ from typing import Any
 import numpy as np
 from PIL import Image, ImageChops, ImageDraw, ImageEnhance, ImageFilter, ImageOps
 
-from .config import ProductTarget
+from .config import ProductTarget, infer_product_type
 from .product_asset import (
     create_gemini_client,
     extract_image_bytes,
@@ -20,6 +20,29 @@ from .product_asset import (
 )
 
 LOG = logging.getLogger("product_render")
+
+
+def _normalize_box(raw_box: Any) -> list[int] | None:
+    if isinstance(raw_box, dict):
+        if "box_2d" in raw_box and isinstance(raw_box["box_2d"], (list, tuple)) and len(raw_box["box_2d"]) == 4:
+            raw_box = raw_box["box_2d"]
+        elif all(k in raw_box for k in ("ymin", "xmin", "ymax", "xmax")):
+            raw_box = [raw_box["ymin"], raw_box["xmin"], raw_box["ymax"], raw_box["xmax"]]
+        else:
+            return None
+    if isinstance(raw_box, (list, tuple)) and len(raw_box) == 4:
+        try:
+            raw_nums = [float(x) for x in raw_box]
+            if max(raw_nums) <= 1.0 and any(x > 0 for x in raw_nums):
+                raw_nums = [x * 1000.0 for x in raw_nums]
+            y1, x1, y2, x2 = [int(round(x)) for x in raw_nums]
+            ymin, ymax = max(0, min(y1, y2)), min(1000, max(y1, y2))
+            xmin, xmax = max(0, min(x1, x2)), min(1000, max(x1, x2))
+            if ymax > ymin + 16 and xmax > xmin + 16:
+                return [ymin, xmin, ymax, xmax]
+        except (ValueError, TypeError):
+            pass
+    return None
 
 
 @dataclass(frozen=True)
@@ -70,15 +93,28 @@ def render_product_from_print(
 
     raw_name = (target.name or "").strip().lower()
     active_niche = (getattr(target, "niche", "") or "").strip().lower()
+    inferred = infer_product_type(active_niche or raw_name)
 
-    is_blanket = raw_name == "blanket" or ("blanket" in active_niche or "quilt" in active_niche)
-    is_rug = raw_name == "rug" or ("rug" in active_niche and "bag" not in active_niche)
-
-    if is_blanket:
+    # When reference templates exist, prioritize universal product canvas extraction
+    # from the uploaded physical product templates.
+    if reference_templates:
+        canvas = get_or_create_universal_product_canvas(
+            target=target,
+            reference_templates=reference_templates,
+            canvas_cache=canvas_cache,
+            client=client,
+            backend=backend,
+            model=model,
+            max_long_edge=max_long_edge,
+        )
+        product, mask = render_universal_product(artwork, canvas, target, max_long_edge)
+        notes = f"print artwork rendered as a universal {active_niche or target.name} product asset from reference templates"
+        shape = canvas.canvas_name
+    elif inferred == "blanket":
         product, mask = render_blanket_product(artwork, target, max_long_edge)
         notes = "print artwork rendered as a soft blanket product asset"
         shape = "rectangle"
-    elif is_rug:
+    elif inferred == "rug":
         product, mask = render_rug_product(artwork, target, max_long_edge)
         notes = f"print artwork rendered as a {target.rug_shape} rug product asset"
         shape = target.rug_shape if target.name == "rug" else "rectangle"
@@ -137,6 +173,35 @@ def get_or_create_universal_product_canvas(
             if not ref_file.exists() or not ref_file.is_file():
                 continue
             try:
+                cached_box_info: tuple[list[int] | None, list[int] | None] = (None, None)
+                ref_cache_path = ref_file.parent / "reference_analysis_cache.json"
+                if ref_cache_path.exists() and ref_cache_path.is_file():
+                    try:
+                        cache_data = json.loads(ref_cache_path.read_text(encoding="utf-8"))
+                        if isinstance(cache_data, dict):
+                            for entry in cache_data.values():
+                                if not isinstance(entry, dict):
+                                    continue
+                                instances = entry.get("product_instances") or []
+                                p_boxes = entry.get("product_boxes_norm_0_1000") or []
+                                hero_c_box: list[int] | None = None
+                                for inst in instances:
+                                    if isinstance(inst, dict):
+                                        p_desc = str(inst.get("pose_and_presentation", "")).lower()
+                                        if any(hw in p_desc for hw in ("zipper", "strap", "buckle", "open", "interior", "hardware")):
+                                            continue
+                                        hero_c_box = _normalize_box(inst.get("box_2d"))
+                                        if hero_c_box:
+                                            break
+                                hero_s_box: list[int] | None = None
+                                if p_boxes:
+                                    hero_s_box = _normalize_box(p_boxes[0])
+                                if hero_c_box or hero_s_box:
+                                    cached_box_info = (hero_c_box, hero_s_box)
+                                    break
+                    except Exception:
+                        pass
+
                 with Image.open(ref_file) as opened_ref:
                     ref_img = ImageOps.exif_transpose(opened_ref).convert("RGB")
                 carrier_canvas = extract_product_canvas_from_reference(
@@ -146,6 +211,7 @@ def get_or_create_universal_product_canvas(
                     backend=backend,
                     model=model,
                     max_long_edge=max_long_edge,
+                    cached_boxes=cached_box_info,
                 )
                 if carrier_canvas is not None:
                     LOG.info("Segmented universal product carrier from reference template %s", ref_file.name)
@@ -177,55 +243,64 @@ def extract_product_canvas_from_reference(
     backend: str = "auto",
     model: str = "gemini-2.5-flash",
     max_long_edge: int = 1800,
+    cached_boxes: tuple[list[int] | None, list[int] | None] | None = None,
 ) -> UniversalProductCanvas | None:
     raw_name = (target.name or "").strip().lower()
     active_niche = (getattr(target, "niche", "") or "").strip().lower()
     niche_label = active_niche or raw_name or "product"
+    is_bag = any(k in niche_label for k in ("bag", "handbag", "tote", "purse", "satchel", "backpack"))
 
-    carrier_box_norm = [100, 100, 900, 900]
-    surface_box_norm = [200, 180, 800, 820]
+    carrier_box_norm: list[int] | None = None
+    surface_box_norm: list[int] | None = None
 
-    if client is None and backend and backend not in ("off", "none", "mock", "test"):
-        try:
-            client = create_gemini_client(backend)
-        except Exception:
-            client = None
+    if cached_boxes:
+        c_box, s_box = cached_boxes
+        if c_box:
+            carrier_box_norm = c_box
+        if s_box:
+            surface_box_norm = s_box
 
-    if client is not None:
-        try:
-            from google.genai import types
+    if carrier_box_norm is None:
+        if client is None and backend and backend not in ("off", "none", "mock", "test"):
+            try:
+                client = create_gemini_client(backend)
+            except Exception:
+                client = None
 
-            prompt = (
-                f"Analyze this image to extract a clean commercial product asset for {niche_label}.\n"
-                f"Identify:\n"
-                f"1. 'carrier_box': normalized [ymin, xmin, ymax, xmax] in 0..1000 scale tightly bounding the primary physical product (including handles, straps, hardware, zippers).\n"
-                f"2. 'surface_box': normalized [ymin, xmin, ymax, xmax] in 0..1000 scale bounding the printable surface panel where custom artwork/patterns are mapped (e.g. front body leather/fabric panel, excluding handles, straps, and zippers).\n"
-                f"Return JSON only: {{\"carrier_box\": [ymin, xmin, ymax, xmax], \"surface_box\": [ymin, xmin, ymax, xmax]}}"
-            )
-            res = client.models.generate_content(
-                model=model,
-                contents=[
-                    types.Content(
-                        role="user",
-                        parts=[
-                            image_part(template, max_side=1024),
-                            types.Part.from_text(text=prompt),
-                        ],
-                    )
-                ],
-                config=types.GenerateContentConfig(temperature=0.0, response_mime_type="application/json"),
-            )
-            raw_text = extract_response_text(res)
-            data = parse_json_relaxed(raw_text)
-            if isinstance(data, dict):
-                cb = data.get("carrier_box")
-                sb = data.get("surface_box")
-                if isinstance(cb, list) and len(cb) == 4:
-                    carrier_box_norm = [int(v) for v in cb]
-                if isinstance(sb, list) and len(sb) == 4:
-                    surface_box_norm = [int(v) for v in sb]
-        except Exception as vision_exc:
-            LOG.warning("Gemini Vision carrier detection fallback: %s", vision_exc)
+        if client is not None:
+            try:
+                from google.genai import types
+
+                prompt = (
+                    f"Analyze this image to extract a clean commercial product asset for {niche_label}.\n"
+                    f"Identify:\n"
+                    f"1. 'carrier_box': normalized [ymin, xmin, ymax, xmax] in 0..1000 scale tightly bounding the primary physical product (including handles, straps, hardware, zippers).\n"
+                    f"2. 'surface_box': normalized [ymin, xmin, ymax, xmax] in 0..1000 scale bounding the printable surface panel where custom artwork/patterns are mapped (e.g. front body leather/fabric panel, excluding handles, straps, and zippers).\n"
+                    f"Return JSON only: {{\"carrier_box\": [ymin, xmin, ymax, xmax], \"surface_box\": [ymin, xmin, ymax, xmax]}}"
+                )
+                res = client.models.generate_content(
+                    model=model,
+                    contents=[
+                        types.Content(
+                            role="user",
+                            parts=[
+                                image_part(template, max_side=1024),
+                                types.Part.from_text(text=prompt),
+                            ],
+                        )
+                    ],
+                    config=types.GenerateContentConfig(temperature=0.0, response_mime_type="application/json"),
+                )
+                raw_text = extract_response_text(res)
+                data = parse_json_relaxed(raw_text)
+                if isinstance(data, dict):
+                    carrier_box_norm = _normalize_box(data.get("carrier_box"))
+                    surface_box_norm = _normalize_box(data.get("surface_box"))
+            except Exception as vision_exc:
+                LOG.warning("Gemini Vision carrier detection fallback: %s", vision_exc)
+
+    if carrier_box_norm is None:
+        carrier_box_norm = [80, 80, 920, 920]
 
     w, h = template.size
     c_ymin, c_xmin, c_ymax, c_xmax = carrier_box_norm
@@ -234,10 +309,9 @@ def extract_product_canvas_from_reference(
     c_right = int(c_xmax * w / 1000.0)
     c_bottom = int(c_ymax * h / 1000.0)
 
-    # Margin check
     c_w = max(32, c_right - c_left)
     c_h = max(32, c_bottom - c_top)
-    carrier_crop = template.crop((c_left, c_top, c_right, c_bottom))
+    carrier_crop = template.crop((c_left, c_top, c_left + c_w, c_top + c_h))
 
     # Scale carrier if needed to maintain resolution
     scale = min(1.0, max_long_edge / max(c_w, c_h))
@@ -247,28 +321,66 @@ def extract_product_canvas_from_reference(
         c_w, c_h = new_w, new_h
 
     # Compute surface box relative to carrier crop
-    s_ymin, s_xmin, s_ymax, s_xmax = surface_box_norm
-    s_left_abs = int(s_xmin * w / 1000.0)
-    s_top_abs = int(s_ymin * h / 1000.0)
-    s_right_abs = int(s_xmax * w / 1000.0)
-    s_bottom_abs = int(s_ymax * h / 1000.0)
+    if surface_box_norm is not None:
+        s_ymin, s_xmin, s_ymax, s_xmax = surface_box_norm
+        s_left_abs = int(s_xmin * w / 1000.0)
+        s_top_abs = int(s_ymin * h / 1000.0)
+        s_right_abs = int(s_xmax * w / 1000.0)
+        s_bottom_abs = int(s_ymax * h / 1000.0)
 
-    rel_left = max(0, min(c_w - 16, int((s_left_abs - c_left) * scale)))
-    rel_top = max(0, min(c_h - 16, int((s_top_abs - c_top) * scale)))
-    rel_right = max(rel_left + 16, min(c_w, int((s_right_abs - c_left) * scale)))
-    rel_bottom = max(rel_top + 16, min(c_h, int((s_bottom_abs - c_top) * scale)))
-    surface_box = (rel_left, rel_top, rel_right, rel_bottom)
+        rel_left = max(0, min(c_w - 24, int((s_left_abs - c_left) * scale)))
+        rel_top = max(0, min(c_h - 24, int((s_top_abs - c_top) * scale)))
+        rel_right = max(rel_left + 20, min(c_w, int((s_right_abs - c_left) * scale)))
+        rel_bottom = max(rel_top + 20, min(c_h, int((s_bottom_abs - c_top) * scale)))
+        surface_box = (rel_left, rel_top, rel_right, rel_bottom)
+    else:
+        # Intelligently derive surface box inside carrier crop:
+        # For bags: top handles occupy the upper ~20-25%; exclude them from surface box
+        if is_bag:
+            surface_box = (
+                max(4, int(c_w * 0.06)),
+                max(8, int(c_h * 0.20)),
+                max(20, int(c_w * 0.94)),
+                max(24, int(c_h * 0.94)),
+            )
+        else:
+            surface_box = (
+                max(4, int(c_w * 0.08)),
+                max(4, int(c_h * 0.08)),
+                max(20, int(c_w * 0.92)),
+                max(20, int(c_h * 0.92)),
+            )
+
+    sb_w = surface_box[2] - surface_box[0]
+    sb_h = surface_box[3] - surface_box[1]
+
+    # Convert carrier to RGBA and remove plain studio background if present
+    carrier_rgba = carrier_crop.convert("RGBA")
+    arr = np.asarray(carrier_rgba)
+    corners = np.concatenate([
+        arr[:4, :4, :3].reshape(-1, 3),
+        arr[:4, -4:, :3].reshape(-1, 3),
+        arr[-4:, :4, :3].reshape(-1, 3),
+        arr[-4:, -4:, :3].reshape(-1, 3),
+    ], axis=0)
+    mean_corner_rgb = float(np.mean(corners))
+    std_corner_rgb = float(np.std(corners))
+    if mean_corner_rgb > 215 and std_corner_rgb < 25:
+        # Light studio background detected -> flood fill from 4 corners to make background transparent
+        for pt in [(0, 0), (c_w - 1, 0), (0, c_h - 1), (c_w - 1, c_h - 1)]:
+            ImageDraw.floodfill(carrier_rgba, pt, (255, 255, 255, 0), thresh=25)
 
     # Extract luminance map for lighting & folds transfer
-    sb_w = rel_right - rel_left
-    sb_h = rel_bottom - rel_top
     surface_crop = carrier_crop.crop(surface_box)
     rgb_arr = np.asarray(surface_crop.convert("RGB"), dtype=np.float32)
     lum = rgb_arr[..., 0] * 0.2126 + rgb_arr[..., 1] * 0.7152 + rgb_arr[..., 2] * 0.0722
     blur_r = max(4, min(sb_w, sb_h) // 30)
     blur_lum_img = Image.fromarray(lum.astype(np.uint8)).filter(ImageFilter.GaussianBlur(radius=blur_r))
     blur_lum = np.asarray(blur_lum_img, dtype=np.float32)
-    median = float(np.median(blur_lum)) or 128.0
+    if blur_lum.size > 0 and not np.isnan(np.median(blur_lum)) and float(np.median(blur_lum)) > 0:
+        median = float(np.median(blur_lum))
+    else:
+        median = 128.0
     shade = np.clip(blur_lum / max(1.0, median), 0.65, 1.35)
 
     # Soft feathered surface mask
@@ -281,7 +393,7 @@ def extract_product_canvas_from_reference(
     material = "leather" if "leather" in niche_label else ("fabric" if any(k in niche_label for k in ("textile", "fabric", "cloth", "canvas")) else "smooth")
 
     return UniversalProductCanvas(
-        carrier_image=carrier_crop.convert("RGBA"),
+        carrier_image=carrier_rgba,
         surface_box=surface_box,
         surface_mask=mask,
         luminance_map=shade,

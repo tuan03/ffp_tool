@@ -113,15 +113,17 @@ def fit_centric_on_canvas(
     avail_w = max(10, int(target_w * (1.0 - 2 * margin_ratio)))
     avail_h = max(10, int(target_h * (1.0 - 2 * margin_ratio)))
 
-    contained = ImageOps.contain(image, (avail_w, avail_h), Image.Resampling.LANCZOS)
-
     rgba = image.convert("RGBA")
+    contained = ImageOps.contain(rgba, (avail_w, avail_h), Image.Resampling.LANCZOS)
+
     arr = np.asarray(rgba)
+    c_w = max(1, min(5, rgba.width // 2))
+    c_h = max(1, min(5, rgba.height // 2))
     corners = np.concatenate([
-        arr[:5, :5, :].reshape(-1, 4),
-        arr[:5, -5:, :].reshape(-1, 4),
-        arr[-5:, :5, :].reshape(-1, 4),
-        arr[-5:, -5:, :].reshape(-1, 4),
+        arr[:c_h, :c_w, :].reshape(-1, 4),
+        arr[:c_h, -c_w:, :].reshape(-1, 4),
+        arr[-c_h:, :c_w, :].reshape(-1, 4),
+        arr[-c_h:, -c_w:, :].reshape(-1, 4),
     ], axis=0)
     median_color = tuple(int(v) for v in np.median(corners, axis=0))
     if median_color[3] < 50:
@@ -136,7 +138,8 @@ def fit_centric_on_canvas(
 
 
 def contain_on_canvas(image: Image.Image, size: tuple[int, int]) -> Image.Image:
-    contained = ImageOps.contain(image, size, Image.Resampling.LANCZOS)
+    rgba = image.convert("RGBA")
+    contained = ImageOps.contain(rgba, size, Image.Resampling.LANCZOS)
     canvas = Image.new("RGBA", size, (255, 255, 255, 0))
     offset = ((size[0] - contained.width) // 2, (size[1] - contained.height) // 2)
     canvas.alpha_composite(contained, offset)

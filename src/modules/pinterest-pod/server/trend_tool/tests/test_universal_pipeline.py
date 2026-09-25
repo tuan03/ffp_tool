@@ -21,6 +21,7 @@ from trend_tool.image_ops import (
 from trend_tool.product_render import (
     UniversalProductCanvas,
     add_leather_surface,
+    extract_product_canvas_from_reference,
     get_or_create_universal_product_canvas,
     render_product_from_print,
     render_universal_product,
@@ -252,6 +253,92 @@ class TestUniversalPipeline(unittest.TestCase):
             arr = np.asarray(fitted)
             red_pixels = (arr[..., 0] > 200) & (arr[..., 1] < 50) & (arr[..., 2] < 50)
             self.assertTrue(np.any(red_pixels), "Hero red motif was preserved and not cropped away!")
+
+    def test_fit_centric_on_canvas_rgb_input_safe(self) -> None:
+        """Regression test: Passing an RGB image to fit_centric_on_canvas must not raise ValueError: images do not match."""
+        rgb_img = Image.new("RGB", (300, 300), (255, 255, 255))
+        draw = ImageDraw.Draw(rgb_img)
+        draw.ellipse((50, 50, 250, 250), fill=(20, 100, 220))
+        result = fit_centric_on_canvas(rgb_img, (600, 600))
+        self.assertEqual(result.size, (600, 600))
+        self.assertEqual(result.mode, "RGBA")
+
+    def test_inpaint_preserves_handles_when_instances_and_surfaces_present(self) -> None:
+        """Requirement: Handles and hardware must not be painted over when inpainting on template."""
+        tpl = Image.new("RGB", (1000, 1000), (200, 200, 200))
+        ref_analysis = {
+            "product_instances": [{"box_2d": [100, 100, 500, 500], "pose_and_presentation": "Front view"}],
+            "product_boxes_norm_0_1000": [[200, 120, 480, 480]],
+        }
+        art = Image.new("RGBA", (500, 500), (0, 255, 0, 255))
+        target = ProductTarget(name="custom", width_px=1000, height_px=1000, niche="leather bag")
+        out = inpaint_artwork_on_template(None, art, tpl, target, ref_analysis)
+
+        # Handle pixel at (x=300, y=150) must remain untouched background gray
+        handle_pixel = out.getpixel((300, 150))
+        self.assertEqual(handle_pixel, (200, 200, 200))
+
+        # Surface pixel at (x=300, y=300) must receive the green artwork
+        surface_pixel = out.getpixel((300, 300))
+        self.assertGreater(surface_pixel[1], 150)
+
+    def test_extract_product_canvas_handles_float_coordinates_robustly(self) -> None:
+        """Regression test: Gemini Vision normalized float coordinates (0..1) must not collapse into a 0-size carrier."""
+        import json
+
+        tpl = Image.new("RGB", (1000, 1000), (240, 240, 240))
+        target = ProductTarget(name="custom", width_px=1000, height_px=1000, niche="leather bag")
+
+        class FakeClient:
+            class models:
+                @staticmethod
+                def generate_content(*args, **kwargs):
+                    class Res:
+                        text = json.dumps({"carrier_box": [0.126, 0.01, 0.5, 0.498], "surface_box": [0.18, 0.04, 0.44, 0.46]})
+                    return Res()
+
+        canvas = extract_product_canvas_from_reference(tpl, target=target, client=FakeClient(), backend="mock")
+        self.assertIsNotNone(canvas)
+        self.assertGreater(canvas.carrier_image.width, 100)
+        self.assertGreater(canvas.carrier_image.height, 100)
+        self.assertGreater(canvas.surface_box[2], canvas.surface_box[0])
+        self.assertGreater(canvas.surface_box[3], canvas.surface_box[1])
+
+    def test_universal_product_canvas_reference_templates_override_rug_name(self) -> None:
+        """Requirement: When reference templates exist, render_product_from_print must extract carrier from templates,
+
+        even if target.name is 'rug' or 'blanket'.
+        """
+        art_p = self.work_dir / "art_rug_override.png"
+        ref_p = self.work_dir / "ref_template.png"
+        prod_p = self.work_dir / "prod_rug_override.png"
+        mask_p = self.work_dir / "mask_rug_override.png"
+
+        Image.new("RGBA", (500, 500), (255, 0, 0, 255)).save(art_p)
+        Image.new("RGB", (1000, 1000), (240, 240, 240)).save(ref_p)
+        target = ProductTarget(name="rug", width_px=1000, height_px=1000, niche="persian silk rug")
+
+        rec = render_product_from_print(
+            source_path=art_p,
+            print_path=art_p,
+            product_path=prod_p,
+            mask_path=mask_p,
+            target=target,
+            reference_templates=[ref_p],
+            backend="off",
+        )
+        self.assertIn("from reference templates", rec.notes)
+        self.assertIn("carrier", rec.shape.lower())
+
+    def test_extract_product_canvas_plain_background_transparency(self) -> None:
+        """Requirement: Plain studio backgrounds should be made transparent so product cutout serves as clean standalone asset."""
+        tpl = Image.new("RGB", (1000, 1000), (250, 250, 250))
+        target = ProductTarget(name="custom", width_px=1000, height_px=1000, niche="leather bag")
+        canvas = extract_product_canvas_from_reference(tpl, target=target, backend="off")
+        self.assertIsNotNone(canvas)
+        self.assertEqual(canvas.carrier_image.mode, "RGBA")
+        corner_alpha = canvas.carrier_image.getpixel((0, 0))[3]
+        self.assertEqual(corner_alpha, 0)
 
 
 if __name__ == "__main__":
