@@ -1543,7 +1543,6 @@ export function SeoReviewPage({
               onApproveProduct={handleApproveProduct}
               onRejectProduct={handleRejectProduct}
               onRollbackProduct={handleRollbackProduct}
-              onZoomImage={handleOpenZoomImage}
               onRetrySync={handleRetrySync}
               onViewSyncError={handleViewSyncError}
             />

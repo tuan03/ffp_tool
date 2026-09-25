@@ -1,11 +1,5 @@
-import { useState } from "react";
-
-import { sanitizeHtmlDescription } from "../sanitize-html";
-import { buildProductZoomImages } from "../zoom-image-helper";
-import { SeoSerpPreview } from "./SeoSerpPreview";
-import { ShopifySyncErrorBanner } from "./ShopifySyncErrorBanner";
 import { SourceBadge } from "./SourceBadge";
-import type { SeoProcessingStatus, SeoProductUiViewModel, ZoomImageItem } from "../types";
+import type { SeoProcessingStatus, SeoProductUiViewModel } from "../types";
 
 export interface ProductCardListProps {
   readonly products: readonly SeoProductUiViewModel[];
@@ -18,7 +12,6 @@ export interface ProductCardListProps {
   readonly onRetrySync?: (id: string) => void;
   readonly onViewSyncError?: (product: SeoProductUiViewModel) => void;
   readonly onRollbackProduct?: (id: string) => void;
-  readonly onZoomImage?: (images: readonly ZoomImageItem[], initialIndex?: number) => void;
 }
 
 export function ProductCardList({
@@ -32,32 +25,7 @@ export function ProductCardList({
   onRetrySync,
   onViewSyncError,
   onRollbackProduct,
-  onZoomImage,
 }: ProductCardListProps): React.JSX.Element {
-  const [expandedDescIds, setExpandedDescIds] = useState<ReadonlySet<string>>(new Set());
-  const [descViewMode, setDescViewMode] = useState<Record<string, "formatted" | "raw">>({});
-  const [copiedKey, setCopiedKey] = useState<string | null>(null);
-
-  function toggleDescExpanded(id: string) {
-    setExpandedDescIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) {
-        next.delete(id);
-      } else {
-        next.add(id);
-      }
-      return next;
-    });
-  }
-
-  function handleCopy(text: string, key: string) {
-    if (typeof navigator !== "undefined" && navigator.clipboard) {
-      navigator.clipboard.writeText(text);
-      setCopiedKey(key);
-      setTimeout(() => setCopiedKey(null), 1600);
-    }
-  }
-
   function renderSeoStatusBadge(status: SeoProcessingStatus, isMock: boolean) {
     if (status === "completed") {
       return (
@@ -203,8 +171,6 @@ export function ProductCardList({
     <div className="space-y-4">
       {products.map((product) => {
         const isSelected = selectedIds.has(product.id);
-        const isDescExpanded = expandedDescIds.has(product.id);
-        const currentDescMode = descViewMode[product.id] || "formatted";
         const firstImage = product.images[0]?.previewUrl.value || "";
 
         return (
@@ -217,7 +183,7 @@ export function ProductCardList({
             }`}
           >
             {/* Card Header */}
-            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 p-4 border-b border-slate-800/80 bg-slate-950/40">
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 p-3 bg-slate-950/40 rounded-2xl">
               <div className="flex items-start gap-3 min-w-0">
                 {/* Select Checkbox */}
                 <div className="pt-1">
@@ -230,58 +196,48 @@ export function ProductCardList({
                   />
                 </div>
 
-                {/* Thumbnail */}
-                <div className="relative h-14 w-14 flex-shrink-0 overflow-hidden rounded-xl border border-slate-800 bg-slate-950 flex items-center justify-center text-slate-600 shadow-inner group">
-                  {firstImage ? (
-                    <button
-                      type="button"
-                      onClick={() => onZoomImage?.(buildProductZoomImages(product), 0)}
-                      className="h-full w-full block cursor-zoom-in relative focus:outline-none focus:ring-1 focus:ring-cyan-500 rounded-xl"
-                      title="Nhấn để phóng to ảnh sản phẩm"
-                      aria-label="Phóng to ảnh sản phẩm"
-                    >
-                      <img
-                        src={firstImage}
-                        alt={product.images[0]?.alt.value || product.productTitle.value}
-                        className="h-full w-full object-cover transition-transform duration-200 group-hover:scale-105"
-                        loading="lazy"
-                        onError={(e) => {
-                          const target = e.currentTarget;
-                          target.style.display = "none";
-                        }}
-                      />
-                      <span className="absolute inset-0 bg-slate-950/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white text-xs">
-                        🔍
+                <button
+                  type="button"
+                  onClick={() => onViewProduct(product)}
+                  aria-label={`Xem chi tiết sản phẩm ${product.productTitle.value}`}
+                  className="group flex min-w-0 flex-1 items-start gap-3 text-left rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
+                >
+                  {/* Thumbnail */}
+                  <div className="relative h-14 w-14 flex-shrink-0 overflow-hidden rounded-xl border border-slate-800 bg-slate-950 flex items-center justify-center text-slate-600 shadow-inner">
+                    {firstImage ? (
+                      <>
+                        <img
+                          src={firstImage}
+                          alt={product.images[0]?.alt.value || product.productTitle.value}
+                          className="h-full w-full object-cover transition-transform duration-200 group-hover:scale-105"
+                          loading="lazy"
+                          onError={(e) => {
+                            e.currentTarget.style.display = "none";
+                          }}
+                        />
+                        <span className="absolute inset-0 bg-slate-950/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white text-xs">Xem</span>
+                      </>
+                    ) : (
+                      <span className="text-xl" title="Không có ảnh">📷</span>
+                    )}
+                  </div>
+
+                  {/* Titles and Badges */}
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-bold text-slate-100 group-hover:text-cyan-400 text-sm lg:text-base text-left transition line-clamp-1">
+                        {product.productTitle.value}
                       </span>
-                    </button>
-                  ) : (
-                    <span className="text-xl" title="Không có ảnh">📷</span>
-                  )}
-                </div>
+                      <SourceBadge source={product.productTitle.source} />
+                    </div>
 
-                {/* Titles and Badges */}
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <button
-                      type="button"
-                      onClick={() => onViewProduct(product)}
-                      className="font-bold text-slate-100 hover:text-cyan-400 text-sm lg:text-base text-left transition cursor-pointer line-clamp-1"
-                    >
-                      {product.productTitle.value}
-                    </button>
-                    <SourceBadge source={product.productTitle.source} />
+                    <div className="flex flex-wrap items-center gap-2 mt-1 text-xs text-slate-400 font-mono">
+                      <span className="text-cyan-400/90 font-medium">/{product.handle.value}</span>
+                      {product.asin && <span className="text-slate-500">ASIN: {product.asin}</span>}
+                      {product.sourceNiche && <span className="text-slate-500 font-sans">Niche: {product.sourceNiche}</span>}
+                    </div>
                   </div>
-
-                  <div className="flex flex-wrap items-center gap-2 mt-1 text-xs text-slate-400 font-mono">
-                    <span className="text-cyan-400/90 font-medium">/{product.handle.value}</span>
-                    {product.asin && (
-                      <span className="text-slate-500">ASIN: {product.asin}</span>
-                    )}
-                    {product.sourceNiche && (
-                      <span className="text-slate-500 font-sans">Niche: {product.sourceNiche}</span>
-                    )}
-                  </div>
-                </div>
+                </button>
               </div>
 
               {/* Status and Action Buttons */}
@@ -290,16 +246,6 @@ export function ProductCardList({
                   {renderSeoStatusBadge(product.seoStatus.value, product.seoStatus.source === "mock")}
                   {renderReviewBadge(product.reviewDecision)}
                   {renderShopifySyncBadge(product)}
-                  {renderShopifySyncBadge(product)}
-                  {product.lastSyncedAt && product.reviewDecision === "approved" && (
-                    <span
-                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-emerald-950/70 text-emerald-300 border border-emerald-800/60"
-                      title={`Đã đồng bộ lên Shopify: ${new Date(product.lastSyncedAt).toLocaleString()}`}
-                    >
-                      <span className="text-emerald-400">✓</span>
-                      <span>Shopify Synced</span>
-                    </span>
-                  )}
                   {product.lastRevertedAt && product.reviewDecision !== "approved" && (
                     <span
                       className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-amber-950/70 text-amber-300 border border-amber-800/60"
@@ -476,217 +422,6 @@ export function ProductCardList({
               </div>
             </div>
 
-            {/* Rejection reason banner if any */}
-            {product.rejectionReason && (
-              <div className="mx-4 mt-3 rounded-lg border border-rose-900/60 bg-rose-950/30 px-3 py-2 text-xs text-rose-300 flex items-center gap-2">
-                <span className="font-bold">Lý do từ chối:</span>
-                <span>{product.rejectionReason}</span>
-              </div>
-            )}
-
-            {/* Card Body: Critical SEO Fields Direct Inspection */}
-            <div className="p-4 space-y-4">
-              {/* 1. Google SERP Snippet Preview */}
-              <SeoSerpPreview
-                seoTitle={product.seoTitle}
-                seoDescription={product.seoDescription}
-                handle={product.handle}
-              />
-
-              {/* 2. Image Alt Texts Grid */}
-              <div className="rounded-xl border border-slate-800/80 bg-slate-950/50 p-3.5 space-y-2.5">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-bold uppercase tracking-wider text-slate-300">
-                      🖼️ Image Alt Texts ({product.images.length} ảnh)
-                    </span>
-                    <span className="text-[11px] text-slate-500">
-                      (Tất cả Alt text được tạo tự động)
-                    </span>
-                  </div>
-                </div>
-
-                {product.images.length === 0 ? (
-                  <div className="text-xs text-slate-500 italic py-1">
-                    Không có hình ảnh cho sản phẩm này.
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5 max-h-72 overflow-y-auto pr-1">
-                    {product.images.map((img, idx) => {
-                      const altLen = img.alt.value.length;
-                      const copyId = `${product.id}-img-${idx}`;
-                      return (
-                        <div
-                          key={img.id}
-                          className="flex items-start gap-2.5 p-2 rounded-lg bg-slate-900/90 border border-slate-800/80"
-                        >
-                          <div className="relative h-12 w-12 flex-shrink-0 overflow-hidden rounded-md border border-slate-800 bg-slate-950 flex items-center justify-center group">
-                            {img.previewUrl.value ? (
-                              <button
-                                type="button"
-                                onClick={() => onZoomImage?.(buildProductZoomImages(product), idx)}
-                                className="h-full w-full block cursor-zoom-in relative focus:outline-none focus:ring-1 focus:ring-cyan-500 rounded-md"
-                                title="Nhấn để phóng to ảnh"
-                                aria-label={`Phóng to ảnh #${idx + 1}`}
-                              >
-                                <img
-                                  src={img.previewUrl.value}
-                                  alt={img.alt.value}
-                                  className="h-full w-full object-cover transition-transform duration-200 group-hover:scale-105"
-                                  loading="lazy"
-                                  onError={(e) => {
-                                    const target = e.currentTarget;
-                                    target.style.display = "none";
-                                  }}
-                                />
-                                <span className="absolute inset-0 bg-slate-950/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white text-[10px]">
-                                  🔍
-                                </span>
-                              </button>
-                            ) : (
-                              <span className="text-sm">📷</span>
-                            )}
-                          </div>
-
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center justify-between mb-0.5">
-                              <span className="text-[10px] font-bold text-slate-400 uppercase">
-                                Ảnh #{idx + 1}
-                              </span>
-                              <div className="flex items-center gap-1.5">
-                                <span
-                                  className={`text-[10px] font-mono ${
-                                    altLen > 125
-                                      ? "text-amber-400"
-                                      : altLen > 0
-                                      ? "text-emerald-400"
-                                      : "text-rose-400"
-                                  }`}
-                                >
-                                  {altLen}/125
-                                </span>
-                                <button
-                                  type="button"
-                                  onClick={() => handleCopy(img.alt.value, copyId)}
-                                  className="text-[10px] font-medium text-slate-400 hover:text-cyan-400 cursor-pointer"
-                                >
-                                  {copiedKey === copyId ? "✓" : "Copy"}
-                                </button>
-                              </div>
-                            </div>
-
-                            <p className="text-xs text-slate-200 line-clamp-2 leading-relaxed bg-slate-950/80 p-1.5 rounded border border-slate-800/60">
-                              {img.alt.value || (
-                                <span className="text-rose-400 italic">Chưa có Alt text</span>
-                              )}
-                            </p>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-
-              {/* 3. Product Description Snippet / Expandable Preview */}
-              <div className="rounded-xl border border-slate-800/80 bg-slate-950/50 p-3.5 space-y-2">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-bold uppercase tracking-wider text-slate-300">
-                      📝 Product Description (Mô tả sản phẩm)
-                    </span>
-                    <SourceBadge source={product.productDescription.source} />
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    {isDescExpanded && (
-                      <div className="flex items-center rounded-md bg-slate-900 p-0.5 border border-slate-800 text-[11px] font-medium">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setDescViewMode((prev) => ({ ...prev, [product.id]: "formatted" }))
-                          }
-                          className={`px-2 py-0.5 rounded transition ${
-                            currentDescMode === "formatted"
-                              ? "bg-cyan-600 text-white font-semibold"
-                              : "text-slate-400 hover:text-slate-200"
-                          }`}
-                        >
-                          Preview
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setDescViewMode((prev) => ({ ...prev, [product.id]: "raw" }))
-                          }
-                          className={`px-2 py-0.5 rounded transition ${
-                            currentDescMode === "raw"
-                              ? "bg-cyan-600 text-white font-semibold"
-                              : "text-slate-400 hover:text-slate-200"
-                          }`}
-                        >
-                          HTML
-                        </button>
-                      </div>
-                    )}
-
-                    <button
-                      type="button"
-                      onClick={() => toggleDescExpanded(product.id)}
-                      className="text-xs font-medium text-cyan-400 hover:text-cyan-300 transition cursor-pointer flex items-center gap-1"
-                    >
-                      <span>{isDescExpanded ? "▲ Thu gọn" : "▼ Xem đầy đủ mô tả"}</span>
-                    </button>
-                  </div>
-                </div>
-
-                {isDescExpanded ? (
-                  currentDescMode === "formatted" ? (
-                    <div
-                      className="prose prose-invert prose-xs max-w-none p-3 rounded-lg bg-slate-900 border border-slate-800 max-h-64 overflow-y-auto leading-relaxed text-slate-300 text-xs"
-                      dangerouslySetInnerHTML={{
-                        __html: sanitizeHtmlDescription(product.productDescription.value),
-                      }}
-                    />
-                  ) : (
-                    <div className="relative">
-                      <pre className="p-3 rounded-lg bg-slate-950 border border-slate-800 font-mono text-[11px] text-slate-300 overflow-x-auto max-h-64">
-                        {product.productDescription.value}
-                      </pre>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          handleCopy(product.productDescription.value, `desc-${product.id}`)
-                        }
-                        className="absolute top-2 right-2 px-2 py-0.5 rounded text-[11px] font-medium bg-slate-800 hover:bg-slate-700 text-slate-300 transition"
-                      >
-                        {copiedKey === `desc-${product.id}` ? "✓ Đã chép" : "Copy"}
-                      </button>
-                    </div>
-                  )
-                ) : (
-                  <div
-                    className="text-xs text-slate-400 line-clamp-2 leading-relaxed bg-slate-900/60 p-2.5 rounded-lg border border-slate-800/60 cursor-pointer hover:text-slate-300"
-                    onClick={() => toggleDescExpanded(product.id)}
-                    title="Bấm để mở rộng toàn bộ mô tả"
-                  >
-                    {product.productDescription.value.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim() || (
-                      <span className="text-rose-400 italic">Chưa có mô tả sản phẩm</span>
-                    )}
-                  </div>
-                )}
-              </div>
-
-              {/* Shopify Sync Error Banner */}
-              {product.shopifySyncStatus === "failed" && (
-                <ShopifySyncErrorBanner
-                  error={product.shopifySyncError}
-                  syncedAt={product.shopifySyncedAt}
-                  onRetry={onRetrySync ? () => onRetrySync(product.id) : undefined}
-                  className="mt-3.5"
-                />
-              )}
-            </div>
           </div>
         );
       })}
