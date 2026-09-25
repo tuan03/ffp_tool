@@ -256,3 +256,106 @@ test("runCustomizationSeoPipeline: handles individual failures gracefully withou
   assert.equal(result.items[1].error, "External SEO provider quota exceeded");
   assert.equal(result.items[1].seoOutput, undefined);
 });
+
+test("fromCustomizationProduct: enriches title, description and variantLabel from splitContext and variants", () => {
+  const productWithSplitContext: CrawlProduct = {
+    ...sampleProductA,
+    title: "Personalized Christian Handbag Set",
+    splitContext: { attribute: "Color", value: "Pink Faith" },
+  };
+
+  const seoInput = fromCustomizationProduct(productWithSplitContext);
+  assert.equal(seoInput.title, "Personalized Christian Handbag Set - Pink Faith");
+  assert.match(seoInput.description, /• Color: Pink Faith/);
+  assert.equal(seoInput.variantLabel, "Pink Faith");
+
+  // If variants[0].options is present instead of splitContext.value
+  const productWithVariants: CrawlProduct = {
+    ...sampleProductA,
+    title: "Personalized Christian Handbag Set",
+    splitContext: { attribute: "Color", value: null },
+    variants: [{ options: { Color: "Purple Faith" } }],
+  };
+
+  const seoInputVar = fromCustomizationProduct(productWithVariants);
+  assert.equal(seoInputVar.title, "Personalized Christian Handbag Set - Purple Faith");
+  assert.match(seoInputVar.description, /• Color: Purple Faith/);
+  assert.equal(seoInputVar.variantLabel, "Purple Faith");
+
+  // Does not duplicate variant label if already in title
+  const productAlreadyHavingVariant: CrawlProduct = {
+    ...sampleProductA,
+    title: "Personalized Christian Handbag Set - Pink Faith",
+    splitContext: { attribute: "Color", value: "Pink Faith" },
+  };
+  const seoInputDup = fromCustomizationProduct(productAlreadyHavingVariant);
+  assert.equal(seoInputDup.title, "Personalized Christian Handbag Set - Pink Faith");
+});
+
+test("applySeoContentToCustomizationProduct: preserves variant label in product title and SEO title", () => {
+  const splitProduct: CrawlProduct = {
+    ...sampleProductA,
+    parentAsin: "B0G1SSY9S7",
+    splitContext: { attribute: "Color", value: "Pink Faith" },
+  };
+
+  const seoOutput: SeoContentOutput = {
+    productTitle: "Personalized Christian Faux Leather Handbag Set - Tote & Wallet",
+    productDescription: "<p>Beautiful Christian handbag set.</p>",
+    productSeoTitle: "Personalized Christian Handbag Set | Premium Tote & Wallet",
+    productSeoDescription: "Shop Christian faux leather handbag set.",
+    productHandle: "christian-handbag-set",
+    images: [],
+  };
+
+  const enriched = applySeoContentToCustomizationProduct(splitProduct, seoOutput, {
+    ensureUniqueHandle: true,
+  });
+
+  assert.match(enriched.title ?? "", /Pink Faith/);
+  assert.match(enriched.seo?.title ?? "", /Pink Faith/);
+  assert.ok((enriched.seo?.title?.length ?? 0) <= 70);
+  assert.match(String(enriched.handle ?? ""), /pink-faith/);
+
+  // Does not duplicate variant label if already present in seoOutput.productTitle
+  const seoOutputWithVariant: SeoContentOutput = {
+    ...seoOutput,
+    productTitle: "Personalized Christian Handbag Set - Pink Faith",
+    productSeoTitle: "Personalized Christian Handbag Set - Pink Faith",
+  };
+  const enrichedDup = applySeoContentToCustomizationProduct(splitProduct, seoOutputWithVariant);
+  assert.equal(enrichedDup.title, "Personalized Christian Handbag Set - Pink Faith");
+  assert.equal(enrichedDup.seo?.title, "Personalized Christian Handbag Set - Pink Faith");
+});
+
+test("applySeoContentToCustomizationProduct: two variants of same parent ASIN produce distinct titles and handles", () => {
+  const seoOutput: SeoContentOutput = {
+    productTitle: "Personalized Christian Handbag Set",
+    productDescription: "<p>Description</p>",
+    productSeoTitle: "Christian Handbag Set",
+    productSeoDescription: "Description",
+    productHandle: "christian-handbag-set",
+    images: [],
+  };
+
+  const variant1: CrawlProduct = {
+    ...sampleProductA,
+    parentAsin: "B0G1SSY9S7",
+    splitContext: { attribute: "Color", value: "Pink Faith" },
+  };
+  const variant2: CrawlProduct = {
+    ...sampleProductA,
+    parentAsin: "B0G1SSY9S7",
+    splitContext: { attribute: "Color", value: "Be Still and Know" },
+  };
+
+  const enriched1 = applySeoContentToCustomizationProduct(variant1, seoOutput, { ensureUniqueHandle: true });
+  const enriched2 = applySeoContentToCustomizationProduct(variant2, seoOutput, { ensureUniqueHandle: true });
+
+  assert.notEqual(enriched1.title, enriched2.title);
+  assert.notEqual(enriched1.seo?.title, enriched2.seo?.title);
+  assert.notEqual(enriched1.handle, enriched2.handle);
+  assert.match(enriched1.title ?? "", /Pink Faith/);
+  assert.match(enriched2.title ?? "", /Be Still and Know/);
+});
+

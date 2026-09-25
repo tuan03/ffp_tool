@@ -208,7 +208,9 @@ export function adaptCustomizationItemToViewModel(
     seo?: { title?: string; description?: string };
     seoTitle?: string;
     seoDescription?: string;
+    sourceKey?: string;
   };
+
   const crawlShopify = sourceProduct.pipeline?.shopify || sourceProduct.shopify;
   const existingShopifyId = crawlShopify?.productId;
   const effectiveProductId = existingShopifyId || item.productId;
@@ -253,11 +255,29 @@ export function adaptCustomizationItemToViewModel(
     backedUpAt: Date.now(),
   };
 
+  const splitValue =
+    (item.sourceProduct.splitContext && typeof item.sourceProduct.splitContext.value === "string" ? item.sourceProduct.splitContext.value.trim() : undefined) ||
+    (Array.isArray(item.sourceProduct.variants) && item.sourceProduct.variants[0] && typeof (item.sourceProduct.variants[0] as { options?: Record<string, string> }).options === "object"
+      ? Object.values((item.sourceProduct.variants[0] as { options?: Record<string, string> }).options || {})[0]
+      : undefined) ||
+    (typeof sourceProduct.sourceKey === "string" ? sourceProduct.sourceKey.split(":").at(-1)?.trim() : undefined);
+
+  const baseAsin = item.sourceProduct.parentAsin || item.sourceProduct.asin || item.asin;
+  const uniqueId =
+    (typeof sourceProduct.sourceKey === "string" && sourceProduct.sourceKey.trim().length > 0 ? sourceProduct.sourceKey.trim() : undefined) ||
+    effectiveProductId ||
+    (item.sourceProduct.id && !item.sourceProduct.id.startsWith("job-") ? item.sourceProduct.id : undefined) ||
+    (baseAsin && splitValue ? `${baseAsin}-${splitValue}` : undefined) ||
+    item.productId ||
+    (splitValue ? `item-${splitValue}` : undefined) ||
+    baseAsin ||
+    `item-${Date.now()}`;
+
   const options: AdaptSeoOutputOptions = {
-    id: effectiveProductId || item.asin || `item-${Date.now()}`,
+    id: uniqueId,
     storeId,
     productId: effectiveProductId,
-    asin: item.asin,
+    asin: baseAsin,
     niche: item.sourceProduct.categories?.[0] || "Custom Product",
     defaultStatus: item.success ? "completed" : "failed",
     isStatusReal: true,
@@ -266,6 +286,7 @@ export function adaptCustomizationItemToViewModel(
     shopifySyncStatus: crawlShopify?.productId ? "synced" : "idle",
     originalBackup,
   };
+
 
   if (!item.success) {
     return {

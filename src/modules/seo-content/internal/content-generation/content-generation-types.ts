@@ -15,6 +15,7 @@ export interface ContentFactSheet {
   readonly occasions: readonly string[];
   readonly useCases: readonly string[];
   readonly personalizationSupported: boolean;
+  readonly variantLabel?: string;
 }
 
 export interface KeywordAllocation {

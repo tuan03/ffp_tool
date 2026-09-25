@@ -46,6 +46,60 @@ export interface CustomizationSeoBatchResult {
 }
 
 /**
+ * Trích xuất nhãn biến thể phân biệt (ví dụ: "Pink Faith", "Be Still and Know")
+ * từ splitContext hoặc variants của CrawlProduct.
+ */
+export function extractVariantLabel(product: CrawlProduct): string | undefined {
+  if (
+    product.splitContext
+    && typeof product.splitContext.value === "string"
+    && product.splitContext.value.trim().length > 0
+  ) {
+    return product.splitContext.value.trim();
+  }
+  if (Array.isArray(product.variants) && product.variants.length > 0) {
+    const firstVariant = product.variants[0] as { options?: Record<string, unknown> } | undefined;
+    if (firstVariant && firstVariant.options && typeof firstVariant.options === "object") {
+      const splitAttr = typeof product.splitContext?.attribute === "string" ? product.splitContext.attribute : undefined;
+      if (splitAttr && typeof firstVariant.options[splitAttr] === "string" && (firstVariant.options[splitAttr] as string).trim().length > 0) {
+        return (firstVariant.options[splitAttr] as string).trim();
+      }
+      const values = Object.values(firstVariant.options).filter(
+        (v): v is string => typeof v === "string" && v.trim().length > 0,
+      );
+      if (values.length > 0) {
+        return values[0].trim();
+      }
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Trích xuất tên thuộc tính biến thể (ví dụ: "Color", "Design", "Size")
+ * từ splitContext hoặc variants của CrawlProduct.
+ */
+export function extractVariantAttribute(product: CrawlProduct): string | undefined {
+  if (
+    product.splitContext
+    && typeof product.splitContext.attribute === "string"
+    && product.splitContext.attribute.trim().length > 0
+  ) {
+    return product.splitContext.attribute.trim();
+  }
+  if (Array.isArray(product.variants) && product.variants.length > 0) {
+    const firstVariant = product.variants[0] as { options?: Record<string, unknown> } | undefined;
+    if (firstVariant && firstVariant.options && typeof firstVariant.options === "object") {
+      const keys = Object.keys(firstVariant.options).filter((k) => k.trim().length > 0);
+      if (keys.length > 0) {
+        return keys[0].trim();
+      }
+    }
+  }
+  return undefined;
+}
+
+/**
  * Chuyển đổi một sản phẩm `CrawlProduct` từ module Customization sang `SeoContentInput` cho module SEO Content.
  *
  * @param product Sản phẩm đã chuẩn hóa từ Customization Normalizer.
@@ -56,10 +110,17 @@ export function fromCustomizationProduct(
   product: CrawlProduct,
   defaultNiche = "custom product",
 ): SeoContentInput {
-  // 1. Tiêu đề sản phẩm
-  const title = (product.title || product.sourceTitle || "").trim() || "Custom Product";
+  const variantLabel = extractVariantLabel(product);
+  const variantAttribute = extractVariantAttribute(product);
 
-  // 2. Mô tả sản phẩm (Ghép description và bullet points thành văn bản mô tả giàu dữ kiện)
+  // 1. Tiêu đề sản phẩm (gắn nhãn biến thể nếu chưa có trong tiêu đề gốc)
+  const rawBaseTitle = (product.title || product.sourceTitle || "").trim() || "Custom Product";
+  let title = rawBaseTitle;
+  if (variantLabel && !title.toLowerCase().includes(variantLabel.toLowerCase())) {
+    title = `${rawBaseTitle} - ${variantLabel}`;
+  }
+
+  // 2. Mô tả sản phẩm (Ghép description, bullet points và thông tin biến thể)
   const descriptionParts: string[] = [];
   if (product.description && product.description.trim()) {
     descriptionParts.push(product.description.trim());
@@ -70,6 +131,14 @@ export function fromCustomizationProduct(
       .filter((b) => b.length > 0);
     if (bullets.length > 0) {
       descriptionParts.push(bullets.map((b) => `• ${b}`).join("\n"));
+    }
+  }
+  if (variantLabel) {
+    const attrName = variantAttribute || "Variant";
+    const variantBullet = `• ${attrName}: ${variantLabel}`;
+    const descCorpus = descriptionParts.join("\n\n");
+    if (!descCorpus.toLowerCase().includes(variantLabel.toLowerCase())) {
+      descriptionParts.push(variantBullet);
     }
   }
   const description = descriptionParts.join("\n\n") || title;
@@ -118,6 +187,7 @@ export function fromCustomizationProduct(
     niche,
     images,
     handle,
+    variantLabel,
     ...(product.id ? { productId: product.id } : {}),
     ...(product.canonicalUrl ? { url: product.canonicalUrl } : {}),
   };
@@ -154,8 +224,17 @@ function resolveProductHandle(
   if (existingHandle) return existingHandle;
   if (!options?.ensureUniqueHandle) return generatedHandle;
 
-  const identity = String(product.sourceKey || product.id || product.parentAsin || product.asin || "product");
-  const splitValue = identity.split(":").at(-1) ?? identity;
+  const splitVal = extractVariantLabel(product);
+  const rawId = product.sourceKey
+    || (product.id && !product.id.startsWith("job-") ? product.id : undefined)
+    || (product.parentAsin && splitVal ? `${product.parentAsin}-${splitVal}` : undefined)
+    || (product.asin && splitVal ? `${product.asin}-${splitVal}` : undefined)
+    || product.id
+    || product.parentAsin
+    || product.asin
+    || "product";
+  const identity = String(rawId);
+  const splitValue = splitVal || (identity.split(":").at(-1) ?? identity);
   const readableSuffix = slugifyHandlePart(splitValue).slice(0, 24) || "product";
   const suffix = `${readableSuffix}-${stableHandleHash(identity)}`;
   const maxHandleLength = 80;
@@ -163,6 +242,50 @@ function resolveProductHandle(
   const availableBaseLength = Math.max(1, maxHandleLength - suffix.length - 1);
   const trimmedBase = base.slice(0, availableBaseLength).replace(/-+$/g, "") || "product";
   return `${trimmedBase}-${suffix}`;
+}
+
+function composeVariantTitle(baseTitle: string, variantLabel: string, maxLen = 100): string {
+  if (baseTitle.toLowerCase().includes(variantLabel.toLowerCase())) {
+    return baseTitle;
+  }
+  const suffix = ` - ${variantLabel}`;
+  if (baseTitle.length + suffix.length <= maxLen) {
+    return `${baseTitle}${suffix}`;
+  }
+  const available = Math.max(20, maxLen - suffix.length);
+  const trimmedBase = baseTitle.slice(0, available).replace(/\s*-\s*$/, "").trim();
+  return `${trimmedBase}${suffix}`;
+}
+
+function composeVariantSeoTitle(baseSeoTitle: string, variantLabel: string, maxLen = 70): string {
+  if (baseSeoTitle.toLowerCase().includes(variantLabel.toLowerCase())) {
+    return baseSeoTitle.length <= maxLen ? baseSeoTitle : baseSeoTitle.slice(0, maxLen);
+  }
+  const suffix = ` - ${variantLabel}`;
+  if (baseSeoTitle.length + suffix.length <= maxLen) {
+    return `${baseSeoTitle}${suffix}`;
+  }
+  // Try stripping common trailing brand/pipe suffix first: e.g. " | Shop Online" or " | Quality & Style"
+  const stripped = baseSeoTitle.replace(/\s*([|•\-–—:]\s*[^|•\-–—:]+)+$/, "").trim();
+  if (stripped.length > 0 && stripped.length + suffix.length <= maxLen) {
+    return `${stripped}${suffix}`;
+  }
+  // Otherwise trim base at word boundary before maxLen - suffix.length
+  const available = Math.max(15, maxLen - suffix.length);
+  const words = stripped.length > 0 ? stripped.split(/\s+/) : baseSeoTitle.split(/\s+/);
+  const selected: string[] = [];
+  let currentLen = 0;
+  for (const word of words) {
+    const nextLen = selected.length === 0 ? word.length : currentLen + 1 + word.length;
+    if (nextLen <= available) {
+      selected.push(word);
+      currentLen = nextLen;
+    } else {
+      break;
+    }
+  }
+  const cleanPrefix = selected.length > 0 ? selected.join(" ") : baseSeoTitle.slice(0, available);
+  return `${cleanPrefix.replace(/\s*-\s*$/, "").trim()}${suffix}`;
 }
 
 export function applySeoContentToCustomizationProduct(
@@ -173,13 +296,22 @@ export function applySeoContentToCustomizationProduct(
   const altBySourceUrl = new Map(
     seoOutput.images.map((image) => [image.sourceUrl, image.alt] as const),
   );
+
+  const variantLabel = extractVariantLabel(product);
+  const finalTitle = variantLabel
+    ? composeVariantTitle(seoOutput.productTitle, variantLabel)
+    : seoOutput.productTitle;
+  const finalSeoTitle = variantLabel
+    ? composeVariantSeoTitle(seoOutput.productSeoTitle, variantLabel)
+    : seoOutput.productSeoTitle;
+
   return {
     ...product,
-    title: seoOutput.productTitle,
+    title: finalTitle,
     descriptionHtml: seoOutput.productDescription,
     handle: resolveProductHandle(product, seoOutput.productHandle, options),
     seo: {
-      title: seoOutput.productSeoTitle,
+      title: finalSeoTitle,
       description: seoOutput.productSeoDescription,
     },
     media: product.media?.map((media) => {
@@ -189,6 +321,7 @@ export function applySeoContentToCustomizationProduct(
     }),
   };
 }
+
 
 /**
  * Chuyển đổi toàn bộ danh sách sản phẩm hoặc batch output từ Customization sang mảng `SeoContentInput`.

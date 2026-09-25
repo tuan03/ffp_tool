@@ -135,24 +135,18 @@ export function buildHeuristicProductTitle(input: TitleBuilderInput): string {
     ? isKeywordGroundedForPrimarySurface(primary, facts)
     : false;
 
+  let baseTitle: string;
   // Case 1: Source title is usable and already represents primary concept
   if (sourceUsable && (!primary || containsCanonicalKeyword(sourceTitle, primary))) {
-    return fitProductTitle(sourceTitle, maxLength);
-  }
-
-  // Case 2: Source title is usable, and primary keyword is grounded and adds SEO differentiation
-  if (sourceUsable && primary && primaryGrounded) {
-    const merged = buildMergedTitle(primary, sourceTitle, facts);
-    return fitProductTitle(merged, maxLength);
-  }
-
-  // Case 3: Source title is usable (even if primary keyword is ungrounded or absent)
-  if (sourceUsable) {
-    return fitProductTitle(sourceTitle, maxLength);
-  }
-
-  // Case 4: Source title is unusable / placeholder -> Rebuild from grounded primary or facts
-  if (primary && primaryGrounded) {
+    baseTitle = sourceTitle;
+  } else if (sourceUsable && primary && primaryGrounded) {
+    // Case 2: Source title is usable, and primary keyword is grounded and adds SEO differentiation
+    baseTitle = buildMergedTitle(primary, sourceTitle, facts);
+  } else if (sourceUsable) {
+    // Case 3: Source title is usable (even if primary keyword is ungrounded or absent)
+    baseTitle = sourceTitle;
+  } else if (primary && primaryGrounded) {
+    // Case 4: Source title is unusable / placeholder -> Rebuild from grounded primary or facts
     let title = toTitleCase(primary);
     if (
       facts.personalizationSupported &&
@@ -161,20 +155,44 @@ export function buildHeuristicProductTitle(input: TitleBuilderInput): string {
     ) {
       title = `Personalized ${title}`;
     }
-    return fitProductTitle(title, maxLength);
+    baseTitle = title;
+  } else {
+    // Case 5: No grounded primary keyword -> Rebuild strictly from B1 facts
+    let fallbackTitle = toTitleCase(facts.physicalProductIdentity ?? "Specialty Product");
+    if (facts.visualEntities) {
+      fallbackTitle = `${toTitleCase(facts.visualEntities.split(/[.;]/)[0])} ${fallbackTitle}`;
+    }
+    if (facts.typographyStyleSummary && !fallbackTitle.toLowerCase().includes(facts.typographyStyleSummary.toLowerCase())) {
+      fallbackTitle = `${toTitleCase(facts.typographyStyleSummary)} ${fallbackTitle}`;
+    }
+    if (facts.personalizationSupported) {
+      fallbackTitle = `Personalized ${fallbackTitle}`;
+    }
+    baseTitle = fallbackTitle;
   }
 
-  // Case 5: No grounded primary keyword -> Rebuild strictly from B1 facts
-  let fallbackTitle = toTitleCase(facts.physicalProductIdentity ?? "Specialty Product");
-  if (facts.visualEntities) {
-    fallbackTitle = `${toTitleCase(facts.visualEntities.split(/[.;]/)[0])} ${fallbackTitle}`;
-  }
-  if (facts.typographyStyleSummary && !fallbackTitle.toLowerCase().includes(facts.typographyStyleSummary.toLowerCase())) {
-    fallbackTitle = `${toTitleCase(facts.typographyStyleSummary)} ${fallbackTitle}`;
-  }
-  if (facts.personalizationSupported) {
-    fallbackTitle = `Personalized ${fallbackTitle}`;
+  // Preserve variant label if present
+  if (facts.variantLabel && facts.variantLabel.trim().length > 0) {
+    const varLabel = facts.variantLabel.trim();
+    const suffix = ` - ${varLabel}`;
+    if (baseTitle.toLowerCase().endsWith(suffix.toLowerCase())) {
+      if (baseTitle.length <= maxLength) {
+        return baseTitle;
+      }
+      const prefixPart = baseTitle.slice(0, baseTitle.length - suffix.length).trim();
+      const available = Math.max(20, maxLength - suffix.length);
+      const fittedPrefix = fitProductTitle(prefixPart, available);
+      return `${fittedPrefix}${suffix}`;
+    } else if (!baseTitle.toLowerCase().includes(varLabel.toLowerCase())) {
+      if (baseTitle.length + suffix.length <= maxLength) {
+        return `${baseTitle}${suffix}`;
+      }
+      const available = Math.max(20, maxLength - suffix.length);
+      const fittedBase = fitProductTitle(baseTitle, available);
+      return `${fittedBase}${suffix}`;
+    }
   }
 
-  return fitProductTitle(fallbackTitle, maxLength);
+  return fitProductTitle(baseTitle, maxLength);
 }
+

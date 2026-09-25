@@ -23,3 +23,34 @@ test("B5 fact sheet excludes scene context and only supplies product-safe B1 evi
   });
   assert.doesNotMatch(`${draft.intro} ${draft.closing}`, /guitar|plant|studio/i);
 });
+
+test("B5 HeuristicContentGenerator preserves variantLabel in fact sheet and title builder", async () => {
+  const facts = buildContentFactSheet({
+    ...createInitialContext({
+      title: "Personalized Christian Handbag Set",
+      description: "",
+      niche: "handbag set",
+      handle: "christian-handbag-set",
+      images: [],
+      variantLabel: "Pink Faith",
+    }),
+    productUnderstanding: {
+      physicalProductIdentity: "handbag set",
+      typography: { visibleTexts: [], styleSummary: "" },
+      visualEntities: "Handbag set with wallet",
+      sceneContext: "",
+    },
+  });
+
+
+  assert.equal(facts.variantLabel, "Pink Faith");
+
+  const draft = await new HeuristicContentGenerator().generate({
+    facts,
+    keywords: { primary: "christian faux leather handbag set", secondary: [], supportingKeywords: [], framingConcepts: [], targetedKeywords: [] },
+    constraints: { maxSeoTitleLength: 70, maxSeoDescriptionLength: 160, maxHandleLength: 80, maxBullets: 5, preserveExistingHandle: true },
+  });
+
+  assert.match(draft.productTitle, /Pink Faith/);
+});
+

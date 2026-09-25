@@ -92,6 +92,13 @@ export interface CrawlProduct {
   readonly sourceTitle?: string;
   readonly title?: string;
   readonly description?: string;
+  readonly descriptionHtml?: string;
+  readonly handle?: string;
+  readonly seo?: {
+    readonly title?: string;
+    readonly description?: string;
+  };
+  readonly sourceKey?: string;
   readonly bulletPoints?: readonly string[];
   readonly categories?: readonly string[];
   readonly productDetails?: Record<string, unknown>;
@@ -103,6 +110,7 @@ export interface CrawlProduct {
   readonly splitContext?: Record<string, unknown>;
   readonly [key: string]: unknown;
 }
+
 
 export interface CrawlJobSettings {
   readonly profileSlug?: string;

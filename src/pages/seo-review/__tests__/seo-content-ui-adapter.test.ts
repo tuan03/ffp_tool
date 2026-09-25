@@ -861,3 +861,65 @@ test("adaptPinterestPodItemToViewModel: records a failed POD handoff", () => {
   assert.equal(viewModel.sourcePinterestItem?.designId, "design_pod_err");
 });
 
+test("adaptCustomizationItemToViewModel: ensures unique IDs for different variants of the same parent ASIN", () => {
+  const variant1Item: CustomizationSeoItemResult = {
+    asin: "B0G1SSY9S7",
+    sourceProduct: {
+      parentAsin: "B0G1SSY9S7",
+      title: "Christian Handbag Set",
+      splitContext: { attribute: "Color", value: "Pink Faith" },
+    },
+    seoInput: {
+      title: "Christian Handbag Set - Pink Faith",
+      description: "Description",
+      niche: "Handbags",
+      handle: "handbag-pink-faith",
+      images: [],
+    },
+    seoOutput: {
+      productTitle: "Christian Handbag Set - Pink Faith",
+      productDescription: "Desc",
+      productSeoTitle: "Christian Handbag Set - Pink Faith",
+      productSeoDescription: "Desc",
+      productHandle: "handbag-pink-faith",
+      images: [],
+    },
+    success: true,
+  };
+
+  const variant2Item: CustomizationSeoItemResult = {
+    asin: "B0G1SSY9S7",
+    sourceProduct: {
+      parentAsin: "B0G1SSY9S7",
+      title: "Christian Handbag Set",
+      splitContext: { attribute: "Color", value: "Purple Faith" },
+    },
+    seoInput: {
+      title: "Christian Handbag Set - Purple Faith",
+      description: "Description",
+      niche: "Handbags",
+      handle: "handbag-purple-faith",
+      images: [],
+    },
+    seoOutput: {
+      productTitle: "Christian Handbag Set - Purple Faith",
+      productDescription: "Desc",
+      productSeoTitle: "Christian Handbag Set - Purple Faith",
+      productSeoDescription: "Desc",
+      productHandle: "handbag-purple-faith",
+      images: [],
+    },
+    success: true,
+  };
+
+  const vm1 = adaptCustomizationItemToViewModel(variant1Item);
+  const vm2 = adaptCustomizationItemToViewModel(variant2Item);
+
+  assert.notEqual(vm1.id, vm2.id);
+  assert.match(vm1.id, /Pink Faith/);
+  assert.match(vm2.id, /Purple Faith/);
+  assert.notEqual(vm1.id, "B0G1SSY9S7");
+  assert.notEqual(vm2.id, "B0G1SSY9S7");
+});
+
+

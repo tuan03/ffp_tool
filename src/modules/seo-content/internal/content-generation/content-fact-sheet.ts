@@ -57,5 +57,6 @@ export function buildContentFactSheet(
     occasions: shoppingContext?.suitableOccasions ?? [],
     useCases: shoppingContext?.useCases ?? [],
     personalizationSupported,
+    variantLabel: source.variantLabel?.trim() || undefined,
   };
 }

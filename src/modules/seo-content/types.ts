@@ -16,6 +16,7 @@ export interface SeoContentInput {
   readonly productId?: string;
   readonly url?: string;
   readonly storeId?: string;
+  readonly variantLabel?: string;
 }
 
 export interface SeoContentWebpAsset {
