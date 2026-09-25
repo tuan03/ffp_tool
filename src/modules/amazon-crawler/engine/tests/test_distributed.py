@@ -2042,6 +2042,164 @@ class CoordinatorDatabaseTests(unittest.TestCase):
 
 
 class CoordinatorApiTests(unittest.TestCase):
+    def test_sync_all_queues_only_approved_reviews_as_each_product_becomes_ready(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = Path(directory) / "coordinator.sqlite3"
+            app = create_coordinator_app(database_url=f"sqlite:///{database_path.as_posix()}")
+            store = app.state.store
+            with TestClient(app) as client:
+                job = store.create_job({"urls": ["B0REVIEW04", "B0REVIEW05"], "storeId": "store-1"})
+                store.register_client(client_hello(slots=2))
+                leases = store.lease_tasks("client-a", 2)
+                self.assertEqual(len(leases), 2)
+                for index, lease in enumerate(leases):
+                    source_key = f"amazon:B0REVIEW0{index + 4}:none:none"
+                    product = {
+                        "id": f"review-product-{index}", "sourceKey": source_key,
+                        "title": f"Review product {index}", "media": [], "variants": [],
+                    }
+                    store.accept_product(
+                        lease["taskId"], "client-a", lease["leaseId"], source_key, f"checksum-{index}",
+                        {"jobId": job["id"], "product": product, "productChecksum": f"checksum-{index}"},
+                    )
+                    store.accept_result(
+                        lease["taskId"], "client-a", lease["leaseId"], f"result-{index}",
+                        {"jobId": job["id"], "products": [product], "errors": [], "warnings": []},
+                    )
+                claims = client.post(
+                    "/api/v1/internal/product-pipeline/claim",
+                    json={"workerId": "worker-1", "storeId": "store-1", "limit": 2},
+                ).json()["items"]
+                self.assertEqual(len(claims), 2)
+                for index, claim in enumerate(claims):
+                    product = claim["product"]
+                    store.mark_product_seo(
+                        claim["id"], worker_id="worker-1", normalized_payload=product,
+                        seo_summary={"status": "running"},
+                    )
+                    store.mark_product_image_processing(
+                        claim["id"], worker_id="worker-1", normalized_payload=product,
+                        image_summary={"status": "completed"},
+                    )
+                    store.mark_product_review_ready(
+                        claim["id"], worker_id="worker-1", normalized_payload=product,
+                        seo_summary={"status": "completed"}, image_summary={"status": "completed"},
+                        review_summary={"storeId": "store-1"},
+                    )
+                    self.assertEqual(client.get("/api/v1/product-reviews").json()["total"], index + 1)
+
+                first_id = claims[0]["id"]
+                approved = client.post(
+                    f"/api/v1/product-reviews/{first_id}/decision",
+                    json={"expectedVersion": 1, "decision": "approved"},
+                )
+                self.assertEqual(approved.status_code, 200)
+                queued = client.post("/api/v1/product-reviews/sync-approved")
+                self.assertEqual(queued.status_code, 200)
+                self.assertEqual(queued.json(), {"queued": 1, "itemIds": [first_id]})
+                self.assertEqual(client.post("/api/v1/product-reviews/sync-approved").json()["queued"], 0)
+                reviews = client.get("/api/v1/product-reviews").json()["items"]
+                self.assertEqual(
+                    {review["id"]: review["syncStatus"] for review in reviews},
+                    {first_id: "queued", claims[1]["id"]: "idle"},
+                )
+
+    def test_review_api_exposes_ready_product_and_requires_explicit_sync(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = Path(directory) / "coordinator.sqlite3"
+            app = create_coordinator_app(database_url=f"sqlite:///{database_path.as_posix()}")
+            store = app.state.store
+            source_key = "amazon:B0REVIEW03:none:none"
+            product = {
+                "id": "review-api-product",
+                "sourceKey": source_key,
+                "parentAsin": "B0REVIEW03",
+                "title": "Original product title",
+                "media": [],
+                "variants": [],
+            }
+            with TestClient(app) as client:
+                job = store.create_job({"urls": ["B0REVIEW03"], "storeId": "store-1"})
+                store.register_client(client_hello(slots=1))
+                lease = store.lease_tasks("client-a", 1)[0]
+                store.accept_product(
+                    lease["taskId"], "client-a", lease["leaseId"], source_key, "checksum-1",
+                    {"jobId": job["id"], "product": product, "productChecksum": "checksum-1"},
+                )
+                store.accept_result(
+                    lease["taskId"], "client-a", lease["leaseId"], "result-checksum",
+                    {"jobId": job["id"], "products": [product], "errors": [], "warnings": []},
+                )
+                claim = client.post(
+                    "/api/v1/internal/product-pipeline/claim",
+                    json={"workerId": "worker-1", "storeId": "store-1", "limit": 1},
+                ).json()["items"][0]
+                self.assertEqual(claim["stage"], "prepare")
+                self.assertEqual(client.get("/api/v1/product-reviews").json()["items"], [])
+                self.assertEqual(client.post(
+                    f"/api/v1/internal/product-pipeline/{claim['id']}/seo",
+                    json={"workerId": "worker-1", "normalizedProduct": product, "seo": {"status": "running"}},
+                ).status_code, 200)
+                self.assertEqual(client.post(
+                    f"/api/v1/internal/product-pipeline/{claim['id']}/image-processing",
+                    json={
+                        "workerId": "worker-1", "normalizedProduct": product,
+                        "imageProcessing": {"status": "completed"},
+                    },
+                ).status_code, 200)
+                ready_product = {**product, "title": "SEO product title", "seo": {"title": "SEO title"}}
+                ready = client.post(
+                    f"/api/v1/internal/product-pipeline/{claim['id']}/review-ready",
+                    json={
+                        "workerId": "worker-1", "normalizedProduct": ready_product,
+                        "seo": {"status": "completed"},
+                        "imageProcessing": {"status": "completed"},
+                        "review": {"storeId": "store-1"},
+                    },
+                )
+                self.assertEqual(ready.status_code, 200)
+                reviews = client.get("/api/v1/product-reviews").json()
+                self.assertEqual(reviews["total"], 1)
+                self.assertEqual(reviews["items"][0]["product"]["title"], "SEO product title")
+                self.assertEqual(reviews["items"][0]["decision"], "pending")
+                self.assertEqual(client.post(
+                    "/api/v1/internal/product-pipeline/claim",
+                    json={"workerId": "worker-2", "storeId": "store-1", "limit": 1},
+                ).json()["items"], [])
+                self.assertEqual(client.post(
+                    f"/api/v1/product-reviews/{claim['id']}/sync",
+                ).status_code, 409)
+
+                edited = client.patch(
+                    f"/api/v1/product-reviews/{claim['id']}",
+                    json={"expectedVersion": 1, "patch": {"productTitle": "Approved product title"}},
+                )
+                self.assertEqual(edited.status_code, 200)
+                self.assertEqual(edited.json()["version"], 2)
+                self.assertEqual(client.post(
+                    f"/api/v1/product-reviews/{claim['id']}/decision",
+                    json={"expectedVersion": 1, "decision": "approved"},
+                ).status_code, 409)
+                approved = client.post(
+                    f"/api/v1/product-reviews/{claim['id']}/decision",
+                    json={"expectedVersion": 2, "decision": "approved"},
+                )
+                self.assertEqual(approved.status_code, 200)
+                self.assertEqual(approved.json()["syncStatus"], "idle")
+                self.assertEqual(client.post(
+                    "/api/v1/internal/product-pipeline/claim",
+                    json={"workerId": "worker-2", "storeId": "store-1", "limit": 1},
+                ).json()["items"], [])
+                queued = client.post(f"/api/v1/product-reviews/{claim['id']}/sync")
+                self.assertEqual(queued.status_code, 200)
+                self.assertEqual(queued.json()["syncStatus"], "queued")
+                sync_claim = client.post(
+                    "/api/v1/internal/product-pipeline/claim",
+                    json={"workerId": "worker-2", "storeId": "store-1", "limit": 1},
+                ).json()["items"][0]
+                self.assertEqual(sync_claim["stage"], "sync")
+                self.assertEqual(sync_claim["product"]["title"], "Approved product title")
+
     def test_image_profile_preview_supports_unsaved_draft_and_job_pins_revision(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             database_path = Path(directory) / "coordinator.sqlite3"
