@@ -1638,6 +1638,8 @@ def _run_local_pipeline_worker(job_id: str, req_body: dict[str, Any], base_url: 
         task5_top_images=task5_top_images,
         task5_max_images_per_query=task5_max_images_per_query,
         task5_vision_mode=vision_mode,
+        trend_region=str(req_body.get("trend_region") or req_body.get("region") or "US").strip().upper(),
+        trend_type=str(req_body.get("trend_type") or "growing").strip(),
         trend_interest=str(req_body.get("interest") or req_body.get("interests") or "").strip(),
         custom_queries=tuple(str(q).strip() for q in (req_body.get("custom_queries") or []) if str(q).strip()),
         selected_clusters=tuple(req_body.get("selected_clusters") or []),
