@@ -1,6 +1,7 @@
 import { GoogleGenAI } from "@google/genai";
 import type { GeminiImagePart } from "./product-image-payload";
 import { GEMINI_PRODUCT_IMAGE_ANALYSIS_SCHEMA } from "./gemini-analysis-schema";
+import { executeWithExponentialBackoff, type GeminiRetryOptions } from "./gemini-retry";
 
 export interface GeminiAnalysisRequest {
   readonly prompt: string;
@@ -121,6 +122,7 @@ export interface GoogleGenAIVertexGeneratorConfig {
   readonly location?: string;
   readonly defaultModel?: string;
   readonly timeoutMs?: number;
+  readonly retryOptions?: GeminiRetryOptions;
   /**
    * Optional injected client adapter for unit testing without live Google ADC credentials.
    */
@@ -147,6 +149,7 @@ export class GoogleGenAIVertexContentGenerator implements GeminiContentGenerator
   private readonly location: string;
   private readonly defaultModel: string;
   private readonly defaultTimeoutMs: number;
+  private readonly retryOptions?: GeminiRetryOptions;
   private readonly client: {
     models: {
       generateContent(params: {
@@ -168,6 +171,7 @@ export class GoogleGenAIVertexContentGenerator implements GeminiContentGenerator
     this.location = config.location || "global";
     this.defaultModel = config.defaultModel || "gemini-2.5-flash";
     this.defaultTimeoutMs = config.timeoutMs || 25000;
+    this.retryOptions = config.retryOptions;
 
     if (config.client) {
       this.client = config.client;
@@ -196,85 +200,87 @@ export class GoogleGenAIVertexContentGenerator implements GeminiContentGenerator
       }
     }
 
-    let timer: NodeJS.Timeout | undefined;
+    return executeWithExponentialBackoff(async () => {
+      let timer: NodeJS.Timeout | undefined;
 
-    try {
-      const timeoutPromise = new Promise<never>((_, reject) => {
-        timer = setTimeout(() => {
-          reject(
-            new GeminiGeneratorError(
-              `Gemini request timed out after ${timeoutMs}ms`,
-              408,
-              true,
-            ),
-          );
-        }, timeoutMs);
-      });
+      try {
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          timer = setTimeout(() => {
+            reject(
+              new GeminiGeneratorError(
+                `Gemini request timed out after ${timeoutMs}ms`,
+                408,
+                true,
+              ),
+            );
+          }, timeoutMs);
+        });
 
-      const responsePromise = this.client.models.generateContent({
-        model,
-        contents: [
-          {
-            role: "user",
-            parts,
+        const responsePromise = this.client.models.generateContent({
+          model,
+          contents: [
+            {
+              role: "user",
+              parts,
+            },
+          ],
+          config: {
+            systemInstruction: request.systemInstruction,
+            responseMimeType: "application/json",
+            responseSchema: GEMINI_PRODUCT_IMAGE_ANALYSIS_SCHEMA,
+            temperature: 0,
+            candidateCount: 1,
+            maxOutputTokens: request.maxOutputTokens || 2048,
           },
-        ],
-        config: {
-          systemInstruction: request.systemInstruction,
-          responseMimeType: "application/json",
-          responseSchema: GEMINI_PRODUCT_IMAGE_ANALYSIS_SCHEMA,
-          temperature: 0,
-          candidateCount: 1,
-          maxOutputTokens: request.maxOutputTokens || 2048,
-        },
-      });
+        });
 
-      const response = await Promise.race([responsePromise, timeoutPromise]);
-      const rawText = response.text;
+        const response = await Promise.race([responsePromise, timeoutPromise]);
+        const rawText = response.text;
 
-      if (!rawText) {
+        if (!rawText) {
+          throw new GeminiGeneratorError(
+            "Gemini response contained no text in candidates",
+          );
+        }
+
+        return { rawText };
+      } catch (err) {
+        if (err instanceof GeminiGeneratorError) {
+          throw err;
+        }
+        const errMsg = err instanceof Error ? err.message : String(err);
+        const status =
+          typeof (err as Record<string, unknown>)?.status === "number"
+            ? ((err as Record<string, unknown>).status as number)
+            : undefined;
+
+        const isRetryable =
+          status === 408 ||
+          status === 429 ||
+          status === 502 ||
+          status === 503 ||
+          status === 504 ||
+          errMsg.includes("429") ||
+          errMsg.includes("503") ||
+          errMsg.includes("504") ||
+          errMsg.includes("RESOURCE_EXHAUSTED") ||
+          errMsg.includes("UNAVAILABLE") ||
+          errMsg.includes("DEADLINE_EXCEEDED") ||
+          errMsg.includes("ECONNRESET") ||
+          errMsg.includes("ETIMEDOUT");
+
         throw new GeminiGeneratorError(
-          "Gemini response contained no text in candidates",
+          `Gemini generateContent failed: ${errMsg}`,
+          status,
+          isRetryable,
+          err,
         );
+      } finally {
+        if (timer) {
+          clearTimeout(timer);
+        }
       }
-
-      return { rawText };
-    } catch (err) {
-      if (err instanceof GeminiGeneratorError) {
-        throw err;
-      }
-      const errMsg = err instanceof Error ? err.message : String(err);
-      const status =
-        typeof (err as Record<string, unknown>)?.status === "number"
-          ? ((err as Record<string, unknown>).status as number)
-          : undefined;
-
-      const isRetryable =
-        status === 408 ||
-        status === 429 ||
-        status === 502 ||
-        status === 503 ||
-        status === 504 ||
-        errMsg.includes("429") ||
-        errMsg.includes("503") ||
-        errMsg.includes("504") ||
-        errMsg.includes("RESOURCE_EXHAUSTED") ||
-        errMsg.includes("UNAVAILABLE") ||
-        errMsg.includes("DEADLINE_EXCEEDED") ||
-        errMsg.includes("ECONNRESET") ||
-        errMsg.includes("ETIMEDOUT");
-
-      throw new GeminiGeneratorError(
-        `Gemini generateContent failed: ${errMsg}`,
-        status,
-        isRetryable,
-        err,
-      );
-    } finally {
-      if (timer) {
-        clearTimeout(timer);
-      }
-    }
+    }, this.retryOptions);
   }
 
   async generateStructuredText(
@@ -283,88 +289,90 @@ export class GoogleGenAIVertexContentGenerator implements GeminiContentGenerator
     const model = request.model || this.defaultModel;
     const timeoutMs = request.timeoutMs || this.defaultTimeoutMs;
 
-    let timer: NodeJS.Timeout | undefined;
+    return executeWithExponentialBackoff(async () => {
+      let timer: NodeJS.Timeout | undefined;
 
-    try {
-      const timeoutPromise = new Promise<never>((_, reject) => {
-        timer = setTimeout(() => {
-          reject(
-            new GeminiGeneratorError(
-              `Gemini request timed out after ${timeoutMs}ms`,
-              408,
-              true,
-            ),
-          );
-        }, timeoutMs);
-      });
+      try {
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          timer = setTimeout(() => {
+            reject(
+              new GeminiGeneratorError(
+                `Gemini request timed out after ${timeoutMs}ms`,
+                408,
+                true,
+              ),
+            );
+          }, timeoutMs);
+        });
 
-      const responsePromise = this.client.models.generateContent({
-        model,
-        contents: [
-          {
-            role: "user",
-            parts: [{ text: request.prompt }],
+        const responsePromise = this.client.models.generateContent({
+          model,
+          contents: [
+            {
+              role: "user",
+              parts: [{ text: request.prompt }],
+            },
+          ],
+          config: {
+            systemInstruction: request.systemInstruction,
+            responseMimeType: "application/json",
+            responseJsonSchema: request.responseJsonSchema,
+            temperature: request.temperature ?? 0,
+            candidateCount: 1,
+            maxOutputTokens: request.maxOutputTokens || 2048,
+            ...(request.thinkingBudget === undefined
+              ? {}
+              : { thinkingConfig: { thinkingBudget: request.thinkingBudget } }),
           },
-        ],
-        config: {
-          systemInstruction: request.systemInstruction,
-          responseMimeType: "application/json",
-          responseJsonSchema: request.responseJsonSchema,
-          temperature: request.temperature ?? 0,
-          candidateCount: 1,
-          maxOutputTokens: request.maxOutputTokens || 2048,
-          ...(request.thinkingBudget === undefined
-            ? {}
-            : { thinkingConfig: { thinkingBudget: request.thinkingBudget } }),
-        },
-      });
+        });
 
-      const response = await Promise.race([responsePromise, timeoutPromise]);
-      const rawText = response.text;
+        const response = await Promise.race([responsePromise, timeoutPromise]);
+        const rawText = response.text;
 
-      if (!rawText) {
+        if (!rawText) {
+          throw new GeminiGeneratorError(
+            "Gemini response contained no text in candidates",
+          );
+        }
+
+        return { rawText };
+      } catch (err) {
+        if (err instanceof GeminiGeneratorError) {
+          throw err;
+        }
+        const errMsg = err instanceof Error ? err.message : String(err);
+        const status =
+          typeof (err as Record<string, unknown>)?.status === "number"
+            ? ((err as Record<string, unknown>).status as number)
+            : undefined;
+
+        const isRetryable =
+          status === 408 ||
+          status === 429 ||
+          status === 502 ||
+          status === 503 ||
+          status === 504 ||
+          errMsg.includes("429") ||
+          errMsg.includes("503") ||
+          errMsg.includes("504") ||
+          errMsg.includes("RESOURCE_EXHAUSTED") ||
+          errMsg.includes("UNAVAILABLE") ||
+          errMsg.includes("DEADLINE_EXCEEDED") ||
+          errMsg.includes("ECONNRESET") ||
+          errMsg.includes("ETIMEDOUT");
+
         throw new GeminiGeneratorError(
-          "Gemini response contained no text in candidates",
+          `Gemini generateContent failed: ${errMsg}`,
+          status,
+          isRetryable,
+          err,
         );
+      } finally {
+        if (timer) {
+          clearTimeout(timer);
+        }
       }
-
-      return { rawText };
-    } catch (err) {
-      if (err instanceof GeminiGeneratorError) {
-        throw err;
-      }
-      const errMsg = err instanceof Error ? err.message : String(err);
-      const status =
-        typeof (err as Record<string, unknown>)?.status === "number"
-          ? ((err as Record<string, unknown>).status as number)
-          : undefined;
-
-      const isRetryable =
-        status === 408 ||
-        status === 429 ||
-        status === 502 ||
-        status === 503 ||
-        status === 504 ||
-        errMsg.includes("429") ||
-        errMsg.includes("503") ||
-        errMsg.includes("504") ||
-        errMsg.includes("RESOURCE_EXHAUSTED") ||
-        errMsg.includes("UNAVAILABLE") ||
-        errMsg.includes("DEADLINE_EXCEEDED") ||
-        errMsg.includes("ECONNRESET") ||
-        errMsg.includes("ETIMEDOUT");
-
-      throw new GeminiGeneratorError(
-        `Gemini generateContent failed: ${errMsg}`,
-        status,
-        isRetryable,
-        err,
-      );
-    } finally {
-      if (timer) {
-        clearTimeout(timer);
-      }
-    }
+    }, this.retryOptions);
   }
 }
 

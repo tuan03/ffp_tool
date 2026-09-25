@@ -9,6 +9,14 @@ import {
 import { prepareProductImagePayload } from "./product-image-payload";
 import type { GeminiContentGenerator } from "./gemini-content-generator";
 import { GeminiGeneratorError } from "./gemini-content-generator";
+import {
+  type AsyncSemaphore,
+  getSharedGeminiVisionSemaphore,
+} from "./async-semaphore";
+import {
+  executeWithExponentialBackoff,
+  type GeminiRetryOptions,
+} from "./gemini-retry";
 
 export const GEMINI_B1_SYSTEM_INSTRUCTION = `You are an evidence extraction system for ecommerce product images.
 
@@ -44,8 +52,10 @@ export interface GeminiProductImageAnalyzerOptions {
   readonly systemInstruction?: string;
   readonly maxOutputTokens?: number;
   readonly timeoutMs?: number;
-  readonly maxRetries?: number; // default 1
+  readonly maxRetries?: number;
   readonly maxImages?: number;
+  readonly semaphore?: AsyncSemaphore;
+  readonly retryOptions?: GeminiRetryOptions;
 }
 
 export class GeminiProductImageAnalyzer implements ProductImageAnalyzer {
@@ -54,8 +64,10 @@ export class GeminiProductImageAnalyzer implements ProductImageAnalyzer {
   private readonly systemInstruction: string;
   private readonly maxOutputTokens: number;
   private readonly timeoutMs?: number;
-  private readonly maxRetries: number;
+  private readonly maxRetries?: number;
   private readonly maxImages?: number;
+  private readonly semaphore: AsyncSemaphore;
+  private readonly retryOptions?: GeminiRetryOptions;
 
   constructor(options: GeminiProductImageAnalyzerOptions) {
     this.generator = options.generator;
@@ -63,8 +75,10 @@ export class GeminiProductImageAnalyzer implements ProductImageAnalyzer {
     this.systemInstruction = options.systemInstruction || GEMINI_B1_SYSTEM_INSTRUCTION;
     this.maxOutputTokens = Math.min(options.maxOutputTokens || 2048, 2048);
     this.timeoutMs = options.timeoutMs;
-    this.maxRetries = options.maxRetries ?? 1;
+    this.maxRetries = options.maxRetries;
     this.maxImages = options.maxImages;
+    this.semaphore = options.semaphore ?? getSharedGeminiVisionSemaphore();
+    this.retryOptions = options.retryOptions;
   }
 
   async analyze(input: ProductImageAnalyzerInput): Promise<ProductImageAnalysis> {
@@ -98,36 +112,24 @@ Focus closely on the primary product design/artwork:
 Use product context only for disambiguation.
 Visual evidence has priority over metadata.`;
 
-    let lastError: unknown;
-    const maxAttempts = 1 + Math.max(0, this.maxRetries);
+    const effectiveRetryOptions: GeminiRetryOptions = {
+      ...(this.retryOptions ?? {}),
+      ...(this.maxRetries !== undefined ? { maxRetries: this.maxRetries } : {}),
+    };
 
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      try {
-        const response = await this.generator.generateProductImageAnalysis({
+    const response = await this.semaphore.runExclusive(async () => {
+      return executeWithExponentialBackoff(async () => {
+        return this.generator.generateProductImageAnalysis({
           prompt,
-      imagePayloads,
+          imagePayloads,
           systemInstruction: this.systemInstruction,
           model: this.model,
           maxOutputTokens: this.maxOutputTokens,
           timeoutMs: this.timeoutMs,
         });
+      }, effectiveRetryOptions);
+    });
 
-        return parseGeminiProductImageAnalysis(response.rawText);
-      } catch (err) {
-        lastError = err;
-
-        const isRetryable =
-          err instanceof GeminiGeneratorError && err.isRetryable && attempt < maxAttempts;
-
-        if (!isRetryable) {
-          throw err;
-        }
-
-        // Brief delay before retry
-        await new Promise((resolve) => setTimeout(resolve, 50));
-      }
-    }
-
-    throw lastError;
+    return parseGeminiProductImageAnalysis(response.rawText);
   }
 }

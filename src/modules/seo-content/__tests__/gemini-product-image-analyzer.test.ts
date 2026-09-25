@@ -55,3 +55,72 @@ test("Gemini B1 limits analysis to maxImages when specified", async () => {
   assert.match(generator.calls[0].prompt, /batch \(1 readable image in supplied order\)/);
 });
 
+test("GeminiProductImageAnalyzer limits concurrent analysis calls via semaphore", async () => {
+  let activeCalls = 0;
+  let peakCalls = 0;
+
+  const generator = new FakeGeminiContentGenerator();
+  generator.setHandler(async () => {
+    activeCalls++;
+    peakCalls = Math.max(peakCalls, activeCalls);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    activeCalls--;
+    return { rawText: response };
+  });
+
+  const { AsyncSemaphore } = await import("../internal/product-understanding/async-semaphore");
+  const semaphore = new AsyncSemaphore(1);
+  const analyzer = new GeminiProductImageAnalyzer({ generator, semaphore });
+
+  const input = {
+    title: "Music rug", description: "", niche: "personalized rug",
+    images: [{ url: "data:image/webp;base64,UklGRg4AAABXRUJQVlA4IAIAAAACAA==" }],
+  };
+
+  await Promise.all([
+    analyzer.analyze(input),
+    analyzer.analyze(input),
+    analyzer.analyze(input),
+  ]);
+
+  assert.equal(generator.calls.length, 3);
+  assert.equal(peakCalls, 1);
+});
+
+test("GeminiProductImageAnalyzer retries on 429 using exponential backoff retry", async () => {
+  let attempts = 0;
+  const retryEvents: Array<{ attempt: number; delayMs: number }> = [];
+
+  const generator = new FakeGeminiContentGenerator();
+  generator.setHandler(async () => {
+    attempts++;
+    if (attempts === 1) {
+      throw new Error("429 RESOURCE_EXHAUSTED");
+    }
+    return { rawText: response };
+  });
+
+  const analyzer = new GeminiProductImageAnalyzer({
+    generator,
+    retryOptions: {
+      initialDelayMs: 100,
+      jitterMs: 0,
+      sleepFn: async () => {},
+      onRetry: (_err, attempt, delayMs) => {
+        retryEvents.push({ attempt, delayMs });
+      },
+    },
+  });
+
+  const result = await analyzer.analyze({
+    title: "Music rug", description: "", niche: "personalized rug",
+    images: [{ url: "data:image/webp;base64,UklGRg4AAABXRUJQVlA4IAIAAAACAA==" }],
+  });
+
+  assert.equal(attempts, 2);
+  assert.equal(retryEvents.length, 1);
+  assert.equal(retryEvents[0].attempt, 1);
+  assert.equal(result.physicalProductIdentity, "area rug");
+});
+
+

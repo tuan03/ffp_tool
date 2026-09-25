@@ -5,6 +5,7 @@ import { extractTextProductSignals } from "../product-understanding/text-product
 import { GeminiProductImageAnalyzer } from "../product-understanding/gemini-product-image-analyzer";
 import { GoogleGenAIVertexContentGenerator } from "../product-understanding/gemini-content-generator";
 import { FallbackProductImageAnalyzer } from "../product-understanding/fallback-product-image-analyzer";
+import { getSharedGeminiVisionSemaphore } from "../product-understanding/async-semaphore";
 
 import type {
   SeoPipelineContext,
@@ -44,6 +45,15 @@ export function createDefaultProductImageAnalyzer(options?: {
     env?.GEMINI_MODEL ||
     "gemini-2.5-flash";
 
+  const rawConcurrency = env?.GEMINI_VISION_CONCURRENCY
+    ? Number(env.GEMINI_VISION_CONCURRENCY)
+    : undefined;
+  const concurrency =
+    Number.isInteger(rawConcurrency) && rawConcurrency! > 0
+      ? rawConcurrency!
+      : 1;
+  const semaphore = getSharedGeminiVisionSemaphore(concurrency);
+
   const generator = new GoogleGenAIVertexContentGenerator({
     projectId,
     location,
@@ -54,6 +64,7 @@ export function createDefaultProductImageAnalyzer(options?: {
     generator,
     model,
     maxImages: options?.maxImages,
+    semaphore,
   });
 
   return new FallbackProductImageAnalyzer({
