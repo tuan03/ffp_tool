@@ -10,7 +10,13 @@ import { loadBootstrappedStores, loadLocalEnv } from "./store-config-loader";
 import { InMemoryThrottleManager } from "./throttle-manager";
 import { CompositeTokenProvider } from "./token-provider";
 import { StoreControlPlane } from "./store-control-plane";
-import { handleStoreRegistrationHttpRequest, handleProxyCheckHttpRequest } from "./store-control-handler";
+import {
+  handleStoreRegistrationHttpRequest,
+  handleProxyCheckHttpRequest,
+  handleStoreUpdateHttpRequest,
+  handleStoreDeleteHttpRequest,
+  handleStoreGetHttpRequest,
+} from "./store-control-handler";
 
 export interface GatewayServerOptions {
   readonly port?: number;
@@ -168,6 +174,21 @@ export function startGatewayServer(
 
     if (url === "/api/stores/register" || url.startsWith("/api/stores/register?")) {
       await handleStoreRegistrationHttpRequest(req, res, storeControlPlane, { authToken, maxBodyBytes });
+      return;
+    }
+
+    if (url === "/api/stores/update" || url.startsWith("/api/stores/update?")) {
+      await handleStoreUpdateHttpRequest(req, res, storeControlPlane, { authToken, maxBodyBytes });
+      return;
+    }
+
+    if (url === "/api/stores/delete" || url.startsWith("/api/stores/delete?")) {
+      await handleStoreDeleteHttpRequest(req, res, storeControlPlane, { authToken, maxBodyBytes });
+      return;
+    }
+
+    if (url === "/api/stores/get" || url.startsWith("/api/stores/get?")) {
+      await handleStoreGetHttpRequest(req, res, storeControlPlane, { authToken, maxBodyBytes });
       return;
     }
 

@@ -10,7 +10,13 @@ import { loadBootstrappedStores, loadLocalEnv } from "./store-config-loader";
 import { InMemoryThrottleManager } from "./throttle-manager";
 import { CompositeTokenProvider } from "./token-provider";
 import { StoreControlPlane } from "./store-control-plane";
-import { handleStoreRegistrationHttpRequest, handleProxyCheckHttpRequest } from "./store-control-handler";
+import {
+  handleStoreRegistrationHttpRequest,
+  handleProxyCheckHttpRequest,
+  handleStoreUpdateHttpRequest,
+  handleStoreDeleteHttpRequest,
+  handleStoreGetHttpRequest,
+} from "./store-control-handler";
 
 export interface ShopifyGatewayDevPluginOptions {
   readonly authToken?: string;
@@ -78,15 +84,20 @@ export function shopifyGatewayDevPlugin(options?: ShopifyGatewayDevPluginOptions
         const isShopify = req.url && (req.url === "/api/shopify" || req.url.startsWith("/api/shopify?"));
         const isAutoSeo = req.url && (req.url === "/api/auto-seo/run" || req.url.startsWith("/api/auto-seo/run?"));
         const isStoreRegister = req.url && (req.url === "/api/stores/register" || req.url.startsWith("/api/stores/register?"));
+        const isStoreUpdate = req.url && (req.url === "/api/stores/update" || req.url.startsWith("/api/stores/update?"));
+        const isStoreDelete = req.url && (req.url === "/api/stores/delete" || req.url.startsWith("/api/stores/delete?"));
+        const isStoreGet = req.url && (req.url === "/api/stores/get" || req.url.startsWith("/api/stores/get?"));
         const isProxyCheck = req.url && (req.url === "/api/proxy/check" || req.url.startsWith("/api/proxy/check?"));
 
-        if (authToken && (isShopify || isAutoSeo || isStoreRegister || isProxyCheck) && isSameOriginRequest(req.headers)) {
+        const isKnownApi = isShopify || isAutoSeo || isStoreRegister || isStoreUpdate || isStoreDelete || isStoreGet || isProxyCheck;
+
+        if (authToken && isKnownApi && isSameOriginRequest(req.headers)) {
           if (!req.headers["x-gateway-key"]) {
             req.headers["x-gateway-key"] = authToken;
           }
         }
 
-        if (isShopify || isAutoSeo || isStoreRegister) {
+        if (isShopify || isAutoSeo || isStoreRegister || isStoreUpdate || isStoreDelete) {
           try {
             const freshStores = loadBootstrappedStores({ env: loadLocalEnv() });
             for (const store of freshStores) {
@@ -200,6 +211,12 @@ export function shopifyGatewayDevPlugin(options?: ShopifyGatewayDevPluginOptions
           }
         } else if (isStoreRegister) {
           await handleStoreRegistrationHttpRequest(req, res, storeControlPlane, { authToken, maxBodyBytes });
+        } else if (isStoreUpdate) {
+          await handleStoreUpdateHttpRequest(req, res, storeControlPlane, { authToken, maxBodyBytes });
+        } else if (isStoreDelete) {
+          await handleStoreDeleteHttpRequest(req, res, storeControlPlane, { authToken, maxBodyBytes });
+        } else if (isStoreGet) {
+          await handleStoreGetHttpRequest(req, res, storeControlPlane, { authToken, maxBodyBytes });
         } else if (isProxyCheck) {
           await handleProxyCheckHttpRequest(req, res, { authToken, maxBodyBytes });
         } else if (req.url && (req.url === "/api/auto-seo/run" || req.url.startsWith("/api/auto-seo/run?"))) {
