@@ -35,6 +35,9 @@ VISUAL_TREND_TERMS = {
 
 
 # Strict Graphic Printability Gate: deterministic stopword regex
+# Keep: Food / cooking recipes, beauty / nails / cosmetics, 3D architectural spaces, and gym workouts.
+# NOTE: Typography quotes, witty memes, and aesthetic phone wallpaper digital art ARE HIGH-VALUE POD MOTIFS.
+# They are deliberately allowed through and converted into dedicated graphic typography & vector art queries.
 NON_PRINTABLE_GATE_REGEX = re.compile(
     r"\b("
     # Food / recipes / cooking / drinks / ingredients
@@ -47,12 +50,10 @@ NON_PRINTABLE_GATE_REGEX = re.compile(
     r"nails?|nail[\s_-]*art|nail[\s_-]*tech|press[\s_-]*on[\s_-]*nails?|acrylic[\s_-]*nails?|gel[\s_-]*nails?|manicure|pedicure|"
     r"hair|hair[\s_-]*styles?|hair[\s_-]*cuts?|hair[\s_-]*color|braids?|updo|"
     r"makeup|make[\s_-]*up|lipsticks?|eye[\s_-]*shadow|mascara|lip[\s_-]*gloss|skin[\s_-]*care|eye[\s_-]*lashes?|eye[\s_-]*brows?|"
-    # Tech / wallpapers
-    r"wallpapers?|lock[\s_-]*screens?|phone[\s_-]*cases?|iphone[\s_-]*wallpapers?|widgets?|home[\s_-]*screens?|"
     # Fashion styling outfits
-    r"outfits?|ootd|shoes|sneakers|heels|dresses|tattoos?|piercings?|jewelry|"
-    # Text memes, quotes, workouts, school crafts
-    r"quotes?|memes?|captions?|workout|gym|fitness|abs[\s_-]*routine|weight[\s_-]*loss|diet|"
+    r"ootd|shoes|sneakers|heels|tattoos?|piercings?|"
+    # Physical exercise workouts, gym routines, diets
+    r"workout|gym|fitness|abs[\s_-]*routine|weight[\s_-]*loss|diet|"
     r"garters?[\s_-]*homecoming|homecoming[\s_-]*mums?|homecoming[\s_-]*garters?|bulletin[\s_-]*boards?|school[\s_-]*crafts?"
     r")\b",
     re.IGNORECASE,
@@ -106,6 +107,17 @@ def build_smart_queries(trend: str, niche: str = "") -> list[QuerySpec]:
         theme = base if base and base.lower() not in {"bag", "leather bag", "rug", "blanket"} else clean
 
     queries: list[QuerySpec] = []
+    # Dedicated typography quote and meme vector print intent
+    if re.search(r"\b(quotes?|memes?|sayings?|typography|slogans?|text)\b", clean, re.I):
+        queries.append(QuerySpec(query=f"{theme} typography vector graphic print", intent="typography_quote", priority=1))
+        queries.append(QuerySpec(query=f"{theme} aesthetic quote design vector", intent="quote_artwork", priority=2))
+    # Dedicated wallpaper & aesthetic lock screen digital art intent
+    elif re.search(r"\b(wallpapers?|lock[\s_-]*screens?)\b", clean, re.I):
+        clean_wall = re.sub(r"\b(wallpapers?|lock[\s_-]*screens?|iphone[\s_-]*wallpapers?)\b", "", theme, flags=re.I).strip()
+        wall_theme = clean_wall if len(clean_wall) >= 3 else theme
+        queries.append(QuerySpec(query=f"{wall_theme} aesthetic digital art vector print", intent="digital_art", priority=1))
+        queries.append(QuerySpec(query=f"{wall_theme} seamless pattern vector", intent="surface_pattern", priority=2))
+
     # Priority 1: Direct Printable Seamless Pattern query (strictly without product container)
     queries.append(QuerySpec(query=f"{theme} seamless pattern vector", intent="surface_pattern", priority=1))
 

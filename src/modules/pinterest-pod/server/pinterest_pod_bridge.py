@@ -3839,10 +3839,8 @@ def _classify_reject_reason(keyword: str) -> tuple[str, str]:
         return "Chứa từ khóa làm đẹp, móng tay, chăm sóc da hoặc tóc (beauty/nails)", "NON_PRINTABLE_BEAUTY"
     if re.search(r"\b(porch|patio|front[\s_-]*doors?|remodel|cabinetry|landscaping|curb[\s_-]*appeal|exterior[\s_-]*design|shelf[\s_-]*styling)\b", kw):
         return "Chứa từ khóa ngoại thất / không gian kiến trúc 3D (porch/patio/staging)", "NON_PRINTABLE_3D_SPACE"
-    if re.search(r"\b(quotes?|memes?|captions?|workout|gym|fitness|diet|abs[\s_-]*routine)\b", kw):
-        return "Chứa từ khóa trích dẫn chữ / meme / bài tập thể hình (text quotes/memes)", "NON_PRINTABLE_TEXT_MEME"
-    if re.search(r"\b(wallpapers?|lock[\s_-]*screens?|phone[\s_-]*cases?|iphone[\s_-]*wallpapers?|widgets?)\b", kw):
-        return "Chứa từ khóa hình nền điện thoại / công nghệ số (wallpapers)", "NON_PRINTABLE_WALLPAPER"
+    if re.search(r"\b(workout|gym|fitness|diet|abs[\s_-]*routine|weight[\s_-]*loss)\b", kw):
+        return "Chứa từ khóa bài tập thể hình / giảm cân (fitness/diet)", "NON_PRINTABLE_FITNESS"
     return "Không đạt tiêu chuẩn in ấn đồ họa 2D (Stop-words lọc ấn phẩm)", "NON_PRINTABLE_GATE"
 
 
@@ -3911,7 +3909,7 @@ def discover_pinterest_trends(payload: dict[str, Any]) -> dict[str, Any]:
     try:
         from pinterest.trend_finder.semantic_analyzer import NON_PRINTABLE_GATE_REGEX, PRODUCT_CONTAINER_PATTERN
     except Exception:
-        NON_PRINTABLE_GATE_REGEX = re.compile(r"\b(recipes?|soup|cocktails?|nails?|hair|makeup|porch|patio|wallpapers?|quotes?|memes?)\b", re.I)
+        NON_PRINTABLE_GATE_REGEX = re.compile(r"\b(recipes?|soup|cocktails?|sourdough|casserole|nails?|hair|makeup|porch|patio|remodel|workout|gym|fitness|abs[\s_-]*routine)\b", re.I)
         PRODUCT_CONTAINER_PATTERN = re.compile(
             r"\b(?:"
             r"leather\s+bag|tote\s+bag|shoulder\s+bag|crossbody\s+bag|messenger\s+bag|"
@@ -4091,7 +4089,14 @@ def discover_pinterest_trends(payload: dict[str, Any]) -> dict[str, Any]:
             rejected_keywords.append(item_obj)
         else:
             item_obj["is_accepted"] = True
-            item_obj["suggested_fused_query"] = f"{clean_kw_for_query} seamless pattern vector"
+            if re.search(r"\b(quotes?|memes?|sayings?|typography|slogans?|text)\b", clean_kw_for_query, re.I):
+                item_obj["suggested_fused_query"] = f"{clean_kw_for_query} typography vector graphic print"
+            elif re.search(r"\b(wallpapers?|lock[\s_-]*screens?)\b", clean_kw_for_query, re.I):
+                clean_wall = re.sub(r"\b(wallpapers?|lock[\s_-]*screens?|iphone[\s_-]*wallpapers?)\b", "", clean_kw_for_query, flags=re.I).strip()
+                wall_theme = clean_wall if len(clean_wall) >= 3 else clean_kw_for_query
+                item_obj["suggested_fused_query"] = f"{wall_theme} aesthetic digital art vector print"
+            else:
+                item_obj["suggested_fused_query"] = f"{clean_kw_for_query} seamless pattern vector"
             accepted_keywords.append(item_obj)
         all_keywords.append(item_obj)
 

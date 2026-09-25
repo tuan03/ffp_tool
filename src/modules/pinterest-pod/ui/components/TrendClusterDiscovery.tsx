@@ -337,8 +337,9 @@ export function TrendClusterDiscovery({
         {showRejected && (
           <div className="flex flex-col gap-2 border-t border-slate-800 p-4 pt-3">
             <p className="text-[11px] text-slate-400 leading-relaxed">
-              Bộ lọc Printability Gate tự động chặn các từ khóa công thức nấu ăn, làm đẹp móng tay, không gian kiến trúc 3D,
-              hình nền điện thoại và meme chữ để đảm bảo 100% kết quả cào về là hoa văn, tranh vẽ và phôi in ấn chuẩn xưởng.
+              Bộ lọc Printability Gate tự động chặn các từ khóa công thức nấu ăn, làm đẹp móng tay, không gian kiến trúc 3D
+              và bài tập thể hình để đảm bảo 100% kết quả cào về là hoa văn, tranh vẽ vector, typography chữ nghệ thuật
+              và hình nền đồ họa chuẩn xưởng in ấn POD.
             </p>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-2">
