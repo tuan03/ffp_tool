@@ -582,21 +582,25 @@ export function createAmazonCrawlerReviewClient({
     },
     subscribe(onItems) {
       let isClosed = false;
-      let pollTimer: ReturnType<typeof setInterval> | undefined;
+      let isPolling = false;
       const poll = async (): Promise<void> => {
+        if (isClosed || isPolling) return;
+        isPolling = true;
         try {
           const items = readReviewItems(await readJson(await fetchImplementation(reviewUrl)));
           if (!isClosed) onItems(items);
         } catch {
-          // The next poll or SSE reconnect can recover without dropping the current UI state.
+          // Keep the last snapshot while the next poll or SSE reconnects.
+        } finally {
+          isPolling = false;
         }
       };
       void poll();
+      const pollTimer = setInterval(() => void poll(), 2_000);
       if (typeof EventSource === "undefined") {
-        pollTimer = setInterval(() => void poll(), 2_000);
         return () => {
           isClosed = true;
-          if (pollTimer) clearInterval(pollTimer);
+          clearInterval(pollTimer);
         };
       }
       const source = new EventSource(`${reviewUrl}/events`);
@@ -609,12 +613,12 @@ export function createAmazonCrawlerReviewClient({
         }
       });
       source.onerror = () => {
-        if (!pollTimer) pollTimer = setInterval(() => void poll(), 2_000);
+        void poll();
       };
       return () => {
         isClosed = true;
         source.close();
-        if (pollTimer) clearInterval(pollTimer);
+        clearInterval(pollTimer);
       };
     },
     async update(itemId: string, expectedVersion: number, patch: AmazonCrawlerReviewEditPatch) {
@@ -644,6 +648,13 @@ export function createAmazonCrawlerReviewClient({
         throw new AmazonCrawlerServiceError("Coordinator returned an invalid batch sync response.", "INVALID_ENGINE_RESPONSE");
       }
       return { queued: value.queued, itemIds: value.itemIds.map(String) };
+    },
+    async deleteAll() {
+      const value = await sendJson(reviewUrl, "DELETE");
+      if (!isRecord(value) || typeof value.deleted !== "number" || typeof value.skipped !== "number") {
+        throw new AmazonCrawlerServiceError("Coordinator returned an invalid review delete response.", "INVALID_ENGINE_RESPONSE");
+      }
+      return { deleted: value.deleted, skipped: value.skipped };
     },
     imageUrl(fileToken: string) {
       return `${reviewUrl}/images/${encodeURIComponent(fileToken)}`;

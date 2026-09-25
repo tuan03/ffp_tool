@@ -463,6 +463,7 @@ export interface AmazonCrawlerReviewClient {
   decide(itemId: string, expectedVersion: number, decision: AmazonCrawlerReviewDecision, reason?: string): Promise<AmazonCrawlerReviewItem>;
   sync(itemId: string): Promise<AmazonCrawlerReviewItem>;
   syncAllApproved(): Promise<{ readonly queued: number; readonly itemIds: readonly string[] }>;
+  deleteAll(): Promise<{ readonly deleted: number; readonly skipped: number }>;
   imageUrl(fileToken: string): string;
 }
 

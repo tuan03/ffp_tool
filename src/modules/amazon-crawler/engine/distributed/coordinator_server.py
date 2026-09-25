@@ -537,6 +537,10 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
         items = store.list_product_reviews()
         return {"items": items, "total": len(items)}
 
+    @app.delete("/api/v1/product-reviews")
+    def delete_all_product_reviews() -> dict[str, int]:
+        return store.delete_all_product_reviews()
+
     @app.get("/api/v1/product-reviews/events")
     async def stream_product_reviews(request: Request) -> StreamingResponse:
         async def stream():
@@ -567,6 +571,8 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
             raise HTTPException(status_code=404, detail="Review item was not found.")
         if result.get("conflict"):
             raise HTTPException(status_code=409, detail="Review item changed; reload before editing.")
+        if result.get("deleted"):
+            raise HTTPException(status_code=409, detail="Review item was deleted.")
         if result.get("locked"):
             raise HTTPException(status_code=409, detail="Review item cannot be edited while syncing or after sync.")
         return result
@@ -586,6 +592,8 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
             raise HTTPException(status_code=404, detail="Review item was not found.")
         if result.get("conflict"):
             raise HTTPException(status_code=409, detail="Review item changed; reload before deciding.")
+        if result.get("deleted"):
+            raise HTTPException(status_code=409, detail="Review item was deleted.")
         if result.get("locked"):
             raise HTTPException(status_code=409, detail="Review item cannot be changed while syncing or after sync.")
         return result
@@ -597,6 +605,8 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
             raise HTTPException(status_code=404, detail="Review item was not found.")
         if result.get("notApproved"):
             raise HTTPException(status_code=409, detail="Only approved products can be synced.")
+        if result.get("deleted"):
+            raise HTTPException(status_code=409, detail="Review item was deleted.")
         if result.get("reconciliationRequired"):
             raise HTTPException(status_code=409, detail="Shopify write needs reconciliation before retrying.")
         return result

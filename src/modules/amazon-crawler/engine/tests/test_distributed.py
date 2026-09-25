@@ -1004,6 +1004,74 @@ class CoordinatorStoreTests(unittest.TestCase):
             "productThreads": 4,
         })
 
+    def test_job_waits_for_every_product_to_finish_seo_before_review_pending(self) -> None:
+        job = self.store.create_job({"urls": ["B0REVIEW01", "B0REVIEW02"]})
+        with self.sessions.begin() as session:
+            tasks = session.scalars(select(CrawlTask).where(CrawlTask.job_id == job["id"])).all()
+            for index, task in enumerate(tasks):
+                task.status = "completed"
+                session.add(CrawlProductItem(
+                    id=f"review-item-{index}", job_id=job["id"], task_id=task.id,
+                    source_key=f"source-{index}", product_id=f"product-{index}",
+                    client_id="client-a", lease_id="lease-a", checksum=f"checksum-{index}",
+                    raw_payload={}, normalized_payload={"media": []},
+                    status="waiting_review" if index == 0 else "seo",
+                    shopify_result={"review": {"decision": "pending"}} if index == 0 else {},
+                ))
+            session.flush()
+            self.store._refresh_job(session, str(job["id"]))
+
+        self.assertEqual(self.store.get_job(str(job["id"]))["status"], "running")
+        with self.sessions.begin() as session:
+            item = session.get(CrawlProductItem, "review-item-1")
+            item.status = "waiting_review"
+            item.shopify_result = {"review": {"decision": "pending"}}
+            session.flush()
+            self.store._refresh_job(session, str(job["id"]))
+        self.assertEqual(self.store.get_job(str(job["id"]))["status"], "review_pending")
+
+    def test_delete_all_reviews_hides_ready_items_but_skips_active_sync(self) -> None:
+        job = self.store.create_job({"urls": ["B0REVIEW01", "B0REVIEW02"]})
+        with self.sessions.begin() as session:
+            tasks = session.scalars(select(CrawlTask).where(CrawlTask.job_id == job["id"])).all()
+            for index, task in enumerate(tasks):
+                task.status = "completed"
+                session.add(CrawlProductItem(
+                    id=f"delete-item-{index}", job_id=job["id"], task_id=task.id,
+                    source_key=f"delete-source-{index}", product_id=f"product-{index}",
+                    client_id="client-a", lease_id="lease-a", checksum=f"checksum-{index}",
+                    raw_payload={}, normalized_payload={"media": []},
+                    status="waiting_review" if index == 0 else "syncing",
+                    shopify_result={"review": {"decision": "approved", "syncStatus": "idle" if index == 0 else "syncing"}},
+                ))
+            session.flush()
+            self.store._refresh_job(session, str(job["id"]))
+
+        outcome = self.store.delete_all_product_reviews()
+
+        self.assertEqual(outcome, {"deleted": 1, "skipped": 1})
+        self.assertEqual([item["id"] for item in self.store.list_product_reviews()], ["delete-item-1"])
+        self.assertEqual(self.store.queue_product_review_sync("delete-item-0"), {"deleted": True})
+
+    def test_failed_review_stays_visible_and_can_retry_bulk_sync(self) -> None:
+        job = self.store.create_job({"urls": ["B0REVIEW01"]})
+        with self.sessions.begin() as session:
+            task = session.scalar(select(CrawlTask).where(CrawlTask.job_id == job["id"]))
+            task.status = "completed"
+            session.add(CrawlProductItem(
+                id="failed-review-item", job_id=job["id"], task_id=task.id,
+                source_key="failed-source", product_id="failed-product",
+                client_id="client-a", lease_id="lease-a", checksum="failed-checksum",
+                raw_payload={}, normalized_payload={"media": []}, status="failed",
+                shopify_result={"review": {"decision": "approved", "syncStatus": "failed"}},
+            ))
+            session.flush()
+            self.store._refresh_job(session, str(job["id"]))
+
+        self.assertEqual([item["id"] for item in self.store.list_product_reviews()], ["failed-review-item"])
+        self.assertEqual(self.store.queue_all_approved_reviews(), ["failed-review-item"])
+        self.assertEqual(self.store.list_product_reviews()[0]["syncStatus"], "queued")
+
     def test_repeated_ready_messages_cannot_exceed_client_capacity(self) -> None:
         self._create_four_task_job()
         self.store.register_client(client_hello(slots=2))
@@ -2043,6 +2111,13 @@ class CoordinatorDatabaseTests(unittest.TestCase):
 
 
 class CoordinatorApiTests(unittest.TestCase):
+    def setUp(self) -> None:
+        image_cache = tempfile.TemporaryDirectory()
+        self.addCleanup(image_cache.cleanup)
+        cache_override = patch.dict(os.environ, {"IMAGE_PROCESSING_CACHE_DIR": image_cache.name})
+        cache_override.start()
+        self.addCleanup(cache_override.stop)
+
     def test_sync_all_queues_only_approved_reviews_as_each_product_becomes_ready(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             database_path = Path(directory) / "coordinator.sqlite3"
@@ -2104,6 +2179,11 @@ class CoordinatorApiTests(unittest.TestCase):
                     {review["id"]: review["syncStatus"] for review in reviews},
                     {first_id: "queued", claims[1]["id"]: "idle"},
                 )
+                deleted = client.delete("/api/v1/product-reviews")
+                self.assertEqual(deleted.status_code, 200)
+                self.assertEqual(deleted.json(), {"deleted": 1, "skipped": 1})
+                self.assertEqual(client.get("/api/v1/product-reviews").json()["total"], 1)
+                self.assertEqual(client.post(f"/api/v1/product-reviews/{claims[1]['id']}/sync").status_code, 409)
 
     def test_review_api_exposes_ready_product_and_requires_explicit_sync(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
