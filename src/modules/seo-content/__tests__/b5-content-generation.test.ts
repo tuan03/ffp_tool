@@ -52,5 +52,9 @@ test("B5 HeuristicContentGenerator preserves variantLabel in fact sheet and titl
   });
 
   assert.match(draft.productTitle, /Pink Faith/);
+  assert.match(draft.productSeoDescription, /Pink Faith/);
+  assert.ok(draft.productSeoDescription.length <= 160);
+  assert.ok(draft.bullets.some((b) => b.text.includes("Pink Faith")));
 });
+
 

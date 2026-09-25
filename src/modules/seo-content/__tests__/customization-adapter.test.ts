@@ -328,12 +328,12 @@ test("applySeoContentToCustomizationProduct: preserves variant label in product 
   assert.equal(enrichedDup.seo?.title, "Personalized Christian Handbag Set - Pink Faith");
 });
 
-test("applySeoContentToCustomizationProduct: two variants of same parent ASIN produce distinct titles and handles", () => {
+test("applySeoContentToCustomizationProduct: two variants of same parent ASIN produce distinct titles, handles, descriptions, and SEO descriptions", () => {
   const seoOutput: SeoContentOutput = {
     productTitle: "Personalized Christian Handbag Set",
-    productDescription: "<p>Description</p>",
+    productDescription: "<p>Elevate your style with this Christian handbag set.</p><ul><li>Features expressive artwork.</li></ul>",
     productSeoTitle: "Christian Handbag Set",
-    productSeoDescription: "Description",
+    productSeoDescription: "Shop Christian faux leather handbag set. Distinctive design and everyday functionality.",
     productHandle: "christian-handbag-set",
     images: [],
   };
@@ -357,5 +357,120 @@ test("applySeoContentToCustomizationProduct: two variants of same parent ASIN pr
   assert.notEqual(enriched1.handle, enriched2.handle);
   assert.match(enriched1.title ?? "", /Pink Faith/);
   assert.match(enriched2.title ?? "", /Be Still and Know/);
+
+  // Variant preservation in descriptionHtml and seo.description
+  assert.notEqual(enriched1.descriptionHtml, enriched2.descriptionHtml);
+  assert.match(enriched1.descriptionHtml ?? "", /Pink Faith/);
+  assert.match(enriched2.descriptionHtml ?? "", /Be Still and Know/);
+
+  assert.notEqual(enriched1.seo?.description, enriched2.seo?.description);
+  assert.match(enriched1.seo?.description ?? "", /Pink Faith/);
+  assert.match(enriched2.seo?.description ?? "", /Be Still and Know/);
+  assert.ok((enriched1.seo?.description?.length ?? 0) <= 160);
+  assert.ok((enriched2.seo?.description?.length ?? 0) <= 160);
 });
+
+test("applySeoContentToCustomizationProduct: clamps title to 100 characters even if variant label is already present", () => {
+  const splitProduct: CrawlProduct = {
+    ...sampleProductA,
+    parentAsin: "B0G1SSY9S7",
+    splitContext: { attribute: "Color", value: "Be Still and Know" },
+  };
+
+  // Base title already has variant label, but total length is 104 (> 100)
+  const longSeoOutput: SeoContentOutput = {
+    productTitle: "Personalized Christian Faux Leather Handbag Set - Scripture Tote & Wallet for Women - Be Still and Know",
+    productDescription: "<p>Description</p>",
+    productSeoTitle: "Christian Handbag Set - Be Still and Know",
+    productSeoDescription: "Description",
+    productHandle: "handbag-set",
+    images: [],
+  };
+
+  const enriched = applySeoContentToCustomizationProduct(splitProduct, longSeoOutput);
+  assert.ok((enriched.title?.length ?? 0) <= 100, `Expected title length <= 100, got ${enriched.title?.length}: "${enriched.title}"`);
+  assert.match(enriched.title ?? "", /Be Still and Know/);
+});
+
+test("applySeoContentToCustomizationProduct: does not truncate variant label in SEO title when exceeding 70 characters", () => {
+  const splitProduct: CrawlProduct = {
+    ...sampleProductA,
+    parentAsin: "B0G1SSY9S7",
+    splitContext: { attribute: "Color", value: "Be Still and Know" },
+  };
+
+  // 71 characters, ends with " - Be Still and Know"
+  const longSeoTitleOutput: SeoContentOutput = {
+    productTitle: "Personalized Christian Handbag Set",
+    productDescription: "<p>Description</p>",
+    productSeoTitle: "Personalized Christian Handbag Set - Scripture Tote - Be Still and Know",
+    productSeoDescription: "Description",
+    productHandle: "handbag-set",
+    images: [],
+  };
+
+  const enriched = applySeoContentToCustomizationProduct(splitProduct, longSeoTitleOutput);
+  assert.ok((enriched.seo?.title?.length ?? 0) <= 70, `Expected SEO title length <= 70, got ${enriched.seo?.title?.length}`);
+  // MUST NOT end with mutilated "Be Still and Kno"
+  assert.doesNotMatch(enriched.seo?.title ?? "", /Be Still and Kno$/);
+  assert.match(enriched.seo?.title ?? "", /Be Still and Know/);
+});
+
+test("runCustomizationSeoPipeline: enriches variant products with distinct titles, handles, descriptions, and SEO descriptions even if runner returns static base output", async () => {
+  const variant1: CrawlProduct = {
+    ...sampleProductA,
+    parentAsin: "B0G1SSY9S7",
+    title: "Christian Handbag Set",
+    splitContext: { attribute: "Color", value: "Pink Faith" },
+  };
+  const variant2: CrawlProduct = {
+    ...sampleProductA,
+    parentAsin: "B0G1SSY9S7",
+    title: "Christian Handbag Set",
+    splitContext: { attribute: "Color", value: "Be Still and Know" },
+  };
+
+  // Static runner that completely ignores variant input
+  const staticRunner = async (): Promise<SeoContentOutput> => ({
+    productTitle: "Christian Handbag Set",
+    productDescription: "<p>General description</p>",
+    productSeoTitle: "Christian Handbag Set - Women Handbag",
+    productSeoDescription: "Discover this premium Christian Handbag Set for daily use. Shop now!",
+    productHandle: "christian-handbag-set",
+    images: [],
+  });
+
+  const result = await runCustomizationSeoPipeline([variant1, variant2], { runner: staticRunner });
+
+  assert.equal(result.total, 2);
+  assert.equal(result.successful, 2);
+  assert.equal(result.seoOutputs.length, 2);
+
+  const out1 = result.seoOutputs[0];
+  const out2 = result.seoOutputs[1];
+
+  // Distinct Titles
+  assert.notEqual(out1.productTitle, out2.productTitle);
+  assert.match(out1.productTitle, /Pink Faith/);
+  assert.match(out2.productTitle, /Be Still and Know/);
+
+  // Distinct SEO Titles
+  assert.notEqual(out1.productSeoTitle, out2.productSeoTitle);
+  assert.match(out1.productSeoTitle, /Pink Faith/);
+  assert.match(out2.productSeoTitle, /Be Still and Know/);
+
+  // Distinct Handles
+  assert.notEqual(out1.productHandle, out2.productHandle);
+
+  // Distinct Descriptions
+  assert.notEqual(out1.productDescription, out2.productDescription);
+  assert.match(out1.productDescription, /Pink Faith/);
+  assert.match(out2.productDescription, /Be Still and Know/);
+
+  // Distinct SEO Descriptions
+  assert.notEqual(out1.productSeoDescription, out2.productSeoDescription);
+  assert.match(out1.productSeoDescription, /Pink Faith/);
+  assert.match(out2.productSeoDescription, /Be Still and Know/);
+});
+
 

@@ -257,17 +257,19 @@ export function adaptCustomizationItemToViewModel(
 
   const splitValue =
     (item.sourceProduct.splitContext && typeof item.sourceProduct.splitContext.value === "string" ? item.sourceProduct.splitContext.value.trim() : undefined) ||
-    (Array.isArray(item.sourceProduct.variants) && item.sourceProduct.variants[0] && typeof (item.sourceProduct.variants[0] as { options?: Record<string, string> }).options === "object"
-      ? Object.values((item.sourceProduct.variants[0] as { options?: Record<string, string> }).options || {})[0]
+    (Array.isArray(item.sourceProduct.variants) && item.sourceProduct.variants[0] && typeof (item.sourceProduct.variants[0] as { options?: Record<string, unknown> }).options === "object"
+      ? Object.values((item.sourceProduct.variants[0] as { options?: Record<string, unknown> }).options || {})
+          .filter((v): v is string => typeof v === "string" && v.trim().length > 0)
+          .join(" / ") || undefined
       : undefined) ||
     (typeof sourceProduct.sourceKey === "string" ? sourceProduct.sourceKey.split(":").at(-1)?.trim() : undefined);
 
   const baseAsin = item.sourceProduct.parentAsin || item.sourceProduct.asin || item.asin;
   const uniqueId =
     (typeof sourceProduct.sourceKey === "string" && sourceProduct.sourceKey.trim().length > 0 ? sourceProduct.sourceKey.trim() : undefined) ||
-    effectiveProductId ||
-    (item.sourceProduct.id && !item.sourceProduct.id.startsWith("job-") ? item.sourceProduct.id : undefined) ||
     (baseAsin && splitValue ? `${baseAsin}-${splitValue}` : undefined) ||
+    (effectiveProductId && splitValue ? `${effectiveProductId}-${splitValue}` : effectiveProductId) ||
+    (item.sourceProduct.id && !item.sourceProduct.id.startsWith("job-") ? item.sourceProduct.id : undefined) ||
     item.productId ||
     (splitValue ? `item-${splitValue}` : undefined) ||
     baseAsin ||

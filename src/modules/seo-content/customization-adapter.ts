@@ -68,7 +68,7 @@ export function extractVariantLabel(product: CrawlProduct): string | undefined {
         (v): v is string => typeof v === "string" && v.trim().length > 0,
       );
       if (values.length > 0) {
-        return values[0].trim();
+        return values.map((v) => v.trim()).join(" / ");
       }
     }
   }
@@ -244,33 +244,107 @@ function resolveProductHandle(
   return `${trimmedBase}-${suffix}`;
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function composeVariantTitle(baseTitle: string, variantLabel: string, maxLen = 100): string {
-  if (baseTitle.toLowerCase().includes(variantLabel.toLowerCase())) {
-    return baseTitle;
-  }
   const suffix = ` - ${variantLabel}`;
+  if (baseTitle.toLowerCase().endsWith(suffix.toLowerCase())) {
+    if (baseTitle.length <= maxLen) {
+      return baseTitle;
+    }
+    const prefixPart = baseTitle.slice(0, baseTitle.length - suffix.length).trim();
+    const available = Math.max(15, maxLen - suffix.length);
+    const trimmedPrefix = prefixPart.slice(0, available).replace(/\s*-\s*$/, "").trim();
+    return `${trimmedPrefix}${suffix}`;
+  }
+
+  if (baseTitle.toLowerCase().includes(variantLabel.toLowerCase())) {
+    if (baseTitle.length <= maxLen) {
+      return baseTitle;
+    }
+    const stripped = baseTitle.replace(/\s*([|•\-–—:]\s*[^|•\-–—:]+)+$/, "").trim();
+    if (stripped.length <= maxLen && stripped.toLowerCase().includes(variantLabel.toLowerCase())) {
+      return stripped;
+    }
+    const rawWithout = baseTitle.replace(new RegExp(`\\s*-\\s*${escapeRegExp(variantLabel)}`, "gi"), "").trim();
+    const available = Math.max(15, maxLen - suffix.length);
+    const trimmedBase = rawWithout.slice(0, available).replace(/\s*-\s*$/, "").trim();
+    return `${trimmedBase}${suffix}`;
+  }
+
   if (baseTitle.length + suffix.length <= maxLen) {
     return `${baseTitle}${suffix}`;
   }
-  const available = Math.max(20, maxLen - suffix.length);
+  const available = Math.max(15, maxLen - suffix.length);
   const trimmedBase = baseTitle.slice(0, available).replace(/\s*-\s*$/, "").trim();
   return `${trimmedBase}${suffix}`;
 }
 
 function composeVariantSeoTitle(baseSeoTitle: string, variantLabel: string, maxLen = 70): string {
-  if (baseSeoTitle.toLowerCase().includes(variantLabel.toLowerCase())) {
-    return baseSeoTitle.length <= maxLen ? baseSeoTitle : baseSeoTitle.slice(0, maxLen);
-  }
   const suffix = ` - ${variantLabel}`;
+
+  if (baseSeoTitle.toLowerCase().endsWith(suffix.toLowerCase())) {
+    if (baseSeoTitle.length <= maxLen) {
+      return baseSeoTitle;
+    }
+    const prefixPart = baseSeoTitle.slice(0, baseSeoTitle.length - suffix.length).trim();
+    const strippedPrefix = prefixPart.replace(/\s*([|•\-–—:]\s*[^|•\-–—:]+)+$/, "").trim();
+    const targetPrefix = strippedPrefix.length > 0 ? strippedPrefix : prefixPart;
+    const available = Math.max(15, maxLen - suffix.length);
+    const words = targetPrefix.split(/\s+/);
+    const selected: string[] = [];
+    let currentLen = 0;
+    for (const word of words) {
+      const nextLen = selected.length === 0 ? word.length : currentLen + 1 + word.length;
+      if (nextLen <= available) {
+        selected.push(word);
+        currentLen = nextLen;
+      } else {
+        break;
+      }
+    }
+    const cleanPrefix = selected.length > 0 ? selected.join(" ") : targetPrefix.slice(0, available);
+    return `${cleanPrefix.replace(/\s*-\s*$/, "").trim()}${suffix}`;
+  }
+
+  if (baseSeoTitle.toLowerCase().includes(variantLabel.toLowerCase())) {
+    if (baseSeoTitle.length <= maxLen) {
+      return baseSeoTitle;
+    }
+    const stripped = baseSeoTitle.replace(/\s*([|•\-–—:]\s*[^|•\-–—:]+)+$/, "").trim();
+    if (stripped.length <= maxLen && stripped.toLowerCase().includes(variantLabel.toLowerCase())) {
+      return stripped;
+    }
+    const rawWithout = baseSeoTitle.replace(new RegExp(`\\s*-\\s*${escapeRegExp(variantLabel)}`, "gi"), "").trim();
+    const available = Math.max(15, maxLen - suffix.length);
+    const words = rawWithout.split(/\s+/);
+    const selected: string[] = [];
+    let currentLen = 0;
+    for (const word of words) {
+      const nextLen = selected.length === 0 ? word.length : currentLen + 1 + word.length;
+      if (nextLen <= available) {
+        selected.push(word);
+        currentLen = nextLen;
+      } else {
+        break;
+      }
+    }
+    const cleanPrefix = selected.length > 0 ? selected.join(" ") : rawWithout.slice(0, available);
+    return `${cleanPrefix.replace(/\s*-\s*$/, "").trim()}${suffix}`;
+  }
+
   if (baseSeoTitle.length + suffix.length <= maxLen) {
     return `${baseSeoTitle}${suffix}`;
   }
+
   // Try stripping common trailing brand/pipe suffix first: e.g. " | Shop Online" or " | Quality & Style"
   const stripped = baseSeoTitle.replace(/\s*([|•\-–—:]\s*[^|•\-–—:]+)+$/, "").trim();
   if (stripped.length > 0 && stripped.length + suffix.length <= maxLen) {
     return `${stripped}${suffix}`;
   }
-  // Otherwise trim base at word boundary before maxLen - suffix.length
+
   const available = Math.max(15, maxLen - suffix.length);
   const words = stripped.length > 0 ? stripped.split(/\s+/) : baseSeoTitle.split(/\s+/);
   const selected: string[] = [];
@@ -288,6 +362,46 @@ function composeVariantSeoTitle(baseSeoTitle: string, variantLabel: string, maxL
   return `${cleanPrefix.replace(/\s*-\s*$/, "").trim()}${suffix}`;
 }
 
+function composeVariantSeoDescription(baseSeoDesc: string, variantLabel: string, maxLen = 160): string {
+  if (baseSeoDesc.toLowerCase().includes(variantLabel.toLowerCase())) {
+    return baseSeoDesc.length <= maxLen ? baseSeoDesc : baseSeoDesc.slice(0, maxLen);
+  }
+  const tag = ` - ${variantLabel}`;
+  if (baseSeoDesc.length + tag.length <= maxLen) {
+    if (/(\.\s*(Shop now!?|Order now!?|Buy now!?))$/i.test(baseSeoDesc)) {
+      return baseSeoDesc.replace(/(\.\s*(Shop now!?|Order now!?|Buy now!?))$/i, `${tag}.$1`);
+    }
+    return `${baseSeoDesc.replace(/\.*$/, "")}${tag}.`;
+  }
+  const available = Math.max(30, maxLen - tag.length - 1);
+  const words = baseSeoDesc.split(/\s+/);
+  const selected: string[] = [];
+  let currentLen = 0;
+  for (const word of words) {
+    const nextLen = selected.length === 0 ? word.length : currentLen + 1 + word.length;
+    if (nextLen <= available) {
+      selected.push(word);
+      currentLen = nextLen;
+    } else {
+      break;
+    }
+  }
+  const cleanPrefix = selected.length > 0 ? selected.join(" ") : baseSeoDesc.slice(0, available);
+  return `${cleanPrefix.replace(/\.*$/, "")}${tag}.`;
+}
+
+function composeVariantDescriptionHtml(baseHtml: string, variantLabel: string, variantAttribute?: string): string {
+  if (baseHtml.toLowerCase().includes(variantLabel.toLowerCase())) {
+    return baseHtml;
+  }
+  const attr = variantAttribute || "Variant";
+  const itemHtml = `<li><strong>${attr}:</strong> ${variantLabel}</li>`;
+  if (baseHtml.includes("</ul>")) {
+    return baseHtml.replace("</ul>", `  ${itemHtml}\n</ul>`);
+  }
+  return `${baseHtml}\n<p><strong>${attr}:</strong> ${variantLabel}</p>`;
+}
+
 export function applySeoContentToCustomizationProduct(
   product: CrawlProduct,
   seoOutput: SeoContentOutput | SeoContentAltOnlyOutput,
@@ -298,21 +412,28 @@ export function applySeoContentToCustomizationProduct(
   );
 
   const variantLabel = extractVariantLabel(product);
+  const variantAttribute = extractVariantAttribute(product);
   const finalTitle = variantLabel
     ? composeVariantTitle(seoOutput.productTitle, variantLabel)
     : seoOutput.productTitle;
   const finalSeoTitle = variantLabel
     ? composeVariantSeoTitle(seoOutput.productSeoTitle, variantLabel)
     : seoOutput.productSeoTitle;
+  const finalSeoDescription = variantLabel
+    ? composeVariantSeoDescription(seoOutput.productSeoDescription, variantLabel)
+    : seoOutput.productSeoDescription;
+  const finalDescriptionHtml = variantLabel
+    ? composeVariantDescriptionHtml(seoOutput.productDescription, variantLabel, variantAttribute)
+    : seoOutput.productDescription;
 
   return {
     ...product,
     title: finalTitle,
-    descriptionHtml: seoOutput.productDescription,
+    descriptionHtml: finalDescriptionHtml,
     handle: resolveProductHandle(product, seoOutput.productHandle, options),
     seo: {
       title: finalSeoTitle,
-      description: seoOutput.productSeoDescription,
+      description: finalSeoDescription,
     },
     media: product.media?.map((media) => {
       if (String(media.kind ?? "image").toLowerCase() === "video") return { ...media };
@@ -368,7 +489,19 @@ export async function runCustomizationSeoPipeline(
     const chunkPromises = chunk.map(async (product): Promise<CustomizationSeoItemResult> => {
       const seoInput = fromCustomizationProduct(product, options.defaultNiche);
       try {
-        const seoOutput = await runner(seoInput);
+        const rawSeoOutput = await runner(seoInput);
+        const variantLabel = extractVariantLabel(product);
+        const variantAttribute = extractVariantAttribute(product);
+        const seoOutput: SeoContentOutput = variantLabel
+          ? {
+              ...rawSeoOutput,
+              productTitle: composeVariantTitle(rawSeoOutput.productTitle, variantLabel),
+              productSeoTitle: composeVariantSeoTitle(rawSeoOutput.productSeoTitle, variantLabel),
+              productSeoDescription: composeVariantSeoDescription(rawSeoOutput.productSeoDescription, variantLabel),
+              productDescription: composeVariantDescriptionHtml(rawSeoOutput.productDescription, variantLabel, variantAttribute),
+              productHandle: resolveProductHandle(product, rawSeoOutput.productHandle, { ensureUniqueHandle: true }),
+            }
+          : rawSeoOutput;
         return {
           productId: product.id,
           asin: product.asin || product.parentAsin,

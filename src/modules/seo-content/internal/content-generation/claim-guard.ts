@@ -42,6 +42,7 @@ function buildFactualCorpus(facts: ContentFactSheet): string {
     facts.physicalProductIdentity ?? "",
     facts.typographyStyleSummary ?? "",
     facts.visualEntities ?? "",
+    facts.variantLabel ?? "",
     ...facts.typographyVisibleTexts,
   ];
   return pieces.join(" ").toLowerCase();

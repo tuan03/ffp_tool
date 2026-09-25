@@ -53,6 +53,7 @@ export class GeminiSeoContentGenerator implements ContentGenerator {
         occasions: facts.occasions,
         useCases: facts.useCases,
         personalizationSupported: facts.personalizationSupported,
+        variantLabel: facts.variantLabel,
       },
       null,
       2,
@@ -69,7 +70,7 @@ Primary Focus Keyword: ${keywords.primary ?? "None specified (use brand/product 
 Secondary Keywords: ${keywords.secondary.join(", ") || "None"}
 Supporting Keywords: ${keywords.supportingKeywords.join(", ") || "None"}
 Framing Concepts: ${keywords.framingConcepts.join(", ") || "None"}
-</SEO_TARGETING>
+${facts.variantLabel ? `Variant / Style: ${facts.variantLabel}\n` : ""}</SEO_TARGETING>
 
 <CONSTRAINTS>
 Max SEO Title Characters: ${constraints.maxSeoTitleLength}

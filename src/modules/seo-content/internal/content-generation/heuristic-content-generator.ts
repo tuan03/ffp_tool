@@ -79,15 +79,25 @@ export class HeuristicContentGenerator implements ContentGenerator {
       });
     }
 
-    // Bullet 4: Made for / Audience & Occasions
+    // Bullet: Variant / Option (if present)
+    if (facts.variantLabel && bullets.length < constraints.maxBullets) {
+      bullets.push({
+        label: "Option",
+        text: `Features the distinct "${facts.variantLabel}" style and artwork.`,
+      });
+    }
+
+    // Bullet: Made for / Audience & Occasions
     const audience = facts.targetAudience.length > 0 ? facts.targetAudience[0] : "enthusiasts";
     const occasion = facts.occasions.length > 0 ? ` during ${facts.occasions[0]}` : "";
-    bullets.push({
-      label: "Made for",
-      text: `A memorable gift or personal accent for ${audience}${occasion}.`,
-    });
+    if (bullets.length < constraints.maxBullets) {
+      bullets.push({
+        label: "Made for",
+        text: `A memorable gift or personal accent for ${audience}${occasion}.`,
+      });
+    }
 
-    // Bullet 5: Use Case (if space permits)
+    // Bullet: Use Case (if space permits)
     if (facts.useCases.length > 0 && bullets.length < constraints.maxBullets) {
       bullets.push({
         label: "Use",
@@ -119,7 +129,8 @@ export class HeuristicContentGenerator implements ContentGenerator {
     const primaryFrag = groundedKeywords.primary
       ? groundedKeywords.primary
       : productTitle.toLowerCase();
-    const rawSeoDesc = `Discover this ${primaryFrag}${audienceFrag}. Distinctive design, premium look, and everyday functionality. Shop now!`;
+    const variantFrag = facts.variantLabel ? ` (${facts.variantLabel})` : "";
+    const rawSeoDesc = `Discover this ${primaryFrag}${variantFrag}${audienceFrag}. Distinctive design, premium look, and everyday functionality. Shop now!`;
     const productSeoDescription = fitSeoDescription(rawSeoDesc, constraints.maxSeoDescriptionLength);
 
     return {
