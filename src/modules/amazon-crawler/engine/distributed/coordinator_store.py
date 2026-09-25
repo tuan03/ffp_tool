@@ -39,6 +39,10 @@ ACTIVE_PRODUCT_STATUSES = {
     "received", "normalizing", "seo", "image_processing", "syncing",
     "shopify_writing", "stopping_after_write", "retry_wait", "sync_queued",
 }
+SEO_READY_PRODUCT_STATUSES = {
+    "waiting_review", "sync_queued", "syncing", "shopify_writing",
+    "stopping_after_write", "completed", "rejected", "reconciliation_required", "deleted",
+}
 CANCELLABLE_PRODUCT_STATUSES = ACTIVE_PRODUCT_STATUSES | {"cancelling"}
 CANCELLATION_UNCONFIRMED_ATTEMPT_STATUSES = {
     "cancelled_unconfirmed",
@@ -2251,6 +2255,8 @@ class CoordinatorStore:
             .where(CrawlProductItem.job_id == job.id)
             .group_by(CrawlProductItem.status)
         ).all())
+        product_total = sum(product_counts.values())
+        seo_ready_count = sum(int(product_counts.get(status, 0)) for status in SEO_READY_PRODUCT_STATUSES)
         retry_errors = session.scalars(
             select(CrawlProductItem.last_error).where(
                 CrawlProductItem.job_id == job.id,
@@ -2281,18 +2287,24 @@ class CoordinatorStore:
         else:
             phase = str(latest_batch_progress.get("phase") or ("product" if progress_events else "queued"))
         terminal_count = completed + failed + cancelled
+        if job.status == "review_pending":
+            progress_message = f"SEO hoàn tất {seo_ready_count}/{product_total} sản phẩm; đã chuyển sang SEO Review."
+        elif is_terminal:
+            progress_message = f"Đã xử lý {terminal_count}/{job.accepted_inputs} link."
+        elif has_pipeline_work and terminal_count == job.accepted_inputs:
+            progress_message = (
+                f"Đang xử lý pipeline {phase.upper()}: SEO hoàn tất {seo_ready_count}/{product_total} sản phẩm."
+            )
+        else:
+            progress_message = str(
+                latest_batch_progress.get("message")
+                or f"Đang xử lý {terminal_count}/{job.accepted_inputs} link trên các client."
+            )
         progress = {
             "phase": phase,
             "completed": terminal_count,
             "total": job.accepted_inputs,
-            "message": (
-                f"Đã xử lý {terminal_count}/{job.accepted_inputs} link."
-                if is_terminal else (
-                    f"Đang xử lý pipeline {phase.upper()}: {int(product_counts.get('completed', 0))}/{sum(product_counts.values())} products."
-                    if has_pipeline_work and terminal_count == job.accepted_inputs
-                    else str(latest_batch_progress.get("message") or f"Đang xử lý {terminal_count}/{job.accepted_inputs} link trên các client.")
-                )
-            ),
+            "message": progress_message,
             "items": progress_items,
             "productCounts": product_counts,
         }

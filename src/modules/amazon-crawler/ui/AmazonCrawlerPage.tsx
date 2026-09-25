@@ -74,6 +74,10 @@ const COMMON_PRODUCT_TYPES = [
   { label: "Sign (Biển hiệu)", value: "Sign" },
 ];
 
+function pipelineStatusLabel(status: string | undefined): string {
+  return status === "waiting_review" ? "SEO complete" : status ?? "Chưa nhận";
+}
+
 export interface StoreProfile {
   readonly storeId: string;
   readonly shopDomain: string;
@@ -1771,7 +1775,9 @@ export function AmazonCrawlerPage({
               <option value="" disabled>-- Chọn phiên cào để xem lại --</option>
               {recentJobs.map((job) => {
                 const timeLabel = job.createdAt ? new Date(job.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
-                const productCount = job.productCounts?.completed ?? job.acceptedInputs;
+                const productCount = job.productCounts
+                  ? Object.values(job.productCounts).reduce((total, count) => total + count, 0)
+                  : job.acceptedInputs;
                 return (
                   <option key={job.id} value={job.id}>
                     {timeLabel ? `[${timeLabel}] ` : ""}{job.id.slice(0, 8)}... ({productCount} SP · {job.status})
@@ -1801,7 +1807,7 @@ export function AmazonCrawlerPage({
           <div>
             <div className="flex flex-wrap justify-between gap-2 text-sm">
               <span>{progress.message}</span>
-              <strong>{progress.completed}/{progress.total} products</strong>
+              <strong>{progress.completed}/{progress.total} links</strong>
             </div>
             <div className="mt-2 h-2 overflow-hidden rounded bg-slate-800">
               <div className="h-full bg-cyan-400 transition-[width]" style={{ width: `${progress.total > 0 ? Math.min(100, (progress.completed / progress.total) * 100) : 0}%` }} />
@@ -1921,7 +1927,7 @@ export function AmazonCrawlerPage({
                         <span className="mt-1 flex flex-wrap gap-1 text-[11px]">
                           {product.customization ? <span className="rounded bg-violet-900/60 px-1.5 py-0.5 text-violet-200">Customize</span> : null}
                           {product.preset ? <span className="rounded bg-cyan-900/60 px-1.5 py-0.5 text-cyan-200">{product.preset}</span> : null}
-                          {product.pipeline ? <span className={`rounded px-1.5 py-0.5 ${product.pipeline.status === "completed" ? "bg-emerald-900/60 text-emerald-200" : product.pipeline.status === "failed" || product.pipeline.status === "reconciliation_required" ? "bg-rose-900/60 text-rose-200" : "bg-blue-900/60 text-blue-200"}`}>Pipeline: {product.pipeline.status}</span> : null}
+                          {product.pipeline ? <span className={`rounded px-1.5 py-0.5 ${product.pipeline.status === "completed" || product.pipeline.status === "waiting_review" ? "bg-emerald-900/60 text-emerald-200" : product.pipeline.status === "failed" || product.pipeline.status === "reconciliation_required" ? "bg-rose-900/60 text-rose-200" : "bg-blue-900/60 text-blue-200"}`}>Pipeline: {pipelineStatusLabel(product.pipeline.status)}</span> : null}
                           {product.warnings.length ? <span className="rounded bg-amber-900/60 px-1.5 py-0.5 text-amber-200">{product.warnings.length} warning</span> : null}
                         </span>
                       </span>
@@ -1958,7 +1964,7 @@ export function AmazonCrawlerPage({
                       <dl className="mt-4 grid gap-x-5 gap-y-2 text-sm sm:grid-cols-2">
                         <div><dt className="text-slate-500">Matrix</dt><dd>{selectedProduct.variantMatrix.discoveredCount}/{selectedProduct.variantMatrix.expectedCount} · {selectedProduct.variantMatrix.complete ? "Complete" : "Incomplete"}</dd></div>
                         <div><dt className="text-slate-500">Preset</dt><dd>{selectedProduct.preset ?? "—"}</dd></div>
-                        <div><dt className="text-slate-500">Pipeline</dt><dd>{selectedProduct.pipeline?.status ?? "Chưa nhận"}</dd></div>
+                        <div><dt className="text-slate-500">Pipeline</dt><dd className={selectedProduct.pipeline?.status === "waiting_review" ? "text-emerald-300" : undefined}>{pipelineStatusLabel(selectedProduct.pipeline?.status)}</dd></div>
                         <div><dt className="text-slate-500">SEO</dt><dd>{selectedProduct.pipeline?.seo.status ?? "pending"}{selectedProduct.pipeline?.seo.engine ? ` · ${selectedProduct.pipeline.seo.engine}` : ""}</dd></div>
                         <div><dt className="text-slate-500">Ảnh</dt><dd>{selectedProduct.pipeline?.imageProcessing?.status ?? "pending"}{selectedProduct.pipeline?.imageProcessing?.profileSlug ? ` · ${selectedProduct.pipeline.imageProcessing.profileSlug}` : ""}</dd></div>
                         <div><dt className="text-slate-500">Proxy Shopify</dt><dd>{selectedProduct.pipeline?.shopify.proxyProfile ?? "—"}</dd></div>

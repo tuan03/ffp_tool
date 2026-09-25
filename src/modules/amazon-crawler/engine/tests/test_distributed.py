@@ -1021,14 +1021,19 @@ class CoordinatorStoreTests(unittest.TestCase):
             session.flush()
             self.store._refresh_job(session, str(job["id"]))
 
-        self.assertEqual(self.store.get_job(str(job["id"]))["status"], "running")
+        in_progress = self.store.get_job(str(job["id"]))
+        self.assertEqual(in_progress["status"], "running")
+        self.assertIn("SEO hoàn tất 1/2 sản phẩm", in_progress["progress"]["message"])
+        self.assertEqual([item["id"] for item in self.store.list_product_reviews()], ["review-item-0"])
         with self.sessions.begin() as session:
             item = session.get(CrawlProductItem, "review-item-1")
             item.status = "waiting_review"
             item.shopify_result = {"review": {"decision": "pending"}}
             session.flush()
             self.store._refresh_job(session, str(job["id"]))
-        self.assertEqual(self.store.get_job(str(job["id"]))["status"], "review_pending")
+        complete = self.store.get_job(str(job["id"]))
+        self.assertEqual(complete["status"], "review_pending")
+        self.assertIn("SEO hoàn tất 2/2 sản phẩm", complete["progress"]["message"])
 
     def test_delete_all_reviews_hides_ready_items_but_skips_active_sync(self) -> None:
         job = self.store.create_job({"urls": ["B0REVIEW01", "B0REVIEW02"]})
