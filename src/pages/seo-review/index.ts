@@ -2,6 +2,7 @@ export { SeoReviewPage } from "./SeoReviewPage";
 export type { SeoReviewPageProps } from "./SeoReviewPage";
 export {
   adaptAutoSeoItemToViewModel,
+  adaptAmazonCrawlerReviewToViewModel,
   adaptCustomizationItemToViewModel,
   adaptPinterestPodItemToViewModel,
   adaptSeoOutputToViewModel,

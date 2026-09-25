@@ -9,20 +9,18 @@ import type {
   AmazonCrawlerClientsLoader,
   AmazonCrawlerJobController,
   AmazonCrawlerJobLoader,
+  AmazonCrawlerReviewClient,
   AmazonCrawlerRunner,
   AmazonCrawlerSyncRetrier,
   ImageProcessingProfileManager,
 } from "../../modules/amazon-crawler";
 import { createAutoSeoRoutes } from "../../modules/auto-seo";
 import type { ShopifyProductForAutoSeoUi } from "../../modules/auto-seo";
-import { getCustomizationNormalizerRunner } from "../../modules/customization-normalizer";
-import type { CrawlProduct } from "../../modules/customization-normalizer";
 import { getModuleApiRunner } from "../../modules/module-api";
 import {
   applyApprovedProductUpdates,
   createAutoSeoModuleApiClient,
   handoverAutoSeoToSeo,
-  handoverCrawlerToSeo,
   handoverPinterestToSeo,
   hasWritableChanges,
 } from "../../modules/orchestrator";
@@ -42,17 +40,16 @@ import { HomePage } from "../../pages/home/HomePage";
 import { NotFoundPage } from "../../pages/not-found/NotFoundPage";
 import {
   adaptAutoSeoItemToViewModel,
-  adaptCustomizationItemToViewModel,
   adaptPinterestPodItemToViewModel,
   adaptViewModelToApprovedUpdate,
   adaptViewModelToRollbackUpdate,
   SeoReviewPage,
 } from "../../pages/seo-review";
 import type { SeoProductUiViewModel } from "../../pages/seo-review";
-import type { AmazonCrawlerProduct } from "../../modules/amazon-crawler";
 
 interface AppRoutesProps {
   amazonCrawlerJobs: AmazonCrawlerJobController;
+  amazonCrawlerReviews: AmazonCrawlerReviewClient;
   clearAmazonCrawlerCache: AmazonCrawlerCacheClearer;
   loadAmazonCrawlerClients: AmazonCrawlerClientsLoader;
   runAmazonCrawler: AmazonCrawlerRunner;
@@ -64,6 +61,7 @@ interface AppRoutesProps {
 
 export function AppRoutes({
   amazonCrawlerJobs,
+  amazonCrawlerReviews,
   clearAmazonCrawlerCache,
   imageProcessingProfiles,
   loadAmazonCrawlerClients,
@@ -186,60 +184,6 @@ export function AppRoutes({
     };
 
     const autoSeoRoutes = createAutoSeoRoutes(autoSeoClient, handleAutoSeoHandover);
-
-    const handleHandoverToSeo = async (
-      crawlerProducts: readonly AmazonCrawlerProduct[],
-    ): Promise<void> => {
-      const normalizer = getCustomizationNormalizerRunner(environment);
-
-      const effectiveStoreId =
-        crawlerProducts.find((p) => p.pipeline?.shopify?.storeId)?.pipeline?.shopify?.storeId ||
-        (crawlerProducts.find((p) => (p as unknown as { storeId?: string }).storeId) as unknown as { storeId?: string })?.storeId;
-
-      const result = await handoverCrawlerToSeo(
-        {
-          products: crawlerProducts as unknown as CrawlProduct[],
-        },
-        {
-          normalizer,
-          seoRunner,
-        },
-      );
-
-      const newViewModels = result.items.map((item) =>
-        adaptCustomizationItemToViewModel(item, effectiveStoreId),
-      );
-
-      if (typeof window !== "undefined" && window.sessionStorage) {
-        try {
-          const storageKey = "ffp_seo_review_session_v1";
-          const existingRaw = window.sessionStorage.getItem(storageKey);
-          let existingList: readonly SeoProductUiViewModel[] = [];
-          if (existingRaw) {
-            const parsed = JSON.parse(existingRaw) as unknown;
-            if (Array.isArray(parsed)) {
-              existingList = parsed as SeoProductUiViewModel[];
-            }
-          }
-          const existingFiltered = existingList.filter(
-            (ex) =>
-              !ex.id.startsWith("sample-prod-") &&
-              !newViewModels.some((nv) => nv.id === ex.id),
-          );
-          const merged = [...newViewModels, ...existingFiltered];
-          window.sessionStorage.setItem(storageKey, JSON.stringify(merged));
-          window.sessionStorage.setItem(
-            "ffp_seo_review_handoff_banner",
-            JSON.stringify({
-              count: newViewModels.length,
-              timestamp: Date.now(),
-            }),
-          );
-        } catch {
-          // Ignore storage quota limits
-        }
-      }
-    };
 
     const handleSyncApprovedProducts = async (
       items: readonly SeoProductUiViewModel[],
@@ -532,7 +476,7 @@ export function AppRoutes({
       runAmazonCrawler,
       clearAmazonCrawlerCache,
       loadAmazonCrawlerClients,
-      handleHandoverToSeo,
+      undefined,
       retryAmazonCrawlerSyncs,
       imageProcessingProfiles,
       amazonCrawlerJobs,
@@ -555,6 +499,7 @@ export function AppRoutes({
             path: "seo-review",
             element: (
               <SeoReviewPage
+                amazonCrawlerReviews={amazonCrawlerReviews}
                 moduleApiRunner={moduleApiRunner}
                 onSyncApprovedProducts={handleSyncApprovedProducts}
                 onRollbackApprovedProducts={handleRollbackApprovedProducts}
@@ -572,7 +517,7 @@ export function AppRoutes({
         ],
       },
     ]);
-  }, [amazonCrawlerJobs, clearAmazonCrawlerCache, imageProcessingProfiles, loadAmazonCrawlerClients, loadAmazonCrawlerJob, retryAmazonCrawlerSyncs, runAmazonCrawler, runWorkflow]);
+  }, [amazonCrawlerJobs, amazonCrawlerReviews, clearAmazonCrawlerCache, imageProcessingProfiles, loadAmazonCrawlerClients, loadAmazonCrawlerJob, retryAmazonCrawlerSyncs, runAmazonCrawler, runWorkflow]);
 
   return <RouterProvider router={router} />;
 }

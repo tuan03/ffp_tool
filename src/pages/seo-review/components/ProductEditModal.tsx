@@ -6,7 +6,7 @@ export interface ProductEditModalProps {
   readonly product: SeoProductUiViewModel | null;
   readonly isOpen: boolean;
   readonly onClose: () => void;
-  readonly onSave: (id: string, updatedFields: SeoProductEditInput) => void;
+  readonly onSave: (id: string, updatedFields: SeoProductEditInput) => Promise<boolean>;
   readonly onZoomImage?: (images: readonly ZoomImageItem[], initialIndex?: number) => void;
 }
 
@@ -35,7 +35,7 @@ export function ProductEditModal({
 interface EditModalInnerProps {
   readonly product: SeoProductUiViewModel;
   readonly onClose: () => void;
-  readonly onSave: (id: string, updatedFields: SeoProductEditInput) => void;
+  readonly onSave: (id: string, updatedFields: SeoProductEditInput) => Promise<boolean>;
   readonly onZoomImage?: (images: readonly ZoomImageItem[], initialIndex?: number) => void;
 }
 
@@ -53,18 +53,28 @@ function EditModalInner({
   const [imageAlts, setImageAlts] = useState(
     product.images.map((img) => ({ id: img.id, alt: img.alt.value })),
   );
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent): Promise<void> {
     e.preventDefault();
-    onSave(product.id, {
-      productTitle,
-      productDescription,
-      seoTitle,
-      seoDescription,
-      handle,
-      imageAlts,
-    });
-    onClose();
+    if (isSaving) return;
+    setIsSaving(true);
+    setSaveError(null);
+    try {
+      const wasSaved = await onSave(product.id, {
+        productTitle,
+        productDescription,
+        seoTitle,
+        seoDescription,
+        handle,
+        imageAlts,
+      });
+      if (wasSaved) onClose();
+      else setSaveError("Không thể lưu chỉnh sửa. Hãy kiểm tra thông báo lỗi và thử lại.");
+    } finally {
+      setIsSaving(false);
+    }
   }
 
   function handleAltChange(id: string, newAlt: string) {
@@ -94,7 +104,7 @@ function EditModalInner({
         </div>
 
         {/* Form Body */}
-        <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-6 space-y-5 text-sm">
+        <form onSubmit={(event) => void handleSubmit(event)} className="flex-1 overflow-y-auto p-6 space-y-5 text-sm">
           {/* Product Title */}
           <div>
             <label className="block text-xs font-semibold uppercase tracking-wider text-slate-300 mb-1.5">
@@ -235,6 +245,7 @@ function EditModalInner({
           )}
 
           {/* Footer Actions */}
+          {saveError && <p role="alert" className="text-xs text-rose-300">{saveError}</p>}
           <div className="border-t border-slate-800 pt-4 flex items-center justify-end gap-3 sticky bottom-0 bg-slate-900">
             <button
               type="button"
@@ -245,9 +256,10 @@ function EditModalInner({
             </button>
             <button
               type="submit"
+              disabled={isSaving}
               className="px-5 py-2 rounded-lg text-xs font-semibold bg-cyan-600 text-white hover:bg-cyan-500 transition shadow-md shadow-cyan-900/30"
             >
-              Lưu thay đổi
+              {isSaving ? "Đang lưu..." : "Lưu thay đổi"}
             </button>
           </div>
         </form>

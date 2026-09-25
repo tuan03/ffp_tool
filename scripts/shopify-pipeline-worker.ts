@@ -43,7 +43,19 @@ interface PipelineClaim {
   readonly productId: string;
   readonly checksum: string;
   readonly attempt: number;
+  readonly stage?: "prepare" | "sync";
   readonly product: CrawlProduct;
+  readonly review?: {
+    readonly seo?: ReturnType<typeof createSeoContentPipelineSummary>;
+    readonly imageProcessing?: {
+      readonly status: "completed";
+      readonly profileSlug: string;
+      readonly profileRevision: string;
+      readonly processedImages: number;
+    };
+    readonly assetsNormalized?: number;
+    readonly [key: string]: unknown;
+  } | null;
   readonly settings: {
     readonly imageProfileSlug?: string;
     readonly imageProfileRevision?: string | null;
@@ -353,37 +365,42 @@ async function processClaim(
   const throwIfCancelled = (): void => {
     if (cancellationController.signal.aborted) throw new PipelineCancelledError();
   };
-  const blockers = productBlockers(claim.product);
-  if (blockers.length > 0) {
-    await failClaim(claim, workerId, new Error(blockers.join(" ")), {
-      phase: "normalization",
-      timings: { totalMs: Date.now() - pipelineStartedAt },
-    });
-    return;
-  }
+  const isSyncStage = claim.stage === "sync";
+  let baseNormalizedProduct = claim.product;
+  let assetsNormalized = Number(claim.review?.assetsNormalized ?? 0);
+  if (!isSyncStage) {
+    const blockers = productBlockers(claim.product);
+    if (blockers.length > 0) {
+      await failClaim(claim, workerId, new Error(blockers.join(" ")), {
+        phase: "normalization",
+        timings: { totalMs: Date.now() - pipelineStartedAt },
+      });
+      return;
+    }
 
-  let normalization: ReturnType<typeof normalizeCustomizationProduct>;
-  const normalizationStartedAt = Date.now();
-  try {
-    normalization = normalizeCustomizationProduct(claim.product);
-  } catch (error: unknown) {
+    let normalization: ReturnType<typeof normalizeCustomizationProduct>;
+    const normalizationStartedAt = Date.now();
+    try {
+      normalization = normalizeCustomizationProduct(claim.product);
+    } catch (error: unknown) {
+      timings.normalizationMs = Date.now() - normalizationStartedAt;
+      timings.totalMs = Date.now() - pipelineStartedAt;
+      await failClaim(claim, workerId, error, { phase: "normalization", timings });
+      return;
+    }
     timings.normalizationMs = Date.now() - normalizationStartedAt;
-    timings.totalMs = Date.now() - pipelineStartedAt;
-    await failClaim(claim, workerId, error, { phase: "normalization", timings });
-    return;
+    logPhase(claim.sourceKey, "normalization", timings.normalizationMs);
+    baseNormalizedProduct = {
+      ...normalization.normalizedProduct,
+      sourceKey: claim.sourceKey,
+    };
+    assetsNormalized = normalization.assetsNormalized;
+    await postJson(`/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/seo`, {
+      workerId,
+      normalizedProduct: baseNormalizedProduct,
+      seo: { status: "running" },
+    });
   }
-  timings.normalizationMs = Date.now() - normalizationStartedAt;
-  logPhase(claim.sourceKey, "normalization", timings.normalizationMs);
-  const baseNormalizedProduct: CrawlProduct = {
-    ...normalization.normalizedProduct,
-    sourceKey: claim.sourceKey,
-  };
-  const assetsNormalized = normalization.assetsNormalized;
-  await postJson(`/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/seo`, {
-    workerId,
-    normalizedProduct: baseNormalizedProduct,
-    seo: { status: "running" },
-  });
 
   let hasStartedShopifyWrite = false;
   let isDrainingAfterWrite = false;
@@ -453,141 +470,190 @@ async function processClaim(
       gatewayAuthToken: env.GATEWAY_AUTH_TOKEN,
     });
     const reconciliationWarnings: string[] = [];
-    const resolveStartedAt = Date.now();
-    const resolvedProduct = await resolveShopifyProductForSync({
-      runner,
-      storeId: effectiveProxyStoreId,
-      sourceKey: claim.sourceKey,
-      mappedProductId: claim.existingShopify?.productId,
-    });
-    throwIfCancelled();
-    timings.shopifyResolveMs = Date.now() - resolveStartedAt;
-    logPhase(claim.sourceKey, "shopify-resolve", timings.shopifyResolveMs);
-    if (resolvedProduct.staleMappedProductId && resolvedProduct.match === "source_tag") {
-      reconciliationWarnings.push(
-        `Stored Shopify product ${resolvedProduct.staleMappedProductId} was missing; recovered source product as ${resolvedProduct.product?.id ?? "unknown"}.`,
-      );
-    } else if (resolvedProduct.staleMappedProductId && resolvedProduct.match === "none") {
-      reconciliationWarnings.push(
-        `Stored Shopify product ${resolvedProduct.staleMappedProductId} was missing; created a replacement product.`,
-      );
-    }
-    existingProductId = resolvedProduct.product?.id;
-    existingProductHandle = resolvedProduct.product?.handle;
-    existingManagedResources = resolvedProduct.match === "mapping"
-      ? claim.existingShopify?.managedResources
-      : resolvedProduct.product
-        ? {
-            tags: resolvedProduct.product.tags,
-            mediaIds: resolvedProduct.product.images?.flatMap((media) => media.id ? [media.id] : []) ?? [],
-            variantIds: resolvedProduct.product.variants.map((variant) => variant.id),
-          }
-        : undefined;
-    const lastSyncedChecksum = existingProductId
-      ? claim.existingShopify?.normalizedChecksum
-      : undefined;
-
-    interface PreparedSeo {
-      readonly input: ReturnType<typeof fromCustomizationProduct>;
-      readonly execution: Awaited<ReturnType<typeof runSeoContentDetailed>>;
-      readonly product: CrawlProduct;
-    }
-    let prepared: SeoCorpusCommitResult<PreparedSeo>;
-    try {
-      prepared = await seoCorpusCommitCoordinator.prepare<PreparedSeo>({
-        signal: cancellationController.signal,
-        runSeo: async () => {
-          const input = {
-            ...fromCustomizationProduct(baseNormalizedProduct),
-            siteDomain: claimStoreConfig?.shopDomain,
-            storeId: claimStoreId,
-          };
-          const execution = await runSeoContentDetailed(input, {
-            imageMode: "alt_only",
-            signal: cancellationController.signal,
-            dependencies: {
-              conflictCorpus: new FileSeoConflictCorpus({ storeId: claimStoreId }),
-            },
-          });
-          const product = applySeoContentToCustomizationProduct(
-            baseNormalizedProduct,
-            execution.output,
-            { ensureUniqueHandle: true, existingShopifyHandle: existingProductHandle },
-          );
-          const finalHandle = String(product.handle || execution.output.productHandle);
-          return {
-            input: {
-              ...fromCustomizationProduct(product),
-              siteDomain: claimStoreConfig?.shopDomain,
-              storeId: claimStoreId,
-            },
-            execution: {
-              ...execution,
-              output: { ...execution.output, productHandle: finalHandle },
-            },
-            product,
-          };
-        },
-        register: async (seo) => registerSeoContentKeywords(seo.input, seo.execution),
+    let lastSyncedChecksum: string | undefined;
+    if (isSyncStage) {
+      const resolveStartedAt = Date.now();
+      const resolvedProduct = await resolveShopifyProductForSync({
+        runner,
+        storeId: effectiveProxyStoreId,
+        sourceKey: claim.sourceKey,
+        mappedProductId: claim.existingShopify?.productId,
       });
       throwIfCancelled();
-      reservedSeo = {
-        input: prepared.execution.input,
-        execution: prepared.execution.execution,
-      };
-    } catch (error: unknown) {
-      if (cancellationController.signal.aborted || (error instanceof Error && error.name === "AbortError")) {
-        throw new PipelineCancelledError();
+      timings.shopifyResolveMs = Date.now() - resolveStartedAt;
+      logPhase(claim.sourceKey, "shopify-resolve", timings.shopifyResolveMs);
+      if (resolvedProduct.staleMappedProductId && resolvedProduct.match === "source_tag") {
+        reconciliationWarnings.push(
+          `Stored Shopify product ${resolvedProduct.staleMappedProductId} was missing; recovered source product as ${resolvedProduct.product?.id ?? "unknown"}.`,
+        );
+      } else if (resolvedProduct.staleMappedProductId && resolvedProduct.match === "none") {
+        reconciliationWarnings.push(
+          `Stored Shopify product ${resolvedProduct.staleMappedProductId} was missing; created a replacement product.`,
+        );
       }
-      timings.totalMs = Date.now() - pipelineStartedAt;
-      await failClaim(claim, workerId, error, { retryable: true, phase: "seo", timings });
-      return;
+      existingProductId = resolvedProduct.product?.id;
+      existingProductHandle = resolvedProduct.product?.handle;
+      existingManagedResources = resolvedProduct.match === "mapping"
+        ? claim.existingShopify?.managedResources
+        : resolvedProduct.product
+          ? {
+              tags: resolvedProduct.product.tags,
+              mediaIds: resolvedProduct.product.images?.flatMap((media) => media.id ? [media.id] : []) ?? [],
+              variantIds: resolvedProduct.product.variants.map((variant) => variant.id),
+            }
+          : undefined;
+      lastSyncedChecksum = existingProductId
+        ? claim.existingShopify?.normalizedChecksum
+        : undefined;
     }
-    timings.seoInitialMs = prepared.timings.initialSeoMs;
-    timings.seoQueueWaitMs = prepared.timings.queueWaitMs;
-    timings.seoRebaseMs = prepared.timings.rebaseSeoMs;
-    timings.seoRegistrationMs = prepared.timings.registrationMs;
-    timings.seoTotalMs = prepared.timings.totalMs;
-    if (prepared.revisionRetries > 0) {
-      reconciliationWarnings.push(
-        `SEO corpus changed during processing; regenerated SEO ${prepared.revisionRetries} time(s) before Shopify sync.`,
-      );
-    }
-    logPhase(claim.sourceKey, "seo-and-corpus", timings.seoTotalMs);
 
-    const seoProduct = prepared.execution.product;
-    const seoExecution = prepared.execution.execution;
     const storeVendor = (claimStoreId.split("--")[0] || claimStoreId).trim().toUpperCase();
-    const seoSummary = createSeoContentPipelineSummary(seoExecution);
-    const imageProfileSlug = claim.settings.imageProfileSlug || "default";
-    await postJson(`/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/image-processing`, {
-      workerId,
-      normalizedProduct: seoProduct,
-      imageProcessing: { status: "running", profileSlug: imageProfileSlug },
-    });
+    let seoSummary: ReturnType<typeof createSeoContentPipelineSummary>;
+    let imageProcessingSummary: {
+      readonly status: "completed";
+      readonly profileSlug: string;
+      readonly profileRevision: string;
+      readonly processedImages: number;
+    };
+    let shopifyProduct: CrawlProduct;
 
-    const imageStartedAt = Date.now();
-    let imageResponse: ImageProcessingResponse;
-    try {
-      imageResponse = await postJson<ImageProcessingResponse>("/api/v1/internal/image-processing/process", {
-        product: seoProduct,
-        profileSlug: imageProfileSlug,
-        profileRevision: claim.settings.imageProfileRevision,
-      }, cancellationController.signal);
-    } catch (error: unknown) {
-      if (cancellationController.signal.aborted || (error instanceof Error && error.name === "AbortError")) {
-        throw new PipelineCancelledError();
+    if (isSyncStage) {
+      if (!claim.review?.seo || !claim.review.imageProcessing) {
+        throw new Error("Approved review claim is missing its SEO or image-processing summary.");
+      }
+      seoSummary = claim.review.seo;
+      imageProcessingSummary = claim.review.imageProcessing;
+      shopifyProduct = claim.product;
+    } else {
+      interface PreparedSeo {
+        readonly input: ReturnType<typeof fromCustomizationProduct>;
+        readonly execution: Awaited<ReturnType<typeof runSeoContentDetailed>>;
+        readonly product: CrawlProduct;
+      }
+      let prepared: SeoCorpusCommitResult<PreparedSeo>;
+      try {
+        prepared = await seoCorpusCommitCoordinator.prepare<PreparedSeo>({
+          signal: cancellationController.signal,
+          runSeo: async () => {
+            const input = {
+              ...fromCustomizationProduct(baseNormalizedProduct),
+              siteDomain: claimStoreConfig?.shopDomain,
+              storeId: claimStoreId,
+            };
+            const execution = await runSeoContentDetailed(input, {
+              imageMode: "alt_only",
+              signal: cancellationController.signal,
+              dependencies: {
+                conflictCorpus: new FileSeoConflictCorpus({ storeId: claimStoreId }),
+              },
+            });
+            const product = applySeoContentToCustomizationProduct(
+              baseNormalizedProduct,
+              execution.output,
+              { ensureUniqueHandle: true, existingShopifyHandle: existingProductHandle },
+            );
+            const finalHandle = String(product.handle || execution.output.productHandle);
+            return {
+              input: {
+                ...fromCustomizationProduct(product),
+                siteDomain: claimStoreConfig?.shopDomain,
+                storeId: claimStoreId,
+              },
+              execution: {
+                ...execution,
+                output: { ...execution.output, productHandle: finalHandle },
+              },
+              product,
+            };
+          },
+          register: async (seo) => registerSeoContentKeywords(seo.input, seo.execution),
+        });
+        throwIfCancelled();
+        reservedSeo = {
+          input: prepared.execution.input,
+          execution: prepared.execution.execution,
+        };
+      } catch (error: unknown) {
+        if (cancellationController.signal.aborted || (error instanceof Error && error.name === "AbortError")) {
+          throw new PipelineCancelledError();
+        }
+        timings.totalMs = Date.now() - pipelineStartedAt;
+        await failClaim(claim, workerId, error, { retryable: true, phase: "seo", timings });
+        return;
+      }
+      timings.seoInitialMs = prepared.timings.initialSeoMs;
+      timings.seoQueueWaitMs = prepared.timings.queueWaitMs;
+      timings.seoRebaseMs = prepared.timings.rebaseSeoMs;
+      timings.seoRegistrationMs = prepared.timings.registrationMs;
+      timings.seoTotalMs = prepared.timings.totalMs;
+      if (prepared.revisionRetries > 0) {
+        reconciliationWarnings.push(
+          `SEO corpus changed during processing; regenerated SEO ${prepared.revisionRetries} time(s) before review.`,
+        );
+      }
+      logPhase(claim.sourceKey, "seo-and-corpus", timings.seoTotalMs);
+
+      const seoProduct = prepared.execution.product;
+      const seoExecution = prepared.execution.execution;
+      seoSummary = createSeoContentPipelineSummary(seoExecution);
+      const imageProfileSlug = claim.settings.imageProfileSlug || "default";
+      await postJson(`/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/image-processing`, {
+        workerId,
+        normalizedProduct: seoProduct,
+        imageProcessing: { status: "running", profileSlug: imageProfileSlug },
+      });
+
+      const imageStartedAt = Date.now();
+      let imageResponse: ImageProcessingResponse;
+      try {
+        imageResponse = await postJson<ImageProcessingResponse>("/api/v1/internal/image-processing/process", {
+          product: seoProduct,
+          profileSlug: imageProfileSlug,
+          profileRevision: claim.settings.imageProfileRevision,
+        }, cancellationController.signal);
+      } catch (error: unknown) {
+        if (cancellationController.signal.aborted || (error instanceof Error && error.name === "AbortError")) {
+          throw new PipelineCancelledError();
+        }
+        timings.imageProcessingMs = Date.now() - imageStartedAt;
+        timings.totalMs = Date.now() - pipelineStartedAt;
+        await failClaim(claim, workerId, error, { retryable: true, phase: "image_processing", timings });
+        return;
       }
       timings.imageProcessingMs = Date.now() - imageStartedAt;
-      timings.totalMs = Date.now() - pipelineStartedAt;
-      await failClaim(claim, workerId, error, { retryable: true, phase: "image_processing", timings });
+      throwIfCancelled();
+      imageProcessingSummary = {
+        status: "completed",
+        profileSlug: imageResponse.profile.slug,
+        profileRevision: imageResponse.profile.revision,
+        processedImages: imageResponse.processed,
+      };
+      shopifyProduct = imageResponse.product;
+      await postJson(`/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/image-processing`, {
+        workerId,
+        normalizedProduct: shopifyProduct,
+        imageProcessing: imageProcessingSummary,
+      });
+      logPhase(claim.sourceKey, "image-processing", timings.imageProcessingMs);
+      await postJson(`/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/review-ready`, {
+        workerId,
+        normalizedProduct: shopifyProduct,
+        seo: seoSummary,
+        imageProcessing: imageProcessingSummary,
+        review: {
+          storeId: claimStoreId,
+          assetsNormalized,
+          seo: seoSummary,
+          imageProcessing: imageProcessingSummary,
+        },
+      });
+      logPhase(claim.sourceKey, "review-ready", Date.now() - pipelineStartedAt);
       return;
     }
-    timings.imageProcessingMs = Date.now() - imageStartedAt;
-    throwIfCancelled();
+
     finalChecksum = checksum({
-      product: seoProduct,
-      imageProfileRevision: imageResponse.profile.revision,
+      product: shopifyProduct,
+      imageProfileRevision: imageProcessingSummary.profileRevision,
       customProductType: customProductType ?? null,
       collectionIds: [...collectionIds].sort(),
       priceAddition,
@@ -595,15 +661,14 @@ async function processClaim(
       storeVendor,
     });
     const isNoOp = Boolean(existingProductId && lastSyncedChecksum === finalChecksum);
-    let shopifyProduct = imageResponse.product;
     if (isNoOp) {
       shopifyProduct = stripProcessingTokens(shopifyProduct);
     }
-    if (!isNoOp && imageResponse.profile.enabled) {
+    if (!isNoOp && shopifyProduct.media?.some((media) => Boolean((media as ProcessedImageMedia).processedFileToken))) {
       const uploadStartedAt = Date.now();
       try {
         shopifyProduct = await stageProcessedMedia(
-          imageResponse.product,
+          shopifyProduct,
           runner,
           effectiveProxyStoreId,
           `pipeline-${claim.id}-${finalChecksum}`,
@@ -619,18 +684,7 @@ async function processClaim(
       timings.imageUploadMs = Date.now() - uploadStartedAt;
       throwIfCancelled();
     }
-    const imageProcessingSummary = {
-      status: "completed",
-      profileSlug: imageResponse.profile.slug,
-      profileRevision: imageResponse.profile.revision,
-      processedImages: imageResponse.processed,
-    } as const;
-    await postJson(`/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/image-processing`, {
-      workerId,
-      normalizedProduct: shopifyProduct,
-      imageProcessing: imageProcessingSummary,
-    });
-    logPhase(claim.sourceKey, "image-processing", timings.imageProcessingMs + (timings.imageUploadMs ?? 0));
+    logPhase(claim.sourceKey, "image-upload", timings.imageUploadMs ?? 0);
     await postJson(`/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/syncing`, {
       workerId,
       normalizedProduct: shopifyProduct,

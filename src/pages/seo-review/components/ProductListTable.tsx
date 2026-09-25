@@ -106,6 +106,14 @@ export function ProductListTable({
   }
 
   function renderShopifySyncBadge(product: SeoProductUiViewModel) {
+    if (product.shopifySyncStatus === "queued") {
+      return (
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-amber-500/10 text-amber-300 border border-amber-500/30">
+          <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+          <span>Chờ đẩy</span>
+        </span>
+      );
+    }
     if (product.shopifySyncStatus === "syncing") {
       return (
         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-sky-500/10 text-sky-400 border border-sky-500/30 animate-pulse">
@@ -492,6 +500,22 @@ export function ProductListTable({
                             "✓"
                           )}
                         </button>
+
+                        {product.reviewDecision === "approved" &&
+                          product.shopifySyncStatus !== "synced" &&
+                          product.shopifySyncStatus !== "failed" &&
+                          onRetrySync ? (
+                            <button
+                              type="button"
+                              title="Sync sản phẩm đã duyệt lên Shopify"
+                              onClick={() => onRetrySync(product.id)}
+                              disabled={product.isSyncing}
+                              className="rounded-lg border border-cyan-500/40 px-1.5 py-1 text-xs text-cyan-300 hover:bg-cyan-950/60 disabled:cursor-not-allowed disabled:text-slate-500"
+                              aria-label="Sync Shopify"
+                            >
+                              🛍️
+                            </button>
+                          ) : null}
 
                         {product.shopifySyncStatus === "failed" && onRetrySync ? (
                           <button

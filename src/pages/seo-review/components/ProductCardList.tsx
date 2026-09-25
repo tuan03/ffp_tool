@@ -110,6 +110,14 @@ export function ProductCardList({
   }
 
   function renderShopifySyncBadge(product: SeoProductUiViewModel) {
+    if (product.shopifySyncStatus === "queued") {
+      return (
+        <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-500/10 text-amber-300 border border-amber-500/30">
+          <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+          <span>Đang chờ đẩy Store</span>
+        </span>
+      );
+    }
     if (product.shopifySyncStatus === "syncing") {
       return (
         <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-sky-500/10 text-sky-400 border border-sky-500/30 animate-pulse">
@@ -329,7 +337,7 @@ export function ProductCardList({
                         ? "Đang đồng bộ lên Shopify..."
                         : product.isReverting
                           ? "Đang hoàn tác dữ liệu cũ..."
-                          : "Phê duyệt và đồng bộ lên Shopify"
+                          : "Phê duyệt nội dung; chưa đồng bộ Shopify"
                     }
                     onClick={() => onApproveProduct(product.id)}
                     disabled={product.isSyncing || product.isReverting}
@@ -356,6 +364,21 @@ export function ProductCardList({
                       </>
                     )}
                   </button>
+
+                  {product.reviewDecision === "approved" &&
+                    product.shopifySyncStatus !== "synced" &&
+                    product.shopifySyncStatus !== "failed" &&
+                    onRetrySync ? (
+                      <button
+                        type="button"
+                        title="Sync sản phẩm đã duyệt lên Shopify"
+                        onClick={() => onRetrySync(product.id)}
+                        disabled={product.isSyncing}
+                        className="inline-flex items-center gap-1 rounded-lg border border-cyan-500/40 bg-cyan-600 px-2.5 py-1.5 text-xs font-semibold text-white transition hover:bg-cyan-500 disabled:cursor-not-allowed disabled:bg-slate-800 disabled:text-slate-500"
+                      >
+                        🛍️ Sync Shopify
+                      </button>
+                    ) : null}
 
                   {product.shopifySyncStatus === "failed" && onRetrySync ? (
                     <button

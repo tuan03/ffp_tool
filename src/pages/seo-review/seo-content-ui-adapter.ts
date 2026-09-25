@@ -1,3 +1,4 @@
+import type { AmazonCrawlerReviewItem } from "../../modules/amazon-crawler";
 import type { CrawlProduct } from "../../modules/customization-normalizer";
 import type { PodDeliverableItem } from "../../modules/pinterest-pod";
 import type {
@@ -274,6 +275,59 @@ export function adaptCustomizationItemToViewModel(
   }
 
   return adaptSeoOutputToViewModel(item.seoOutput, options);
+}
+
+export function adaptAmazonCrawlerReviewToViewModel(
+  item: AmazonCrawlerReviewItem,
+  resolveImageUrl: (fileToken: string) => string,
+): SeoProductUiViewModel {
+  const product = item.product;
+  const images: readonly SeoImageUiViewModel[] = product.media
+    .filter((media) => media.kind !== "video")
+    .map((media, index) => {
+      const processedFileToken = (media as unknown as { processedFileToken?: string }).processedFileToken;
+      const previewUrl = processedFileToken ? resolveImageUrl(processedFileToken) : media.processedUrl || media.url;
+      return {
+        id: media.url || media.amazonImageId || `${item.id}-image-${index + 1}`,
+        previewUrl: { value: previewUrl, source: "real" },
+        alt: { value: media.alt || product.title, source: "real" },
+        webpUrl: { value: previewUrl, source: "real" },
+        webpFilename: { value: processedFileToken || "", source: "real" },
+      };
+    });
+  const syncedProductId = product.pipeline?.shopify.productId;
+  const updatedAt = item.updatedAt ? Date.parse(item.updatedAt) : Date.now();
+  return {
+    id: item.id,
+    storeId: item.storeId || product.pipeline?.shopify.storeId,
+    productId: syncedProductId,
+    asin: product.parentAsin,
+    sourceNiche: product.categories[0],
+    coordinatorReview: {
+      itemId: item.id,
+      jobId: item.jobId,
+      version: item.version,
+      target: item.target,
+    },
+    productTitle: { value: product.title, source: "real" },
+    productDescription: { value: product.descriptionHtml || product.description || "", source: "real" },
+    seoTitle: { value: product.seo?.title || product.title, source: "real" },
+    seoDescription: { value: product.seo?.description || "", source: "real" },
+    handle: { value: product.handle || "", source: "real" },
+    images,
+    seoStatus: { value: "completed", source: "real" },
+    reviewDecision: item.decision,
+    rejectionReason: item.rejectionReason || undefined,
+    updatedAt: Number.isFinite(updatedAt) ? updatedAt : Date.now(),
+    sourceCrawlProduct: product as unknown as CrawlProduct,
+    shopifySyncStatus: item.syncStatus,
+    shopifyAdminUrl: product.pipeline?.shopify.adminUrl,
+    shopifySyncError: item.syncError || undefined,
+    shopifySyncedAt: item.syncStatus === "synced" ? updatedAt : undefined,
+    isSyncing: item.syncStatus === "queued" || item.syncStatus === "syncing",
+    syncError: item.syncError || undefined,
+    lastSyncedAt: item.syncStatus === "synced" ? updatedAt : undefined,
+  };
 }
 
 /**
