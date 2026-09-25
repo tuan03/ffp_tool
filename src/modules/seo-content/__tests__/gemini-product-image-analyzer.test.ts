@@ -123,4 +123,59 @@ test("GeminiProductImageAnalyzer retries on 429 using exponential backoff retry"
   assert.equal(result.physicalProductIdentity, "area rug");
 });
 
+test("GeminiProductImageAnalyzer forwards retryOptions to GoogleGenAIVertexContentGenerator without double-retry", async () => {
+  let callCount = 0;
+  const retryEvents: Array<{ attempt: number; delayMs: number }> = [];
+
+  const { GoogleGenAIVertexContentGenerator } = await import(
+    "../internal/product-understanding/gemini-content-generator"
+  );
+
+  const generator = new GoogleGenAIVertexContentGenerator({
+    projectId: "test-project",
+    // Generator defaults to 3 retries if not overridden
+    client: {
+      models: {
+        async generateContent() {
+          callCount++;
+          const err = new Error("429 RESOURCE_EXHAUSTED");
+          Object.assign(err, { status: 429 });
+          throw err;
+        },
+      },
+    },
+  });
+
+  const analyzer = new GeminiProductImageAnalyzer({
+    generator,
+    retryOptions: {
+      maxRetries: 1, // Must override generator default 3
+      initialDelayMs: 50,
+      jitterMs: 0,
+      sleepFn: async () => {},
+      onRetry: (_err, attempt, delayMs) => {
+        retryEvents.push({ attempt, delayMs });
+      },
+    },
+  });
+
+  await assert.rejects(
+    async () => {
+      await analyzer.analyze({
+        title: "Music rug",
+        description: "",
+        niche: "personalized rug",
+        images: [{ url: "data:image/webp;base64,UklGRg4AAABXRUJQVlA4IAIAAAACAA==" }],
+      });
+    },
+    /429 RESOURCE_EXHAUSTED/,
+  );
+
+  // 1 initial + 1 retry = 2 calls (not 1 + 3 = 4)
+  assert.equal(callCount, 2);
+  // Outer retry must not double-retry after generator exhausts its retries
+  assert.equal(retryEvents.length, 1);
+});
+
+
 

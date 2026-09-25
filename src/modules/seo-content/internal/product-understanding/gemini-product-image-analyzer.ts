@@ -126,6 +126,7 @@ Visual evidence has priority over metadata.`;
           model: this.model,
           maxOutputTokens: this.maxOutputTokens,
           timeoutMs: this.timeoutMs,
+          retryOptions: effectiveRetryOptions,
         });
       }, effectiveRetryOptions);
     });

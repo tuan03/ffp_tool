@@ -68,3 +68,50 @@ test("GoogleGenAIVertexContentGenerator retries on 429 rate limit with exponenti
   assert.equal(result.rawText, '{"niche":"custom rugs"}');
 });
 
+test("GoogleGenAIVertexContentGenerator prioritizes request-level retryOptions", async () => {
+  let callCount = 0;
+  const requestRetryEvents: Array<{ attempt: number; delayMs: number }> = [];
+
+  const generator = new GoogleGenAIVertexContentGenerator({
+    projectId: "test-project",
+    retryOptions: {
+      maxRetries: 5,
+    },
+    client: {
+      models: {
+        async generateContent() {
+          callCount++;
+          const err = new Error("429 RESOURCE_EXHAUSTED");
+          Object.assign(err, { status: 429 });
+          throw err;
+        },
+      },
+    },
+  });
+
+  await assert.rejects(
+    async () => {
+      await generator.generateProductImageAnalysis({
+        prompt: "Analyze image",
+        imagePayloads: [],
+        systemInstruction: "Instructions",
+        retryOptions: {
+          maxRetries: 1, // overrides generator's 5 retries
+          initialDelayMs: 50,
+          jitterMs: 0,
+          sleepFn: async () => {},
+          onRetry: (_err, attempt, delayMs) => {
+            requestRetryEvents.push({ attempt, delayMs });
+          },
+        },
+      });
+    },
+    /429 RESOURCE_EXHAUSTED/,
+  );
+
+  // 1 initial attempt + 1 retry = 2 calls (not 1 + 5 = 6)
+  assert.equal(callCount, 2);
+  assert.equal(requestRetryEvents.length, 1);
+});
+
+

@@ -37,21 +37,63 @@ export function isGeminiRateLimitOrTransientError(error: unknown): boolean {
     }
   }
 
-  const status =
-    typeof err.status === "number"
-      ? err.status
-      : typeof err.statusCode === "number"
-        ? err.statusCode
-        : typeof err.code === "number"
-          ? err.code
-          : undefined;
-
-  if (status !== undefined && [408, 429, 500, 502, 503, 504].includes(status)) {
-    return true;
+  // Check nested error object (e.g., Google Cloud REST API body: { error: { code: 429, message: "...", status: "RESOURCE_EXHAUSTED" } })
+  if (err.error && typeof err.error === "object" && err.error !== error) {
+    if (isGeminiRateLimitOrTransientError(err.error)) {
+      return true;
+    }
   }
 
-  const message = error instanceof Error ? error.message : String(error);
-  const upperMessage = message.toUpperCase();
+  const rawStatus =
+    err.status !== undefined
+      ? err.status
+      : err.statusCode !== undefined
+        ? err.statusCode
+        : err.code;
+
+  if (typeof rawStatus === "number") {
+    // HTTP status codes
+    if ([408, 429, 500, 502, 503, 504].includes(rawStatus)) {
+      return true;
+    }
+    // gRPC status codes: 4 = DEADLINE_EXCEEDED, 8 = RESOURCE_EXHAUSTED, 14 = UNAVAILABLE
+    if ([4, 8, 14].includes(rawStatus)) {
+      return true;
+    }
+  } else if (typeof rawStatus === "string") {
+    const num = Number(rawStatus);
+    if (!Number.isNaN(num) && [408, 429, 500, 502, 503, 504, 4, 8, 14].includes(num)) {
+      return true;
+    }
+    const upper = rawStatus.toUpperCase();
+    if (
+      upper === "RESOURCE_EXHAUSTED" ||
+      upper === "UNAVAILABLE" ||
+      upper === "DEADLINE_EXCEEDED"
+    ) {
+      return true;
+    }
+  }
+
+  // Gather message fragments across Error instance or plain error objects
+  const textFragments: string[] = [];
+  if (error instanceof Error) {
+    textFragments.push(error.message);
+  } else if (typeof err.message === "string") {
+    textFragments.push(err.message);
+  }
+
+  if (typeof err.details === "string") {
+    textFragments.push(err.details);
+  }
+  if (typeof err.statusText === "string") {
+    textFragments.push(err.statusText);
+  }
+  if (typeof error === "string") {
+    textFragments.push(error);
+  }
+
+  const upperMessage = textFragments.join(" ").toUpperCase();
 
   const transientKeywords = [
     "429",
@@ -59,6 +101,8 @@ export function isGeminiRateLimitOrTransientError(error: unknown): boolean {
     "RATE_LIMIT",
     "RATE LIMIT",
     "TOO MANY REQUESTS",
+    "QUOTA EXCEEDED",
+    "QUOTA_EXCEEDED",
     "UNAVAILABLE",
     "503",
     "504",
@@ -121,7 +165,11 @@ export async function executeWithExponentialBackoff<T>(
     } catch (error: unknown) {
       if (attempt > maxRetries || !isGeminiRateLimitOrTransientError(error)) {
         if (typeof error === "object" && error !== null) {
-          (error as Record<symbol, unknown>)[GEMINI_RETRIES_EXHAUSTED] = true;
+          try {
+            (error as Record<symbol, unknown>)[GEMINI_RETRIES_EXHAUSTED] = true;
+          } catch {
+            // Ignore if error object is frozen or non-extensible
+          }
         }
         throw error;
       }

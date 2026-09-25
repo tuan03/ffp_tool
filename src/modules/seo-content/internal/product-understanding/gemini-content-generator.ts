@@ -1,7 +1,11 @@
 import { GoogleGenAI } from "@google/genai";
 import type { GeminiImagePart } from "./product-image-payload";
 import { GEMINI_PRODUCT_IMAGE_ANALYSIS_SCHEMA } from "./gemini-analysis-schema";
-import { executeWithExponentialBackoff, type GeminiRetryOptions } from "./gemini-retry";
+import {
+  executeWithExponentialBackoff,
+  isGeminiRateLimitOrTransientError,
+  type GeminiRetryOptions,
+} from "./gemini-retry";
 
 export interface GeminiAnalysisRequest {
   readonly prompt: string;
@@ -10,6 +14,7 @@ export interface GeminiAnalysisRequest {
   readonly model?: string;
   readonly maxOutputTokens?: number;
   readonly timeoutMs?: number;
+  readonly retryOptions?: GeminiRetryOptions;
 }
 
 export interface GeminiStructuredTextRequest {
@@ -22,6 +27,7 @@ export interface GeminiStructuredTextRequest {
   readonly temperature?: number;
   /** Set to zero for short deterministic classifications that do not need model reasoning tokens. */
   readonly thinkingBudget?: number;
+  readonly retryOptions?: GeminiRetryOptions;
 }
 
 export interface GeminiAnalysisResponse {
@@ -200,6 +206,8 @@ export class GoogleGenAIVertexContentGenerator implements GeminiContentGenerator
       }
     }
 
+    const retryOptions = request.retryOptions ?? this.retryOptions;
+
     return executeWithExponentialBackoff(async () => {
       let timer: NodeJS.Timeout | undefined;
 
@@ -249,25 +257,21 @@ export class GoogleGenAIVertexContentGenerator implements GeminiContentGenerator
           throw err;
         }
         const errMsg = err instanceof Error ? err.message : String(err);
+        const errObj = err as Record<string, unknown>;
+        const rawStatus =
+          errObj?.status !== undefined
+            ? errObj.status
+            : errObj?.statusCode !== undefined
+              ? errObj.statusCode
+              : errObj?.code;
         const status =
-          typeof (err as Record<string, unknown>)?.status === "number"
-            ? ((err as Record<string, unknown>).status as number)
-            : undefined;
+          typeof rawStatus === "number"
+            ? rawStatus
+            : typeof rawStatus === "string" && !Number.isNaN(Number(rawStatus))
+              ? Number(rawStatus)
+              : undefined;
 
-        const isRetryable =
-          status === 408 ||
-          status === 429 ||
-          status === 502 ||
-          status === 503 ||
-          status === 504 ||
-          errMsg.includes("429") ||
-          errMsg.includes("503") ||
-          errMsg.includes("504") ||
-          errMsg.includes("RESOURCE_EXHAUSTED") ||
-          errMsg.includes("UNAVAILABLE") ||
-          errMsg.includes("DEADLINE_EXCEEDED") ||
-          errMsg.includes("ECONNRESET") ||
-          errMsg.includes("ETIMEDOUT");
+        const isRetryable = isGeminiRateLimitOrTransientError(err);
 
         throw new GeminiGeneratorError(
           `Gemini generateContent failed: ${errMsg}`,
@@ -280,7 +284,7 @@ export class GoogleGenAIVertexContentGenerator implements GeminiContentGenerator
           clearTimeout(timer);
         }
       }
-    }, this.retryOptions);
+    }, retryOptions);
   }
 
   async generateStructuredText(
@@ -288,6 +292,7 @@ export class GoogleGenAIVertexContentGenerator implements GeminiContentGenerator
   ): Promise<GeminiAnalysisResponse> {
     const model = request.model || this.defaultModel;
     const timeoutMs = request.timeoutMs || this.defaultTimeoutMs;
+    const retryOptions = request.retryOptions ?? this.retryOptions;
 
     return executeWithExponentialBackoff(async () => {
       let timer: NodeJS.Timeout | undefined;
@@ -341,25 +346,21 @@ export class GoogleGenAIVertexContentGenerator implements GeminiContentGenerator
           throw err;
         }
         const errMsg = err instanceof Error ? err.message : String(err);
+        const errObj = err as Record<string, unknown>;
+        const rawStatus =
+          errObj?.status !== undefined
+            ? errObj.status
+            : errObj?.statusCode !== undefined
+              ? errObj.statusCode
+              : errObj?.code;
         const status =
-          typeof (err as Record<string, unknown>)?.status === "number"
-            ? ((err as Record<string, unknown>).status as number)
-            : undefined;
+          typeof rawStatus === "number"
+            ? rawStatus
+            : typeof rawStatus === "string" && !Number.isNaN(Number(rawStatus))
+              ? Number(rawStatus)
+              : undefined;
 
-        const isRetryable =
-          status === 408 ||
-          status === 429 ||
-          status === 502 ||
-          status === 503 ||
-          status === 504 ||
-          errMsg.includes("429") ||
-          errMsg.includes("503") ||
-          errMsg.includes("504") ||
-          errMsg.includes("RESOURCE_EXHAUSTED") ||
-          errMsg.includes("UNAVAILABLE") ||
-          errMsg.includes("DEADLINE_EXCEEDED") ||
-          errMsg.includes("ECONNRESET") ||
-          errMsg.includes("ETIMEDOUT");
+        const isRetryable = isGeminiRateLimitOrTransientError(err);
 
         throw new GeminiGeneratorError(
           `Gemini generateContent failed: ${errMsg}`,
@@ -372,7 +373,7 @@ export class GoogleGenAIVertexContentGenerator implements GeminiContentGenerator
           clearTimeout(timer);
         }
       }
-    }, this.retryOptions);
+    }, retryOptions);
   }
 }
 

@@ -9,18 +9,40 @@ import {
 import { GeminiGeneratorError } from "../internal/product-understanding/gemini-content-generator";
 
 test("isGeminiRateLimitOrTransientError accurately classifies transient vs permanent errors", () => {
-  // Transient status codes
+  // Transient status codes (number and string)
   assert.equal(isGeminiRateLimitOrTransientError({ status: 429 }), true);
   assert.equal(isGeminiRateLimitOrTransientError({ status: 503 }), true);
   assert.equal(isGeminiRateLimitOrTransientError({ status: 504 }), true);
   assert.equal(isGeminiRateLimitOrTransientError({ statusCode: 429 }), true);
   assert.equal(isGeminiRateLimitOrTransientError({ code: 429 }), true);
+  assert.equal(isGeminiRateLimitOrTransientError({ status: "429" }), true);
+  assert.equal(isGeminiRateLimitOrTransientError({ status: "RESOURCE_EXHAUSTED" }), true);
+  assert.equal(isGeminiRateLimitOrTransientError({ status: "UNAVAILABLE" }), true);
+
+  // gRPC status codes (4: DEADLINE_EXCEEDED, 8: RESOURCE_EXHAUSTED, 14: UNAVAILABLE)
+  assert.equal(isGeminiRateLimitOrTransientError({ code: 8 }), true);
+  assert.equal(isGeminiRateLimitOrTransientError({ code: 14 }), true);
+  assert.equal(isGeminiRateLimitOrTransientError({ code: 4 }), true);
+
+  // Plain objects with message (deserialized JSON / non-Error instances)
+  assert.equal(isGeminiRateLimitOrTransientError({ message: "429 Too Many Requests" }), true);
+  assert.equal(isGeminiRateLimitOrTransientError({ message: "Resource exhausted" }), false);
+  assert.equal(isGeminiRateLimitOrTransientError({ message: "Quota exceeded for quota metric 'Queries'" }), true);
+
+  // Google Cloud REST API error payload structure
+  assert.equal(
+    isGeminiRateLimitOrTransientError({
+      error: { code: 429, message: "Resource has been exhausted (e.g. check quota).", status: "RESOURCE_EXHAUSTED" },
+    }),
+    true,
+  );
 
   // Transient messages / keywords
   assert.equal(isGeminiRateLimitOrTransientError(new Error("429 RESOURCE_EXHAUSTED")), true);
   assert.equal(isGeminiRateLimitOrTransientError(new Error("The service is UNAVAILABLE")), true);
   assert.equal(isGeminiRateLimitOrTransientError(new Error("rate limit exceeded")), true);
   assert.equal(isGeminiRateLimitOrTransientError(new Error("request ETIMEDOUT")), true);
+  assert.equal(isGeminiRateLimitOrTransientError(new Error("Quota exceeded")), true);
 
   // GeminiGeneratorError
   assert.equal(isGeminiRateLimitOrTransientError(new GeminiGeneratorError("Timeout", 408, true)), true);
@@ -212,3 +234,30 @@ test("executeWithExponentialBackoff prevents nested double-retry when inner erro
   // Outer should not have retried at all because inner exhausted retries
   assert.equal(outerRetries, 0);
 });
+
+test("executeWithExponentialBackoff handles frozen error objects safely without throwing TypeError", async () => {
+  let callCount = 0;
+  const frozenError = Object.freeze(new Error("429 RESOURCE_EXHAUSTED"));
+
+  await assert.rejects(
+    async () => {
+      await executeWithExponentialBackoff(
+        async () => {
+          callCount++;
+          throw frozenError;
+        },
+        {
+          maxRetries: 1,
+          sleepFn: async () => {},
+        },
+      );
+    },
+    (err: unknown) => {
+      assert.equal(err, frozenError);
+      return true;
+    },
+  );
+
+  assert.equal(callCount, 2);
+});
+
