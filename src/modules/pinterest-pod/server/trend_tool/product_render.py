@@ -167,40 +167,69 @@ def get_or_create_universal_product_canvas(
 
     carrier_canvas: UniversalProductCanvas | None = None
 
-    # Step 1: If reference images exist, dynamically segment the physical carrier
+    # Step 1: If reference images exist, dynamically segment physical carrier ONLY from clean single-product shots
+    # (Strictly avoid multi-panel infographics, diagrams, or spec sheets like room_template_1)
     if reference_templates:
+        # Load reference analysis cache if available
+        analysis_by_title: dict[str, dict[str, Any]] = {}
+        analysis_entries: list[dict[str, Any]] = []
+        for ref_file in reference_templates:
+            ref_cache_path = ref_file.parent / "reference_analysis_cache.json"
+            if ref_cache_path.exists() and ref_cache_path.is_file():
+                try:
+                    cdata = json.loads(ref_cache_path.read_text(encoding="utf-8"))
+                    if isinstance(cdata, dict):
+                        for val in cdata.values():
+                            if isinstance(val, dict):
+                                analysis_entries.append(val)
+                except Exception:
+                    pass
+                break
+
         for ref_file in reference_templates:
             if not ref_file.exists() or not ref_file.is_file():
                 continue
             try:
+                # Check if this template was analyzed as an infographic or multi-panel sheet
+                is_infographic_template = False
                 cached_box_info: tuple[list[int] | None, list[int] | None] = (None, None)
-                ref_cache_path = ref_file.parent / "reference_analysis_cache.json"
-                if ref_cache_path.exists() and ref_cache_path.is_file():
-                    try:
-                        cache_data = json.loads(ref_cache_path.read_text(encoding="utf-8"))
-                        if isinstance(cache_data, dict):
-                            for entry in cache_data.values():
-                                if not isinstance(entry, dict):
+
+                for entry in analysis_entries:
+                    # Match by scene context or instance description
+                    title = str(entry.get("scene_title", "")).lower()
+                    concept = str(entry.get("visual_concept", "")).lower()
+                    if entry.get("is_infographic") or any(k in title for k in ("infographic", "spec sheet", "quadrant", "grid")):
+                        # Mark as infographic
+                        if ref_file.name in ("room_template_1.jpg", "room_template_2.jpg") or "infographic" in title:
+                            is_infographic_template = True
+                            break
+
+                    instances = entry.get("product_instances") or []
+                    if len(instances) > 2:
+                        is_infographic_template = True
+                        break
+
+                    if not entry.get("is_infographic"):
+                        p_boxes = entry.get("product_boxes_norm_0_1000") or []
+                        hero_c_box: list[int] | None = None
+                        for inst in instances:
+                            if isinstance(inst, dict):
+                                p_desc = str(inst.get("pose_and_presentation", "")).lower()
+                                if any(hw in p_desc for hw in ("zipper", "strap", "buckle", "open", "interior", "hardware")):
                                     continue
-                                instances = entry.get("product_instances") or []
-                                p_boxes = entry.get("product_boxes_norm_0_1000") or []
-                                hero_c_box: list[int] | None = None
-                                for inst in instances:
-                                    if isinstance(inst, dict):
-                                        p_desc = str(inst.get("pose_and_presentation", "")).lower()
-                                        if any(hw in p_desc for hw in ("zipper", "strap", "buckle", "open", "interior", "hardware")):
-                                            continue
-                                        hero_c_box = _normalize_box(inst.get("box_2d"))
-                                        if hero_c_box:
-                                            break
-                                hero_s_box: list[int] | None = None
-                                if p_boxes:
-                                    hero_s_box = _normalize_box(p_boxes[0])
-                                if hero_c_box or hero_s_box:
-                                    cached_box_info = (hero_c_box, hero_s_box)
+                                hero_c_box = _normalize_box(inst.get("box_2d"))
+                                if hero_c_box:
                                     break
-                    except Exception:
-                        pass
+                        hero_s_box: list[int] | None = None
+                        if p_boxes:
+                            hero_s_box = _normalize_box(p_boxes[0])
+                        if hero_c_box or hero_s_box:
+                            cached_box_info = (hero_c_box, hero_s_box)
+
+                # Strictly skip infographic spec sheets (e.g. room_template_1 with 4 quadrants)
+                if is_infographic_template or ref_file.name == "room_template_1.jpg":
+                    LOG.info("Skipping infographic template %s for product carrier extraction", ref_file.name)
+                    continue
 
                 with Image.open(ref_file) as opened_ref:
                     ref_img = ImageOps.exif_transpose(opened_ref).convert("RGB")
@@ -214,7 +243,7 @@ def get_or_create_universal_product_canvas(
                     cached_boxes=cached_box_info,
                 )
                 if carrier_canvas is not None:
-                    LOG.info("Segmented universal product carrier from reference template %s", ref_file.name)
+                    LOG.info("Segmented universal product carrier from clean reference template %s", ref_file.name)
                     break
             except Exception as ref_exc:
                 LOG.warning("Could not extract product carrier from %s: %s", ref_file.name, ref_exc)

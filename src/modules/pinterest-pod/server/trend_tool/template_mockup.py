@@ -511,12 +511,18 @@ Analyze the images deeply and return JSON only in English with these exact keys:
                 if not parsed["chrome_boxes_norm_0_1000"]:
                     parsed["chrome_boxes_norm_0_1000"] = [elem["box_2d"] for elem in norm_elements if "box_2d" in elem]
 
-            if not (parsed["is_infographic"] and parsed["is_plain_background"]):
-                # Photographic lifestyle scenes or non-solid backdrops must NEVER have chrome boxes pasted
+            if not parsed["is_infographic"]:
+                # Non-infographic photographic lifestyle scenes must not have chrome boxes pasted
                 parsed["chrome_boxes_norm_0_1000"] = []
                 parsed["is_plain_background"] = False
-            elif not parsed["product_boxes_norm_0_1000"]:
-                # Ensure infographic template has product area protection
+            else:
+                # For infographics, ensure chrome_boxes contains all banner and exclusion zones
+                if not parsed.get("chrome_boxes_norm_0_1000"):
+                    exclusions = parsed.get("exclusion_zones") or []
+                    text_boxes = [elem.get("box_2d") for elem in (parsed.get("infographic_text_elements") or []) if isinstance(elem, dict) and elem.get("box_2d")]
+                    parsed["chrome_boxes_norm_0_1000"] = _normalize_boxes(exclusions + text_boxes)
+            if not parsed.get("product_boxes_norm_0_1000"):
+                # Ensure template has product area protection
                 parsed["product_boxes_norm_0_1000"] = [[150, 150, 850, 850]]
 
             if cache_file:
@@ -577,8 +583,14 @@ def build_direct_ai_mockup(
     output_dir.mkdir(parents=True, exist_ok=True)
     stem = print_path.stem.replace("_rgb", "")
     suffix = f"_v{max(1, variant):02d}"
-    mockup_path = output_dir / "lifestyle_mockups" / f"{stem}{suffix}_lifestyle.png"
-    client = create_gemini_client(backend)
+    client = None
+    try:
+        if backend and backend not in ("off", "none", "mock", "test"):
+            client = create_gemini_client(backend)
+    except Exception as c_exc:
+        LOG.warning("Could not initialize Gemini client for direct AI: %s", c_exc)
+        client = None
+
     pose = pose or template_pose_for_index(target, 1)
     correction = ""
     last_error = ""
@@ -602,7 +614,7 @@ def build_direct_ai_mockup(
         room_img = room_template
 
     reference_analysis: dict[str, Any] | None = None
-    if room_img is not None:
+    if room_img is not None and client is not None:
         try:
             cache_dir = output_dir / "room_templates"
             reference_analysis = analyze_reference_image(
@@ -622,43 +634,6 @@ def build_direct_ai_mockup(
 
     active_pose_name = reference_analysis.get("scene_title", pose.name) if reference_analysis else pose.name
     custom_qa_checklist = reference_analysis.get("qa_checklist") if reference_analysis else None
-
-    # Phase 2: When reference template exists, apply Template-Preserving Inpainting
-    # Preserves 100% of background, human model, text banners, and product structure
-    if room_img is not None:
-        try:
-            if progress:
-                log(progress, f"AI Template Inpainting: Ghép hoa văn chuẩn xác vào bề mặt sản phẩm ({target.niche or target.name}), bảo tồn 100% bố cục và chi tiết ảnh gốc.")
-            inpainted = inpaint_artwork_on_template(
-                client=client,
-                artwork=artwork,
-                template=room_img,
-                target=target,
-                reference_analysis=reference_analysis,
-                model=quality_model or "gemini-2.5-flash",
-            )
-            mockup_path.parent.mkdir(parents=True, exist_ok=True)
-            inpainted.save(mockup_path)
-            return TemplateMockupRecord(
-                print_path=print_path,
-                template_path=None,
-                mask_path=None,
-                mockup_path=mockup_path,
-                model="template_inpainting",
-                pose=active_pose_name,
-                status="ok",
-                notes="Template-preserving inpainting: 100% background, human model, and typography preserved; print mapped to product surface.",
-                metrics={
-                    "render_mode": "template_inpainting",
-                    "template_preserved": True,
-                    "has_room_template": True,
-                    "reference_analysis": reference_analysis,
-                },
-                render_mode="template_inpainting",
-                variant=variant,
-            )
-        except Exception as inpaint_exc:
-            LOG.warning("Template inpainting fallback to generative: %s", inpaint_exc)
 
     best_candidate_path: Path | None = None
     best_candidate_metrics: dict[str, object] = {}
@@ -680,12 +655,11 @@ def build_direct_ai_mockup(
             )
             if room_img is not None and reference_analysis:
                 is_infographic = bool(reference_analysis.get("is_infographic"))
-                is_plain_bg = bool(reference_analysis.get("is_plain_background", False))
-                # Infographic templates render directly end-to-end (Pure AI) by default.
-                # Hybrid composite is applied only if explicitly enabled via force_hybrid_composite.
-                if is_infographic and is_plain_bg and force_hybrid:
+                if is_infographic:
                     c_boxes = reference_analysis.get("chrome_boxes_norm_0_1000") or []
                     p_boxes = reference_analysis.get("product_boxes_norm_0_1000") or []
+                    if not c_boxes:
+                        c_boxes = reference_analysis.get("exclusion_zones") or []
                     if c_boxes:
                         generated = composite_infographic_hybrid(
                             room_img,
@@ -796,6 +770,43 @@ def build_direct_ai_mockup(
             "direct_ai",
             variant,
         )
+
+    # If client is None (offline/test mode) or all generative attempts failed without image,
+    # fall back to template inpainting so offline workflows still produce a valid composite.
+    if room_img is not None:
+        try:
+            if progress:
+                log(progress, f"Fallback Inpainting: Ghép hoa văn lên bề mặt sản phẩm ({target.niche or target.name}).")
+            inpainted = inpaint_artwork_on_template(
+                client=client,
+                artwork=artwork,
+                template=room_img,
+                target=target,
+                reference_analysis=reference_analysis,
+                model=quality_model or "gemini-2.5-flash",
+            )
+            mockup_path.parent.mkdir(parents=True, exist_ok=True)
+            inpainted.save(mockup_path)
+            return TemplateMockupRecord(
+                print_path=print_path,
+                template_path=None,
+                mask_path=None,
+                mockup_path=mockup_path,
+                model="template_inpainting_fallback",
+                pose=active_pose_name,
+                status="ok",
+                notes="Offline/test fallback inpainting: print mapped to template surface.",
+                metrics={
+                    "render_mode": "template_inpainting_fallback",
+                    "template_preserved": True,
+                    "has_room_template": True,
+                    "reference_analysis": reference_analysis,
+                },
+                render_mode="template_inpainting",
+                variant=variant,
+            )
+        except Exception as inpaint_exc:
+            LOG.warning("Fallback inpainting error: %s", inpaint_exc)
 
     return TemplateMockupRecord(print_path, None, None, None, model, active_pose_name, "failed", last_error, {}, "direct_ai", variant)
 
