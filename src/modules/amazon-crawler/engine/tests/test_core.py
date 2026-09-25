@@ -748,6 +748,10 @@ class CoreTests(unittest.TestCase):
         media_by_split = {product["splitContext"]["value"]: [media["url"] for media in product["media"]] for product in products}
         self.assertEqual(media_by_split["Ocean"], ["https://img/ocean.jpg"])
         self.assertEqual(media_by_split["Forest"], ["https://img/forest.jpg"])
+        links_by_split = {product["splitContext"]["value"]: product["canonicalUrl"] for product in products}
+        self.assertEqual(links_by_split["Ocean"], "https://www.amazon.com/dp/B012345678")
+        self.assertEqual(links_by_split["Forest"], "https://www.amazon.com/dp/B012345679")
+        self.assertTrue(all(product["parentAsin"] == "B0PARENT00" for product in products))
 
     def test_split_uses_actual_source_options_when_matrix_labels_are_inconsistent(self) -> None:
         first = source_variant("B012345678", "Ocean", "Twin")
