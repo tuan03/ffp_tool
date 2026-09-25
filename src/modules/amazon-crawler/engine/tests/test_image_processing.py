@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import tempfile
 import unittest
 import urllib.error
@@ -135,6 +136,29 @@ class ImageProcessingTests(unittest.TestCase):
 
             self.assertEqual(result["processed"], 1)
             self.assertEqual(result["product"]["customization"], product["customization"])
+            service.close()
+
+    def test_expired_cache_keeps_images_referenced_by_pending_reviews(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            service = ImageProcessingService(Path(directory), cache_ttl_minutes=1)
+            protected_token = "a" * 64
+            expired_token = "b" * 64
+            protected_path = service.cache_root / f"{protected_token}.jpg"
+            expired_path = service.cache_root / f"{expired_token}.jpg"
+            protected_path.write_bytes(b"protected")
+            expired_path.write_bytes(b"expired")
+            old_timestamp = 1
+            os.utime(protected_path, (old_timestamp, old_timestamp))
+            os.utime(expired_path, (old_timestamp, old_timestamp))
+
+            removed = service.clear_expired({protected_token})
+
+            self.assertEqual(removed, 1)
+            self.assertTrue(protected_path.exists())
+            self.assertFalse(expired_path.exists())
+            cleared = service.clear_cache({protected_token})
+            self.assertEqual(cleared["removedFiles"], 0)
+            self.assertTrue(protected_path.exists())
             service.close()
 
 

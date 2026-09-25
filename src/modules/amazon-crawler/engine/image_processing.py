@@ -415,11 +415,14 @@ class ImageProcessingService:
             raise KeyError("Processed image was not found.")
         return path
 
-    def clear_expired(self) -> int:
+    def clear_expired(self, protected_tokens: set[str] | None = None) -> int:
         removed = 0
         cutoff = time.time() - self.cache_ttl_seconds
+        protected = protected_tokens or set()
         for path in self.cache_root.glob("*.jpg"):
             try:
+                if path.stem in protected:
+                    continue
                 if path.stat().st_mtime < cutoff:
                     path.unlink(missing_ok=True)
                     removed += 1
@@ -429,12 +432,15 @@ class ImageProcessingService:
                 continue
         return removed
 
-    def clear_cache(self) -> dict[str, int]:
+    def clear_cache(self, protected_tokens: set[str] | None = None) -> dict[str, int]:
         removed_files = 0
         removed_bytes = 0
+        protected = protected_tokens or set()
         for path in self.cache_root.glob("*"):
             try:
                 if not path.is_file():
+                    continue
+                if path.stem in protected:
                     continue
                 removed_bytes += path.stat().st_size
                 path.unlink(missing_ok=True)

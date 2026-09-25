@@ -1641,6 +1641,152 @@ class CoordinatorStoreTests(unittest.TestCase):
         self.assertEqual(retry_claim["existingShopify"]["productId"], "gid://shopify/Product/123")
         self.assertEqual(retry_claim["existingShopify"]["normalizedChecksum"], "seo-checksum-1")
 
+    def test_review_gate_persists_product_until_explicit_sync(self) -> None:
+        source_key = "amazon:B0REVIEW01:none:none"
+        product = {
+            "id": "product-review",
+            "sourceKey": source_key,
+            "parentAsin": "B0REVIEW01",
+            "title": "Review product",
+            "media": [],
+            "variants": [],
+        }
+        job = self.store.create_job({"urls": ["B0REVIEW01"], "storeId": "store-1"})
+        self.store.register_client(client_hello(slots=1))
+        lease = self.store.lease_tasks("client-a", 1)[0]
+        self.store.accept_product(
+            lease["taskId"], "client-a", lease["leaseId"], source_key, "checksum-1",
+            {"jobId": job["id"], "product": product, "productChecksum": "checksum-1"},
+        )
+        self.store.accept_result(
+            lease["taskId"], "client-a", lease["leaseId"], "result-checksum",
+            {"jobId": job["id"], "products": [product], "errors": [], "warnings": []},
+        )
+        claim = self.store.claim_product_items(worker_id="worker-1", store_id="store-1", limit=1)[0]
+        self.assertEqual(claim["stage"], "prepare")
+        self.assertTrue(self.store.mark_product_seo(
+            claim["id"], worker_id="worker-1", normalized_payload=product,
+            seo_summary={"status": "running"},
+        ))
+        seo_product = {
+            **product,
+            "title": "Reviewed SEO title",
+            "descriptionHtml": "<p>Reviewed description</p>",
+            "handle": "reviewed-seo-title",
+            "seo": {"title": "SEO title", "description": "SEO description"},
+        }
+        self.assertTrue(self.store.mark_product_image_processing(
+            claim["id"], worker_id="worker-1", normalized_payload=seo_product,
+            image_summary={"status": "completed", "profileSlug": "default", "profileRevision": "rev-1", "processedImages": 0},
+        ))
+        self.assertTrue(self.store.mark_product_review_ready(
+            claim["id"], worker_id="worker-1", normalized_payload=seo_product,
+            seo_summary={"status": "completed", "engine": "heuristic"},
+            image_summary={"status": "completed", "profileSlug": "default", "profileRevision": "rev-1", "processedImages": 0},
+            review_summary={"storeId": "store-1", "assetsNormalized": 0},
+        ))
+
+        reviews = self.store.list_product_reviews()
+        self.assertEqual(len(reviews), 1)
+        self.assertEqual(reviews[0]["decision"], "pending")
+        self.assertEqual(reviews[0]["syncStatus"], "idle")
+        self.assertEqual(self.store.get_job(str(job["id"]))["status"], "review_pending")
+        self.assertEqual(
+            self.store.claim_product_items(worker_id="worker-2", store_id="store-1", limit=1),
+            [],
+        )
+
+        # A review-pending job no longer blocks the next crawl job.
+        next_job = self.store.create_job({"urls": ["B0REVIEW02"]})
+        self.assertNotEqual(next_job["id"], job["id"])
+
+        rejected = self.store.decide_product_review(
+            claim["id"], expected_version=1, decision="rejected", reason="Needs revision",
+        )
+        self.assertEqual(rejected["decision"], "rejected")
+        cleanup = self.store.cleanup_history(retention_minutes=60, now=utc_now() + timedelta(hours=2))
+        self.assertEqual(cleanup["jobs"], 0)
+        reopened = self.store.decide_product_review(
+            claim["id"], expected_version=2, decision="pending", reason=None,
+        )
+        self.assertEqual(reopened["decision"], "pending")
+        edited = self.store.update_product_review(
+            claim["id"], expected_version=3, patch={"productTitle": "Edited review title"},
+        )
+        self.assertEqual(edited["decision"], "pending")
+        self.assertEqual(edited["product"]["title"], "Edited review title")
+        approved = self.store.decide_product_review(
+            claim["id"], expected_version=4, decision="approved", reason=None,
+        )
+        self.assertEqual(approved["decision"], "approved")
+        queued = self.store.queue_product_review_sync(claim["id"])
+        self.assertEqual(queued["syncStatus"], "queued")
+        sync_claim = self.store.claim_product_items(worker_id="worker-3", store_id="store-1", limit=1)[0]
+        self.assertEqual(sync_claim["stage"], "sync")
+        self.assertEqual(sync_claim["product"]["title"], "Edited review title")
+        self.assertEqual(self.store.fail_product_item(
+            claim["id"], worker_id="worker-3", store_id="store-1",
+            error={"message": "Uncertain Shopify write", "phase": "shopify"},
+            retryable=False, reconciliation_required=True,
+        ), "reconciliation_required")
+        failed_review = self.store.list_product_reviews()[0]
+        self.assertEqual(failed_review["syncStatus"], "failed")
+        self.assertEqual(self.store.queue_product_review_sync(claim["id"]), {"reconciliationRequired": True})
+
+    def test_approved_review_completes_only_after_sync_claim(self) -> None:
+        source_key = "amazon:B0REVW0001:none:none"
+        product = {
+            "id": "review-product", "sourceKey": source_key,
+            "parentAsin": "B0REVW0001", "title": "Ready for review",
+            "media": [], "variants": [],
+        }
+        job = self.store.create_job({"urls": ["B0REVW0001"], "storeId": "store-1"})
+        self.store.register_client(client_hello(slots=1))
+        lease = self.store.lease_tasks("client-a", 1)[0]
+        self.store.accept_product(
+            lease["taskId"], "client-a", lease["leaseId"], source_key, "checksum-1",
+            {"jobId": job["id"], "product": product, "productChecksum": "checksum-1"},
+        )
+        self.store.accept_result(
+            lease["taskId"], "client-a", lease["leaseId"], "result-checksum",
+            {"jobId": job["id"], "products": [product], "errors": [], "warnings": []},
+        )
+        claim = self.store.claim_product_items(worker_id="worker-1", store_id="store-1", limit=1)[0]
+        self.store.mark_product_seo(
+            claim["id"], worker_id="worker-1", normalized_payload=product,
+            seo_summary={"status": "running"},
+        )
+        self.store.mark_product_image_processing(
+            claim["id"], worker_id="worker-1", normalized_payload=product,
+            image_summary={"status": "completed"},
+        )
+        self.store.mark_product_review_ready(
+            claim["id"], worker_id="worker-1", normalized_payload=product,
+            seo_summary={"status": "completed"},
+            image_summary={"status": "completed"},
+            review_summary={"storeId": "store-1"},
+        )
+        self.store.decide_product_review(
+            claim["id"], expected_version=1, decision="approved", reason=None,
+        )
+        self.assertEqual(self.store.get_job(str(job["id"]))["status"], "review_pending")
+        self.store.queue_product_review_sync(claim["id"])
+        sync_claim = self.store.claim_product_items(worker_id="worker-2", store_id="store-1", limit=1)[0]
+        self.assertEqual(sync_claim["stage"], "sync")
+        self.store.mark_product_syncing(
+            claim["id"], worker_id="worker-2", normalized_payload=product,
+            proxy_profile="direct", seo_summary={"status": "completed"},
+        )
+        self.assertTrue(self.store.complete_product_item(
+            claim["id"], worker_id="worker-2", store_id="store-1",
+            normalized_checksum="normalized-1", normalized_payload=product,
+            shopify_result={"productId": "gid://shopify/Product/123", "storeId": "store-1"},
+        ))
+        synced_review = self.store.list_product_reviews()[0]
+        self.assertEqual(synced_review["syncStatus"], "synced")
+        self.assertEqual(synced_review["product"]["pipeline"]["shopify"]["productId"], "gid://shopify/Product/123")
+        self.assertEqual(self.store.get_job(str(job["id"]))["status"], "completed")
+
     def test_completed_product_discards_raw_payload_but_keeps_temporary_normalized_result(self) -> None:
         job = self.store.create_job({"urls": ["B0FR4MSS2H"]})
         self.store.register_client(client_hello(slots=1))

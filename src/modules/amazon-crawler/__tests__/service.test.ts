@@ -7,6 +7,7 @@ import {
   createAmazonCrawlerClientsLoader,
   createAmazonCrawlerJobController,
   createAmazonCrawlerJobLoader,
+  createAmazonCrawlerReviewClient,
   createAmazonCrawlerRunner,
   createAmazonCrawlerSyncRetrier,
   createImageProcessingProfileManager,
@@ -406,6 +407,55 @@ test("Shopify sync retry resumes polling and returns the refreshed job output", 
   assert.equal(retried.retried, 1);
   assert.equal(retried.output?.status, "completed");
   assert.equal(productsSeen.length, 2);
+});
+
+test("review client keeps approval separate from explicit Shopify sync", async () => {
+  const requests: Array<{ url: string; method: string; body?: unknown }> = [];
+  const product = amazonCrawlerMockOutput.products[0];
+  assert.ok(product);
+  const review = {
+    id: "review-1",
+    jobId: "job-1",
+    sourceKey: "amazon:B0MOCK0001:none:none",
+    storeId: "capozen",
+    decision: "pending",
+    syncStatus: "idle",
+    version: 1,
+    target: { collectionIds: ["gid://shopify/Collection/1"], productType: "Rug", priceAddition: 2, discountPercent: 10 },
+    product,
+  };
+  const client = createAmazonCrawlerReviewClient({
+    engineUrl: "http://coordinator.test",
+    fetchImplementation: async (request, init) => {
+      const url = String(request);
+      const body = init?.body ? JSON.parse(String(init.body)) as unknown : undefined;
+      requests.push({ url, method: init?.method ?? "GET", body });
+      if (url.endsWith("/sync-approved")) return jsonResponse({ queued: 1, itemIds: ["review-1"] });
+      if (url.endsWith("/decision")) {
+        return jsonResponse({ ...review, decision: "approved", version: 2 });
+      }
+      if (url.endsWith("/sync")) {
+        return jsonResponse({ ...review, decision: "approved", syncStatus: "queued", version: 2 });
+      }
+      return jsonResponse({ items: [review] });
+    },
+  });
+
+  assert.equal((await client.list())[0]?.decision, "pending");
+  const approved = await client.decide("review-1", 1, "approved");
+  assert.equal(approved.syncStatus, "idle");
+  assert.equal((requests.at(-1)?.body as { decision?: string }).decision, "approved");
+  const queued = await client.sync("review-1");
+  assert.equal(queued.syncStatus, "queued");
+  assert.deepEqual(await client.syncAllApproved(), { queued: 1, itemIds: ["review-1"] });
+  assert.deepEqual(requests.slice(1).map(({ url, method }) => ({
+    path: new URL(url).pathname,
+    method,
+  })), [
+    { path: "/api/v1/product-reviews/review-1/decision", method: "POST" },
+    { path: "/api/v1/product-reviews/review-1/sync", method: "POST" },
+    { path: "/api/v1/product-reviews/sync-approved", method: "POST" },
+  ]);
 });
 
 test("mock Customize contract omits raw and duplicate fields while exposing pricing migration", () => {

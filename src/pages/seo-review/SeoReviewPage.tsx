@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { environment } from "../../config/environment";
+import type { AmazonCrawlerReviewClient } from "../../modules/amazon-crawler";
 import { getModuleApiRunner, type ModuleApiRunner } from "../../modules/module-api";
 import {
   pushSeoReviewProductsBatch,
@@ -18,6 +19,7 @@ import { ProductSplitView } from "./components/ProductSplitView";
 import { SeoBatchToolbar } from "./components/SeoBatchToolbar";
 import { ShopifySyncErrorModal } from "./components/ShopifySyncErrorModal";
 import { filterSeoProducts, findNextProductInList } from "./review-navigation";
+import { adaptAmazonCrawlerReviewToViewModel } from "./seo-content-ui-adapter";
 import type {
   SeoProductEditInput,
   SeoProductUiViewModel,
@@ -81,6 +83,7 @@ function toPushProductItem(vm: SeoProductUiViewModel): SeoReviewPushProductItem 
 }
 
 export interface SeoReviewPageProps {
+  readonly amazonCrawlerReviews?: AmazonCrawlerReviewClient;
   readonly moduleApiRunner?: ModuleApiRunner;
   readonly storeId?: string;
   readonly onSyncApprovedProducts?: (
@@ -92,6 +95,7 @@ export interface SeoReviewPageProps {
 }
 
 export function SeoReviewPage({
+  amazonCrawlerReviews,
   moduleApiRunner: injectedRunner,
   storeId,
   onSyncApprovedProducts,
@@ -129,6 +133,19 @@ export function SeoReviewPage({
     }
     return [];
   });
+
+  useEffect(() => {
+    if (!amazonCrawlerReviews) return;
+    return amazonCrawlerReviews.subscribe((reviewItems) => {
+      const crawlerProducts = reviewItems.map((item) =>
+        adaptAmazonCrawlerReviewToViewModel(item, amazonCrawlerReviews.imageUrl),
+      );
+      setProducts((current) => {
+        const legacyProducts = current.filter((product) => !product.coordinatorReview);
+        return [...crawlerProducts, ...legacyProducts];
+      });
+    });
+  }, [amazonCrawlerReviews]);
 
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(new Set());
   const [activeProduct, setActiveProduct] = useState<SeoProductUiViewModel | null>(null);
@@ -225,7 +242,8 @@ export function SeoReviewPage({
   useEffect(() => {
     if (typeof window !== "undefined" && window.sessionStorage) {
       try {
-        window.sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(products));
+        const legacyProducts = products.filter((product) => !product.coordinatorReview);
+        window.sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(legacyProducts));
       } catch {
         // Storage limit or private mode warning
       }
@@ -278,6 +296,9 @@ export function SeoReviewPage({
     const completed = products.filter((p) => p.seoStatus.value === "completed").length;
     const pending = products.filter((p) => p.reviewDecision === "pending").length;
     const approved = products.filter((p) => p.reviewDecision === "approved").length;
+    const approvedUnsynced = products.filter(
+      (p) => p.reviewDecision === "approved" && !p.isSyncing && !p.isReverting && p.shopifySyncStatus !== "synced",
+    ).length;
     const rejected = products.filter((p) => p.reviewDecision === "rejected").length;
     const synced = products.filter((p) => p.shopifySyncStatus === "synced").length;
     const syncing = products.filter((p) => p.shopifySyncStatus === "syncing").length;
@@ -289,7 +310,7 @@ export function SeoReviewPage({
       p.handle.source === "mock",
     ).length;
 
-    return { total, completed, pending, approved, rejected, synced, syncing, syncFailed, hasMock };
+    return { total, completed, pending, approved, approvedUnsynced, rejected, synced, syncing, syncFailed, hasMock };
   }, [products]);
 
   // Selection handlers
@@ -382,6 +403,7 @@ export function SeoReviewPage({
             return {
               ...p,
               shopifySyncStatus: "synced",
+              isSyncing: false,
               productId: result.productId ?? p.productId,
               handle: result.productHandle
                 ? { value: result.productHandle, source: "real" }
@@ -395,6 +417,7 @@ export function SeoReviewPage({
             return {
               ...p,
               shopifySyncStatus: "failed",
+              isSyncing: false,
               shopifySyncError: result.error || "Lỗi khi đẩy sản phẩm lên Shopify",
               updatedAt: Date.now(),
             };
@@ -416,6 +439,7 @@ export function SeoReviewPage({
             ? {
                 ...p,
                 shopifySyncStatus: "failed",
+                isSyncing: false,
                 shopifySyncError: message,
                 updatedAt: Date.now(),
               }
@@ -475,6 +499,7 @@ export function SeoReviewPage({
             return {
               ...p,
               shopifySyncStatus: "synced",
+              isSyncing: false,
               productId: res.productId ?? p.productId,
               handle: res.productHandle
                 ? { value: res.productHandle, source: "real" }
@@ -488,6 +513,7 @@ export function SeoReviewPage({
             return {
               ...p,
               shopifySyncStatus: "failed",
+              isSyncing: false,
               shopifySyncError: res.error || "Lỗi khi đẩy sản phẩm lên Shopify",
               updatedAt: Date.now(),
             };
@@ -510,6 +536,7 @@ export function SeoReviewPage({
             ? {
                 ...p,
                 shopifySyncStatus: "failed",
+                isSyncing: false,
                 shopifySyncError: message,
                 updatedAt: Date.now(),
               }
@@ -529,9 +556,28 @@ export function SeoReviewPage({
     const target = products.find((p) => p.id === id);
     if (!target) return;
 
+    if (target.coordinatorReview && amazonCrawlerReviews) {
+      setProducts((prev) => prev.map((product) =>
+        product.id === id
+          ? { ...product, shopifySyncStatus: "queued", isSyncing: true, syncError: undefined }
+          : product,
+      ));
+      void amazonCrawlerReviews.sync(target.coordinatorReview.itemId).catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error);
+        setProducts((prev) => prev.map((product) =>
+          product.id === id
+            ? { ...product, shopifySyncStatus: "failed", isSyncing: false, syncError: message }
+            : product,
+        ));
+        setSyncFeedback({ type: "error", message: `Không thể đưa sản phẩm vào hàng đợi sync: ${message}` });
+      });
+      return;
+    }
+
     const syncingTarget: SeoProductUiViewModel = {
       ...target,
       shopifySyncStatus: "syncing",
+      isSyncing: true,
       shopifySyncError: undefined,
       updatedAt: Date.now(),
     };
@@ -551,9 +597,12 @@ export function SeoReviewPage({
     const failedTargets = products.filter((p) => p.shopifySyncStatus === "failed");
     if (failedTargets.length === 0) return;
 
+    const coordinatorTargets = failedTargets.filter((target) => target.coordinatorReview);
+    const legacyTargets = failedTargets.filter((target) => !target.coordinatorReview);
     const retryingTargets = failedTargets.map((t) => ({
       ...t,
-      shopifySyncStatus: "syncing" as const,
+      shopifySyncStatus: t.coordinatorReview ? "queued" as const : "syncing" as const,
+      isSyncing: true,
       shopifySyncError: undefined,
       updatedAt: Date.now(),
     }));
@@ -561,25 +610,91 @@ export function SeoReviewPage({
     const retryingMap = new Map(retryingTargets.map((t) => [t.id, t]));
     setProducts((prev) => prev.map((p) => retryingMap.get(p.id) ?? p));
 
-    void triggerBatchPushToShopify(retryingTargets);
+    if (coordinatorTargets.length > 0 && amazonCrawlerReviews) {
+      void Promise.all(coordinatorTargets.map((target) =>
+        amazonCrawlerReviews.sync(target.coordinatorReview?.itemId ?? target.id),
+      )).catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error);
+        const coordinatorIds = new Set(coordinatorTargets.map((target) => target.id));
+        setProducts((currentProducts) => currentProducts.map((product) =>
+          coordinatorIds.has(product.id)
+            ? { ...product, shopifySyncStatus: "failed", isSyncing: false, syncError: message }
+            : product,
+        ));
+        setSyncFeedback({ type: "error", message: `Không thể retry các sản phẩm Amazon: ${message}` });
+      });
+    }
+    if (legacyTargets.length > 0) {
+      void triggerBatchPushToShopify(
+        retryingTargets.filter((target) => !target.coordinatorReview),
+      );
+    }
   }
 
   async function handleApproveProduct(id: string): Promise<void> {
     const target = products.find((p) => p.id === id);
     if (!target) return;
-    if (target.isSyncing || target.isReverting) return; // Prevent duplicate clicks
+    if (target.isSyncing || target.isReverting) return;
+    try {
+      let nextVersion = target.coordinatorReview?.version;
+      if (target.coordinatorReview && amazonCrawlerReviews) {
+        const reviewed = await amazonCrawlerReviews.decide(
+          target.coordinatorReview.itemId,
+          target.coordinatorReview.version,
+          "approved",
+        );
+        nextVersion = reviewed.version;
+      }
+      setProducts((prev) => prev.map((product) =>
+        product.id === id
+          ? {
+              ...product,
+              reviewDecision: "approved",
+              rejectionReason: undefined,
+              coordinatorReview: product.coordinatorReview && nextVersion !== undefined
+                ? { ...product.coordinatorReview, version: nextVersion }
+                : product.coordinatorReview,
+              updatedAt: Date.now(),
+            }
+          : product,
+      ));
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+      setSyncFeedback({ type: "success", message: `✓ Đã duyệt "${target.productTitle.value}". Sản phẩm đang chờ lệnh Sync.` });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      setSyncFeedback({ type: "error", message: `Không thể duyệt sản phẩm: ${message}` });
+    }
+  }
 
-    // Fallback if sync handler is not provided
-    if (!onSyncApprovedProducts) {
+  async function handleRejectProduct(id: string, reason = "Nội dung SEO chưa đạt yêu cầu"): Promise<void> {
+    const target = products.find((p) => p.id === id);
+    if (!target || target.isSyncing || target.isReverting) return;
+
+    try {
+      let nextVersion = target.coordinatorReview?.version;
+      if (target.coordinatorReview && amazonCrawlerReviews) {
+        const reviewed = await amazonCrawlerReviews.decide(
+          target.coordinatorReview.itemId,
+          target.coordinatorReview.version,
+          "rejected",
+          reason,
+        );
+        nextVersion = reviewed.version;
+      }
       setProducts((prev) =>
         prev.map((p) =>
           p.id === id
             ? {
                 ...p,
-                reviewDecision: "approved",
-                isSyncing: false,
-                syncError: undefined,
-                lastSyncedAt: Date.now(),
+                reviewDecision: "rejected",
+                rejectionReason: reason,
+                coordinatorReview: p.coordinatorReview && nextVersion !== undefined
+                  ? { ...p.coordinatorReview, version: nextVersion }
+                  : p.coordinatorReview,
                 updatedAt: Date.now(),
               }
             : p,
@@ -591,115 +706,10 @@ export function SeoReviewPage({
         next.delete(id);
         return next;
       });
-      setSyncFeedback({
-        type: "success",
-        message: `Đã phê duyệt sản phẩm "${target.productTitle.value}".`,
-      });
-      return;
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      setSyncFeedback({ type: "error", message: `Không thể từ chối sản phẩm: ${message}` });
     }
-
-    // Set syncing state
-    setProducts((prev) =>
-      prev.map((p) =>
-        p.id === id ? { ...p, isSyncing: true, syncError: undefined } : p,
-      ),
-    );
-
-    try {
-      const result = await onSyncApprovedProducts([target]);
-      const targetId = (target.productId || target.id).trim();
-      const itemResult =
-        result.items.find(
-          (i) =>
-            i.productId === targetId ||
-            i.productId === target.id ||
-            i.productId === target.productId,
-        ) ?? result.items[0];
-
-      if (itemResult?.ok) {
-        setProducts((prev) =>
-          prev.map((p) =>
-            p.id === id
-              ? {
-                  ...p,
-                  reviewDecision: "approved",
-                  isSyncing: false,
-                  syncError: undefined,
-                  revertError: undefined,
-                  lastSyncedAt: Date.now(),
-                  lastRevertedAt: undefined,
-                  updatedAt: Date.now(),
-                }
-              : p,
-          ),
-        );
-        setSelectedIds((prev) => {
-          if (!prev.has(id)) return prev;
-          const next = new Set(prev);
-          next.delete(id);
-          return next;
-        });
-        setSyncFeedback({
-          type: "success",
-          message: `✓ Đã phê duyệt và đồng bộ "${target.productTitle.value}" lên Shopify thành công!`,
-        });
-      } else {
-        const errorMsg = itemResult?.error || "Đồng bộ sản phẩm lên Shopify thất bại.";
-        setProducts((prev) =>
-          prev.map((p) =>
-            p.id === id
-              ? {
-                  ...p,
-                  isSyncing: false,
-                  syncError: errorMsg,
-                  updatedAt: Date.now(),
-                }
-              : p,
-          ),
-        );
-        setSyncFeedback({
-          type: "error",
-          message: `✕ Lỗi khi đồng bộ "${target.productTitle.value}" lên Shopify: ${errorMsg}`,
-        });
-      }
-    } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : String(err);
-      setProducts((prev) =>
-        prev.map((p) =>
-          p.id === id
-            ? {
-                ...p,
-                isSyncing: false,
-                syncError: errorMsg,
-                updatedAt: Date.now(),
-              }
-            : p,
-        ),
-      );
-      setSyncFeedback({
-        type: "error",
-        message: `✕ Lỗi khi đồng bộ "${target.productTitle.value}" lên Shopify: ${errorMsg}`,
-      });
-    }
-  }
-
-  function handleRejectProduct(id: string, reason = "Nội dung SEO chưa đạt yêu cầu") {
-    const target = products.find((p) => p.id === id);
-    if (!target || target.isSyncing || target.isReverting) return;
-
-    setProducts((prev) =>
-      prev.map((p) =>
-        p.id === id
-          ? { ...p, reviewDecision: "rejected", rejectionReason: reason, updatedAt: Date.now() }
-          : p,
-      ),
-    );
-    setSelectedIds((prev) => {
-      if (!prev.has(id)) return prev;
-      const next = new Set(prev);
-      next.delete(id);
-      return next;
-    });
   }
 
   function advanceToNextProduct(currentId: string) {
@@ -717,7 +727,7 @@ export function SeoReviewPage({
   }
 
   function handleRejectAndNext(id: string) {
-    handleRejectProduct(id);
+    void handleRejectProduct(id);
     advanceToNextProduct(id);
   }
 
@@ -727,177 +737,147 @@ export function SeoReviewPage({
       (p) => selectedIds.has(p.id) && !p.isSyncing && !p.isReverting,
     );
     if (targets.length === 0) return;
-
-    if (!onSyncApprovedProducts) {
-      setProducts((prev) =>
-        prev.map((p) =>
-          selectedIds.has(p.id)
-            ? {
-                ...p,
-                reviewDecision: "approved",
-                isSyncing: false,
-                syncError: undefined,
-                revertError: undefined,
-                lastSyncedAt: Date.now(),
-                lastRevertedAt: undefined,
-                updatedAt: Date.now(),
-              }
-            : p,
-        ),
-      );
-      setSelectedIds(new Set());
-      setSyncFeedback({
-        type: "success",
-        message: `Đã phê duyệt ${targets.length} sản phẩm đã chọn.`,
-      });
-      return;
-    }
-
-    const targetIdSet = new Set(targets.map((t) => t.id));
-
-    setProducts((prev) =>
-      prev.map((p) =>
-        targetIdSet.has(p.id)
-          ? { ...p, isSyncing: true, syncError: undefined }
-          : p,
-      ),
-    );
-
     try {
-      const result = await onSyncApprovedProducts(targets);
-      const resultMap = new Map<string, { ok: boolean; error?: string }>();
-      for (const item of result.items) {
-        resultMap.set(item.productId, item);
-      }
-
-      let successCount = 0;
-      let failCount = 0;
-      const successfulIds = new Set<string>();
-
-      for (const target of targets) {
-        const pId = (target.productId || target.id).trim();
-        const itemRes =
-          resultMap.get(pId) ??
-          resultMap.get(target.id) ??
-          (target.productId ? resultMap.get(target.productId.trim()) : undefined);
-
-        if (itemRes?.ok) {
-          successCount++;
-          successfulIds.add(target.id);
-        } else {
-          failCount++;
-        }
-      }
-
-      setProducts((prev) =>
-        prev.map((p) => {
-          if (!targetIdSet.has(p.id)) return p;
-
-          const pId = (p.productId || p.id).trim();
-          const itemRes =
-            resultMap.get(pId) ??
-            resultMap.get(p.id) ??
-            (p.productId ? resultMap.get(p.productId.trim()) : undefined);
-
-          if (itemRes?.ok) {
-            return {
-              ...p,
+      const updatedReviews = await Promise.all(targets.flatMap((target) => {
+        if (!target.coordinatorReview || !amazonCrawlerReviews) return [];
+        return [amazonCrawlerReviews.decide(
+          target.coordinatorReview.itemId,
+          target.coordinatorReview.version,
+          "approved",
+        )];
+      }));
+      const versions = new Map(updatedReviews.map((review) => [review.id, review.version]));
+      const targetIds = new Set(targets.map((target) => target.id));
+      setProducts((prev) => prev.map((product) =>
+        targetIds.has(product.id)
+          ? {
+              ...product,
               reviewDecision: "approved",
-              isSyncing: false,
-              syncError: undefined,
-              revertError: undefined,
-              lastSyncedAt: Date.now(),
-              lastRevertedAt: undefined,
+              rejectionReason: undefined,
+              coordinatorReview: product.coordinatorReview && versions.has(product.coordinatorReview.itemId)
+                ? { ...product.coordinatorReview, version: versions.get(product.coordinatorReview.itemId) ?? product.coordinatorReview.version }
+                : product.coordinatorReview,
               updatedAt: Date.now(),
-            };
-          } else {
-            const err = itemRes?.error || "Đồng bộ lên Shopify thất bại.";
-            return {
-              ...p,
-              isSyncing: false,
-              syncError: err,
-              updatedAt: Date.now(),
-            };
-          }
-        }),
-      );
-
-      // Deselect only successful items; keep failing items selected for review/retry
-      setSelectedIds((prev) => {
-        const next = new Set<string>();
-        for (const id of prev) {
-          if (!successfulIds.has(id)) {
-            next.add(id);
-          }
-        }
-        return next;
-      });
-
-      if (failCount === 0) {
-        setSyncFeedback({
-          type: "success",
-          message: `✓ Đã phê duyệt và đồng bộ thành công ${successCount} sản phẩm lên Shopify!`,
-        });
-      } else if (successCount > 0) {
-        setSyncFeedback({
-          type: "warning",
-          message: `Đã đồng bộ ${successCount}/${targets.length} sản phẩm thành công. ${failCount} sản phẩm gặp lỗi đồng bộ.`,
-        });
-      } else {
-        setSyncFeedback({
-          type: "error",
-          message: `✕ Đồng bộ thất bại cho cả ${targets.length} sản phẩm đã chọn. Vui lòng kiểm tra lỗi chi tiết trên từng sản phẩm.`,
-        });
-      }
-    } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : String(err);
-      setProducts((prev) =>
-        prev.map((p) =>
-          targetIdSet.has(p.id)
-            ? {
-                ...p,
-                isSyncing: false,
-                syncError: errorMsg,
-                updatedAt: Date.now(),
-              }
-            : p,
-        ),
-      );
-      setSyncFeedback({
-        type: "error",
-        message: `✕ Lỗi trong quá trình đồng bộ hàng loạt lên Shopify: ${errorMsg}`,
-      });
+            }
+          : product,
+      ));
+      setSelectedIds(new Set());
+      setSyncFeedback({ type: "success", message: `✓ Đã duyệt ${targets.length} sản phẩm. Chưa có sản phẩm nào được sync.` });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      setSyncFeedback({ type: "error", message: `Không thể duyệt hàng loạt: ${message}` });
     }
   }
 
-  function handleRejectSelected() {
+  async function handleSyncAllApproved(): Promise<void> {
+    const eligible = products.filter((product) =>
+      product.reviewDecision === "approved" &&
+      product.shopifySyncStatus !== "synced" &&
+      !product.isSyncing &&
+      !product.isReverting,
+    );
+    if (eligible.length === 0) return;
+    if (!confirm(`Sync ${eligible.length} sản phẩm đã duyệt lên Shopify?`)) return;
+
+    const crawlerTargets = eligible.filter((product) => product.coordinatorReview);
+    const legacyTargets = eligible.filter((product) => !product.coordinatorReview);
+    try {
+      if (crawlerTargets.length > 0 && amazonCrawlerReviews) {
+        await amazonCrawlerReviews.syncAllApproved();
+        const crawlerIds = new Set(crawlerTargets.map((target) => target.id));
+        setProducts((prev) => prev.map((product) =>
+          crawlerIds.has(product.id)
+            ? { ...product, shopifySyncStatus: "queued", isSyncing: true, syncError: undefined }
+            : product,
+        ));
+      }
+      if (legacyTargets.length > 0) {
+        const legacyIds = new Set(legacyTargets.map((target) => target.id));
+        setProducts((prev) => prev.map((product) =>
+          legacyIds.has(product.id)
+            ? { ...product, shopifySyncStatus: "syncing", isSyncing: true, syncError: undefined }
+            : product,
+        ));
+        if (onSyncApprovedProducts) {
+          const result = await onSyncApprovedProducts(legacyTargets);
+          const succeededProductIds = new Set(result.items.filter((item) => item.ok).map((item) => item.productId));
+          setProducts((prev) => prev.map((product) => {
+            if (!legacyTargets.some((target) => target.id === product.id)) return product;
+            const productId = (product.productId || product.id).trim();
+            const didSucceed = succeededProductIds.has(productId);
+            return {
+              ...product,
+              shopifySyncStatus: didSucceed ? "synced" : "failed",
+              isSyncing: false,
+              lastSyncedAt: didSucceed ? Date.now() : product.lastSyncedAt,
+              syncError: didSucceed ? undefined : "Đồng bộ lên Shopify thất bại.",
+              updatedAt: Date.now(),
+            };
+          }));
+        } else {
+          await triggerBatchPushToShopify(legacyTargets);
+        }
+      }
+      setSyncFeedback({ type: "success", message: `Đã đưa ${eligible.length} sản phẩm đã duyệt vào luồng sync Shopify.` });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      const legacyIds = new Set(legacyTargets.map((target) => target.id));
+      setProducts((prev) => prev.map((product) =>
+        legacyIds.has(product.id) && product.isSyncing
+          ? { ...product, shopifySyncStatus: "failed", isSyncing: false, syncError: message }
+          : product,
+      ));
+      setSyncFeedback({ type: "error", message: `Không thể sync tất cả sản phẩm đã duyệt: ${message}` });
+    }
+  }
+
+  async function handleRejectSelected(): Promise<void> {
     const targets = products.filter(
       (p) => selectedIds.has(p.id) && !p.isSyncing && !p.isReverting,
     );
     if (targets.length === 0) return;
     const targetIdSet = new Set(targets.map((t) => t.id));
 
-    setProducts((prev) =>
-      prev.map((p) =>
-        targetIdSet.has(p.id)
-          ? {
-              ...p,
-              reviewDecision: "rejected",
-              rejectionReason: "Từ chối hàng loạt trong đợt review",
-              updatedAt: Date.now(),
-            }
-          : p,
-      ),
-    );
-    setSelectedIds((prev) => {
-      const next = new Set<string>();
-      for (const id of prev) {
-        if (!targetIdSet.has(id)) {
-          next.add(id);
+    const reason = "Từ chối hàng loạt trong đợt review";
+    try {
+      const updatedReviews = await Promise.all(targets.flatMap((target) => {
+        if (!target.coordinatorReview || !amazonCrawlerReviews) return [];
+        return [amazonCrawlerReviews.decide(
+          target.coordinatorReview.itemId,
+          target.coordinatorReview.version,
+          "rejected",
+          reason,
+        )];
+      }));
+      const versions = new Map(updatedReviews.map((review) => [review.id, review.version]));
+      setProducts((prev) =>
+        prev.map((p) =>
+          targetIdSet.has(p.id)
+            ? {
+                ...p,
+                reviewDecision: "rejected",
+                rejectionReason: reason,
+                coordinatorReview: p.coordinatorReview && versions.has(p.coordinatorReview.itemId)
+                  ? { ...p.coordinatorReview, version: versions.get(p.coordinatorReview.itemId) ?? p.coordinatorReview.version }
+                  : p.coordinatorReview,
+                updatedAt: Date.now(),
+              }
+            : p,
+        ),
+      );
+      setSelectedIds((prev) => {
+        const next = new Set<string>();
+        for (const id of prev) {
+          if (!targetIdSet.has(id)) {
+            next.add(id);
+          }
         }
-      }
-      return next;
-    });
+        return next;
+      });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      setSyncFeedback({ type: "error", message: `Không thể từ chối hàng loạt: ${message}` });
+    }
   }
 
   function restoreProductFromBackup(p: SeoProductUiViewModel): SeoProductUiViewModel {
@@ -1167,7 +1147,23 @@ export function SeoReviewPage({
     setIsEditModalOpen(true);
   }
 
-  function handleSaveEdit(id: string, updated: SeoProductEditInput) {
+  async function handleSaveEdit(id: string, updated: SeoProductEditInput): Promise<boolean> {
+    const target = products.find((product) => product.id === id);
+    let nextVersion = target?.coordinatorReview?.version;
+    try {
+      if (target?.coordinatorReview && amazonCrawlerReviews) {
+        const reviewed = await amazonCrawlerReviews.update(
+          target.coordinatorReview.itemId,
+          target.coordinatorReview.version,
+          updated,
+        );
+        nextVersion = reviewed.version;
+      }
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      setSyncFeedback({ type: "error", message: `Không thể lưu chỉnh sửa: ${message}` });
+      return false;
+    }
     setProducts((prev) =>
       prev.map((p) => {
         if (p.id !== id) return p;
@@ -1191,10 +1187,16 @@ export function SeoReviewPage({
           seoDescription: { value: updated.seoDescription, source: "real" },
           handle: { value: updated.handle, source: "real" },
           images: updatedImages,
+          reviewDecision: "pending",
+          rejectionReason: undefined,
+          coordinatorReview: p.coordinatorReview && nextVersion !== undefined
+            ? { ...p.coordinatorReview, version: nextVersion }
+            : p.coordinatorReview,
           updatedAt: Date.now(),
         };
       }),
     );
+    return true;
   }
 
   // Export approved JSON
@@ -1236,9 +1238,13 @@ export function SeoReviewPage({
   }
 
   function handleClearAll() {
-    if (products.length === 0) return;
-    if (confirm("Bạn có chắc chắn muốn xóa toàn bộ sản phẩm khỏi danh sách review?")) {
-      setProducts([]);
+    const removableProducts = products.filter((product) => !product.coordinatorReview);
+    if (removableProducts.length === 0) {
+      setSyncFeedback({ type: "error", message: "Sản phẩm từ Amazon được lưu trên coordinator và không thể xóa khỏi danh sách review tại đây." });
+      return;
+    }
+    if (confirm(`Xóa ${removableProducts.length} sản phẩm được nhập thủ công khỏi danh sách review?`)) {
+      setProducts((currentProducts) => currentProducts.filter((product) => product.coordinatorReview));
       setSelectedIds(new Set());
       setActiveProduct(null);
       if (typeof window !== "undefined" && window.sessionStorage) {
@@ -1433,6 +1439,7 @@ export function SeoReviewPage({
         filteredCount={filteredProducts.length}
         pendingCount={stats.pending}
         approvedCount={stats.approved}
+        approvedUnsyncedCount={stats.approvedUnsynced}
         rejectedCount={stats.rejected}
         syncFailedCount={stats.syncFailed}
         selectedCount={selectedIds.size}
@@ -1449,6 +1456,7 @@ export function SeoReviewPage({
         onClearSelection={handleClearSelection}
         onApproveSelected={handleApproveSelected}
         onRejectSelected={handleRejectSelected}
+        onSyncAllApproved={() => void handleSyncAllApproved()}
         onRollbackSelected={handleRollbackSelected}
         onExportApprovedJson={handleExportApprovedJson}
         onClearAll={handleClearAll}

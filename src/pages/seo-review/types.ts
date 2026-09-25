@@ -6,6 +6,7 @@
  */
 
 import type { CrawlProduct } from "../../modules/customization-normalizer";
+import type { AmazonCrawlerReviewTarget } from "../../modules/amazon-crawler";
 import type { PodDeliverableItem } from "../../modules/pinterest-pod";
 
 export type FieldSource = "real" | "mock";
@@ -16,7 +17,7 @@ export type ReviewDecision = "pending" | "approved" | "rejected";
 
 export type SeoReviewViewMode = "cards" | "table" | "split";
 
-export type ShopifySyncStatus = "idle" | "syncing" | "synced" | "failed";
+export type ShopifySyncStatus = "idle" | "queued" | "syncing" | "synced" | "failed";
 
 export interface DisplayField<T> {
   readonly value: T;
@@ -46,6 +47,12 @@ export interface SeoProductUiViewModel {
   readonly productId?: string;
   readonly asin?: string;
   readonly sourceNiche?: string;
+  readonly coordinatorReview?: {
+    readonly itemId: string;
+    readonly jobId: string;
+    readonly version: number;
+    readonly target: AmazonCrawlerReviewTarget;
+  };
 
   // Core Display Fields
   readonly productTitle: DisplayField<string>;

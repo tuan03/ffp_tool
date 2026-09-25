@@ -479,7 +479,7 @@ export function hydrateCrawlerSessionFromJob(hydrated: AmazonCrawlerHydratedJob)
 
   const now = new Date().toISOString();
   const fallbackStatus: AmazonCrawlerOutput["status"] =
-    hydrated.status === "completed" || hydrated.status === "partial" || hydrated.status === "cancelled"
+    hydrated.status === "completed" || hydrated.status === "partial" || hydrated.status === "cancelled" || hydrated.status === "review_pending"
       ? hydrated.status
       : "completed";
 

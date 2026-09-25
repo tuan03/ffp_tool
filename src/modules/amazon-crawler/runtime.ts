@@ -1,8 +1,8 @@
 import { clearMockAmazonCrawlerCache, createMockAmazonCrawlerJobLoader, runMockAmazonCrawler } from "./mocks/runner";
-import { createAmazonCrawlerCacheClearer, createAmazonCrawlerClientsLoader, createAmazonCrawlerJobController, createAmazonCrawlerJobLoader, createAmazonCrawlerRunner, createAmazonCrawlerSyncRetrier, createImageProcessingProfileManager } from "./service";
+import { createAmazonCrawlerCacheClearer, createAmazonCrawlerClientsLoader, createAmazonCrawlerJobController, createAmazonCrawlerJobLoader, createAmazonCrawlerReviewClient, createAmazonCrawlerRunner, createAmazonCrawlerSyncRetrier, createImageProcessingProfileManager } from "./service";
 
 import type { AppEnvironment } from "../../shared/types";
-import type { AmazonCrawlerCacheClearer, AmazonCrawlerClientsLoader, AmazonCrawlerJobController, AmazonCrawlerJobLoader, AmazonCrawlerRunner, AmazonCrawlerSyncRetrier, ImageProcessingProfileManager } from "./types";
+import type { AmazonCrawlerCacheClearer, AmazonCrawlerClientsLoader, AmazonCrawlerJobController, AmazonCrawlerJobLoader, AmazonCrawlerReviewClient, AmazonCrawlerRunner, AmazonCrawlerSyncRetrier, ImageProcessingProfileManager } from "./types";
 
 export function getAmazonCrawlerRunner(environment: AppEnvironment, engineUrl: string): AmazonCrawlerRunner {
   return environment === "mock" ? runMockAmazonCrawler : createAmazonCrawlerRunner({ engineUrl });
@@ -35,6 +35,19 @@ export function getAmazonCrawlerSyncRetrier(environment: AppEnvironment, engineU
 
 export function getAmazonCrawlerJobLoader(environment: AppEnvironment, engineUrl: string): AmazonCrawlerJobLoader {
   return environment === "mock" ? createMockAmazonCrawlerJobLoader() : createAmazonCrawlerJobLoader({ engineUrl });
+}
+
+export function getAmazonCrawlerReviewClient(environment: AppEnvironment, engineUrl: string): AmazonCrawlerReviewClient {
+  if (environment !== "mock") return createAmazonCrawlerReviewClient({ engineUrl });
+  return {
+    list: async () => [],
+    subscribe: () => () => undefined,
+    update: async () => { throw new Error("Mock review item was not found."); },
+    decide: async () => { throw new Error("Mock review item was not found."); },
+    sync: async () => { throw new Error("Mock review item was not found."); },
+    syncAllApproved: async () => ({ queued: 0, itemIds: [] }),
+    imageUrl: (fileToken) => fileToken,
+  };
 }
 
 export function getImageProcessingProfileManager(environment: AppEnvironment, engineUrl: string): ImageProcessingProfileManager {
