@@ -158,6 +158,27 @@ export function SeoReviewPage({
     type: "success" | "error" | "warning";
     message: string;
   } | null>(null);
+  const [pendingCrawlerSyncIds, setPendingCrawlerSyncIds] = useState<readonly string[]>([]);
+
+  useEffect(() => {
+    if (pendingCrawlerSyncIds.length === 0) return;
+    const targets = pendingCrawlerSyncIds.map((id) => products.find((product) => product.coordinatorReview?.itemId === id));
+    const succeeded = targets.filter((product) => product?.shopifySyncStatus === "synced").length;
+    const failed = targets.filter((product) => product?.shopifySyncStatus === "failed").length;
+    if (succeeded + failed < pendingCrawlerSyncIds.length) {
+      if (failed > 0) {
+        setSyncFeedback({ type: "warning", message: `${failed}/${pendingCrawlerSyncIds.length} sản phẩm sync lỗi; các sản phẩm còn lại đang xử lý.` });
+      }
+      return;
+    }
+    setPendingCrawlerSyncIds([]);
+    setSyncFeedback({
+      type: failed === 0 ? "success" : succeeded === 0 ? "error" : "warning",
+      message: failed === 0
+        ? `✓ Đã sync thành công ${succeeded} sản phẩm lên Shopify.`
+        : `Đã sync ${succeeded}/${pendingCrawlerSyncIds.length} sản phẩm; ${failed} sản phẩm lỗi. Xem lỗi trên từng sản phẩm.`,
+    });
+  }, [pendingCrawlerSyncIds, products]);
 
   // High-Resolution Image Zoom Modal State
   const [zoomState, setZoomState] = useState<{
@@ -297,7 +318,7 @@ export function SeoReviewPage({
     const pending = products.filter((p) => p.reviewDecision === "pending").length;
     const approved = products.filter((p) => p.reviewDecision === "approved").length;
     const approvedUnsynced = products.filter(
-      (p) => p.reviewDecision === "approved" && !p.isSyncing && !p.isReverting && p.shopifySyncStatus !== "synced",
+      (p) => p.reviewDecision === "approved" && !p.isSyncing && !p.isReverting && !["queued", "syncing", "synced"].includes(p.shopifySyncStatus || "idle"),
     ).length;
     const rejected = products.filter((p) => p.reviewDecision === "rejected").length;
     const synced = products.filter((p) => p.shopifySyncStatus === "synced").length;
@@ -772,7 +793,7 @@ export function SeoReviewPage({
   async function handleSyncAllApproved(): Promise<void> {
     const eligible = products.filter((product) =>
       product.reviewDecision === "approved" &&
-      product.shopifySyncStatus !== "synced" &&
+      !["queued", "syncing", "synced"].includes(product.shopifySyncStatus || "idle") &&
       !product.isSyncing &&
       !product.isReverting,
     );
@@ -781,15 +802,13 @@ export function SeoReviewPage({
 
     const crawlerTargets = eligible.filter((product) => product.coordinatorReview);
     const legacyTargets = eligible.filter((product) => !product.coordinatorReview);
+    let crawlerQueuedIds: readonly string[] = [];
     try {
+      let crawlerQueued = 0;
       if (crawlerTargets.length > 0 && amazonCrawlerReviews) {
-        await amazonCrawlerReviews.syncAllApproved();
-        const crawlerIds = new Set(crawlerTargets.map((target) => target.id));
-        setProducts((prev) => prev.map((product) =>
-          crawlerIds.has(product.id)
-            ? { ...product, shopifySyncStatus: "queued", isSyncing: true, syncError: undefined }
-            : product,
-        ));
+        const response = await amazonCrawlerReviews.syncAllApproved();
+        crawlerQueued = response.queued;
+        crawlerQueuedIds = response.itemIds;
       }
       if (legacyTargets.length > 0) {
         const legacyIds = new Set(legacyTargets.map((target) => target.id));
@@ -818,7 +837,14 @@ export function SeoReviewPage({
           await triggerBatchPushToShopify(legacyTargets);
         }
       }
-      setSyncFeedback({ type: "success", message: `Đã đưa ${eligible.length} sản phẩm đã duyệt vào luồng sync Shopify.` });
+      setSyncFeedback({
+        type: crawlerTargets.length > 0 && crawlerQueued === 0 ? "warning" : "success",
+        message: crawlerQueued > 0
+          ? `Đã xếp hàng ${crawlerQueued} sản phẩm trên coordinator. Trạng thái sync sẽ tự cập nhật khi hoàn tất.`
+          : legacyTargets.length > 0
+            ? `Đã xử lý ${legacyTargets.length} sản phẩm đã duyệt.`
+            : "Không có sản phẩm mới được xếp hàng; danh sách sẽ cập nhật theo trạng thái coordinator.",
+      });
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
       const legacyIds = new Set(legacyTargets.map((target) => target.id));
@@ -828,6 +854,10 @@ export function SeoReviewPage({
           : product,
       ));
       setSyncFeedback({ type: "error", message: `Không thể sync tất cả sản phẩm đã duyệt: ${message}` });
+    } finally {
+      if (crawlerQueuedIds.length > 0) {
+        setPendingCrawlerSyncIds((current) => [...new Set([...current, ...crawlerQueuedIds])]);
+      }
     }
   }
 
@@ -1237,19 +1267,29 @@ export function SeoReviewPage({
     URL.revokeObjectURL(url);
   }
 
-  function handleClearAll() {
-    const removableProducts = products.filter((product) => !product.coordinatorReview);
-    if (removableProducts.length === 0) {
-      setSyncFeedback({ type: "error", message: "Sản phẩm từ Amazon được lưu trên coordinator và không thể xóa khỏi danh sách review tại đây." });
-      return;
-    }
-    if (confirm(`Xóa ${removableProducts.length} sản phẩm được nhập thủ công khỏi danh sách review?`)) {
-      setProducts((currentProducts) => currentProducts.filter((product) => product.coordinatorReview));
+  async function handleClearAll(): Promise<void> {
+    if (products.length === 0) return;
+    if (!confirm(`Xóa ${products.length} sản phẩm khỏi danh sách SEO Review? Sản phẩm đã sync trên Shopify vẫn được giữ nguyên.`)) return;
+    try {
+      const outcome = amazonCrawlerReviews ? await amazonCrawlerReviews.deleteAll() : { deleted: 0, skipped: 0 };
+      const remainingProducts = amazonCrawlerReviews
+        ? (await amazonCrawlerReviews.list()).map((item) =>
+          adaptAmazonCrawlerReviewToViewModel(item, amazonCrawlerReviews.imageUrl))
+        : [];
+      setProducts(remainingProducts);
       setSelectedIds(new Set());
       setActiveProduct(null);
       if (typeof window !== "undefined" && window.sessionStorage) {
         window.sessionStorage.removeItem(SESSION_STORAGE_KEY);
       }
+      setSyncFeedback({
+        type: outcome.skipped > 0 ? "warning" : "success",
+        message: outcome.skipped > 0
+          ? `Đã xóa ${outcome.deleted} sản phẩm khỏi Review; ${outcome.skipped} sản phẩm đang sync hoặc cần đối soát được giữ lại.`
+          : `✓ Đã xóa ${outcome.deleted + products.filter((product) => !product.coordinatorReview).length} sản phẩm khỏi danh sách Review.`,
+      });
+    } catch (error: unknown) {
+      setSyncFeedback({ type: "error", message: `Không thể xóa danh sách Review: ${error instanceof Error ? error.message : String(error)}` });
     }
   }
 

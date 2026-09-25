@@ -431,6 +431,7 @@ test("review client keeps approval separate from explicit Shopify sync", async (
       const body = init?.body ? JSON.parse(String(init.body)) as unknown : undefined;
       requests.push({ url, method: init?.method ?? "GET", body });
       if (url.endsWith("/sync-approved")) return jsonResponse({ queued: 1, itemIds: ["review-1"] });
+      if (init?.method === "DELETE") return jsonResponse({ deleted: 1, skipped: 0 });
       if (url.endsWith("/decision")) {
         return jsonResponse({ ...review, decision: "approved", version: 2 });
       }
@@ -448,6 +449,7 @@ test("review client keeps approval separate from explicit Shopify sync", async (
   const queued = await client.sync("review-1");
   assert.equal(queued.syncStatus, "queued");
   assert.deepEqual(await client.syncAllApproved(), { queued: 1, itemIds: ["review-1"] });
+  assert.deepEqual(await client.deleteAll(), { deleted: 1, skipped: 0 });
   assert.deepEqual(requests.slice(1).map(({ url, method }) => ({
     path: new URL(url).pathname,
     method,
@@ -455,6 +457,7 @@ test("review client keeps approval separate from explicit Shopify sync", async (
     { path: "/api/v1/product-reviews/review-1/decision", method: "POST" },
     { path: "/api/v1/product-reviews/review-1/sync", method: "POST" },
     { path: "/api/v1/product-reviews/sync-approved", method: "POST" },
+    { path: "/api/v1/product-reviews", method: "DELETE" },
   ]);
 });
 

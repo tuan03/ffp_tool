@@ -34,7 +34,7 @@ from .protocol import CLIENT_OFFLINE_SECONDS, LEASE_SECONDS, MAX_CRAWL_FAILURES,
 
 
 TERMINAL_TASK_STATUSES = {"completed", "failed", "cancelled"}
-TERMINAL_PRODUCT_STATUSES = {"completed", "failed", "reconciliation_required", "cancelled", "rejected"}
+TERMINAL_PRODUCT_STATUSES = {"completed", "failed", "reconciliation_required", "cancelled", "rejected", "deleted"}
 ACTIVE_PRODUCT_STATUSES = {
     "received", "normalizing", "seo", "image_processing", "syncing",
     "shopify_writing", "stopping_after_write", "retry_wait", "sync_queued",
@@ -150,7 +150,15 @@ class CoordinatorStore:
                 product_statuses.get(status, 0)
                 for status in {"waiting_review", "sync_queued"}
             )
-            if has_review_work:
+            has_pre_review_work = any(
+                product_statuses.get(status, 0)
+                for status in {"received", "normalizing", "seo", "image_processing", "retry_wait"}
+            )
+            if has_pre_review_work:
+                job.status = "running"
+                job.started_at = job.started_at or utc_now()
+                job.completed_at = None
+            elif has_review_work:
                 job.status = "review_pending"
                 job.started_at = job.started_at or utc_now()
                 job.completed_at = utc_now()
@@ -823,7 +831,7 @@ class CoordinatorStore:
             items = session.scalars(
                 select(CrawlProductItem)
                 .where(CrawlProductItem.status.in_([
-                    "waiting_review", "sync_queued", "syncing", "shopify_writing", "completed", "rejected",
+                    "waiting_review", "sync_queued", "syncing", "shopify_writing", "completed", "failed", "rejected",
                     "reconciliation_required",
                 ]))
                 .order_by(CrawlProductItem.updated_at.desc())
@@ -835,12 +843,43 @@ class CoordinatorStore:
                     result.append(self._review_snapshot(item, session.get(CrawlJob, item.job_id)))
             return result
 
+    def delete_all_product_reviews(self) -> dict[str, int]:
+        deleted = 0
+        skipped = 0
+        job_ids: set[str] = set()
+        with self.sessions.begin() as session:
+            items = session.scalars(
+                select(CrawlProductItem)
+                .where(CrawlProductItem.status != "deleted")
+                .with_for_update(skip_locked=True)
+            ).all()
+            for item in items:
+                pipeline_result = dict(item.shopify_result or {})
+                review = dict(pipeline_result.get("review") or {})
+                if not review:
+                    continue
+                if item.status not in {"waiting_review", "rejected", "completed", "failed"}:
+                    skipped += 1
+                    continue
+                review["deletedAt"] = utc_iso(utc_now())
+                review["version"] = int(review.get("version") or 1) + 1
+                pipeline_result["review"] = review
+                item.shopify_result = pipeline_result
+                item.status = "deleted"
+                item.completed_at = utc_now()
+                job_ids.add(item.job_id)
+                deleted += 1
+                self._event(session, item.job_id, "product_review_deleted", {"productItemId": item.id})
+            for job_id in job_ids:
+                self._refresh_job(session, job_id)
+        return {"deleted": deleted, "skipped": skipped}
+
     def review_image_tokens(self) -> set[str]:
         """Return processed image tokens that still belong to unsynced reviews."""
         with self.sessions() as session:
             items = session.scalars(
                 select(CrawlProductItem).where(CrawlProductItem.status.in_([
-                    "waiting_review", "sync_queued", "syncing", "shopify_writing", "rejected",
+                    "waiting_review", "sync_queued", "syncing", "shopify_writing", "failed", "rejected",
                     "reconciliation_required",
                 ]))
             ).all()
@@ -869,6 +908,8 @@ class CoordinatorStore:
             item = session.scalar(select(CrawlProductItem).where(CrawlProductItem.id == item_id).with_for_update())
             if item is None:
                 return None
+            if item.status == "deleted":
+                return {"deleted": True}
             pipeline_result = dict(item.shopify_result or {})
             review = dict(pipeline_result.get("review") or {})
             if not review or int(review.get("version") or 1) != expected_version:
@@ -937,6 +978,8 @@ class CoordinatorStore:
             item = session.scalar(select(CrawlProductItem).where(CrawlProductItem.id == item_id).with_for_update())
             if item is None:
                 return None
+            if item.status == "deleted":
+                return {"deleted": True}
             pipeline_result = dict(item.shopify_result or {})
             review = dict(pipeline_result.get("review") or {})
             if not review or int(review.get("version") or 1) != expected_version:
@@ -966,6 +1009,8 @@ class CoordinatorStore:
             item = session.scalar(select(CrawlProductItem).where(CrawlProductItem.id == item_id).with_for_update())
             if item is None:
                 return None
+            if item.status == "deleted":
+                return {"deleted": True}
             pipeline_result = dict(item.shopify_result or {})
             review = dict(pipeline_result.get("review") or {})
             if str(review.get("decision") or "pending") != "approved":
@@ -992,7 +1037,7 @@ class CoordinatorStore:
         with self.sessions.begin() as session:
             items = session.scalars(
                 select(CrawlProductItem)
-                .where(CrawlProductItem.status.in_(["waiting_review", "rejected"]))
+                .where(CrawlProductItem.status.in_(["waiting_review", "rejected", "failed"]))
                 .with_for_update(skip_locked=True)
             ).all()
             job_ids: set[str] = set()
