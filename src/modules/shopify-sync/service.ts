@@ -18,6 +18,16 @@ import type {
   UpdateProductOutput,
 } from "./types";
 
+const AMAZON_ASIN_PATTERN = /^[A-Z0-9]{10}$/;
+
+function requireAmazonAsin(value: string | undefined, metafieldName: string): string {
+  const normalized = value?.trim().toUpperCase() ?? "";
+  if (!AMAZON_ASIN_PATTERN.test(normalized)) {
+    throw new Error(`Customized product requires a valid ${metafieldName} ASIN.`);
+  }
+  return normalized;
+}
+
 export function createDryRunGateway(): ShopifyGateway {
   return {
     async createProduct(input: CreateProductInput): Promise<CreateProductOutput> {
@@ -134,6 +144,12 @@ export async function syncSingleProduct(
 
   try {
     throwIfCancelled();
+    const amazonAsin = requireAmazonAsin(product.amazonAsin, "custom.amazon_asin");
+    const amazonParentAsin = requireAmazonAsin(
+      product.amazonParentAsin,
+      "custom.amazon_parent_asin",
+    );
+
     // 1. Create Product & Media Gallery & Options/Variants
     const productWriteInput = {
       title: product.title,
@@ -368,6 +384,32 @@ export async function syncSingleProduct(
         throw new Error("Failed to set required custom.amazon_customizer metafield.");
       }
       metafieldMs += Date.now() - customizationMetafieldStartedAt;
+
+    }
+
+    const amazonMetafields = [
+      { key: "amazon_asin", value: amazonAsin },
+      { key: "amazon_parent_asin", value: amazonParentAsin },
+    ] as const;
+    for (const amazonMetafield of amazonMetafields) {
+      const amazonMetafieldStartedAt = Date.now();
+      try {
+        throwIfCancelled();
+        const amazonMetafieldResult = await gateway.setProductMetafield({
+          productId: writtenProduct.productId,
+          namespace: "custom",
+          key: amazonMetafield.key,
+          type: "single_line_text_field",
+          value: amazonMetafield.value,
+        });
+        if (!amazonMetafieldResult.success) {
+          throw new Error(
+            `Failed to set required custom.${amazonMetafield.key} metafield.`,
+          );
+        }
+      } finally {
+        metafieldMs += Date.now() - amazonMetafieldStartedAt;
+      }
     }
 
     if (product.sourceKey) {

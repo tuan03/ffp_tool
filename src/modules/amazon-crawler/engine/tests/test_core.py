@@ -724,6 +724,7 @@ class CoreTests(unittest.TestCase):
             crawler = AmazonCrawler(root=Path(directory), settings=CrawlSettings(profile_slug="jeminise", apply_jeminise_preset=True), browser_pool=FakeBrowser(PRODUCT_HTML))
             products = crawler._products_from_family(family)
         self.assertEqual(len(products), 2)
+        self.assertEqual([product["asin"] for product in products], ["B012345678", "B012345679"])
         self.assertEqual(products[0]["splitContext"]["attribute"], "Design")
         self.assertTrue(products[0]["title"].startswith("Bedding - "))
         self.assertTrue(all(product["preset"] == PRESET_ID and len(product["variants"]) == 47 for product in products))
@@ -748,6 +749,10 @@ class CoreTests(unittest.TestCase):
         media_by_split = {product["splitContext"]["value"]: [media["url"] for media in product["media"]] for product in products}
         self.assertEqual(media_by_split["Ocean"], ["https://img/ocean.jpg"])
         self.assertEqual(media_by_split["Forest"], ["https://img/forest.jpg"])
+        links_by_split = {product["splitContext"]["value"]: product["canonicalUrl"] for product in products}
+        self.assertEqual(links_by_split["Ocean"], "https://www.amazon.com/dp/B012345678")
+        self.assertEqual(links_by_split["Forest"], "https://www.amazon.com/dp/B012345679")
+        self.assertTrue(all(product["parentAsin"] == "B0PARENT00" for product in products))
 
     def test_split_uses_actual_source_options_when_matrix_labels_are_inconsistent(self) -> None:
         first = source_variant("B012345678", "Ocean", "Twin")

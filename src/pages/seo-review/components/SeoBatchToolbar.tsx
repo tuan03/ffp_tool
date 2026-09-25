@@ -5,6 +5,7 @@ export interface SeoBatchToolbarProps {
   readonly filteredCount?: number;
   readonly pendingCount?: number;
   readonly approvedCount?: number;
+  readonly approvedUnsyncedCount?: number;
   readonly rejectedCount?: number;
   readonly syncFailedCount?: number;
   readonly selectedCount: number;
@@ -21,6 +22,7 @@ export interface SeoBatchToolbarProps {
   readonly onClearSelection: () => void;
   readonly onApproveSelected: () => void;
   readonly onRejectSelected: () => void;
+  readonly onSyncAllApproved: () => void;
   readonly onRollbackSelected?: () => void;
   readonly onExportApprovedJson: () => void;
   readonly onClearAll: () => void;
@@ -31,6 +33,7 @@ export function SeoBatchToolbar({
   filteredCount,
   pendingCount = 0,
   approvedCount = 0,
+  approvedUnsyncedCount = 0,
   rejectedCount = 0,
   syncFailedCount = 0,
   selectedCount,
@@ -47,6 +50,7 @@ export function SeoBatchToolbar({
   onClearSelection,
   onApproveSelected,
   onRejectSelected,
+  onSyncAllApproved,
   onRollbackSelected,
   onExportApprovedJson,
   onClearAll,
@@ -330,6 +334,15 @@ export function SeoBatchToolbar({
               </button>
             </>
           )}
+
+          <button
+            type="button"
+            onClick={onSyncAllApproved}
+            disabled={approvedUnsyncedCount === 0 || isSyncing || isReverting}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-cyan-500/40 bg-cyan-600 px-3 py-1.5 font-semibold text-white transition hover:bg-cyan-500 disabled:cursor-not-allowed disabled:border-slate-700 disabled:bg-slate-800 disabled:text-slate-500"
+          >
+            🛍️ Sync tất cả đã duyệt ({approvedUnsyncedCount})
+          </button>
 
           <button
             type="button"

@@ -147,6 +147,7 @@ function progressPhaseLabel(phase: AmazonCrawlerProgress["phase"]): string {
     normalization: "Chuẩn hóa",
     seo: "Tạo nội dung SEO",
     image_processing: "Xử lý và tải ảnh",
+    review: "Chờ kiểm duyệt",
     shopify: "Đẩy Shopify",
     captcha: "Chờ CAPTCHA",
     export: "Xuất JSON",
@@ -403,7 +404,7 @@ export function AmazonCrawlerPage({
 
         hydrateCrawlerSessionFromJob(job);
 
-        if (job.status === "completed" || job.status === "partial" || job.status === "failed" || job.status === "cancelled") {
+        if (job.status === "completed" || job.status === "partial" || job.status === "failed" || job.status === "cancelled" || job.status === "review_pending") {
           window.clearInterval(intervalId);
         }
       } catch {
@@ -484,7 +485,7 @@ export function AmazonCrawlerPage({
       updateCrawlerSession({ activeJobId: null, isRunning: false, error: null });
       return;
     }
-    if (isActive || (activeJob.status !== "completed" && activeJob.status !== "partial")) return;
+    if (isActive || !["completed", "partial", "review_pending"].includes(activeJob.status)) return;
     void amazonCrawlerJobs.get(activeJobId).then((completedJob) => {
       if (!completedJob.result) return;
       updateCrawlerSession({
@@ -1705,7 +1706,9 @@ export function AmazonCrawlerPage({
                       ) : job.status === "cancelling" ? (
                         <span className="rounded border border-amber-600 px-3 py-1 text-xs font-semibold text-amber-300">Đang dừng…</span>
                       ) : null}
-                      {["completed", "partial"].includes(job.status) ? (
+                      {job.status === "review_pending" ? (
+                        <button className="rounded border border-emerald-600 px-3 py-1 text-xs font-semibold text-emerald-300" type="button" onClick={() => navigate("/seo-review")}>Kiểm duyệt SEO</button>
+                      ) : ["completed", "partial"].includes(job.status) ? (
                         <>
                           <button className="rounded border border-cyan-600 px-3 py-1 text-xs font-semibold text-cyan-300 disabled:opacity-50" disabled={controlledJobId !== null || coordinatorActiveJob !== undefined} type="button" onClick={() => void handleRunAgain(job)}>Run again</button>
                           <button className="rounded border border-slate-600 px-3 py-1 text-xs font-semibold text-slate-300 disabled:opacity-50" disabled={controlledJobId !== null} type="button" onClick={() => void handleDeleteJob(job.jobId)}>Delete</button>
@@ -1728,6 +1731,7 @@ export function AmazonCrawlerPage({
       <div className="flex flex-wrap items-center gap-3">
         <button className="rounded-lg bg-cyan-400 px-5 py-2 font-semibold text-slate-950 disabled:opacity-50" disabled={urls.length === 0 || isRunning || coordinatorActiveJob !== undefined} type="button" onClick={() => void handleStart()}>Start ({urls.length})</button>
         <button className="rounded-lg border border-rose-400 px-5 py-2 font-semibold text-rose-300 disabled:opacity-50" disabled={!isRunning || controlledJobId !== null || isCancellationPending} type="button" onClick={() => void handleStop()}>{isActiveStopPending ? "Đang dừng..." : "Stop"}</button>
+        <button className="rounded-lg border border-emerald-500 px-5 py-2 font-semibold text-emerald-300 hover:bg-emerald-950/40" type="button" onClick={() => navigate("/seo-review")}>Mở SEO Review</button>
         {output === null && resultProducts.length === 0 ? null : (
           <>
             {onHandoverToSeo ? (
