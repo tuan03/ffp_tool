@@ -1603,7 +1603,9 @@ def _run_local_pipeline_worker(job_id: str, req_body: dict[str, Any], base_url: 
         task5_max_images_per_query = int(req_body.get("task5_max_images_per_query") or req_body.get("max_images_per_query") or max(20, task5_max_downloads // 6))
     except (ValueError, TypeError):
         task5_max_images_per_query = max(20, task5_max_downloads // 6)
-    task5_max_crawl_trends = max(5, min(30, int(req_body.get("max_trends") or 15)))
+    custom_queries = tuple(str(q).strip() for q in (req_body.get("custom_queries") or []) if str(q).strip())
+    default_max_trends = max(15, len(custom_queries)) if custom_queries else 15
+    task5_max_crawl_trends = max(5, min(100, int(req_body.get("max_trends") or default_max_trends)))
 
     gemini_model = str(
         req_body.get("gemini_model")
@@ -1642,7 +1644,7 @@ def _run_local_pipeline_worker(job_id: str, req_body: dict[str, Any], base_url: 
         trend_region=str(req_body.get("trend_region") or req_body.get("region") or "US").strip().upper(),
         trend_type=str(req_body.get("trend_type") or "growing").strip(),
         trend_interest=str(req_body.get("interest") or req_body.get("interests") or "").strip(),
-        custom_queries=tuple(str(q).strip() for q in (req_body.get("custom_queries") or []) if str(q).strip()),
+        custom_queries=custom_queries,
         selected_clusters=tuple(req_body.get("selected_clusters") or []),
     )
 
@@ -4020,30 +4022,63 @@ def discover_pinterest_trends(payload: dict[str, Any]) -> dict[str, Any]:
     base_pool: list[dict[str, Any]] = list(api_keywords)
 
     if not base_pool:
-        # Generate rich realistic keywords tailored to niche
-        dynamic_specs = [
-            (f"vintage distressed {clean_niche}", 1, 125.0, 48.0, 85.0),
-            (f"boho chic {clean_niche} pattern", 2, 95.0, 34.0, 60.0),
-            (f"botanical wildflower {clean_niche}", 3, 88.0, 29.0, 72.0),
-            (f"minimalist neutral {clean_niche}", 4, 76.0, 22.0, 50.0),
-            (f"western tooled {clean_niche} motifs", 5, 110.0, 52.0, 90.0),
-            (f"dark academia {clean_niche} aesthetic", 6, 68.0, 18.0, 45.0),
-            (f"cottagecore floral {clean_niche}", 7, 92.0, 36.0, 80.0),
-            (f"y2k retro groovy {clean_niche}", 8, 140.0, 62.0, 115.0),
-            (f"spooky halloween {clean_niche} decor", 9, 165.0, 75.0, 130.0),
-            (f"celestial moon star {clean_niche}", 10, 84.0, 26.0, 58.0),
-            (f"geometric checkerboard {clean_niche}", 11, 78.0, 24.0, 52.0),
-            (f"folk art ornamental {clean_niche}", 12, 86.0, 31.0, 65.0),
-            (f"abstract line art {clean_niche}", 13, 62.0, 16.0, 40.0),
-            (f"gothic spiderweb {clean_niche}", 14, 150.0, 70.0, 120.0),
-            (f"heritage tapestry {clean_niche}", 15, 80.0, 25.0, 60.0),
-            # Realistic non-printable keywords to demonstrate transparent Graphic Printability Gate
-            (f"autumn pumpkin soup simmer pot recipes", 16, 190.0, 85.0, 140.0),
-            (f"almond fall nail art gel manicure", 17, 130.0, 55.0, 95.0),
-            (f"fall front porch pumpkin decor 3d", 18, 175.0, 80.0, 135.0),
-            (f"daily positive workout fitness text quotes", 19, 60.0, 15.0, 35.0),
-            (f"aesthetic iphone wallpaper lock screen", 20, 85.0, 28.0, 65.0),
-        ]
+        # Strip any product container/mockup keywords (leather bag, blanket, rug, tote, etc.)
+        # Search keywords MUST target pure 2D graphic art, illustration, and typography, NOT physical merchandise!
+        art_theme_only = PRODUCT_CONTAINER_PATTERN.sub("", niche).strip()
+        art_theme_only = re.sub(
+            r"\b(?:design|pattern|artwork|style|print|bag|bags|leather|blanket|blankets|rug|rugs|carpet|carpets|tote|totes|mug|mugs|shirt|shirts|tshirt|tshirts|pillow|pillows)\b",
+            "",
+            art_theme_only,
+            flags=re.I,
+        ).strip()
+        clean_art_theme = art_theme_only if len(art_theme_only) >= 3 else ""
+
+        if clean_art_theme:
+            dynamic_specs = [
+                (f"vintage distressed {clean_art_theme} vector", 1, 125.0, 48.0, 85.0),
+                (f"boho chic {clean_art_theme} illustration", 2, 95.0, 34.0, 60.0),
+                (f"botanical wildflower {clean_art_theme}", 3, 88.0, 29.0, 72.0),
+                (f"minimalist neutral {clean_art_theme} art", 4, 76.0, 22.0, 50.0),
+                (f"retro groovy 70s {clean_art_theme}", 5, 140.0, 62.0, 115.0),
+                (f"dark academia {clean_art_theme} aesthetic", 6, 68.0, 18.0, 45.0),
+                (f"cottagecore floral {clean_art_theme}", 7, 92.0, 36.0, 80.0),
+                (f"celestial tarot {clean_art_theme} vector", 8, 84.0, 26.0, 58.0),
+                (f"spooky halloween {clean_art_theme} graphic", 9, 165.0, 75.0, 130.0),
+                (f"western tooled {clean_art_theme} floral", 10, 110.0, 52.0, 90.0),
+                (f"folk art ornamental {clean_art_theme}", 11, 86.0, 31.0, 65.0),
+                (f"whimsical woodland {clean_art_theme} fairy", 12, 90.0, 35.0, 75.0),
+                (f"gothic spiderweb {clean_art_theme}", 13, 150.0, 70.0, 120.0),
+                (f"typography graphic quote {clean_art_theme}", 14, 135.0, 58.0, 98.0),
+                (f"vintage text slogan {clean_art_theme}", 15, 120.0, 50.0, 90.0),
+                # Realistic non-printable keywords to demonstrate transparent Graphic Printability Gate
+                ("autumn pumpkin soup simmer pot recipes", 16, 190.0, 85.0, 140.0),
+                ("almond fall nail art gel manicure", 17, 130.0, 55.0, 95.0),
+                ("patio backyard pergola deck porch staging", 18, 175.0, 80.0, 135.0),
+                ("daily positive workout fitness routines", 19, 60.0, 15.0, 35.0),
+            ]
+        else:
+            dynamic_specs = [
+                ("vintage distressed ornamental emblem", 1, 125.0, 48.0, 85.0),
+                ("boho chic aztec mandala illustration", 2, 95.0, 34.0, 60.0),
+                ("botanical wildflowers floral artwork", 3, 88.0, 29.0, 72.0),
+                ("minimalist modern neutral line art", 4, 76.0, 22.0, 50.0),
+                ("western tooled floral carving texture", 5, 110.0, 52.0, 90.0),
+                ("dark academia aesthetic vintage graphic", 6, 68.0, 18.0, 45.0),
+                ("cottagecore wildflower botanical flora", 7, 92.0, 36.0, 80.0),
+                ("retro groovy 70s daisy flower print", 8, 140.0, 62.0, 115.0),
+                ("spooky cute halloween ghost illustration", 9, 165.0, 75.0, 130.0),
+                ("celestial sun moon stars tarot card", 10, 84.0, 26.0, 58.0),
+                ("geometric bauhaus modern graphic print", 11, 78.0, 24.0, 52.0),
+                ("folk art whimsical mushroom fairy", 12, 86.0, 31.0, 65.0),
+                ("typography graphic quote print vector", 13, 135.0, 58.0, 98.0),
+                ("dark gothic celestial astrology aesthetic", 14, 150.0, 70.0, 120.0),
+                ("vintage aesthetic text slogan design", 15, 120.0, 50.0, 90.0),
+                # Realistic non-printable keywords to demonstrate transparent Graphic Printability Gate
+                ("autumn pumpkin soup simmer pot recipes", 16, 190.0, 85.0, 140.0),
+                ("almond fall nail art gel manicure", 17, 130.0, 55.0, 95.0),
+                ("patio backyard pergola deck porch staging", 18, 175.0, 80.0, 135.0),
+                ("daily positive workout fitness routines", 19, 60.0, 15.0, 35.0),
+            ]
         for idx, (kw, rk, mom, wow, yoy) in enumerate(dynamic_specs, start=1):
             m_list = [target_regions[idx % len(target_regions)]]
             if len(target_regions) > 1:
@@ -4118,9 +4153,9 @@ def discover_pinterest_trends(payload: dict[str, Any]) -> dict[str, Any]:
             "visual_style": "Tone màu ấm hoài niệm (nâu đất, đồng cổ, be), nét vẽ khắc gỗ, họa tiết đục lỗ dập chìm chuẩn xưởng",
             "sample_motifs": ["Hoa văn Damask cổ điển", "Họa tiết dập chìm Tây phương", "Chất liệu loang màu tự nhiên"],
             "fused_templates": [
-                f"{prefix}vintage distressed ornamental seamless pattern vector".strip(),
+                f"{prefix}vintage distressed ornamental emblem vector artwork print".strip(),
                 f"{prefix}heritage floral surface print design flat".strip(),
-                f"{prefix}retro aesthetic vector print flat".strip(),
+                f"{prefix}vintage aesthetic classic vector print flat".strip(),
             ],
             "recommended": True,
         },
@@ -4133,9 +4168,9 @@ def discover_pinterest_trends(payload: dict[str, Any]) -> dict[str, Any]:
             "visual_style": "Nét vẽ mảnh Botanical illustration, màu xanh rêu, hoa phấn nhạt, nền phẳng tao nhã",
             "sample_motifs": ["Hoa dại ép khô", "Lá cành thảo mộc", "Họa tiết cỏ hoa liền mạch"],
             "fused_templates": [
-                f"{prefix}botanical wildflowers seamless pattern vector".strip(),
+                f"{prefix}botanical wildflowers floral graphic illustration vector print flat".strip(),
                 f"{prefix}cottagecore floral surface print design flat".strip(),
-                f"{prefix}vintage pressed flowers vector artwork print".strip(),
+                f"{prefix}vintage pressed flowers botanical vector artwork print".strip(),
             ],
             "recommended": True,
         },
@@ -4148,9 +4183,9 @@ def discover_pinterest_trends(payload: dict[str, Any]) -> dict[str, Any]:
             "visual_style": "Tương phản cao đen - cam đất - tím khói, họa tiết gothic chạm khắc sắc nét",
             "sample_motifs": ["Mạng nhện ren gothic", "Bí ngô nghệ thuật chạm khắc", "Biểu tượng hoàng gia cổ"],
             "fused_templates": [
-                f"{prefix}dark gothic celestial seamless pattern vector".strip(),
+                f"{prefix}dark gothic celestial graphic illustration vector print flat".strip(),
                 f"{prefix}halloween spooky spiderweb surface print design flat".strip(),
-                f"{prefix}dark academia aesthetic pattern vector".strip(),
+                f"{prefix}dark academia aesthetic vintage graphic vector".strip(),
             ],
             "recommended": False,
         },
@@ -4163,7 +4198,7 @@ def discover_pinterest_trends(payload: dict[str, Any]) -> dict[str, Any]:
             "visual_style": "Đường nét khắc nổi, họa tiết hình học thổ cẩm, tua rua nghệ thuật, tone màu đất mộc",
             "sample_motifs": ["Hoa văn chạm khắc Viễn Tây", "Họa tiết Aztec/Mandala", "Nét vân thủ công"],
             "fused_templates": [
-                f"{prefix}boho chic aztec mandala seamless pattern vector".strip(),
+                f"{prefix}boho chic aztec mandala graphic vector print".strip(),
                 f"{prefix}western tooled floral carving texture seamless pattern".strip(),
                 f"{prefix}bohemian folk art surface print design flat".strip(),
             ],
@@ -4178,7 +4213,7 @@ def discover_pinterest_trends(payload: dict[str, Any]) -> dict[str, Any]:
             "visual_style": "Đường nét dứt khoát, sóng lượn Bauhaus, tone màu trung tính Đan Mạch/Japandi",
             "sample_motifs": ["Đường lượn sóng tối giản", "Hình khối trừu tượng Bauhaus", "Vân sọc đan xen thanh lịch"],
             "fused_templates": [
-                f"{prefix}minimalist geometric bauhaus seamless pattern vector".strip(),
+                f"{prefix}minimalist geometric bauhaus graphic vector art print".strip(),
                 f"{prefix}modern abstract line art surface print design flat".strip(),
                 f"{prefix}japandi neutral wavy pattern vector print".strip(),
             ],
@@ -4195,7 +4230,7 @@ def discover_pinterest_trends(payload: dict[str, Any]) -> dict[str, Any]:
             "fused_templates": [
                 f"{prefix}typography graphic quote print vector".strip(),
                 f"{prefix}vintage aesthetic text quote design vector".strip(),
-                f"{prefix}sarcastic funny typography print flat".strip(),
+                f"{prefix}sarcastic funny typography surface print design flat".strip(),
             ],
             "recommended": True,
         },
@@ -4208,7 +4243,7 @@ def discover_pinterest_trends(payload: dict[str, Any]) -> dict[str, Any]:
             "visual_style": "Tone màu vàng gold trên nền xanh đêm/đen tuyền, đường nét khắc nét mảnh nghệ thuật",
             "sample_motifs": ["Mặt trăng khuyết và sao", "Lá bài Tarot nghệ thuật", "Vòng tròn cung hoàng đạo"],
             "fused_templates": [
-                f"{prefix}celestial moon and stars seamless pattern vector".strip(),
+                f"{prefix}celestial sun and moon tarot card graphic vector art print".strip(),
                 f"{prefix}mystical tarot card surface print design flat".strip(),
                 f"{prefix}witchy astrology aesthetic vector artwork print".strip(),
             ],
@@ -4223,7 +4258,7 @@ def discover_pinterest_trends(payload: dict[str, Any]) -> dict[str, Any]:
             "visual_style": "Màu sắc tươi tắn (cam cháy, vàng mù tạt, xanh quả bơ), nét sóng uốn lượn tràn viền",
             "sample_motifs": ["Họa tiết caro Checkered lượn sóng", "Hoa cúc Retro Groovy", "Đường vân xoắn ốc 70s"],
             "fused_templates": [
-                f"{prefix}retro groovy 70s seamless pattern vector".strip(),
+                f"{prefix}retro 70s groovy daisy flower graphic vector print".strip(),
                 f"{prefix}y2k wavy checkerboard surface print design flat".strip(),
                 f"{prefix}vintage psychedelic floral pattern print".strip(),
             ],
@@ -4238,8 +4273,8 @@ def discover_pinterest_trends(payload: dict[str, Any]) -> dict[str, Any]:
             "visual_style": "Nét vẽ minh họa vẽ tay ấm áp, gam màu đất mộc mạc kết hợp xanh lá rừng",
             "sample_motifs": ["Nấm đốm rừng ma thuật", "Mèo đen bên thảo mộc", "Cỏ cây đồng quê thơ mộng"],
             "fused_templates": [
-                f"{prefix}whimsical forest mushroom seamless pattern vector".strip(),
-                f"{prefix}cottagecore woodland fairy surface print design flat".strip(),
+                f"{prefix}whimsical forest mushroom fairy graphic vector art print".strip(),
+                f"{prefix}cottagecore woodland botanical surface print design flat".strip(),
                 f"{prefix}cute witchy cat botanical artwork vector print".strip(),
             ],
             "recommended": False,

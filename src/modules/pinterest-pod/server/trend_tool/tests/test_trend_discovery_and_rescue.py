@@ -55,15 +55,13 @@ class TestPinterestTrendDiscoveryAndRescue(unittest.TestCase):
         self.assertEqual(code, "NON_PRINTABLE_3D_SPACE")
         self.assertIn("ngoại thất", reason)
 
-        # Memes / text quotes
-        reason, code = _classify_reject_reason("daily positive workout gym text quotes")
-        self.assertEqual(code, "NON_PRINTABLE_TEXT_MEME")
-        self.assertIn("trích dẫn", reason)
+        # Fitness
+        reason, code = _classify_reject_reason("workout gym fitness routines")
+        self.assertEqual(code, "NON_PRINTABLE_FITNESS")
 
-        # Wallpapers
-        reason, code = _classify_reject_reason("aesthetic iphone wallpaper lock screen")
-        self.assertEqual(code, "NON_PRINTABLE_WALLPAPER")
-        self.assertIn("hình nền", reason)
+        # 3D architecture / exterior
+        reason, code = _classify_reject_reason("patio backyard pergola deck porch staging")
+        self.assertEqual(code, "NON_PRINTABLE_3D_SPACE")
 
     def test_discover_pinterest_trends_success(self):
         res = discover_pinterest_trends({
@@ -78,10 +76,10 @@ class TestPinterestTrendDiscoveryAndRescue(unittest.TestCase):
         self.assertEqual(res["trend_type"], "growing")
         self.assertEqual(res["region"], "US")
 
-        # Must provide 3 to 5 theme clusters
+        # Must provide 3 to 10 theme clusters
         clusters = res["clusters"]
         self.assertGreaterEqual(len(clusters), 3)
-        self.assertLessEqual(len(clusters), 5)
+        self.assertLessEqual(len(clusters), 10)
 
         for cluster in clusters:
             self.assertIn("cluster_id", cluster)

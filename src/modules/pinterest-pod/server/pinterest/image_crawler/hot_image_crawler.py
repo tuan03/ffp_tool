@@ -4,6 +4,7 @@ import argparse
 import collections
 import html
 import logging
+import math
 import os
 import sys
 from pathlib import Path
@@ -61,7 +62,22 @@ def collect_results(
     results: list[SearchResult] = []
     early_exit_threshold = max(35, int((max_downloads or 40) * 1.8)) if max_downloads else None
 
-    for trend in package.trends[:max_trends]:
+    active_trends = list(package.trends)
+    source_info = getattr(package, "source", None)
+    is_custom = isinstance(source_info, dict) and source_info.get("generator") in (
+        "pinterest_pod_theme_clusters",
+        "custom_queries",
+    )
+    if not is_custom and max_trends > 0 and len(active_trends) > max_trends:
+        active_trends = active_trends[:max_trends]
+
+    total_trends_count = max(1, len(active_trends))
+    if max_downloads and total_trends_count > 0:
+        fair_query_limit = max(8, min(max_images_per_query, int(math.ceil((max_downloads * 1.6) / total_trends_count))))
+    else:
+        fair_query_limit = max_images_per_query
+
+    for trend in active_trends:
         trend_queries = list(trend.queries) if trend.queries else build_smart_queries(trend.trend, package.niche)
         for query in sorted(trend_queries, key=lambda item: item.priority)[:max_queries_per_trend]:
             LOG.info("Search: [%s] %s", trend.trend_id, query.query)
@@ -69,7 +85,7 @@ def collect_results(
                 found = provider.search(
                     query=query.query,
                     trend=trend,
-                    limit=max_images_per_query,
+                    limit=fair_query_limit,
                     region=package.region,
                     locale=locale,
                 )
@@ -82,8 +98,9 @@ def collect_results(
                         "count": len(found),
                     }
                 )
-                if early_exit_threshold and len(results) >= early_exit_threshold:
-                    LOG.info("Đã thu thập đủ %d kết quả tìm kiếm cho mục tiêu %d ảnh. Dừng tìm kiếm sớm (Early-exit).", len(results), max_downloads)
+                # Ensure all trends get at least one search before early-exit triggers
+                if early_exit_threshold and len(results) >= early_exit_threshold and len(audit["queries"]) >= total_trends_count:
+                    LOG.info("Đã thu thập đủ %d kết quả tìm kiếm cho mục tiêu %d ảnh từ tất cả %d cụm. Dừng tìm kiếm sớm (Early-exit).", len(results), max_downloads, total_trends_count)
                     break
             except Exception as exc:
                 LOG.warning("Search failed for %r: %s", query.query, exc)
