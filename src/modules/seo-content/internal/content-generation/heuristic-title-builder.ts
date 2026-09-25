@@ -123,31 +123,36 @@ export interface TitleBuilderInput {
   readonly maxLength?: number;
 }
 
-export function extractVisionDesignConcept(facts: ContentFactSheet): string | undefined {
-  const visibleTexts = facts.typographyVisibleTexts.filter(
+const PLACEHOLDER_PATTERN = /^(unknown|none|n\/a|not applicable|unspecified|sample|test|sku.*)[\s.]*$/i;
+
+export function extractVisionDesignConcept(facts: {
+  readonly typographyVisibleTexts?: readonly string[];
+  readonly visualEntities?: string;
+}): string | undefined {
+  const rawTexts = Array.isArray(facts.typographyVisibleTexts) ? facts.typographyVisibleTexts : [];
+  const visibleTexts = rawTexts.filter(
     (t) =>
       typeof t === "string" &&
       t.trim().length >= 2 &&
-      !/^(unknown|none|sample|test|n\/a|sku.*)$/i.test(t.trim()),
+      !PLACEHOLDER_PATTERN.test(t.trim()),
   );
-  const prominentText = visibleTexts.length > 0 ? visibleTexts[0].trim() : undefined;
+  const prominentText = visibleTexts.length > 0 ? visibleTexts[0].trim().replace(/[.]+$/, "") : undefined;
 
-  const rawEntities = facts.visualEntities?.trim();
+  const rawEntities = typeof facts.visualEntities === "string" ? facts.visualEntities.trim() : undefined;
   const hasSpecificEntities =
-    rawEntities &&
-    rawEntities.toLowerCase() !== "unknown" &&
-    rawEntities.toLowerCase() !== "none" &&
-    rawEntities.length >= 3;
+    Boolean(rawEntities) &&
+    !PLACEHOLDER_PATTERN.test(rawEntities ?? "") &&
+    (rawEntities?.length ?? 0) >= 3;
 
   if (!prominentText && !hasSpecificEntities) {
     return undefined;
   }
 
   let entityPhrase: string | undefined;
-  if (hasSpecificEntities) {
+  if (hasSpecificEntities && rawEntities) {
     let phrase = rawEntities.split(/[.;]/)[0].trim();
     phrase = phrase.replace(/\s+(illustration|artwork|graphic|design|pattern)$/i, "").trim();
-    if (phrase.length > 0) {
+    if (phrase.length > 0 && !PLACEHOLDER_PATTERN.test(phrase)) {
       entityPhrase = toTitleCase(phrase);
     }
   }
@@ -206,15 +211,13 @@ export function enrichTitleWithVisionConcept(
     }
   }
 
-  // 2. Avoid duplicating the first word if visionConcept also starts with it
+  // 2. Avoid duplicating words between first theme/brand word and visionConcept
   const titleWords = cleanTitle.split(/\s+/);
   const firstWord = titleWords[0] ?? "";
   let cleanConcept = visionConcept;
-  if (
-    firstWord &&
-    cleanConcept.toLowerCase().startsWith(firstWord.toLowerCase())
-  ) {
-    cleanConcept = cleanConcept.slice(firstWord.length).trim();
+  if (firstWord && firstWord.length > 2) {
+    const wordPattern = new RegExp(`(^|\\s)${firstWord.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(\\s|$)`, "i");
+    cleanConcept = cleanConcept.replace(wordPattern, " ").replace(/\s{2,}/g, " ").trim();
     cleanConcept = cleanConcept.replace(/^[^a-z0-9]+/i, "").trim();
   }
 

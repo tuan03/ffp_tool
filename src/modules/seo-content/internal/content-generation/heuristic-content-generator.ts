@@ -121,9 +121,29 @@ export class HeuristicContentGenerator implements ContentGenerator {
     if (groundedKeywords.primary) {
       const primaryTitle = toTitleCase(groundedKeywords.primary);
       const visionConcept = extractVisionDesignConcept(facts);
-      const distinctiveSuffix = visionConcept
-        ? visionConcept.split(/[.;&]/)[0].trim().slice(0, 24)
-        : facts.variantLabel;
+      let distinctiveSuffix: string | undefined;
+      if (visionConcept) {
+        let firstPart = visionConcept.split(/[.;&]/)[0].trim();
+        // Remove words already present in primary keyword to avoid "Viking ... Viking"
+        const primaryWords = groundedKeywords.primary.toLowerCase().split(/\s+/);
+        for (const pw of primaryWords) {
+          if (pw.length > 2) {
+            const reg = new RegExp(`(^|\\s)${pw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(\\s|$)`, "i");
+            firstPart = firstPart.replace(reg, " ").replace(/\s{2,}/g, " ").trim();
+          }
+        }
+        firstPart = firstPart.replace(/\s+(with|and|or|for|of|in|at|by|on)$/i, "").trim();
+        if (firstPart.length > 28) {
+          const sliced = firstPart.slice(0, 28);
+          const lastSpace = sliced.lastIndexOf(" ");
+          firstPart = lastSpace > 10 ? sliced.slice(0, lastSpace).trim() : sliced.trim();
+          firstPart = firstPart.replace(/\s+(with|and|or|for|of|in|at|by|on)$/i, "").trim();
+        }
+        distinctiveSuffix = firstPart || undefined;
+      }
+      if (!distinctiveSuffix) {
+        distinctiveSuffix = facts.variantLabel;
+      }
 
       if (
         distinctiveSuffix &&

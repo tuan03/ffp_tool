@@ -72,7 +72,7 @@ Primary Focus Keyword: ${keywords.primary ?? "None specified (use brand/product 
 Secondary Keywords: ${keywords.secondary.join(", ") || "None"}
 Supporting Keywords: ${keywords.supportingKeywords.join(", ") || "None"}
 Framing Concepts: ${keywords.framingConcepts.join(", ") || "None"}
-${facts.variantLabel ? `Variant / Style: ${facts.variantLabel}\n` : ""}${facts.visualEntities && facts.visualEntities.toLowerCase() !== "unknown" ? `Visual Design Motif: ${facts.visualEntities}\n` : ""}${facts.typographyVisibleTexts.length > 0 ? `Printed Text on Design: ${facts.typographyVisibleTexts.join(", ")}\n` : ""}</SEO_TARGETING>
+${facts.variantLabel ? `Variant / Style: ${facts.variantLabel}\n` : ""}${facts.visualEntities && !/^(unknown|none|n\/a|not applicable)[\s.]*$/i.test(facts.visualEntities.trim()) ? `Visual Design Motif: ${facts.visualEntities}\n` : ""}${facts.typographyVisibleTexts.filter((t) => !/^(unknown|none|n\/a|not applicable)[\s.]*$/i.test(t.trim())).length > 0 ? `Printed Text on Design: ${facts.typographyVisibleTexts.filter((t) => !/^(unknown|none|n\/a|not applicable)[\s.]*$/i.test(t.trim())).join(", ")}\n` : ""}</SEO_TARGETING>
 
 <CONSTRAINTS>
 Max SEO Title Characters: ${constraints.maxSeoTitleLength}

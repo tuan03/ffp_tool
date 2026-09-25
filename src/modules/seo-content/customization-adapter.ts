@@ -182,34 +182,71 @@ export function fromCustomizationProduct(
   let variantImageUrl: string | undefined;
   let variantImageAlt: string | undefined;
 
-  const firstVariant = Array.isArray(product.variants) && product.variants.length > 0
-    ? (product.variants[0] as Record<string, unknown> | undefined)
-    : undefined;
+  let targetVariant: Record<string, unknown> | undefined;
+  if (Array.isArray(product.variants) && product.variants.length > 0) {
+    if (variantLabel) {
+      const normLabel = variantLabel.trim().toLowerCase();
+      const matched = product.variants.find((v) => {
+        if (!v || typeof v !== "object") return false;
+        const rec = v as Record<string, unknown>;
+        if (typeof rec.title === "string" && rec.title.trim().toLowerCase() === normLabel) return true;
+        if (typeof rec.name === "string" && rec.name.trim().toLowerCase() === normLabel) return true;
+        if (rec.options && typeof rec.options === "object") {
+          const vals = Object.values(rec.options as Record<string, unknown>);
+          if (vals.some((val) => typeof val === "string" && val.trim().toLowerCase() === normLabel)) {
+            return true;
+          }
+        }
+        return false;
+      });
+      if (matched && typeof matched === "object") {
+        targetVariant = matched as Record<string, unknown>;
+      }
+    }
+    if (!targetVariant) {
+      targetVariant = product.variants[0] as Record<string, unknown> | undefined;
+    }
+  }
 
-  if (firstVariant) {
-    if (typeof firstVariant.imageUrl === "string" && firstVariant.imageUrl.trim()) {
-      variantImageUrl = firstVariant.imageUrl.trim();
-    } else if (typeof firstVariant.mediaUrl === "string" && firstVariant.mediaUrl.trim()) {
-      variantImageUrl = firstVariant.mediaUrl.trim();
-    } else if (typeof firstVariant.image === "string" && firstVariant.image.trim()) {
-      variantImageUrl = firstVariant.image.trim();
-    } else if (firstVariant.image && typeof firstVariant.image === "object" && typeof (firstVariant.image as Record<string, unknown>).url === "string") {
-      variantImageUrl = ((firstVariant.image as Record<string, unknown>).url as string).trim();
-      if (typeof (firstVariant.image as Record<string, unknown>).alt === "string") {
-        variantImageAlt = ((firstVariant.image as Record<string, unknown>).alt as string).trim();
+  if (targetVariant) {
+    const rawImageId = targetVariant.imageId ?? targetVariant.image_id;
+    if (rawImageId && Array.isArray(product.media)) {
+      const matchById = product.media.find(
+        (m) => m && String(m.id ?? "").trim() === String(rawImageId).trim() && typeof m.url === "string" && m.url.trim(),
+      );
+      if (matchById && typeof matchById.url === "string") {
+        variantImageUrl = matchById.url.trim();
+        if (typeof matchById.alt === "string") {
+          variantImageAlt = matchById.alt.trim();
+        }
       }
-    } else if (firstVariant.featuredImage && typeof firstVariant.featuredImage === "object" && typeof (firstVariant.featuredImage as Record<string, unknown>).url === "string") {
-      variantImageUrl = ((firstVariant.featuredImage as Record<string, unknown>).url as string).trim();
-      if (typeof (firstVariant.featuredImage as Record<string, unknown>).alt === "string") {
-        variantImageAlt = ((firstVariant.featuredImage as Record<string, unknown>).alt as string).trim();
-      }
-    } else if (firstVariant.featuredImage && typeof firstVariant.featuredImage === "string" && firstVariant.featuredImage.trim()) {
-      variantImageUrl = firstVariant.featuredImage.trim();
-    } else if (Array.isArray(firstVariant.media) && firstVariant.media.length > 0) {
-      const firstMedia = firstVariant.media[0] as { url?: string; alt?: string } | undefined;
-      if (firstMedia && typeof firstMedia.url === "string" && firstMedia.url.trim()) {
-        variantImageUrl = firstMedia.url.trim();
-        variantImageAlt = typeof firstMedia.alt === "string" ? firstMedia.alt.trim() : undefined;
+    }
+
+    if (!variantImageUrl) {
+      if (typeof targetVariant.imageUrl === "string" && targetVariant.imageUrl.trim()) {
+        variantImageUrl = targetVariant.imageUrl.trim();
+      } else if (typeof targetVariant.mediaUrl === "string" && targetVariant.mediaUrl.trim()) {
+        variantImageUrl = targetVariant.mediaUrl.trim();
+      } else if (typeof targetVariant.image === "string" && targetVariant.image.trim()) {
+        variantImageUrl = targetVariant.image.trim();
+      } else if (targetVariant.image && typeof targetVariant.image === "object" && typeof (targetVariant.image as Record<string, unknown>).url === "string") {
+        variantImageUrl = ((targetVariant.image as Record<string, unknown>).url as string).trim();
+        if (typeof (targetVariant.image as Record<string, unknown>).alt === "string") {
+          variantImageAlt = ((targetVariant.image as Record<string, unknown>).alt as string).trim();
+        }
+      } else if (targetVariant.featuredImage && typeof targetVariant.featuredImage === "object" && typeof (targetVariant.featuredImage as Record<string, unknown>).url === "string") {
+        variantImageUrl = ((targetVariant.featuredImage as Record<string, unknown>).url as string).trim();
+        if (typeof (targetVariant.featuredImage as Record<string, unknown>).alt === "string") {
+          variantImageAlt = ((targetVariant.featuredImage as Record<string, unknown>).alt as string).trim();
+        }
+      } else if (targetVariant.featuredImage && typeof targetVariant.featuredImage === "string" && targetVariant.featuredImage.trim()) {
+        variantImageUrl = targetVariant.featuredImage.trim();
+      } else if (Array.isArray(targetVariant.media) && targetVariant.media.length > 0) {
+        const firstMedia = targetVariant.media[0] as { url?: string; alt?: string } | undefined;
+        if (firstMedia && typeof firstMedia.url === "string" && firstMedia.url.trim()) {
+          variantImageUrl = firstMedia.url.trim();
+          variantImageAlt = typeof firstMedia.alt === "string" ? firstMedia.alt.trim() : undefined;
+        }
       }
     }
   }
@@ -225,14 +262,28 @@ export function fromCustomizationProduct(
     }
   }
 
-  // Nếu variant có ASIN riêng và trong product.media có item gán sourceAsin khớp với ASIN đó
-  if (!variantImageUrl && product.asin && Array.isArray(product.media)) {
+  // Nếu variant có ASIN riêng (hoặc splitContext.sourceAsins) và trong product.media có item gán sourceAsin khớp
+  const targetAsins = new Set<string>();
+  if (product.asin && typeof product.asin === "string" && product.asin.trim()) {
+    targetAsins.add(product.asin.trim().toLowerCase());
+  }
+  if (product.splitContext && typeof product.splitContext === "object") {
+    const sc = product.splitContext as Record<string, unknown>;
+    if (Array.isArray(sc.sourceAsins)) {
+      for (const a of sc.sourceAsins) {
+        if (typeof a === "string" && a.trim()) {
+          targetAsins.add(a.trim().toLowerCase());
+        }
+      }
+    }
+  }
+  if (!variantImageUrl && targetAsins.size > 0 && Array.isArray(product.media)) {
     const matchingMedia = product.media.find(
       (m) =>
         m
         && String(m.kind ?? "image").toLowerCase() !== "video"
         && typeof m.sourceAsin === "string"
-        && m.sourceAsin.trim().toLowerCase() === product.asin?.trim().toLowerCase()
+        && targetAsins.has(m.sourceAsin.trim().toLowerCase())
         && typeof m.url === "string"
         && m.url.trim(),
     );
@@ -274,6 +325,8 @@ export function fromCustomizationProduct(
         url: variantImageUrl,
         alt: variantImageAlt || (variantLabel ? `${title} - ${variantLabel}` : undefined),
       });
+    } else if (existingIndex === 0 && !images[0].alt && variantImageAlt) {
+      images[0] = { ...images[0], alt: variantImageAlt };
     }
   }
 
@@ -289,6 +342,9 @@ export function fromCustomizationProduct(
     variantLabel,
     ...(product.id ? { productId: product.id } : {}),
     ...(product.canonicalUrl ? { url: product.canonicalUrl } : {}),
+    ...((product as Record<string, unknown>).storeId
+      ? { storeId: String((product as Record<string, unknown>).storeId) }
+      : {}),
   };
 }
 

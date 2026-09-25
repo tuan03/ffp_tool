@@ -495,5 +495,32 @@ test("fromCustomizationProduct: always places variant representative image into 
   assert.equal(seoInput.images[2].url, "https://example.com/gallery-2.jpg");
 });
 
+test("fromCustomizationProduct: selects matching variant image among multiple variants and preserves storeId", () => {
+  const product: CrawlProduct = {
+    id: "prod-multi-var",
+    title: "Viking Quilt",
+    storeId: "jeminise",
+    media: [
+      { id: "img-black", url: "https://example.com/black.jpg", alt: "Black" },
+      { id: "img-valhalla", url: "https://example.com/valhalla.jpg", alt: "Valhalla" },
+    ],
+    variants: [
+      { id: "var-black", title: "Black", imageId: "img-black" },
+      { id: "var-valhalla", title: "Valhalla", imageId: "img-valhalla" },
+    ],
+    splitContext: {
+      attribute: "Design",
+      value: "Valhalla",
+      sourceAsins: ["B0VALHALLA"],
+    },
+  };
+
+  const seoInput = fromCustomizationProduct(product);
+  assert.equal(seoInput.storeId, "jeminise");
+  assert.equal(seoInput.images[0].url, "https://example.com/valhalla.jpg");
+  assert.equal(seoInput.images[0].alt, "Valhalla");
+});
+
+
 
 

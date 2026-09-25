@@ -3,6 +3,7 @@ import test from "node:test";
 
 import { buildContentFactSheet } from "../internal/content-generation/content-fact-sheet";
 import { HeuristicContentGenerator } from "../internal/content-generation/heuristic-content-generator";
+import { extractVisionDesignConcept } from "../internal/content-generation/heuristic-title-builder";
 import { createInitialContext } from "../internal/pipeline-context";
 
 test("B5 fact sheet excludes scene context and only supplies product-safe B1 evidence", async () => {
@@ -110,6 +111,8 @@ test("B5 HeuristicContentGenerator enriches title and SEO title using visualEnti
   // Verify Product Titles are enriched and distinct
   assert.match(draft1.productTitle, /Valhalla/i);
   assert.match(draft1.productTitle, /Shield/i);
+  // Verify theme word is not awkwardly repeated like "Viking Valhalla Viking"
+  assert.doesNotMatch(draft1.productTitle, /Viking\s+Valhalla\s+Viking/i);
   assert.match(draft2.productTitle, /Thor/i);
   assert.match(draft2.productTitle, /Mjolnir/i);
   assert.notEqual(draft1.productTitle, draft2.productTitle);
@@ -117,10 +120,67 @@ test("B5 HeuristicContentGenerator enriches title and SEO title using visualEnti
   // Verify SEO Titles are vision-driven and distinct
   assert.match(draft1.productSeoTitle, /Valhalla/i);
   assert.match(draft2.productSeoTitle, /Thor/i);
+  assert.doesNotMatch(draft1.productSeoTitle, /Viking.*Viking/i);
   assert.notEqual(draft1.productSeoTitle, draft2.productSeoTitle);
   assert.ok(draft1.productSeoTitle.length <= 70);
   assert.ok(draft2.productSeoTitle.length <= 70);
 });
+
+test("B5 extractVisionDesignConcept safely rejects placeholder values like 'unknown.', 'None.', 'N/A'", () => {
+  assert.equal(
+    extractVisionDesignConcept({
+      typographyVisibleTexts: [],
+      visualEntities: "unknown.",
+    }),
+    undefined,
+  );
+
+  assert.equal(
+    extractVisionDesignConcept({
+      typographyVisibleTexts: ["unknown."],
+      visualEntities: "none",
+    }),
+    undefined,
+  );
+
+  assert.equal(
+    extractVisionDesignConcept({
+      typographyVisibleTexts: ["N/A"],
+      visualEntities: "Not Applicable",
+    }),
+    undefined,
+  );
+});
+
+test("B5 HeuristicContentGenerator does not truncate distinctive suffix mid-word in SEO Title", async () => {
+  const facts = buildContentFactSheet({
+    ...createInitialContext({
+      title: "Viking Bedding Set Quilt Comforter",
+      description: "Viking bedding set",
+      niche: "bedding",
+      handle: "viking-bedding-set",
+      images: [],
+    }),
+    productUnderstanding: {
+      physicalProductIdentity: "quilt bedding set",
+      typography: { visibleTexts: [], styleSummary: "" },
+      visualEntities: "Valhalla Viking Round Shield with Crossed Battle Axes",
+      sceneContext: "Bedroom",
+    },
+  });
+
+  const generator = new HeuristicContentGenerator();
+  const draft = await generator.generate({
+    facts,
+    keywords: { primary: "viking bedding set", secondary: [], supportingKeywords: [], framingConcepts: [], targetedKeywords: [] },
+    constraints: { maxSeoTitleLength: 70, maxSeoDescriptionLength: 160, maxHandleLength: 80, maxBullets: 5, preserveExistingHandle: true },
+  });
+
+  // Verify SEO Title does not contain broken words like "Round Sh"
+  assert.doesNotMatch(draft.productSeoTitle, /\bRound\s+Sh\b/);
+  assert.ok(draft.productSeoTitle.length <= 70);
+});
+
 
 
 
