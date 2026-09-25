@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import gzip
+import hashlib
 import json
 import tempfile
 import threading
@@ -1318,7 +1319,7 @@ class CoordinatorStoreTests(unittest.TestCase):
         self.assertEqual(confirmed["status"], "cancelled")
         self.assertTrue(confirmed["cancellation"]["isExecutionConfirmed"])
 
-    def test_expired_pipeline_claim_remains_cancelling_until_worker_acknowledges(self) -> None:
+    def test_expired_pipeline_claim_completes_stop_without_old_worker(self) -> None:
         job = self.store.create_job({"urls": ["B0FR4MSS2H"]})
         self.store.register_client(client_hello(slots=1))
         lease = self.store.lease_tasks("client-a", 1)[0]
@@ -1339,25 +1340,60 @@ class CoordinatorStoreTests(unittest.TestCase):
         claim = self.store.claim_product_items(worker_id="worker-1", store_id="store-1", limit=1)[0]
         self.assertEqual(claim["inputAsin"], "B0FR4MSS2H")
         self.store.cancel_job(str(job["id"]))
+        self.store.reap_expired()
+        self.assertEqual(self.store.get_job(str(job["id"]))["status"], "cancelling")
         with self.sessions.begin() as session:
             item = session.get(CrawlProductItem, claim["id"])
             item.claim_expires_at = utc_now() - timedelta(seconds=1)
 
         self.store.reap_expired()
 
-        pending = self.store.get_job(str(job["id"]))
-        self.assertEqual(pending["status"], "cancelling")
-        self.assertEqual(pending["cancellation"]["pendingPipelineItems"], 1)
-        self.assertEqual(pending["cancellation"]["pendingPipeline"][0]["phase"], "normalizing")
-        self.assertIsNone(pending["cancellation"]["pendingPipeline"][0]["receivedAt"])
-        self.assertEqual(
-            self.store.product_cancellation_state(claim["id"], worker_id="worker-1"),
-            "cancelled",
+        stopped = self.store.get_job(str(job["id"]))
+        self.assertEqual(stopped["status"], "cancelled")
+        self.assertEqual(stopped["cancellation"]["pendingPipelineItems"], 0)
+        self.assertIsNone(self.store.product_cancellation_state(claim["id"], worker_id="worker-1"))
+        self.assertFalse(self.store.acknowledge_product_cancel(claim["id"], worker_id="worker-1"))
+
+    def test_expired_shopify_write_still_waits_for_worker_checkpoint(self) -> None:
+        source_key = "amazon:B0FR4MSS2H:design:write"
+        product = {"id": "product-write", "sourceKey": source_key, "title": "Write"}
+        job = self.store.create_job({"urls": ["B0FR4MSS2H"]})
+        self.store.register_client(client_hello(slots=1))
+        lease = self.store.lease_tasks("client-a", 1)[0]
+        self.store.accept_product(
+            lease["taskId"], "client-a", lease["leaseId"], source_key, "checksum-write",
+            {"jobId": job["id"], "product": product, "productChecksum": "checksum-write"},
         )
-        received = self.store.get_job(str(job["id"]))
-        self.assertIsNotNone(received["cancellation"]["pendingPipeline"][0]["receivedAt"])
-        self.assertTrue(self.store.acknowledge_product_cancel(claim["id"], worker_id="worker-1"))
-        self.assertEqual(self.store.get_job(str(job["id"]))["status"], "cancelled")
+        self.store.accept_result(
+            lease["taskId"], "client-a", lease["leaseId"], "result-checksum",
+            {"jobId": job["id"], "products": [product], "errors": [], "warnings": []},
+        )
+        claim = self.store.claim_product_items(worker_id="worker-1", store_id="store-1", limit=1)[0]
+        self.store.mark_product_syncing(
+            claim["id"], worker_id="worker-1", normalized_payload=product, proxy_profile="direct",
+        )
+        self.store.mark_shopify_write_started(claim["id"], worker_id="worker-1")
+        request_id = f"product-sync:{hashlib.sha256(source_key.encode('utf-8')).hexdigest()}"
+        with self.sessions.begin() as session:
+            session.add(ShopifyOperationIdempotency(
+                id="pending-write", store_id="store-1", request_id=request_id,
+                operation="product.sync", payload_hash="checksum-write", state="pending",
+                response_payload={"itemId": claim["id"], "sourceKey": source_key},
+            ))
+        self.store.cancel_job(str(job["id"]))
+        with self.sessions.begin() as session:
+            item = session.get(CrawlProductItem, claim["id"])
+            item.claim_expires_at = utc_now() - timedelta(seconds=1)
+
+        self.store.reap_expired()
+
+        self.assertEqual(self.store.get_job(str(job["id"]))["status"], "cancelling")
+        with self.sessions() as session:
+            operation = session.scalar(select(ShopifyOperationIdempotency).where(
+                ShopifyOperationIdempotency.request_id == request_id,
+            ))
+            self.assertEqual(operation.state, "pending")
+        self.assertEqual(self.store.purge_stopped_jobs(), 0)
 
     def test_delete_job_is_idempotent_and_leaves_discard_tombstone(self) -> None:
         job = self.store.create_job({"urls": ["B0FR4MSS2H"]})

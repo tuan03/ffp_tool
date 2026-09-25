@@ -1570,6 +1570,20 @@ class CoordinatorStore:
                         attempt.status = "abandoned"
                         attempt.finished_at = now
                 self._event(session, task.job_id, "task_requeued", {"taskId": task.id, "reason": "lease_expired"})
+            stopped_items = session.scalars(select(CrawlProductItem).where(
+                CrawlProductItem.status == "cancelling",
+                CrawlProductItem.claim_expires_at.is_not(None),
+                CrawlProductItem.claim_expires_at < now,
+            )).all()
+            for item in stopped_items:
+                item.status = "cancelled"
+                item.claimed_by = None
+                item.claim_expires_at = None
+                item.completed_at = now
+                job_ids.add(item.job_id)
+                self._event(session, item.job_id, "product_cancel_claim_expired", {
+                    "productItemId": item.id,
+                })
             for job_id in job_ids:
                 self._refresh_job(session, job_id)
         return {"offlineClients": offline, "requeuedTasks": requeued}
