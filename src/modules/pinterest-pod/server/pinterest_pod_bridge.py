@@ -1598,12 +1598,12 @@ def _run_local_pipeline_worker(job_id: str, req_body: dict[str, Any], base_url: 
     if is_vision_disabled:
         task5_max_downloads = user_pool_size
     else:
-        task5_max_downloads = max(user_pool_size, min(240, int(user_pool_size * 2.0)))
+        task5_max_downloads = max(user_pool_size, min(1200, int(user_pool_size * 1.5)))
     try:
-        task5_max_images_per_query = int(req_body.get("task5_max_images_per_query") or req_body.get("max_images_per_query") or max(15, task5_max_downloads // 8))
+        task5_max_images_per_query = int(req_body.get("task5_max_images_per_query") or req_body.get("max_images_per_query") or max(20, task5_max_downloads // 6))
     except (ValueError, TypeError):
-        task5_max_images_per_query = max(15, task5_max_downloads // 8)
-    task5_max_crawl_trends = max(5, min(10, int(req_body.get("max_trends") or 8)))
+        task5_max_images_per_query = max(20, task5_max_downloads // 6)
+    task5_max_crawl_trends = max(5, min(30, int(req_body.get("max_trends") or 15)))
 
     gemini_model = str(
         req_body.get("gemini_model")
@@ -2076,7 +2076,7 @@ def create_pod_job(payload: dict[str, Any], base_url: str, api_url: str = DEFAUL
             ai_background_variants = 5
         ai_background_variants = max(1, min(10, ai_background_variants))
 
-    # Pinterest crawl count slider: range 10-80, default 40
+    # Pinterest crawl count slider: range 10-1000, default 40
     raw_crawl = (
         payload.get("candidatePoolSize")
         or payload.get("task5_max_downloads")
@@ -2088,7 +2088,7 @@ def create_pod_job(payload: dict[str, Any], base_url: str, api_url: str = DEFAUL
         crawl_count = int(raw_crawl)
     except (ValueError, TypeError):
         crawl_count = 40
-    crawl_count = max(10, min(80, crawl_count))
+    crawl_count = max(10, min(1000, crawl_count))
 
     trend_region = str(payload.get("trend_region") or payload.get("region") or "US").strip()
     trend_type = str(payload.get("trend_type") or "growing").strip()

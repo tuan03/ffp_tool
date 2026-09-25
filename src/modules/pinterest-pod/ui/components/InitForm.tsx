@@ -356,7 +356,7 @@ export function InitForm({
             <span>📥 2. Số lượng ảnh cào về từ Pinterest:</span>
             <span className="text-cyan-400 font-bold text-sm">{crawlCount} ảnh</span>
           </label>
-          <span className="text-[11px] text-slate-400">10 – 80 ảnh (Mục tiêu 30-45 giây)</span>
+          <span className="text-[11px] text-slate-400">10 – 500+ ảnh (Tùy chỉnh linh hoạt)</span>
         </div>
 
         <div className="flex items-center gap-3 pt-1">
@@ -364,26 +364,42 @@ export function InitForm({
             id="crawl-count-input"
             type="range"
             min={10}
-            max={80}
-            step={5}
-            value={crawlCount}
+            max={300}
+            step={10}
+            value={Math.min(300, crawlCount)}
             onChange={(e) => onCrawlCountChange?.(Number(e.target.value))}
             disabled={isBusy}
             className="flex-1 accent-cyan-400 h-2 bg-slate-700 rounded-lg cursor-pointer disabled:opacity-50"
           />
-          <span className="w-12 text-center text-xs font-bold text-cyan-300 bg-slate-800 px-2 py-1 rounded-lg border border-slate-700">
-            {crawlCount}
-          </span>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <input
+              type="number"
+              min={10}
+              max={1000}
+              step={10}
+              value={crawlCount}
+              onChange={(e) => {
+                const val = Number(e.target.value);
+                if (!isNaN(val)) {
+                  onCrawlCountChange?.(Math.max(10, Math.min(1000, val)));
+                }
+              }}
+              disabled={isBusy}
+              className="w-16 rounded-lg border border-slate-700 bg-slate-900 px-2 py-1 text-center text-xs font-bold text-cyan-300 focus:border-cyan-400 focus:outline-none disabled:opacity-50"
+            />
+            <span className="text-xs text-slate-400">ảnh</span>
+          </div>
         </div>
 
         {/* Quick presets */}
         <div className="flex flex-wrap items-center gap-2 pt-1">
           <span className="text-[10px] text-slate-400 font-medium">Chọn nhanh:</span>
           {[
-            { count: 20, label: "20 ảnh (Cực nhanh ~15s)" },
-            { count: 40, label: "40 ảnh (Chuẩn ~30s - Đề xuất)", highlight: true },
-            { count: 60, label: "60 ảnh (~45s)" },
-            { count: 80, label: "80 ảnh (Tối đa ~60s)" },
+            { count: 40, label: "40 ảnh (~30s - Thử nhanh)" },
+            { count: 80, label: "80 ảnh (~1m - Chuẩn đề xuất)", highlight: true },
+            { count: 150, label: "150 ảnh (~2m - Mở rộng)" },
+            { count: 250, label: "250 ảnh (~3m - Quy mô lớn)" },
+            { count: 400, label: "400 ảnh (~5m - Kho cực đại)" },
           ].map((preset) => (
             <button
               key={preset.count}
