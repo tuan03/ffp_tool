@@ -2043,6 +2043,14 @@ class CoordinatorDatabaseTests(unittest.TestCase):
 
 
 class CoordinatorApiTests(unittest.TestCase):
+    def setUp(self) -> None:
+        image_cache = tempfile.TemporaryDirectory()
+        self.addCleanup(image_cache.cleanup)
+        self.image_cache_root = Path(image_cache.name)
+        cache_override = patch.dict(os.environ, {"IMAGE_PROCESSING_CACHE_DIR": image_cache.name})
+        cache_override.start()
+        self.addCleanup(cache_override.stop)
+
     def test_sync_all_queues_only_approved_reviews_as_each_product_becomes_ready(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             database_path = Path(directory) / "coordinator.sqlite3"
@@ -2387,6 +2395,7 @@ class CoordinatorApiTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             database_path = Path(directory) / "coordinator.sqlite3"
             app = create_coordinator_app(database_url=f"sqlite:///{database_path.as_posix()}")
+            self.assertEqual(app.state.image_processing_service.root, self.image_cache_root.resolve())
             with TestClient(app) as client:
                 response = client.delete("/api/v1/clients/cache")
 
