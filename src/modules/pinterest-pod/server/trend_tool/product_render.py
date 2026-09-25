@@ -1,11 +1,25 @@
 from __future__ import annotations
 
+import io
+import json
+import logging
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Any
 
+import numpy as np
 from PIL import Image, ImageChops, ImageDraw, ImageEnhance, ImageFilter, ImageOps
 
 from .config import ProductTarget
+from .product_asset import (
+    create_gemini_client,
+    extract_image_bytes,
+    extract_response_text,
+    image_part,
+    parse_json_relaxed,
+)
+
+LOG = logging.getLogger("product_render")
 
 
 @dataclass(frozen=True)
@@ -25,6 +39,16 @@ class ProductRenderRecord:
         return asdict(self)
 
 
+@dataclass(frozen=True)
+class UniversalProductCanvas:
+    carrier_image: Image.Image
+    surface_box: tuple[int, int, int, int]  # (left, top, right, bottom)
+    surface_mask: Image.Image
+    luminance_map: np.ndarray | None
+    material_type: str
+    canvas_name: str
+
+
 def render_product_from_print(
     *,
     source_path: Path,
@@ -33,17 +57,45 @@ def render_product_from_print(
     mask_path: Path,
     target: ProductTarget,
     max_long_edge: int = 1800,
+    reference_templates: list[Path] | None = None,
+    canvas_cache: dict[str, Any] | None = None,
+    client: Any = None,
+    backend: str = "auto",
+    model: str = "gemini-2.5-flash",
 ) -> ProductRenderRecord:
     product_path.parent.mkdir(parents=True, exist_ok=True)
     mask_path.parent.mkdir(parents=True, exist_ok=True)
     with Image.open(print_path) as opened:
         artwork = ImageOps.exif_transpose(opened).convert("RGBA")
-    if target.name == "blanket":
+
+    raw_name = (target.name or "").strip().lower()
+    active_niche = (getattr(target, "niche", "") or "").strip().lower()
+
+    is_blanket = raw_name == "blanket" or ("blanket" in active_niche or "quilt" in active_niche)
+    is_rug = raw_name == "rug" or ("rug" in active_niche and "bag" not in active_niche)
+
+    if is_blanket:
         product, mask = render_blanket_product(artwork, target, max_long_edge)
         notes = "print artwork rendered as a soft blanket product asset"
-    else:
+        shape = "rectangle"
+    elif is_rug:
         product, mask = render_rug_product(artwork, target, max_long_edge)
         notes = f"print artwork rendered as a {target.rug_shape} rug product asset"
+        shape = target.rug_shape if target.name == "rug" else "rectangle"
+    else:
+        canvas = get_or_create_universal_product_canvas(
+            target=target,
+            reference_templates=reference_templates,
+            canvas_cache=canvas_cache,
+            client=client,
+            backend=backend,
+            model=model,
+            max_long_edge=max_long_edge,
+        )
+        product, mask = render_universal_product(artwork, canvas, target, max_long_edge)
+        notes = f"print artwork rendered as a universal {active_niche or target.name} product asset"
+        shape = canvas.canvas_name
+
     product.save(product_path)
     mask.save(mask_path)
     return ProductRenderRecord(
@@ -52,12 +104,352 @@ def render_product_from_print(
         product_path=product_path,
         mask_path=mask_path,
         product_name=target.name,
-        shape=target.rug_shape if target.name == "rug" else "rectangle",
+        shape=shape,
         width=product.width,
         height=product.height,
         status="ok",
         notes=notes,
     )
+
+
+def get_or_create_universal_product_canvas(
+    *,
+    target: ProductTarget,
+    reference_templates: list[Path] | None = None,
+    canvas_cache: dict[str, Any] | None = None,
+    client: Any = None,
+    backend: str = "auto",
+    model: str = "gemini-2.5-flash",
+    max_long_edge: int = 1800,
+) -> UniversalProductCanvas:
+    raw_name = (target.name or "").strip().lower()
+    active_niche = (getattr(target, "niche", "") or "").strip().lower()
+    cache_key = f"universal_canvas_{active_niche or raw_name}"
+
+    if canvas_cache is not None and cache_key in canvas_cache:
+        return canvas_cache[cache_key]
+
+    carrier_canvas: UniversalProductCanvas | None = None
+
+    # Step 1: If reference images exist, dynamically segment the physical carrier
+    if reference_templates:
+        for ref_file in reference_templates:
+            if not ref_file.exists() or not ref_file.is_file():
+                continue
+            try:
+                with Image.open(ref_file) as opened_ref:
+                    ref_img = ImageOps.exif_transpose(opened_ref).convert("RGB")
+                carrier_canvas = extract_product_canvas_from_reference(
+                    ref_img,
+                    target=target,
+                    client=client,
+                    backend=backend,
+                    model=model,
+                    max_long_edge=max_long_edge,
+                )
+                if carrier_canvas is not None:
+                    LOG.info("Segmented universal product carrier from reference template %s", ref_file.name)
+                    break
+            except Exception as ref_exc:
+                LOG.warning("Could not extract product carrier from %s: %s", ref_file.name, ref_exc)
+
+    # Step 2: If no reference template exists, create universal dynamic product blank for niche
+    if carrier_canvas is None:
+        carrier_canvas = generate_universal_product_blank(
+            target=target,
+            client=client,
+            backend=backend,
+            model=model,
+            max_long_edge=max_long_edge,
+        )
+
+    if canvas_cache is not None:
+        canvas_cache[cache_key] = carrier_canvas
+
+    return carrier_canvas
+
+
+def extract_product_canvas_from_reference(
+    template: Image.Image,
+    *,
+    target: ProductTarget,
+    client: Any = None,
+    backend: str = "auto",
+    model: str = "gemini-2.5-flash",
+    max_long_edge: int = 1800,
+) -> UniversalProductCanvas | None:
+    raw_name = (target.name or "").strip().lower()
+    active_niche = (getattr(target, "niche", "") or "").strip().lower()
+    niche_label = active_niche or raw_name or "product"
+
+    carrier_box_norm = [100, 100, 900, 900]
+    surface_box_norm = [200, 180, 800, 820]
+
+    if client is None and backend and backend not in ("off", "none", "mock", "test"):
+        try:
+            client = create_gemini_client(backend)
+        except Exception:
+            client = None
+
+    if client is not None:
+        try:
+            from google.genai import types
+
+            prompt = (
+                f"Analyze this image to extract a clean commercial product asset for {niche_label}.\n"
+                f"Identify:\n"
+                f"1. 'carrier_box': normalized [ymin, xmin, ymax, xmax] in 0..1000 scale tightly bounding the primary physical product (including handles, straps, hardware, zippers).\n"
+                f"2. 'surface_box': normalized [ymin, xmin, ymax, xmax] in 0..1000 scale bounding the printable surface panel where custom artwork/patterns are mapped (e.g. front body leather/fabric panel, excluding handles, straps, and zippers).\n"
+                f"Return JSON only: {{\"carrier_box\": [ymin, xmin, ymax, xmax], \"surface_box\": [ymin, xmin, ymax, xmax]}}"
+            )
+            res = client.models.generate_content(
+                model=model,
+                contents=[
+                    types.Content(
+                        role="user",
+                        parts=[
+                            image_part(template, max_side=1024),
+                            types.Part.from_text(text=prompt),
+                        ],
+                    )
+                ],
+                config=types.GenerateContentConfig(temperature=0.0, response_mime_type="application/json"),
+            )
+            raw_text = extract_response_text(res)
+            data = parse_json_relaxed(raw_text)
+            if isinstance(data, dict):
+                cb = data.get("carrier_box")
+                sb = data.get("surface_box")
+                if isinstance(cb, list) and len(cb) == 4:
+                    carrier_box_norm = [int(v) for v in cb]
+                if isinstance(sb, list) and len(sb) == 4:
+                    surface_box_norm = [int(v) for v in sb]
+        except Exception as vision_exc:
+            LOG.warning("Gemini Vision carrier detection fallback: %s", vision_exc)
+
+    w, h = template.size
+    c_ymin, c_xmin, c_ymax, c_xmax = carrier_box_norm
+    c_left = int(c_xmin * w / 1000.0)
+    c_top = int(c_ymin * h / 1000.0)
+    c_right = int(c_xmax * w / 1000.0)
+    c_bottom = int(c_ymax * h / 1000.0)
+
+    # Margin check
+    c_w = max(32, c_right - c_left)
+    c_h = max(32, c_bottom - c_top)
+    carrier_crop = template.crop((c_left, c_top, c_right, c_bottom))
+
+    # Scale carrier if needed to maintain resolution
+    scale = min(1.0, max_long_edge / max(c_w, c_h))
+    if scale < 1.0:
+        new_w, new_h = max(16, round(c_w * scale)), max(16, round(c_h * scale))
+        carrier_crop = carrier_crop.resize((new_w, new_h), Image.Resampling.LANCZOS)
+        c_w, c_h = new_w, new_h
+
+    # Compute surface box relative to carrier crop
+    s_ymin, s_xmin, s_ymax, s_xmax = surface_box_norm
+    s_left_abs = int(s_xmin * w / 1000.0)
+    s_top_abs = int(s_ymin * h / 1000.0)
+    s_right_abs = int(s_xmax * w / 1000.0)
+    s_bottom_abs = int(s_ymax * h / 1000.0)
+
+    rel_left = max(0, min(c_w - 16, int((s_left_abs - c_left) * scale)))
+    rel_top = max(0, min(c_h - 16, int((s_top_abs - c_top) * scale)))
+    rel_right = max(rel_left + 16, min(c_w, int((s_right_abs - c_left) * scale)))
+    rel_bottom = max(rel_top + 16, min(c_h, int((s_bottom_abs - c_top) * scale)))
+    surface_box = (rel_left, rel_top, rel_right, rel_bottom)
+
+    # Extract luminance map for lighting & folds transfer
+    sb_w = rel_right - rel_left
+    sb_h = rel_bottom - rel_top
+    surface_crop = carrier_crop.crop(surface_box)
+    rgb_arr = np.asarray(surface_crop.convert("RGB"), dtype=np.float32)
+    lum = rgb_arr[..., 0] * 0.2126 + rgb_arr[..., 1] * 0.7152 + rgb_arr[..., 2] * 0.0722
+    blur_r = max(4, min(sb_w, sb_h) // 30)
+    blur_lum_img = Image.fromarray(lum.astype(np.uint8)).filter(ImageFilter.GaussianBlur(radius=blur_r))
+    blur_lum = np.asarray(blur_lum_img, dtype=np.float32)
+    median = float(np.median(blur_lum)) or 128.0
+    shade = np.clip(blur_lum / max(1.0, median), 0.65, 1.35)
+
+    # Soft feathered surface mask
+    mask = Image.new("L", (sb_w, sb_h), 255)
+    radius = max(8, min(sb_w, sb_h) // 25)
+    draw = ImageDraw.Draw(mask)
+    draw.rounded_rectangle((0, 0, sb_w, sb_h), radius=radius, fill=255)
+    mask = mask.filter(ImageFilter.GaussianBlur(radius=max(2, min(sb_w, sb_h) // 60)))
+
+    material = "leather" if "leather" in niche_label else ("fabric" if any(k in niche_label for k in ("textile", "fabric", "cloth", "canvas")) else "smooth")
+
+    return UniversalProductCanvas(
+        carrier_image=carrier_crop.convert("RGBA"),
+        surface_box=surface_box,
+        surface_mask=mask,
+        luminance_map=shade,
+        material_type=material,
+        canvas_name=f"{niche_label}_carrier",
+    )
+
+
+def generate_universal_product_blank(
+    *,
+    target: ProductTarget,
+    client: Any = None,
+    backend: str = "auto",
+    model: str = "gemini-2.5-flash",
+    max_long_edge: int = 1800,
+) -> UniversalProductCanvas:
+    raw_name = (target.name or "").strip().lower()
+    active_niche = (getattr(target, "niche", "") or "").strip().lower()
+    niche_label = active_niche or raw_name or "commercial product"
+
+    if client is None and backend and backend not in ("off", "none", "mock", "test"):
+        try:
+            client = create_gemini_client(backend)
+        except Exception:
+            client = None
+
+    if client is not None:
+        try:
+            from google.genai import types
+
+            blank_prompt = (
+                f"A clean commercial studio e-commerce photograph of a plain neutral blank {niche_label} on solid white background. "
+                f"Front three-quarter view, high resolution, soft studio lighting, sharp focus, no graphics, no prints, no logos, no text."
+            )
+            gen_res = client.models.generate_content(
+                model="gemini-2.5-flash-image",
+                contents=[types.Content(role="user", parts=[types.Part.from_text(text=blank_prompt)])],
+                config=types.GenerateContentConfig(
+                    response_modalities=["IMAGE"],
+                    temperature=0.2,
+                    image_config=types.ImageConfig(aspect_ratio="1:1", image_size="2K", output_mime_type="image/png"),
+                ),
+            )
+            img_bytes, _ = extract_image_bytes(gen_res)
+            if img_bytes:
+                with Image.open(io.BytesIO(img_bytes)) as generated:
+                    blank_img = generated.convert("RGB")
+                extracted = extract_product_canvas_from_reference(
+                    blank_img,
+                    target=target,
+                    client=client,
+                    backend=backend,
+                    model=model,
+                    max_long_edge=max_long_edge,
+                )
+                if extracted is not None:
+                    return extracted
+        except Exception as gen_exc:
+            LOG.warning("Dynamic product blank AI generation skipped: %s", gen_exc)
+
+    return create_synthetic_carrier(target, max_long_edge, niche_label)
+
+
+def create_synthetic_carrier(target: ProductTarget, max_long_edge: int, niche_label: str) -> UniversalProductCanvas:
+    product_size = product_canvas_size(target, max_long_edge)
+    carrier = Image.new("RGBA", product_size, (255, 255, 255, 0))
+    draw = ImageDraw.Draw(carrier)
+
+    is_bag = any(k in niche_label for k in ("bag", "handbag", "tote", "purse", "satchel", "backpack"))
+
+    if is_bag:
+        body_box = inset_box(product_size, 0.08, 0.18)
+        radius = max(28, min(product_size) // 20)
+        # Handles on top
+        handle_w = max(14, min(product_size) // 50)
+        h_left = body_box[0] + (body_box[2] - body_box[0]) // 4
+        h_right = body_box[2] - (body_box[2] - body_box[0]) // 4
+        h_top = max(10, int(product_size[1] * 0.05))
+        draw.arc((h_left, h_top, h_right, body_box[1] + 40), start=180, end=0, fill=(45, 35, 30, 255), width=handle_w)
+        # Leather carrier base
+        draw.rounded_rectangle(body_box, radius=radius, fill=(50, 40, 35, 255))
+        # Metallic hardware accents (buckles)
+        draw.rectangle((h_left - 6, body_box[1] - 4, h_left + 6, body_box[1] + 16), fill=(210, 175, 90, 255))
+        draw.rectangle((h_right - 6, body_box[1] - 4, h_right + 6, body_box[1] + 16), fill=(210, 175, 90, 255))
+        surface_box = inset_box((body_box[2] - body_box[0], body_box[3] - body_box[1]), 0.04, 0.05)
+        surface_box = (
+            body_box[0] + surface_box[0],
+            body_box[1] + surface_box[1],
+            body_box[0] + surface_box[2],
+            body_box[1] + surface_box[3],
+        )
+    else:
+        body_box = inset_box(product_size, 0.05, 0.05)
+        radius = max(20, min(product_size) // 26)
+        draw.rounded_rectangle(body_box, radius=radius, fill=(240, 240, 242, 255))
+        surface_box = inset_box(product_size, 0.06, 0.06)
+
+    sb_w = surface_box[2] - surface_box[0]
+    sb_h = surface_box[3] - surface_box[1]
+    mask = Image.new("L", (sb_w, sb_h), 255)
+    draw_mask = ImageDraw.Draw(mask)
+    draw_mask.rounded_rectangle((0, 0, sb_w, sb_h), radius=max(12, min(sb_w, sb_h) // 30), fill=255)
+    mask = mask.filter(ImageFilter.GaussianBlur(radius=2))
+
+    material = "leather" if ("leather" in niche_label or is_bag) else "smooth"
+
+    return UniversalProductCanvas(
+        carrier_image=carrier,
+        surface_box=surface_box,
+        surface_mask=mask,
+        luminance_map=None,
+        material_type=material,
+        canvas_name=f"{niche_label}_carrier",
+    )
+
+
+def render_universal_product(
+    artwork: Image.Image,
+    canvas: UniversalProductCanvas,
+    target: ProductTarget,
+    max_long_edge: int,
+) -> tuple[Image.Image, Image.Image]:
+    carrier = canvas.carrier_image.copy()
+    sb_left, sb_top, sb_right, sb_bottom = canvas.surface_box
+    sb_w = max(16, sb_right - sb_left)
+    sb_h = max(16, sb_bottom - sb_top)
+
+    fitted = ImageOps.fit(artwork.convert("RGBA"), (sb_w, sb_h), Image.Resampling.LANCZOS)
+
+    if canvas.luminance_map is not None:
+        art_np = np.asarray(fitted.convert("RGB"), dtype=np.float32)
+        lum_map = canvas.luminance_map
+        if lum_map.shape[:2] != (sb_h, sb_w):
+            lum_img = Image.fromarray(np.clip(lum_map * 128.0, 0, 255).astype(np.uint8))
+            lum_resized = lum_img.resize((sb_w, sb_h), Image.Resampling.BILINEAR)
+            lum_map = np.asarray(lum_resized, dtype=np.float32) / 128.0
+        shaded_art = np.clip(art_np * lum_map[..., np.newaxis], 0, 255).astype(np.uint8)
+        fitted = Image.fromarray(shaded_art).convert("RGBA")
+
+    if canvas.material_type == "leather":
+        fitted = add_leather_surface(fitted, strength=0.08)
+    elif canvas.material_type in {"textile", "fabric", "canvas"}:
+        fitted = add_textile_surface(fitted, strength=0.09)
+
+    mask = canvas.surface_mask
+    if mask.size != (sb_w, sb_h):
+        mask = mask.resize((sb_w, sb_h), Image.Resampling.BILINEAR)
+
+    carrier.paste(fitted, (sb_left, sb_top), mask)
+    alpha = carrier.getchannel("A")
+    return carrier, alpha
+
+
+def add_leather_surface(image: Image.Image, *, strength: float = 0.08) -> Image.Image:
+    """Adds subtle pebble grain and depth variation characteristic of genuine leather."""
+    image = image.convert("RGBA")
+    overlay = Image.new("RGBA", image.size, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay)
+    alpha_high = max(4, round(255 * strength))
+    alpha_low = max(2, alpha_high // 2)
+    step = max(4, min(image.size) // 180)
+    for y in range(0, image.height, step * 2):
+        for x in range(0, image.width, step * 2):
+            offset_x = (y // (step * 2) % 2) * step
+            draw.point((x + offset_x, y), fill=(255, 255, 255, alpha_high))
+            draw.point((x + offset_x + 1, y + 1), fill=(0, 0, 0, alpha_low))
+    return Image.alpha_composite(image, overlay)
+
 
 
 def render_rug_product(

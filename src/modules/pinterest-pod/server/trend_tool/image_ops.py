@@ -26,7 +26,14 @@ def enhance_image(source: Path, destination: Path, min_long_edge: int) -> Path:
     return destination
 
 
-def fit_to_target(source: Path, destination: Path, target: ProductTarget, mode: str) -> Path:
+def fit_to_target(
+    source: Path,
+    destination: Path,
+    target: ProductTarget,
+    mode: str,
+    *,
+    auto_semantic_scale: bool = True,
+) -> Path:
     destination.parent.mkdir(parents=True, exist_ok=True)
     with Image.open(source) as image:
         image = ImageOps.exif_transpose(image).convert("RGBA")
@@ -35,12 +42,97 @@ def fit_to_target(source: Path, destination: Path, target: ProductTarget, mode: 
         elif mode == "contain":
             fitted = contain_on_canvas(image, (target.width_px, target.height_px))
         else:
-            fitted = ImageOps.fit(image, (target.width_px, target.height_px), Image.Resampling.LANCZOS, centering=(0.5, 0.5))
+            if auto_semantic_scale and detect_artwork_layout_type(image) == "centric_illustration":
+                fitted = fit_centric_on_canvas(image, (target.width_px, target.height_px))
+            else:
+                fitted = ImageOps.fit(image, (target.width_px, target.height_px), Image.Resampling.LANCZOS, centering=(0.5, 0.5))
         del image
         fitted.save(destination, dpi=(target.dpi, target.dpi))
         del fitted
     gc.collect()
     return destination
+
+
+def detect_artwork_layout_type(image: Image.Image) -> str:
+    """Detect whether artwork is a centric illustration (hero graphic) or repeat pattern.
+
+    Centric illustrations typically have:
+    - Relatively uniform border strips (high margin consistency / low border variance)
+    - Or transparent border pixels
+    - Or a distinct subject with background margins
+    Repeat patterns have continuous motifs traversing across all four borders.
+    """
+    import numpy as np
+
+    rgba = image.convert("RGBA")
+    w, h = rgba.size
+    if w < 16 or h < 16:
+        return "repeat_pattern"
+
+    arr = np.asarray(rgba, dtype=np.float32)
+    alpha = arr[..., 3]
+    border_w = max(2, int(w * 0.04))
+    border_h = max(2, int(h * 0.04))
+
+    border_alpha = np.concatenate([
+        alpha[:border_h, :].flatten(),
+        alpha[-border_h:, :].flatten(),
+        alpha[:, :border_w].flatten(),
+        alpha[:, -border_w:].flatten(),
+    ])
+    if np.mean(border_alpha < 128) > 0.35:
+        return "centric_illustration"
+
+    rgb = arr[..., :3]
+    border_rgb = np.concatenate([
+        rgb[:border_h, :, :].reshape(-1, 3),
+        rgb[-border_h:, :, :].reshape(-1, 3),
+        rgb[:, :border_w, :].reshape(-1, 3),
+        rgb[:, -border_w:, :].reshape(-1, 3),
+    ], axis=0)
+
+    border_std = float(np.mean(np.std(border_rgb, axis=0)))
+    if border_std < 24.0:
+        return "centric_illustration"
+
+    return "repeat_pattern"
+
+
+def fit_centric_on_canvas(
+    image: Image.Image,
+    size: tuple[int, int],
+    margin_ratio: float = 0.08,
+) -> Image.Image:
+    """Fit a centric illustration onto the target canvas with balanced margins so hero motifs are never cropped.
+
+    Pads the canvas with the artwork's detected border color (or transparent/white).
+    """
+    import numpy as np
+
+    target_w, target_h = size
+    avail_w = max(10, int(target_w * (1.0 - 2 * margin_ratio)))
+    avail_h = max(10, int(target_h * (1.0 - 2 * margin_ratio)))
+
+    contained = ImageOps.contain(image, (avail_w, avail_h), Image.Resampling.LANCZOS)
+
+    rgba = image.convert("RGBA")
+    arr = np.asarray(rgba)
+    corners = np.concatenate([
+        arr[:5, :5, :].reshape(-1, 4),
+        arr[:5, -5:, :].reshape(-1, 4),
+        arr[-5:, :5, :].reshape(-1, 4),
+        arr[-5:, -5:, :].reshape(-1, 4),
+    ], axis=0)
+    median_color = tuple(int(v) for v in np.median(corners, axis=0))
+    if median_color[3] < 50:
+        bg_color = (255, 255, 255, 0)
+    else:
+        bg_color = (median_color[0], median_color[1], median_color[2], 255)
+
+    canvas = Image.new("RGBA", size, bg_color)
+    offset = ((target_w - contained.width) // 2, (target_h - contained.height) // 2)
+    canvas.alpha_composite(contained, offset)
+    return canvas
 
 
 def contain_on_canvas(image: Image.Image, size: tuple[int, int]) -> Image.Image:

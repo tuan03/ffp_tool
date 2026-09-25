@@ -847,6 +847,20 @@ def run_production_from_candidates(
 
     is_direct_mode = normalize_key(config.design_mode) in {"direct", "direct_print", "product_design"}
 
+    # Resolve room template images early so product rendering and mockups share the same references
+    room_template_files: list[Path] = []
+    if hasattr(config, "task4_room_templates") and config.task4_room_templates:
+        for r_item in config.task4_room_templates:
+            r_path = Path(r_item)
+            if r_path.exists() and r_path.is_file():
+                room_template_files.append(r_path)
+    if not room_template_files:
+        rt_dir = run_dir / "room_templates"
+        if rt_dir.exists() and rt_dir.is_dir():
+            room_template_files = [p for p in sorted(rt_dir.glob("*.*")) if p.is_file() and p.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}]
+
+    product_canvas_cache: dict[str, Any] = {}
+
     for index, (source_path, keyword, meta) in enumerate(resolved_sources, start=1):
         if cancel_event is not None and cancel_event.is_set():
             raise PipelineCancelled("Production was stopped by the user.")
@@ -957,6 +971,9 @@ def run_production_from_candidates(
             final_images.append(export_cmyk_jpg(final_png, cmyk_path, config.target.dpi))
 
         render_target = config.target
+        if not getattr(render_target, "niche", "") and config.trend_niche:
+            render_target = replace(render_target, niche=config.trend_niche)
+
         if config.target.name.strip().lower() == "rug":
             try:
                 shape_decision = recommend_rug_shape(
@@ -965,7 +982,7 @@ def run_production_from_candidates(
                     backend=config.gemini_backend,
                     model=config.gemini_model,
                 )
-                render_target = replace(config.target, rug_shape=shape_decision.shape)
+                render_target = replace(render_target, rug_shape=shape_decision.shape)
                 rug_shape_records.append({"print_path": final_png, **shape_decision.to_dict()})
                 log(progress, f"[{index}/{len(resolved_sources)}] Rug shape: {shape_decision.shape}.")
             except Exception as shape_exc:
@@ -979,6 +996,10 @@ def run_production_from_candidates(
                 product_path=rendered_product_dir / f"{base}_product.png",
                 mask_path=rendered_mask_dir / f"{base}_mask.png",
                 target=render_target,
+                reference_templates=room_template_files,
+                canvas_cache=product_canvas_cache,
+                backend=config.gemini_backend,
+                model=config.vision_model,
             )
             product_render_records.append(render_record)
             rendered_products.append(render_record.product_path)
@@ -1002,18 +1023,6 @@ def run_production_from_candidates(
     # Mockups rendering
     mockups: list[Path] = []
     ai_background_final_records: list[dict[str, object]] = []
-
-    # Resolve room template images from config or run_dir
-    room_template_files: list[Path] = []
-    if hasattr(config, "task4_room_templates") and config.task4_room_templates:
-        for r_item in config.task4_room_templates:
-            r_path = Path(r_item)
-            if r_path.exists() and r_path.is_file():
-                room_template_files.append(r_path)
-    if not room_template_files:
-        rt_dir = run_dir / "room_templates"
-        if rt_dir.exists() and rt_dir.is_dir():
-            room_template_files = [p for p in sorted(rt_dir.glob("*.*")) if p.is_file() and p.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}]
 
     if final_pngs:
         # Only render default synthetic canvas mockups if no custom room templates are provided and AI mockups aren't configured
