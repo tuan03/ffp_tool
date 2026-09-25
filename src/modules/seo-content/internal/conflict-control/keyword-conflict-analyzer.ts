@@ -66,6 +66,7 @@ export interface KeywordConflictAnalyzer {
 }
 
 export interface CatalogKeywordTarget {
+  readonly storeId?: string;
   readonly productKey: string;
   readonly productId?: string;
   readonly handle?: string;
@@ -288,6 +289,7 @@ export class DefaultKeywordConflictAnalyzer implements KeywordConflictAnalyzer {
     const conflictDetails: Record<string, ConflictDetail> = {};
 
     const owner: SeoProductIdentity = {
+      storeId: input.source.storeId,
       productId: input.source.productId,
       handle: input.source.handle,
       url:
@@ -390,8 +392,17 @@ export class DefaultKeywordConflictAnalyzer implements KeywordConflictAnalyzer {
       if (corpusSnapshot) {
         for (const product of corpusSnapshot.products) {
           if (
+            owner.storeId &&
+            product.storeId &&
+            owner.storeId.trim() !== product.storeId.trim()
+          ) {
+            continue;
+          }
+
+          if (
             owner &&
             isSameProduct(owner, {
+              storeId: product.storeId,
               productId: product.productId,
               handle: product.handle,
               url: product.url,
@@ -474,8 +485,17 @@ export class DefaultKeywordConflictAnalyzer implements KeywordConflictAnalyzer {
     if (corpusSnapshot) {
       for (const product of corpusSnapshot.products) {
         if (
+          owner.storeId &&
+          product.storeId &&
+          owner.storeId.trim() !== product.storeId.trim()
+        ) {
+          continue;
+        }
+
+        if (
           owner &&
           isSameProduct(owner, {
+            storeId: product.storeId,
             productId: product.productId,
             handle: product.handle,
             url: product.url,
@@ -487,6 +507,7 @@ export class DefaultKeywordConflictAnalyzer implements KeywordConflictAnalyzer {
           product.url ?? (product.handle ? `/products/${product.handle}` : "");
         for (const kw of product.keywords) {
           catalogTargets.push({
+            storeId: product.storeId,
             productKey: product.productKey,
             productId: product.productId,
             handle: product.handle,

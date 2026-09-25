@@ -87,11 +87,11 @@ export async function runSeoContentDetailed(
   };
   const runtimeStages = [
     createB1ProductUnderstandingStage({
-      imageAnalyzer: options.imageMode === "alt_only"
-        ? heuristicProductImageAnalyzer
-        : createDefaultProductImageAnalyzer({
-            onFallback: (error) => observeFallback("b1", error),
-          }),
+      imageAnalyzer: createDefaultProductImageAnalyzer({
+        onFallback: (error) => observeFallback("b1", error),
+        maxImages: options.imageMode === "alt_only" ? 1 : undefined,
+      }),
+      maxImages: options.imageMode === "alt_only" ? 1 : undefined,
     }),
     createB2ShoppingContextStage({
       analyzer: createDefaultShoppingContextAnalyzer({

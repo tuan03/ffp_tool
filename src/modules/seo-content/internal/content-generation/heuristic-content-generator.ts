@@ -8,7 +8,10 @@ import type {
 import { fitProductTitle, fitSeoDescription, fitSeoTitle, toTitleCase } from "./content-fitters";
 import { findUnsupportedClaimsInText } from "./claim-guard";
 
-import { buildHeuristicProductTitle } from "./heuristic-title-builder";
+import {
+  buildHeuristicProductTitle,
+  extractVisionDesignConcept,
+} from "./heuristic-title-builder";
 
 /**
  * Deterministic, offline rule-based copywriting generator.
@@ -114,10 +117,25 @@ export class HeuristicContentGenerator implements ContentGenerator {
     // 5. Build Closing
     const closing = `Whether buying for yourself or searching for a memorable gift, this ${category} offers the perfect blend of distinctive styling and reliable everyday enjoyment.`;
 
-    // 6. Build SEO Title (<= 70 chars)
-    const rawSeoTitle = groundedKeywords.primary
-      ? `${toTitleCase(groundedKeywords.primary)} | Quality & Style`
-      : `${productTitle} | Shop Online`;
+    let rawSeoTitle: string;
+    if (groundedKeywords.primary) {
+      const primaryTitle = toTitleCase(groundedKeywords.primary);
+      const visionConcept = extractVisionDesignConcept(facts);
+      const distinctiveSuffix = visionConcept
+        ? visionConcept.split(/[.;&]/)[0].trim().slice(0, 24)
+        : facts.variantLabel;
+
+      if (
+        distinctiveSuffix &&
+        !primaryTitle.toLowerCase().includes(distinctiveSuffix.toLowerCase())
+      ) {
+        rawSeoTitle = `${primaryTitle} - ${distinctiveSuffix} | Shop Online`;
+      } else {
+        rawSeoTitle = `${primaryTitle} | Quality & Style`;
+      }
+    } else {
+      rawSeoTitle = `${productTitle} | Shop Online`;
+    }
     const productSeoTitle = fitSeoTitle(
       rawSeoTitle,
       groundedKeywords.primary,

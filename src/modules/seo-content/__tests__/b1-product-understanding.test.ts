@@ -49,3 +49,24 @@ test("B1 falls back only to physical identity when no image pixels are available
     visualEntities: "unknown", sceneContext: "unknown", physicalProductIdentity: "area rug",
   });
 });
+
+test("B1 with maxImages: 1 limits image analysis to exactly the first image (images[0])", async () => {
+  const captured: unknown[] = [];
+  const analyzer: ProductImageAnalyzer = {
+    async analyze(request) {
+      captured.push(request);
+      return analysis;
+    },
+  };
+  const result = await createB1ProductUnderstandingStage({
+    imageAnalyzer: analyzer,
+    maxImages: 1,
+  }).execute(createInitialContext(input));
+
+  assert.equal(captured.length, 1);
+  const sentImages = (captured[0] as { images: readonly { url: string }[] }).images;
+  assert.equal(sentImages.length, 1);
+  assert.equal(sentImages[0].url, "https://example.com/rug-front.webp");
+  assert.deepEqual(result.productUnderstanding, analysis);
+});
+

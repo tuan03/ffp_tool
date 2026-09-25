@@ -39,3 +39,19 @@ test("Gemini B1 omits unreadable images without abandoning remaining pixel evide
   });
   assert.equal(generator.calls[0].imagePayloads.length, 1);
 });
+
+test("Gemini B1 limits analysis to maxImages when specified", async () => {
+  const generator = new FakeGeminiContentGenerator(response);
+  const analyzer = new GeminiProductImageAnalyzer({ generator, maxImages: 1 });
+  await analyzer.analyze({
+    title: "Music rug", description: "", niche: "personalized rug",
+    images: [
+      { url: "data:image/webp;base64,UklGRg4AAABXRUJQVlA4IAIAAAACAA==" },
+      { url: "data:image/webp;base64,UklGRg4AAABXRUJQVlA4IAIAAAACAA==" },
+    ],
+  });
+  assert.equal(generator.calls.length, 1);
+  assert.equal(generator.calls[0].imagePayloads.length, 1);
+  assert.match(generator.calls[0].prompt, /batch \(1 readable image in supplied order\)/);
+});
+

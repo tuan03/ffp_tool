@@ -20,7 +20,7 @@ Rules:
    - Product/design detail belongs only in typography, visualEntities, and physicalProductIdentity.
    - Background furniture, rooms, people and props belong only in sceneContext.
 2. Typography:
-   - typography.visibleTexts contains only text visibly present on the product/design.
+   - typography.visibleTexts contains only text visibly printed, embroidered, or engraved directly on the product/design (e.g. slogan, quotes, names, single words like 'VALHALLA', bible verses, brand names on graphic). Be precise and comprehensive about visible text on the graphic artwork.
    - Never infer OCR text from title, description, niche, filename or alt text.
    - Never correct spelling found in the image.
    - Preserve visible wording, casing and punctuation where possible.
@@ -28,9 +28,9 @@ Rules:
    - If no reliable visible text exists, return [].
 
    - typography.styleSummary states the visual treatment of that product text.
-3. visualEntities is one rich, product-design-only English summary. Do not list scene objects.
+3. visualEntities is one rich, product-design-only English summary of the central graphic design elements, artistic motifs, emblems, symbols, or patterns on the product (e.g., 'Viking round shield with crossed battle axes and ornate knotwork', 'Thor Mjolnir hammer with skull and lightning'). Prioritize distinctive artistic themes and central subject matter over generic product attributes. Do not list scene objects.
 4. sceneContext is one English description of the placement/space only.
-5. physicalProductIdentity is the physical blank/object (for example "area rug"), never Shopify category or product type.
+5. physicalProductIdentity is the physical blank/object (for example "area rug", "quilt bedding set", "t-shirt"), never Shopify category or product type.
    - Decide it from cross-batch evidence, not the first image or repeated backgrounds.
    - Return "unknown" where evidence is insufficient.
 
@@ -45,6 +45,7 @@ export interface GeminiProductImageAnalyzerOptions {
   readonly maxOutputTokens?: number;
   readonly timeoutMs?: number;
   readonly maxRetries?: number; // default 1
+  readonly maxImages?: number;
 }
 
 export class GeminiProductImageAnalyzer implements ProductImageAnalyzer {
@@ -54,6 +55,7 @@ export class GeminiProductImageAnalyzer implements ProductImageAnalyzer {
   private readonly maxOutputTokens: number;
   private readonly timeoutMs?: number;
   private readonly maxRetries: number;
+  private readonly maxImages?: number;
 
   constructor(options: GeminiProductImageAnalyzerOptions) {
     this.generator = options.generator;
@@ -62,10 +64,17 @@ export class GeminiProductImageAnalyzer implements ProductImageAnalyzer {
     this.maxOutputTokens = Math.min(options.maxOutputTokens || 2048, 2048);
     this.timeoutMs = options.timeoutMs;
     this.maxRetries = options.maxRetries ?? 1;
+    this.maxImages = options.maxImages;
   }
 
   async analyze(input: ProductImageAnalyzerInput): Promise<ProductImageAnalysis> {
-    const prepared = await Promise.allSettled(input.images.map((image) => prepareProductImagePayload(image, {
+    const limit = input.maxImages ?? this.maxImages;
+    const imagesToProcess =
+      typeof limit === "number" && limit > 0
+        ? input.images.slice(0, limit)
+        : input.images;
+
+    const prepared = await Promise.allSettled(imagesToProcess.map((image) => prepareProductImagePayload(image, {
       fetchTimeoutMs: this.timeoutMs,
     })));
     const imagePayloads = prepared.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
@@ -73,7 +82,7 @@ export class GeminiProductImageAnalyzer implements ProductImageAnalyzer {
       throw new GeminiGeneratorError("No readable product images were available for B1 analysis");
     }
 
-    const prompt = `Analyze this ecommerce product image batch (${imagePayloads.length} readable images in supplied order).
+    const prompt = `Analyze this ecommerce product image batch (${imagePayloads.length} readable image${imagePayloads.length === 1 ? "" : "s"} in supplied order).
 
 Product context:
 Title: ${input.title || ""}
@@ -81,6 +90,10 @@ Description: ${input.description || ""}
 Niche: ${input.niche || ""}
 
 Extract exactly the four requested evidence groups.
+Focus closely on the primary product design/artwork:
+- Extract any prominent text or slogan printed on the design into typography.visibleTexts.
+- Describe the key artistic/design entities (symbols, motifs, emblems, illustrations) in visualEntities.
+- Identify the physical product blank in physicalProductIdentity.
 
 Use product context only for disambiguation.
 Visual evidence has priority over metadata.`;

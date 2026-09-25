@@ -178,6 +178,105 @@ export function fromCustomizationProduct(
     }
   }
 
+  // Đảm bảo ảnh đại diện của variant luôn nằm ở images[0]
+  let variantImageUrl: string | undefined;
+  let variantImageAlt: string | undefined;
+
+  const firstVariant = Array.isArray(product.variants) && product.variants.length > 0
+    ? (product.variants[0] as Record<string, unknown> | undefined)
+    : undefined;
+
+  if (firstVariant) {
+    if (typeof firstVariant.imageUrl === "string" && firstVariant.imageUrl.trim()) {
+      variantImageUrl = firstVariant.imageUrl.trim();
+    } else if (typeof firstVariant.mediaUrl === "string" && firstVariant.mediaUrl.trim()) {
+      variantImageUrl = firstVariant.mediaUrl.trim();
+    } else if (typeof firstVariant.image === "string" && firstVariant.image.trim()) {
+      variantImageUrl = firstVariant.image.trim();
+    } else if (firstVariant.image && typeof firstVariant.image === "object" && typeof (firstVariant.image as Record<string, unknown>).url === "string") {
+      variantImageUrl = ((firstVariant.image as Record<string, unknown>).url as string).trim();
+      if (typeof (firstVariant.image as Record<string, unknown>).alt === "string") {
+        variantImageAlt = ((firstVariant.image as Record<string, unknown>).alt as string).trim();
+      }
+    } else if (firstVariant.featuredImage && typeof firstVariant.featuredImage === "object" && typeof (firstVariant.featuredImage as Record<string, unknown>).url === "string") {
+      variantImageUrl = ((firstVariant.featuredImage as Record<string, unknown>).url as string).trim();
+      if (typeof (firstVariant.featuredImage as Record<string, unknown>).alt === "string") {
+        variantImageAlt = ((firstVariant.featuredImage as Record<string, unknown>).alt as string).trim();
+      }
+    } else if (firstVariant.featuredImage && typeof firstVariant.featuredImage === "string" && firstVariant.featuredImage.trim()) {
+      variantImageUrl = firstVariant.featuredImage.trim();
+    } else if (Array.isArray(firstVariant.media) && firstVariant.media.length > 0) {
+      const firstMedia = firstVariant.media[0] as { url?: string; alt?: string } | undefined;
+      if (firstMedia && typeof firstMedia.url === "string" && firstMedia.url.trim()) {
+        variantImageUrl = firstMedia.url.trim();
+        variantImageAlt = typeof firstMedia.alt === "string" ? firstMedia.alt.trim() : undefined;
+      }
+    }
+  }
+
+  if (!variantImageUrl && product.splitContext && typeof product.splitContext === "object") {
+    const sc = product.splitContext as Record<string, unknown>;
+    if (typeof sc.imageUrl === "string" && sc.imageUrl.trim()) {
+      variantImageUrl = sc.imageUrl.trim();
+    } else if (typeof sc.thumbnailUrl === "string" && sc.thumbnailUrl.trim()) {
+      variantImageUrl = sc.thumbnailUrl.trim();
+    } else if (sc.image && typeof sc.image === "object" && typeof (sc.image as Record<string, unknown>).url === "string") {
+      variantImageUrl = ((sc.image as Record<string, unknown>).url as string).trim();
+    }
+  }
+
+  // Nếu variant có ASIN riêng và trong product.media có item gán sourceAsin khớp với ASIN đó
+  if (!variantImageUrl && product.asin && Array.isArray(product.media)) {
+    const matchingMedia = product.media.find(
+      (m) =>
+        m
+        && String(m.kind ?? "image").toLowerCase() !== "video"
+        && typeof m.sourceAsin === "string"
+        && m.sourceAsin.trim().toLowerCase() === product.asin?.trim().toLowerCase()
+        && typeof m.url === "string"
+        && m.url.trim(),
+    );
+    if (matchingMedia && typeof matchingMedia.url === "string") {
+      variantImageUrl = matchingMedia.url.trim();
+      if (typeof matchingMedia.alt === "string") {
+        variantImageAlt = matchingMedia.alt.trim();
+      }
+    }
+  }
+
+  // Nếu trong product.media có item mà alt chứa variantLabel
+  if (!variantImageUrl && variantLabel && Array.isArray(product.media)) {
+    const matchingMedia = product.media.find(
+      (m) =>
+        m
+        && String(m.kind ?? "image").toLowerCase() !== "video"
+        && typeof m.alt === "string"
+        && m.alt.toLowerCase().includes(variantLabel.toLowerCase())
+        && typeof m.url === "string"
+        && m.url.trim(),
+    );
+    if (matchingMedia && typeof matchingMedia.url === "string") {
+      variantImageUrl = matchingMedia.url.trim();
+      if (typeof matchingMedia.alt === "string") {
+        variantImageAlt = matchingMedia.alt.trim();
+      }
+    }
+  }
+
+  // Đặt variantImageUrl lên vị trí đầu tiên (images[0])
+  if (variantImageUrl) {
+    const existingIndex = images.findIndex((img) => img.url === variantImageUrl);
+    if (existingIndex > 0) {
+      const [found] = images.splice(existingIndex, 1);
+      images.unshift(found);
+    } else if (existingIndex === -1) {
+      images.unshift({
+        url: variantImageUrl,
+        alt: variantImageAlt || (variantLabel ? `${title} - ${variantLabel}` : undefined),
+      });
+    }
+  }
+
   // 5. Handle / URL Slug (B5 sẽ tự sinh slug chuẩn nếu handle rỗng)
   const handle = typeof product.handle === "string" ? product.handle.trim() : "";
 

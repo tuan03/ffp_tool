@@ -117,3 +117,86 @@ test("FileSeoConflictCorpus isolates corpus files and conflict lookups by storeI
     rmSync(tempDir, { recursive: true, force: true });
   }
 });
+
+test("B4 DefaultKeywordConflictAnalyzer isolates keyword conflicts across different stores", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "seo-b4-store-isolation-"));
+  try {
+    const corpusFile = join(tempDir, "corpus.json");
+    const corpus = new FileSeoConflictCorpus({ filePath: corpusFile });
+
+    // Store "capozen" registers "viking bedding set"
+    await corpus.upsertProduct({
+      identity: { storeId: "capozen", productId: "cap-1", handle: "viking-quilt-a" },
+      title: "Capozen Viking Quilt Set",
+      approvedKeywords: ["viking bedding set"],
+    });
+
+    const analyzer = new DefaultKeywordConflictAnalyzer({
+      conflictCorpus: corpus,
+      fallbackEmbeddingProvider: new LocalTfidfVectorizer(),
+    });
+
+    // 1. Same store "capozen" with another product requesting "viking bedding set" -> MUST CONFLICT
+    const sameStoreResult = await analyzer.analyze({
+      source: {
+        storeId: "capozen",
+        productId: "cap-2",
+        handle: "viking-quilt-b",
+        title: "Capozen Viking Quilt Bedding",
+        description: "Viking quilt bedding comforter",
+        niche: "bedding",
+        images: [],
+      },
+      productUnderstanding: {
+        physicalProductIdentity: "quilt bedding set",
+        typography: { visibleTexts: [], styleSummary: "unknown" },
+        visualEntities: "Viking artwork",
+        sceneContext: "unknown",
+      },
+      searchResearch: {
+        seedKeywords: ["viking bedding set"],
+        suggestedQueries: [],
+        querySources: { "viking bedding set": "buyer_intent_seed" },
+      },
+    });
+
+    assert.equal(sameStoreResult.approvedKeywords.includes("viking bedding set"), false);
+    assert.equal(
+      sameStoreResult.conflictReasons["viking bedding set"],
+      "existing_url_cannibalization",
+    );
+
+    // 2. Different store "jeminise" requesting same keyword "viking bedding set" -> MUST BE APPROVED
+    const diffStoreResult = await analyzer.analyze({
+      source: {
+        storeId: "jeminise",
+        productId: "jem-1",
+        handle: "jeminise-viking-quilt",
+        title: "Jeminise Viking Quilt Bedding",
+        description: "Viking quilt bedding comforter",
+        niche: "bedding",
+        images: [],
+      },
+      productUnderstanding: {
+        physicalProductIdentity: "quilt bedding set",
+        typography: { visibleTexts: [], styleSummary: "unknown" },
+        visualEntities: "Viking artwork",
+        sceneContext: "unknown",
+      },
+      searchResearch: {
+        seedKeywords: ["viking bedding set"],
+        suggestedQueries: [],
+        querySources: { "viking bedding set": "buyer_intent_seed" },
+      },
+    });
+
+    assert.ok(
+      diffStoreResult.approvedKeywords.includes("viking bedding set"),
+      "Product from different store must be approved without conflict",
+    );
+    assert.equal(diffStoreResult.conflictReasons["viking bedding set"], undefined);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+

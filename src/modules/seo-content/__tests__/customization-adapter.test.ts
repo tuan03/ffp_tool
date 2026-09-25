@@ -473,4 +473,27 @@ test("runCustomizationSeoPipeline: enriches variant products with distinct title
   assert.match(out2.productSeoDescription, /Be Still and Know/);
 });
 
+test("fromCustomizationProduct: always places variant representative image into images[0]", () => {
+  const productWithVariantMedia: CrawlProduct = {
+    id: "prod-var-img",
+    title: "Viking Bedding Set",
+    media: [
+      { url: "https://example.com/gallery-1.jpg", alt: "General Gallery 1" },
+      { url: "https://example.com/variant-valhalla.jpg", alt: "Valhalla Design Variant" },
+      { url: "https://example.com/gallery-2.jpg", alt: "General Gallery 2" },
+    ],
+    variants: [
+      { id: "var-1", imageUrl: "https://example.com/variant-valhalla.jpg" },
+    ],
+  };
+
+  const seoInput = fromCustomizationProduct(productWithVariantMedia);
+  assert.equal(seoInput.images.length, 3);
+  assert.equal(seoInput.images[0].url, "https://example.com/variant-valhalla.jpg");
+  assert.equal(seoInput.images[0].alt, "Valhalla Design Variant");
+  assert.equal(seoInput.images[1].url, "https://example.com/gallery-1.jpg");
+  assert.equal(seoInput.images[2].url, "https://example.com/gallery-2.jpg");
+});
+
+
 

@@ -123,6 +123,114 @@ export interface TitleBuilderInput {
   readonly maxLength?: number;
 }
 
+export function extractVisionDesignConcept(facts: ContentFactSheet): string | undefined {
+  const visibleTexts = facts.typographyVisibleTexts.filter(
+    (t) =>
+      typeof t === "string" &&
+      t.trim().length >= 2 &&
+      !/^(unknown|none|sample|test|n\/a|sku.*)$/i.test(t.trim()),
+  );
+  const prominentText = visibleTexts.length > 0 ? visibleTexts[0].trim() : undefined;
+
+  const rawEntities = facts.visualEntities?.trim();
+  const hasSpecificEntities =
+    rawEntities &&
+    rawEntities.toLowerCase() !== "unknown" &&
+    rawEntities.toLowerCase() !== "none" &&
+    rawEntities.length >= 3;
+
+  if (!prominentText && !hasSpecificEntities) {
+    return undefined;
+  }
+
+  let entityPhrase: string | undefined;
+  if (hasSpecificEntities) {
+    let phrase = rawEntities.split(/[.;]/)[0].trim();
+    phrase = phrase.replace(/\s+(illustration|artwork|graphic|design|pattern)$/i, "").trim();
+    if (phrase.length > 0) {
+      entityPhrase = toTitleCase(phrase);
+    }
+  }
+
+  if (prominentText && entityPhrase) {
+    if (!entityPhrase.toLowerCase().includes(prominentText.toLowerCase())) {
+      const cleanProminent = toTitleCase(prominentText);
+      return `${cleanProminent} ${entityPhrase}`;
+    }
+    return entityPhrase;
+  }
+
+  if (entityPhrase) {
+    return entityPhrase;
+  }
+
+  if (prominentText) {
+    return toTitleCase(prominentText);
+  }
+
+  return undefined;
+}
+
+export function titleContainsVisionConcept(title: string, visionConcept: string): boolean {
+  const normTitle = title.toLowerCase().replace(/[^a-z0-9]+/g, " ");
+  const visionWords = visionConcept
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .split(/\s+/)
+    .filter((w) => w.length > 2 && !/^(with|and|the|for|from|into|onto|over)$/.test(w));
+
+  if (visionWords.length === 0) return true;
+  const matchCount = visionWords.filter((w) => normTitle.includes(w)).length;
+  return matchCount >= Math.ceil(visionWords.length * 0.6);
+}
+
+export function enrichTitleWithVisionConcept(
+  baseTitle: string,
+  visionConcept: string,
+): string {
+  if (titleContainsVisionConcept(baseTitle, visionConcept)) {
+    return baseTitle;
+  }
+
+  // 1. Clean generic pattern suffixes from baseTitle: e.g. " - Pattern 01", " - Style A"
+  let cleanTitle = baseTitle
+    .replace(/\s*-\s*(pattern|style|design|color|option|model)\s*([a-z0-9_-]+).*$/i, "")
+    .trim();
+
+  // Clean generic filler like "with Pillowcases" if present
+  let secondaryFeature = "";
+  if (/\bwith\s+pillowcases\b/i.test(cleanTitle)) {
+    cleanTitle = cleanTitle.replace(/\s*with\s+pillowcases\b/i, "").trim();
+    if (!/quilt|comforter/i.test(cleanTitle)) {
+      secondaryFeature = " - Quilt Comforter";
+    }
+  }
+
+  // 2. Avoid duplicating the first word if visionConcept also starts with it
+  const titleWords = cleanTitle.split(/\s+/);
+  const firstWord = titleWords[0] ?? "";
+  let cleanConcept = visionConcept;
+  if (
+    firstWord &&
+    cleanConcept.toLowerCase().startsWith(firstWord.toLowerCase())
+  ) {
+    cleanConcept = cleanConcept.slice(firstWord.length).trim();
+    cleanConcept = cleanConcept.replace(/^[^a-z0-9]+/i, "").trim();
+  }
+
+  if (!cleanConcept) {
+    return cleanTitle;
+  }
+
+  // 3. Insert visionConcept after first theme/brand word, or prefix
+  if (titleWords.length > 1) {
+    const remainder = titleWords.slice(1).join(" ");
+    return `${firstWord} ${cleanConcept} ${remainder}${secondaryFeature}`;
+  }
+
+  return `${cleanConcept} ${cleanTitle}${secondaryFeature}`;
+}
+
 /**
  * Deterministic heuristic title builder following the Preserve -> Enrich -> Rebuild policy.
  */
@@ -169,6 +277,12 @@ export function buildHeuristicProductTitle(input: TitleBuilderInput): string {
       fallbackTitle = `Personalized ${fallbackTitle}`;
     }
     baseTitle = fallbackTitle;
+  }
+
+  // Enrich with vision design concept if available
+  const visionConcept = extractVisionDesignConcept(facts);
+  if (visionConcept) {
+    baseTitle = enrichTitleWithVisionConcept(baseTitle, visionConcept);
   }
 
   // Preserve variant label if present

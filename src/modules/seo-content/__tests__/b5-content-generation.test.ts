@@ -57,4 +57,70 @@ test("B5 HeuristicContentGenerator preserves variantLabel in fact sheet and titl
   assert.ok(draft.bullets.some((b) => b.text.includes("Pink Faith")));
 });
 
+test("B5 HeuristicContentGenerator enriches title and SEO title using visualEntities and typographyVisibleTexts", async () => {
+  const facts1 = buildContentFactSheet({
+    ...createInitialContext({
+      title: "Viking Bedding Set Quilt Comforter with Pillowcases - Pattern 01",
+      description: "Viking comforter bedding set with pillowcases",
+      niche: "bedding",
+      handle: "viking-bedding-set-1",
+      images: [],
+      variantLabel: "Pattern 01",
+    }),
+    productUnderstanding: {
+      physicalProductIdentity: "quilt bedding set",
+      typography: { visibleTexts: ["VALHALLA"], styleSummary: "bold runic lettering" },
+      visualEntities: "Valhalla Viking Shield with Crossed Battle Axes",
+      sceneContext: "Bedroom",
+    },
+  });
+
+  const facts2 = buildContentFactSheet({
+    ...createInitialContext({
+      title: "Viking Bedding Set Quilt Comforter with Pillowcases - Pattern 02",
+      description: "Viking comforter bedding set with pillowcases",
+      niche: "bedding",
+      handle: "viking-bedding-set-2",
+      images: [],
+      variantLabel: "Pattern 02",
+    }),
+    productUnderstanding: {
+      physicalProductIdentity: "quilt bedding set",
+      typography: { visibleTexts: [], styleSummary: "" },
+      visualEntities: "Thor Mjolnir Skull Hammer with lightning",
+      sceneContext: "Bedroom",
+    },
+  });
+
+  const generator = new HeuristicContentGenerator();
+  const constraints = { maxSeoTitleLength: 70, maxSeoDescriptionLength: 160, maxHandleLength: 80, maxBullets: 5, preserveExistingHandle: true };
+
+  const draft1 = await generator.generate({
+    facts: facts1,
+    keywords: { primary: "viking bedding set", secondary: [], supportingKeywords: [], framingConcepts: [], targetedKeywords: [] },
+    constraints,
+  });
+
+  const draft2 = await generator.generate({
+    facts: facts2,
+    keywords: { primary: "viking bedding set", secondary: [], supportingKeywords: [], framingConcepts: [], targetedKeywords: [] },
+    constraints,
+  });
+
+  // Verify Product Titles are enriched and distinct
+  assert.match(draft1.productTitle, /Valhalla/i);
+  assert.match(draft1.productTitle, /Shield/i);
+  assert.match(draft2.productTitle, /Thor/i);
+  assert.match(draft2.productTitle, /Mjolnir/i);
+  assert.notEqual(draft1.productTitle, draft2.productTitle);
+
+  // Verify SEO Titles are vision-driven and distinct
+  assert.match(draft1.productSeoTitle, /Valhalla/i);
+  assert.match(draft2.productSeoTitle, /Thor/i);
+  assert.notEqual(draft1.productSeoTitle, draft2.productSeoTitle);
+  assert.ok(draft1.productSeoTitle.length <= 70);
+  assert.ok(draft2.productSeoTitle.length <= 70);
+});
+
+
 

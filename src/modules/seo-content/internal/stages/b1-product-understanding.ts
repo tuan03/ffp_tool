@@ -16,7 +16,8 @@ import type {
 } from "../product-understanding/product-image-analyzer";
 
 export interface B1ProductUnderstandingDependencies {
-  readonly imageAnalyzer: ProductImageAnalyzer;
+  readonly imageAnalyzer?: ProductImageAnalyzer;
+  readonly maxImages?: number;
 }
 
 /**
@@ -28,6 +29,7 @@ export interface B1ProductUnderstandingDependencies {
  */
 export function createDefaultProductImageAnalyzer(options?: {
   readonly onFallback?: (error: unknown) => void;
+  readonly maxImages?: number;
 }): ProductImageAnalyzer {
   const env = typeof process !== "undefined" && process.env ? process.env : undefined;
   const projectId = env?.GOOGLE_CLOUD_PROJECT;
@@ -51,6 +53,7 @@ export function createDefaultProductImageAnalyzer(options?: {
   const geminiAnalyzer = new GeminiProductImageAnalyzer({
     generator,
     model,
+    maxImages: options?.maxImages,
   });
 
   return new FallbackProductImageAnalyzer({
@@ -70,14 +73,20 @@ export function createDefaultProductImageAnalyzer(options?: {
 export function createB1ProductUnderstandingStage(
   dependencies?: B1ProductUnderstandingDependencies,
 ): SeoPipelineStage {
-  const imageAnalyzer = dependencies?.imageAnalyzer ?? createDefaultProductImageAnalyzer();
+  const imageAnalyzer =
+    dependencies?.imageAnalyzer ??
+    createDefaultProductImageAnalyzer({ maxImages: dependencies?.maxImages });
 
   return {
     name: "b1",
     async execute(context: SeoPipelineContext): Promise<SeoPipelineContext> {
       const source = context.source;
       const niche = context.effectiveNiche ?? source.niche;
-      const images = source.images ?? [];
+      const rawImages = source.images ?? [];
+      const images =
+        typeof dependencies?.maxImages === "number" && dependencies.maxImages > 0
+          ? rawImages.slice(0, dependencies.maxImages)
+          : rawImages;
 
       const textSignals = extractTextProductSignals({
         title: source.title ?? "",
@@ -93,6 +102,7 @@ export function createB1ProductUnderstandingStage(
             title: source.title ?? "",
             description: source.description ?? "",
             niche,
+            maxImages: dependencies?.maxImages,
           });
         } catch {
           // Do not promote source metadata into visual evidence when all image reads fail.

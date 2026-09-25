@@ -5,6 +5,7 @@ export interface ProductImageAnalyzerInput {
   readonly title: string;
   readonly description: string;
   readonly niche: string;
+  readonly maxImages?: number;
 }
 
 export interface ProductImageAnalysis {
