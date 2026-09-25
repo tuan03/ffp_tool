@@ -469,9 +469,10 @@ export function clearCrawlerSession(): void {
 }
 
 export function hydrateCrawlerSessionFromJob(hydrated: AmazonCrawlerHydratedJob): void {
-  const products = hydrated.output?.products && hydrated.output.products.length > 0
-    ? hydrated.output.products
-    : hydrated.products;
+  const outputProducts = hydrated.output?.products ?? [];
+  const products = hydrated.products.length >= outputProducts.length && hydrated.products.length > 0
+    ? hydrated.products
+    : outputProducts;
   const firstProduct = products[0] ?? null;
   const hasSelected = sessionState.selectedProductId
     ? products.some((product) => product.id === sessionState.selectedProductId)
@@ -483,7 +484,9 @@ export function hydrateCrawlerSessionFromJob(hydrated: AmazonCrawlerHydratedJob)
       ? hydrated.status
       : "completed";
 
-  const resolvedOutput: AmazonCrawlerOutput | null = hydrated.output ?? (products.length > 0 ? {
+  const resolvedOutput: AmazonCrawlerOutput | null = hydrated.output
+    ? { ...hydrated.output, products }
+    : (products.length > 0 ? {
     version: "1.0",
     jobId: hydrated.jobId,
     status: fallbackStatus,
