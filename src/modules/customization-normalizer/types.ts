@@ -59,6 +59,7 @@ export interface CustomizationPricing {
 export interface ProductCustomization {
   readonly hasCustomization?: boolean;
   readonly formUrl?: string | null;
+  readonly source?: Readonly<Record<string, string>>;
   optionGroups?: CustomizationOptionGroup[];
   textInputs?: readonly unknown[];
   imageInputs?: readonly unknown[];

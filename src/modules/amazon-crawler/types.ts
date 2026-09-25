@@ -290,6 +290,7 @@ export interface ProductDiagnostics {
 export interface AmazonCrawlerProduct {
   id: string;
   sourceKey?: string;
+  asin: string;
   parentAsin: string;
   canonicalUrl: string;
   sourceTitle: string;

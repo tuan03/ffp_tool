@@ -56,6 +56,22 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function normalizeAsin(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const normalized = value.trim().toUpperCase();
+  return /^[A-Z0-9]{10}$/.test(normalized) ? normalized : undefined;
+}
+
+function firstSourceVariantAsin(product: CrawlProduct): string | undefined {
+  for (const sourceVariant of product.sourceVariants ?? []) {
+    if (isRecord(sourceVariant)) {
+      const asin = normalizeAsin(sourceVariant.asin);
+      if (asin) return asin;
+    }
+  }
+  return undefined;
+}
+
 function formatPrice(value: unknown, defaultVal = "0.00"): string {
   if (value == null) return defaultVal;
   if (typeof value === "number") return Number.isFinite(value) ? value.toFixed(2) : defaultVal;
@@ -88,7 +104,11 @@ function formatOptionalPrice(value: unknown): string | undefined {
 
 export function fromCustomizationNormalizerProduct(
   product: CrawlProduct,
-  options?: { readonly vendor?: string; readonly productType?: string },
+  options?: {
+    readonly vendor?: string;
+    readonly productType?: string;
+    readonly amazonParentAsin?: string;
+  },
 ): ShopifySyncProductInput {
   const title = product.title || product.sourceTitle || "Custom Product";
   const descriptionHtml = typeof product.descriptionHtml === "string"
@@ -121,6 +141,12 @@ export function fromCustomizationNormalizerProduct(
 
   let customizerInput: ShopifyProductCustomizerInput | null = null;
   const rawCustomization = product.customization;
+  const amazonAsin = normalizeAsin(product.asin)
+    ?? normalizeAsin(rawCustomization?.source?.asin)
+    ?? firstSourceVariantAsin(product);
+  const amazonParentAsin = normalizeAsin(
+    options?.amazonParentAsin ?? product.parentAsin ?? product.asin,
+  );
 
   if (rawCustomization && typeof rawCustomization === "object") {
     tags.add("has-customizer");
@@ -190,6 +216,8 @@ export function fromCustomizationNormalizerProduct(
   return {
     id: product.id,
     sourceKey: typeof product.sourceKey === "string" ? product.sourceKey : product.id,
+    amazonAsin,
+    amazonParentAsin,
     title,
     descriptionHtml,
     handle: typeof product.handle === "string" ? product.handle : undefined,
@@ -208,7 +236,11 @@ export function fromCustomizationNormalizerProduct(
 
 export function fromCustomizationNormalizerBatch(
   batch: CustomizationNormalizerOutput,
-  options?: { readonly vendor?: string; readonly productType?: string },
+  options?: {
+    readonly vendor?: string;
+    readonly productType?: string;
+    readonly amazonParentAsin?: string;
+  },
 ): ShopifySyncBatchInput {
   return {
     jobId: batch.jobId,

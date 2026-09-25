@@ -77,6 +77,8 @@ export interface ShopifyProductCustomizerInput {
 export interface ShopifySyncProductInput {
   readonly id?: string;
   readonly sourceKey?: string;
+  readonly amazonAsin?: string;
+  readonly amazonParentAsin?: string;
   readonly title: string;
   readonly descriptionHtml: string;
   readonly handle?: string;
@@ -201,7 +203,7 @@ export interface SetMetafieldInput {
   readonly productId: string;
   readonly namespace: string;
   readonly key: string;
-  readonly type: "json";
+  readonly type: "json" | "single_line_text_field";
   readonly value: string;
 }
 

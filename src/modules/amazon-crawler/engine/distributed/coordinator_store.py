@@ -718,6 +718,9 @@ class CoordinatorStore:
                     ShopifyProductLink.store_id == effective_store,
                     ShopifyProductLink.source_key == item.source_key,
                 ))
+                task = session.get(CrawlTask, item.task_id)
+                if task is None:
+                    raise RuntimeError(f"Crawl task {item.task_id} is missing for product item {item.id}.")
                 claimed.append({
                     "id": item.id,
                     "jobId": item.job_id,
@@ -727,6 +730,7 @@ class CoordinatorStore:
                     "checksum": item.checksum,
                     "attempt": item.attempt_count,
                     "stage": "sync" if is_sync_claim else "prepare",
+                    "inputAsin": task.asin,
                     "product": item.normalized_payload if is_sync_claim else item.raw_payload,
                     "settings": job_settings,
                     "review": review if is_sync_claim else None,

@@ -1264,6 +1264,7 @@ class CoordinatorStoreTests(unittest.TestCase):
             {"jobId": job["id"], "products": [product], "errors": [], "warnings": []},
         )
         claim = self.store.claim_product_items(worker_id="worker-1", store_id="store-1", limit=1)[0]
+        self.assertEqual(claim["inputAsin"], "B0FR4MSS2H")
         self.store.cancel_job(str(job["id"]))
         with self.sessions.begin() as session:
             item = session.get(CrawlProductItem, claim["id"])

@@ -1731,7 +1731,7 @@ class AmazonCrawler:
             if not matrix["complete"]:
                 warnings.append(f"Variant matrix is incomplete (discovered {matrix['discoveredCount']} of {matrix['expectedCount']}, cap {matrix['safetyCap']}).")
             products.append({
-                "id": group_key, "parentAsin": family["parentAsin"],
+                "id": group_key, "asin": representative["asin"], "parentAsin": family["parentAsin"],
                 "canonicalUrl": f"https://www.amazon.com/dp/{representative['asin']}",
                 "sourceTitle": family["sourceTitle"], "title": title, "description": description,
                 "bulletPoints": deepcopy(bullet_points), "categories": deepcopy(categories),
