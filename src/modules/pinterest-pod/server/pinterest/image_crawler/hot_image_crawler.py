@@ -17,7 +17,7 @@ if __package__ in {None, ""}:
     from pinterest.image_crawler.vision_filter import ProductVisionFilter
     from pinterest.shared.cache import JsonCache
     from pinterest.shared.models import ImageCandidate, RankedImage, SearchResult
-    from pinterest.shared.product_policy import ProductPolicy, generate_product_policy
+    from pinterest.shared.product_policy import ProductPolicy, generate_product_policy, infer_product_policy
     from pinterest.shared.utils import configure_logging, dataclass_to_dict, env, html_page, utc_now_iso, write_csv, write_json
     from pinterest.trend_finder.semantic_analyzer import build_smart_queries
 else:
@@ -28,7 +28,7 @@ else:
     from .vision_filter import ProductVisionFilter
     from ..shared.cache import JsonCache
     from ..shared.models import ImageCandidate, RankedImage, SearchResult
-    from ..shared.product_policy import ProductPolicy, generate_product_policy
+    from ..shared.product_policy import ProductPolicy, generate_product_policy, infer_product_policy
     from ..shared.utils import configure_logging, dataclass_to_dict, env, html_page, utc_now_iso, write_csv, write_json
     from ..trend_finder.semantic_analyzer import build_smart_queries
 
@@ -306,13 +306,21 @@ def main() -> int:
     )
 
     package = context["package"]
-    product_policy = generate_product_policy(
-        niche=package.niche,
-        product_focus=args.product_focus,
-        model=args.vision_model,
-        backend=args.gemini_backend,
-        output_path=output_dir / "product_policy.json",
+    is_vision_disabled = (
+        args.vision_mode == "off"
+        or env("DISABLE_VISION_FILTER", "").lower() in {"1", "true", "yes"}
     )
+    if is_vision_disabled:
+        LOG.info("Vision AI filter is disabled: using inferred product policy without calling Gemini.")
+        product_policy = infer_product_policy(package.niche, args.product_focus)
+    else:
+        product_policy = generate_product_policy(
+            niche=package.niche,
+            product_focus=args.product_focus,
+            model=args.vision_model,
+            backend=args.gemini_backend,
+            output_path=output_dir / "product_policy.json",
+        )
     if args.crawl_purpose == "inspiration" and (product_policy.require_physical_product or product_policy.require_floor_textile):
         product_policy = ProductPolicy(
             policy_id=product_policy.policy_id,
@@ -351,14 +359,15 @@ def main() -> int:
     )
     LOG.info("Ranking candidates and applying direct-print classification...")
 
+    effective_top_images = len(candidates) if is_vision_disabled else max(1, args.top_images)
     hot_images, vision_rejected = rank_images(
         candidates=candidates,
         vision_results=vision_results,
-        top_images=max(1, args.top_images),
-        min_score=args.min_image_score,
-        accepted_roles=set(args.accepted_product_roles),
-        min_product_visibility=args.min_product_visibility,
-        min_trend_relevance=args.min_trend_relevance,
+        top_images=effective_top_images,
+        min_score=0.0 if is_vision_disabled else args.min_image_score,
+        accepted_roles=set(args.accepted_product_roles) if not is_vision_disabled else {"PRIMARY", "SECONDARY", "INCIDENTAL", "UNVERIFIED"},
+        min_product_visibility=0.0 if is_vision_disabled else args.min_product_visibility,
+        min_trend_relevance=0.0 if is_vision_disabled else args.min_trend_relevance,
         niche=package.niche,
         product_focus=args.product_focus,
         product_policy=product_policy,

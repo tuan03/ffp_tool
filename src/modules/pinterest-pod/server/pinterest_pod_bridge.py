@@ -1589,11 +1589,15 @@ def _run_local_pipeline_worker(job_id: str, req_body: dict[str, Any], base_url: 
     except (ValueError, TypeError):
         user_pool_size = 40
 
+    is_vision_disabled = os.getenv("DISABLE_VISION_FILTER", "1").lower() in {"1", "true", "yes"}
+    vision_mode = "off" if is_vision_disabled else str(req_body.get("vision_mode") or "auto")
+
     task5_top_images = user_pool_size
-    # Since Vision AI strictly rejects text, quotes, specs, and watermark noise (~40-50% rejection rate),
-    # we over-fetch raw downloads with a buffer multiplier (~1.8x to 2.0x) so the final accepted review pool
-    # achieves the user's requested target quantity.
-    task5_max_downloads = max(user_pool_size, min(240, int(user_pool_size * 2.0)))
+    # When Vision AI filter is disabled, keep 100% of crawled images without buffer over-fetching
+    if is_vision_disabled:
+        task5_max_downloads = user_pool_size
+    else:
+        task5_max_downloads = max(user_pool_size, min(240, int(user_pool_size * 2.0)))
     try:
         task5_max_images_per_query = int(req_body.get("task5_max_images_per_query") or req_body.get("max_images_per_query") or max(15, task5_max_downloads // 8))
     except (ValueError, TypeError):
@@ -1633,6 +1637,7 @@ def _run_local_pipeline_worker(job_id: str, req_body: dict[str, Any], base_url: 
         task5_max_downloads=task5_max_downloads,
         task5_top_images=task5_top_images,
         task5_max_images_per_query=task5_max_images_per_query,
+        task5_vision_mode=vision_mode,
         trend_interest=str(req_body.get("interest") or req_body.get("interests") or "").strip(),
         custom_queries=tuple(str(q).strip() for q in (req_body.get("custom_queries") or []) if str(q).strip()),
         selected_clusters=tuple(req_body.get("selected_clusters") or []),
@@ -1648,7 +1653,8 @@ def _run_local_pipeline_worker(job_id: str, req_body: dict[str, Any], base_url: 
                 logs.append(msg)
                 del logs[:-500]
 
-    log_progress(f"Bắt đầu pipeline trực tiếp (Stage: {stage}, Product: {product}, Niche: '{niche}')...")
+    vision_status_note = "ĐÃ TẮT AI LỌC - hiển thị 100% ảnh thô cào về" if is_vision_disabled else "Bật AI lọc"
+    log_progress(f"Bắt đầu pipeline trực tiếp (Stage: {stage}, Product: {product}, Niche: '{niche}', Vision: {vision_status_note})...")
 
     try:
         if cancel_event is not None and cancel_event.is_set():

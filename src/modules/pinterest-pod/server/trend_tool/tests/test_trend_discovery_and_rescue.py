@@ -194,6 +194,53 @@ class TestPinterestTrendDiscoveryAndRescue(unittest.TestCase):
         self.assertEqual(len(cfg.selected_clusters), 1)
         self.assertEqual(cfg.trend_interest, "womens_fashion")
 
+    def test_vision_filter_disabled_bypasses_ai_and_accepts_all_images(self):
+        from pinterest.image_crawler.vision_filter import ProductVisionFilter
+        from pinterest.image_crawler.ranker import rank_images
+        from pinterest.shared.models import ImageCandidate
+
+        os.environ["DISABLE_VISION_FILTER"] = "1"
+        try:
+            cand = ImageCandidate(
+                image_id="test_img_123",
+                query="vintage seamless pattern",
+                trend_id="trend_01",
+                trend="vintage",
+                image_url="https://i.pinimg.com/test.jpg",
+                pin_id="111",
+                pin_url="https://pinterest.com/pin/111",
+                local_path="",
+                width=1000,
+                height=1000,
+                dhash="0",
+                source="pinterest",
+            )
+            vfilter = ProductVisionFilter(niche="leather bag")
+            self.assertEqual(vfilter.mode, "off")
+            self.assertIsNone(vfilter.client)
+
+            results = vfilter.analyze([cand])
+            self.assertIn("test_img_123", results)
+            self.assertTrue(results["test_img_123"].accepted)
+            self.assertEqual(results["test_img_123"].product_role, "PRIMARY")
+
+            selected, rejected = rank_images(
+                candidates=[cand],
+                vision_results=results,
+                top_images=10,
+                min_score=20.0,
+                accepted_roles={"PRIMARY"},
+                min_product_visibility=75.0,
+                min_trend_relevance=70.0,
+                niche="leather bag",
+                crawl_purpose="inspiration",
+            )
+            self.assertEqual(len(selected), 1)
+            self.assertEqual(len(rejected), 0)
+            self.assertEqual(selected[0].image_id, "test_img_123")
+        finally:
+            os.environ.pop("DISABLE_VISION_FILTER", None)
+
 
 if __name__ == "__main__":
     unittest.main()

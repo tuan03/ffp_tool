@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from ..shared.models import ImageCandidate, RankedImage, VisionResult
 from ..shared.product_policy import ProductPolicy, infer_product_policy, normalized
+from ..shared.utils import env
 
 
 @dataclass(frozen=True)
@@ -204,6 +205,10 @@ def rank_images(
     ranked: list[RankedImage] = []
     rejected: list[dict] = []
     inspiration_mode = (crawl_purpose or "product").strip().lower().replace("-", "_") == "inspiration"
+    is_vision_disabled = (
+        env("DISABLE_VISION_FILTER", "").lower() in {"1", "true", "yes"}
+        or any(bool(v.reason and "Đã tắt AI" in v.reason) for v in vision_results.values() if v)
+    )
     for candidate in candidates:
         vision = vision_results.get(candidate.image_id)
         if vision is None:
@@ -227,14 +232,20 @@ def rank_images(
         else:
             classification = "3D Scene/Photo"
 
-        score = score_image(candidate, vision, is_direct_printable=is_direct_printable)
-        reject_reason = (
-            inspiration_reject_reason(candidate, vision, policy, is_direct_printable=is_direct_printable)
-            if inspiration_mode
-            else policy_reject_reason(candidate, vision, policy)
-        )
-        if not reject_reason and score < min_score:
-            reject_reason = "REJECT_LOW_SCORE"
+        if is_vision_disabled:
+            reject_reason = ""
+            is_direct_printable = True
+            classification = "Flat Pattern"
+            score = max(80.0, score_image(candidate, vision, is_direct_printable=True))
+        else:
+            score = score_image(candidate, vision, is_direct_printable=is_direct_printable)
+            reject_reason = (
+                inspiration_reject_reason(candidate, vision, policy, is_direct_printable=is_direct_printable)
+                if inspiration_mode
+                else policy_reject_reason(candidate, vision, policy)
+            )
+            if not reject_reason and score < min_score:
+                reject_reason = "REJECT_LOW_SCORE"
         if reject_reason:
             vision.policy_reject_reason = reject_reason
             rejected.append(
@@ -313,19 +324,20 @@ def rank_images(
 
     selected: list[RankedImage] = []
     trend_ranked_lists = list(ranked_by_trend.values())
+    effective_top_images = len(candidates) if is_vision_disabled else top_images
     max_t_len = max((len(lst) for lst in trend_ranked_lists), default=0)
     for i in range(max_t_len):
         for lst in trend_ranked_lists:
-            if i < len(lst) and len(selected) < top_images:
+            if i < len(lst) and len(selected) < effective_top_images:
                 selected.append(lst[i])
-        if len(selected) >= top_images:
+        if len(selected) >= effective_top_images:
             break
 
     # If round-robin didn't fill top_images, fill remaining from remaining ranked candidates
-    if len(selected) < top_images and len(selected) < len(ranked):
+    if len(selected) < effective_top_images and len(selected) < len(ranked):
         selected_ids = {item.image_id for item in selected}
         for item in ranked:
-            if item.image_id not in selected_ids and len(selected) < top_images:
+            if item.image_id not in selected_ids and len(selected) < effective_top_images:
                 selected.append(item)
 
     selected_ids = {item.image_id for item in selected}

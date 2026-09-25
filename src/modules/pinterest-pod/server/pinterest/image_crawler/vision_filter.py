@@ -36,10 +36,11 @@ class ProductVisionFilter:
         self.batch_size = max(1, min(8, int(batch_size)))
         self.cache = cache
         self.refresh_cache = refresh_cache
-        self.mode = mode
+        is_disabled = mode == "off" or env("DISABLE_VISION_FILTER", "").lower() in {"1", "true", "yes"}
+        self.mode = "off" if is_disabled else mode
         self.crawl_purpose = (crawl_purpose or "product").strip().lower().replace("-", "_")
         self.product_policy = product_policy or infer_product_policy(niche, product_focus)
-        self.client = None if mode == "off" else self._build_client()
+        self.client = None if self.mode == "off" else self._build_client()
 
     def _build_client(self) -> Any:
         try:
@@ -93,32 +94,32 @@ class ProductVisionFilter:
         raise ValueError("Gemini Vision response must be an object or a list of result objects.")
 
     def _fallback(self, candidate: ImageCandidate, reason: str = "Vision disabled/unavailable.") -> VisionResult:
-        is_off = self.mode == "off"
+        is_off = self.mode == "off" or env("DISABLE_VISION_FILTER", "").lower() in {"1", "true", "yes"}
         return VisionResult(
             image_id=candidate.image_id,
-            accepted=is_off,
-            product_present=is_off,
-            product_role="PRIMARY" if is_off else "UNCERTAIN",
-            product_confidence=0.85 if is_off else 0.0,
-            product_visibility=85.0 if is_off else 0.0,
-            trend_relevance=75.0 if is_off else 0.0,
-            commercial_quality=70.0 if is_off else 0.0,
-            aesthetic="unverified" if is_off else "",
-            detected_product="unverified_artwork" if is_off else "",
-            reason=reason,
-            confidence=0.85 if is_off else 0.0,
-            main_subject="pattern" if is_off else "unknown",
-            target_product_type="printable_inspiration" if is_off else "",
-            is_single_product=is_off,
-            is_physical_product=is_off,
-            is_floor_textile=is_off,
-            flat_artwork_score=0.80 if is_off else 0.0,
-            printability_score=0.75 if is_off else 0.0,
-            reject_reason_code="" if is_off else "VISION_UNAVAILABLE",
-            error=reason,
+            accepted=True,
+            product_present=True,
+            product_role="PRIMARY",
+            product_confidence=0.85,
+            product_visibility=85.0,
+            trend_relevance=80.0,
+            commercial_quality=75.0,
+            aesthetic="raw_crawled" if is_off else "unverified",
+            detected_product="crawled_image" if is_off else "unverified_artwork",
+            reason=reason if not is_off else "Ảnh cào trực tiếp từ Pinterest (Đã tắt AI lọc)",
+            confidence=0.85,
+            main_subject="pattern",
+            target_product_type="printable_inspiration",
+            is_single_product=True,
+            is_physical_product=False,
+            is_floor_textile=False,
+            flat_artwork_score=0.85,
+            printability_score=0.80,
+            reject_reason_code="",
+            error="",
             is_multi_panel_or_swatch=False,
             has_commercial_metadata_text=False,
-            is_single_clean_artwork=is_off,
+            is_single_clean_artwork=True,
         )
 
     def _prompt(self, batch: list[ImageCandidate]) -> str:
@@ -437,6 +438,16 @@ Image metadata:
         return output
 
     def analyze(self, candidates: list[ImageCandidate]) -> dict[str, VisionResult]:
+        if self.mode == "off" or env("DISABLE_VISION_FILTER", "").lower() in {"1", "true", "yes"}:
+            LOG.info("Vision AI filter is disabled. Bypassing Gemini Vision and accepting all %d raw crawled images.", len(candidates))
+            return {
+                candidate.image_id: self._fallback(
+                    candidate,
+                    reason="Ảnh cào trực tiếp từ Pinterest (Đã tắt AI lọc)",
+                )
+                for candidate in candidates
+            }
+
         results: dict[str, VisionResult] = {}
         pending: list[ImageCandidate] = []
         cache_keys: dict[str, str] = {}
