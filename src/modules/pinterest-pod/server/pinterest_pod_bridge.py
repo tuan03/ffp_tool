@@ -3852,9 +3852,23 @@ def discover_pinterest_trends(payload: dict[str, Any]) -> dict[str, Any]:
     product = raw_product if raw_product in {"rug", "blanket", "bag", "custom"} else infer_product_type_from_niche(niche)
 
     try:
-        from pinterest.trend_finder.semantic_analyzer import NON_PRINTABLE_GATE_REGEX
+        from pinterest.trend_finder.semantic_analyzer import NON_PRINTABLE_GATE_REGEX, PRODUCT_CONTAINER_PATTERN
     except Exception:
         NON_PRINTABLE_GATE_REGEX = re.compile(r"\b(recipes?|soup|cocktails?|nails?|hair|makeup|porch|patio|wallpapers?|quotes?|memes?)\b", re.I)
+        PRODUCT_CONTAINER_PATTERN = re.compile(
+            r"\b(?:"
+            r"leather\s+bag|tote\s+bag|shoulder\s+bag|crossbody\s+bag|messenger\s+bag|"
+            r"leather\s+purse|leather\s+backpack|satchel\s+bag|leather\s+satchel|"
+            r"bag|purse|tote|backpack|satchel|crossbody|handbag|clutch|briefcase|weekender|fringe\s+bag|"
+            r"area\s+rug|runner\s+rug|floor\s+rug|throw\s+rug|floor\s+carpet|accent\s+rug|"
+            r"rug|carpet|doormat|bath\s+mat|mat|"
+            r"throw\s+blanket|fleece\s+blanket|woven\s+blanket|quilted\s+blanket|"
+            r"blanket|throw|quilt|comforter|"
+            r"coffee\s+mug|ceramic\s+mug|travel\s+mug|coffee\s+cup|"
+            r"mug|cup|tumbler"
+            r")\b",
+            flags=re.IGNORECASE,
+        )
 
     # 1. Try Pinterest API if authenticated
     api_keywords: list[dict[str, Any]] = []
@@ -3941,6 +3955,9 @@ def discover_pinterest_trends(payload: dict[str, Any]) -> dict[str, Any]:
         is_rejected = bool(NON_PRINTABLE_GATE_REGEX.search(kw.lower()))
         item_obj = dict(item)
         item_obj["keyword"] = kw
+        kw_clean_theme = PRODUCT_CONTAINER_PATTERN.sub("", kw).strip()
+        kw_clean_theme = re.sub(r"\s+", " ", kw_clean_theme).strip()
+        clean_kw_for_query = kw_clean_theme if len(kw_clean_theme) >= 3 else kw
         if is_rejected:
             reason_text, reason_code = _classify_reject_reason(kw)
             item_obj["is_accepted"] = False
@@ -3949,11 +3966,18 @@ def discover_pinterest_trends(payload: dict[str, Any]) -> dict[str, Any]:
             rejected_keywords.append(item_obj)
         else:
             item_obj["is_accepted"] = True
-            item_obj["suggested_fused_query"] = f"{kw} seamless pattern vector"
+            item_obj["suggested_fused_query"] = f"{clean_kw_for_query} seamless pattern vector"
             accepted_keywords.append(item_obj)
         all_keywords.append(item_obj)
 
     # 4. Tier 2: Group accepted keywords into 3-5 theme clusters
+    # Decouple product canvas from visual art theme:
+    # If niche is 'leather bag', product='bag' (preset 4500x5400 px), but the search query must
+    # target 2D surface patterns and printable vector graphics, NOT physical bags!
+    art_theme_prefix = PRODUCT_CONTAINER_PATTERN.sub("", niche).strip()
+    art_theme_prefix = re.sub(r"\b(?:design|pattern|artwork|style|print)\b", "", art_theme_prefix, flags=re.I).strip()
+    prefix = f"{art_theme_prefix} " if len(art_theme_prefix) >= 3 else ""
+
     theme_definitions = [
         {
             "cluster_id": "cluster_vintage_heritage",
@@ -3964,9 +3988,9 @@ def discover_pinterest_trends(payload: dict[str, Any]) -> dict[str, Any]:
             "visual_style": "Tone màu ấm hoài niệm (nâu đất, đồng cổ, be), nét vẽ khắc gỗ, họa tiết đục lỗ dập chìm chuẩn xưởng",
             "sample_motifs": ["Hoa văn Damask cổ điển", "Họa tiết dập chìm Tây phương", "Chất liệu loang màu tự nhiên"],
             "fused_templates": [
-                f"{niche} vintage distressed seamless pattern vector",
-                f"{niche} heritage ornamental surface print design flat",
-                f"{niche} retro aesthetic print vector",
+                f"{prefix}vintage distressed ornamental seamless pattern vector".strip(),
+                f"{prefix}heritage floral surface print design flat".strip(),
+                f"{prefix}retro aesthetic vector print flat".strip(),
             ],
             "recommended": True,
         },
@@ -3979,9 +4003,9 @@ def discover_pinterest_trends(payload: dict[str, Any]) -> dict[str, Any]:
             "visual_style": "Nét vẽ mảnh Botanical illustration, màu xanh rêu, hoa phấn nhạt, nền phẳng tao nhã",
             "sample_motifs": ["Hoa dại ép khô", "Lá cành thảo mộc", "Họa tiết cỏ hoa liền mạch"],
             "fused_templates": [
-                f"{niche} botanical wildflowers seamless pattern vector",
-                f"{niche} cottagecore floral surface print design flat",
-                f"{niche} nature pressed flowers vector artwork print",
+                f"{prefix}botanical wildflowers seamless pattern vector".strip(),
+                f"{prefix}cottagecore floral surface print design flat".strip(),
+                f"{prefix}vintage pressed flowers vector artwork print".strip(),
             ],
             "recommended": True,
         },
@@ -3994,9 +4018,9 @@ def discover_pinterest_trends(payload: dict[str, Any]) -> dict[str, Any]:
             "visual_style": "Tương phản cao đen - cam đất - tím khói, họa tiết gothic chạm khắc sắc nét",
             "sample_motifs": ["Mạng nhện ren gothic", "Bí ngô nghệ thuật chạm khắc", "Biểu tượng hoàng gia cổ"],
             "fused_templates": [
-                f"{niche} dark gothic spiderweb seamless pattern vector",
-                f"{niche} halloween festive surface print design flat",
-                f"{niche} dark academia aesthetic pattern vector",
+                f"{prefix}dark gothic celestial seamless pattern vector".strip(),
+                f"{prefix}halloween spooky spiderweb surface print design flat".strip(),
+                f"{prefix}dark academia aesthetic pattern vector".strip(),
             ],
             "recommended": False,
         },
@@ -4009,9 +4033,9 @@ def discover_pinterest_trends(payload: dict[str, Any]) -> dict[str, Any]:
             "visual_style": "Đường nét khắc nổi, họa tiết hình học thổ cẩm, tua rua nghệ thuật, tone màu đất mộc",
             "sample_motifs": ["Hoa văn chạm khắc Viễn Tây", "Họa tiết Aztec/Mandala", "Nét vân thủ công"],
             "fused_templates": [
-                f"{niche} boho chic aztec seamless pattern vector",
-                f"{niche} western tooled surface print design flat",
-                f"{niche} bohemian folk art pattern vector print",
+                f"{prefix}boho chic aztec mandala seamless pattern vector".strip(),
+                f"{prefix}western tooled floral carving texture seamless pattern".strip(),
+                f"{prefix}bohemian folk art surface print design flat".strip(),
             ],
             "recommended": False,
         },
@@ -4024,9 +4048,9 @@ def discover_pinterest_trends(payload: dict[str, Any]) -> dict[str, Any]:
             "visual_style": "Đường nét dứt khoát, sóng lượn Bauhaus, tone màu trung tính Đan Mạch/Japandi",
             "sample_motifs": ["Đường lượn sóng tối giản", "Hình khối trừu tượng Bauhaus", "Vân sọc đan xen thanh lịch"],
             "fused_templates": [
-                f"{niche} minimalist geometric seamless pattern vector",
-                f"{niche} modern abstract surface print design flat",
-                f"{niche} japandi neutral pattern vector print",
+                f"{prefix}minimalist geometric bauhaus seamless pattern vector".strip(),
+                f"{prefix}modern abstract line art surface print design flat".strip(),
+                f"{prefix}japandi neutral wavy pattern vector print".strip(),
             ],
             "recommended": False,
         },
@@ -4047,7 +4071,8 @@ def discover_pinterest_trends(payload: dict[str, Any]) -> dict[str, Any]:
             growth_avg = round(sum(k.get("pct_growth_mom", 0.0) for k in cluster_kws) / len(cluster_kws), 1)
         else:
             # Fallback keyword representation
-            rep_kw = f"{t_def['match_words'].copy().pop()} {clean_niche}"
+            rep_core = art_theme_prefix or t_def['match_words'].copy().pop()
+            rep_kw = f"{rep_core} pattern"
             cluster_kws = [{
                 "keyword": rep_kw,
                 "rank": len(clusters) + 1,

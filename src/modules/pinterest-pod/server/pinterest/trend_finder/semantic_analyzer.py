@@ -102,22 +102,24 @@ def build_smart_queries(trend: str, niche: str = "") -> list[QuerySpec]:
         base = clean
 
     theme = extract_design_theme(trend, niche)
+    if not theme or theme.lower() in {"bag", "leather bag", "rug", "blanket", "custom", "product"}:
+        theme = base if base and base.lower() not in {"bag", "leather bag", "rug", "blanket"} else clean
 
     queries: list[QuerySpec] = []
-    # Priority 1: Pure natural user search query - directly matching Pinterest trending pins
-    queries.append(QuerySpec(query=clean, intent="trend_raw", priority=1))
+    # Priority 1: Direct Printable Seamless Pattern query (strictly without product container)
+    queries.append(QuerySpec(query=f"{theme} seamless pattern vector", intent="surface_pattern", priority=1))
 
-    # Priority 2: Aesthetic & styling reference query
-    queries.append(QuerySpec(query=f"{base} aesthetic", intent="trend_aesthetic", priority=2))
+    # Priority 2: Flat surface print design query
+    queries.append(QuerySpec(query=f"{theme} surface print design flat", intent="surface_pattern_design", priority=2))
 
-    # Priority 3: Direct Printable Seamless Pattern query (without product container to find 2D printable patterns)
-    queries.append(QuerySpec(query=f"{theme} seamless pattern", intent="surface_pattern", priority=3))
+    # Priority 3: Printable Vector & Graphic Artwork query
+    queries.append(QuerySpec(query=f"{theme} vector artwork print", intent="trend_artwork", priority=3))
 
-    # Priority 4: Printable Vector & Graphic Artwork query
-    queries.append(QuerySpec(query=f"{theme} vector artwork print", intent="trend_artwork", priority=4))
+    # Priority 4: Pattern & textile print query
+    queries.append(QuerySpec(query=f"{theme} pattern design flat", intent="pattern_design", priority=4))
 
-    # Priority 5: Pattern & surface print query
-    queries.append(QuerySpec(query=f"{theme} pattern design flat", intent="surface_pattern_design", priority=5))
+    # Priority 5: Aesthetic pattern vector query
+    queries.append(QuerySpec(query=f"{theme} aesthetic print vector", intent="trend_aesthetic", priority=5))
 
     return queries
 
