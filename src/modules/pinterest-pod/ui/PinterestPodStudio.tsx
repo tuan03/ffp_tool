@@ -554,12 +554,16 @@ export function PinterestPodStudio({ client: injectedClient }: PinterestPodStudi
   async function handleStartCrawlWithClusters(
     selectedClusters: readonly ThemeCluster[],
     restoredKws?: readonly TrendingKeywordItem[],
+    selectedCustomKws?: readonly TrendingKeywordItem[],
   ): Promise<void> {
     const clusterQueries = selectedClusters.flatMap((c) => c.fused_queries ?? c.sample_queries ?? []);
     const restoredQueries = (restoredKws ?? []).map(
       (k) => k.suggested_fused_query || `${k.keyword} seamless pattern vector`,
     );
-    const combinedQueries = Array.from(new Set([...clusterQueries, ...restoredQueries]));
+    const customKwQueries = (selectedCustomKws ?? []).map(
+      (k) => k.suggested_fused_query || `${k.keyword} seamless pattern vector`,
+    );
+    const combinedQueries = Array.from(new Set([...clusterQueries, ...restoredQueries, ...customKwQueries]));
     await handleStartCrawl(combinedQueries);
   }
 
@@ -882,7 +886,9 @@ export function PinterestPodStudio({ client: injectedClient }: PinterestPodStudi
               onToggleCluster={handleToggleCluster}
               onSelectAllClusters={handleSelectAllClusters}
               onDeselectAllClusters={handleDeselectAllClusters}
-              onStartCrawlWithClusters={(clusters) => void handleStartCrawlWithClusters(clusters)}
+              onStartCrawlWithClusters={(clusters, restoredKws, customKws) =>
+                void handleStartCrawlWithClusters(clusters, restoredKws, customKws)
+              }
               isCrawling={jobStatus === "running"}
               onClose={() => setTrendDiscoveryResult(null)}
             />

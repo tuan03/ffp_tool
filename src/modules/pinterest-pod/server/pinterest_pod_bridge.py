@@ -4184,6 +4184,66 @@ def discover_pinterest_trends(payload: dict[str, Any]) -> dict[str, Any]:
             ],
             "recommended": False,
         },
+        {
+            "cluster_id": "cluster_typography_quotes",
+            "theme_name": "Typography Slogans & Graphic Quotes",
+            "theme_name_vi": "Typography Chữ Nghệ thuật & Slogan Độc đáo",
+            "match_words": {"quote", "quotes", "slogan", "typography", "saying", "sayings", "text", "humor", "funny", "lettering", "words", "meme", "memes"},
+            "description": f"Dòng trích dẫn chữ nghệ thuật, slogan châm biếm hài hước và typography phong cách cho {niche}.",
+            "visual_style": "Nét chữ nghệ thuật độc bản, bố cục Typography cân đối, chuẩn in ấn áo thun, cốc sứ và túi vải",
+            "sample_motifs": ["Typography Retro Vintage", "Slogan hài hước ý nghĩa", "Chữ thư pháp nghệ thuật"],
+            "fused_templates": [
+                f"{prefix}typography graphic quote print vector".strip(),
+                f"{prefix}vintage aesthetic text quote design vector".strip(),
+                f"{prefix}sarcastic funny typography print flat".strip(),
+            ],
+            "recommended": True,
+        },
+        {
+            "cluster_id": "cluster_celestial_witchy",
+            "theme_name": "Celestial Magic & Mystical Tarot",
+            "theme_name_vi": "Huyền bí Trăng sao, Chiêm tinh & Lá bài Tarot",
+            "match_words": {"celestial", "tarot", "moon", "star", "stars", "zodiac", "astrology", "witchy", "mystic", "sun", "galaxy", "magic"},
+            "description": f"Chủ đề huyền học, chiêm tinh cung hoàng đạo, biểu tượng mặt trăng mặt trời và lá bài tarot cho {niche}.",
+            "visual_style": "Tone màu vàng gold trên nền xanh đêm/đen tuyền, đường nét khắc nét mảnh nghệ thuật",
+            "sample_motifs": ["Mặt trăng khuyết và sao", "Lá bài Tarot nghệ thuật", "Vòng tròn cung hoàng đạo"],
+            "fused_templates": [
+                f"{prefix}celestial moon and stars seamless pattern vector".strip(),
+                f"{prefix}mystical tarot card surface print design flat".strip(),
+                f"{prefix}witchy astrology aesthetic vector artwork print".strip(),
+            ],
+            "recommended": True,
+        },
+        {
+            "cluster_id": "cluster_retro_y2k_groovy",
+            "theme_name": "Retro 70s Groovy & Y2K Checkered",
+            "theme_name_vi": "Cổ điển 70s Groovy & Xu hướng Y2K Năng động",
+            "match_words": {"70s", "retro", "groovy", "y2k", "checkerboard", "checkered", "wavy", "psychedelic", "disco", "swirl"},
+            "description": f"Sức hút thập niên 70 rực rỡ với họa tiết caro checkerboard, đường cong lượn sóng wavy và phong cách Y2K sôi động cho {niche}.",
+            "visual_style": "Màu sắc tươi tắn (cam cháy, vàng mù tạt, xanh quả bơ), nét sóng uốn lượn tràn viền",
+            "sample_motifs": ["Họa tiết caro Checkered lượn sóng", "Hoa cúc Retro Groovy", "Đường vân xoắn ốc 70s"],
+            "fused_templates": [
+                f"{prefix}retro groovy 70s seamless pattern vector".strip(),
+                f"{prefix}y2k wavy checkerboard surface print design flat".strip(),
+                f"{prefix}vintage psychedelic floral pattern print".strip(),
+            ],
+            "recommended": False,
+        },
+        {
+            "cluster_id": "cluster_cottagecore_whimsical",
+            "theme_name": "Cottagecore & Forest Whimsical",
+            "theme_name_vi": "Đồng quê Cottagecore & Sinh vật Rừng Thần tiên",
+            "match_words": {"cottagecore", "mushroom", "mushrooms", "fairy", "forest", "frog", "whimsical", "woodland", "wildlife", "cat", "cats", "snail"},
+            "description": f"Không gian thơ mộng đồng quê với nấm rừng ma thuật, mèo đen bí ẩn và sinh vật thảo mộc đáng yêu cho {niche}.",
+            "visual_style": "Nét vẽ minh họa vẽ tay ấm áp, gam màu đất mộc mạc kết hợp xanh lá rừng",
+            "sample_motifs": ["Nấm đốm rừng ma thuật", "Mèo đen bên thảo mộc", "Cỏ cây đồng quê thơ mộng"],
+            "fused_templates": [
+                f"{prefix}whimsical forest mushroom seamless pattern vector".strip(),
+                f"{prefix}cottagecore woodland fairy surface print design flat".strip(),
+                f"{prefix}cute witchy cat botanical artwork vector print".strip(),
+            ],
+            "recommended": False,
+        },
     ]
 
     clusters: list[dict[str, Any]] = []
@@ -4199,36 +4259,53 @@ def discover_pinterest_trends(payload: dict[str, Any]) -> dict[str, Any]:
 
         if cluster_kws:
             growth_avg = round(sum(k.get("pct_growth_mom", 0.0) for k in cluster_kws) / len(cluster_kws), 1)
-        else:
-            # Fallback keyword representation
-            rep_core = art_theme_prefix or t_def['match_words'].copy().pop()
-            rep_kw = f"{rep_core} pattern"
-            cluster_kws = [{
-                "keyword": rep_kw,
-                "rank": len(clusters) + 1,
-                "pct_growth_mom": 80.0,
-                "pct_growth_wow": 28.0,
-                "pct_growth_yoy": 60.0,
-                "is_accepted": True,
-                "suggested_fused_query": f"{rep_kw} seamless pattern vector",
-            }]
-            growth_avg = 80.0
+            clusters.append({
+                "cluster_id": t_def["cluster_id"],
+                "theme_name": t_def["theme_name"],
+                "theme_name_vi": t_def["theme_name_vi"],
+                "description": t_def["description"],
+                "visual_style": t_def["visual_style"],
+                "recommended": t_def["recommended"] or len(cluster_kws) >= 5,
+                "sample_motifs": t_def["sample_motifs"],
+                "keywords": cluster_kws,
+                "fused_queries": t_def["fused_templates"],
+                "growth_mom_avg": growth_avg,
+                "keyword_count": len(cluster_kws),
+            })
 
-        clusters.append({
-            "cluster_id": t_def["cluster_id"],
-            "theme_name": t_def["theme_name"],
-            "theme_name_vi": t_def["theme_name_vi"],
-            "description": t_def["description"],
-            "visual_style": t_def["visual_style"],
-            "recommended": t_def["recommended"],
-            "sample_motifs": t_def["sample_motifs"],
-            "keywords": cluster_kws,
-            "fused_queries": t_def["fused_templates"],
-            "growth_mom_avg": growth_avg,
-        })
+    # Sort clusters by relevance: clusters with real matched keywords first, then by growth rate
+    clusters.sort(key=lambda c: (c.get("keyword_count", 0), c.get("growth_mom_avg", 0.0)), reverse=True)
 
-    # Keep top 3-5 clusters
-    clusters = clusters[:5]
+    # If fewer than 3 clusters had matches, add back top themes with synthesized keywords to guarantee choices
+    if len(clusters) < 3:
+        for t_def in theme_definitions:
+            if not any(c["cluster_id"] == t_def["cluster_id"] for c in clusters):
+                rep_core = art_theme_prefix or next(iter(t_def["match_words"]), "pattern")
+                rep_kw = f"{rep_core} pattern"
+                fallback_kws = [{
+                    "keyword": rep_kw,
+                    "rank": len(clusters) + 1,
+                    "pct_growth_mom": 80.0,
+                    "pct_growth_wow": 28.0,
+                    "pct_growth_yoy": 60.0,
+                    "is_accepted": True,
+                    "suggested_fused_query": f"{rep_kw} seamless pattern vector",
+                }]
+                clusters.append({
+                    "cluster_id": t_def["cluster_id"],
+                    "theme_name": t_def["theme_name"],
+                    "theme_name_vi": t_def["theme_name_vi"],
+                    "description": t_def["description"],
+                    "visual_style": t_def["visual_style"],
+                    "recommended": False,
+                    "sample_motifs": t_def["sample_motifs"],
+                    "keywords": fallback_kws,
+                    "fused_queries": t_def["fused_templates"],
+                    "growth_mom_avg": 80.0,
+                    "keyword_count": len(fallback_kws),
+                })
+                if len(clusters) >= 5:
+                    break
 
     return {
         "ok": True,
