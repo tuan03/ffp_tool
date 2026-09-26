@@ -1,3 +1,4 @@
+import { executeChunkedWrite } from "../chunked-write";
 import { GatewayError, mapUserErrorsToGatewayError, type MutationUserErrorItem } from "../errors";
 import type { ShopifyGraphqlClient } from "../shopify-graphql-client";
 import type { GatewayErrorCode, ProductImageSummary, ProductSummary, ProductVariantSummary, StoreConfig } from "../types";
@@ -231,15 +232,6 @@ const PIPELINE_PRODUCT_MEDIA_QUERY = `
           nodes { id }
         }
       }
-    }
-  }
-`;
-
-const PRODUCT_MEDIA_DELETE_MUTATION = `
-  mutation ProductMediaDelete($productId: ID!, $mediaIds: [ID!]!) {
-    productDeleteMedia(productId: $productId, mediaIds: $mediaIds) {
-      deletedMediaIds
-      userErrors { field message }
     }
   }
 `;
@@ -686,9 +678,25 @@ export async function executeProductsCreate(
   }
 
   const rawMediaList = extractMediaInputs(productInput.featuredImage, productInput.images, productInput.media);
+  if (rawMediaList.length > 250) {
+    throw new GatewayError(
+      `Product media items cannot exceed 250 per productCreate mutation (received ${rawMediaList.length})`,
+      "SHOPIFY_INVALID_INPUT",
+      400,
+    );
+  }
+
   const { mediaList, urlMap } = mode === "apply"
     ? await ensureMediaPubliclyAccessible(store, client, rawMediaList, { requestId })
     : { mediaList: rawMediaList, urlMap: new Map<string, string>() };
+
+  if (mediaList.length > 250) {
+    throw new GatewayError(
+      `Product media items cannot exceed 250 per productCreate mutation (received ${mediaList.length})`,
+      "SHOPIFY_INVALID_INPUT",
+      400,
+    );
+  }
 
   const createVariables: Record<string, unknown> = { product: input };
   if (mediaList.length > 0) {
@@ -766,26 +774,26 @@ export async function executeProductsCreate(
       };
     }
 
-    const mappedVariants: ProductVariantSummary[] = [];
-    const chunkSize = 250;
     try {
-      for (let i = 0; i < variantsInput.length; i += chunkSize) {
-        const chunk = variantsInput.slice(i, i + chunkSize);
-        const chunkRequestId = requestId ? `${requestId}:variants:${Math.floor(i / chunkSize)}` : undefined;
-        const extraRaw = await client.query<ProductVariantsBulkCreateResponse>(
-          store,
-          PRODUCT_VARIANTS_BULK_CREATE_MUTATION,
-          { productId: product.id, variants: chunk },
-          { isWrite: true, requestId: chunkRequestId },
-        );
+      const chunkedResult = await executeChunkedWrite<Record<string, unknown>, ProductVariantSummary[]>({
+        items: variantsInput,
+        chunkSize: 250,
+        operationName: "products.create:variants",
+        executeChunk: async (chunk, chunkIndex) => {
+          const chunkRequestId = requestId ? `${requestId}:variants:${chunkIndex}` : undefined;
+          const extraRaw = await client.query<ProductVariantsBulkCreateResponse>(
+            store,
+            PRODUCT_VARIANTS_BULK_CREATE_MUTATION,
+            { productId: product.id, variants: chunk },
+            { isWrite: true, requestId: chunkRequestId },
+          );
 
-        if (extraRaw.productVariantsBulkCreate.userErrors && extraRaw.productVariantsBulkCreate.userErrors.length > 0) {
-          throw mapUserErrorsToGatewayError(extraRaw.productVariantsBulkCreate.userErrors);
-        }
+          const createdNodes = extraRaw.productVariantsBulkCreate.productVariants ?? [];
+          const userErrors = extraRaw.productVariantsBulkCreate.userErrors ?? [];
 
-        if (extraRaw.productVariantsBulkCreate.productVariants) {
-          for (const node of extraRaw.productVariantsBulkCreate.productVariants) {
-            mappedVariants.push({
+          const chunkVariants: ProductVariantSummary[] = [];
+          for (const node of createdNodes) {
+            chunkVariants.push({
               id: node.id,
               productId: product.id,
               title: node.title,
@@ -796,9 +804,48 @@ export async function executeProductsCreate(
               inventoryQuantity: node.inventoryQuantity ?? undefined,
             });
           }
-        }
-      }
 
+          if (userErrors.length > 0) {
+            if (chunkVariants.length > 0) {
+              const createdVariantIds = chunkVariants.map((v) => v.id);
+              const errMsg = `Shopify productVariantsBulkCreate partially created ${chunkVariants.length} variant(s) but failed with user errors: ${userErrors.map((e) => e.message).join(", ")}`;
+              throw new GatewayError(
+                errMsg,
+                "SHOPIFY_PARTIAL_WRITE",
+                409,
+                undefined,
+                undefined,
+                userErrors.flatMap((e) => (e.field ? [...e.field] : [])),
+                false,
+                {
+                  createdProductId: product.id,
+                  createdVariantIds,
+                  completedChunks: chunkIndex,
+                  totalChunks: Math.ceil(variantsInput.length / 250),
+                  failedChunkIndex: chunkIndex,
+                  causeCode: "SHOPIFY_USER_ERROR",
+                  userErrors,
+                  reconciliationRequired: true,
+                },
+                true,
+              );
+            }
+            throw mapUserErrorsToGatewayError(userErrors);
+          }
+
+          return chunkVariants;
+        },
+        extractCompletedDetails: (completedResults) => {
+          const allCreated = completedResults.flat();
+          return {
+            createdProductId: product.id,
+            createdVariantIds: allCreated.map((v) => v.id),
+            completedCount: allCreated.length,
+          };
+        },
+      });
+
+      const mappedVariants = chunkedResult.chunkResults.flat();
       return {
         product: {
           ...product,
@@ -806,8 +853,44 @@ export async function executeProductsCreate(
         },
       };
     } catch (err: unknown) {
+      if (err instanceof GatewayError && err.code === "SHOPIFY_PARTIAL_WRITE") {
+        const details = {
+          createdProductId: product.id,
+          createdVariantIds: [],
+          completedChunks: 0,
+          totalChunks: Math.ceil(variantsInput.length / 250),
+          failedChunkIndex: 0,
+          causeCode: "SHOPIFY_USER_ERROR",
+          ...err.details,
+          reconciliationRequired: true,
+        };
+        throw new GatewayError(
+          err.message,
+          "SHOPIFY_PARTIAL_WRITE",
+          409,
+          err.retryAfterSeconds,
+          err.cause,
+          err.fields,
+          false,
+          details,
+          true,
+        );
+      }
+
+      const causeCode =
+        err instanceof GatewayError
+          ? err.code
+          : err && typeof err === "object" && "code" in err && typeof (err as { code: unknown }).code === "string"
+          ? (err as { code: string }).code
+          : "UNKNOWN_ERROR";
+      const isAmbiguous = causeCode === "SHOPIFY_UNKNOWN_WRITE_STATE";
       const errMsg = err instanceof Error ? err.message : String(err);
       const fields = err instanceof GatewayError ? err.fields : undefined;
+      const errDetails = err instanceof GatewayError && err.details ? err.details : {};
+      const createdVariantIds = Array.isArray(errDetails.createdVariantIds)
+        ? (errDetails.createdVariantIds as string[])
+        : [];
+
       throw new GatewayError(
         `Product created (${product.id}) but failed to create variants: ${errMsg}`,
         "SHOPIFY_PARTIAL_WRITE",
@@ -816,7 +899,16 @@ export async function executeProductsCreate(
         err,
         fields,
         false,
-        { createdProductId: product.id, reconciliationRequired: true },
+        {
+          createdProductId: product.id,
+          createdVariantIds,
+          completedChunks: 0,
+          totalChunks: Math.ceil(variantsInput.length / 250),
+          failedChunkIndex: 0,
+          causeCode,
+          ...(isAmbiguous ? { ambiguousChunkIndex: 0 } : {}),
+          reconciliationRequired: true,
+        },
         true,
       );
     }
@@ -1144,26 +1236,31 @@ export async function executeProductsUpdate(
   }
 
   if (shouldReplaceMedia && existingMediaIds.length > 0) {
-    interface ProductMediaDeleteResponse {
-      readonly productDeleteMedia: {
-        readonly deletedMediaIds?: readonly string[];
+    interface FileUpdateReferencesResponse {
+      readonly fileUpdate: {
+        readonly files?: readonly { readonly id: string }[];
         readonly userErrors: readonly MutationUserErrorItem[];
       };
     }
     for (let i = 0; i < existingMediaIds.length; i += 250) {
       const chunk = existingMediaIds.slice(i, i + 250);
       const chunkReqId = requestId
-        ? (existingMediaIds.length > 250 ? `${requestId}:media-delete:${Math.floor(i / 250)}` : `${requestId}:media-delete`)
+        ? (existingMediaIds.length > 250 ? `${requestId}:media-unlink:${Math.floor(i / 250)}` : `${requestId}:media-unlink`)
         : undefined;
       try {
-        const deleted = await client.query<ProductMediaDeleteResponse>(
+        const updateResult = await client.query<FileUpdateReferencesResponse>(
           store,
-          PRODUCT_MEDIA_DELETE_MUTATION,
-          { productId: id, mediaIds: chunk },
+          FILE_UPDATE_MUTATION,
+          {
+            files: chunk.map((mediaId) => ({
+              id: mediaId,
+              referencesToRemove: [id],
+            })),
+          },
           { isWrite: true, requestId: chunkReqId },
         );
-        if (deleted.productDeleteMedia.userErrors.length > 0) {
-          throw mapUserErrorsToGatewayError(deleted.productDeleteMedia.userErrors);
+        if (updateResult.fileUpdate?.userErrors && updateResult.fileUpdate.userErrors.length > 0) {
+          throw mapUserErrorsToGatewayError(updateResult.fileUpdate.userErrors);
         }
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error);

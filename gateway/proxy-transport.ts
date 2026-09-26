@@ -19,14 +19,39 @@ export function clearProxyAgentPool(): void {
   proxyAgentPool.clear();
 }
 
-export function evictProxyAgent(proxyUrl: string): void {
+export function evictProxyAgent(
+  proxy: string | { url: string; username?: string; password?: string },
+  username?: string,
+  password?: string,
+): void {
   try {
-    const parsed = new URL(proxyUrl);
+    const rawUrl = typeof proxy === "string" ? proxy : proxy.url;
+    if (!rawUrl) return;
+    const user = (typeof proxy === "object" ? proxy.username : username) ?? "";
+    const pass = (typeof proxy === "object" ? proxy.password : password) ?? "";
+
+    const parsed = new URL(rawUrl);
+    if (user) parsed.username = user;
+    if (pass) parsed.password = pass;
+
     const normalized = parsed.toString();
     const agent = proxyAgentPool.get(normalized);
     if (agent) {
       void agent.close().catch(() => {});
       proxyAgentPool.delete(normalized);
+    } else {
+      // Evict any pool entry whose host and pathname match
+      for (const [key, pooledAgent] of proxyAgentPool.entries()) {
+        try {
+          const pooledParsed = new URL(key);
+          if (pooledParsed.host === parsed.host && pooledParsed.pathname === parsed.pathname) {
+            void pooledAgent.close().catch(() => {});
+            proxyAgentPool.delete(key);
+          }
+        } catch {
+          // ignore
+        }
+      }
     }
   } catch {
     // Ignore invalid proxy url during eviction

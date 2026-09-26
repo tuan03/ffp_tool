@@ -37,6 +37,26 @@ const PRODUCTS_LIST_QUERY = `
             width
             height
           }
+          media(first: 10) {
+            pageInfo {
+              hasNextPage
+              endCursor
+            }
+            nodes {
+              id
+              alt
+              mediaContentType
+              ... on MediaImage {
+                id
+                image {
+                  url
+                  altText
+                  width
+                  height
+                }
+              }
+            }
+          }
           seo {
             title
             description
@@ -230,7 +250,7 @@ export function mapProductNode(node: RawProductNode): ProductSummary {
         );
       })
       .map((m) => ({
-        id: m.id,
+        id: m.id.startsWith("gid://shopify/MediaImage/") ? m.id : `gid://shopify/MediaImage/${m.id.replace(/^gid:\/\/shopify\/\w+\//, "")}`,
         url: m.image.url.trim(),
         altText: typeof m.alt === "string" ? m.alt : (m.image.altText ?? undefined),
         width: typeof m.image.width === "number" ? m.image.width : undefined,
@@ -246,7 +266,7 @@ export function mapProductNode(node: RawProductNode): ProductSummary {
   }
 
   if (featuredImage && images && images.length > 0) {
-    const matchedMedia = images.find((img) => img.url === featuredImage.url) ?? images[0];
+    const matchedMedia = images.find((img) => img.url === featuredImage.url);
     if (matchedMedia?.id) {
       (featuredImage as { id?: string }).id = matchedMedia.id;
     }

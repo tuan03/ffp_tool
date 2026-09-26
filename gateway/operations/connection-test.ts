@@ -22,9 +22,16 @@ interface ConnectionTestRawResponse {
 export async function executeConnectionTest(
   store: StoreConfig,
   client: ShopifyGraphqlClient,
-  _payload: unknown,
+  payload?: unknown,
 ): Promise<ConnectionTestData> {
-  const data = await client.query<ConnectionTestRawResponse>(store, CONNECTION_TEST_QUERY);
+  const p = payload && typeof payload === "object" ? (payload as Record<string, unknown>) : undefined;
+  const timeoutMs = typeof p?.timeoutMs === "number" && p.timeoutMs > 0 ? p.timeoutMs : undefined;
+  const data = await client.query<ConnectionTestRawResponse>(
+    store,
+    CONNECTION_TEST_QUERY,
+    undefined,
+    timeoutMs !== undefined ? { timeoutMs } : undefined,
+  );
   return {
     isConnected: true,
     connected: true,

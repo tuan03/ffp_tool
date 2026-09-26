@@ -381,7 +381,7 @@ export class StoreControlPlane {
     }
 
     if (existing.proxy?.url && existing.proxy.url !== candidateConfig.proxy?.url) {
-      evictProxyAgent(existing.proxy.url);
+      evictProxyAgent(existing.proxy);
     }
 
     await this.persistStoreToConfigFile(candidateConfig);
@@ -410,7 +410,7 @@ export class StoreControlPlane {
 
     const existing = await this.storeRegistry.getStore(trimmedId);
     if (existing?.proxy?.url) {
-      evictProxyAgent(existing.proxy.url);
+      evictProxyAgent(existing.proxy);
     }
 
     const exists = await this.storeRegistry.hasStore(trimmedId);

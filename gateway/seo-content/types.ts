@@ -34,8 +34,10 @@ export interface SeoContentResult {
   readonly seoOutputs?: readonly unknown[];
 }
 
+import type { SeoContentInput as CoreSeoContentInput, SeoContentOutput } from "../../src/modules/seo-content";
+
 export interface GatewaySeoContentOptions {
-  readonly runner?: (input: any) => Promise<any>;
+  readonly runner?: (input: CoreSeoContentInput) => Promise<SeoContentOutput>;
 }
 
 export type SeoContentRunner = (
