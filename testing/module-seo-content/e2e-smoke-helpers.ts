@@ -75,10 +75,10 @@ function parseImages(input: Record<string, unknown>, repositoryRoot: string): Se
   });
 }
 
-/** Converts a local, human-editable smoke fixture into the public SEO input contract. */
-export function parseSmokeInput(rawInput: unknown, repositoryRoot: string): SeoContentInput {
+/** Converts a single smoke fixture item into the public SEO input contract. */
+export function parseSingleSmokeInput(rawInput: unknown, repositoryRoot: string, itemPrefix = ""): SeoContentInput {
   if (!isRecord(rawInput)) {
-    throw new Error("Smoke input must be a JSON object");
+    throw new Error(`${itemPrefix}Smoke input must be a JSON object`.trim());
   }
 
   const siteDomain =
@@ -94,6 +94,42 @@ export function parseSmokeInput(rawInput: unknown, repositoryRoot: string): SeoC
     images: parseImages(rawInput, repositoryRoot),
     ...(siteDomain ? { siteDomain } : {}),
   };
+}
+
+/** Parses single or multiple products from a smoke fixture. */
+export function parseSmokeInputs(rawInput: unknown, repositoryRoot: string): readonly SeoContentInput[] {
+  if (Array.isArray(rawInput)) {
+    if (rawInput.length === 0) {
+      throw new Error("Smoke input array must contain at least one product");
+    }
+    return rawInput.map((item, index) =>
+      parseSingleSmokeInput(item, repositoryRoot, `Product #${index + 1}: `),
+    );
+  }
+
+  if (isRecord(rawInput)) {
+    if (Array.isArray(rawInput.items)) {
+      if (rawInput.items.length === 0) {
+        throw new Error("Smoke input items array must contain at least one product");
+      }
+      return rawInput.items.map((item, index) =>
+        parseSingleSmokeInput(item, repositoryRoot, `Product #${index + 1}: `),
+      );
+    }
+    return [parseSingleSmokeInput(rawInput, repositoryRoot)];
+  }
+
+  throw new Error("Smoke input must be a JSON object or array of products");
+}
+
+/** Converts a local, human-editable smoke fixture into the public SEO input contract (backward-compatible). */
+export function parseSmokeInput(rawInput: unknown, repositoryRoot: string): SeoContentInput {
+  const inputs = parseSmokeInputs(rawInput, repositoryRoot);
+  const first = inputs[0];
+  if (!first) {
+    throw new Error("No products found in smoke input");
+  }
+  return first;
 }
 
 /** Removes binary image data before report JSON is persisted. */

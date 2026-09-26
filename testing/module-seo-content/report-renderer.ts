@@ -6,6 +6,20 @@ export interface StageSnapshot {
   readonly summary: Record<string, unknown>;
 }
 
+export interface SmokeProductItemSummary {
+  readonly productIndex: number;
+  readonly input: {
+    readonly title: string;
+    readonly niche: string;
+    readonly siteDomain?: string;
+    readonly imageCount: number;
+  };
+  readonly durationMs: number;
+  readonly stageTraces: readonly StageSnapshot[];
+  readonly output?: SerializedSeoOutput;
+  readonly error?: string;
+}
+
 export interface SmokeRunSummary {
   readonly startedAt: string;
   readonly completedAt: string;
@@ -23,6 +37,8 @@ export interface SmokeRunSummary {
   readonly stageTraces: readonly StageSnapshot[];
   readonly output?: SerializedSeoOutput;
   readonly error?: string;
+  readonly totalProducts?: number;
+  readonly items?: readonly SmokeProductItemSummary[];
 }
 
 interface ContentResult {
@@ -352,17 +368,48 @@ function renderDelivery(summary: SmokeRunSummary): string {
   </section>`;
 }
 
+function renderSingleProductContent(
+  productSummary: {
+    readonly input: SmokeRunSummary["input"];
+    readonly stageTraces: readonly StageSnapshot[];
+    readonly output?: SerializedSeoOutput;
+    readonly error?: string;
+  },
+  artifactUrls: ReadonlyMap<string, string>,
+): string {
+  const activeStages = new Set(productSummary.stageTraces.map((trace) => trace.stageName));
+  const effectiveNiche =
+    [...productSummary.stageTraces].reverse().find((trace) => trace.effectiveNiche)?.effectiveNiche ??
+    productSummary.input.niche;
+
+  return `
+    <section class="overview" aria-label="Run overview">
+      <article class="overview-card primary"><span>Effective niche</span><strong>${escapeHtml(effectiveNiche)}</strong></article>
+      <article class="overview-card"><span>Manual fallback niche</span><strong>${escapeHtml(productSummary.input.niche)}</strong></article>
+      <article class="overview-card"><span>Storefront domain</span><strong>${escapeHtml(productSummary.input.siteDomain ?? "Not supplied")}</strong></article>
+      <article class="overview-card"><span>Images</span><strong>${productSummary.input.imageCount} supplied · ${productSummary.output?.images.length ?? 0} WebP</strong></article>
+    </section>
+    <nav class="timeline" aria-label="Pipeline stages">${(["b1", "b2", "b3", "b4", "b5", "b6"] as const)
+      .map((stage, index) => `<span class="${activeStages.has(stage) ? "active" : ""}">${stage.toUpperCase()}</span>${index < 5 ? "<i></i>" : ""}`)
+      .join("")}</nav>
+    ${productSummary.error ? `<aside class="error"><strong>Run stopped early</strong>${escapeHtml(productSummary.error)}</aside>` : ""}
+    ${renderStageCards(productSummary.stageTraces, artifactUrls)}
+    ${renderDelivery({ output: productSummary.output } as unknown as SmokeRunSummary)}
+  `;
+}
+
 export function renderSmokeReport(summary: SmokeRunSummary, artifactUrls: ReadonlyMap<string, string>): string {
   const isFailed = Boolean(summary.error);
   const status = isFailed ? "Run needs attention" : "B1 → B6 completed";
-  const activeStages = new Set(summary.stageTraces.map((trace) => trace.stageName));
-  const effectiveNiche = [...summary.stageTraces].reverse().find((trace) => trace.effectiveNiche)?.effectiveNiche ?? summary.input.niche;
+  const isMultiProduct = Array.isArray(summary.items) && summary.items.length > 1;
+  const items = summary.items ?? [];
+
   return `<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>SEO Content B1–B6 Smoke Report</title>
+  <title>SEO Content B1–B6 Smoke Report${isMultiProduct ? ` (${items.length} Products)` : ""}</title>
   <style>
     :root { font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #e8eefc; background: #0b1020; }
     * { box-sizing: border-box; } body { margin: 0; min-width: 320px; background: radial-gradient(circle at 14% -10%, #273d81 0, transparent 30rem), radial-gradient(circle at 90% 0, #1a604e 0, transparent 28rem), #0b1020; }
@@ -376,24 +423,72 @@ export function renderSmokeReport(summary: SmokeRunSummary, artifactUrls: Readon
     .content-layout { display: grid; grid-template-columns: minmax(200px, .7fr) minmax(0, 1.3fr); gap: 14px; }.content-hero { display: flex; flex-direction: column; justify-content: center; gap: 9px; min-height: 175px; padding: 19px; border: 1px solid #704354; border-radius: 14px; background: linear-gradient(145deg, #3d2032, #20192d); }.content-hero strong { font-size: 1.25rem; overflow-wrap: anywhere; }.handle { color: #f3bdd0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .76rem; }.seo-preview { padding: 19px; border: 1px solid #37548c; border-radius: 14px; background: linear-gradient(145deg, #102646, #121e34); }.seo-preview h3 { margin-top: 7px; color: #a6c9ff; font-size: 1.12rem; }.preview-url { display: block; margin-top: 7px; color: #83c894; font-size: .77rem; }.seo-preview p { margin-top: 8px; color: #d6e1f8; line-height: 1.45; font-size: .87rem; }.seo-metrics { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }.seo-metrics > div > span { display: block; margin-bottom: 7px; color: #9eb0d1; font-size: .78rem; }.length-meter { position: relative; height: 18px; border-radius: 100px; overflow: hidden; background: #21314e; }.length-meter > span { display: block; height: 100%; background: linear-gradient(90deg, #5262c9, #5dcdba); }.length-meter.low > span { background: #596a8a; }.length-meter.over > span { background: #e2617c; }.length-meter small { position: absolute; inset: 0 7px 0 auto; display: flex; align-items: center; color: #f6f8ff; font-size: .66rem; font-weight: 800; text-shadow: 0 1px 2px #000; }.content-layout > .field-group, .content-layout > .description-preview { grid-column: 1 / -1; margin-top: 0; }.safe-evidence { grid-column: 1 / -1; margin: 0; border-color: #337968; background: linear-gradient(145deg, #112d28, #101b32); }.safe-evidence p { margin-top: 7px; color: #bde6d5; font-size: .8rem; line-height: 1.45; }.safe-evidence-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 12px; }.safe-evidence .metric { min-height: 0; background: rgba(8, 31, 28, .68); border-color: #2f6258; }.description-preview { background: #0b1528; }.rich-text { color: #e7efff; line-height: 1.65; font-size: .92rem; }.rich-text p:first-child { margin-top: 0; }.rich-text p { margin: 12px 0; }.rich-text ul, .rich-text ol { padding-left: 22px; }.rich-text li { margin: 5px 0; }.runtime-note { margin-top: 14px; padding: 10px 12px; border-radius: 9px; background: #15233d; color: #b8cbea; font-size: .8rem; }.asset-gallery { margin-top: 15px; }.asset-row { display: grid; grid-template-columns: 78px minmax(0, 1fr); gap: 12px; padding: 11px 0; border-top: 1px solid #2b4265; }.asset-row:first-of-type { border-top: 0; }.asset-preview { width: 78px; height: 78px; overflow: hidden; border: 1px solid #365c7c; border-radius: 10px; background: #eaf1fc; }.asset-preview img { width: 100%; height: 100%; display: block; object-fit: contain; }.asset-placeholder { display: grid; width: 100%; height: 100%; place-items: center; color: #38566e; font-size: .73rem; font-weight: 900; }.asset-copy { min-width: 0; }.asset-row strong { display: block; font-size: .84rem; overflow-wrap: anywhere; }.asset-row p, .asset-row small { display: block; margin-top: 6px; color: #b6c9e6; font-size: .78rem; }.asset-row small { color: #e7b8c2; }.conversion-state { margin-top: 6px; background: #173e37; color: #baf3db; border: 1px solid #337568; }.conversion-state.fallback { background: #4a3518; color: #ffe1a3; border-color: #856124; }
     .delivery-card { padding: 22px; border-color: #345d82; background: linear-gradient(145deg, #10243a, #13213a 45%, #14203a); }.delivery-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }.delivery-header h2 { margin-top: 5px; font-size: 1.28rem; }.delivery-count { padding: 8px 11px; border: 1px solid #42688b; border-radius: 100px; color: #c7e8ff; background: #102b46; font-size: .76rem; white-space: nowrap; }.final-content { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 17px 0; }.final-content > div { padding: 12px; border: 1px solid #2a4b6e; border-radius: 11px; background: rgba(8, 21, 39, .58); }.final-content strong { display: block; margin-top: 6px; font-size: .92rem; overflow-wrap: anywhere; }.gallery { display: grid; grid-template-columns: repeat(auto-fit, minmax(275px, 1fr)); gap: 12px; }.image-card { display: grid; grid-template-columns: 112px 1fr; gap: 13px; padding: 11px; border: 1px solid #2e506e; border-radius: 13px; background: #0b172a; }.image-preview { position: relative; width: 112px; height: 112px; overflow: hidden; border-radius: 9px; background: #e9f0f9; }.image-preview img { width: 100%; height: 100%; object-fit: contain; display: block; }.image-preview > span { position: absolute; top: 6px; left: 6px; display: flex; align-items: center; justify-content: center; min-width: 22px; height: 22px; padding: 0 5px; border-radius: 7px; background: #195e9e; color: white; font-size: .7rem; font-weight: 850; }.image-placeholder { display: grid; place-items: center; width: 100%; height: 100%; color: #31516e; font-weight: 900; }.image-copy { min-width: 0; display: flex; flex-direction: column; justify-content: center; gap: 9px; }.image-copy strong { font-size: .83rem; overflow-wrap: anywhere; }.image-copy p { color: #c1d2ef; font-size: .82rem; line-height: 1.35; }.empty-stage { padding: 20px; color: #aab9d3; }
     .error { margin-top: 16px; padding: 15px; border: 1px solid #8c4655; border-radius: 13px; background: #3b1f2a; color: #ffd8df; line-height: 1.45; }.error strong { display: block; margin-bottom: 5px; color: #fff; }
+    .product-tabs { display: flex; gap: 8px; margin: 22px 0 26px; overflow-x: auto; padding-bottom: 4px; }
+    .product-tab { display: inline-flex; align-items: center; gap: 10px; padding: 11px 18px; border: 1px solid #354a70; border-radius: 12px; background: #13223c; color: #a9beea; font-size: 0.85rem; font-weight: 600; cursor: pointer; transition: all 0.2s ease; text-align: left; }
+    .product-tab:hover { background: #1a2e52; border-color: #5375ad; color: #fff; }
+    .product-tab.active { background: linear-gradient(135deg, #1f4cb8, #183578); border-color: #5f8eff; color: #fff; box-shadow: 0 4px 16px rgba(31, 76, 184, 0.4); }
+    .product-tab span { display: inline-flex; align-items: center; justify-content: center; min-width: 22px; height: 22px; border-radius: 6px; background: rgba(0,0,0,0.3); font-size: 0.72rem; }
+    .product-panel-header { display: flex; align-items: center; justify-content: space-between; margin: 24px 0 12px; padding-bottom: 8px; border-bottom: 1px solid #233554; }
+    .product-panel-header h2 { font-size: 1.3rem; color: #72a4fe; }
     @media (max-width: 760px) { main { width: min(100% - 22px, 1180px); padding-top: 30px; }.overview, .insight-grid, .insight-grid.compact, .content-layout, .seo-metrics, .safe-evidence, .context-layout, .conflict-grid, .final-content { grid-template-columns: 1fr 1fr; }.content-hero, .seo-preview, .content-layout > .field-group, .content-layout > .description-preview, .safe-evidence { grid-column: 1 / -1; }.safe-evidence-grid { grid-template-columns: 1fr; }.query-list, .reason-list { grid-template-columns: 1fr; }.niche-pill { display: none; } }
     @media (max-width: 480px) { .overview, .insight-grid, .insight-grid.compact, .seo-metrics, .conflict-grid, .final-content { grid-template-columns: 1fr; }.stage-header, .delivery-header { align-items: flex-start; }.delivery-header { flex-direction: column; }.stage-layout, .stage-header, .delivery-card { padding: 16px; }.image-card { grid-template-columns: 88px 1fr; }.image-preview { width: 88px; height: 88px; } }
   </style>
 </head>
 <body>
   <main>
-    <header class="hero"><span class="eyebrow">Manual smoke test · ${escapeHtml(summary.startedAt)}</span><h1>SEO Content pipeline, made readable.</h1><p>Visual trace of the B1 → B6 workflow for <strong>${escapeHtml(summary.input.title)}</strong>.</p><span class="status ${isFailed ? "failed" : ""}">${status} · ${(summary.durationMs / 1000).toFixed(1)}s</span></header>
-    <section class="overview" aria-label="Run overview">
-      <article class="overview-card primary"><span>Effective niche</span><strong>${escapeHtml(effectiveNiche)}</strong></article>
-      <article class="overview-card"><span>Manual fallback niche</span><strong>${escapeHtml(summary.input.niche)}</strong></article>
-      <article class="overview-card"><span>Storefront domain</span><strong>${escapeHtml(summary.input.siteDomain ?? "Not supplied")}</strong></article>
-      <article class="overview-card"><span>Images</span><strong>${summary.input.imageCount} supplied · ${summary.output?.images.length ?? 0} WebP</strong></article>
-    </section>
+    <header class="hero">
+      <span class="eyebrow">Manual smoke test · ${escapeHtml(summary.startedAt)}</span>
+      <h1>SEO Content pipeline, made readable.</h1>
+      <p>${isMultiProduct ? `Visual trace of the B1 → B6 workflow for <strong>${items.length} products</strong>.` : `Visual trace of the B1 → B6 workflow for <strong>${escapeHtml(summary.input.title)}</strong>.`}</p>
+      <span class="status ${isFailed ? "failed" : ""}">${status} · ${(summary.durationMs / 1000).toFixed(1)}s</span>
+    </header>
+
     <p class="runtime-line">Runtime: <strong>${escapeHtml(summary.environment.googleCloudProject ?? "Gemini project not configured")}</strong>${summary.environment.searchProvider ? ` · Search: <strong>${escapeHtml(summary.environment.searchProvider)}</strong>` : ""}</p>
-    <nav class="timeline" aria-label="Pipeline stages">${(["b1", "b2", "b3", "b4", "b5", "b6"] as const).map((stage, index) => `<span class="${activeStages.has(stage) ? "active" : ""}">${stage.toUpperCase()}</span>${index < 5 ? "<i></i>" : ""}`).join("")}</nav>
-    ${summary.error ? `<aside class="error"><strong>Run stopped early</strong>${escapeHtml(summary.error)}</aside>` : ""}
-    ${renderStageCards(summary.stageTraces, artifactUrls)}
-    ${renderDelivery(summary)}
+
+    ${
+      isMultiProduct
+        ? `
+    <nav class="product-tabs" aria-label="Product selector">
+      ${items
+        .map(
+          (item, idx) => `
+        <button type="button" class="product-tab ${idx === 0 ? "active" : ""}" onclick="selectProduct(${idx})">
+          <span>#${idx + 1}</span>
+          <strong>${escapeHtml(truncate(item.input.title, 42))}</strong>
+        </button>
+      `,
+        )
+        .join("")}
+    </nav>
+
+    ${items
+      .map(
+        (item, idx) => `
+      <div id="product-panel-${idx}" class="product-panel" style="display: ${idx === 0 ? "block" : "none"};">
+        <div class="product-panel-header">
+          <h2>Product #${idx + 1}: ${escapeHtml(item.input.title)}</h2>
+          <span class="status ${item.error ? "failed" : ""}">${item.error ? "Failed" : "Success"} · ${(item.durationMs / 1000).toFixed(1)}s</span>
+        </div>
+        ${renderSingleProductContent(item, artifactUrls)}
+      </div>
+    `,
+      )
+      .join("")}
+
+    <script>
+      function selectProduct(index) {
+        document.querySelectorAll('.product-panel').forEach(function(el, i) {
+          el.style.display = i === index ? 'block' : 'none';
+        });
+        document.querySelectorAll('.product-tab').forEach(function(btn, i) {
+          if (i === index) btn.classList.add('active');
+          else btn.classList.remove('active');
+        });
+      }
+    </script>
+    `
+        : renderSingleProductContent(summary, artifactUrls)
+    }
   </main>
 </body>
 </html>`;

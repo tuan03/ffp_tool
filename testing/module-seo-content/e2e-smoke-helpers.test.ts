@@ -5,7 +5,9 @@ import { pathToFileURL } from "node:url";
 
 import {
   createTracingStages,
+  parseSingleSmokeInput,
   parseSmokeInput,
+  parseSmokeInputs,
   serializeSeoOutput,
 } from "./e2e-smoke-helpers";
 import { createInitialContext } from "../../src/modules/seo-content/internal/pipeline-context";
@@ -158,4 +160,64 @@ test("loads default stages only after server environment initialization", async 
   });
 
   assert.equal(runtime.stages, expectedStages);
+});
+
+test("parses an array of multiple products via parseSmokeInputs", () => {
+  const inputs = parseSmokeInputs(
+    [
+      {
+        title: "Product One",
+        description: "First description",
+        niche: "rug",
+        handle: "product-one",
+        images: [{ url: "https://example.com/1.webp" }],
+      },
+      {
+        title: "Product Two",
+        description: "Second description",
+        niche: "blanket",
+        handle: "product-two",
+        siteDomain: "jeminise.com",
+        images: [{ url: "https://example.com/2.webp", alt: "Alt 2" }],
+      },
+    ],
+    REPOSITORY_ROOT,
+  );
+
+  assert.equal(inputs.length, 2);
+  assert.equal(inputs[0]?.title, "Product One");
+  assert.equal(inputs[1]?.title, "Product Two");
+  assert.equal(inputs[1]?.siteDomain, "jeminise.com");
+  assert.equal(inputs[1]?.images[0]?.alt, "Alt 2");
+});
+
+test("parses an object with items array via parseSmokeInputs", () => {
+  const inputs = parseSmokeInputs(
+    {
+      items: [
+        {
+          title: "Wrapped Product",
+          description: "Wrapped description",
+          niche: "rug",
+          handle: "wrapped-product",
+          images: [{ url: "https://example.com/wrapped.webp" }],
+        },
+      ],
+    },
+    REPOSITORY_ROOT,
+  );
+
+  assert.equal(inputs.length, 1);
+  assert.equal(inputs[0]?.title, "Wrapped Product");
+});
+
+test("rejects empty arrays in parseSmokeInputs", () => {
+  assert.throws(
+    () => parseSmokeInputs([], REPOSITORY_ROOT),
+    /contain at least one product/i,
+  );
+  assert.throws(
+    () => parseSmokeInputs({ items: [] }, REPOSITORY_ROOT),
+    /contain at least one product/i,
+  );
 });
