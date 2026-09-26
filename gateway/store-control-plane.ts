@@ -4,6 +4,7 @@ import type { ShopifyGraphqlClient } from "./shopify-graphql-client";
 import type { TokenProvider } from "./token-provider";
 import type { StoreAuthConfig, StoreConfig, StoreProxyConfig } from "./types";
 import { toStoreSummary, type GatewayStoreSummary } from "./operations/store-management";
+import { evictProxyAgent } from "./proxy-transport";
 import { persistStoreToConfigFile, removeStoreFromConfigFile } from "./store-config-loader";
 
 export type StoreAuthInput =
@@ -379,6 +380,10 @@ export class StoreControlPlane {
       throw persistErr;
     }
 
+    if (existing.proxy?.url && existing.proxy.url !== candidateConfig.proxy?.url) {
+      evictProxyAgent(existing.proxy.url);
+    }
+
     await this.persistStoreToConfigFile(candidateConfig);
 
     this.verifiedStoreIds.add(candidateConfig.storeId);
@@ -402,6 +407,11 @@ export class StoreControlPlane {
 
     // Invalidate token cache before removal
     this.tokenProvider.invalidate?.(trimmedId);
+
+    const existing = await this.storeRegistry.getStore(trimmedId);
+    if (existing?.proxy?.url) {
+      evictProxyAgent(existing.proxy.url);
+    }
 
     const exists = await this.storeRegistry.hasStore(trimmedId);
     if (exists) {

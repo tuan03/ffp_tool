@@ -6,6 +6,8 @@ export type ShopifyOperation =
   | "products.update"
   | "products.bulkUpdate"
   | "products.delete"
+  /** @deprecated products.preflightAmazonAsins is Amazon-specific domain logic. Scheduled for migration to business modules. */
+  | "products.preflightAmazonAsins"
   | "variants.update"
   | "variants.bulkUpdate"
   | "variants.bulkCreate"
@@ -13,8 +15,10 @@ export type ShopifyOperation =
   | "files.bulkCreate"
   | "files.stageBinary"
   | "files.delete"
+  | "files.list"
   | "metafields.set"
   | "metafields.get"
+  | "metafields.delete"
   | "collections.list"
   | "collections.get"
   | "collections.create"
@@ -172,6 +176,10 @@ export interface ShopifyProductVariantInput {
   readonly sku?: string;
   readonly barcode?: string;
   readonly inventoryTracked?: boolean;
+  /**
+   * @deprecated Setting inventoryQuantity via Catalog API is not supported by Shopify GraphQL and rejected with SHOPIFY_INVALID_INPUT.
+   * Use the Shopify Inventory API instead.
+   */
   readonly inventoryQuantity?: number;
   readonly optionValues?: readonly ShopifyVariantOptionValueInput[];
 }
@@ -450,6 +458,38 @@ export interface ShopifyProductsDeleteResponse {
   readonly data: ShopifyProductsDeleteData;
 }
 
+// 7b. products.preflightAmazonAsins
+export interface AmazonAsinMatch {
+  readonly asin: string;
+  readonly productId: string;
+  readonly title: string;
+  readonly adminUrl: string;
+}
+
+export interface ShopifyProductsPreflightAmazonAsinsPayload {
+  readonly asins: readonly string[];
+}
+
+export interface ShopifyProductsPreflightAmazonAsinsData {
+  readonly ready: boolean;
+  readonly matches: readonly AmazonAsinMatch[];
+}
+
+export interface ShopifyProductsPreflightAmazonAsinsInput {
+  readonly storeId: string;
+  readonly requestId?: string;
+  readonly mode?: ShopifyExecutionMode;
+  readonly operation: "products.preflightAmazonAsins";
+  readonly payload: ShopifyProductsPreflightAmazonAsinsPayload;
+}
+
+export interface ShopifyProductsPreflightAmazonAsinsResponse {
+  readonly storeId: string;
+  readonly operation: "products.preflightAmazonAsins";
+  readonly success: true;
+  readonly data: ShopifyProductsPreflightAmazonAsinsData;
+}
+
 // 8. variants.update
 export interface ShopifyVariantsUpdatePayload {
   readonly id: string;
@@ -654,6 +694,44 @@ export interface ShopifyFilesDeleteResponse {
   readonly data: ShopifyFilesDeleteData;
 }
 
+// 9c-4. files.list
+export interface ShopifyFilesListPayload {
+  readonly first?: number;
+  readonly after?: string;
+  readonly query?: string;
+}
+
+export interface ShopifyFileSummary {
+  readonly id: string;
+  readonly url: string;
+  readonly altText?: string;
+  readonly fileStatus: string;
+  readonly createdAt: string;
+  readonly updatedAt?: string;
+  readonly mimeType?: string;
+  readonly width?: number;
+  readonly height?: number;
+}
+
+export interface ShopifyFilesListData {
+  readonly files: readonly ShopifyFileSummary[];
+  readonly pageInfo: ShopifyPageInfo;
+}
+
+export interface ShopifyFilesListInput {
+  readonly storeId: string;
+  readonly requestId?: string;
+  readonly operation: "files.list";
+  readonly payload: ShopifyFilesListPayload;
+}
+
+export interface ShopifyFilesListResponse {
+  readonly storeId: string;
+  readonly operation: "files.list";
+  readonly success: true;
+  readonly data: ShopifyFilesListData;
+}
+
 // 9d. metafields.set
 export interface ShopifyMetafieldItemInput {
   readonly ownerId?: string;
@@ -732,6 +810,43 @@ export interface ShopifyMetafieldsGetResponse {
   readonly operation: "metafields.get";
   readonly success: true;
   readonly data: ShopifyMetafieldsGetData;
+}
+
+// 9f. metafields.delete
+export interface ShopifyMetafieldIdentifier {
+  readonly ownerId: string;
+  readonly namespace: string;
+  readonly key: string;
+}
+
+export interface ShopifyMetafieldsDeletePayload {
+  readonly ownerId?: string;
+  readonly namespace?: string;
+  readonly key?: string;
+  readonly metafields?: readonly ShopifyMetafieldIdentifier[];
+}
+
+export interface ShopifyMetafieldsDeleteData {
+  readonly success: boolean;
+  readonly deletedMetafields: readonly ShopifyMetafieldIdentifier[];
+  readonly notFound: readonly ShopifyMetafieldIdentifier[];
+  /** @deprecated Shopify metafieldsDelete returns identifiers, not deletedId. Always undefined. */
+  readonly deletedId?: undefined;
+}
+
+export interface ShopifyMetafieldsDeleteInput {
+  readonly storeId: string;
+  readonly requestId?: string;
+  readonly mode?: ShopifyExecutionMode;
+  readonly operation: "metafields.delete";
+  readonly payload: ShopifyMetafieldsDeletePayload;
+}
+
+export interface ShopifyMetafieldsDeleteResponse {
+  readonly storeId: string;
+  readonly operation: "metafields.delete";
+  readonly success: true;
+  readonly data: ShopifyMetafieldsDeleteData;
 }
 
 // 10. collections.list
@@ -947,6 +1062,7 @@ export type ShopifyApiInput =
   | ShopifyProductsUpdateInput
   | ShopifyProductsBulkUpdateInput
   | ShopifyProductsDeleteInput
+  | ShopifyProductsPreflightAmazonAsinsInput
   | ShopifyVariantsUpdateInput
   | ShopifyVariantsBulkUpdateInput
   | ShopifyVariantsBulkCreateInput
@@ -954,8 +1070,10 @@ export type ShopifyApiInput =
   | ShopifyFilesBulkCreateInput
   | ShopifyFilesStageBinaryInput
   | ShopifyFilesDeleteInput
+  | ShopifyFilesListInput
   | ShopifyMetafieldsSetInput
   | ShopifyMetafieldsGetInput
+  | ShopifyMetafieldsDeleteInput
   | ShopifyCollectionsListInput
   | ShopifyCollectionsGetInput
   | ShopifyCollectionsCreateInput
@@ -973,6 +1091,7 @@ export type ShopifyApiResponse =
   | ShopifyProductsUpdateResponse
   | ShopifyProductsBulkUpdateResponse
   | ShopifyProductsDeleteResponse
+  | ShopifyProductsPreflightAmazonAsinsResponse
   | ShopifyVariantsUpdateResponse
   | ShopifyVariantsBulkUpdateResponse
   | ShopifyVariantsBulkCreateResponse
@@ -980,8 +1099,10 @@ export type ShopifyApiResponse =
   | ShopifyFilesBulkCreateResponse
   | ShopifyFilesStageBinaryResponse
   | ShopifyFilesDeleteResponse
+  | ShopifyFilesListResponse
   | ShopifyMetafieldsSetResponse
   | ShopifyMetafieldsGetResponse
+  | ShopifyMetafieldsDeleteResponse
   | ShopifyCollectionsListResponse
   | ShopifyCollectionsGetResponse
   | ShopifyCollectionsCreateResponse
@@ -1004,14 +1125,17 @@ export interface ModuleApiRunner {
   (input: ShopifyProductsUpdateInput): Promise<ShopifyProductsUpdateResponse>;
   (input: ShopifyProductsBulkUpdateInput): Promise<ShopifyProductsBulkUpdateResponse>;
   (input: ShopifyProductsDeleteInput): Promise<ShopifyProductsDeleteResponse>;
+  (input: ShopifyProductsPreflightAmazonAsinsInput): Promise<ShopifyProductsPreflightAmazonAsinsResponse>;
   (input: ShopifyVariantsUpdateInput): Promise<ShopifyVariantsUpdateResponse>;
   (input: ShopifyVariantsBulkUpdateInput): Promise<ShopifyVariantsBulkUpdateResponse>;
   (input: ShopifyVariantsBulkCreateInput): Promise<ShopifyVariantsBulkCreateResponse>;
   (input: ShopifyFilesCreateInput): Promise<ShopifyFilesCreateResponse>;
   (input: ShopifyFilesBulkCreateInput): Promise<ShopifyFilesBulkCreateResponse>;
   (input: ShopifyFilesDeleteInput): Promise<ShopifyFilesDeleteResponse>;
+  (input: ShopifyFilesListInput): Promise<ShopifyFilesListResponse>;
   (input: ShopifyMetafieldsSetInput): Promise<ShopifyMetafieldsSetResponse>;
   (input: ShopifyMetafieldsGetInput): Promise<ShopifyMetafieldsGetResponse>;
+  (input: ShopifyMetafieldsDeleteInput): Promise<ShopifyMetafieldsDeleteResponse>;
   (input: ShopifyCollectionsListInput): Promise<ShopifyCollectionsListResponse>;
   (input: ShopifyCollectionsGetInput): Promise<ShopifyCollectionsGetResponse>;
   (input: ShopifyCollectionsCreateInput): Promise<ShopifyCollectionsCreateResponse>;

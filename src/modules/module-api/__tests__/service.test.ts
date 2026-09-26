@@ -18,6 +18,7 @@ import type {
   ModuleApiRunner,
   ShopifyApiInput,
   ShopifyApiResponse,
+  ShopifyMetafieldsDeletePayload,
   ShopifyOperation,
   ShopifyProduct,
 } from "..";
@@ -1201,7 +1202,7 @@ test("Real service maps HTTP non-2xx status codes predictably", async () => {
   );
   await assert.rejects(
     async () => {
-      await userErr422Runner({ storeId: "s1", mode: "apply", operation: "products.create",
+      await userErr422Runner({ storeId: "s1", mode: "apply", requestId: "req-err-422", operation: "products.create",
         payload: { product: { title: "Invalid" } },
       });
     },
@@ -1235,7 +1236,7 @@ test("Real service maps HTTP non-2xx status codes predictably", async () => {
   );
   await assert.rejects(
     async () => {
-      await serverErrWriteRunner({ storeId: "s1", mode: "apply", operation: "products.create",
+      await serverErrWriteRunner({ storeId: "s1", mode: "apply", requestId: "req-err-500", operation: "products.create",
         payload: { product: { title: "Item" } },
       });
     },
@@ -1253,7 +1254,7 @@ test("Real service maps HTTP non-2xx status codes predictably", async () => {
   );
   await assert.rejects(
     async () => {
-      await server503WriteRunner({ storeId: "s1", mode: "apply", operation: "products.delete",
+      await server503WriteRunner({ storeId: "s1", mode: "apply", requestId: "req-err-503", operation: "products.delete",
         payload: { id: "p-delete" },
       });
     },
@@ -1317,7 +1318,7 @@ test("Real service handles malformed JSON response", async () => {
   // Write operation malformed JSON -> SHOPIFY_UNKNOWN_WRITE_STATE
   await assert.rejects(
     async () => {
-      await runner({ storeId: "s1", mode: "apply", operation: "variants.update",
+      await runner({ storeId: "s1", mode: "apply", requestId: "req-malformed-json", operation: "variants.update",
         payload: { id: "v1", variant: { price: "12.00" } },
       });
     },
@@ -1373,16 +1374,16 @@ test("Real service maps ambiguous write network failure to SHOPIFY_UNKNOWN_WRITE
   );
 
   const writeInputs: ShopifyApiInput[] = [
-    { storeId: "s1", mode: "apply", operation: "products.create", payload: { product: { title: "T" } } },
-    { storeId: "s1", mode: "apply", operation: "products.update", payload: { id: "p1", product: { title: "T2" } } },
-    { storeId: "s1", mode: "apply", operation: "products.bulkUpdate", payload: { products: [{ id: "p1", product: {} }] } },
-    { storeId: "s1", mode: "apply", operation: "products.delete", payload: { id: "p1" } },
-    { storeId: "s1", mode: "apply", operation: "variants.update", payload: { id: "v1", variant: {} } },
-    { storeId: "s1", mode: "apply", operation: "variants.bulkUpdate", payload: { variants: [{ id: "v1", variant: {} }] } },
-    { storeId: "s1", mode: "apply", operation: "collections.create", payload: { collection: { title: "C" } } },
-    { storeId: "s1", mode: "apply", operation: "collections.update", payload: { id: "c1", collection: {} } },
-    { storeId: "s1", mode: "apply", operation: "collections.delete", payload: { id: "c1" } },
-    { storeId: "s1", mode: "apply", operation: "collections.updateMembership", payload: { collectionId: "c1" } },
+    { storeId: "s1", mode: "apply", requestId: "req-amb-1", operation: "products.create", payload: { product: { title: "T" } } },
+    { storeId: "s1", mode: "apply", requestId: "req-amb-2", operation: "products.update", payload: { id: "p1", product: { title: "T2" } } },
+    { storeId: "s1", mode: "apply", requestId: "req-amb-3", operation: "products.bulkUpdate", payload: { products: [{ id: "p1", product: {} }] } },
+    { storeId: "s1", mode: "apply", requestId: "req-amb-4", operation: "products.delete", payload: { id: "p1" } },
+    { storeId: "s1", mode: "apply", requestId: "req-amb-5", operation: "variants.update", payload: { id: "v1", variant: {} } },
+    { storeId: "s1", mode: "apply", requestId: "req-amb-6", operation: "variants.bulkUpdate", payload: { variants: [{ id: "v1", variant: {} }] } },
+    { storeId: "s1", mode: "apply", requestId: "req-amb-7", operation: "collections.create", payload: { collection: { title: "C" } } },
+    { storeId: "s1", mode: "apply", requestId: "req-amb-8", operation: "collections.update", payload: { id: "c1", collection: {} } },
+    { storeId: "s1", mode: "apply", requestId: "req-amb-9", operation: "collections.delete", payload: { id: "c1" } },
+    { storeId: "s1", mode: "apply", requestId: "req-amb-10", operation: "collections.updateMembership", payload: { collectionId: "c1" } },
   ];
 
   for (const writeInput of writeInputs) {
@@ -1480,6 +1481,7 @@ test("Real service forwards apply mode intact", async () => {
     storeId: "store-42",
     operation: "products.update",
     mode: "apply",
+    requestId: "req-applied-1",
     payload: { id: "gid://shopify/Product/1001", product: { title: "Applied" } },
   });
 
@@ -1695,6 +1697,7 @@ test("Real service handles timeouts predictably", async () => {
         storeId: "store-1",
         operation: "products.create",
         mode: "apply",
+        requestId: "req-timeout",
         payload: { product: { title: "Timeout Product" } },
       });
     },
@@ -1789,7 +1792,7 @@ test("Real service preserves cause in ShopifyApiError for network errors, timeou
   // Write network error preserves cause
   await assert.rejects(
     async () => {
-      await runner({ storeId: "s1", mode: "apply", operation: "products.delete",
+      await runner({ storeId: "s1", mode: "apply", requestId: "req-cause", operation: "products.delete",
         payload: { id: "p1" },
       });
     },
@@ -1849,7 +1852,7 @@ test("Real service maps HTTP 408 Request Timeout to SHOPIFY_UNKNOWN_WRITE_STATE 
   // Write on 408
   await assert.rejects(
     async () => {
-      await runner({ storeId: "s1", mode: "apply", operation: "products.create",
+      await runner({ storeId: "s1", mode: "apply", requestId: "req-408", operation: "products.create",
         payload: { product: { title: "Item" } },
       });
     },
@@ -1879,7 +1882,7 @@ test("Real service handles diverse gateway error response formats correctly", as
 
   await assert.rejects(
     async () => {
-      await errObjRunner({ storeId: "s1", mode: "apply", operation: "products.create",
+      await errObjRunner({ storeId: "s1", mode: "apply", requestId: "req-err-obj", operation: "products.create",
         payload: { product: { title: "T" } },
       });
     },
@@ -1909,7 +1912,7 @@ test("Real service handles diverse gateway error response formats correctly", as
 
   await assert.rejects(
     async () => {
-      await stringErrRunner({ storeId: "s1", mode: "apply", operation: "products.create",
+      await stringErrRunner({ storeId: "s1", mode: "apply", requestId: "req-str-err", operation: "products.create",
         payload: { product: { title: "" } },
       });
     },
@@ -1963,7 +1966,7 @@ test("Real service handles diverse gateway error response formats correctly", as
 
   await assert.rejects(
     async () => {
-      await gqlErrRunner({ storeId: "s1", mode: "apply", operation: "variants.update",
+      await gqlErrRunner({ storeId: "s1", mode: "apply", requestId: "req-gql-err", operation: "variants.update",
         payload: { id: "v1", variant: { sku: "bad" } },
       });
     },
@@ -2017,7 +2020,7 @@ test("Real service validates that response data payload is an object", async () 
 
   await assert.rejects(
     async () => {
-      await nonObjectDataRunner({ storeId: "s1", mode: "apply", operation: "products.delete",
+      await nonObjectDataRunner({ storeId: "s1", mode: "apply", requestId: "req-non-obj", operation: "products.delete",
         payload: { id: "p1" },
       });
     },
@@ -2155,6 +2158,7 @@ test("Real service propagates fields, retryable, and details into ShopifyApiErro
         storeId: "store-42",
         operation: "products.create",
         mode: "apply",
+        requestId: "req-err-details",
         payload: {
           product: { title: "" },
         },
@@ -2383,6 +2387,7 @@ test("Real service propagates reconciliationRequired into ShopifyApiError on par
         storeId: "store-test",
         operation: "products.create",
         mode: "apply",
+        requestId: "req-partial-write",
         payload: { product: { title: "Partially Created Product" } },
       });
     },
@@ -3156,6 +3161,7 @@ test("Test invariant: every ShopifyOperation union member is present in SUPPORTE
     "products.update": true,
     "products.bulkUpdate": true,
     "products.delete": true,
+    "products.preflightAmazonAsins": true,
     "variants.update": true,
     "variants.bulkUpdate": true,
     "variants.bulkCreate": true,
@@ -3163,8 +3169,10 @@ test("Test invariant: every ShopifyOperation union member is present in SUPPORTE
     "files.bulkCreate": true,
     "files.stageBinary": true,
     "files.delete": true,
+    "files.list": true,
     "metafields.set": true,
     "metafields.get": true,
+    "metafields.delete": true,
     "collections.list": true,
     "collections.get": true,
     "collections.create": true,
@@ -3502,9 +3510,466 @@ test("createCustomizationGatewayAdapter successfully routes calls to runner", as
   ]);
 });
 
+test("Real service and mock runner execute files.list correctly", async () => {
+  // Mock runner
+  const mockRes = await runMockModuleApi({
+    storeId: "store-test",
+    operation: "files.list",
+    payload: { first: 10 },
+  });
+  assert.equal(mockRes.success, true);
+  assert.ok(Array.isArray(mockRes.data.files));
+  assert.equal(mockRes.data.pageInfo.hasNextPage, false);
 
+  // Real service dispatch
+  const { fetch: fakeFetch, requests: listRequests } = createFakeFetch(async () => {
+    return new Response(
+      JSON.stringify({
+        storeId: "store-test",
+        operation: "files.list",
+        success: true,
+        data: {
+          files: [
+            {
+              id: "gid://shopify/MediaImage/101",
+              alt: "Mock Image",
+              createdAt: "2026-01-01T00:00:00Z",
+              fileStatus: "READY",
+              image: { url: "https://cdn.shopify.com/101.jpg", width: 500, height: 500 },
+            },
+          ],
+          pageInfo: { hasNextPage: false, endCursor: null },
+        },
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  });
 
+  const runner = createModuleApiRunner(
+    { gatewayUrl: "https://gateway.example.com/api" },
+    { fetch: fakeFetch },
+  );
 
+  const realRes = await runner({
+    storeId: "store-test",
+    operation: "files.list",
+    payload: { first: 5, query: "status:READY" },
+  });
 
+  assert.equal(realRes.success, true);
+  assert.equal(realRes.data.files.length, 1);
+  assert.equal(realRes.data.files[0]?.id, "gid://shopify/MediaImage/101");
+  assert.deepEqual(JSON.parse(listRequests[0].init?.body as string), {
+    storeId: "store-test",
+    operation: "files.list",
+    payload: { first: 5, query: "status:READY" },
+  });
+});
 
+test("Real service and mock runner execute metafields.delete correctly", async () => {
+  // Mock runner
+  const mockRes = await runMockModuleApi({
+    storeId: "store-test",
+    operation: "metafields.delete",
+    mode: "apply",
+    requestId: "req-del-mf-mock",
+    payload: {
+      ownerId: "gid://shopify/Product/1",
+      namespace: "custom",
+      key: "test_key",
+    },
+  });
+  assert.equal(mockRes.success, true);
+  assert.equal(mockRes.data.success, true);
+  assert.equal(mockRes.data.deletedMetafields.length, 1);
+  assert.equal(mockRes.data.deletedId, undefined);
+
+  // Mock runner rejects id-only
+  await assert.rejects(
+    async () => {
+      await runMockModuleApi({
+        storeId: "store-test",
+        operation: "metafields.delete",
+        mode: "apply",
+        requestId: "req-del-mf-id-only",
+        payload: { id: "gid://shopify/Metafield/999" } as unknown as ShopifyMetafieldsDeletePayload,
+      });
+    },
+    (err: unknown) => {
+      assert.ok(err instanceof Error);
+      assert.ok(err.message.includes("ownerId, namespace, key"));
+      return true;
+    },
+  );
+
+  // Real service dispatch
+  const { fetch: fakeFetch, requests: deleteRequests } = createFakeFetch(async () => {
+    return new Response(
+      JSON.stringify({
+        storeId: "store-test",
+        operation: "metafields.delete",
+        mode: "apply",
+        success: true,
+        data: {
+          success: true,
+          deletedMetafields: [
+            { ownerId: "gid://shopify/Product/1", namespace: "custom", key: "test_key" },
+          ],
+          notFound: [],
+          deletedId: undefined,
+        },
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  });
+
+  const runner = createModuleApiRunner(
+    { gatewayUrl: "https://gateway.example.com/api" },
+    { fetch: fakeFetch },
+  );
+
+  const realRes = await runner({
+    storeId: "store-test",
+    operation: "metafields.delete",
+    mode: "apply",
+    requestId: "req-del-mf-real",
+    payload: {
+      ownerId: "gid://shopify/Product/1",
+      namespace: "custom",
+      key: "test_key",
+    },
+  });
+
+  assert.equal(realRes.success, true);
+  assert.equal(realRes.data.deletedMetafields.length, 1);
+  assert.equal(realRes.data.deletedId, undefined);
+  assert.equal((JSON.parse(deleteRequests[0].init?.body as string) as { requestId: string }).requestId, "req-del-mf-real");
+});
+
+test("Real service validates that write operations in apply mode require a non-empty requestId", async () => {
+  const runner = createModuleApiRunner({
+    gatewayUrl: "https://gateway.example.com/api",
+  });
+
+  // Missing requestId
+  await assert.rejects(
+    async () => {
+      await runner({
+        storeId: "store-test",
+        operation: "products.create",
+        mode: "apply",
+        payload: { product: { title: "Test Product" } },
+      } as unknown as ShopifyApiInput);
+    },
+    (err: unknown) => {
+      assert.ok(err instanceof ShopifyApiError);
+      assert.equal(err.code, "SHOPIFY_USER_ERROR");
+      assert.match(err.message, /requestId is required for write operations in apply mode/);
+      return true;
+    },
+  );
+
+  // Whitespace-only requestId
+  await assert.rejects(
+    async () => {
+      await runner({
+        storeId: "store-test",
+        operation: "products.create",
+        mode: "apply",
+        requestId: "   ",
+        payload: { product: { title: "Test Product" } },
+      });
+    },
+    (err: unknown) => {
+      assert.ok(err instanceof ShopifyApiError);
+      assert.equal(err.code, "SHOPIFY_USER_ERROR");
+      assert.match(err.message, /requestId is required for write operations in apply mode/);
+      return true;
+    },
+  );
+
+  // Preview mode does not require requestId
+  const previewFetch = createFakeFetch(async () =>
+    new Response(
+      JSON.stringify({
+        storeId: "store-test",
+        operation: "products.create",
+        mode: "preview",
+        success: true,
+        data: { product: { id: "gid://shopify/Product/1", title: "Preview Product", handle: "prev", status: "DRAFT", tags: [], variants: [], createdAt: "", updatedAt: "" } },
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    ),
+  ).fetch;
+
+  const previewRunner = createModuleApiRunner(
+    { gatewayUrl: "https://gateway.example.com/api" },
+    { fetch: previewFetch },
+  );
+
+  const previewRes = await previewRunner({
+    storeId: "store-test",
+    operation: "products.create",
+    mode: "preview",
+    payload: { product: { title: "Preview Product" } },
+  });
+  assert.equal(previewRes.success, true);
+});
+
+test("Mock runner and gateway validation reject inventoryQuantity on variants with SHOPIFY_INVALID_INPUT", async () => {
+  // Mock runner products.create
+  await assert.rejects(
+    async () => {
+      await runMockModuleApi({
+        storeId: "store-test",
+        operation: "products.create",
+        mode: "apply",
+        requestId: "req-inv-qty",
+        payload: {
+          product: {
+            title: "Item with Qty",
+            variants: [
+              {
+                title: "Default",
+                inventoryQuantity: 50,
+              } as unknown as Record<string, unknown>,
+            ],
+          },
+        },
+      } as unknown as ShopifyApiInput);
+    },
+    (err: unknown) => {
+      assert.ok(err instanceof ShopifyApiError);
+      assert.equal(err.code, "SHOPIFY_INVALID_INPUT");
+      assert.match(err.message, /inventoryQuantity is not supported by Catalog API/);
+      return true;
+    },
+  );
+
+  // Mock runner variants.bulkCreate
+  await assert.rejects(
+    async () => {
+      await runMockModuleApi({
+        storeId: "store-test",
+        operation: "variants.bulkCreate",
+        mode: "apply",
+        requestId: "req-inv-qty-bulk",
+        payload: {
+          productId: "gid://shopify/Product/1",
+          variants: [
+            {
+              inventoryQuantity: 10,
+            } as unknown as Record<string, unknown>,
+          ],
+        },
+      } as unknown as ShopifyApiInput);
+    },
+    (err: unknown) => {
+      assert.ok(err instanceof ShopifyApiError);
+      assert.equal(err.code, "SHOPIFY_INVALID_INPUT");
+      assert.match(err.message, /inventoryQuantity is not supported by Catalog API/);
+      return true;
+    },
+  );
+});
+
+test("Integration: CustomizationGateway.deleteFiles with real module-api runner in apply mode supplies deterministic requestId", async () => {
+  let capturedBody: Record<string, unknown> | null = null;
+  const fakeFetch = createFakeFetch(async (req) => {
+    capturedBody = JSON.parse(req.init?.body as string);
+    return new Response(
+      JSON.stringify({
+        storeId: "store-managed",
+        operation: "files.delete",
+        mode: "apply",
+        success: true,
+        data: {
+          success: true,
+          deletedFileIds: (capturedBody?.payload as { fileIds: string[] })?.fileIds ?? [],
+        },
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  }).fetch;
+
+  const realRunner = createModuleApiRunner(
+    { gatewayUrl: "https://gateway.example.com/api" },
+    { fetch: fakeFetch },
+  );
+
+  const adapter = createCustomizationGatewayAdapter("store-managed", {
+    runner: realRunner,
+    mode: "apply",
+  });
+
+  const res1 = await adapter.deleteFiles({
+    fileIds: ["gid://shopify/MediaImage/200", "gid://shopify/MediaImage/100"],
+  });
+
+  assert.equal(res1.deletedFileIds.length, 2);
+  assert.ok(capturedBody);
+  const reqId1 = (capturedBody as { requestId?: string })?.requestId;
+  assert.ok(reqId1, "requestId must be supplied to real runner in apply mode");
+  assert.match(reqId1, /^custom-store-managed-files-delete:[a-f0-9]{8}$/);
+
+  // Verify same fileIds in different order yield the EXACT same deterministic requestId
+  await adapter.deleteFiles({
+    fileIds: ["gid://shopify/MediaImage/100", "gid://shopify/MediaImage/200"],
+  });
+  const reqId2 = (capturedBody as { requestId?: string })?.requestId;
+  assert.equal(reqId2, reqId1, "Sorted fileIds must produce identical deterministic requestId");
+
+  // Verify requestId does not contain timestamp or random patterns
+  assert.equal(reqId1.includes(String(new Date().getFullYear())), false);
+  assert.equal(reqId1.includes("NaN"), false);
+});
+
+test("Real service and mock runner execute metafields.delete with Shopify 2026-07 identifiers and notFound normalization", async () => {
+  // 1. Mock runner batch delete
+  const mockBatchRes = await runMockModuleApi({
+    storeId: "store-test",
+    operation: "metafields.delete",
+    mode: "apply",
+    requestId: "req-del-batch-1",
+    payload: {
+      metafields: [
+        { ownerId: "gid://shopify/Product/1", namespace: "custom", key: "color" },
+        { ownerId: "gid://shopify/Product/1", namespace: "custom", key: "size" },
+      ],
+    },
+  });
+  assert.equal(mockBatchRes.success, true);
+  assert.equal(mockBatchRes.data.deletedMetafields.length, 2);
+  assert.equal(mockBatchRes.data.deletedMetafields[0]?.key, "color");
+
+  // 2. Mock runner rejects > 250 items
+  const tooMany = Array.from({ length: 251 }, (_, i) => ({
+    ownerId: "gid://shopify/Product/1",
+    namespace: "custom",
+    key: `key_${i}`,
+  }));
+  await assert.rejects(
+    async () => {
+      await runMockModuleApi({
+        storeId: "store-test",
+        operation: "metafields.delete",
+        mode: "apply",
+        requestId: "req-del-too-many",
+        payload: { metafields: tooMany },
+      });
+    },
+    (err: unknown) => {
+      assert.ok(err instanceof ShopifyApiError);
+      assert.equal(err.code, "SHOPIFY_USER_ERROR");
+      assert.match(err.message, /exceeds Shopify limit of 250/);
+      return true;
+    },
+  );
+
+  // 3. Real service dispatch with notFound normalization
+  const { fetch: fakeFetch, requests } = createFakeFetch(async () => {
+    return new Response(
+      JSON.stringify({
+        storeId: "store-test",
+        operation: "metafields.delete",
+        mode: "apply",
+        success: true,
+        data: {
+          success: true,
+          deletedMetafields: [
+            { ownerId: "gid://shopify/Product/1", namespace: "custom", key: "color" },
+          ],
+          notFound: [
+            { ownerId: "gid://shopify/Product/1", namespace: "custom", key: "missing_key" },
+          ],
+        },
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  });
+
+  const runner = createModuleApiRunner(
+    { gatewayUrl: "https://gateway.example.com/api" },
+    { fetch: fakeFetch },
+  );
+
+  const realRes = await runner({
+    storeId: "store-test",
+    operation: "metafields.delete",
+    mode: "apply",
+    requestId: "req-del-real-1",
+    payload: {
+      metafields: [
+        { ownerId: "gid://shopify/Product/1", namespace: "custom", key: "color" },
+        { ownerId: "gid://shopify/Product/1", namespace: "custom", key: "missing_key" },
+      ],
+    },
+  });
+
+  assert.equal(realRes.success, true);
+  assert.equal(realRes.data.deletedMetafields.length, 1);
+  assert.equal(realRes.data.deletedMetafields[0]?.key, "color");
+  assert.equal(realRes.data.notFound?.length, 1);
+  assert.equal(realRes.data.notFound?.[0]?.key, "missing_key");
+
+  const sentBody = JSON.parse(requests[0].init?.body as string);
+  assert.equal(sentBody.requestId, "req-del-real-1");
+  assert.equal(sentBody.operation, "metafields.delete");
+});
+
+test("createCustomizationGatewayAdapter with options.requestId namespaces child operations without collision", async () => {
+  const dispatchedRequests: { operation: string; requestId?: string }[] = [];
+  const fakeRunner = (async (envelope: ShopifyApiInput) => {
+    dispatchedRequests.push({ operation: envelope.operation, requestId: envelope.requestId });
+    if (envelope.operation === "metafields.set") {
+      return {
+        storeId: envelope.storeId,
+        operation: "metafields.set",
+        success: true,
+        data: { success: true, metafieldId: "gid://shopify/Metafield/mf-1", metafields: [] },
+      };
+    }
+    if (envelope.operation === "files.delete") {
+      return {
+        storeId: envelope.storeId,
+        operation: "files.delete",
+        success: true,
+        data: { success: true, deletedFileIds: envelope.payload.fileIds },
+      };
+    }
+    throw new Error(`Unexpected operation ${envelope.operation}`);
+  }) as ModuleApiRunner;
+
+  const adapter = createCustomizationGatewayAdapter("store-test", {
+    runner: fakeRunner,
+    mode: "apply",
+    requestId: "root-import-job-123",
+  });
+
+  // 1. Run setMetafield
+  await adapter.setMetafield({
+    ownerId: "gid://shopify/Product/123",
+    namespace: "custom",
+    key: "config",
+    value: "{}",
+    type: "json",
+  });
+
+  // 2. Run deleteFiles in the same job
+  await adapter.deleteFiles({
+    fileIds: ["gid://shopify/MediaImage/file-1"],
+  });
+
+  assert.equal(dispatchedRequests.length, 2);
+  const mfReq = dispatchedRequests[0];
+  const fileReq = dispatchedRequests[1];
+
+  assert.equal(mfReq.operation, "metafields.set");
+  assert.equal(fileReq.operation, "files.delete");
+
+  // Both should start with root-import-job-123 but have distinct operation suffixes
+  assert.ok(mfReq.requestId?.startsWith("root-import-job-123:metafields-set:"));
+  assert.ok(fileReq.requestId?.startsWith("root-import-job-123:files-delete:"));
+  assert.notEqual(mfReq.requestId, fileReq.requestId);
+});
 

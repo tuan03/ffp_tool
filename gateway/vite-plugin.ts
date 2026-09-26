@@ -97,14 +97,20 @@ export function shopifyGatewayDevPlugin(options?: ShopifyGatewayDevPluginOptions
           }
         }
 
-        if (isShopify || isAutoSeo || isStoreRegister || isStoreUpdate || isStoreDelete) {
+        if (isShopify || isAutoSeo || isStoreRegister || isStoreUpdate || isStoreDelete || isStoreGet) {
           try {
             const freshStores = loadBootstrappedStores({ env: loadLocalEnv() });
+            const freshIds = new Set(freshStores.map((s) => s.storeId));
             for (const store of freshStores) {
               if (!storeRegistry.getStore(store.storeId)) {
                 storeRegistry.registerStore(store);
               } else {
                 storeRegistry.updateStore(store);
+              }
+            }
+            for (const existing of storeRegistry.listStores()) {
+              if (!freshIds.has(existing.storeId)) {
+                storeRegistry.removeStore(existing.storeId);
               }
             }
           } catch {

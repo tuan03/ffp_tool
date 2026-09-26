@@ -444,6 +444,7 @@ export function loadBootstrappedStores(options?: StoreBootstrapOptions): StoreCo
   }
 
   const baseStores = Array.from(storesByStoreId.values());
+  // Legacy fallback: AMAZON_CRAWLER_PROXY_CONFIG is deprecated; prefer SHOPIFY_PROXY_CONFIG.
   const rawProxyConfigPath = env.SHOPIFY_PROXY_CONFIG || env.AMAZON_CRAWLER_PROXY_CONFIG;
   const proxyConfigPath = rawProxyConfigPath ? resolve(cwd, rawProxyConfigPath) : undefined;
   if (proxyConfigPath && existsSync(proxyConfigPath)) {

@@ -1,3 +1,4 @@
+import { executeChunkedWrite } from "../chunked-write";
 import { GatewayError, mapUserErrorsToGatewayError, type MutationUserErrorItem } from "../errors";
 import type { ShopifyGraphqlClient } from "../shopify-graphql-client";
 import type { ProductVariantSummary, StoreConfig } from "../types";
@@ -437,6 +438,14 @@ export async function executeVariantsBulkCreate(
     if (!item || typeof item !== "object") {
       throw new GatewayError("Each variant item must be an object", "SHOPIFY_USER_ERROR", 400);
     }
+    const raw = item as Record<string, unknown>;
+    if ("inventoryQuantity" in raw && raw.inventoryQuantity !== undefined) {
+      throw new GatewayError(
+        "inventoryQuantity is not supported by Catalog API. Use the Shopify Inventory API.",
+        "SHOPIFY_INVALID_INPUT",
+        400,
+      );
+    }
   }
 
   if (variants.length === 0) {
@@ -524,34 +533,72 @@ export async function executeVariantsBulkCreate(
     };
   }
 
-  const mappedVariants: ProductVariantSummary[] = [];
-  for (let i = 0; i < variantsInput.length; i += 250) {
-    const chunk = variantsInput.slice(i, i + 250);
-    const chunkReqId = requestId ? `${requestId}:${Math.floor(i / 250)}` : undefined;
-    const raw = await client.query<ProductVariantsBulkCreateResponse>(
-      store,
-      PRODUCT_VARIANTS_BULK_CREATE_MUTATION,
-      { productId, variants: chunk },
-      { isWrite: true, requestId: chunkReqId },
-    );
+  const chunkedResult = await executeChunkedWrite<Record<string, unknown>, ProductVariantSummary[]>({
+    items: variantsInput,
+    chunkSize: 250,
+    operationName: "variants.bulkCreate",
+    executeChunk: async (chunk, chunkIndex) => {
+      const chunkReqId = requestId ? `${requestId}:${chunkIndex}` : undefined;
+      const raw = await client.query<ProductVariantsBulkCreateResponse>(
+        store,
+        PRODUCT_VARIANTS_BULK_CREATE_MUTATION,
+        { productId, variants: chunk },
+        { isWrite: true, requestId: chunkReqId },
+      );
 
-    if (raw.productVariantsBulkCreate.userErrors && raw.productVariantsBulkCreate.userErrors.length > 0) {
-      throw mapUserErrorsToGatewayError(raw.productVariantsBulkCreate.userErrors);
-    }
+      const createdNodes = raw.productVariantsBulkCreate.productVariants ?? [];
+      const userErrors = raw.productVariantsBulkCreate.userErrors ?? [];
 
-    for (const node of raw.productVariantsBulkCreate.productVariants ?? []) {
-      mappedVariants.push({
-        id: node.id,
+      if (userErrors.length > 0) {
+        if (createdNodes.length > 0) {
+          const createdVariantIds = createdNodes.map((n) => n.id);
+          const errMsg = `Shopify productVariantsBulkCreate partially created ${createdNodes.length} variant(s) but failed with user errors: ${userErrors.map((e) => e.message).join(", ")}`;
+          throw new GatewayError(
+            errMsg,
+            "SHOPIFY_PARTIAL_WRITE",
+            409,
+            undefined,
+            undefined,
+            userErrors.flatMap((e) => (e.field ? [...e.field] : [])),
+            false,
+            {
+              productId,
+              createdVariantIds,
+              userErrors,
+              reconciliationRequired: true,
+            },
+            true,
+          );
+        }
+        throw mapUserErrorsToGatewayError(userErrors);
+      }
+
+      const chunkVariants: ProductVariantSummary[] = [];
+      for (const node of raw.productVariantsBulkCreate.productVariants ?? []) {
+        chunkVariants.push({
+          id: node.id,
+          productId,
+          title: node.title,
+          price: node.price,
+          compareAtPrice: node.compareAtPrice ?? undefined,
+          barcode: node.barcode ?? undefined,
+          sku: node.inventoryItem?.sku ?? undefined,
+          inventoryQuantity: node.inventoryQuantity ?? undefined,
+        });
+      }
+      return chunkVariants;
+    },
+    extractCompletedDetails: (completedResults) => {
+      const allCreated = completedResults.flat();
+      return {
+        completedCount: allCreated.length,
+        createdVariantIds: allCreated.map((v) => v.id),
         productId,
-        title: node.title,
-        price: node.price,
-        compareAtPrice: node.compareAtPrice ?? undefined,
-        barcode: node.barcode ?? undefined,
-        sku: node.inventoryItem?.sku ?? undefined,
-        inventoryQuantity: node.inventoryQuantity ?? undefined,
-      });
-    }
-  }
+      };
+    },
+  });
+
+  const mappedVariants = chunkedResult.chunkResults.flat();
 
   return {
     createdCount: mappedVariants.length,
