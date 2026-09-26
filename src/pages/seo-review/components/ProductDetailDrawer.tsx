@@ -47,6 +47,10 @@ export function ProductDetailDrawer({
   const [descriptionTab, setDescriptionTab] = useState<"formatted" | "raw">("formatted");
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [showRawJsonModal, setShowRawJsonModal] = useState(false);
+  const rawJsonString = useMemo(
+    () => (product ? serializeProductRawJson(product) : ""),
+    [product],
+  );
 
   // Close modal or drawer on Escape key
   useEffect(() => {
@@ -121,7 +125,6 @@ export function ProductDetailDrawer({
         (variant): variant is Record<string, unknown> => Boolean(variant) && typeof variant === "object",
       )
     : [];
-  const rawJsonString = useMemo(() => serializeProductRawJson(product), [product]);
 
   return (
     <div className="fixed inset-0 z-50 overflow-hidden">
