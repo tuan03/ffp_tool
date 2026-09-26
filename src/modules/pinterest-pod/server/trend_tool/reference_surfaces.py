@@ -10,7 +10,7 @@ from PIL import Image
 
 from .product_asset import extract_response_text, image_part, parse_json_relaxed
 from .planar_boundary import anchor_planar_boundary
-from .reference_composite import compose_reference_artwork, decode_surface_mask
+from .reference_composite import compose_reference_artwork, decode_surface_mask, normalize_surface_coordinates
 
 
 SEGMENTATION_MODEL = "gemini-2.5-flash"
@@ -50,6 +50,7 @@ artwork top-left, top-right, bottom-right, bottom-left order; corners outside th
 image may extend to -1000..2000 for cropped surfaces. The 4 corners must cover the
 ENTIRE top face of the product edge-to-edge right to its outer boundary (or stitched border),
 replacing ALL existing prints/text/graphics.
+CRITICAL: All coordinates for "quad", "polygon", and "protected_polygons" MUST be [x, y] format (x = horizontal 0..1000, y = vertical 0..1000). DO NOT return [y, x].
 Map the SAME complete master canvas in every view; never crop, tile, mirror or rearrange artwork.
 For curved and folded surfaces provide a piecewise UV mesh. For planar surfaces
 also provide this mesh when illumination varies across the surface; match the
@@ -178,6 +179,8 @@ def analyze_reference_surfaces(client, image: Image.Image, product_label: str, *
         if surface["surface_id"] not in by_label:
             raise ValueError("SURFACE_REVIEW_REQUIRED: missing instance segmentation")
         surface["segmentation"] = by_label[surface["surface_id"]]
+        box_2d = surface["segmentation"].get("box_2d")
+        normalize_surface_coordinates(surface, box_2d)
         protected = []
         for occluder in plan["occluders"]:
             if occluder["occluder_id"] not in by_label:

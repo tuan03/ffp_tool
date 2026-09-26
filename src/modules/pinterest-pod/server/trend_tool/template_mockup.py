@@ -24,7 +24,7 @@ from .product_asset import (
     parse_json_relaxed,
 )
 from .product_render import add_leather_surface, add_textile_surface
-from .reference_composite import compose_reference_artwork
+from .reference_composite import compose_reference_artwork, normalize_coordinates, normalize_surface_coordinates
 from .reference_surfaces import analyze_reference_surfaces
 
 LOG = logging.getLogger("template_mockup")
@@ -464,6 +464,8 @@ For each surface supply:
 - polygon: detailed visible printable boundary as [x,y] points in 0..1000.
 - protected_polygons: polygons for ALL occluding hands, hardware, seams, trim,
   straps and other non-printed parts within the surface; [] only if absent.
+- box_2d: [ymin, xmin, ymax, xmax] bounding box enclosing this product surface.
+CRITICAL: All coordinates for "quad", "polygon", and "protected_polygons" MUST be [x, y] format (x = horizontal col 0..1000, y = vertical row 0..1000). DO NOT return [y, x].
 Do not include interior lining, hardware/detail-only panels or text banners as
 printable surfaces. Do not substitute bounding boxes for printable boundaries.
 If any surface cannot be accurately mapped, mark coverage false. The caller will
@@ -544,6 +546,19 @@ require review instead of publishing an uncertain composite. No niche defaults.
             if not parsed.get("product_boxes_norm_0_1000"):
                 # Ensure template has product area protection
                 parsed["product_boxes_norm_0_1000"] = [[150, 150, 850, 850]]
+
+            # Pillar 1: Normalize all surface coordinates in surface_plan
+            surface_plan = parsed.get("surface_plan")
+            if isinstance(surface_plan, dict) and isinstance(surface_plan.get("surfaces"), list):
+                product_boxes = parsed.get("product_boxes_norm_0_1000") or []
+                for idx, surface in enumerate(surface_plan["surfaces"]):
+                    if isinstance(surface, dict):
+                        b2d = surface.get("box_2d")
+                        if not b2d and idx < len(product_boxes):
+                            b2d = product_boxes[idx]
+                        elif not b2d and product_boxes:
+                            b2d = product_boxes[0]
+                        normalize_surface_coordinates(surface, b2d)
 
             if cache_file:
                 try:
@@ -680,6 +695,23 @@ def build_direct_ai_mockup(
             plan = reference_analysis.get("surface_plan") if reference_analysis else None
             if not isinstance(plan, dict):
                 raise ValueError("SURFACE_REVIEW_REQUIRED: reference analysis did not provide printable masks and mapping")
+
+            # Pillar 2: Populate exclusion zones in plan from reference_analysis
+            exclusions = list(reference_analysis.get("exclusion_zones") or [])
+            exclusions.extend(reference_analysis.get("chrome_boxes_norm_0_1000") or [])
+            for elem in (reference_analysis.get("infographic_text_elements") or []):
+                if isinstance(elem, dict) and elem.get("box_2d"):
+                    exclusions.append(elem["box_2d"])
+            if exclusions:
+                plan["exclusion_zones"] = _normalize_boxes(list(plan.get("exclusion_zones") or []) + exclusions)
+
+            # Pillar 1: Normalize all surface coordinates in plan
+            product_boxes = reference_analysis.get("product_boxes_norm_0_1000") or []
+            for idx, s in enumerate(plan.get("surfaces") or []):
+                if isinstance(s, dict):
+                    b2d = s.get("box_2d") or (product_boxes[idx] if idx < len(product_boxes) else (product_boxes[0] if product_boxes else None))
+                    normalize_surface_coordinates(s, b2d)
+
             generated, edit_mask = compose_reference_artwork(room_img, artwork, plan)
             candidate_path = output_dir / "direct_ai_candidates" / f"{stem}{suffix}_projected.png"
             mask_path = output_dir / "reference_masks" / f"{stem}{suffix}_mask.png"

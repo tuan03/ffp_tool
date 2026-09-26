@@ -340,30 +340,42 @@ def assess_direct_ai_mockup(
         if strict_diff_count > 0:
             return PrintabilityDecision("direct_ai_mockup", mockup_path, False, "pixels outside printable mask changed", metrics, {})
         assessment_prompt = """
-You are reviewing a reference-preserving commercial Print-on-Demand (POD) mockup.
-ORIGINAL SCENE contains a physical product (e.g. rug, blanket, tote bag, mat) displaying
-an OLD, PREVIOUS DESIGN (which may include old text, illustrations, doodles, borders, patterns).
-The EDIT MASK (white area) defines the printable surface of the product.
-GOAL: The entire old printed design inside the white mask MUST be replaced by MASTER ARTWORK via perspective projection.
-Replacing old graphics, old text, or old printed patterns inside the printable area is 100% CORRECT and REQUIRED.
-Protected parts refer ONLY to external non-print objects (floor, walls, furniture, people, resting items) and non-printed product hardware (metal zippers, carry handles, outer stitched edge binding).
-Compare the output against ORIGINAL SCENE, EDIT MASK, and MASTER ARTWORK. Return ONLY this JSON schema:
+You are conducting a strict, unbiased quality assurance (QA) inspection of a commercial Print-on-Demand (POD) mockup.
+Directly compare ORIGINAL SCENE against BACKGROUND_MOCKUP and MASTER ARTWORK.
+The BACKGROUND_MOCKUP must replace the old product print from ORIGINAL SCENE with MASTER ARTWORK while preserving the authentic photograph.
+
+Inspect these 3 mandatory pillars:
+1. Product Shape & Orientation:
+   - Does the new product in BACKGROUND_MOCKUP match the EXACT physical footprint, perspective, shape, and orientation of the original product in ORIGINAL SCENE?
+   - For example, if ORIGINAL SCENE shows a horizontal rectangular rug on the floor, the product in BACKGROUND_MOCKUP MUST be a horizontal rectangular rug in the exact same orientation. It must NOT be rotated 90 degrees, turned into a vertical column, distorted, or cropped to a wrong aspect ratio.
+2. Critical Content Preservation:
+   - Are ALL foreground humans (children, babies, adult models, hands, feet), toys, room furniture, and infographic text/tables/dimension arrows from ORIGINAL SCENE preserved 100% without being covered, cut through, or obscured by rectangular slabs or artwork overlays?
+   - Any covering, cutting through, or alteration of a person, model, toy, or size chart table is an immediate FATAL failure.
+3. Natural Realism & Lighting Artifacts:
+   - Is the product free of artificial bright white circular spotlights, dark grey vignettes, or dingy grey color casts? The product must blend naturally with the ambient room illumination.
+   - Master artwork colors, motifs, and clean white points must be preserved faithfully.
+
+Return ONLY this JSON schema:
 {
+  "product_shape_and_orientation_matched": boolean,
+  "critical_content_preserved": boolean,
+  "no_artificial_lighting_artifacts": boolean,
   "artwork_identity_preserved": boolean,
   "all_print_surfaces_replaced": boolean,
-  "mask_respects_printable_boundaries": boolean,
-  "protected_parts_preserved": boolean,
-  "reference_geometry_preserved": boolean,
   "no_original_print_remaining": boolean,
+  "reference_geometry_preserved": boolean,
+  "protected_parts_preserved": boolean,
   "surface_lighting_preserved": boolean,
+  "mask_respects_printable_boundaries": boolean,
   "listing_realism_score": number from 0 to 100,
   "reason": "specific visible evidence for acceptance or rejection"
 }
-- artwork_identity_preserved: true if master artwork motifs, colors, and layout are recognizable on the product surface. Note: perspective projection naturally skews/scales the artwork to match the product surface plane; do not mistake perspective mapping for tiling or distortion.
-- all_print_surfaces_replaced & no_original_print_remaining: true if the old print design inside the printable area was fully replaced by the new artwork.
-- mask_respects_printable_boundaries & protected_parts_preserved: true if the edit stayed inside the product printable surface and did not spill onto floor/furniture/background or overwrite genuine foreground people/objects. Note: old printed decorative borders and text on the product surface are NOT protected parts and SHOULD be replaced.
-- reference_geometry_preserved: true if the perspective projection correctly aligns with the product surface plane.
-- surface_lighting_preserved: true if the product lighting and material texture look believable and integrate well into the room scene.
+
+SCORING RULES:
+- If ANY critical element (human model, child, toy, size chart table, text banner) is covered, cut through, or obscured: listing_realism_score MUST be below 50, critical_content_preserved MUST be false.
+- If product shape or orientation is wrong (e.g. horizontal rug turned into vertical column): listing_realism_score MUST be below 50, product_shape_and_orientation_matched MUST be false.
+- If there is an artificial spotlight or fake vignette: no_artificial_lighting_artifacts MUST be false.
+- Only assign score >= 70 if all criteria are fully satisfied and the mockup is a flawless commercial listing photo.
 """
     try:
         assessment = _vision_pair_assessment(
@@ -386,11 +398,31 @@ Compare the output against ORIGINAL SCENE, EDIT MASK, and MASTER ARTWORK. Return
     is_rug = target.name == "rug"
 
     if reference_template is not None:
-        accepted = score >= 70 and all(assessment.get(field) is True for field in (
-            "artwork_identity_preserved", "all_print_surfaces_replaced",
-            "mask_respects_printable_boundaries", "protected_parts_preserved",
-            "reference_geometry_preserved", "no_original_print_remaining", "surface_lighting_preserved",
-        ))
+        shape_orientation_ok = (
+            assessment.get("product_shape_and_orientation_matched") is True
+            or (assessment.get("product_shape_and_orientation_matched") is None and assessment.get("reference_geometry_preserved") is True)
+        )
+        critical_content_ok = (
+            assessment.get("critical_content_preserved") is True
+            or (assessment.get("critical_content_preserved") is None and assessment.get("protected_parts_preserved") is True and assessment.get("mask_respects_printable_boundaries", True) is True)
+        )
+        no_artifacts_ok = (
+            assessment.get("no_artificial_lighting_artifacts") is True
+            or (assessment.get("no_artificial_lighting_artifacts") is None and assessment.get("surface_lighting_preserved") is True)
+        )
+        artwork_identity_ok = assessment.get("artwork_identity_preserved") is True
+        all_replaced_ok = assessment.get("all_print_surfaces_replaced") is True
+        no_orig_print_ok = assessment.get("no_original_print_remaining") is True
+
+        accepted = (
+            score >= 70
+            and shape_orientation_ok
+            and critical_content_ok
+            and no_artifacts_ok
+            and artwork_identity_ok
+            and all_replaced_ok
+            and no_orig_print_ok
+        )
     elif custom_checklist:
         # Fully dynamic evaluation based on the reference image's custom checklist
         accepted = (
@@ -719,7 +751,7 @@ def _vision_pair_assessment(
     if reference_template is not None and edit_mask is not None:
         reference_parts = [
             types.Part.from_text(text="ORIGINAL SCENE"), image_part(reference_template),
-            types.Part.from_text(text="EDIT MASK: white = replaced print, black = protected"), image_part(edit_mask.convert("RGB")),
+            types.Part.from_text(text="PROJECTION MASK (for reference only: does NOT override original scene content or product orientation)"), image_part(edit_mask.convert("RGB")),
         ]
     last_error: Exception | None = None
     for attempt in range(1, 4):

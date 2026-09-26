@@ -8,11 +8,14 @@ from __future__ import annotations
 import base64
 import binascii
 import io
+import logging
 
 import numpy as np
 from PIL import Image, ImageDraw
 
 from .surface_mesh import project_surface_mesh
+
+LOG = logging.getLogger("reference_composite")
 
 
 def decode_surface_mask(payload: object, size: tuple[int, int]) -> Image.Image:
@@ -82,6 +85,131 @@ def order_quad_points(points: np.ndarray) -> np.ndarray:
     return pts
 
 
+def _normalize_points(
+    points: object,
+    box_2d: object = None,
+    *,
+    is_quad: bool = False,
+) -> tuple[list[list[float]] | object, bool]:
+    if not isinstance(points, (list, tuple, np.ndarray)):
+        return points, False
+    pts = np.asarray(points, dtype=np.float64)
+    if pts.ndim != 2 or pts.shape[1] != 2 or len(pts) == 0:
+        return points, False
+
+    should_swap = False
+    valid_box = None
+    if isinstance(box_2d, (list, tuple, np.ndarray)) and len(box_2d) == 4:
+        try:
+            b = [float(v) for v in box_2d]
+            if all(np.isfinite(b)):
+                valid_box = b
+        except (ValueError, TypeError):
+            pass
+
+    if valid_box is not None:
+        ymin, xmin, ymax, xmax = valid_box
+        box_w = max(1.0, xmax - xmin)
+        box_h = max(1.0, ymax - ymin)
+        box_aspect = box_w / box_h  # > 1.0 for horizontal/wide, < 1.0 for vertical/tall
+
+        c0 = pts[:, 0]
+        c1 = pts[:, 1]
+        c0_min, c0_max = float(np.min(c0)), float(np.max(c0))
+        c1_min, c1_max = float(np.min(c1)), float(np.max(c1))
+        c0_span = max(1.0, c0_max - c0_min)
+        c1_span = max(1.0, c1_max - c1_min)
+        pts_aspect = c0_span / c1_span
+
+        err_as_xy = abs(c0_min - xmin) + abs(c0_max - xmax) + abs(c1_min - ymin) + abs(c1_max - ymax)
+        err_as_yx = abs(c0_min - ymin) + abs(c0_max - ymax) + abs(c1_min - xmin) + abs(c1_max - xmax)
+
+        # 1. Component alignment: does component 0 match y and component 1 match x significantly better?
+        if err_as_yx + 15.0 < err_as_xy:
+            should_swap = True
+        # 2. Aspect ratio inversion check: e.g. horizontal rug (box_aspect > 1.15) but points are vertical (pts_aspect < 0.85)
+        elif (box_aspect > 1.15 and pts_aspect < 0.85) or (box_aspect < 0.85 and pts_aspect > 1.15):
+            should_swap = True
+        # 3. Containment check: points clearly fall within [ymin, ymax] for c0 and [xmin, xmax] for c1
+        elif (ymin - 40 <= c0_min and c0_max <= ymax + 40 and xmin - 40 <= c1_min and c1_max <= xmax + 40) and not (
+            xmin - 40 <= c0_min and c0_max <= xmax + 40 and ymin - 40 <= c1_min and c1_max <= ymax + 40
+        ):
+            should_swap = True
+
+    if should_swap:
+        pts = pts[:, [1, 0]]
+
+    if is_quad and len(pts) == 4:
+        pts = order_quad_points(pts)
+
+    return pts.tolist(), should_swap
+
+
+def _swap_points(points: object) -> object:
+    if not isinstance(points, (list, tuple, np.ndarray)):
+        return points
+    pts = np.asarray(points, dtype=np.float64)
+    if pts.ndim == 2 and pts.shape[1] == 2:
+        return pts[:, [1, 0]].tolist()
+    return points
+
+
+def normalize_coordinates(
+    points: object,
+    box_2d: object = None,
+    *,
+    is_quad: bool = False,
+) -> list[list[float]] | object:
+    """Detect and normalize [y, x] vs [x, y] coordinates.
+
+    Gemini Vision models naturally return coordinates in [ymin, xmin, ymax, xmax] ([row, col] / [y, x]).
+    If component 0 aligns with [ymin, ymax] and component 1 aligns with [xmin, xmax],
+    or if the quad aspect ratio is inverted compared to box_2d, swap [coord[1], coord[0]] to [x, y].
+    For quads, order points TL -> TR -> BR -> BL.
+    """
+    res, _ = _normalize_points(points, box_2d, is_quad=is_quad)
+    return res
+
+
+def normalize_surface_coordinates(surface: dict[str, object], box_2d: object = None) -> None:
+    """Normalize quad, polygon, and protected_polygons on a surface dict."""
+    if not isinstance(surface, dict):
+        return
+    b2d = box_2d
+    if not b2d and surface.get("box_2d"):
+        b2d = surface.get("box_2d")
+    elif not b2d and isinstance(surface.get("segmentation"), dict) and surface["segmentation"].get("box_2d"):
+        b2d = surface["segmentation"]["box_2d"]
+
+    is_inverted = False
+    if "quad" in surface and surface["quad"]:
+        norm_q, swapped = _normalize_points(surface["quad"], b2d, is_quad=True)
+        surface["quad"] = norm_q
+        if swapped:
+            is_inverted = True
+
+    if "polygon" in surface and surface["polygon"]:
+        if is_inverted:
+            surface["polygon"] = _swap_points(surface["polygon"])
+        else:
+            norm_p, swapped = _normalize_points(surface["polygon"], b2d, is_quad=False)
+            surface["polygon"] = norm_p
+            if swapped:
+                is_inverted = True
+
+    if "protected_polygons" in surface and isinstance(surface["protected_polygons"], list):
+        if is_inverted:
+            surface["protected_polygons"] = [
+                _swap_points(poly) for poly in surface["protected_polygons"] if poly
+            ]
+        else:
+            surface["protected_polygons"] = [
+                _normalize_points(poly, b2d, is_quad=False)[0]
+                for poly in surface["protected_polygons"]
+                if poly
+            ]
+
+
 def _points(value: object, size: tuple[int, int], *, quad: bool = False) -> np.ndarray:
     if not isinstance(value, list) or len(value) < 3 or (quad and len(value) != 4):
         raise ValueError("SURFACE_REVIEW_REQUIRED: missing polygon or four-corner mapping")
@@ -138,8 +266,41 @@ def compose_reference_artwork(
         if (geometry not in {"planar", "curved", "folded"} or isinstance(confidence, bool)
                 or not isinstance(confidence, (int, float)) or not 0.85 <= confidence <= 1):
             raise ValueError("SURFACE_REVIEW_REQUIRED: uncertain or unsupported geometry")
+
+        # Pillar 1: Ensure surface coordinates are normalized [x, y]
+        b2d = surface.get("box_2d")
+        if not b2d and isinstance(surface.get("segmentation"), dict):
+            b2d = surface["segmentation"].get("box_2d")
+        if not b2d and isinstance(plan.get("box_2d"), list):
+            b2d = plan["box_2d"]
+        normalize_surface_coordinates(surface, b2d)
+
+        # Pillar 2: Build exclusion zone mask from plan and surface exclusion zones
+        exclusion_mask = np.zeros(reference.size[::-1], dtype=bool)
+        all_exclusions = []
+        if isinstance(plan.get("exclusion_zones"), list):
+            all_exclusions.extend(plan["exclusion_zones"])
+        if isinstance(surface.get("exclusion_zones"), list):
+            all_exclusions.extend(surface["exclusion_zones"])
+        for excl in all_exclusions:
+            if isinstance(excl, (list, tuple)) and len(excl) == 4:
+                try:
+                    ey0, ex0, ey1, ex1 = [float(v) for v in excl]
+                    py0 = max(0, min(reference.height - 1, int(round(ey0 * (reference.height - 1) / 1000.0))))
+                    px0 = max(0, min(reference.width - 1, int(round(ex0 * (reference.width - 1) / 1000.0))))
+                    py1 = max(0, min(reference.height, int(round(ey1 * (reference.height - 1) / 1000.0)) + 1))
+                    px1 = max(0, min(reference.width, int(round(ex1 * (reference.width - 1) / 1000.0)) + 1))
+                    if px1 > px0 and py1 > py0:
+                        exclusion_mask[py0:py1, px0:px1] = True
+                except (ValueError, TypeError):
+                    pass
+
         if geometry in {"curved", "folded"} or "vertices" in surface:
             visible = _visible_segmentation(surface, reference.size)
+            if np.any(visible & exclusion_mask):
+                visible = visible & ~exclusion_mask
+            if not np.any(visible):
+                raise ValueError("SURFACE_REVIEW_REQUIRED: no visible print remains after exclusion zone protection")
             mask = Image.fromarray(visible.astype(np.uint8) * 255)
             if np.any(union & visible):
                 raise ValueError("SURFACE_REVIEW_REQUIRED: overlapping printable surfaces")
@@ -147,20 +308,41 @@ def compose_reference_artwork(
             output.paste(projected, (0, 0), mask)
             union |= visible
             continue
+
         quad = _points(surface.get("quad"), reference.size, quad=True)
         if "segmentation" in surface:
             visible = _visible_segmentation(surface, reference.size)
         else:
             polygon = _points(surface.get("polygon"), reference.size)
             visible = np.asarray(_polygon_mask(reference.size, polygon)) > 0
+
+        # Protected polygons
+        protected = surface.get("protected_polygons", [] if "segmentation" in surface else None)
+        if not isinstance(protected, list):
+            raise ValueError("SURFACE_REVIEW_REQUIRED: explicit occlusion review is required")
+        for polygon_value in protected:
+            poly_norm = normalize_coordinates(polygon_value, b2d, is_quad=False)
+            poly_m = np.asarray(_polygon_mask(reference.size, _points(poly_norm, reference.size))) > 0
+            exclusion_mask |= poly_m
+
+        # Pillar 2: Exclusion Zone Collision Check & Clipping
+        if np.any(visible & exclusion_mask):
+            collided_px = int(np.count_nonzero(visible & exclusion_mask))
+            LOG.info("Printable area collided with %d exclusion zone pixels; clipping printable surface.", collided_px)
+            visible = visible & ~exclusion_mask
+
+        if not np.any(visible):
+            raise ValueError("SURFACE_REVIEW_REQUIRED: no visible print remains after exclusion zone protection")
+
         quad_mask = np.asarray(_polygon_mask(reference.size, quad)) > 0
         outside_pixels = np.count_nonzero(visible & ~quad_mask)
-        if outside_pixels > 0:
+        quad_excl_collision = np.count_nonzero(quad_mask & exclusion_mask)
+
+        if outside_pixels > 0 or quad_excl_collision > 0:
             mask_area = np.count_nonzero(visible)
             overlap_area = np.count_nonzero(visible & quad_mask)
             coverage_ratio = overlap_area / max(1, mask_area)
-            if coverage_ratio >= 0.95:
-                # High coverage (>95%): boundary discretization fuzz is safely clipped to quad mapping
+            if coverage_ratio >= 0.95 and quad_excl_collision == 0:
                 visible = visible & quad_mask
             else:
                 # Auto-repair: attempt refitting perspective quad from visible mask contour using cv2
@@ -190,16 +372,16 @@ def compose_reference_artwork(
                 except Exception:
                     pass
                 if not repaired:
-                    raise ValueError(f"SURFACE_REVIEW_REQUIRED: print mask extends outside mapping (coverage={coverage_ratio:.3f})")
+                    if coverage_ratio >= 0.95:
+                        visible = visible & quad_mask
+                    else:
+                        raise ValueError(f"SURFACE_REVIEW_REQUIRED: print mask extends outside mapping (coverage={coverage_ratio:.3f})")
+
         try:
             surface["quad"] = (quad * 1000.0 / np.asarray([reference.size[0] - 1, reference.size[1] - 1])).round().astype(int).tolist()
         except Exception:
             pass
-        protected = surface.get("protected_polygons", [] if "segmentation" in surface else None)
-        if not isinstance(protected, list):
-            raise ValueError("SURFACE_REVIEW_REQUIRED: explicit occlusion review is required")
-        for polygon_value in protected:
-            visible &= np.asarray(_polygon_mask(reference.size, _points(polygon_value, reference.size))) == 0
+
         if not np.any(visible) or np.any(union & visible):
             raise ValueError("SURFACE_REVIEW_REQUIRED: empty or overlapping printable surfaces")
         matrix, values = [], []
@@ -219,27 +401,44 @@ def compose_reference_artwork(
             from PIL import ImageFilter
             from .product_render import add_textile_surface
 
-            # Smooth ambient room lighting modulation
-            gray = reference.convert("L")
-            blur_rad = max(30, min(reference.size) // 25)
-            ambient = gray.filter(ImageFilter.GaussianBlur(radius=blur_rad))
-            amb_arr = np.asarray(ambient, dtype=np.float32)
-            vis_amb = amb_arr[visible]
-            if len(vis_amb) > 0:
-                mean_vis = float(np.median(vis_amb))
-                light_map = np.clip(amb_arr / max(1.0, mean_vis), 0.85, 1.15)
-            else:
-                light_map = np.ones(reference.size[::-1], dtype=np.float32)
+            # Pillar 3: Natural Ambient Lighting (no fake spotlight or grey vignette from old print)
+            # Sample ambient illumination strictly from the surrounding floor/room outside visible mask.
+            vis_u8 = visible.astype(np.uint8) * 255
+            try:
+                import cv2
+                dilated_surround = cv2.dilate(vis_u8, np.ones((25, 25), np.uint8), iterations=2) > 0
+            except Exception:
+                dilated_surround = np.asarray(Image.fromarray(vis_u8).filter(ImageFilter.MaxFilter(size=51))) > 0
 
-            # Scale artwork diffuse white point to realistic indoor fabric brightness (~222/255)
+            surround_mask = dilated_surround & ~visible
+            gray_ref = np.asarray(reference.convert("L"), dtype=np.float32)
+
+            light_map = np.ones((reference.height, reference.width), dtype=np.float32)
+            y_indices, x_indices = np.nonzero(surround_mask)
+
+            if len(y_indices) > 100:
+                surround_lum = gray_ref[surround_mask]
+                mean_lum = float(np.mean(surround_lum))
+                if mean_lum > 10.0:
+                    # Fit a smooth, subtle 1st-order linear gradient across the room (I(x,y) = ax + by + c)
+                    # This captures natural directional room lighting without ANY spotlight or vignette.
+                    try:
+                        A = np.column_stack([x_indices, y_indices, np.ones_like(x_indices)])
+                        coeffs, _, _, _ = np.linalg.lstsq(A, surround_lum, rcond=None)
+                        grid_y, grid_x = np.indices((reference.height, reference.width))
+                        fitted_plane = (coeffs[0] * grid_x + coeffs[1] * grid_y + coeffs[2]) / mean_lum
+                        # Tightly constrain ambient modulation to +/- 6% so colors remain pure and true
+                        light_map = np.clip(fitted_plane, 0.94, 1.06).astype(np.float32)
+                    except Exception:
+                        light_map = np.ones((reference.height, reference.width), dtype=np.float32)
+
+            # Keep the artwork's clean white point and true colors intact (no arbitrary scaling down to 222/255)
             proj_arr = np.asarray(projected, dtype=np.float32)
-            fabric_scaled = proj_arr * (222.0 / 255.0)
-            shaded = np.clip(fabric_scaled * light_map[..., np.newaxis], 0, 255).astype(np.uint8)
+            shaded = np.clip(proj_arr * light_map[..., np.newaxis], 0, 255).astype(np.uint8)
             shaded_img = Image.fromarray(shaded)
-            shaded_img = add_textile_surface(shaded_img, strength=0.07)
+            shaded_img = add_textile_surface(shaded_img, strength=0.04)
 
             # Inner feathering: soften edges strictly within printable boundary
-            vis_u8 = visible.astype(np.uint8) * 255
             try:
                 import cv2
                 dist = cv2.distanceTransform(vis_u8, cv2.DIST_L2, 3)
