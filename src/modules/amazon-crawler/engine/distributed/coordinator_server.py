@@ -618,6 +618,20 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
         item_ids = store.queue_all_approved_reviews()
         return {"queued": len(item_ids), "itemIds": item_ids}
 
+    @app.post("/api/v1/product-reviews/{item_id}/synced")
+    def mark_product_review_synced(item_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        result = store.mark_product_review_synced(
+            item_id,
+            product_id=str(payload.get("productId") or "").strip() or None,
+            product_handle=str(payload.get("productHandle") or "").strip() or None,
+            admin_url=str(payload.get("adminUrl") or "").strip() or None,
+        )
+        if result is None:
+            raise HTTPException(status_code=404, detail="Review item was not found.")
+        if result.get("deleted"):
+            raise HTTPException(status_code=409, detail="Review item was deleted.")
+        return result
+
     @app.get("/api/v1/image-profiles")
     def list_image_profiles() -> dict[str, Any]:
         return {"profiles": image_service.profiles.list()}

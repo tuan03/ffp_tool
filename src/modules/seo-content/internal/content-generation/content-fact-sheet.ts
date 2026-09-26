@@ -51,19 +51,28 @@ export function buildContentFactSheet(
 ): ContentFactSheet {
   const { source, productUnderstanding, shoppingContext } = context;
 
-  const storeProfile =
+  let storeProfile =
     context.storeProfile ??
     resolveStoreProfile({
       storeId: source.storeId,
       siteDomain: source.siteDomain ?? source.url,
     });
 
+  const combinedEvidence = `${source.title} ${source.niche || ""} ${source.description || ""}`.toLowerCase();
+  const isBedding = /\b(bedding|quilt|comforter|duvet|blanket|pillow|bedspread|coverlet)\b/i.test(combinedEvidence);
+
+  if (storeProfile?.bedding && !isBedding) {
+    // Strip bedding-specific rules when the crawled product is not a bedding product (e.g. Handbag, Rug, Doormat)
+    const { bedding, descriptionGuidelines, seoDescriptionGuidelines, ...generalProfile } = storeProfile;
+    storeProfile = generalProfile;
+  }
+
   const personalizationSupported = detectPersonalizationEvidence(
     source,
     productUnderstanding,
   );
 
-  const effectiveNiche = context.effectiveNiche ?? storeProfile?.niche ?? source.niche;
+  const effectiveNiche = context.effectiveNiche ?? (isBedding ? storeProfile?.niche : undefined) ?? source.niche;
   const sanitizedNiche = sanitizeFactText(effectiveNiche);
   const sanitizedProductIdentity =
     sanitizeFactText(productUnderstanding?.physicalProductIdentity) ||

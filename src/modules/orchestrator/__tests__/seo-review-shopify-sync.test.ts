@@ -577,4 +577,163 @@ describe("seo-review-shopify-sync", () => {
     const printFileRef = capturedMetafields?.find((m: any) => m.key === "print_file");
     assert.equal(printFileRef, undefined);
   });
+
+  it("passes crawler vendor, collections, productType, and applies variant price formula", async () => {
+    let capturedCreatePayload: any;
+    let capturedMembershipCalls: any[] = [];
+
+    const runner = createMockRunner(async (input) => {
+      if (input.operation === "products.create") {
+        capturedCreatePayload = input.payload;
+        return {
+          storeId: input.storeId || "jeminise",
+          operation: "products.create",
+          success: true,
+          data: {
+            product: {
+              id: "gid://shopify/Product/crawl-sync-999",
+              title: input.payload.product.title,
+              handle: input.payload.product.handle,
+              variants: [{ id: "gid://shopify/ProductVariant/v1", price: "26.95" }],
+              images: [],
+            },
+          },
+        } as unknown as ShopifyApiResponse;
+      }
+      if (input.operation === "collections.updateMembership") {
+        capturedMembershipCalls.push(input.payload);
+        return {
+          storeId: input.storeId || "jeminise",
+          operation: "collections.updateMembership",
+          success: true,
+          data: {},
+        } as unknown as ShopifyApiResponse;
+      }
+      return undefined;
+    });
+
+    const crawlProduct: CrawlProduct = {
+      id: "crawl-prod-999",
+      asin: "B012345678",
+      sourceKey: "amazon:B012345678:none:none",
+      canonicalUrl: "https://amazon.com/dp/B012345678",
+      categories: ["Home & Kitchen"],
+      variants: [
+        {
+          id: "v1",
+          sku: "SKU-1",
+          price: "20.00",
+          options: { Size: "Medium" },
+        },
+      ],
+      media: [],
+    };
+
+    const item: SeoReviewPushProductItem = {
+      id: "review-test-1",
+      asin: "B012345678",
+      productTitle: "Custom Printed Blanket",
+      productDescription: "<p>Super soft blanket</p>",
+      seoTitle: "Custom Printed Blanket - High Quality",
+      seoDescription: "Buy custom printed blanket now.",
+      handle: "custom-printed-blanket",
+      images: [],
+      sourceCrawlProduct: crawlProduct,
+      vendor: "JEMINISE",
+      productType: "Blanket",
+      collectionsToJoin: ["gid://shopify/Collection/111", "gid://shopify/Collection/222"],
+      priceAddition: 6.95,
+      discountPercent: 20,
+    };
+
+    const result = await pushSeoReviewProductToShopify(item, {
+      moduleApiRunner: runner,
+      storeId: "jeminise",
+    });
+
+    assert.equal(result.success, true);
+    assert.equal(result.productId, "gid://shopify/Product/crawl-sync-999");
+
+    // 1. Verify vendor and productType were passed
+    assert.equal(capturedCreatePayload?.product?.vendor, "JEMINISE");
+    assert.equal(capturedCreatePayload?.product?.productType, "Blanket");
+
+    // 2. Verify pricing formula: $20.00 + $6.95 = $26.95; compare-at with 20% discount = $26.95 / 0.8 = $33.69
+    assert.ok(capturedCreatePayload?.product?.variants?.length > 0);
+    const variant = capturedCreatePayload.product.variants[0];
+    assert.equal(variant.price, "26.95");
+    assert.equal(variant.compareAtPrice, "33.69");
+
+    // 3. Verify collections.updateMembership was called for both collections
+    assert.equal(capturedMembershipCalls.length, 2);
+    assert.deepEqual(capturedMembershipCalls[0], {
+      collectionId: "gid://shopify/Collection/111",
+      productIdsToAdd: ["gid://shopify/Product/crawl-sync-999"],
+    });
+    assert.deepEqual(capturedMembershipCalls[1], {
+      collectionId: "gid://shopify/Collection/222",
+      productIdsToAdd: ["gid://shopify/Product/crawl-sync-999"],
+    });
+  });
+
+  it("updates existing product with vendor, productType, and joins collections", async () => {
+    let capturedUpdatePayload: any;
+    let capturedMembershipCalls: any[] = [];
+
+    const runner = createMockRunner(async (input) => {
+      if (input.operation === "products.update") {
+        capturedUpdatePayload = input.payload;
+        return {
+          storeId: input.storeId || "capozen",
+          operation: "products.update",
+          success: true,
+          data: {
+            product: {
+              id: input.payload.id,
+              title: input.payload.product.title,
+              handle: input.payload.product.handle,
+            },
+          },
+        } as unknown as ShopifyApiResponse;
+      }
+      if (input.operation === "collections.updateMembership") {
+        capturedMembershipCalls.push(input.payload);
+        return {
+          storeId: input.storeId || "capozen",
+          operation: "collections.updateMembership",
+          success: true,
+          data: {},
+        } as unknown as ShopifyApiResponse;
+      }
+      return undefined;
+    });
+
+    const item: SeoReviewPushProductItem = {
+      id: "prod-existing-1",
+      productId: "gid://shopify/Product/12345678",
+      productTitle: "Updated Living Room Rug",
+      productDescription: "<p>Updated description</p>",
+      seoTitle: "Updated Living Room Rug",
+      seoDescription: "Updated seo description",
+      handle: "updated-living-room-rug",
+      images: [],
+      vendor: "CAPOZEN",
+      productType: "Rug",
+      collectionsToJoin: ["gid://shopify/Collection/rugs-999"],
+    };
+
+    const result = await pushSeoReviewProductToShopify(item, {
+      moduleApiRunner: runner,
+      storeId: "capozen",
+    });
+
+    assert.equal(result.success, true);
+    assert.equal(capturedUpdatePayload?.product?.vendor, "CAPOZEN");
+    assert.equal(capturedUpdatePayload?.product?.productType, "Rug");
+    assert.equal(capturedMembershipCalls.length, 1);
+    assert.deepEqual(capturedMembershipCalls[0], {
+      collectionId: "gid://shopify/Collection/rugs-999",
+      productIdsToAdd: ["gid://shopify/Product/12345678"],
+    });
+  });
 });

@@ -63,6 +63,26 @@ function toPushProductItem(vm: SeoProductUiViewModel): SeoReviewPushProductItem 
     },
   ] : undefined;
 
+  const targetCollectionIds = vm.sourcePinterestItem?.collectionIds
+    ?? (vm.coordinatorReview?.target?.collectionIds && vm.coordinatorReview.target.collectionIds.length > 0
+        ? vm.coordinatorReview.target.collectionIds
+        : undefined);
+
+  const effectiveProductType = vm.sourcePinterestItem?.productType
+    || (vm.coordinatorReview?.target?.productType?.trim() ? vm.coordinatorReview.target.productType.trim() : undefined)
+    || (vm.sourceCrawlProduct?.productType ? String(vm.sourceCrawlProduct.productType) : undefined);
+
+  const effectiveVendor = vm.sourcePinterestItem?.vendor
+    || (vm.storeId ? (vm.storeId.split("--")[0] || vm.storeId).trim().toUpperCase() : undefined);
+
+  const priceAddition = vm.coordinatorReview?.target?.priceAddition
+    ?? vm.sourcePinterestItem?.priceAddition
+    ?? 0;
+
+  const discountPercent = vm.coordinatorReview?.target?.discountPercent
+    ?? vm.sourcePinterestItem?.discountPercent
+    ?? 0;
+
   return {
     id: vm.id,
     productId: vm.productId,
@@ -79,12 +99,14 @@ function toPushProductItem(vm: SeoProductUiViewModel): SeoReviewPushProductItem 
       alt: img.alt.value,
     })),
     sourceCrawlProduct: vm.sourceCrawlProduct,
-    productType: vm.sourcePinterestItem?.productType || (vm.sourceCrawlProduct?.productType ? String(vm.sourceCrawlProduct.productType) : undefined),
+    productType: effectiveProductType,
     tags: vm.sourcePinterestItem
       ? ["pod", "pinterest-pod", ...(vm.sourcePinterestItem.trendKeywords || [])]
-      : undefined,
-    vendor: vm.sourcePinterestItem?.vendor || (vm.sourcePinterestItem ? "FFP Store" : undefined),
-    collectionsToJoin: vm.sourcePinterestItem?.collectionIds,
+      : (Array.isArray(vm.sourceCrawlProduct?.tags) ? vm.sourceCrawlProduct.tags.map(String) : undefined),
+    vendor: effectiveVendor,
+    collectionsToJoin: targetCollectionIds,
+    priceAddition,
+    discountPercent,
     metafields,
     variants: vm.sourcePinterestItem?.variants,
   };
@@ -559,6 +581,13 @@ export function SeoReviewPage({
       );
 
       if (result.success) {
+        if (targetProduct.coordinatorReview && amazonCrawlerReviews) {
+          void amazonCrawlerReviews.markSynced(targetProduct.coordinatorReview.itemId, {
+            productId: result.productId,
+            productHandle: result.productHandle,
+            adminUrl: result.adminUrl,
+          }).catch(() => {});
+        }
         notifyUser({
           title: "🛍️ Shopify Sync thành công!",
           message: `Sản phẩm "${targetProduct.productTitle.value}" đã được đồng bộ lên Store ${targetStore.toUpperCase()}.`,
@@ -643,6 +672,19 @@ export function SeoReviewPage({
       );
 
       const resultMap = new Map(results.map((r) => [r.id, r]));
+
+      for (const res of results) {
+        if (res.success) {
+          const matchedTarget = targets.find((t) => t.id === res.id);
+          if (matchedTarget?.coordinatorReview && amazonCrawlerReviews) {
+            void amazonCrawlerReviews.markSynced(matchedTarget.coordinatorReview.itemId, {
+              productId: res.productId,
+              productHandle: res.productHandle,
+              adminUrl: res.adminUrl,
+            }).catch(() => {});
+          }
+        }
+      }
 
       const successCount = results.filter((r) => r.success).length;
       const failCount = results.length - successCount;
@@ -751,18 +793,6 @@ export function SeoReviewPage({
     );
 
     void triggerPushToShopify(syncingTarget);
-
-    const targetStore = target.storeId || effectiveStoreId || "capozen";
-    if (
-      target.coordinatorReview &&
-      amazonCrawlerReviews &&
-      target.storeId &&
-      targetStore.toLowerCase() === target.storeId.toLowerCase()
-    ) {
-      void amazonCrawlerReviews.sync(target.coordinatorReview.itemId).catch(() => {
-        // Coordinator notification is best-effort alongside direct gateway push
-      });
-    }
   }
 
   function handleViewSyncError(product: SeoProductUiViewModel) {
@@ -948,19 +978,6 @@ export function SeoReviewPage({
         }));
       } else {
         await triggerBatchPushToShopify(syncingTargets);
-      }
-
-      // Best-effort notify coordinator for same-store crawler items
-      const sameStoreCoordinatorTargets = eligible.filter(
-        (target) =>
-          target.coordinatorReview &&
-          target.storeId &&
-          target.storeId.toLowerCase() === effectiveStoreId.toLowerCase(),
-      );
-      if (sameStoreCoordinatorTargets.length > 0 && amazonCrawlerReviews) {
-        void amazonCrawlerReviews.syncAllApproved().catch(() => {
-          // Coordinator notification is best-effort alongside direct gateway push
-        });
       }
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
@@ -1379,15 +1396,14 @@ export function SeoReviewPage({
           },
         );
 
-        if (target.coordinatorReview && amazonCrawlerReviews) {
-          try {
-            await amazonCrawlerReviews.sync(target.coordinatorReview.itemId);
-          } catch {
-            // Coordinator sync queue notification is best-effort alongside direct push
-          }
-        }
-
         if (pushResult.success) {
+          if (target.coordinatorReview && amazonCrawlerReviews) {
+            void amazonCrawlerReviews.markSynced(target.coordinatorReview.itemId, {
+              productId: pushResult.productId,
+              productHandle: pushResult.productHandle,
+              adminUrl: pushResult.adminUrl,
+            }).catch(() => {});
+          }
           const syncedProduct: SeoProductUiViewModel = {
             ...updatedProductBase,
             storeId: targetStore,

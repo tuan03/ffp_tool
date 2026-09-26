@@ -495,6 +495,7 @@ export function ProductDetailDrawer({
                 <h3 className="text-sm font-bold text-slate-200">Thông tin Shopify sẽ đồng bộ</h3>
                 <dl className="mt-3 grid gap-3 text-xs sm:grid-cols-2">
                   <div><dt className="text-slate-500">Store</dt><dd className="mt-1 font-mono text-cyan-300">{product.storeId || "—"}</dd></div>
+                  <div><dt className="text-slate-500">Nhà cung cấp (Vendor)</dt><dd className="mt-1 font-medium text-slate-200">{(product.storeId ? (product.storeId.split("--")[0] || product.storeId).trim().toUpperCase() : "—")}</dd></div>
                   <div><dt className="text-slate-500">Job</dt><dd className="mt-1 font-mono text-slate-300">{product.coordinatorReview.jobId}</dd></div>
                   <div><dt className="text-slate-500">Product type</dt><dd className="mt-1 text-slate-200">{reviewTarget.productType || "Theo Amazon"}</dd></div>
                   <div><dt className="text-slate-500">Collections</dt><dd className="mt-1 break-all text-slate-200">{reviewTarget.collectionIds.join(", ") || "Không chọn"}</dd></div>

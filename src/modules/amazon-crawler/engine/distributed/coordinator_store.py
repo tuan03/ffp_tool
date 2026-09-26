@@ -1065,6 +1065,50 @@ class CoordinatorStore:
                 self._refresh_job(session, job_id)
         return queued
 
+    def mark_product_review_synced(
+        self,
+        item_id: str,
+        *,
+        product_id: str | None = None,
+        product_handle: str | None = None,
+        admin_url: str | None = None,
+    ) -> dict[str, Any] | None:
+        with self.sessions.begin() as session:
+            item = session.scalar(select(CrawlProductItem).where(CrawlProductItem.id == item_id).with_for_update())
+            if item is None:
+                return None
+            if item.status == "deleted":
+                return {"deleted": True}
+            pipeline_result = dict(item.shopify_result or {})
+            review = dict(pipeline_result.get("review") or {})
+            now_iso = utc_iso(utc_now())
+            review.update({
+                "decision": "approved",
+                "syncStatus": "synced",
+                "syncError": None,
+                "syncedAt": now_iso,
+                "updatedAt": now_iso,
+            })
+            if product_id:
+                pipeline_result["productId"] = product_id
+            if product_handle:
+                pipeline_result["productHandle"] = product_handle
+            if admin_url:
+                pipeline_result["adminUrl"] = admin_url
+            pipeline_result["review"] = review
+            item.shopify_result = pipeline_result
+            item.status = "completed"
+            item.last_error = None
+            item.next_attempt_at = None
+            item.claim_expires_at = None
+            item.completed_at = utc_now()
+            self._event(session, item.job_id, "product_review_synced", {
+                "productItemId": item.id,
+                "productId": product_id,
+            })
+            self._refresh_job(session, item.job_id)
+            return self._review_snapshot(item, session.get(CrawlJob, item.job_id))
+
     def mark_product_seo(
         self,
         item_id: str,

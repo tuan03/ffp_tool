@@ -16,6 +16,7 @@ import {
   syncSingleProduct,
   type ShopifyManagedResources,
   type ShopifyMetafieldInput,
+  type ShopifySyncProductInput,
 } from "../shopify-sync";
 
 export interface SeoReviewPushImageItem {
@@ -43,6 +44,8 @@ export interface SeoReviewPushProductItem {
   readonly metafields?: readonly ShopifyMetafieldInput[];
   readonly originalStoreId?: string;
   readonly collectionsToJoin?: readonly string[];
+  readonly priceAddition?: number;
+  readonly discountPercent?: number;
   readonly variants?: readonly {
     readonly title?: string;
     readonly price: string;
@@ -136,6 +139,9 @@ export async function pushSeoReviewProductToShopify(
       product.originalStoreId &&
       product.originalStoreId.trim().toLowerCase() !== targetStoreId.trim().toLowerCase(),
     );
+
+    const fallbackVendor = (targetStoreId.split("--")[0] || targetStoreId).trim().toUpperCase();
+    const effectiveVendor = product.vendor || fallbackVendor;
 
     let finalMetafields = product.metafields ? [...product.metafields] : undefined;
 
@@ -278,7 +284,44 @@ export async function pushSeoReviewProductToShopify(
       // Ensure existingProductId is strictly a valid Shopify GID or undefined (never pass raw ASIN)
       const validExistingProductId = isShopifyProductGid(existingProductId) ? existingProductId : undefined;
 
-      const syncResult = await syncSingleProduct(fromCustomizationNormalizerProduct(enrichedCrawlProduct), {
+      const baseInput = fromCustomizationNormalizerProduct(enrichedCrawlProduct, {
+        vendor: effectiveVendor,
+        productType: product.productType,
+        amazonParentAsin: product.asin,
+      });
+
+      let syncInput: ShopifySyncProductInput = {
+        ...baseInput,
+        vendor: effectiveVendor,
+        collectionsToJoin: product.collectionsToJoin,
+        ...(product.productType ? { productType: product.productType } : {}),
+      };
+
+      const priceAddition = Number(product.priceAddition ?? 0);
+      const discountPercent = Number(product.discountPercent ?? 0);
+      if ((priceAddition > 0 || discountPercent > 0) && baseInput.variants && baseInput.variants.length > 0) {
+        const adjustedVariants = baseInput.variants.map((v) => {
+          const rawPrice = Number.parseFloat(v.price);
+          if (!Number.isFinite(rawPrice)) return v;
+          const sellingPrice = rawPrice + priceAddition;
+          let compareAtPrice: string | undefined = v.compareAtPrice;
+          if (discountPercent > 0 && discountPercent < 100) {
+            const calcCompare = sellingPrice / (1 - discountPercent / 100);
+            compareAtPrice = calcCompare.toFixed(2);
+          }
+          return {
+            ...v,
+            price: sellingPrice.toFixed(2),
+            compareAtPrice,
+          };
+        });
+        syncInput = {
+          ...syncInput,
+          variants: adjustedVariants,
+        };
+      }
+
+      const syncResult = await syncSingleProduct(syncInput, {
         gateway,
         existingProductId: validExistingProductId,
         existingManagedResources,
@@ -294,6 +337,26 @@ export async function pushSeoReviewProductToShopify(
 
       const finalProductId = syncResult.productId || validExistingProductId || (isCrossStore ? undefined : normalizeShopifyProductGid(product.productId));
       const finalHandle = syncResult.productHandle || product.handle;
+
+      if (finalProductId && product.collectionsToJoin && product.collectionsToJoin.length > 0) {
+        for (const colId of product.collectionsToJoin) {
+          try {
+            await moduleApiRunner({
+              storeId: targetStoreId,
+              operation: "collections.updateMembership",
+              payload: {
+                collectionId: colId,
+                productIdsToAdd: [finalProductId],
+              },
+              mode,
+              requestId: `seo-review-col-${product.id}-${colId.replace(/[^a-zA-Z0-9]/g, "")}-${Date.now()}`,
+            });
+          } catch (colErr: unknown) {
+            const msg = colErr instanceof Error ? colErr.message : String(colErr);
+            console.warn(`[SEO Review Shopify Sync] Non-fatal: Failed to attach product to collection ${colId}: ${msg}`);
+          }
+        }
+      }
 
       return {
         id: product.id,
@@ -340,6 +403,9 @@ export async function pushSeoReviewProductToShopify(
             title: product.productTitle,
             descriptionHtml: product.productDescription,
             handle: product.handle,
+            vendor: effectiveVendor,
+            productType: product.productType,
+            tags: product.tags ? [...product.tags] : undefined,
             seo: {
               title: product.seoTitle,
               description: product.seoDescription,
@@ -385,6 +451,26 @@ export async function pushSeoReviewProductToShopify(
         }
       }
 
+      if (finalProductId && product.collectionsToJoin && product.collectionsToJoin.length > 0) {
+        for (const colId of product.collectionsToJoin) {
+          try {
+            await moduleApiRunner({
+              storeId: targetStoreId,
+              operation: "collections.updateMembership",
+              payload: {
+                collectionId: colId,
+                productIdsToAdd: [finalProductId],
+              },
+              mode,
+              requestId: `seo-review-update-col-${product.id}-${colId.replace(/[^a-zA-Z0-9]/g, "")}-${Date.now()}`,
+            });
+          } catch (colErr: unknown) {
+            const msg = colErr instanceof Error ? colErr.message : String(colErr);
+            console.warn(`[SEO Review Shopify Sync] Non-fatal: Failed to attach updated product to collection ${colId}: ${msg}`);
+          }
+        }
+      }
+
       return {
         id: product.id,
         success: true,
@@ -410,7 +496,7 @@ export async function pushSeoReviewProductToShopify(
         description: product.seoDescription,
       },
       tags: product.tags ? [...product.tags] : undefined,
-      vendor: product.vendor,
+      vendor: effectiveVendor,
       productType: product.productType,
       collectionsToJoin: product.collectionsToJoin,
       metafields: finalMetafields,
@@ -419,18 +505,32 @@ export async function pushSeoReviewProductToShopify(
         alt: img.alt,
         mediaContentType: "IMAGE",
       })),
-      variants: product.variants?.map((v) => ({
-        title: v.title,
-        price: v.price,
-        compareAtPrice: v.compareAtPrice,
-        sku: v.sku,
-        barcode: v.barcode,
-        inventoryTracked: v.inventoryTracked,
-        optionValues: v.optionValues?.map((ov) => ({
-          optionName: ov.optionName || "Size",
-          name: ov.name || ov.value || "Standard",
-        })),
-      })),
+      variants: product.variants?.map((v) => {
+        const rawPrice = Number.parseFloat(v.price);
+        const priceAddition = Number(product.priceAddition ?? 0);
+        const discountPercent = Number(product.discountPercent ?? 0);
+        let finalPrice = v.price;
+        let compareAtPrice = v.compareAtPrice;
+        if (Number.isFinite(rawPrice) && (priceAddition > 0 || discountPercent > 0)) {
+          const sellingPrice = rawPrice + priceAddition;
+          finalPrice = sellingPrice.toFixed(2);
+          if (discountPercent > 0 && discountPercent < 100) {
+            compareAtPrice = (sellingPrice / (1 - discountPercent / 100)).toFixed(2);
+          }
+        }
+        return {
+          title: v.title,
+          price: finalPrice,
+          compareAtPrice,
+          sku: v.sku,
+          barcode: v.barcode,
+          inventoryTracked: v.inventoryTracked,
+          optionValues: v.optionValues?.map((ov) => ({
+            optionName: ov.optionName || "Size",
+            name: ov.name || ov.value || "Standard",
+          })),
+        };
+      }),
       status: "ACTIVE",
     });
 
