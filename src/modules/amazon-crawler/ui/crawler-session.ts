@@ -48,6 +48,10 @@ interface PersistedCrawlerSession {
 
 const STORAGE_KEY = "ffp_amazon_crawler_session_v1";
 
+function useCurrentAmazonZip(settings: AmazonCrawlerSettings): AmazonCrawlerSettings {
+  return settings.amazonZip === "10001" ? { ...settings, amazonZip: "90001" } : settings;
+}
+
 const DEFAULT_SESSION_STATE: AmazonCrawlerSessionState = {
   urlText: "",
   settings: DEFAULT_AMAZON_CRAWLER_SETTINGS,
@@ -79,10 +83,10 @@ function readPersistedSession(): AmazonCrawlerSessionState {
     const parsed = JSON.parse(raw) as Partial<PersistedCrawlerSession>;
     if (!parsed || typeof parsed !== "object") return { ...DEFAULT_SESSION_STATE };
 
-    const settings: AmazonCrawlerSettings = {
+    const settings = useCurrentAmazonZip({
       ...DEFAULT_AMAZON_CRAWLER_SETTINGS,
       ...(parsed.settings && typeof parsed.settings === "object" ? parsed.settings : {}),
-    };
+    });
 
     const output = (parsed.output && typeof parsed.output === "object" && Array.isArray((parsed.output as AmazonCrawlerOutput).products))
       ? (parsed.output as AmazonCrawlerOutput)
@@ -271,7 +275,7 @@ export async function startCrawlerJob({
 }: StartCrawlerJobOptions): Promise<AmazonCrawlerOutput | null> {
   if (urls.length === 0 || sessionState.isRunning) return null;
 
-  const jobSettings = settings ?? sessionState.settings;
+  const jobSettings = useCurrentAmazonZip(settings ?? sessionState.settings);
   const controller = new AbortController();
   activeController = controller;
 

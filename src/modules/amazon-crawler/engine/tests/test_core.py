@@ -10,7 +10,7 @@ from copy import deepcopy
 from pathlib import Path
 
 from engine.cache import CACHE_SCHEMA_VERSION, RawFamilyCache
-from engine.crawler_core import AmazonCrawler, CrawlSettings, HttpFetcher, NormalizedInput, effective_product_threads, normalize_amazon_input, parse_product_html
+from engine.crawler_core import AmazonCrawler, CrawlFetchError, CrawlSettings, HttpFetcher, NormalizedInput, effective_product_threads, normalize_amazon_input, parse_product_html
 from engine.customization_converter import expand_paid_variants, normalize_customization, remove_option_choosers
 from engine.proxy_profiles import ProxyAssignment
 from engine.variant_presets import PRESET_ID, build_jeminise_variants
@@ -187,7 +187,7 @@ class FixtureCrawler(AmazonCrawler):
 
 
 class ParentFamilyCrawler(AmazonCrawler):
-    def _fetch_parsed(self, normalized: NormalizedInput) -> tuple[dict, dict]:
+    def _fetch_parsed(self, normalized: NormalizedInput, *, require_price: bool = True) -> tuple[dict, dict]:
         variants = {
             "B012345678": {"Design": "Ocean"},
             "B012345679": {"Design": "Forest"},
@@ -216,7 +216,7 @@ class ParentFamilyCrawler(AmazonCrawler):
 
 
 class PartiallyDetectedCustomizeFamilyCrawler(AmazonCrawler):
-    def _fetch_parsed(self, normalized: NormalizedInput) -> tuple[dict, dict]:
+    def _fetch_parsed(self, normalized: NormalizedInput, *, require_price: bool = True) -> tuple[dict, dict]:
         first_asin = "B012345678"
         second_asin = "B012345679"
         has_customize = normalized.asin == first_asin
@@ -257,6 +257,11 @@ def source_variant(asin: str, design: str, size: str, customization: dict | None
 
 
 class CoreTests(unittest.TestCase):
+    def test_default_crawl_uses_required_los_angeles_delivery_zip(self) -> None:
+        self.assertEqual(CrawlSettings().amazon_zip, "90001")
+        self.assertEqual(CrawlSettings.from_api({}).amazon_zip, "90001")
+        self.assertEqual(CrawlSettings.from_api({"amazonZip": "10001"}).amazon_zip, "90001")
+
     def test_http_response_wait_is_interrupted_by_stop_event(self) -> None:
         request_started = threading.Event()
         release_request = threading.Event()
@@ -398,6 +403,13 @@ class CoreTests(unittest.TestCase):
         parsed = parse_product_html(html, "B012345678", "https://www.amazon.com/dp/B012345678")
         self.assertEqual(parsed["price"], {"raw": "$29.93", "amount": 29.93, "currency": "USD"})
 
+    def test_price_parser_reads_buy_box_selector_from_previous_crawler(self) -> None:
+        html = """<html><body><input id='ASIN' value='B012345678'><h1 id='productTitle'>Price</h1>
+        <div id='corePriceDisplay_desktop_feature_div'><span class='aok-offscreen'>$24.75</span></div>
+        </body></html>"""
+        parsed = parse_product_html(html, "B012345678", "https://www.amazon.com/dp/B012345678")
+        self.assertEqual(parsed["price"], {"raw": "$24.75", "amount": 24.75, "currency": "USD"})
+
     def test_unrelated_recommendation_asins_are_not_variants(self) -> None:
         html = """<html><body><input id='ASIN' value='B012345678'><h1 id='productTitle'>Family</h1>
         <div id='twister'><li data-asin='B012345679'></li></div>
@@ -460,7 +472,7 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(len(fetcher.calls), 1)
         self.assertEqual(browser.calls, ["https://www.amazon.com/dp/B012345678"])
 
-    def test_customize_family_rechecks_child_whose_first_snapshot_has_no_customize_marker(self) -> None:
+    def test_customize_family_does_not_fetch_form_for_child_without_customize_signal(self) -> None:
         second_entry_html = CUSTOMIZABLE_ENTRY_HTML.replace("B012345678", "B012345679")
         widget_html = """<html><body><script type='application/json'>
         {"sellerConfigComponents":[{"componentType":"TextInputComponent","id":"name","label":"Name"}]}
@@ -478,10 +490,98 @@ class CoreTests(unittest.TestCase):
             family = crawler._crawl_family(normalize_amazon_input("B012345678"))
 
         variants = {variant["asin"]: variant for variant in family["sourceVariants"]}
-        self.assertIsNotNone(variants["B012345679"]["customization"])
+        self.assertIsNone(variants["B012345679"]["customization"])
         self.assertTrue(variants["B012345679"]["customizationComplete"])
-        self.assertEqual(browser.entry_calls, ["https://www.amazon.com/dp/B012345679"])
-        self.assertIn("https://www.amazon.com/customize/B012345679", browser.form_calls)
+        self.assertEqual(browser.entry_calls, [])
+        self.assertNotIn("https://www.amazon.com/customize/B012345679", browser.form_calls)
+
+    def test_variant_matrix_failure_is_not_treated_as_customize_signal(self) -> None:
+        class IncompleteMatrixCrawler(ParentFamilyCrawler):
+            def _fetch_parsed(self, normalized: NormalizedInput, *, require_price: bool = True) -> tuple[dict, dict]:
+                parsed, diagnostics = super()._fetch_parsed(normalized, require_price=require_price)
+                parsed["dimensions"]["Design"].append("Desert")
+                return parsed, diagnostics
+
+        class FailingMatrixBrowser(FakeBrowser):
+            def sweep_variant_matrix(self, *_args: object, **_kwargs: object) -> list[str]:
+                raise RuntimeError("matrix unavailable")
+
+        with tempfile.TemporaryDirectory() as directory:
+            crawler = IncompleteMatrixCrawler(
+                root=Path(directory), settings=CrawlSettings(variant_threads=1),
+                browser_pool=FailingMatrixBrowser(PRODUCT_HTML),
+            )
+            family = crawler._crawl_family(normalize_amazon_input("B012345678"))
+
+        self.assertIn("matrix unavailable", family["diagnostics"]["matrixWarning"])
+        self.assertTrue(all(variant["hasCustomizationSignal"] is False for variant in family["sourceVariants"]))
+        self.assertTrue(all(variant["customizationComplete"] is True for variant in family["sourceVariants"]))
+
+    def test_gallery_failure_does_not_mark_regular_product_customize_incomplete(self) -> None:
+        class FailingGalleryBrowser(FakeBrowser):
+            def fetch_gallery(self, *_args: object, **_kwargs: object) -> str:
+                raise RuntimeError("gallery unavailable")
+
+        with tempfile.TemporaryDirectory() as directory:
+            crawler = ParentFamilyCrawler(
+                root=Path(directory), settings=CrawlSettings(variant_threads=1),
+                browser_pool=FailingGalleryBrowser(PRODUCT_HTML),
+            )
+            family = crawler._crawl_family(normalize_amazon_input("B012345678"))
+
+        self.assertTrue(all(variant["customizationComplete"] is True for variant in family["sourceVariants"]))
+        self.assertTrue(all(any("gallery unavailable" in warning for warning in variant["warnings"])
+                            for variant in family["sourceVariants"]))
+
+    def test_http_product_without_price_retries_rendered_page_and_records_page_signals(self) -> None:
+        html_without_price = PRODUCT_HTML.replace("$19.99", "")
+        with tempfile.TemporaryDirectory() as directory:
+            crawler = AmazonCrawler(
+                root=Path(directory), settings=CrawlSettings(amazon_zip="90001"),
+                fetcher=StaticFetcher(html_without_price), browser_pool=FakeBrowser(PRODUCT_HTML),
+            )
+            parsed, diagnostics = crawler._fetch_parsed(normalize_amazon_input("B012345678"))
+        self.assertEqual(parsed["price"]["amount"], 19.99)
+        self.assertEqual(diagnostics["fetchMode"], "playwright")
+        self.assertEqual(diagnostics["amazonZip"], "90001")
+        self.assertFalse(diagnostics["fetchTrace"]["http"][-1]["hasPrice"])
+        self.assertTrue(diagnostics["fetchTrace"]["playwright"][-1]["hasPrice"])
+
+    def test_unpriced_family_page_still_discovers_variants_and_refetches_its_child(self) -> None:
+        class UnpricedDiscoveryCrawler(ParentFamilyCrawler):
+            def __init__(self, **kwargs: object) -> None:
+                super().__init__(**kwargs)
+                self.fetches: list[tuple[str, bool]] = []
+
+            def _fetch_parsed(self, normalized: NormalizedInput, *, require_price: bool = True) -> tuple[dict, dict]:
+                self.fetches.append((normalized.asin, require_price))
+                parsed, diagnostics = super()._fetch_parsed(normalized)
+                if normalized.asin == "B012345678" and not require_price:
+                    parsed["price"] = None
+                return parsed, diagnostics
+
+        with tempfile.TemporaryDirectory() as directory:
+            crawler = UnpricedDiscoveryCrawler(
+                root=Path(directory), settings=CrawlSettings(variant_threads=1), browser_pool=FakeBrowser(PRODUCT_HTML),
+            )
+            family = crawler._crawl_family(normalize_amazon_input("B012345678"))
+        self.assertEqual(crawler.fetches[0], ("B012345678", False))
+        self.assertIn(("B012345678", True), crawler.fetches)
+        self.assertTrue(all(variant["price"] is not None for variant in family["sourceVariants"]))
+
+    def test_missing_price_after_render_keeps_diagnostic_instead_of_guessing_price(self) -> None:
+        html_without_price = PRODUCT_HTML.replace("$19.99", "")
+        with tempfile.TemporaryDirectory() as directory:
+            crawler = AmazonCrawler(
+                root=Path(directory), settings=CrawlSettings(amazon_zip="90001"),
+                fetcher=StaticFetcher(html_without_price), browser_pool=FakeBrowser(html_without_price),
+            )
+            with self.assertRaises(CrawlFetchError) as raised:
+                crawler._fetch_parsed(normalize_amazon_input("B012345678"))
+        diagnostics = raised.exception.diagnostics
+        self.assertEqual(diagnostics["amazonZip"], "90001")
+        self.assertFalse(diagnostics["fetchTrace"]["http"][-1]["hasPrice"])
+        self.assertFalse(diagnostics["fetchTrace"]["playwright"][-1]["hasPrice"])
 
     def test_http_failure_uses_playwright_fallback(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -503,6 +603,8 @@ class CoreTests(unittest.TestCase):
             [(trace["profile"], trace["outcome"]) for trace in fetcher.last_diagnostics()],
             [("proxy-1", "captcha"), ("proxy-2", "success")],
         )
+        self.assertTrue(all(trace["amazonZip"] == "90001" for trace in fetcher.last_diagnostics()))
+        self.assertTrue(all(trace["usProfileApplied"] for trace in fetcher.last_diagnostics()))
 
         fetcher.fetch("https://www.amazon.com/dp/B012345678")
 
@@ -782,7 +884,7 @@ class CoreTests(unittest.TestCase):
                 self.peak = 0
                 self.lock = threading.Lock()
 
-            def _fetch_parsed(self, normalized: NormalizedInput) -> tuple[dict, dict]:
+            def _fetch_parsed(self, normalized: NormalizedInput, *, require_price: bool = True) -> tuple[dict, dict]:
                 with self.lock:
                     self.active += 1
                     self.peak = max(self.peak, self.active)
@@ -1064,7 +1166,7 @@ class CoreTests(unittest.TestCase):
         forest_finished_before_ocean = False
 
         class ConcurrentGroupCrawler(AmazonCrawler):
-            def _fetch_parsed(self, normalized: NormalizedInput) -> tuple[dict, dict]:
+            def _fetch_parsed(self, normalized: NormalizedInput, *, require_price: bool = True) -> tuple[dict, dict]:
                 nonlocal forest_finished_before_ocean
                 options_by_asin = {
                     "B012345678": {"Design": "Ocean", "Size": "Twin"},

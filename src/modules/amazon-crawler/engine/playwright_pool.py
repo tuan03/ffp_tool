@@ -693,10 +693,10 @@ class PlaywrightPool:
             if route == "direct" and skip_remaining_direct:
                 continue
             is_last_route = attempt == len(routes)
-            # Customize needs the current direct session to remain available for
-            # a human CAPTCHA solve before rotating to another proxy.
+            # Let the first direct session solve a CAPTCHA before rotating
+            # routes; this also lets Amazon apply the requested delivery ZIP.
             allow_manual_captcha = not self.headless and (
-                is_last_route or (customization_markers is not None and route == "direct" and attempt == 1)
+                is_last_route or (route == "direct" and attempt == 1)
             )
             try:
                 fetch_options: dict[str, Any] = {
@@ -712,6 +712,8 @@ class PlaywrightPool:
                     "profile": assignment.name,
                     "proxyEnabled": assignment.is_enabled,
                     "networkRoute": route,
+                    "amazonZip": self.zip_code,
+                    "usProfileApplied": self._us_profile_applied.get(profile_index) is True,
                     "outcome": "success",
                     "htmlBytes": len(html),
                 })
@@ -764,6 +766,7 @@ class PlaywrightPool:
     ) -> dict[str, Any]:
         trace: dict[str, Any] = {
             "attempt": attempt,
+            "amazonZip": self.zip_code,
             "outcome": outcome,
             "error": str(error),
         }
@@ -773,6 +776,7 @@ class PlaywrightPool:
                 "profile": assignment.name,
                 "proxyEnabled": assignment.is_enabled,
                 "networkRoute": self._route_kind(profile_index),
+                "usProfileApplied": self._us_profile_applied.get(profile_index) is True,
             })
         return trace
 

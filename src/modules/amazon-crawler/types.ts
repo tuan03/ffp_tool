@@ -586,7 +586,7 @@ export const DEFAULT_AMAZON_CRAWLER_SETTINGS: AmazonCrawlerSettings = {
   browserProfiles: 4,
   browserTabs: 2,
   headless: false,
-  amazonZip: "10001",
+  amazonZip: "90001",
   captchaTimeoutSeconds: 180,
   maxMatrixVariants: 500,
   storeId: "capozen",

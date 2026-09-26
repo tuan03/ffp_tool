@@ -30,6 +30,7 @@ class FakeZipCaptchaPage(FakeCaptchaPage):
     def __init__(self, contents: list[str]) -> None:
         super().__init__(contents)
         self.was_closed = False
+        self.requested_zip: str | None = None
 
     async def goto(self, *args, **kwargs) -> None:
         pass
@@ -37,7 +38,8 @@ class FakeZipCaptchaPage(FakeCaptchaPage):
     async def wait_for_selector(self, *args, **kwargs) -> None:
         pass
 
-    async def evaluate(self, *args, **kwargs):
+    async def evaluate(self, _script, arguments):
+        self.requested_zip = arguments["zipCode"]
         return {"ok": True, "payload": {"isAddressUpdated": True}}
 
     async def close(self) -> None:
@@ -102,7 +104,7 @@ class PlaywrightPoolTests(unittest.IsolatedAsyncioTestCase):
             tabs_per_profile=1,
             headless=headless,
             captcha_timeout=30,
-            zip_code="10001",
+            zip_code="90001",
             on_captcha=on_captcha,
         )
 
@@ -138,6 +140,7 @@ class PlaywrightPoolTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(was_applied)
         self.assertTrue(page.was_brought_forward)
         self.assertTrue(page.was_closed)
+        self.assertEqual(page.requested_zip, "90001")
         self.assertEqual(notifications, ["https://www.amazon.com/?language=en_US&currency=USD"])
 
     async def test_profile_tab_capacity_runs_browser_work_in_parallel(self) -> None:
@@ -316,7 +319,7 @@ class PlaywrightPoolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(diagnostics[0]["profile"], "direct-1")
         self.assertFalse(diagnostics[0]["proxyEnabled"])
 
-    async def test_headed_captcha_wait_is_allowed_only_after_proxy_fallbacks(self) -> None:
+    async def test_headed_captcha_waits_on_first_direct_profile_then_falls_back(self) -> None:
         pool = PlaywrightPool(
             profile_root=Path(tempfile.gettempdir()) / "ffp-playwright-test",
             profiles=2,
@@ -338,7 +341,7 @@ class PlaywrightPoolTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(CaptchaTimeout):
             await pool._fetch_with_retries("https://amazon.com/dp/B012345678", None)
 
-        self.assertEqual(attempts, [("direct", False), ("direct", False), ("proxy", True)])
+        self.assertEqual(attempts, [("direct", True), ("direct", False), ("proxy", True)])
 
     async def test_headed_customize_can_solve_captcha_on_direct_profile(self) -> None:
         pool = PlaywrightPool(

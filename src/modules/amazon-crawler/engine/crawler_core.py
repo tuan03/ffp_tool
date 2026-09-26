@@ -54,7 +54,7 @@ class CrawlSettings:
     browser_profiles: int = 4
     browser_tabs: int = 2
     headless: bool = False
-    amazon_zip: str = "10001"
+    amazon_zip: str = "90001"
     captcha_timeout_seconds: int = 180
     max_matrix_variants: int = 500
     store_id: str = ""
@@ -84,7 +84,9 @@ class CrawlSettings:
             except (ValueError, TypeError):
                 return default
 
-        zip_code = str(payload.get("amazonZip") or "10001").strip()
+        zip_code = str(payload.get("amazonZip") or "90001").strip()
+        if zip_code == "10001":
+            zip_code = "90001"
         if not re.fullmatch(r"\d{5}(?:-\d{4})?", zip_code):
             raise ValueError("amazonZip must be a US ZIP code.")
 
@@ -553,7 +555,10 @@ def parse_product_html(html: str, requested_asin: str, url: str) -> dict[str, An
 
     price = first_money((
         "#apex-pricetopay-accessibility-label", ".priceToPay .a-offscreen",
+        "#corePriceDisplay_desktop_feature_div .aok-offscreen",
         "#corePrice_feature_div .a-offscreen", "#corePriceDisplay_desktop_feature_div .a-offscreen",
+        "#corePrice_feature_div .aok-offscreen", ".apexPriceToPay .a-offscreen",
+        ".reinventPricePriceToPayMargin .a-offscreen", "#priceblock_dealprice",
         "#priceblock_ourprice", "#price_inside_buybox", "#newBuyBoxPrice", "#tp_price_block_total_price_ww .a-offscreen",
     ))
     images = _extract_high_resolution_images(html, canonical_asin)
@@ -607,7 +612,7 @@ class HttpFetcher:
     def __init__(
         self,
         *,
-        zip_code: str = "10001",
+        zip_code: str = "90001",
         retries: int = 3,
         assignments: list[ProxyAssignment] | None = None,
         cancel_event: threading.Event | None = None,
@@ -782,12 +787,14 @@ class HttpFetcher:
                 "attempt": attempt,
                 "profile": assignment.name,
                 "proxyEnabled": assignment.is_enabled,
+                "amazonZip": self.zip_code,
                 "candidate": attempt - 1 if attempt <= len(candidates) else (attempt - 1) % len(candidates),
             }
             slot = self._assignment_slots[assignment.index] if assignment.is_enabled else contextlib.nullcontext()
             with slot:
                 try:
                     cookie_header = self._bootstrap_us_cookie(assignment)
+                    trace["usProfileApplied"] = self._us_profile_applied.get(assignment.index) is True
                     if self._us_profile_applied.get(assignment.index) is not True:
                         raise RuntimeError(
                             f"HTTP could not confirm Amazon US delivery ZIP {self.zip_code} for this profile."
@@ -1017,7 +1024,25 @@ class AmazonCrawler:
         if self.cancel_event.is_set():
             raise InterruptedError("Crawler job was cancelled.")
 
-    def _fetch_parsed(self, normalized: NormalizedInput) -> tuple[dict[str, Any], dict[str, Any]]:
+    def _page_signals(self, parsed: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "returnedAsin": parsed.get("asin"),
+            "amazonZip": self.settings.amazon_zip,
+            "hasPrice": parsed.get("price") is not None,
+            "hasCustomizeSignal": bool(
+                parsed.get("customizationRaw") is not None
+                or parsed.get("customizationFormUrl")
+                or parsed.get("customizationWarnings")
+            ),
+            "mediaCount": len(parsed.get("media") or []),
+        }
+
+    def _fetch_parsed(
+        self,
+        normalized: NormalizedInput,
+        *,
+        require_price: bool = True,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
         attempts = 0
         captcha = False
         location_fallback = False
@@ -1030,6 +1055,12 @@ class AmazonCrawler:
             if callable(read_http_trace):
                 http_trace = read_http_trace()
             parsed = parse_product_html(html, normalized.asin, normalized.canonical_url)
+            if not http_trace:
+                http_trace = [{"attempt": attempts, "outcome": "success"}]
+            http_trace[-1].update(self._page_signals(parsed))
+            if require_price and parsed.get("price") is None:
+                http_trace[-1].update({"outcome": "incomplete", "reason": "selling_price_missing"})
+                raise ValueError(f"Amazon returned no selling price for {normalized.asin} at US ZIP {self.settings.amazon_zip}.")
             return parsed, {
                 "fetchMode": "http", "attempts": attempts, "captchaEncountered": False,
                 "locationFallbackUsed": False, "amazonZip": self.settings.amazon_zip,
@@ -1061,7 +1092,10 @@ class AmazonCrawler:
                     if callable(read_browser_trace):
                         trace["profiles"] = read_browser_trace()
                     parsed = parse_product_html(html, normalized.asin, normalized.canonical_url)
-                    trace.update({"outcome": "success", "returnedAsin": parsed.get("asin"), "htmlBytes": len(html)})
+                    trace.update(self._page_signals(parsed))
+                    if require_price and parsed.get("price") is None:
+                        raise ValueError(f"Amazon returned no selling price for {normalized.asin} at US ZIP {self.settings.amazon_zip} after browser rendering.")
+                    trace.update({"outcome": "success", "htmlBytes": len(html)})
                     playwright_trace.append(trace)
                     return parsed, {
                         "fetchMode": "playwright", "attempts": len(http_trace) + browser_attempt,
@@ -1196,15 +1230,13 @@ class AmazonCrawler:
         *,
         variants: list[dict[str, Any]],
         source: str,
-        force: bool = False,
     ) -> None:
-        if not force and not any(variant.get("customizationRaw") is not None for variant in variants):
-            return
         candidates = [
             variant
             for variant in variants
             if (variant.get("customization") is None or variant.get("customizationComplete") is not True)
             and (variant.get("diagnostics") or {}).get("fetchMode") != "failed"
+            and variant.get("hasCustomizationSignal") is True
         ]
         for variant in candidates:
             asin = str(variant["asin"])
@@ -1274,7 +1306,7 @@ class AmazonCrawler:
             item_updates={"status": "running", "currentAsin": normalized.asin},
         )
         with self._variant_fetch_slots:
-            parent, diagnostics = self._fetch_parsed(normalized)
+            parent, diagnostics = self._fetch_parsed(normalized, require_price=False)
         parent_asin = parent["parentAsin"]
         asin_options: dict[str, dict[str, str]] = dict(parent["asinOptions"])
         # parentAsin identifies the variation family and is often not a
@@ -1316,7 +1348,7 @@ class AmazonCrawler:
             except (InterruptedError, CaptchaTimeout):
                 raise
             except Exception as error:
-                parent.setdefault("customizationWarnings", []).append(f"Variant matrix browser sweep failed: {error}")
+                diagnostics["matrixWarning"] = f"Variant matrix browser sweep failed: {error}"
             expected_count = 1
             for values in parent["dimensions"].values():
                 expected_count *= max(1, len(values))
@@ -1337,11 +1369,6 @@ class AmazonCrawler:
             split_value = asin_options.get(asin, {}).get(split_attribute) if split_attribute else None
             expected_groups.setdefault(split_value, set()).add(asin)
         emitted_groups: set[str | None] = set()
-        family_customizable_hint = bool(
-            parent.get("customizationRaw") is not None
-            or parent.get("customizationFormUrl")
-            or parent.get("customizationWarnings")
-        )
         active_variants: dict[str, dict[str, str]] = {}
         active_variants_lock = threading.Lock()
 
@@ -1370,7 +1397,7 @@ class AmazonCrawler:
                     "activeVariants": active_snapshot,
                 },
             )
-            if asin == parent["asin"]:
+            if asin == parent["asin"] and parent.get("price") is not None:
                 child = deepcopy(parent)
                 child_diagnostics = diagnostics
             else:
@@ -1381,7 +1408,7 @@ class AmazonCrawler:
                         f"Requested child ASIN {asin}, but Amazon returned {child['asin']}.",
                         {**child_diagnostics, "fetchMode": "failed"},
                     )
-            warnings = list(child.get("customizationWarnings", []))
+            gallery_warnings: list[str] = []
             if len(child.get("media") or []) <= 1 and hasattr(self.browser_pool, "fetch_gallery"):
                 try:
                     gallery_html = self.browser_pool.fetch_gallery(
@@ -1395,7 +1422,7 @@ class AmazonCrawler:
                     )
                     gallery_media = gallery_product.get("media") or []
                     if gallery_product.get("asin") != asin:
-                        warnings.append(
+                        gallery_warnings.append(
                             f"Gallery render requested {asin}, but Amazon returned {gallery_product.get('asin')}."
                         )
                     elif len(gallery_media) > len(child.get("media") or []):
@@ -1403,10 +1430,16 @@ class AmazonCrawler:
                 except (InterruptedError, CaptchaTimeout):
                     raise
                 except Exception as error:
-                    warnings.append(f"Full gallery browser fallback failed for {asin}: {error}")
+                    gallery_warnings.append(f"Full gallery browser fallback failed for {asin}: {error}")
             customization_raw = child.get("customizationRaw")
             form_url = child.get("customizationFormUrl")
-            if warnings and not self._has_customization_entry(child):
+            customization_warnings = list(child.get("customizationWarnings", []))
+            has_customization_signal = bool(
+                customization_raw is not None
+                or form_url
+                or child.get("customizationWarnings")
+            )
+            if child.get("customizationWarnings") and not self._has_customization_entry(child):
                 recovered_child, recovery_errors = self._recover_customization_entry(
                     asin=asin,
                     source=normalized.source,
@@ -1415,13 +1448,14 @@ class AmazonCrawler:
                 if recovered_child is not None:
                     customization_raw = recovered_child.get("customizationRaw")
                     form_url = recovered_child.get("customizationFormUrl")
-                    warnings = list(recovered_child.get("customizationWarnings", []))
+                    customization_warnings = list(recovered_child.get("customizationWarnings", []))
                 else:
-                    warnings = [
+                    customization_warnings = [
                         "Amazon indicated customization but omitted its form payload after HTTP and Playwright retries: "
                         + "; ".join(recovery_errors)
                     ]
-            customization_complete = not warnings
+            customization_complete = not customization_warnings
+            warnings = gallery_warnings + customization_warnings
             if form_url:
                 with active_variants_lock:
                     current_active_snapshot = active_variant_snapshot()
@@ -1456,6 +1490,7 @@ class AmazonCrawler:
                 "customizationRaw": customization_raw, "customization": normalized_customization,
                 "customizationFingerprint": normalized_customization.get("fingerprint") if normalized_customization else None,
                 "customizationComplete": customization_complete,
+                "hasCustomizationSignal": has_customization_signal,
                 "priceInference": {"isInferred": False, "sourceAsins": []}, "warnings": warnings,
                 "diagnostics": child_diagnostics,
             }
@@ -1488,7 +1523,6 @@ class AmazonCrawler:
             self._retry_family_customization(
                 variants=group_variants,
                 source=normalized.source,
-                force=family_customizable_hint,
             )
             self._infer_consensus_prices(group_variants)
             group_family = {
