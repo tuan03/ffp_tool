@@ -155,8 +155,8 @@ def compose_reference_artwork(
             mask_area = np.count_nonzero(visible)
             overlap_area = np.count_nonzero(visible & quad_mask)
             coverage_ratio = overlap_area / max(1, mask_area)
-            if coverage_ratio >= 0.985:
-                # High coverage (>98.5%): boundary discretization fuzz is safely clipped to quad mapping
+            if coverage_ratio >= 0.95:
+                # High coverage (>95%): boundary discretization fuzz is safely clipped to quad mapping
                 visible = visible & quad_mask
             else:
                 # Auto-repair: attempt refitting perspective quad from visible mask contour using cv2
@@ -177,7 +177,7 @@ def compose_reference_artwork(
                                 if np.all(crosses_r > 0):
                                     refit_mask = np.asarray(_polygon_mask(reference.size, refit_quad)) > 0
                                     refit_overlap = np.count_nonzero(visible & refit_mask)
-                                    if refit_overlap / max(1, mask_area) >= 0.985:
+                                    if refit_overlap / max(1, mask_area) >= 0.95:
                                         quad = refit_quad
                                         quad_mask = refit_mask
                                         visible = visible & quad_mask

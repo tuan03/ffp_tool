@@ -1046,6 +1046,8 @@ def is_flat_planar_profile(profile: dict[str, Any]) -> bool:
 
 
 def is_transient_gemini_error(exc: Exception) -> bool:
+    if isinstance(exc, (TimeoutError, OSError)):
+        return True
     message = str(exc).upper()
     transient_markers = [
         "429",
@@ -1055,6 +1057,8 @@ def is_transient_gemini_error(exc: Exception) -> bool:
         "DEADLINE_EXCEEDED",
         "503",
         "504",
+        "TIMEOUT",
+        "TIMED OUT",
     ]
     return any(marker in message for marker in transient_markers)
 
