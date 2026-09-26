@@ -106,4 +106,3 @@ class Downloader:
         except Exception as exc:
             candidate.download_error = str(exc)
             return candidate
-

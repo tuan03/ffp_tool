@@ -69,4 +69,3 @@ def is_low_information(path: Path, min_stddev: float = 10.0) -> bool:
     with Image.open(path) as image:
         stat = ImageStat.Stat(image.convert("L").resize((128, 128)))
     return bool(stat.stddev[0] < min_stddev)
-

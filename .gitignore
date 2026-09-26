@@ -4,9 +4,14 @@ build/
 artifacts/
 Tool_crawer_New_update/
 .vite/
-.env.local
-.env.*.local
+.env
+.env.*
+.env.shopify
 *.tsbuildinfo
+.DS_Store
+stores.local.json
+stores.config.json
+*zip
 
 # Python & Local Server Artifacts
 __pycache__/
@@ -21,13 +26,38 @@ src/modules/pinterest-pod/server/.env
 **/.*oauth*.json
 pinterest_oauth_tokens.json
 
-# Amazon Distributed Crawler Artifacts
+# Amazon Distributed Crawler & Local Data Artifacts
+# Crawler & Gateway runtime/data
 .runtime/
 exports/
 client-data/
+.local-data/
 *.sqlite3
 *.sqlite3-shm
 *.sqlite3-wal
 installer-output/
 config/amazon-crawler-profiles.json
 config/amazon-crawler-agent.json
+
+#=== [start] - module SEO Content - Lth Loi ===
+.agents
+compress-src.cmd
+dev.cmd
+.compressignore
+PROJECT_CONTEXT.md
+branches-git.cmd
+remotes-git.cmd
+repo-seo-content.cmd
+log-git.cmd
+stash-git.cmd
+stash-apply-git.cmd
+stash-drop-git.cmd
+test-e2e-b1-b6.cmd
+test-pin-seo-content.cmd
+agent-dev.cmd
+#=== [end] - module SEO Content - Lth Loi ===
+
+# Manual SEO Content smoke-test artifacts and developer-specific inputs.
+testing/module-seo-content/output/
+testing/module-seo-content/local-input*.json
+testing/module-seo-content/.env.local

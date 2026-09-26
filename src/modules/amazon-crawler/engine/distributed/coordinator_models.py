@@ -7,7 +7,19 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint, create_engine
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    JSON,
+    String,
+    Text,
+    UniqueConstraint,
+    create_engine,
+    event,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, sessionmaker
@@ -55,6 +67,53 @@ class CrawlJob(Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     tasks: Mapped[list["CrawlTask"]] = relationship(back_populates="job", cascade="all, delete-orphan")
+
+
+class CrawlJobControl(Base):
+    __tablename__ = "crawl_job_controls"
+
+    job_id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    state: Mapped[str] = mapped_column(String(32), default="active", index=True)
+    priority: Mapped[int] = mapped_column(Integer, default=0, index=True)
+    replacement_of_job_id: Mapped[str | None] = mapped_column(String(40), nullable=True, index=True)
+    cancellation_id: Mapped[str | None] = mapped_column(String(40), nullable=True, index=True)
+    cancel_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+
+class DeletedCrawlJob(Base):
+    __tablename__ = "deleted_crawl_jobs"
+
+    job_id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    cancellation_id: Mapped[str] = mapped_column(String(40), index=True)
+    deleted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
+
+class CoordinatorState(Base):
+    __tablename__ = "coordinator_state"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[str] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+
+class JobStopClientCleanup(Base):
+    __tablename__ = "job_stop_client_cleanup"
+    __table_args__ = (
+        UniqueConstraint("job_id", "client_id", name="uq_job_stop_client_cleanup"),
+    )
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    job_id: Mapped[str] = mapped_column(String(40), index=True)
+    client_id: Mapped[str] = mapped_column(String(64), index=True)
+    cache_generation: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(32), default="pending", index=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 
 
 class CrawlTask(Base):
@@ -113,6 +172,71 @@ class TaskResult(Base):
     task: Mapped[CrawlTask] = relationship(back_populates="result")
 
 
+class CrawlProductItem(Base):
+    __tablename__ = "crawl_product_items"
+    __table_args__ = (
+        UniqueConstraint("job_id", "source_key", name="uq_crawl_product_job_source"),
+        Index("ix_crawl_product_pipeline", "status", "next_attempt_at", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    job_id: Mapped[str] = mapped_column(ForeignKey("crawl_jobs.id", ondelete="CASCADE"), index=True)
+    task_id: Mapped[str] = mapped_column(ForeignKey("crawl_tasks.id", ondelete="CASCADE"), index=True)
+    source_key: Mapped[str] = mapped_column(String(500), index=True)
+    product_id: Mapped[str] = mapped_column(String(200))
+    client_id: Mapped[str] = mapped_column(String(64), index=True)
+    lease_id: Mapped[str] = mapped_column(String(40))
+    checksum: Mapped[str] = mapped_column(String(64))
+    raw_payload: Mapped[dict[str, Any]] = mapped_column(JSON_VALUE)
+    normalized_payload: Mapped[dict[str, Any] | None] = mapped_column(JSON_VALUE, nullable=True)
+    status: Mapped[str] = mapped_column(String(32), default="received", index=True)
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0)
+    next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    claimed_by: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    claim_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    proxy_profile: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    shopify_result: Mapped[dict[str, Any] | None] = mapped_column(JSON_VALUE, nullable=True)
+    last_error: Mapped[dict[str, Any] | None] = mapped_column(JSON_VALUE, nullable=True)
+    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ShopifyProductLink(Base):
+    __tablename__ = "shopify_product_links"
+    __table_args__ = (
+        UniqueConstraint("store_id", "source_key", name="uq_shopify_link_store_source"),
+    )
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    store_id: Mapped[str] = mapped_column(String(100), index=True)
+    source_key: Mapped[str] = mapped_column(String(500), index=True)
+    shopify_product_id: Mapped[str] = mapped_column(String(200), index=True)
+    shopify_product_handle: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    normalized_checksum: Mapped[str] = mapped_column(String(64))
+    managed_resources: Mapped[dict[str, Any]] = mapped_column(JSON_VALUE, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+
+class ShopifyOperationIdempotency(Base):
+    __tablename__ = "shopify_operation_idempotency"
+    __table_args__ = (
+        UniqueConstraint("store_id", "request_id", name="uq_shopify_operation_request"),
+    )
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    store_id: Mapped[str] = mapped_column(String(100), index=True)
+    request_id: Mapped[str] = mapped_column(String(200), index=True)
+    operation: Mapped[str] = mapped_column(String(100))
+    payload_hash: Mapped[str] = mapped_column(String(64))
+    state: Mapped[str] = mapped_column(String(32), default="pending")
+    response_payload: Mapped[dict[str, Any] | None] = mapped_column(JSON_VALUE, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+
 class JobEvent(Base):
     __tablename__ = "job_events"
 
@@ -147,7 +271,15 @@ def create_database_engine(url: str | None = None):
         if sqlite_database and sqlite_database != ":memory:":
             Path(sqlite_database).expanduser().resolve().parent.mkdir(parents=True, exist_ok=True)
         engine_options["poolclass"] = NullPool
-    return create_engine(selected, **engine_options)
+    engine = create_engine(selected, **engine_options)
+    if selected.startswith("sqlite"):
+        @event.listens_for(engine, "connect")
+        def _set_sqlite_pragma(dbapi_connection, connection_record):
+            cursor = dbapi_connection.cursor()
+            cursor.execute("PRAGMA journal_mode=WAL;")
+            cursor.execute("PRAGMA busy_timeout=10000;")
+            cursor.close()
+    return engine
 
 
 def create_session_factory(engine):

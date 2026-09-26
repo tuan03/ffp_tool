@@ -59,4 +59,3 @@ python hot_image_crawler.py `
   --vision-mode auto `
   --verbose
 ```
-

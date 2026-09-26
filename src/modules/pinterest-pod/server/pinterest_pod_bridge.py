@@ -617,7 +617,7 @@ def check_oauth_token_valid(token_file: Path | None = None) -> tuple[bool, dict[
         data = json.loads(t_file.read_text(encoding="utf-8"))
         has_token = bool(data.get("access_token") or data.get("refresh_token"))
         exp = data.get("access_token_expires_at")
-        
+
         # Check if token is expired or close to expiry (within 300 seconds)
         if exp and float(exp) < (time.time() + 300):
             if data.get("refresh_token"):
@@ -642,7 +642,7 @@ def generate_pinterest_oauth_url(redirect_uri: str | None = None) -> dict[str, A
     app_id = str(os.getenv("PINTEREST_APP_ID") or "1595071").strip()
     r_uri = str(redirect_uri or os.getenv("PINTEREST_REDIRECT_URI") or "http://localhost:8768/api/pinterest-pod/oauth/callback").strip()
     scopes = str(os.getenv("PINTEREST_SCOPES") or "user_accounts:read,boards:read,pins:read,ads:read").strip()
-    
+
     query = urllib.parse.urlencode({
         "consumer_id": app_id,
         "redirect_uri": r_uri,
@@ -738,7 +738,7 @@ def exchange_pinterest_oauth_code(code_or_url: str, redirect_uri: str | None = N
     target_file = (ROOT / "pinterest" / ".pinterest_oauth_tokens.json").resolve()
     target_file.parent.mkdir(parents=True, exist_ok=True)
     target_file.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    
+
     # Also save to root token file for maximum compatibility
     try:
         (ROOT / ".pinterest_oauth_tokens.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")

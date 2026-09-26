@@ -4,6 +4,7 @@ import json
 import tempfile
 import threading
 import unittest
+import urllib.request
 from copy import deepcopy
 from pathlib import Path
 
@@ -32,6 +33,23 @@ var dimensionToAsinMap = {"1_1":"B012345681"};
 <script type="application/json">{"surfaces":[{"id":"front"}],"components":[{"componentType":"TextInputComponent","id":"name","label":"Name"},{"componentType":"OptionChooserComponent","id":"finish","label":"Finish","required":false,"options":[{"id":"plain","label":"Plain","price":0},{"id":"gold","label":"Gold","price":"+$5.00"}]}]}</script>
 </body></html>
 """
+
+DIRECT_GALLERY_HTML = r'''<html><body>
+<input id="ASIN" value="B012345678"><h1 id="productTitle">Gallery product</h1>
+<script>
+var imageBlock = {"colorImages":{"initial":[
+  {"hiRes":"https://m.media-amazon.com/images/I/MAINIMAGE01._SL1500_.jpg","large":"https://m.media-amazon.com/images/I/MAINIMAGE01._SL1000_.jpg","mainUrl":"https://m.media-amazon.com/images/I/MAINIMAGE01._SL500_.jpg"},
+  {"large":"https://m.media-amazon.com/images/I/GALLERYIMG2._SL1000_.jpg"},
+  {"thumb":"https://m.media-amazon.com/images/I/VIDEOICON01._SS40_PKplay-button-mb-image-grid-small_.png","isVideo":true},
+  {"hiRes":"https://m.media-amazon.com/images/I/MAINIMAGE01._SL1500_.jpg"}
+]}};
+</script></body></html>'''
+
+PARSE_JSON_GALLERY_HTML = r'''<html><body>
+<input id="ASIN" value="B012345678"><h1 id="productTitle">Encoded gallery</h1>
+<script>
+var data = {"colorImages":{"initial":A.$.parseJSON('[{"hiRes":"https:\/\/m.media-amazon.com\/images\/I\/PARSEJSON01._SL1500_.jpg"},{"mainUrl":"https:\/\/m.media-amazon.com\/images\/I\/PARSEJSON02._SL500_.jpg"}]')}};
+</script></body></html>'''
 
 CUSTOMIZABLE_ENTRY_HTML = """
 <html><body><input id="ASIN" value="B012345678"><h1 id="productTitle">Custom product</h1>
@@ -238,6 +256,44 @@ def source_variant(asin: str, design: str, size: str, customization: dict | None
 
 
 class CoreTests(unittest.TestCase):
+    def test_http_response_wait_is_interrupted_by_stop_event(self) -> None:
+        request_started = threading.Event()
+        release_request = threading.Event()
+        cancel_event = threading.Event()
+
+        class BlockingResponse:
+            status = 200
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args: object) -> None:
+                return None
+
+            def read(self) -> bytes:
+                request_started.set()
+                release_request.wait(timeout=2)
+                return b"late response"
+
+        class BlockingOpener:
+            def open(self, *_args: object, **_kwargs: object) -> BlockingResponse:
+                return BlockingResponse()
+
+        fetcher = HttpFetcher(cancel_event=cancel_event)
+        timer = threading.Timer(0.05, cancel_event.set)
+        timer.start()
+        try:
+            with self.assertRaisesRegex(InterruptedError, "cancelled"):
+                fetcher._read_response(
+                    BlockingOpener(),
+                    urllib.request.Request("https://example.test"),
+                    timeout=90,
+                )
+            self.assertTrue(request_started.is_set())
+        finally:
+            release_request.set()
+            timer.cancel()
+
     def test_default_settings_match_four_proxy_concurrency_profile(self) -> None:
         settings = CrawlSettings.from_api({})
 
@@ -287,6 +343,32 @@ class CoreTests(unittest.TestCase):
             "https://m.media-amazon.com/images/I/alt-large._AC_.jpg",
         ])
 
+    def test_media_parses_direct_color_images_and_preserves_gallery_metadata(self) -> None:
+        parsed = parse_product_html(
+            DIRECT_GALLERY_HTML,
+            "B012345678",
+            "https://www.amazon.com/dp/B012345678",
+        )
+
+        self.assertEqual(len(parsed["media"]), 2)
+        self.assertEqual(parsed["media"][0]["amazonImageId"], "MAINIMAGE01")
+        self.assertTrue(parsed["media"][0]["isMain"])
+        self.assertEqual(parsed["media"][1]["amazonImageId"], "GALLERYIMG2")
+        self.assertFalse(parsed["media"][1]["isMain"])
+        self.assertTrue(all(media["sourceAsin"] == "B012345678" for media in parsed["media"]))
+
+    def test_media_parses_amazon_parse_json_main_url_fallback(self) -> None:
+        parsed = parse_product_html(
+            PARSE_JSON_GALLERY_HTML,
+            "B012345678",
+            "https://www.amazon.com/dp/B012345678",
+        )
+
+        self.assertEqual(
+            [media["amazonImageId"] for media in parsed["media"]],
+            ["PARSEJSON01", "PARSEJSON02"],
+        )
+
     def test_media_excludes_product_videos(self) -> None:
         html = """<html><body><input id='ASIN' value='B012345678'><h1 id='productTitle'>Images only</h1>
         <img id='landingImage' src='https://m.media-amazon.com/images/I/product.jpg'>
@@ -297,7 +379,7 @@ class CoreTests(unittest.TestCase):
         parsed = parse_product_html(html, "B012345678", "https://www.amazon.com/dp/B012345678")
 
         self.assertEqual([media["url"] for media in parsed["media"]], [
-            "https://m.media-amazon.com/images/I/product.jpg",
+            "https://m.media-amazon.com/images/I/product._SL1500_.jpg",
         ])
 
     def test_parses_description_and_bullets_from_new_product_facts_layout(self) -> None:
@@ -520,6 +602,53 @@ class CoreTests(unittest.TestCase):
         self.assertNotIn("controls", normalized)
         self.assertNotIn("rules", normalized)
 
+    def test_customization_filters_mini_size_and_all_unavailable_option_signals(self) -> None:
+        raw = {"components": [{
+            "componentType": "OptionChooserComponent", "id": "size", "label": "Size", "required": False,
+            "defaultOptionId": "mini",
+            "options": [
+                {"id": "mini", "label": "SMALL (Mini Size)", "price": 0},
+                {"id": "no-print", "label": "Small Size - No-Print", "price": 0},
+                {"id": "stock-flag", "label": "Medium", "price": 4, "outOfStock": True},
+                {"id": "available-flag", "label": "Large", "price": 5, "isAvailable": False},
+                {"id": "status", "label": "X-Large", "price": 6, "status": "currently_unavailable"},
+                {"id": "regular", "label": "Regular Size", "price": 7},
+            ],
+        }]}
+
+        normalized, warnings = normalize_customization(raw)
+
+        self.assertEqual(warnings, [])
+        assert normalized is not None
+        paid_group = normalized["pricing"]["paidOptionGroups"][0]
+        self.assertEqual([option["label"] for option in paid_group["options"]], ["None", "Regular Size"])
+        self.assertEqual(paid_group["defaultOptionId"], "")
+        variants = expand_paid_variants([
+            {
+                "id": "base", "sku": "BASE", "sourceAsin": "B012345678", "options": {},
+                "price": {"raw": "$20.00", "amount": 20.0, "currency": "USD"},
+                "surcharge": None, "metadata": {},
+            },
+        ], normalized)
+        self.assertEqual([variant["options"]["Size"] for variant in variants], ["None", "Regular Size"])
+
+    def test_customization_keeps_normal_small_options_without_mini_marker(self) -> None:
+        raw = {"components": [{
+            "componentType": "OptionChooserComponent", "id": "size", "label": "Size", "required": True,
+            "defaultOptionId": "small",
+            "options": [
+                {"id": "small", "label": "Small", "price": 3},
+                {"id": "large", "label": "Large", "price": 5},
+            ],
+        }]}
+
+        normalized, _ = normalize_customization(raw)
+
+        assert normalized is not None
+        paid_group = normalized["pricing"]["paidOptionGroups"][0]
+        self.assertEqual([option["label"] for option in paid_group["options"]], ["Small", "Large"])
+        self.assertEqual(paid_group["defaultOptionId"], "small")
+
     def test_customization_ports_amazon_identifiers_costs_hierarchy_and_assets(self) -> None:
         raw = {
             "asin": "B0CUSTOM01", "marketplaceId": "ATVPDKIKX0DER", "productImageUrl": "https://img/product.jpg",
@@ -595,6 +724,7 @@ class CoreTests(unittest.TestCase):
             crawler = AmazonCrawler(root=Path(directory), settings=CrawlSettings(profile_slug="jeminise", apply_jeminise_preset=True), browser_pool=FakeBrowser(PRODUCT_HTML))
             products = crawler._products_from_family(family)
         self.assertEqual(len(products), 2)
+        self.assertEqual([product["asin"] for product in products], ["B012345678", "B012345679"])
         self.assertEqual(products[0]["splitContext"]["attribute"], "Design")
         self.assertTrue(products[0]["title"].startswith("Bedding - "))
         self.assertTrue(all(product["preset"] == PRESET_ID and len(product["variants"]) == 47 for product in products))
@@ -619,6 +749,10 @@ class CoreTests(unittest.TestCase):
         media_by_split = {product["splitContext"]["value"]: [media["url"] for media in product["media"]] for product in products}
         self.assertEqual(media_by_split["Ocean"], ["https://img/ocean.jpg"])
         self.assertEqual(media_by_split["Forest"], ["https://img/forest.jpg"])
+        links_by_split = {product["splitContext"]["value"]: product["canonicalUrl"] for product in products}
+        self.assertEqual(links_by_split["Ocean"], "https://www.amazon.com/dp/B012345678")
+        self.assertEqual(links_by_split["Forest"], "https://www.amazon.com/dp/B012345679")
+        self.assertTrue(all(product["parentAsin"] == "B0PARENT00" for product in products))
 
     def test_split_uses_actual_source_options_when_matrix_labels_are_inconsistent(self) -> None:
         first = source_variant("B012345678", "Ocean", "Twin")
@@ -774,8 +908,11 @@ class CoreTests(unittest.TestCase):
         family = {
             "parentAsin": "B012345678", "canonicalUrl": "https://www.amazon.com/dp/B012345678", "sourceTitle": "Bedding",
             "description": None, "bulletPoints": [], "media": [],
-            "sourceVariants": [source_variant("B012345678", "Ocean", "Twin")],
-            "variantMatrix": {"dimensions": {"Design": ["Ocean"], "Size": ["Twin"]}, "expectedCount": 1, "discoveredCount": 1, "complete": True, "safetyCap": 500},
+            "sourceVariants": [
+                source_variant("B012345678", "Ocean", "Twin"),
+                source_variant("B012345679", "Forest", "Twin"),
+            ],
+            "variantMatrix": {"dimensions": {"Design": ["Ocean", "Forest"], "Size": ["Twin"]}, "expectedCount": 2, "discoveredCount": 2, "complete": True, "safetyCap": 500},
             "diagnostics": {"fetchMode": "http", "attempts": 1, "captchaEncountered": False, "locationFallbackUsed": False, "matrixSwept": False, "cacheHit": False},
         }
         with tempfile.TemporaryDirectory() as directory:
@@ -789,7 +926,7 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(list((root / "exports").glob("*.tmp")), [])
         self.assertEqual(output["status"], "partial")
         self.assertEqual(output["statistics"]["rejectedInputs"], 1)
-        self.assertEqual(len(output["products"]), 1)
+        self.assertEqual(len(output["products"]), 2)
 
     def test_cancelled_batch_does_not_write_export(self) -> None:
         cancel_event = threading.Event()
@@ -828,6 +965,114 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(callbacks[0]["asin"], "B012345678")
         self.assertEqual(callbacks[0]["status"], "completed")
         self.assertEqual(len(callbacks[0]["products"]), 1)
+
+    def test_product_callback_is_forwarded_before_input_completion(self) -> None:
+        family = {
+            "parentAsin": "B012345678", "canonicalUrl": "https://www.amazon.com/dp/B012345678", "sourceTitle": "Bedding",
+            "description": None, "bulletPoints": [], "categories": [], "productDetails": {}, "media": [],
+            "sourceVariants": [source_variant("B012345678", "Ocean", "Twin")],
+            "variantMatrix": {"dimensions": {"Design": ["Ocean"], "Size": ["Twin"]}, "expectedCount": 1, "discoveredCount": 1, "complete": True, "safetyCap": 500},
+            "diagnostics": {"fetchMode": "http", "attempts": 1, "captchaEncountered": False, "locationFallbackUsed": False, "matrixSwept": False, "cacheHit": False},
+        }
+
+        class StreamingFixtureCrawler(FixtureCrawler):
+            def _crawl_family(self, normalized, on_product_complete=None):
+                crawled = super()._crawl_family(normalized)
+                if on_product_complete is not None:
+                    on_product_complete(
+                        self._products_from_family(
+                            crawled,
+                            split_attribute_override="Design",
+                        )[0]
+                    )
+                return crawled
+
+        callback_order: list[str] = []
+        with tempfile.TemporaryDirectory() as directory:
+            crawler = StreamingFixtureCrawler(
+                family,
+                root=Path(directory),
+                settings=CrawlSettings(),
+                browser_pool=FakeBrowser(PRODUCT_HTML),
+            )
+            crawler.run(
+                job_id="streaming-job",
+                sources=["B012345678"],
+                on_product_complete=lambda payload: callback_order.append(f"product:{payload['product']['sourceKey']}"),
+                on_input_complete=lambda _payload: callback_order.append("input"),
+                write_export=False,
+            )
+
+        self.assertEqual(callback_order[0], "product:amazon:B012345678:design:ocean")
+        self.assertEqual(callback_order[-1], "input")
+
+    def test_split_group_is_emitted_while_a_different_group_is_still_crawling(self) -> None:
+        ocean_emitted = threading.Event()
+        forest_finished_before_ocean = False
+
+        class ConcurrentGroupCrawler(AmazonCrawler):
+            def _fetch_parsed(self, normalized: NormalizedInput) -> tuple[dict, dict]:
+                nonlocal forest_finished_before_ocean
+                options_by_asin = {
+                    "B012345678": {"Design": "Ocean", "Size": "Twin"},
+                    "B012345679": {"Design": "Forest", "Size": "Twin"},
+                }
+                if normalized.asin == "B012345679":
+                    forest_finished_before_ocean = not ocean_emitted.wait(timeout=1)
+                parsed = {
+                    "asin": normalized.asin,
+                    "parentAsin": "B0PARENT00",
+                    "url": normalized.canonical_url,
+                    "title": "Bedding",
+                    "description": None,
+                    "bulletPoints": [],
+                    "categories": [],
+                    "productDetails": {},
+                    "price": {"raw": "$20.00", "amount": 20.0, "currency": "USD"},
+                    "media": [],
+                    "dimensions": {"Design": ["Ocean", "Forest"], "Size": ["Twin"]},
+                    "asinOptions": options_by_asin,
+                    "customizationRaw": None,
+                    "customizationWarnings": [],
+                    "customizationFormUrl": None,
+                }
+                diagnostics = {
+                    "fetchMode": "http", "attempts": 1, "captchaEncountered": False,
+                    "locationFallbackUsed": False, "amazonZip": "10001", "usProfileApplied": True,
+                    "matrixSwept": False, "cacheHit": False,
+                }
+                return parsed, diagnostics
+
+        emitted: list[str] = []
+        with tempfile.TemporaryDirectory() as directory:
+            crawler = ConcurrentGroupCrawler(
+                root=Path(directory),
+                settings=CrawlSettings(variant_threads=2),
+                browser_pool=FakeBrowser(PRODUCT_HTML),
+            )
+
+            def product_completed(product: dict[str, object]) -> None:
+                emitted.append(str(product["sourceKey"]))
+                if str(product["sourceKey"]).endswith(":ocean"):
+                    ocean_emitted.set()
+
+            crawler._crawl_family(
+                normalize_amazon_input("B012345678"),
+                on_product_complete=product_completed,
+            )
+
+        self.assertIn("amazon:B0PARENT00:design:ocean", emitted)
+        self.assertFalse(forest_finished_before_ocean)
+
+    def test_incomplete_or_priceless_product_is_blocked_from_live_publish(self) -> None:
+        product = {
+            "variantMatrix": {"complete": False},
+            "sourceVariants": [{"price": None, "warnings": []}],
+        }
+        self.assertEqual(
+            AmazonCrawler._product_publish_blockers(product),
+            ["variant_matrix_incomplete", "price_missing"],
+        )
 
 
 if __name__ == "__main__":

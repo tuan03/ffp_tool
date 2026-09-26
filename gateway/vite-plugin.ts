@@ -1,0 +1,236 @@
+import type { Plugin } from "vite";
+
+import { GatewayDispatcher } from "./dispatcher";
+import { handleAutoSeoHttpRequest } from "./auto-seo-handler";
+import { assertHostSecurity, createGatewayHttpHandler, isGatewayAuthorized, MAX_BODY_BYTES } from "./http-server";
+import { InMemoryIdempotencyStore } from "./idempotency";
+import { ShopifyGraphqlClient } from "./shopify-graphql-client";
+import { InMemoryStoreRegistry } from "./store-registry";
+import { loadBootstrappedStores, loadLocalEnv } from "./store-config-loader";
+import { InMemoryThrottleManager } from "./throttle-manager";
+import { CompositeTokenProvider } from "./token-provider";
+import { StoreControlPlane } from "./store-control-plane";
+import {
+  handleStoreRegistrationHttpRequest,
+  handleProxyCheckHttpRequest,
+  handleStoreUpdateHttpRequest,
+  handleStoreDeleteHttpRequest,
+  handleStoreGetHttpRequest,
+} from "./store-control-handler";
+
+export interface ShopifyGatewayDevPluginOptions {
+  readonly authToken?: string;
+  readonly maxBodyBytes?: number;
+}
+
+function isSameOriginRequest(headers: Record<string, string | string[] | undefined>): boolean {
+  if (headers["sec-fetch-site"] === "same-origin") {
+    return true;
+  }
+  const host = typeof headers.host === "string" ? headers.host : undefined;
+  if (!host) {
+    return false;
+  }
+  const origin = typeof headers.origin === "string" ? headers.origin : undefined;
+  if (origin) {
+    try {
+      return new URL(origin).host.toLowerCase() === host.toLowerCase();
+    } catch {
+      return false;
+    }
+  }
+  const referer = typeof headers.referer === "string" ? headers.referer : undefined;
+  if (referer) {
+    try {
+      return new URL(referer).host.toLowerCase() === host.toLowerCase();
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
+export function shopifyGatewayDevPlugin(options?: ShopifyGatewayDevPluginOptions): Plugin {
+  return {
+    name: "shopify-gateway-dev",
+    configureServer(server) {
+      const env = loadLocalEnv();
+      const rawAuthToken = options?.authToken ?? env.GATEWAY_AUTH_TOKEN ?? process.env.GATEWAY_AUTH_TOKEN;
+      const authToken =
+        typeof rawAuthToken === "string" && rawAuthToken.trim() !== ""
+          ? rawAuthToken.trim()
+          : undefined;
+      const host = server?.config?.server?.host;
+      assertHostSecurity(host, authToken, "vite dev server");
+      const maxBodyBytes = options?.maxBodyBytes && options.maxBodyBytes > 0 ? options.maxBodyBytes : MAX_BODY_BYTES;
+
+      const stores = loadBootstrappedStores({ env });
+
+      const storeRegistry = new InMemoryStoreRegistry(stores);
+      const tokenProvider = new CompositeTokenProvider();
+      const throttleManager = new InMemoryThrottleManager();
+      const graphqlClient = new ShopifyGraphqlClient({ tokenProvider, throttleManager });
+      const idempotencyStore = new InMemoryIdempotencyStore();
+      const dispatcher = new GatewayDispatcher({ storeRegistry, graphqlClient, idempotencyStore });
+      const httpHandler = createGatewayHttpHandler(dispatcher, { authToken, maxBodyBytes });
+      const storeControlPlane = new StoreControlPlane({
+        storeRegistry,
+        tokenProvider,
+        graphqlClient,
+        persistConfigFile: "stores.local.json",
+      });
+
+      server.middlewares.use(async (req, res, next) => {
+        const isShopify = req.url && (req.url === "/api/shopify" || req.url.startsWith("/api/shopify?"));
+        const isAutoSeo = req.url && (req.url === "/api/auto-seo/run" || req.url.startsWith("/api/auto-seo/run?"));
+        const isStoreRegister = req.url && (req.url === "/api/stores/register" || req.url.startsWith("/api/stores/register?"));
+        const isStoreUpdate = req.url && (req.url === "/api/stores/update" || req.url.startsWith("/api/stores/update?"));
+        const isStoreDelete = req.url && (req.url === "/api/stores/delete" || req.url.startsWith("/api/stores/delete?"));
+        const isStoreGet = req.url && (req.url === "/api/stores/get" || req.url.startsWith("/api/stores/get?"));
+        const isProxyCheck = req.url && (req.url === "/api/proxy/check" || req.url.startsWith("/api/proxy/check?"));
+
+        const isKnownApi = isShopify || isAutoSeo || isStoreRegister || isStoreUpdate || isStoreDelete || isStoreGet || isProxyCheck;
+
+        if (authToken && isKnownApi && isSameOriginRequest(req.headers)) {
+          if (!req.headers["x-gateway-key"]) {
+            req.headers["x-gateway-key"] = authToken;
+          }
+        }
+
+        if (isShopify || isAutoSeo || isStoreRegister || isStoreUpdate || isStoreDelete || isStoreGet) {
+          try {
+            const freshStores = loadBootstrappedStores({ env: loadLocalEnv() });
+            const freshIds = new Set(freshStores.map((s) => s.storeId));
+            for (const store of freshStores) {
+              if (!storeRegistry.getStore(store.storeId)) {
+                storeRegistry.registerStore(store);
+              } else {
+                storeRegistry.updateStore(store);
+              }
+            }
+            for (const existing of storeRegistry.listStores()) {
+              if (!freshIds.has(existing.storeId)) {
+                storeRegistry.removeStore(existing.storeId);
+              }
+            }
+          } catch {
+            // non-fatal env sync in dev
+          }
+        }
+
+        if (isShopify) {
+          if (req.method !== "POST") {
+            res.statusCode = 405;
+            res.setHeader("Content-Type", "application/json");
+            res.end(
+              JSON.stringify({
+                success: false,
+                error: { code: "SHOPIFY_INVALID_INPUT", message: "Method Not Allowed" },
+              }),
+            );
+            return;
+          }
+
+          if (authToken && !isGatewayAuthorized(req.headers, authToken)) {
+            res.statusCode = 401;
+            res.setHeader("Content-Type", "application/json");
+            res.end(
+              JSON.stringify({
+                success: false,
+                error: {
+                  code: "SHOPIFY_AUTH_FAILED",
+                  message: "Unauthorized: Invalid or missing Gateway authentication token",
+                },
+              }),
+            );
+            return;
+          }
+
+          try {
+            const clHeader = req.headers["content-length"];
+            if (clHeader) {
+              const cl = Number.parseInt(clHeader, 10);
+              if (!Number.isNaN(cl) && cl > maxBodyBytes) {
+                req.destroy();
+                res.statusCode = 413;
+                res.setHeader("Content-Type", "application/json");
+                res.end(
+                  JSON.stringify({
+                    success: false,
+                    error: {
+                      code: "SHOPIFY_INVALID_INPUT",
+                      message: `Payload Too Large: request body exceeds ${maxBodyBytes} bytes limit`,
+                    },
+                  }),
+                );
+                return;
+              }
+            }
+
+            const chunks: Buffer[] = [];
+            let totalBytes = 0;
+            for await (const chunk of req) {
+              const buf = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
+              totalBytes += buf.length;
+              if (totalBytes > maxBodyBytes) {
+                req.destroy();
+                res.statusCode = 413;
+                res.setHeader("Content-Type", "application/json");
+                res.end(
+                  JSON.stringify({
+                    success: false,
+                    error: {
+                      code: "SHOPIFY_INVALID_INPUT",
+                      message: `Payload Too Large: request body exceeds ${maxBodyBytes} bytes limit`,
+                    },
+                  }),
+                );
+                return;
+              }
+              chunks.push(buf);
+            }
+            const body = Buffer.concat(chunks);
+            const protocol = req.headers["x-forwarded-proto"] || "http";
+            const host = req.headers.host || "localhost:5173";
+            const webReq = new Request(`${protocol}://${host}${req.url}`, {
+              method: req.method,
+              headers: req.headers as Record<string, string>,
+              body,
+            });
+
+            const webRes = await httpHandler(webReq);
+            res.statusCode = webRes.status;
+            webRes.headers.forEach((val, key) => {
+              res.setHeader(key, val);
+            });
+            const resBuffer = await webRes.arrayBuffer();
+            res.end(Buffer.from(resBuffer));
+          } catch (err: unknown) {
+            res.statusCode = 500;
+            res.setHeader("Content-Type", "application/json");
+            res.end(
+              JSON.stringify({
+                success: false,
+                error: { code: "SHOPIFY_NETWORK_ERROR", message: "Gateway Middleware Error" },
+              }),
+            );
+          }
+        } else if (isStoreRegister) {
+          await handleStoreRegistrationHttpRequest(req, res, storeControlPlane, { authToken, maxBodyBytes });
+        } else if (isStoreUpdate) {
+          await handleStoreUpdateHttpRequest(req, res, storeControlPlane, { authToken, maxBodyBytes });
+        } else if (isStoreDelete) {
+          await handleStoreDeleteHttpRequest(req, res, storeControlPlane, { authToken, maxBodyBytes });
+        } else if (isStoreGet) {
+          await handleStoreGetHttpRequest(req, res, storeControlPlane, { authToken, maxBodyBytes });
+        } else if (isProxyCheck) {
+          await handleProxyCheckHttpRequest(req, res, { authToken, maxBodyBytes });
+        } else if (req.url && (req.url === "/api/auto-seo/run" || req.url.startsWith("/api/auto-seo/run?"))) {
+          await handleAutoSeoHttpRequest(req, res, { authToken, maxBodyBytes });
+        } else {
+          next();
+        }
+      });
+    },
+  };
+}

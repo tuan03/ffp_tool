@@ -2,6 +2,7 @@ import type { AmazonCrawlerOutput, AmazonCrawlerProduct, AmazonCrawlerSettings, 
 
 const MOCK_SETTINGS: AmazonCrawlerSettings = {
   profileSlug: "default",
+  imageProfileSlug: "default",
   applyJeminisePreset: false,
   productThreads: 3,
   variantThreads: 8,
@@ -52,7 +53,7 @@ function createJeminiseMockVariants(): AmazonFinalVariant[] {
 }
 
 const regularMockProduct: AmazonCrawlerProduct = {
-  id: "mock-regular", parentAsin: "B0MOCK1001", canonicalUrl: "https://www.amazon.com/dp/B0MOCK1001",
+  id: "mock-regular", asin: "B0MOCK1001", parentAsin: "B0MOCK1001", canonicalUrl: "https://www.amazon.com/dp/B0MOCK1001",
   sourceTitle: "Amazon Ceramic Mug", title: "Amazon Ceramic Mug", description: "Amazon source description", bulletPoints: ["Amazon source data"], categories: ["Home & Kitchen", "Mugs"], productDetails: { Material: "Ceramic" }, media: [],
   sourceVariants: [{ asin: "B0MOCK1001", url: "https://www.amazon.com/dp/B0MOCK1001", options: {}, price: { raw: "$14.99", amount: 14.99, currency: "USD" }, media: [], customizationFingerprint: null, priceInference: { isInferred: false, sourceAsins: [] }, warnings: [] }],
   variants: [{ id: "B0MOCK1001-default", sku: "B0MOCK1001", sourceAsin: "B0MOCK1001", options: {}, price: { raw: "$14.99", amount: 14.99, currency: "USD" }, surcharge: null, metadata: {} }],
@@ -62,7 +63,7 @@ const regularMockProduct: AmazonCrawlerProduct = {
 
 const matrixMockProduct: AmazonCrawlerProduct = {
   ...structuredClone(regularMockProduct),
-  id: "mock-matrix-ocean", parentAsin: "B0MOCK2001", canonicalUrl: "https://www.amazon.com/dp/B0MOCK2001", sourceTitle: "Pattern Throw", title: "Pattern Throw - Ocean",
+  id: "mock-matrix-ocean", asin: "B0MOCK2002", parentAsin: "B0MOCK2001", canonicalUrl: "https://www.amazon.com/dp/B0MOCK2001", sourceTitle: "Pattern Throw", title: "Pattern Throw - Ocean",
   sourceVariants: [
     { ...structuredClone(regularMockProduct.sourceVariants[0]), asin: "B0MOCK2002", options: { Design: "Ocean", Color: "Blue" } },
     { ...structuredClone(regularMockProduct.sourceVariants[0]), asin: "B0MOCK2003", options: { Design: "Ocean", Color: "Navy" } },
@@ -79,7 +80,7 @@ const matrixMockProduct: AmazonCrawlerProduct = {
 const jeminiseMockVariants = createJeminiseMockVariants();
 const jeminiseMockProduct: AmazonCrawlerProduct = {
   ...structuredClone(regularMockProduct),
-  id: "mock-jeminise", parentAsin: "B0MOCK3001", canonicalUrl: "https://www.amazon.com/dp/B0MOCK3001", sourceTitle: "Personalized Comforter", title: "Personalized Comforter - Floral",
+  id: "mock-jeminise", asin: "B0MOCK3001", parentAsin: "B0MOCK3001", canonicalUrl: "https://www.amazon.com/dp/B0MOCK3001", sourceTitle: "Personalized Comforter", title: "Personalized Comforter - Floral",
   sourceVariants: [{ ...structuredClone(regularMockProduct.sourceVariants[0]), asin: "B0MOCK3001", options: { Design: "Floral" } }],
   variants: jeminiseMockVariants,
   splitContext: { attribute: "Design", value: "Floral", groupKey: "mock-jeminise", sourceAsins: ["B0MOCK3001"] },
@@ -97,6 +98,7 @@ export const amazonCrawlerMockOutput: AmazonCrawlerOutput = {
     regularMockProduct,
     {
       id: "mock-parent-design-starry-night",
+      asin: "B0MOCK0002",
       parentAsin: "B0MOCK0001",
       canonicalUrl: "https://www.amazon.com/dp/B0MOCK0001",
       sourceTitle: "Personalized Bedding Set",

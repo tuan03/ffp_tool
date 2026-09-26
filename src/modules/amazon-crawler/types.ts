@@ -3,7 +3,9 @@ export type AmazonCrawlerProfile = "default" | "jeminise";
 export type AmazonCrawlerJobStatus =
   | "queued"
   | "running"
+  | "cancelling"
   | "waiting_captcha"
+  | "review_pending"
   | "completed"
   | "partial"
   | "failed"
@@ -17,6 +19,8 @@ export interface Money {
 
 export interface AmazonCrawlerSettings {
   profileSlug: AmazonCrawlerProfile;
+  imageProfileSlug: string;
+  imageProfileRevision?: string | null;
   applyJeminisePreset: boolean;
   productThreads: number;
   variantThreads: number;
@@ -27,10 +31,32 @@ export interface AmazonCrawlerSettings {
   amazonZip: string;
   captchaTimeoutSeconds: number;
   maxMatrixVariants: number;
+  storeId?: string;
+  priceAddition?: number;
+  discountPercent?: number;
+  collectionId?: string;
+  collectionIds?: readonly string[];
+  productType?: string;
 }
 
 export interface AmazonCrawlerInput extends AmazonCrawlerSettings {
   urls: readonly string[];
+}
+
+export interface AmazonAsinPreflightMatch {
+  readonly asin: string;
+  readonly productId: string;
+  readonly title: string;
+  readonly adminUrl: string;
+}
+
+export interface AmazonAsinPreflightResult {
+  readonly ready: boolean;
+  readonly matches: readonly AmazonAsinPreflightMatch[];
+}
+
+export interface AmazonAsinChecker {
+  (storeId: string, asins: readonly string[]): Promise<AmazonAsinPreflightResult>;
 }
 
 export interface AmazonCrawlerActiveVariant {
@@ -42,7 +68,7 @@ export interface AmazonCrawlerProgressItem {
   source: string;
   asin: string;
   phase: AmazonCrawlerProgress["phase"];
-  status: "queued" | "running" | "completed" | "failed" | "cancelled";
+  status: "queued" | "running" | "cancelling" | "completed" | "failed" | "cancelled";
   message: string;
   variantCompleted: number;
   variantTotal: number;
@@ -64,13 +90,89 @@ export interface AmazonCrawlerBrowserPoolProgress {
 }
 
 export interface AmazonCrawlerProgress {
-  phase: "queued" | "product" | "variant_matrix" | "customization" | "export" | "captcha";
+  phase: "queued" | "product" | "variant_matrix" | "customization" | "normalization" | "seo" | "image_processing" | "review" | "shopify" | "export" | "captcha";
   completed: number;
   total: number;
   message: string;
   source?: string;
   items?: AmazonCrawlerProgressItem[];
   browserPool?: AmazonCrawlerBrowserPoolProgress;
+}
+
+export type ProductPipelineStatus =
+  | "received"
+  | "normalizing"
+  | "seo"
+  | "image_processing"
+  | "waiting_review"
+  | "sync_queued"
+  | "syncing"
+  | "shopify_writing"
+  | "stopping_after_write"
+  | "cancelling"
+  | "retry_wait"
+  | "completed"
+  | "rejected"
+  | "failed"
+  | "reconciliation_required"
+  | "cancelled";
+
+export interface ProductPipelineMetadata {
+  status: ProductPipelineStatus;
+  normalization: {
+    status: "pending" | "running" | "completed";
+    assetsNormalized: number;
+  };
+  seo: {
+    status: "pending" | "running" | "completed" | "failed";
+    engine?: "gemini" | "heuristic" | "mixed";
+    fieldsApplied?: string[];
+    fallbackStages?: string[];
+    warnings?: string[];
+    error?: string | null;
+  };
+  imageProcessing?: {
+    status: "pending" | "running" | "completed" | "failed";
+    profileSlug?: string;
+    profileRevision?: string;
+    processedImages?: number;
+    error?: string | null;
+  };
+  shopify: {
+    storeId?: string;
+    productId?: string;
+    productHandle?: string;
+    adminUrl?: string;
+    attempts: number;
+    proxyProfile?: string | null;
+    warnings?: string[];
+    error?: string | null;
+    noOp?: boolean;
+    timings?: ProductPipelineTimings;
+  };
+}
+
+export interface ProductPipelineTimings {
+  pipeline?: {
+    normalizationMs?: number;
+    shopifyResolveMs?: number;
+    seoInitialMs?: number;
+    seoQueueWaitMs?: number;
+    seoRebaseMs?: number;
+    seoRegistrationMs?: number;
+    seoTotalMs?: number;
+    imageProcessingMs?: number;
+    imageUploadMs?: number;
+    shopifySyncMs?: number;
+    totalMs?: number;
+  };
+  shopify?: {
+    productWriteMs?: number;
+    variantsMs?: number;
+    assetUploadMs?: number;
+    metafieldMs?: number;
+    totalMs?: number;
+  };
 }
 
 export interface AmazonCrawlerError {
@@ -84,6 +186,10 @@ export interface ProductMedia {
   url: string;
   kind: "image" | "video";
   sourceAsin?: string;
+  alt?: string;
+  amazonImageId?: string | null;
+  isMain?: boolean;
+  processedUrl?: string;
 }
 
 export interface PriceInference {
@@ -199,11 +305,19 @@ export interface ProductDiagnostics {
 
 export interface AmazonCrawlerProduct {
   id: string;
+  sourceKey?: string;
+  asin: string;
   parentAsin: string;
   canonicalUrl: string;
   sourceTitle: string;
   title: string;
   description: string | null;
+  descriptionHtml?: string;
+  handle?: string;
+  seo?: {
+    title: string;
+    description: string;
+  };
   bulletPoints: string[];
   categories: string[];
   productDetails: Record<string, string>;
@@ -216,6 +330,7 @@ export interface AmazonCrawlerProduct {
   preset: string | null;
   warnings: string[];
   diagnostics: ProductDiagnostics;
+  pipeline?: ProductPipelineMetadata;
 }
 
 export interface AmazonCrawlerStatistics {
@@ -231,7 +346,7 @@ export interface AmazonCrawlerStatistics {
 export interface AmazonCrawlerOutput {
   version: string;
   jobId: string;
-  status: Extract<AmazonCrawlerJobStatus, "completed" | "partial" | "cancelled">;
+  status: Extract<AmazonCrawlerJobStatus, "review_pending" | "completed" | "partial" | "cancelled">;
   startedAt: string;
   completedAt: string;
   settings: AmazonCrawlerSettings;
@@ -245,7 +360,20 @@ export interface AmazonCrawlerOutput {
 export interface AmazonCrawlerRunOptions {
   input: AmazonCrawlerInput;
   onProgress?: (progress: AmazonCrawlerProgress) => void;
+  onProducts?: (products: readonly AmazonCrawlerProduct[]) => void;
+  onJobCreated?: (jobId: string) => void;
   signal?: AbortSignal;
+}
+
+export interface AmazonCrawlerSyncRetrier {
+  (
+    jobId: string,
+    options?: {
+      onProgress?: (progress: AmazonCrawlerProgress) => void;
+      onProducts?: (products: readonly AmazonCrawlerProduct[]) => void;
+      signal?: AbortSignal;
+    },
+  ): Promise<{ retried: number; output?: AmazonCrawlerOutput }>;
 }
 
 export interface AmazonCrawlerJobSnapshot {
@@ -254,10 +382,105 @@ export interface AmazonCrawlerJobSnapshot {
   progress: AmazonCrawlerProgress;
   result: AmazonCrawlerOutput | null;
   error: string | null;
+  inputs: readonly string[];
+  settings: AmazonCrawlerSettings;
+  createdAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
+  replacementOfJobId: string | null;
+  cancellation: AmazonCrawlerCancellationSummary;
+}
+
+export interface AmazonCrawlerPendingAgentCancellation {
+  clientId: string;
+  displayName: string;
+  status: AmazonCrawlerClientStatus;
+  taskCount: number;
+  receivedTaskCount: number;
+  hasReceived: boolean;
+}
+
+export interface AmazonCrawlerPendingPipelineCancellation {
+  itemId: string;
+  sourceKey: string;
+  phase: ProductPipelineStatus | "pipeline";
+  workerId: string | null;
+  receivedAt: string | null;
+}
+
+export interface AmazonCrawlerCancellationSummary {
+  id: string | null;
+  requestedAt: string | null;
+  pendingAgents: readonly AmazonCrawlerPendingAgentCancellation[];
+  pendingPipeline: readonly AmazonCrawlerPendingPipelineCancellation[];
+  pendingPipelineItems: number;
+  pendingCleanupAgents: readonly {
+    clientId: string;
+    displayName: string;
+    status: string;
+    error: string | null;
+  }[];
+  cacheGeneration: number | null;
+  isExecutionConfirmed: boolean;
+}
+
+export interface AmazonCrawlerJobController {
+  list(limit?: number): Promise<readonly AmazonCrawlerJobSnapshot[]>;
+  get(jobId: string): Promise<AmazonCrawlerJobSnapshot>;
+  cancel(jobId: string): Promise<AmazonCrawlerJobSnapshot>;
+  replace(jobId: string, input: AmazonCrawlerInput): Promise<AmazonCrawlerJobSnapshot>;
+  delete(jobId: string): Promise<void>;
 }
 
 export interface AmazonCrawlerRunner {
   (options: AmazonCrawlerRunOptions): Promise<AmazonCrawlerOutput>;
+}
+
+export type AmazonCrawlerReviewDecision = "pending" | "approved" | "rejected";
+
+export type AmazonCrawlerReviewSyncStatus = "idle" | "queued" | "syncing" | "synced" | "failed";
+
+export interface AmazonCrawlerReviewTarget {
+  readonly collectionIds: readonly string[];
+  readonly productType?: string;
+  readonly priceAddition: number;
+  readonly discountPercent: number;
+}
+
+export interface AmazonCrawlerReviewItem {
+  readonly id: string;
+  readonly jobId: string;
+  readonly sourceKey: string;
+  readonly storeId: string;
+  readonly decision: AmazonCrawlerReviewDecision;
+  readonly syncStatus: AmazonCrawlerReviewSyncStatus;
+  readonly version: number;
+  readonly rejectionReason?: string | null;
+  readonly syncError?: string | null;
+  readonly readyAt?: string | null;
+  readonly updatedAt?: string | null;
+  readonly target: AmazonCrawlerReviewTarget;
+  readonly product: AmazonCrawlerProduct;
+}
+
+export interface AmazonCrawlerReviewEditPatch {
+  readonly productTitle?: string;
+  readonly productDescription?: string;
+  readonly seoTitle?: string;
+  readonly seoDescription?: string;
+  readonly handle?: string;
+  readonly imageAlts?: readonly { readonly id: string; readonly alt: string }[];
+}
+
+export interface AmazonCrawlerReviewClient {
+  list(): Promise<readonly AmazonCrawlerReviewItem[]>;
+  subscribe(onItems: (items: readonly AmazonCrawlerReviewItem[]) => void): () => void;
+  update(itemId: string, expectedVersion: number, patch: AmazonCrawlerReviewEditPatch): Promise<AmazonCrawlerReviewItem>;
+  decide(itemId: string, expectedVersion: number, decision: AmazonCrawlerReviewDecision, reason?: string): Promise<AmazonCrawlerReviewItem>;
+  sync(itemId: string): Promise<AmazonCrawlerReviewItem>;
+  syncAllApproved(): Promise<{ readonly queued: number; readonly itemIds: readonly string[] }>;
+  deleteAll(): Promise<{ readonly deleted: number; readonly skipped: number }>;
+  imageUrl(fileToken: string): string;
 }
 
 export interface AmazonCrawlerCacheClearResult {
@@ -287,8 +510,75 @@ export interface AmazonCrawlerClientsLoader {
   (): Promise<AmazonCrawlerClientSummary[]>;
 }
 
+export interface AmazonCrawlerJobSummary {
+  id: string;
+  status: AmazonCrawlerJobStatus;
+  createdAt: string;
+  startedAt?: string | null;
+  completedAt?: string | null;
+  acceptedInputs: number;
+  productCounts?: Record<string, number>;
+  progress?: AmazonCrawlerProgress;
+}
+
+export interface AmazonCrawlerHydratedJob {
+  jobId: string;
+  status: AmazonCrawlerJobStatus;
+  progress?: AmazonCrawlerProgress;
+  products: AmazonCrawlerProduct[];
+  output?: AmazonCrawlerOutput | null;
+  settings?: AmazonCrawlerSettings;
+}
+
+export interface AmazonCrawlerJobLoader {
+  loadJob(jobId?: string): Promise<AmazonCrawlerHydratedJob | null>;
+  listRecentJobs(limit?: number): Promise<AmazonCrawlerJobSummary[]>;
+}
+
+export type AmazonCrawlerHandoverHandler = (
+  products: readonly AmazonCrawlerProduct[],
+) => Promise<void> | void;
+
+export interface ImageProcessingProfile {
+  slug: string;
+  name: string;
+  enabled: boolean;
+  revision: string;
+  hasLogo: boolean;
+  logoUrl?: string;
+  randomPixels: number;
+  pixelDelta: number;
+  jpegQuality: number;
+  output: {
+    width: number;
+    height: number;
+    fit: "contain" | "cover";
+    upscale: boolean;
+    background: string;
+  };
+  logo: {
+    enabled: boolean;
+    width: number;
+    height: number;
+    maxPercent: number;
+    percentBasis: "width" | "height";
+    padding: number;
+    position: "top-left" | "top-right" | "bottom-left" | "bottom-right";
+    opacity: number;
+  };
+}
+
+export interface ImageProcessingProfileManager {
+  list(): Promise<ImageProcessingProfile[]>;
+  save(slug: string, profile: ImageProcessingProfile): Promise<ImageProcessingProfile>;
+  delete(slug: string): Promise<void>;
+  uploadLogo(slug: string, dataUrl: string): Promise<ImageProcessingProfile>;
+  preview(slug: string, profile: ImageProcessingProfile, dataUrl: string): Promise<string>;
+}
+
 export const DEFAULT_AMAZON_CRAWLER_SETTINGS: AmazonCrawlerSettings = {
   profileSlug: "default",
+  imageProfileSlug: "default",
   applyJeminisePreset: false,
   productThreads: 3,
   variantThreads: 8,
@@ -299,4 +589,10 @@ export const DEFAULT_AMAZON_CRAWLER_SETTINGS: AmazonCrawlerSettings = {
   amazonZip: "10001",
   captchaTimeoutSeconds: 180,
   maxMatrixVariants: 500,
+  storeId: "capozen",
+  priceAddition: 0,
+  discountPercent: 0,
+  collectionId: "",
+  collectionIds: [],
+  productType: "",
 };

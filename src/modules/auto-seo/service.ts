@@ -1,147 +1,212 @@
 import { AppError } from "../../shared/errors/app-error";
 import type {
   AutoSeoClient,
-  AutoSeoContentInput,
   AutoSeoOutput,
-  AutoSeoWorkflowInput,
+  AutoSeoProductCandidate,
+  AutoSeoSelectionInput,
+  SeoContentInputPayload,
   ShopifyProductForAutoSeoUi,
 } from "./types";
 
-export async function runAutoSeo(input: AutoSeoWorkflowInput): Promise<AutoSeoOutput> {
-  const trimmedNiche = input.niche.trim();
-  if (!trimmedNiche) {
-    throw new AppError("Niche cannot be empty when running Auto SEO.", "AUTO_SEO_INVALID_INPUT");
-  }
-
-  if (!input.products || input.products.length === 0) {
-    throw new AppError("No product candidates provided to Auto SEO.", "AUTO_SEO_INVALID_INPUT");
-  }
-
-  const selectedSet =
-    input.selectedProductIds && input.selectedProductIds.length > 0
-      ? new Set(input.selectedProductIds)
-      : null;
-
-  const targetCandidates = selectedSet
-    ? input.products.filter((candidate) => selectedSet.has(candidate.productId))
-    : input.products;
-
+export async function runAutoSeo(
+  input: AutoSeoSelectionInput,
+): Promise<AutoSeoOutput> {
   const warnings: string[] = [];
-  const seoContentInputs: AutoSeoContentInput[] = [];
 
-  for (const candidate of targetCandidates) {
-    if (!candidate.title || !candidate.title.trim()) {
-      warnings.push(`Product ${candidate.productId} has empty title.`);
-    }
-
-    if (!candidate.handle || !candidate.handle.trim()) {
-      warnings.push(`Product ${candidate.productId} has empty handle.`);
-    }
-
-    if (!candidate.images || candidate.images.length === 0) {
-      warnings.push(`Product ${candidate.productId} has no images.`);
-    }
-
-    if (!candidate.descriptionHtml || !candidate.descriptionHtml.trim()) {
-      warnings.push(`Product ${candidate.productId} has empty descriptionHtml.`);
-    }
-
-    seoContentInputs.push({
-      productId: candidate.productId,
-      handle: candidate.handle,
-      niche: trimmedNiche,
-      sourceTitle: candidate.title,
-      sourceDescriptionHtml: candidate.descriptionHtml,
-      images: candidate.images.map((img) => ({
-        url: img.url,
-        altText: img.altText,
-        position: img.position,
-      })),
-    });
+  if (input.products.length === 0) {
+    warnings.push("Product list is empty.");
   }
+
+  const hasSelectedIds =
+    Array.isArray(input.selectedProductIds) && input.selectedProductIds.length > 0;
+  const hasSelectedHandles =
+    Array.isArray(input.selectedHandles) && input.selectedHandles.length > 0;
+
+  if (!hasSelectedIds && !hasSelectedHandles) {
+    throw new AppError(
+      "No products selected. Please select at least one product.",
+      "AUTO_SEO_NO_SELECTION",
+    );
+  }
+
+  const selectedIdSet = new Set(input.selectedProductIds ?? []);
+  const selectedHandleSet = new Set(input.selectedHandles ?? []);
+
+  if (hasSelectedIds) {
+    for (const id of selectedIdSet) {
+      const exists = input.products.some((product) => product.productId === id);
+      if (!exists) {
+        warnings.push(`Selected product ID not found: ${id}`);
+      }
+    }
+  }
+
+  if (hasSelectedHandles) {
+    for (const handle of selectedHandleSet) {
+      const exists = input.products.some((product) => product.handle === handle);
+      if (!exists) {
+        warnings.push(`Selected product handle not found: ${handle}`);
+      }
+    }
+  }
+
+  const selectedProducts: AutoSeoProductCandidate[] = [];
+  const seenProductIds = new Set<string>();
+
+  for (const product of input.products) {
+    const isMatched =
+      selectedIdSet.has(product.productId) ||
+      selectedHandleSet.has(product.handle);
+
+    if (isMatched && !seenProductIds.has(product.productId)) {
+      seenProductIds.add(product.productId);
+      selectedProducts.push(product);
+    }
+  }
+
+  const seoContentInputs: SeoContentInputPayload[] = selectedProducts.map(
+    (product) => {
+      validateProduct(product, warnings);
+
+      return {
+        productId: product.productId,
+        handle: product.handle.trim(),
+        sourceTitle: product.title.trim(),
+        sourceDescriptionHtml: product.descriptionHtml,
+        sourceSeoTitle: product.seoTitle ?? null,
+        sourceSeoDescription: product.seoDescription ?? null,
+        images: product.images,
+      };
+    },
+  );
 
   return {
-    workflowId: input.workflowId || `auto_seo_${Date.now()}`,
+    workflowId: input.workflowId,
     selectedCount: seoContentInputs.length,
     seoContentInputs,
     warnings,
   };
 }
 
-export class RealAutoSeoClient implements AutoSeoClient {
-  public constructor(private readonly baseUrl = "") {}
-
-  public async loadProducts(): Promise<readonly ShopifyProductForAutoSeoUi[]> {
-    try {
-      const response = await fetch(`${this.baseUrl}/api/shopify`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          operation: "products.list",
-        }),
-      });
-
-      if (!response.ok) {
-        throw new AppError(
-          `Failed to load Shopify products: HTTP ${response.status}`,
-          "AUTO_SEO_LOAD_FAILED",
-        );
-      }
-
-      const payload = (await response.json()) as unknown;
-      if (Array.isArray(payload)) {
-        return payload as ShopifyProductForAutoSeoUi[];
-      }
-
-      if (
-        payload &&
-        typeof payload === "object" &&
-        "products" in payload &&
-        Array.isArray((payload as { products: unknown }).products)
-      ) {
-        return (payload as { products: ShopifyProductForAutoSeoUi[] }).products;
-      }
-
-      if (
-        payload &&
-        typeof payload === "object" &&
-        "data" in payload &&
-        typeof (payload as { data: unknown }).data === "object" &&
-        (payload as { data: { products?: unknown } }).data?.products &&
-        Array.isArray((payload as { data: { products: unknown[] } }).data.products)
-      ) {
-        return (payload as { data: { products: ShopifyProductForAutoSeoUi[] } }).data.products;
-      }
-
-      return [];
-    } catch (error) {
-      if (error instanceof AppError) {
-        throw error;
-      }
-      throw new AppError(
-        error instanceof Error ? error.message : "Failed to load products from Shopify API.",
-        "AUTO_SEO_LOAD_FAILED",
-        error,
-      );
-    }
+function validateProduct(
+  product: AutoSeoProductCandidate,
+  warnings: string[],
+): void {
+  if (product.productId.trim().length === 0) {
+    warnings.push("Selected product has empty productId.");
   }
-
-  public async runAutoSeo(input: AutoSeoWorkflowInput): Promise<AutoSeoOutput> {
-    try {
-      return await runAutoSeo(input);
-    } catch (error) {
-      if (error instanceof AppError) {
-        throw error;
-      }
-      throw new AppError(
-        error instanceof Error ? error.message : "Auto SEO execution failed.",
-        "AUTO_SEO_RUN_FAILED",
-        error,
-      );
-    }
+  if (product.handle.trim().length === 0) {
+    warnings.push(`Selected product ${product.productId} has empty handle.`);
+  }
+  if (product.title.trim().length === 0) {
+    warnings.push(`Selected product ${product.productId} has empty title.`);
+  }
+  if (product.descriptionHtml.trim().length === 0) {
+    warnings.push(
+      `Selected product ${product.productId} has empty descriptionHtml.`,
+    );
+  }
+  if (product.images.length === 0) {
+    warnings.push(`Selected product ${product.productId} has no images.`);
   }
 }
 
-export const realAutoSeoClient = new RealAutoSeoClient();
+export async function mapWithConcurrency<T, R>(
+  items: readonly T[],
+  limit: number,
+  fn: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  if (items.length === 0) {
+    return [];
+  }
+  const safeLimit =
+    Number.isFinite(limit) && limit > 0
+      ? Math.max(1, Math.floor(limit))
+      : 5;
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+  let firstError: unknown = null;
+
+  const workers = Array.from({ length: Math.min(safeLimit, items.length) }, async () => {
+    while (nextIndex < items.length && !firstError) {
+      const currentIndex = nextIndex++;
+      try {
+        results[currentIndex] = await fn(items[currentIndex]!, currentIndex);
+      } catch (err) {
+        if (!firstError) {
+          firstError = err;
+        }
+        break;
+      }
+    }
+  });
+
+  await Promise.all(workers);
+
+  if (firstError) {
+    throw firstError;
+  }
+
+  return results;
+}
+
+export async function hydrateSelectedProducts(
+  client: AutoSeoClient,
+  productIds: readonly string[],
+  concurrency = 5,
+  storeId?: string,
+): Promise<readonly ShopifyProductForAutoSeoUi[]> {
+  if (typeof client.hydrateSelectedProductsFresh === "function") {
+    return client.hydrateSelectedProductsFresh(productIds, concurrency, storeId);
+  }
+
+  if (typeof client.hydrateSelectedProducts === "function") {
+    return client.hydrateSelectedProducts(productIds, concurrency, storeId);
+  }
+
+  if (productIds.length === 0) {
+    return [];
+  }
+
+  const uniqueIds = Array.from(new Set(productIds));
+  const productMap = new Map<string, ShopifyProductForAutoSeoUi>();
+
+  const idsToFetch: string[] = [];
+  for (const id of uniqueIds) {
+    const cached = client.getCachedDetail?.(id, storeId);
+    if (cached) {
+      productMap.set(id, cached);
+    } else {
+      idsToFetch.push(id);
+    }
+  }
+
+  if (idsToFetch.length > 0) {
+    await mapWithConcurrency(idsToFetch, concurrency, async (id) => {
+      try {
+        const detail = storeId
+          ? await client.loadProductDetail(storeId, id)
+          : await client.loadProductDetail(id);
+        productMap.set(id, detail);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        throw new AppError(
+          `Failed to hydrate product detail for product ${id}: ${message}`,
+          "AUTO_SEO_LOAD_FAILED",
+          err,
+        );
+      }
+    });
+  }
+
+  return productIds.map((id) => {
+    const product = productMap.get(id);
+    if (!product) {
+      throw new AppError(
+        `Failed to hydrate product detail for product ${id}: product detail not found`,
+        "AUTO_SEO_LOAD_FAILED",
+      );
+    }
+    return product;
+  });
+}

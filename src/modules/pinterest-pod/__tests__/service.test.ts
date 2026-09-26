@@ -1369,4 +1369,3 @@ test("MockPinterestPodClient.createJob preserves selected_clusters in getJobDeta
   assert.equal(detail.clusters[0].theme_name, "Custom Ghost Aesthetic");
 });
 
-

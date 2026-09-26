@@ -1,0 +1,4 @@
+
+> ffp-tool@0.1.0 dev:agent
+> python scripts/amazon-crawler-agent.py --project-root .
+

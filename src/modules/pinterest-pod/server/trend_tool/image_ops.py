@@ -25,7 +25,6 @@ def enhance_image(source: Path, destination: Path, min_long_edge: int) -> Path:
     gc.collect()
     return destination
 
-
 def fit_to_target(
     source: Path,
     destination: Path,
@@ -180,4 +179,3 @@ def export_cmyk_jpg(source: Path, destination: Path, dpi: int) -> Path:
         del cmyk
     gc.collect()
     return destination
-

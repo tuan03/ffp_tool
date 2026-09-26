@@ -1,12 +1,19 @@
 import { useState } from "react";
 import type { AutoSeoOutput } from "../../types";
 
-interface AutoSeoOutputPanelProps {
+export interface AutoSeoOutputPanelProps {
   output: AutoSeoOutput | null;
   onClearOutput(): void;
+  onSendToSeoContent?(): void;
+  isSendingToSeo?: boolean;
 }
 
-export function AutoSeoOutputPanel({ output, onClearOutput }: AutoSeoOutputPanelProps): React.JSX.Element | null {
+export function AutoSeoOutputPanel({
+  output,
+  onClearOutput,
+  onSendToSeoContent,
+  isSendingToSeo = false,
+}: AutoSeoOutputPanelProps): React.JSX.Element | null {
   const [copied, setCopied] = useState(false);
 
   if (!output) {
@@ -115,7 +122,7 @@ export function AutoSeoOutputPanel({ output, onClearOutput }: AutoSeoOutputPanel
                   <th className="py-2.5 px-3 text-center w-12">STT</th>
                   <th className="py-2.5 px-3">Product ID</th>
                   <th className="py-2.5 px-3">Handle</th>
-                  <th className="py-2.5 px-3">Niche</th>
+                  <th className="py-2.5 px-3">SEO Title</th>
                   <th className="py-2.5 px-3">Tiêu đề gốc</th>
                   <th className="py-2.5 px-3 text-center">Số ảnh</th>
                 </tr>
@@ -128,7 +135,9 @@ export function AutoSeoOutputPanel({ output, onClearOutput }: AutoSeoOutputPanel
                       {item.productId.replace("gid://shopify/Product/", "prod:")}
                     </td>
                     <td className="py-2.5 px-3 text-cyan-400 truncate max-w-[150px]">{item.handle}</td>
-                    <td className="py-2.5 px-3 font-sans text-amber-300">{item.niche}</td>
+                    <td className="py-2.5 px-3 font-sans text-cyan-300 truncate max-w-[150px]" title={item.sourceSeoTitle ?? ""}>
+                      {item.sourceSeoTitle ?? "—"}
+                    </td>
                     <td className="py-2.5 px-3 font-sans text-slate-200 max-w-xs truncate">{item.sourceTitle}</td>
                     <td className="py-2.5 px-3 text-center text-slate-300 font-sans">
                       <span className="inline-block rounded-full bg-slate-800 px-2 py-0.5 text-[10px] font-semibold">
@@ -173,18 +182,35 @@ export function AutoSeoOutputPanel({ output, onClearOutput }: AutoSeoOutputPanel
           </button>
         </div>
 
-        {/* Send to SEO Content (Disabled) */}
+        {/* Send to SEO Content */}
         <div className="relative group">
           <button
             type="button"
-            disabled
-            className="inline-flex items-center gap-2 rounded-lg bg-slate-800/50 px-4 py-2 text-xs font-semibold text-slate-500 border border-slate-800 cursor-not-allowed"
+            disabled={isSendingToSeo || !onSendToSeoContent}
+            onClick={onSendToSeoContent}
+            className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold border transition ${
+              isSendingToSeo
+                ? "bg-cyan-950 text-cyan-400 border-cyan-700 cursor-wait animate-pulse"
+                : onSendToSeoContent
+                  ? "bg-gradient-to-r from-cyan-600 to-blue-600 text-white border-cyan-500 hover:from-cyan-500 hover:to-blue-500 shadow-md shadow-cyan-900/40 cursor-pointer"
+                  : "bg-slate-800/50 text-slate-500 border-slate-800 cursor-not-allowed"
+            }`}
           >
-            <span>📤</span> Gửi sang SEO Content
+            {isSendingToSeo ? (
+              <>
+                <span className="animate-spin">⏳</span> Đang chạy SEO Pipeline (B1 → B6)...
+              </>
+            ) : (
+              <>
+                <span>📤</span> Gửi sang SEO Content
+              </>
+            )}
           </button>
-          <div className="absolute right-0 bottom-full mb-2 hidden group-hover:block z-20 w-64 rounded-lg bg-slate-950 p-2 text-[11px] text-slate-400 border border-slate-800 shadow-xl text-center">
-            SEO Content module is not connected yet.
-          </div>
+          {!onSendToSeoContent && (
+            <div className="absolute right-0 bottom-full mb-2 hidden group-hover:block z-20 w-64 rounded-lg bg-slate-950 p-2 text-[11px] text-slate-400 border border-slate-800 shadow-xl text-center">
+              SEO Content handler is not provided.
+            </div>
+          )}
         </div>
       </div>
     </div>

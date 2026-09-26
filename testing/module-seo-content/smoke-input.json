@@ -1,0 +1,31 @@
+[
+  {
+    "title": "Personalized Music Player Area Rug",
+    "description": "A personalized area rug for music lovers and cozy home spaces.",
+    "niche": "personalized rug",
+    "handle": "personalized-music-player-area-rug",
+    "images": [
+      {
+        "localFilePath": "src/modules/seo-content/__tests__/media/8e0cfedae08f18301b3fcb668c1192b14716606b9ba78d9f2c03b3194e3a20d0_9e062a6b-1a87-439d-80f9-6b42fdb6eeba.webp",
+        "alt": "Personalized music player area rug"
+      }
+    ]
+  },
+  {
+    "title": "Cute Halloween Pumpkin & Ghost Round Rug",
+    "description": "Festive fall entryway round mat with cute jack-o'-lantern and ghost pattern.",
+    "niche": "halloween rug",
+    "handle": "cute-halloween-pumpkin-ghost-round-rug",
+    "siteDomain": "jeminise.com",
+    "images": [
+      {
+        "localFilePath": "D:\\D-Downloads\\shopify-download\\2aOboR1HqOz2K68UN8nL3svqGDv5rriTXu6RHCeu.jpg",
+        "alt": "Halloween Pumpkin and Ghost Round Rug on front porch"
+      },
+      {
+        "localFilePath": "D:\\D-Downloads\\shopify-download\\2aOboR1HqP2Rxa3TACpxVCs1NBJ9PbSUbOabODgG.jpg",
+        "alt": "Round rug dimensions and size guide chart"
+      }
+    ]
+  }
+]

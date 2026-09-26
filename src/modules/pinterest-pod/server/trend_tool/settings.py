@@ -56,8 +56,6 @@ def env_path(*names: str) -> Path | None:
         if value:
             return Path(value)
     return None
-
-
 def task5_token_path_from_env() -> Path | None:
     configured = env_path("PINTEREST_OAUTH_TOKEN_PATH", "PINTEREST_TOKEN_PATH", "TASK5_TOKEN_PATH")
     if configured:
@@ -69,6 +67,3 @@ def task5_token_path_from_env() -> Path | None:
         if candidate.exists():
             return candidate
     return None
-
-
-

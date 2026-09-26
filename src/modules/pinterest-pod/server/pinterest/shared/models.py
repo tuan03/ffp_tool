@@ -151,4 +151,3 @@ class RankedImage:
     requires_extraction: bool = False
     classification: str = "Printable Artwork"
     is_direct_printable: bool = False
-

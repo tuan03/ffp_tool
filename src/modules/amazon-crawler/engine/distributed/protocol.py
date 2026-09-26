@@ -5,8 +5,13 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Any
+
+try:
+    from datetime import UTC  # type: ignore[attr-defined]
+except ImportError:
+    UTC = timezone.utc
 
 from . import AGENT_VERSION, PROTOCOL_VERSION
 
@@ -22,7 +27,10 @@ def utc_now() -> datetime:
 
 
 def utc_iso(value: datetime | None = None) -> str:
-    return (value or utc_now()).isoformat().replace("+00:00", "Z")
+    timestamp = value or utc_now()
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.replace(tzinfo=UTC)
+    return timestamp.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 
 def canonical_json(value: Any) -> bytes:
@@ -101,6 +109,9 @@ def hello_message(
     available_slots: int,
     max_concurrent_inputs: int,
     limits: AgentLimits,
+    local_tasks: list[dict[str, Any]] | None = None,
+    cancel_intents: list[str] | None = None,
+    cache_generation: int = 0,
 ) -> dict[str, Any]:
     return {
         "type": "hello",
@@ -110,7 +121,12 @@ def hello_message(
         "displayName": display_name,
         "availableSlots": max(0, available_slots),
         "maxConcurrentInputs": max(1, max_concurrent_inputs),
-        "capabilities": {"amazon": True, "captcha": not limits.headless, "offlineSpool": True},
+        "capabilities": {
+            "amazon": True,
+            "captcha": not limits.headless,
+            "offlineSpool": True,
+            "mediaGalleryV2": True,
+        },
         "limits": {
             "productThreads": limits.product_threads,
             "variantThreads": limits.variant_threads,
@@ -119,4 +135,7 @@ def hello_message(
             "browserTabs": limits.browser_tabs,
             "headless": limits.headless,
         },
+        "localTasks": list(local_tasks or []),
+        "cancelIntents": list(cancel_intents or []),
+        "cacheGeneration": max(0, int(cache_generation)),
     }

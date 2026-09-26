@@ -9,6 +9,7 @@ import random
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections import deque
 from pathlib import Path
@@ -83,11 +84,29 @@ class DistributedCrawlerAgent:
         self.outbound_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         self.completion_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         self.active: dict[str, dict[str, Any]] = {}
-        self.cancel_events: dict[str, threading.Event] = {}
+        self.cancel_events: dict[str, set[threading.Event]] = {}
+        self._cancel_events_lock = threading.Lock()
+        self.executing_task_ids: set[str] = set()
         self.stop_event = asyncio.Event()
         self.connection_status = "offline"
-        self._paused = False
+        self._paused = self.store.is_paused()
         self._captcha_waiting = False
+        self._pending_stop_cleanups: dict[str, int] = {}
+        self._cache_cleanup_lock = asyncio.Lock()
+        self._running_crawlers: dict[str, Any] = {}
+        self._running_crawlers_lock = threading.Lock()
+        self._debug_log_lock = threading.Lock()
+        self._debug_log_path = config.data_directory / "agent-debug.jsonl"
+
+    def _debug_event(self, event: str, **details: Any) -> None:
+        payload = {"timestamp": utc_iso(), "event": event, "clientId": self.client_id, **details}
+        try:
+            with self._debug_log_lock:
+                self._debug_log_path.parent.mkdir(parents=True, exist_ok=True)
+                with self._debug_log_path.open("a", encoding="utf-8") as stream:
+                    stream.write(json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n")
+        except OSError:
+            return
 
     def status_snapshot(self) -> dict[str, Any]:
         return {
@@ -97,7 +116,8 @@ class DistributedCrawlerAgent:
             "activeTasks": len(self.active),
             "availableSlots": self._available_slots(),
             "waitingCaptcha": self._captcha_waiting,
-            "pendingUploads": len(self.store.pending_results()),
+            "pendingUploads": len(self.store.pending_results()) + len(self.store.pending_products()),
+            "isPaused": self._paused,
         }
 
     def _publish_status(self) -> None:
@@ -107,7 +127,6 @@ class DistributedCrawlerAgent:
         for assignment in self.store.recover_assignments():
             task_id = str(assignment["taskId"])
             self.active[task_id] = assignment
-            await self.assignment_queue.put(assignment)
         executor = asyncio.create_task(self._execution_loop())
         completions = asyncio.create_task(self._completion_loop())
         try:
@@ -120,15 +139,118 @@ class DistributedCrawlerAgent:
 
     def stop(self) -> None:
         self.stop_event.set()
-        for event in self.cancel_events.values():
+        with self._cancel_events_lock:
+            events = [event for job_events in self.cancel_events.values() for event in job_events]
+        for event in events:
             event.set()
+
+    def _register_cancel_event(self, job_id: str, event: threading.Event) -> None:
+        with self._cancel_events_lock:
+            self.cancel_events.setdefault(job_id, set()).add(event)
+        if any(
+            self.store.is_task_cancelled(task_id)
+            for task_id, assignment in self.active.items()
+            if str(assignment.get("jobId") or "") == job_id
+        ):
+            event.set()
+
+    def _unregister_cancel_event(self, job_id: str, event: threading.Event) -> None:
+        with self._cancel_events_lock:
+            events = self.cancel_events.get(job_id)
+            if events is None:
+                return
+            events.discard(event)
+            if not events:
+                self.cancel_events.pop(job_id, None)
+
+    def _cancel_job(self, job_id: str) -> None:
+        if not job_id:
+            return
+        self.store.cancel_job(job_id)
+        with self._cancel_events_lock:
+            events = list(self.cancel_events.get(job_id, set()))
+        for event in events:
+            event.set()
+        with self._running_crawlers_lock:
+            crawler = self._running_crawlers.get(job_id)
+        self._debug_event(
+            "stop_signal_applied",
+            jobId=job_id,
+            cancelEventCount=len(events),
+            hasRunningCrawler=crawler is not None,
+        )
+        if crawler is not None:
+            threading.Thread(
+                target=crawler.browser_pool.close,
+                name=f"stop-browser-{job_id[:8]}",
+                daemon=True,
+            ).start()
 
     def set_paused(self, is_paused: bool) -> None:
         self._paused = is_paused
+        self.store.set_paused(is_paused)
         if is_paused:
             self.connection_status = "paused"
         elif self.connection_status == "paused":
             self.connection_status = "online"
+        self._publish_status()
+
+    def stop_and_discard_local_work(self) -> int:
+        assignments = list(self.active.values())
+        job_ids = {
+            str(assignment.get("jobId") or "")
+            for assignment in assignments
+            if str(assignment.get("jobId") or "")
+        }
+        for job_id in job_ids:
+            self.store.add_cancel_intent(job_id)
+            self._cancel_job(job_id)
+            self.store.discard_job(job_id)
+        for task_id in list(self.active):
+            if task_id not in self.executing_task_ids:
+                self.active.pop(task_id, None)
+        self._publish_status()
+        return len(assignments)
+
+    async def _apply_reconciliation(self, acknowledgement: dict[str, Any]) -> None:
+        resume_ids = {str(value) for value in acknowledgement.get("resumeTaskIds") or []}
+        executable_ids = {
+            str(assignment.get("taskId") or "")
+            for assignment in self.store.recover_assignments()
+        }
+        discard_ids = {str(value) for value in acknowledgement.get("discardTaskIds") or []}
+        cancelled_job_ids = {str(value) for value in acknowledgement.get("cancelledJobIds") or []}
+        for job_id in cancelled_job_ids:
+            self._cancel_job(job_id)
+        discarded_job_ids = {
+            str(self.active[task_id].get("jobId") or "")
+            for task_id in discard_ids
+            if task_id in self.active
+        }
+        for job_id in discarded_job_ids:
+            with self._cancel_events_lock:
+                events = list(self.cancel_events.get(job_id, set()))
+            for event in events:
+                event.set()
+        for task_id in discard_ids:
+            if task_id not in self.executing_task_ids:
+                self.active.pop(task_id, None)
+            self.store.discard_task(task_id)
+        for task_id in resume_ids:
+            assignment = self.active.get(task_id) or self.store.assignment(task_id)
+            if assignment is not None and task_id in executable_ids and task_id not in self.executing_task_ids:
+                await self.assignment_queue.put(assignment)
+        acknowledged = [str(value) for value in acknowledgement.get("acknowledgedCancelIntents") or []]
+        self.store.acknowledge_cancel_intents(acknowledged)
+        required_generation = max(0, int(acknowledgement.get("requiredCacheGeneration") or 0))
+        if required_generation > self.store.cache_generation():
+            await self._ensure_cache_generation(required_generation)
+            await self.outbound_queue.put({
+                "type": "cache_generation_ack",
+                "cacheGeneration": required_generation,
+                "availableSlots": self._available_slots(),
+            })
+        await self.outbound_queue.put({"type": "ready", "availableSlots": self._available_slots()})
         self._publish_status()
 
     async def _connection_supervisor(self) -> None:
@@ -150,10 +272,14 @@ class DistributedCrawlerAgent:
                         available_slots=self._available_slots(),
                         max_concurrent_inputs=self.config.max_concurrent_inputs,
                         limits=self.config.limits,
+                        local_tasks=self.store.local_tasks(),
+                        cancel_intents=self.store.cancel_intents(),
+                        cache_generation=self.store.cache_generation(),
                     )))
                     acknowledgement = json.loads(await asyncio.wait_for(websocket.recv(), timeout=15))
                     if acknowledgement.get("type") != "hello_ack":
                         raise RuntimeError("Coordinator did not acknowledge the worker protocol.")
+                    await self._apply_reconciliation(acknowledgement)
                     delay = 1.0
                     connection_tasks = [
                         asyncio.create_task(self._sender(websocket)),
@@ -205,10 +331,31 @@ class DistributedCrawlerAgent:
                     self._publish_status()
             elif message_type == "cancel":
                 job_id = str(payload.get("jobId") or "")
-                self.store.cancel_job(job_id)
-                event = self.cancel_events.get(job_id)
-                if event:
-                    event.set()
+                generation = max(0, int(payload.get("cacheGeneration") or 0))
+                self._debug_event(
+                    "stop_received",
+                    jobId=job_id,
+                    cacheGeneration=generation,
+                    activeTaskIds=sorted(
+                        task_id
+                        for task_id, assignment in self.active.items()
+                        if str(assignment.get("jobId") or "") == job_id
+                    ),
+                    executingTaskIds=sorted(self.executing_task_ids),
+                )
+                self._cancel_job(job_id)
+                for assignment in list(self.active.values()):
+                    if str(assignment.get("jobId") or "") != job_id:
+                        continue
+                    await self.outbound_queue.put({
+                        "type": "cancel_received",
+                        "taskId": assignment["taskId"],
+                        "leaseId": assignment["leaseId"],
+                    })
+                current_generation = self._pending_stop_cleanups.get(job_id, 0)
+                if job_id and generation > current_generation:
+                    self._pending_stop_cleanups[job_id] = generation
+                    asyncio.create_task(self._complete_stop_cleanup(job_id, generation))
             elif message_type == "pause":
                 self.set_paused(bool(payload.get("paused", True)))
             elif message_type == "clear_cache":
@@ -224,6 +371,97 @@ class DistributedCrawlerAgent:
                 "type": "cache_cleared", "requestId": request_id,
                 "removedFiles": 0, "removedBytes": 0, "error": str(error),
             }
+
+    async def _ensure_cache_generation(self, generation: int) -> dict[str, Any]:
+        async with self._cache_cleanup_lock:
+            if self.store.cache_generation() >= generation:
+                return {"removedFiles": 0, "removedBytes": 0}
+            result = await asyncio.to_thread(RawFamilyCache(self.project_root / ".runtime" / "cache").clear)
+            self.store.set_cache_generation(generation)
+            return result
+
+    async def _complete_stop_cleanup(self, job_id: str, generation: int) -> None:
+        started_at = time.monotonic()
+        local_tasks = {
+            str(task.get("taskId") or ""): task
+            for task in self.store.local_tasks()
+            if str(task.get("jobId") or "") == job_id
+        }
+        job_task_ids = {
+            task_id
+            for task_id, assignment in self.active.items()
+            if str(assignment.get("jobId") or "") == job_id
+        } | set(local_tasks)
+        acknowledged_task_ids: set[str] = set()
+        for task_id, assignment in list(self.active.items()):
+            if str(assignment.get("jobId") or "") != job_id or task_id in self.executing_task_ids:
+                continue
+            self.active.pop(task_id, None)
+            self.store.discard_task(task_id)
+            await self.outbound_queue.put({
+                "type": "cancel_ack",
+                "taskId": task_id,
+                "leaseId": assignment["leaseId"],
+            })
+            acknowledged_task_ids.add(task_id)
+        for task_id, local_task in local_tasks.items():
+            if task_id in acknowledged_task_ids or task_id in self.active or task_id in self.executing_task_ids:
+                continue
+            await self.outbound_queue.put({
+                "type": "cancel_ack",
+                "taskId": task_id,
+                "leaseId": local_task["leaseId"],
+            })
+        while (
+            any(
+                str(assignment.get("jobId") or "") == job_id
+                for assignment in self.active.values()
+            )
+            or bool(job_task_ids & self.executing_task_ids)
+        ):
+            await asyncio.sleep(0.1)
+        self._debug_event(
+            "stop_execution_drained",
+            jobId=job_id,
+            cacheGeneration=generation,
+            durationMs=round((time.monotonic() - started_at) * 1000),
+        )
+        self.store.discard_job(job_id)
+        while self._pending_stop_cleanups.get(job_id) == generation:
+            try:
+                cache_result = await self._ensure_cache_generation(generation)
+                self._debug_event(
+                    "stop_cleanup_completed",
+                    jobId=job_id,
+                    cacheGeneration=generation,
+                    durationMs=round((time.monotonic() - started_at) * 1000),
+                    **cache_result,
+                )
+                await self.outbound_queue.put({
+                    "type": "stop_cleanup_ack",
+                    "jobId": job_id,
+                    "cacheGeneration": generation,
+                    **cache_result,
+                    "error": None,
+                })
+                self._pending_stop_cleanups.pop(job_id, None)
+                await self.outbound_queue.put({"type": "ready", "availableSlots": self._available_slots()})
+                self._publish_status()
+                return
+            except Exception as error:
+                self._debug_event(
+                    "stop_cleanup_failed",
+                    jobId=job_id,
+                    cacheGeneration=generation,
+                    error=str(error),
+                )
+                await self.outbound_queue.put({
+                    "type": "stop_cleanup_ack",
+                    "jobId": job_id,
+                    "cacheGeneration": generation,
+                    "error": str(error),
+                })
+                await asyncio.sleep(1)
 
     async def _heartbeat_loop(self) -> None:
         while True:
@@ -242,7 +480,7 @@ class DistributedCrawlerAgent:
             await asyncio.sleep(HEARTBEAT_INTERVAL_SECONDS)
 
     def _available_slots(self) -> int:
-        if self._paused:
+        if self._paused or self._pending_stop_cleanups:
             return 0
         return max(0, self.config.max_concurrent_inputs - len(self.active))
 
@@ -272,7 +510,12 @@ class DistributedCrawlerAgent:
                 task_id = str(assignment["taskId"])
                 if self.store.is_task_cancelled(task_id):
                     self.active.pop(task_id, None)
-                    self.store.complete_lease(task_id)
+                    self.store.discard_task(task_id)
+                    await self.outbound_queue.put({
+                        "type": "cancel_ack",
+                        "taskId": task_id,
+                        "leaseId": assignment["leaseId"],
+                    })
                 else:
                     runnable.append(assignment)
             batch = runnable
@@ -282,9 +525,10 @@ class DistributedCrawlerAgent:
                 continue
             task_ids = [str(assignment["taskId"]) for assignment in batch]
             self.store.mark_running(task_ids)
+            self.executing_task_ids.update(task_ids)
             cancel_event = threading.Event()
             job_id = str(first["jobId"])
-            self.cancel_events[job_id] = cancel_event
+            self._register_cancel_event(job_id, cancel_event)
             try:
                 await asyncio.to_thread(self._run_batch, batch, cancel_event, loop)
             except Exception as error:
@@ -299,7 +543,8 @@ class DistributedCrawlerAgent:
                         },
                     })
             finally:
-                self.cancel_events.pop(job_id, None)
+                self._unregister_cancel_event(job_id, cancel_event)
+                self.executing_task_ids.difference_update(task_ids)
 
     def _run_batch(self, batch: list[dict[str, Any]], cancel_event: threading.Event, loop: asyncio.AbstractEventLoop) -> None:
         first = batch[0]
@@ -307,8 +552,27 @@ class DistributedCrawlerAgent:
         settings = CrawlSettings.from_api(effective_settings)
         actual_settings = settings.api_dict()
         assignments_by_source = {str(assignment["url"]): assignment for assignment in batch}
+        completed_task_ids: set[str] = set()
+        completion_lock = threading.Lock()
+
+        def enqueue_completion(completion: dict[str, Any]) -> None:
+            task_id = str(completion["taskId"])
+            with completion_lock:
+                if task_id in completed_task_ids:
+                    return
+                completed_task_ids.add(task_id)
+            asyncio.run_coroutine_threadsafe(self.completion_queue.put(completion), loop)
+
+        def enqueue_cancelled(assignment: dict[str, Any]) -> None:
+            enqueue_completion({
+                "type": "cancelled",
+                "taskId": assignment["taskId"],
+                "leaseId": assignment["leaseId"],
+            })
 
         def progress(progress_payload: dict[str, Any]) -> None:
+            if cancel_event.is_set():
+                return
             phase = str(progress_payload.get("phase") or "product")
             self._captcha_waiting = phase == "captcha"
             for assignment in progress_targets(batch, progress_payload):
@@ -323,6 +587,9 @@ class DistributedCrawlerAgent:
             if assignment is None:
                 assignment = next((item for item in batch if item.get("asin") == input_result.get("asin")), None)
             if assignment is None:
+                return
+            if cancel_event.is_set():
+                enqueue_cancelled(assignment)
                 return
             core_result = {
                 "status": input_result["status"], "products": input_result["products"],
@@ -346,18 +613,58 @@ class DistributedCrawlerAgent:
                     task_id=assignment["taskId"], lease_id=assignment["leaseId"],
                     checksum=checksum, payload=envelope,
                 )
-                asyncio.run_coroutine_threadsafe(self.completion_queue.put({
+                enqueue_completion({
                     "type": "completed", "taskId": assignment["taskId"],
-                }), loop)
+                })
             elif input_result["status"] == "failed":
                 error = input_result["errors"][0] if input_result["errors"] else {"message": "Crawler failed.", "retryable": True}
-                asyncio.run_coroutine_threadsafe(self.completion_queue.put({
+                enqueue_completion({
                     "type": "failed", "taskId": assignment["taskId"], "leaseId": assignment["leaseId"], "error": error,
-                }), loop)
+                })
             elif input_result["status"] == "cancelled":
-                asyncio.run_coroutine_threadsafe(self.completion_queue.put({
-                    "type": "cancelled", "taskId": assignment["taskId"], "leaseId": assignment["leaseId"],
-                }), loop)
+                enqueue_cancelled(assignment)
+
+        def product_completed(product_result: dict[str, Any]) -> None:
+            assignment = assignments_by_source.get(str(product_result.get("source") or ""))
+            if assignment is None:
+                assignment = next(
+                    (item for item in batch if item.get("asin") == product_result.get("asin")),
+                    None,
+                )
+            product = product_result.get("product")
+            if assignment is None or not isinstance(product, dict):
+                return
+            if cancel_event.is_set():
+                return
+            product_key = str(product.get("sourceKey") or product.get("id") or "").strip()
+            if not product_key:
+                return
+            core_payload = {
+                "sourceKey": product_key,
+                "productId": str(product.get("id") or product_key),
+                "product": product,
+            }
+            envelope = {
+                "version": "distributed-2",
+                "agentVersion": AGENT_VERSION,
+                "taskId": assignment["taskId"],
+                "jobId": assignment["jobId"],
+                "leaseId": assignment["leaseId"],
+                "clientId": self.client_id,
+                "source": assignment["source"],
+                "asin": assignment["asin"],
+                "completedAt": product_result.get("completedAt") or utc_iso(),
+                "productChecksum": payload_checksum(product),
+                **core_payload,
+            }
+            self.store.spool_product(
+                task_id=str(assignment["taskId"]),
+                product_key=product_key,
+                lease_id=str(assignment["leaseId"]),
+                checksum=payload_checksum(envelope),
+                payload=envelope,
+            )
+            loop.call_soon_threadsafe(self._publish_status)
 
         crawler = self.crawler_factory(
             root=self.project_root,
@@ -366,15 +673,24 @@ class DistributedCrawlerAgent:
             cancel_event=cancel_event,
             proxy_config_path=self.config.proxy_config_path,
         )
+        with self._running_crawlers_lock:
+            self._running_crawlers[str(first["jobId"])] = crawler
         try:
             crawler.run(
                 job_id=str(first["jobId"]),
                 sources=[str(assignment["url"]) for assignment in batch],
                 on_input_complete=completed,
+                on_product_complete=product_completed,
                 write_export=False,
             )
         finally:
+            if cancel_event.is_set():
+                for assignment in batch:
+                    enqueue_cancelled(assignment)
             crawler.browser_pool.close()
+            with self._running_crawlers_lock:
+                if self._running_crawlers.get(str(first["jobId"])) is crawler:
+                    self._running_crawlers.pop(str(first["jobId"]), None)
             self._captcha_waiting = False
             loop.call_soon_threadsafe(self._publish_status)
 
@@ -390,27 +706,82 @@ class DistributedCrawlerAgent:
                 })
                 self.store.complete_lease(task_id)
             elif completion["type"] == "cancelled":
-                self.store.complete_lease(task_id)
+                self.store.discard_task(task_id)
+                await self.outbound_queue.put({
+                    "type": "cancel_ack",
+                    "taskId": task_id,
+                    "leaseId": completion["leaseId"],
+                })
             await self.outbound_queue.put({"type": "ready", "availableSlots": self._available_slots()})
             self._publish_status()
 
     async def _upload_loop(self) -> None:
         while True:
+            upload_failed = False
+            retry_delay = 1
+            pending_products = self.store.pending_products()
+            discarded_task_ids: set[str] = set()
+            for product in pending_products:
+                task_id = str(product["taskId"])
+                if task_id in discarded_task_ids:
+                    continue
+                try:
+                    response = await asyncio.to_thread(self._upload_product, product)
+                    if response.get("status") == "cancelled":
+                        self.store.discard_task(task_id)
+                        self.active.pop(task_id, None)
+                        discarded_task_ids.add(task_id)
+                        await self.outbound_queue.put({"type": "ready", "availableSlots": self._available_slots()})
+                    elif response.get("status") in {"accepted", "duplicate"}:
+                        self.store.acknowledge_product(task_id, product["productKey"])
+                except Exception as error:
+                    self.store.product_failed(task_id, product["productKey"], str(error))
+                    upload_failed = True
+                    retry_delay = max(retry_delay, min(30, 2 ** min(int(product.get("attempts", 0)), 5)))
             pending = self.store.pending_results()
             if not pending:
-                await asyncio.sleep(1)
+                await asyncio.sleep(retry_delay if upload_failed else 1)
                 continue
             for result in pending:
+                if self.store.has_pending_products(result["taskId"]):
+                    continue
                 try:
                     response = await asyncio.to_thread(self._upload_result, result)
-                    if response.get("status") in {"accepted", "duplicate"}:
+                    if response.get("status") in {"accepted", "duplicate", "cancelled"}:
                         self.store.acknowledge_result(result["taskId"])
                         self.active.pop(result["taskId"], None)
                         await self.outbound_queue.put({"type": "ready", "availableSlots": self._available_slots()})
                 except Exception as error:
                     self.store.result_failed(result["taskId"], str(error))
-                    raise
+                    upload_failed = True
+                    retry_delay = max(retry_delay, min(30, 2 ** min(int(result.get("attempts", 0)), 5)))
             self._publish_status()
+            await asyncio.sleep(retry_delay if upload_failed else 1)
+
+    def _upload_product(self, product: dict[str, Any]) -> dict[str, Any]:
+        body = gzip.compress(json.dumps(product["payload"], ensure_ascii=False).encode("utf-8"))
+        product_key = urllib.parse.quote(str(product["productKey"]), safe="")
+        request = urllib.request.Request(
+            f"{self.config.server_url}/api/v1/worker/tasks/{product['taskId']}/products/{product_key}",
+            data=body,
+            method="PUT",
+            headers={
+                "Content-Type": "application/json",
+                "Content-Encoding": "gzip",
+                "X-Client-Id": self.client_id,
+                "X-Lease-Id": product["leaseId"],
+                "X-Result-Checksum": product["checksum"],
+            },
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=60) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as error:
+            if error.code == 404:
+                return {"status": "cancelled"}
+            if error.code == 409:
+                return {"status": "duplicate"}
+            raise
 
     def _upload_result(self, result: dict[str, Any]) -> dict[str, Any]:
         raw = json.dumps(result["payload"], ensure_ascii=False, separators=(",", ":")).encode("utf-8")

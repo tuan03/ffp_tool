@@ -13,6 +13,14 @@ from typing import Any, Callable
 OPTION_CHOOSER = "OptionChooserComponent"
 SCHEMA_VERSION = 1
 
+_NO_PRINT_RE = re.compile(r"\bno\s*(?:[-_]\s*)?print\b", re.I)
+_MINI_SIZE_RE = re.compile(r"\bmini(?:[-_\s]*size)\b", re.I)
+_UNAVAILABLE_RE = re.compile(
+    r"\b(?:out\s*(?:[-_]\s*)?of\s*(?:[-_]\s*)?stock|sold[-_\s]*out|"
+    r"currently[-_\s]+unavailable|temporarily[-_\s]+unavailable|not[-_\s]+available|unavailable)\b",
+    re.I,
+)
+
 
 def money(value: Any, default: Decimal = Decimal("0")) -> dict[str, Any]:
     if isinstance(value, dict):
@@ -69,14 +77,43 @@ def _additional_cost(option: dict[str, Any]) -> Any:
     return 0
 
 
+def _is_true_flag(value: Any) -> bool:
+    if value is True or value == 1:
+        return True
+    return isinstance(value, str) and value.strip().casefold() in {"1", "true", "yes"}
+
+
+def _is_false_flag(value: Any) -> bool:
+    if value is False or value == 0:
+        return True
+    return isinstance(value, str) and value.strip().casefold() in {"0", "false", "no"}
+
+
+def _option_search_text(option: dict[str, Any], fallback_label: str) -> str:
+    text = " ".join(
+        str(option.get(key) or "")
+        for key in ("label", "name", "value", "displayName", "availability", "status", "inventoryStatus")
+    ).strip() or fallback_label
+    return text.replace("_", " ")
+
+
+def _is_no_print(option: dict[str, Any], label: str) -> bool:
+    return bool(_NO_PRINT_RE.search(_option_search_text(option, label)))
+
+
+def _is_mini_size(option: dict[str, Any], label: str) -> bool:
+    return bool(_MINI_SIZE_RE.search(_option_search_text(option, label)))
+
+
 def _is_unavailable(option: dict[str, Any], label: str) -> bool:
-    availability = str(option.get("availability") or option.get("status") or "").casefold().replace("_", " ")
+    unavailable_flags = (
+        "disabled", "isDisabled", "outOfStock", "isOutOfStock", "isSoldOut", "unavailable",
+    )
+    available_flags = ("enabled", "available", "isAvailable", "inStock", "isInStock", "selectable", "isSelectable")
     return bool(
-        option.get("disabled") is True or option.get("isDisabled") is True or option.get("enabled") is False
-        or option.get("outOfStock") is True or option.get("isOutOfStock") is True
-        or option.get("isSoldOut") is True or option.get("unavailable") is True
-        or availability in {"sold out", "unavailable", "out of stock"}
-        or re.search(r"out\s*of\s*stock|sold\s*out|unavailable", label, re.I)
+        any(_is_true_flag(option.get(key)) for key in unavailable_flags)
+        or any(key in option and _is_false_flag(option.get(key)) for key in available_flags)
+        or _UNAVAILABLE_RE.search(_option_search_text(option, label))
     )
 
 
@@ -88,7 +125,7 @@ def _normalize_options(component: dict[str, Any], add_asset: Callable[[dict[str,
     for index, candidate in enumerate(candidates if isinstance(candidates, list) else []):
         option = candidate if isinstance(candidate, dict) else {"label": candidate}
         label = _label(option, f"Option {index + 1}")
-        if "no print" in label.casefold() or _is_unavailable(option, label):
+        if _is_no_print(option, label) or _is_mini_size(option, label) or _is_unavailable(option, label):
             continue
         normalized.append({
             "id": _identifier(option, str(option.get("value") or index)), "label": label,
@@ -189,7 +226,11 @@ def normalize_customization(raw: Any) -> tuple[dict[str, Any] | None, list[str]]
                 next_placement = component_id
             elif component_type == OPTION_CHOOSER:
                 options = _normalize_options(value, add_asset)
-                control = {"id": component_id, "type": component_type, "label": label, "required": required, "defaultOptionId": _default_option_id(value), "instructions": str(value.get("instructions") or ""), "options": options, "displayHint": "choice-grid" if options and all(option.get("thumbnailImage") or option.get("overlayImage") for option in options) else "select"}
+                default_option_id = _default_option_id(value)
+                available_option_ids = {str(option.get("id") or "") for option in options}
+                if default_option_id not in available_option_ids:
+                    default_option_id = str(options[0].get("id") or "") if required and options else ""
+                control = {"id": component_id, "type": component_type, "label": label, "required": required, "defaultOptionId": default_option_id, "instructions": str(value.get("instructions") or ""), "options": options, "displayHint": "choice-grid" if options and all(option.get("thumbnailImage") or option.get("overlayImage") for option in options) else "select"}
                 if any(float(option["price"]["amount"]) > 0 for option in options):
                     if not required and not any(float(option["price"]["amount"]) == 0 for option in options):
                         options.insert(0, {"id": f"{component_id}__none", "label": "None", "price": money(0), "isAvailable": True, "overlayImage": None, "thumbnailImage": None})

@@ -13,4 +13,3 @@ class TrendCandidate:
     strength: float
     metrics: dict[str, Any] = field(default_factory=dict)
     raw: dict[str, Any] = field(default_factory=dict)
-

@@ -1,14 +1,38 @@
+import { useNavigate } from "react-router-dom";
 import type { RouteObject } from "react-router-dom";
-import type { AutoSeoClient } from "./types";
+import type { AutoSeoClient, AutoSeoHandoverHandler } from "./types";
 import { AutoSeoPage } from "./ui/AutoSeoPage";
 
-export function createAutoSeoRoutes(client?: AutoSeoClient): RouteObject[] {
+function AutoSeoRoutePage({
+  client,
+  onHandoverToSeo,
+}: {
+  readonly client: AutoSeoClient;
+  readonly onHandoverToSeo?: AutoSeoHandoverHandler;
+}): React.JSX.Element {
+  const navigate = useNavigate();
+  return (
+    <AutoSeoPage
+      client={client}
+      onHandoverToSeo={onHandoverToSeo}
+      navigate={navigate}
+    />
+  );
+}
+
+export function createAutoSeoRoutes(
+  client: AutoSeoClient,
+  onHandoverToSeo?: AutoSeoHandoverHandler,
+): RouteObject[] {
   return [
     {
       path: "auto-seo",
-      element: <AutoSeoPage client={client} />,
+      element: (
+        <AutoSeoRoutePage
+          client={client}
+          onHandoverToSeo={onHandoverToSeo}
+        />
+      ),
     },
   ];
 }
-
-export const autoSeoRoutes = createAutoSeoRoutes();

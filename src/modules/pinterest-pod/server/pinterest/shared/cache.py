@@ -31,4 +31,3 @@ class JsonCache:
     def save(self) -> None:
         if self.enabled:
             write_json(self.path, self.data)
-
