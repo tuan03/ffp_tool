@@ -41,11 +41,12 @@ export interface ResolveShopifyProductForSyncInput {
   readonly storeId: string;
   readonly sourceKey: string;
   readonly mappedProductId?: string;
+  readonly handle?: string;
 }
 
 export interface ResolvedShopifyProductForSync {
   readonly product?: ShopifyProduct;
-  readonly match: "mapping" | "source_tag" | "none";
+  readonly match: "mapping" | "source_tag" | "handle" | "none";
   readonly staleMappedProductId?: string;
 }
 
@@ -73,10 +74,12 @@ export async function resolveShopifyProductForSync(
   const storeId = input.storeId.trim();
   const sourceKey = input.sourceKey.trim();
   const mappedProductId = input.mappedProductId?.trim();
-  if (!storeId || !sourceKey) {
-    throw new Error("storeId and sourceKey are required to reconcile a Shopify product.");
+  const handle = input.handle?.trim();
+  if (!storeId || (!sourceKey && !handle)) {
+    throw new Error("storeId and sourceKey or handle are required to reconcile a Shopify product.");
   }
 
+  // 1. Try mapped ID if provided
   if (mappedProductId) {
     const validMappedId = normalizeShopifyProductGid(mappedProductId);
     if (validMappedId) {
@@ -90,36 +93,90 @@ export async function resolveShopifyProductForSync(
           return { product: mappedResponse.data.product, match: "mapping" };
         }
       } catch {
-        // Fall back to source tag lookup if products.get fails for mappedProductId
+        // Fall back to handle / source tag lookup if products.get fails for mappedProductId
       }
     }
   }
 
-  const sourceTag = `ffp-source:${sourceKey}`;
-  const listed = await input.runner({
-    storeId,
-    operation: "products.list",
-    payload: {
-      limit: 10,
-      query: `tag:"${escapeShopifySearch(sourceTag)}"`,
-    },
-  }) as ShopifyProductsListResponse;
-  const candidate = listed.data.products.find((product) => product.tags.includes(sourceTag));
-  if (!candidate) {
-    return {
-      match: "none",
-      ...(mappedProductId ? { staleMappedProductId: mappedProductId } : {}),
-    };
+  // 2. Try handle lookup if provided (handles are unique per Shopify store)
+  if (handle) {
+    try {
+      const handleListed = (await input.runner({
+        storeId,
+        operation: "products.list",
+        payload: {
+          limit: 5,
+          query: `handle:${escapeShopifySearch(handle)}`,
+        },
+      })) as ShopifyProductsListResponse;
+      const candidateByHandle = handleListed.data?.products?.find(
+        (p) => p.handle.toLowerCase() === handle.toLowerCase(),
+      );
+      if (candidateByHandle) {
+        try {
+          const detail = (await input.runner({
+            storeId,
+            operation: "products.get",
+            payload: { id: candidateByHandle.id },
+          })) as ShopifyProductsGetResponse;
+          return {
+            product: detail.data?.product ?? candidateByHandle,
+            match: "handle",
+            ...(mappedProductId ? { staleMappedProductId: mappedProductId } : {}),
+          };
+        } catch {
+          return {
+            product: candidateByHandle,
+            match: "handle",
+            ...(mappedProductId ? { staleMappedProductId: mappedProductId } : {}),
+          };
+        }
+      }
+    } catch {
+      // Fall back to source tag lookup
+    }
   }
 
-  const detail = await input.runner({
-    storeId,
-    operation: "products.get",
-    payload: { id: candidate.id },
-  }) as ShopifyProductsGetResponse;
+  // 3. Try source tag lookup
+  if (sourceKey) {
+    const sourceTag = `ffp-source:${sourceKey}`;
+    const listed = await input.runner({
+      storeId,
+      operation: "products.list",
+      payload: {
+        limit: 10,
+        query: `tag:"${escapeShopifySearch(sourceTag)}"`,
+      },
+    }) as ShopifyProductsListResponse;
+    const candidate = listed.data?.products?.find((product) =>
+      product.tags.includes(sourceTag) ||
+      product.tags.some((t) => t.toLowerCase() === sourceTag.toLowerCase()) ||
+      product.tags.some((t) => t.toLowerCase().includes(sourceKey.toLowerCase())),
+    );
+    if (candidate) {
+      try {
+        const detail = await input.runner({
+          storeId,
+          operation: "products.get",
+          payload: { id: candidate.id },
+        }) as ShopifyProductsGetResponse;
+        return {
+          product: detail.data?.product ?? candidate,
+          match: "source_tag",
+          ...(mappedProductId ? { staleMappedProductId: mappedProductId } : {}),
+        };
+      } catch {
+        return {
+          product: candidate,
+          match: "source_tag",
+          ...(mappedProductId ? { staleMappedProductId: mappedProductId } : {}),
+        };
+      }
+    }
+  }
+
   return {
-    product: detail.data.product ?? candidate,
-    match: "source_tag",
+    match: "none",
     ...(mappedProductId ? { staleMappedProductId: mappedProductId } : {}),
   };
 }

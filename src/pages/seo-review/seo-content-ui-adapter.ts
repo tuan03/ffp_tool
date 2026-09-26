@@ -70,6 +70,7 @@ export interface AdaptSeoOutputOptions {
   readonly shopifySyncStatus?: ShopifySyncStatus;
   readonly shopifyAdminUrl?: string;
   readonly originalBackup?: SeoProductBackup;
+  readonly sourceOrigin?: "distributed_crawler" | "pinterest_pod" | "auto_seo";
 }
 
 /**
@@ -185,6 +186,7 @@ export function adaptSeoOutputToViewModel(
     seoStatus: seoStatusField,
     reviewDecision: options.initialDecision || "pending",
     updatedAt: Date.now(),
+    sourceOrigin: options.sourceOrigin,
     sourceCrawlProduct: options.sourceCrawlProduct,
     shopifySyncStatus: options.shopifySyncStatus || "idle",
     shopifyAdminUrl: options.shopifyAdminUrl,
@@ -265,6 +267,7 @@ export function adaptCustomizationItemToViewModel(
     shopifyAdminUrl: crawlShopify?.adminUrl,
     shopifySyncStatus: crawlShopify?.productId ? "synced" : "idle",
     originalBackup,
+    sourceOrigin: "distributed_crawler",
   };
 
   if (!item.success) {
@@ -303,6 +306,7 @@ export function adaptAmazonCrawlerReviewToViewModel(
     productId: syncedProductId,
     asin: product.parentAsin,
     sourceNiche: product.categories[0],
+    sourceOrigin: "distributed_crawler",
     coordinatorReview: {
       itemId: item.id,
       jobId: item.jobId,
@@ -407,6 +411,7 @@ export function adaptAutoSeoItemToViewModel(
     defaultStatus: item.success ? "completed" : "failed",
     isStatusReal: true,
     originalBackup,
+    sourceOrigin: "auto_seo",
   };
 
   if (!item.success) {
@@ -436,6 +441,7 @@ export function adaptPinterestPodItemToViewModel(
     niche,
     defaultStatus: item.success ? "completed" : "failed",
     isStatusReal: true,
+    sourceOrigin: "pinterest_pod",
   };
 
   if (!item.success) {
@@ -451,6 +457,24 @@ export function adaptPinterestPodItemToViewModel(
     ...baseViewModel,
     sourcePinterestItem: podItem,
   };
+}
+
+/**
+ * Resolves the primary origin source for a product ("distributed_crawler" | "pinterest_pod" | "auto_seo").
+ */
+export function getProductSourceOrigin(
+  product: SeoProductUiViewModel,
+): "distributed_crawler" | "pinterest_pod" | "auto_seo" {
+  if (product.sourceOrigin) {
+    return product.sourceOrigin;
+  }
+  if (product.sourcePinterestItem) {
+    return "pinterest_pod";
+  }
+  if (product.coordinatorReview || product.sourceCrawlProduct) {
+    return "distributed_crawler";
+  }
+  return "auto_seo";
 }
 
 /**

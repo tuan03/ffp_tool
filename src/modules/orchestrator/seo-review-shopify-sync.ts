@@ -41,6 +41,7 @@ export interface SeoReviewPushProductItem {
   readonly vendor?: string;
   readonly productType?: string;
   readonly metafields?: readonly ShopifyMetafieldInput[];
+  readonly originalStoreId?: string;
 }
 
 export interface PushSeoReviewProductResult {
@@ -117,6 +118,10 @@ export async function pushSeoReviewProductToShopify(
     const store = resolvedStore || (await resolvePrimaryShopifyStore(moduleApiRunner, options.storeId));
     const targetStoreId = store.storeId;
     const shopAdminHandle = store.shopAdminHandle;
+    const isCrossStore = Boolean(
+      product.originalStoreId &&
+      product.originalStoreId.trim().toLowerCase() !== targetStoreId.trim().toLowerCase(),
+    );
 
     let finalMetafields = product.metafields ? [...product.metafields] : undefined;
 
@@ -212,7 +217,9 @@ export async function pushSeoReviewProductToShopify(
         shopify?: { productId?: string };
       };
       const crawlShopifyId = crawlPipelineShopify.pipeline?.shopify?.productId || crawlPipelineShopify.shopify?.productId;
-      const candidateShopifyId = normalizeShopifyProductGid(product.productId) || normalizeShopifyProductGid(crawlShopifyId);
+      const rawCandidateId = normalizeShopifyProductGid(product.productId) || normalizeShopifyProductGid(crawlShopifyId);
+      // When syncing cross-store, previous store's Product ID is invalid on the target store
+      const candidateShopifyId = isCrossStore ? undefined : rawCandidateId;
 
       // 2. Discover/reconcile existing Shopify product via sourceKey or mapping
       let existingProductId: string | undefined = candidateShopifyId;
@@ -227,14 +234,15 @@ export async function pushSeoReviewProductToShopify(
         typeof product.id === "string" ? product.id.trim() : "",
       ].filter((k) => k.length > 0 && !k.startsWith("sample-prod-") && !k.startsWith("crawler-review-"));
 
-      const sourceKey = candidateSourceKeys[0];
-      if (sourceKey) {
+      const sourceKey = candidateSourceKeys[0] || (typeof product.asin === "string" ? product.asin.trim() : "") || product.handle;
+      if (sourceKey || product.handle) {
         try {
           const resolved = await resolveShopifyProductForSync({
             runner: moduleApiRunner,
             storeId: targetStoreId,
-            sourceKey,
+            sourceKey: sourceKey || product.handle,
             mappedProductId: candidateShopifyId,
+            handle: product.handle,
           });
           if (resolved.product) {
             existingProductId = resolved.product.id;
@@ -243,11 +251,13 @@ export async function pushSeoReviewProductToShopify(
               mediaIds: resolved.product.images?.flatMap((img) => (img.id ? [img.id] : [])) ?? [],
               variantIds: resolved.product.variants?.map((v) => v.id) ?? [],
             };
-          } else if (resolved.match === "none" && !candidateShopifyId) {
+          } else if (resolved.match === "none") {
             existingProductId = undefined;
           }
         } catch {
-          // If resolution fails (e.g. offline/mock runner), proceed with candidateShopifyId if valid
+          if (isCrossStore) {
+            existingProductId = undefined;
+          }
         }
       }
 
@@ -268,7 +278,7 @@ export async function pushSeoReviewProductToShopify(
         };
       }
 
-      const finalProductId = syncResult.productId || validExistingProductId || normalizeShopifyProductGid(product.productId);
+      const finalProductId = syncResult.productId || validExistingProductId || (isCrossStore ? undefined : normalizeShopifyProductGid(product.productId));
       const finalHandle = syncResult.productHandle || product.handle;
 
       return {
@@ -280,8 +290,30 @@ export async function pushSeoReviewProductToShopify(
       };
     }
 
-    // Case 2: Product has existing Shopify Product ID (e.g. from Auto SEO or prior sync)
-    const normalizedProductId = normalizeShopifyProductGid(product.productId);
+    // Case 2: Product has existing Shopify Product ID or matches handle on target store
+    let crossStoreExistingId: string | undefined;
+    if (isCrossStore && product.handle) {
+      try {
+        const handleCheck = (await moduleApiRunner({
+          storeId: targetStoreId,
+          operation: "products.list",
+          payload: {
+            limit: 1,
+            query: `handle:${product.handle.trim()}`,
+          },
+        })) as { data?: { products?: readonly { id: string; handle: string }[] } };
+        const matched = handleCheck.data?.products?.find(
+          (p) => p.handle.toLowerCase() === product.handle.trim().toLowerCase(),
+        );
+        if (matched) {
+          crossStoreExistingId = matched.id;
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    const normalizedProductId = (isCrossStore ? undefined : normalizeShopifyProductGid(product.productId)) || crossStoreExistingId;
     if (normalizedProductId) {
       const response = (await moduleApiRunner({
         storeId: targetStoreId,

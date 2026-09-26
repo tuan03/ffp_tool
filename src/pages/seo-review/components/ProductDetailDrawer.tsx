@@ -4,11 +4,13 @@ import { sanitizeHtmlDescription } from "../sanitize-html";
 import { buildProductZoomImages } from "../zoom-image-helper";
 import { ShopifySyncErrorBanner } from "./ShopifySyncErrorBanner";
 import { SourceBadge } from "./SourceBadge";
+import { SourceOriginBadge } from "./SourceOriginBadge";
 import type { SeoProductUiViewModel, ZoomImageItem } from "../types";
 
 export interface ProductDetailDrawerProps {
   readonly product: SeoProductUiViewModel | null;
   readonly isOpen: boolean;
+  readonly currentStoreId?: string;
   readonly onClose: () => void;
   readonly onEdit: (product: SeoProductUiViewModel) => void;
   readonly onApprove: (id: string) => void;
@@ -35,6 +37,7 @@ function readVariantPrice(variant: Record<string, unknown>): number | null {
 export function ProductDetailDrawer({
   product,
   isOpen,
+  currentStoreId,
   onClose,
   onEdit,
   onApprove,
@@ -121,7 +124,8 @@ export function ProductDetailDrawer({
             {/* Review Status Banner */}
             <div className="flex flex-wrap items-center justify-between rounded-xl border border-slate-800 bg-slate-950/60 p-4 gap-3">
               <div className="flex items-center gap-3 flex-wrap">
-                <span className="text-xs font-semibold uppercase text-slate-400">Trạng thái:</span>
+                <SourceOriginBadge product={product} showStore targetStoreId={currentStoreId} />
+                <span className="text-xs font-semibold uppercase text-slate-400">| Trạng thái:</span>
                 {product.reviewDecision === "approved" ? (
                   <span className="px-2.5 py-1 rounded text-xs font-bold bg-emerald-950 text-emerald-300 border border-emerald-700">
                     ✓ ĐÃ PHÊ DUYỆT (Approved)
@@ -153,9 +157,21 @@ export function ProductDetailDrawer({
                   </span>
                 )}
                 {product.shopifySyncStatus === "synced" && (
-                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
-                    <span className="h-2 w-2 rounded-full bg-emerald-400" />
-                    <span>Đã đẩy Shopify Store</span>
+                  <span
+                    className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold ${
+                      currentStoreId && product.storeId && currentStoreId.toLowerCase() !== product.storeId.toLowerCase()
+                        ? "bg-amber-500/15 text-amber-300 border border-amber-500/40"
+                        : "bg-emerald-500/15 text-emerald-300 border border-emerald-500/30"
+                    }`}
+                  >
+                    <span
+                      className={`h-2 w-2 rounded-full ${
+                        currentStoreId && product.storeId && currentStoreId.toLowerCase() !== product.storeId.toLowerCase()
+                          ? "bg-amber-400"
+                          : "bg-emerald-400"
+                      }`}
+                    />
+                    <span>{product.storeId ? `Đã đẩy (${product.storeId})` : "Đã đẩy Shopify Store"}</span>
                     {product.shopifyAdminUrl && (
                       <a
                         href={product.shopifyAdminUrl}
@@ -643,6 +659,26 @@ export function ProductDetailDrawer({
                     🛍️ Sync Shopify
                   </button>
                 )}
+
+              {product.shopifySyncStatus === "synced" && onRetrySync && (
+                <button
+                  type="button"
+                  title={
+                    product.storeId && currentStoreId && product.storeId.toLowerCase() !== currentStoreId.toLowerCase()
+                      ? `Đồng bộ sản phẩm này sang Store mục tiêu: ${currentStoreId}`
+                      : "Đồng bộ lại toàn bộ dữ liệu mới nhất lên Shopify Store"
+                  }
+                  onClick={() => onRetrySync(product.id)}
+                  disabled={product.isSyncing}
+                  className="rounded-lg border border-teal-500/30 bg-slate-800 hover:bg-slate-700 px-4 py-2 text-sm font-semibold text-teal-300 transition cursor-pointer disabled:opacity-50"
+                >
+                  <span>
+                    {product.storeId && currentStoreId && product.storeId.toLowerCase() !== currentStoreId.toLowerCase()
+                      ? `🔄 Sync sang ${currentStoreId}`
+                      : "🔄 Sync lại Shopify"}
+                  </span>
+                </button>
+              )}
 
               {/* Nút Hoàn tác dữ liệu cũ */}
               {Boolean(product.originalBackup) &&

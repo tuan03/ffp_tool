@@ -5,12 +5,14 @@ import { buildProductZoomImages } from "../zoom-image-helper";
 import { SeoSerpPreview } from "./SeoSerpPreview";
 import { ShopifySyncErrorBanner } from "./ShopifySyncErrorBanner";
 import { SourceBadge } from "./SourceBadge";
+import { SourceOriginBadge } from "./SourceOriginBadge";
 import type { SeoProcessingStatus, SeoProductUiViewModel, ZoomImageItem } from "../types";
 
 export interface ProductSplitViewProps {
   readonly products: readonly SeoProductUiViewModel[];
   readonly selectedIds: ReadonlySet<string>;
   readonly activeProduct: SeoProductUiViewModel | null;
+  readonly currentStoreId?: string;
   readonly onSelectActive: (product: SeoProductUiViewModel) => void;
   readonly onToggleSelect: (id: string) => void;
   readonly onViewProduct: (product: SeoProductUiViewModel) => void;
@@ -29,6 +31,7 @@ export function ProductSplitView({
   products,
   selectedIds,
   activeProduct,
+  currentStoreId,
   onSelectActive,
   onToggleSelect,
   onViewProduct,
@@ -191,10 +194,19 @@ export function ProductSplitView({
       );
     }
     if (product.shopifySyncStatus === "synced") {
+      const isCrossStore = Boolean(
+        currentStoreId && product.storeId && currentStoreId.toLowerCase() !== product.storeId.toLowerCase(),
+      );
       return (
-        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
-          <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-          <span>Đã đẩy Store</span>
+        <span
+          className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold ${
+            isCrossStore
+              ? "bg-amber-500/15 text-amber-300 border border-amber-500/40"
+              : "bg-emerald-500/15 text-emerald-300 border border-emerald-500/30"
+          }`}
+        >
+          <span className={`h-1.5 w-1.5 rounded-full ${isCrossStore ? "bg-amber-400" : "bg-emerald-400"}`} />
+          <span>{product.storeId ? `Đã đẩy (${product.storeId})` : "Đã đẩy Store"}</span>
           {product.shopifyAdminUrl ? (
             <a
               href={product.shopifyAdminUrl}
@@ -348,9 +360,9 @@ export function ProductSplitView({
                   </p>
 
                   <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
+                    <SourceOriginBadge product={product} showStatusHint={false} targetStoreId={currentStoreId} />
                     {renderReviewBadge(product.reviewDecision)}
                     {renderSeoStatusBadge(product.seoStatus.value, product.seoStatus.source === "mock")}
-                    {renderShopifySyncBadge(product)}
                     {renderShopifySyncBadge(product)}
                     {product.isSyncing && (
                       <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-cyan-950/70 text-cyan-300 border border-cyan-800/60">
@@ -450,7 +462,8 @@ export function ProductSplitView({
               {/* Status Banner */}
               <div className="flex flex-wrap items-center justify-between rounded-xl border border-slate-800 bg-slate-950/60 p-3 gap-2">
                 <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-xs text-slate-400">Trạng thái:</span>
+                  <SourceOriginBadge product={activeProduct} showStore targetStoreId={currentStoreId} />
+                  <span className="text-xs text-slate-400">| Trạng thái:</span>
                   {renderReviewBadge(activeProduct.reviewDecision)}
                   {renderShopifySyncBadge(activeProduct)}
                 </div>
@@ -747,6 +760,26 @@ export function ProductSplitView({
                       🛍️ Sync Shopify
                     </button>
                   ) : null}
+
+                {activeProduct.shopifySyncStatus === "synced" && onRetrySync ? (
+                  <button
+                    type="button"
+                    title={
+                      activeProduct.storeId && currentStoreId && activeProduct.storeId.toLowerCase() !== currentStoreId.toLowerCase()
+                        ? `Đồng bộ sản phẩm này sang Store mục tiêu: ${currentStoreId}`
+                        : "Đồng bộ lại toàn bộ dữ liệu mới nhất lên Shopify Store"
+                    }
+                    onClick={() => onRetrySync(activeProduct.id)}
+                    disabled={activeProduct.isSyncing}
+                    className="rounded-lg border border-teal-500/30 bg-slate-800 hover:bg-slate-700 px-3 py-1.5 text-xs font-semibold text-teal-300 transition cursor-pointer disabled:opacity-50"
+                  >
+                    <span>
+                      {activeProduct.storeId && currentStoreId && activeProduct.storeId.toLowerCase() !== currentStoreId.toLowerCase()
+                        ? `🔄 Sync sang ${currentStoreId}`
+                        : "🔄 Sync lại"}
+                    </span>
+                  </button>
+                ) : null}
 
                 <button
                   type="button"

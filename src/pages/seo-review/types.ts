@@ -9,6 +9,8 @@ import type { CrawlProduct } from "../../modules/customization-normalizer";
 import type { AmazonCrawlerReviewTarget } from "../../modules/amazon-crawler";
 import type { PodDeliverableItem } from "../../modules/pinterest-pod";
 
+export type ProductSourceOrigin = "all" | "distributed_crawler" | "pinterest_pod" | "auto_seo";
+
 export type FieldSource = "real" | "mock";
 
 export type SeoProcessingStatus = "processing" | "completed" | "failed";
@@ -18,6 +20,13 @@ export type ReviewDecision = "pending" | "approved" | "rejected";
 export type SeoReviewViewMode = "cards" | "table" | "split";
 
 export type ShopifySyncStatus = "idle" | "queued" | "syncing" | "synced" | "failed";
+
+export interface StoreProfile {
+  readonly storeId: string;
+  readonly shopDomain: string;
+  readonly productTypes?: readonly string[];
+  readonly defaultProductType?: string;
+}
 
 export interface DisplayField<T> {
   readonly value: T;
@@ -47,6 +56,7 @@ export interface SeoProductUiViewModel {
   readonly productId?: string;
   readonly asin?: string;
   readonly sourceNiche?: string;
+  readonly sourceOrigin?: "distributed_crawler" | "pinterest_pod" | "auto_seo";
   readonly coordinatorReview?: {
     readonly itemId: string;
     readonly jobId: string;
@@ -97,6 +107,7 @@ export interface SeoReviewFilterState {
   readonly statusFilter: "all" | SeoProcessingStatus;
   readonly decisionFilter: "all" | ReviewDecision | "sync_failed";
   readonly onlyMockData: boolean;
+  readonly sourceOriginFilter?: ProductSourceOrigin;
 }
 
 export interface SeoProductEditInput {

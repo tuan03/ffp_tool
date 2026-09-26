@@ -1897,6 +1897,37 @@ class CoordinatorStoreTests(unittest.TestCase):
         self.assertEqual(synced_review["product"]["pipeline"]["shopify"]["productId"], "gid://shopify/Product/123")
         self.assertEqual(self.store.get_job(str(job["id"]))["status"], "completed")
 
+        # Verify synced review can be edited and re-queued for sync
+        edited = self.store.update_product_review(
+            claim["id"],
+            expected_version=synced_review["version"],
+            patch={"productTitle": "Updated title after initial sync"},
+        )
+        self.assertEqual(edited["decision"], "pending")
+        self.assertEqual(edited["syncStatus"], "idle")
+        self.assertEqual(edited["product"]["title"], "Updated title after initial sync")
+
+        decided = self.store.decide_product_review(
+            claim["id"],
+            expected_version=edited["version"],
+            decision="approved",
+            reason=None,
+        )
+        self.assertEqual(decided["decision"], "approved")
+
+        requeued = self.store.queue_product_review_sync(claim["id"])
+        self.assertEqual(requeued["syncStatus"], "queued")
+
+        # Verify editing is locked while queued
+        self.assertEqual(
+            self.store.update_product_review(
+                claim["id"],
+                expected_version=requeued["version"],
+                patch={"productTitle": "Should be locked while queued"},
+            ),
+            {"locked": True},
+        )
+
     def test_completed_product_discards_raw_payload_but_keeps_temporary_normalized_result(self) -> None:
         job = self.store.create_job({"urls": ["B0FR4MSS2H"]})
         self.store.register_client(client_hello(slots=1))

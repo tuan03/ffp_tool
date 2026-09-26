@@ -5,12 +5,14 @@ import { buildProductZoomImages } from "../zoom-image-helper";
 import { SeoSerpPreview } from "./SeoSerpPreview";
 import { ShopifySyncErrorBanner } from "./ShopifySyncErrorBanner";
 import { SourceBadge } from "./SourceBadge";
+import { SourceOriginBadge } from "./SourceOriginBadge";
 import type { SeoProcessingStatus, SeoProductUiViewModel, ZoomImageItem } from "../types";
 
 export interface ProductListTableProps {
   readonly products: readonly SeoProductUiViewModel[];
   readonly selectedIds: ReadonlySet<string>;
   readonly expandedIds: ReadonlySet<string>;
+  readonly currentStoreId?: string;
   readonly onToggleSelect: (id: string) => void;
   readonly onToggleSelectAll: () => void;
   readonly onToggleExpand: (id: string) => void;
@@ -28,6 +30,7 @@ export function ProductListTable({
   products,
   selectedIds,
   expandedIds,
+  currentStoreId,
   onToggleSelect,
   onToggleSelectAll,
   onToggleExpand,
@@ -126,10 +129,19 @@ export function ProductListTable({
       );
     }
     if (product.shopifySyncStatus === "synced") {
+      const isCrossStore = Boolean(
+        currentStoreId && product.storeId && currentStoreId.toLowerCase() !== product.storeId.toLowerCase(),
+      );
       return (
-        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
-          <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-          <span>Đã đẩy Store</span>
+        <span
+          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold ${
+            isCrossStore
+              ? "bg-amber-500/15 text-amber-300 border border-amber-500/40"
+              : "bg-emerald-500/15 text-emerald-300 border border-emerald-500/30"
+          }`}
+        >
+          <span className={`h-1.5 w-1.5 rounded-full ${isCrossStore ? "bg-amber-400" : "bg-emerald-400"}`} />
+          <span>{product.storeId ? `Đã đẩy (${product.storeId})` : "Đã đẩy Store"}</span>
           {product.shopifyAdminUrl ? (
             <a
               href={product.shopifyAdminUrl}
@@ -349,6 +361,10 @@ export function ProductListTable({
                             <span className="text-slate-500">ASIN: {product.asin}</span>
                           )}
                         </div>
+
+                        <div className="mt-1">
+                          <SourceOriginBadge product={product} showStore targetStoreId={currentStoreId} />
+                        </div>
                       </div>
                     </td>
 
@@ -439,7 +455,6 @@ export function ProductListTable({
                         )}
                       </div>
                       <div>{renderShopifySyncBadge(product)}</div>
-                      <div>{renderShopifySyncBadge(product)}</div>
                       {product.lastSyncedAt && product.reviewDecision === "approved" && (
                         <div className="text-[10px] text-emerald-400 font-medium">
                           ✓ Synced
@@ -516,6 +531,27 @@ export function ProductListTable({
                               🛍️
                             </button>
                           ) : null}
+
+                        {product.shopifySyncStatus === "synced" && onRetrySync ? (
+                          <button
+                            type="button"
+                            title={
+                              product.storeId && currentStoreId && product.storeId.toLowerCase() !== currentStoreId.toLowerCase()
+                                ? `Đồng bộ sản phẩm này sang Store mục tiêu: ${currentStoreId}`
+                                : "Đồng bộ lại toàn bộ dữ liệu mới nhất lên Shopify Store"
+                            }
+                            onClick={() => onRetrySync(product.id)}
+                            disabled={product.isSyncing}
+                            className="rounded-lg border border-teal-500/30 px-1.5 py-1 text-xs text-teal-300 hover:bg-slate-800 disabled:cursor-not-allowed disabled:text-slate-500"
+                            aria-label={
+                              product.storeId && currentStoreId && product.storeId.toLowerCase() !== currentStoreId.toLowerCase()
+                                ? `Sync sang ${currentStoreId}`
+                                : "Sync lại Shopify"
+                            }
+                          >
+                            🔄
+                          </button>
+                        ) : null}
 
                         {product.shopifySyncStatus === "failed" && onRetrySync ? (
                           <button

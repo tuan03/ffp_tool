@@ -17,14 +17,16 @@ import { ProductEditModal } from "./components/ProductEditModal";
 import { ProductListTable } from "./components/ProductListTable";
 import { ProductSplitView } from "./components/ProductSplitView";
 import { SeoBatchToolbar } from "./components/SeoBatchToolbar";
+import { AddStoreModal, type AddedStoreInfo } from "../../shared/components/AddStoreModal";
 import { ShopifySyncErrorModal } from "./components/ShopifySyncErrorModal";
 import { filterSeoProducts, findNextProductInList } from "./review-navigation";
-import { adaptAmazonCrawlerReviewToViewModel } from "./seo-content-ui-adapter";
+import { adaptAmazonCrawlerReviewToViewModel, getProductSourceOrigin } from "./seo-content-ui-adapter";
 import type {
   SeoProductEditInput,
   SeoProductUiViewModel,
   SeoReviewFilterState,
   SeoReviewViewMode,
+  StoreProfile,
   ZoomImageItem,
 } from "./types";
 
@@ -61,6 +63,7 @@ function toPushProductItem(vm: SeoProductUiViewModel): SeoReviewPushProductItem 
   return {
     id: vm.id,
     productId: vm.productId,
+    originalStoreId: vm.storeId,
     asin: vm.asin,
     productTitle: vm.productTitle.value,
     productDescription: vm.productDescription.value,
@@ -179,6 +182,106 @@ export function SeoReviewPage({
         : `Đã sync ${succeeded}/${pendingCrawlerSyncIds.length} sản phẩm; ${failed} sản phẩm lỗi. Xem lỗi trên từng sản phẩm.`,
     });
   }, [pendingCrawlerSyncIds, products]);
+
+  // Shopify Store Selection State (matching Distributed Crawl logic)
+  const [availableStores, setAvailableStores] = useState<Array<StoreProfile>>([
+    {
+      storeId: "capozen",
+      shopDomain: "capozen.myshopify.com",
+      productTypes: ["Rug", "Doormat", "Area Rug"],
+      defaultProductType: "Rug",
+    },
+    {
+      storeId: "jeminise",
+      shopDomain: "b6-theme-test.myshopify.com",
+      productTypes: ["Blanket", "Bedding Set", "Quilt", "Comforter", "Pillow"],
+      defaultProductType: "Blanket",
+    },
+  ]);
+  const [selectedStoreId, setSelectedStoreId] = useState<string>(() => {
+    if (typeof window !== "undefined" && window.localStorage) {
+      const saved = window.localStorage.getItem("ffp_seo_review_selected_store");
+      if (saved) return saved;
+    }
+    return storeId || "capozen";
+  });
+  const [isAddStoreOpen, setIsAddStoreOpen] = useState(false);
+
+  useEffect(() => {
+    let isMounted = true;
+    async function fetchStores(): Promise<void> {
+      try {
+        const res = await fetch("/api/shopify", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ operation: "stores.list", payload: {} }),
+        });
+        const data = await res.json();
+        if (data.success && Array.isArray(data.data?.stores) && isMounted) {
+          const fetchedStores: StoreProfile[] = data.data.stores.map((s: Record<string, unknown>) => ({
+            storeId: String(s.storeId || ""),
+            shopDomain: String(s.shopDomain || ""),
+            productTypes: Array.isArray(s.productTypes) ? (s.productTypes as string[]) : undefined,
+            defaultProductType: typeof s.defaultProductType === "string" ? s.defaultProductType : undefined,
+          })).filter((s: StoreProfile) => Boolean(s.storeId && s.shopDomain));
+
+          if (fetchedStores.length > 0) {
+            setAvailableStores((prev) => {
+              const map = new Map<string, StoreProfile>();
+              for (const s of prev) map.set(s.storeId.toLowerCase(), s);
+              for (const s of fetchedStores) {
+                const existing = map.get(s.storeId.toLowerCase());
+                map.set(s.storeId.toLowerCase(), {
+                  storeId: s.storeId,
+                  shopDomain: s.shopDomain,
+                  productTypes: s.productTypes || existing?.productTypes,
+                  defaultProductType: s.defaultProductType || existing?.defaultProductType,
+                });
+              }
+              return Array.from(map.values());
+            });
+          }
+        }
+      } catch {
+        // Keep default stores if fetch fails
+      }
+    }
+    void fetchStores();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  function handleStoreChange(nextStore: string): void {
+    setSelectedStoreId(nextStore);
+    if (typeof window !== "undefined" && window.localStorage) {
+      try {
+        window.localStorage.setItem("ffp_seo_review_selected_store", nextStore);
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  function handleStoreAdded(newStore: AddedStoreInfo): void {
+    setAvailableStores((prev) => {
+      const exists = prev.some((s) => s.storeId.toLowerCase() === newStore.storeId.toLowerCase());
+      if (exists) return prev;
+      return [
+        ...prev,
+        {
+          storeId: newStore.storeId,
+          shopDomain: newStore.shopDomain,
+          productTypes: newStore.productTypes,
+          defaultProductType: newStore.defaultProductType,
+        },
+      ];
+    });
+    handleStoreChange(newStore.storeId);
+    setIsAddStoreOpen(false);
+  }
+
+  const effectiveStoreId = selectedStoreId || storeId || "capozen";
 
   // High-Resolution Image Zoom Modal State
   const [zoomState, setZoomState] = useState<{
@@ -330,8 +433,11 @@ export function SeoReviewPage({
       p.seoDescription.source === "mock" ||
       p.handle.source === "mock",
     ).length;
+    const crawlCount = products.filter((p) => getProductSourceOrigin(p) === "distributed_crawler").length;
+    const podCount = products.filter((p) => getProductSourceOrigin(p) === "pinterest_pod").length;
+    const autoSeoCount = products.filter((p) => getProductSourceOrigin(p) === "auto_seo").length;
 
-    return { total, completed, pending, approved, approvedUnsynced, rejected, synced, syncing, syncFailed, hasMock };
+    return { total, completed, pending, approved, approvedUnsynced, rejected, synced, syncing, syncFailed, hasMock, crawlCount, podCount, autoSeoCount };
   }, [products]);
 
   // Selection handlers
@@ -390,19 +496,20 @@ export function SeoReviewPage({
 
   // Push to Shopify Store handlers
   async function triggerPushToShopify(targetProduct: SeoProductUiViewModel) {
+    const targetStore = effectiveStoreId || targetProduct.storeId || "capozen";
     try {
       const result = await pushSeoReviewProductToShopify(
         toPushProductItem(targetProduct),
         {
           moduleApiRunner: runner,
-          storeId,
+          storeId: targetStore,
         },
       );
 
       if (result.success) {
         notifyUser({
           title: "🛍️ Shopify Sync thành công!",
-          message: `Sản phẩm "${targetProduct.productTitle.value}" đã được đồng bộ lên Store chính.`,
+          message: `Sản phẩm "${targetProduct.productTitle.value}" đã được đồng bộ lên Store ${targetStore.toUpperCase()}.`,
           type: "success",
           sound: "chime",
           url: "/seo-review",
@@ -423,6 +530,7 @@ export function SeoReviewPage({
           if (result.success) {
             return {
               ...p,
+              storeId: targetStore,
               shopifySyncStatus: "synced",
               isSyncing: false,
               productId: result.productId ?? p.productId,
@@ -477,7 +585,7 @@ export function SeoReviewPage({
         pushItems,
         {
           moduleApiRunner: runner,
-          storeId,
+          storeId: effectiveStoreId,
         },
         3,
       );
@@ -489,7 +597,7 @@ export function SeoReviewPage({
       if (failCount === 0) {
         notifyUser({
           title: "🛍️ Shopify Sync: Đẩy hàng loạt thành công!",
-          message: `Đã đồng bộ toàn bộ ${successCount} sản phẩm lên Shopify Store chính.`,
+          message: `Đã đồng bộ toàn bộ ${successCount} sản phẩm lên Shopify Store (${effectiveStoreId.toUpperCase()}).`,
           type: "success",
           sound: "chime",
           url: "/seo-review",
@@ -519,6 +627,7 @@ export function SeoReviewPage({
           if (res.success) {
             return {
               ...p,
+              storeId: effectiveStoreId,
               shopifySyncStatus: "synced",
               isSyncing: false,
               productId: res.productId ?? p.productId,
@@ -577,24 +686,6 @@ export function SeoReviewPage({
     const target = products.find((p) => p.id === id);
     if (!target) return;
 
-    if (target.coordinatorReview && amazonCrawlerReviews) {
-      setProducts((prev) => prev.map((product) =>
-        product.id === id
-          ? { ...product, shopifySyncStatus: "queued", isSyncing: true, syncError: undefined }
-          : product,
-      ));
-      void amazonCrawlerReviews.sync(target.coordinatorReview.itemId).catch((error: unknown) => {
-        const message = error instanceof Error ? error.message : String(error);
-        setProducts((prev) => prev.map((product) =>
-          product.id === id
-            ? { ...product, shopifySyncStatus: "failed", isSyncing: false, syncError: message }
-            : product,
-        ));
-        setSyncFeedback({ type: "error", message: `Không thể đưa sản phẩm vào hàng đợi sync: ${message}` });
-      });
-      return;
-    }
-
     const syncingTarget: SeoProductUiViewModel = {
       ...target,
       shopifySyncStatus: "syncing",
@@ -608,6 +699,18 @@ export function SeoReviewPage({
     );
 
     void triggerPushToShopify(syncingTarget);
+
+    const targetStore = effectiveStoreId || target.storeId || "capozen";
+    if (
+      target.coordinatorReview &&
+      amazonCrawlerReviews &&
+      target.storeId &&
+      targetStore.toLowerCase() === target.storeId.toLowerCase()
+    ) {
+      void amazonCrawlerReviews.sync(target.coordinatorReview.itemId).catch(() => {
+        // Coordinator notification is best-effort alongside direct gateway push
+      });
+    }
   }
 
   function handleViewSyncError(product: SeoProductUiViewModel) {
@@ -618,11 +721,9 @@ export function SeoReviewPage({
     const failedTargets = products.filter((p) => p.shopifySyncStatus === "failed");
     if (failedTargets.length === 0) return;
 
-    const coordinatorTargets = failedTargets.filter((target) => target.coordinatorReview);
-    const legacyTargets = failedTargets.filter((target) => !target.coordinatorReview);
     const retryingTargets = failedTargets.map((t) => ({
       ...t,
-      shopifySyncStatus: t.coordinatorReview ? "queued" as const : "syncing" as const,
+      shopifySyncStatus: "syncing" as const,
       isSyncing: true,
       shopifySyncError: undefined,
       updatedAt: Date.now(),
@@ -631,24 +732,20 @@ export function SeoReviewPage({
     const retryingMap = new Map(retryingTargets.map((t) => [t.id, t]));
     setProducts((prev) => prev.map((p) => retryingMap.get(p.id) ?? p));
 
-    if (coordinatorTargets.length > 0 && amazonCrawlerReviews) {
-      void Promise.all(coordinatorTargets.map((target) =>
-        amazonCrawlerReviews.sync(target.coordinatorReview?.itemId ?? target.id),
-      )).catch((error: unknown) => {
-        const message = error instanceof Error ? error.message : String(error);
-        const coordinatorIds = new Set(coordinatorTargets.map((target) => target.id));
-        setProducts((currentProducts) => currentProducts.map((product) =>
-          coordinatorIds.has(product.id)
-            ? { ...product, shopifySyncStatus: "failed", isSyncing: false, syncError: message }
-            : product,
-        ));
-        setSyncFeedback({ type: "error", message: `Không thể retry các sản phẩm Amazon: ${message}` });
+    void triggerBatchPushToShopify(retryingTargets);
+
+    const targetStore = effectiveStoreId || "capozen";
+    const sameStoreCoordinatorTargets = failedTargets.filter(
+      (t) => t.coordinatorReview && t.storeId && targetStore.toLowerCase() === t.storeId.toLowerCase(),
+    );
+    if (sameStoreCoordinatorTargets.length > 0 && amazonCrawlerReviews) {
+      void Promise.all(
+        sameStoreCoordinatorTargets.map((target) =>
+          amazonCrawlerReviews.sync(target.coordinatorReview?.itemId ?? target.id),
+        ),
+      ).catch(() => {
+        // best effort
       });
-    }
-    if (legacyTargets.length > 0) {
-      void triggerBatchPushToShopify(
-        retryingTargets.filter((target) => !target.coordinatorReview),
-      );
     }
   }
 
@@ -798,66 +895,62 @@ export function SeoReviewPage({
       !product.isReverting,
     );
     if (eligible.length === 0) return;
-    if (!confirm(`Sync ${eligible.length} sản phẩm đã duyệt lên Shopify?`)) return;
+    if (!confirm(`Sync ${eligible.length} sản phẩm đã duyệt lên Shopify (${effectiveStoreId.toUpperCase()})?`)) return;
 
-    const crawlerTargets = eligible.filter((product) => product.coordinatorReview);
-    const legacyTargets = eligible.filter((product) => !product.coordinatorReview);
-    let crawlerQueuedIds: readonly string[] = [];
+    const syncingTargets = eligible.map((p) => ({
+      ...p,
+      shopifySyncStatus: "syncing" as const,
+      isSyncing: true,
+      shopifySyncError: undefined,
+      updatedAt: Date.now(),
+    }));
+
+    const syncingMap = new Map(syncingTargets.map((t) => [t.id, t]));
+    setProducts((prev) => prev.map((p) => syncingMap.get(p.id) ?? p));
+
     try {
-      let crawlerQueued = 0;
-      if (crawlerTargets.length > 0 && amazonCrawlerReviews) {
-        const response = await amazonCrawlerReviews.syncAllApproved();
-        crawlerQueued = response.queued;
-        crawlerQueuedIds = response.itemIds;
+      if (onSyncApprovedProducts) {
+        const result = await onSyncApprovedProducts(eligible);
+        const succeededProductIds = new Set(result.items.filter((item) => item.ok).map((item) => item.productId));
+        setProducts((prev) => prev.map((product) => {
+          if (!eligible.some((target) => target.id === product.id)) return product;
+          const productId = (product.productId || product.id).trim();
+          const didSucceed = succeededProductIds.has(productId);
+          return {
+            ...product,
+            storeId: didSucceed ? effectiveStoreId : product.storeId,
+            shopifySyncStatus: didSucceed ? "synced" : "failed",
+            isSyncing: false,
+            lastSyncedAt: didSucceed ? Date.now() : product.lastSyncedAt,
+            syncError: didSucceed ? undefined : "Đồng bộ lên Shopify thất bại.",
+            updatedAt: Date.now(),
+          };
+        }));
+      } else {
+        await triggerBatchPushToShopify(syncingTargets);
       }
-      if (legacyTargets.length > 0) {
-        const legacyIds = new Set(legacyTargets.map((target) => target.id));
-        setProducts((prev) => prev.map((product) =>
-          legacyIds.has(product.id)
-            ? { ...product, shopifySyncStatus: "syncing", isSyncing: true, syncError: undefined }
-            : product,
-        ));
-        if (onSyncApprovedProducts) {
-          const result = await onSyncApprovedProducts(legacyTargets);
-          const succeededProductIds = new Set(result.items.filter((item) => item.ok).map((item) => item.productId));
-          setProducts((prev) => prev.map((product) => {
-            if (!legacyTargets.some((target) => target.id === product.id)) return product;
-            const productId = (product.productId || product.id).trim();
-            const didSucceed = succeededProductIds.has(productId);
-            return {
-              ...product,
-              shopifySyncStatus: didSucceed ? "synced" : "failed",
-              isSyncing: false,
-              lastSyncedAt: didSucceed ? Date.now() : product.lastSyncedAt,
-              syncError: didSucceed ? undefined : "Đồng bộ lên Shopify thất bại.",
-              updatedAt: Date.now(),
-            };
-          }));
-        } else {
-          await triggerBatchPushToShopify(legacyTargets);
-        }
+
+      // Best-effort notify coordinator for same-store crawler items
+      const sameStoreCoordinatorTargets = eligible.filter(
+        (target) =>
+          target.coordinatorReview &&
+          target.storeId &&
+          target.storeId.toLowerCase() === effectiveStoreId.toLowerCase(),
+      );
+      if (sameStoreCoordinatorTargets.length > 0 && amazonCrawlerReviews) {
+        void amazonCrawlerReviews.syncAllApproved().catch(() => {
+          // Coordinator notification is best-effort alongside direct gateway push
+        });
       }
-      setSyncFeedback({
-        type: crawlerTargets.length > 0 && crawlerQueued === 0 ? "warning" : "success",
-        message: crawlerQueued > 0
-          ? `Đã xếp hàng ${crawlerQueued} sản phẩm trên coordinator. Trạng thái sync sẽ tự cập nhật khi hoàn tất.`
-          : legacyTargets.length > 0
-            ? `Đã xử lý ${legacyTargets.length} sản phẩm đã duyệt.`
-            : "Không có sản phẩm mới được xếp hàng; danh sách sẽ cập nhật theo trạng thái coordinator.",
-      });
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
-      const legacyIds = new Set(legacyTargets.map((target) => target.id));
+      const eligibleIds = new Set(eligible.map((target) => target.id));
       setProducts((prev) => prev.map((product) =>
-        legacyIds.has(product.id) && product.isSyncing
+        eligibleIds.has(product.id) && product.isSyncing
           ? { ...product, shopifySyncStatus: "failed", isSyncing: false, syncError: message }
           : product,
       ));
       setSyncFeedback({ type: "error", message: `Không thể sync tất cả sản phẩm đã duyệt: ${message}` });
-    } finally {
-      if (crawlerQueuedIds.length > 0) {
-        setPendingCrawlerSyncIds((current) => [...new Set([...current, ...crawlerQueuedIds])]);
-      }
     }
   }
 
@@ -1177,8 +1270,18 @@ export function SeoReviewPage({
     setIsEditModalOpen(true);
   }
 
-  async function handleSaveEdit(id: string, updated: SeoProductEditInput): Promise<boolean> {
+  async function handleSaveEdit(id: string, updated: SeoProductEditInput, autoApprove = false): Promise<boolean> {
     const target = products.find((product) => product.id === id);
+    if (!target) return false;
+
+    const wasAlreadySynced = Boolean(
+      target.shopifySyncStatus === "synced" ||
+      target.shopifySyncedAt ||
+      target.lastSyncedAt ||
+      target.shopifyAdminUrl ||
+      (target.productId && target.productId.startsWith("gid://shopify/Product/")),
+    );
+
     let nextVersion = target?.coordinatorReview?.version;
     try {
       if (target?.coordinatorReview && amazonCrawlerReviews) {
@@ -1188,44 +1291,187 @@ export function SeoReviewPage({
           updated,
         );
         nextVersion = reviewed.version;
+
+        if (autoApprove) {
+          const approved = await amazonCrawlerReviews.decide(
+            target.coordinatorReview.itemId,
+            nextVersion,
+            "approved",
+          );
+          nextVersion = approved.version;
+        }
       }
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
-      setSyncFeedback({ type: "error", message: `Không thể lưu chỉnh sửa: ${message}` });
+      const isNetworkOrCors = message.includes("Failed to fetch") || message.includes("NetworkError");
+      const friendlyDetail = isNetworkOrCors
+        ? "Không thể kết nối hoặc bị chặn bởi Coordinator Server (CORS/Network). Vui lòng đảm bảo Coordinator Server đang chạy và đã được khởi động lại để nhận cấu hình CORS mới."
+        : message;
+      setSyncFeedback({ type: "error", message: `Không thể lưu chỉnh sửa: ${friendlyDetail}` });
       return false;
     }
-    setProducts((prev) =>
-      prev.map((p) => {
-        if (p.id !== id) return p;
 
-        const updatedImages = p.images.map((img) => {
-          const match = updated.imageAlts.find((a) => a.id === img.id);
-          if (match && match.alt !== img.alt.value) {
-            return {
-              ...img,
-              alt: { value: match.alt, source: "real" as const },
-            };
-          }
-          return img;
-        });
-
+    const updatedImages = target.images.map((img) => {
+      const match = updated.imageAlts.find((a) => a.id === img.id);
+      if (match && match.alt !== img.alt.value) {
         return {
-          ...p,
-          productTitle: { value: updated.productTitle, source: "real" },
-          productDescription: { value: updated.productDescription, source: "real" },
-          seoTitle: { value: updated.seoTitle, source: "real" },
-          seoDescription: { value: updated.seoDescription, source: "real" },
-          handle: { value: updated.handle, source: "real" },
-          images: updatedImages,
-          reviewDecision: "pending",
-          rejectionReason: undefined,
-          coordinatorReview: p.coordinatorReview && nextVersion !== undefined
-            ? { ...p.coordinatorReview, version: nextVersion }
-            : p.coordinatorReview,
+          ...img,
+          alt: { value: match.alt, source: "real" as const },
+        };
+      }
+      return img;
+    });
+
+    const updatedProductBase: SeoProductUiViewModel = {
+      ...target,
+      productTitle: { value: updated.productTitle, source: "real" },
+      productDescription: { value: updated.productDescription, source: "real" },
+      seoTitle: { value: updated.seoTitle, source: "real" },
+      seoDescription: { value: updated.seoDescription, source: "real" },
+      handle: { value: updated.handle, source: "real" },
+      images: updatedImages,
+      reviewDecision: autoApprove ? "approved" : "pending",
+      rejectionReason: undefined,
+      coordinatorReview: target.coordinatorReview && nextVersion !== undefined
+        ? { ...target.coordinatorReview, version: nextVersion }
+        : target.coordinatorReview,
+      updatedAt: Date.now(),
+    };
+
+    // If autoApprove is requested AND product was already synced on Shopify (or already has a Shopify GID):
+    // Directly push the updated product data to Shopify!
+    if (autoApprove && wasAlreadySynced) {
+      const targetStore = effectiveStoreId || target.storeId || "capozen";
+      setProducts((prev) =>
+        prev.map((p) =>
+          p.id === id
+            ? { ...updatedProductBase, isSyncing: true, shopifySyncStatus: "syncing", shopifySyncError: undefined }
+            : p,
+        ),
+      );
+
+      try {
+        const pushResult = await pushSeoReviewProductToShopify(
+          toPushProductItem(updatedProductBase),
+          {
+            moduleApiRunner: runner,
+            storeId: targetStore,
+          },
+        );
+
+        if (target.coordinatorReview && amazonCrawlerReviews) {
+          try {
+            await amazonCrawlerReviews.sync(target.coordinatorReview.itemId);
+          } catch {
+            // Coordinator sync queue notification is best-effort alongside direct push
+          }
+        }
+
+        if (pushResult.success) {
+          const syncedProduct: SeoProductUiViewModel = {
+            ...updatedProductBase,
+            storeId: targetStore,
+            shopifySyncStatus: "synced",
+            isSyncing: false,
+            productId: pushResult.productId ?? target.productId,
+            handle: pushResult.productHandle
+              ? { value: pushResult.productHandle, source: "real" }
+              : updatedProductBase.handle,
+            shopifyAdminUrl: pushResult.adminUrl ?? target.shopifyAdminUrl,
+            shopifySyncedAt: Date.now(),
+            shopifySyncError: undefined,
+            updatedAt: Date.now(),
+          };
+
+          setProducts((prev) => prev.map((p) => (p.id === id ? syncedProduct : p)));
+          setSelectedIds((prev) => {
+            const next = new Set(prev);
+            next.delete(id);
+            return next;
+          });
+
+          setSyncFeedback({
+            type: "success",
+            message: `✓ Đã cập nhật, phê duyệt và đồng bộ dữ liệu mới của "${updated.productTitle}" lên Shopify (${targetStore.toUpperCase()}) thành công!`,
+          });
+          notifyUser({
+            title: "🛍️ Shopify Sync thành công!",
+            message: `Sản phẩm "${updated.productTitle}" đã được cập nhật dữ liệu mới lên Store ${targetStore.toUpperCase()}.`,
+            type: "success",
+            sound: "chime",
+            url: "/seo-review",
+          });
+          return true;
+        } else {
+          const errorMsg = pushResult.error || "Lỗi khi đồng bộ dữ liệu mới lên Shopify";
+          const failedProduct: SeoProductUiViewModel = {
+            ...updatedProductBase,
+            shopifySyncStatus: "failed",
+            isSyncing: false,
+            shopifySyncError: errorMsg,
+            updatedAt: Date.now(),
+          };
+          setProducts((prev) => prev.map((p) => (p.id === id ? failedProduct : p)));
+          setSyncFeedback({
+            type: "error",
+            message: `✕ Đã lưu chỉnh sửa nhưng không thể đồng bộ lên Shopify: ${errorMsg}`,
+          });
+          return false;
+        }
+      } catch (pushErr) {
+        const errorMsg = pushErr instanceof Error ? pushErr.message : String(pushErr);
+        const failedProduct: SeoProductUiViewModel = {
+          ...updatedProductBase,
+          shopifySyncStatus: "failed",
+          isSyncing: false,
+          shopifySyncError: errorMsg,
           updatedAt: Date.now(),
         };
-      }),
-    );
+        setProducts((prev) => prev.map((p) => (p.id === id ? failedProduct : p)));
+        setSyncFeedback({
+          type: "error",
+          message: `✕ Lỗi khi đồng bộ lên Shopify: ${errorMsg}`,
+        });
+        return false;
+      }
+    }
+
+    // Default save case (when not auto-synced):
+    // If wasAlreadySynced is true, local content has changed while Shopify has old content.
+    // Reset shopifySyncStatus to "idle" so approver sees it needs syncing,
+    // and batch/single sync will recognize it!
+    const finalProduct: SeoProductUiViewModel = {
+      ...updatedProductBase,
+      shopifySyncStatus: wasAlreadySynced && !autoApprove ? "idle" : target.shopifySyncStatus || "idle",
+      isSyncing: false,
+    };
+
+    setProducts((prev) => prev.map((p) => (p.id === id ? finalProduct : p)));
+
+    if (autoApprove) {
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+      setSyncFeedback({
+        type: "success",
+        message: `✓ Đã cập nhật và phê duyệt "${updated.productTitle}". Sản phẩm sẵn sàng đồng bộ lên Store.`,
+      });
+    } else {
+      if (wasAlreadySynced) {
+        setSyncFeedback({
+          type: "warning",
+          message: `✓ Đã lưu thay đổi cho "${updated.productTitle}". Dữ liệu trên Shopify chưa được cập nhật, vui lòng duyệt và bấm "Sync Shopify" để đẩy nội dung mới lên Store.`,
+        });
+      } else {
+        setSyncFeedback({
+          type: "success",
+          message: `✓ Đã cập nhật thông tin sản phẩm "${updated.productTitle}".`,
+        });
+      }
+    }
+
     return true;
   }
 
@@ -1377,6 +1623,56 @@ export function SeoReviewPage({
         </div>
       </div>
 
+      {/* Target Shopify Store Destination Card (Matching Distributed Crawl logic) */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-xl border border-slate-800 bg-slate-900/60 p-3.5 shadow-sm">
+        <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+          <div className="flex items-center gap-2">
+            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-teal-500/20 text-teal-300 text-sm">
+              🏪
+            </span>
+            <label className="text-sm font-semibold text-slate-200">
+              Shopify Store
+            </label>
+            <span className="text-[11px] font-mono text-slate-400" title="Shopify Vendor">
+              ({((effectiveStoreId).split("--")[0] || "CAPOZEN").trim().toUpperCase()})
+            </span>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <select
+              className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs text-slate-100 outline-none focus:border-cyan-500 font-mono transition"
+              value={effectiveStoreId}
+              onChange={(e) => handleStoreChange(e.target.value)}
+            >
+              {availableStores.map((s) => (
+                <option key={s.storeId} value={s.storeId}>
+                  {s.storeId} ({s.shopDomain})
+                </option>
+              ))}
+            </select>
+
+            <button
+              type="button"
+              onClick={() => setIsAddStoreOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-md border border-cyan-500/50 bg-cyan-500/10 px-2.5 py-1.5 text-xs font-semibold text-cyan-300 shadow-sm transition-all hover:border-cyan-400 hover:bg-cyan-500/20 hover:text-white cursor-pointer"
+              title="Thêm và kết nối Shopify Store mới"
+            >
+              <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
+                <path d="M12 4v16m8-8H4" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              <span>+ Thêm store</span>
+            </button>
+          </div>
+        </div>
+
+        <div className="text-xs text-slate-400 flex items-center gap-2">
+          <span>Target store hiện tại:</span>
+          <span className="font-mono text-cyan-300 font-medium bg-slate-800/80 px-2.5 py-1 rounded border border-slate-700">
+            {availableStores.find((s) => s.storeId.toLowerCase() === effectiveStoreId.toLowerCase())?.shopDomain || effectiveStoreId}
+          </span>
+        </div>
+      </div>
+
       {/* Top Shopify Sync Failure Alert Banner */}
       {stats.syncFailed > 0 && !isDismissedErrorBanner && (
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-xl border border-rose-500/50 bg-rose-950/50 p-4 text-rose-200 animate-fadeIn shadow-lg shadow-rose-950/30">
@@ -1477,6 +1773,9 @@ export function SeoReviewPage({
       <SeoBatchToolbar
         totalCount={products.length}
         filteredCount={filteredProducts.length}
+        crawlCount={stats.crawlCount}
+        podCount={stats.podCount}
+        autoSeoCount={stats.autoSeoCount}
         pendingCount={stats.pending}
         approvedCount={stats.approved}
         approvedUnsyncedCount={stats.approvedUnsynced}
@@ -1537,6 +1836,7 @@ export function SeoReviewPage({
             <ProductCardList
               products={filteredProducts}
               selectedIds={selectedIds}
+              currentStoreId={effectiveStoreId}
               onToggleSelect={handleToggleSelect}
               onViewProduct={handleViewProduct}
               onEditProduct={handleEditProduct}
@@ -1553,6 +1853,7 @@ export function SeoReviewPage({
               products={filteredProducts}
               selectedIds={selectedIds}
               expandedIds={expandedTableIds}
+              currentStoreId={effectiveStoreId}
               onToggleSelect={handleToggleSelect}
               onToggleSelectAll={handleToggleSelectAll}
               onToggleExpand={handleToggleExpandTable}
@@ -1572,6 +1873,7 @@ export function SeoReviewPage({
               products={filteredProducts}
               selectedIds={selectedIds}
               activeProduct={activeProduct}
+              currentStoreId={effectiveStoreId}
               onSelectActive={setActiveProduct}
               onToggleSelect={handleToggleSelect}
               onViewProduct={handleViewProduct}
@@ -1593,6 +1895,7 @@ export function SeoReviewPage({
       <ProductDetailDrawer
         product={activeProduct}
         isOpen={isDrawerOpen}
+        currentStoreId={effectiveStoreId}
         onClose={() => setIsDrawerOpen(false)}
         onEdit={handleEditProduct}
         onApprove={(id) => {
@@ -1632,6 +1935,13 @@ export function SeoReviewPage({
         images={zoomState.images}
         initialIndex={zoomState.initialIndex}
         onClose={handleCloseZoomImage}
+      />
+
+      {/* Add Shopify Store Modal */}
+      <AddStoreModal
+        isOpen={isAddStoreOpen}
+        onClose={() => setIsAddStoreOpen(false)}
+        onStoreAdded={handleStoreAdded}
       />
     </div>
   );

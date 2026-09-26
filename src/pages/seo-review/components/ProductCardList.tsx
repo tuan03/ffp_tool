@@ -1,9 +1,11 @@
 import { SourceBadge } from "./SourceBadge";
+import { SourceOriginBadge } from "./SourceOriginBadge";
 import type { SeoProcessingStatus, SeoProductUiViewModel } from "../types";
 
 export interface ProductCardListProps {
   readonly products: readonly SeoProductUiViewModel[];
   readonly selectedIds: ReadonlySet<string>;
+  readonly currentStoreId?: string;
   readonly onToggleSelect: (id: string) => void;
   readonly onViewProduct: (product: SeoProductUiViewModel) => void;
   readonly onEditProduct: (product: SeoProductUiViewModel) => void;
@@ -17,6 +19,7 @@ export interface ProductCardListProps {
 export function ProductCardList({
   products,
   selectedIds,
+  currentStoreId,
   onToggleSelect,
   onViewProduct,
   onEditProduct,
@@ -98,10 +101,19 @@ export function ProductCardList({
       );
     }
     if (product.shopifySyncStatus === "synced") {
+      const isCrossStore = Boolean(
+        currentStoreId && product.storeId && currentStoreId.toLowerCase() !== product.storeId.toLowerCase(),
+      );
       return (
-        <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
-          <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-          <span>Đã đẩy Store</span>
+        <span
+          className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold ${
+            isCrossStore
+              ? "bg-amber-500/15 text-amber-300 border border-amber-500/40"
+              : "bg-emerald-500/15 text-emerald-300 border border-emerald-500/30"
+          }`}
+        >
+          <span className={`h-1.5 w-1.5 rounded-full ${isCrossStore ? "bg-amber-400" : "bg-emerald-400"}`} />
+          <span>{product.storeId ? `Đã đẩy (${product.storeId})` : "Đã đẩy Store"}</span>
           {product.shopifyAdminUrl ? (
             <a
               href={product.shopifyAdminUrl}
@@ -229,6 +241,7 @@ export function ProductCardList({
                         {product.productTitle.value}
                       </span>
                       <SourceBadge source={product.productTitle.source} />
+                      <SourceOriginBadge product={product} showStore targetStoreId={currentStoreId} />
                     </div>
 
                     <div className="flex flex-wrap items-center gap-2 mt-1 text-xs text-slate-400 font-mono">
@@ -325,6 +338,27 @@ export function ProductCardList({
                         🛍️ Sync Shopify
                       </button>
                     ) : null}
+
+                  {product.shopifySyncStatus === "synced" && onRetrySync ? (
+                    <button
+                      type="button"
+                      title={
+                        product.storeId && currentStoreId && product.storeId.toLowerCase() !== currentStoreId.toLowerCase()
+                          ? `Đồng bộ sản phẩm này sang Store mục tiêu: ${currentStoreId}`
+                          : "Đồng bộ lại toàn bộ dữ liệu mới nhất lên Shopify Store"
+                      }
+                      onClick={() => onRetrySync(product.id)}
+                      disabled={product.isSyncing}
+                      className="inline-flex items-center gap-1 rounded-lg border border-teal-500/30 bg-slate-800 hover:bg-slate-700 px-2.5 py-1.5 text-xs font-semibold text-teal-300 transition cursor-pointer disabled:opacity-50"
+                    >
+                      <span>🔄</span>
+                      <span>
+                        {product.storeId && currentStoreId && product.storeId.toLowerCase() !== currentStoreId.toLowerCase()
+                          ? `Sync sang ${currentStoreId}`
+                          : "Sync lại"}
+                      </span>
+                    </button>
+                  ) : null}
 
                   {product.shopifySyncStatus === "failed" && onRetrySync ? (
                     <button

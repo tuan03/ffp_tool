@@ -918,7 +918,7 @@ class CoordinatorStore:
             review = dict(pipeline_result.get("review") or {})
             if not review or int(review.get("version") or 1) != expected_version:
                 return {"conflict": True}
-            if item.status == "reconciliation_required" or str(review.get("syncStatus") or "idle") in {"queued", "syncing", "synced"}:
+            if item.status == "reconciliation_required" or str(review.get("syncStatus") or "idle") in {"queued", "syncing"}:
                 return {"locked": True}
             product = dict(item.normalized_payload or {})
             field_map = {
@@ -959,6 +959,7 @@ class CoordinatorStore:
             })
             item.normalized_payload = product
             item.status = "waiting_review"
+            item.checksum = hashlib.sha256(json.dumps(product, sort_keys=True).encode("utf-8")).hexdigest()
             pipeline_result["review"] = review
             item.shopify_result = pipeline_result
             self._event(session, item.job_id, "product_review_updated", {
@@ -988,7 +989,7 @@ class CoordinatorStore:
             review = dict(pipeline_result.get("review") or {})
             if not review or int(review.get("version") or 1) != expected_version:
                 return {"conflict": True}
-            if item.status == "reconciliation_required" or str(review.get("syncStatus") or "idle") in {"queued", "syncing", "synced"}:
+            if item.status == "reconciliation_required" or str(review.get("syncStatus") or "idle") in {"queued", "syncing"}:
                 return {"locked": True}
             review.update({
                 "decision": decision,
@@ -1021,7 +1022,7 @@ class CoordinatorStore:
                 return {"notApproved": True}
             if item.status == "reconciliation_required":
                 return {"reconciliationRequired": True}
-            if str(review.get("syncStatus") or "idle") in {"queued", "syncing", "synced"}:
+            if str(review.get("syncStatus") or "idle") in {"queued", "syncing"}:
                 return self._review_snapshot(item, session.get(CrawlJob, item.job_id))
             review.update({
                 "syncStatus": "queued",

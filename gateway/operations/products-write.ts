@@ -78,9 +78,17 @@ const PRODUCT_CREATE_MUTATION = `
 `;
 
 const PRODUCT_HANDLE_LOOKUP_QUERY = `
-  query ProductHandleLookup($handle: String!) {
+  query ProductHandleLookup($handle: String!, $query: String) {
     productByHandle(handle: $handle) {
       id
+    }
+    products(first: 1, query: $query) {
+      edges {
+        node {
+          id
+          handle
+        }
+      }
     }
   }
 `;
@@ -365,7 +373,15 @@ async function resolveAvailableProductHandle(
   requestedHandle: string,
 ): Promise<string> {
   interface ProductHandleLookupResponse {
-    readonly productByHandle: { readonly id: string } | null;
+    readonly productByHandle?: { readonly id: string } | null;
+    readonly products?: {
+      readonly edges?: readonly {
+        readonly node: {
+          readonly id: string;
+          readonly handle: string;
+        };
+      }[];
+    } | null;
   }
 
   for (let suffix = 1; suffix <= MAX_HANDLE_SUFFIX; suffix += 1) {
@@ -373,9 +389,13 @@ async function resolveAvailableProductHandle(
     const result = await client.query<ProductHandleLookupResponse>(
       store,
       PRODUCT_HANDLE_LOOKUP_QUERY,
-      { handle: candidate },
+      { handle: candidate, query: `handle:${candidate}` },
     );
-    if (!result.productByHandle) {
+    const inUseByHandle = Boolean(result.productByHandle);
+    const inUseByQuery = Boolean(
+      result.products?.edges?.some((e) => e.node.handle.toLowerCase() === candidate.toLowerCase()),
+    );
+    if (!inUseByHandle && !inUseByQuery) {
       return candidate;
     }
   }
