@@ -236,7 +236,7 @@ export async function syncSingleProduct(
       };
 
       if (gateway.uploadFilesBatch && uniqueAssets.length > 0) {
-        const BATCH_SIZE = 100;
+        const BATCH_SIZE = 250;
         for (let i = 0; i < uniqueAssets.length; i += BATCH_SIZE) {
           const chunk = uniqueAssets.slice(i, i + BATCH_SIZE);
           try {
@@ -323,9 +323,15 @@ export async function syncSingleProduct(
       assetsUploadedCount = replacements.size;
       assetUploadMs = Date.now() - assetUploadStartedAt;
 
-      if (assetsUploadedCount !== uniqueAssets.length) {
-        throw new Error(
-          `Customization assets incomplete: uploaded ${assetsUploadedCount}/${uniqueAssets.length}.`,
+      if (assetsUploadedCount < uniqueAssets.length) {
+        const missingCount = uniqueAssets.length - assetsUploadedCount;
+        if (assetsUploadedCount === 0 && uniqueAssets.length > 0) {
+          throw new Error(
+            `Customization assets failed: could not upload any of ${uniqueAssets.length} assets to Shopify.`,
+          );
+        }
+        warnings.push(
+          `Customization assets partially uploaded (${assetsUploadedCount}/${uniqueAssets.length}). ${missingCount} asset(s) retained original Amazon source URLs.`,
         );
       }
 

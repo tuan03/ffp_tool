@@ -918,7 +918,7 @@ class CoordinatorStore:
             review = dict(pipeline_result.get("review") or {})
             if not review or int(review.get("version") or 1) != expected_version:
                 return {"conflict": True}
-            if item.status == "reconciliation_required" or str(review.get("syncStatus") or "idle") in {"queued", "syncing"}:
+            if str(review.get("syncStatus") or "idle") in {"queued", "syncing"}:
                 return {"locked": True}
             product = dict(item.normalized_payload or {})
             field_map = {
@@ -989,7 +989,7 @@ class CoordinatorStore:
             review = dict(pipeline_result.get("review") or {})
             if not review or int(review.get("version") or 1) != expected_version:
                 return {"conflict": True}
-            if item.status == "reconciliation_required" or str(review.get("syncStatus") or "idle") in {"queued", "syncing"}:
+            if str(review.get("syncStatus") or "idle") in {"queued", "syncing"}:
                 return {"locked": True}
             review.update({
                 "decision": decision,
@@ -1042,7 +1042,7 @@ class CoordinatorStore:
         with self.sessions.begin() as session:
             items = session.scalars(
                 select(CrawlProductItem)
-                .where(CrawlProductItem.status.in_(["waiting_review", "rejected", "failed"]))
+                .where(CrawlProductItem.status.in_(["waiting_review", "rejected", "failed", "reconciliation_required"]))
                 .with_for_update(skip_locked=True)
             ).all()
             job_ids: set[str] = set()
