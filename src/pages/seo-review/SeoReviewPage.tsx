@@ -19,6 +19,7 @@ import { ProductSplitView } from "./components/ProductSplitView";
 import { SeoBatchToolbar } from "./components/SeoBatchToolbar";
 import { ShopifySyncErrorModal } from "./components/ShopifySyncErrorModal";
 import { filterSeoProducts, findNextProductInList } from "./review-navigation";
+import { buildProductRawJson } from "./product-raw-json-helper";
 import { adaptAmazonCrawlerReviewToViewModel } from "./seo-content-ui-adapter";
 import type {
   SeoProductEditInput,
@@ -1237,27 +1238,7 @@ export function SeoReviewPage({
       return;
     }
 
-    const exportPayload = approvedProducts.map((p) => ({
-      productId: p.productId,
-      asin: p.asin,
-      productTitle: p.productTitle.value,
-      productDescription: p.productDescription.value,
-      productSeoTitle: p.seoTitle.value,
-      productSeoDescription: p.seoDescription.value,
-      productHandle: p.handle.value,
-      images: p.images.map((img) => ({
-        sourceUrl: img.previewUrl.value,
-        alt: img.alt.value,
-        webp: {
-          filename: img.webpFilename.value,
-          url: img.webpUrl.value,
-        },
-      })),
-      reviewStatus: p.reviewDecision,
-      aeo_quick_summary: p.aeoQuickSummary?.value ?? "",
-      aeo_faq: p.aeoFaq?.value ?? [],
-      aeo_json_ld: p.aeoJsonLd?.value ?? "",
-    }));
+    const exportPayload = approvedProducts.map(buildProductRawJson);
 
     const blob = new Blob([JSON.stringify(exportPayload, null, 2)], {
       type: "application/json",

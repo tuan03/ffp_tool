@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { sanitizeHtmlDescription } from "../sanitize-html";
 import { buildProductZoomImages } from "../zoom-image-helper";
+import { serializeProductRawJson } from "../product-raw-json-helper";
 import { ShopifySyncErrorBanner } from "./ShopifySyncErrorBanner";
 import { SourceBadge } from "./SourceBadge";
 import type { SeoProductUiViewModel, ZoomImageItem } from "../types";
@@ -45,17 +46,22 @@ export function ProductDetailDrawer({
 }: ProductDetailDrawerProps): React.JSX.Element | null {
   const [descriptionTab, setDescriptionTab] = useState<"formatted" | "raw">("formatted");
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  const [showRawJsonModal, setShowRawJsonModal] = useState(false);
 
-  // Close drawer on Escape key
+  // Close modal or drawer on Escape key
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape" && isOpen) {
-        onClose();
+      if (e.key === "Escape") {
+        if (showRawJsonModal) {
+          setShowRawJsonModal(false);
+        } else if (isOpen) {
+          onClose();
+        }
       }
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen, onClose]);
+  }, [isOpen, onClose, showRawJsonModal]);
 
   if (!isOpen || !product) {
     return null;
@@ -115,6 +121,7 @@ export function ProductDetailDrawer({
         (variant): variant is Record<string, unknown> => Boolean(variant) && typeof variant === "object",
       )
     : [];
+  const rawJsonString = useMemo(() => serializeProductRawJson(product), [product]);
 
   return (
     <div className="fixed inset-0 z-50 overflow-hidden">
@@ -144,14 +151,26 @@ export function ProductDetailDrawer({
               </div>
             </div>
 
-            <button
-              type="button"
-              onClick={onClose}
-              className="rounded-lg p-2 text-slate-400 hover:bg-slate-800 hover:text-slate-200 transition"
-              aria-label="Đóng drawer"
-            >
-              ✕
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setShowRawJsonModal(true)}
+                className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 text-cyan-300 hover:bg-slate-700 hover:text-cyan-200 border border-slate-700 transition flex items-center gap-1.5 cursor-pointer shadow-sm"
+                title="Xem trực quan toàn bộ object JSON đầy đủ của sản phẩm"
+              >
+                <span>🔍</span>
+                <span>Xem Raw JSON</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={onClose}
+                className="rounded-lg p-2 text-slate-400 hover:bg-slate-800 hover:text-slate-200 transition cursor-pointer"
+                aria-label="Đóng drawer"
+              >
+                ✕
+              </button>
+            </div>
           </div>
 
           {/* Drawer Body - Scrollable */}
@@ -724,22 +743,65 @@ export function ProductDetailDrawer({
                 </div>
               </div>
             )}
+
+            {/* 6. Raw JSON (Full Product Object) */}
+            <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-5 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="text-base">🔍</span>
+                  <label className="text-xs font-bold uppercase tracking-wider text-slate-300">
+                    Raw JSON Sản Phẩm (Full Payload)
+                  </label>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handleCopy(rawJsonString, "full-raw-json")}
+                    className="px-2.5 py-1 rounded text-xs font-medium bg-slate-800 hover:bg-slate-700 text-cyan-300 border border-slate-700 transition flex items-center gap-1 cursor-pointer"
+                  >
+                    {copiedKey === "full-raw-json" ? "✓ Đã copy Full JSON" : "📋 Copy Full JSON"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowRawJsonModal(true)}
+                    className="px-2.5 py-1 rounded text-xs font-medium bg-cyan-950/60 hover:bg-cyan-900/80 text-cyan-300 border border-cyan-800 transition flex items-center gap-1 cursor-pointer"
+                  >
+                    <span>Phóng to ↗</span>
+                  </button>
+                </div>
+              </div>
+              <pre className="p-4 rounded-lg bg-slate-950 border border-slate-800/80 font-mono text-[11px] text-cyan-300 overflow-x-auto max-h-64 leading-relaxed select-all">
+                {rawJsonString}
+              </pre>
+            </div>
           </div>
 
           {/* Drawer Footer Actions */}
           <div className="border-t border-slate-800 bg-slate-900/90 px-6 py-4 flex items-center justify-between sticky bottom-0 z-10">
-            <button
-              type="button"
-              onClick={() => onEdit(product)}
-              disabled={product.isSyncing || product.isReverting}
-              className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold transition ${
-                product.isSyncing || product.isReverting
-                  ? "bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed"
-                  : "bg-slate-800 text-slate-200 hover:bg-slate-700 border border-slate-700 cursor-pointer"
-              }`}
-            >
-              ✏️ Chỉnh sửa
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => onEdit(product)}
+                disabled={product.isSyncing || product.isReverting}
+                className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold transition ${
+                  product.isSyncing || product.isReverting
+                    ? "bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed"
+                    : "bg-slate-800 text-slate-200 hover:bg-slate-700 border border-slate-700 cursor-pointer"
+                }`}
+              >
+                ✏️ Chỉnh sửa
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setShowRawJsonModal(true)}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-semibold bg-slate-800 text-cyan-300 hover:bg-slate-700 hover:text-cyan-200 border border-slate-700 cursor-pointer transition shadow-sm"
+                title="Xem trực quan toàn bộ object JSON đầy đủ của sản phẩm"
+              >
+                <span>🔍</span>
+                <span>Xem Raw JSON</span>
+              </button>
+            </div>
 
             <div className="flex items-center gap-3">
               {product.shopifyAdminUrl && (
@@ -854,6 +916,61 @@ export function ProductDetailDrawer({
           </div>
         </div>
       </div>
+
+      {/* Full Raw JSON Modal */}
+      {showRawJsonModal && (
+        <div
+          className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-fadeIn"
+          onClick={() => setShowRawJsonModal(false)}
+        >
+          <div
+            className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-4xl max-h-[85vh] flex flex-col shadow-2xl overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div className="flex items-center justify-between border-b border-slate-800 px-6 py-4 bg-slate-900/90 sticky top-0">
+              <div className="flex items-center gap-3">
+                <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 font-bold text-base">
+                  🔍
+                </span>
+                <div>
+                  <h3 className="text-base font-bold text-slate-100 line-clamp-1">
+                    Raw JSON: {product.productTitle.value}
+                  </h3>
+                  <p className="text-xs text-slate-400">
+                    Toàn bộ object JSON đầy đủ của sản phẩm (bao gồm các trường aeo_*, SEO, mô tả và hình ảnh).
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleCopy(rawJsonString, "modal-raw-json")}
+                  className="px-3.5 py-1.5 rounded-lg text-xs font-bold bg-cyan-600 hover:bg-cyan-500 text-white transition flex items-center gap-1.5 cursor-pointer shadow-md shadow-cyan-900/30"
+                >
+                  {copiedKey === "modal-raw-json" ? "✓ Đã copy Full JSON" : "📋 Copy Full JSON"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowRawJsonModal(false)}
+                  className="rounded-lg p-2 text-slate-400 hover:bg-slate-800 hover:text-slate-200 transition cursor-pointer"
+                  aria-label="Đóng popup"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+
+            {/* Modal Body */}
+            <div className="flex-1 overflow-auto p-5 bg-slate-950">
+              <pre className="font-mono text-xs text-cyan-300 whitespace-pre leading-relaxed select-all">
+                {rawJsonString}
+              </pre>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
