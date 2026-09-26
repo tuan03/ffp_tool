@@ -124,11 +124,14 @@ def _normalize_points(
         err_as_xy = abs(c0_min - xmin) + abs(c0_max - xmax) + abs(c1_min - ymin) + abs(c1_max - ymax)
         err_as_yx = abs(c0_min - ymin) + abs(c0_max - ymax) + abs(c1_min - xmin) + abs(c1_max - xmax)
 
+        # 0. Definitive XY match: if [x, y] is already significantly better, never swap
+        if err_as_xy + 15.0 < err_as_yx:
+            should_swap = False
         # 1. Component alignment: does component 0 match y and component 1 match x significantly better?
-        if err_as_yx + 15.0 < err_as_xy:
+        elif err_as_yx + 15.0 < err_as_xy:
             should_swap = True
-        # 2. Aspect ratio inversion check: e.g. horizontal rug (box_aspect > 1.15) but points are vertical (pts_aspect < 0.85)
-        elif (box_aspect > 1.15 and pts_aspect < 0.85) or (box_aspect < 0.85 and pts_aspect > 1.15):
+        # 2. Aspect ratio inversion check: e.g. horizontal rug (box_aspect > 1.05) but points are vertical (pts_aspect < 0.95)
+        elif (box_aspect > 1.05 and pts_aspect < 0.95) or (box_aspect < 0.95 and pts_aspect > 1.05):
             should_swap = True
         # 3. Containment check: points clearly fall within [ymin, ymax] for c0 and [xmin, xmax] for c1
         elif (ymin - 40 <= c0_min and c0_max <= ymax + 40 and xmin - 40 <= c1_min and c1_max <= xmax + 40) and not (
@@ -180,6 +183,8 @@ def normalize_surface_coordinates(surface: dict[str, object], box_2d: object = N
         b2d = surface.get("box_2d")
     elif not b2d and isinstance(surface.get("segmentation"), dict) and surface["segmentation"].get("box_2d"):
         b2d = surface["segmentation"]["box_2d"]
+    if b2d and not surface.get("box_2d"):
+        surface["box_2d"] = b2d
 
     is_inverted = False
     if "quad" in surface and surface["quad"]:
@@ -273,6 +278,8 @@ def compose_reference_artwork(
             b2d = surface["segmentation"].get("box_2d")
         if not b2d and isinstance(plan.get("box_2d"), list):
             b2d = plan["box_2d"]
+        if not b2d and isinstance(plan.get("product_boxes_norm_0_1000"), list) and plan["product_boxes_norm_0_1000"]:
+            b2d = plan["product_boxes_norm_0_1000"][0]
         normalize_surface_coordinates(surface, b2d)
 
         # Pillar 2: Build exclusion zone mask from plan and surface exclusion zones
@@ -336,13 +343,12 @@ def compose_reference_artwork(
 
         quad_mask = np.asarray(_polygon_mask(reference.size, quad)) > 0
         outside_pixels = np.count_nonzero(visible & ~quad_mask)
-        quad_excl_collision = np.count_nonzero(quad_mask & exclusion_mask)
 
-        if outside_pixels > 0 or quad_excl_collision > 0:
+        if outside_pixels > 0:
             mask_area = np.count_nonzero(visible)
             overlap_area = np.count_nonzero(visible & quad_mask)
             coverage_ratio = overlap_area / max(1, mask_area)
-            if coverage_ratio >= 0.95 and quad_excl_collision == 0:
+            if coverage_ratio >= 0.95:
                 visible = visible & quad_mask
             else:
                 # Auto-repair: attempt refitting perspective quad from visible mask contour using cv2
@@ -410,7 +416,7 @@ def compose_reference_artwork(
             except Exception:
                 dilated_surround = np.asarray(Image.fromarray(vis_u8).filter(ImageFilter.MaxFilter(size=51))) > 0
 
-            surround_mask = dilated_surround & ~visible
+            surround_mask = dilated_surround & ~visible & ~exclusion_mask
             gray_ref = np.asarray(reference.convert("L"), dtype=np.float32)
 
             light_map = np.ones((reference.height, reference.width), dtype=np.float32)
@@ -425,8 +431,9 @@ def compose_reference_artwork(
                     try:
                         A = np.column_stack([x_indices, y_indices, np.ones_like(x_indices)])
                         coeffs, _, _, _ = np.linalg.lstsq(A, surround_lum, rcond=None)
-                        grid_y, grid_x = np.indices((reference.height, reference.width))
-                        fitted_plane = (coeffs[0] * grid_x + coeffs[1] * grid_y + coeffs[2]) / mean_lum
+                        x_coords = np.arange(reference.width, dtype=np.float32)[np.newaxis, :]
+                        y_coords = np.arange(reference.height, dtype=np.float32)[:, np.newaxis]
+                        fitted_plane = (coeffs[0] * x_coords + coeffs[1] * y_coords + coeffs[2]) / mean_lum
                         # Tightly constrain ambient modulation to +/- 6% so colors remain pure and true
                         light_map = np.clip(fitted_plane, 0.94, 1.06).astype(np.float32)
                     except Exception:

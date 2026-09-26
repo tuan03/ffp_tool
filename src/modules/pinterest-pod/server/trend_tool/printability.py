@@ -398,21 +398,27 @@ SCORING RULES:
     is_rug = target.name == "rug"
 
     if reference_template is not None:
+        val_shape = assessment.get("product_shape_and_orientation_matched")
         shape_orientation_ok = (
-            assessment.get("product_shape_and_orientation_matched") is True
-            or (assessment.get("product_shape_and_orientation_matched") is None and assessment.get("reference_geometry_preserved") is True)
+            _bool(val_shape)
+            if val_shape is not None
+            else _bool(assessment.get("reference_geometry_preserved"))
         )
+        val_critical = assessment.get("critical_content_preserved")
         critical_content_ok = (
-            assessment.get("critical_content_preserved") is True
-            or (assessment.get("critical_content_preserved") is None and assessment.get("protected_parts_preserved") is True and assessment.get("mask_respects_printable_boundaries", True) is True)
+            _bool(val_critical)
+            if val_critical is not None
+            else (_bool(assessment.get("protected_parts_preserved")) and _bool(assessment.get("mask_respects_printable_boundaries", True)))
         )
+        val_artifacts = assessment.get("no_artificial_lighting_artifacts")
         no_artifacts_ok = (
-            assessment.get("no_artificial_lighting_artifacts") is True
-            or (assessment.get("no_artificial_lighting_artifacts") is None and assessment.get("surface_lighting_preserved") is True)
+            _bool(val_artifacts)
+            if val_artifacts is not None
+            else _bool(assessment.get("surface_lighting_preserved"))
         )
-        artwork_identity_ok = assessment.get("artwork_identity_preserved") is True
-        all_replaced_ok = assessment.get("all_print_surfaces_replaced") is True
-        no_orig_print_ok = assessment.get("no_original_print_remaining") is True
+        artwork_identity_ok = _bool(assessment.get("artwork_identity_preserved"))
+        all_replaced_ok = _bool(assessment.get("all_print_surfaces_replaced"))
+        no_orig_print_ok = _bool(assessment.get("no_original_print_remaining"))
 
         accepted = (
             score >= 70

@@ -339,6 +339,77 @@ class TestFourBestPracticePillars(unittest.TestCase):
                 )
                 self.assertTrue(decision.accepted, "QA must accept when all four pillars are satisfied")
 
+    def test_unbiased_qa_accepts_string_booleans_from_gemini(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "mockup.png"
+            Image.new("RGB", (32, 32), "red").save(path)
+
+            # Gemini often returns booleans as lowercase strings in relaxed JSON
+            mock_assessment = {
+                "listing_realism_score": 90,
+                "product_shape_and_orientation_matched": "true",
+                "critical_content_preserved": "true",
+                "no_artificial_lighting_artifacts": "true",
+                "artwork_identity_preserved": "true",
+                "all_print_surfaces_replaced": "true",
+                "no_original_print_remaining": "true",
+            }
+
+            with patch("trend_tool.printability._vision_pair_assessment", return_value=mock_assessment):
+                decision = assess_direct_ai_mockup(
+                    path,
+                    path,
+                    ProductTarget(name="rug", width_px=32, height_px=32),
+                    backend="auto",
+                    model="vision",
+                    image_type="REFERENCE_TEMPLATE",
+                    reference_template=Image.new("RGB", (32, 32), "green"),
+                    edit_mask=Image.new("L", (32, 32), 255),
+                )
+                self.assertTrue(decision.accepted, "QA must accept string booleans ('true') from Gemini")
+
+    def test_ambient_lighting_strictly_excludes_infographic_exclusion_zones(self):
+        # Floor is neutral grey (128, 128, 128)
+        ref_img = Image.new("RGB", (500, 500), (128, 128, 128))
+        draw = ImageDraw.Draw(ref_img)
+        # Adjacent graphic text banner (exclusion zone) at y: 50..150, x: 50..450 is pure white (255, 255, 255)
+        draw.rectangle([50, 50, 450, 150], fill=(255, 255, 255))
+        # Product is at y: 150..400, x: 100..400
+        plan = {
+            "all_printable_surfaces_identified": True,
+            "photorealistic": True,
+            "exclusion_zones": [[100, 100, 300, 900]],  # banner in norm 0..1000
+            "surfaces": [
+                {
+                    "surface_id": "rug",
+                    "geometry": "planar",
+                    "confidence": 0.98,
+                    "quad": [[200, 300], [800, 300], [800, 800], [200, 800]],
+                    "polygon": [[200, 300], [800, 300], [800, 800], [200, 800]],
+                    "protected_polygons": [],
+                }
+            ],
+        }
+        # Artwork with neutral grey 160
+        artwork = Image.new("RGB", (100, 100), (160, 160, 160))
+        composite, _ = compose_reference_artwork(ref_img, artwork, plan, photorealistic=True)
+        # Verify ambient modulation on the artwork does not get distorted by the white banner
+        top_art_val = composite.getpixel((250, 180))[0]
+        bottom_art_val = composite.getpixel((250, 380))[0]
+        diff = abs(int(top_art_val) - int(bottom_art_val))
+        self.assertLess(diff, 15, f"Exclusion zone corrupted ambient lighting: diff={diff}")
+
+    def test_normalize_surface_coordinates_persists_box_2d(self):
+        box_2d = [400, 100, 600, 800]
+        surface = {
+            "quad": [[400, 100], [400, 800], [600, 800], [600, 100]],
+            "polygon": [[400, 100], [400, 800], [600, 800], [600, 100]],
+            "protected_polygons": [],
+        }
+        normalize_surface_coordinates(surface, box_2d)
+        self.assertIn("box_2d", surface)
+        self.assertEqual(surface["box_2d"], box_2d)
+
 
 if __name__ == "__main__":
     unittest.main()
