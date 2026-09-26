@@ -16,6 +16,14 @@ export type {
   SeoCorpusCommitResult,
   SeoCorpusCommitTimings,
 } from "./corpus-commit-coordinator";
+export { createSeoContentQueue, SeoContentQueue } from "./queue";
+export type {
+  SeoQueueEvents,
+  SeoQueueItem,
+  SeoQueueItemStatus,
+  SeoQueueOptions,
+  SeoQueueProgressStats,
+} from "./queue";
 export {
   applySeoContentToCustomizationProduct,
   fromCustomizationBatch,
