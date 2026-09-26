@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 import shutil
 from threading import Event
+import time
 from typing import Callable
 
 from PIL import Image, ImageDraw
@@ -1104,6 +1105,7 @@ def run_production_from_candidates(
                             })
                     except Exception as mock_exc:
                         log(progress, f"Mockup view {var_idx} skipped: {mock_exc}")
+                    time.sleep(1.0)
 
         # Explicit garbage collection after each candidate to keep memory usage minimal on low-RAM VPS
         gc.collect()

@@ -583,6 +583,7 @@ def build_direct_ai_mockup(
     output_dir.mkdir(parents=True, exist_ok=True)
     stem = print_path.stem.replace("_rgb", "")
     suffix = f"_v{max(1, variant):02d}"
+    mockup_path = output_dir / "lifestyle_mockups" / f"{stem}{suffix}_lifestyle.png"
     client = None
     try:
         if backend and backend not in ("off", "none", "mock", "test"):
@@ -638,7 +639,8 @@ def build_direct_ai_mockup(
     best_candidate_path: Path | None = None
     best_candidate_metrics: dict[str, object] = {}
 
-    for attempt in range(1, max(1, attempts) + 1):
+    attempts_to_run = max(1, attempts) if client is not None else 0
+    for attempt in range(1, attempts_to_run + 1):
         candidate_path = output_dir / "direct_ai_candidates" / f"{stem}{suffix}_attempt_{attempt}.png"
         force_hybrid = bool(kwargs.get("force_hybrid_composite", False))
         try:
@@ -740,7 +742,8 @@ def build_direct_ai_mockup(
                         "and correct cloth geometry, folds, scale, and lighting."
                     )
             if attempt < max(1, attempts) and is_transient_gemini_error(exc):
-                time.sleep(float(attempt) * 2.0)
+                backoff = 6.0 * attempt if ("429" in last_error or "resource_exhausted" in last_error.lower()) else float(attempt) * 2.0
+                time.sleep(backoff)
                 continue
             if attempt < max(1, attempts) and "direct ai mockup qa" in last_error.lower():
                 continue

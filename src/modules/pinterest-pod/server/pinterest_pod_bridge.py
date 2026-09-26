@@ -2003,7 +2003,8 @@ def produce_pod_job(payload: dict[str, Any], base_url: str, api_url: str = DEFAU
         req_body["height_px"] = print_spec["height_px"]
 
     # Directly execute in-process local pipeline worker
-    local_job_id = f"job_prod_{uuid.uuid4().hex[:10]}"
+    target_job_id = str(payload.get("target_job_id") or payload.get("job_id") or "").strip()
+    local_job_id = target_job_id if target_job_id else f"job_prod_{uuid.uuid4().hex[:10]}"
     cancel_event = threading.Event()
     initial_state = {
         "job_id": local_job_id,
