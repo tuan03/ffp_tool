@@ -181,6 +181,130 @@ test("B5 HeuristicContentGenerator does not truncate distinctive suffix mid-word
   assert.ok(draft.productSeoTitle.length <= 70);
 });
 
+test("B5 HeuristicContentGenerator generates full AEO suite with quick summary, 4 strategic FAQs, and Schema.org JSON-LD @graph", async () => {
+  const facts = buildContentFactSheet({
+    ...createInitialContext({
+      title: "Viking Quilt Bed Set - Viking-03",
+      description: "Machine wash cold gentle cycle. Microfiber bedding.",
+      niche: "bedding",
+      handle: "viking-quilt-bed-set-viking-03",
+      images: [],
+      variantLabel: "Viking-03",
+    }),
+    productUnderstanding: {
+      physicalProductIdentity: "quilt bed set",
+      typography: { visibleTexts: ["VALHALLA"], styleSummary: "Nordic runes" },
+      visualEntities: "Thor Mjolnir skull hammer with Celtic knotwork and ravens",
+      sceneContext: "Bedroom",
+    },
+    shoppingContext: {
+      targetAudience: ["Norse mythology enthusiasts"],
+      suitableOccasions: ["Housewarming"],
+      useCases: ["master bedroom decor"],
+      buyerIntentKeywords: ["viking quilt set"],
+    },
+  });
+
+  const generator = new HeuristicContentGenerator();
+  const draft = await generator.generate({
+    facts,
+    keywords: { primary: "viking quilt bed set", secondary: ["all-season bedding"], supportingKeywords: [], framingConcepts: [], targetedKeywords: [] },
+    constraints: { maxSeoTitleLength: 70, maxSeoDescriptionLength: 160, maxHandleLength: 80, maxBullets: 5, preserveExistingHandle: true },
+  });
+
+  // 1. aeo_quick_summary checks
+  assert.ok(draft.aeo_quick_summary, "aeo_quick_summary must be defined");
+  const words = draft.aeo_quick_summary.split(/\s+/).filter(Boolean);
+  assert.ok(words.length >= 30 && words.length <= 80, `Quick summary word count ${words.length} should be ~40-70 words`);
+  assert.match(draft.aeo_quick_summary, /Viking-03/);
+  assert.match(draft.aeo_quick_summary, /Thor Mjolnir skull hammer/);
+  assert.match(draft.aeo_quick_summary, /quilt bed set/i);
+
+  // 2. aeo_faq checks: exactly 4 strategic questions
+  assert.ok(Array.isArray(draft.aeo_faq), "aeo_faq must be an array");
+  assert.equal(draft.aeo_faq.length, 4, "aeo_faq must contain exactly 4 Q&As");
+
+  // Q1: Pre-purchase intent
+  assert.match(draft.aeo_faq[0].question, /How do I choose the right/i);
+  assert.ok(draft.aeo_faq[0].answer.length > 20);
+
+  // Q2: Usability/Durability adapted for bedding
+  assert.match(draft.aeo_faq[1].question, /all-season|comfort/i);
+  assert.match(draft.aeo_faq[1].answer, /warmth|breathable|season/i);
+
+  // Q3: Care/Cleaning since personalizationSupported is false
+  assert.match(draft.aeo_faq[2].question, /cleaned|maintained/i);
+  assert.doesNotMatch(draft.aeo_faq[2].answer, /personalize|customized name/i);
+
+  // Q4: USP Differentiation
+  assert.match(draft.aeo_faq[3].question, /different from similar products/i);
+  assert.match(draft.aeo_faq[3].answer, /Thor Mjolnir skull hammer/);
+
+  // 3. aeo_json_ld checks: Schema.org @graph [Product, FAQPage]
+  assert.ok(draft.aeo_json_ld, "aeo_json_ld must be defined");
+  const parsedJsonLd = JSON.parse(draft.aeo_json_ld);
+  assert.equal(parsedJsonLd["@context"], "https://schema.org");
+  assert.ok(Array.isArray(parsedJsonLd["@graph"]));
+  assert.equal(parsedJsonLd["@graph"].length, 2);
+
+  const productEntity = parsedJsonLd["@graph"].find((item: { "@type": string }) => item["@type"] === "Product");
+  assert.ok(productEntity, "JSON-LD graph must include Product entity");
+  assert.equal(productEntity.name, draft.productTitle);
+
+  const faqEntity = parsedJsonLd["@graph"].find((item: { "@type": string }) => item["@type"] === "FAQPage");
+  assert.ok(faqEntity, "JSON-LD graph must include FAQPage entity");
+  assert.equal(faqEntity.mainEntity.length, 4);
+  assert.equal(faqEntity.mainEntity[0]["@type"], "Question");
+  assert.equal(faqEntity.mainEntity[0].acceptedAnswer["@type"], "Answer");
+});
+
+test("B5 HeuristicContentGenerator adapts FAQ Q2 and Q3 for rugs and personalization", async () => {
+  const rugFacts = buildContentFactSheet({
+    ...createInitialContext({
+      title: "Custom Vintage Cat Rug",
+      description: "Low-pile washable rug.",
+      niche: "custom rug",
+      handle: "custom-vintage-cat-rug",
+      images: [],
+    }),
+    productUnderstanding: {
+      physicalProductIdentity: "area rug",
+      typography: { visibleTexts: [], styleSummary: "" },
+      visualEntities: "Vintage black cat silhouette",
+      sceneContext: "",
+    },
+    shoppingContext: {
+      targetAudience: ["cat lovers"],
+      suitableOccasions: [],
+      useCases: ["living room entryway"],
+      buyerIntentKeywords: [],
+    },
+  });
+
+  const rugFactsWithCustom = {
+    ...rugFacts,
+    personalizationSupported: true,
+  };
+
+  const generator = new HeuristicContentGenerator();
+  const draft = await generator.generate({
+    facts: rugFactsWithCustom,
+    keywords: { primary: "custom vintage cat rug", secondary: [], supportingKeywords: [], framingConcepts: [], targetedKeywords: [] },
+    constraints: { maxSeoTitleLength: 70, maxSeoDescriptionLength: 160, maxHandleLength: 80, maxBullets: 5, preserveExistingHandle: true },
+  });
+
+  assert.ok(draft.aeo_faq);
+  assert.equal(draft.aeo_faq.length, 4);
+
+  // Q2: Rug adapted
+  assert.match(draft.aeo_faq[1].question, /high-traffic/i);
+  assert.match(draft.aeo_faq[1].answer, /low-pile|foot traffic/i);
+
+  // Q3: Personalization supported
+  assert.match(draft.aeo_faq[2].question, /personalize|customize/i);
+  assert.match(draft.aeo_faq[2].answer, /personalization/i);
+});
+
 
 
 

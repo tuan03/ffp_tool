@@ -92,5 +92,8 @@ export function finalizePipelineOutput(context: SeoPipelineContext): SeoContentO
       content?.productSeoDescription ?? context.source.description.slice(0, 160),
     images,
     productHandle: content?.productHandle ?? context.source.handle,
+    aeo_quick_summary: content?.aeo_quick_summary,
+    aeo_faq: content?.aeo_faq,
+    aeo_json_ld: content?.aeo_json_ld,
   };
 }

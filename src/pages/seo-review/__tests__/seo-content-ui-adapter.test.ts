@@ -152,6 +152,53 @@ test("adaptSeoOutputToViewModel: complete SeoContentOutput produces all 'real' c
   assert.equal(vm.reviewDecision, "pending");
 });
 
+test("adaptSeoOutputToViewModel: maps aeo_quick_summary, aeo_faq, and aeo_json_ld with field provenance", () => {
+  const outputWithAeo: SeoContentOutput = {
+    productTitle: "Viking Quilt Bed Set - Viking-03",
+    productDescription: "<p>Microfiber bedding</p>",
+    productSeoTitle: "Viking Quilt Bed Set Viking-03",
+    productSeoDescription: "Shop Viking quilt bed set.",
+    productHandle: "viking-quilt-bed-set-viking-03",
+    images: [],
+    aeo_quick_summary: "The Viking-03 Quilt Bed Set is an all-season microfiber bedding package designed for Norse mythology enthusiasts.",
+    aeo_faq: [
+      {
+        question: "How do I choose the right Viking quilt bed set for master bedroom decor?",
+        answer: "Choose by matching dimensions and checking all-season breathability.",
+      },
+      {
+        question: "Is this quilt set suitable for year-round, all-season use?",
+        answer: "Yes, lightweight microfiber provides cozy warmth and breathable comfort.",
+      },
+    ],
+    aeo_json_ld: JSON.stringify({ "@context": "https://schema.org", "@graph": [{ "@type": "Product" }] }),
+  };
+
+  const vm = adaptSeoOutputToViewModel(outputWithAeo, {
+    productId: "gid://shopify/Product/123",
+    asin: "B0D9RSVZHX",
+  });
+
+  assert.equal(vm.aeoQuickSummary?.source, "real");
+  assert.match(vm.aeoQuickSummary?.value ?? "", /Viking-03 Quilt Bed Set/);
+
+  assert.equal(vm.aeoFaq?.source, "real");
+  assert.equal(vm.aeoFaq?.value.length, 2);
+  assert.equal(vm.aeoFaq?.value[0].question, "How do I choose the right Viking quilt bed set for master bedroom decor?");
+
+  assert.equal(vm.aeoJsonLd?.source, "real");
+  assert.match(vm.aeoJsonLd?.value ?? "", /schema\.org/);
+
+  // When omitted in partial output:
+  const vmWithoutAeo = adaptSeoOutputToViewModel({}, { productId: "p2" });
+  assert.equal(vmWithoutAeo.aeoQuickSummary?.source, "mock");
+  assert.equal(vmWithoutAeo.aeoQuickSummary?.value, "");
+  assert.equal(vmWithoutAeo.aeoFaq?.source, "mock");
+  assert.deepEqual(vmWithoutAeo.aeoFaq?.value, []);
+  assert.equal(vmWithoutAeo.aeoJsonLd?.source, "mock");
+  assert.equal(vmWithoutAeo.aeoJsonLd?.value, "");
+});
+
 test("adaptSeoOutputToViewModel: partial output tags missing fields as 'mock' without breaking structure", () => {
   const partialOutput: Partial<SeoContentOutput> = {
     productTitle: "Partial Spooky Pillow",

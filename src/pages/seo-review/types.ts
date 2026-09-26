@@ -8,6 +8,7 @@
 import type { CrawlProduct } from "../../modules/customization-normalizer";
 import type { AmazonCrawlerReviewTarget } from "../../modules/amazon-crawler";
 import type { PodDeliverableItem } from "../../modules/pinterest-pod";
+import type { GeneratedFaqItem } from "../../modules/seo-content";
 
 export type FieldSource = "real" | "mock";
 
@@ -61,6 +62,11 @@ export interface SeoProductUiViewModel {
   readonly seoDescription: DisplayField<string>;
   readonly handle: DisplayField<string>;
   readonly images: readonly SeoImageUiViewModel[];
+
+  // AEO Suite Fields
+  readonly aeoQuickSummary?: DisplayField<string>;
+  readonly aeoFaq?: DisplayField<readonly GeneratedFaqItem[]>;
+  readonly aeoJsonLd?: DisplayField<string>;
 
   // Progress & Review State
   readonly seoStatus: DisplayField<SeoProcessingStatus>;

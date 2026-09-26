@@ -1,4 +1,4 @@
-import type { SeoContentImageOutput, SeoContentInput } from "../types";
+import type { GeneratedFaqItem, SeoContentImageOutput, SeoContentInput } from "../types";
 import type { StoredEmbedding } from "./conflict-control/seo-conflict-corpus";
 
 export type SeoStageName = "b1" | "b2" | "b3" | "b4" | "b5" | "b6";
@@ -75,6 +75,9 @@ export interface ContentResult {
   readonly productSeoTitle: string;
   readonly productSeoDescription: string;
   readonly productHandle: string;
+  readonly aeo_quick_summary?: string;
+  readonly aeo_faq?: readonly GeneratedFaqItem[];
+  readonly aeo_json_ld?: string;
 }
 
 /** B5: Metadata nội bộ về từ khóa và cơ chế sinh nội dung */

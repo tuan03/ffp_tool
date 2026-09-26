@@ -55,6 +55,30 @@ export const GEMINI_CONTENT_DRAFT_SCHEMA: Record<string, unknown> = {
       description:
         "SEO meta description strictly <= 160 characters. Clear summary with natural click appeal.",
     },
+    aeo_quick_summary: {
+      type: "STRING",
+      description:
+        "Fact-dense, concise 40-70 word summary highlighting specific design entities, materials, dimensions, and ideal use case for AI search overviews.",
+    },
+    aeo_faq: {
+      type: "ARRAY",
+      description:
+        "Exactly 4 strategic Q&A pairs (Q1: pre-purchase intent/how to choose; Q2: practical usability/durability; Q3: customization if supported, otherwise care/sizing; Q4: unique selling proposition/differentiation).",
+      items: {
+        type: "OBJECT",
+        properties: {
+          question: {
+            type: "STRING",
+            description: "Clear, customer-centric question targeting search intent.",
+          },
+          answer: {
+            type: "STRING",
+            description: "Direct answer-first response grounded strictly in product facts.",
+          },
+        },
+        required: ["question", "answer"],
+      },
+    },
   },
   required: [
     "productTitle",
@@ -64,5 +88,7 @@ export const GEMINI_CONTENT_DRAFT_SCHEMA: Record<string, unknown> = {
     "closing",
     "productSeoTitle",
     "productSeoDescription",
+    "aeo_quick_summary",
+    "aeo_faq",
   ],
 };

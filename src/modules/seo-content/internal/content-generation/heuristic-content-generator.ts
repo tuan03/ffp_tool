@@ -1,17 +1,125 @@
 import type {
+  ContentFactSheet,
   ContentGenerationInput,
   ContentGenerator,
   GeneratedBullet,
   GeneratedContentDraft,
+  GeneratedFaqItem,
   KeywordAllocation,
 } from "./content-generation-types";
 import { fitProductTitle, fitSeoDescription, fitSeoTitle, toTitleCase } from "./content-fitters";
 import { findUnsupportedClaimsInText } from "./claim-guard";
-
 import {
   buildHeuristicProductTitle,
   extractVisionDesignConcept,
 } from "./heuristic-title-builder";
+import { buildJsonLdSchema } from "./json-ld-builder";
+
+/**
+ * Generates a concise, fact-dense 40-70 word summary highlighting specific design entities,
+ * materials, dimensions, and ideal use cases for AI search overviews (ChatGPT Search, Perplexity).
+ */
+export function buildHeuristicAiQuickSummary(
+  facts: ContentFactSheet,
+  productTitle: string,
+): string {
+  const identity = facts.physicalProductIdentity || facts.niche || "specialty item";
+  const entityText = facts.visualEntities && !/^(unknown|none|n\/a|not applicable)[\s.]*$/i.test(facts.visualEntities.trim())
+    ? `featuring ${facts.visualEntities.trim()}`
+    : "";
+  const typographyText = facts.typographyVisibleTexts.filter((t) => !/^(unknown|none|n\/a|not applicable)[\s.]*$/i.test(t.trim())).length > 0
+    ? `with printed '${facts.typographyVisibleTexts.filter((t) => !/^(unknown|none|n\/a|not applicable)[\s.]*$/i.test(t.trim()))[0]}' lettering`
+    : "";
+  const stylePart = [entityText, typographyText].filter(Boolean).join(" ");
+  const audience = facts.targetAudience.length > 0 ? facts.targetAudience[0] : "home and lifestyle enthusiasts";
+  const useCase = facts.useCases.length > 0 ? facts.useCases[0] : "daily decorative and functional use";
+  const occasion = facts.occasions.length > 0 ? ` or special ${facts.occasions[0]} gifting` : "";
+  const variantClause = facts.variantLabel ? ` in the exclusive ${facts.variantLabel} edition` : "";
+
+  return `The ${productTitle} is an authentic ${identity}${variantClause} crafted for ${audience}. Carefully engineered ${stylePart ? `${stylePart}, ` : ""}it combines durable construction with distinctive themed artwork. Ideal for ${useCase}${occasion}, offering balanced performance, easy maintenance, and standout visual appeal for modern spaces.`;
+}
+
+/**
+ * Builds 4 strategic Q&A pairs (Q1: pre-purchase intent; Q2: usability/durability;
+ * Q3: customization or care; Q4: USP differentiation).
+ */
+export function buildHeuristicFaq(
+  facts: ContentFactSheet,
+  productTitle: string,
+): readonly GeneratedFaqItem[] {
+  const catName = facts.physicalProductIdentity || facts.niche || "item";
+  const primaryUseCase = facts.useCases.length > 0
+    ? facts.useCases[0]
+    : facts.occasions.length > 0
+      ? `${facts.occasions[0]} gifting`
+      : "daily use";
+
+  // Q1: Pre-purchase intent / How-to-choose
+  const q1 = `How do I choose the right ${catName} for ${primaryUseCase}?`;
+  const a1 = `When selecting a ${catName}, evaluate your space dimensions, preferred artwork aesthetic, and material durability. This ${productTitle} features verified construction and distinctive styling, making it an ideal choice for ${primaryUseCase}.`;
+
+  // Q2: Usability / Durability adapted to category
+  const catCorpus = `${facts.physicalProductIdentity || ""} ${facts.niche || ""} ${facts.originalTitle}`.toLowerCase();
+  let q2 = `Is this ${catName} suitable for everyday use?`;
+  let a2 = `Yes. Engineered with durable, high-quality materials, it is built to maintain structural integrity and color vibrancy through regular everyday use.`;
+
+  if (/rug|mat|carpet/i.test(catCorpus)) {
+    q2 = `Is this ${catName} suitable for high-traffic areas and busy households?`;
+    a2 = `Yes. It features a low-pile, resilient surface designed to withstand regular foot traffic while remaining easy to vacuum and position securely.`;
+  } else if (/bedding|quilt|blanket|duvet|comforter/i.test(catCorpus)) {
+    q2 = `Is this ${catName} suitable for year-round, all-season comfort?`;
+    a2 = `Yes. Its balanced, breathable fabric construction delivers cozy warmth in cooler months and comfortable airflow during warmer seasons.`;
+  } else if (/bag|backpack|tote/i.test(catCorpus)) {
+    q2 = `Is this ${catName} sturdy enough for heavy everyday carry and commuting?`;
+    a2 = `Yes. Built with reinforced stress points and durable stitching, it comfortably handles daily essentials, electronics, and commute gear.`;
+  } else if (/shirt|hoodie|apparel|clothing|sweatshirt/i.test(catCorpus)) {
+    q2 = `Is this ${catName} comfortable for all-day wear and regular washing?`;
+    a2 = `Yes. Crafted from soft, breathable fabric with colorfast printing that maintains shape and graphic clarity after repeated wash cycles.`;
+  }
+
+  // Q3: Conditional Customization OR Care / Sizing
+  let q3: string;
+  let a3: string;
+  if (facts.personalizationSupported) {
+    q3 = `Can I personalize or customize this ${catName}?`;
+    a3 = `Yes. Personalization options allow you to tailor specific names, dates, or custom details, creating a truly unique keepsake or personalized gift.`;
+  } else {
+    q3 = `What is included with this ${catName}, and how should it be cleaned and maintained?`;
+    const careMention = /wash|clean|wipe/i.test(facts.originalDescription)
+      ? "Follow care guidelines: wash cold on gentle cycle or wipe clean, and air dry to maintain material quality."
+      : "For best longevity, spot clean or machine wash cold on a gentle cycle and lay flat or tumble dry low. Avoid bleach.";
+    a3 = `This package includes the standard ${catName} specification. ${careMention}`;
+  }
+
+  // Q4: USP Differentiation
+  const variantTag = facts.variantLabel ? ` (${facts.variantLabel})` : "";
+  const q4 = `What makes this ${catName}${variantTag} different from similar products?`;
+  const visualText = facts.visualEntities && !/^(unknown|none|n\/a|not applicable)[\s.]*$/i.test(facts.visualEntities.trim())
+    ? `detailed ${facts.visualEntities.trim()}`
+    : "original graphic composition";
+  const a4 = `Unlike generic mass-market alternatives, this edition features ${visualText}${facts.variantLabel ? ` in the signature ${facts.variantLabel} design` : ""}, paired with verified materials and focused craftsmanship for long-term appeal.`;
+
+  return [
+    { question: q1, answer: a1 },
+    { question: q2, answer: a2 },
+    { question: q3, answer: a3 },
+    { question: q4, answer: a4 },
+  ];
+}
+
+/**
+ * Builds a Schema.org compliant JSON-LD string combining Product and FAQPage.
+ */
+export function buildHeuristicJsonLd(
+  draft: { readonly productTitle: string; readonly productSeoDescription: string },
+  faqItems: readonly GeneratedFaqItem[],
+): string {
+  return buildJsonLdSchema({
+    productTitle: draft.productTitle,
+    description: draft.productSeoDescription,
+    faq: faqItems,
+  });
+}
 
 /**
  * Deterministic, offline rule-based copywriting generator.
@@ -171,6 +279,14 @@ export class HeuristicContentGenerator implements ContentGenerator {
     const rawSeoDesc = `Discover this ${primaryFrag}${variantFrag}${audienceFrag}. Distinctive design, premium look, and everyday functionality. Shop now!`;
     const productSeoDescription = fitSeoDescription(rawSeoDesc, constraints.maxSeoDescriptionLength);
 
+    // 8. Build AEO Suite (AI Quick Summary, Strategic FAQ, JSON-LD Schema)
+    const aeo_quick_summary = buildHeuristicAiQuickSummary(facts, productTitle);
+    const aeo_faq = buildHeuristicFaq(facts, productTitle);
+    const aeo_json_ld = buildHeuristicJsonLd(
+      { productTitle, productSeoDescription },
+      aeo_faq,
+    );
+
     return {
       productTitle,
       intro,
@@ -179,6 +295,9 @@ export class HeuristicContentGenerator implements ContentGenerator {
       closing,
       productSeoTitle,
       productSeoDescription,
+      aeo_quick_summary,
+      aeo_faq,
+      aeo_json_ld,
     };
   }
 }

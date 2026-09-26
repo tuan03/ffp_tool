@@ -55,6 +55,7 @@ export type {
   PodPrintMasterSpec,
 } from "./pinterest-pod-adapter";
 export type {
+  GeneratedFaqItem,
   SeoContentImageInput,
   SeoContentImageOutput,
   SeoContentAltOnlyDetailedOutput,

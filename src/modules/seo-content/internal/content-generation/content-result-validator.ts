@@ -3,6 +3,7 @@ import type {
   ContentFactSheet,
   ContentResult,
   GeneratedContentDraft,
+  GeneratedFaqItem,
   KeywordAllocation,
 } from "./content-generation-types";
 import {
@@ -79,6 +80,38 @@ export function validateDraft(raw: unknown): GeneratedContentDraft {
     }
   }
 
+  const aeo_quick_summary =
+    typeof obj.aeo_quick_summary === "string" && obj.aeo_quick_summary.trim().length > 0
+      ? obj.aeo_quick_summary.trim()
+      : undefined;
+
+  let aeo_faq: GeneratedFaqItem[] | undefined;
+  if (Array.isArray(obj.aeo_faq)) {
+    const validFaq: GeneratedFaqItem[] = [];
+    for (const item of obj.aeo_faq) {
+      if (
+        item &&
+        typeof item === "object" &&
+        typeof (item as Record<string, unknown>).question === "string" &&
+        typeof (item as Record<string, unknown>).answer === "string"
+      ) {
+        const q = ((item as Record<string, unknown>).question as string).trim();
+        const a = ((item as Record<string, unknown>).answer as string).trim();
+        if (q.length > 0 && a.length > 0) {
+          validFaq.push({ question: q, answer: a });
+        }
+      }
+    }
+    if (validFaq.length > 0) {
+      aeo_faq = validFaq;
+    }
+  }
+
+  let aeo_json_ld =
+    typeof obj.aeo_json_ld === "string" && obj.aeo_json_ld.trim().length > 0
+      ? obj.aeo_json_ld.trim()
+      : undefined;
+
   return {
     productTitle: obj.productTitle.trim(),
     intro: obj.intro.trim(),
@@ -90,6 +123,9 @@ export function validateDraft(raw: unknown): GeneratedContentDraft {
     closing: obj.closing.trim(),
     productSeoTitle: obj.productSeoTitle.trim(),
     productSeoDescription: obj.productSeoDescription.trim(),
+    ...(aeo_quick_summary ? { aeo_quick_summary } : {}),
+    ...(aeo_faq ? { aeo_faq } : {}),
+    ...(aeo_json_ld ? { aeo_json_ld } : {}),
   };
 }
 

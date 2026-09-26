@@ -31,6 +31,11 @@ export interface GeneratedBullet {
   readonly text: string;
 }
 
+export interface GeneratedFaqItem {
+  readonly question: string;
+  readonly answer: string;
+}
+
 export interface GeneratedContentDraft {
   readonly productTitle: string;
   readonly intro: string;
@@ -39,6 +44,9 @@ export interface GeneratedContentDraft {
   readonly closing: string;
   readonly productSeoTitle: string;
   readonly productSeoDescription: string;
+  readonly aeo_quick_summary?: string;
+  readonly aeo_faq?: readonly GeneratedFaqItem[];
+  readonly aeo_json_ld?: string;
 }
 
 export interface ContentConstraints {

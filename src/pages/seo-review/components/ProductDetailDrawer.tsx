@@ -536,6 +536,101 @@ export function ProductDetailDrawer({
               )}
             </div>
 
+            {/* AEO Suite (Generative / Answer Engine Optimization) */}
+            <div className="rounded-xl border border-purple-900/50 bg-purple-950/20 p-5 space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="text-base">🤖</span>
+                  <h3 className="font-bold text-purple-300 text-sm tracking-wide">
+                    AEO Suite (AI Search &amp; Overview Optimization)
+                  </h3>
+                </div>
+                <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                  GEO / Perplexity / ChatGPT Search
+                </span>
+              </div>
+
+              {/* 1. AI Quick Summary (Featured Snippet Passage) */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+                    <span>⚡ AI Quick Summary</span>
+                    <span className="text-[10px] text-slate-500 font-normal">(AI Overviews snippet)</span>
+                  </label>
+                  {product.aeoQuickSummary && <SourceBadge source={product.aeoQuickSummary.source} />}
+                </div>
+                <div className="p-3 rounded-lg bg-slate-900/90 border border-slate-800 text-slate-200 text-xs leading-relaxed">
+                  {product.aeoQuickSummary?.value ? (
+                    product.aeoQuickSummary.value
+                  ) : (
+                    <span className="text-slate-500 italic">Chưa có dữ liệu AEO Quick Summary</span>
+                  )}
+                </div>
+              </div>
+
+              {/* 2. Strategic FAQ (4-pack) */}
+              <div className="space-y-2 pt-2 border-t border-purple-900/30">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+                    <span>❓ Strategic FAQ (Pre-purchase &amp; Differentiation)</span>
+                    <span className="text-[10px] text-slate-500 font-normal">
+                      ({product.aeoFaq?.value?.length ?? 0} câu hỏi)
+                    </span>
+                  </label>
+                  {product.aeoFaq && <SourceBadge source={product.aeoFaq.source} />}
+                </div>
+                {product.aeoFaq?.value && product.aeoFaq.value.length > 0 ? (
+                  <div className="space-y-2">
+                    {product.aeoFaq.value.map((item, qIdx) => (
+                      <div key={qIdx} className="p-2.5 rounded-lg bg-slate-900/80 border border-slate-800 space-y-1">
+                        <div className="font-semibold text-purple-200 text-xs flex items-start gap-1.5">
+                          <span className="text-purple-400 font-mono">Q{qIdx + 1}:</span>
+                          <span>{item.question}</span>
+                        </div>
+                        <div className="text-slate-300 text-xs pl-5 leading-relaxed">
+                          {item.answer}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="p-3 rounded-lg bg-slate-900/90 border border-slate-800 text-slate-500 text-xs italic">
+                    Chưa có FAQ chiến lược
+                  </div>
+                )}
+              </div>
+
+              {/* 3. JSON-LD Schema @graph */}
+              <div className="space-y-1.5 pt-2 border-t border-purple-900/30">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+                    <span>📄 Schema.org JSON-LD (@graph: Product &amp; FAQPage)</span>
+                  </label>
+                  <div className="flex items-center gap-2">
+                    {product.aeoJsonLd && <SourceBadge source={product.aeoJsonLd.source} />}
+                    {product.aeoJsonLd?.value ? (
+                      <button
+                        type="button"
+                        onClick={() => handleCopy(product.aeoJsonLd?.value || "", "json-ld")}
+                        className="px-2.5 py-1 rounded text-xs font-medium bg-purple-900/50 hover:bg-purple-800/60 text-purple-200 border border-purple-700/50 transition flex items-center gap-1"
+                      >
+                        {copiedKey === "json-ld" ? "✓ Đã copy" : "📋 Copy JSON-LD"}
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+                {product.aeoJsonLd?.value ? (
+                  <pre className="p-3 rounded-lg bg-slate-950 font-mono text-[11px] text-cyan-300 overflow-x-auto max-h-48 border border-slate-800/80">
+                    {product.aeoJsonLd.value}
+                  </pre>
+                ) : (
+                  <div className="p-3 rounded-lg bg-slate-900/90 border border-slate-800 text-slate-500 text-xs italic">
+                    Chưa có dữ liệu JSON-LD Schema
+                  </div>
+                )}
+              </div>
+            </div>
+
             {/* Print Master Specification (Shopify Metafields) */}
             {product.sourcePinterestItem?.printMaster && (
               <div className="rounded-xl border border-indigo-900/50 bg-indigo-950/20 p-4 space-y-3">

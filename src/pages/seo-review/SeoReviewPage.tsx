@@ -1254,6 +1254,9 @@ export function SeoReviewPage({
         },
       })),
       reviewStatus: p.reviewDecision,
+      aeo_quick_summary: p.aeoQuickSummary?.value ?? "",
+      aeo_faq: p.aeoFaq?.value ?? [],
+      aeo_json_ld: p.aeoJsonLd?.value ?? "",
     }));
 
     const blob = new Blob([JSON.stringify(exportPayload, null, 2)], {

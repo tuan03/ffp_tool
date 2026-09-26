@@ -589,6 +589,9 @@ export function applySeoContentToCustomizationProduct(
     seo: {
       title: finalSeoTitle,
       description: finalSeoDescription,
+      ...(seoOutput.aeo_quick_summary !== undefined ? { aeo_quick_summary: seoOutput.aeo_quick_summary } : {}),
+      ...(seoOutput.aeo_faq !== undefined ? { aeo_faq: seoOutput.aeo_faq } : {}),
+      ...(seoOutput.aeo_json_ld !== undefined ? { aeo_json_ld: seoOutput.aeo_json_ld } : {}),
     },
     media: product.media?.map((media) => {
       if (String(media.kind ?? "image").toLowerCase() === "video") return { ...media };

@@ -101,6 +101,8 @@ export function checkClaimGrounding(
     draft.closing,
     draft.productSeoTitle,
     draft.productSeoDescription,
+    draft.aeo_quick_summary ?? "",
+    ...(draft.aeo_faq ? draft.aeo_faq.map((f) => `${f.question} ${f.answer}`) : []),
   ]
     .join(" ")
     .toLowerCase();

@@ -4,6 +4,7 @@ import type { PodDeliverableItem } from "../../modules/pinterest-pod";
 import type {
   AutoSeoItemResult,
   CustomizationSeoItemResult,
+  GeneratedFaqItem,
   PinterestPodSeoItemResult,
   SeoContentImageOutput,
   SeoContentOutput,
@@ -170,6 +171,34 @@ export function adaptSeoOutputToViewModel(
     source: options.isStatusReal ? "real" : "mock",
   };
 
+  // AEO Fields mapping
+  const rawAeoQuickSummary =
+    output?.aeo_quick_summary ||
+    (options.sourceCrawlProduct?.seo as Record<string, unknown> | undefined)?.aeo_quick_summary as string | undefined;
+
+  const rawAeoFaq =
+    output?.aeo_faq ||
+    (options.sourceCrawlProduct?.seo as Record<string, unknown> | undefined)?.aeo_faq as GeneratedFaqItem[] | undefined;
+
+  const rawAeoJsonLd =
+    output?.aeo_json_ld ||
+    (options.sourceCrawlProduct?.seo as Record<string, unknown> | undefined)?.aeo_json_ld as string | undefined;
+
+  const aeoQuickSummaryField = getDisplayValue(
+    rawAeoQuickSummary,
+    "",
+  );
+
+  const aeoFaqField = getDisplayValue(
+    rawAeoFaq,
+    [],
+  );
+
+  const aeoJsonLdField = getDisplayValue(
+    rawAeoJsonLd,
+    "",
+  );
+
   return {
     id: safeId,
     storeId: options.storeId,
@@ -182,6 +211,9 @@ export function adaptSeoOutputToViewModel(
     seoDescription: seoDescriptionField,
     handle: handleField,
     images,
+    aeoQuickSummary: aeoQuickSummaryField,
+    aeoFaq: aeoFaqField,
+    aeoJsonLd: aeoJsonLdField,
     seoStatus: seoStatusField,
     reviewDecision: options.initialDecision || "pending",
     updatedAt: Date.now(),
@@ -338,6 +370,18 @@ export function adaptAmazonCrawlerReviewToViewModel(
     seoDescription: { value: product.seo?.description || "", source: "real" },
     handle: { value: product.handle || "", source: "real" },
     images,
+    aeoQuickSummary: getDisplayValue(
+      (product.seo as Record<string, unknown> | undefined)?.aeo_quick_summary as string | undefined,
+      "",
+    ),
+    aeoFaq: getDisplayValue(
+      (product.seo as Record<string, unknown> | undefined)?.aeo_faq as GeneratedFaqItem[] | undefined,
+      [],
+    ),
+    aeoJsonLd: getDisplayValue(
+      (product.seo as Record<string, unknown> | undefined)?.aeo_json_ld as string | undefined,
+      "",
+    ),
     seoStatus: { value: "completed", source: "real" },
     reviewDecision: item.decision,
     rejectionReason: item.rejectionReason || undefined,

@@ -97,6 +97,10 @@ export interface CrawlProduct {
   readonly seo?: {
     readonly title?: string;
     readonly description?: string;
+    readonly aeo_quick_summary?: string;
+    readonly aeo_faq?: readonly unknown[];
+    readonly aeo_json_ld?: string;
+    readonly [key: string]: unknown;
   };
   readonly sourceKey?: string;
   readonly bulletPoints?: readonly string[];

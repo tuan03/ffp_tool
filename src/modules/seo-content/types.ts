@@ -32,6 +32,11 @@ export interface SeoContentImageOutput {
   readonly webp: SeoContentWebpAsset;
 }
 
+export interface GeneratedFaqItem {
+  readonly question: string;
+  readonly answer: string;
+}
+
 export interface SeoContentOutput {
   readonly productTitle: string;
   readonly productDescription: string;
@@ -39,6 +44,9 @@ export interface SeoContentOutput {
   readonly productSeoDescription: string;
   readonly images: readonly SeoContentImageOutput[];
   readonly productHandle: string;
+  readonly aeo_quick_summary?: string;
+  readonly aeo_faq?: readonly GeneratedFaqItem[];
+  readonly aeo_json_ld?: string;
 }
 
 export type SeoContentEngine = "gemini" | "heuristic" | "mixed";
@@ -78,6 +86,9 @@ export interface SeoContentAltOnlyOutput {
   readonly productSeoDescription: string;
   readonly images: readonly SeoContentAltOnlyImageOutput[];
   readonly productHandle: string;
+  readonly aeo_quick_summary?: string;
+  readonly aeo_faq?: readonly GeneratedFaqItem[];
+  readonly aeo_json_ld?: string;
 }
 
 export interface SeoContentAltOnlyDetailedOutput {

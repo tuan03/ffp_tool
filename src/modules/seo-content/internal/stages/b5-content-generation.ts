@@ -144,6 +144,9 @@ export async function executeB5ContentGeneration(
     productSeoTitle,
     productSeoDescription,
     productHandle,
+    aeo_quick_summary: draft.aeo_quick_summary,
+    aeo_faq: draft.aeo_faq,
+    aeo_json_ld: draft.aeo_json_ld,
   };
 
   // 6. Validate final content
