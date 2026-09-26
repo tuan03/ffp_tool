@@ -5,12 +5,15 @@ import path from "node:path";
 import { promisify } from "node:util";
 
 import { loadServerEnvironment } from "../../src/config/server-environment";
-import { handoverPinterestToSeo } from "../../src/modules/orchestrator";
 import type {
   PinterestPodDeliverables,
   PodDeliverableItem,
 } from "../../src/modules/pinterest-pod";
 import type { SeoContentOutput } from "../../src/modules/seo-content";
+import type {
+  ProductUnderstanding,
+  SeoPipelineContext,
+} from "../../src/modules/seo-content/internal/domain-types";
 import { loadSmokePipelineRuntime } from "./runtime-loader";
 import { serializeSeoOutput } from "./e2e-smoke-helpers";
 
@@ -50,6 +53,7 @@ function renderHtmlReport(params: {
   readonly stageTraces: readonly StageExecutionTrace[];
   readonly photo1Info: { readonly path: string; readonly size: number; readonly base64: string };
   readonly photo2Info: { readonly path: string; readonly size: number; readonly base64: string };
+  readonly productUnderstanding?: ProductUnderstanding;
 }): string {
   const {
     workflowId,
@@ -60,6 +64,7 @@ function renderHtmlReport(params: {
     stageTraces,
     photo1Info,
     photo2Info,
+    productUnderstanding,
   } = params;
 
   const item = deliverables.items[0];
@@ -628,6 +633,41 @@ function renderHtmlReport(params: {
         </article>
 
       </div>
+
+      <!-- AI Vision Understanding Callout (Stage B1 Multimodal Grounding) -->
+      ${productUnderstanding ? `
+      <div class="card" style="margin-top: 20px; border: 1px solid rgba(99, 102, 241, 0.35); background: linear-gradient(135deg, rgba(17, 24, 39, 0.95), rgba(30, 27, 75, 0.4));">
+        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <span style="font-size: 1.1rem;">👁️</span>
+            <span style="font-weight: 700; color: #a5b4fc; font-size: 0.95rem;">Gemini Multimodal Vision Analysis (Stage B1 Grounding)</span>
+          </div>
+          <span class="badge badge-success">Image Bytes Analyzed</span>
+        </div>
+        <div class="spec-grid" style="margin-bottom: 12px;">
+          <div class="spec-cell">
+            <div class="label">Physical Product Identity</div>
+            <div class="value" style="color: #67e8f9;">${escapeHtml(productUnderstanding.physicalProductIdentity ?? "unknown")}</div>
+          </div>
+          <div class="spec-cell">
+            <div class="label">Visible Typography / OCR</div>
+            <div class="value">${productUnderstanding.typography.visibleTexts.length > 0 ? productUnderstanding.typography.visibleTexts.map((t: string) => `"${escapeHtml(t)}"`).join(", ") : "None detected on graphic"}</div>
+          </div>
+        </div>
+        ${productUnderstanding.visualEntities ? `
+        <div style="margin-bottom: 10px;">
+          <span style="font-size: 0.78rem; color: #94a3b8; font-weight: 600; text-transform: uppercase;">Visual Graphic Entities:</span>
+          <p style="font-size: 0.88rem; color: #e2e8f0; margin-top: 2px;">${escapeHtml(productUnderstanding.visualEntities)}</p>
+        </div>
+        ` : ""}
+        ${productUnderstanding.sceneContext ? `
+        <div>
+          <span style="font-size: 0.78rem; color: #94a3b8; font-weight: 600; text-transform: uppercase;">Detected Placement / Scene Context:</span>
+          <p style="font-size: 0.88rem; color: #cbd5e1; margin-top: 2px;">${escapeHtml(productUnderstanding.sceneContext)}</p>
+        </div>
+        ` : ""}
+      </div>
+      ` : ""}
     </section>
 
     <!-- SECTION 2: Pinterest POD Deliverables (Input Contract) -->
@@ -686,9 +726,9 @@ function renderHtmlReport(params: {
       <div class="card">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
           <span style="font-size: 0.8rem; color: #818cf8; font-weight: 700; text-transform: uppercase;">Optimized Product Title</span>
-          <button class="btn btn-secondary" onclick="copyText('${escapeHtml(seoOutput.productTitle).replace(/'/g, "\\'")}', this)">📋 Copy Title</button>
+          <button class="btn btn-secondary" onclick="copyToClipboard('product-title-text', this)">📋 Copy Title</button>
         </div>
-        <h3 style="font-size: 1.2rem; color: #fff; font-weight: 700;">${escapeHtml(seoOutput.productTitle)}</h3>
+        <h3 id="product-title-text" style="font-size: 1.2rem; color: #fff; font-weight: 700;">${escapeHtml(seoOutput.productTitle)}</h3>
         <span class="char-meter ok">Độ dài: ${seoOutput.productTitle.length} ký tự (chuẩn eCommerce)</span>
       </div>
 
@@ -713,7 +753,7 @@ function renderHtmlReport(params: {
       <div class="card">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
           <span style="font-size: 0.85rem; color: #94a3b8; font-weight: 700;">Product Description (Rendered Storefront Preview)</span>
-          <button class="btn btn-secondary" onclick="copyText(document.getElementById('raw-desc-content').innerText, this)">📋 Copy Description HTML</button>
+          <button class="btn btn-secondary" onclick="copyToClipboard('raw-desc-content', this)">📋 Copy Description HTML</button>
         </div>
         <div class="rich-desc">
           ${seoOutput.productDescription}
@@ -781,12 +821,13 @@ function renderHtmlReport(params: {
 
   <script>
     function copyToClipboard(elementId, btn) {
-      const text = document.getElementById(elementId).innerText;
+      const el = document.getElementById(elementId);
+      const text = el ? (el.textContent || el.innerText || "") : "";
       copyText(text, btn);
     }
 
     function copyText(text, btn) {
-      navigator.clipboard.writeText(text).then(() => {
+      function showSuccess() {
         const originalText = btn.innerText;
         btn.innerText = "✅ Đã chép!";
         btn.style.background = "#059669";
@@ -796,19 +837,52 @@ function renderHtmlReport(params: {
           btn.style.background = "";
           btn.style.color = "";
         }, 2000);
-      }).catch(err => {
-        alert("Không thể chép vào clipboard: " + err);
-      });
+      }
+
+      function fallbackCopy(fallbackText) {
+        const textArea = document.createElement("textarea");
+        textArea.value = fallbackText;
+        textArea.style.position = "fixed";
+        textArea.style.left = "-999999px";
+        textArea.style.top = "-999999px";
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        try {
+          const successful = document.execCommand("copy");
+          if (successful) {
+            showSuccess();
+          } else {
+            alert("Không thể chép vào clipboard trên trình duyệt này.");
+          }
+        } catch (err) {
+          alert("Lỗi khi chép vào clipboard: " + err);
+        } finally {
+          textArea.remove();
+        }
+      }
+
+      if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+        navigator.clipboard.writeText(text).then(showSuccess).catch(() => {
+          fallbackCopy(text);
+        });
+      } else {
+        fallbackCopy(text);
+      }
     }
 
     function downloadJsonFile() {
-      const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(document.getElementById('output-json').innerText);
-      const downloadAnchor = document.createElement('a');
-      downloadAnchor.setAttribute("href", dataStr);
+      const el = document.getElementById("output-json");
+      const text = el ? (el.textContent || el.innerText || "") : "";
+      const blob = new Blob([text], { type: "application/json;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const downloadAnchor = document.createElement("a");
+      downloadAnchor.setAttribute("href", url);
       downloadAnchor.setAttribute("download", "pinterest-pod-seo-output-${escapeHtml(item.designId)}.json");
       document.body.appendChild(downloadAnchor);
       downloadAnchor.click();
       downloadAnchor.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
     }
   </script>
 </body>
@@ -899,17 +973,22 @@ async function main(): Promise<void> {
   // 3. Khởi tạo pipeline runtime có trace tiến trình B1 -> B6
   console.log("\n[3/5] Khởi động Pipeline SEO Content & Trace Stages (B1 -> B6)...");
   loadServerEnvironment();
-  const pipelineRuntime = await loadSmokePipelineRuntime();
+  const [{ handoverPinterestToSeo }, pipelineRuntime] = await Promise.all([
+    import("../../src/modules/orchestrator"),
+    loadSmokePipelineRuntime(),
+  ]);
 
   const stageTraces: StageExecutionTrace[] = [];
   const stageDescriptions: Record<string, string> = {
-    b1: "Product Understanding (Đọc byte ảnh thật từ localFilePath & phân tích thực thể thị giác)",
+    b1: "Product Understanding (Đọc byte ảnh thật từ localFilePath & phân tích thực thể thị giác bằng Gemini Vision)",
     b2: "Shopping Context (Trích xuất target audience, ngữ cảnh mua sắm & seed từ khóa)",
     b3: "Search Suggestions (Thu thập từ khóa gợi ý Google Autocomplete theo ngữ cảnh)",
     b4: "Conflict Control (Đánh giá mức độ liên quan ngữ nghĩa & chống xung đột ăn thịt từ khóa)",
     b5: "Content Generation (Sinh Title, HTML Description, AEO Summary & FAQ Schema)",
     b6: "Image Processing (Tối ưu hóa Alt Text & Chuyển đổi định dạng ảnh sang WebP)",
   };
+
+  let capturedFinalContext: SeoPipelineContext | undefined;
 
   const tracedPipeline = pipelineRuntime.createSeoPipeline({
     siteNicheResolver: pipelineRuntime.siteNicheResolver,
@@ -926,6 +1005,7 @@ async function main(): Promise<void> {
           durationMs: duration,
           description: stageDescriptions[stage.name] ?? stage.name,
         });
+        capturedFinalContext = nextContext;
         return nextContext;
       },
     })),
@@ -989,6 +1069,7 @@ async function main(): Promise<void> {
     stageTraces,
     photo1Info: { path: PHOTO_1_PATH, size: stat1.size, base64: photo1Base64 },
     photo2Info: { path: PHOTO_2_PATH, size: stat2.size, base64: photo2Base64 },
+    productUnderstanding: capturedFinalContext?.productUnderstanding,
   });
 
   const reportHtmlPath = path.join(runDirectory, "report.html");
@@ -1004,6 +1085,7 @@ async function main(): Promise<void> {
       { path: PHOTO_2_PATH, sizeBytes: stat2.size, scene: "specification size chart" },
     ],
     stageTraces,
+    productUnderstanding: capturedFinalContext?.productUnderstanding,
     deliverablesInput: deliverables,
     seoOutput: serializeSeoOutput(seoOutput),
   };
