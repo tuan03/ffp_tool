@@ -19,6 +19,9 @@ import { HeuristicContentGenerator } from "../content-generation/heuristic-conte
 import { GeminiSeoContentGenerator } from "../content-generation/gemini-content-generator";
 import { FallbackContentGenerator } from "../content-generation/fallback-content-generator";
 import { GoogleGenAIVertexContentGenerator } from "../product-understanding/gemini-content-generator";
+import { buildBeddingSeoDescription } from "../content-generation/heuristic-content-generator";
+import { extractVisionDesignConcept } from "../content-generation/heuristic-title-builder";
+import { sanitizeBeddingTitle } from "../store-profiles";
 import type {
   ContentConstraints,
   ContentGenerator,
@@ -121,17 +124,52 @@ export async function executeB5ContentGeneration(
   }
 
   // 5. Finalize, fit, and format content fields
-  const productTitle = fitProductTitle(draft.productTitle, 80);
-  const productDescription = formatProductDescriptionHtml(draft);
-  const productSeoTitle = fitSeoTitle(
+  if (facts.storeProfile?.bedding && (!draft.styleOptions || draft.styleOptions.length < 3)) {
+    draft = {
+      ...draft,
+      styleOptions: facts.storeProfile.bedding.options.map((opt) => ({
+        name: opt.name,
+        description: `${opt.shortDescription}. ${opt.detailedFeatures}`,
+      })),
+    };
+  }
+
+  let productTitle = fitProductTitle(draft.productTitle, 80);
+  let productSeoTitle = fitSeoTitle(
     draft.productSeoTitle,
     keywords.primary,
     constraints.maxSeoTitleLength,
   );
-  const productSeoDescription = fitSeoDescription(
-    draft.productSeoDescription,
-    constraints.maxSeoDescriptionLength,
-  );
+
+  let productSeoDescription: string;
+  if (facts.storeProfile?.bedding) {
+    productTitle = sanitizeBeddingTitle(productTitle);
+    productSeoTitle = sanitizeBeddingTitle(productSeoTitle);
+
+    const hasAllKeywords =
+      draft.productSeoDescription.includes("Comforter") &&
+      draft.productSeoDescription.includes("Quilt") &&
+      draft.productSeoDescription.includes("Duvet Cover") &&
+      draft.productSeoDescription.length >= 155 &&
+      draft.productSeoDescription.length <= constraints.maxSeoDescriptionLength;
+
+    if (hasAllKeywords) {
+      productSeoDescription = draft.productSeoDescription;
+    } else {
+      productSeoDescription = buildBeddingSeoDescription(
+        productTitle,
+        extractVisionDesignConcept(facts),
+        constraints.maxSeoDescriptionLength,
+      );
+    }
+  } else {
+    productSeoDescription = fitSeoDescription(
+      draft.productSeoDescription,
+      constraints.maxSeoDescriptionLength,
+    );
+  }
+
+  const productDescription = formatProductDescriptionHtml(draft);
   const productHandle = generateProductHandle(keywords.primary || productTitle, {
     existingHandle: facts.existingHandle,
     preserveExisting: constraints.preserveExistingHandle,

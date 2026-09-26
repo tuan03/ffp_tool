@@ -15,6 +15,7 @@ import { createB4ConflictControlStage } from "./internal/stages/b4-conflict-cont
 import { createB5ContentGenerationStage, createDefaultB5Generator } from "./internal/stages/b5-content-generation";
 import { createB6ImageProcessingStage } from "./internal/stages/b6-image-processing";
 import { getDefaultSiteNicheResolver } from "./internal/site-niche/site-niche-runtime";
+import { resolveStoreProfile } from "./internal/store-profiles";
 import type {
   SeoContentAltOnlyDetailedOutput,
   SeoContentDetailedOutput,
@@ -211,3 +212,6 @@ export function createSeoContentPipelineSummary(
     warnings: detailed.metadata.warnings,
   };
 }
+
+export { resolveStoreProfile, JEMINISE_BEDDING_PROFILE } from "./internal/store-profiles";
+

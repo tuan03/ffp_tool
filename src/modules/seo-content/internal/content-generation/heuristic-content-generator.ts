@@ -15,6 +15,7 @@ import {
   extractVisionDesignConcept,
 } from "./heuristic-title-builder";
 import { buildJsonLdSchema } from "./json-ld-builder";
+import { sanitizeBeddingTitle } from "../store-profiles";
 
 /**
  * Generates a concise, fact-dense 40-70 word summary highlighting specific design entities,
@@ -178,49 +179,124 @@ export function buildBeddingSeoDescription(
   designConcept: string | undefined,
   maxLength: number = 160,
 ): string {
+  const sanitizedTitle = sanitizeBeddingTitle(productTitle);
   const optionsPhrase = "Available in Comforter, Quilt, or Duvet Cover styles.";
   const designText = designConcept ? ` featuring ${designConcept}` : "";
-  const cleanedTitle = productTitle.replace(/\s+/g, " ").trim();
+  const cleanedTitle = sanitizedTitle.replace(/\s+/g, " ").trim();
 
-  const suffixes = [
-    " Crafted from premium ultra-soft microfiber with vibrant colors. Shop now!",
-    " Crafted from premium microfiber with vibrant colors. Shop now!",
-    " Premium ultra-soft microfiber with vivid print. Shop now!",
-    " Ultra-soft breathable microfiber with vivid print. Shop now!",
-    " Premium microfiber fabric with vivid colors. Shop now!",
-    " Soft breathable microfiber for all seasons. Shop now!",
-    " Ultra-soft microfiber fabric. Shop now!",
-    " Shop online today!",
+  const features = [
+    "Crafted from premium ultra-soft brushed microfiber with vibrant thermal dye-sublimation print",
+    "Crafted from premium ultra-soft microfiber with vibrant thermal dye-sublimation print",
+    "Crafted from premium ultra-soft microfiber with vibrant thermal sublimation print",
+    "Crafted from premium ultra-soft microfiber with vibrant fade-resistant print",
+    "Crafted from ultra-soft breathable microfiber with vibrant fade-resistant print",
+    "Crafted from premium ultra-soft microfiber with vibrant fade-resistant colors",
+    "Crafted from premium ultra-soft microfiber with vibrant colors and easy care",
+    "Crafted from premium microfiber with vibrant fade-resistant colors",
+    "Crafted from premium microfiber with vibrant colors and easy care",
+    "Crafted from ultra-soft microfiber with vivid long-lasting colors",
+    "Crafted from premium microfiber with vibrant fade-resistant print",
+    "Crafted from premium ultra-soft microfiber with vibrant colors",
+    "Crafted from premium breathable microfiber with vibrant print",
+    "Crafted from ultra-soft microfiber with vibrant durable print",
+    "Crafted from ultra-soft breathable microfiber for all seasons",
+    "Crafted from ultra-soft microfiber with vibrant colors",
+    "Crafted from premium microfiber with vivid colors",
+    "Ultra-soft breathable microfiber with vivid print",
+    "Premium ultra-soft microfiber with vivid print",
+    "Ultra-soft microfiber for all-season comfort",
+    "Ultra-soft microfiber with vibrant print",
+    "Soft breathable microfiber construction",
+    "Premium microfiber with vibrant colors",
+    "Ultra-soft microfiber fabric",
+    "Soft breathable microfiber",
+    "Premium microfiber fabric",
+    "Fade-resistant print",
+    "All-season comfort",
+    "",
   ];
 
-  const subjects = [
-    `${cleanedTitle}${designText}`,
-    cleanedTitle,
+  const ctas = [
+    "Perfect for your master bedroom or guest room. Shop online today!",
+    "Perfect for your bedroom decor. Designed for all-season comfort. Shop now!",
+    "Perfect for your bedroom decor with vibrant detail. Shop now!",
+    "Designed for cozy all-season comfort and easy care. Shop now!",
+    "Perfect for your bedroom decor. Shop online today!",
+    "Elevate your bedroom decor today. Shop now!",
+    "Easy machine wash care. Shop online today!",
+    "Perfect for bedroom decor. Shop now!",
+    "Designed for cozy comfort. Shop now!",
+    "Ideal for any bedroom. Shop now!",
+    "Easy machine care. Shop now!",
+    "Order yours today!",
+    "Shop online today!",
+    "Shop online now!",
+    "Shop today!",
+    "Shop now!",
   ];
 
+  const minTarget = Math.min(155, Math.max(120, maxLength - 5));
+
+  const subjects: string[] = [];
+  if (designText) {
+    subjects.push(`${cleanedTitle}${designText}`);
+  }
+  subjects.push(cleanedTitle);
+
+  // Add progressively shortened word-boundary titles for long titles
+  const words = cleanedTitle.split(" ");
+  for (let i = words.length - 1; i >= 1; i--) {
+    const sub = words.slice(0, i).join(" ").trim().replace(/[,.-]$/, "");
+    if (sub.length >= 8 && !subjects.includes(sub)) {
+      subjects.push(sub);
+    }
+  }
+
+  // 1. Try to find a combination strictly in [minTarget, maxLength]
   for (const subject of subjects) {
     const prefix = `Discover this ${subject}. ${optionsPhrase}`;
-    for (const suffix of suffixes) {
-      const full = `${prefix}${suffix}`;
-      if (full.length >= 155 && full.length <= maxLength) {
-        return full;
+    for (const feat of features) {
+      for (const cta of ctas) {
+        const mid = feat ? ` ${feat}.` : "";
+        const end = ` ${cta}`;
+        const candidate = `${prefix}${mid}${end}`;
+        if (
+          candidate.length >= minTarget &&
+          candidate.length <= maxLength &&
+          candidate.includes("Comforter") &&
+          candidate.includes("Quilt") &&
+          candidate.includes("Duvet Cover")
+        ) {
+          return candidate;
+        }
       }
     }
   }
 
+  // 2. Fallback: closest <= maxLength that has all 3 keywords
+  let bestCandidate = "";
   for (const subject of subjects) {
     const prefix = `Discover this ${subject}. ${optionsPhrase}`;
-    for (const suffix of suffixes) {
-      const full = `${prefix}${suffix}`;
-      if (
-        full.length <= maxLength &&
-        full.includes("Comforter") &&
-        full.includes("Quilt") &&
-        full.includes("Duvet Cover")
-      ) {
-        return full;
+    for (const feat of features) {
+      for (const cta of ctas) {
+        const mid = feat ? ` ${feat}.` : "";
+        const end = ` ${cta}`;
+        const candidate = `${prefix}${mid}${end}`;
+        if (
+          candidate.length <= maxLength &&
+          candidate.includes("Comforter") &&
+          candidate.includes("Quilt") &&
+          candidate.includes("Duvet Cover") &&
+          candidate.length > bestCandidate.length
+        ) {
+          bestCandidate = candidate;
+        }
       }
     }
+  }
+
+  if (bestCandidate) {
+    return bestCandidate;
   }
 
   const standardSuffix = " Premium microfiber fabric with vivid print. Shop now!";
@@ -251,11 +327,14 @@ export class HeuristicContentGenerator implements ContentGenerator {
     };
 
     // 1. Build Product Title (Preserve -> Enrich -> Rebuild policy)
-    const productTitle = buildHeuristicProductTitle({
+    let productTitle = buildHeuristicProductTitle({
       facts,
       keywords: groundedKeywords,
       maxLength: 80,
     });
+    if (facts.storeProfile?.bedding) {
+      productTitle = sanitizeBeddingTitle(productTitle);
+    }
 
     // 2. Build Intro
     const category = facts.physicalProductIdentity || "item";
@@ -403,11 +482,14 @@ export class HeuristicContentGenerator implements ContentGenerator {
     } else {
       rawSeoTitle = `${productTitle} | Shop Online`;
     }
-    const productSeoTitle = fitSeoTitle(
+    let productSeoTitle = fitSeoTitle(
       rawSeoTitle,
       groundedKeywords.primary,
       constraints.maxSeoTitleLength,
     );
+    if (facts.storeProfile?.bedding) {
+      productSeoTitle = sanitizeBeddingTitle(productSeoTitle);
+    }
 
     // 7. Build SEO Description (<= 160 chars)
     let productSeoDescription: string;

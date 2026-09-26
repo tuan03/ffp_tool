@@ -9,6 +9,7 @@ import { b4ConflictControlStage } from "./stages/b4-conflict-control";
 import { b5ContentGenerationStage } from "./stages/b5-content-generation";
 import { b6ImageProcessingStage } from "./stages/b6-image-processing";
 import type { SiteNicheResolver } from "./site-niche/site-niche-resolver";
+import { resolveStoreProfile } from "./store-profiles";
 
 export type { SeoPipelineStage };
 
@@ -83,13 +84,17 @@ export function createSeoPipeline(
   async function executeDetailed(input: SeoContentInput, executionOptions: SeoPipelineExecutionOptions = {}) {
     const { signal } = executionOptions;
     throwIfAborted(signal);
+    const storeProfile = resolveStoreProfile({
+      storeId: input.storeId,
+      siteDomain: input.siteDomain ?? input.url,
+    });
     const resolution = siteNicheResolver
       ? await awaitWithAbort(siteNicheResolver.resolve({
           siteDomain: input.siteDomain ?? "",
-          fallbackNiche: input.niche,
+          fallbackNiche: input.niche ?? storeProfile?.niche,
         }), signal)
       : undefined;
-    let currentContext = createInitialContext(input, resolution?.niche ?? input.niche);
+    let currentContext = createInitialContext(input, resolution?.niche ?? storeProfile?.niche ?? input.niche);
     const fallbackStages: string[] = [];
     const warnings: string[] = [];
 

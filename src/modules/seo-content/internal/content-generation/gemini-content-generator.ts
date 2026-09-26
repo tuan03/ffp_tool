@@ -9,9 +9,12 @@ import { GEMINI_CONTENT_DRAFT_SCHEMA } from "./gemini-content-generation-schema"
 import { validateDraft } from "./content-result-validator";
 import { buildJsonLdSchema } from "./json-ld-builder";
 import {
+  buildBeddingSeoDescription,
   buildHeuristicAiQuickSummary,
   buildHeuristicFaq,
 } from "./heuristic-content-generator";
+import { extractVisionDesignConcept } from "./heuristic-title-builder";
+import { sanitizeBeddingTitle } from "../store-profiles";
 
 const SYSTEM_INSTRUCTION = `You are an expert e-commerce SEO copywriter and product marketing specialist.
 Your mission is to generate clean, compelling, conversion-focused, and search-optimized product copywriting.
@@ -141,35 +144,108 @@ Return the structured draft in the required JSON format.`;
     }
 
     const draft = validateDraft(parsed);
-    const styleOptions =
-      draft.styleOptions && draft.styleOptions.length > 0
-        ? draft.styleOptions
-        : facts.storeProfile?.bedding
-          ? facts.storeProfile.bedding.options.map((opt) => ({
-              name: opt.name,
-              description: `${opt.shortDescription}. ${opt.detailedFeatures}`,
-            }))
-          : undefined;
 
-    const aeo_quick_summary =
-      draft.aeo_quick_summary || buildHeuristicAiQuickSummary(facts, draft.productTitle);
-    const aeo_faq =
-      draft.aeo_faq && draft.aeo_faq.length > 0
-        ? draft.aeo_faq
-        : buildHeuristicFaq(facts, draft.productTitle);
+    let finalTitle = draft.productTitle;
+    let finalSeoTitle = draft.productSeoTitle;
+    let finalSeoDescription = draft.productSeoDescription;
+    let finalStyleOptions = draft.styleOptions;
+    let finalQuickSummary = draft.aeo_quick_summary;
+    let finalFaq = draft.aeo_faq;
+
+    if (facts.storeProfile?.bedding) {
+      // 1. Title Invariant: strip any forced style list from productTitle and productSeoTitle
+      finalTitle = sanitizeBeddingTitle(finalTitle);
+      finalSeoTitle = sanitizeBeddingTitle(finalSeoTitle);
+
+      // 2. Style Options: ensure all 3 options exist
+      const requiredStyles = ["Comforter", "Quilt", "Duvet Cover"];
+      const hasAllStyles =
+        finalStyleOptions &&
+        finalStyleOptions.length >= 3 &&
+        requiredStyles.every((req) =>
+          finalStyleOptions!.some((opt) => opt.name.toLowerCase().includes(req.toLowerCase())),
+        );
+
+      if (!hasAllStyles) {
+        finalStyleOptions = facts.storeProfile.bedding.options.map((opt) => ({
+          name: opt.name,
+          description: `${opt.shortDescription}. ${opt.detailedFeatures}`,
+        }));
+      }
+
+      // 3. SEO Description: must contain all 3 keywords within [155, 160] chars
+      const hasAllKeywords =
+        finalSeoDescription &&
+        finalSeoDescription.length >= 155 &&
+        finalSeoDescription.length <= constraints.maxSeoDescriptionLength &&
+        finalSeoDescription.includes("Comforter") &&
+        finalSeoDescription.includes("Quilt") &&
+        finalSeoDescription.includes("Duvet Cover");
+
+      if (!hasAllKeywords) {
+        finalSeoDescription = buildBeddingSeoDescription(
+          finalTitle,
+          extractVisionDesignConcept(facts),
+          constraints.maxSeoDescriptionLength,
+        );
+      }
+
+      // 4. AEO Quick Summary: ensure it mentions the 3 styles
+      const summaryMentionsAll =
+        finalQuickSummary &&
+        finalQuickSummary.includes("Comforter") &&
+        finalQuickSummary.includes("Quilt") &&
+        finalQuickSummary.includes("Duvet Cover");
+
+      if (!summaryMentionsAll) {
+        finalQuickSummary = buildHeuristicAiQuickSummary(facts, finalTitle);
+      }
+
+      // 5. AEO FAQ: ensure it has a question explaining the difference between the 3 styles
+      const hasDifferenceQuestion =
+        finalFaq &&
+        finalFaq.some(
+          (item) =>
+            /difference/i.test(item.question) &&
+            /comforter/i.test(item.question + item.answer) &&
+            /quilt/i.test(item.question + item.answer) &&
+            /duvet/i.test(item.question + item.answer),
+        );
+
+      if (!hasDifferenceQuestion) {
+        const beddingFaqs = buildHeuristicFaq(facts, finalTitle);
+        const diffItem = beddingFaqs[0];
+        if (finalFaq && finalFaq.length > 0) {
+          finalFaq = [diffItem, ...finalFaq.slice(0, 3)];
+        } else {
+          finalFaq = beddingFaqs;
+        }
+      }
+    } else {
+      if (!finalQuickSummary) {
+        finalQuickSummary = buildHeuristicAiQuickSummary(facts, finalTitle);
+      }
+      if (!finalFaq || finalFaq.length === 0) {
+        finalFaq = buildHeuristicFaq(facts, finalTitle);
+      }
+    }
+
     const aeo_json_ld =
       draft.aeo_json_ld ??
       buildJsonLdSchema({
-        productTitle: draft.productTitle,
-        description: draft.productSeoDescription,
-        faq: aeo_faq,
+        productTitle: finalTitle,
+        description: finalSeoDescription,
+        faq: finalFaq ?? [],
       });
 
     return {
       ...draft,
-      ...(styleOptions ? { styleOptions } : {}),
-      aeo_quick_summary,
-      aeo_faq,
+      productTitle: finalTitle,
+      productSeoTitle: finalSeoTitle,
+      productSeoDescription: finalSeoDescription,
+      ...(finalStyleOptions ? { styleOptions: finalStyleOptions } : {}),
+      aeo_quick_summary: finalQuickSummary,
+      aeo_faq: finalFaq,
       aeo_json_ld,
     };
   }

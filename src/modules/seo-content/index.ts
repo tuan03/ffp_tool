@@ -7,6 +7,8 @@ export {
   unregisterSeoContentKeywords,
   runSeoContent,
   runSeoContentDetailed,
+  resolveStoreProfile,
+  JEMINISE_BEDDING_PROFILE,
 } from "./service";
 export { FileSeoConflictCorpus } from "./internal/conflict-control/file-seo-conflict-corpus";
 export { CorpusRevisionConflictError } from "./internal/conflict-control/corpus-errors";

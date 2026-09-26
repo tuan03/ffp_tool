@@ -53,6 +53,9 @@ function buildFactualCorpus(facts: ContentFactSheet): string {
       pieces.push(facts.storeProfile.bedding.fabricMaterial);
       pieces.push(facts.storeProfile.bedding.printTechnology);
       pieces.push(facts.storeProfile.bedding.careGuidance);
+      if (/machine\s+wash/i.test(facts.storeProfile.bedding.careGuidance)) {
+        pieces.push("machine washable");
+      }
       for (const opt of facts.storeProfile.bedding.options) {
         pieces.push(opt.name);
         pieces.push(opt.shortDescription);

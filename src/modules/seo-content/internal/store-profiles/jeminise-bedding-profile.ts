@@ -25,7 +25,7 @@ export const JEMINISE_BEDDING_PROFILE: StoreContentProfile = Object.freeze({
     ]),
     fabricMaterial: "Premium ultra-soft brushed microfiber, breathable and hypoallergenic",
     printTechnology: "High-definition thermal dye-sublimation for vibrant, fade-resistant color",
-    careGuidance: "Machine wash cold on gentle cycle, tumble dry low heat",
+    careGuidance: "Machine washable: machine wash cold on gentle cycle, tumble dry low heat",
   }),
   descriptionGuidelines: Object.freeze([
     "Do NOT force Comforter, Quilt, or Duvet Cover into the product title; title must focus on artwork and variant.",

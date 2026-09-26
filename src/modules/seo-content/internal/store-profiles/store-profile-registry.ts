@@ -20,6 +20,10 @@ export function normalizeDomain(rawDomainOrUrl?: string): string {
   domain = domain.replace(/^https?:\/\//i, "");
   // Strip path and query parameters
   domain = domain.split("/")[0].split("?")[0].split("#")[0];
+  // Strip credentials if present (user:pass@)
+  if (domain.includes("@")) {
+    domain = domain.split("@")[1];
+  }
   // Strip port if present
   domain = domain.split(":")[0];
   // Strip trailing dot
