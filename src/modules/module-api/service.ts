@@ -121,6 +121,7 @@ const VALID_ERROR_CODES: ReadonlySet<string> = new Set([
   "SHOPIFY_NOT_FOUND",
   "SHOPIFY_PERMISSION_DENIED",
   "SHOPIFY_PARTIAL_WRITE",
+  "SHOPIFY_SECURITY_ERROR",
   "NOT_IMPLEMENTED",
 ]);
 
@@ -166,6 +167,9 @@ function normalizeErrorCode(value: unknown): ShopifyApiErrorCode | undefined {
   }
   if (upper === "PARTIAL_WRITE" || upper === "SHOPIFY_PARTIAL_WRITE") {
     return "SHOPIFY_PARTIAL_WRITE";
+  }
+  if (upper === "SECURITY_ERROR" || upper === "SSRF_DETECTED" || upper === "PATH_TRAVERSAL") {
+    return "SHOPIFY_SECURITY_ERROR";
   }
   return undefined;
 }
