@@ -1,3 +1,5 @@
+import { createSeoContentQueue } from "./queue";
+import type { SeoQueueProgressStats } from "./queue";
 import { runSeoContent } from "./service";
 import type {
   SeoContentImageInput,
@@ -68,10 +70,16 @@ export interface PinterestPodDeliverables {
 export interface PinterestPodAdapterOptions {
   /** Runner tùy chỉnh (hỗ trợ dependency injection hoặc testing) */
   readonly runner?: (input: SeoContentInput) => Promise<SeoContentOutput>;
-  /** Số lượng sản phẩm xử lý đồng thời tối đa (mặc định: 3) */
+  /** Số lượng sản phẩm xử lý đồng thời tối đa (mặc định: 1, tối đa: 3) */
   readonly concurrency?: number;
   /** Niche mặc định khi sản phẩm không suy luận được niche (mặc định: "Home Decor") */
   readonly defaultNiche?: string;
+  /** Callback phát sự kiện ngay khi một sản phẩm hoàn tất xử lý */
+  readonly onItemCompleted?: (itemResult: PinterestPodSeoItemResult) => void;
+  /** Callback phát sự kiện ngay khi một sản phẩm xử lý thất bại */
+  readonly onItemFailed?: (itemResult: PinterestPodSeoItemResult) => void;
+  /** Callback phát sự kiện tiến độ tổng thể của batch */
+  readonly onProgress?: (stats: SeoQueueProgressStats) => void;
 }
 
 /**
@@ -297,9 +305,6 @@ export async function runPinterestPodSeoPipeline(
   deliverables: PinterestPodDeliverables | readonly PodDeliverableItem[],
   options: PinterestPodAdapterOptions = {},
 ): Promise<PinterestPodSeoBatchResult> {
-  const runner = options.runner || runSeoContent;
-  const concurrency = Math.max(1, Math.min(options.concurrency || 3, 10));
-
   const rawItems: readonly PodDeliverableItem[] = Array.isArray(deliverables)
     ? deliverables
     : deliverables && "items" in deliverables && Array.isArray(deliverables.items)
@@ -309,55 +314,79 @@ export async function runPinterestPodSeoPipeline(
     ? deliverables.workflowId
     : "unknown_workflow";
 
+  if (rawItems.length === 0) {
+    return {
+      workflowId,
+      total: 0,
+      successful: 0,
+      failed: 0,
+      items: [],
+      seoOutputs: [],
+    };
+  }
+
+  const baseRunner = options.runner || runSeoContent;
+  const rawConcurrency = typeof options.concurrency === "number" && !Number.isNaN(options.concurrency)
+    ? options.concurrency
+    : 1;
+  const concurrency = Math.max(1, Math.min(Math.floor(rawConcurrency), 3));
+
   const items: PinterestPodSeoItemResult[] = [];
   const seoOutputs: SeoContentOutput[] = [];
 
-  for (let i = 0; i < rawItems.length; i += concurrency) {
-    const chunk = rawItems.slice(i, i + concurrency);
-    const chunkPromises = chunk.map(async (deliverableItem: PodDeliverableItem): Promise<PinterestPodSeoItemResult> => {
-      const seoInput = fromPinterestPodItem(deliverableItem, options.defaultNiche);
-      const designId = deliverableItem.designId || "";
-      const sourceCandidateId = deliverableItem.sourceCandidateId;
-      const productType = deliverableItem.productType || "custom";
-      const handle = seoInput.handle;
+  const queue = createSeoContentQueue<PodDeliverableItem>({
+    concurrency,
+    runner: async (seoInput) => baseRunner(seoInput),
+    onItemCompleted: (item, seoOutput) => {
+      const deliverableItem = item.source as PodDeliverableItem;
+      const itemResult: PinterestPodSeoItemResult = {
+        designId: deliverableItem.designId || "",
+        sourceCandidateId: deliverableItem.sourceCandidateId,
+        productType: deliverableItem.productType || "custom",
+        handle: item.seoInput.handle,
+        deliverableItem,
+        sourceItem: deliverableItem,
+        seoInput: item.seoInput,
+        seoOutput,
+        success: true,
+      };
+      items.push(itemResult);
+      seoOutputs.push(seoOutput);
+      options.onItemCompleted?.(itemResult);
+    },
+    onItemFailed: (item, error) => {
+      const deliverableItem = item.source as PodDeliverableItem;
+      const itemResult: PinterestPodSeoItemResult = {
+        designId: deliverableItem.designId || "",
+        sourceCandidateId: deliverableItem.sourceCandidateId,
+        productType: deliverableItem.productType || "custom",
+        handle: item.seoInput.handle,
+        deliverableItem,
+        sourceItem: deliverableItem,
+        seoInput: item.seoInput,
+        success: false,
+        error,
+      };
+      items.push(itemResult);
+      options.onItemCompleted?.(itemResult);
+      options.onItemFailed?.(itemResult);
+    },
+    onProgress: (stats) => {
+      options.onProgress?.(stats);
+    },
+  });
 
-      try {
-        const seoOutput = await runner(seoInput);
-        return {
-          designId,
-          sourceCandidateId,
-          productType,
-          handle,
-          deliverableItem,
-          sourceItem: deliverableItem,
-          seoInput,
-          seoOutput,
-          success: true,
-        };
-      } catch (err: unknown) {
-        const errorMessage = err instanceof Error ? err.message : String(err);
-        return {
-          designId,
-          sourceCandidateId,
-          productType,
-          handle,
-          deliverableItem,
-          sourceItem: deliverableItem,
-          seoInput,
-          success: false,
-          error: errorMessage,
-        };
-      }
-    });
+  const inputs = rawItems.map((it) => fromPinterestPodItem(it, options.defaultNiche));
+  queue.enqueue(inputs, rawItems);
+  await queue.waitForDrain();
 
-    const chunkResults = await Promise.all(chunkPromises);
-    for (const res of chunkResults) {
-      items.push(res);
-      if (res.success && res.seoOutput) {
-        seoOutputs.push(res.seoOutput);
-      }
-    }
-  }
+  const itemIndexMap = new Map<PodDeliverableItem, number>();
+  rawItems.forEach((it, idx) => itemIndexMap.set(it, idx));
+  items.sort((a, b) => (itemIndexMap.get(a.sourceItem) ?? 0) - (itemIndexMap.get(b.sourceItem) ?? 0));
+
+  const orderedOutputs = items
+    .filter((it): it is PinterestPodSeoItemResult & { seoOutput: SeoContentOutput } => it.success && Boolean(it.seoOutput))
+    .map((it) => it.seoOutput);
 
   const successful = items.filter((it) => it.success).length;
   const failed = items.length - successful;
@@ -368,6 +397,6 @@ export async function runPinterestPodSeoPipeline(
     successful,
     failed,
     items,
-    seoOutputs,
+    seoOutputs: orderedOutputs,
   };
 }

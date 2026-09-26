@@ -521,6 +521,43 @@ test("fromCustomizationProduct: selects matching variant image among multiple va
   assert.equal(seoInput.images[0].alt, "Valhalla");
 });
 
+test("runCustomizationSeoPipeline: streams realtime callbacks (onItemCompleted, onProgress)", async () => {
+  const streamedItems: string[] = [];
+  const progressList: number[] = [];
+
+  const mockRunner = async (input: SeoContentInput): Promise<SeoContentOutput> => ({
+    productTitle: `SEO - ${input.title}`,
+    productDescription: `<p>${input.description}</p>`,
+    productSeoTitle: `SEO | ${input.title}`.slice(0, 70),
+    productSeoDescription: `Description for ${input.title}`.slice(0, 160),
+    productHandle: input.handle || "custom-handle",
+    images: input.images.map((img, idx) => ({
+      sourceUrl: img.url,
+      webp: { filename: `seo-img-${idx + 1}.webp` },
+      alt: img.alt || `SEO Alt ${idx + 1}`,
+    })),
+  });
+
+  const result = await runCustomizationSeoPipeline([sampleProductA, sampleProductB], {
+    runner: mockRunner,
+    concurrency: 1,
+    onItemCompleted: (itemResult) => {
+      streamedItems.push(itemResult.productId || "");
+      assert.ok(itemResult.success);
+      assert.ok(itemResult.seoOutput);
+    },
+    onProgress: (stats) => {
+      progressList.push(stats.percent);
+    },
+  });
+
+  assert.equal(result.total, 2);
+  assert.equal(result.successful, 2);
+  assert.deepEqual(streamedItems, ["prod-1", "prod-2"]);
+  assert.ok(progressList.length >= 2);
+  assert.equal(progressList.at(-1), 100);
+});
+
 
 
 

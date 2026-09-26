@@ -196,4 +196,52 @@ describe("Auto SEO Adapter: fromAutoSeoProduct & runAutoSeoPipeline", () => {
     const passedItems = result.items.filter((it) => it.success);
     assert.equal(passedItems.length, 2);
   });
+
+  it("runAutoSeoPipeline phát realtime callbacks qua onItemCompleted, onItemFailed và onProgress", async () => {
+    const products: AutoSeoSourceProduct[] = [
+      { id: "prod-s-1", title: "Stream Bag 1", handle: "stream-1" },
+      { id: "prod-s-fail", title: "Stream Fail", handle: "stream-fail" },
+      { id: "prod-s-2", title: "Stream Bag 2", handle: "stream-2" },
+    ];
+
+    const completedIds: string[] = [];
+    const failedIds: string[] = [];
+    const progressList: number[] = [];
+
+    const mockRunner = async (input: SeoContentInput): Promise<SeoContentOutput> => {
+      if (input.productId === "prod-s-fail") {
+        throw new Error("Quota 429");
+      }
+      return {
+        productTitle: `SEO ${input.title}`,
+        productDescription: `<p>${input.title}</p>`,
+        productSeoTitle: `SEO ${input.title}`,
+        productSeoDescription: `Meta ${input.title}`,
+        productHandle: input.handle,
+        images: [],
+      };
+    };
+
+    const result = await runAutoSeoPipeline(products, {
+      runner: mockRunner,
+      concurrency: 1,
+      onItemCompleted: (itemResult) => {
+        completedIds.push(itemResult.productId);
+      },
+      onItemFailed: (itemResult) => {
+        failedIds.push(itemResult.productId);
+      },
+      onProgress: (stats) => {
+        progressList.push(stats.percent);
+      },
+    });
+
+    assert.equal(result.total, 3);
+    assert.equal(result.successful, 2);
+    assert.equal(result.failed, 1);
+    assert.deepEqual(completedIds, ["prod-s-1", "prod-s-fail", "prod-s-2"]);
+    assert.deepEqual(failedIds, ["prod-s-fail"]);
+    assert.ok(progressList.length >= 3);
+    assert.equal(progressList.at(-1), 100);
+  });
 });

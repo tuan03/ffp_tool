@@ -274,4 +274,44 @@ describe("Pinterest POD Adapter: runPinterestPodSeoPipeline", () => {
     assert.equal(batchResult.seoOutputs[0].productHandle, "boho-moroccan-runner");
     assert.equal(batchResult.seoOutputs[1].productHandle, "vintage-anatolian-carpet");
   });
+
+  it("phát realtime callbacks qua onItemCompleted, onItemFailed và onProgress", async () => {
+    const completedIds: string[] = [];
+    const failedIds: string[] = [];
+    const progressList: number[] = [];
+
+    const mockRunner = async (input: SeoContentInput): Promise<SeoContentOutput> => {
+      if (input.productId === "d_03_fail") {
+        throw new Error("Simulated LLM Vision Timeout");
+      }
+      return {
+        productTitle: `SEO Optimized: ${input.title}`,
+        productDescription: `<p>Rich Description for ${input.title}</p>`,
+        productSeoTitle: `${input.title} | Premium Home Decor`,
+        productSeoDescription: `Shop authentic ${input.title} with fast shipping.`,
+        images: [],
+        productHandle: input.handle,
+      };
+    };
+
+    const batchResult = await runPinterestPodSeoPipeline(sampleDeliverables, {
+      runner: mockRunner,
+      concurrency: 1,
+      onItemCompleted: (itemResult) => {
+        completedIds.push(itemResult.designId);
+      },
+      onItemFailed: (itemResult) => {
+        failedIds.push(itemResult.designId);
+      },
+      onProgress: (stats) => {
+        progressList.push(stats.percent);
+      },
+    });
+
+    assert.equal(batchResult.total, 3);
+    assert.deepEqual(completedIds, ["d_01", "d_02", "d_03_fail"]);
+    assert.deepEqual(failedIds, ["d_03_fail"]);
+    assert.ok(progressList.length >= 3);
+    assert.equal(progressList.at(-1), 100);
+  });
 });

@@ -1,4 +1,6 @@
 import type { CrawlProduct, CustomizationNormalizerOutput } from "../customization-normalizer";
+import { createSeoContentQueue } from "./queue";
+import type { SeoQueueProgressStats } from "./queue";
 import { runSeoContent } from "./service";
 import type {
   SeoContentAltOnlyOutput,
@@ -13,10 +15,16 @@ import type {
 export interface CustomizationSeoOptions {
   /** Runner tùy chỉnh (hỗ trợ dependency injection hoặc testing) */
   readonly runner?: (input: SeoContentInput) => Promise<SeoContentOutput>;
-  /** Số lượng sản phẩm xử lý đồng thời tối đa (mặc định: 3) */
+  /** Số lượng sản phẩm xử lý đồng thời tối đa (mặc định: 1, tối đa: 3) */
   readonly concurrency?: number;
   /** Niche mặc định khi sản phẩm không có danh mục (mặc định: "custom product") */
   readonly defaultNiche?: string;
+  /** Callback phát sự kiện ngay khi một sản phẩm hoàn tất xử lý */
+  readonly onItemCompleted?: (itemResult: CustomizationSeoItemResult) => void;
+  /** Callback phát sự kiện ngay khi một sản phẩm xử lý thất bại */
+  readonly onItemFailed?: (itemResult: CustomizationSeoItemResult) => void;
+  /** Callback phát sự kiện tiến độ tổng thể của batch */
+  readonly onProgress?: (stats: SeoQueueProgressStats) => void;
 }
 
 /**
@@ -635,60 +643,88 @@ export async function runCustomizationSeoPipeline(
   const products = Array.isArray(input)
     ? input
     : (input as CustomizationNormalizerOutput).products || [];
-  const runner = options.runner || runSeoContent;
-  const concurrency = Math.max(1, Math.min(options.concurrency || 3, 10));
+
+  if (products.length === 0) {
+    return {
+      total: 0,
+      successful: 0,
+      failed: 0,
+      items: [],
+      seoOutputs: [],
+    };
+  }
+
+  const baseRunner = options.runner || runSeoContent;
+  const rawConcurrency = typeof options.concurrency === "number" && !Number.isNaN(options.concurrency)
+    ? options.concurrency
+    : 1;
+  const concurrency = Math.max(1, Math.min(Math.floor(rawConcurrency), 3));
 
   const items: CustomizationSeoItemResult[] = [];
   const seoOutputs: SeoContentOutput[] = [];
 
-  // Xử lý từng cụm sản phẩm với kiểm soát concurrency an toàn
-  for (let i = 0; i < products.length; i += concurrency) {
-    const chunk = products.slice(i, i + concurrency);
-    const chunkPromises = chunk.map(async (product): Promise<CustomizationSeoItemResult> => {
-      const seoInput = fromCustomizationProduct(product, options.defaultNiche);
-      try {
-        const rawSeoOutput = await runner(seoInput);
-        const variantLabel = extractVariantLabel(product);
-        const variantAttribute = extractVariantAttribute(product);
-        const seoOutput: SeoContentOutput = variantLabel
-          ? {
-              ...rawSeoOutput,
-              productTitle: composeVariantTitle(rawSeoOutput.productTitle, variantLabel),
-              productSeoTitle: composeVariantSeoTitle(rawSeoOutput.productSeoTitle, variantLabel),
-              productSeoDescription: composeVariantSeoDescription(rawSeoOutput.productSeoDescription, variantLabel),
-              productDescription: composeVariantDescriptionHtml(rawSeoOutput.productDescription, variantLabel, variantAttribute),
-              productHandle: resolveProductHandle(product, rawSeoOutput.productHandle, { ensureUniqueHandle: true }),
-            }
-          : rawSeoOutput;
-        return {
-          productId: product.id,
-          asin: product.asin || product.parentAsin,
-          sourceProduct: product,
-          seoInput,
-          seoOutput,
-          success: true,
-        };
-      } catch (err: unknown) {
-        const errorMessage = err instanceof Error ? err.message : String(err);
-        return {
-          productId: product.id,
-          asin: product.asin || product.parentAsin,
-          sourceProduct: product,
-          seoInput,
-          success: false,
-          error: errorMessage,
-        };
-      }
-    });
+  const queue = createSeoContentQueue<CrawlProduct>({
+    concurrency,
+    runner: async (seoInput) => baseRunner(seoInput),
+    onItemCompleted: (item, rawSeoOutput) => {
+      const product = item.source as CrawlProduct;
+      const variantLabel = extractVariantLabel(product);
+      const variantAttribute = extractVariantAttribute(product);
+      const seoOutput: SeoContentOutput = variantLabel
+        ? {
+            ...rawSeoOutput,
+            productTitle: composeVariantTitle(rawSeoOutput.productTitle, variantLabel),
+            productSeoTitle: composeVariantSeoTitle(rawSeoOutput.productSeoTitle, variantLabel),
+            productSeoDescription: composeVariantSeoDescription(rawSeoOutput.productSeoDescription, variantLabel),
+            productDescription: composeVariantDescriptionHtml(rawSeoOutput.productDescription, variantLabel, variantAttribute),
+            productHandle: resolveProductHandle(product, rawSeoOutput.productHandle, { ensureUniqueHandle: true }),
+          }
+        : rawSeoOutput;
 
-    const chunkResults = await Promise.all(chunkPromises);
-    for (const res of chunkResults) {
-      items.push(res);
-      if (res.success && res.seoOutput) {
-        seoOutputs.push(res.seoOutput);
-      }
-    }
-  }
+      const itemResult: CustomizationSeoItemResult = {
+        productId: product.id,
+        asin: product.asin || product.parentAsin,
+        sourceProduct: product,
+        seoInput: item.seoInput,
+        seoOutput,
+        success: true,
+      };
+
+      items.push(itemResult);
+      seoOutputs.push(seoOutput);
+      options.onItemCompleted?.(itemResult);
+    },
+    onItemFailed: (item, error) => {
+      const product = item.source as CrawlProduct;
+      const itemResult: CustomizationSeoItemResult = {
+        productId: product.id,
+        asin: product.asin || product.parentAsin,
+        sourceProduct: product,
+        seoInput: item.seoInput,
+        success: false,
+        error,
+      };
+
+      items.push(itemResult);
+      options.onItemCompleted?.(itemResult);
+      options.onItemFailed?.(itemResult);
+    },
+    onProgress: (stats) => {
+      options.onProgress?.(stats);
+    },
+  });
+
+  const inputs = products.map((product) => fromCustomizationProduct(product, options.defaultNiche));
+  queue.enqueue(inputs, products);
+  await queue.waitForDrain();
+
+  const productIndexMap = new Map<CrawlProduct, number>();
+  products.forEach((p, idx) => productIndexMap.set(p, idx));
+  items.sort((a, b) => (productIndexMap.get(a.sourceProduct) ?? 0) - (productIndexMap.get(b.sourceProduct) ?? 0));
+
+  const orderedOutputs = items
+    .filter((it): it is CustomizationSeoItemResult & { seoOutput: SeoContentOutput } => it.success && Boolean(it.seoOutput))
+    .map((it) => it.seoOutput);
 
   const successful = items.filter((it) => it.success).length;
   const failed = items.length - successful;
@@ -698,6 +734,6 @@ export async function runCustomizationSeoPipeline(
     successful,
     failed,
     items,
-    seoOutputs,
+    seoOutputs: orderedOutputs,
   };
 }

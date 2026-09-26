@@ -1,3 +1,5 @@
+import { createSeoContentQueue } from "./queue";
+import type { SeoQueueProgressStats } from "./queue";
 import { runSeoContent } from "./service";
 import type {
   SeoContentImageInput,
@@ -45,12 +47,18 @@ export interface AutoSeoSourceProduct {
 export interface AutoSeoAdapterOptions {
   /** Runner tùy chỉnh (hỗ trợ dependency injection hoặc testing) */
   readonly runner?: (input: SeoContentInput) => Promise<SeoContentOutput>;
-  /** Số lượng sản phẩm xử lý đồng thời tối đa (mặc định: 3) */
+  /** Số lượng sản phẩm xử lý đồng thời tối đa (mặc định: 1, tối đa: 3) */
   readonly concurrency?: number;
   /** Niche mặc định khi sản phẩm không có productType hoặc tags (mặc định: "General") */
   readonly defaultNiche?: string;
   /** Storefront domain shared by the batch, supplied by Gateway when available. */
   readonly siteDomain?: string;
+  /** Callback phát sự kiện ngay khi một sản phẩm hoàn tất xử lý */
+  readonly onItemCompleted?: (itemResult: AutoSeoItemResult) => void;
+  /** Callback phát sự kiện ngay khi một sản phẩm xử lý thất bại */
+  readonly onItemFailed?: (itemResult: AutoSeoItemResult) => void;
+  /** Callback phát sự kiện tiến độ tổng thể của batch */
+  readonly onProgress?: (stats: SeoQueueProgressStats) => void;
 }
 
 /**
@@ -231,58 +239,84 @@ export async function runAutoSeoPipeline(
   products: readonly AutoSeoSourceProduct[],
   options: AutoSeoAdapterOptions = {},
 ): Promise<AutoSeoBatchResult> {
-  const runner = options.runner || runSeoContent;
-  const concurrency = Math.max(1, Math.min(options.concurrency || 3, 10));
+  if (products.length === 0) {
+    return {
+      total: 0,
+      successful: 0,
+      failed: 0,
+      items: [],
+      seoOutputs: [],
+    };
+  }
+
+  const baseRunner = options.runner || runSeoContent;
+  const rawConcurrency = typeof options.concurrency === "number" && !Number.isNaN(options.concurrency)
+    ? options.concurrency
+    : 1;
+  const concurrency = Math.max(1, Math.min(Math.floor(rawConcurrency), 3));
 
   const items: AutoSeoItemResult[] = [];
   const seoOutputs: SeoContentOutput[] = [];
 
-  for (let i = 0; i < products.length; i += concurrency) {
-    const chunk = products.slice(i, i + concurrency);
-    const chunkPromises = chunk.map(async (product): Promise<AutoSeoItemResult> => {
-      const mappedInput = fromAutoSeoProduct(product, options.defaultNiche);
-      const seoInput = options.siteDomain?.trim()
-        ? { ...mappedInput, siteDomain: options.siteDomain.trim() }
-        : mappedInput;
-      const productId = seoInput.productId ?? "";
-      const handle = seoInput.handle;
-      const storeId = typeof product.storeId === "string" && product.storeId.trim().length > 0
-        ? product.storeId.trim()
-        : undefined;
+  const queue = createSeoContentQueue<AutoSeoSourceProduct>({
+    concurrency,
+    runner: async (seoInput) => baseRunner(seoInput),
+    onItemCompleted: (item, seoOutput) => {
+      const product = item.source as AutoSeoSourceProduct;
+      const itemResult: AutoSeoItemResult = {
+        productId: item.seoInput.productId ?? "",
+        storeId: typeof product.storeId === "string" && product.storeId.trim().length > 0
+          ? product.storeId.trim()
+          : undefined,
+        handle: item.seoInput.handle,
+        sourceProduct: product,
+        seoInput: item.seoInput,
+        seoOutput,
+        success: true,
+      };
+      items.push(itemResult);
+      seoOutputs.push(seoOutput);
+      options.onItemCompleted?.(itemResult);
+    },
+    onItemFailed: (item, error) => {
+      const product = item.source as AutoSeoSourceProduct;
+      const itemResult: AutoSeoItemResult = {
+        productId: item.seoInput.productId ?? "",
+        storeId: typeof product.storeId === "string" && product.storeId.trim().length > 0
+          ? product.storeId.trim()
+          : undefined,
+        handle: item.seoInput.handle,
+        sourceProduct: product,
+        seoInput: item.seoInput,
+        success: false,
+        error,
+      };
+      items.push(itemResult);
+      options.onItemCompleted?.(itemResult);
+      options.onItemFailed?.(itemResult);
+    },
+    onProgress: (stats) => {
+      options.onProgress?.(stats);
+    },
+  });
 
-      try {
-        const seoOutput = await runner(seoInput);
-        return {
-          productId,
-          storeId,
-          handle,
-          sourceProduct: product,
-          seoInput,
-          seoOutput,
-          success: true,
-        };
-      } catch (err: unknown) {
-        const errorMessage = err instanceof Error ? err.message : String(err);
-        return {
-          productId,
-          storeId,
-          handle,
-          sourceProduct: product,
-          seoInput,
-          success: false,
-          error: errorMessage,
-        };
-      }
-    });
+  const inputs = products.map((product) => {
+    const mapped = fromAutoSeoProduct(product, options.defaultNiche);
+    return options.siteDomain?.trim()
+      ? { ...mapped, siteDomain: options.siteDomain.trim() }
+      : mapped;
+  });
 
-    const chunkResults = await Promise.all(chunkPromises);
-    for (const res of chunkResults) {
-      items.push(res);
-      if (res.success && res.seoOutput) {
-        seoOutputs.push(res.seoOutput);
-      }
-    }
-  }
+  queue.enqueue(inputs, products);
+  await queue.waitForDrain();
+
+  const productIndexMap = new Map<AutoSeoSourceProduct, number>();
+  products.forEach((p, idx) => productIndexMap.set(p, idx));
+  items.sort((a, b) => (productIndexMap.get(a.sourceProduct) ?? 0) - (productIndexMap.get(b.sourceProduct) ?? 0));
+
+  const orderedOutputs = items
+    .filter((it): it is AutoSeoItemResult & { seoOutput: SeoContentOutput } => it.success && Boolean(it.seoOutput))
+    .map((it) => it.seoOutput);
 
   const successful = items.filter((it) => it.success).length;
   const failed = items.length - successful;
@@ -292,6 +326,6 @@ export async function runAutoSeoPipeline(
     successful,
     failed,
     items,
-    seoOutputs,
+    seoOutputs: orderedOutputs,
   };
 }
