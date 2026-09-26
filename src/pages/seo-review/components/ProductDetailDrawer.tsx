@@ -117,6 +117,25 @@ export function ProductDetailDrawer({
     }
   }
 
+  function handleDownloadJson() {
+    if (!rawJsonString || !product) return;
+    try {
+      const blob = new Blob([rawJsonString], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      const safeSlug = (product.handle.value || product.asin || product.id)
+        .toLowerCase()
+        .replace(/[^a-z0-9_-]+/g, "-")
+        .replace(/^-+|-+$/g, "");
+      link.href = url;
+      link.download = `product-${safeSlug || "raw"}.json`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      // Silently catch in environments without DOM blob support
+    }
+  }
+
   const seoTitleLen = product.seoTitle.value.length;
   const seoDescLen = product.seoDescription.value.length;
   const reviewTarget = product.coordinatorReview?.target;
@@ -759,6 +778,15 @@ export function ProductDetailDrawer({
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
+                    onClick={handleDownloadJson}
+                    className="px-2.5 py-1 rounded text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition flex items-center gap-1 cursor-pointer"
+                    title="Tải file JSON sản phẩm này về máy tính"
+                  >
+                    <span>📥</span>
+                    <span>Tải JSON</span>
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => handleCopy(rawJsonString, "full-raw-json")}
                     className="px-2.5 py-1 rounded text-xs font-medium bg-slate-800 hover:bg-slate-700 text-cyan-300 border border-slate-700 transition flex items-center gap-1 cursor-pointer"
                   >
@@ -947,6 +975,15 @@ export function ProductDetailDrawer({
               </div>
 
               <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleDownloadJson}
+                  className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition flex items-center gap-1.5 cursor-pointer shadow-sm"
+                  title="Tải file JSON này về máy tính"
+                >
+                  <span>📥</span>
+                  <span>Download JSON</span>
+                </button>
                 <button
                   type="button"
                   onClick={() => handleCopy(rawJsonString, "modal-raw-json")}
