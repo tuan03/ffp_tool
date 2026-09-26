@@ -1584,6 +1584,7 @@ class CoordinatorStore:
                 job_ids.add(item.job_id)
                 self._event(session, item.job_id, "product_cancel_claim_expired", {
                     "productItemId": item.id,
+                    "sourceKey": item.source_key,
                 })
             for job_id in job_ids:
                 self._refresh_job(session, job_id)
@@ -1593,6 +1594,7 @@ class CoordinatorStore:
         self,
         job_id: str,
         connected_client_ids: set[str] | None = None,
+        force: bool = False,
     ) -> dict[str, Any] | None:
         with self.sessions.begin() as session:
             job = session.get(CrawlJob, job_id)
@@ -1606,6 +1608,43 @@ class CoordinatorStore:
                 control = CrawlJobControl(job_id=job_id, state="active")
                 session.add(control)
             if control.state == "cancelling" and control.cancellation_id:
+                elapsed_seconds = (now - _as_utc(control.cancel_requested_at)).total_seconds() if control.cancel_requested_at else 999
+                if not force and elapsed_seconds < 15:
+                    return self._job_snapshot(session, job)
+                # Stalled cancellation (>15s or re-requested by user with force): force-finalize remaining items and tasks
+                for item in session.scalars(select(CrawlProductItem).where(
+                    CrawlProductItem.job_id == job_id,
+                    CrawlProductItem.status.in_(["cancelling", "stopping_after_write"]),
+                )):
+                    was_stopping = item.status == "stopping_after_write"
+                    item.status = "cancelled"
+                    item.claimed_by = None
+                    item.claim_expires_at = None
+                    item.completed_at = now
+                    if was_stopping:
+                        for operation in session.scalars(select(ShopifyOperationIdempotency).where(
+                            ShopifyOperationIdempotency.request_id == _shopify_sync_request_id(item.source_key),
+                            ShopifyOperationIdempotency.state == "pending",
+                        )):
+                            operation.state = "reconciliation_required"
+                            operation.response_payload = {
+                                "itemId": item.id,
+                                "sourceKey": item.source_key,
+                                "reason": "Job force-stopped after Shopify write started without a confirmed checkpoint.",
+                            }
+                for task in session.scalars(select(CrawlTask).where(
+                    CrawlTask.job_id == job_id,
+                    CrawlTask.status.in_(["cancelling", "leased", "running"]),
+                )):
+                    task.status = "cancelled"
+                    task.lease_expires_at = None
+                    task.completed_at = now
+                    if task.lease_id:
+                        attempt = session.scalar(select(TaskAttempt).where(TaskAttempt.lease_id == task.lease_id))
+                        if attempt is not None:
+                            attempt.status = "cancelled"
+                            attempt.finished_at = now
+                self._refresh_job(session, job_id)
                 return self._job_snapshot(session, job)
             should_track_client_cleanup = connected_client_ids is not None
             if connected_client_ids is None:

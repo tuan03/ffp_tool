@@ -311,9 +311,9 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
         return JSONResponse(result, headers={"Content-Disposition": f'attachment; filename="amazon-crawl-{job_id}.json"'})
 
     @app.post("/api/v1/crawl-jobs/{job_id}/cancel")
-    async def cancel_job(job_id: str) -> dict[str, Any]:
+    async def cancel_job(job_id: str, force: bool = False) -> dict[str, Any]:
         connected_client_ids = await manager.connected_client_ids()
-        snapshot = store.cancel_job(job_id, connected_client_ids)
+        snapshot = store.cancel_job(job_id, connected_client_ids, force=force)
         if snapshot is None:
             raise HTTPException(status_code=404, detail="Crawl job was not found.")
         cache_generation = store.current_cache_generation()

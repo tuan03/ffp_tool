@@ -427,7 +427,7 @@ export interface AmazonCrawlerCancellationSummary {
 export interface AmazonCrawlerJobController {
   list(limit?: number): Promise<readonly AmazonCrawlerJobSnapshot[]>;
   get(jobId: string): Promise<AmazonCrawlerJobSnapshot>;
-  cancel(jobId: string): Promise<AmazonCrawlerJobSnapshot>;
+  cancel(jobId: string, options?: { force?: boolean }): Promise<AmazonCrawlerJobSnapshot>;
   replace(jobId: string, input: AmazonCrawlerInput): Promise<AmazonCrawlerJobSnapshot>;
   delete(jobId: string): Promise<void>;
 }
