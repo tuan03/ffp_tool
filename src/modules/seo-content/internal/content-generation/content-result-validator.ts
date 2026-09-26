@@ -4,6 +4,7 @@ import type {
   ContentResult,
   GeneratedContentDraft,
   GeneratedFaqItem,
+  GeneratedStyleOption,
   KeywordAllocation,
 } from "./content-generation-types";
 import {
@@ -107,6 +108,28 @@ export function validateDraft(raw: unknown): GeneratedContentDraft {
     }
   }
 
+  let styleOptions: GeneratedStyleOption[] | undefined;
+  if (Array.isArray(obj.styleOptions)) {
+    const validOptions: GeneratedStyleOption[] = [];
+    for (const opt of obj.styleOptions) {
+      if (
+        opt &&
+        typeof opt === "object" &&
+        typeof (opt as Record<string, unknown>).name === "string" &&
+        typeof (opt as Record<string, unknown>).description === "string"
+      ) {
+        const name = ((opt as Record<string, unknown>).name as string).trim();
+        const description = ((opt as Record<string, unknown>).description as string).trim();
+        if (name.length > 0 && description.length > 0) {
+          validOptions.push({ name, description });
+        }
+      }
+    }
+    if (validOptions.length > 0) {
+      styleOptions = validOptions;
+    }
+  }
+
   let aeo_json_ld =
     typeof obj.aeo_json_ld === "string" && obj.aeo_json_ld.trim().length > 0
       ? obj.aeo_json_ld.trim()
@@ -123,6 +146,7 @@ export function validateDraft(raw: unknown): GeneratedContentDraft {
     closing: obj.closing.trim(),
     productSeoTitle: obj.productSeoTitle.trim(),
     productSeoDescription: obj.productSeoDescription.trim(),
+    ...(styleOptions ? { styleOptions } : {}),
     ...(aeo_quick_summary ? { aeo_quick_summary } : {}),
     ...(aeo_faq ? { aeo_faq } : {}),
     ...(aeo_json_ld ? { aeo_json_ld } : {}),

@@ -1,5 +1,6 @@
 import type { GeneratedFaqItem, SeoContentImageOutput, SeoContentInput } from "../types";
 import type { StoredEmbedding } from "./conflict-control/seo-conflict-corpus";
+import type { StoreContentProfile } from "./store-profiles/types";
 
 export type SeoStageName = "b1" | "b2" | "b3" | "b4" | "b5" | "b6";
 
@@ -102,6 +103,7 @@ export interface SeoPipelineContext {
   readonly source: SeoContentInput;
   /** Derived from the storefront homepage; source.niche remains the fallback input. */
   readonly effectiveNiche?: string;
+  readonly storeProfile?: StoreContentProfile;
   readonly productUnderstanding?: ProductUnderstanding;
   readonly shoppingContext?: ShoppingContext;
   readonly searchResearch?: SearchResearchResult;

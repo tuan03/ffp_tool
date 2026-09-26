@@ -1,6 +1,7 @@
 import type { SeoContentInput } from "../../types";
 import type { ProductUnderstanding, SeoPipelineContext } from "../domain-types";
 import type { ContentFactSheet } from "./content-generation-types";
+import { resolveStoreProfile } from "../store-profiles";
 
 const PERSONALIZATION_PATTERN =
   /\b(personalized|personalised|personalization|personalisation|custom\s+name|your\s+name|custom\s+text|custom\s+photo|upload\s+photo|custom\s+image|monogram|initials|customizable|customisable|engraved|engraving|custom\s+song|custom\s+spotify)\b/i;
@@ -36,19 +37,28 @@ export function buildContentFactSheet(
 ): ContentFactSheet {
   const { source, productUnderstanding, shoppingContext } = context;
 
+  const storeProfile =
+    context.storeProfile ??
+    resolveStoreProfile({
+      storeId: source.storeId,
+      siteDomain: source.siteDomain ?? source.url,
+    });
+
   const personalizationSupported = detectPersonalizationEvidence(
     source,
     productUnderstanding,
   );
 
+  const effectiveNiche = context.effectiveNiche ?? storeProfile?.niche ?? source.niche;
+
   return {
     originalTitle: source.title.trim(),
     originalDescription: source.description.trim(),
     existingHandle: source.handle,
-    niche: (context.effectiveNiche ?? source.niche)?.trim() || undefined,
+    niche: effectiveNiche?.trim() || undefined,
     physicalProductIdentity:
       productUnderstanding?.physicalProductIdentity?.trim() ||
-      (context.effectiveNiche ?? source.niche)?.trim() ||
+      effectiveNiche?.trim() ||
       "product",
     typographyVisibleTexts: productUnderstanding?.typography.visibleTexts ?? [],
     typographyStyleSummary: productUnderstanding?.typography.styleSummary?.trim() || undefined,
@@ -58,5 +68,6 @@ export function buildContentFactSheet(
     useCases: shoppingContext?.useCases ?? [],
     personalizationSupported,
     variantLabel: source.variantLabel?.trim() || undefined,
+    storeProfile,
   };
 }

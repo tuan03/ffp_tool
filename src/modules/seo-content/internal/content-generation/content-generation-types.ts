@@ -1,4 +1,5 @@
 import type { ContentGenerationMetadata, ContentResult } from "../domain-types";
+import type { StoreContentProfile } from "../store-profiles/types";
 
 export type { ContentGenerationMetadata, ContentResult };
 
@@ -16,6 +17,7 @@ export interface ContentFactSheet {
   readonly useCases: readonly string[];
   readonly personalizationSupported: boolean;
   readonly variantLabel?: string;
+  readonly storeProfile?: StoreContentProfile;
 }
 
 export interface KeywordAllocation {
@@ -31,6 +33,11 @@ export interface GeneratedBullet {
   readonly text: string;
 }
 
+export interface GeneratedStyleOption {
+  readonly name: string;
+  readonly description: string;
+}
+
 export interface GeneratedFaqItem {
   readonly question: string;
   readonly answer: string;
@@ -44,6 +51,7 @@ export interface GeneratedContentDraft {
   readonly closing: string;
   readonly productSeoTitle: string;
   readonly productSeoDescription: string;
+  readonly styleOptions?: readonly GeneratedStyleOption[];
   readonly aeo_quick_summary?: string;
   readonly aeo_faq?: readonly GeneratedFaqItem[];
   readonly aeo_json_ld?: string;

@@ -11,6 +11,7 @@ import type {
   SeoPipelineContext,
   SeoPipelineStage,
 } from "../domain-types";
+import { resolveStoreProfile } from "../store-profiles";
 import type {
   ProductImageAnalysis,
   ProductImageAnalyzer,
@@ -92,7 +93,13 @@ export function createB1ProductUnderstandingStage(
     name: "b1",
     async execute(context: SeoPipelineContext): Promise<SeoPipelineContext> {
       const source = context.source;
-      const niche = context.effectiveNiche ?? source.niche;
+      const storeProfile =
+        context.storeProfile ??
+        resolveStoreProfile({
+          storeId: source.storeId,
+          siteDomain: source.siteDomain ?? source.url,
+        });
+      const niche = context.effectiveNiche ?? storeProfile?.niche ?? source.niche;
       const rawImages = source.images ?? [];
       const images =
         typeof dependencies?.maxImages === "number" && dependencies.maxImages > 0
@@ -125,7 +132,10 @@ export function createB1ProductUnderstandingStage(
         textSignals,
       );
 
-      return evolveContext(context, { productUnderstanding });
+      return evolveContext(context, {
+        productUnderstanding,
+        ...(storeProfile ? { storeProfile } : {}),
+      });
     },
   };
 }

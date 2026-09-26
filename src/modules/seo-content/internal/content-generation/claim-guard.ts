@@ -45,6 +45,22 @@ function buildFactualCorpus(facts: ContentFactSheet): string {
     facts.variantLabel ?? "",
     ...facts.typographyVisibleTexts,
   ];
+
+  if (facts.storeProfile) {
+    pieces.push(facts.storeProfile.storeName);
+    pieces.push(facts.storeProfile.niche);
+    if (facts.storeProfile.bedding) {
+      pieces.push(facts.storeProfile.bedding.fabricMaterial);
+      pieces.push(facts.storeProfile.bedding.printTechnology);
+      pieces.push(facts.storeProfile.bedding.careGuidance);
+      for (const opt of facts.storeProfile.bedding.options) {
+        pieces.push(opt.name);
+        pieces.push(opt.shortDescription);
+        pieces.push(opt.detailedFeatures);
+      }
+    }
+  }
+
   return pieces.join(" ").toLowerCase();
 }
 

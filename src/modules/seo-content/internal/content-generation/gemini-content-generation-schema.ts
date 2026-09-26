@@ -33,6 +33,25 @@ export const GEMINI_CONTENT_DRAFT_SCHEMA: Record<string, unknown> = {
         required: ["label", "text"],
       },
     },
+    styleOptions: {
+      type: "ARRAY",
+      description:
+        "Optional list of style options (e.g. Comforter, Quilt, Duvet Cover) when specified by the store profile offering.",
+      items: {
+        type: "OBJECT",
+        properties: {
+          name: {
+            type: "STRING",
+            description: "Option style name, e.g. 'Comforter', 'Quilt', or 'Duvet Cover'.",
+          },
+          description: {
+            type: "STRING",
+            description: "Concise summary of the style's distinctive construction and feel.",
+          },
+        },
+        required: ["name", "description"],
+      },
+    },
     guidance: {
       type: "ARRAY",
       description:

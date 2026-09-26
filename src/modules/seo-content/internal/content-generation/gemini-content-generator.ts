@@ -33,7 +33,13 @@ CRITICAL INVARIANTS:
      * Q2 (Practical Usability / Durability): Category-adapted question (e.g. all-season comfort for bedding, high-traffic durability for rugs, everyday capacity for bags).
      * Q3 (Conditional Customization OR Care): If personalizationSupported is true, explain custom options. If personalizationSupported is false, explain care/cleaning or package inclusions. NEVER mention personalization if personalizationSupported is false.
      * Q4 (USP Differentiation): Explain what makes this design/variant unique from generic alternatives using visualEntities and variant details.
-7. FORMAT: Output strictly valid JSON matching the specified schema. Do not wrap output in markdown codeblocks.`;
+7. STORE-SPECIFIC OFFERINGS (when <STORE_PRODUCT_OFFERING> is provided):
+   - Product Title & SEO Title: DO NOT force "Comforter, Quilt, Duvet Cover" into product title or SEO title. Title must naturally focus on artwork/design and variant.
+   - Product Description / Style Options: You MUST include the available styles in styleOptions with their distinctive characteristics. Highlight the verified fabric, print technology, and care instructions in bullets and guidance.
+   - Product SEO Description: MUST naturally mention all 3 styles ("Comforter", "Quilt", "Duvet Cover") alongside the product design, strictly within 155-160 characters.
+   - AEO Quick Summary: Highlight that the design is available across the 3 styles (Comforter, Quilt, Duvet Cover).
+   - AEO FAQ: Include a dedicated question (e.g. Q1 or Q2) explaining the difference between Comforter, Quilt, and Duvet Cover so buyers can choose the right option.
+8. FORMAT: Output strictly valid JSON matching the specified schema. Do not wrap output in markdown codeblocks.`;
 
 export class GeminiSeoContentGenerator implements ContentGenerator {
   private readonly maxOutputTokens: number;
@@ -73,12 +79,28 @@ export class GeminiSeoContentGenerator implements ContentGenerator {
       2,
     );
 
+    let storeOfferingSection = "";
+    if (facts.storeProfile?.bedding) {
+      const b = facts.storeProfile.bedding;
+      const optionsText = b.options
+        .map((opt) => `- ${opt.name}: ${opt.shortDescription}. ${opt.detailedFeatures}`)
+        .join("\n");
+      storeOfferingSection = `\n<STORE_PRODUCT_OFFERING>
+Store: ${facts.storeProfile.storeName} (${facts.storeProfile.niche})
+Key Product Fact: This product offers 3 distinct styles for buyers to choose from at checkout:
+${optionsText}
+Fabric: ${b.fabricMaterial}
+Print: ${b.printTechnology}
+Care: ${b.careGuidance}
+</STORE_PRODUCT_OFFERING>\n`;
+    }
+
     const prompt = `Generate optimized e-commerce product copy and AEO suite based on the following verified product details and SEO targeting.
 
 <UNTRUSTED_PRODUCT_DATA>
 ${untrustedData}
 </UNTRUSTED_PRODUCT_DATA>
-
+${storeOfferingSection}
 <SEO_TARGETING>
 Primary Focus Keyword: ${keywords.primary ?? "None specified (use brand/product category)"}
 Secondary Keywords: ${keywords.secondary.join(", ") || "None"}
@@ -119,6 +141,16 @@ Return the structured draft in the required JSON format.`;
     }
 
     const draft = validateDraft(parsed);
+    const styleOptions =
+      draft.styleOptions && draft.styleOptions.length > 0
+        ? draft.styleOptions
+        : facts.storeProfile?.bedding
+          ? facts.storeProfile.bedding.options.map((opt) => ({
+              name: opt.name,
+              description: `${opt.shortDescription}. ${opt.detailedFeatures}`,
+            }))
+          : undefined;
+
     const aeo_quick_summary =
       draft.aeo_quick_summary || buildHeuristicAiQuickSummary(facts, draft.productTitle);
     const aeo_faq =
@@ -135,6 +167,7 @@ Return the structured draft in the required JSON format.`;
 
     return {
       ...draft,
+      ...(styleOptions ? { styleOptions } : {}),
       aeo_quick_summary,
       aeo_faq,
       aeo_json_ld,

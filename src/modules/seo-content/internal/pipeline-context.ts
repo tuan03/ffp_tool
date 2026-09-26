@@ -4,6 +4,7 @@ import type {
   SeoContentOutput,
 } from "../types";
 import type { ContentResult, SeoPipelineContext } from "./domain-types";
+import { resolveStoreProfile } from "./store-profiles";
 
 /**
  * Creates the initial immutable SeoPipelineContext from the raw input.
@@ -20,9 +21,15 @@ export function createInitialContext(input: SeoContentInput, effectiveNiche?: st
     ),
   });
 
+  const storeProfile = resolveStoreProfile({
+    storeId: input.storeId,
+    siteDomain: input.siteDomain ?? input.url,
+  });
+
   return Object.freeze({
     source: frozenSource,
     ...(effectiveNiche ? { effectiveNiche } : {}),
+    ...(storeProfile ? { storeProfile } : {}),
   });
 }
 

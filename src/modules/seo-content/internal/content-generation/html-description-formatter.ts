@@ -63,7 +63,16 @@ export function formatProductDescriptionHtml(draft: GeneratedContentDraft): stri
     sections.push(`<p>${escapeHtml(draft.intro.trim())}</p>`);
   }
 
-  // 2. Feature & Benefit Bullets
+  // 2. Style Options (e.g. Comforter, Quilt, Duvet Cover for Bedding stores)
+  if (draft.styleOptions && draft.styleOptions.length > 0) {
+    const optionItems = draft.styleOptions
+      .map((opt) => `  <li><strong>${escapeHtml(opt.name)}:</strong> ${escapeHtml(opt.description.trim())}</li>`)
+      .join("\n");
+
+    sections.push(`<p><strong>Available Styles:</strong></p>\n<ul>\n${optionItems}\n</ul>`);
+  }
+
+  // 3. Feature & Benefit Bullets
   if (draft.bullets && draft.bullets.length > 0) {
     const listItems = draft.bullets
       .map((bullet: GeneratedBullet) => {

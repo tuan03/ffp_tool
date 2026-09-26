@@ -5,6 +5,7 @@ import type {
   GeneratedBullet,
   GeneratedContentDraft,
   GeneratedFaqItem,
+  GeneratedStyleOption,
   KeywordAllocation,
 } from "./content-generation-types";
 import { fitProductTitle, fitSeoDescription, fitSeoTitle, toTitleCase } from "./content-fitters";
@@ -23,6 +24,15 @@ export function buildHeuristicAiQuickSummary(
   facts: ContentFactSheet,
   productTitle: string,
 ): string {
+  if (facts.storeProfile?.bedding) {
+    const variantClause = facts.variantLabel ? ` in the ${facts.variantLabel} design` : "";
+    const visualText = facts.visualEntities && !/^(unknown|none|n\/a|not applicable)[\s.]*$/i.test(facts.visualEntities.trim())
+      ? ` featuring ${facts.visualEntities.trim()}`
+      : "";
+    const audience = facts.targetAudience.length > 0 ? facts.targetAudience[0] : "bedding and home decor enthusiasts";
+    return `The ${productTitle} is a premium bedding collection${variantClause}${visualText} designed for ${audience}. Available in three distinct style options—plush Comforter, lightweight classic Quilt, or convenient zippered Duvet Cover—it features ultra-soft brushed microfiber and vibrant dye-sublimation print for all-season comfort and easy care.`;
+  }
+
   const identity = facts.physicalProductIdentity || facts.niche || "specialty item";
   const entityText = facts.visualEntities && !/^(unknown|none|n\/a|not applicable)[\s.]*$/i.test(facts.visualEntities.trim())
     ? `featuring ${facts.visualEntities.trim()}`
@@ -47,6 +57,42 @@ export function buildHeuristicFaq(
   facts: ContentFactSheet,
   productTitle: string,
 ): readonly GeneratedFaqItem[] {
+  if (facts.storeProfile?.bedding) {
+    const q1 = "What is the difference between the Comforter, Quilt, and Duvet Cover options?";
+    const a1 =
+      "The Comforter provides thick, plush all-season warmth with fluffy batting fill. The Quilt is a lightweight coverlet with classic diamond stitching, perfect for warm months or layering. The Duvet Cover is a soft protective casing with a hidden zipper and interior corner ties to securely encase your existing insert.";
+
+    const q2 = "Is this bedding set suitable for year-round, all-season comfort?";
+    const a2 =
+      "Yes. Crafted from premium breathable microfiber, it delivers cozy warmth in cooler months and comfortable airflow during warmer seasons.";
+
+    let q3: string;
+    let a3: string;
+    if (facts.personalizationSupported) {
+      q3 = "Can I personalize or customize this bedding set?";
+      a3 =
+        "Yes. Personalization options allow you to tailor specific names, dates, or custom details, creating a truly unique keepsake or personalized gift.";
+    } else {
+      q3 = "How should this bedding set be cleaned and cared for?";
+      a3 = `${facts.storeProfile.bedding.careGuidance}. Crafted from ${facts.storeProfile.bedding.fabricMaterial}, the thermal dye-sublimation print maintains vibrant, fade-resistant color wash after wash.`;
+    }
+
+    const variantTag = facts.variantLabel ? ` (${facts.variantLabel})` : "";
+    const q4 = `What makes this ${facts.physicalProductIdentity || "bedding set"}${variantTag} unique?`;
+    const visualText =
+      facts.visualEntities && !/^(unknown|none|n\/a|not applicable)[\s.]*$/i.test(facts.visualEntities.trim())
+        ? `detailed ${facts.visualEntities.trim()}`
+        : "original graphic composition";
+    const a4 = `Unlike generic mass-market bedding, this edition features ${visualText}${facts.variantLabel ? ` in the signature ${facts.variantLabel} design` : ""}, paired with verified materials and focused craftsmanship for long-term appeal.`;
+
+    return [
+      { question: q1, answer: a1 },
+      { question: q2, answer: a2 },
+      { question: q3, answer: a3 },
+      { question: q4, answer: a4 },
+    ];
+  }
+
   const catName = facts.physicalProductIdentity || facts.niche || "item";
   const primaryUseCase = facts.useCases.length > 0
     ? facts.useCases[0]
@@ -124,6 +170,68 @@ export function buildHeuristicJsonLd(
 }
 
 /**
+ * Builds a compliant SEO meta description for bedding products with 3 available styles
+ * (Comforter, Quilt, Duvet Cover), guaranteeing mandatory keywords and strict <= maxLength length.
+ */
+export function buildBeddingSeoDescription(
+  productTitle: string,
+  designConcept: string | undefined,
+  maxLength: number = 160,
+): string {
+  const optionsPhrase = "Available in Comforter, Quilt, or Duvet Cover styles.";
+  const designText = designConcept ? ` featuring ${designConcept}` : "";
+  const cleanedTitle = productTitle.replace(/\s+/g, " ").trim();
+
+  const suffixes = [
+    " Crafted from premium ultra-soft microfiber with vibrant colors. Shop now!",
+    " Crafted from premium microfiber with vibrant colors. Shop now!",
+    " Premium ultra-soft microfiber with vivid print. Shop now!",
+    " Ultra-soft breathable microfiber with vivid print. Shop now!",
+    " Premium microfiber fabric with vivid colors. Shop now!",
+    " Soft breathable microfiber for all seasons. Shop now!",
+    " Ultra-soft microfiber fabric. Shop now!",
+    " Shop online today!",
+  ];
+
+  const subjects = [
+    `${cleanedTitle}${designText}`,
+    cleanedTitle,
+  ];
+
+  for (const subject of subjects) {
+    const prefix = `Discover this ${subject}. ${optionsPhrase}`;
+    for (const suffix of suffixes) {
+      const full = `${prefix}${suffix}`;
+      if (full.length >= 155 && full.length <= maxLength) {
+        return full;
+      }
+    }
+  }
+
+  for (const subject of subjects) {
+    const prefix = `Discover this ${subject}. ${optionsPhrase}`;
+    for (const suffix of suffixes) {
+      const full = `${prefix}${suffix}`;
+      if (
+        full.length <= maxLength &&
+        full.includes("Comforter") &&
+        full.includes("Quilt") &&
+        full.includes("Duvet Cover")
+      ) {
+        return full;
+      }
+    }
+  }
+
+  const standardSuffix = " Premium microfiber fabric with vivid print. Shop now!";
+  const reserved = `Discover this . ${optionsPhrase}${standardSuffix}`.length;
+  const availForTitle = Math.max(10, maxLength - reserved);
+  const shortenedTitle = cleanedTitle.slice(0, availForTitle).trim().replace(/[,.-]$/, "");
+  const fallback = `Discover this ${shortenedTitle}. ${optionsPhrase}${standardSuffix}`;
+  return fallback.length > maxLength ? fallback.slice(0, maxLength) : fallback;
+}
+
+/**
  * Deterministic, offline rule-based copywriting generator.
  * Zero external network calls. Produces clean, highly grounded e-commerce content.
  */
@@ -159,7 +267,27 @@ export class HeuristicContentGenerator implements ContentGenerator {
     // 3. Build Bullets
     const bullets: GeneratedBullet[] = [];
 
-    // Bullet 1: Design / Art
+    // Optional style options for bedding profile
+    const styleOptions: readonly GeneratedStyleOption[] | undefined = facts.storeProfile?.bedding
+      ? facts.storeProfile.bedding.options.map((opt) => ({
+          name: opt.name,
+          description: `${opt.shortDescription} - ${opt.detailedFeatures}`,
+        }))
+      : undefined;
+
+    // Dedicated material and print specifications for bedding profile
+    if (facts.storeProfile?.bedding) {
+      bullets.push({
+        label: "Materials",
+        text: facts.storeProfile.bedding.fabricMaterial,
+      });
+      bullets.push({
+        label: "Print",
+        text: facts.storeProfile.bedding.printTechnology,
+      });
+    }
+
+    // Bullet: Design / Art
     if (facts.visualEntities || facts.typographyStyleSummary) {
       const entityText = facts.visualEntities ? `showcasing ${facts.visualEntities}` : "with verified design details";
       bullets.push({
@@ -173,19 +301,21 @@ export class HeuristicContentGenerator implements ContentGenerator {
       });
     }
 
-    // Bullet 2: Style & Fit
-    const secondaryClause =
-      groundedKeywords.secondary.length > 0
-        ? `Ideal choice for ${groundedKeywords.secondary[0]}.`
-        : `A versatile statement piece that complements a wide range of settings.`;
+    // Bullet: Style & Fit
+    if (bullets.length < constraints.maxBullets) {
+      const secondaryClause =
+        groundedKeywords.secondary.length > 0
+          ? `Ideal choice for ${groundedKeywords.secondary[0]}.`
+          : `A versatile statement piece that complements a wide range of settings.`;
 
-    bullets.push({
-      label: "Style",
-      text: `${styleClause ? toTitleCase(styleClause.trim()) + ". " : ""}${secondaryClause}`,
-    });
+      bullets.push({
+        label: "Style",
+        text: `${styleClause ? toTitleCase(styleClause.trim()) + ". " : ""}${secondaryClause}`,
+      });
+    }
 
-    // Bullet 3: Personalization (if explicitly supported)
-    if (facts.personalizationSupported) {
+    // Bullet: Personalization (if explicitly supported)
+    if (facts.personalizationSupported && bullets.length < constraints.maxBullets) {
       bullets.push({
         label: "Personalization",
         text: "Customizable with custom details, making it truly unique for yourself or a loved one.",
@@ -218,14 +348,21 @@ export class HeuristicContentGenerator implements ContentGenerator {
       });
     }
 
-    // 4. Build Guidance (only if grounded in source description)
+    // 4. Build Guidance (only if grounded in source description or store profile)
     const guidance: string[] = [];
+    if (facts.storeProfile?.bedding?.careGuidance) {
+      guidance.push(facts.storeProfile.bedding.careGuidance);
+    }
     if (/wash|clean|wipe|hand wash/i.test(facts.originalDescription)) {
-      guidance.push("Wipe clean or follow specific garment care guidelines.");
+      if (!guidance.some((g) => /wash|clean/i.test(g))) {
+        guidance.push("Wipe clean or follow specific garment care guidelines.");
+      }
     }
 
     // 5. Build Closing
-    const closing = `Whether buying for yourself or searching for a memorable gift, this ${category} offers the perfect blend of distinctive styling and reliable everyday enjoyment.`;
+    const closing = facts.storeProfile?.bedding
+      ? "Whether choosing the plush warmth of a Comforter, the classic stitched style of a Quilt, or the versatile casing of a Duvet Cover, this bedding set offers the ideal balance of comfort, quality, and distinctive style."
+      : `Whether buying for yourself or searching for a memorable gift, this ${category} offers the perfect blend of distinctive styling and reliable everyday enjoyment.`;
 
     let rawSeoTitle: string;
     if (groundedKeywords.primary) {
@@ -273,13 +410,23 @@ export class HeuristicContentGenerator implements ContentGenerator {
     );
 
     // 7. Build SEO Description (<= 160 chars)
-    const audienceFrag = facts.targetAudience.length > 0 ? ` for ${facts.targetAudience[0]}` : "";
-    const primaryFrag = groundedKeywords.primary
-      ? groundedKeywords.primary
-      : productTitle.toLowerCase();
-    const variantFrag = facts.variantLabel ? ` (${facts.variantLabel})` : "";
-    const rawSeoDesc = `Discover this ${primaryFrag}${variantFrag}${audienceFrag}. Distinctive design, premium look, and everyday functionality. Shop now!`;
-    const productSeoDescription = fitSeoDescription(rawSeoDesc, constraints.maxSeoDescriptionLength);
+    let productSeoDescription: string;
+    if (facts.storeProfile?.bedding) {
+      const designConcept = extractVisionDesignConcept(facts);
+      productSeoDescription = buildBeddingSeoDescription(
+        productTitle,
+        designConcept,
+        constraints.maxSeoDescriptionLength,
+      );
+    } else {
+      const audienceFrag = facts.targetAudience.length > 0 ? ` for ${facts.targetAudience[0]}` : "";
+      const primaryFrag = groundedKeywords.primary
+        ? groundedKeywords.primary
+        : productTitle.toLowerCase();
+      const variantFrag = facts.variantLabel ? ` (${facts.variantLabel})` : "";
+      const rawSeoDesc = `Discover this ${primaryFrag}${variantFrag}${audienceFrag}. Distinctive design, premium look, and everyday functionality. Shop now!`;
+      productSeoDescription = fitSeoDescription(rawSeoDesc, constraints.maxSeoDescriptionLength);
+    }
 
     // 8. Build AEO Suite (AI Quick Summary, Strategic FAQ, JSON-LD Schema)
     const aeo_quick_summary = buildHeuristicAiQuickSummary(facts, productTitle);
@@ -297,6 +444,7 @@ export class HeuristicContentGenerator implements ContentGenerator {
       closing,
       productSeoTitle,
       productSeoDescription,
+      ...(styleOptions ? { styleOptions } : {}),
       aeo_quick_summary,
       aeo_faq,
       aeo_json_ld,
