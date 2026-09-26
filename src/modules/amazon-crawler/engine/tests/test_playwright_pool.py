@@ -26,6 +26,16 @@ class FakeCaptchaPage:
         self.index += 1
 
 
+class FakeContinuePage(FakeCaptchaPage):
+    def __init__(self, contents: list[str]) -> None:
+        super().__init__(contents)
+        self.clicks: list[str] = []
+
+    async def click(self, selector: str, **_kwargs: object) -> None:
+        self.clicks.append(selector)
+        self.index += 1
+
+
 class FakeZipCaptchaPage(FakeCaptchaPage):
     def __init__(self, contents: list[str]) -> None:
         super().__init__(contents)
@@ -117,6 +127,29 @@ class PlaywrightPoolTests(unittest.IsolatedAsyncioTestCase):
                 "https://amazon.com",
                 None,
             )
+
+    async def test_headless_clicks_button_only_continue_challenge(self) -> None:
+        challenge = """<form method="get" action="/errors_page/validateCaptcha">
+        <input type="hidden" name="amzn" value="token"><input type="hidden" name="field-keywords" value="PEUBXF">
+        <button type="submit" alt="Continue shopping">Continue shopping</button></form>"""
+        page = FakeContinuePage([challenge, "<h1 id='productTitle'>Ready</h1>"])
+        pool = self.make_pool(headless=True)
+
+        html = await pool._wait_for_captcha(page, "https://www.amazon.com/dp/B012345678", None)
+
+        self.assertIn("productTitle", html)
+        self.assertEqual(page.clicks, ['form[action="/errors_page/validateCaptcha"] button[type="submit"]'])
+
+    async def test_headless_does_not_click_challenge_with_captcha_input(self) -> None:
+        challenge = """<form method="get" action="/errors_page/validateCaptcha">
+        <input name="captchacharacters"><button type="submit">Continue shopping</button></form>"""
+        page = FakeContinuePage([challenge])
+        pool = self.make_pool(headless=True)
+
+        with self.assertRaises(CaptchaTimeout):
+            await pool._wait_for_captcha(page, "https://www.amazon.com/dp/B012345678", None)
+
+        self.assertEqual(page.clicks, [])
 
     async def test_headed_mode_waits_for_manual_captcha_then_continues(self) -> None:
         notifications: list[str] = []
