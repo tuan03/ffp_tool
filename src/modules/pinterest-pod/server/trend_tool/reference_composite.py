@@ -29,6 +29,7 @@ def decode_surface_mask(payload: object, size: tuple[int, int]) -> Image.Image:
         raise ValueError("SURFACE_REVIEW_REQUIRED: invalid segmentation payload")
     if encoded.startswith("data:image/png;base64,"):
         encoded = encoded.split(",", 1)[1]
+    encoded = "".join(encoded.split())
     try:
         raw = base64.b64decode(encoded, validate=True)
         with Image.open(io.BytesIO(raw)) as opened:
