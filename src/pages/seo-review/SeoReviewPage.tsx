@@ -6,6 +6,7 @@ import { getModuleApiRunner, type ModuleApiRunner } from "../../modules/module-a
 import {
   pushSeoReviewProductsBatch,
   pushSeoReviewProductToShopify,
+  type PushSeoReviewProductResult,
   type SeoReviewPushProductItem,
 } from "../../modules/orchestrator";
 import type { ApplyApprovedProductUpdatesResult } from "../../modules/orchestrator";
@@ -81,8 +82,10 @@ function toPushProductItem(vm: SeoProductUiViewModel): SeoReviewPushProductItem 
     tags: vm.sourcePinterestItem
       ? ["pod", "pinterest-pod", ...(vm.sourcePinterestItem.trendKeywords || [])]
       : undefined,
-    vendor: vm.sourcePinterestItem ? "FFP Store" : undefined,
+    vendor: vm.sourcePinterestItem?.vendor || (vm.sourcePinterestItem ? "FFP Store" : undefined),
+    collectionsToJoin: vm.sourcePinterestItem?.collectionIds,
     metafields,
+    variants: vm.sourcePinterestItem?.variants,
   };
 }
 
@@ -191,6 +194,12 @@ export function SeoReviewPage({
 
   // Shopify Store Selection State (matching Distributed Crawl logic)
   const [availableStores, setAvailableStores] = useState<Array<StoreProfile>>([
+    {
+      storeId: "chillgen",
+      shopDomain: "bbjttb-n9.myshopify.com",
+      productTypes: ["Rug", "Doormat", "Area Rug"],
+      defaultProductType: "Rug",
+    },
     {
       storeId: "capozen",
       shopDomain: "capozen.myshopify.com",
@@ -343,11 +352,19 @@ export function SeoReviewPage({
         const raw = window.sessionStorage.getItem("ffp_seo_review_handoff_banner");
         if (raw) {
           window.sessionStorage.removeItem("ffp_seo_review_handoff_banner");
-          const handoff = JSON.parse(raw) as { count: number; timestamp: number; source?: string };
+          const handoff = JSON.parse(raw) as { count: number; timestamp: number; source?: string; storeId?: string };
           if (handoff && handoff.count > 0) {
+            if (handoff.storeId) {
+              setSelectedStoreId(handoff.storeId);
+              try {
+                window.localStorage.setItem("ffp_seo_review_selected_store", handoff.storeId);
+              } catch {
+                // ignore
+              }
+            }
             notifyUser({
               title: "📥 Sản phẩm mới cần kiểm duyệt!",
-              message: `Hệ thống vừa nhận ${handoff.count} sản phẩm từ ${handoff.source || "hệ thống"}. Vui lòng kiểm tra và duyệt nội dung SEO.`,
+              message: `Hệ thống vừa nhận ${handoff.count} sản phẩm từ ${handoff.source || "hệ thống"}${handoff.storeId ? ` cho store ${handoff.storeId.toUpperCase()}` : ""}. Vui lòng kiểm tra và duyệt nội dung SEO.`,
               type: "info",
               sound: "chime",
               url: "/seo-review",
@@ -494,7 +511,7 @@ export function SeoReviewPage({
 
   // Push to Shopify Store handlers
   async function triggerPushToShopify(targetProduct: SeoProductUiViewModel) {
-    const targetStore = effectiveStoreId || targetProduct.storeId || "capozen";
+    const targetStore = targetProduct.storeId || effectiveStoreId || "capozen";
     try {
       const result = await pushSeoReviewProductToShopify(
         toPushProductItem(targetProduct),
@@ -579,14 +596,28 @@ export function SeoReviewPage({
   async function triggerBatchPushToShopify(targets: readonly SeoProductUiViewModel[]) {
     try {
       const pushItems = targets.map(toPushProductItem);
-      const results = await pushSeoReviewProductsBatch(
-        pushItems,
-        {
-          moduleApiRunner: runner,
-          storeId: effectiveStoreId,
-        },
-        3,
-      );
+      // Group push items by target store so each product goes to its own intended store
+      const storeGroups = new Map<string, SeoReviewPushProductItem[]>();
+      for (const item of pushItems) {
+        const itemStore = item.originalStoreId || effectiveStoreId;
+        if (!storeGroups.has(itemStore)) {
+          storeGroups.set(itemStore, []);
+        }
+        storeGroups.get(itemStore)!.push(item);
+      }
+
+      const results: PushSeoReviewProductResult[] = [];
+      for (const [storeIdKey, groupItems] of storeGroups.entries()) {
+        const groupResults = await pushSeoReviewProductsBatch(
+          groupItems,
+          {
+            moduleApiRunner: runner,
+            storeId: storeIdKey,
+          },
+          3,
+        );
+        results.push(...groupResults);
+      }
 
       const resultMap = new Map(results.map((r) => [r.id, r]));
 
@@ -698,7 +729,7 @@ export function SeoReviewPage({
 
     void triggerPushToShopify(syncingTarget);
 
-    const targetStore = effectiveStoreId || target.storeId || "capozen";
+    const targetStore = target.storeId || effectiveStoreId || "capozen";
     if (
       target.coordinatorReview &&
       amazonCrawlerReviews &&
@@ -1307,7 +1338,7 @@ export function SeoReviewPage({
     // If autoApprove is requested AND product was already synced on Shopify (or already has a Shopify GID):
     // Directly push the updated product data to Shopify!
     if (autoApprove && wasAlreadySynced) {
-      const targetStore = effectiveStoreId || target.storeId || "capozen";
+      const targetStore = target.storeId || effectiveStoreId || "capozen";
       setProducts((prev) =>
         prev.map((p) =>
           p.id === id

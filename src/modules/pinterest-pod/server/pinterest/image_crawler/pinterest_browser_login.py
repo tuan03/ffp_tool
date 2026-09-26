@@ -22,6 +22,17 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def cleanup_profile_locks(profile_dir: Path) -> None:
+    """Clean up stale Chromium singleton locks left by abnormal exits."""
+    for lock_name in ("SingletonLock", "SingletonCookie", "SingletonSocket"):
+        lock_file = profile_dir / lock_name
+        try:
+            if lock_file.is_symlink() or lock_file.exists():
+                lock_file.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
 def has_login_cookie(context) -> bool:
     try:
         cookies = context.cookies()
@@ -41,7 +52,7 @@ def has_login_cookie(context) -> bool:
         if name == "_auth" and value == "1":
             return True
         # _pinterest_sess contains a long signed session token for authenticated accounts
-        if name == "_pinterest_sess" and len(value) > 15 and value != "0":
+        if name == "_pinterest_sess" and len(value) > 30 and value != "0":
             return True
     return False
 
@@ -96,6 +107,7 @@ def main() -> int:
     args = parse_args()
     profile_dir = browser_profile_dir(args.profile_dir)
     profile_dir.mkdir(parents=True, exist_ok=True)
+    cleanup_profile_locks(profile_dir)
 
     try:
         from playwright.sync_api import sync_playwright
@@ -110,7 +122,7 @@ def main() -> int:
 
     deadline = time.time() + max(30, args.timeout)
     with sync_playwright() as playwright:
-        channels_to_try = [None, "chrome", "msedge"]
+        channels_to_try = [None, "chrome"] if sys.platform != "win32" else [None, "chrome", "msedge"]
         context = None
         last_exc = None
         for channel in channels_to_try:
@@ -123,6 +135,9 @@ def main() -> int:
                     "args": [
                         "--disable-blink-features=AutomationControlled",
                         "--disable-dev-shm-usage",
+                        "--no-first-run",
+                        "--no-default-browser-check",
+                        "--start-maximized",
                     ],
                 }
                 if channel:
@@ -130,6 +145,7 @@ def main() -> int:
                 context = playwright.chromium.launch_persistent_context(**launch_args)
                 break
             except Exception as exc:
+                print(f"Notice: Channel '{channel}' failed to launch: {exc}", flush=True)
                 last_exc = exc
                 continue
 
@@ -140,6 +156,10 @@ def main() -> int:
         page = context.pages[0] if context.pages else context.new_page()
         try:
             page.goto(args.url, wait_until="domcontentloaded", timeout=45_000)
+            try:
+                page.bring_to_front()
+            except Exception:
+                pass
         except Exception as exc:
             print(f"WARNING: Could not open Pinterest login page: {exc}", flush=True)
 

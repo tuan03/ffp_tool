@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { notifyUser } from "../../../shared/utils";
 import { inferProductTypeFromNiche, packageDeliverablesForSeo, realPinterestPodClient } from "../service";
+import { DEFAULT_PINTEREST_POD_SHOPIFY_SETTINGS } from "../types";
 import type {
   CandidateItem,
   DeliverablesData,
@@ -10,6 +11,7 @@ import type {
   PinterestAuthStatus,
   PinterestPodClient,
   PinterestPodDeliverables,
+  PinterestPodShopifySettings,
   PinterestProductType,
   PodRecentRunItem,
   ReferenceImage,
@@ -28,6 +30,7 @@ import { PinterestAuthModal } from "./components/PinterestAuthModal";
 import { ProgressAndLogs } from "./components/ProgressAndLogs";
 import { RecentRunsAccordion } from "./components/RecentRunsAccordion";
 import { RoomTemplateManagerModal } from "./components/RoomTemplateManagerModal";
+import { ShopifyPricingConfigSection } from "./components/ShopifyPricingConfigSection";
 import { TrendClusterDiscovery } from "./components/TrendClusterDiscovery";
 
 interface PinterestPodStudioProps {
@@ -90,6 +93,32 @@ export function PinterestPodStudio({
   const [previewImage, setPreviewImage] = useState<LightboxImageItem | null>(null);
   const [isRoomManagerOpen, setIsRoomManagerOpen] = useState(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+
+  // Shopify & Pricing settings (persisted across sessions)
+  const [shopifySettings, setShopifySettings] = useState<PinterestPodShopifySettings>(() => {
+    try {
+      const raw = localStorage.getItem("ffp_pinterest_pod_shopify_settings");
+      if (raw) {
+        const parsed = JSON.parse(raw) as Partial<PinterestPodShopifySettings>;
+        return {
+          ...DEFAULT_PINTEREST_POD_SHOPIFY_SETTINGS,
+          ...parsed,
+        };
+      }
+    } catch {
+      // Ignore localStorage parse error
+    }
+    return DEFAULT_PINTEREST_POD_SHOPIFY_SETTINGS;
+  });
+
+  function handleShopifySettingsChange(next: PinterestPodShopifySettings): void {
+    setShopifySettings(next);
+    try {
+      localStorage.setItem("ffp_pinterest_pod_shopify_settings", JSON.stringify(next));
+    } catch {
+      // Ignore localStorage write error
+    }
+  }
 
   function handlePreviewCandidate(candidate: CandidateItem): void {
     setPreviewImage({
@@ -391,8 +420,11 @@ export function PinterestPodStudio({
     setIsLoggingIn(true);
     setErrorMessage(null);
     try {
-      await client.launchLogin(600);
+      const res = await client.launchLogin(600);
       if (!isMountedRef.current) return;
+      if (res && !res.ok) {
+        setErrorMessage(res.message || res.error || "Không thể khởi chạy trình duyệt Pinterest");
+      }
       await refreshAuthStatus();
     } catch (err) {
       if (!isMountedRef.current) return;
@@ -700,19 +732,23 @@ export function PinterestPodStudio({
     setSelectedCandidateIds((prev) => [...prev, candId]);
   }
 
-  // Stop Job
+  // Stop Job and unlock form
   async function handleStopJob(): Promise<void> {
-    if (!jobId) return;
+    const currentId = jobId;
     try {
-      await client.cancelJob(jobId);
-      if (!isMountedRef.current) return;
-      setJobStatus("cancelled");
-      stopPolling();
-      setIsProducing(false);
-      void loadRecentRuns();
+      if (currentId) {
+        await client.cancelJob(currentId);
+      }
     } catch (err) {
-      if (!isMountedRef.current) return;
-      setErrorMessage(err instanceof Error ? err.message : "Hủy job thất bại");
+      console.warn("Cancel job warning:", err);
+    } finally {
+      if (isMountedRef.current) {
+        setJobStatus("idle");
+        setIsProducing(false);
+        stopPolling();
+        setErrorMessage(null);
+        void loadRecentRuns();
+      }
     }
   }
 
@@ -832,8 +868,22 @@ export function PinterestPodStudio({
         candidates,
       },
       product,
+      selectedCandidateIds,
+      undefined,
+      {
+        storeId: shopifySettings.storeId,
+        vendor: shopifySettings.vendor,
+        collectionIds: shopifySettings.collectionIds,
+        productType: shopifySettings.productType,
+        priceAddition: shopifySettings.priceAddition,
+        discountPercent: shopifySettings.discountPercent,
+        profileSlug: shopifySettings.profileSlug,
+        applyJeminisePreset: shopifySettings.applyJeminisePreset,
+        imageProfileSlug: shopifySettings.imageProfileSlug,
+        variants: shopifySettings.variants,
+      },
     );
-  }, [deliverables, jobId, candidates, product]);
+  }, [deliverables, jobId, candidates, product, selectedCandidateIds, shopifySettings]);
 
   const hasStage2 = candidates.length > 0 || jobStatus === "ready_for_review";
   const hasDeliverables =
@@ -884,6 +934,36 @@ export function PinterestPodStudio({
       {/* TAB 1: Quét Trend & Khởi tạo Job */}
       {currentStage === 1 && (
         <div className="flex flex-col gap-5 animate-in fade-in duration-200">
+          {/* Active Job Alert Banner with Stop & Unlock */}
+          {(jobStatus === "running" || jobStatus === "producing") && (
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 rounded-xl border border-cyan-500/60 bg-gradient-to-r from-slate-900 via-cyan-950/40 to-slate-900 p-4 text-xs shadow-lg">
+              <div className="flex items-center gap-3">
+                <span className="relative flex h-3 w-3">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-cyan-400 opacity-75" />
+                  <span className="relative inline-flex h-3 w-3 rounded-full bg-cyan-500" />
+                </span>
+                <div>
+                  <p className="font-bold text-cyan-200 text-sm">
+                    {jobStatus === "producing" ? "Đang sản xuất thiết kế POD..." : "Đang tiến hành cào mẫu & phân tích xu hướng Pinterest..."}
+                  </p>
+                  <p className="text-[11px] text-slate-400">
+                    Job ID: <span className="font-mono text-cyan-300">{jobId || "Đang khởi tạo"}</span> • Bạn có thể theo dõi tiến độ chi tiết ở cột bên phải.
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => void handleStopJob()}
+                  className="flex items-center gap-1.5 rounded-lg border border-rose-500/50 bg-rose-950/60 px-3.5 py-2 font-bold text-rose-200 transition hover:bg-rose-900 hover:text-white hover:border-rose-400 cursor-pointer shadow"
+                >
+                  <span>⏹</span>
+                  <span>Dừng tiến trình & Mở khóa Form</span>
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Quick link banner if candidate review is already available */}
           {hasStage2 && (
             <div className="flex flex-col sm:flex-row items-center justify-between gap-3 rounded-xl border border-amber-500/50 bg-amber-950/40 p-4 text-xs text-amber-200 shadow-md">
@@ -1149,6 +1229,14 @@ export function PinterestPodStudio({
               onHandoverToSeo={onHandoverToSeo}
             />
           )}
+
+          {/* Cấu hình Shopify & Định giá trước khi bàn giao SEO (Đặt ở dưới cùng) */}
+          <ShopifyPricingConfigSection
+            settings={shopifySettings}
+            onChange={handleShopifySettingsChange}
+            onReset={() => handleShopifySettingsChange(DEFAULT_PINTEREST_POD_SHOPIFY_SETTINGS)}
+            disabled={isProductionActive}
+          />
         </div>
       )}
 

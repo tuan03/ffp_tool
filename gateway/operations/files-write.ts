@@ -1,5 +1,3 @@
-import { Blob } from "node:buffer";
-
 import { FormData } from "undici";
 
 import { executeChunkedWrite } from "../chunked-write";
@@ -169,15 +167,19 @@ export async function executeFilesStageBinary(
   if (!target?.url || !target.resourceUrl) {
     throw new GatewayError("Shopify did not return a staged image target", "SHOPIFY_USER_ERROR", 400);
   }
-  // The proxy transport uses undici.fetch, so its FormData implementation must
-  // also come from undici. Node's global FormData is from a separate undici
-  // instance and is serialized as a plain body by the package transport.
-  const form = new FormData();
+  const transport = uploadTransport ?? createStoreTransport(store);
+  // Match FormData implementation to transport:
+  // - When using globalThis.fetch (direct connection without proxy), Node's native fetch
+  //   requires globalThis.FormData to serialize a valid multipart/form-data body.
+  //   Passing undici.FormData to globalThis.fetch causes Node to serialize it as "[object FormData]",
+  //   leading to GCS 400 "Cannot create buckets using a POST".
+  // - When using proxyTransport (undici.fetch with ProxyAgent), undici requires undici.FormData.
+  const useGlobalFormData = transport === globalThis.fetch;
+  const form = useGlobalFormData ? new globalThis.FormData() : new FormData();
   for (const parameter of target.parameters) {
     form.append(parameter.name, parameter.value);
   }
   form.append("file", new Blob([Uint8Array.from(content)], { type: resolvedMimeType }), filename);
-  const transport = uploadTransport ?? createStoreTransport(store);
   let upload: Response;
   try {
     upload = await transport(target.url, {

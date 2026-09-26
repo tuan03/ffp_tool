@@ -492,6 +492,7 @@ def check_browser_profile_logged_in(profile_dir: Path | None = None) -> bool:
         return False
     candidate_cookie_files = [
         p_dir / "Default" / "Network" / "Cookies",
+        p_dir / "Default" / "Cookies",
         p_dir / "Network" / "Cookies",
         p_dir / "Cookies",
     ]
@@ -829,6 +830,14 @@ def resolve_browser_profile_dir() -> Path:
     return local_profile
 
 
+def is_browser_login_process_running() -> bool:
+    """Check if the interactive browser login subprocess is currently alive."""
+    global _LOGIN_PROCESS
+    if _LOGIN_PROCESS is None:
+        return False
+    return _LOGIN_PROCESS.poll() is None
+
+
 def get_pinterest_auth_status() -> dict[str, Any]:
     """Inspect browser profile and OAuth token status for Pinterest POD Studio."""
     profile_dir = resolve_browser_profile_dir()
@@ -854,6 +863,7 @@ def get_pinterest_auth_status() -> dict[str, Any]:
         "ok": True,
         "logged_in": is_fully_logged_in,
         "browser_logged_in": browser_logged_in,
+        "browser_process_active": is_browser_login_process_running(),
         "oauth_valid": oauth_valid,
         "status_text": status_text,
         "profile_dir": str(profile_dir),
@@ -895,6 +905,15 @@ def launch_pinterest_login(timeout: int = 600) -> dict[str, Any]:
     profile_dir = resolve_browser_profile_dir()
     profile_dir.mkdir(parents=True, exist_ok=True)
 
+    # Clean up stale locks before launch
+    for lock_name in ("SingletonLock", "SingletonCookie", "SingletonSocket"):
+        lock_file = profile_dir / lock_name
+        try:
+            if lock_file.is_symlink() or lock_file.exists():
+                lock_file.unlink(missing_ok=True)
+        except Exception:
+            pass
+
     cmd = [
         sys.executable,
         str(script),
@@ -903,6 +922,14 @@ def launch_pinterest_login(timeout: int = 600) -> dict[str, Any]:
         "--timeout",
         str(timeout),
     ]
+
+    log_path = (ROOT / "pinterest" / "pinterest_browser_login.log").resolve()
+    try:
+        log_f = open(log_path, "a", encoding="utf-8")
+        log_f.write(f"\n--- [LAUNCH] Pinterest Browser Login initiated at {time.strftime('%Y-%m-%d %H:%M:%S')} ---\n")
+        log_f.flush()
+    except Exception:
+        log_f = subprocess.DEVNULL
 
     try:
         import subprocess
@@ -913,6 +940,8 @@ def launch_pinterest_login(timeout: int = 600) -> dict[str, Any]:
             cmd,
             cwd=str(ROOT),
             creationflags=creationflags,
+            stdout=log_f,
+            stderr=subprocess.STDOUT,
         )
         return {
             "ok": True,
@@ -1523,16 +1552,34 @@ def _run_local_pipeline_worker(job_id: str, req_body: dict[str, Any], base_url: 
                 if k == "trend_tool" or k.startswith("trend_tool."):
                     del sys.modules[k]
 
+    # Ensure project .venv site-packages is in sys.path if not running inside .venv
+    try:
+        project_root = ROOT.parents[3]
+        venv_dir = project_root / ".venv"
+        if venv_dir.exists() and Path(sys.prefix).resolve() != venv_dir.resolve():
+            import glob
+            for sp in glob.glob(str(venv_dir / "lib" / "python*" / "site-packages")):
+                if sp not in sys.path:
+                    sys.path.insert(0, sp)
+            win_sp = venv_dir / "Lib" / "site-packages"
+            if win_sp.exists() and str(win_sp) not in sys.path:
+                sys.path.insert(0, str(win_sp))
+    except Exception:
+        pass
+
     try:
         import trend_tool.config as tt_cfg
         import trend_tool.pipeline as tt_pipe
         from trend_tool.settings import task5_token_path_from_env
     except Exception as exc:
         with JOB_CACHE_LOCK:
+            JOB_CANCEL_EVENTS.pop(job_id, None)
+            LOCAL_WORKER_THREADS.pop(job_id, None)
             if job_id in ACTIVE_JOBS:
                 ACTIVE_JOBS[job_id]["status"] = "failed"
                 ACTIVE_JOBS[job_id]["error"] = f"Không thể nạp trend_tool module: {exc}"
                 ACTIVE_JOBS[job_id].setdefault("logs", []).append(f"LỖI: Không thể nạp trend_tool module: {exc}")
+                save_job_manifest(job_id, ACTIVE_JOBS[job_id])
         return
 
     niche = str(req_body.get("niche") or "").strip()
@@ -2671,6 +2718,24 @@ def get_pod_job_status(job_id: str, base_url: str, api_url: str = DEFAULT_API_UR
     if not cached_job:
         raise LookupError(f"Không tìm thấy job hoặc thư mục run: {job_id}")
 
+    # Reconcile orphaned running jobs: if status is running/producing but worker thread is dead/non-existent
+    if cached_job.get("status") in {"running", "producing"}:
+        is_thread_alive = False
+        with JOB_CACHE_LOCK:
+            worker_th = LOCAL_WORKER_THREADS.get(job_id)
+            if worker_th and worker_th.is_alive():
+                is_thread_alive = True
+        if not is_thread_alive:
+            cached_job["status"] = "failed"
+            cached_job["error"] = "Tiến trình chạy nền đã kết thúc hoặc máy chủ được khởi động lại."
+            cached_job.setdefault("logs", []).append("Tiến trình bị gián đoạn: luồng xử lý không còn hoạt động hoặc máy chủ đã khởi động lại.")
+            with JOB_CACHE_LOCK:
+                ACTIVE_JOBS[job_id] = cached_job
+            try:
+                save_job_manifest(job_id, cached_job)
+            except Exception:
+                pass
+
     # If completed and assets not yet cached, cache now
     if cached_job.get("status") == "completed" and "cachedAssets" not in cached_job:
         cached = cache_job_assets(job_id, cached_job, base_url, api_url)
@@ -3102,6 +3167,15 @@ def cancel_pod_job(job_id: str, api_url: str = DEFAULT_API_URL) -> dict[str, Any
             ACTIVE_JOBS[safe_id]["error"] = "Tiến trình đã được dừng bởi người dùng."
             ACTIVE_JOBS[safe_id].setdefault("logs", []).append("Nhận được lệnh dừng job từ người dùng. Đang hủy tiến trình...")
             save_job_manifest(safe_id, ACTIVE_JOBS[safe_id])
+        else:
+            manifest = load_job_manifest(safe_id)
+            if manifest:
+                m_data = manifest.get("jobData") or manifest
+                m_data["status"] = "cancelled"
+                m_data["error"] = "Tiến trình đã được dừng bởi người dùng."
+                m_data.setdefault("logs", []).append("Nhận được lệnh dừng job từ người dùng. Đang hủy tiến trình...")
+                ACTIVE_JOBS[safe_id] = m_data
+                save_job_manifest(safe_id, m_data)
 
     return {"ok": True, "jobId": safe_id, "status": "cancelled"}
 
@@ -3206,6 +3280,22 @@ def list_recent_jobs_and_runs() -> list[dict[str, Any]]:
                         r_id = data.get("runId") or job_info.get("run_id") or job_info.get("runId") or (job_info.get("output") or {}).get("run_id")
                         if r_id:
                             seen_ids.add(str(r_id))
+
+                    if st_val in {"running", "producing"}:
+                        is_th_alive = False
+                        with JOB_CACHE_LOCK:
+                            th = LOCAL_WORKER_THREADS.get(path.name)
+                            if th and th.is_alive():
+                                is_th_alive = True
+                        if not is_th_alive:
+                            st_val = "failed"
+                            job_info["status"] = "failed"
+                            job_info["error"] = "Tiến trình chạy nền đã kết thúc hoặc máy chủ được khởi động lại."
+                            data["status"] = "failed"
+                            try:
+                                manifest_file.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+                            except Exception:
+                                pass
 
                     cached_cands = job_info.get("candidates") or (job_info.get("output") or {}).get("candidates") or []
                     thumbnails: list[str] = []

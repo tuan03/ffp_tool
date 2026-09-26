@@ -3,7 +3,7 @@ import type { AppEnvironment } from "../../shared/types";
 export type { AppEnvironment };
 
 /** Supported product types for Pinterest POD pipeline */
-export type PodProductType = "bag" | "rug" | "blanket" | "custom";
+export type PodProductType = "bag" | "rug" | "blanket" | "custom" | (string & {});
 export type PinterestProductType = PodProductType;
 
 /**
@@ -256,6 +256,7 @@ export interface PinterestAuthStatus {
   readonly ok: boolean;
   readonly logged_in: boolean;
   readonly browser_logged_in?: boolean;
+  readonly browser_process_active?: boolean;
   readonly oauth_valid?: boolean;
   readonly status_text: string;
   readonly profile_dir?: string;
@@ -459,21 +460,149 @@ export interface PodComposedMockupSpec {
 export interface PodDeliverableItem {
   readonly designId: string;
   readonly sourceCandidateId: string;
-  readonly productType: PodProductType;
+  readonly productType: PodProductType | string;
   readonly originalPinTitle: string;
   readonly trendKeywords: readonly string[];
   readonly printMaster: PodPrintMasterSpec;
   readonly cutoutProduct: PodCutoutSpec;
   readonly composedMockups: readonly PodComposedMockupSpec[];
+  readonly storeId?: string;
+  readonly vendor?: string;
+  readonly collectionIds?: readonly string[];
+  readonly priceAddition?: number;
+  readonly discountPercent?: number;
+  readonly profileSlug?: "default" | "jeminise";
+  readonly applyJeminisePreset?: boolean;
+  readonly imageProfileSlug?: string;
+  readonly variants?: readonly {
+    readonly title?: string;
+    readonly price: string;
+    readonly compareAtPrice?: string;
+    readonly sku?: string;
+    readonly optionValues?: readonly { readonly optionName: string; readonly name: string }[];
+  }[];
 }
 
 /** Complete deliverables contract handed off to the SEO & Content module */
 export interface PinterestPodDeliverables {
   readonly workflowId: string;
   readonly success: true;
-  readonly productType: PodProductType;
+  readonly productType: PodProductType | string;
   readonly totalProduced: number;
   readonly items: readonly PodDeliverableItem[];
+  readonly storeId?: string;
+  readonly vendor?: string;
+  readonly collectionIds?: readonly string[];
+  readonly priceAddition?: number;
+  readonly discountPercent?: number;
+  readonly profileSlug?: "default" | "jeminise";
+  readonly applyJeminisePreset?: boolean;
+  readonly imageProfileSlug?: string;
+  readonly variants?: readonly {
+    readonly title?: string;
+    readonly price: string;
+    readonly compareAtPrice?: string;
+    readonly sku?: string;
+    readonly optionValues?: readonly { readonly optionName: string; readonly name: string }[];
+  }[];
+}
+
+/** Single item in the POD price set & variant matrix */
+export interface PodPriceVariantItem {
+  readonly id?: string;
+  readonly label: string;
+  readonly basePrice: number;
+  readonly sku?: string;
+  readonly optionName?: string;
+}
+
+/** Standard preset definition for POD price sets */
+export interface PodPricePresetDefinition {
+  readonly id: string;
+  readonly name: string;
+  readonly productType: string;
+  readonly description: string;
+  readonly targetStoreIds?: readonly string[];
+  readonly variants: readonly PodPriceVariantItem[];
+}
+
+export const DEFAULT_POD_PRICE_VARIANTS: readonly PodPriceVariantItem[] = [
+  { label: '36" x 60" (3x5 ft)', basePrice: 49.99, optionName: "Size" },
+  { label: '48" x 72" (4x6 ft)', basePrice: 79.99, optionName: "Size" },
+  { label: '60" x 96" (5x8 ft)', basePrice: 129.99, optionName: "Size" },
+];
+
+/** Configuration for Shopify store sync, pricing, and variants */
+export interface PinterestPodShopifySettings {
+  readonly storeId: string;
+  readonly vendor?: string;
+  readonly collectionIds: readonly string[];
+  readonly collectionId?: string;
+  readonly productType: string;
+  readonly priceAddition: number;
+  readonly discountPercent: number;
+  readonly profileSlug: "default" | "jeminise";
+  readonly applyJeminisePreset: boolean;
+  readonly imageProfileSlug: string;
+  readonly priceSetMode?: "preset" | "store_product" | "custom";
+  readonly priceSetPresetId?: string;
+  readonly storeSampleProductId?: string;
+  readonly storeSampleProductTitle?: string;
+  readonly variants?: readonly PodPriceVariantItem[];
+}
+
+export const DEFAULT_PINTEREST_POD_SHOPIFY_SETTINGS: PinterestPodShopifySettings = {
+  storeId: "chillgen",
+  vendor: "CHILLGEN",
+  collectionIds: [],
+  collectionId: "",
+  productType: "Rug",
+  priceAddition: 6.95,
+  discountPercent: 0,
+  profileSlug: "default",
+  applyJeminisePreset: false,
+  imageProfileSlug: "default",
+  priceSetMode: "preset",
+  priceSetPresetId: "rug_3_sizes",
+  variants: DEFAULT_POD_PRICE_VARIANTS,
+};
+
+/** Image processing profile for watermarks, canvas resize, and pixel transforms */
+export interface ImageProcessingProfile {
+  readonly slug: string;
+  readonly name: string;
+  readonly enabled: boolean;
+  readonly revision: string;
+  readonly hasLogo: boolean;
+  readonly logoUrl?: string;
+  readonly randomPixels: number;
+  readonly pixelDelta: number;
+  readonly jpegQuality: number;
+  readonly output: {
+    readonly width: number;
+    readonly height: number;
+    readonly fit: "contain" | "cover";
+    readonly upscale?: boolean;
+    readonly background: string;
+  };
+  readonly logo: {
+    readonly enabled: boolean;
+    readonly width: number;
+    readonly height: number;
+    readonly maxPercent: number;
+    readonly percentBasis?: "width" | "height";
+    readonly padding: number;
+    readonly position: "top-left" | "top-right" | "bottom-left" | "bottom-right";
+    readonly opacity?: number;
+  };
+}
+
+export interface ImageProcessingProfileManager {
+  list(): Promise<ImageProcessingProfile[]>;
+  save(slug: string, profile: ImageProcessingProfile): Promise<ImageProcessingProfile>;
+  delete(slug: string): Promise<void>;
+  uploadLogo(slug: string, dataUrl: string): Promise<ImageProcessingProfile>;
+  preview(slug: string, profile: ImageProcessingProfile, dataUrl: string): Promise<string>;
 }
 
 /** Recent job or run item for UI history listing */

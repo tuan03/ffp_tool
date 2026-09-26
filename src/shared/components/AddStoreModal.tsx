@@ -1,4 +1,4 @@
-﻿import { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 
 export interface AddedStoreInfo {
   readonly storeId: string;
@@ -87,7 +87,7 @@ export function AddStoreModal({
         if (isMounted) {
           setStatusMessage({
             type: "error",
-            text: err instanceof Error ? err.message : "Kh├┤ng tß║úi ─æã░ß╗úc th├┤ng tin store.",
+            text: err instanceof Error ? err.message : "Không tải được thông tin store.",
           });
         }
       } finally {
@@ -130,7 +130,7 @@ export function AddStoreModal({
     if (!trimmedProxy) {
       setProxyCheckResult({
         success: false,
-        error: "Vui l├▓ng nhß║¡p Proxy URL trã░ß╗øc khi kiß╗âm tra.",
+        error: "Vui lòng nhập Proxy URL trước khi kiểm tra.",
       });
       return;
     }
@@ -154,7 +154,7 @@ export function AddStoreModal({
         setProxyCheckResult({
           success: false,
           latencyMs: data.data?.latencyMs,
-          error: data.error?.message || "Kiß╗âm tra proxy thß║Ñt bß║íi.",
+          error: data.error?.message || "Kiểm tra proxy thất bại.",
         });
         return;
       }
@@ -168,7 +168,7 @@ export function AddStoreModal({
     } catch (err: unknown) {
       setProxyCheckResult({
         success: false,
-        error: err instanceof Error ? err.message : "Lß╗ùi mß║íng khi kiß╗âm tra proxy.",
+        error: err instanceof Error ? err.message : "Lỗi mạng khi kiểm tra proxy.",
       });
     } finally {
       setIsTestingProxy(false);
@@ -241,20 +241,20 @@ export function AddStoreModal({
   }
 
   function validateInput(): string | null {
-    if (!storeId.trim()) return "Vui l├▓ng nhß║¡p Store ID (v├¡ dß╗Ñ: dizzy).";
-    if (!isEditMode && !shopDomain.trim()) return "Vui l├▓ng nhß║¡p Shopify Domain (v├¡ dß╗Ñ: dizzy.myshopify.com).";
+    if (!storeId.trim()) return "Vui lòng nhập Store ID (ví dụ: dizzy).";
+    if (!isEditMode && !shopDomain.trim()) return "Vui lòng nhập Shopify Domain (ví dụ: dizzy.myshopify.com).";
 
     if (!isEditMode) {
       if (authType === "client_credentials") {
-        if (!clientId.trim()) return "Vui l├▓ng nhß║¡p Client ID tß╗½ Shopify Partner App.";
-        if (!clientSecret.trim()) return "Vui l├▓ng nhß║¡p Client Secret tß╗½ Shopify Partner App.";
+        if (!clientId.trim()) return "Vui lòng nhập Client ID từ Shopify Partner App.";
+        if (!clientSecret.trim()) return "Vui lòng nhập Client Secret từ Shopify Partner App.";
       } else {
-        if (!accessToken.trim()) return "Vui l├▓ng nhß║¡p Access Token (shpat_...).";
+        if (!accessToken.trim()) return "Vui lòng nhập Access Token (shpat_...).";
       }
     }
 
     if (enableProxy && !proxyUrl.trim()) {
-      return "Vui l├▓ng nhß║¡p Proxy URL khi ─æ├ú bß║¡t cß║Ñu h├¼nh Proxy.";
+      return "Vui lòng nhập Proxy URL khi đã bật cấu hình Proxy.";
     }
     return null;
   }
@@ -280,18 +280,18 @@ export function AddStoreModal({
 
       const data = await res.json();
       if (!res.ok || !data.success) {
-        throw new Error(data.error?.message || "Kiß╗âm tra kß║┐t nß╗æi thß║Ñt bß║íi.");
+        throw new Error(data.error?.message || "Kiểm tra kết nối thất bại.");
       }
 
       const discovered = (data.data?.productTypes as string[]) || [];
       const discoveredText =
         discovered.length > 0
-          ? ` (─É├ú qu├®t ─æã░ß╗úc ${discovered.length} loß║íi SP: ${discovered.slice(0, 4).join(", ")}${discovered.length > 4 ? "..." : ""})`
+          ? ` (Đã quét được ${discovered.length} loại SP: ${discovered.slice(0, 4).join(", ")}${discovered.length > 4 ? "..." : ""})`
           : "";
 
       setStatusMessage({
         type: "success",
-        text: `Ô£ô Kß║┐t nß╗æi th├ánh c├┤ng tß╗øi ${data.data?.shopDomain || shopDomain}! Th├┤ng tin x├íc thß╗▒c hß╗úp lß╗ç.${discoveredText}`,
+        text: `✓ Kết nối thành công tới ${data.data?.shopDomain || shopDomain}! Thông tin xác thực hợp lệ.${discoveredText}`,
       });
 
       if (!productTypesInput.trim() && discovered.length > 0) {
@@ -300,7 +300,7 @@ export function AddStoreModal({
     } catch (err: unknown) {
       setStatusMessage({
         type: "error",
-        text: err instanceof Error ? err.message : "Kh├┤ng thß╗â kß║┐t nß╗æi vß╗øi Shopify.",
+        text: err instanceof Error ? err.message : "Không thể kết nối với Shopify.",
       });
     } finally {
       setIsTesting(false);
@@ -330,7 +330,7 @@ export function AddStoreModal({
 
       const data = await res.json();
       if (!res.ok || !data.success) {
-        throw new Error(data.error?.message || (isEditMode ? "Cß║¡p nhß║¡t store thß║Ñt bß║íi." : "─É─âng k├¢ store thß║Ñt bß║íi."));
+        throw new Error(data.error?.message || (isEditMode ? "Cập nhật store thất bại." : "Đăng ký store thất bại."));
       }
 
       const registeredStore = data.data?.store;
@@ -361,7 +361,7 @@ export function AddStoreModal({
     } catch (err: unknown) {
       setStatusMessage({
         type: "error",
-        text: err instanceof Error ? err.message : isEditMode ? "Kh├┤ng thß╗â cß║¡p nhß║¡t store." : "Kh├┤ng thß╗â ─æ─âng k├¢ store.",
+        text: err instanceof Error ? err.message : isEditMode ? "Không thể cập nhật store." : "Không thể đăng ký store.",
       });
     } finally {
       setIsLoading(false);
@@ -380,16 +380,16 @@ export function AddStoreModal({
           <div>
             <div className="flex items-center gap-2">
               <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-cyan-500/20 text-cyan-400 font-bold border border-cyan-500/30 text-sm">
-                {isEditMode ? "Ô£Å´©Å" : "­ƒÅ¼"}
+                {isEditMode ? "✏️" : "🏬"}
               </span>
               <h3 className="text-lg font-bold text-slate-100">
-                {isEditMode ? "Chß╗ënh sß╗¡a Shopify Store" : "Th├¬m & Kß║┐t nß╗æi Shopify Store mß╗øi"}
+                {isEditMode ? "Chỉnh sửa Shopify Store" : "Thêm & Kết nối Shopify Store mới"}
               </h3>
             </div>
             <p className="mt-1 text-xs text-slate-400">
               {isEditMode
-                ? "Cß║¡p nhß║¡t ß╗®ng dß╗Ñng Partner App, ─æß╗òi Access Token hoß║Àc thay ─æß╗òi cß║Ñu h├¼nh Proxy"
-                : "Nhß║¡p th├┤ng tin x├íc thß╗▒c ─æß╗â kß║┐t nß╗æi trß╗▒c tiß║┐p vß╗øi Shopify qua Gateway v├á lã░u v├áo cß║Ñu h├¼nh hß╗ç thß╗æng."}
+                ? "Cập nhật ứng dụng Partner App, đổi Access Token hoặc thay đổi cấu hình Proxy"
+                : "Nhập thông tin xác thực để kết nối trực tiếp với Shopify qua Gateway và lưu vào cấu hình hệ thống."}
             </p>
           </div>
           <button
@@ -398,7 +398,7 @@ export function AddStoreModal({
             type="button"
             onClick={handleClose}
           >
-            Ô£ò
+            ✕
           </button>
         </div>
 
@@ -408,16 +408,26 @@ export function AddStoreModal({
               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
             </svg>
-            ─Éang tß║úi th├┤ng tin store...
+            Đang tải thông tin store...
           </div>
         ) : (
-          <form className="mt-5 space-y-4" onSubmit={handleSubmit}>
+          <form
+            className="mt-5 space-y-4"
+            onSubmit={handleSubmit}
+            autoComplete="off"
+            data-lpignore="true"
+            data-1p-ignore="true"
+          >
+            {/* Hidden dummy fields to capture aggressive browser autofill */}
+            <input type="text" style={{ display: "none" }} tabIndex={-1} aria-hidden="true" autoComplete="off" />
+            <input type="password" style={{ display: "none" }} tabIndex={-1} aria-hidden="true" autoComplete="new-password" />
+
             {/* Store ID & Domain */}
             <div className="grid gap-3 sm:grid-cols-2">
               <label className="grid gap-1 text-xs font-medium text-slate-300">
                 <span>
                   Store ID <span className="text-rose-400">*</span>
-                  {isEditMode && <span className="text-[10px] text-slate-500 font-normal ml-1">(Cß╗æ ─æß╗ïnh)</span>}
+                  {isEditMode && <span className="text-[10px] text-slate-500 font-normal ml-1">(Cố định)</span>}
                 </span>
                 <input
                   className={`rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-400 font-mono ${
@@ -427,10 +437,14 @@ export function AddStoreModal({
                   placeholder="vd: dizzy"
                   required
                   type="text"
+                  name="ffp_new_store_id"
+                  autoComplete="off"
+                  data-lpignore="true"
+                  data-1p-ignore="true"
                   value={storeId}
                   onChange={(e) => setStoreId(e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, ""))}
                 />
-                <span className="text-[10px] text-slate-500">M├ú ─æß╗ïnh danh duy nhß║Ñt (chß╗» thã░ß╗Øng, sß╗æ, dß║Ñu gß║ích)</span>
+                <span className="text-[10px] text-slate-500">Mã định danh duy nhất (chữ thường, số, dấu gạch)</span>
               </label>
 
               <label className="grid gap-1 text-xs font-medium text-slate-300">
@@ -443,35 +457,39 @@ export function AddStoreModal({
                   placeholder="vd: dizzy.myshopify.com"
                   required
                   type="text"
+                  name="ffp_new_shop_domain"
+                  autoComplete="off"
+                  data-lpignore="true"
+                  data-1p-ignore="true"
                   value={shopDomain}
                   onChange={(e) => setShopDomain(e.target.value)}
                 />
-                <span className="text-[10px] text-slate-500">Domain hoß║Àc link admin myshopify</span>
+                <span className="text-[10px] text-slate-500">Domain hoặc link admin myshopify</span>
               </label>
             </div>
 
             {/* Product Types / Niche */}
             <label className="grid gap-1 text-xs font-medium text-slate-300">
               <span className="flex items-center justify-between">
-                <span>Loß║íi sß║ún phß║®m ch├¡nh (Niche / Product Types)</span>
-                <span className="text-[11px] font-normal text-slate-500">T├╣y chß╗ìn</span>
+                <span>Loại sản phẩm chính (Niche / Product Types)</span>
+                <span className="text-[11px] font-normal text-slate-500">Tùy chọn</span>
               </span>
               <input
                 className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-400 font-sans"
                 disabled={isLoading || isTesting}
-                placeholder="vd: Blanket, Quilt, Bedding Set (hoß║Àc Rug, Doormat...)"
+                placeholder="vd: Blanket, Quilt, Bedding Set (hoặc Rug, Doormat...)"
                 type="text"
                 value={productTypesInput}
                 onChange={(e) => setProductTypesInput(e.target.value)}
               />
               <span className="text-[10px] text-slate-500">
-                Ph├ón c├ích bß║▒ng dß║Ñu phß║®y. Nß║┐u ─æß╗â trß╗æng, hß╗ç thß╗æng sß║¢ tß╗▒ ─æß╗Öng qu├®t tß╗½ store khi kiß╗âm tra kß║┐t nß╗æi.
+                Phân cách bằng dấu phẩy. Nếu để trống, hệ thống sẽ tự động quét từ store khi kiểm tra kết nối.
               </span>
             </label>
 
             {/* Auth Type Tabs */}
             <div className="space-y-2 rounded-xl border border-slate-800 bg-slate-950/60 p-3.5">
-              <label className="text-xs font-semibold text-slate-300">Phã░ãíng thß╗®c x├íc thß╗▒c Shopify</label>
+              <label className="text-xs font-semibold text-slate-300">Phương thức xác thực Shopify</label>
               <div className="grid grid-cols-2 gap-2">
                 <button
                   type="button"
@@ -483,13 +501,13 @@ export function AddStoreModal({
                   }`}
                 >
                   <span className="text-xs font-bold flex items-center gap-1.5">
-                    <span>­ƒöæ Client Credentials</span>
+                    <span>🔑 Client Credentials</span>
                     <span className="rounded bg-cyan-500/20 px-1 py-0.2 text-[9px] text-cyan-300 font-normal">
-                      Khuy├¬n d├╣ng
+                      Khuyên dùng
                     </span>
                   </span>
                   <span className="text-[11px] text-slate-400 leading-tight">
-                    Tß╗▒ ─æß╗Öng cß║Ñp & gia hß║ín token qua Partner App (kh├┤ng bao giß╗Ø hß║┐t hß║ín).
+                    Tự động cấp & gia hạn token qua Partner App (không bao giờ hết hạn).
                   </span>
                 </button>
 
@@ -502,9 +520,9 @@ export function AddStoreModal({
                       : "border-slate-800 bg-slate-900/60 text-slate-400 hover:border-slate-700 hover:text-slate-300"
                   }`}
                 >
-                  <span className="text-xs font-bold">­ƒÄ½ Static Access Token</span>
+                  <span className="text-xs font-bold">🎫 Static Access Token</span>
                   <span className="text-[11px] text-slate-400 leading-tight">
-                    D├╣ng Admin API token t─®nh (bß║»t ─æß║ºu bß║▒ng shpat_...).
+                    Dùng Admin API token tĩnh (bắt đầu bằng shpat_...).
                   </span>
                 </button>
               </div>
@@ -519,8 +537,11 @@ export function AddStoreModal({
                     <input
                       className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-400 font-mono"
                       disabled={isLoading || isTesting}
-                      placeholder={isEditMode ? "Giß╗» nguy├¬n Client ID c┼® nß║┐u kh├┤ng ─æß╗òi" : "Client ID tß╗½ Partner App"}
+                      placeholder={isEditMode ? "Giữ nguyên Client ID cũ nếu không đổi" : "Client ID từ Partner App"}
                       type="text"
+                      name="ffp_shopify_client_id"
+                      autoComplete="off"
+                      data-lpignore="true"
                       value={clientId}
                       onChange={(e) => setClientId(e.target.value)}
                     />
@@ -529,14 +550,18 @@ export function AddStoreModal({
                   <label className="grid gap-1 text-xs font-medium text-slate-300">
                     <span>
                       Client Secret {!isEditMode && <span className="text-rose-400">*</span>}
-                      {isEditMode && <span className="text-[10px] text-slate-500 font-normal ml-1">(─Éß╗â trß╗æng nß║┐u giß╗» nguy├¬n b├¡ mß║¡t c┼®)</span>}
+                      {isEditMode && <span className="text-[10px] text-slate-500 font-normal ml-1">(Để trống nếu giữ nguyên bí mật cũ)</span>}
                     </span>
                     <div className="relative">
                       <input
                         className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 pr-10 text-sm text-slate-100 outline-none focus:border-cyan-400 font-mono"
                         disabled={isLoading || isTesting}
-                        placeholder={isEditMode ? "ÔÇóÔÇóÔÇóÔÇóÔÇóÔÇóÔÇóÔÇó (─æß╗â trß╗æng nß║┐u giß╗» nguy├¬n b├¡ mß║¡t c┼®)" : "Client Secret tß╗½ Partner App"}
+                        placeholder={isEditMode ? "•••••••• (để trống nếu giữ nguyên bí mật cũ)" : "Client Secret từ Partner App"}
                         type={showSecret ? "text" : "password"}
+                        name="ffp_shopify_client_secret"
+                        autoComplete="new-password"
+                        data-lpignore="true"
+                        data-1p-ignore="true"
                         value={clientSecret}
                         onChange={(e) => setClientSecret(e.target.value)}
                       />
@@ -545,7 +570,7 @@ export function AddStoreModal({
                         onClick={() => setShowSecret(!showSecret)}
                         className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200 text-xs"
                       >
-                        {showSecret ? "­ƒÖê" : "­ƒæü´©Å"}
+                        {showSecret ? "🙈" : "👁️"}
                       </button>
                     </div>
                   </label>
@@ -556,14 +581,18 @@ export function AddStoreModal({
                   <label className="grid gap-1 text-xs font-medium text-slate-300">
                     <span>
                       Admin API Access Token {!isEditMode && <span className="text-rose-400">*</span>}
-                      {isEditMode && <span className="text-[10px] text-slate-500 font-normal ml-1">(─Éß╗â trß╗æng nß║┐u giß╗» nguy├¬n token c┼®)</span>}
+                      {isEditMode && <span className="text-[10px] text-slate-500 font-normal ml-1">(Để trống nếu giữ nguyên token cũ)</span>}
                     </span>
                     <div className="relative">
                       <input
                         className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 pr-10 text-sm text-slate-100 outline-none focus:border-cyan-400 font-mono"
                         disabled={isLoading || isTesting}
-                        placeholder={isEditMode ? "ÔÇóÔÇóÔÇóÔÇóÔÇóÔÇóÔÇóÔÇó (─æß╗â trß╗æng nß║┐u giß╗» nguy├¬n token c┼®)" : "shpat_xxxxxxxxxxxxxxxxxxxxxxxx"}
+                        placeholder={isEditMode ? "•••••••• (để trống nếu giữ nguyên token cũ)" : "shpat_xxxxxxxxxxxxxxxxxxxxxxxx"}
                         type={showSecret ? "text" : "password"}
+                        name="ffp_shopify_access_token"
+                        autoComplete="new-password"
+                        data-lpignore="true"
+                        data-1p-ignore="true"
                         value={accessToken}
                         onChange={(e) => setAccessToken(e.target.value)}
                       />
@@ -572,7 +601,7 @@ export function AddStoreModal({
                         onClick={() => setShowSecret(!showSecret)}
                         className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200 text-xs"
                       >
-                        {showSecret ? "­ƒÖê" : "­ƒæü´©Å"}
+                        {showSecret ? "🙈" : "👁️"}
                       </button>
                     </div>
                   </label>
@@ -585,13 +614,13 @@ export function AddStoreModal({
               <div className="flex items-center justify-between">
                 <div>
                   <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
-                    <span>­ƒîÉ Proxy ri├¬ng cho Store</span>
+                    <span>🌐 Proxy riêng cho Store</span>
                     <span className="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] text-slate-400 font-normal">
-                      Khuy├¬n d├╣ng cho Multi-Store
+                      Khuyên dùng cho Multi-Store
                     </span>
                   </label>
                   <p className="text-[11px] text-slate-400 mt-0.5">
-                    Mß╗ùi store mß╗Öt IP proxy ri├¬ng biß╗çt chß╗æng li├¬n kß║┐t t├ái khoß║ún (Fail-closed policy).
+                    Mỗi store một IP proxy riêng biệt chống liên kết tài khoản (Fail-closed policy).
                   </p>
                 </div>
                 <input
@@ -614,6 +643,8 @@ export function AddStoreModal({
                       disabled={isLoading || isTesting}
                       placeholder="vd: http://123.45.67.89:8080"
                       type="text"
+                      name="ffp_proxy_url"
+                      autoComplete="off"
                       value={proxyUrl}
                       onChange={(e) => setProxyUrl(e.target.value)}
                     />
@@ -621,12 +652,15 @@ export function AddStoreModal({
 
                   <div className="grid gap-3 sm:grid-cols-2">
                     <label className="grid gap-1 text-xs font-medium text-slate-300">
-                      <span>Proxy Username (t├╣y chß╗ìn)</span>
+                      <span>Proxy Username (tùy chọn)</span>
                       <input
                         className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-400 font-mono"
                         disabled={isLoading || isTesting}
                         placeholder="username"
                         type="text"
+                        name="ffp_proxy_username"
+                        autoComplete="off"
+                        data-lpignore="true"
                         value={proxyUsername}
                         onChange={(e) => setProxyUsername(e.target.value)}
                       />
@@ -634,15 +668,19 @@ export function AddStoreModal({
 
                     <label className="grid gap-1 text-xs font-medium text-slate-300">
                       <span>
-                        Proxy Password (t├╣y chß╗ìn)
-                        {isEditMode && <span className="text-[10px] text-slate-500 font-normal ml-1">(─Éß╗â trß╗æng nß║┐u giß╗» mß║¡t khß║®u c┼®)</span>}
+                        Proxy Password (tùy chọn)
+                        {isEditMode && <span className="text-[10px] text-slate-500 font-normal ml-1">(Để trống nếu giữ mật khẩu cũ)</span>}
                       </span>
                       <div className="relative">
                         <input
                           className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 pr-10 text-sm text-slate-100 outline-none focus:border-cyan-400 font-mono"
                           disabled={isLoading || isTesting}
-                          placeholder={isEditMode ? "ÔÇóÔÇóÔÇóÔÇóÔÇóÔÇóÔÇóÔÇó (─æß╗â trß╗æng nß║┐u giß╗» nguy├¬n mß║¡t khß║®u c┼®)" : "password"}
+                          placeholder={isEditMode ? "•••••••• (để trống nếu giữ nguyên mật khẩu cũ)" : "password"}
                           type={showProxyPassword ? "text" : "password"}
+                          name="ffp_proxy_password"
+                          autoComplete="new-password"
+                          data-lpignore="true"
+                          data-1p-ignore="true"
                           value={proxyPassword}
                           onChange={(e) => setProxyPassword(e.target.value)}
                         />
@@ -651,7 +689,7 @@ export function AddStoreModal({
                           onClick={() => setShowProxyPassword(!showProxyPassword)}
                           className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200 text-xs"
                         >
-                          {showProxyPassword ? "­ƒÖê" : "­ƒæü´©Å"}
+                          {showProxyPassword ? "🙈" : "👁️"}
                         </button>
                       </div>
                     </label>
@@ -671,11 +709,11 @@ export function AddStoreModal({
                             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
                           </svg>
-                          <span>─Éang kiß╗âm tra proxy...</span>
+                          <span>Đang kiểm tra proxy...</span>
                         </>
                       ) : (
                         <>
-                          <span>ÔÜí Kiß╗âm tra Proxy</span>
+                          <span>⚡ Kiểm tra Proxy</span>
                         </>
                       )}
                     </button>
@@ -690,15 +728,15 @@ export function AddStoreModal({
                       >
                         {proxyCheckResult.success ? (
                           <>
-                            <span>Ô£ô IP: {proxyCheckResult.ip}</span>
+                            <span>✓ IP: {proxyCheckResult.ip}</span>
                             {proxyCheckResult.country && <span>({proxyCheckResult.country})</span>}
                             {proxyCheckResult.latencyMs !== undefined && (
-                              <span className="font-mono text-emerald-400">┬À {proxyCheckResult.latencyMs}ms</span>
+                              <span className="font-mono text-emerald-400">· {proxyCheckResult.latencyMs}ms</span>
                             )}
                           </>
                         ) : (
                           <>
-                            <span>Ô£ò {proxyCheckResult.error || "Proxy kh├┤ng kß║┐t nß╗æi ─æã░ß╗úc"}</span>
+                            <span>✕ {proxyCheckResult.error || "Proxy không kết nối được"}</span>
                           </>
                         )}
                       </div>
@@ -735,10 +773,10 @@ export function AddStoreModal({
                       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                       <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
                     </svg>
-                    <span>─Éang kiß╗âm tra kß║┐t nß╗æi...</span>
+                    <span>Đang kiểm tra kết nối...</span>
                   </>
                 ) : (
-                  <span>­ƒöî Kiß╗âm tra kß║┐t nß╗æi</span>
+                  <span>🔌 Kiểm tra kết nối</span>
                 )}
               </button>
 
@@ -749,7 +787,7 @@ export function AddStoreModal({
                   disabled={isLoading || isTesting}
                   className="rounded-lg border border-slate-700 bg-slate-800 px-4 py-2 text-xs font-medium text-slate-300 hover:bg-slate-700 transition-colors disabled:opacity-50"
                 >
-                  Hß╗ºy
+                  Hủy
                 </button>
                 <button
                   type="submit"
@@ -762,10 +800,10 @@ export function AddStoreModal({
                         <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                         <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
                       </svg>
-                      <span>{isEditMode ? "─Éang lã░u thay ─æß╗òi..." : "─Éang lã░u..."}</span>
+                      <span>{isEditMode ? "Đang lưu thay đổi..." : "Đang lưu..."}</span>
                     </>
                   ) : (
-                    <span>{isEditMode ? "Lã░u thay ─æß╗òi" : "Lã░u Store"}</span>
+                    <span>{isEditMode ? "Lưu thay đổi" : "Lưu Store"}</span>
                   )}
                 </button>
               </div>

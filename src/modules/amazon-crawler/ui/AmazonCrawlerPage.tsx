@@ -750,6 +750,18 @@ export function AmazonCrawlerPage({
     return ["Rug", "Blanket", "Quilt", "T-Shirt", "Tumbler"];
   }, [availableStores, customStoreProductTypes, currentStoreId]);
 
+  const storeFilteredProductTypes = useMemo(() => {
+    return currentStoreProductTypes.map((typeName) => {
+      const matched = COMMON_PRODUCT_TYPES.find(
+        (c) => c.value.toLowerCase() === typeName.toLowerCase(),
+      );
+      return {
+        value: typeName,
+        label: matched ? matched.label : typeName,
+      };
+    });
+  }, [currentStoreProductTypes]);
+
   function handleStoreChange(nextStore: string): void {
     setAsinPreflightError(null);
     setAsinPreflightMatches([]);
@@ -1477,19 +1489,23 @@ export function AmazonCrawlerPage({
               />
               <select
                 className="rounded-lg border border-slate-700 bg-slate-800 px-2 py-1.5 text-slate-200 outline-none focus:border-slate-500 text-xs cursor-pointer"
-                value={
-                  COMMON_PRODUCT_TYPES.some((t) => t.value === settings.productType)
-                    ? settings.productType
-                    : ""
-                }
+                value={settings.productType || ""}
                 onChange={(e) => {
                   if (e.target.value) {
                     updateSetting("productType", e.target.value);
                   }
                 }}
               >
-                <option value="">Mẫu khác...</option>
-                {COMMON_PRODUCT_TYPES.map((t) => (
+                <option value="">{`-- Chọn loại SP (${currentStoreId.toUpperCase()}) --`}</option>
+                {Boolean(settings.productType) &&
+                  !storeFilteredProductTypes.some(
+                    (t) => t.value.toLowerCase() === (settings.productType || "").toLowerCase(),
+                  ) && (
+                    <option value={settings.productType}>
+                      {settings.productType} (Tùy chỉnh)
+                    </option>
+                  )}
+                {storeFilteredProductTypes.map((t) => (
                   <option key={t.value} value={t.value}>
                     {t.label}
                   </option>

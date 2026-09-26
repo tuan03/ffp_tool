@@ -31,6 +31,7 @@ export function PinterestAuthModal({
   const [manualRefreshToken, setManualRefreshToken] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [feedback, setFeedback] = useState<{ type: "success" | "error"; message: string } | null>(null);
+  const [isBrowserActive, setIsBrowserActive] = useState(false);
 
   // Listen for postMessage from popup OAuth callback
   useEffect(() => {
@@ -48,6 +49,35 @@ export function PinterestAuthModal({
       window.removeEventListener("message", handleOAuthMessage);
     };
   }, [onRefreshStatus]);
+
+  // Poll authStatus when browser login is active
+  useEffect(() => {
+    if (!isBrowserActive && !authStatus?.browser_process_active) return;
+    const interval = setInterval(() => {
+      void onRefreshStatus();
+    }, 2500);
+
+    return () => {
+      clearInterval(interval);
+    };
+  }, [isBrowserActive, authStatus?.browser_process_active, onRefreshStatus]);
+
+  // React to authStatus updates while browser is active
+  useEffect(() => {
+    if (!isBrowserActive) return;
+    if (authStatus?.browser_logged_in) {
+      setIsBrowserActive(false);
+      setFeedback({
+        type: "success",
+        message: "🎉 Đăng nhập Pinterest thành công! Phiên trình duyệt crawler đã được lưu trữ an toàn.",
+      });
+      return;
+    }
+
+    if (authStatus && authStatus.browser_process_active === false && !isLoggingIn) {
+      setIsBrowserActive(false);
+    }
+  }, [isBrowserActive, authStatus, isLoggingIn]);
 
   if (!isOpen) return null;
 
@@ -411,14 +441,50 @@ export function PinterestAuthModal({
               <p className="mt-1 text-slate-400 leading-relaxed">
                 Hệ thống sẽ mở một cửa sổ trình duyệt Chromium riêng biệt. Bạn chỉ cần đăng nhập tài khoản Pinterest của mình vào đó. Trình duyệt sẽ tự động đóng và lưu trữ cookie phiên làm việc để phục vụ crawler ảnh.
               </p>
+
+              {(isBrowserActive || authStatus?.browser_process_active) && (
+                <div className="mt-3 rounded-xl border border-indigo-500/40 bg-indigo-950/50 p-3.5 text-indigo-200 animate-in fade-in duration-200">
+                  <div className="flex items-center gap-2 font-bold text-indigo-300">
+                    <span className="relative flex h-2.5 w-2.5">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75" />
+                      <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-indigo-500" />
+                    </span>
+                    <span>Cửa sổ Chromium đang hoạt động trên màn hình!</span>
+                  </div>
+                  <p className="mt-1.5 text-slate-300 text-[11px] leading-relaxed">
+                    Vui lòng kiểm tra cửa sổ Chromium (biểu tượng trình duyệt trên thanh Dock / Taskbar).
+                    Hãy hoàn tất <strong>đăng nhập tài khoản Pinterest</strong> của bạn tại đó.
+                  </p>
+                  <p className="mt-1 text-[11px] text-indigo-400 font-semibold">
+                    💡 Cửa sổ sẽ tự động đóng và hệ thống sẽ lập tức cập nhật trạng thái khi đăng nhập thành công.
+                  </p>
+                </div>
+              )}
+
               <div className="mt-4 flex items-center gap-3">
                 <button
                   type="button"
-                  disabled={isLoggingIn}
-                  onClick={onLaunchBrowserLogin}
-                  className="rounded-xl bg-indigo-600 px-5 py-2.5 font-bold text-white shadow-lg shadow-indigo-600/30 hover:bg-indigo-500 disabled:opacity-50 cursor-pointer"
+                  disabled={isLoggingIn || isBrowserActive || (authStatus?.browser_process_active ?? false)}
+                  onClick={() => {
+                    setIsBrowserActive(true);
+                    setFeedback(null);
+                    onLaunchBrowserLogin();
+                  }}
+                  className="flex items-center gap-2 rounded-xl bg-indigo-600 px-5 py-2.5 font-bold text-white shadow-lg shadow-indigo-600/30 hover:bg-indigo-500 disabled:opacity-50 cursor-pointer"
                 >
-                  {isLoggingIn ? "Đang mở Chromium..." : "Mở Trình Duyệt Đăng Nhập"}
+                  {(isLoggingIn || isBrowserActive || (authStatus?.browser_process_active ?? false)) && (
+                    <svg className="animate-spin h-3.5 w-3.5 text-white" viewBox="0 0 24 24" fill="none">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                    </svg>
+                  )}
+                  <span>
+                    {isBrowserActive || (authStatus?.browser_process_active ?? false)
+                      ? "Cửa sổ đang mở • Chờ đăng nhập..."
+                      : isLoggingIn
+                      ? "Đang mở Chromium..."
+                      : "Mở Trình Duyệt Đăng Nhập"}
+                  </span>
                 </button>
                 <button
                   type="button"

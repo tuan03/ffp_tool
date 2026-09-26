@@ -341,6 +341,50 @@ export function SeoHandoffModal({
                 </div>
               </div>
 
+              {/* Shopify Target & Pricing Configuration Card */}
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-800 bg-slate-900/60 px-4 py-2.5 text-xs text-slate-300">
+                <div className="flex flex-wrap items-center gap-3">
+                  <span className="flex items-center gap-1.5 font-semibold text-slate-200">
+                    <span>🛍️ Store đích:</span>
+                    <strong className="text-white font-mono">{payload.storeId || "chillgen"}</strong>
+                    {payload.vendor && <span className="text-[11px] text-slate-400">({payload.vendor})</span>}
+                  </span>
+                  <span className="text-slate-600">•</span>
+                  <span className="flex items-center gap-1">
+                    <span className="text-slate-400">Loại SP:</span>
+                    <strong className="text-slate-200">{payload.productType || "Rug"}</strong>
+                  </span>
+                  {payload.collectionIds && payload.collectionIds.length > 0 && (
+                    <>
+                      <span className="text-slate-600">•</span>
+                      <span className="flex items-center gap-1 text-slate-400">
+                        <span>Collections:</span>
+                        <strong className="text-cyan-300">{payload.collectionIds.length}</strong>
+                      </span>
+                    </>
+                  )}
+                  <span className="text-slate-600">•</span>
+                  <span className="flex items-center gap-1">
+                    <span className="text-slate-400">Định giá:</span>
+                    <strong className="text-emerald-300 font-mono">+${(payload.priceAddition ?? 0).toFixed(2)}</strong>
+                    {(payload.discountPercent ?? 0) > 0 && (
+                      <span className="text-amber-300 font-mono">(-{payload.discountPercent}%)</span>
+                    )}
+                  </span>
+                  {payload.applyJeminisePreset && (
+                    <>
+                      <span className="text-slate-600">•</span>
+                      <span className="rounded bg-indigo-950 border border-indigo-700/60 px-2 py-0.5 text-[11px] font-semibold text-indigo-300">
+                        Jeminise 47 variants
+                      </span>
+                    </>
+                  )}
+                </div>
+                <div className="text-[11px] text-slate-400 font-mono">
+                  Sẵn sàng bàn giao SEO Review
+                </div>
+              </div>
+
               {/* PRODUCT GROUPS LIST */}
               <div className="flex flex-col gap-5">
                 {productGroups.map((prod, prodIdx) => {

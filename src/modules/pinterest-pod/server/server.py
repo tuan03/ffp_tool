@@ -27,6 +27,22 @@ SERVER_ROOT = Path(__file__).resolve().parent
 if str(SERVER_ROOT) not in sys.path:
     sys.path.insert(0, str(SERVER_ROOT))
 
+# Auto re-exec into project .venv if running outside it
+PROJECT_ROOT = SERVER_ROOT.parents[3]
+_venv_dir = PROJECT_ROOT / ".venv"
+_venv_python = _venv_dir / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
+if _venv_python.exists() and Path(sys.prefix).resolve() != _venv_dir.resolve():
+    try:
+        os.execv(str(_venv_python), [str(_venv_python)] + sys.argv)
+    except Exception:
+        import glob
+        for sp in glob.glob(str(_venv_dir / "lib" / "python*" / "site-packages")):
+            if sp not in sys.path:
+                sys.path.insert(0, sp)
+        win_sp = _venv_dir / "Lib" / "site-packages"
+        if win_sp.exists() and str(win_sp) not in sys.path:
+            sys.path.insert(0, str(win_sp))
+
 # Load .env if present
 try:
     from dotenv import load_dotenv
