@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { environment } from "../../config/environment";
 import type { AmazonCrawlerReviewClient } from "../../modules/amazon-crawler";
@@ -156,11 +156,16 @@ export function SeoReviewPage({
   const [editingProduct, setEditingProduct] = useState<SeoProductUiViewModel | null>(null);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [errorModalProduct, setErrorModalProduct] = useState<SeoProductUiViewModel | null>(null);
-  const [isDismissedErrorBanner, setIsDismissedErrorBanner] = useState(false);
-  const [syncFeedback, setSyncFeedback] = useState<{
-    type: "success" | "error" | "warning";
-    message: string;
-  } | null>(null);
+  const setSyncFeedback = useCallback((fb: { type: "success" | "error" | "warning"; message: string } | null) => {
+    if (!fb) return;
+    notifyUser({
+      title: fb.type === "success" ? "✓ Thành công" : fb.type === "warning" ? "⚠️ Cảnh báo" : "✕ Lỗi thao tác",
+      message: fb.message,
+      type: fb.type,
+      sound: fb.type === "error" ? "alert" : "chime",
+      url: "/seo-review",
+    });
+  }, []);
   const [pendingCrawlerSyncIds, setPendingCrawlerSyncIds] = useState<readonly string[]>([]);
 
   useEffect(() => {
@@ -330,35 +335,27 @@ export function SeoReviewPage({
     onlyMockData: false,
   });
 
-  const [handoffBanner, setHandoffBanner] = useState<{
-    count: number;
-    timestamp: number;
-    source?: string;
-  } | null>(() => {
+  // Notify approver when new products arrive from other pipelines
+  useEffect(() => {
     if (typeof window !== "undefined" && window.sessionStorage) {
       try {
         const raw = window.sessionStorage.getItem("ffp_seo_review_handoff_banner");
         if (raw) {
           window.sessionStorage.removeItem("ffp_seo_review_handoff_banner");
-          return JSON.parse(raw) as { count: number; timestamp: number; source?: string };
+          const handoff = JSON.parse(raw) as { count: number; timestamp: number; source?: string };
+          if (handoff && handoff.count > 0) {
+            notifyUser({
+              title: "📥 Sản phẩm mới cần kiểm duyệt!",
+              message: `Hệ thống vừa nhận ${handoff.count} sản phẩm từ ${handoff.source || "hệ thống"}. Vui lòng kiểm tra và duyệt nội dung SEO.`,
+              type: "info",
+              sound: "chime",
+              url: "/seo-review",
+            });
+          }
         }
       } catch {
         // ignore
       }
-    }
-    return null;
-  });
-
-  // Notify approver when new products arrive from other pipelines
-  useEffect(() => {
-    if (handoffBanner && handoffBanner.count > 0) {
-      notifyUser({
-        title: "📥 Sản phẩm mới cần kiểm duyệt!",
-        message: `Hệ thống vừa nhận ${handoffBanner.count} sản phẩm từ ${handoffBanner.source || "hệ thống"}. Vui lòng kiểm tra và duyệt nội dung SEO.`,
-        type: "info",
-        sound: "chime",
-        url: "/seo-review",
-      });
     }
   }, []);
 
@@ -715,38 +712,6 @@ export function SeoReviewPage({
 
   function handleViewSyncError(product: SeoProductUiViewModel) {
     setErrorModalProduct(product);
-  }
-
-  function handleRetryAllFailed() {
-    const failedTargets = products.filter((p) => p.shopifySyncStatus === "failed");
-    if (failedTargets.length === 0) return;
-
-    const retryingTargets = failedTargets.map((t) => ({
-      ...t,
-      shopifySyncStatus: "syncing" as const,
-      isSyncing: true,
-      shopifySyncError: undefined,
-      updatedAt: Date.now(),
-    }));
-
-    const retryingMap = new Map(retryingTargets.map((t) => [t.id, t]));
-    setProducts((prev) => prev.map((p) => retryingMap.get(p.id) ?? p));
-
-    void triggerBatchPushToShopify(retryingTargets);
-
-    const targetStore = effectiveStoreId || "capozen";
-    const sameStoreCoordinatorTargets = failedTargets.filter(
-      (t) => t.coordinatorReview && t.storeId && targetStore.toLowerCase() === t.storeId.toLowerCase(),
-    );
-    if (sameStoreCoordinatorTargets.length > 0 && amazonCrawlerReviews) {
-      void Promise.all(
-        sameStoreCoordinatorTargets.map((target) =>
-          amazonCrawlerReviews.sync(target.coordinatorReview?.itemId ?? target.id),
-        ),
-      ).catch(() => {
-        // best effort
-      });
-    }
   }
 
   async function handleApproveProduct(id: string): Promise<void> {
@@ -1672,102 +1637,6 @@ export function SeoReviewPage({
           </span>
         </div>
       </div>
-
-      {/* Top Shopify Sync Failure Alert Banner */}
-      {stats.syncFailed > 0 && !isDismissedErrorBanner && (
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-xl border border-rose-500/50 bg-rose-950/50 p-4 text-rose-200 animate-fadeIn shadow-lg shadow-rose-950/30">
-          <div className="flex items-center gap-3">
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-rose-500/20 text-rose-300 font-bold text-lg">
-              ⚠️
-            </span>
-            <div>
-              <p className="font-semibold text-rose-100">
-                Có {stats.syncFailed} sản phẩm gặp lỗi khi đẩy lên Shopify Store!
-              </p>
-              <p className="text-xs text-rose-300/80">
-                Dữ liệu chưa được đồng bộ hoàn tất. Bạn có thể lọc riêng để kiểm tra lỗi hoặc thử lại tất cả.
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2 flex-wrap">
-            <button
-              type="button"
-              onClick={() => setFilter((prev) => ({ ...prev, decisionFilter: "sync_failed" }))}
-              className="rounded-lg bg-rose-900/60 hover:bg-rose-800/70 border border-rose-700/60 px-3 py-1.5 text-xs font-semibold text-rose-200 transition cursor-pointer"
-            >
-              🔍 Lọc sản phẩm lỗi ({stats.syncFailed})
-            </button>
-            <button
-              type="button"
-              onClick={handleRetryAllFailed}
-              className="rounded-lg bg-rose-600 hover:bg-rose-500 px-3 py-1.5 text-xs font-bold text-white shadow-md shadow-rose-900/40 transition flex items-center gap-1.5 cursor-pointer"
-            >
-              <span>🔄 Thử lại tất cả</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setIsDismissedErrorBanner(true)}
-              className="rounded-lg bg-slate-900/60 hover:bg-slate-800 px-2 py-1.5 text-xs text-slate-400 hover:text-slate-200 transition"
-              title="Đóng thông báo này"
-            >
-              ✕
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Handover Success Banner */}
-      {handoffBanner ? (
-        <div className="flex items-center justify-between rounded-xl border border-emerald-500/40 bg-emerald-950/40 p-4 text-emerald-200 animate-fadeIn">
-          <div className="flex items-center gap-3">
-            <span className="flex h-9 w-9 items-center justify-center rounded-full bg-emerald-500/20 text-emerald-300 font-bold text-base shadow-sm">
-              ✓
-            </span>
-            <div>
-              <p className="font-semibold text-emerald-100">
-                Bàn giao từ {handoffBanner.source || "Distributed Crawler"} thành công!
-              </p>
-              <p className="text-xs text-emerald-300/80">
-                Đã nạp và tối ưu hóa SEO cho {handoffBanner.count} sản phẩm mới. Dữ liệu đã sẵn sàng để review và phê duyệt.
-              </p>
-            </div>
-          </div>
-          <button
-            className="rounded-lg bg-emerald-900/50 hover:bg-emerald-800/60 px-3 py-1.5 text-xs font-semibold text-emerald-300 transition-colors"
-            type="button"
-            onClick={() => setHandoffBanner(null)}
-          >
-            ✕ Đóng
-          </button>
-        </div>
-      ) : null}
-
-      {/* Sync Feedback Notification Banner */}
-      {syncFeedback ? (
-        <div
-          className={`flex items-center justify-between rounded-xl border p-4 text-xs font-medium animate-fadeIn ${
-            syncFeedback.type === "success"
-              ? "border-emerald-500/40 bg-emerald-950/40 text-emerald-200"
-              : syncFeedback.type === "warning"
-                ? "border-amber-500/40 bg-amber-950/40 text-amber-200"
-                : "border-rose-500/40 bg-rose-950/40 text-rose-200"
-          }`}
-        >
-          <div className="flex items-center gap-2.5">
-            <span className="text-base flex-shrink-0">
-              {syncFeedback.type === "success" ? "✓" : syncFeedback.type === "warning" ? "⚠️" : "✕"}
-            </span>
-            <p className="leading-relaxed">{syncFeedback.message}</p>
-          </div>
-          <button
-            type="button"
-            className="ml-4 rounded-lg px-2.5 py-1 text-xs opacity-75 hover:opacity-100 transition"
-            onClick={() => setSyncFeedback(null)}
-          >
-            ✕ Đóng
-          </button>
-        </div>
-      ) : null}
 
       {/* Batch Actions & Filters Toolbar */}
       <SeoBatchToolbar
