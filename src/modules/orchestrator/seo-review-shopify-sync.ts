@@ -42,6 +42,20 @@ export interface SeoReviewPushProductItem {
   readonly productType?: string;
   readonly metafields?: readonly ShopifyMetafieldInput[];
   readonly originalStoreId?: string;
+  readonly collectionsToJoin?: readonly string[];
+  readonly variants?: readonly {
+    readonly title?: string;
+    readonly price: string;
+    readonly compareAtPrice?: string;
+    readonly sku?: string;
+    readonly barcode?: string;
+    readonly inventoryTracked?: boolean;
+    readonly optionValues?: readonly {
+      readonly optionName?: string;
+      readonly name?: string;
+      readonly value?: string;
+    }[];
+  }[];
 }
 
 export interface PushSeoReviewProductResult {
@@ -398,11 +412,24 @@ export async function pushSeoReviewProductToShopify(
       tags: product.tags ? [...product.tags] : undefined,
       vendor: product.vendor,
       productType: product.productType,
+      collectionsToJoin: product.collectionsToJoin,
       metafields: finalMetafields,
       media: product.images.map((img) => ({
         originalSource: img.previewUrl,
         alt: img.alt,
         mediaContentType: "IMAGE",
+      })),
+      variants: product.variants?.map((v) => ({
+        title: v.title,
+        price: v.price,
+        compareAtPrice: v.compareAtPrice,
+        sku: v.sku,
+        barcode: v.barcode,
+        inventoryTracked: v.inventoryTracked,
+        optionValues: v.optionValues?.map((ov) => ({
+          optionName: ov.optionName || "Size",
+          name: ov.name || ov.value || "Standard",
+        })),
       })),
       status: "ACTIVE",
     });

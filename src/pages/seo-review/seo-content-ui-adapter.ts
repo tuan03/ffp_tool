@@ -505,6 +505,7 @@ export function adaptPinterestPodItemToViewModel(
   const options: AdaptSeoOutputOptions = {
     id: item.designId || `pod-${Date.now()}`,
     productId: item.designId,
+    storeId: podItem?.storeId,
     niche,
     defaultStatus: item.success ? "completed" : "failed",
     isStatusReal: true,

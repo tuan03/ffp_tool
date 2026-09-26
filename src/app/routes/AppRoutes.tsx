@@ -119,6 +119,13 @@ export function AppRoutes({
               !ex.id.startsWith("sample-prod-") &&
               !newViewModels.some((nv) => nv.id === ex.id),
           );
+          if (payload.storeId) {
+            try {
+              window.localStorage.setItem("ffp_seo_review_selected_store", payload.storeId);
+            } catch {
+              // Ignore
+            }
+          }
           const merged = [...newViewModels, ...existingFiltered];
           window.sessionStorage.setItem(storageKey, JSON.stringify(merged));
           window.sessionStorage.setItem(
@@ -127,6 +134,7 @@ export function AppRoutes({
               count: newViewModels.length,
               timestamp: Date.now(),
               source: "Pinterest POD Studio",
+              storeId: payload.storeId,
             }),
           );
         } catch {

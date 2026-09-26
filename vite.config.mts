@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import net from "node:net";
 import { spawn, type ChildProcess } from "node:child_process";
 import path from "node:path";
@@ -29,6 +30,19 @@ function isPortListening(port: number, host = "127.0.0.1"): Promise<boolean> {
   });
 }
 
+function resolvePythonCommand(): string {
+  if (process.env.PYTHON?.trim()) {
+    return process.env.PYTHON.trim();
+  }
+  const venvPython = process.platform === "win32"
+    ? path.resolve(__dirname, ".venv/Scripts/python.exe")
+    : path.resolve(__dirname, ".venv/bin/python");
+  if (fs.existsSync(venvPython)) {
+    return venvPython;
+  }
+  return process.platform === "win32" ? "python" : "python3";
+}
+
 function pinterestPodBackendPlugin(): Plugin {
   let pyProcess: ChildProcess | null = null;
 
@@ -51,7 +65,8 @@ function pinterestPodBackendPlugin(): Plugin {
       console.log(`\x1b[36m[pinterest-pod]\x1b[0m Auto-starting Python backend on port ${port}...`);
 
       try {
-        pyProcess = spawn("python", [serverScript], {
+        const pythonCmd = resolvePythonCommand();
+        pyProcess = spawn(pythonCmd, [serverScript], {
           stdio: "inherit",
           detached: false,
         });
@@ -94,7 +109,7 @@ export default defineConfig({
         changeOrigin: true,
       },
       "^/api/(?!shopify)": {
-        target: process.env.VITE_API_URL || "http://127.0.0.1:8765",
+        target: process.env.VITE_API_URL || process.env.VITE_AMAZON_COORDINATOR_URL || "http://127.0.0.1:8766",
         changeOrigin: true,
       },
     },

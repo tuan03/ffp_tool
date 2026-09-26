@@ -20,8 +20,10 @@ import type {
   PodCandidate,
   PodComposedMockupSpec,
   PodDeliverableItem,
+  PodFactoryPrintStandard,
   PodJobStatusResponse,
   PodPollOptions,
+  PodPriceVariantItem,
   PodProductType,
   PodRecentRunItem,
   PodStatusResponse,
@@ -34,7 +36,11 @@ import type {
   TrendDiscoveryInput,
   TrendDiscoveryResult,
 } from "./types";
-import { FACTORY_PRINT_STANDARDS, inferProductTypeFromNiche } from "./types";
+import {
+  DEFAULT_POD_PRICE_VARIANTS,
+  FACTORY_PRINT_STANDARDS,
+  inferProductTypeFromNiche,
+} from "./types";
 
 export { inferProductTypeFromNiche };
 
@@ -438,17 +444,49 @@ function extractFilename(urlOrPath?: string): string | undefined {
   return last && last.trim().length > 0 ? last : undefined;
 }
 
+function resolvePrintStandard(productType: string): PodFactoryPrintStandard {
+  const norm = productType.toLowerCase();
+  if (norm.includes("blanket") || norm.includes("quilt") || norm.includes("bedding") || norm.includes("comforter") || norm.includes("pillow")) {
+    return FACTORY_PRINT_STANDARDS.blanket;
+  }
+  if (norm.includes("bag") || norm.includes("tote")) {
+    return FACTORY_PRINT_STANDARDS.bag;
+  }
+  if (norm.includes("rug") || norm.includes("doormat") || norm.includes("carpet") || norm.includes("mat")) {
+    return FACTORY_PRINT_STANDARDS.rug;
+  }
+  return FACTORY_PRINT_STANDARDS[productType as PodProductType] || FACTORY_PRINT_STANDARDS.custom;
+}
+
+export interface BuildSeoDeliverablesOptions {
+  readonly storeId?: string;
+  readonly vendor?: string;
+  readonly collectionIds?: readonly string[];
+  readonly productType?: string;
+  readonly priceAddition?: number;
+  readonly discountPercent?: number;
+  readonly profileSlug?: "default" | "jeminise";
+  readonly applyJeminisePreset?: boolean;
+  readonly imageProfileSlug?: string;
+  readonly variants?: readonly PodPriceVariantItem[];
+}
+
 /** Build structured SEO deliverables package conforming to CONTRACT_PINTEREST_POD_TO_SEO */
 export function buildSeoDeliverables(
   jobStatus: PodJobStatusResponse,
   productType: PodProductType = "rug",
   selectedCandidateIds?: readonly string[],
   approvedMockupUrls?: ReadonlySet<string> | readonly string[],
+  shopifyConfig?: BuildSeoDeliverablesOptions,
 ): PinterestPodDeliverables {
   const deliverables: PodBackendDeliverables = jobStatus.deliverables ?? {};
   const comparisonRows = deliverables.comparison_rows ?? deliverables.comparison_matrix ?? [];
-  const printStandard = FACTORY_PRINT_STANDARDS[productType];
+  const chosenType = (shopifyConfig?.productType?.trim() || productType) as PodProductType;
+  const printStandard = resolvePrintStandard(chosenType);
   const workflowId = jobStatus.jobId || jobStatus.job_id || "pod_production_completed";
+  if (jobStatus.status === "failed" || jobStatus.status === "cancelled") {
+    throw new AppError("Không thể bàn giao SEO khi sản xuất chưa đạt kiểm định.", "PINTEREST_POD_JOB_FAILED");
+  }
 
   const approvedSet = approvedMockupUrls
     ? (approvedMockupUrls instanceof Set ? approvedMockupUrls : new Set(approvedMockupUrls))
@@ -491,11 +529,41 @@ export function buildSeoDeliverables(
   const effectiveSelectedIds: readonly string[] =
     selectedCandidateIds ?? jobStatus.selected_candidates ?? [];
 
+  // Calculate final variant selling prices and compare-at prices from shopifyConfig
+  const addition = shopifyConfig?.priceAddition ?? 0;
+  const discount = shopifyConfig?.discountPercent ?? 0;
+  const rawVariants: readonly PodPriceVariantItem[] =
+    shopifyConfig?.variants && shopifyConfig.variants.length > 0
+      ? shopifyConfig.variants
+      : DEFAULT_POD_PRICE_VARIANTS;
+
+  const calculatedVariants = rawVariants.map((v: PodPriceVariantItem) => {
+    const base = typeof v.basePrice === "number" && !isNaN(v.basePrice) ? v.basePrice : 29.99;
+    const selling = (base + addition).toFixed(2);
+    const compareAt =
+      discount > 0 && discount < 100
+        ? (Number(selling) / (1 - discount / 100)).toFixed(2)
+        : undefined;
+    return {
+      title: v.label,
+      price: selling,
+      compareAtPrice: compareAt,
+      sku: v.sku,
+      optionValues: [
+        {
+          optionName: v.optionName || "Size",
+          name: v.label,
+        },
+      ],
+    };
+  });
+
   let items: PodDeliverableItem[] = [];
 
   if (comparisonRows.length > 0) {
     items = comparisonRows.map((row, idx) => {
-      const designId = `design_${productType}_${row.index || idx + 1}`;
+      const typeSlug = chosenType.toLowerCase().replace(/[^a-z0-9]+/g, "_");
+      const designId = `design_${typeSlug}_${row.index || idx + 1}`;
 
       // 1. Try selected candidate ID at the matching position
       const selectedId = effectiveSelectedIds[idx];
@@ -592,7 +660,7 @@ export function buildSeoDeliverables(
       return {
         designId,
         sourceCandidateId,
-        productType,
+        productType: chosenType,
         originalPinTitle,
         trendKeywords,
         printMaster: {
@@ -612,11 +680,21 @@ export function buildSeoDeliverables(
           localFilePath: cutoutLocal,
         },
         composedMockups,
+        storeId: shopifyConfig?.storeId,
+        vendor: shopifyConfig?.vendor,
+        collectionIds: shopifyConfig?.collectionIds,
+        priceAddition: shopifyConfig?.priceAddition,
+        discountPercent: shopifyConfig?.discountPercent,
+        profileSlug: shopifyConfig?.profileSlug,
+        applyJeminisePreset: shopifyConfig?.applyJeminisePreset,
+        imageProfileSlug: shopifyConfig?.imageProfileSlug,
+        variants: calculatedVariants,
       };
     });
   } else if (deliverables.print_cmyk_images && deliverables.print_cmyk_images.length > 0) {
     items = deliverables.print_cmyk_images.map((cmykImg, idx) => {
-      const designId = `design_${productType}_${idx + 1}`;
+      const typeSlug = chosenType.toLowerCase().replace(/[^a-z0-9]+/g, "_");
+      const designId = `design_${typeSlug}_${idx + 1}`;
       const selectedId = effectiveSelectedIds[idx];
       const matchedCand = selectedId
         ? candidatesById.get(selectedId)
@@ -658,11 +736,11 @@ export function buildSeoDeliverables(
       return {
         designId,
         sourceCandidateId,
-        productType,
+        productType: chosenType,
         originalPinTitle,
         trendKeywords: matchedCand?.trend
           ? [matchedCand.trend, matchedCand.query ?? ""].filter(Boolean)
-          : [`${productType} trend`, "home decor"],
+          : [`${chosenType} trend`, "home decor"],
         printMaster: {
           cmykUrl: cmykImg.url,
           rgbUrl: rgbImg?.url ?? cmykImg.url.replace("_cmyk_300dpi.jpg", "_rgb_4k.png"),
@@ -680,6 +758,15 @@ export function buildSeoDeliverables(
           localFilePath: whiteCutout?.filename ? `temp/pinterest_pod/${effectiveRunId}/${whiteCutout.filename}` : undefined,
         },
         composedMockups: mockups,
+        storeId: shopifyConfig?.storeId,
+        vendor: shopifyConfig?.vendor,
+        collectionIds: shopifyConfig?.collectionIds,
+        priceAddition: shopifyConfig?.priceAddition,
+        discountPercent: shopifyConfig?.discountPercent,
+        profileSlug: shopifyConfig?.profileSlug,
+        applyJeminisePreset: shopifyConfig?.applyJeminisePreset,
+        imageProfileSlug: shopifyConfig?.imageProfileSlug,
+        variants: calculatedVariants,
       };
     });
   }
@@ -687,9 +774,18 @@ export function buildSeoDeliverables(
   return {
     workflowId,
     success: true,
-    productType,
+    productType: chosenType,
     totalProduced: items.length,
     items,
+    storeId: shopifyConfig?.storeId,
+    vendor: shopifyConfig?.vendor,
+    collectionIds: shopifyConfig?.collectionIds,
+    priceAddition: shopifyConfig?.priceAddition,
+    discountPercent: shopifyConfig?.discountPercent,
+    profileSlug: shopifyConfig?.profileSlug,
+    applyJeminisePreset: shopifyConfig?.applyJeminisePreset,
+    imageProfileSlug: shopifyConfig?.imageProfileSlug,
+    variants: calculatedVariants,
   };
 }
 

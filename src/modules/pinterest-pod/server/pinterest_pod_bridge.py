@@ -151,6 +151,15 @@ def save_room_template_images(items: list[Any], target_dir: Path) -> list[Path]:
             except Exception as e:
                 logger.warning("Failed to download remote room template #%d from %s: %s", idx, url, e)
 
+    if len(saved_paths) != len(items):
+        raise ValueError("REFERENCE_UNREADABLE: không tải được đầy đủ ảnh tham chiếu đã chọn.")
+    from PIL import Image
+    for saved_path in saved_paths:
+        try:
+            with Image.open(saved_path) as reference:
+                reference.verify()
+        except Exception as exc:
+            raise ValueError("REFERENCE_UNREADABLE: ảnh tham chiếu không hợp lệ.") from exc
     return saved_paths
 
 
@@ -492,6 +501,7 @@ def check_browser_profile_logged_in(profile_dir: Path | None = None) -> bool:
         return False
     candidate_cookie_files = [
         p_dir / "Default" / "Network" / "Cookies",
+        p_dir / "Default" / "Cookies",
         p_dir / "Network" / "Cookies",
         p_dir / "Cookies",
     ]
@@ -829,6 +839,14 @@ def resolve_browser_profile_dir() -> Path:
     return local_profile
 
 
+def is_browser_login_process_running() -> bool:
+    """Check if the interactive browser login subprocess is currently alive."""
+    global _LOGIN_PROCESS
+    if _LOGIN_PROCESS is None:
+        return False
+    return _LOGIN_PROCESS.poll() is None
+
+
 def get_pinterest_auth_status() -> dict[str, Any]:
     """Inspect browser profile and OAuth token status for Pinterest POD Studio."""
     profile_dir = resolve_browser_profile_dir()
@@ -854,6 +872,7 @@ def get_pinterest_auth_status() -> dict[str, Any]:
         "ok": True,
         "logged_in": is_fully_logged_in,
         "browser_logged_in": browser_logged_in,
+        "browser_process_active": is_browser_login_process_running(),
         "oauth_valid": oauth_valid,
         "status_text": status_text,
         "profile_dir": str(profile_dir),
@@ -895,6 +914,15 @@ def launch_pinterest_login(timeout: int = 600) -> dict[str, Any]:
     profile_dir = resolve_browser_profile_dir()
     profile_dir.mkdir(parents=True, exist_ok=True)
 
+    # Clean up stale locks before launch
+    for lock_name in ("SingletonLock", "SingletonCookie", "SingletonSocket"):
+        lock_file = profile_dir / lock_name
+        try:
+            if lock_file.is_symlink() or lock_file.exists():
+                lock_file.unlink(missing_ok=True)
+        except Exception:
+            pass
+
     cmd = [
         sys.executable,
         str(script),
@@ -903,6 +931,14 @@ def launch_pinterest_login(timeout: int = 600) -> dict[str, Any]:
         "--timeout",
         str(timeout),
     ]
+
+    log_path = (ROOT / "pinterest" / "pinterest_browser_login.log").resolve()
+    try:
+        log_f = open(log_path, "a", encoding="utf-8")
+        log_f.write(f"\n--- [LAUNCH] Pinterest Browser Login initiated at {time.strftime('%Y-%m-%d %H:%M:%S')} ---\n")
+        log_f.flush()
+    except Exception:
+        log_f = subprocess.DEVNULL
 
     try:
         import subprocess
@@ -913,6 +949,8 @@ def launch_pinterest_login(timeout: int = 600) -> dict[str, Any]:
             cmd,
             cwd=str(ROOT),
             creationflags=creationflags,
+            stdout=log_f,
+            stderr=subprocess.STDOUT,
         )
         return {
             "ok": True,
@@ -1523,16 +1561,34 @@ def _run_local_pipeline_worker(job_id: str, req_body: dict[str, Any], base_url: 
                 if k == "trend_tool" or k.startswith("trend_tool."):
                     del sys.modules[k]
 
+    # Ensure project .venv site-packages is in sys.path if not running inside .venv
+    try:
+        project_root = ROOT.parents[3]
+        venv_dir = project_root / ".venv"
+        if venv_dir.exists() and Path(sys.prefix).resolve() != venv_dir.resolve():
+            import glob
+            for sp in glob.glob(str(venv_dir / "lib" / "python*" / "site-packages")):
+                if sp not in sys.path:
+                    sys.path.insert(0, sp)
+            win_sp = venv_dir / "Lib" / "site-packages"
+            if win_sp.exists() and str(win_sp) not in sys.path:
+                sys.path.insert(0, str(win_sp))
+    except Exception:
+        pass
+
     try:
         import trend_tool.config as tt_cfg
         import trend_tool.pipeline as tt_pipe
         from trend_tool.settings import task5_token_path_from_env
     except Exception as exc:
         with JOB_CACHE_LOCK:
+            JOB_CANCEL_EVENTS.pop(job_id, None)
+            LOCAL_WORKER_THREADS.pop(job_id, None)
             if job_id in ACTIVE_JOBS:
                 ACTIVE_JOBS[job_id]["status"] = "failed"
                 ACTIVE_JOBS[job_id]["error"] = f"Không thể nạp trend_tool module: {exc}"
                 ACTIVE_JOBS[job_id].setdefault("logs", []).append(f"LỖI: Không thể nạp trend_tool module: {exc}")
+                save_job_manifest(job_id, ACTIVE_JOBS[job_id])
         return
 
     niche = str(req_body.get("niche") or "").strip()
@@ -1566,7 +1622,17 @@ def _run_local_pipeline_worker(job_id: str, req_body: dict[str, Any], base_url: 
     src_dir = resolve_run_dir(src_run_id) if src_run_id else None
     if raw_refs:
         job_rt_dir = TEMP_DIR / job_id / "room_templates"
-        initial_rt = save_room_template_images(raw_refs, job_rt_dir)
+        try:
+            initial_rt = save_room_template_images(raw_refs, job_rt_dir)
+        except ValueError as exc:
+            with JOB_CACHE_LOCK:
+                job = ACTIVE_JOBS.get(job_id, {})
+                job.update({"status": "failed", "error": str(exc)})
+                ACTIVE_JOBS[job_id] = job
+                save_job_manifest(job_id, job)
+                JOB_CANCEL_EVENTS.pop(job_id, None)
+                LOCAL_WORKER_THREADS.pop(job_id, None)
+            return
     elif src_dir and (src_dir / "room_templates").is_dir():
         initial_rt = [p for p in sorted((src_dir / "room_templates").glob("*.*")) if p.is_file() and p.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}]
 
@@ -1786,7 +1852,6 @@ def _run_local_pipeline_worker(job_id: str, req_body: dict[str, Any], base_url: 
             loaded = load_standalone_run(result.run_dir.name, base_url)
             with JOB_CACHE_LOCK:
                 if loaded:
-                    loaded["status"] = "completed"
                     loaded["job_id"] = job_id
                     loaded["jobId"] = job_id
                     loaded["run_id"] = result.run_dir.name
@@ -1797,14 +1862,15 @@ def _run_local_pipeline_worker(job_id: str, req_body: dict[str, Any], base_url: 
                     ACTIVE_JOBS[job_id] = loaded
                     save_job_manifest(job_id, loaded)
                 elif job_id in ACTIVE_JOBS:
-                    ACTIVE_JOBS[job_id]["status"] = "completed"
+                    ACTIVE_JOBS[job_id]["status"] = "failed"
+                    ACTIVE_JOBS[job_id]["error"] = "Không thể xác minh kết quả sản xuất từ manifest."
                     ACTIVE_JOBS[job_id]["run_id"] = result.run_dir.name
                     ACTIVE_JOBS[job_id]["runId"] = result.run_dir.name
                     ACTIVE_JOBS[job_id]["source_run_id"] = src_run_id
                     ACTIVE_JOBS[job_id]["request"] = req_body
-                    ACTIVE_JOBS[job_id].setdefault("logs", []).append(f"Hoàn thành sản xuất (Run: {result.run_dir.name}).")
+                    ACTIVE_JOBS[job_id].setdefault("logs", []).append(f"Chưa xác minh được kết quả sản xuất (Run: {result.run_dir.name}).")
                     save_job_manifest(job_id, ACTIVE_JOBS[job_id])
-            if req_body.get("notify_enabled", True):
+            if req_body.get("notify_enabled", True) and loaded and loaded.get("status") == "completed":
                 total_items = len(selected)
                 send_windows_desktop_notification(
                     "Pinterest POD Studio - Hoàn tất",
@@ -1815,18 +1881,18 @@ def _run_local_pipeline_worker(job_id: str, req_body: dict[str, Any], base_url: 
             loaded = load_standalone_run(result.run_dir.name, base_url)
             with JOB_CACHE_LOCK:
                 if loaded:
-                    loaded["status"] = "completed"
                     loaded["job_id"] = job_id
                     loaded["jobId"] = job_id
                     loaded["run_id"] = result.run_dir.name
                     ACTIVE_JOBS[job_id] = loaded
                     save_job_manifest(job_id, loaded)
                 elif job_id in ACTIVE_JOBS:
-                    ACTIVE_JOBS[job_id]["status"] = "completed"
+                    ACTIVE_JOBS[job_id]["status"] = "failed"
+                    ACTIVE_JOBS[job_id]["error"] = "Không thể xác minh kết quả sản xuất từ manifest."
                     ACTIVE_JOBS[job_id]["run_id"] = result.run_dir.name
-                    ACTIVE_JOBS[job_id].setdefault("logs", []).append(f"Hoàn thành pipeline (Run: {result.run_dir.name}).")
+                    ACTIVE_JOBS[job_id].setdefault("logs", []).append(f"Chưa xác minh được kết quả pipeline (Run: {result.run_dir.name}).")
                     save_job_manifest(job_id, ACTIVE_JOBS[job_id])
-            if req_body.get("notify_enabled", True):
+            if req_body.get("notify_enabled", True) and loaded and loaded.get("status") == "completed":
                 send_windows_desktop_notification(
                     "Pinterest POD Studio - Hoàn tất",
                     f"Quy trình tự động cho '{req_body.get('niche', 'POD')}' đã hoàn tất xuất sắc!"
@@ -2274,6 +2340,10 @@ def load_standalone_run(run_id: str, base_url: str) -> dict[str, Any] | None:
     # Discover perspective mockups (sorted naturally by filename)
     perspective_dir = run_dir / "mockups"
     perspective_files = sorted([p for p in perspective_dir.iterdir() if p.is_file() and p.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}], key=natural_sort_key) if perspective_dir.exists() else []
+    approved_files = manifest_data.get("approved_mockup_files")
+    if isinstance(approved_files, list):
+        mockup_files = [path for path in mockup_files if path.name in approved_files]
+        perspective_files = [path for path in perspective_files if path.name in approved_files]
 
     if not mockup_files and not cmyk_files and not final_png_files and not candidates:
         if manifest_file.exists() or review_file.exists() or cfg_file.exists():
@@ -2545,6 +2615,8 @@ def load_standalone_run(run_id: str, base_url: str) -> dict[str, Any] | None:
     }
 
     status_val = "completed" if (mockup_files or cmyk_files or final_png_files) else ("ready_for_review" if candidates else "in_progress")
+    if manifest_data.get("status") == "failed":
+        status_val = "failed"
     deliverables_dict = {
         "marketing_images": marketing_assets,
         "lifestyle_mockups": marketing_assets,
@@ -2600,6 +2672,8 @@ def load_standalone_run(run_id: str, base_url: str) -> dict[str, Any] | None:
         "job_id": safe_id,
         "jobId": safe_id,
         "status": status_val,
+        "error": manifest_data.get("message") if status_val == "failed" else None,
+        "quality_summary": manifest_data.get("quality_summary"),
         "niche": niche or safe_id,
         "product": product_type or "rug",
         "motifs": motifs,
@@ -2670,6 +2744,24 @@ def get_pod_job_status(job_id: str, base_url: str, api_url: str = DEFAULT_API_UR
 
     if not cached_job:
         raise LookupError(f"Không tìm thấy job hoặc thư mục run: {job_id}")
+
+    # Reconcile orphaned running jobs: if status is running/producing but worker thread is dead/non-existent
+    if cached_job.get("status") in {"running", "producing"}:
+        is_thread_alive = False
+        with JOB_CACHE_LOCK:
+            worker_th = LOCAL_WORKER_THREADS.get(job_id)
+            if worker_th and worker_th.is_alive():
+                is_thread_alive = True
+        if not is_thread_alive:
+            cached_job["status"] = "failed"
+            cached_job["error"] = "Tiến trình chạy nền đã kết thúc hoặc máy chủ được khởi động lại."
+            cached_job.setdefault("logs", []).append("Tiến trình bị gián đoạn: luồng xử lý không còn hoạt động hoặc máy chủ đã khởi động lại.")
+            with JOB_CACHE_LOCK:
+                ACTIVE_JOBS[job_id] = cached_job
+            try:
+                save_job_manifest(job_id, cached_job)
+            except Exception:
+                pass
 
     # If completed and assets not yet cached, cache now
     if cached_job.get("status") == "completed" and "cachedAssets" not in cached_job:
@@ -3007,8 +3099,21 @@ def get_pod_job_status(job_id: str, base_url: str, api_url: str = DEFAULT_API_UR
         enriched_rejected.append(c_dict)
 
     # Check if job has actual deliverables
+    if r_dir and (r_dir / "stage_manifest.json").is_file():
+        try:
+            quality_manifest = json.loads((r_dir / "stage_manifest.json").read_text(encoding="utf-8"))
+            approved_files = quality_manifest.get("approved_mockup_files")
+            if isinstance(approved_files, list):
+                for field in ("lifestyle_mockups", "marketing_images", "perspective_mockups"):
+                    deliverables[field] = [asset for asset in deliverables.get(field, []) if asset.get("filename") in approved_files]
+                if quality_manifest.get("status") == "failed":
+                    cached_job["status"] = "failed"
+                    cached_job["error"] = quality_manifest.get("message")
+        except (OSError, ValueError):
+            cached_job["status"] = "failed"
+            cached_job["error"] = "Không đọc được kết quả kiểm định sản xuất."
     has_deliverables = bool(final_png_len or cmyk_len or marketing_len)
-    if has_deliverables:
+    if has_deliverables and cached_job.get("status") not in {"failed", "cancelled", "producing", "running"}:
         cached_job["status"] = "completed"
         # Update manifest on disk if it was saved as ready_for_review
         try:
@@ -3058,7 +3163,8 @@ def get_pod_job_status(job_id: str, base_url: str, api_url: str = DEFAULT_API_UR
         "ok": True,
         "jobId": job_id,
         "job_id": job_id,
-        "status": "completed" if has_deliverables else (cached_job.get("status") or "unknown"),
+        "status": cached_job.get("status") or "unknown",
+        "error": cached_job.get("error"),
         "stepper": stepper,
         "job": cached_job,
         "logs": cached_job.get("logs") or [],
@@ -3102,6 +3208,15 @@ def cancel_pod_job(job_id: str, api_url: str = DEFAULT_API_URL) -> dict[str, Any
             ACTIVE_JOBS[safe_id]["error"] = "Tiến trình đã được dừng bởi người dùng."
             ACTIVE_JOBS[safe_id].setdefault("logs", []).append("Nhận được lệnh dừng job từ người dùng. Đang hủy tiến trình...")
             save_job_manifest(safe_id, ACTIVE_JOBS[safe_id])
+        else:
+            manifest = load_job_manifest(safe_id)
+            if manifest:
+                m_data = manifest.get("jobData") or manifest
+                m_data["status"] = "cancelled"
+                m_data["error"] = "Tiến trình đã được dừng bởi người dùng."
+                m_data.setdefault("logs", []).append("Nhận được lệnh dừng job từ người dùng. Đang hủy tiến trình...")
+                ACTIVE_JOBS[safe_id] = m_data
+                save_job_manifest(safe_id, m_data)
 
     return {"ok": True, "jobId": safe_id, "status": "cancelled"}
 
@@ -3185,7 +3300,7 @@ def list_recent_jobs_and_runs() -> list[dict[str, Any]]:
                     seen_ids.add(path.name)
                     st_val = job_info.get("status") or data.get("status") or "completed"
                     # Check if deliverables actually exist either in temp dir or linked run
-                    if st_val != "completed":
+                    if st_val not in {"completed", "failed", "cancelled", "producing", "running"}:
                         has_local_deliv = any(path.glob("*_cmyk.jpg")) or any(path.glob("*_lifestyle*.png")) or any(path.glob("*_print*.png")) or any(path.glob("rug_*.*"))
                         if has_local_deliv:
                             st_val = "completed"
@@ -3206,6 +3321,22 @@ def list_recent_jobs_and_runs() -> list[dict[str, Any]]:
                         r_id = data.get("runId") or job_info.get("run_id") or job_info.get("runId") or (job_info.get("output") or {}).get("run_id")
                         if r_id:
                             seen_ids.add(str(r_id))
+
+                    if st_val in {"running", "producing"}:
+                        is_th_alive = False
+                        with JOB_CACHE_LOCK:
+                            th = LOCAL_WORKER_THREADS.get(path.name)
+                            if th and th.is_alive():
+                                is_th_alive = True
+                        if not is_th_alive:
+                            st_val = "failed"
+                            job_info["status"] = "failed"
+                            job_info["error"] = "Tiến trình chạy nền đã kết thúc hoặc máy chủ được khởi động lại."
+                            data["status"] = "failed"
+                            try:
+                                manifest_file.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+                            except Exception:
+                                pass
 
                     cached_cands = job_info.get("candidates") or (job_info.get("output") or {}).get("candidates") or []
                     thumbnails: list[str] = []
@@ -3293,6 +3424,13 @@ def list_recent_jobs_and_runs() -> list[dict[str, Any]]:
                         run_status = "unknown"
                 else:
                     run_status = "failed"
+
+                if manifest.exists():
+                    try:
+                        if json.loads(manifest.read_text(encoding="utf-8")).get("status") == "failed":
+                            run_status = "failed"
+                    except (OSError, ValueError):
+                        run_status = "failed"
 
                 thumbnails: list[str] = []
                 if lifestyle_dir.exists():

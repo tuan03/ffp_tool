@@ -42,6 +42,15 @@ import {
 } from "..";
 import type { JobDetailResponse, PodJobStatusResponse } from "../types";
 
+test("buildSeoDeliverables does not publish partial assets from failed production", () => {
+  assert.throws(() => buildSeoDeliverables({
+    ok: true,
+    jobId: "failed-production",
+    status: "failed",
+    deliverables: { final_png_images: [{ url: "https://example.test/master.png", filename: "master.png" }] },
+  }), (error: unknown) => error instanceof AppError && error.code === "PINTEREST_POD_JOB_FAILED");
+});
+
 // ==========================================
 // Tests for MockPinterestPodClient & UI Flow
 // ==========================================

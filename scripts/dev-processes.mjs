@@ -1,6 +1,22 @@
+import fs from "node:fs";
+import path from "node:path";
+
+function getDefaultPythonExecutable() {
+  if (process.env.PYTHON?.trim()) {
+    return process.env.PYTHON.trim();
+  }
+  const venvPython = process.platform === "win32"
+    ? path.resolve(process.cwd(), ".venv/Scripts/python.exe")
+    : path.resolve(process.cwd(), ".venv/bin/python");
+  if (fs.existsSync(venvPython)) {
+    return venvPython;
+  }
+  return "python";
+}
+
 export function getDevelopmentProcessSpecs({
   nodeExecutable = process.execPath,
-  pythonExecutable = process.env.PYTHON?.trim() || "python",
+  pythonExecutable = getDefaultPythonExecutable(),
 } = {}) {
   return [
     {

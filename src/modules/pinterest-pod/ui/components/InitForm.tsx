@@ -600,10 +600,10 @@ export function InitForm({
           <button
             type="button"
             onClick={onStopJob}
-            className="flex items-center gap-1 rounded-lg border border-rose-700/60 bg-rose-950/40 px-3 py-1.5 text-xs font-semibold text-rose-300 transition hover:bg-rose-900/60 hover:text-white cursor-pointer"
+            className="flex items-center gap-1.5 rounded-lg border border-rose-600/70 bg-rose-950/60 px-3 py-1.5 text-xs font-bold text-rose-200 transition hover:bg-rose-900 hover:text-white hover:border-rose-400 cursor-pointer shadow-sm"
           >
             <span>⏹</span>
-            <span>Dừng Job</span>
+            <span>Dừng & Mở khóa Form</span>
           </button>
         </div>
       )}

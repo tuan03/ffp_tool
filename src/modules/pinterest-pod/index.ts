@@ -61,6 +61,8 @@ export {
 } from "./service";
 
 export {
+  DEFAULT_PINTEREST_POD_SHOPIFY_SETTINGS,
+  DEFAULT_POD_PRICE_VARIANTS,
   FACTORY_PRINT_STANDARDS,
   inferProductTypeFromNiche,
   POD_SIZE_PRESETS,
@@ -77,6 +79,8 @@ export type {
   DeliverableLifestyleMockup,
   DeliverablePrintImage,
   DeliverablesData,
+  ImageProcessingProfile,
+  ImageProcessingProfileManager,
   JobDetailResponse,
   JobStatus,
   PinterestAuthStatus,
@@ -87,6 +91,7 @@ export type {
   PinterestLaunchLoginResponse,
   PinterestPodClient,
   PinterestPodDeliverables,
+  PinterestPodShopifySettings,
   PinterestProductionInput,
   PinterestProductionOutput,
   PinterestProductType,
@@ -104,6 +109,8 @@ export type {
   PodJobStatusResponse,
   PodJobStepper,
   PodPollOptions,
+  PodPricePresetDefinition,
+  PodPriceVariantItem,
   PodPrintMasterSpec,
   PodProductType,
   PodReferenceImage,

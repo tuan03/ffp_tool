@@ -726,6 +726,93 @@ export function ProductDetailDrawer({
               </div>
             </div>
 
+            {/* Pinterest POD Shopify & Pricing Details */}
+            {product.sourcePinterestItem && (
+              <div className="rounded-xl border border-teal-900/50 bg-teal-950/20 p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="text-base">🏷️</span>
+                    <h3 className="font-semibold text-teal-300 text-sm">
+                      Cấu hình Shopify & Định giá POD
+                    </h3>
+                  </div>
+                  {product.sourcePinterestItem.storeId && (
+                    <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-teal-500/20 text-teal-300 border border-teal-500/30">
+                      Store: {product.sourcePinterestItem.storeId.toUpperCase()}
+                    </span>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+                  <div className="bg-slate-900/80 p-2.5 rounded border border-slate-800">
+                    <span className="text-slate-400 block text-[11px]">Loại SP:</span>
+                    <span className="font-medium text-slate-100">
+                      {product.sourcePinterestItem.productType || "Rug"}
+                    </span>
+                  </div>
+                  <div className="bg-slate-900/80 p-2.5 rounded border border-slate-800">
+                    <span className="text-slate-400 block text-[11px]">Nhà cung cấp:</span>
+                    <span className="font-medium text-slate-100">
+                      {product.sourcePinterestItem.vendor || "CHILLGEN"}
+                    </span>
+                  </div>
+                  <div className="bg-slate-900/80 p-2.5 rounded border border-slate-800">
+                    <span className="text-slate-400 block text-[11px]">Giá cộng thêm:</span>
+                    <span className="font-mono font-medium text-emerald-400">
+                      +${(product.sourcePinterestItem.priceAddition ?? 0).toFixed(2)}
+                    </span>
+                  </div>
+                  <div className="bg-slate-900/80 p-2.5 rounded border border-slate-800">
+                    <span className="text-slate-400 block text-[11px]">Compare-At:</span>
+                    <span className="font-mono font-medium text-amber-400">
+                      {product.sourcePinterestItem.discountPercent ? `Giảm ${product.sourcePinterestItem.discountPercent}%` : "0% (Không gạch)"}
+                    </span>
+                  </div>
+                </div>
+
+                {product.sourcePinterestItem.collectionIds && product.sourcePinterestItem.collectionIds.length > 0 && (
+                  <div className="text-[11px] text-slate-400 bg-slate-950/60 p-2.5 rounded border border-slate-800/80">
+                    <span className="text-slate-400 font-medium">Collections đã gán: </span>
+                    <span className="font-mono text-cyan-300">
+                      {product.sourcePinterestItem.collectionIds.length} collection(s)
+                    </span>
+                  </div>
+                )}
+
+                {product.sourcePinterestItem.variants && product.sourcePinterestItem.variants.length > 0 && (
+                  <div className="space-y-1.5 pt-1">
+                    <div className="flex items-center justify-between text-xs text-slate-400">
+                      <span className="font-semibold text-slate-300">
+                        Bảng biến thể ({product.sourcePinterestItem.variants.length} sizes/options):
+                      </span>
+                    </div>
+                    <div className="overflow-x-auto rounded-lg border border-slate-800 bg-slate-950/80">
+                      <table className="w-full text-left text-xs text-slate-300">
+                        <thead className="bg-slate-900/80 text-[11px] uppercase text-slate-400 border-b border-slate-800">
+                          <tr>
+                            <th className="py-1.5 px-3">Tên biến thể</th>
+                            <th className="py-1.5 px-3">Giá bán</th>
+                            <th className="py-1.5 px-3">Giá gạch ngang</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-800/50 font-mono text-[11px]">
+                          {product.sourcePinterestItem.variants.map((v, vIdx) => (
+                            <tr key={vIdx} className="hover:bg-slate-900/40">
+                              <td className="py-1.5 px-3 text-slate-200 font-sans">{v.title || `Variant #${vIdx + 1}`}</td>
+                              <td className="py-1.5 px-3 text-emerald-400 font-semibold">${v.price}</td>
+                              <td className="py-1.5 px-3 text-slate-500">
+                                {v.compareAtPrice ? <span className="line-through">${v.compareAtPrice}</span> : "—"}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Print Master Specification (Shopify Metafields) */}
             {product.sourcePinterestItem?.printMaster && (
               <div className="rounded-xl border border-indigo-900/50 bg-indigo-950/20 p-4 space-y-3">

@@ -78,6 +78,46 @@ describe("Gateway: staged binary image upload", () => {
     assert.equal(file.size, Buffer.byteLength("jpeg-content"));
   });
 
+  it("uses globalThis.FormData when transport is globalThis.fetch (no-proxy store)", async () => {
+    const originalFetch = globalThis.fetch;
+    let capturedBody: BodyInit | null | undefined;
+    globalThis.fetch = async (_input, init) => {
+      capturedBody = init?.body;
+      return new Response("created", { status: 201 });
+    };
+
+    try {
+      const storeWithoutProxy: StoreConfig = {
+        storeId: "store-no-proxy",
+        shopDomain: "no-proxy.myshopify.com",
+        apiVersion: "2026-07",
+        auth: { type: "static", staticToken: "test" },
+      };
+
+      const result = await executeFilesStageBinary(
+        storeWithoutProxy,
+        createStagedUploadClient(),
+        {
+          filename: "image.jpg",
+          mimeType: "image/jpeg",
+          contentBase64: Buffer.from("jpeg-content").toString("base64"),
+        },
+        "apply",
+        "staged-upload-request",
+      );
+
+      assert.equal(
+        result.resourceUrl,
+        "https://shopify-staged-uploads.storage.googleapis.com/tmp/test/image.jpg",
+      );
+      assert.ok(capturedBody instanceof globalThis.FormData);
+      assert.equal(capturedBody.get("Content-Type"), "image/jpeg");
+      assert.equal(capturedBody.get("key"), "tmp/test/image.jpg");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("includes safe storage diagnostics when a staged upload is rejected", async () => {
     const uploadTransport: HttpTransport = async () => new Response(
       "<?xml version='1.0'?><Error><Code>InvalidArgument</Code><Message>Invalid argument.</Message><Details>Cannot create buckets using a POST.</Details><Signature>private</Signature></Error>",

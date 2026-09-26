@@ -4,6 +4,7 @@ import dataclasses
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime
 import gc
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -853,8 +854,8 @@ def run_production_from_candidates(
     if hasattr(config, "task4_room_templates") and config.task4_room_templates:
         for r_item in config.task4_room_templates:
             r_path = Path(r_item)
-            if r_path.exists() and r_path.is_file():
-                room_template_files.append(r_path)
+            # Preserve requested slots so an unreadable reference fails closed.
+            room_template_files.append(r_path)
     if not room_template_files:
         rt_dir = run_dir / "room_templates"
         if rt_dir.exists() and rt_dir.is_dir():
@@ -1024,6 +1025,7 @@ def run_production_from_candidates(
     # Mockups rendering
     mockups: list[Path] = []
     ai_background_final_records: list[dict[str, object]] = []
+    expected_mockup_count = 0
 
     if final_pngs:
         # Only render default synthetic canvas mockups if no custom room templates are provided and AI mockups aren't configured
@@ -1032,6 +1034,7 @@ def run_production_from_candidates(
             mockups.extend(make_product_mockups(final_pngs[0], mockup_dir, config.target, count=config.mockup_count))
 
         if (room_template_files or config.task4_mockup_engine in {"blender_3d", "direct_ai", "template_ai"}) and config.task4_ai_limit > 0:
+            expected_mockup_count = len(final_pngs) * max(1, config.task4_variants_per_product, len(room_template_files))
             source_prints = final_pngs[: config.task4_ai_limit]
             variants_per_product = max(1, config.task4_variants_per_product)
             blender_render = config.task4_mockup_engine == "blender_3d"
@@ -1058,7 +1061,7 @@ def run_production_from_candidates(
                     else:
                         log(progress, f"[{p_idx}/{len(source_prints)}] Tạo mockup AI biến thể {var_idx}/{variants_per_product} ({pose_label}).")
                     try:
-                        if blender_render:
+                        if blender_render and chosen_room is None:
                             rec = build_blender_mockup(print_file, run_dir, cur_target, pose=pose, variant=var_idx, progress=progress)
                         elif direct_render:
                             rec = build_direct_ai_mockup(
@@ -1101,10 +1104,15 @@ def run_production_from_candidates(
                                 "mockup_path": lifestyle_copy,
                                 "final_rgb_path": lifestyle_copy,
                                 "asset_type": "lifestyle_mockup",
+                                "variant": var_idx,
                                 "status": "ok",
                             })
                     except Exception as mock_exc:
                         log(progress, f"Mockup view {var_idx} skipped: {mock_exc}")
+                        template_mockup_records.append({
+                            "print_path": print_file, "variant": var_idx, "status": "failed",
+                            "mockup_path": None, "notes": str(mock_exc),
+                        })
                     time.sleep(1.0)
 
         # Explicit garbage collection after each candidate to keep memory usage minimal on low-RAM VPS
@@ -1145,6 +1153,8 @@ def run_production_from_candidates(
             return Path(p).name if p else ""
 
         def _template_mock_key(rec: dict) -> str:
+            if rec.get("print_path"):
+                return f"{Path(str(rec['print_path'])).name}:{rec.get('variant', 1)}"
             p = str(rec.get("mockup_path") or rec.get("output_path") or "")
             return Path(p).name if p else ""
 
@@ -1182,8 +1192,32 @@ def run_production_from_candidates(
         key=lambda x: x.name,
     )
 
+    approved_mockups = sum(1 for record in template_mockup_records if record.get("status") == "ok")
+    if template_mockup_records:
+        approved_slots = {
+            (Path(str(record.get("print_path"))).name, int(record.get("variant", 1)))
+            for record in template_mockup_records if record.get("status") == "ok"
+        }
+        def approved_lifestyle(record: dict) -> bool:
+            filename = Path(str(record.get("lifestyle_path") or "")).name
+            matched = re.search(r"_lifestyle_(\d+)\.", filename)
+            variant = int(record.get("variant") or (matched.group(1) if matched else 1))
+            return (Path(str(record.get("print_path"))).name, variant) in approved_slots
+        ai_background_final_records = [record for record in ai_background_final_records if approved_lifestyle(record)]
+        approved_paths = {str(record.get("mockup_path")) for record in template_mockup_records if record.get("status") == "ok"}
+        approved_paths.update(str(record.get("lifestyle_path")) for record in ai_background_final_records)
+        all_mockup_images = [path for path in all_mockup_images if str(path) in approved_paths]
+    expected_mockup_count = max(expected_mockup_count, len(template_mockup_records))
+    failed_mockups = expected_mockup_count - approved_mockups
     stage_manifest = {
-        "status": "completed",
+        "status": "failed" if failed_mockups else "completed",
+        "message": f"Có {failed_mockups} ảnh mockup chưa đạt kiểm định; cần kiểm tra vùng in/artwork trước khi xuất bản." if failed_mockups else "",
+        "quality_summary": {"expected": expected_mockup_count, "approved": approved_mockups, "failed": failed_mockups},
+        "approved_mockup_files": [path.name for path in all_mockup_images],
+        "master_artworks": [
+            {"path": path, "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+            for path in all_final_images if path.suffix.lower() == ".png"
+        ],
         "workflow_mode": "trend_to_product",
         "design_mode": config.design_mode,
         "selected_candidates_count": len(design_records),
@@ -1206,7 +1240,7 @@ def run_production_from_candidates(
         for p, kw, _ in resolved_sources
     ]
     report_path = write_resilient_report(run_dir / "report.html", config, decisions, all_final_images, all_mockup_images, stage_manifest)
-    log(progress, f"Production complete. Output: {run_dir}")
+    log(progress, f"Production {'requires quality review' if failed_mockups else 'complete'}. Output: {run_dir}")
 
     return PipelineResult(
         run_dir=run_dir,

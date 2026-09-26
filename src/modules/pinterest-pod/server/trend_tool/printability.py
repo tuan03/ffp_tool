@@ -5,6 +5,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 from PIL import Image, ImageStat
 
 from .config import ProductTarget
@@ -274,6 +275,8 @@ def assess_direct_ai_mockup(
     require_matching_pillowcases: bool = False,
     image_type: str = "ROOM_SCENE",
     custom_checklist: list[str] | None = None,
+    reference_template: Image.Image | None = None,
+    edit_mask: Image.Image | None = None,
     backend: str,
     model: str,
 ) -> PrintabilityDecision:
@@ -293,6 +296,24 @@ def assess_direct_ai_mockup(
         "image_type": image_type,
         "has_custom_checklist": bool(custom_checklist),
     }
+    reference_requirements = ""
+    if reference_template is not None:
+        if edit_mask is None or reference_template.size != mockup.size or edit_mask.size != mockup.size:
+            return PrintabilityDecision("direct_ai_mockup", mockup_path, False, "reference/mask dimensions mismatch", metrics, {})
+        outside = np.asarray(edit_mask.convert("L")) == 0
+        if not np.array_equal(np.asarray(reference_template.convert("RGB"))[outside], np.asarray(mockup)[outside]):
+            return PrintabilityDecision("direct_ai_mockup", mockup_path, False, "pixels outside printable mask changed", metrics, {})
+        reference_requirements = """
+The first image is MASTER ARTWORK, not the original product photo. Compare the
+output against ORIGINAL SCENE and EDIT MASK as well. Return explicit booleans:
+artwork_identity_preserved (same motifs, text, colors and relative arrangement),
+all_print_surfaces_replaced (including every inset/view),
+mask_respects_printable_boundaries (no background/hardware/lining painted),
+protected_parts_preserved (hands, seams, straps, hardware unchanged),
+reference_geometry_preserved (same silhouette, perspective and natural surface),
+no_original_print_remaining. Missing/uncertain evidence must be false.
+Reject flat overlays on curved or folded products and misplaced artwork.
+"""
     try:
         assessment = _vision_pair_assessment(
             reference,
@@ -304,9 +325,10 @@ def assess_direct_ai_mockup(
                 require_matching_pillowcases=require_matching_pillowcases,
                 custom_checklist=custom_checklist,
                 image_type=image_type,
-            ),
+            ) + reference_requirements,
             backend=backend,
             model=model,
+            **({"reference_template": reference_template, "edit_mask": edit_mask} if reference_template is not None else {}),
         )
     except Exception as exc:
         return PrintabilityDecision("direct_ai_mockup", mockup_path, False, f"direct AI mockup quality assessment failed: {exc}", metrics, {})
@@ -319,7 +341,13 @@ def assess_direct_ai_mockup(
     is_blanket = target.name == "blanket"
     is_rug = target.name == "rug"
 
-    if custom_checklist:
+    if reference_template is not None:
+        accepted = score >= 85 and all(assessment.get(field) is True for field in (
+            "artwork_identity_preserved", "all_print_surfaces_replaced",
+            "mask_respects_printable_boundaries", "protected_parts_preserved",
+            "reference_geometry_preserved", "no_original_print_remaining",
+        ))
+    elif custom_checklist:
         # Fully dynamic evaluation based on the reference image's custom checklist
         accepted = (
             _bool(assessment.get("artwork_identity_preserved"))
@@ -637,10 +665,18 @@ def _vision_pair_assessment(
     *,
     backend: str,
     model: str,
+    reference_template: Image.Image | None = None,
+    edit_mask: Image.Image | None = None,
 ) -> dict[str, object]:
     from google.genai import types
 
     client = create_gemini_client(backend)
+    reference_parts = []
+    if reference_template is not None and edit_mask is not None:
+        reference_parts = [
+            types.Part.from_text(text="ORIGINAL SCENE"), image_part(reference_template),
+            types.Part.from_text(text="EDIT MASK: white = replaced print, black = protected"), image_part(edit_mask.convert("RGB")),
+        ]
     last_error: Exception | None = None
     for attempt in range(1, 4):
         try:
@@ -651,6 +687,7 @@ def _vision_pair_assessment(
                     image_part(first),
                     types.Part.from_text(text="BACKGROUND_MOCKUP"),
                     image_part(second),
+                    *reference_parts,
                     types.Part.from_text(text=prompt),
                 ])],
                 config=types.GenerateContentConfig(temperature=0.0, response_mime_type="application/json"),

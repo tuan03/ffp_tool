@@ -22,6 +22,8 @@ export function RoomTemplateManagerModal({
   const [showUrlInput, setShowUrlInput] = useState(false);
   const [customUrl, setCustomUrl] = useState("");
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
+  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   if (!isOpen) return null;
@@ -95,6 +97,52 @@ export function RoomTemplateManagerModal({
 
   function handleClearAll(): void {
     onChange([]);
+  }
+
+  function handleMove(fromIndex: number, toIndex: number): void {
+    if (toIndex < 0 || toIndex >= images.length || fromIndex === toIndex) return;
+    const updated = [...images];
+    const [moved] = updated.splice(fromIndex, 1);
+    if (!moved) return;
+    updated.splice(toIndex, 0, moved);
+    onChange(updated);
+  }
+
+  function handleDragStart(e: React.DragEvent, index: number): void {
+    setDraggedIndex(index);
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", String(index));
+  }
+
+  function handleDragOver(e: React.DragEvent, index: number): void {
+    if (draggedIndex === null) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    if (dragOverIndex !== index) {
+      setDragOverIndex(index);
+    }
+  }
+
+  function handleDragLeave(): void {
+    setDragOverIndex(null);
+  }
+
+  function handleDrop(e: React.DragEvent, targetIndex: number): void {
+    e.preventDefault();
+    e.stopPropagation();
+    if (draggedIndex === null || draggedIndex === targetIndex) {
+      setDraggedIndex(null);
+      setDragOverIndex(null);
+      return;
+    }
+    handleMove(draggedIndex, targetIndex);
+    setDraggedIndex(null);
+    setDragOverIndex(null);
+  }
+
+  function handleDragEnd(): void {
+    setDraggedIndex(null);
+    setDragOverIndex(null);
   }
 
   return (
@@ -267,66 +315,129 @@ export function RoomTemplateManagerModal({
                 </p>
               </div>
             ) : (
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3.5">
-                {images.map((img, idx) => (
-                  <div
-                    key={img.id}
-                    className="group relative flex flex-col overflow-hidden rounded-xl border border-slate-700/80 bg-slate-950 shadow-md transition hover:border-purple-500/60"
-                  >
-                    {/* Image Preview Container */}
-                    <div className="relative aspect-4/3 w-full overflow-hidden bg-slate-900">
-                      <img
-                        src={img.url}
-                        alt={img.name || `Phòng ${idx + 1}`}
-                        className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
-                      />
+              <div className="flex flex-col gap-2">
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3.5">
+                  {images.map((img, idx) => {
+                    const isDragging = draggedIndex === idx;
+                    const isOver = dragOverIndex === idx && draggedIndex !== idx;
 
-                      {/* Number Badge */}
-                      <span className="absolute top-2 left-2 rounded-md bg-black/70 px-1.5 py-0.5 text-[10px] font-bold text-purple-300 backdrop-blur-xs">
-                        #{idx + 1}
-                      </span>
-
-                      {/* Delete Button Overlay */}
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleRemove(img.id);
-                        }}
-                        className="absolute top-2 right-2 flex h-6 w-6 items-center justify-center rounded-md bg-rose-600/80 hover:bg-rose-600 text-white text-xs backdrop-blur-xs transition shadow cursor-pointer opacity-80 hover:opacity-100"
-                        title="Gỡ ảnh phòng này"
+                    return (
+                      <div
+                        key={img.id}
+                        draggable
+                        onDragStart={(e) => handleDragStart(e, idx)}
+                        onDragOver={(e) => handleDragOver(e, idx)}
+                        onDragLeave={handleDragLeave}
+                        onDrop={(e) => handleDrop(e, idx)}
+                        onDragEnd={handleDragEnd}
+                        className={`group relative flex flex-col overflow-hidden rounded-xl border bg-slate-950 shadow-md select-none transition-all duration-150 cursor-grab active:cursor-grabbing ${
+                          isDragging
+                            ? "opacity-30 scale-95 border-dashed border-purple-400"
+                            : isOver
+                              ? "ring-2 ring-purple-400 border-purple-400 bg-purple-950/40 scale-105 z-10"
+                              : "border-slate-700/80 hover:border-purple-500/60"
+                        }`}
+                        title={
+                          images.length > 1
+                            ? `Ảnh phòng #${idx + 1}: Kéo thả hoặc dùng nút ◀ ▶ để đổi thứ tự`
+                            : img.name || `Phòng Mẫu #${idx + 1}`
+                        }
                       >
-                        ✕
-                      </button>
+                        {/* Image Preview Container */}
+                        <div className="relative aspect-4/3 w-full overflow-hidden bg-slate-900 pointer-events-none">
+                          <img
+                            src={img.url}
+                            alt={img.name || `Phòng ${idx + 1}`}
+                            className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105 pointer-events-none"
+                          />
 
-                      {/* Zoom Preview Button */}
-                      {onPreviewImage && (
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onPreviewImage(img.url, img.name || `Phòng Mẫu #${idx + 1}`);
-                          }}
-                          className="absolute bottom-2 right-2 flex items-center gap-1 rounded bg-black/70 hover:bg-black/90 px-1.5 py-0.5 text-[10px] font-medium text-white backdrop-blur-xs transition cursor-pointer"
-                          title="Soi phóng to HD"
-                        >
-                          <span>🔍</span>
-                          <span>Soi</span>
-                        </button>
-                      )}
-                    </div>
+                          {/* Number Badge & Reorder Controls */}
+                          <div className="absolute top-2 left-2 flex items-center gap-1 pointer-events-auto">
+                            <span
+                              className={`rounded-md px-1.5 py-0.5 text-[10px] font-bold text-white shadow backdrop-blur-xs ${
+                                idx === 0 ? "bg-purple-600/90 text-purple-100" : "bg-black/70 text-purple-300"
+                              }`}
+                            >
+                              #{idx + 1}{idx === 0 ? " ★" : ""}
+                            </span>
+                            {images.length > 1 && (
+                              <div className="flex items-center gap-0.5 rounded-md bg-black/75 p-0.5 shadow backdrop-blur-xs opacity-90 group-hover:opacity-100 transition">
+                                <button
+                                  type="button"
+                                  disabled={idx === 0}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleMove(idx, idx - 1);
+                                  }}
+                                  className="flex h-4 w-4 items-center justify-center rounded text-[9px] text-slate-200 hover:bg-purple-600 hover:text-white disabled:opacity-20 disabled:hover:bg-transparent cursor-pointer"
+                                  title="Chuyển sang trước (◀)"
+                                >
+                                  ◀
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={idx === images.length - 1}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleMove(idx, idx + 1);
+                                  }}
+                                  className="flex h-4 w-4 items-center justify-center rounded text-[9px] text-slate-200 hover:bg-purple-600 hover:text-white disabled:opacity-20 disabled:hover:bg-transparent cursor-pointer"
+                                  title="Chuyển ra sau (▶)"
+                                >
+                                  ▶
+                                </button>
+                              </div>
+                            )}
+                          </div>
 
-                    {/* Meta info */}
-                    <div className="p-2 border-t border-slate-800 bg-slate-900/60">
-                      <p
-                        className="truncate text-[11px] font-medium text-slate-300"
-                        title={img.name || `Phòng Mẫu #${idx + 1}`}
-                      >
-                        {img.name || `Phòng Mẫu #${idx + 1}`}
-                      </p>
-                    </div>
-                  </div>
-                ))}
+                          {/* Delete Button Overlay */}
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleRemove(img.id);
+                            }}
+                            className="absolute top-2 right-2 flex h-6 w-6 items-center justify-center rounded-md bg-rose-600/80 hover:bg-rose-600 text-white text-xs backdrop-blur-xs transition shadow cursor-pointer opacity-80 hover:opacity-100 pointer-events-auto"
+                            title="Gỡ ảnh phòng này"
+                          >
+                            ✕
+                          </button>
+
+                          {/* Zoom Preview Button */}
+                          {onPreviewImage && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onPreviewImage(img.url, img.name || `Phòng Mẫu #${idx + 1}`);
+                              }}
+                              className="absolute bottom-2 right-2 flex items-center gap-1 rounded bg-black/70 hover:bg-black/90 px-1.5 py-0.5 text-[10px] font-medium text-white backdrop-blur-xs transition cursor-pointer pointer-events-auto"
+                              title="Soi phóng to HD"
+                            >
+                              <span>🔍</span>
+                              <span>Soi</span>
+                            </button>
+                          )}
+                        </div>
+
+                        {/* Meta info */}
+                        <div className="p-2 border-t border-slate-800 bg-slate-900/60 pointer-events-auto">
+                          <p
+                            className="truncate text-[11px] font-medium text-slate-300"
+                            title={img.name || `Phòng Mẫu #${idx + 1}`}
+                          >
+                            {img.name || `Phòng Mẫu #${idx + 1}`}
+                          </p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                {images.length > 1 && (
+                  <p className="text-[11px] text-slate-400 italic">
+                    💡 Mẹo: Kéo thả các ảnh hoặc bấm nút ◀ ▶ để thay đổi thứ tự ưu tiên (Ảnh #1 ★ sẽ làm phôi mockup chính).
+                  </p>
+                )}
               </div>
             )}
           </div>
