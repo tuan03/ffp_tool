@@ -42,6 +42,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     _configure_packaged_browser()
     from .client_agent import DistributedCrawlerAgent
     from .client_config import AgentConfig
+    from .instance_lock import AgentAlreadyRunningError, AgentInstanceLock
 
     arguments = build_parser().parse_args(argv)
     try:
@@ -58,22 +59,26 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0
         config.data_directory.mkdir(parents=True, exist_ok=True)
         project_root.mkdir(parents=True, exist_ok=True)
-        if arguments.no_tray or sys.platform != "win32":
-            agent = DistributedCrawlerAgent(
-                project_root=project_root,
-                config=config,
-                on_status=lambda status: print(json.dumps(status, ensure_ascii=False), flush=True),
-            )
-            asyncio.run(agent.run())
-            return 0
+        with AgentInstanceLock(config.data_directory):
+            if arguments.no_tray or sys.platform != "win32":
+                agent = DistributedCrawlerAgent(
+                    project_root=project_root,
+                    config=config,
+                    on_status=lambda status: print(json.dumps(status, ensure_ascii=False), flush=True),
+                )
+                asyncio.run(agent.run())
+                return 0
 
-        from .client_tray import TrayApplication
+            from .client_tray import TrayApplication
 
-        agent = DistributedCrawlerAgent(project_root=project_root, config=config)
-        TrayApplication(agent, config.data_directory).run()
+            agent = DistributedCrawlerAgent(project_root=project_root, config=config)
+            TrayApplication(agent, config.data_directory).run()
         return 0
     except KeyboardInterrupt:
         return 130
+    except AgentAlreadyRunningError as error:
+        print(str(error), file=sys.stderr)
+        return 2
     except Exception as error:
         print(f"FFP Amazon Crawler could not start: {error}", file=sys.stderr)
         return 1

@@ -70,18 +70,20 @@ class ConnectionManager:
         self.lock = asyncio.Lock()
         self.cache_requests: dict[str, dict[str, Any]] = {}
 
-    async def add(self, client_id: str, websocket: WebSocket) -> None:
+    async def add(self, client_id: str, websocket: WebSocket) -> bool:
         async with self.lock:
-            previous = self.connections.get(client_id)
+            if client_id in self.connections:
+                return False
             self.connections[client_id] = websocket
-        if previous is not None and previous is not websocket:
-            await previous.close(code=4001, reason="Replaced by a newer client connection.")
+            return True
 
-    async def remove(self, client_id: str, websocket: WebSocket) -> None:
+    async def remove(self, client_id: str, websocket: WebSocket) -> bool:
         async with self.lock:
             if self.connections.get(client_id) is websocket:
                 self.connections.pop(client_id, None)
                 self.runtime.pop(client_id, None)
+                return True
+            return False
 
     async def update_runtime(self, client_id: str, *, active_tasks: int, available_slots: int) -> None:
         async with self.lock:
@@ -961,8 +963,15 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
             if capabilities.get("mediaGalleryV2") is not True:
                 await websocket.close(code=4003, reason="Agent must support complete Amazon media galleries.")
                 return
+            client_id = str(hello.get("clientId") or "").strip()
+            if not client_id:
+                await websocket.close(code=4000, reason="clientId is required.")
+                return
+            if not await manager.add(client_id, websocket):
+                client_id = ""
+                await websocket.close(code=4001, reason="This agent is already connected.")
+                return
             client = await asyncio.to_thread(store.register_client, hello)
-            client_id = client["id"]
             cancel_intents = [str(value) for value in list(hello.get("cancelIntents") or []) if str(value)]
             acknowledged_intents: list[str] = []
             stop_clients = await manager.connected_client_ids()
@@ -973,7 +982,6 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
                     acknowledged_intents.append(job_id)
             local_tasks = [value for value in list(hello.get("localTasks") or []) if isinstance(value, dict)]
             reconciliation = await asyncio.to_thread(store.reconcile_tasks, client_id, local_tasks)
-            await manager.add(client_id, websocket)
             maximum_slots = int(client.get("maxConcurrentInputs") or 0)
             required_cache_generation = await asyncio.to_thread(store.current_cache_generation)
             client_cache_generation = max(0, int(hello.get("cacheGeneration") or 0))
@@ -1120,9 +1128,9 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
             await websocket.close(code=4000, reason=str(error)[:120])
         finally:
             if client_id:
-                await manager.remove(client_id, websocket)
-                await asyncio.to_thread(store.mark_client_disconnected, client_id)
-                await asyncio.to_thread(store.purge_stopped_jobs)
+                if await manager.remove(client_id, websocket):
+                    await asyncio.to_thread(store.mark_client_disconnected, client_id)
+                    await asyncio.to_thread(store.purge_stopped_jobs)
 
     return app
 

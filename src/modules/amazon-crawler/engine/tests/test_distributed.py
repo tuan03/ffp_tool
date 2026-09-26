@@ -26,6 +26,7 @@ from engine.distributed.client_store import ClientStore
 from engine.distributed.client_agent import DistributedCrawlerAgent, progress_for_assignment, progress_targets
 from engine.distributed.client_config import AgentConfig
 from engine.distributed.client_main import _configure_packaged_browser, _resolve_config_path
+from engine.distributed.instance_lock import AgentAlreadyRunningError, AgentInstanceLock
 from engine.distributed.client_tray import format_status, should_notify_captcha
 from engine.distributed.coordinator_models import (
     Base,
@@ -128,6 +129,17 @@ class ClientTrayTests(unittest.TestCase):
 
 
 class PackagedClientTests(unittest.TestCase):
+    def test_agent_data_directory_allows_only_one_running_instance(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            first = AgentInstanceLock(Path(directory))
+            second = AgentInstanceLock(Path(directory))
+            with first:
+                with self.assertRaises(AgentAlreadyRunningError):
+                    with second:
+                        pass
+            with second:
+                self.assertTrue((Path(directory) / "agent.lock").exists())
+
     def test_playwright_browser_path_uses_pyinstaller_bundle_directory(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             bundle_root = Path(directory)
@@ -196,6 +208,21 @@ class PackagedClientTests(unittest.TestCase):
 
 
 class DistributedCacheControlTests(unittest.IsolatedAsyncioTestCase):
+    async def test_connection_manager_keeps_existing_socket_when_client_id_reconnects(self) -> None:
+        manager = ConnectionManager()
+
+        class FakeSocket:
+            pass
+
+        first = FakeSocket()
+        duplicate = FakeSocket()
+        self.assertTrue(await manager.add("client-a", first))
+        self.assertFalse(await manager.add("client-a", duplicate))
+        self.assertEqual(await manager.connected_client_ids(), {"client-a"})
+        self.assertFalse(await manager.remove("client-a", duplicate))
+        self.assertTrue(await manager.remove("client-a", first))
+        self.assertEqual(await manager.connected_client_ids(), set())
+
     async def test_connection_manager_reports_live_tasks_separately_from_database_leases(self) -> None:
         manager = ConnectionManager()
 
@@ -2190,6 +2217,23 @@ class CoordinatorApiTests(unittest.TestCase):
         cache_override = patch.dict(os.environ, {"IMAGE_PROCESSING_CACHE_DIR": image_cache.name})
         cache_override.start()
         self.addCleanup(cache_override.stop)
+
+    def test_duplicate_agent_socket_does_not_disconnect_the_active_agent(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = Path(directory) / "coordinator.sqlite3"
+            app = create_coordinator_app(database_url=f"sqlite:///{database_path.as_posix()}")
+            with TestClient(app) as client:
+                with client.websocket_connect("/api/v1/worker/connect") as primary:
+                    primary.send_json(client_hello())
+                    self.assertEqual(primary.receive_json()["type"], "hello_ack")
+                    with client.websocket_connect("/api/v1/worker/connect") as duplicate:
+                        duplicate.send_json(client_hello())
+                        close = duplicate.receive()
+                        self.assertEqual(close["type"], "websocket.close")
+                        self.assertEqual(close["code"], 4001)
+                    current = next(record for record in client.get("/api/v1/clients").json() if record["id"] == "client-a")
+                    self.assertTrue(current["isConnected"])
+                    self.assertEqual(current["status"], "online")
 
     def test_sync_all_queues_only_approved_reviews_as_each_product_becomes_ready(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
