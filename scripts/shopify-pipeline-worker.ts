@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { setDefaultResultOrder } from "node:dns";
 import { hostname } from "node:os";
 
 import {
@@ -1045,6 +1046,8 @@ process.on("SIGINT", stop);
 process.on("SIGTERM", stop);
 
 async function main(): Promise<void> {
+  // Amazon image CDN IPv6 connections can reset on Windows while IPv4 succeeds.
+  setDefaultResultOrder("ipv4first");
   if (!storeId || !baseStore) {
     console.warn(
       `[Shopify pipeline] ${!storeId ? "GATEWAY_STORE_ID is not configured" : `Shopify store '${storeId}' was not found in server configuration`}. Waiting for store configuration...`,
