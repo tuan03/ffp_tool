@@ -449,6 +449,9 @@ export function buildSeoDeliverables(
   const comparisonRows = deliverables.comparison_rows ?? deliverables.comparison_matrix ?? [];
   const printStandard = FACTORY_PRINT_STANDARDS[productType];
   const workflowId = jobStatus.jobId || jobStatus.job_id || "pod_production_completed";
+  if (jobStatus.status === "failed" || jobStatus.status === "cancelled") {
+    throw new AppError("Không thể bàn giao SEO khi sản xuất chưa đạt kiểm định.", "PINTEREST_POD_JOB_FAILED");
+  }
 
   const approvedSet = approvedMockupUrls
     ? (approvedMockupUrls instanceof Set ? approvedMockupUrls : new Set(approvedMockupUrls))

@@ -5,7 +5,6 @@ import io
 import json
 import logging
 import re
-import shutil
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -25,6 +24,7 @@ from .product_asset import (
     parse_json_relaxed,
 )
 from .product_render import add_leather_surface, add_textile_surface
+from .reference_composite import compose_reference_artwork
 
 LOG = logging.getLogger("template_mockup")
 
@@ -357,7 +357,7 @@ def analyze_reference_image(
         thumb_art.save(buf_art, format="JPEG", quality=75)
         buf_art_bytes = buf_art.getvalue()
 
-    hash_key = "v7_" + hashlib.sha256(buf_ref.getvalue() + buf_art_bytes + product_label.encode("utf-8")).hexdigest()[:16]
+    hash_key = "v8_surface_" + hashlib.sha256(buf_ref.getvalue() + buf_art_bytes + product_label.encode("utf-8")).hexdigest()[:16]
 
     cache_file: Path | None = None
     if cache_dir:
@@ -448,6 +448,25 @@ Analyze the images deeply and return JSON only in English with these exact keys:
     "criterion 4: Verify human hands and anatomy are natural and flawless if present"
   ]
 }}
+"""
+    analysis_prompt += """
+Additional mandatory field: surface_plan. The caller does NOT regenerate this
+reference. It projects the original artwork mathematically, preserving all other
+pixels. Supply {"all_printable_surfaces_identified": true/false, "surfaces": [...]}.
+Include EVERY visible printed surface in every product instance, including insets.
+For each surface supply:
+- geometry: "planar" only when one homography accurately describes the entire
+  surface. Otherwise "curved" or "folded"; never approximate those as planar.
+- confidence: number 0..1 for accurate boundary, mapping and occlusion detection.
+- quad: four [x,y] corners in 0..1000, in artwork TL, TR, BR, BL order. These map
+  the SAME full master canvas in every view, never crop, mirror or rearrange it.
+- polygon: detailed visible printable boundary as [x,y] points in 0..1000.
+- protected_polygons: polygons for ALL occluding hands, hardware, seams, trim,
+  straps and other non-printed parts within the surface; [] only if absent.
+Do not include interior lining, hardware/detail-only panels or text banners as
+printable surfaces. Do not substitute bounding boxes for printable boundaries.
+If any surface cannot be accurately mapped, mark coverage false. The caller will
+require review instead of publishing an uncertain composite. No niche defaults.
 """
     if artwork is not None:
         contents_parts = [
@@ -579,7 +598,7 @@ def build_direct_ai_mockup(
     room_template: Path | Image.Image | None = None,
     **kwargs: Any,
 ) -> TemplateMockupRecord:
-    """Have the image model render real cloth geometry rather than compositing a flat print."""
+    """Project onto supplied references; generate new scenes only without a reference."""
     output_dir.mkdir(parents=True, exist_ok=True)
     stem = print_path.stem.replace("_rgb", "")
     suffix = f"_v{max(1, variant):02d}"
@@ -594,7 +613,7 @@ def build_direct_ai_mockup(
 
     pose = pose or template_pose_for_index(target, 1)
     correction = ""
-    last_error = ""
+    last_error = "Image generation client is unavailable; no verified mockup produced."
     try:
         with Image.open(print_path) as opened:
             artwork = ImageOps.exif_transpose(opened).convert("RGB")
@@ -612,7 +631,10 @@ def build_direct_ai_mockup(
                 if progress:
                     log(progress, f"Note: could not open room template {p_rt.name}: {rt_exc}")
     elif isinstance(room_template, Image.Image):
-        room_img = room_template
+        room_img = ImageOps.exif_transpose(room_template).convert("RGB")
+
+    if room_template is not None and room_img is None:
+        return TemplateMockupRecord(print_path, None, None, None, model, pose.name, "failed", "REFERENCE_UNREADABLE: supplied template could not be loaded", {}, "reference_composite", variant)
 
     reference_analysis: dict[str, Any] | None = None
     if room_img is not None and client is not None:
@@ -636,7 +658,36 @@ def build_direct_ai_mockup(
     active_pose_name = reference_analysis.get("scene_title", pose.name) if reference_analysis else pose.name
     custom_qa_checklist = reference_analysis.get("qa_checklist") if reference_analysis else None
 
-    best_candidate_path: Path | None = None
+    if room_img is not None:
+        metrics: dict[str, object] = {"master_artwork_sha256": hashlib.sha256(print_path.read_bytes()).hexdigest()}
+        try:
+            plan = reference_analysis.get("surface_plan") if reference_analysis else None
+            if not isinstance(plan, dict):
+                raise ValueError("SURFACE_REVIEW_REQUIRED: reference analysis did not provide printable masks and mapping")
+            generated, edit_mask = compose_reference_artwork(room_img, artwork, plan)
+            candidate_path = output_dir / "direct_ai_candidates" / f"{stem}{suffix}_projected.png"
+            mask_path = output_dir / "reference_masks" / f"{stem}{suffix}_mask.png"
+            candidate_path.parent.mkdir(parents=True, exist_ok=True)
+            mask_path.parent.mkdir(parents=True, exist_ok=True)
+            generated.save(candidate_path)
+            edit_mask.save(mask_path)
+            metrics.update({"surface_plan": plan, "outside_mask_unchanged": True})
+            quality = assess_direct_ai_mockup(
+                print_path, candidate_path, target, backend=backend, model=quality_model,
+                image_type="REFERENCE_TEMPLATE", reference_template=room_img, edit_mask=edit_mask,
+            )
+            metrics["mockup_quality"] = quality.to_dict()
+            if not quality.accepted:
+                raise ValueError(f"REFERENCE_QA_REJECTED: {quality.reason}")
+            mockup_path.parent.mkdir(parents=True, exist_ok=True)
+            generated.save(mockup_path)
+            return TemplateMockupRecord(print_path, None, mask_path, mockup_path, quality_model,
+                active_pose_name, "ok", "Master artwork projected into validated printable surface masks.",
+                metrics, "reference_composite", variant)
+        except Exception as exc:
+            return TemplateMockupRecord(print_path, None, None, None, quality_model, active_pose_name,
+                "failed", str(exc), metrics, "reference_composite", variant)
+
     best_candidate_metrics: dict[str, object] = {}
 
     attempts_to_run = max(1, attempts) if client is not None else 0
@@ -671,7 +722,6 @@ def build_direct_ai_mockup(
                         )
             candidate_path.parent.mkdir(parents=True, exist_ok=True)
             generated.save(candidate_path)
-            best_candidate_path = candidate_path
 
             quality = assess_direct_ai_mockup(
                 print_path,
@@ -686,6 +736,7 @@ def build_direct_ai_mockup(
                 model=quality_model,
             )
             metrics_dict: dict[str, object] = {
+                "master_artwork_sha256": hashlib.sha256(print_path.read_bytes()).hexdigest(),
                 "generation_attempt": attempt,
                 "mockup_quality": quality.to_dict(),
                 "has_room_template": room_img is not None,
@@ -695,9 +746,7 @@ def build_direct_ai_mockup(
             best_candidate_metrics = metrics_dict
 
             if not quality.accepted:
-                if attempt < max(1, attempts):
-                    raise RuntimeError(f"direct AI mockup QA rejected: {quality.reason}")
-                LOG.info("Proceeding with candidate on final attempt despite QA check: %s", quality.reason)
+                raise RuntimeError(f"direct AI mockup QA rejected: {quality.reason}")
             mockup_path.parent.mkdir(parents=True, exist_ok=True)
             generated.save(mockup_path)
             return TemplateMockupRecord(
@@ -749,69 +798,8 @@ def build_direct_ai_mockup(
                 continue
             break
 
-    # If all attempts failed strict QA, but a candidate image was successfully generated,
-    # fallback to the best generated candidate so the user still receives their requested mockup!
-    if best_candidate_path and best_candidate_path.exists():
-        mockup_path.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(best_candidate_path, mockup_path)
-        fallback_metrics = best_candidate_metrics or {
-            "has_room_template": room_img is not None,
-            "fallback_used": True,
-            "fallback_reason": last_error,
-        }
-        fallback_metrics["fallback_used"] = True
-        return TemplateMockupRecord(
-            print_path,
-            None,
-            None,
-            mockup_path,
-            model,
-            active_pose_name,
-            "ok",
-            f"Accepted candidate via QA fallback ({last_error})",
-            fallback_metrics,
-            "direct_ai",
-            variant,
-        )
-
-    # If client is None (offline/test mode) or all generative attempts failed without image,
-    # fall back to template inpainting so offline workflows still produce a valid composite.
-    if room_img is not None:
-        try:
-            if progress:
-                log(progress, f"Fallback Inpainting: Ghép hoa văn lên bề mặt sản phẩm ({target.niche or target.name}).")
-            inpainted = inpaint_artwork_on_template(
-                client=client,
-                artwork=artwork,
-                template=room_img,
-                target=target,
-                reference_analysis=reference_analysis,
-                model=quality_model or "gemini-2.5-flash",
-            )
-            mockup_path.parent.mkdir(parents=True, exist_ok=True)
-            inpainted.save(mockup_path)
-            return TemplateMockupRecord(
-                print_path=print_path,
-                template_path=None,
-                mask_path=None,
-                mockup_path=mockup_path,
-                model="template_inpainting_fallback",
-                pose=active_pose_name,
-                status="ok",
-                notes="Offline/test fallback inpainting: print mapped to template surface.",
-                metrics={
-                    "render_mode": "template_inpainting_fallback",
-                    "template_preserved": True,
-                    "has_room_template": True,
-                    "reference_analysis": reference_analysis,
-                },
-                render_mode="template_inpainting",
-                variant=variant,
-            )
-        except Exception as inpaint_exc:
-            LOG.warning("Fallback inpainting error: %s", inpaint_exc)
-
-    return TemplateMockupRecord(print_path, None, None, None, model, active_pose_name, "failed", last_error, {}, "direct_ai", variant)
+    # Rejected candidates remain diagnostic artifacts, never deliverables.
+    return TemplateMockupRecord(print_path, None, None, None, model, active_pose_name, "failed", last_error, best_candidate_metrics, "direct_ai", variant)
 
 
 def inpaint_artwork_on_template(

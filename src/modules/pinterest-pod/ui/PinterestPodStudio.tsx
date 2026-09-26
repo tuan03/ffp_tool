@@ -822,7 +822,7 @@ export function PinterestPodStudio({
 
   // Packaged SEO payload when deliverables available
   const seoPayload = useMemo(() => {
-    if (!deliverables || !jobId) return undefined;
+    if (!deliverables || !jobId || jobStatus !== "completed") return undefined;
     return packageDeliverablesForSeo(
       {
         ok: true,
@@ -833,7 +833,7 @@ export function PinterestPodStudio({
       },
       product,
     );
-  }, [deliverables, jobId, candidates, product]);
+  }, [deliverables, jobId, jobStatus, candidates, product]);
 
   const hasStage2 = candidates.length > 0 || jobStatus === "ready_for_review";
   const hasDeliverables =
