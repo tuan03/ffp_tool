@@ -672,6 +672,7 @@ def build_direct_ai_mockup(
 
     active_pose_name = reference_analysis.get("scene_title", pose.name) if reference_analysis else pose.name
     custom_qa_checklist = reference_analysis.get("qa_checklist") if reference_analysis else None
+    best_candidate_metrics: dict[str, object] = {}
 
     if room_img is not None:
         metrics: dict[str, object] = {"master_artwork_sha256": hashlib.sha256(print_path.read_bytes()).hexdigest()}
@@ -708,10 +709,11 @@ def build_direct_ai_mockup(
                 active_pose_name, "ok", "Master artwork projected into validated printable surface masks.",
                 metrics, "reference_composite", variant)
         except Exception as exc:
-            return TemplateMockupRecord(print_path, None, None, None, quality_model, active_pose_name,
-                "failed", str(exc), metrics, "reference_composite", variant)
+            LOG.warning("Reference composite failed or rejected (%s). Falling back to generative lifestyle with template.", exc)
+            metrics["reference_composite_error"] = str(exc)
+            best_candidate_metrics = metrics
 
-    best_candidate_metrics: dict[str, object] = {}
+
 
     attempts_to_run = max(1, attempts) if client is not None else 0
     for attempt in range(1, attempts_to_run + 1):

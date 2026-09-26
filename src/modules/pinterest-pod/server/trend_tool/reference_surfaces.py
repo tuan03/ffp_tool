@@ -14,16 +14,22 @@ from .reference_composite import compose_reference_artwork, decode_surface_mask
 
 
 SEGMENTATION_MODEL = "gemini-2.5-flash"
-ANALYSIS_VERSION = "pixel-uv-v5-native-format"
+ANALYSIS_VERSION = "pixel-uv-v6-full-product"
 
 GEOMETRY_PROMPT = """
-Analyze only the supplied reference photograph. Identify EVERY visible printable
-surface belonging to the requested target, including repeated views and insets.
-We will sample the original master artwork, NOT generate a new scene or redraw art.
-Do not infer geometry from a niche preset. Preserve all objects, text, borders,
-seams, handles, people and foreground occluders. Distinguish printable surface
-from product silhouette. Never treat a bounding box as a printable boundary.
+Analyze only the supplied reference photograph for commercial Print-on-Demand mockup replacement.
+The reference photo contains a physical product (e.g. rug, blanket, tote bag, mat) displaying
+an OLD, PREVIOUS PRINTED DESIGN (which may include old text, illustrations, doodles, borders, patterns).
+WE ARE REPLACING THE ENTIRE PRINT ON THIS PRODUCT EDGE-TO-EDGE WITH NEW MASTER ARTWORK.
+Do not preserve old printed graphics, old text, old illustrations, or old printed borders that belong to the design on the product surface. The ENTIRE printed surface must be replaced edge-to-edge.
 
+PRESERVE ONLY genuine non-print parts and occluders:
+- People, hands, feet, shoes standing on or holding the product.
+- Room furniture, walls, floor, tables, chairs, toys, or objects resting on the product.
+- Physical non-printable construction elements: outer stitched edge bindings, rug fringes,
+  zippers, buckles, metal grommets, carry handles and straps.
+
+Identify EVERY visible printable surface belonging to the requested target product.
 Return JSON: {"scene_title": string, "all_printable_surfaces_identified": boolean,
 "surfaces": [{"surface_id": unique short string, "description": unambiguous visual
 location and description of the VISIBLE printable area excluding occluders,
@@ -41,8 +47,10 @@ perimeter are allowed. False/unknown means do not infer full dimensions from mas
 
 For planar surfaces provide "quad": four [x,y] points normalized 0..1000 in
 artwork top-left, top-right, bottom-right, bottom-left order; corners outside the
-image may extend to -1000..2000 for cropped surfaces. Map the SAME complete
-master canvas in every view; never crop, tile, mirror or rearrange artwork.
+image may extend to -1000..2000 for cropped surfaces. The 4 corners must cover the
+ENTIRE top face of the product edge-to-edge right to its outer boundary (or stitched border),
+replacing ALL existing prints/text/graphics.
+Map the SAME complete master canvas in every view; never crop, tile, mirror or rearrange artwork.
 For curved and folded surfaces provide a piecewise UV mesh. For planar surfaces
 also provide this mesh when illumination varies across the surface; match the
 planar homography exactly rather than introducing arbitrary deformations:
@@ -134,8 +142,9 @@ def analyze_reference_surfaces(client, image: Image.Image, product_label: str, *
             "Give native segmentation masks for these requested regions: " + json.dumps(mask_request)
             + '. Output a JSON list with "label" (exact requested label), "box_2d" '
             '(normalized [ymin,xmin,ymax,xmax] in 0..1000), "mask" (base64 PNG '
-            'probability mask within that box). For visible_printable_area entries, exclude '
-            'foreground people, objects, trim, hardware, seams and outside typography. '
+            'probability mask within that box). For visible_printable_area entries, include the '
+            'entire printable surface of the product edge-to-edge replacing any prior printed graphics/text/border, '
+            'excluding only foreground people, resting objects, trim, hardware, and seams. '
             'For complete_foreground_object entries, INCLUDE the entire visible object '
             '(people, toys, hardware, etc.) so it can be protected from replacement. '
             'Return one mask per requested label. Do not return polygons or box-filled masks.',

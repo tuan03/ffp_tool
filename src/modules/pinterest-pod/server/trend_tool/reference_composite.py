@@ -112,7 +112,11 @@ def _polygon_mask(size: tuple[int, int], points: np.ndarray) -> Image.Image:
 
 
 def compose_reference_artwork(
-    reference: Image.Image, artwork: Image.Image, plan: dict[str, object],
+    reference: Image.Image,
+    artwork: Image.Image,
+    plan: dict[str, object],
+    *,
+    photorealistic: bool = False,
 ) -> tuple[Image.Image, Image.Image]:
     """Return RGB composite and binary edit mask, without regenerating any pixels.
 
@@ -209,7 +213,36 @@ def compose_reference_artwork(
         projected = artwork.convert("RGB").transform(
             reference.size, Image.Transform.PERSPECTIVE, coefficients.tolist(), Image.Resampling.BICUBIC,
         )
-        mask = Image.fromarray(visible.astype(np.uint8) * 255)
-        output.paste(projected, (0, 0), mask)
+
+        should_shade = photorealistic or (min(reference.size) >= 512 and bool(plan.get("photorealistic", True)))
+        if should_shade:
+            from PIL import ImageFilter
+            from .product_render import add_textile_surface
+
+            # Smooth ambient room lighting modulation
+            gray = reference.convert("L")
+            blur_rad = max(30, min(reference.size) // 25)
+            ambient = gray.filter(ImageFilter.GaussianBlur(radius=blur_rad))
+            amb_arr = np.asarray(ambient, dtype=np.float32)
+            vis_amb = amb_arr[visible]
+            if len(vis_amb) > 0:
+                mean_vis = float(np.median(vis_amb))
+                light_map = np.clip(amb_arr / max(1.0, mean_vis), 0.85, 1.15)
+            else:
+                light_map = np.ones(reference.size[::-1], dtype=np.float32)
+
+            # Scale artwork diffuse white point to realistic indoor fabric brightness (~222/255)
+            proj_arr = np.asarray(projected, dtype=np.float32)
+            fabric_scaled = proj_arr * (222.0 / 255.0)
+            shaded = np.clip(fabric_scaled * light_map[..., np.newaxis], 0, 255).astype(np.uint8)
+            shaded_img = Image.fromarray(shaded)
+            shaded_img = add_textile_surface(shaded_img, strength=0.07)
+
+            mask = Image.fromarray(visible.astype(np.uint8) * 255)
+            mask = mask.filter(ImageFilter.GaussianBlur(radius=1.0))
+            output.paste(shaded_img, (0, 0), mask)
+        else:
+            mask = Image.fromarray(visible.astype(np.uint8) * 255)
+            output.paste(projected, (0, 0), mask)
         union |= visible
     return output, Image.fromarray(union.astype(np.uint8) * 255)
