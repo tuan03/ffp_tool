@@ -36,7 +36,7 @@ export function buildHeuristicAiQuickSummary(
   const occasion = facts.occasions.length > 0 ? ` or special ${facts.occasions[0]} gifting` : "";
   const variantClause = facts.variantLabel ? ` in the exclusive ${facts.variantLabel} edition` : "";
 
-  return `The ${productTitle} is an authentic ${identity}${variantClause} crafted for ${audience}. Carefully engineered ${stylePart ? `${stylePart}, ` : ""}it combines durable construction with distinctive themed artwork. Ideal for ${useCase}${occasion}, offering balanced performance, easy maintenance, and standout visual appeal for modern spaces.`;
+  return `The ${productTitle} is a distinctive ${identity}${variantClause} crafted for ${audience}. Carefully engineered ${stylePart ? `${stylePart}, ` : ""}it combines durable construction with distinctive themed artwork. Ideal for ${useCase}${occasion}, offering balanced performance, easy maintenance, and standout visual appeal for modern spaces.`;
 }
 
 /**
@@ -85,9 +85,11 @@ export function buildHeuristicFaq(
     a3 = `Yes. Personalization options allow you to tailor specific names, dates, or custom details, creating a truly unique keepsake or personalized gift.`;
   } else {
     q3 = `What is included with this ${catName}, and how should it be cleaned and maintained?`;
-    const careMention = /wash|clean|wipe/i.test(facts.originalDescription)
-      ? "Follow care guidelines: wash cold on gentle cycle or wipe clean, and air dry to maintain material quality."
-      : "For best longevity, spot clean or machine wash cold on a gentle cycle and lay flat or tumble dry low. Avoid bleach.";
+    const careMention = /dry\s*clean/i.test(facts.originalDescription)
+      ? "Follow care instructions: dry clean only as recommended to maintain fabric and print quality."
+      : /wash|clean|wipe/i.test(facts.originalDescription)
+        ? "Follow care guidelines: wash cold on gentle cycle or wipe clean, and air dry to maintain material quality."
+        : "For best longevity, spot clean or machine wash cold on a gentle cycle and lay flat or tumble dry low. Avoid bleach.";
     a3 = `This package includes the standard ${catName} specification. ${careMention}`;
   }
 

@@ -8,6 +8,10 @@ import { ContentGenerationSchemaError } from "./content-generation-types";
 import { GEMINI_CONTENT_DRAFT_SCHEMA } from "./gemini-content-generation-schema";
 import { validateDraft } from "./content-result-validator";
 import { buildJsonLdSchema } from "./json-ld-builder";
+import {
+  buildHeuristicAiQuickSummary,
+  buildHeuristicFaq,
+} from "./heuristic-content-generator";
 
 const SYSTEM_INSTRUCTION = `You are an expert e-commerce SEO copywriter and product marketing specialist.
 Your mission is to generate clean, compelling, conversion-focused, and search-optimized product copywriting.
@@ -115,14 +119,24 @@ Return the structured draft in the required JSON format.`;
     }
 
     const draft = validateDraft(parsed);
-    const aeo_json_ld = draft.aeo_json_ld ?? buildJsonLdSchema({
-      productTitle: draft.productTitle,
-      description: draft.productSeoDescription,
-      faq: draft.aeo_faq,
-    });
+    const aeo_quick_summary =
+      draft.aeo_quick_summary || buildHeuristicAiQuickSummary(facts, draft.productTitle);
+    const aeo_faq =
+      draft.aeo_faq && draft.aeo_faq.length > 0
+        ? draft.aeo_faq
+        : buildHeuristicFaq(facts, draft.productTitle);
+    const aeo_json_ld =
+      draft.aeo_json_ld ??
+      buildJsonLdSchema({
+        productTitle: draft.productTitle,
+        description: draft.productSeoDescription,
+        faq: aeo_faq,
+      });
 
     return {
       ...draft,
+      aeo_quick_summary,
+      aeo_faq,
       aeo_json_ld,
     };
   }

@@ -11,23 +11,37 @@ export interface JsonLdProductInput {
  * within a single unified @graph block.
  */
 export function buildJsonLdSchema(input: JsonLdProductInput): string {
+  const cleanDescription = (input.description || "")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+
   const graph: Array<Record<string, unknown>> = [
     {
       "@type": "Product",
-      name: input.productTitle,
-      description: input.description,
+      name: input.productTitle.trim(),
+      description: cleanDescription,
     },
   ];
 
-  if (input.faq && input.faq.length > 0) {
+  const validFaq = (input.faq || []).filter(
+    (item) =>
+      item &&
+      typeof item.question === "string" &&
+      item.question.trim().length > 0 &&
+      typeof item.answer === "string" &&
+      item.answer.trim().length > 0,
+  );
+
+  if (validFaq.length > 0) {
     graph.push({
       "@type": "FAQPage",
-      mainEntity: input.faq.map((item) => ({
+      mainEntity: validFaq.map((item) => ({
         "@type": "Question",
-        name: item.question,
+        name: item.question.trim(),
         acceptedAnswer: {
           "@type": "Answer",
-          text: item.answer,
+          text: item.answer.trim(),
         },
       })),
     });

@@ -39,3 +39,80 @@ test("B5 claim guard rejects unsupported high-risk and personalization claims", 
   assert.ok(violations.some((value) => value.includes("free shipping")));
   assert.ok(violations.some((value) => value.includes("personalization")));
 });
+
+test("B5 claim guard detects unsupported claims inside aeo_quick_summary and aeo_faq", () => {
+  const baseFacts: ContentFactSheet = {
+    originalTitle: "Viking Blanket",
+    originalDescription: "Cozy polyester throw blanket with Nordic art.",
+    typographyVisibleTexts: [],
+    visualEntities: "raven",
+    physicalProductIdentity: "fleece blanket",
+    targetAudience: ["mythology fans"],
+    occasions: [],
+    useCases: ["living room"],
+    personalizationSupported: false,
+  };
+
+  const draftWithAeoViolation: GeneratedContentDraft = {
+    productTitle: "Viking Blanket",
+    intro: "Cozy blanket with raven art.",
+    bullets: [
+      { label: "Design", text: "Raven art." },
+      { label: "Style", text: "Nordic." },
+    ],
+    guidance: [],
+    closing: "Great gift.",
+    productSeoTitle: "Viking Blanket",
+    productSeoDescription: "Cozy blanket.",
+    aeo_quick_summary: "This blanket is crafted with genuine leather trim and 100% cashmere for ultimate luxury.",
+    aeo_faq: [
+      {
+        question: "Can I personalize this blanket?",
+        answer: "Yes, you can add your custom name or personalized text easily.",
+      },
+    ],
+  };
+
+  const violations = checkClaimGrounding(draftWithAeoViolation, baseFacts);
+  assert.ok(violations.some((v) => v.includes("genuine leather")), "Must flag genuine leather in quick summary");
+  assert.ok(violations.some((v) => v.includes("personalization")), "Must flag personalization claim in FAQ");
+});
+
+test("B5 HeuristicContentGenerator safely handles leather goods without false-positive claim violations", async () => {
+  const { HeuristicContentGenerator } = await import("../internal/content-generation/heuristic-content-generator");
+  const leatherFacts: ContentFactSheet = {
+    originalTitle: "Vintage Leather Messenger Bag for Men",
+    originalDescription: "Brown leather bag with multiple compartments. Wipe clean.",
+    typographyVisibleTexts: [],
+    visualEntities: "brass buckle",
+    physicalProductIdentity: "leather bag",
+    targetAudience: ["professionals"],
+    occasions: [],
+    useCases: ["office commuting"],
+    personalizationSupported: false,
+  };
+
+  const generator = new HeuristicContentGenerator();
+  const draft = await generator.generate({
+    facts: leatherFacts,
+    keywords: {
+      primary: "vintage leather messenger bag",
+      secondary: ["office commuting bag"],
+      supportingKeywords: [],
+      framingConcepts: [],
+      targetedKeywords: [],
+    },
+    constraints: {
+      maxSeoTitleLength: 70,
+      maxSeoDescriptionLength: 160,
+      maxHandleLength: 80,
+      maxBullets: 5,
+      preserveExistingHandle: true,
+    },
+  });
+
+  const violations = checkClaimGrounding(draft, leatherFacts);
+  assert.equal(violations.length, 0, "Heuristic generator must not trigger false positive claim violations for leather items");
+  assert.ok(draft.aeo_quick_summary);
+  assert.doesNotMatch(draft.aeo_quick_summary, /\bauthentic\s+leather\b/i);
+});

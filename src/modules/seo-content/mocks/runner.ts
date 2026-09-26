@@ -14,11 +14,17 @@ export async function runMockSeoContent(input: SeoContentInput): Promise<SeoCont
     },
   }));
 
+  const aeo_faq = seoContentMockData.aeo_faq?.map((item) => ({
+    question: item.question,
+    answer: item.answer,
+  }));
+
   const trimmedHandle = input.handle.trim();
 
   return {
     ...seoContentMockData,
     images,
+    ...(aeo_faq ? { aeo_faq } : {}),
     productHandle: trimmedHandle ? trimmedHandle : seoContentMockData.productHandle,
   };
 }

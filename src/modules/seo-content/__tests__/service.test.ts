@@ -176,6 +176,12 @@ test("SEO + Content mock runner returns immutable cloned objects across multiple
   assert.notEqual(result1.images, result2.images);
   assert.notEqual(result1.images[0], result2.images[0]);
   assert.notEqual(result1.images[0].webp, result2.images[0].webp);
+
+  assert.notEqual(result1.aeo_faq, seoContentMockData.aeo_faq);
+  assert.notEqual(result1.aeo_faq, result2.aeo_faq);
+  if (result1.aeo_faq && result2.aeo_faq) {
+    assert.notEqual(result1.aeo_faq[0], result2.aeo_faq[0]);
+  }
 });
 
 test("SEO + Content runtime selects appropriate runner by environment", async () => {
