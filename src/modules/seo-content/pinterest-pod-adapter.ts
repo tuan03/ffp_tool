@@ -217,7 +217,7 @@ function extractImages(item: PodDeliverableItem): SeoContentImageInput[] {
     });
   };
 
-  const title = item.originalPinTitle || item.designId;
+  const title = item.originalPinTitle || (item as { title?: string }).title || item.designId;
 
   // 1. Ảnh quảng bá Storefront: CHỈ lấy các ảnh phối cảnh AI Mockup (AI_background) do AI render
   const hasMockups = Array.isArray(item.composedMockups) && item.composedMockups.some((m) => Boolean(m?.mockupUrl));
@@ -256,9 +256,13 @@ export function fromPinterestPodItem(
   defaultNiche = "Home Decor",
 ): SeoContentInput {
   const designId = (typeof item.designId === "string" ? item.designId : "").trim();
-  const rawTitle = typeof item.originalPinTitle === "string" && item.originalPinTitle.trim().length > 0
-    ? item.originalPinTitle.trim()
-    : designId || "Untitled Pinterest POD Item";
+  const fallbackTitle = (item as { title?: string }).title;
+  const rawTitle =
+    typeof item.originalPinTitle === "string" && item.originalPinTitle.trim().length > 0
+      ? item.originalPinTitle.trim()
+      : typeof fallbackTitle === "string" && fallbackTitle.trim().length > 0
+        ? fallbackTitle.trim()
+        : designId || "Untitled Pinterest POD Item";
 
   const handle = slugify(rawTitle) || slugify(designId) || "pinterest-pod-product";
   const niche = inferNiche(item.productType || "", item.trendKeywords, defaultNiche);

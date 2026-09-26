@@ -35,7 +35,7 @@ import { TrendClusterDiscovery } from "./components/TrendClusterDiscovery";
 
 interface PinterestPodStudioProps {
   readonly client?: PinterestPodClient;
-  readonly onHandoverToSeo?: (payload: PinterestPodDeliverables) => Promise<void>;
+  readonly onHandoverToSeo?: (payload: PinterestPodDeliverables, serverViewModels?: readonly unknown[]) => Promise<void>;
 }
 
 export function PinterestPodStudio({

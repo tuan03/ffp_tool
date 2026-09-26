@@ -1,5 +1,6 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import { resolveLocalImageFile } from "../image-processing/local-image-resolver";
 import type { SeoContentImageInput } from "../../types";
 
 export type SupportedImageMimeType = "image/jpeg" | "image/png" | "image/webp";
@@ -63,46 +64,36 @@ export async function prepareProductImagePayload(
   }
 
   // Priority 1: localFilePath
-  if (image.localFilePath && image.localFilePath.trim()) {
-    const rawPath = image.localFilePath.trim();
-    let resolvedPath = rawPath;
-    try {
-      if (typeof path !== "undefined" && typeof path.resolve === "function") {
-        resolvedPath = path.resolve(rawPath);
-      }
-    } catch {
-      resolvedPath = rawPath;
-    }
-    const mimeType = detectMimeTypeFromFilename(resolvedPath);
-    if (!mimeType) {
-      throw new InvalidImagePayloadError(
-        `Unsupported image format for local file: ${rawPath}. Allowed: JPEG, PNG, WebP`,
-      );
-    }
+  const localResolved = resolveLocalImageFile(image.localFilePath, image.url);
+  if (localResolved) {
+    const mimeType = detectMimeTypeFromFilename(localResolved);
+    if (mimeType) {
+      try {
+        const stats = await fs.stat(localResolved);
+        if (stats.size > MAX_IMAGE_BYTES) {
+          throw new InvalidImagePayloadError(
+            `Local image file '${localResolved}' (${stats.size} bytes) exceeds maximum allowed size of 10MB`,
+          );
+        }
 
-    try {
-      const stats = await fs.stat(resolvedPath);
-      if (stats.size > MAX_IMAGE_BYTES) {
-        throw new InvalidImagePayloadError(
-          `Local image file '${rawPath}' (${stats.size} bytes) exceeds maximum allowed size of 10MB`,
-        );
+        const buffer = await fs.readFile(localResolved);
+        const base64 = buffer.toString("base64");
+        return {
+          type: "inline",
+          inlineData: {
+            data: base64,
+            mimeType,
+          },
+        };
+      } catch (err) {
+        if (err instanceof InvalidImagePayloadError) throw err;
+        if (!image.url) {
+          throw new InvalidImagePayloadError(
+            `Failed to read local image file '${localResolved}': ${err instanceof Error ? err.message : String(err)}`,
+            err,
+          );
+        }
       }
-
-      const buffer = await fs.readFile(resolvedPath);
-      const base64 = buffer.toString("base64");
-      return {
-        type: "inline",
-        inlineData: {
-          data: base64,
-          mimeType,
-        },
-      };
-    } catch (err) {
-      if (err instanceof InvalidImagePayloadError) throw err;
-      throw new InvalidImagePayloadError(
-        `Failed to read local image file '${rawPath}': ${err instanceof Error ? err.message : String(err)}`,
-        err,
-      );
     }
   }
 

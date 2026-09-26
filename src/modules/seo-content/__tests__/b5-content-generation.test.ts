@@ -305,6 +305,58 @@ test("B5 HeuristicContentGenerator adapts FAQ Q2 and Q3 for rugs and personaliza
   assert.match(draft.aeo_faq[2].answer, /personalization/i);
 });
 
+test("B5: placeholder defense filters 'unknown' and rebuilds title for 'Design #1'", async () => {
+  const { isUsableSourceTitle } = await import("../internal/content-generation/heuristic-title-builder");
+  assert.equal(isUsableSourceTitle("Design #1"), false);
+  assert.equal(isUsableSourceTitle("Design 2"), false);
+  assert.equal(isUsableSourceTitle("design #99"), false);
+  assert.equal(isUsableSourceTitle("Vintage Floral Area Rug"), true);
+
+  const rawContext = {
+    ...createInitialContext({
+      title: "Design #1",
+      description: "Sample description",
+      niche: "area rug",
+      handle: "design-1",
+      images: [],
+    }),
+    productUnderstanding: {
+      physicalProductIdentity: "area rug",
+      typography: { visibleTexts: ["unknown", "VALHALLA"], styleSummary: "unknown" },
+      visualEntities: "unknown",
+      sceneContext: "unknown",
+    },
+    shoppingContext: {
+      targetAudience: [],
+      suitableOccasions: [],
+      useCases: [],
+      buyerIntentKeywords: [],
+    },
+  };
+
+  const facts = buildContentFactSheet(rawContext);
+  assert.equal(facts.visualEntities, undefined);
+  assert.equal(facts.typographyStyleSummary, undefined);
+  assert.deepEqual(facts.typographyVisibleTexts, ["VALHALLA"]);
+
+  const generator = new HeuristicContentGenerator();
+  const draft = await generator.generate({
+    facts,
+    keywords: { primary: "boho celestial rug", secondary: [], supportingKeywords: [], framingConcepts: [], targetedKeywords: [] },
+    constraints: { maxSeoTitleLength: 70, maxSeoDescriptionLength: 160, maxHandleLength: 80, maxBullets: 5, preserveExistingHandle: false },
+  });
+
+  assert.doesNotMatch(draft.productTitle, /Design #1/i);
+  assert.doesNotMatch(draft.intro, /unknown/i);
+  assert.doesNotMatch(draft.intro, /featuring/i);
+  for (const b of draft.bullets) {
+    assert.doesNotMatch(b.text, /unknown/i);
+    assert.doesNotMatch(b.text, /featuring unknown/i);
+  }
+  assert.doesNotMatch(draft.closing, /unknown/i);
+});
+
+
 
 
 

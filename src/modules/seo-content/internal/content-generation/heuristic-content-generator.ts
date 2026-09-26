@@ -17,6 +17,15 @@ import {
 import { buildJsonLdSchema } from "./json-ld-builder";
 import { sanitizeBeddingTitle } from "../store-profiles";
 
+const PLACEHOLDER_PATTERN =
+  /^(unknown|none|n\/a|not applicable|unspecified|sample|test|sku.*)[\s.]*$/i;
+
+function isMeaningfulText(text?: string): text is string {
+  if (!text) return false;
+  const clean = text.trim();
+  return clean.length > 0 && !PLACEHOLDER_PATTERN.test(clean);
+}
+
 /**
  * Generates a concise, fact-dense 40-70 word summary highlighting specific design entities,
  * materials, dimensions, and ideal use cases for AI search overviews (ChatGPT Search, Perplexity).
@@ -27,19 +36,23 @@ export function buildHeuristicAiQuickSummary(
 ): string {
   if (facts.storeProfile?.bedding) {
     const variantClause = facts.variantLabel ? ` in the ${facts.variantLabel} design` : "";
-    const visualText = facts.visualEntities && !/^(unknown|none|n\/a|not applicable)[\s.]*$/i.test(facts.visualEntities.trim())
+    const visualText = isMeaningfulText(facts.visualEntities)
       ? ` featuring ${facts.visualEntities.trim()}`
       : "";
     const audience = facts.targetAudience.length > 0 ? facts.targetAudience[0] : "bedding and home decor enthusiasts";
     return `The ${productTitle} is a premium bedding collection${variantClause}${visualText} designed for ${audience}. Available in three distinct style options—plush Comforter, lightweight classic Quilt, or convenient zippered Duvet Cover—it features ultra-soft brushed microfiber and vibrant dye-sublimation print for all-season comfort and easy care.`;
   }
 
-  const identity = facts.physicalProductIdentity || facts.niche || "specialty item";
-  const entityText = facts.visualEntities && !/^(unknown|none|n\/a|not applicable)[\s.]*$/i.test(facts.visualEntities.trim())
+  const identity = isMeaningfulText(facts.physicalProductIdentity)
+    ? facts.physicalProductIdentity.trim()
+    : isMeaningfulText(facts.niche)
+      ? facts.niche.trim()
+      : "specialty item";
+  const entityText = isMeaningfulText(facts.visualEntities)
     ? `featuring ${facts.visualEntities.trim()}`
     : "";
-  const typographyText = facts.typographyVisibleTexts.filter((t) => !/^(unknown|none|n\/a|not applicable)[\s.]*$/i.test(t.trim())).length > 0
-    ? `with printed '${facts.typographyVisibleTexts.filter((t) => !/^(unknown|none|n\/a|not applicable)[\s.]*$/i.test(t.trim()))[0]}' lettering`
+  const typographyText = facts.typographyVisibleTexts.filter((t) => isMeaningfulText(t)).length > 0
+    ? `with printed '${facts.typographyVisibleTexts.filter((t) => isMeaningfulText(t))[0]}' lettering`
     : "";
   const stylePart = [entityText, typographyText].filter(Boolean).join(" ");
   const audience = facts.targetAudience.length > 0 ? facts.targetAudience[0] : "home and lifestyle enthusiasts";
@@ -337,9 +350,17 @@ export class HeuristicContentGenerator implements ContentGenerator {
     }
 
     // 2. Build Intro
-    const category = facts.physicalProductIdentity || "item";
-    const entityClause = facts.visualEntities ? ` featuring ${facts.visualEntities}` : "";
-    const styleClause = facts.typographyStyleSummary ? ` with ${facts.typographyStyleSummary}` : "";
+    const category = isMeaningfulText(facts.physicalProductIdentity)
+      ? facts.physicalProductIdentity.trim()
+      : isMeaningfulText(facts.niche)
+        ? facts.niche.trim()
+        : "item";
+    const entityClause = isMeaningfulText(facts.visualEntities)
+      ? ` featuring ${facts.visualEntities.trim()}`
+      : "";
+    const styleClause = isMeaningfulText(facts.typographyStyleSummary)
+      ? ` with ${facts.typographyStyleSummary.trim()}`
+      : "";
 
     const intro = `Elevate your collection with this distinctive ${category}${entityClause}${styleClause}. Carefully designed to combine character, visual appeal, and everyday functionality.`;
 
@@ -367,8 +388,12 @@ export class HeuristicContentGenerator implements ContentGenerator {
     }
 
     // Bullet: Design / Art
-    if (facts.visualEntities || facts.typographyStyleSummary) {
-      const entityText = facts.visualEntities ? `showcasing ${facts.visualEntities}` : "with verified design details";
+    const hasMeaningfulVisual = isMeaningfulText(facts.visualEntities);
+    const hasMeaningfulStyle = isMeaningfulText(facts.typographyStyleSummary);
+    if (hasMeaningfulVisual || hasMeaningfulStyle) {
+      const entityText = hasMeaningfulVisual
+        ? `showcasing ${facts.visualEntities.trim()}`
+        : "with verified design details";
       bullets.push({
         label: "Design",
         text: `Features expressive artwork ${entityText}, crafted to stand out.`,
@@ -387,9 +412,13 @@ export class HeuristicContentGenerator implements ContentGenerator {
           ? `Ideal choice for ${groundedKeywords.secondary[0]}.`
           : `A versatile statement piece that complements a wide range of settings.`;
 
+      const styleLead = hasMeaningfulStyle
+        ? `${toTitleCase(styleClause.trim())}. `
+        : "";
+
       bullets.push({
         label: "Style",
-        text: `${styleClause ? toTitleCase(styleClause.trim()) + ". " : ""}${secondaryClause}`,
+        text: `${styleLead}${secondaryClause}`,
       });
     }
 

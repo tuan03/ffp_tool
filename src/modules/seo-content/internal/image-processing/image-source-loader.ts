@@ -1,6 +1,7 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 
+import { resolveLocalImageFile } from "./local-image-resolver";
 import type { SeoContentImageInput } from "../../types";
 import type { ImageSourceLoaded } from "./image-processing-types";
 
@@ -112,6 +113,14 @@ export function validateSafeUrl(rawUrl: string): void {
   }
 
   if (isPrivateOrLocalHost(parsed.hostname)) {
+    // Allow internal loopback to Pinterest POD server on port 8768
+    if (
+      (parsed.hostname === "127.0.0.1" || parsed.hostname === "localhost") &&
+      parsed.port === "8768" &&
+      parsed.pathname.startsWith("/api/pinterest-pod/")
+    ) {
+      return;
+    }
     throw new Error(`Access to private or local network URL '${rawUrl}' is blocked`);
   }
 }
@@ -168,22 +177,27 @@ export class DefaultImageSourceLoader implements ImageSourceLoader {
       throw new Error("Image input is required");
     }
 
-    // 1. localFilePath
-    if (image.localFilePath && image.localFilePath.trim()) {
-      const resolvedPath = path.resolve(image.localFilePath.trim());
+    // 1. localFilePath / disk resolution
+    const localResolved = resolveLocalImageFile(image.localFilePath, image.url);
+    if (localResolved) {
       try {
-        const stats = await fs.stat(resolvedPath);
+        const stats = await fs.stat(localResolved);
         if (stats.size > MAX_IMAGE_BYTES) {
           throw new Error(
             `Local image exceeds maximum allowed size of 10MB (${stats.size} bytes)`,
           );
         }
-        const buffer = await fs.readFile(resolvedPath);
+        const buffer = await fs.readFile(localResolved);
         return { buffer };
       } catch (err) {
-        throw new Error(
-          `Failed to read local image '${image.localFilePath}': ${err instanceof Error ? err.message : String(err)}`,
-        );
+        if (err instanceof Error && err.message.includes("exceeds maximum allowed size")) {
+          throw err;
+        }
+        if (!image.url) {
+          throw new Error(
+            `Failed to read local image '${localResolved}': ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
       }
     }
 

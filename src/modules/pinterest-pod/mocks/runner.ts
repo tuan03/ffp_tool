@@ -607,10 +607,13 @@ export class MockPinterestPodClient implements PinterestPodClient {
     return {
       success: true,
       message: `[MOCK] Bàn giao sang SEO thành công: ${printMasterCount} file in xưởng (CMYK 300 DPI) và ${approvedMockupCount} mockup AI đã duyệt.`,
+      workflowId: payload.workflowId,
+      count: payload.items.length,
       receivedAt: Date.now(),
       printMasterCount,
       approvedMockupCount,
       savedPath: `temp/pinterest_pod/${payload.workflowId}/seo_handoff_payload.json`,
+      items: payload.items,
     };
   }
 }

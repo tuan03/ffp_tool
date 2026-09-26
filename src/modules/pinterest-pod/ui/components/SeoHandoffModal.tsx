@@ -15,7 +15,7 @@ interface SeoHandoffModalProps {
   readonly onPreviewImage?: (item: LightboxImageItem) => void;
   readonly handoffResult?: SeoHandoverResponse | null;
   readonly onHandoffSuccess?: (res: SeoHandoverResponse, filteredPayload: PinterestPodDeliverables) => void;
-  readonly onHandoverToSeo?: (payload: PinterestPodDeliverables) => Promise<void>;
+  readonly onHandoverToSeo?: (payload: PinterestPodDeliverables, serverViewModels?: readonly unknown[]) => Promise<void>;
   readonly onClose: () => void;
 }
 
@@ -181,7 +181,7 @@ export function SeoHandoffModal({
     try {
       const res = await handoverToSeo(filteredPayload);
       if (onHandoverToSeo) {
-        await onHandoverToSeo(filteredPayload);
+        await onHandoverToSeo(filteredPayload, res.viewModels);
       }
       setCurrentResult(res);
       setViewMode("result");
@@ -210,10 +210,13 @@ export function SeoHandoffModal({
       const fallbackResult: SeoHandoverResponse = {
         success: true,
         message: `Bàn giao sang SEO thành công: ${printCount} file in xưởng (CMYK 300 DPI) và ${approvedCount} mockup AI đã duyệt.`,
+        workflowId: filteredPayload.workflowId,
+        count: filteredPayload.items.length,
         receivedAt: Date.now(),
         printMasterCount: printCount,
         approvedMockupCount: approvedCount,
         savedPath: `data/pinterest_pod/output/${filteredPayload.workflowId}/seo_handoff_payload.json`,
+        items: filteredPayload.items,
       };
       setCurrentResult(fallbackResult);
       setViewMode("result");

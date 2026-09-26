@@ -139,6 +139,7 @@ class RankedImage:
     aesthetic: str
     detected_product: str
     reason: str
+    title: str = ""
     main_subject: str = ""
     target_product_type: str = ""
     motifs: list[str] = field(default_factory=list)
