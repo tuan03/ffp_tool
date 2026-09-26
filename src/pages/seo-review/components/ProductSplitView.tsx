@@ -171,6 +171,14 @@ export function ProductSplitView({
   }
 
   function renderShopifySyncBadge(product: SeoProductUiViewModel) {
+    if (product.shopifySyncStatus === "queued") {
+      return (
+        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-500/10 text-amber-300 border border-amber-500/30">
+          <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+          <span>Chờ đẩy</span>
+        </span>
+      );
+    }
     if (product.shopifySyncStatus === "syncing") {
       return (
         <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-sky-500/10 text-sky-400 border border-sky-500/30 animate-pulse">
@@ -725,6 +733,20 @@ export function ProductSplitView({
                     <span>✓ Duyệt</span>
                   )}
                 </button>
+
+                {activeProduct.reviewDecision === "approved" &&
+                  activeProduct.shopifySyncStatus !== "synced" &&
+                  activeProduct.shopifySyncStatus !== "failed" &&
+                  onRetrySync ? (
+                    <button
+                      type="button"
+                      onClick={() => onRetrySync(activeProduct.id)}
+                      disabled={activeProduct.isSyncing}
+                      className="rounded-lg border border-cyan-500/40 bg-cyan-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-cyan-500 disabled:cursor-not-allowed disabled:bg-slate-800 disabled:text-slate-500"
+                    >
+                      🛍️ Sync Shopify
+                    </button>
+                  ) : null}
 
                 <button
                   type="button"

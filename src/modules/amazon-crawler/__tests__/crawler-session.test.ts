@@ -191,6 +191,31 @@ test("hydrateCrawlerSessionFromJob restores products, lastJobId, and resolves se
   assert.equal(state.selectedProductId, amazonCrawlerMockOutput.products[0]?.id);
 });
 
+test("hydrateCrawlerSessionFromJob keeps the latest SEO status when a results snapshot is stale", () => {
+  clearCrawlerSession();
+  const sourceProduct = amazonCrawlerMockOutput.products[0];
+  assert.ok(sourceProduct);
+  const pipeline = {
+    status: "waiting_review" as const,
+    normalization: { status: "completed" as const, assetsNormalized: 1 },
+    seo: { status: "completed" as const },
+    shopify: { attempts: 0 },
+  };
+  const currentProduct = { ...sourceProduct, pipeline };
+  const staleProduct = { ...sourceProduct, pipeline: { ...pipeline, status: "seo" as const } };
+
+  hydrateCrawlerSessionFromJob({
+    jobId: "job-seo-review",
+    status: "review_pending",
+    products: [currentProduct],
+    output: { ...amazonCrawlerMockOutput, products: [staleProduct] },
+  });
+
+  const state = getCrawlerSessionState();
+  assert.equal(state.output?.products[0]?.pipeline?.status, "waiting_review");
+  assert.equal(state.liveProducts[0]?.pipeline?.status, "waiting_review");
+});
+
 test("hydrateCrawlerSessionFromJob reconnects an active job so Stop can target it after refresh", () => {
   clearCrawlerSession();
 

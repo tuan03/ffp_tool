@@ -2768,6 +2768,8 @@ test("createShopifyGatewayAdapter implements ShopifyGateway interface and works 
   const syncResult = await syncSingleProduct(
     {
       id: "crawl-prod-001",
+      amazonAsin: "B0CHILD001",
+      amazonParentAsin: "B0PARENT01",
       title: "Full Pipeline Bag",
       descriptionHtml: "<p>Beautiful customized leather bag</p>",
       vendor: "FFP",

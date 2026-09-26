@@ -7,7 +7,9 @@ import type {
   PinterestPodSeoItemResult,
   SeoContentOutput,
 } from "../../../modules/seo-content";
+import type { AmazonCrawlerReviewItem } from "../../../modules/amazon-crawler";
 import {
+  adaptAmazonCrawlerReviewToViewModel,
   adaptAutoSeoItemToViewModel,
   adaptCustomizationItemToViewModel,
   adaptPinterestPodItemToViewModel,
@@ -21,6 +23,53 @@ import {
 } from "../seo-content-ui-adapter";
 import { hasWritableChanges } from "../../../modules/orchestrator";
 import type { SeoProductUiViewModel } from "../types";
+
+test("adaptAmazonCrawlerReviewToViewModel: preserves durable review and sync state", () => {
+  const review: AmazonCrawlerReviewItem = {
+    id: "review-1",
+    jobId: "job-1",
+    sourceKey: "amazon:B0MOCK0001:none:none",
+    storeId: "capozen",
+    decision: "approved",
+    syncStatus: "queued",
+    version: 3,
+    readyAt: "2026-09-25T10:00:00Z",
+    updatedAt: "2026-09-25T10:01:00Z",
+    target: {
+      collectionIds: ["gid://shopify/Collection/1"],
+      productType: "Rug",
+      priceAddition: 2,
+      discountPercent: 10,
+    },
+    product: {
+      id: "product-1",
+      parentAsin: "B0MOCK0001",
+      title: "Reviewed rug",
+      descriptionHtml: "<p>Reviewed description</p>",
+      handle: "reviewed-rug",
+      seo: { title: "Reviewed rug SEO", description: "Reviewed SEO description" },
+      categories: ["Home"],
+      media: [{
+        url: "https://example.com/rug.jpg",
+        kind: "image",
+        alt: "Reviewed rug",
+        processedFileToken: "token-0",
+      }],
+    } as unknown as AmazonCrawlerReviewItem["product"],
+  };
+
+  const viewModel = adaptAmazonCrawlerReviewToViewModel(
+    review,
+    (token) => `http://coordinator.test/review-images/${token}`,
+  );
+
+  assert.equal(viewModel.reviewDecision, "approved");
+  assert.equal(viewModel.shopifySyncStatus, "queued");
+  assert.equal(viewModel.isSyncing, true);
+  assert.equal(viewModel.coordinatorReview?.version, 3);
+  assert.equal(viewModel.coordinatorReview?.target.productType, "Rug");
+  assert.match(viewModel.images[0]?.previewUrl.value ?? "", /review-images\/token-0$/);
+});
 
 test("getDisplayValue: preserves valid real values and tags with source 'real'", () => {
   const str = getDisplayValue("Gothic Area Rug", "Fallback Title");

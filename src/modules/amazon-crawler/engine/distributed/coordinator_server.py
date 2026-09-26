@@ -211,7 +211,8 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
                         store.cleanup_history,
                         retention_minutes=history_retention_minutes,
                     )
-                    await asyncio.to_thread(image_service.clear_expired)
+                    protected_tokens = await asyncio.to_thread(store.review_image_tokens)
+                    await asyncio.to_thread(image_service.clear_expired, protected_tokens)
                     next_cleanup_at = loop_time + 60
                 try:
                     await asyncio.wait_for(stop.wait(), timeout=5)
@@ -332,7 +333,8 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
             "discard": True,
             "cacheGeneration": cache_generation,
         })
-        await asyncio.to_thread(image_service.clear_cache)
+        protected_tokens = await asyncio.to_thread(store.review_image_tokens)
+        await asyncio.to_thread(image_service.clear_cache, protected_tokens)
         await asyncio.to_thread(store.purge_stopped_jobs)
         return snapshot
 
@@ -409,7 +411,8 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
     @app.delete("/api/v1/clients/cache")
     async def clear_client_caches() -> dict[str, Any]:
         result = await manager.clear_client_caches()
-        image_cache = await asyncio.to_thread(image_service.clear_cache)
+        protected_tokens = await asyncio.to_thread(store.review_image_tokens)
+        image_cache = await asyncio.to_thread(image_service.clear_cache, protected_tokens)
         result["removedFiles"] += image_cache["removedFiles"]
         result["removedBytes"] += image_cache["removedBytes"]
         result["imageProcessing"] = image_cache
@@ -529,6 +532,90 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
         if expected and value != expected:
             raise HTTPException(status_code=401, detail="Invalid pipeline worker key.")
 
+    @app.get("/api/v1/product-reviews")
+    def list_product_reviews() -> dict[str, Any]:
+        items = store.list_product_reviews()
+        return {"items": items, "total": len(items)}
+
+    @app.delete("/api/v1/product-reviews")
+    def delete_all_product_reviews() -> dict[str, int]:
+        return store.delete_all_product_reviews()
+
+    @app.get("/api/v1/product-reviews/events")
+    async def stream_product_reviews(request: Request) -> StreamingResponse:
+        async def stream():
+            previous = ""
+            while not await request.is_disconnected():
+                items = await asyncio.to_thread(store.list_product_reviews)
+                encoded = json.dumps(items, ensure_ascii=False, sort_keys=True)
+                if encoded != previous:
+                    previous = encoded
+                    yield f"event: review_snapshot\ndata: {encoded}\n\n"
+                else:
+                    yield ": keep-alive\n\n"
+                await asyncio.sleep(1)
+
+        return StreamingResponse(stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"})
+
+    @app.patch("/api/v1/product-reviews/{item_id}")
+    def update_product_review(item_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        patch = payload.get("patch")
+        if not isinstance(patch, dict):
+            raise HTTPException(status_code=422, detail="patch is required.")
+        result = store.update_product_review(
+            item_id,
+            expected_version=int(payload.get("expectedVersion") or 0),
+            patch=patch,
+        )
+        if result is None:
+            raise HTTPException(status_code=404, detail="Review item was not found.")
+        if result.get("conflict"):
+            raise HTTPException(status_code=409, detail="Review item changed; reload before editing.")
+        if result.get("deleted"):
+            raise HTTPException(status_code=409, detail="Review item was deleted.")
+        if result.get("locked"):
+            raise HTTPException(status_code=409, detail="Review item cannot be edited while syncing or after sync.")
+        return result
+
+    @app.post("/api/v1/product-reviews/{item_id}/decision")
+    def decide_product_review(item_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        try:
+            result = store.decide_product_review(
+                item_id,
+                expected_version=int(payload.get("expectedVersion") or 0),
+                decision=str(payload.get("decision") or ""),
+                reason=str(payload.get("reason") or "").strip() or None,
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        if result is None:
+            raise HTTPException(status_code=404, detail="Review item was not found.")
+        if result.get("conflict"):
+            raise HTTPException(status_code=409, detail="Review item changed; reload before deciding.")
+        if result.get("deleted"):
+            raise HTTPException(status_code=409, detail="Review item was deleted.")
+        if result.get("locked"):
+            raise HTTPException(status_code=409, detail="Review item cannot be changed while syncing or after sync.")
+        return result
+
+    @app.post("/api/v1/product-reviews/{item_id}/sync")
+    def queue_product_review_sync(item_id: str) -> dict[str, Any]:
+        result = store.queue_product_review_sync(item_id)
+        if result is None:
+            raise HTTPException(status_code=404, detail="Review item was not found.")
+        if result.get("notApproved"):
+            raise HTTPException(status_code=409, detail="Only approved products can be synced.")
+        if result.get("deleted"):
+            raise HTTPException(status_code=409, detail="Review item was deleted.")
+        if result.get("reconciliationRequired"):
+            raise HTTPException(status_code=409, detail="Shopify write needs reconciliation before retrying.")
+        return result
+
+    @app.post("/api/v1/product-reviews/sync-approved")
+    def queue_all_approved_reviews() -> dict[str, Any]:
+        item_ids = store.queue_all_approved_reviews()
+        return {"queued": len(item_ids), "itemIds": item_ids}
+
     @app.get("/api/v1/image-profiles")
     def list_image_profiles() -> dict[str, Any]:
         return {"profiles": image_service.profiles.list()}
@@ -637,6 +724,14 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
             raise HTTPException(status_code=404, detail=str(error)) from error
         return FileResponse(path, media_type="image/jpeg", filename=f"{file_token}.jpg")
 
+    @app.get("/api/v1/product-reviews/images/{file_token}")
+    def get_review_image(file_token: str) -> FileResponse:
+        try:
+            path = image_service.file_path(file_token)
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        return FileResponse(path, media_type="image/jpeg", filename=f"{file_token}.jpg")
+
     @app.post("/api/v1/internal/product-pipeline/{item_id}/image-processing")
     def mark_product_image_processing(
         item_id: str,
@@ -656,6 +751,30 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
         ):
             raise HTTPException(status_code=409, detail="Pipeline item claim is stale.")
         return {"status": "image_processing"}
+
+    @app.post("/api/v1/internal/product-pipeline/{item_id}/review-ready")
+    def mark_product_review_ready(
+        item_id: str,
+        payload: dict[str, Any],
+        x_pipeline_key: str | None = Header(default=None, alias="X-Pipeline-Key"),
+    ) -> dict[str, Any]:
+        require_pipeline_key(x_pipeline_key)
+        normalized = payload.get("normalizedProduct")
+        seo_summary = payload.get("seo")
+        image_summary = payload.get("imageProcessing")
+        review_summary = payload.get("review")
+        if not all(isinstance(value, dict) for value in (normalized, seo_summary, image_summary, review_summary)):
+            raise HTTPException(status_code=422, detail="normalizedProduct, seo, imageProcessing and review are required.")
+        if not store.mark_product_review_ready(
+            item_id,
+            worker_id=str(payload.get("workerId") or ""),
+            normalized_payload=normalized,
+            seo_summary=seo_summary,
+            image_summary=image_summary,
+            review_summary=review_summary,
+        ):
+            raise HTTPException(status_code=409, detail="Pipeline item claim is stale.")
+        return {"status": "waiting_review"}
 
     @app.post("/api/v1/internal/product-pipeline/claim")
     def claim_product_pipeline(

@@ -1,4 +1,6 @@
 import type {
+  AmazonAsinChecker,
+  AmazonAsinPreflightResult,
   AmazonCrawlerInput,
   AmazonCrawlerCacheClearer,
   AmazonCrawlerClientSummary,
@@ -11,6 +13,10 @@ import type {
   AmazonCrawlerOutput,
   AmazonCrawlerProduct,
   AmazonCrawlerProgress,
+  AmazonCrawlerReviewClient,
+  AmazonCrawlerReviewDecision,
+  AmazonCrawlerReviewEditPatch,
+  AmazonCrawlerReviewItem,
   AmazonCrawlerRunOptions,
   AmazonCrawlerRunner,
   AmazonCrawlerSettings,
@@ -49,6 +55,36 @@ export class AmazonCrawlerServiceError extends Error {
   }
 }
 
+export function createAmazonAsinChecker(fetchImplementation: typeof fetch = fetch): AmazonAsinChecker {
+  return async (storeId, asins): Promise<AmazonAsinPreflightResult> => {
+    const response = await fetchImplementation("/api/shopify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        storeId,
+        operation: "products.preflightAmazonAsins",
+        mode: "apply",
+        requestId: `amazon-asin-preflight-${globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`}`,
+        payload: { asins },
+      }),
+    });
+    const body: unknown = await response.json().catch(() => null);
+    if (!response.ok || !isRecord(body) || body.success !== true || !isRecord(body.data)) {
+      const error = isRecord(body) && isRecord(body.error) && typeof body.error.message === "string"
+        ? body.error.message
+        : "Không kiểm tra được ASIN trên Shopify.";
+      throw new AmazonCrawlerServiceError(error, "SHOPIFY_ASIN_PREFLIGHT_FAILED", response.status);
+    }
+    const preflight = body.data;
+    if (typeof preflight.ready !== "boolean" || !Array.isArray(preflight.matches) ||
+      preflight.matches.some((match: unknown) => !isRecord(match) || typeof match.asin !== "string" ||
+        typeof match.productId !== "string" || typeof match.title !== "string" || typeof match.adminUrl !== "string")) {
+      throw new AmazonCrawlerServiceError("Shopify trả về kết quả kiểm tra ASIN không hợp lệ.", "INVALID_ENGINE_RESPONSE");
+    }
+    return preflight as unknown as AmazonAsinPreflightResult;
+  };
+}
+
 function normalizeEngineUrl(engineUrl: string): string {
   return engineUrl.replace(/\/+$/, "");
 }
@@ -80,7 +116,7 @@ function readSnapshot(value: unknown): CoordinatorSnapshot {
     throw new AmazonCrawlerServiceError("Engine returned invalid job progress.", "INVALID_ENGINE_RESPONSE");
   }
   const status = value.status as CoordinatorSnapshot["status"];
-  const isTerminal = ["completed", "partial", "cancelled"].includes(status);
+  const isTerminal = ["review_pending", "completed", "partial", "cancelled"].includes(status);
   return {
     id: value.id,
     status,
@@ -303,7 +339,7 @@ export function createAmazonCrawlerRunner({
           }
         }
 
-        if (snapshot.status === "completed" || snapshot.status === "partial") {
+        if (snapshot.status === "review_pending" || snapshot.status === "completed" || snapshot.status === "partial") {
           const resultResponse = await fetchImplementation(`${baseUrl}/api/v1/crawl-jobs/${encodeURIComponent(jobId)}/results`, { signal });
           return await readJson(resultResponse) as AmazonCrawlerOutput;
         }
@@ -346,7 +382,7 @@ export function createAmazonCrawlerJobController({
     },
     async get(jobId) {
       const snapshot = readJobSnapshot(await readJson(await fetchImplementation(jobUrl(jobId))));
-      if (snapshot.status === "completed" || snapshot.status === "partial") {
+      if (snapshot.status === "review_pending" || snapshot.status === "completed" || snapshot.status === "partial") {
         const result = await readJson(await fetchImplementation(`${jobUrl(jobId)}/results`));
         return { ...snapshot, result: result as AmazonCrawlerOutput };
       }
@@ -411,7 +447,7 @@ export function createAmazonCrawlerSyncRetrier({
           options.onProducts(productsPayload.products as AmazonCrawlerOutput["products"]);
         }
       }
-      if (snapshot.status === "completed" || snapshot.status === "partial") {
+      if (snapshot.status === "review_pending" || snapshot.status === "completed" || snapshot.status === "partial") {
         const resultResponse = await fetchImplementation(
           `${baseUrl}/api/v1/crawl-jobs/${encodeURIComponent(jobId)}/results`,
           { signal: options.signal },
@@ -531,6 +567,133 @@ export function createImageProcessingProfileManager({
   };
 }
 
+function readReviewItem(value: unknown): AmazonCrawlerReviewItem {
+  if (
+    !isRecord(value) ||
+    typeof value.id !== "string" ||
+    typeof value.jobId !== "string" ||
+    typeof value.sourceKey !== "string" ||
+    typeof value.storeId !== "string" ||
+    !["pending", "approved", "rejected"].includes(String(value.decision)) ||
+    !["idle", "queued", "syncing", "synced", "failed"].includes(String(value.syncStatus)) ||
+    typeof value.version !== "number" ||
+    !isRecord(value.target) ||
+    !isRecord(value.product)
+  ) {
+    throw new AmazonCrawlerServiceError("Coordinator returned an invalid review item.", "INVALID_ENGINE_RESPONSE");
+  }
+  return value as unknown as AmazonCrawlerReviewItem;
+}
+
+function readReviewItems(value: unknown): readonly AmazonCrawlerReviewItem[] {
+  const items = isRecord(value) ? value.items : value;
+  if (!Array.isArray(items)) {
+    throw new AmazonCrawlerServiceError("Coordinator returned an invalid review list.", "INVALID_ENGINE_RESPONSE");
+  }
+  return items.map(readReviewItem);
+}
+
+export function createAmazonCrawlerReviewClient({
+  engineUrl,
+  fetchImplementation = fetch,
+}: AmazonCrawlerClientOptions): AmazonCrawlerReviewClient {
+  const baseUrl = normalizeEngineUrl(engineUrl);
+  const reviewUrl = `${baseUrl}/api/v1/product-reviews`;
+
+  const sendJson = async (url: string, method: string, body?: object): Promise<unknown> => {
+    return readJson(await fetchImplementation(url, {
+      method,
+      headers: body ? { "Content-Type": "application/json" } : undefined,
+      body: body ? JSON.stringify(body) : undefined,
+    }));
+  };
+
+  return {
+    async list() {
+      return readReviewItems(await readJson(await fetchImplementation(reviewUrl)));
+    },
+    subscribe(onItems) {
+      let isClosed = false;
+      let isPolling = false;
+      const poll = async (): Promise<void> => {
+        if (isClosed || isPolling) return;
+        isPolling = true;
+        try {
+          const items = readReviewItems(await readJson(await fetchImplementation(reviewUrl)));
+          if (!isClosed) onItems(items);
+        } catch {
+          // Keep the last snapshot while the next poll or SSE reconnects.
+        } finally {
+          isPolling = false;
+        }
+      };
+      void poll();
+      const pollTimer = setInterval(() => void poll(), 2_000);
+      if (typeof EventSource === "undefined") {
+        return () => {
+          isClosed = true;
+          clearInterval(pollTimer);
+        };
+      }
+      const source = new EventSource(`${reviewUrl}/events`);
+      source.addEventListener("review_snapshot", (event) => {
+        try {
+          const parsed: unknown = JSON.parse((event as MessageEvent<string>).data);
+          if (!isClosed) onItems(readReviewItems(parsed));
+        } catch {
+          // Ignore malformed events; the initial request remains authoritative.
+        }
+      });
+      source.onerror = () => {
+        void poll();
+      };
+      return () => {
+        isClosed = true;
+        source.close();
+        clearInterval(pollTimer);
+      };
+    },
+    async update(itemId: string, expectedVersion: number, patch: AmazonCrawlerReviewEditPatch) {
+      return readReviewItem(await sendJson(`${reviewUrl}/${encodeURIComponent(itemId)}`, "PATCH", {
+        expectedVersion,
+        patch,
+      }));
+    },
+    async decide(
+      itemId: string,
+      expectedVersion: number,
+      decision: AmazonCrawlerReviewDecision,
+      reason?: string,
+    ) {
+      return readReviewItem(await sendJson(`${reviewUrl}/${encodeURIComponent(itemId)}/decision`, "POST", {
+        expectedVersion,
+        decision,
+        reason,
+      }));
+    },
+    async sync(itemId: string) {
+      return readReviewItem(await sendJson(`${reviewUrl}/${encodeURIComponent(itemId)}/sync`, "POST"));
+    },
+    async syncAllApproved() {
+      const value = await sendJson(`${reviewUrl}/sync-approved`, "POST");
+      if (!isRecord(value) || typeof value.queued !== "number" || !Array.isArray(value.itemIds)) {
+        throw new AmazonCrawlerServiceError("Coordinator returned an invalid batch sync response.", "INVALID_ENGINE_RESPONSE");
+      }
+      return { queued: value.queued, itemIds: value.itemIds.map(String) };
+    },
+    async deleteAll() {
+      const value = await sendJson(reviewUrl, "DELETE");
+      if (!isRecord(value) || typeof value.deleted !== "number" || typeof value.skipped !== "number") {
+        throw new AmazonCrawlerServiceError("Coordinator returned an invalid review delete response.", "INVALID_ENGINE_RESPONSE");
+      }
+      return { deleted: value.deleted, skipped: value.skipped };
+    },
+    imageUrl(fileToken: string) {
+      return `${reviewUrl}/images/${encodeURIComponent(fileToken)}`;
+    },
+  };
+}
+
 export function createAmazonCrawlerJobLoader({
   engineUrl,
   fetchImplementation = fetch,
@@ -582,7 +745,7 @@ export function createAmazonCrawlerJobLoader({
         }
 
         let output: AmazonCrawlerOutput | null = null;
-        if (jobSnapshot.status === "completed" || jobSnapshot.status === "partial") {
+        if (jobSnapshot.status === "review_pending" || jobSnapshot.status === "completed" || jobSnapshot.status === "partial") {
           try {
             const resultsResponse = await fetchImplementation(`${baseUrl}/api/v1/crawl-jobs/${encodeURIComponent(targetJobId)}/results`);
             if (resultsResponse.ok) {
@@ -609,7 +772,7 @@ export function createAmazonCrawlerJobLoader({
           output = {
             version: "1.0",
             jobId: targetJobId,
-            status: (jobSnapshot.status === "completed" || jobSnapshot.status === "partial" || jobSnapshot.status === "cancelled")
+            status: (jobSnapshot.status === "review_pending" || jobSnapshot.status === "completed" || jobSnapshot.status === "partial" || jobSnapshot.status === "cancelled")
               ? jobSnapshot.status
               : "completed",
             startedAt: new Date().toISOString(),

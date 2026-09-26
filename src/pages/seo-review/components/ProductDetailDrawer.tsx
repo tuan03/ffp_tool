@@ -18,6 +18,20 @@ export interface ProductDetailDrawerProps {
   readonly onZoomImage?: (images: readonly ZoomImageItem[], initialIndex?: number) => void;
 }
 
+function readVariantPrice(variant: Record<string, unknown>): number | null {
+  const price = variant.price;
+  if (typeof price === "number") return Number.isFinite(price) ? price : null;
+  if (typeof price === "string") {
+    const parsed = Number.parseFloat(price);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  if (price && typeof price === "object" && "amount" in price) {
+    const amount = (price as { amount?: unknown }).amount;
+    return typeof amount === "number" && Number.isFinite(amount) ? amount : null;
+  }
+  return null;
+}
+
 export function ProductDetailDrawer({
   product,
   isOpen,
@@ -57,6 +71,12 @@ export function ProductDetailDrawer({
 
   const seoTitleLen = product.seoTitle.value.length;
   const seoDescLen = product.seoDescription.value.length;
+  const reviewTarget = product.coordinatorReview?.target;
+  const sourceVariants = Array.isArray(product.sourceCrawlProduct?.variants)
+    ? product.sourceCrawlProduct.variants.filter(
+        (variant): variant is Record<string, unknown> => Boolean(variant) && typeof variant === "object",
+      )
+    : [];
 
   return (
     <div className="fixed inset-0 z-50 overflow-hidden">
@@ -117,6 +137,12 @@ export function ProductDetailDrawer({
                 )}
 
                 {/* Shopify Store Sync Badge */}
+                {product.shopifySyncStatus === "queued" && (
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-amber-500/10 text-amber-300 border border-amber-500/30">
+                    <span className="h-2 w-2 rounded-full bg-amber-400" />
+                    <span>Đang chờ đồng bộ Store</span>
+                  </span>
+                )}
                 {product.shopifySyncStatus === "syncing" && (
                   <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-sky-500/10 text-sky-400 border border-sky-500/30 animate-pulse">
                     <svg className="animate-spin h-3.5 w-3.5 text-sky-400" viewBox="0 0 24 24" fill="none">
@@ -367,6 +393,53 @@ export function ProductDetailDrawer({
               )}
             </div>
 
+            {product.coordinatorReview && reviewTarget && (
+              <section className="rounded-xl border border-slate-800 bg-slate-950/40 p-4">
+                <h3 className="text-sm font-bold text-slate-200">Thông tin Shopify sẽ đồng bộ</h3>
+                <dl className="mt-3 grid gap-3 text-xs sm:grid-cols-2">
+                  <div><dt className="text-slate-500">Store</dt><dd className="mt-1 font-mono text-cyan-300">{product.storeId || "—"}</dd></div>
+                  <div><dt className="text-slate-500">Job</dt><dd className="mt-1 font-mono text-slate-300">{product.coordinatorReview.jobId}</dd></div>
+                  <div><dt className="text-slate-500">Product type</dt><dd className="mt-1 text-slate-200">{reviewTarget.productType || "Theo Amazon"}</dd></div>
+                  <div><dt className="text-slate-500">Collections</dt><dd className="mt-1 break-all text-slate-200">{reviewTarget.collectionIds.join(", ") || "Không chọn"}</dd></div>
+                  <div><dt className="text-slate-500">Cộng giá</dt><dd className="mt-1 text-slate-200">${reviewTarget.priceAddition.toFixed(2)}</dd></div>
+                  <div><dt className="text-slate-500">Compare-at</dt><dd className="mt-1 text-slate-200">{reviewTarget.discountPercent}%</dd></div>
+                </dl>
+                <div className="mt-4 overflow-x-auto">
+                  <table className="min-w-full text-left text-xs">
+                    <thead className="text-slate-500"><tr><th className="pb-2 pr-3">SKU</th><th className="pb-2 pr-3">Options</th><th className="pb-2 pr-3">Giá gốc</th><th className="pb-2 pr-3">Giá Shopify</th><th className="pb-2">Compare-at</th></tr></thead>
+                    <tbody className="divide-y divide-slate-800 text-slate-300">
+                      {sourceVariants.map((variant, index) => {
+                        const basePrice = readVariantPrice(variant);
+                        const sellingPrice = basePrice === null
+                          ? null
+                          : basePrice + reviewTarget.priceAddition;
+                        const discount = reviewTarget.discountPercent;
+                        const compareAtPrice = sellingPrice !== null && discount > 0 && discount < 100
+                          ? sellingPrice / (1 - discount / 100)
+                          : null;
+                        return (
+                          <tr key={String(variant.id || variant.sku || index)}>
+                            <td className="py-2 pr-3 font-mono">{String(variant.sku || "—")}</td>
+                            <td className="py-2 pr-3">{JSON.stringify(variant.options || {})}</td>
+                            <td className="py-2 pr-3">{basePrice === null ? "—" : `$${basePrice.toFixed(2)}`}</td>
+                            <td className="py-2 pr-3 text-cyan-300">{sellingPrice === null ? "—" : `$${sellingPrice.toFixed(2)}`}</td>
+                            <td className="py-2 text-amber-300">{compareAtPrice === null ? "—" : `$${compareAtPrice.toFixed(2)}`}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                  {sourceVariants.length === 0 && <p className="text-slate-500">Không có variant.</p>}
+                </div>
+                {product.sourceCrawlProduct?.customization && (
+                  <details className="mt-4 rounded-lg border border-violet-900/60 bg-violet-950/20 p-3">
+                    <summary className="cursor-pointer font-semibold text-violet-300">Customization payload</summary>
+                    <pre className="mt-3 max-h-56 overflow-auto whitespace-pre-wrap text-[11px] text-slate-400">{JSON.stringify(product.sourceCrawlProduct.customization, null, 2)}</pre>
+                  </details>
+                )}
+              </section>
+            )}
+
             {/* 4. Images Gallery (Preview, ALT text, WebP URL) */}
             <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-5 space-y-4">
               <div className="flex items-center justify-between">
@@ -557,6 +630,20 @@ export function ProductDetailDrawer({
                 </button>
               )}
 
+              {product.reviewDecision === "approved" &&
+                product.shopifySyncStatus !== "synced" &&
+                product.shopifySyncStatus !== "failed" &&
+                onRetrySync && (
+                  <button
+                    type="button"
+                    onClick={() => onRetrySync(product.id)}
+                    disabled={product.isSyncing}
+                    className="rounded-lg border border-cyan-500/40 bg-cyan-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-cyan-500 disabled:cursor-not-allowed disabled:bg-slate-800 disabled:text-slate-500"
+                  >
+                    🛍️ Sync Shopify
+                  </button>
+                )}
+
               {/* Nút Hoàn tác dữ liệu cũ */}
               {Boolean(product.originalBackup) &&
                 (product.reviewDecision === "approved" || Boolean(product.lastSyncedAt)) && (
@@ -626,7 +713,7 @@ export function ProductDetailDrawer({
                 ) : (
                   <>
                     <span>✓</span>
-                    <span>{product.reviewDecision === "approved" ? "Đã duyệt (Đồng bộ lại)" : "Phê duyệt (Approve)"}</span>
+                    <span>{product.reviewDecision === "approved" ? "Đã duyệt" : "Phê duyệt (Approve)"}</span>
                   </>
                 )}
               </button>

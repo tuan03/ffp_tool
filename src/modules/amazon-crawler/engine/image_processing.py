@@ -6,6 +6,7 @@ import base64
 import concurrent.futures
 import hashlib
 import json
+import logging
 import os
 import random
 import re
@@ -22,6 +23,7 @@ from PIL import Image, ImageEnhance, ImageOps
 
 
 PROCESSING_SCHEMA_VERSION = 1
+logger = logging.getLogger(__name__)
 DEFAULT_PROFILE_SLUG = "default"
 DEFAULT_CONFIG: dict[str, Any] = {
     "slug": DEFAULT_PROFILE_SLUG,
@@ -242,7 +244,7 @@ def _image_candidates(url: str) -> list[str]:
     return list(dict.fromkeys([f"{stem}._SL1500_{extension}", base, f"{stem}._SL1000_{extension}", f"{stem}._SL500_{extension}"]))
 
 
-def _download_image(url: str) -> bytes:
+def _download_image(url: str, *, diagnostics: dict[str, Any] | None = None) -> bytes:
     error: Exception | None = None
     candidates = _image_candidates(url)
     for attempt in range(3):
@@ -258,6 +260,8 @@ def _download_image(url: str) -> bytes:
                     content = response.read(20 * 1024 * 1024 + 1)
                 if len(content) > 20 * 1024 * 1024:
                     raise ValueError("Image exceeds the 20 MB processing limit.")
+                if diagnostics is not None:
+                    diagnostics["downloadedUrl"] = candidate
                 return content
             except Exception as caught:
                 error = caught
@@ -266,20 +270,41 @@ def _download_image(url: str) -> bytes:
     raise RuntimeError(f"Unable to download image {url}: {error}")
 
 
-def process_image_bytes(content: bytes, profile: dict[str, Any], *, logo_content: bytes | None = None, seed: str = "") -> bytes:
+def process_image_bytes(
+    content: bytes,
+    profile: dict[str, Any],
+    *,
+    logo_content: bytes | None = None,
+    seed: str = "",
+    diagnostics: dict[str, Any] | None = None,
+) -> bytes:
     normalized = normalize_profile(profile, str(profile.get("slug") or DEFAULT_PROFILE_SLUG))
     output = normalized["output"]
     with Image.open(BytesIO(content)) as opened:
         image = ImageOps.exif_transpose(opened).convert("RGB")
+    source_size = [image.width, image.height]
     target = (output["width"], output["height"])
+    canvas_padding = [0, 0, 0, 0]
     if output["fit"] == "cover":
         image = ImageOps.fit(image, target, method=Image.Resampling.LANCZOS)
     else:
-        if output["upscale"] or image.width > target[0] or image.height > target[1]:
-            image.thumbnail(target, Image.Resampling.LANCZOS)
+        resize_target = target if output["upscale"] else (min(target[0], image.width), min(target[1], image.height))
+        image = ImageOps.contain(image, resize_target, method=Image.Resampling.LANCZOS)
+        left = (target[0] - image.width) // 2
+        top = (target[1] - image.height) // 2
+        canvas_padding = [left, top, target[0] - image.width - left, target[1] - image.height - top]
+    resized_size = [image.width, image.height]
+    if output["fit"] == "contain":
         canvas = Image.new("RGB", target, output["background"])
-        canvas.paste(image, ((target[0] - image.width) // 2, (target[1] - image.height) // 2))
+        canvas.paste(image, (canvas_padding[0], canvas_padding[1]))
         image = canvas
+    if diagnostics is not None:
+        diagnostics.update({
+            "sourceSize": source_size,
+            "resizedSize": resized_size,
+            "outputSize": [image.width, image.height],
+            "canvasPadding": canvas_padding,
+        })
     if normalized["randomPixels"]:
         pixels = image.load()
         generator = random.Random(hashlib.sha256(seed.encode("utf-8")).digest())
@@ -350,24 +375,35 @@ class ImageProcessingService:
                 is_fresh = output_path.exists() and time.time() - output_path.stat().st_mtime < self.cache_ttl_seconds
                 if not is_fresh:
                     logo_path = self.profiles.logo_path(profile["slug"], profile["revision"])
-                    source_content = _download_image(url)
+                    diagnostics: dict[str, Any] = {}
+                    source_content = _download_image(url, diagnostics=diagnostics)
                     processed = process_image_bytes(
                         source_content,
                         profile,
                         logo_content=logo_path.read_bytes() if logo_path else None,
                         seed=key,
+                        diagnostics=diagnostics,
                     )
                     temporary = output_path.with_suffix(".tmp")
                     temporary.write_bytes(processed)
                     temporary.replace(output_path)
                     metadata_path.write_text(
-                        json.dumps({"sourcePerceptualHash": _perceptual_hash_bytes(source_content)}),
+                        json.dumps({"sourcePerceptualHash": _perceptual_hash_bytes(source_content), "diagnostics": diagnostics}),
                         encoding="utf-8",
                     )
                 try:
-                    source_hash = str(json.loads(metadata_path.read_text(encoding="utf-8"))["sourcePerceptualHash"])
+                    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+                    source_hash = str(metadata["sourcePerceptualHash"])
+                    recorded_diagnostics = metadata.get("diagnostics")
+                    diagnostics = recorded_diagnostics if isinstance(recorded_diagnostics, dict) else {}
                 except (OSError, KeyError, TypeError, json.JSONDecodeError):
                     source_hash = _perceptual_hash_bytes(output_path.read_bytes())
+                    diagnostics = {}
+                logger.info(
+                    "image_processing token=%s cache_hit=%s source=%s resized=%s padding=%s",
+                    key[:12], is_fresh, diagnostics.get("sourceSize"),
+                    diagnostics.get("resizedSize"), diagnostics.get("canvasPadding"),
+                )
         finally:
             with self._locks_guard:
                 self._locks.pop(key, None)
@@ -415,11 +451,14 @@ class ImageProcessingService:
             raise KeyError("Processed image was not found.")
         return path
 
-    def clear_expired(self) -> int:
+    def clear_expired(self, protected_tokens: set[str] | None = None) -> int:
         removed = 0
         cutoff = time.time() - self.cache_ttl_seconds
+        protected = protected_tokens or set()
         for path in self.cache_root.glob("*.jpg"):
             try:
+                if path.stem in protected:
+                    continue
                 if path.stat().st_mtime < cutoff:
                     path.unlink(missing_ok=True)
                     removed += 1
@@ -429,12 +468,15 @@ class ImageProcessingService:
                 continue
         return removed
 
-    def clear_cache(self) -> dict[str, int]:
+    def clear_cache(self, protected_tokens: set[str] | None = None) -> dict[str, int]:
         removed_files = 0
         removed_bytes = 0
+        protected = protected_tokens or set()
         for path in self.cache_root.glob("*"):
             try:
                 if not path.is_file():
+                    continue
+                if path.stem in protected:
                     continue
                 removed_bytes += path.stat().st_size
                 path.unlink(missing_ok=True)

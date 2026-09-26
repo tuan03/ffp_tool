@@ -5,6 +5,7 @@ export type AmazonCrawlerJobStatus =
   | "running"
   | "cancelling"
   | "waiting_captcha"
+  | "review_pending"
   | "completed"
   | "partial"
   | "failed"
@@ -42,6 +43,22 @@ export interface AmazonCrawlerInput extends AmazonCrawlerSettings {
   urls: readonly string[];
 }
 
+export interface AmazonAsinPreflightMatch {
+  readonly asin: string;
+  readonly productId: string;
+  readonly title: string;
+  readonly adminUrl: string;
+}
+
+export interface AmazonAsinPreflightResult {
+  readonly ready: boolean;
+  readonly matches: readonly AmazonAsinPreflightMatch[];
+}
+
+export interface AmazonAsinChecker {
+  (storeId: string, asins: readonly string[]): Promise<AmazonAsinPreflightResult>;
+}
+
 export interface AmazonCrawlerActiveVariant {
   asin: string;
   options: Record<string, string>;
@@ -73,7 +90,7 @@ export interface AmazonCrawlerBrowserPoolProgress {
 }
 
 export interface AmazonCrawlerProgress {
-  phase: "queued" | "product" | "variant_matrix" | "customization" | "normalization" | "seo" | "image_processing" | "shopify" | "export" | "captcha";
+  phase: "queued" | "product" | "variant_matrix" | "customization" | "normalization" | "seo" | "image_processing" | "review" | "shopify" | "export" | "captcha";
   completed: number;
   total: number;
   message: string;
@@ -87,12 +104,15 @@ export type ProductPipelineStatus =
   | "normalizing"
   | "seo"
   | "image_processing"
+  | "waiting_review"
+  | "sync_queued"
   | "syncing"
   | "shopify_writing"
   | "stopping_after_write"
   | "cancelling"
   | "retry_wait"
   | "completed"
+  | "rejected"
   | "failed"
   | "reconciliation_required"
   | "cancelled";
@@ -286,6 +306,7 @@ export interface ProductDiagnostics {
 export interface AmazonCrawlerProduct {
   id: string;
   sourceKey?: string;
+  asin: string;
   parentAsin: string;
   canonicalUrl: string;
   sourceTitle: string;
@@ -325,7 +346,7 @@ export interface AmazonCrawlerStatistics {
 export interface AmazonCrawlerOutput {
   version: string;
   jobId: string;
-  status: Extract<AmazonCrawlerJobStatus, "completed" | "partial" | "cancelled">;
+  status: Extract<AmazonCrawlerJobStatus, "review_pending" | "completed" | "partial" | "cancelled">;
   startedAt: string;
   completedAt: string;
   settings: AmazonCrawlerSettings;
@@ -413,6 +434,53 @@ export interface AmazonCrawlerJobController {
 
 export interface AmazonCrawlerRunner {
   (options: AmazonCrawlerRunOptions): Promise<AmazonCrawlerOutput>;
+}
+
+export type AmazonCrawlerReviewDecision = "pending" | "approved" | "rejected";
+
+export type AmazonCrawlerReviewSyncStatus = "idle" | "queued" | "syncing" | "synced" | "failed";
+
+export interface AmazonCrawlerReviewTarget {
+  readonly collectionIds: readonly string[];
+  readonly productType?: string;
+  readonly priceAddition: number;
+  readonly discountPercent: number;
+}
+
+export interface AmazonCrawlerReviewItem {
+  readonly id: string;
+  readonly jobId: string;
+  readonly sourceKey: string;
+  readonly storeId: string;
+  readonly decision: AmazonCrawlerReviewDecision;
+  readonly syncStatus: AmazonCrawlerReviewSyncStatus;
+  readonly version: number;
+  readonly rejectionReason?: string | null;
+  readonly syncError?: string | null;
+  readonly readyAt?: string | null;
+  readonly updatedAt?: string | null;
+  readonly target: AmazonCrawlerReviewTarget;
+  readonly product: AmazonCrawlerProduct;
+}
+
+export interface AmazonCrawlerReviewEditPatch {
+  readonly productTitle?: string;
+  readonly productDescription?: string;
+  readonly seoTitle?: string;
+  readonly seoDescription?: string;
+  readonly handle?: string;
+  readonly imageAlts?: readonly { readonly id: string; readonly alt: string }[];
+}
+
+export interface AmazonCrawlerReviewClient {
+  list(): Promise<readonly AmazonCrawlerReviewItem[]>;
+  subscribe(onItems: (items: readonly AmazonCrawlerReviewItem[]) => void): () => void;
+  update(itemId: string, expectedVersion: number, patch: AmazonCrawlerReviewEditPatch): Promise<AmazonCrawlerReviewItem>;
+  decide(itemId: string, expectedVersion: number, decision: AmazonCrawlerReviewDecision, reason?: string): Promise<AmazonCrawlerReviewItem>;
+  sync(itemId: string): Promise<AmazonCrawlerReviewItem>;
+  syncAllApproved(): Promise<{ readonly queued: number; readonly itemIds: readonly string[] }>;
+  deleteAll(): Promise<{ readonly deleted: number; readonly skipped: number }>;
+  imageUrl(fileToken: string): string;
 }
 
 export interface AmazonCrawlerCacheClearResult {
