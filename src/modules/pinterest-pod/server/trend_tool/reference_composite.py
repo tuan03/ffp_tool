@@ -238,11 +238,28 @@ def compose_reference_artwork(
             shaded_img = Image.fromarray(shaded)
             shaded_img = add_textile_surface(shaded_img, strength=0.07)
 
-            mask = Image.fromarray(visible.astype(np.uint8) * 255)
-            mask = mask.filter(ImageFilter.GaussianBlur(radius=1.0))
+            # Inner feathering: soften edges strictly within printable boundary
+            vis_u8 = visible.astype(np.uint8) * 255
+            try:
+                import cv2
+                dist = cv2.distanceTransform(vis_u8, cv2.DIST_L2, 3)
+                feather_radius = 1.5
+                feather_alpha = np.clip(dist / feather_radius, 0.0, 1.0)
+                feather_u8 = (feather_alpha * 255.0).astype(np.uint8)
+                feather_u8[~visible] = 0
+                mask = Image.fromarray(feather_u8)
+            except Exception:
+                blurred = Image.fromarray(vis_u8).filter(ImageFilter.GaussianBlur(radius=1.0))
+                feather_u8 = np.where(visible, np.asarray(blurred), 0).astype(np.uint8)
+                mask = Image.fromarray(feather_u8)
             output.paste(shaded_img, (0, 0), mask)
         else:
             mask = Image.fromarray(visible.astype(np.uint8) * 255)
             output.paste(projected, (0, 0), mask)
         union |= visible
+    # Strict preservation: restore bit-for-bit identity for all pixels outside union
+    out_arr = np.array(output)
+    ref_arr = np.asarray(reference.convert("RGB"))
+    out_arr[~union] = ref_arr[~union]
+    output = Image.fromarray(out_arr)
     return output, Image.fromarray(union.astype(np.uint8) * 255)

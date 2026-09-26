@@ -415,6 +415,7 @@ export interface PodCancelJobResponse {
   readonly jobId?: string;
   readonly status?: string;
   readonly message?: string;
+  readonly logs?: readonly string[];
 }
 export type CancelJobOutput = PodCancelJobResponse;
 

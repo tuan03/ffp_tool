@@ -244,6 +244,85 @@ class MockupPublicationTests(unittest.TestCase):
             self.assertEqual(record.status, "failed")
             self.assertIsNone(record.mockup_path)
 
+    def test_three_zone_integrity_check(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            mockup_path = root / "mockup.png"
+            ref_path = root / "ref.png"
+            # 64x64 images
+            ref_img = Image.new("RGB", (64, 64), (100, 100, 100))
+            # Center printable mask 20..44 (24x24)
+            mask_img = Image.new("L", (64, 64), 0)
+            from PIL import ImageDraw
+            ImageDraw.Draw(mask_img).rectangle((20, 20, 44, 44), fill=255)
+
+            # Case A: Mockup has changes in inner artwork zone (25, 25) AND 1px transition seam (19, 25)
+            # but STRICT background (e.g. 10, 10) is untouched.
+            mock_a = ref_img.copy()
+            mock_a.putpixel((25, 25), (255, 0, 0))  # inside printable mask
+            mock_a.putpixel((19, 25), (105, 100, 100))  # 1px transition seam
+            mock_a.save(mockup_path)
+            ref_img.save(ref_path)
+
+            mock_assessment = {
+                "listing_realism_score": 90,
+                "artwork_identity_preserved": True,
+                "all_print_surfaces_replaced": True,
+                "mask_respects_printable_boundaries": True,
+                "protected_parts_preserved": True,
+                "reference_geometry_preserved": True,
+                "no_original_print_remaining": True,
+                "surface_lighting_preserved": True,
+            }
+            with patch("trend_tool.printability._vision_pair_assessment", return_value=mock_assessment):
+                decision = assess_direct_ai_mockup(
+                    ref_path, mockup_path, ProductTarget(name="custom", width_px=32, height_px=32),
+                    backend="auto", model="vision", image_type="REFERENCE_TEMPLATE",
+                    reference_template=ref_img, edit_mask=mask_img,
+                )
+                self.assertTrue(decision.accepted)
+                self.assertTrue(decision.metrics["zone_integrity"]["strict_background_preserved"])
+                self.assertGreater(decision.metrics["zone_integrity"]["transition_seam_modified"], 0)
+
+            # Case B: Mockup changes a pixel in the strict protected background (e.g. 5, 5, which is >2px outside mask)
+            mock_b = ref_img.copy()
+            mock_b.putpixel((5, 5), (0, 255, 0))
+            mock_b.save(mockup_path)
+            decision_b = assess_direct_ai_mockup(
+                ref_path, mockup_path, ProductTarget(name="custom", width_px=32, height_px=32),
+                backend="auto", model="vision", image_type="REFERENCE_TEMPLATE",
+                reference_template=ref_img, edit_mask=mask_img,
+            )
+            self.assertFalse(decision_b.accepted)
+            self.assertIn("pixels outside printable mask changed", decision_b.reason)
+            self.assertFalse(decision_b.metrics["zone_integrity"]["strict_background_preserved"])
+
+    def test_reference_composite_inner_feathering_preserves_background(self):
+        from trend_tool.reference_composite import compose_reference_artwork
+        ref = Image.new("RGB", (512, 512), (120, 130, 140))
+        art = Image.new("RGB", (256, 256), (200, 50, 50))
+        plan = {
+            "all_printable_surfaces_identified": True,
+            "photorealistic": True,
+            "surfaces": [{
+                "confidence": 0.98,
+                "geometry": "planar",
+                "quad": [[200, 200], [800, 200], [800, 800], [200, 800]],
+                "polygon": [[200, 200], [800, 200], [800, 800], [200, 800]],
+                "protected_polygons": [],
+            }],
+        }
+        output, edit_mask = compose_reference_artwork(ref, art, plan, photorealistic=True)
+        out_arr = np.asarray(output)
+        ref_arr = np.asarray(ref)
+        mask_arr = np.asarray(edit_mask) > 0
+
+        # Background pixels outside mask must be bit-for-bit identical
+        outside = ~mask_arr
+        np.testing.assert_array_equal(out_arr[outside], ref_arr[outside])
+        # Artwork pixels inside mask must have been modified
+        self.assertFalse(np.array_equal(out_arr[mask_arr], ref_arr[mask_arr]))
+
 
 if __name__ == "__main__":
     unittest.main()

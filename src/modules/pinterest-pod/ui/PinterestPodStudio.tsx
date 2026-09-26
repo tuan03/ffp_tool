@@ -22,15 +22,14 @@ import type {
   TrendingKeywordItem,
 } from "../types";
 import { CandidateReviewGrid } from "./components/CandidateReviewGrid";
-import { DeliverablesShowcase } from "./components/DeliverablesShowcase";
 import { HeaderBar } from "./components/HeaderBar";
 import { ImageLightboxModal, type LightboxImageItem } from "./components/ImageLightboxModal";
 import { InitForm } from "./components/InitForm";
 import { PinterestAuthModal } from "./components/PinterestAuthModal";
+import { ProductionStep } from "./components/ProductionStep";
 import { ProgressAndLogs } from "./components/ProgressAndLogs";
 import { RecentRunsAccordion } from "./components/RecentRunsAccordion";
 import { RoomTemplateManagerModal } from "./components/RoomTemplateManagerModal";
-import { ShopifyPricingConfigSection } from "./components/ShopifyPricingConfigSection";
 import { TrendClusterDiscovery } from "./components/TrendClusterDiscovery";
 
 interface PinterestPodStudioProps {
@@ -81,6 +80,7 @@ export function PinterestPodStudio({
   const [summaryMetrics, setSummaryMetrics] = useState<SummaryMetrics | undefined>(undefined);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isProducing, setIsProducing] = useState(false);
+  const [isCancelling, setIsCancelling] = useState(false);
 
   // Recent Runs State
   const [recentRuns, setRecentRuns] = useState<readonly PodRecentRunItem[]>([]);
@@ -735,16 +735,27 @@ export function PinterestPodStudio({
   // Stop Job and unlock form
   async function handleStopJob(): Promise<void> {
     const currentId = jobId;
+    if (!currentId) return;
+    setIsCancelling(true);
     try {
-      if (currentId) {
-        await client.cancelJob(currentId);
+      const cancelRes = await client.cancelJob(currentId);
+      if (isMountedRef.current) {
+        setJobStatus("cancelled");
+        if (cancelRes.logs && cancelRes.logs.length > 0) {
+          setLogs(cancelRes.logs);
+        } else {
+          setLogs((prev) => [...prev, "Tiến trình đã được dừng an toàn theo yêu cầu của người dùng."]);
+        }
       }
     } catch (err) {
       console.warn("Cancel job warning:", err);
+      if (isMountedRef.current) {
+        setJobStatus("cancelled");
+      }
     } finally {
       if (isMountedRef.current) {
-        setJobStatus("idle");
         setIsProducing(false);
+        setIsCancelling(false);
         stopPolling();
         setErrorMessage(null);
         void loadRecentRuns();
@@ -1129,113 +1140,28 @@ export function PinterestPodStudio({
 
       {/* TAB 3: Thành phẩm & Bàn giao */}
       {currentStage === 3 && (
-        <div ref={stage3Ref} className="flex flex-col gap-4 animate-in fade-in duration-200">
-          {/* Breadcrumb Context Bar */}
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-800 bg-slate-950/70 px-4 py-3 text-xs">
-            <div className="flex flex-wrap items-center gap-2 text-slate-400">
-              {hasStage2 && (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => handleSelectStage(2)}
-                    className="flex items-center gap-1 font-semibold text-amber-400 hover:text-amber-300 hover:underline cursor-pointer"
-                  >
-                    <span>←</span>
-                    <span>Xem lại Mẫu ứng viên ({candidates.length})</span>
-                  </button>
-                  <span>•</span>
-                </>
-              )}
-              <button
-                type="button"
-                onClick={() => handleSelectStage(1)}
-                className="flex items-center gap-1 font-semibold text-slate-400 hover:text-slate-200 hover:underline cursor-pointer"
-              >
-                <span>Bước 1: Quét Trend</span>
-              </button>
-              {jobId && (
-                <>
-                  <span>•</span>
-                  <code className="text-[10px] text-slate-400 font-mono">{jobId}</code>
-                </>
-              )}
-            </div>
-
-            <button
-              type="button"
-              onClick={() => handleSelectStage(1)}
-              className="flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 font-semibold text-slate-200 hover:bg-slate-700 hover:text-white transition shadow-xs cursor-pointer"
-            >
-              <span>🚀</span>
-              <span>Làm đợt mới</span>
-            </button>
-          </div>
-
-          {/* In-Progress producing banner */}
-          {isProductionActive && !hasDeliverables && (
-            <div className="flex flex-col gap-4 rounded-xl border border-amber-800/60 bg-amber-950/30 p-6 shadow-xl">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-500/20 text-amber-300 animate-pulse text-xl">
-                    🏭
-                  </div>
-                  <div>
-                    <h2 className="text-base font-bold text-amber-200">
-                      Đang sản xuất thành phẩm xưởng &amp; Mockup AI...
-                    </h2>
-                    <p className="text-xs text-amber-300/80">
-                      {stepper?.current_message || "Hệ thống đang chuẩn bị file in CMYK 300 DPI và tạo bối cảnh lifestyle..."}
-                    </p>
-                  </div>
-                </div>
-                <span className="rounded-full border border-amber-600/50 bg-amber-900/50 px-3 py-1 text-xs font-semibold text-amber-300">
-                  {stepper?.percent ?? 0}% hoàn tất
-                </span>
-              </div>
-
-              <div className="h-2 w-full overflow-hidden rounded-full bg-slate-800">
-                <div
-                  className="h-full bg-gradient-to-r from-amber-500 to-orange-500 transition-all duration-500"
-                  style={{ width: `${Math.max(5, stepper?.percent ?? 0)}%` }}
-                />
-              </div>
-
-              <p className="text-[11px] text-slate-400">
-                ⚡ Hệ thống đang xử lý độc lập ở chế độ chuẩn mẫu tham chiếu (Direct Print). Sau khi hoàn thành toàn bộ {selectedCandidateIds.length || candidates.length} sản phẩm, thông báo Windows sẽ tự động kích hoạt.
-              </p>
-            </div>
-          )}
-
-          {/* Failed banner */}
-          {jobStatus === "failed" && !hasDeliverables && (
-            <div className="flex flex-col gap-3 rounded-xl border border-rose-800 bg-rose-950/70 p-6 shadow-xl text-xs text-rose-200">
-              <div className="flex items-center gap-3">
-                <span className="text-2xl">❌</span>
-                <div>
-                  <h3 className="text-sm font-bold text-rose-100">Sản xuất thất bại</h3>
-                  <p className="text-rose-300/90 mt-0.5">{errorMessage || "Đã xảy ra lỗi trong quá trình xử lý pipeline."}</p>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Completed Deliverables Showcase */}
-          {hasDeliverables && (
-            <DeliverablesShowcase
-              deliverables={deliverables}
-              summaryMetrics={summaryMetrics}
-              seoPayload={seoPayload}
-              onPreviewImage={setPreviewImage}
-              onHandoverToSeo={onHandoverToSeo}
-            />
-          )}
-
-          {/* Cấu hình Shopify & Định giá trước khi bàn giao SEO (Đặt ở dưới cùng) */}
-          <ShopifyPricingConfigSection
-            settings={shopifySettings}
-            onChange={handleShopifySettingsChange}
-            onReset={() => handleShopifySettingsChange(DEFAULT_PINTEREST_POD_SHOPIFY_SETTINGS)}
-            disabled={isProductionActive}
+        <div ref={stage3Ref}>
+          <ProductionStep
+            jobId={jobId}
+            jobStatus={jobStatus}
+            isProductionActive={isProductionActive}
+            isCancelling={isCancelling}
+            stepper={stepper}
+            logs={logs}
+            deliverables={deliverables}
+            summaryMetrics={summaryMetrics}
+            seoPayload={seoPayload}
+            shopifySettings={shopifySettings}
+            errorMessage={errorMessage}
+            candidateCount={selectedCandidateIds.length || candidates.length}
+            hasStage2={hasStage2}
+            onSelectStage={handleSelectStage}
+            onCancelJob={handleStopJob}
+            onRerun={() => void handleProduce()}
+            onPreviewImage={setPreviewImage}
+            onHandoverToSeo={onHandoverToSeo}
+            onShopifySettingsChange={handleShopifySettingsChange}
+            onResetShopifySettings={() => handleShopifySettingsChange(DEFAULT_PINTEREST_POD_SHOPIFY_SETTINGS)}
           />
         </div>
       )}
