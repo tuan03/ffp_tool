@@ -15,7 +15,7 @@ interface SeoHandoffModalProps {
   readonly onPreviewImage?: (item: LightboxImageItem) => void;
   readonly handoffResult?: SeoHandoverResponse | null;
   readonly onHandoffSuccess?: (res: SeoHandoverResponse, filteredPayload: PinterestPodDeliverables) => void;
-  readonly onHandoverToSeo?: (payload: PinterestPodDeliverables) => Promise<void>;
+  readonly onHandoverToSeo?: (payload: PinterestPodDeliverables, serverViewModels?: readonly unknown[]) => Promise<void>;
   readonly onClose: () => void;
 }
 
@@ -181,7 +181,7 @@ export function SeoHandoffModal({
     try {
       const res = await handoverToSeo(filteredPayload);
       if (onHandoverToSeo) {
-        await onHandoverToSeo(filteredPayload);
+        await onHandoverToSeo(filteredPayload, res.viewModels);
       }
       setCurrentResult(res);
       setViewMode("result");

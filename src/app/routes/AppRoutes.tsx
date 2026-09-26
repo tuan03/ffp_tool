@@ -81,20 +81,27 @@ export function AppRoutes({
 
     const handlePinterestHandover = async (
       payload: PinterestPodDeliverables,
+      serverViewModels?: readonly unknown[],
     ): Promise<void> => {
-      const result = await handoverPinterestToSeo(
-        {
-          deliverables: payload,
-          defaultNiche: payload.items[0]?.trendKeywords?.[0] || payload.productType || "home decor",
-        },
-        {
-          seoRunner,
-        },
-      );
+      let newViewModels: readonly SeoProductUiViewModel[];
 
-      const newViewModels = result.items.map((item) =>
-        adaptPinterestPodItemToViewModel(item),
-      );
+      if (serverViewModels && Array.isArray(serverViewModels) && serverViewModels.length > 0) {
+        newViewModels = serverViewModels as readonly SeoProductUiViewModel[];
+      } else {
+        const result = await handoverPinterestToSeo(
+          {
+            deliverables: payload,
+            defaultNiche: payload.items[0]?.trendKeywords?.[0] || payload.productType || "home decor",
+          },
+          {
+            seoRunner,
+          },
+        );
+
+        newViewModels = result.items.map((item) =>
+          adaptPinterestPodItemToViewModel(item),
+        );
+      }
 
       if (typeof window !== "undefined" && window.sessionStorage) {
         try {

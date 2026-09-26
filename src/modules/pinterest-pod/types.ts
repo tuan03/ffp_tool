@@ -512,10 +512,14 @@ export interface PodStatusResponse {
 export interface SeoHandoverResponse {
   readonly success: boolean;
   readonly message: string;
+  readonly workflowId?: string;
+  readonly count?: number;
   readonly receivedAt?: number;
   readonly printMasterCount?: number;
   readonly approvedMockupCount?: number;
   readonly savedPath?: string;
+  readonly items?: readonly unknown[];
+  readonly viewModels?: readonly unknown[];
 }
 
 /** Pinterest Pod client interface for UI consumption */

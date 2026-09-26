@@ -300,6 +300,7 @@ def rank_images(
                 aesthetic=vision.aesthetic,
                 detected_product=vision.detected_product,
                 reason=vision.reason,
+                title=candidate.title,
                 main_subject=vision.main_subject,
                 target_product_type=vision.target_product_type,
                 motifs=vision.motifs,
