@@ -312,7 +312,8 @@ export function AmazonCrawlerPage({
     () => resolveSelectedProduct(resultProducts, selectedProductId),
     [resultProducts, selectedProductId],
   );
-  const activeMediaUrl = selectedMediaUrl ?? firstProductMediaUrl(selectedProduct);
+  const firstMediaUrl = firstProductMediaUrl(selectedProduct);
+  const activeMediaUrl = firstMediaUrl ? selectedMediaUrl ?? firstMediaUrl : null;
   const selectedPipelineTimings = formatPipelineTimings(selectedProduct?.pipeline?.shopify.timings);
   const connectedClients = clients.filter((client) => client.isConnected && client.status !== "offline");
   const activeManagedJob = activeJobId ? jobs.find((job) => job.jobId === activeJobId) : undefined;
@@ -2058,6 +2059,7 @@ export function AmazonCrawlerPage({
                 </div>
                 {resultProducts.map((product) => {
                   const isSelected = product.id === selectedProduct?.id;
+                  const mediaUrl = firstProductMediaUrl(product);
                   return (
                     <button
                       key={product.id}
@@ -2065,7 +2067,7 @@ export function AmazonCrawlerPage({
                       type="button"
                       onClick={() => handleSelectProduct(product.id)}
                     >
-                      {product.media[0]?.url ? <img alt="" className="h-14 w-14 rounded-md bg-white object-contain" src={product.media[0].url} /> : <span className="flex h-14 w-14 items-center justify-center rounded-md bg-slate-800 text-xs text-slate-500">No image</span>}
+                      {mediaUrl ? <img alt="" className="h-14 w-14 rounded-md bg-white object-contain" src={mediaUrl} /> : <span className="flex h-14 w-14 items-center justify-center rounded-md bg-slate-800 text-xs text-slate-500">No image</span>}
                       <span className="min-w-0">
                         <span className="block truncate text-sm font-semibold text-slate-100">{product.title}</span>
                         <span className="mt-1 block text-xs text-slate-400">{product.splitContext.attribute && product.splitContext.value ? `${product.splitContext.attribute}: ${product.splitContext.value}` : product.parentAsin}</span>
@@ -2093,7 +2095,7 @@ export function AmazonCrawlerPage({
                       ) : (
                         <div className="flex aspect-square items-center justify-center rounded-xl bg-slate-900 text-sm text-slate-500">Không có ảnh</div>
                       )}
-                      {selectedProduct.media.length > 1 ? (
+                      {firstMediaUrl && selectedProduct.media.length > 1 ? (
                         <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
                           {selectedProduct.media.map((media) => (
                             <button key={media.url} className={`shrink-0 rounded-md border p-1 ${activeMediaUrl === media.url ? "border-cyan-400" : "border-slate-700"}`} type="button" onClick={() => setCrawlerSelectedMediaUrl(media.url)}>
@@ -2125,7 +2127,11 @@ export function AmazonCrawlerPage({
                           </div>
                         </div>
                       ) : null}
-                      {selectedProduct.pipeline?.shopify.error ? <p className="mt-3 rounded-lg border border-rose-800 bg-rose-950/30 p-3 text-sm text-rose-200">Shopify: {selectedProduct.pipeline.shopify.error}</p> : null}
+                      {selectedProduct.sourceVariants.some((variant) => variant.diagnostics?.fetchMode === "failed") ? (
+                        <p className="mt-3 rounded-lg border border-rose-800 bg-rose-950/30 p-3 text-sm text-rose-200">
+                          Amazon: Không tải được trang ASIN con {selectedProduct.sourceVariants.filter((variant) => variant.diagnostics?.fetchMode === "failed").map((variant) => variant.asin).join(", ")}. Kiểm tra CAPTCHA hoặc kết nối proxy rồi cào lại.
+                        </p>
+                      ) : selectedProduct.pipeline?.shopify.error ? <p className="mt-3 rounded-lg border border-rose-800 bg-rose-950/30 p-3 text-sm text-rose-200">Shopify: {selectedProduct.pipeline.shopify.error}</p> : null}
                       {selectedProduct.pipeline?.seo.fallbackStages?.length ? <p className="mt-3 rounded-lg border border-amber-800 bg-amber-950/30 p-3 text-sm text-amber-200">SEO fallback: {selectedProduct.pipeline.seo.fallbackStages.join(", ")}</p> : null}
                       {selectedProduct.pipeline?.seo.warnings?.map((warning) => <p key={warning} className="mt-3 rounded-lg border border-amber-800 bg-amber-950/30 p-3 text-sm text-amber-200">SEO: {warning}</p>)}
                       {selectedProduct.pipeline?.seo.error ? <p className="mt-3 rounded-lg border border-rose-800 bg-rose-950/30 p-3 text-sm text-rose-200">SEO: {selectedProduct.pipeline.seo.error}</p> : null}

@@ -693,7 +693,11 @@ class PlaywrightPool:
             if route == "direct" and skip_remaining_direct:
                 continue
             is_last_route = attempt == len(routes)
-            allow_manual_captcha = not self.headless and is_last_route
+            # Customize needs the current direct session to remain available for
+            # a human CAPTCHA solve before rotating to another proxy.
+            allow_manual_captcha = not self.headless and (
+                is_last_route or (customization_markers is not None and route == "direct" and attempt == 1)
+            )
             try:
                 fetch_options: dict[str, Any] = {
                     "route": route,
@@ -718,7 +722,7 @@ class PlaywrightPool:
                 if isinstance(profile_index, int):
                     self._block_profile(profile_index, error)
                 diagnostics.append(self._browser_error_trace(attempt, profile_index, error, "captcha"))
-                if allow_manual_captcha:
+                if allow_manual_captcha and is_last_route:
                     setattr(error, "diagnostics", diagnostics)
                     raise
             except Exception as error:

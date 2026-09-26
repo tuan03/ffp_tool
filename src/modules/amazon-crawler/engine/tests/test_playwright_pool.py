@@ -340,6 +340,50 @@ class PlaywrightPoolTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(attempts, [("direct", False), ("direct", False), ("proxy", True)])
 
+    async def test_headed_customize_can_solve_captcha_on_direct_profile(self) -> None:
+        pool = PlaywrightPool(
+            profile_root=Path(tempfile.gettempdir()) / "ffp-playwright-test",
+            profiles=1, tabs_per_profile=1, headless=False, captcha_timeout=30, zip_code="10001",
+            proxy_assignments=[ProxyAssignment(index=0, name="proxy-1", server="http://proxy.test:80")],
+        )
+        attempts: list[tuple[str, bool]] = []
+
+        async def fetch_once(_url: str, _cancel_event, *, route: str, allow_manual_captcha: bool, customization_markers: tuple[str, ...]):
+            attempts.append((route, allow_manual_captcha))
+            if allow_manual_captcha and route == "direct":
+                return "sellerConfigComponents", 0
+            raise CaptchaTimeout("captcha")
+
+        pool._fetch_once = fetch_once
+        html, _ = await pool._fetch_with_retries(
+            "https://amazon.com/customize/B012345678", None,
+            customization_markers=("sellerConfigComponents",),
+        )
+        self.assertEqual(html, "sellerConfigComponents")
+        self.assertEqual(attempts, [("direct", True)])
+
+    async def test_customize_falls_back_to_proxy_after_direct_captcha_timeout(self) -> None:
+        pool = PlaywrightPool(
+            profile_root=Path(tempfile.gettempdir()) / "ffp-playwright-test",
+            profiles=1, tabs_per_profile=1, headless=False, captcha_timeout=30, zip_code="10001",
+            proxy_assignments=[ProxyAssignment(index=0, name="proxy-1", server="http://proxy.test:80")],
+        )
+        attempts: list[tuple[str, bool]] = []
+
+        async def fetch_once(_url: str, _cancel_event, *, route: str, allow_manual_captcha: bool, customization_markers: tuple[str, ...]):
+            attempts.append((route, allow_manual_captcha))
+            if route == "direct":
+                raise CaptchaTimeout("captcha")
+            return "sellerConfigComponents", pool.profiles
+
+        pool._fetch_once = fetch_once
+        html, _ = await pool._fetch_with_retries(
+            "https://amazon.com/customize/B012345678", None,
+            customization_markers=("sellerConfigComponents",),
+        )
+        self.assertEqual(html, "sellerConfigComponents")
+        self.assertEqual(attempts, [("direct", True), ("proxy", True)])
+
     async def test_exhausted_cooldown_routes_are_not_reported_as_captcha(self) -> None:
         pool = self.make_pool(headless=False)
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import tempfile
 import threading
+import time
 import unittest
 import urllib.request
 from copy import deepcopy
@@ -753,6 +754,58 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(links_by_split["Ocean"], "https://www.amazon.com/dp/B012345678")
         self.assertEqual(links_by_split["Forest"], "https://www.amazon.com/dp/B012345679")
         self.assertTrue(all(product["parentAsin"] == "B0PARENT00" for product in products))
+
+    def test_failed_split_child_does_not_display_parent_media(self) -> None:
+        failed = source_variant("B012345679", "Forest", "Twin")
+        failed["price"] = None
+        failed["media"] = []
+        failed["diagnostics"] = {"fetchMode": "failed"}
+        family = {
+            "parentAsin": "B0PARENT00", "canonicalUrl": "https://www.amazon.com/dp/B0PARENT00",
+            "sourceTitle": "Blanket", "description": None, "bulletPoints": [],
+            "media": [{"url": "https://img/ocean.jpg", "kind": "image", "sourceAsin": "B012345678"}],
+            "sourceVariants": [source_variant("B012345678", "Ocean", "Twin"), failed],
+            "variantMatrix": {"dimensions": {"Design": ["Ocean", "Forest"]}, "expectedCount": 2, "discoveredCount": 2, "complete": True, "safetyCap": 500},
+            "diagnostics": {"fetchMode": "http"},
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            crawler = AmazonCrawler(root=Path(directory), settings=CrawlSettings(), browser_pool=FakeBrowser(PRODUCT_HTML))
+            products = crawler._products_from_family(family)
+        failed_product = next(product for product in products if product["asin"] == failed["asin"])
+        self.assertEqual(failed_product["media"], [])
+
+    def test_child_fetches_share_one_network_capacity_across_families(self) -> None:
+        class ConcurrentCrawler(ParentFamilyCrawler):
+            def __init__(self, **kwargs: object) -> None:
+                super().__init__(**kwargs)
+                self.active = 0
+                self.peak = 0
+                self.lock = threading.Lock()
+
+            def _fetch_parsed(self, normalized: NormalizedInput) -> tuple[dict, dict]:
+                with self.lock:
+                    self.active += 1
+                    self.peak = max(self.peak, self.active)
+                try:
+                    time.sleep(0.05)
+                    parsed, diagnostics = super()._fetch_parsed(normalized)
+                    parsed["asinOptions"] = {
+                        f"B01234567{digit}": {"Design": f"Design {digit}"}
+                        for digit in range(4, 9)
+                    }
+                    parsed["dimensions"] = {"Design": [f"Design {digit}" for digit in range(4, 9)]}
+                    return parsed, diagnostics
+                finally:
+                    with self.lock:
+                        self.active -= 1
+
+        with tempfile.TemporaryDirectory() as directory:
+            crawler = ConcurrentCrawler(
+                root=Path(directory), settings=CrawlSettings(product_threads=2, variant_threads=8, browser_profiles=2),
+                browser_pool=FakeBrowser(PRODUCT_HTML),
+            )
+            crawler.run(job_id="concurrency", sources=["B012345678", "B012345679"], write_export=False)
+        self.assertLessEqual(crawler.peak, 2)
 
     def test_split_uses_actual_source_options_when_matrix_labels_are_inconsistent(self) -> None:
         first = source_variant("B012345678", "Ocean", "Twin")

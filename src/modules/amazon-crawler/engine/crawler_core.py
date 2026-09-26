@@ -882,6 +882,10 @@ class AmazonCrawler:
             cancel_event=self.cancel_event,
         )
         self._http_slots = threading.BoundedSemaphore(settings.urllib_threads)
+        # Family workers share the same browser/proxy capacity across all inputs.
+        self._variant_fetch_slots = threading.BoundedSemaphore(
+            min(settings.variant_threads, settings.browser_profiles, settings.urllib_threads)
+        )
         self.cache = RawFamilyCache(root / ".runtime" / "cache")
         self.browser_pool = browser_pool or PlaywrightPool(
             profile_root=root / ".runtime" / "browser-profiles", profiles=settings.browser_profiles,
@@ -1199,7 +1203,8 @@ class AmazonCrawler:
         candidates = [
             variant
             for variant in variants
-            if variant.get("customization") is None or variant.get("customizationComplete") is not True
+            if (variant.get("customization") is None or variant.get("customizationComplete") is not True)
+            and (variant.get("diagnostics") or {}).get("fetchMode") != "failed"
         ]
         for variant in candidates:
             asin = str(variant["asin"])
@@ -1268,7 +1273,8 @@ class AmazonCrawler:
             source=normalized.source,
             item_updates={"status": "running", "currentAsin": normalized.asin},
         )
-        parent, diagnostics = self._fetch_parsed(normalized)
+        with self._variant_fetch_slots:
+            parent, diagnostics = self._fetch_parsed(normalized)
         parent_asin = parent["parentAsin"]
         asin_options: dict[str, dict[str, str]] = dict(parent["asinOptions"])
         # parentAsin identifies the variation family and is often not a
@@ -1368,7 +1374,13 @@ class AmazonCrawler:
                 child = deepcopy(parent)
                 child_diagnostics = diagnostics
             else:
-                child, child_diagnostics = self._fetch_parsed(normalize_amazon_input(asin))
+                with self._variant_fetch_slots:
+                    child, child_diagnostics = self._fetch_parsed(normalize_amazon_input(asin))
+                if child["asin"] != asin:
+                    raise CrawlFetchError(
+                        f"Requested child ASIN {asin}, but Amazon returned {child['asin']}.",
+                        {**child_diagnostics, "fetchMode": "failed"},
+                    )
             warnings = list(child.get("customizationWarnings", []))
             if len(child.get("media") or []) <= 1 and hasattr(self.browser_pool, "fetch_gallery"):
                 try:
@@ -1705,7 +1717,11 @@ class AmazonCrawler:
                     identity = str(media.get("amazonImageId") or media.get("url") or "")
                     if identity:
                         media_by_identity.setdefault(identity, deepcopy(media))
-            if not media_by_identity:
+            if (
+                not media_by_identity
+                and split_attribute is None
+                and all((variant.get("diagnostics") or {}).get("fetchMode") != "failed" for variant in source_variants)
+            ):
                 for media in family.get("media", []):
                     identity = str(media.get("amazonImageId") or media.get("url") or "")
                     if identity:

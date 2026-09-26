@@ -302,11 +302,16 @@ function stripProcessingTokens(product: CrawlProduct): CrawlProduct {
 
 function productBlockers(product: CrawlProduct): string[] {
   const blockers: string[] = [];
+  const sourceVariants = Array.isArray(product.sourceVariants) ? product.sourceVariants : [];
+  const failedAsins = sourceVariants.filter((variant) => variant?.diagnostics?.fetchMode === "failed")
+    .map((variant) => variant.asin);
+  if (failedAsins.length > 0) {
+    return [`Amazon crawler could not load child ASIN ${failedAsins.join(", ")} (CAPTCHA or network failure). Retry the crawl after checking the direct browser or proxy connection.`];
+  }
   const matrix = product.variantMatrix && typeof product.variantMatrix === "object"
     ? product.variantMatrix as Record<string, unknown>
     : {};
   if (matrix.complete !== true) blockers.push("Variant matrix is incomplete.");
-  const sourceVariants = Array.isArray(product.sourceVariants) ? product.sourceVariants : [];
   if (sourceVariants.length === 0) blockers.push("Product has no source variants.");
   if (sourceVariants.some((variant) => {
     if (!variant || typeof variant !== "object") return true;
