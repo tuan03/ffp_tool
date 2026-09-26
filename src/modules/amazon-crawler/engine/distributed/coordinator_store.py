@@ -2023,7 +2023,7 @@ class CoordinatorStore:
         public_seo = (
             {
                 key: seo[key]
-                for key in ("status", "engine", "fieldsApplied", "fallbackStages", "warnings", "error")
+                for key in ("status", "engine", "fieldsApplied", "fallbackStages", "warnings", "error", "performance")
                 if key in seo
             }
             if isinstance(seo, dict)

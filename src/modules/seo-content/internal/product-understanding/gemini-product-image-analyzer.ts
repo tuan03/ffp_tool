@@ -11,7 +11,6 @@ import type { GeminiContentGenerator } from "./gemini-content-generator";
 import { GeminiGeneratorError } from "./gemini-content-generator";
 import {
   type AsyncSemaphore,
-  getSharedGeminiVisionSemaphore,
 } from "./async-semaphore";
 import {
   executeWithExponentialBackoff,
@@ -47,6 +46,7 @@ They are never evidence for OCR.
 Do not fabricate details that are not visible.`;
 
 export interface GeminiProductImageAnalyzerOptions {
+  readonly signal?: AbortSignal;
   readonly generator: GeminiContentGenerator;
   readonly model?: string;
   readonly systemInstruction?: string;
@@ -85,7 +85,8 @@ export class GeminiProductImageAnalyzer implements ProductImageAnalyzer {
   private readonly timeoutMs?: number;
   private readonly maxRetries?: number;
   private readonly maxImages?: number;
-  private readonly semaphore: AsyncSemaphore;
+  private readonly signal?: AbortSignal;
+  private readonly semaphore?: AsyncSemaphore;
   private readonly retryOptions?: GeminiRetryOptions;
 
   constructor(options: GeminiProductImageAnalyzerOptions) {
@@ -96,11 +97,13 @@ export class GeminiProductImageAnalyzer implements ProductImageAnalyzer {
     this.timeoutMs = options.timeoutMs;
     this.maxRetries = options.maxRetries;
     this.maxImages = options.maxImages;
-    this.semaphore = options.semaphore ?? getSharedGeminiVisionSemaphore();
+    this.semaphore = options.semaphore;
+    this.signal = options.signal;
     this.retryOptions = options.retryOptions;
   }
 
   async analyze(input: ProductImageAnalyzerInput): Promise<ProductImageAnalysis> {
+    this.signal?.throwIfAborted();
     const limit = input.maxImages ?? this.maxImages;
     const maxPayloads = typeof limit === "number" && Number.isFinite(limit) && limit > 0
       ? Math.floor(limit)
@@ -114,7 +117,9 @@ export class GeminiProductImageAnalyzer implements ProductImageAnalyzer {
       const candidates = input.images.slice(nextImageIndex, nextImageIndex + batchSize);
       const prepared = await Promise.allSettled(candidates.map((image) => prepareProductImagePayload(image, {
         fetchTimeoutMs: this.timeoutMs,
+        signal: this.signal,
       })));
+      this.signal?.throwIfAborted();
       for (const result of prepared) {
         if (result.status === "fulfilled") {
           if (imagePayloads.length < maxPayloads) imagePayloads.push(result.value);
@@ -149,22 +154,18 @@ Visual evidence has priority over metadata.`;
 
     const effectiveRetryOptions: GeminiRetryOptions = {
       ...(this.retryOptions ?? {}),
+      signal: this.signal,
       ...(this.maxRetries !== undefined ? { maxRetries: this.maxRetries } : {}),
     };
 
-    const response = await this.semaphore.runExclusive(async () => {
-      return executeWithExponentialBackoff(async () => {
-        return this.generator.generateProductImageAnalysis({
-          prompt,
-          imagePayloads,
-          systemInstruction: this.systemInstruction,
-          model: this.model,
-          maxOutputTokens: this.maxOutputTokens,
-          timeoutMs: this.timeoutMs,
-          retryOptions: effectiveRetryOptions,
-        });
-      }, effectiveRetryOptions);
+    const generate = () => this.generator.generateProductImageAnalysis({
+      prompt, imagePayloads, systemInstruction: this.systemInstruction,
+      model: this.model, maxOutputTokens: this.maxOutputTokens,
+      timeoutMs: this.timeoutMs, retryOptions: effectiveRetryOptions,
     });
+    const attempt = () => this.semaphore ? this.semaphore.runExclusive(generate, this.signal) : generate();
+    const response = this.generator.handlesRetries ? await attempt()
+      : await executeWithExponentialBackoff(attempt, effectiveRetryOptions);
 
     return parseGeminiProductImageAnalysis(response.rawText);
   }

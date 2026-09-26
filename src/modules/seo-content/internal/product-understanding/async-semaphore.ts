@@ -27,16 +27,25 @@ export class AsyncSemaphore {
     return this._maxConcurrency;
   }
 
-  async acquire(): Promise<() => void> {
+  async acquire(signal?: AbortSignal): Promise<() => void> {
+    signal?.throwIfAborted();
     if (this._activeCount < this._maxConcurrency) {
       this._activeCount++;
       return this.createRelease();
     }
 
-    return new Promise<() => void>((resolve) => {
-      this._waitingQueue.push(() => {
+    return new Promise<() => void>((resolve, reject) => {
+      const grant = () => {
+        signal?.removeEventListener("abort", cancel);
         resolve(this.createRelease());
-      });
+      };
+      const cancel = () => {
+        const index = this._waitingQueue.indexOf(grant);
+        if (index >= 0) this._waitingQueue.splice(index, 1);
+        reject(signal?.reason ?? new DOMException("Cancelled", "AbortError"));
+      };
+      this._waitingQueue.push(grant);
+      signal?.addEventListener("abort", cancel, { once: true });
     });
   }
 
@@ -57,9 +66,10 @@ export class AsyncSemaphore {
     };
   }
 
-  async runExclusive<T>(fn: () => Promise<T>): Promise<T> {
-    const release = await this.acquire();
+  async runExclusive<T>(fn: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+    const release = await this.acquire(signal);
     try {
+      signal?.throwIfAborted();
       return await fn();
     } finally {
       release();

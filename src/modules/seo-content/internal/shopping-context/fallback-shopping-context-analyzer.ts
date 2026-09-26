@@ -33,6 +33,7 @@ export class FallbackShoppingContextAnalyzer
     try {
       return await this.primary.analyze(input);
     } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") throw error;
       if (this.onFallback) {
         try {
           this.onFallback(error, input);

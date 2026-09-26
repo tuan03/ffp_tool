@@ -314,7 +314,7 @@ export function AmazonCrawlerPage({
   );
   const firstMediaUrl = firstProductMediaUrl(selectedProduct);
   const activeMediaUrl = firstMediaUrl ? selectedMediaUrl ?? firstMediaUrl : null;
-  const selectedPipelineTimings = formatPipelineTimings(selectedProduct?.pipeline?.shopify.timings);
+  const selectedPipelineTimings = formatPipelineTimings(selectedProduct?.pipeline?.shopify.timings, selectedProduct?.pipeline?.seo.performance);
   const connectedClients = clients.filter((client) => client.isConnected && client.status !== "offline");
   const activeManagedJob = activeJobId ? jobs.find((job) => job.jobId === activeJobId) : undefined;
   const coordinatorActiveJob = jobs.find((job) =>

@@ -1818,13 +1818,15 @@ class CoordinatorStoreTests(unittest.TestCase):
         ))
         self.assertTrue(self.store.mark_product_review_ready(
             claim["id"], worker_id="worker-1", normalized_payload=seo_product,
-            seo_summary={"status": "completed", "engine": "heuristic"},
+            seo_summary={"status": "completed", "engine": "heuristic", "performance": {"stageDurationsMs": {"b1": 1200}, "cacheHits": 2}},
             image_summary={"status": "completed", "profileSlug": "default", "profileRevision": "rev-1", "processedImages": 0},
             review_summary={"storeId": "store-1", "assetsNormalized": 0},
         ))
 
         reviews = self.store.list_product_reviews()
         self.assertEqual(len(reviews), 1)
+        snapshot = self.store.job_products(str(job["id"]))
+        self.assertEqual(snapshot["products"][0]["pipeline"]["seo"]["performance"]["cacheHits"], 2)
         self.assertEqual(reviews[0]["decision"], "pending")
         self.assertEqual(reviews[0]["syncStatus"], "idle")
         self.assertEqual(self.store.get_job(str(job["id"]))["status"], "review_pending")

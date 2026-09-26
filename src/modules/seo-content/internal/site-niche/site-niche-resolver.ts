@@ -1,3 +1,4 @@
+import { SingleFlight } from "../single-flight";
 export interface SiteNicheResolution {
   readonly niche: string;
   readonly source: "cache" | "inferred" | "fallback";
@@ -10,11 +11,11 @@ export interface SiteNicheCache {
 }
 
 export interface RenderedHomepageRenderer {
-  render(url: string): Promise<string>;
+  render(url: string, signal?: AbortSignal): Promise<string>;
 }
 
 export interface HomepageNicheAnalyzer {
-  analyze(renderedHtml: string, homepageUrl: string): Promise<string>;
+  analyze(renderedHtml: string, homepageUrl: string, signal?: AbortSignal): Promise<string>;
 }
 
 export class InMemorySiteNicheCache implements SiteNicheCache {
@@ -61,14 +62,16 @@ function safeReason(error: unknown): string {
 }
 
 export class SiteNicheResolver {
-  private readonly inFlight = new Map<string, Promise<SiteNicheResolution>>();
+  private readonly inFlight = new SingleFlight<SiteNicheResolution>();
 
   public constructor(private readonly dependencies: SiteNicheResolverDependencies) {}
 
   public async resolve(input: {
+    readonly signal?: AbortSignal;
     readonly siteDomain: string;
     readonly fallbackNiche: string;
   }): Promise<SiteNicheResolution> {
+    input.signal?.throwIfAborted();
     if (!input.siteDomain.trim()) {
       return { niche: input.fallbackNiche, source: "fallback" };
     }
@@ -82,29 +85,24 @@ export class SiteNicheResolver {
     const cached = await this.dependencies.cache.get(normalized.key);
     if (cached) return { niche: cached, source: "cache" };
 
-    const existing = this.inFlight.get(normalized.key);
-    if (existing) return existing;
-
-    const task = this.infer(normalized, input.fallbackNiche);
-    this.inFlight.set(normalized.key, task);
-    try {
-      return await task;
-    } finally {
-      this.inFlight.delete(normalized.key);
-    }
+    return this.inFlight.join(normalized.key, signal => this.infer(normalized, input.fallbackNiche, signal), input.signal);
   }
 
   private async infer(
     normalized: { readonly key: string; readonly url: string },
     fallbackNiche: string,
+    signal: AbortSignal,
   ): Promise<SiteNicheResolution> {
     try {
-      const renderedHtml = await this.dependencies.renderer.render(normalized.url);
-      const niche = (await this.dependencies.analyzer.analyze(renderedHtml, normalized.url)).trim();
+      const renderedHtml = await this.dependencies.renderer.render(normalized.url, signal);
+      signal.throwIfAborted();
+      const niche = (await this.dependencies.analyzer.analyze(renderedHtml, normalized.url, signal)).trim();
+      signal.throwIfAborted();
       if (!niche) throw new Error("niche analyzer returned an empty niche");
       await this.dependencies.cache.set(normalized.key, niche);
       return { niche, source: "inferred" };
     } catch (error) {
+      signal.throwIfAborted();
       return { niche: fallbackNiche, source: "fallback", reason: safeReason(error) };
     }
   }

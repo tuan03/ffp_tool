@@ -57,8 +57,9 @@ export function detectMimeTypeFromFilename(filenameOrUrl: string): SupportedImag
  */
 export async function prepareProductImagePayload(
   image: SeoContentImageInput,
-  options?: { readonly fetchTimeoutMs?: number },
+  options?: { readonly fetchTimeoutMs?: number; readonly signal?: AbortSignal },
 ): Promise<GeminiImagePart> {
+  options?.signal?.throwIfAborted();
   if (!image) {
     throw new InvalidImagePayloadError("Image input is required");
   }
@@ -86,6 +87,7 @@ export async function prepareProductImagePayload(
           },
         };
       } catch (err) {
+        options?.signal?.throwIfAborted();
         if (err instanceof InvalidImagePayloadError) throw err;
         if (!image.url) {
           throw new InvalidImagePayloadError(
@@ -161,9 +163,12 @@ export async function prepareProductImagePayload(
     if (typeof fetch === "function") {
       const timeoutMs = options?.fetchTimeoutMs ?? DEFAULT_IMAGE_FETCH_TIMEOUT_MS;
       const controller = new AbortController();
+      const cancel = () => controller.abort(options?.signal?.reason);
+      options?.signal?.addEventListener("abort", cancel, { once: true });
       const timer = setTimeout(() => controller.abort(), timeoutMs);
 
       try {
+        options?.signal?.throwIfAborted();
         const response = await fetch(rawUrl, { signal: controller.signal });
         if (!response.ok) {
           throw new Error(`HTTP error ${response.status} ${response.statusText}`);
@@ -225,6 +230,7 @@ export async function prepareProductImagePayload(
           },
         };
       } catch (err) {
+        options?.signal?.throwIfAborted();
         if (err instanceof InvalidImagePayloadError) throw err;
         if (err instanceof Error && err.name === "AbortError") {
           throw new InvalidImagePayloadError(
@@ -238,6 +244,7 @@ export async function prepareProductImagePayload(
         );
       } finally {
         clearTimeout(timer);
+        options?.signal?.removeEventListener("abort", cancel);
       }
     }
 
