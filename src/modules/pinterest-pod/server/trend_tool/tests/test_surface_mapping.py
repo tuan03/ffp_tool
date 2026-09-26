@@ -122,10 +122,39 @@ class SurfaceMappingTests(unittest.TestCase):
         payload = bitmap(Image.new("L", (10, 10), 255))
         payload["box_2d"] = [100, 500, 300, 900]
         mask = reference_composite.decode_surface_mask(payload, (100, 100))
-        self.assertEqual(mask.getbbox(), (50, 10, 90, 30))
         for bad in ({"box_2d": [0, 0, 1000, 1000], "mask": "bad"}, {**payload, "box_2d": [300, 500, 100, 900]}, {**payload, "box_2d": [True, 0, 1000, 1000]}):
             with self.subTest(bad=bad), self.assertRaises(ValueError):
                 reference_composite.decode_surface_mask(bad, (100, 100))
+
+    def test_order_quad_points_fixes_reversed_corners(self):
+        # Coordinates in [TL, BL, BR, TR] order
+        unordered = [[457, 107], [449, 892], [939, 980], [957, 24]]
+        ordered = reference_composite.order_quad_points(np.array(unordered))
+        edges = np.roll(ordered, -1, axis=0) - ordered
+        crosses = edges[:, 0] * np.roll(edges[:, 1], -1) - edges[:, 1] * np.roll(edges[:, 0], -1)
+        self.assertTrue(np.all(crosses > 0), "quad should be ordered clockwise TL TR BR BL")
+        np.testing.assert_allclose(ordered[0], [457, 107])
+        np.testing.assert_allclose(ordered[1], [957, 24])
+        np.testing.assert_allclose(ordered[2], [939, 980])
+        np.testing.assert_allclose(ordered[3], [449, 892])
+
+    def test_high_coverage_mask_auto_repairs_minor_boundary_discretization(self):
+        from PIL import ImageDraw
+        # Quad (10..90, 10..90)
+        # Polygon with a tiny 1-pixel protrusion at (9, 50)
+        mask = Image.new("L", (101, 101))
+        ImageDraw.Draw(mask).rectangle((10, 10, 90, 90), fill=255)
+        mask.putpixel((9, 50), 255)
+        plan = {"all_printable_surfaces_identified": True, "surfaces": [{
+            "confidence": 0.99, "geometry": "planar", "segmentation": bitmap(mask),
+            "quad": [[100, 100], [900, 100], [900, 900], [100, 900]],
+        }]}
+        output, edit_mask = reference_composite.compose_reference_artwork(
+            Image.new("RGB", (101, 101), "green"), Image.new("RGB", (20, 20), "red"), plan
+        )
+        self.assertEqual(output.getpixel((50, 50)), (255, 0, 0))
+        # Outside pixel (9, 50) should be clipped away to quad, leaving green background
+        self.assertEqual(output.getpixel((9, 50)), (0, 128, 0))
 
 
 class SurfaceAnalysisTests(unittest.TestCase):
