@@ -1062,14 +1062,19 @@ export function AmazonCrawlerPage({
     setHandoverError(null);
     try {
       await onHandoverToSeo(resultProducts);
+      try {
+        window.localStorage.setItem("ffp_seo_review_selected_store", activeStoreId);
+      } catch {
+        // ignore
+      }
       notifyUser({
         title: "📦 Bàn giao sang SEO Review",
-        message: `Đã bàn giao ${resultProducts.length} sản phẩm sang bộ phận SEO Review thành công!`,
+        message: `Đã bàn giao ${resultProducts.length} sản phẩm sang bộ phận SEO Review cho Store ${activeStoreId.toUpperCase()} thành công!`,
         type: "success",
         sound: "chime",
-        url: "/seo-review",
+        url: `/seo-review?storeId=${encodeURIComponent(activeStoreId)}`,
       });
-      navigate("/seo-review");
+      navigate(`/seo-review?storeId=${encodeURIComponent(activeStoreId)}`);
     } catch (caught: unknown) {
       const msg = caught instanceof Error ? caught.message : String(caught);
       setHandoverError(`Lỗi khi bàn giao sang SEO Review: ${msg}`);
@@ -1814,7 +1819,21 @@ export function AmazonCrawlerPage({
                         <span className="rounded border border-amber-600 px-3 py-1 text-xs font-semibold text-amber-300">Đang dừng…</span>
                       ) : null}
                       {job.status === "review_pending" ? (
-                        <button className="rounded border border-emerald-600 px-3 py-1 text-xs font-semibold text-emerald-300" type="button" onClick={() => navigate("/seo-review")}>Kiểm duyệt SEO</button>
+                        <button
+                          className="rounded border border-emerald-600 px-3 py-1 text-xs font-semibold text-emerald-300"
+                          type="button"
+                          onClick={() => {
+                            const targetStore = (job.settings?.storeId as string | undefined) || activeStoreId;
+                            try {
+                              window.localStorage.setItem("ffp_seo_review_selected_store", targetStore);
+                            } catch {
+                              // ignore
+                            }
+                            navigate(`/seo-review?storeId=${encodeURIComponent(targetStore)}`);
+                          }}
+                        >
+                          Kiểm duyệt SEO
+                        </button>
                       ) : ["completed", "partial"].includes(job.status) ? (
                         <>
                           <button className="rounded border border-cyan-600 px-3 py-1 text-xs font-semibold text-cyan-300 disabled:opacity-50" disabled={controlledJobId !== null || coordinatorActiveJob !== undefined || isCheckingAsins} type="button" onClick={() => void handleRunAgain(job)}>Run again</button>
@@ -1838,7 +1857,20 @@ export function AmazonCrawlerPage({
       <div className="flex flex-wrap items-center gap-3">
         <button className="rounded-lg bg-cyan-400 px-5 py-2 font-semibold text-slate-950 disabled:opacity-50" disabled={urls.length === 0 || isRunning || isCheckingAsins || coordinatorActiveJob !== undefined} type="button" onClick={() => void handleStart()}>{isCheckingAsins ? "Đang kiểm tra ASIN..." : `Start (${urls.length})`}</button>
         <button className="rounded-lg border border-rose-400 px-5 py-2 font-semibold text-rose-300 disabled:opacity-50" disabled={!isRunning || controlledJobId !== null || isCancellationPending} type="button" onClick={() => void handleStop()}>{isActiveStopPending ? "Đang dừng..." : "Stop"}</button>
-        <button className="rounded-lg border border-emerald-500 px-5 py-2 font-semibold text-emerald-300 hover:bg-emerald-950/40" type="button" onClick={() => navigate("/seo-review")}>Mở SEO Review</button>
+        <button
+          className="rounded-lg border border-emerald-500 px-5 py-2 font-semibold text-emerald-300 hover:bg-emerald-950/40"
+          type="button"
+          onClick={() => {
+            try {
+              window.localStorage.setItem("ffp_seo_review_selected_store", activeStoreId);
+            } catch {
+              // ignore
+            }
+            navigate(`/seo-review?storeId=${encodeURIComponent(activeStoreId)}`);
+          }}
+        >
+          Mở SEO Review
+        </button>
         {output === null && resultProducts.length === 0 ? null : (
           <>
             {onHandoverToSeo ? (

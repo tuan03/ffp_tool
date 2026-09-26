@@ -306,17 +306,25 @@ export function AutoSeoPage({
       setAutoSeoOutput(result);
       setAutoSeoLastHydratedProducts(productsWithStore);
 
+      if (effectiveStoreId) {
+        try {
+          window.localStorage.setItem("ffp_seo_review_selected_store", effectiveStoreId);
+        } catch {
+          // ignore
+        }
+      }
+
       notifyUser({
         title: "✨ Auto SEO: Tối ưu hóa hoàn tất!",
         message: `Đã tạo nội dung Auto SEO thành công cho ${result.selectedCount} sản phẩm. Đã sẵn sàng kiểm duyệt tại SEO Review.`,
         type: "success",
         sound: "chime",
-        url: "/seo-review",
+        url: effectiveStoreId ? `/seo-review?storeId=${encodeURIComponent(effectiveStoreId)}` : "/seo-review",
       });
 
       if (onHandoverToSeo) {
         await onHandoverToSeo(productsWithStore, effectiveStoreId);
-        navigate("/seo-review");
+        navigate(effectiveStoreId ? `/seo-review?storeId=${encodeURIComponent(effectiveStoreId)}` : "/seo-review");
       }
     } catch (err) {
       const errText = err instanceof Error ? err.message : "Đã xảy ra lỗi khi chạy Auto SEO.";
@@ -356,14 +364,21 @@ export function AutoSeoPage({
         storeId: product.storeId || effectiveStoreId,
       }));
       await onHandoverToSeo(productsWithStore, effectiveStoreId);
+      if (effectiveStoreId) {
+        try {
+          window.localStorage.setItem("ffp_seo_review_selected_store", effectiveStoreId);
+        } catch {
+          // ignore
+        }
+      }
       notifyUser({
         title: "📦 Auto SEO: Bàn giao SEO thành công!",
         message: `Đã bàn giao ${lastHydratedProducts.length} sản phẩm sang SEO Review.`,
         type: "success",
         sound: "chime",
-        url: "/seo-review",
+        url: effectiveStoreId ? `/seo-review?storeId=${encodeURIComponent(effectiveStoreId)}` : "/seo-review",
       });
-      navigate("/seo-review");
+      navigate(effectiveStoreId ? `/seo-review?storeId=${encodeURIComponent(effectiveStoreId)}` : "/seo-review");
     } catch (err) {
       const errText = err instanceof Error ? err.message : "Đã xảy ra lỗi khi bàn giao sang SEO Content.";
       setErrorMessage(errText);

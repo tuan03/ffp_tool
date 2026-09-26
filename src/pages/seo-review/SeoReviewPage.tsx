@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 
 import { environment } from "../../config/environment";
 import type { AmazonCrawlerReviewClient } from "../../modules/amazon-crawler";
@@ -18,7 +19,6 @@ import { ProductEditModal } from "./components/ProductEditModal";
 import { ProductListTable } from "./components/ProductListTable";
 import { ProductSplitView } from "./components/ProductSplitView";
 import { SeoBatchToolbar } from "./components/SeoBatchToolbar";
-import { AddStoreModal, type AddedStoreInfo } from "../../shared/components/AddStoreModal";
 import { ShopifySyncErrorModal } from "./components/ShopifySyncErrorModal";
 import { filterSeoProducts, findNextProductInList } from "./review-navigation";
 import { buildProductRawJson } from "./product-raw-json-helper";
@@ -109,6 +109,10 @@ export function SeoReviewPage({
   onSyncApprovedProducts,
   onRollbackApprovedProducts,
 }: SeoReviewPageProps = {}): React.JSX.Element {
+  const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const urlStoreId = searchParams.get("storeId")?.trim().toLowerCase();
+
   const runner = useMemo(
     () => injectedRunner || getModuleApiRunner(environment),
     [injectedRunner],
@@ -228,13 +232,26 @@ export function SeoReviewPage({
     },
   ]);
   const [selectedStoreId, setSelectedStoreId] = useState<string>(() => {
+    if (urlStoreId) return urlStoreId;
+    if (storeId) return storeId.toLowerCase();
     if (typeof window !== "undefined" && window.localStorage) {
       const saved = window.localStorage.getItem("ffp_seo_review_selected_store");
-      if (saved) return saved;
+      if (saved) return saved.toLowerCase();
     }
-    return storeId || "capozen";
+    return "capozen";
   });
-  const [isAddStoreOpen, setIsAddStoreOpen] = useState(false);
+
+  // Sync selectedStoreId whenever urlStoreId query param changes
+  useEffect(() => {
+    if (urlStoreId && urlStoreId !== selectedStoreId.toLowerCase()) {
+      setSelectedStoreId(urlStoreId);
+      try {
+        window.localStorage.setItem("ffp_seo_review_selected_store", urlStoreId);
+      } catch {
+        // ignore
+      }
+    }
+  }, [urlStoreId, selectedStoreId]);
 
   useEffect(() => {
     let isMounted = true;
@@ -281,36 +298,14 @@ export function SeoReviewPage({
     };
   }, []);
 
-  function handleStoreChange(nextStore: string): void {
-    setSelectedStoreId(nextStore);
-    if (typeof window !== "undefined" && window.localStorage) {
-      try {
-        window.localStorage.setItem("ffp_seo_review_selected_store", nextStore);
-      } catch {
-        // ignore
-      }
-    }
-  }
-
-  function handleStoreAdded(newStore: AddedStoreInfo): void {
-    setAvailableStores((prev) => {
-      const exists = prev.some((s) => s.storeId.toLowerCase() === newStore.storeId.toLowerCase());
-      if (exists) return prev;
-      return [
-        ...prev,
-        {
-          storeId: newStore.storeId,
-          shopDomain: newStore.shopDomain,
-          productTypes: newStore.productTypes,
-          defaultProductType: newStore.defaultProductType,
-        },
-      ];
-    });
-    handleStoreChange(newStore.storeId);
-    setIsAddStoreOpen(false);
-  }
-
-  const effectiveStoreId = selectedStoreId || storeId || "capozen";
+  const effectiveStoreId = useMemo(() => {
+    if (urlStoreId) return urlStoreId;
+    if (storeId) return storeId.toLowerCase();
+    if (selectedStoreId) return selectedStoreId.toLowerCase();
+    const firstProductStore = products.find((p) => p.storeId)?.storeId?.toLowerCase();
+    if (firstProductStore) return firstProductStore;
+    return "capozen";
+  }, [urlStoreId, storeId, selectedStoreId, products]);
 
   // High-Resolution Image Zoom Modal State
   const [zoomState, setZoomState] = useState<{
@@ -369,11 +364,15 @@ export function SeoReviewPage({
           const handoff = JSON.parse(raw) as { count: number; timestamp: number; source?: string; storeId?: string };
           if (handoff && handoff.count > 0) {
             if (handoff.storeId) {
-              setSelectedStoreId(handoff.storeId);
+              const targetStore = handoff.storeId.toLowerCase();
+              setSelectedStoreId(targetStore);
               try {
-                window.localStorage.setItem("ffp_seo_review_selected_store", handoff.storeId);
+                window.localStorage.setItem("ffp_seo_review_selected_store", targetStore);
               } catch {
                 // ignore
+              }
+              if (!urlStoreId || urlStoreId !== targetStore) {
+                navigate(`/seo-review?storeId=${encodeURIComponent(targetStore)}`, { replace: true });
               }
             }
             notifyUser({
@@ -381,7 +380,7 @@ export function SeoReviewPage({
               message: `Hệ thống vừa nhận ${handoff.count} sản phẩm từ ${handoff.source || "hệ thống"}${handoff.storeId ? ` cho store ${handoff.storeId.toUpperCase()}` : ""}. Vui lòng kiểm tra và duyệt nội dung SEO.`,
               type: "info",
               sound: "chime",
-              url: "/seo-review",
+              url: handoff.storeId ? `/seo-review?storeId=${encodeURIComponent(handoff.storeId)}` : "/seo-review",
             });
           }
         }
@@ -389,7 +388,7 @@ export function SeoReviewPage({
         // ignore
       }
     }
-  }, []);
+  }, [navigate, urlStoreId]);
 
   // Persist review state to sessionStorage
   useEffect(() => {
@@ -414,10 +413,34 @@ export function SeoReviewPage({
     }
   }, [viewMode]);
 
-  // Filtered products list
+  // 1. Strictly scope products to the effective target store
+  const storeScopedProducts = useMemo(() => {
+    return products.filter((p) => {
+      const itemStore = (p.storeId || "capozen").trim().toLowerCase();
+      return itemStore === effectiveStoreId.toLowerCase();
+    });
+  }, [products, effectiveStoreId]);
+
+  // 2. Filter products within the scoped store
   const filteredProducts = useMemo(() => {
-    return filterSeoProducts(products, filter);
-  }, [products, filter]);
+    return filterSeoProducts(storeScopedProducts, filter);
+  }, [storeScopedProducts, filter]);
+
+  // Track other stores that have products awaiting review in memory/session
+  const otherStoresWithProducts = useMemo(() => {
+    const storeCountMap = new Map<string, number>();
+    for (const p of products) {
+      const s = (p.storeId || "capozen").trim().toLowerCase();
+      storeCountMap.set(s, (storeCountMap.get(s) || 0) + 1);
+    }
+    return Array.from(storeCountMap.entries())
+      .filter(([s]) => s !== effectiveStoreId.toLowerCase())
+      .map(([s, count]) => ({
+        storeId: s,
+        count,
+        shopDomain: availableStores.find((as) => as.storeId.toLowerCase() === s)?.shopDomain || s,
+      }));
+  }, [products, effectiveStoreId, availableStores]);
 
   // Keep activeProduct synchronized with filteredProducts
   useEffect(() => {
@@ -443,31 +466,31 @@ export function SeoReviewPage({
     }
   }, [filteredProducts, activeProduct]);
 
-  // Stats calculation
+  // Stats calculation scoped strictly to the current active store
   const stats = useMemo(() => {
-    const total = products.length;
-    const completed = products.filter((p) => p.seoStatus.value === "completed").length;
-    const pending = products.filter((p) => p.reviewDecision === "pending").length;
-    const approved = products.filter((p) => p.reviewDecision === "approved").length;
-    const approvedUnsynced = products.filter(
+    const total = storeScopedProducts.length;
+    const completed = storeScopedProducts.filter((p) => p.seoStatus.value === "completed").length;
+    const pending = storeScopedProducts.filter((p) => p.reviewDecision === "pending").length;
+    const approved = storeScopedProducts.filter((p) => p.reviewDecision === "approved").length;
+    const approvedUnsynced = storeScopedProducts.filter(
       (p) => p.reviewDecision === "approved" && !p.isSyncing && !p.isReverting && !["queued", "syncing", "synced"].includes(p.shopifySyncStatus || "idle"),
     ).length;
-    const rejected = products.filter((p) => p.reviewDecision === "rejected").length;
-    const synced = products.filter((p) => p.shopifySyncStatus === "synced").length;
-    const syncing = products.filter((p) => p.shopifySyncStatus === "syncing").length;
-    const syncFailed = products.filter((p) => p.shopifySyncStatus === "failed").length;
-    const hasMock = products.filter((p) =>
+    const rejected = storeScopedProducts.filter((p) => p.reviewDecision === "rejected").length;
+    const synced = storeScopedProducts.filter((p) => p.shopifySyncStatus === "synced").length;
+    const syncing = storeScopedProducts.filter((p) => p.shopifySyncStatus === "syncing").length;
+    const syncFailed = storeScopedProducts.filter((p) => p.shopifySyncStatus === "failed").length;
+    const hasMock = storeScopedProducts.filter((p) =>
       p.productTitle.source === "mock" ||
       p.seoTitle.source === "mock" ||
       p.seoDescription.source === "mock" ||
       p.handle.source === "mock",
     ).length;
-    const crawlCount = products.filter((p) => getProductSourceOrigin(p) === "distributed_crawler").length;
-    const podCount = products.filter((p) => getProductSourceOrigin(p) === "pinterest_pod").length;
-    const autoSeoCount = products.filter((p) => getProductSourceOrigin(p) === "auto_seo").length;
+    const crawlCount = storeScopedProducts.filter((p) => getProductSourceOrigin(p) === "distributed_crawler").length;
+    const podCount = storeScopedProducts.filter((p) => getProductSourceOrigin(p) === "pinterest_pod").length;
+    const autoSeoCount = storeScopedProducts.filter((p) => getProductSourceOrigin(p) === "auto_seo").length;
 
     return { total, completed, pending, approved, approvedUnsynced, rejected, synced, syncing, syncFailed, hasMock, crawlCount, podCount, autoSeoCount };
-  }, [products]);
+  }, [storeScopedProducts]);
 
   // Selection handlers
   function handleToggleSelect(id: string) {
@@ -525,7 +548,7 @@ export function SeoReviewPage({
 
   // Push to Shopify Store handlers
   async function triggerPushToShopify(targetProduct: SeoProductUiViewModel) {
-    const targetStore = targetProduct.storeId || effectiveStoreId || "capozen";
+    const targetStore = effectiveStoreId;
     try {
       const result = await pushSeoReviewProductToShopify(
         toPushProductItem(targetProduct),
@@ -541,7 +564,7 @@ export function SeoReviewPage({
           message: `Sản phẩm "${targetProduct.productTitle.value}" đã được đồng bộ lên Store ${targetStore.toUpperCase()}.`,
           type: "success",
           sound: "chime",
-          url: "/seo-review",
+          url: `/seo-review?storeId=${encodeURIComponent(targetStore)}`,
         });
       } else {
         notifyUser({
@@ -549,7 +572,7 @@ export function SeoReviewPage({
           message: result.error || "Lỗi khi đẩy sản phẩm lên Shopify",
           type: "error",
           sound: "alert",
-          url: "/seo-review",
+          url: `/seo-review?storeId=${encodeURIComponent(targetStore)}`,
         });
       }
 
@@ -589,7 +612,7 @@ export function SeoReviewPage({
         message,
         type: "error",
         sound: "alert",
-        url: "/seo-review",
+        url: `/seo-review?storeId=${encodeURIComponent(targetStore)}`,
       });
       setProducts((prev) =>
         prev.map((p) =>
@@ -610,28 +633,14 @@ export function SeoReviewPage({
   async function triggerBatchPushToShopify(targets: readonly SeoProductUiViewModel[]) {
     try {
       const pushItems = targets.map(toPushProductItem);
-      // Group push items by target store so each product goes to its own intended store
-      const storeGroups = new Map<string, SeoReviewPushProductItem[]>();
-      for (const item of pushItems) {
-        const itemStore = item.originalStoreId || effectiveStoreId;
-        if (!storeGroups.has(itemStore)) {
-          storeGroups.set(itemStore, []);
-        }
-        storeGroups.get(itemStore)!.push(item);
-      }
-
-      const results: PushSeoReviewProductResult[] = [];
-      for (const [storeIdKey, groupItems] of storeGroups.entries()) {
-        const groupResults = await pushSeoReviewProductsBatch(
-          groupItems,
-          {
-            moduleApiRunner: runner,
-            storeId: storeIdKey,
-          },
-          3,
-        );
-        results.push(...groupResults);
-      }
+      const results = await pushSeoReviewProductsBatch(
+        pushItems,
+        {
+          moduleApiRunner: runner,
+          storeId: effectiveStoreId,
+        },
+        3,
+      );
 
       const resultMap = new Map(results.map((r) => [r.id, r]));
 
@@ -643,23 +652,23 @@ export function SeoReviewPage({
           message: `Đã đồng bộ toàn bộ ${successCount} sản phẩm lên Shopify Store (${effectiveStoreId.toUpperCase()}).`,
           type: "success",
           sound: "chime",
-          url: "/seo-review",
+          url: `/seo-review?storeId=${encodeURIComponent(effectiveStoreId)}`,
         });
       } else if (successCount > 0) {
         notifyUser({
           title: "⚠️ Shopify Sync: Đã đẩy một phần",
-          message: `Đã đồng bộ ${successCount}/${results.length} sản phẩm lên Store. Có ${failCount} sản phẩm gặp lỗi cần retry.`,
+          message: `Đã đồng bộ ${successCount}/${results.length} sản phẩm lên Store ${effectiveStoreId.toUpperCase()}. Có ${failCount} sản phẩm gặp lỗi cần retry.`,
           type: "warning",
           sound: "alert",
-          url: "/seo-review",
+          url: `/seo-review?storeId=${encodeURIComponent(effectiveStoreId)}`,
         });
       } else {
         notifyUser({
           title: "❌ Shopify Sync Thất bại",
-          message: `Cả ${failCount} sản phẩm đều không thể đồng bộ lên Shopify Store.`,
+          message: `Cả ${failCount} sản phẩm đều không thể đồng bộ lên Shopify Store ${effectiveStoreId.toUpperCase()}.`,
           type: "error",
           sound: "alert",
-          url: "/seo-review",
+          url: `/seo-review?storeId=${encodeURIComponent(effectiveStoreId)}`,
         });
       }
 
@@ -899,7 +908,7 @@ export function SeoReviewPage({
   }
 
   async function handleSyncAllApproved(): Promise<void> {
-    const eligible = products.filter((product) =>
+    const eligible = storeScopedProducts.filter((product) =>
       product.reviewDecision === "approved" &&
       !["queued", "syncing", "synced"].includes(product.shopifySyncStatus || "idle") &&
       !product.isSyncing &&
@@ -1565,37 +1574,43 @@ export function SeoReviewPage({
   }, [selectedIds, activeProduct, setSyncFeedback]);
 
   async function handleClearAll(): Promise<void> {
-    if (products.length === 0) return;
-    if (!confirm(`Xóa ${products.length} sản phẩm khỏi danh sách SEO Review? Sản phẩm đã sync trên Shopify vẫn được giữ nguyên.`)) return;
+    if (storeScopedProducts.length === 0) return;
+    if (!confirm(`Xóa ${storeScopedProducts.length} sản phẩm của store ${effectiveStoreId.toUpperCase()} khỏi danh sách SEO Review? Sản phẩm đã sync trên Shopify vẫn được giữ nguyên.`)) return;
     try {
-      let outcome = { deleted: 0, skipped: 0 };
-      if (amazonCrawlerReviews) {
+      const storeScopedIds = new Set(storeScopedProducts.map((p) => p.id));
+      if (storeScopedProducts.length === products.length && amazonCrawlerReviews) {
         try {
-          outcome = await amazonCrawlerReviews.deleteAll();
+          await amazonCrawlerReviews.deleteAll();
         } catch {
-          // Crawler backend may be offline; proceed to delete local/session products anyway
+          // Coordinator backend best-effort
         }
       }
-      let remainingProducts: SeoProductUiViewModel[] = [];
-      if (amazonCrawlerReviews) {
-        try {
-          remainingProducts = (await amazonCrawlerReviews.list()).map((item) =>
-            adaptAmazonCrawlerReviewToViewModel(item, amazonCrawlerReviews.imageUrl));
-        } catch {
-          remainingProducts = [];
+      setProducts((prev) => {
+        const nextProducts = prev.filter((p) => !storeScopedIds.has(p.id));
+        if (typeof window !== "undefined" && window.sessionStorage) {
+          try {
+            const legacy = nextProducts.filter((p) => !p.coordinatorReview);
+            window.sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(legacy));
+          } catch {
+            // ignore
+          }
         }
-      }
-      setProducts(remainingProducts);
-      setSelectedIds(new Set());
-      setActiveProduct(null);
-      if (typeof window !== "undefined" && window.sessionStorage) {
-        window.sessionStorage.removeItem(SESSION_STORAGE_KEY);
+        return nextProducts;
+      });
+      setSelectedIds((prev) => {
+        const next = new Set<string>();
+        for (const id of prev) {
+          if (!storeScopedIds.has(id)) next.add(id);
+        }
+        return next;
+      });
+      if (activeProduct && storeScopedIds.has(activeProduct.id)) {
+        setActiveProduct(null);
+        setIsDrawerOpen(false);
       }
       setSyncFeedback({
-        type: outcome.skipped > 0 ? "warning" : "success",
-        message: outcome.skipped > 0
-          ? `Đã xóa ${outcome.deleted} sản phẩm khỏi Review; ${outcome.skipped} sản phẩm đang sync hoặc cần đối soát được giữ lại.`
-          : `✓ Đã xóa ${outcome.deleted + products.filter((product) => !product.coordinatorReview).length} sản phẩm khỏi danh sách Review.`,
+        type: "success",
+        message: `✓ Đã xóa ${storeScopedProducts.length} sản phẩm của store ${effectiveStoreId.toUpperCase()} khỏi danh sách Review.`,
       });
     } catch (error: unknown) {
       setSyncFeedback({ type: "error", message: `Không thể xóa danh sách Review: ${error instanceof Error ? error.message : String(error)}` });
@@ -1686,59 +1701,71 @@ export function SeoReviewPage({
         </div>
       </div>
 
-      {/* Target Shopify Store Destination Card (Matching Distributed Crawl logic) */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-xl border border-slate-800 bg-slate-900/60 p-3.5 shadow-sm">
-        <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-          <div className="flex items-center gap-2">
+      {/* Target Shopify Store Destination Card - LOCKED TO PREVENT MISMATCH */}
+      <div className="flex flex-col gap-3 rounded-xl border border-teal-800/40 bg-gradient-to-r from-slate-900/95 via-slate-900/80 to-teal-950/30 p-3.5 shadow-sm">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex flex-wrap items-center gap-2.5">
             <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-teal-500/20 text-teal-300 text-sm">
               🏪
             </span>
-            <label className="text-sm font-semibold text-slate-200">
-              Shopify Store
-            </label>
-            <span className="text-[11px] font-mono text-slate-400" title="Shopify Vendor">
-              ({((effectiveStoreId).split("--")[0] || "CAPOZEN").trim().toUpperCase()})
+            <span className="text-sm font-semibold text-slate-200">
+              Shopify Store đích:
+            </span>
+            <span className="inline-flex items-center gap-1.5 rounded-md border border-teal-500/40 bg-teal-500/10 px-2.5 py-1 font-mono text-xs font-bold text-teal-300">
+              <span>{effectiveStoreId.toUpperCase()}</span>
+              <span className="text-[10px] text-slate-400 font-normal">
+                ({availableStores.find((s) => s.storeId.toLowerCase() === effectiveStoreId.toLowerCase())?.shopDomain || effectiveStoreId})
+              </span>
+            </span>
+            <span
+              className="inline-flex items-center gap-1 rounded bg-amber-500/10 border border-amber-500/30 px-2 py-0.5 text-[11px] font-semibold text-amber-300"
+              title="Store đích được cố định tự động từ pipeline Crawler / POD để bảo vệ không bị lẫn lộn dữ liệu giữa các store."
+            >
+              🔒 ĐÃ KHÓA THEO PIPELINE
             </span>
           </div>
 
-          <div className="flex items-center gap-2">
-            <select
-              className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs text-slate-100 outline-none focus:border-cyan-500 font-mono transition"
-              value={effectiveStoreId}
-              onChange={(e) => handleStoreChange(e.target.value)}
-            >
-              {availableStores.map((s) => (
-                <option key={s.storeId} value={s.storeId}>
-                  {s.storeId} ({s.shopDomain})
-                </option>
-              ))}
-            </select>
-
-            <button
-              type="button"
-              onClick={() => setIsAddStoreOpen(true)}
-              className="inline-flex items-center gap-1.5 rounded-md border border-cyan-500/50 bg-cyan-500/10 px-2.5 py-1.5 text-xs font-semibold text-cyan-300 shadow-sm transition-all hover:border-cyan-400 hover:bg-cyan-500/20 hover:text-white cursor-pointer"
-              title="Thêm và kết nối Shopify Store mới"
-            >
-              <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
-                <path d="M12 4v16m8-8H4" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-              <span>+ Thêm store</span>
-            </button>
+          <div className="text-xs text-slate-400 flex items-center gap-2">
+            <span>Đang hiển thị & sync cho:</span>
+            <span className="font-mono text-cyan-300 font-semibold bg-slate-800/90 px-2.5 py-1 rounded border border-slate-700">
+              {storeScopedProducts.length} sản phẩm
+            </span>
           </div>
         </div>
 
-        <div className="text-xs text-slate-400 flex items-center gap-2">
-          <span>Target store hiện tại:</span>
-          <span className="font-mono text-cyan-300 font-medium bg-slate-800/80 px-2.5 py-1 rounded border border-slate-700">
-            {availableStores.find((s) => s.storeId.toLowerCase() === effectiveStoreId.toLowerCase())?.shopDomain || effectiveStoreId}
-          </span>
-        </div>
+        {/* Other stores that have products in review queue */}
+        {otherStoresWithProducts.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-800/60 text-xs text-slate-400">
+            <span className="text-slate-500">Các store khác có sản phẩm chờ duyệt:</span>
+            {otherStoresWithProducts.map((os) => (
+              <button
+                key={os.storeId}
+                type="button"
+                onClick={() => {
+                  try {
+                    window.localStorage.setItem("ffp_seo_review_selected_store", os.storeId);
+                  } catch {
+                    // ignore
+                  }
+                  navigate(`/seo-review?storeId=${encodeURIComponent(os.storeId)}`);
+                }}
+                className="inline-flex items-center gap-1.5 rounded-md border border-slate-700 bg-slate-800/80 px-2.5 py-1 font-mono text-[11px] text-cyan-300 hover:border-cyan-500 hover:bg-slate-700 transition cursor-pointer"
+                title={`Chuyển sang xem danh sách review của store ${os.storeId.toUpperCase()}`}
+              >
+                <span>🏪 {os.storeId.toUpperCase()}</span>
+                <span className="rounded bg-cyan-950 px-1.5 py-0.2 text-[10px] text-cyan-400 font-bold border border-cyan-800">
+                  {os.count} sp
+                </span>
+                <span className="text-slate-400">➔</span>
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Batch Actions & Filters Toolbar */}
       <SeoBatchToolbar
-        totalCount={products.length}
+        totalCount={storeScopedProducts.length}
         filteredCount={filteredProducts.length}
         crawlCount={stats.crawlCount}
         podCount={stats.podCount}
@@ -1753,7 +1780,7 @@ export function SeoReviewPage({
         filter={filter}
         viewMode={viewMode}
         isAllExpanded={isAllExpanded}
-        isSyncing={products.some((p) => selectedIds.has(p.id) && p.isSyncing)}
+        isSyncing={storeScopedProducts.some((p) => selectedIds.has(p.id) && p.isSyncing)}
         isReverting={isRevertingSelected}
         onFilterChange={(newFilter) => setFilter((prev) => ({ ...prev, ...newFilter }))}
         onViewModeChange={setViewMode}
@@ -1770,16 +1797,25 @@ export function SeoReviewPage({
       />
 
       {/* Review Content View based on active viewMode */}
-      {products.length === 0 ? (
+      {storeScopedProducts.length === 0 ? (
         <div className="rounded-2xl border border-slate-800 bg-slate-900/40 p-12 text-center">
           <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-800/80 text-2xl text-slate-400 border border-slate-700/50 shadow-inner">
             📝
           </div>
           <h3 className="mt-4 text-base font-bold text-slate-200">
-            Chưa có sản phẩm nào trong danh sách review
+            Chưa có sản phẩm nào cho Store {effectiveStoreId.toUpperCase()}
           </h3>
           <p className="mt-2 text-xs text-slate-400 max-w-md mx-auto leading-relaxed">
-            Danh sách đang trống. Bạn hãy sang tab <strong className="text-cyan-400">⚡ Distributed Crawler</strong> hoặc <strong className="text-pink-400">🎨 Pinterest POD Studio</strong> để cào/tạo sản phẩm và bấm nút <strong className="text-emerald-400">"✨ Bàn giao sang SEO"</strong> để tự động chuẩn hóa và đưa sản phẩm vào đây.
+            {otherStoresWithProducts.length > 0 ? (
+              <>
+                Store <strong className="text-cyan-400">{effectiveStoreId.toUpperCase()}</strong> hiện chưa có sản phẩm trong danh sách review.
+                Bạn có thể bấm vào các store bên trên ({otherStoresWithProducts.map((os) => `${os.storeId.toUpperCase()} (${os.count})`).join(", ")}) để xem sản phẩm của các store đó.
+              </>
+            ) : (
+              <>
+                Danh sách đang trống. Bạn hãy sang tab <strong className="text-cyan-400">⚡ Distributed Crawler</strong> hoặc <strong className="text-pink-400">🎨 Pinterest POD Studio</strong> để cào/tạo sản phẩm và bấm nút <strong className="text-emerald-400">"✨ Bàn giao sang SEO"</strong> để tự động đưa sản phẩm vào đây.
+              </>
+            )}
           </p>
           <div className="mt-5 flex items-center justify-center gap-3">
             <a
@@ -1910,12 +1946,6 @@ export function SeoReviewPage({
         onClose={handleCloseZoomImage}
       />
 
-      {/* Add Shopify Store Modal */}
-      <AddStoreModal
-        isOpen={isAddStoreOpen}
-        onClose={() => setIsAddStoreOpen(false)}
-        onStoreAdded={handleStoreAdded}
-      />
     </div>
   );
 }

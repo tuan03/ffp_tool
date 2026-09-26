@@ -86,7 +86,10 @@ export function AppRoutes({
       let newViewModels: readonly SeoProductUiViewModel[];
 
       if (serverViewModels && Array.isArray(serverViewModels) && serverViewModels.length > 0) {
-        newViewModels = serverViewModels as readonly SeoProductUiViewModel[];
+        newViewModels = (serverViewModels as readonly SeoProductUiViewModel[]).map((vm) => ({
+          ...vm,
+          storeId: vm.storeId || payload.storeId,
+        }));
       } else {
         const result = await handoverPinterestToSeo(
           {
@@ -99,7 +102,7 @@ export function AppRoutes({
         );
 
         newViewModels = result.items.map((item) =>
-          adaptPinterestPodItemToViewModel(item),
+          adaptPinterestPodItemToViewModel(item, payload.storeId),
         );
       }
 

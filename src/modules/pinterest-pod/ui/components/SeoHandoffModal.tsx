@@ -186,12 +186,18 @@ export function SeoHandoffModal({
       setCurrentResult(res);
       setViewMode("result");
       onHandoffSuccess?.(res, filteredPayload);
+      const targetStore = filteredPayload.storeId || "capozen";
+      try {
+        window.localStorage.setItem("ffp_seo_review_selected_store", targetStore);
+      } catch {
+        // ignore
+      }
       notifyUser({
         title: "✨ Pinterest POD: Bàn giao SEO thành công!",
-        message: `Đã bàn giao ${filteredPayload.items.length} thiết kế POD sang SEO Review.`,
+        message: `Đã bàn giao ${filteredPayload.items.length} thiết kế POD sang SEO Review cho Store ${targetStore.toUpperCase()}.`,
         type: "success",
         sound: "chime",
-        url: "/seo-review",
+        url: `/seo-review?storeId=${encodeURIComponent(targetStore)}`,
       });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -221,12 +227,18 @@ export function SeoHandoffModal({
       setCurrentResult(fallbackResult);
       setViewMode("result");
       onHandoffSuccess?.(fallbackResult, filteredPayload);
+      const targetStore = filteredPayload.storeId || "capozen";
+      try {
+        window.localStorage.setItem("ffp_seo_review_selected_store", targetStore);
+      } catch {
+        // ignore
+      }
       notifyUser({
         title: "✨ Pinterest POD: Bàn giao SEO thành công!",
-        message: `Đã bàn giao ${filteredPayload.items.length} thiết kế POD sang SEO Review.`,
+        message: `Đã bàn giao ${filteredPayload.items.length} thiết kế POD sang SEO Review cho Store ${targetStore.toUpperCase()}.`,
         type: "success",
         sound: "chime",
-        url: "/seo-review",
+        url: `/seo-review?storeId=${encodeURIComponent(targetStore)}`,
       });
     } finally {
       setIsSubmitting(false);
@@ -691,7 +703,14 @@ export function SeoHandoffModal({
                   {copied ? "✓ Đã sao chép" : "Sao chép JSON"}
                 </button>
                 <a
-                  href="/seo-review"
+                  href={`/seo-review?storeId=${encodeURIComponent(filteredPayload.storeId || "capozen")}`}
+                  onClick={() => {
+                    try {
+                      window.localStorage.setItem("ffp_seo_review_selected_store", filteredPayload.storeId || "capozen");
+                    } catch {
+                      // ignore
+                    }
+                  }}
                   className="flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-emerald-500 to-teal-600 px-4 py-2 text-xs font-bold text-slate-950 shadow-md transition hover:from-emerald-400 hover:to-teal-500"
                 >
                   <span>📝 Đi tới SEO Review</span>
