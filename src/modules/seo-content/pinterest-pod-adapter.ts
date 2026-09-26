@@ -331,8 +331,12 @@ export async function runPinterestPodSeoPipeline(
     : 1;
   const concurrency = Math.max(1, Math.min(Math.floor(rawConcurrency), 3));
 
-  const items: PinterestPodSeoItemResult[] = [];
-  const seoOutputs: SeoContentOutput[] = [];
+  interface IndexedItem {
+    readonly index: number;
+    readonly result: PinterestPodSeoItemResult;
+    readonly seoOutput?: SeoContentOutput;
+  }
+  const collectedItems: IndexedItem[] = [];
 
   const queue = createSeoContentQueue<PodDeliverableItem>({
     concurrency,
@@ -350,8 +354,7 @@ export async function runPinterestPodSeoPipeline(
         seoOutput,
         success: true,
       };
-      items.push(itemResult);
-      seoOutputs.push(seoOutput);
+      collectedItems.push({ index: item.index, result: itemResult, seoOutput });
       options.onItemCompleted?.(itemResult);
     },
     onItemFailed: (item, error) => {
@@ -367,7 +370,7 @@ export async function runPinterestPodSeoPipeline(
         success: false,
         error,
       };
-      items.push(itemResult);
+      collectedItems.push({ index: item.index, result: itemResult });
       options.onItemCompleted?.(itemResult);
       options.onItemFailed?.(itemResult);
     },
@@ -380,13 +383,11 @@ export async function runPinterestPodSeoPipeline(
   queue.enqueue(inputs, rawItems);
   await queue.waitForDrain();
 
-  const itemIndexMap = new Map<PodDeliverableItem, number>();
-  rawItems.forEach((it, idx) => itemIndexMap.set(it, idx));
-  items.sort((a, b) => (itemIndexMap.get(a.sourceItem) ?? 0) - (itemIndexMap.get(b.sourceItem) ?? 0));
-
-  const orderedOutputs = items
-    .filter((it): it is PinterestPodSeoItemResult & { seoOutput: SeoContentOutput } => it.success && Boolean(it.seoOutput))
-    .map((it) => it.seoOutput);
+  collectedItems.sort((a, b) => a.index - b.index);
+  const items = collectedItems.map((entry) => entry.result);
+  const orderedOutputs = collectedItems
+    .filter((entry): entry is IndexedItem & { seoOutput: SeoContentOutput } => entry.result.success && Boolean(entry.seoOutput))
+    .map((entry) => entry.seoOutput);
 
   const successful = items.filter((it) => it.success).length;
   const failed = items.length - successful;

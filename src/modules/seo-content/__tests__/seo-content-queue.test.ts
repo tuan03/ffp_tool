@@ -305,4 +305,127 @@ describe("SeoContentQueue - Universal FIFO Queue Engine", () => {
     assert.equal(stats.pending, 0);
     assert.equal(stats.processing, 0);
   });
+
+  it("bảo toàn source khi enqueue đơn lẻ mà TSource là một mảng", () => {
+    const queue = createSeoContentQueue<string[]>({ autoStart: false });
+    const tagArray = ["tag1", "tag2", "tag3"];
+    const [enqueuedItem] = queue.enqueue(createSampleSeoInput("single-1", "Single Item"), tagArray);
+
+    assert.ok(enqueuedItem);
+    assert.deepEqual(enqueuedItem.source, ["tag1", "tag2", "tag3"]);
+    assert.equal(Array.isArray(enqueuedItem.source), true);
+  });
+
+  it("cô lập ngoại lệ từ listener (onItemStarted, onItemCompleted, onDrained) và không làm sập queue hoặc biến completed thành failed", async () => {
+    let drainedFired = false;
+    const queue = createSeoContentQueue({
+      concurrency: 1,
+      runner: async (input) => {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        return createSampleSeoOutput(input);
+      },
+      onItemStarted: () => {
+        throw new Error("Buggy listener onItemStarted threw unexpected error");
+      },
+      onItemCompleted: () => {
+        throw new Error("Buggy listener onItemCompleted threw unexpected error");
+      },
+      onDrained: () => {
+        drainedFired = true;
+        throw new Error("Buggy listener onDrained threw unexpected error");
+      },
+    });
+
+    queue.enqueue([
+      createSampleSeoInput("iso-1", "Iso 1"),
+      createSampleSeoInput("iso-2", "Iso 2"),
+    ]);
+
+    const stats = await queue.waitForDrain();
+
+    assert.equal(stats.total, 2);
+    assert.equal(stats.completed, 2);
+    assert.equal(stats.failed, 0);
+    assert.ok(drainedFired);
+
+    const items = queue.getItems();
+    assert.equal(items[0].status, "completed");
+    assert.equal(items[1].status, "completed");
+  });
+
+  it("hỗ trợ enqueue khi queue đang bị tạm dừng (isPaused = true) và chỉ chạy khi resume", async () => {
+    let runCount = 0;
+    const queue = createSeoContentQueue({
+      concurrency: 1,
+      runner: async (input) => {
+        runCount += 1;
+        return createSampleSeoOutput(input);
+      },
+    });
+
+    queue.pause();
+    queue.enqueue([
+      createSampleSeoInput("pause-q-1", "PQ 1"),
+      createSampleSeoInput("pause-q-2", "PQ 2"),
+    ]);
+
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    assert.equal(runCount, 0);
+    assert.equal(queue.getStats().pending, 2);
+
+    queue.resume();
+    const stats = await queue.waitForDrain();
+
+    assert.equal(runCount, 2);
+    assert.equal(stats.completed, 2);
+  });
+
+  it("kích hoạt onDrained và resolve waitForDrain khi clear toàn bộ queue đang pending", async () => {
+    let drainedCalled = false;
+    const queue = createSeoContentQueue({
+      autoStart: false,
+      onDrained: (stats) => {
+        drainedCalled = true;
+        assert.equal(stats.total, 0);
+      },
+    });
+
+    queue.enqueue([
+      createSampleSeoInput("clr-1", "C 1"),
+      createSampleSeoInput("clr-2", "C 2"),
+    ]);
+
+    queue.clear();
+    const stats = await queue.waitForDrain();
+
+    assert.equal(stats.total, 0);
+    assert.equal(stats.pending, 0);
+    assert.equal(stats.processing, 0);
+    assert.ok(drainedCalled);
+  });
+
+  it("hỗ trợ nhiều consumer gọi waitForDrain đồng thời", async () => {
+    const queue = createSeoContentQueue({
+      concurrency: 2,
+      runner: async (input) => {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        return createSampleSeoOutput(input);
+      },
+    });
+
+    queue.enqueue([
+      createSampleSeoInput("multi-d-1", "M 1"),
+      createSampleSeoInput("multi-d-2", "M 2"),
+    ]);
+
+    const [drain1, drain2, drain3] = await Promise.all([
+      queue.waitForDrain(),
+      queue.waitForDrain(),
+      queue.waitForDrain(),
+    ]);
+
+    assert.equal(drain1.completed, 2);
+    assert.equal(drain2.completed, 2);
+    assert.equal(drain3.completed, 2);
+  });
 });

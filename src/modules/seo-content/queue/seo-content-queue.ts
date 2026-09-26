@@ -44,6 +44,21 @@ export class SeoContentQueue<TSource = unknown> {
   }
 
   /**
+   * Bắn sự kiện an toàn, cô lập lỗi callback của người gọi để không ảnh hưởng đến vòng lặp queue.
+   */
+  private safeEmit<TArgs extends unknown[]>(
+    emitter: ((...args: TArgs) => void) | undefined,
+    ...args: TArgs
+  ): void {
+    if (!emitter) return;
+    try {
+      emitter(...args);
+    } catch {
+      // Isolate listener error to prevent crashing internal queue loop
+    }
+  }
+
+  /**
    * Thêm một hoặc nhiều sản phẩm vào cuối hàng đợi.
    */
   public enqueue(
@@ -56,7 +71,7 @@ export class SeoContentQueue<TSource = unknown> {
 
     for (let index = 0; index < inputs.length; index += 1) {
       const currentInput = inputs[index];
-      const currentSource = Array.isArray(source) ? source[index] : source;
+      const currentSource = isBatch && Array.isArray(source) ? source[index] : source;
 
       const item: SeoQueueItem<TSource> = {
         id: generateQueueItemId(this.nextItemIndex),
@@ -71,11 +86,11 @@ export class SeoContentQueue<TSource = unknown> {
       this.items.push(item);
       newItems.push(item);
       this.hasDispatchedDrained = false;
-      this.options.onItemEnqueued?.(item);
+      this.safeEmit(this.options.onItemEnqueued, item);
     }
 
     if (newItems.length > 0) {
-      this.options.onProgress?.(this.getStats());
+      this.safeEmit(this.options.onProgress, this.getStats());
       if (this.autoStart && !this.isPaused) {
         this.pump();
       }
@@ -90,8 +105,8 @@ export class SeoContentQueue<TSource = unknown> {
   public start(): void {
     if (this.isPaused) {
       this.isPaused = false;
-      this.options.onResumed?.();
-      this.options.onProgress?.(this.getStats());
+      this.safeEmit(this.options.onResumed);
+      this.safeEmit(this.options.onProgress, this.getStats());
     }
     this.pump();
   }
@@ -102,8 +117,8 @@ export class SeoContentQueue<TSource = unknown> {
   public pause(): void {
     if (!this.isPaused) {
       this.isPaused = true;
-      this.options.onPaused?.();
-      this.options.onProgress?.(this.getStats());
+      this.safeEmit(this.options.onPaused);
+      this.safeEmit(this.options.onProgress, this.getStats());
     }
   }
 
@@ -113,8 +128,8 @@ export class SeoContentQueue<TSource = unknown> {
   public resume(): void {
     if (this.isPaused) {
       this.isPaused = false;
-      this.options.onResumed?.();
-      this.options.onProgress?.(this.getStats());
+      this.safeEmit(this.options.onResumed);
+      this.safeEmit(this.options.onProgress, this.getStats());
       this.pump();
     }
   }
@@ -136,8 +151,8 @@ export class SeoContentQueue<TSource = unknown> {
     }
 
     if (hasCancelled) {
-      this.options.onCancelled?.();
-      this.options.onProgress?.(this.getStats());
+      this.safeEmit(this.options.onCancelled);
+      this.safeEmit(this.options.onProgress, this.getStats());
     }
 
     this.checkDrain();
@@ -151,7 +166,7 @@ export class SeoContentQueue<TSource = unknown> {
     this.items = this.items.filter((item) => item.status !== "pending");
 
     if (prevPending > 0) {
-      this.options.onProgress?.(this.getStats());
+      this.safeEmit(this.options.onProgress, this.getStats());
     }
 
     this.checkDrain();
@@ -236,14 +251,14 @@ export class SeoContentQueue<TSource = unknown> {
       }
 
       this.hasDispatchedDrained = false;
-      nextItem.status = "processing";
-      nextItem.startedAt = Date.now();
+      const currentItem = nextItem;
+      currentItem.status = "processing";
+      currentItem.startedAt = Date.now();
       this.runningCount += 1;
 
-      this.options.onItemStarted?.(nextItem);
-      this.options.onProgress?.(this.getStats());
+      this.safeEmit(this.options.onItemStarted, currentItem);
+      this.safeEmit(this.options.onProgress, this.getStats());
 
-      const currentItem = nextItem;
       (async () => {
         try {
           const output = await this.runner(currentItem.seoInput);
@@ -251,17 +266,17 @@ export class SeoContentQueue<TSource = unknown> {
           currentItem.output = output;
           currentItem.completedAt = Date.now();
           currentItem.durationMs = currentItem.completedAt - (currentItem.startedAt ?? currentItem.completedAt);
-          this.options.onItemCompleted?.(currentItem, output);
+          this.safeEmit(this.options.onItemCompleted, currentItem, output);
         } catch (err: unknown) {
           currentItem.status = "failed";
           const errorMessage = err instanceof Error ? err.message : String(err);
           currentItem.error = errorMessage;
           currentItem.completedAt = Date.now();
           currentItem.durationMs = currentItem.completedAt - (currentItem.startedAt ?? currentItem.completedAt);
-          this.options.onItemFailed?.(currentItem, errorMessage);
+          this.safeEmit(this.options.onItemFailed, currentItem, errorMessage);
         } finally {
           this.runningCount -= 1;
-          this.options.onProgress?.(this.getStats());
+          this.safeEmit(this.options.onProgress, this.getStats());
           this.pump();
           this.checkDrain();
         }
@@ -277,16 +292,20 @@ export class SeoContentQueue<TSource = unknown> {
   private checkDrain(): void {
     const stats = this.getStats();
     if (stats.pending === 0 && stats.processing === 0) {
-      if (!this.hasDispatchedDrained && stats.total > 0) {
+      if (!this.hasDispatchedDrained) {
         this.hasDispatchedDrained = true;
-        this.options.onDrained?.(stats);
+        this.safeEmit(this.options.onDrained, stats);
       }
 
       if (this.drainResolvers.length > 0) {
         const resolvers = [...this.drainResolvers];
         this.drainResolvers = [];
         for (const resolve of resolvers) {
-          resolve(stats);
+          try {
+            resolve(stats);
+          } catch {
+            // Protect against unexpected resolver errors
+          }
         }
       }
     }

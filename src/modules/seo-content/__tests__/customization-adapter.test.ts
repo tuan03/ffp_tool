@@ -558,6 +558,35 @@ test("runCustomizationSeoPipeline: streams realtime callbacks (onItemCompleted, 
   assert.equal(progressList.at(-1), 100);
 });
 
+test("runCustomizationSeoPipeline: preserves exact order even when input contains identical product object references", async () => {
+  let counter = 0;
+  const mockRunner = async (input: SeoContentInput): Promise<SeoContentOutput> => {
+    counter += 1;
+    const callIdx = counter;
+    // Delay first item longer to ensure out-of-order completion under concurrency
+    const delay = callIdx === 1 ? 40 : 10;
+    await new Promise((resolve) => setTimeout(resolve, delay));
+    return {
+      productTitle: `SEO - ${input.title} - Call ${callIdx}`,
+      productDescription: `<p>${input.description}</p>`,
+      productSeoTitle: `SEO | ${input.title}`.slice(0, 70),
+      productSeoDescription: `Description for ${input.title}`.slice(0, 160),
+      productHandle: `handle-${callIdx}`,
+      images: [],
+    };
+  };
 
+  // Pass identical reference sampleProductA twice
+  const result = await runCustomizationSeoPipeline([sampleProductA, sampleProductA], {
+    runner: mockRunner,
+    concurrency: 2,
+  });
 
-
+  assert.equal(result.total, 2);
+  assert.equal(result.successful, 2);
+  assert.equal(result.items.length, 2);
+  assert.equal(result.seoOutputs.length, 2);
+  // Item 0 corresponds to first enqueue (Call 1), item 1 to second enqueue (Call 2)
+  assert.match(result.seoOutputs[0].productTitle, /Call 1/);
+  assert.match(result.seoOutputs[1].productTitle, /Call 2/);
+});
