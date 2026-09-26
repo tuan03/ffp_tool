@@ -685,6 +685,9 @@ export function createAmazonCrawlerReviewClient({
     async markSynced(itemId: string, info?: { productId?: string; productHandle?: string; adminUrl?: string }) {
       return readReviewItem(await sendJson(`${reviewUrl}/${encodeURIComponent(itemId)}/synced`, "POST", info ?? {}));
     },
+    async markFailed(itemId: string, error?: string) {
+      return readReviewItem(await sendJson(`${reviewUrl}/${encodeURIComponent(itemId)}/failed`, "POST", { error }));
+    },
     async deleteAll() {
       const value = await sendJson(reviewUrl, "DELETE");
       if (!isRecord(value) || typeof value.deleted !== "number" || typeof value.skipped !== "number") {

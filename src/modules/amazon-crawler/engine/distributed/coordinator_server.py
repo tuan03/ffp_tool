@@ -632,6 +632,18 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
             raise HTTPException(status_code=409, detail="Review item was deleted.")
         return result
 
+    @app.post("/api/v1/product-reviews/{item_id}/failed")
+    def mark_product_review_failed(item_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        result = store.mark_product_review_sync_failed(
+            item_id,
+            error=str(payload.get("error") or "").strip() or None,
+        )
+        if result is None:
+            raise HTTPException(status_code=404, detail="Review item was not found.")
+        if result.get("deleted"):
+            raise HTTPException(status_code=409, detail="Review item was deleted.")
+        return result
+
     @app.get("/api/v1/image-profiles")
     def list_image_profiles() -> dict[str, Any]:
         return {"profiles": image_service.profiles.list()}

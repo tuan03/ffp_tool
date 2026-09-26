@@ -1957,6 +1957,46 @@ class CoordinatorStoreTests(unittest.TestCase):
             {"locked": True},
         )
 
+    def test_mark_product_review_sync_failed_persists_status_and_error(self) -> None:
+        job = self.store.create_job({"urls": ["B0TESTFAIL"]})
+        self.store.register_client(client_hello(slots=1))
+        lease = self.store.lease_tasks("client-a", 1)[0]
+        source_key = "amazon:B0TESTFAIL:design:red"
+        product = {"id": "prod-fail", "sourceKey": source_key, "parentAsin": "B0TESTFAIL", "title": "Test Fail Item"}
+        self.store.accept_product(
+            lease["taskId"], "client-a", lease["leaseId"], source_key, "cs-1",
+            {"jobId": job["id"], "product": product, "productChecksum": "cs-1"},
+        )
+        self.store.accept_result(
+            lease["taskId"], "client-a", lease["leaseId"], "rcs-1",
+            {"jobId": job["id"], "products": [product], "errors": [], "warnings": []},
+        )
+        claim = self.store.claim_product_items(worker_id="worker-1", store_id="store-1", limit=1)[0]
+        self.store.mark_product_image_processing(
+            claim["id"], worker_id="worker-1", normalized_payload=product,
+            image_summary={"status": "completed", "profileSlug": "default", "profileRevision": "rev-1", "processedImages": 0},
+        )
+        self.store.mark_product_review_ready(
+            claim["id"], worker_id="worker-1", normalized_payload=product,
+            seo_summary={"status": "completed"},
+            image_summary={"status": "completed"},
+            review_summary={"storeId": "store-1"},
+        )
+        self.store.decide_product_review(claim["id"], expected_version=1, decision="approved", reason=None)
+
+        failed_snapshot = self.store.mark_product_review_sync_failed(
+            claim["id"],
+            error="Shopify API rate limit exceeded (HTTP 429)",
+        )
+        self.assertIsNotNone(failed_snapshot)
+        self.assertEqual(failed_snapshot["syncStatus"], "failed")
+        self.assertEqual(failed_snapshot["syncError"], "Shopify API rate limit exceeded (HTTP 429)")
+
+        reviews = self.store.list_product_reviews()
+        self.assertEqual(len(reviews), 1)
+        self.assertEqual(reviews[0]["syncStatus"], "failed")
+        self.assertEqual(reviews[0]["syncError"], "Shopify API rate limit exceeded (HTTP 429)")
+
     def test_completed_product_discards_raw_payload_but_keeps_temporary_normalized_result(self) -> None:
         job = self.store.create_job({"urls": ["B0FR4MSS2H"]})
         self.store.register_client(client_hello(slots=1))

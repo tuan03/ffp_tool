@@ -522,7 +522,6 @@ export function AppRoutes({
               <SeoReviewPage
                 amazonCrawlerReviews={amazonCrawlerReviews}
                 moduleApiRunner={moduleApiRunner}
-                onSyncApprovedProducts={handleSyncApprovedProducts}
                 onRollbackApprovedProducts={handleRollbackApprovedProducts}
               />
             ),

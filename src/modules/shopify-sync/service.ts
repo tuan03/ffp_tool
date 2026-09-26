@@ -94,6 +94,130 @@ export function replaceUrlsInObject(
   return target;
 }
 
+export function compactCustomizerConfigForMetafield(config: Record<string, unknown>): Record<string, unknown> {
+  const getByteLength = (val: unknown): number => {
+    try {
+      const s = typeof val === "string" ? val : JSON.stringify(val);
+      if (typeof Buffer !== "undefined") {
+        return Buffer.byteLength(s, "utf8");
+      }
+      return new TextEncoder().encode(s).length;
+    } catch {
+      return 0;
+    }
+  };
+
+  const SHOPIFY_MAX_METAFIELD_BYTES = 131072; // 128 KB hard limit
+  const SAFETY_BUFFER_BYTES = 118000; // ~115 KB safe threshold
+
+  let current = { ...config };
+  let serialized = JSON.stringify(current);
+  if (getByteLength(serialized) <= SAFETY_BUFFER_BYTES) {
+    return current;
+  }
+
+  // Level 1: Prune duplicate arrays and redundant internal trees
+  // - assets: duplicate image list (surfaces and optionGroups already contain direct Shopify CDN URLs)
+  // - rawConfig: raw Amazon payload copy
+  // - componentParent, componentTypes, fingerprint: internal crawler debugging trees
+  const {
+    assets: _discardedAssets,
+    rawConfig: _raw,
+    componentParent: _cp,
+    componentTypes: _ct,
+    fingerprint: _fp,
+    ...level1
+  } = current;
+
+  current = level1;
+  serialized = JSON.stringify(current);
+  if (getByteLength(serialized) <= SAFETY_BUFFER_BYTES) {
+    return current;
+  }
+
+  // Level 2: Prune option boilerplate (friendlyFileName, alt, dimensions, zero-price raw strings)
+  if (Array.isArray(current.optionGroups)) {
+    const prunedOptionGroups = (current.optionGroups as readonly Record<string, unknown>[]).map((group) => {
+      if (!group || typeof group !== "object") return group;
+      const opts = Array.isArray(group.options)
+        ? (group.options as readonly Record<string, unknown>[]).map((opt) => {
+            if (!opt || typeof opt !== "object") return opt;
+            const cleanOpt: Record<string, unknown> = {
+              id: opt.id,
+              label: opt.label,
+            };
+            if (opt.isAvailable !== undefined) {
+              cleanOpt.isAvailable = opt.isAvailable;
+            }
+            if (opt.price && typeof opt.price === "object") {
+              const p = opt.price as { amount?: number; currency?: string };
+              if (p.amount && p.amount > 0) {
+                cleanOpt.price = { amount: p.amount, ...(p.currency ? { currency: p.currency } : {}) };
+              }
+            }
+            if (opt.overlayImage && typeof opt.overlayImage === "object") {
+              const img = opt.overlayImage as { url?: string };
+              if (img.url) {
+                cleanOpt.overlayImage = { url: img.url };
+              }
+            }
+            if (opt.thumbnailImage && typeof opt.thumbnailImage === "object") {
+              const img = opt.thumbnailImage as { url?: string };
+              if (img.url) {
+                cleanOpt.thumbnailImage = { url: img.url };
+              }
+            }
+            return cleanOpt;
+          })
+        : group.options;
+
+      return {
+        id: group.id,
+        label: group.label,
+        type: group.type,
+        required: group.required,
+        defaultOptionId: group.defaultOptionId,
+        instructions: group.instructions || undefined,
+        options: opts,
+      };
+    });
+
+    current = {
+      ...current,
+      optionGroups: prunedOptionGroups,
+    };
+  }
+
+  serialized = JSON.stringify(current);
+  if (getByteLength(serialized) <= SHOPIFY_MAX_METAFIELD_BYTES) {
+    return current;
+  }
+
+  // Level 3: If still exceeding 128KB, drop thumbnailImage when overlayImage exists
+  if (Array.isArray(current.optionGroups)) {
+    const compactOptionGroups = (current.optionGroups as readonly Record<string, unknown>[]).map((group) => {
+      if (!group || !Array.isArray(group.options)) return group;
+      return {
+        ...group,
+        options: group.options.map((opt: Record<string, unknown>) => {
+          if (opt && opt.overlayImage && opt.thumbnailImage) {
+            const { thumbnailImage: _ti, ...leanOpt } = opt;
+            return leanOpt;
+          }
+          return opt;
+        }),
+      };
+    });
+
+    current = {
+      ...current,
+      optionGroups: compactOptionGroups,
+    };
+  }
+
+  return current;
+}
+
 export async function syncSingleProduct(
   product: ShopifySyncProductInput,
   options: ShopifySyncOptions = {},
@@ -358,19 +482,13 @@ export async function syncSingleProduct(
         unknown
       >;
 
-      let serializedValue = JSON.stringify(finalConfig);
-
-      // Shopify Metafield JSON size limit is 131,072 bytes (128 KB).
-      // If the serialized config exceeds 120,000 bytes, prune redundant duplicate `assets`
-      // array because surfaces and optionGroups already contain direct Shopify CDN URLs.
-      if (serializedValue.length > 120000 && finalConfig.assets) {
-        const { assets: _discardedAssets, ...compactConfig } = finalConfig;
-        finalConfig = compactConfig;
-        serializedValue = JSON.stringify(finalConfig);
-      }
+      // Ensure customizer config fits safely within Shopify 128KB (131,072 bytes) limit
+      finalConfig = compactCustomizerConfigForMetafield(finalConfig);
+      const serializedValue = JSON.stringify(finalConfig);
 
       // 4. Set Metafield custom.amazon_customizer
       const customizationMetafieldStartedAt = Date.now();
+      let lastMetaError: string | undefined;
       try {
         throwIfCancelled();
         const metaResult = await gateway.setProductMetafield({
@@ -382,12 +500,14 @@ export async function syncSingleProduct(
         });
         metafieldSet = metaResult.success;
       } catch (metaError: unknown) {
-        const errDetail =
+        lastMetaError =
           metaError instanceof Error ? metaError.message : String(metaError);
-        warnings.push(`Failed to set custom.amazon_customizer metafield: ${errDetail}`);
+        warnings.push(`Failed to set custom.amazon_customizer metafield: ${lastMetaError}`);
       }
       if (!metafieldSet) {
-        throw new Error("Failed to set required custom.amazon_customizer metafield.");
+        throw new Error(
+          `Failed to set required custom.amazon_customizer metafield${lastMetaError ? `: ${lastMetaError}` : "."}`,
+        );
       }
       metafieldMs += Date.now() - customizationMetafieldStartedAt;
 

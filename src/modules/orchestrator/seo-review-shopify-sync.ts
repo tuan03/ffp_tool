@@ -554,10 +554,40 @@ export async function pushSeoReviewProductToShopify(
   }
 }
 
+function isRetryablePushError(err: unknown): boolean {
+  if (!err) return false;
+  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
+  const code = typeof err === "object" && err !== null && "code" in err ? String((err as Record<string, unknown>).code).toLowerCase() : "";
+  const status = typeof err === "object" && err !== null && "status" in err ? Number((err as Record<string, unknown>).status) : 0;
+
+  if (status === 429 || status === 500 || status === 502 || status === 503 || status === 504) {
+    return true;
+  }
+  if (code.includes("throttle") || code.includes("timeout") || code.includes("network") || code.includes("rate_limit")) {
+    return true;
+  }
+  return (
+    msg.includes("rate limit") ||
+    msg.includes("throttled") ||
+    msg.includes("429") ||
+    msg.includes("500") ||
+    msg.includes("502") ||
+    msg.includes("503") ||
+    msg.includes("504") ||
+    msg.includes("timeout") ||
+    msg.includes("etimedout") ||
+    msg.includes("econnreset") ||
+    msg.includes("socket hang up") ||
+    msg.includes("fetch failed") ||
+    msg.includes("temporarily unavailable")
+  );
+}
+
 export async function pushSeoReviewProductsBatch(
   products: readonly SeoReviewPushProductItem[],
   options: PushSeoReviewProductsOptions,
   concurrency = 3,
+  onProgress?: (result: PushSeoReviewProductResult, completedCount: number, totalCount: number) => void,
 ): Promise<readonly PushSeoReviewProductResult[]> {
   if (products.length === 0) return [];
 
@@ -568,9 +598,31 @@ export async function pushSeoReviewProductsBatch(
   for (let index = 0; index < products.length; index += safeConcurrency) {
     const chunk = products.slice(index, index + safeConcurrency);
     const chunkResults = await Promise.all(
-      chunk.map((prod) => pushSeoReviewProductToShopify(prod, options, store)),
+      chunk.map(async (prod) => {
+        const maxAttempts = 3;
+        let lastResult: PushSeoReviewProductResult = { id: prod.id, success: false, error: "Chưa hoàn tất" };
+        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+          const res = await pushSeoReviewProductToShopify(prod, options, store);
+          if (res.success) {
+            return res;
+          }
+          lastResult = res;
+          if (attempt >= maxAttempts || !isRetryablePushError(res.error)) {
+            break;
+          }
+          const baseDelay = attempt * 800;
+          const jitter = Math.floor(Math.random() * 400);
+          await new Promise((resolve) => setTimeout(resolve, baseDelay + jitter));
+        }
+        return lastResult;
+      }),
     );
-    results.push(...chunkResults);
+    for (const cr of chunkResults) {
+      results.push(cr);
+      if (onProgress) {
+        onProgress(cr, results.length, products.length);
+      }
+    }
   }
 
   return results;

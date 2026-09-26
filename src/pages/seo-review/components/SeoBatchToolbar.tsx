@@ -26,6 +26,7 @@ export interface SeoBatchToolbarProps {
   readonly onApproveSelected: () => void;
   readonly onRejectSelected: () => void;
   readonly onSyncAllApproved: () => void;
+  readonly onRetryFailedSync?: () => void;
   readonly onRollbackSelected?: () => void;
   readonly onDeleteSelected?: () => void;
   readonly onExportApprovedJson: () => void;
@@ -58,6 +59,7 @@ export function SeoBatchToolbar({
   onApproveSelected,
   onRejectSelected,
   onSyncAllApproved,
+  onRetryFailedSync,
   onRollbackSelected,
   onDeleteSelected,
   onExportApprovedJson,
@@ -441,10 +443,44 @@ export function SeoBatchToolbar({
             type="button"
             onClick={onSyncAllApproved}
             disabled={approvedUnsyncedCount === 0 || isSyncing || isReverting}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-cyan-500/40 bg-cyan-600 px-3 py-1.5 font-semibold text-white transition hover:bg-cyan-500 disabled:cursor-not-allowed disabled:border-slate-700 disabled:bg-slate-800 disabled:text-slate-500"
+            className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 font-semibold transition ${
+              isSyncing
+                ? "border-cyan-500/60 bg-cyan-700/80 text-cyan-100 cursor-wait shadow-sm shadow-cyan-900/40"
+                : "border-cyan-500/40 bg-cyan-600 text-white hover:bg-cyan-500 cursor-pointer disabled:cursor-not-allowed disabled:border-slate-700 disabled:bg-slate-800 disabled:text-slate-500"
+            }`}
           >
-            🛍️ Sync tất cả đã duyệt ({approvedUnsyncedCount})
+            {isSyncing ? (
+              <>
+                <svg className="animate-spin h-3.5 w-3.5 text-cyan-200" viewBox="0 0 24 24" fill="none">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                </svg>
+                <span>Đang đẩy Store ({approvedUnsyncedCount})...</span>
+              </>
+            ) : (
+              <>
+                <span>🛍️</span>
+                <span>Sync tất cả đã duyệt ({approvedUnsyncedCount})</span>
+              </>
+            )}
           </button>
+
+          {syncFailedCount > 0 && onRetryFailedSync && (
+            <button
+              type="button"
+              onClick={onRetryFailedSync}
+              disabled={isSyncing || isReverting}
+              className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 font-semibold transition ${
+                isSyncing
+                  ? "border-amber-500/60 bg-amber-700/80 text-amber-100 cursor-wait shadow-sm shadow-amber-900/40"
+                  : "border-amber-500/50 bg-amber-600 text-white hover:bg-amber-500 cursor-pointer disabled:cursor-not-allowed disabled:border-slate-700 disabled:bg-slate-800 disabled:text-slate-500 shadow-md shadow-amber-950/40"
+              }`}
+              title="Thử lại đẩy tất cả các sản phẩm bị lỗi lên Shopify Store"
+            >
+              <span>🔄</span>
+              <span>Thử lại các sản phẩm lỗi ({syncFailedCount})</span>
+            </button>
+          )}
 
           <button
             type="button"

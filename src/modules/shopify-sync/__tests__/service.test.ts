@@ -4,6 +4,7 @@ import assertStrict from "node:assert/strict";
 
 import {
   buildProductDescriptionHtml,
+  compactCustomizerConfigForMetafield,
   fromCustomizationNormalizerProduct,
   getShopifySyncRunner,
   replaceUrlsInObject,
@@ -613,5 +614,76 @@ test("syncSingleProduct retries assets omitted from a partial batch response", a
   assertStrict.equal(result.assetsUploadedCount, 2);
   assertStrict.deepEqual(individuallyUploaded, ["https://example.com/asset-2.png"]);
 });
+
+test("compactCustomizerConfigForMetafield safely compacts large customizer configs under 128KB Shopify limit", () => {
+  // Generate a mock customizer config mimicking large Amazon Nurse bags (>200KB)
+  const optionGroups = Array.from({ length: 10 }, (_, gIndex) => ({
+    id: `group-${gIndex}`,
+    label: `Choose Custom Option ${gIndex}`,
+    type: "OptionChooserComponent",
+    required: true,
+    defaultOptionId: `opt-${gIndex}-0`,
+    instructions: "Please choose one option",
+    options: Array.from({ length: 20 }, (_, oIndex) => ({
+      id: `opt-${gIndex}-${oIndex}`,
+      label: `Option Design Label ${oIndex}`,
+      price: { raw: "$0.00", amount: 0, currency: "USD" },
+      isAvailable: true,
+      overlayImage: {
+        url: `https://m.media-amazon.com/images/overlay-${gIndex}-${oIndex}.png`,
+        width: 2000,
+        height: 2000,
+        alt: `Overlay description for group ${gIndex} option ${oIndex}`,
+        friendlyFileName: `friendly-file-name-${gIndex}-${oIndex}.png`,
+      },
+      thumbnailImage: {
+        url: `https://m.media-amazon.com/images/thumb-${gIndex}-${oIndex}.png`,
+        width: 800,
+        height: 800,
+        alt: `Thumbnail description for group ${gIndex} option ${oIndex}`,
+        friendlyFileName: `thumbnail-file-name-${gIndex}-${oIndex}.png`,
+      },
+    })),
+  }));
+
+  const mockLargeConfig: Record<string, unknown> = {
+    hasCustomization: true,
+    shopifyProductId: "gid://shopify/Product/123",
+    surfaces: [
+      {
+        id: "surface-1",
+        label: "Front Mockup",
+        previewUrl: "https://m.media-amazon.com/images/surface-front.png",
+      },
+    ],
+    optionGroups,
+    assets: Array.from({ length: 200 }, (_, i) => ({
+      url: `https://m.media-amazon.com/images/asset-${i}.png`,
+      alt: `Asset ${i}`,
+    })),
+    rawConfig: {
+      redundantData: "x".repeat(30000),
+    },
+  };
+
+  const initialBytes = Buffer.byteLength(JSON.stringify(mockLargeConfig), "utf8");
+  assertStrict.ok(initialBytes > 131072, `Initial payload should exceed 128KB, got ${initialBytes} bytes`);
+
+  const compacted = compactCustomizerConfigForMetafield(mockLargeConfig);
+  const compactedBytes = Buffer.byteLength(JSON.stringify(compacted), "utf8");
+
+  assertStrict.ok(
+    compactedBytes <= 131072,
+    `Compacted payload must be <= 131072 bytes (128KB), got ${compactedBytes} bytes`,
+  );
+  assertStrict.equal((compacted.optionGroups as any[]).length, 10);
+  assertStrict.equal((compacted.surfaces as any[]).length, 1);
+  assertStrict.equal(compacted.hasCustomization, true);
+  // Verify image URLs are preserved
+  const firstOpt = (compacted.optionGroups as any[])[0].options[0];
+  assertStrict.equal(firstOpt.overlayImage.url, "https://m.media-amazon.com/images/overlay-0-0.png");
+  assertStrict.equal(firstOpt.thumbnailImage.url, "https://m.media-amazon.com/images/thumb-0-0.png");
+});
+
 
 
