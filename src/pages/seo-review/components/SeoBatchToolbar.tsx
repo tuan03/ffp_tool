@@ -27,6 +27,7 @@ export interface SeoBatchToolbarProps {
   readonly onRejectSelected: () => void;
   readonly onSyncAllApproved: () => void;
   readonly onRollbackSelected?: () => void;
+  readonly onDeleteSelected?: () => void;
   readonly onExportApprovedJson: () => void;
   readonly onClearAll: () => void;
 }
@@ -58,6 +59,7 @@ export function SeoBatchToolbar({
   onRejectSelected,
   onSyncAllApproved,
   onRollbackSelected,
+  onDeleteSelected,
   onExportApprovedJson,
   onClearAll,
 }: SeoBatchToolbarProps): React.JSX.Element {
@@ -415,6 +417,23 @@ export function SeoBatchToolbar({
               >
                 ✕ Từ chối ({selectedCount})
               </button>
+
+              {onDeleteSelected && (
+                <button
+                  type="button"
+                  onClick={onDeleteSelected}
+                  disabled={isSyncing || isReverting}
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold transition ${
+                    isSyncing || isReverting
+                      ? "bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed"
+                      : "bg-rose-950/80 text-rose-300 hover:bg-rose-900 border border-rose-800/80 cursor-pointer shadow-sm shadow-rose-950/50"
+                  }`}
+                  title="Xóa các sản phẩm đã chọn khỏi danh sách SEO Review"
+                >
+                  <span>🗑️</span>
+                  <span>Xóa ({selectedCount})</span>
+                </button>
+              )}
             </>
           )}
 

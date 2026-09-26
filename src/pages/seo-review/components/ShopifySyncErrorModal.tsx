@@ -7,6 +7,7 @@ export interface ShopifySyncErrorModalProps {
   readonly isOpen: boolean;
   readonly onClose: () => void;
   readonly onRetry?: (id: string) => void;
+  readonly onDelete?: (id: string) => void;
 }
 
 export function ShopifySyncErrorModal({
@@ -14,6 +15,7 @@ export function ShopifySyncErrorModal({
   isOpen,
   onClose,
   onRetry,
+  onDelete,
 }: ShopifySyncErrorModalProps): React.JSX.Element | null {
   const [copied, setCopied] = useState(false);
 
@@ -139,13 +141,29 @@ export function ShopifySyncErrorModal({
 
         {/* Footer */}
         <div className="p-4 bg-slate-950 border-t border-slate-800 flex items-center justify-between gap-3">
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-4 py-2 rounded-xl border border-slate-700 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold transition"
-          >
-            Đóng
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 rounded-xl border border-slate-700 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold transition cursor-pointer"
+            >
+              Đóng
+            </button>
+            {onDelete && (
+              <button
+                type="button"
+                onClick={() => {
+                  onDelete(product.id);
+                  onClose();
+                }}
+                className="px-3.5 py-2 rounded-xl border border-rose-800/60 bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer shadow-sm shadow-rose-950/40"
+                title="Xóa sản phẩm này khỏi danh sách SEO Review"
+              >
+                <span>🗑️</span>
+                <span>Xóa khỏi Review</span>
+              </button>
+            )}
+          </div>
 
           {onRetry && (
             <button

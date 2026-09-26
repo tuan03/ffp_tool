@@ -34,6 +34,7 @@ import type {
 
 const SESSION_STORAGE_KEY = "ffp_seo_review_session_v1";
 const VIEW_MODE_STORAGE_KEY = "ffp_seo_review_view_mode";
+const CLEANUP_STUCK_FAILED_KEY = "ffp_seo_review_cleaned_stuck_failed_v1";
 
 function toPushProductItem(vm: SeoProductUiViewModel): SeoReviewPushProductItem {
   const printMaster = vm.sourcePinterestItem?.printMaster;
@@ -119,11 +120,19 @@ export function SeoReviewPage({
         if (saved) {
           const parsed = JSON.parse(saved);
           if (Array.isArray(parsed) && parsed.length > 0) {
-            // Filter out any leftover fake sample data from previous sessions and clear stuck syncing/reverting states
+            const hasCleaned = window.sessionStorage.getItem(CLEANUP_STUCK_FAILED_KEY);
+            // Filter out any leftover fake sample data and remove stuck failed sync product from previous sessions
             const realOnly = parsed
               .filter(
-                (p: { id?: string }) =>
-                  p && typeof p.id === "string" && !p.id.startsWith("sample-prod-"),
+                (p: { id?: string; shopifySyncStatus?: string }) => {
+                  if (!p || typeof p.id !== "string" || p.id.startsWith("sample-prod-")) {
+                    return false;
+                  }
+                  if (!hasCleaned && p.shopifySyncStatus === "failed") {
+                    return false;
+                  }
+                  return true;
+                },
               )
               .map((p: SeoProductUiViewModel) => {
                 let updated = p;
@@ -131,6 +140,11 @@ export function SeoReviewPage({
                 if (updated.isReverting) updated = { ...updated, isReverting: false };
                 return updated;
               });
+
+            if (!hasCleaned) {
+              window.sessionStorage.setItem(CLEANUP_STUCK_FAILED_KEY, "true");
+              window.sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(realOnly));
+            }
             return realOnly;
           }
         }
@@ -1493,15 +1507,84 @@ export function SeoReviewPage({
     URL.revokeObjectURL(url);
   }
 
+  const handleDeleteProduct = useCallback((id: string) => {
+    const target = products.find((p) => p.id === id);
+    if (!target) return;
+    setProducts((prev) => {
+      const nextProducts = prev.filter((p) => p.id !== id);
+      if (typeof window !== "undefined" && window.sessionStorage) {
+        try {
+          const legacy = nextProducts.filter((p) => !p.coordinatorReview);
+          window.sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(legacy));
+        } catch {
+          // ignore
+        }
+      }
+      return nextProducts;
+    });
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+    if (activeProduct?.id === id) {
+      setActiveProduct(null);
+      setIsDrawerOpen(false);
+    }
+    setSyncFeedback({
+      type: "success",
+      message: `✓ Đã xóa sản phẩm "${target.productTitle.value}" khỏi danh sách Review.`,
+    });
+  }, [products, activeProduct, setSyncFeedback]);
+
+  const handleDeleteSelected = useCallback(() => {
+    if (selectedIds.size === 0) return;
+    const count = selectedIds.size;
+    if (!confirm(`Xóa ${count} sản phẩm đã chọn khỏi danh sách SEO Review?`)) return;
+    setProducts((prev) => {
+      const nextProducts = prev.filter((p) => !selectedIds.has(p.id));
+      if (typeof window !== "undefined" && window.sessionStorage) {
+        try {
+          const legacy = nextProducts.filter((p) => !p.coordinatorReview);
+          window.sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(legacy));
+        } catch {
+          // ignore
+        }
+      }
+      return nextProducts;
+    });
+    setSelectedIds(new Set());
+    if (activeProduct && selectedIds.has(activeProduct.id)) {
+      setActiveProduct(null);
+      setIsDrawerOpen(false);
+    }
+    setSyncFeedback({
+      type: "success",
+      message: `✓ Đã xóa ${count} sản phẩm đã chọn khỏi danh sách Review.`,
+    });
+  }, [selectedIds, activeProduct, setSyncFeedback]);
+
   async function handleClearAll(): Promise<void> {
     if (products.length === 0) return;
     if (!confirm(`Xóa ${products.length} sản phẩm khỏi danh sách SEO Review? Sản phẩm đã sync trên Shopify vẫn được giữ nguyên.`)) return;
     try {
-      const outcome = amazonCrawlerReviews ? await amazonCrawlerReviews.deleteAll() : { deleted: 0, skipped: 0 };
-      const remainingProducts = amazonCrawlerReviews
-        ? (await amazonCrawlerReviews.list()).map((item) =>
-          adaptAmazonCrawlerReviewToViewModel(item, amazonCrawlerReviews.imageUrl))
-        : [];
+      let outcome = { deleted: 0, skipped: 0 };
+      if (amazonCrawlerReviews) {
+        try {
+          outcome = await amazonCrawlerReviews.deleteAll();
+        } catch {
+          // Crawler backend may be offline; proceed to delete local/session products anyway
+        }
+      }
+      let remainingProducts: SeoProductUiViewModel[] = [];
+      if (amazonCrawlerReviews) {
+        try {
+          remainingProducts = (await amazonCrawlerReviews.list()).map((item) =>
+            adaptAmazonCrawlerReviewToViewModel(item, amazonCrawlerReviews.imageUrl));
+        } catch {
+          remainingProducts = [];
+        }
+      }
       setProducts(remainingProducts);
       setSelectedIds(new Set());
       setActiveProduct(null);
@@ -1679,6 +1762,7 @@ export function SeoReviewPage({
         onClearSelection={handleClearSelection}
         onApproveSelected={handleApproveSelected}
         onRejectSelected={handleRejectSelected}
+        onDeleteSelected={handleDeleteSelected}
         onSyncAllApproved={() => void handleSyncAllApproved()}
         onRollbackSelected={handleRollbackSelected}
         onExportApprovedJson={handleExportApprovedJson}
@@ -1727,6 +1811,7 @@ export function SeoReviewPage({
               onApproveProduct={handleApproveProduct}
               onRejectProduct={handleRejectProduct}
               onRollbackProduct={handleRollbackProduct}
+              onDeleteProduct={handleDeleteProduct}
               onRetrySync={handleRetrySync}
               onViewSyncError={handleViewSyncError}
             />
@@ -1746,6 +1831,7 @@ export function SeoReviewPage({
               onApproveProduct={handleApproveProduct}
               onRejectProduct={handleRejectProduct}
               onRollbackProduct={handleRollbackProduct}
+              onDeleteProduct={handleDeleteProduct}
               onZoomImage={handleOpenZoomImage}
               onRetrySync={handleRetrySync}
               onViewSyncError={handleViewSyncError}
@@ -1765,6 +1851,7 @@ export function SeoReviewPage({
               onApproveProduct={handleApproveProduct}
               onRejectProduct={handleRejectProduct}
               onRollbackProduct={handleRollbackProduct}
+              onDeleteProduct={handleDeleteProduct}
               onApproveAndNext={handleApproveAndNext}
               onRejectAndNext={handleRejectAndNext}
               onZoomImage={handleOpenZoomImage}
@@ -1789,6 +1876,7 @@ export function SeoReviewPage({
           handleRejectProduct(id);
           setIsDrawerOpen(false);
         }}
+        onDelete={handleDeleteProduct}
         onRollback={(id) => {
           void handleRollbackProduct(id);
         }}
@@ -1811,6 +1899,7 @@ export function SeoReviewPage({
         product={errorModalProduct}
         onClose={() => setErrorModalProduct(null)}
         onRetry={handleRetrySync}
+        onDelete={handleDeleteProduct}
       />
 
       {/* High-Resolution Image Zoom Lightbox */}

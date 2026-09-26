@@ -16,6 +16,7 @@ export interface ProductDetailDrawerProps {
   readonly onEdit: (product: SeoProductUiViewModel) => void;
   readonly onApprove: (id: string) => void;
   readonly onReject: (id: string) => void;
+  readonly onDelete?: (id: string) => void;
   readonly onRetrySync?: (id: string) => void;
   readonly onRollback?: (id: string) => void;
   readonly onZoomImage?: (images: readonly ZoomImageItem[], initialIndex?: number) => void;
@@ -43,6 +44,7 @@ export function ProductDetailDrawer({
   onEdit,
   onApprove,
   onReject,
+  onDelete,
   onRetrySync,
   onRollback,
   onZoomImage,
@@ -1036,6 +1038,19 @@ export function ProductDetailDrawer({
                     )}
                   </button>
                 )}
+
+              {onDelete && (
+                <button
+                  type="button"
+                  onClick={() => onDelete(product.id)}
+                  disabled={product.isSyncing || product.isReverting}
+                  className="px-3.5 py-2 rounded-lg text-sm font-semibold transition bg-rose-950/40 text-rose-300 hover:bg-rose-900/70 border border-rose-800/60 cursor-pointer flex items-center gap-1.5 shadow-sm shadow-rose-950/40"
+                  title="Xóa sản phẩm này khỏi danh sách SEO Review"
+                >
+                  <span>🗑️</span>
+                  <span>Xóa khỏi Review</span>
+                </button>
+              )}
 
               <button
                 type="button"

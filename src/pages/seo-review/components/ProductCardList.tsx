@@ -14,6 +14,7 @@ export interface ProductCardListProps {
   readonly onRetrySync?: (id: string) => void;
   readonly onViewSyncError?: (product: SeoProductUiViewModel) => void;
   readonly onRollbackProduct?: (id: string) => void;
+  readonly onDeleteProduct?: (id: string) => void;
 }
 
 export function ProductCardList({
@@ -28,6 +29,7 @@ export function ProductCardList({
   onRetrySync,
   onViewSyncError,
   onRollbackProduct,
+  onDeleteProduct,
 }: ProductCardListProps): React.JSX.Element {
   function renderSeoStatusBadge(status: SeoProcessingStatus, isMock: boolean) {
     if (status === "completed") {
@@ -452,6 +454,22 @@ export function ProductCardList({
                   >
                     👁️
                   </button>
+
+                  {onDeleteProduct && (
+                    <button
+                      type="button"
+                      title="Xóa sản phẩm này khỏi SEO Review"
+                      onClick={() => onDeleteProduct(product.id)}
+                      disabled={product.isSyncing || product.isReverting}
+                      className={`p-1.5 rounded-lg text-xs font-medium transition ${
+                        product.isSyncing || product.isReverting
+                          ? "bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed"
+                          : "text-rose-400 hover:text-rose-200 bg-rose-950/40 hover:bg-rose-900/60 border border-rose-800/50 cursor-pointer shadow-sm shadow-rose-950/40"
+                      }`}
+                    >
+                      🗑️
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
