@@ -52,6 +52,9 @@ log-git.cmd
 stash-git.cmd
 stash-apply-git.cmd
 stash-drop-git.cmd
+test-e2e-b1-b6.cmd
+test-pin-seo-content.cmd
+agent-dev.cmd
 #=== [end] - module SEO Content - Lth Loi ===
 
 # Manual SEO Content smoke-test artifacts and developer-specific inputs.
