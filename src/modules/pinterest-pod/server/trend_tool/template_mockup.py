@@ -347,13 +347,13 @@ def analyze_reference_image(
         product_label = raw_target or active_niche or "POD commercial product"
 
     # Deterministic content hash for caching (combining reference image and artwork thumbnail)
-    thumb_ref = image.resize((min(image.width, 256), min(image.height, 256)))
+    thumb_ref = image.convert("RGB").resize((min(image.width, 256), min(image.height, 256)))
     buf_ref = io.BytesIO()
     thumb_ref.save(buf_ref, format="JPEG", quality=75)
 
     buf_art_bytes = b""
     if artwork is not None:
-        thumb_art = artwork.resize((min(artwork.width, 256), min(artwork.height, 256)))
+        thumb_art = artwork.convert("RGB").resize((min(artwork.width, 256), min(artwork.height, 256)))
         buf_art = io.BytesIO()
         thumb_art.save(buf_art, format="JPEG", quality=75)
         buf_art_bytes = buf_art.getvalue()
@@ -653,7 +653,22 @@ def build_direct_ai_mockup(
                 concept_short = str(reference_analysis.get("visual_concept", ""))[:70]
                 log(progress, f"AI Vision phân tích ảnh tham chiếu: [{scene_label}] - {concept_short}...")
         except Exception as an_exc:
-            LOG.warning("Failed to analyze reference image: %s", an_exc)
+            LOG.warning("Failed to analyze reference surfaces with native mask: %s; trying geometric analysis fallback...", an_exc)
+            try:
+                reference_analysis = analyze_reference_image(
+                    client,
+                    room_img,
+                    target,
+                    artwork=artwork,
+                    model=quality_model,
+                    cache_dir=cache_dir,
+                )
+                if progress and reference_analysis:
+                    scene_label = reference_analysis.get("scene_title", "Reference Shot")
+                    concept_short = str(reference_analysis.get("visual_concept", ""))[:70]
+                    log(progress, f"AI Vision phân tích hình học tham chiếu (fallback): [{scene_label}] - {concept_short}...")
+            except Exception as fb_exc:
+                LOG.warning("Fallback geometric reference analysis also failed: %s", fb_exc)
 
     active_pose_name = reference_analysis.get("scene_title", pose.name) if reference_analysis else pose.name
     custom_qa_checklist = reference_analysis.get("qa_checklist") if reference_analysis else None

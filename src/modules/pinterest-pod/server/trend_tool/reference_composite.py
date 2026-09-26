@@ -132,7 +132,7 @@ def compose_reference_artwork(
         confidence = surface.get("confidence")
         geometry = surface.get("geometry")
         if (geometry not in {"planar", "curved", "folded"} or isinstance(confidence, bool)
-                or not isinstance(confidence, (int, float)) or not 0.95 <= confidence <= 1):
+                or not isinstance(confidence, (int, float)) or not 0.85 <= confidence <= 1):
             raise ValueError("SURFACE_REVIEW_REQUIRED: uncertain or unsupported geometry")
         if geometry in {"curved", "folded"} or "vertices" in surface:
             visible = _visible_segmentation(surface, reference.size)
