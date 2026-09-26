@@ -2,6 +2,7 @@ import { Blob } from "node:buffer";
 
 import { FormData } from "undici";
 
+import { executeChunkedWrite } from "../chunked-write";
 import { GatewayError, mapUserErrorsToGatewayError, type MutationUserErrorItem } from "../errors";
 import { createStoreTransport } from "../proxy-transport";
 import type { ShopifyGraphqlClient } from "../shopify-graphql-client";
@@ -511,24 +512,62 @@ export async function executeFilesBulkCreate(
     return input;
   });
 
-  const raw = await client.query<FileCreateResponse>(
-    store,
-    FILE_CREATE_MUTATION,
-    { files: fileInputs },
-    { isWrite: true, requestId },
-  );
+  type CreatedNode = NonNullable<FileCreateResponse["fileCreate"]["files"]>[number];
+  const chunkedResult = await executeChunkedWrite<Record<string, unknown>, CreatedNode[]>({
+    items: fileInputs,
+    chunkSize: 250,
+    operationName: "files.bulkCreate",
+    executeChunk: async (chunk, chunkIndex) => {
+      const chunkReqId = requestId ? `${requestId}:${chunkIndex}` : undefined;
+      const raw = await client.query<FileCreateResponse>(
+        store,
+        FILE_CREATE_MUTATION,
+        { files: chunk },
+        { isWrite: true, requestId: chunkReqId },
+      );
 
-  if (
-    raw.fileCreate.userErrors &&
-    raw.fileCreate.userErrors.length > 0 &&
-    (!raw.fileCreate.files || raw.fileCreate.files.length === 0)
-  ) {
-    throw mapUserErrorsToGatewayError(raw.fileCreate.userErrors);
-  }
+      const createdNodes = (raw.fileCreate.files ?? []).filter(Boolean);
+      const userErrors = raw.fileCreate.userErrors ?? [];
+
+      if (userErrors.length > 0) {
+        if (createdNodes.length > 0) {
+          const createdFileIds = createdNodes.map((n) => n.id);
+          const errMsg = `Shopify fileCreate partially created ${createdNodes.length} file(s) but failed with user errors: ${userErrors.map((e) => e.message).join(", ")}`;
+          throw new GatewayError(
+            errMsg,
+            "SHOPIFY_PARTIAL_WRITE",
+            409,
+            undefined,
+            undefined,
+            userErrors.flatMap((e) => (e.field ? [...e.field] : [])),
+            false,
+            {
+              createdFileIds,
+              userErrors,
+              reconciliationRequired: true,
+            },
+            true,
+          );
+        }
+        throw mapUserErrorsToGatewayError(userErrors);
+      }
+
+      return createdNodes as CreatedNode[];
+    },
+    extractCompletedDetails: (completedResults) => {
+      const allFiles = completedResults.flat().filter(Boolean);
+      return {
+        completedCount: allFiles.length,
+        createdFileIds: allFiles.map((f) => f.id),
+      };
+    },
+  });
+
+  const allCreatedNodes = chunkedResult.chunkResults.flat();
 
   const results: FilesBulkCreateItemResult[] = rawFiles.map((f, idx) => {
     const originalSource = typeof f.originalSource === "string" ? f.originalSource.trim() : "";
-    const node = raw.fileCreate.files?.[idx];
+    const node = allCreatedNodes[idx];
     if (!node) {
       return {
         originalSource,
@@ -650,6 +689,7 @@ export async function executeFilesDelete(
   store: StoreConfig,
   payload: unknown,
   executionMode: "preview" | "apply",
+  requestId?: string,
 ): Promise<FilesDeleteData> {
   const p = payload as Record<string, unknown> | null;
   if (!p || !Array.isArray(p.fileIds)) {
@@ -671,34 +711,224 @@ export async function executeFilesDelete(
     };
   }
 
-  const allDeleted: string[] = [];
-  const chunkSize = 250;
+  const chunkedResult = await executeChunkedWrite<string, readonly string[]>({
+    items: fileIds,
+    chunkSize: 250,
+    operationName: "files.delete",
+    executeChunk: async (chunk, chunkIndex) => {
+      const chunkReqId = requestId ? `${requestId}:del:${chunkIndex}` : undefined;
+      const raw = await client.query<RawFileDeleteResponse>(
+        store,
+        FILE_DELETE_MUTATION,
+        { fileIds: chunk },
+        { isWrite: true, requestId: chunkReqId },
+      );
 
-  for (let i = 0; i < fileIds.length; i += chunkSize) {
-    const chunk = fileIds.slice(i, i + chunkSize);
-    const raw = await client.query<RawFileDeleteResponse>(
-      store,
-      FILE_DELETE_MUTATION,
-      { fileIds: chunk },
-      { isWrite: true },
-    );
+      if (!raw?.fileDelete) {
+        throw new GatewayError("Shopify returned empty fileDelete response", "SHOPIFY_USER_ERROR", 502);
+      }
 
-    if (!raw?.fileDelete) {
-      throw new GatewayError("Shopify returned empty fileDelete response", "SHOPIFY_USER_ERROR", 502);
-    }
+      const deletedIds = raw.fileDelete.deletedFileIds ?? [];
+      const userErrors = raw.fileDelete.userErrors ?? [];
 
-    if (raw.fileDelete.userErrors && raw.fileDelete.userErrors.length > 0) {
-      throw mapUserErrorsToGatewayError(raw.fileDelete.userErrors);
-    }
+      if (userErrors.length > 0) {
+        if (deletedIds.length > 0) {
+          const errMsg = `Shopify fileDelete partially deleted ${deletedIds.length} file(s) but failed with user errors: ${userErrors.map((e) => e.message).join(", ")}`;
+          throw new GatewayError(
+            errMsg,
+            "SHOPIFY_PARTIAL_WRITE",
+            409,
+            undefined,
+            undefined,
+            userErrors.flatMap((e) => (e.field ? [...e.field] : [])),
+            false,
+            {
+              deletedFileIds: deletedIds,
+              userErrors,
+              reconciliationRequired: true,
+            },
+            true,
+          );
+        }
+        throw mapUserErrorsToGatewayError(userErrors);
+      }
 
-    if (raw.fileDelete.deletedFileIds) {
-      allDeleted.push(...raw.fileDelete.deletedFileIds);
-    }
-  }
+      return deletedIds;
+    },
+    extractCompletedDetails: (completedResults) => {
+      const allDeleted = completedResults.flat();
+      return {
+        completedCount: allDeleted.length,
+        deletedFileIds: allDeleted,
+      };
+    },
+  });
+
+  const allDeleted = chunkedResult.chunkResults.flat();
 
   return {
     success: true,
     deletedFileIds: allDeleted,
+  };
+}
+
+export const FILES_LIST_QUERY = `
+  query FilesList($first: Int, $after: String, $query: String) {
+    files(first: $first, after: $after, query: $query) {
+      edges {
+        node {
+          id
+          fileStatus
+          alt
+          createdAt
+          updatedAt
+          ... on MediaImage {
+            image {
+              url
+              width
+              height
+            }
+          }
+          ... on GenericFile {
+            url
+            mimeType
+            originalFileSize
+          }
+        }
+        cursor
+      }
+      pageInfo {
+        hasNextPage
+        hasPreviousPage
+        startCursor
+        endCursor
+      }
+    }
+  }
+`;
+
+export interface FilesListPayload {
+  readonly first?: number;
+  readonly after?: string;
+  readonly query?: string;
+}
+
+export interface ShopifyFileItem {
+  readonly id: string;
+  readonly url: string;
+  readonly altText?: string;
+  readonly fileStatus: string;
+  readonly createdAt: string;
+  readonly updatedAt?: string;
+  readonly mimeType?: string;
+  readonly width?: number;
+  readonly height?: number;
+}
+
+export interface FilesListData {
+  readonly files: readonly ShopifyFileItem[];
+  readonly pageInfo: {
+    readonly hasNextPage: boolean;
+    readonly hasPreviousPage?: boolean;
+    readonly startCursor?: string | null;
+    readonly endCursor?: string | null;
+  };
+}
+
+interface RawFilesListResponse {
+  readonly files?: {
+    readonly edges?: readonly {
+      readonly cursor: string;
+      readonly node: {
+        readonly id: string;
+        readonly fileStatus: string;
+        readonly alt?: string | null;
+        readonly createdAt: string;
+        readonly updatedAt?: string | null;
+        readonly image?: {
+          readonly url: string;
+          readonly width?: number | null;
+          readonly height?: number | null;
+        } | null;
+        readonly url?: string | null;
+        readonly mimeType?: string | null;
+        readonly originalFileSize?: number | null;
+      };
+    }[];
+    readonly pageInfo?: {
+      readonly hasNextPage?: boolean;
+      readonly hasPreviousPage?: boolean;
+      readonly startCursor?: string | null;
+      readonly endCursor?: string | null;
+    };
+  };
+}
+
+export async function executeFilesList(
+  client: ShopifyGraphqlClient,
+  store: StoreConfig,
+  payload: unknown,
+  executionMode: "preview" | "apply",
+): Promise<FilesListData> {
+  const p = (payload && typeof payload === "object" ? payload : {}) as Record<string, unknown>;
+  const first = typeof p.first === "number" && p.first > 0 ? Math.min(p.first, 250) : 50;
+  const after = typeof p.after === "string" && p.after.trim() !== "" ? p.after.trim() : undefined;
+  const query = typeof p.query === "string" && p.query.trim() !== "" ? p.query.trim() : undefined;
+
+  if (executionMode === "preview") {
+    return {
+      files: [
+        {
+          id: "gid://shopify/MediaImage/preview-file-1",
+          url: "https://cdn.shopify.com/s/files/1/0000/preview-file-1.jpg",
+          altText: "Preview Image",
+          fileStatus: "READY",
+          createdAt: new Date().toISOString(),
+          width: 800,
+          height: 600,
+        },
+      ],
+      pageInfo: {
+        hasNextPage: false,
+        hasPreviousPage: false,
+        startCursor: "cur-1",
+        endCursor: "cur-1",
+      },
+    };
+  }
+
+  const raw = await client.query<RawFilesListResponse>(
+    store,
+    FILES_LIST_QUERY,
+    { first, after, query },
+    { isWrite: false },
+  );
+
+  const edges = raw?.files?.edges ?? [];
+  const files: ShopifyFileItem[] = edges.map((e) => {
+    const node = e.node;
+    const url = node.image?.url ?? node.url ?? "";
+    return {
+      id: node.id,
+      url,
+      altText: node.alt ?? undefined,
+      fileStatus: node.fileStatus,
+      createdAt: node.createdAt,
+      updatedAt: node.updatedAt ?? undefined,
+      mimeType: node.mimeType ?? undefined,
+      width: typeof node.image?.width === "number" ? node.image.width : undefined,
+      height: typeof node.image?.height === "number" ? node.image.height : undefined,
+    };
+  });
+
+  return {
+    files,
+    pageInfo: {
+      hasNextPage: Boolean(raw?.files?.pageInfo?.hasNextPage),
+      hasPreviousPage: Boolean(raw?.files?.pageInfo?.hasPreviousPage),
+      startCursor: raw?.files?.pageInfo?.startCursor ?? null,
+      endCursor: raw?.files?.pageInfo?.endCursor ?? null,
+    },
   };
 }
 

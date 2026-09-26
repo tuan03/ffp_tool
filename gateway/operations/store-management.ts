@@ -10,6 +10,10 @@ export interface GatewayStoreSummary {
   readonly connected?: boolean;
   readonly productTypes?: readonly string[];
   readonly defaultProductType?: string;
+  readonly clientId?: string;
+  readonly hasProxy?: boolean;
+  readonly proxyUrl?: string;
+  readonly proxyUsername?: string;
 }
 
 export function toStoreSummary(config: StoreConfig, connected?: boolean): GatewayStoreSummary {
@@ -21,6 +25,10 @@ export function toStoreSummary(config: StoreConfig, connected?: boolean): Gatewa
     connected,
     productTypes: config.productTypes,
     defaultProductType: config.defaultProductType,
+    clientId: config.auth.clientId,
+    hasProxy: Boolean(config.proxy?.url),
+    proxyUrl: config.proxy?.url,
+    proxyUsername: config.proxy?.username,
   };
 }
 

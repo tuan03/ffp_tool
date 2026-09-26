@@ -53,7 +53,7 @@ const PRODUCT_CREATE_MUTATION = `
         }
         createdAt
         updatedAt
-        variants(first: 100) {
+        variants(first: 250) {
           pageInfo {
             hasNextPage
           }
@@ -166,7 +166,7 @@ const PRODUCT_UPDATE_MUTATION = `
         }
         createdAt
         updatedAt
-        variants(first: 100) {
+        variants(first: 250) {
           pageInfo {
             hasNextPage
           }
@@ -426,6 +426,18 @@ export async function executeProductsCreate(
   const title = typeof productInput.title === "string" ? productInput.title.trim() : "";
   if (!title) {
     throw new GatewayError("Product title is required", "SHOPIFY_USER_ERROR", 400);
+  }
+
+  if (Array.isArray(productInput.variants)) {
+    for (const v of productInput.variants as readonly Record<string, unknown>[]) {
+      if (v && typeof v === "object" && "inventoryQuantity" in v && v.inventoryQuantity !== undefined) {
+        throw new GatewayError(
+          "inventoryQuantity is not supported by Catalog API. Use the Shopify Inventory API.",
+          "SHOPIFY_INVALID_INPUT",
+          400,
+        );
+      }
+    }
   }
 
   if (mode === "preview") {

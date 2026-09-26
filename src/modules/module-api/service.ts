@@ -25,10 +25,14 @@ import type {
   ShopifyFilesBulkCreateResponse,
   ShopifyFilesDeleteInput,
   ShopifyFilesDeleteResponse,
+  ShopifyFilesListInput,
+  ShopifyFilesListResponse,
   ShopifyMetafieldsSetInput,
   ShopifyMetafieldsSetResponse,
   ShopifyMetafieldsGetInput,
   ShopifyMetafieldsGetResponse,
+  ShopifyMetafieldsDeleteInput,
+  ShopifyMetafieldsDeleteResponse,
   ShopifyOperation,
   ShopifyProductsBulkUpdateInput,
   ShopifyProductsBulkUpdateResponse,
@@ -40,6 +44,8 @@ import type {
   ShopifyProductsGetResponse,
   ShopifyProductsListInput,
   ShopifyProductsListResponse,
+  ShopifyProductsPreflightAmazonAsinsInput,
+  ShopifyProductsPreflightAmazonAsinsResponse,
   ShopifyProductsUpdateInput,
   ShopifyProductsUpdateResponse,
   ShopifyStoresGetInput,
@@ -62,6 +68,7 @@ const READ_OPERATIONS: ReadonlySet<ShopifyOperation> = new Set([
   "products.list",
   "products.get",
   "metafields.get",
+  "files.list",
   "collections.list",
   "collections.get",
   "stores.list",
@@ -76,6 +83,7 @@ const ALL_OPERATIONS: ReadonlySet<ShopifyOperation> = new Set([
   "products.update",
   "products.bulkUpdate",
   "products.delete",
+  "products.preflightAmazonAsins",
   "variants.update",
   "variants.bulkUpdate",
   "variants.bulkCreate",
@@ -83,8 +91,10 @@ const ALL_OPERATIONS: ReadonlySet<ShopifyOperation> = new Set([
   "files.bulkCreate",
   "files.stageBinary",
   "files.delete",
+  "files.list",
   "metafields.set",
   "metafields.get",
+  "metafields.delete",
   "collections.list",
   "collections.get",
   "collections.create",
@@ -427,6 +437,15 @@ export function createModuleApiRunner(
 
     const isRead = isShopifyReadOperation(input.operation);
 
+    if (!isRead && "mode" in input && input.mode === "apply") {
+      if (!input.requestId || input.requestId.trim() === "") {
+        throw new ShopifyApiError(
+          "requestId is required for write operations in apply mode",
+          "SHOPIFY_USER_ERROR",
+        );
+      }
+    }
+
     const requestBody: Record<string, unknown> = {
       operation: input.operation,
       payload: effectivePayload,
@@ -458,10 +477,7 @@ export function createModuleApiRunner(
       (config as Record<string, unknown> | undefined)?.GATEWAY_AUTH_TOKEN as string | undefined ??
       (dependencies as Record<string, unknown> | undefined)?.gatewayAuthToken as string | undefined ??
       (dependencies as Record<string, unknown> | undefined)?.GATEWAY_AUTH_TOKEN as string | undefined ??
-      (typeof process !== "undefined" && process.env ? process.env.GATEWAY_AUTH_TOKEN : undefined) ??
-      (typeof import.meta !== "undefined" && "env" in import.meta && (import.meta as { env?: Record<string, unknown> }).env
-        ? ((import.meta as { env?: Record<string, unknown> }).env?.VITE_GATEWAY_AUTH_TOKEN as string | undefined)
-        : undefined);
+      (typeof process !== "undefined" && process.env ? process.env.GATEWAY_AUTH_TOKEN : undefined);
 
     if (authToken && typeof authToken === "string" && authToken.trim() !== "") {
       headers["X-Gateway-Key"] = authToken.trim();
@@ -595,10 +611,14 @@ export function createModuleApiRunner(
         fields,
         retryable,
         details,
+        reconciliationRequired: bodyRecRequired,
       } = extractErrorFromPayload(parsedObj);
       const errorCode = bodyCode ?? "SHOPIFY_USER_ERROR";
       const errorMessage = sanitizeErrorMessage(bodyMessage, "Shopify gateway operation failed");
-      throw new ShopifyApiError(errorMessage, errorCode, undefined, fields, retryable, details);
+      const reconciliationRequired =
+        bodyRecRequired ??
+        (errorCode === "SHOPIFY_PARTIAL_WRITE" || errorCode === "SHOPIFY_UNKNOWN_WRITE_STATE" ? true : undefined);
+      throw new ShopifyApiError(errorMessage, errorCode, undefined, fields, retryable, details, reconciliationRequired);
     }
 
     if (!hasData) {
@@ -640,14 +660,17 @@ export async function runModuleApi(input: ShopifyProductsCreateInput): Promise<S
 export async function runModuleApi(input: ShopifyProductsUpdateInput): Promise<ShopifyProductsUpdateResponse>;
 export async function runModuleApi(input: ShopifyProductsBulkUpdateInput): Promise<ShopifyProductsBulkUpdateResponse>;
 export async function runModuleApi(input: ShopifyProductsDeleteInput): Promise<ShopifyProductsDeleteResponse>;
+export async function runModuleApi(input: ShopifyProductsPreflightAmazonAsinsInput): Promise<ShopifyProductsPreflightAmazonAsinsResponse>;
 export async function runModuleApi(input: ShopifyVariantsUpdateInput): Promise<ShopifyVariantsUpdateResponse>;
 export async function runModuleApi(input: ShopifyVariantsBulkUpdateInput): Promise<ShopifyVariantsBulkUpdateResponse>;
 export async function runModuleApi(input: ShopifyVariantsBulkCreateInput): Promise<ShopifyVariantsBulkCreateResponse>;
 export async function runModuleApi(input: ShopifyFilesCreateInput): Promise<ShopifyFilesCreateResponse>;
 export async function runModuleApi(input: ShopifyFilesBulkCreateInput): Promise<ShopifyFilesBulkCreateResponse>;
 export async function runModuleApi(input: ShopifyFilesDeleteInput): Promise<ShopifyFilesDeleteResponse>;
+export async function runModuleApi(input: ShopifyFilesListInput): Promise<ShopifyFilesListResponse>;
 export async function runModuleApi(input: ShopifyMetafieldsSetInput): Promise<ShopifyMetafieldsSetResponse>;
 export async function runModuleApi(input: ShopifyMetafieldsGetInput): Promise<ShopifyMetafieldsGetResponse>;
+export async function runModuleApi(input: ShopifyMetafieldsDeleteInput): Promise<ShopifyMetafieldsDeleteResponse>;
 export async function runModuleApi(input: ShopifyCollectionsListInput): Promise<ShopifyCollectionsListResponse>;
 export async function runModuleApi(input: ShopifyCollectionsGetInput): Promise<ShopifyCollectionsGetResponse>;
 export async function runModuleApi(input: ShopifyCollectionsCreateInput): Promise<ShopifyCollectionsCreateResponse>;

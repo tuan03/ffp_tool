@@ -99,7 +99,7 @@ for (const key of seoEnvironmentKeys) {
 if (env.GATEWAY_AUTH_TOKEN) {
   process.env.GATEWAY_AUTH_TOKEN = env.GATEWAY_AUTH_TOKEN;
 }
-const storeId = env.GATEWAY_STORE_ID?.trim();
+let storeId = env.GATEWAY_STORE_ID?.trim();
 process.env.SEO_CONFLICT_CORPUS_PATH = process.env.SEO_CONFLICT_CORPUS_PATH
   || (storeId ? `.runtime/seo-conflict-corpus-${storeId}.json` : ".runtime/seo-conflict-corpus.json");
 env.SHOPIFY_PROXY_CONFIG = env.SHOPIFY_PROXY_CONFIG || env.AMAZON_CRAWLER_PROXY_CONFIG || "config/amazon-crawler-profiles.json";
@@ -127,15 +127,18 @@ interface PipelineTimings {
   totalMs?: number;
 }
 
-const configuredStores = loadBootstrappedStores({ env });
-const baseStore = storeId ? configuredStores.find((store) => store.storeId === storeId) : undefined;
+let configuredStores = loadBootstrappedStores({ env });
+let baseStore = storeId ? configuredStores.find((store) => store.storeId === storeId) : (configuredStores.length > 0 ? configuredStores[0] : undefined);
+if (!storeId && baseStore) {
+  storeId = baseStore.storeId;
+}
 const shopAdminHandle = baseStore ? baseStore.shopDomain.replace(/\.myshopify\.com$/i, "") : "";
-const proxyStores = storeId
+let proxyStores = storeId
   ? configuredStores.filter(
       (store) => store.storeId.startsWith(`${storeId}--`) && store.proxy?.url && store.proxy.failClosed !== false,
     )
   : [];
-const effectiveStores = proxyStores.length > 0 ? proxyStores : (baseStore ? [baseStore] : []);
+let effectiveStores = proxyStores.length > 0 ? proxyStores : (baseStore ? [baseStore] : []);
 
 let gatewayServer: ReturnType<typeof startGatewayServer> | undefined;
 if (!env.SHOPIFY_GATEWAY_URL) {
@@ -436,7 +439,11 @@ async function processClaim(
 
   try {
     throwIfCancelled();
-    const claimStoreConfig = configuredStores.find((store) => store.storeId === claimStoreId);
+    let claimStoreConfig = configuredStores.find((store) => store.storeId === claimStoreId);
+    if (!claimStoreConfig) {
+      configuredStores = loadBootstrappedStores({ env: loadLocalEnv() });
+      claimStoreConfig = configuredStores.find((store) => store.storeId === claimStoreId);
+    }
     const claimAdminHandle = claimStoreConfig?.shopDomain
       ? claimStoreConfig.shopDomain.replace(/\.myshopify\.com$/i, "")
       : claimStoreId;
@@ -1037,10 +1044,23 @@ process.on("SIGTERM", stop);
 async function main(): Promise<void> {
   if (!storeId || !baseStore) {
     console.warn(
-      `[Shopify pipeline] ${!storeId ? "GATEWAY_STORE_ID is not configured" : `Shopify store '${storeId}' was not found in server configuration`}. Pipeline worker will remain idle.`,
+      `[Shopify pipeline] ${!storeId ? "GATEWAY_STORE_ID is not configured" : `Shopify store '${storeId}' was not found in server configuration`}. Waiting for store configuration...`,
     );
-    await new Promise(() => {});
-    return;
+    while (!storeId || !baseStore) {
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+      const freshEnv = loadLocalEnv();
+      configuredStores = loadBootstrappedStores({ env: freshEnv });
+      storeId = (freshEnv.GATEWAY_STORE_ID || process.env.GATEWAY_STORE_ID || (configuredStores.length > 0 ? configuredStores[0].storeId : ""))?.trim();
+      baseStore = storeId ? configuredStores.find((store) => store.storeId === storeId) : undefined;
+      if (storeId && baseStore) {
+        proxyStores = configuredStores.filter(
+          (store) => store.storeId.startsWith(`${storeId}--`) && store.proxy?.url && store.proxy.failClosed !== false,
+        );
+        effectiveStores = proxyStores.length > 0 ? proxyStores : [baseStore];
+        console.log(`[Shopify pipeline] Store '${storeId}' detected and configured.`);
+        break;
+      }
+    }
   }
   await waitForCoordinator();
   console.log(

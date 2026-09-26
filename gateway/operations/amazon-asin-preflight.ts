@@ -1,3 +1,11 @@
+/**
+ * @deprecated EXTERNAL ARCHITECTURE DEBT:
+ * Amazon ASIN preflight contains Amazon business domain logic.
+ * A pure generic Shopify Gateway should not contain business-specific preflights.
+ * Use generic products.list({ query: "..." }) or metafields.get instead.
+ * Scheduled for migration to amazon-crawler / shopify-sync business modules.
+ */
+
 import { GatewayError } from "../errors";
 import type { ShopifyGraphqlClient } from "../shopify-graphql-client";
 import type { StoreConfig } from "../types";
@@ -96,17 +104,53 @@ export async function executeAmazonAsinPreflight(
       const index = nextIndex++;
       const asin = asins[index];
       const query = `metafields.custom.amazon_asin:"${asin}"`;
-      const response = await client.query<{ products: { nodes: readonly {
-        id: string; title: string; metafield: { value: string } | null;
-      }[] } }>(store, PRODUCT_QUERY, { query });
-      const product = response.products.nodes.find((candidate) => candidate.metafield?.value === asin);
-      if (product) {
-        matches[index] = {
-          asin,
-          productId: product.id,
-          title: product.title,
-          adminUrl: `https://${store.shopDomain}/admin/products/${product.id.split("/").at(-1)}`,
+      try {
+        let response: {
+          products: {
+            nodes: readonly {
+              id: string;
+              title: string;
+              metafield: { value: string } | null;
+            }[];
+          };
         };
+        try {
+          response = await client.query<{
+            products: {
+              nodes: readonly {
+                id: string;
+                title: string;
+                metafield: { value: string } | null;
+              }[];
+            };
+          }>(store, PRODUCT_QUERY, { query });
+        } catch {
+          // Retry once on transient failure
+          await new Promise((resolve) => setTimeout(resolve, 500));
+          response = await client.query<{
+            products: {
+              nodes: readonly {
+                id: string;
+                title: string;
+                metafield: { value: string } | null;
+              }[];
+            };
+          }>(store, PRODUCT_QUERY, { query });
+        }
+        const product = response.products.nodes.find((candidate) => candidate.metafield?.value === asin);
+        if (product) {
+          matches[index] = {
+            asin,
+            productId: product.id,
+            title: product.title,
+            adminUrl: `https://${store.shopDomain}/admin/products/${product.id.split("/").at(-1)}`,
+          };
+        }
+      } catch (err: unknown) {
+        console.warn(
+          `[AmazonAsinPreflight] Warning: Failed to preflight ASIN ${asin} on Shopify:`,
+          err instanceof Error ? err.message : err,
+        );
       }
     }
   }

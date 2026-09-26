@@ -103,7 +103,7 @@ const PRODUCTS_GET_QUERY = `
       }
       createdAt
       updatedAt
-      variants(first: 100) {
+      variants(first: 250) {
         pageInfo {
           hasNextPage
         }
@@ -243,6 +243,13 @@ export function mapProductNode(node: RawProductNode): ProductSummary {
     images = node.images.edges
       .map((edge) => mapImageNode(edge?.node))
       .filter((img): img is ProductImageSummary => img !== undefined);
+  }
+
+  if (featuredImage && images && images.length > 0) {
+    const matchedMedia = images.find((img) => img.url === featuredImage.url) ?? images[0];
+    if (matchedMedia?.id) {
+      (featuredImage as { id?: string }).id = matchedMedia.id;
+    }
   }
 
   const hasMoreVariants = node.variants?.pageInfo?.hasNextPage !== undefined

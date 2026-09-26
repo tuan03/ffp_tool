@@ -52,6 +52,7 @@ import {
 import { formatPipelineTimings } from "./pipeline-timings";
 import { runAfterAmazonAsinPreflight } from "./amazon-asin-preflight";
 import { AddStoreModal } from "./components/AddStoreModal";
+import { DeleteStoreModal } from "./components/DeleteStoreModal";
 
 interface AmazonCrawlerPageProps {
   checkAmazonAsins?: AmazonAsinChecker;
@@ -251,6 +252,8 @@ export function AmazonCrawlerPage({
   const [newProductTypeInput, setNewProductTypeInput] = useState("");
   const [isAddingNewType, setIsAddingNewType] = useState(false);
   const [isAddStoreOpen, setIsAddStoreOpen] = useState(false);
+  const [isEditStoreOpen, setIsEditStoreOpen] = useState(false);
+  const [isDeleteStoreOpen, setIsDeleteStoreOpen] = useState(false);
   const [availableCollections, setAvailableCollections] = useState<Array<{ id: string; title: string; productsCount?: number }>>([]);
   const [isLoadingCollections, setIsLoadingCollections] = useState(false);
   const [isCollectionListOpen, setIsCollectionListOpen] = useState(false);
@@ -726,6 +729,13 @@ export function AmazonCrawlerPage({
 
   const currentStoreId = (settings.storeId || "capozen").trim().toLowerCase();
 
+  const selectedStoreProfile = useMemo(() => {
+    return availableStores.find((s) => s.storeId.toLowerCase() === currentStoreId);
+  }, [availableStores, currentStoreId]);
+
+  const activeStoreId = selectedStoreProfile?.storeId || settings.storeId || "capozen";
+  const activeShopDomain = selectedStoreProfile?.shopDomain || `${activeStoreId}.myshopify.com`;
+
   const currentStoreProductTypes = useMemo(() => {
     if (customStoreProductTypes[currentStoreId] && customStoreProductTypes[currentStoreId].length > 0) {
       return customStoreProductTypes[currentStoreId];
@@ -1176,17 +1186,41 @@ export function AmazonCrawlerPage({
                   ({((settings.storeId || "capozen").split("--")[0] || "CAPOZEN").trim().toUpperCase()})
                 </span>
               </div>
-              <button
-                type="button"
-                onClick={() => setIsAddStoreOpen(true)}
-                className="inline-flex items-center gap-1.5 rounded-md border border-cyan-500/50 bg-cyan-500/10 px-2.5 py-1 text-xs font-semibold text-cyan-300 shadow-sm transition-all hover:border-cyan-400 hover:bg-cyan-500/20 hover:text-white"
-                title="Thêm và kết nối Shopify Store mới"
-              >
-                <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
-                  <path d="M12 4v16m8-8H4" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-                <span>Thêm store</span>
-              </button>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setIsEditStoreOpen(true)}
+                  className="inline-flex items-center gap-1 rounded-md border border-slate-700 bg-slate-800/80 px-2 py-1 text-xs font-medium text-slate-300 shadow-sm transition-all hover:border-slate-600 hover:bg-slate-700 hover:text-white"
+                  title={`Chỉnh sửa cấu hình App hoặc Proxy của store ${activeStoreId}`}
+                >
+                  <svg className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                    <path d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                  <span>Sửa</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsDeleteStoreOpen(true)}
+                  className="inline-flex items-center gap-1 rounded-md border border-rose-500/30 bg-rose-500/10 px-2 py-1 text-xs font-medium text-rose-300 shadow-sm transition-all hover:border-rose-500/50 hover:bg-rose-500/20 hover:text-rose-200"
+                  title={`Xóa store ${activeStoreId} khỏi danh sách`}
+                >
+                  <svg className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                    <path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                  <span>Xóa</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsAddStoreOpen(true)}
+                  className="inline-flex items-center gap-1 rounded-md border border-cyan-500/50 bg-cyan-500/10 px-2 py-1 text-xs font-semibold text-cyan-300 shadow-sm transition-all hover:border-cyan-400 hover:bg-cyan-500/20 hover:text-white"
+                  title="Thêm và kết nối Shopify Store mới"
+                >
+                  <svg className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
+                    <path d="M12 4v16m8-8H4" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                  <span>Thêm</span>
+                </button>
+              </div>
             </div>
             <select
               className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-slate-100 outline-none focus:border-slate-500 text-sm"
@@ -2091,8 +2125,12 @@ export function AmazonCrawlerPage({
       )}
 
       <AddStoreModal
-        isOpen={isAddStoreOpen}
-        onClose={() => setIsAddStoreOpen(false)}
+        isOpen={isAddStoreOpen || isEditStoreOpen}
+        editStoreId={isEditStoreOpen ? activeStoreId : null}
+        onClose={() => {
+          setIsAddStoreOpen(false);
+          setIsEditStoreOpen(false);
+        }}
         onStoreAdded={(newStore) => {
           setAvailableStores((prev) => {
             const filtered = prev.filter((s) => s.storeId.toLowerCase() !== newStore.storeId.toLowerCase());
@@ -2121,6 +2159,57 @@ export function AmazonCrawlerPage({
             title: "Store mới đã kết nối",
             message: `Store ${newStore.storeId} (${newStore.shopDomain}) đã sẵn sàng hoạt động!`,
             type: "success",
+          });
+        }}
+        onStoreUpdated={(updatedStore) => {
+          setAvailableStores((prev) =>
+            prev.map((s) =>
+              s.storeId.toLowerCase() === updatedStore.storeId.toLowerCase()
+                ? {
+                    ...s,
+                    shopDomain: updatedStore.shopDomain,
+                    productTypes: updatedStore.productTypes || s.productTypes,
+                    defaultProductType: updatedStore.defaultProductType || s.defaultProductType,
+                  }
+                : s
+            )
+          );
+          if (updatedStore.productTypes && updatedStore.productTypes.length > 0) {
+            const newMap = {
+              ...customStoreProductTypes,
+              [updatedStore.storeId.toLowerCase()]: [...updatedStore.productTypes],
+            };
+            setCustomStoreProductTypes(newMap);
+            try {
+              localStorage.setItem("ffp_store_product_types", JSON.stringify(newMap));
+            } catch {}
+          }
+          notifyUser({
+            title: "Cập nhật store thành công",
+            message: `Store ${updatedStore.storeId} (${updatedStore.shopDomain}) đã được cập nhật cấu hình!`,
+            type: "success",
+          });
+        }}
+      />
+
+      <DeleteStoreModal
+        isOpen={isDeleteStoreOpen}
+        storeId={activeStoreId}
+        shopDomain={activeShopDomain}
+        onClose={() => setIsDeleteStoreOpen(false)}
+        onStoreDeleted={(deletedId) => {
+          setAvailableStores((prev) => {
+            const remaining = prev.filter((s) => s.storeId.toLowerCase() !== deletedId.toLowerCase());
+            if ((settings.storeId || "").toLowerCase() === deletedId.toLowerCase()) {
+              const fallback = remaining[0]?.storeId || "capozen";
+              handleStoreChange(fallback);
+            }
+            return remaining;
+          });
+          notifyUser({
+            title: "Đã xóa store",
+            message: `Store ${deletedId} đã được xóa thành công.`,
+            type: "info",
           });
         }}
       />
