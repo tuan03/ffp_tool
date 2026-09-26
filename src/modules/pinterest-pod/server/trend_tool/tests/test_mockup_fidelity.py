@@ -323,6 +323,69 @@ class MockupPublicationTests(unittest.TestCase):
         # Artwork pixels inside mask must have been modified
         self.assertFalse(np.array_equal(out_arr[mask_arr], ref_arr[mask_arr]))
 
+    def test_three_zone_integrity_edge_cases_full_and_empty_mask(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            ref_path = root / "ref.png"
+            mock_path = root / "mock.png"
+            ref_img = Image.new("RGB", (32, 32), (50, 50, 50))
+            mock_img = Image.new("RGB", (32, 32), (50, 50, 50))
+            ref_img.save(ref_path)
+            mock_img.save(mock_path)
+
+            # Edge case 1: 100% filled mask (strict background is empty)
+            full_mask = Image.new("L", (32, 32), 255)
+            mock_assessment = {
+                "listing_realism_score": 95,
+                "artwork_identity_preserved": True,
+                "all_print_surfaces_replaced": True,
+                "mask_respects_printable_boundaries": True,
+                "protected_parts_preserved": True,
+                "reference_geometry_preserved": True,
+                "no_original_print_remaining": True,
+                "surface_lighting_preserved": True,
+            }
+            with patch("trend_tool.printability._vision_pair_assessment", return_value=mock_assessment):
+                decision = assess_direct_ai_mockup(
+                    ref_path, mock_path, ProductTarget(name="custom", width_px=32, height_px=32),
+                    backend="auto", model="vision", image_type="REFERENCE_TEMPLATE",
+                    reference_template=ref_img, edit_mask=full_mask,
+                )
+                self.assertTrue(decision.accepted)
+                self.assertEqual(decision.metrics["zone_integrity"]["strict_background_pixels"], 0)
+                self.assertEqual(decision.metrics["zone_integrity"]["strict_background_diff"], 0)
+                self.assertTrue(decision.metrics["zone_integrity"]["strict_background_preserved"])
+
+    def test_cancel_pod_job_sets_event_and_updates_status(self):
+        import threading
+        test_job_id = "test_cancel_flow_job"
+        cancel_evt = threading.Event()
+        with bridge.JOB_CACHE_LOCK:
+            bridge.JOB_CANCEL_EVENTS[test_job_id] = cancel_evt
+            bridge.ACTIVE_JOBS[test_job_id] = {
+                "status": "producing",
+                "logs": ["Bắt đầu sản xuất..."],
+            }
+        try:
+            res = bridge.cancel_pod_job(test_job_id)
+            self.assertTrue(res["ok"])
+            self.assertEqual(res["status"], "cancelled")
+            self.assertEqual(res["jobId"], test_job_id)
+            self.assertTrue(cancel_evt.is_set())
+            self.assertIn("logs", res)
+            self.assertTrue(any("dừng job" in line for line in res["logs"]))
+            with bridge.JOB_CACHE_LOCK:
+                self.assertEqual(bridge.ACTIVE_JOBS[test_job_id]["status"], "cancelled")
+        finally:
+            with bridge.JOB_CACHE_LOCK:
+                bridge.JOB_CANCEL_EVENTS.pop(test_job_id, None)
+                bridge.ACTIVE_JOBS.pop(test_job_id, None)
+
+        # Invalid job ID handling
+        bad_res = bridge.cancel_pod_job("")
+        self.assertFalse(bad_res["ok"])
+        self.assertIn("Invalid job ID", bad_res["message"])
+
 
 if __name__ == "__main__":
     unittest.main()

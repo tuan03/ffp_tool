@@ -545,7 +545,9 @@ export class MockPinterestPodClient implements PinterestPodClient {
 
     return {
       ok: true,
+      jobId,
       status: "cancelled",
+      logs: job ? [...job.logs] : undefined,
     };
   }
 

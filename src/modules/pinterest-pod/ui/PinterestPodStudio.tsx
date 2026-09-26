@@ -218,7 +218,10 @@ export function PinterestPodStudio({
           id: c.id || c.candidate_id || c.image_id || `cand_${idx + 1}`,
         }));
         setCandidates(normalized);
-        setSelectedCandidateIds(normalized.filter((c) => c.recommended).map((c) => c.id));
+        const savedSelected = detail.selected_candidates && detail.selected_candidates.length > 0
+          ? detail.selected_candidates
+          : normalized.filter((c) => c.recommended).map((c) => c.id);
+        setSelectedCandidateIds(savedSelected.length > 0 ? savedSelected : normalized.map((c) => c.id));
       } else {
         setCandidates([]);
         setSelectedCandidateIds([]);
@@ -278,6 +281,7 @@ export function PinterestPodStudio({
           setCurrentStage(1);
         }
       } else if (
+        targetJobId.startsWith("job_prod_") ||
         detail.status === "completed" ||
         (detail.deliverables && (detail.deliverables.print_cmyk_images?.length ?? 0) > 0)
       ) {
@@ -546,10 +550,12 @@ export function PinterestPodStudio({
             sound: "alert",
             url: "/pinterest-pod",
           });
-        }
-        if (detail.error) {
-          setErrorMessage(detail.error);
-          window.scrollTo({ top: 0, behavior: "smooth" });
+          if (detail.error) {
+            setErrorMessage(detail.error);
+            window.scrollTo({ top: 0, behavior: "smooth" });
+          }
+        } else {
+          setErrorMessage(null);
         }
       }
     } catch (err) {
@@ -809,7 +815,11 @@ export function PinterestPodStudio({
 
   // Produce Action (Stage 2 -> Stage 3)
   async function handleProduce(): Promise<void> {
-    if (!jobId || selectedCandidateIds.length === 0) return;
+    const candidatesToProduce =
+      selectedCandidateIds.length > 0
+        ? selectedCandidateIds
+        : candidates.map((c) => c.id || c.candidate_id || c.image_id || "").filter(Boolean);
+    if (!jobId || candidatesToProduce.length === 0) return;
 
     setIsProducing(true);
     setErrorMessage(null);
@@ -820,7 +830,7 @@ export function PinterestPodStudio({
     setStepper({
       current_step: 3,
       percent: 60,
-      current_message: `Đang chuẩn bị file in CMYK 300DPI và render mockup AI cho ${selectedCandidateIds.length} mẫu đã chọn...`,
+      current_message: `Đang chuẩn bị file in CMYK 300DPI và render mockup AI cho ${candidatesToProduce.length} mẫu đã chọn...`,
     });
     setTimeout(() => {
       if (isMountedRef.current) {
@@ -832,7 +842,7 @@ export function PinterestPodStudio({
     try {
       const produceRes = await client.produce({
         jobId,
-        selected_candidates: selectedCandidateIds,
+        selected_candidates: candidatesToProduce,
         product,
         niche,
         design_mode: "direct_print",
@@ -903,7 +913,11 @@ export function PinterestPodStudio({
       (deliverables.lifestyle_mockups?.length ?? 0) > 0 ||
       (deliverables.final_png_images?.length ?? 0) > 0);
   const isProductionActive = isProducing || jobStatus === "producing";
-  const hasStage3 = hasDeliverables || isProductionActive;
+  const hasStage3 =
+    hasDeliverables ||
+    isProductionActive ||
+    jobStatus === "cancelled" ||
+    (jobStatus === "failed" && Boolean(jobId?.startsWith("job_prod_") || currentStage === 3));
 
   return (
     <div className="flex w-full flex-col gap-6 py-2">

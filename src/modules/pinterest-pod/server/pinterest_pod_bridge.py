@@ -3203,11 +3203,13 @@ def cancel_pod_job(job_id: str, api_url: str = DEFAULT_API_URL) -> dict[str, Any
         if cancel_evt:
             cancel_evt.set()
 
+        logs_to_return: list[str] = []
         if safe_id in ACTIVE_JOBS:
             ACTIVE_JOBS[safe_id]["status"] = "cancelled"
             ACTIVE_JOBS[safe_id]["error"] = "Tiến trình đã được dừng bởi người dùng."
             ACTIVE_JOBS[safe_id].setdefault("logs", []).append("Nhận được lệnh dừng job từ người dùng. Đang hủy tiến trình...")
             save_job_manifest(safe_id, ACTIVE_JOBS[safe_id])
+            logs_to_return = list(ACTIVE_JOBS[safe_id].get("logs") or [])
         else:
             manifest = load_job_manifest(safe_id)
             if manifest:
@@ -3217,8 +3219,9 @@ def cancel_pod_job(job_id: str, api_url: str = DEFAULT_API_URL) -> dict[str, Any
                 m_data.setdefault("logs", []).append("Nhận được lệnh dừng job từ người dùng. Đang hủy tiến trình...")
                 ACTIVE_JOBS[safe_id] = m_data
                 save_job_manifest(safe_id, m_data)
+                logs_to_return = list(m_data.get("logs") or [])
 
-    return {"ok": True, "jobId": safe_id, "status": "cancelled"}
+    return {"ok": True, "jobId": safe_id, "status": "cancelled", "logs": logs_to_return}
 
 
 def delete_pod_job(job_id: str) -> dict[str, Any]:

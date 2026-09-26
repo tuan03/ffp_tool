@@ -93,9 +93,24 @@ export function ProductionStep({
   }, [logs, autoScroll]);
 
   function handleCopyLogs(): void {
-    void navigator.clipboard.writeText(logs.join("\n"));
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    if (navigator?.clipboard?.writeText) {
+      void navigator.clipboard.writeText(logs.join("\n"));
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } else {
+      try {
+        const textarea = document.createElement("textarea");
+        textarea.value = logs.join("\n");
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand("copy");
+        document.body.removeChild(textarea);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      } catch {
+        // Ignore clipboard failure in unsupported contexts
+      }
+    }
   }
 
   return (
@@ -142,7 +157,7 @@ export function ProductionStep({
       </div>
 
       {/* In-Progress Producing Banner with Cancel Action */}
-      {isProductionActive && !hasDeliverables && (
+      {isProductionActive && (
         <div className="flex flex-col gap-4 rounded-xl border border-amber-800/60 bg-amber-950/30 p-6 shadow-xl">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div className="flex items-center gap-3">
@@ -202,7 +217,7 @@ export function ProductionStep({
       )}
 
       {/* Cancelled Banner */}
-      {jobStatus === "cancelled" && !hasDeliverables && (
+      {jobStatus === "cancelled" && (
         <div className="flex flex-col gap-4 rounded-xl border border-amber-700/80 bg-amber-950/40 p-6 shadow-xl text-xs text-amber-200">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div className="flex items-center gap-3">
@@ -240,7 +255,7 @@ export function ProductionStep({
       )}
 
       {/* Failed Banner */}
-      {jobStatus === "failed" && !hasDeliverables && (
+      {jobStatus === "failed" && (
         <div className="flex flex-col gap-4 rounded-xl border border-rose-800 bg-rose-950/70 p-6 shadow-xl text-xs text-rose-200">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div className="flex items-center gap-3">
@@ -343,7 +358,7 @@ export function ProductionStep({
                     {i + 1}
                   </span>
                   <span className="text-slate-500 select-none">&gt;</span>
-                  <span className={`break-words ${getLogLineClass(log)}`}>
+                  <span className={`break-words whitespace-pre-wrap ${getLogLineClass(log)}`}>
                     {log}
                   </span>
                 </div>

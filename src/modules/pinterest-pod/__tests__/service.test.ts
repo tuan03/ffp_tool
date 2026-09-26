@@ -124,6 +124,9 @@ test("Mock client handles cancelJob", async () => {
   const cancelRes = await mockPinterestPodClient.cancelJob(created.jobId);
   assert.equal(cancelRes.ok, true);
   assert.equal(cancelRes.status, "cancelled");
+  assert.equal(cancelRes.jobId, created.jobId);
+  assert.ok(Array.isArray(cancelRes.logs));
+  assert.ok((cancelRes.logs?.length ?? 0) > 0);
 
   const detail = await mockPinterestPodClient.getJobDetail(created.jobId);
   assert.equal(detail.status, "cancelled");
