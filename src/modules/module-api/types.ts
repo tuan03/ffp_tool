@@ -138,6 +138,7 @@ export interface ShopifyProduct {
   readonly seo?: ShopifySeo;
   readonly hasMoreVariants?: boolean;
   readonly hasMoreImages?: boolean;
+  readonly hasCustomizer?: boolean;
   readonly createdAt: string;
   readonly updatedAt: string;
 }

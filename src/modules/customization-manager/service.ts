@@ -32,8 +32,99 @@ export const DEFAULT_CONFIG: Required<CustomizationManagerConfig> = {
 const SHOPIFY_FILE_DELETE_BATCH_LIMIT = 250;
 
 // ============================================================================
-// Core Service Implementation
-// ============================================================================
+export function normalizeAmazonCustomizerPayload(raw: Record<string, unknown>): ProductCustomization {
+  const surfaces = Array.isArray(raw.surfaces)
+    ? raw.surfaces.map((s) => {
+        if (!s || typeof s !== "object") return s;
+        const surf = s as Record<string, unknown>;
+        const previewUrl =
+          typeof surf.previewUrl === "string" && surf.previewUrl
+            ? surf.previewUrl
+            : (surf.baseImage as { url?: string } | undefined)?.url ||
+              (surf.image as { url?: string } | undefined)?.url ||
+              "";
+        const name =
+          typeof surf.name === "string" && surf.name
+            ? surf.name
+            : typeof surf.label === "string" && surf.label
+              ? surf.label
+              : "Surface";
+        const surfaceId =
+          typeof surf.surfaceId === "string" && surf.surfaceId
+            ? surf.surfaceId
+            : typeof surf.id === "string" && surf.id
+              ? surf.id
+              : `surface_${Date.now()}`;
+        return {
+          ...surf,
+          name,
+          surfaceId,
+          previewUrl,
+        };
+      })
+    : [];
+
+  const optionGroups = Array.isArray(raw.optionGroups) ? [...raw.optionGroups] : [];
+
+  // Adapt color groups into optionGroups if not already present
+  if (Array.isArray(raw.colorGroups)) {
+    for (const cg of raw.colorGroups) {
+      if (cg && typeof cg === "object") {
+        const groupObj = cg as Record<string, unknown>;
+        const groupId = String(groupObj.id || "group_color");
+        if (!optionGroups.some((g: any) => g.id === groupId)) {
+          optionGroups.push({
+            id: groupId,
+            label: String(groupObj.label || "Màu sắc"),
+            type: "color",
+            required: Boolean(groupObj.required),
+            defaultOptionId: String(groupObj.defaultColorId || ""),
+            options: Array.isArray(groupObj.options)
+              ? groupObj.options.map((opt: any) => ({
+                  id: String(opt.id || opt.name),
+                  label: String(opt.name || opt.label || opt.id),
+                  isAvailable: true,
+                }))
+              : [],
+          });
+        }
+      }
+    }
+  }
+
+  // Adapt font groups into optionGroups if not already present
+  if (Array.isArray(raw.fontGroups)) {
+    for (const fg of raw.fontGroups) {
+      if (fg && typeof fg === "object") {
+        const groupObj = fg as Record<string, unknown>;
+        const groupId = String(groupObj.id || "group_font");
+        if (!optionGroups.some((g: any) => g.id === groupId)) {
+          optionGroups.push({
+            id: groupId,
+            label: String(groupObj.label || "Kiểu chữ (Font)"),
+            type: "font",
+            required: Boolean(groupObj.required),
+            defaultOptionId: String(groupObj.defaultFontId || ""),
+            options: Array.isArray(groupObj.options)
+              ? groupObj.options.map((opt: any) => ({
+                  id: String(opt.id || opt.family),
+                  label: String(opt.family || opt.label || opt.id),
+                  isAvailable: true,
+                }))
+              : [],
+          });
+        }
+      }
+    }
+  }
+
+  return {
+    ...raw,
+    hasCustomization: true,
+    surfaces,
+    optionGroups,
+  };
+}
 
 export async function readCustomization(
   gateway: CustomizationGateway,
@@ -44,11 +135,36 @@ export async function readCustomization(
   const key = input.key ?? config.defaultKey ?? DEFAULT_CONFIG.defaultKey;
   const warnings: string[] = [];
 
-  const rawMeta = await gateway.getMetafield({
+  let rawMeta = await gateway.getMetafield({
     ownerId: input.productId,
     namespace,
     key,
   });
+
+  // Fallback: If not found under default key, check other potential customizer keys
+  if (!rawMeta.value || rawMeta.value.trim().length === 0) {
+    const fallbackCandidates = [
+      { namespace: "custom", key: "amazon_customizer" },
+      { namespace: "custom", key: "customizer_config" },
+      { namespace: "custom", key: "customizer" },
+    ];
+    for (const fb of fallbackCandidates) {
+      if (fb.namespace === namespace && fb.key === key) continue;
+      try {
+        const alt = await gateway.getMetafield({
+          ownerId: input.productId,
+          namespace: fb.namespace,
+          key: fb.key,
+        });
+        if (alt.value && alt.value.trim().length > 0) {
+          rawMeta = alt;
+          break;
+        }
+      } catch {
+        // Continue
+      }
+    }
+  }
 
   if (!rawMeta.value || rawMeta.value.trim().length === 0) {
     return {
@@ -79,7 +195,7 @@ export async function readCustomization(
       };
     }
 
-    const customization = parsed as ProductCustomization;
+    const customization = normalizeAmazonCustomizerPayload(parsed as Record<string, unknown>);
     const trackedFileIds = extractAssetFileIds(customization);
 
     return {

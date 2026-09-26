@@ -644,6 +644,17 @@ export function ProductDetailDrawer({
                   </button>
                 )}
 
+              <a
+                href={`/customization?productId=${encodeURIComponent(product.productId || product.id)}&storeId=${encodeURIComponent(product.storeId || "")}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="rounded-lg border border-cyan-800/80 bg-cyan-950/40 px-3 py-2 text-sm font-semibold text-cyan-300 transition hover:bg-cyan-900/60 inline-flex items-center gap-1.5"
+                title="Mở Customization Manager cho sản phẩm này"
+              >
+                <span>🎛️</span>
+                <span>Customizer ↗</span>
+              </a>
+
               {/* Nút Hoàn tác dữ liệu cũ */}
               {Boolean(product.originalBackup) &&
                 (product.reviewDecision === "approved" || Boolean(product.lastSyncedAt)) && (
