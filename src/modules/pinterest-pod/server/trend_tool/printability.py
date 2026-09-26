@@ -296,36 +296,53 @@ def assess_direct_ai_mockup(
         "image_type": image_type,
         "has_custom_checklist": bool(custom_checklist),
     }
-    reference_requirements = ""
+    assessment_prompt = direct_ai_mockup_prompt(
+        target, pose_name=pose_name, pose_requirement=pose_requirement,
+        require_matching_pillowcases=require_matching_pillowcases,
+        custom_checklist=custom_checklist, image_type=image_type,
+    ) if reference_template is None else ""
     if reference_template is not None:
         if edit_mask is None or reference_template.size != mockup.size or edit_mask.size != mockup.size:
             return PrintabilityDecision("direct_ai_mockup", mockup_path, False, "reference/mask dimensions mismatch", metrics, {})
         outside = np.asarray(edit_mask.convert("L")) == 0
         if not np.array_equal(np.asarray(reference_template.convert("RGB"))[outside], np.asarray(mockup)[outside]):
             return PrintabilityDecision("direct_ai_mockup", mockup_path, False, "pixels outside printable mask changed", metrics, {})
-        reference_requirements = """
+        assessment_prompt = """
+You are reviewing a reference-preserving artwork replacement, not a newly
+generated lifestyle scene. Evaluate only the actual product and material visible
+in ORIGINAL SCENE; do not impose niche-specific props, hems or pillowcases.
 The first image is MASTER ARTWORK, not the original product photo. Compare the
-output against ORIGINAL SCENE and EDIT MASK as well. Return explicit booleans:
-artwork_identity_preserved (same motifs, text, colors and relative arrangement),
-all_print_surfaces_replaced (including every inset/view),
-mask_respects_printable_boundaries (no background/hardware/lining painted),
-protected_parts_preserved (hands, seams, straps, hardware unchanged),
-reference_geometry_preserved (same silhouette, perspective and natural surface),
-no_original_print_remaining. Missing/uncertain evidence must be false.
-Reject flat overlays on curved or folded products and misplaced artwork.
+output against ORIGINAL SCENE and EDIT MASK as well. Return ONLY this JSON schema:
+{
+  "artwork_identity_preserved": boolean,
+  "all_print_surfaces_replaced": boolean,
+  "mask_respects_printable_boundaries": boolean,
+  "protected_parts_preserved": boolean,
+  "reference_geometry_preserved": boolean,
+  "no_original_print_remaining": boolean,
+  "surface_lighting_preserved": boolean,
+  "listing_realism_score": number from 0 to 100,
+  "reason": "specific visible evidence for acceptance or rejection"
+}
+Identity means identical master motifs, readable text, palette and relative
+arrangement after perspective/curvature deformation; no cropping, tiling,
+duplication, invented marks or rearrangement. Natural shading may change brightness
+but must not alter the design. All visible instances/insets must be replaced.
+Check the mask against actual printable boundaries, NOT just the output against
+the mask. No background, border, trim, hardware, lining, person or foreground
+object may be painted; all occlusion holes must match the original.
+Geometry must follow the original perspective, curves and folds. Reject a flat
+sticker over a curved surface, stretched text, seams, incorrect UV placement or
+old-print fragments. Lighting/material appearance must remain believable and
+consistent with the original highlights, shadows and surface texture; a flat
+color fill or obvious faceted shading is a failure. Missing/uncertain evidence
+must be false. Assess visible evidence, not the claimed model confidence.
 """
     try:
         assessment = _vision_pair_assessment(
             reference,
             mockup,
-            direct_ai_mockup_prompt(
-                target,
-                pose_name=pose_name,
-                pose_requirement=pose_requirement,
-                require_matching_pillowcases=require_matching_pillowcases,
-                custom_checklist=custom_checklist,
-                image_type=image_type,
-            ) + reference_requirements,
+            assessment_prompt,
             backend=backend,
             model=model,
             **({"reference_template": reference_template, "edit_mask": edit_mask} if reference_template is not None else {}),
@@ -345,7 +362,7 @@ Reject flat overlays on curved or folded products and misplaced artwork.
         accepted = score >= 85 and all(assessment.get(field) is True for field in (
             "artwork_identity_preserved", "all_print_surfaces_replaced",
             "mask_respects_printable_boundaries", "protected_parts_preserved",
-            "reference_geometry_preserved", "no_original_print_remaining",
+            "reference_geometry_preserved", "no_original_print_remaining", "surface_lighting_preserved",
         ))
     elif custom_checklist:
         # Fully dynamic evaluation based on the reference image's custom checklist
@@ -683,7 +700,7 @@ def _vision_pair_assessment(
             response = client.models.generate_content(
                 model=model,
                 contents=[types.Content(role="user", parts=[
-                    types.Part.from_text(text="ORIGINAL_PRODUCT_REFERENCE"),
+                    types.Part.from_text(text="MASTER ARTWORK" if reference_template is not None else "ORIGINAL_PRODUCT_REFERENCE"),
                     image_part(first),
                     types.Part.from_text(text="BACKGROUND_MOCKUP"),
                     image_part(second),

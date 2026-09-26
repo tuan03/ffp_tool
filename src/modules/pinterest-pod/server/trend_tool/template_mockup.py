@@ -25,6 +25,7 @@ from .product_asset import (
 )
 from .product_render import add_leather_surface, add_textile_surface
 from .reference_composite import compose_reference_artwork
+from .reference_surfaces import analyze_reference_surfaces
 
 LOG = logging.getLogger("template_mockup")
 
@@ -640,11 +641,10 @@ def build_direct_ai_mockup(
     if room_img is not None and client is not None:
         try:
             cache_dir = output_dir / "room_templates"
-            reference_analysis = analyze_reference_image(
+            reference_analysis = analyze_reference_surfaces(
                 client,
                 room_img,
-                target,
-                artwork=artwork,
+                getattr(target, "niche", "") or target.name or "POD product",
                 model=quality_model,
                 cache_dir=cache_dir,
             )
@@ -671,13 +671,21 @@ def build_direct_ai_mockup(
             mask_path.parent.mkdir(parents=True, exist_ok=True)
             generated.save(candidate_path)
             edit_mask.save(mask_path)
-            metrics.update({"surface_plan": plan, "outside_mask_unchanged": True})
+            # Keep native mask payloads in analysis cache, not large job manifests.
+            metrics.update({"surface_plan": {**plan, "surfaces": [
+                {key: value for key, value in surface.items() if key not in {"segmentation", "protected_segmentations"}}
+                for surface in plan["surfaces"]
+            ]}, "outside_mask_unchanged": True,
+                "segmentation_model": reference_analysis.get("segmentation_model")})
             quality = assess_direct_ai_mockup(
                 print_path, candidate_path, target, backend=backend, model=quality_model,
                 image_type="REFERENCE_TEMPLATE", reference_template=room_img, edit_mask=edit_mask,
             )
             metrics["mockup_quality"] = quality.to_dict()
             if not quality.accepted:
+                cache_key = reference_analysis.get("cache_key") if reference_analysis else None
+                if isinstance(cache_key, str) and re.fullmatch(r"[a-f0-9]{64}", cache_key):
+                    (output_dir / "room_templates" / f"surface_{cache_key}.json").unlink(missing_ok=True)
                 raise ValueError(f"REFERENCE_QA_REJECTED: {quality.reason}")
             mockup_path.parent.mkdir(parents=True, exist_ok=True)
             generated.save(mockup_path)

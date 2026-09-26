@@ -150,7 +150,11 @@ class MockupPublicationTests(unittest.TestCase):
                 ({"listing_realism_score": 100, "artwork_identity_preserved": True,
                   "all_print_surfaces_replaced": True, "mask_respects_printable_boundaries": True,
                   "protected_parts_preserved": True, "reference_geometry_preserved": True,
-                  "no_original_print_remaining": True}, True),
+                  "no_original_print_remaining": True}, False),
+                ({"listing_realism_score": 100, "artwork_identity_preserved": True,
+                  "all_print_surfaces_replaced": True, "mask_respects_printable_boundaries": True,
+                  "protected_parts_preserved": True, "reference_geometry_preserved": True,
+                  "no_original_print_remaining": True, "surface_lighting_preserved": True}, True),
             ]:
                 with self.subTest(expected=expected), patch("trend_tool.printability._vision_pair_assessment", return_value=assessment):
                     decision = assess_direct_ai_mockup(
@@ -174,7 +178,7 @@ class MockupPublicationTests(unittest.TestCase):
                 "protected_polygons": [],
             }]}
             with patch("trend_tool.template_mockup.create_gemini_client", return_value=object()), patch(
-                "trend_tool.template_mockup.analyze_reference_image", return_value={"surface_plan": plan}
+                "trend_tool.template_mockup.analyze_reference_surfaces", return_value={"surface_plan": plan}
             ), patch("trend_tool.template_mockup.generate_direct_ai_lifestyle", side_effect=AssertionError("must not redraw reference")), patch(
                 "trend_tool.template_mockup.assess_direct_ai_mockup", return_value=approved
             ):

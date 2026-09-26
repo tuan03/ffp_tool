@@ -1,20 +1,72 @@
 """Lossless reference preservation and deterministic master-artwork projection.
 
-Only planar surfaces are supported. A model's geometry estimate is not a verified
-segmentation: the caller must additionally review the composite against its source.
+Planar homographies and curved/folded UV meshes share the same preservation gate.
+AI estimates are not verified segmentation: callers must review against the source.
 """
 from __future__ import annotations
+
+import base64
+import binascii
+import io
 
 import numpy as np
 from PIL import Image, ImageDraw
 
+from .surface_mesh import project_surface_mesh
+
+
+def decode_surface_mask(payload: object, size: tuple[int, int]) -> Image.Image:
+    """Decode Gemini's crop-local PNG probabilities and [ymin,xmin,ymax,xmax] box."""
+    if not isinstance(payload, dict):
+        raise ValueError("SURFACE_REVIEW_REQUIRED: bitmap segmentation is required")
+    box, encoded = payload.get("box_2d"), payload.get("mask")
+    if not isinstance(box, list) or len(box) != 4 or any(
+        isinstance(v, bool) or not isinstance(v, (int, float)) or not np.isfinite(v) or not 0 <= v <= 1000 for v in box
+    ):
+        raise ValueError("SURFACE_REVIEW_REQUIRED: invalid segmentation box")
+    y0, x0, y1, x1 = box
+    if x0 >= x1 or y0 >= y1 or not isinstance(encoded, str) or len(encoded) > 8_000_000:
+        raise ValueError("SURFACE_REVIEW_REQUIRED: invalid segmentation payload")
+    if encoded.startswith("data:image/png;base64,"):
+        encoded = encoded.split(",", 1)[1]
+    try:
+        raw = base64.b64decode(encoded, validate=True)
+        with Image.open(io.BytesIO(raw)) as opened:
+            if opened.format != "PNG" or opened.width * opened.height > 16_777_216:
+                raise ValueError("unsupported mask format or dimensions")
+            crop = opened.convert("L")
+    except (ValueError, binascii.Error, OSError, Image.DecompressionBombError) as exc:
+        raise ValueError("SURFACE_REVIEW_REQUIRED: invalid segmentation PNG") from exc
+    left, top = int(x0 * size[0] / 1000), int(y0 * size[1] / 1000)
+    right, bottom = int(x1 * size[0] / 1000), int(y1 * size[1] / 1000)
+    if right <= left or bottom <= top:
+        raise ValueError("SURFACE_REVIEW_REQUIRED: empty segmentation crop")
+    crop = crop.resize((right-left, bottom-top), Image.Resampling.BILINEAR)
+    mask = Image.new("L", size)
+    mask.paste(crop.point(lambda value: 255 if value >= 128 else 0), (left, top))
+    if mask.getbbox() is None:
+        raise ValueError("SURFACE_REVIEW_REQUIRED: empty segmentation")
+    return mask
+
+
+def _visible_segmentation(surface: dict[str, object], size: tuple[int, int]) -> np.ndarray:
+    visible = np.asarray(decode_surface_mask(surface.get("segmentation"), size)) > 0
+    protected = surface.get("protected_segmentations", [])
+    if not isinstance(protected, list):
+        raise ValueError("SURFACE_REVIEW_REQUIRED: invalid foreground segmentations")
+    for payload in protected:
+        visible &= np.asarray(decode_surface_mask(payload, size)) == 0
+    if not np.any(visible):
+        raise ValueError("SURFACE_REVIEW_REQUIRED: no visible print remains after foreground protection")
+    return visible
 
 def _points(value: object, size: tuple[int, int], *, quad: bool = False) -> np.ndarray:
     if not isinstance(value, list) or len(value) < 3 or (quad and len(value) != 4):
         raise ValueError("SURFACE_REVIEW_REQUIRED: missing polygon or four-corner mapping")
+    minimum, maximum = (-1000, 2000) if quad else (0, 1000)
     for point in value:
         if not isinstance(point, list) or len(point) != 2 or any(
-            isinstance(v, bool) or not isinstance(v, (int, float)) or not np.isfinite(v) or not 0 <= v <= 1000
+            isinstance(v, bool) or not isinstance(v, (int, float)) or not np.isfinite(v) or not minimum <= v <= maximum
             for v in point
         ):
             raise ValueError("SURFACE_REVIEW_REQUIRED: invalid normalized coordinates")
@@ -55,16 +107,29 @@ def compose_reference_artwork(
         if not isinstance(surface, dict):
             raise ValueError("SURFACE_REVIEW_REQUIRED: invalid surface")
         confidence = surface.get("confidence")
-        if (surface.get("geometry") != "planar" or isinstance(confidence, bool)
+        geometry = surface.get("geometry")
+        if (geometry not in {"planar", "curved", "folded"} or isinstance(confidence, bool)
                 or not isinstance(confidence, (int, float)) or not 0.95 <= confidence <= 1):
-            raise ValueError("SURFACE_REVIEW_REQUIRED: uncertain or non-planar geometry")
+            raise ValueError("SURFACE_REVIEW_REQUIRED: uncertain or unsupported geometry")
+        if geometry in {"curved", "folded"} or "vertices" in surface:
+            visible = _visible_segmentation(surface, reference.size)
+            mask = Image.fromarray(visible.astype(np.uint8) * 255)
+            if np.any(union & visible):
+                raise ValueError("SURFACE_REVIEW_REQUIRED: overlapping printable surfaces")
+            projected = project_surface_mesh(artwork, reference.size, surface, visible)
+            output.paste(projected, (0, 0), mask)
+            union |= visible
+            continue
         quad = _points(surface.get("quad"), reference.size, quad=True)
-        polygon = _points(surface.get("polygon"), reference.size)
-        visible = np.asarray(_polygon_mask(reference.size, polygon)) > 0
+        if "segmentation" in surface:
+            visible = _visible_segmentation(surface, reference.size)
+        else:
+            polygon = _points(surface.get("polygon"), reference.size)
+            visible = np.asarray(_polygon_mask(reference.size, polygon)) > 0
         quad_mask = np.asarray(_polygon_mask(reference.size, quad)) > 0
         if np.any(visible & ~quad_mask):
             raise ValueError("SURFACE_REVIEW_REQUIRED: print mask extends outside mapping")
-        protected = surface.get("protected_polygons")
+        protected = surface.get("protected_polygons", [] if "segmentation" in surface else None)
         if not isinstance(protected, list):
             raise ValueError("SURFACE_REVIEW_REQUIRED: explicit occlusion review is required")
         for polygon_value in protected:
