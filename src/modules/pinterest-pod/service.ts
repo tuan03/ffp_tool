@@ -484,6 +484,9 @@ export function buildSeoDeliverables(
   const chosenType = (shopifyConfig?.productType?.trim() || productType) as PodProductType;
   const printStandard = resolvePrintStandard(chosenType);
   const workflowId = jobStatus.jobId || jobStatus.job_id || "pod_production_completed";
+  if (jobStatus.status === "failed" || jobStatus.status === "cancelled") {
+    throw new AppError("Không thể bàn giao SEO khi sản xuất chưa đạt kiểm định.", "PINTEREST_POD_JOB_FAILED");
+  }
 
   const approvedSet = approvedMockupUrls
     ? (approvedMockupUrls instanceof Set ? approvedMockupUrls : new Set(approvedMockupUrls))
