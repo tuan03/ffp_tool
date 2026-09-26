@@ -554,11 +554,14 @@ export function buildSeoDeliverables(
       const whiteCutoutFilename = extractFilename(row.cutout_white_url);
       const transCutoutFilename = extractFilename(row.cutout_url);
 
-      const printMasterLocal = `temp/pinterest_pod/${workflowId}/${cmykFilename}`;
+      const runMatchCmyk = cmykUrl.match(/\/api\/pinterest-pod\/assets\/([^/]+)\//);
+      const effectiveRunId = runMatchCmyk ? runMatchCmyk[1] : workflowId;
+
+      const printMasterLocal = `temp/pinterest_pod/${effectiveRunId}/${cmykFilename}`;
       const cutoutLocal = whiteCutoutFilename
-        ? `temp/pinterest_pod/${workflowId}/${whiteCutoutFilename}`
+        ? `temp/pinterest_pod/${effectiveRunId}/${whiteCutoutFilename}`
         : transCutoutFilename
-          ? `temp/pinterest_pod/${workflowId}/${transCutoutFilename}`
+          ? `temp/pinterest_pod/${effectiveRunId}/${transCutoutFilename}`
           : undefined;
 
       const backgroundUrls = (row.ai_background_urls ?? []).filter(isMockupApproved);
@@ -567,7 +570,9 @@ export function buildSeoDeliverables(
           const matchedMockup = deliverables.lifestyle_mockups?.find((m) => m.url === bgUrl);
           const isLiving = bgIdx % 2 === 0;
           const bgFilename = extractFilename(bgUrl);
-          const mockupLocal = bgFilename ? `temp/pinterest_pod/${workflowId}/${bgFilename}` : undefined;
+          const runMatchMockup = bgUrl.match(/\/api\/pinterest-pod\/assets\/([^/]+)\//);
+          const effRunId = runMatchMockup ? runMatchMockup[1] : effectiveRunId;
+          const mockupLocal = bgFilename ? `temp/pinterest_pod/${effRunId}/${bgFilename}` : undefined;
 
           return {
             referenceImageId: `ref_room_0${bgIdx + 1}`,
@@ -627,20 +632,27 @@ export function buildSeoDeliverables(
         ? deliverables.product_cutouts[idx]
         : undefined;
 
+      const runMatchCmyk = cmykImg.url.match(/\/api\/pinterest-pod\/assets\/([^/]+)\//);
+      const effectiveRunId = runMatchCmyk ? runMatchCmyk[1] : workflowId;
+
       const mockups: PodComposedMockupSpec[] = (deliverables.lifestyle_mockups ?? [])
         .filter((m) => isMockupApproved(m.url))
         .map(
-        (m, mIdx) => ({
-          referenceImageId: `ref_room_0${mIdx + 1}`,
-          mockupUrl: m.url,
-          localFilePath: m.filename ? `temp/pinterest_pod/${workflowId}/${m.filename}` : undefined,
-          detectedSceneType: m.scene_type ?? (mIdx % 2 === 0 ? "living_room" : "bedroom"),
-          detectedSceneDescription:
-            m.scene_description ??
-            (mIdx % 2 === 0
-              ? "Modern spacious living room with couch and natural lighting"
-              : "Cozy bedroom with wooden floor"),
-        }),
+        (m, mIdx) => {
+          const runMatchMockup = m.url ? m.url.match(/\/api\/pinterest-pod\/assets\/([^/]+)\//) : null;
+          const effRunId = runMatchMockup ? runMatchMockup[1] : effectiveRunId;
+          return {
+            referenceImageId: `ref_room_0${mIdx + 1}`,
+            mockupUrl: m.url,
+            localFilePath: m.filename ? `temp/pinterest_pod/${effRunId}/${m.filename}` : undefined,
+            detectedSceneType: m.scene_type ?? (mIdx % 2 === 0 ? "living_room" : "bedroom"),
+            detectedSceneDescription:
+              m.scene_description ??
+              (mIdx % 2 === 0
+                ? "Modern spacious living room with couch and natural lighting"
+                : "Cozy bedroom with wooden floor"),
+          };
+        },
       );
 
       return {
@@ -654,7 +666,7 @@ export function buildSeoDeliverables(
         printMaster: {
           cmykUrl: cmykImg.url,
           rgbUrl: rgbImg?.url ?? cmykImg.url.replace("_cmyk_300dpi.jpg", "_rgb_4k.png"),
-          localFilePath: cmykImg.filename ? `temp/pinterest_pod/${workflowId}/${cmykImg.filename}` : undefined,
+          localFilePath: cmykImg.filename ? `temp/pinterest_pod/${effectiveRunId}/${cmykImg.filename}` : undefined,
           widthPx: printStandard.widthPx,
           heightPx: printStandard.heightPx,
           dpi: 300,
@@ -665,7 +677,7 @@ export function buildSeoDeliverables(
         cutoutProduct: {
           transparentUrl: transCutout?.url ?? "",
           whiteBgUrl: whiteCutout?.url ?? "",
-          localFilePath: whiteCutout?.filename ? `temp/pinterest_pod/${workflowId}/${whiteCutout.filename}` : undefined,
+          localFilePath: whiteCutout?.filename ? `temp/pinterest_pod/${effectiveRunId}/${whiteCutout.filename}` : undefined,
         },
         composedMockups: mockups,
       };

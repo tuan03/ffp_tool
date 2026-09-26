@@ -256,11 +256,12 @@ export function fromPinterestPodItem(
   defaultNiche = "Home Decor",
 ): SeoContentInput {
   const designId = (typeof item.designId === "string" ? item.designId : "").trim();
+  const fallbackTitle = (item as { title?: string }).title;
   const rawTitle =
     typeof item.originalPinTitle === "string" && item.originalPinTitle.trim().length > 0
       ? item.originalPinTitle.trim()
-      : typeof (item as { title?: string }).title === "string" && (item as { title?: string }).title!.trim().length > 0
-        ? (item as { title?: string }).title!.trim()
+      : typeof fallbackTitle === "string" && fallbackTitle.trim().length > 0
+        ? fallbackTitle.trim()
         : designId || "Untitled Pinterest POD Item";
 
   const handle = slugify(rawTitle) || slugify(designId) || "pinterest-pod-product";

@@ -210,10 +210,13 @@ export function SeoHandoffModal({
       const fallbackResult: SeoHandoverResponse = {
         success: true,
         message: `Bàn giao sang SEO thành công: ${printCount} file in xưởng (CMYK 300 DPI) và ${approvedCount} mockup AI đã duyệt.`,
+        workflowId: filteredPayload.workflowId,
+        count: filteredPayload.items.length,
         receivedAt: Date.now(),
         printMasterCount: printCount,
         approvedMockupCount: approvedCount,
         savedPath: `data/pinterest_pod/output/${filteredPayload.workflowId}/seo_handoff_payload.json`,
+        items: filteredPayload.items,
       };
       setCurrentResult(fallbackResult);
       setViewMode("result");

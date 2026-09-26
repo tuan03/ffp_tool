@@ -162,12 +162,16 @@ export async function handlePinterestPodSeoHttpRequest(
     loadServerEnvironment();
 
     // 2. Persist backup copies to local filesystem (matches Python backend layout)
-    const workflowId = payload.workflowId || (payload as { jobId?: string }).jobId || `job_pod_${Date.now()}`;
+    const rawWorkflowId = payload.workflowId || (payload as { jobId?: string }).jobId || `job_pod_${Date.now()}`;
+    const workflowId = String(rawWorkflowId).replace(/[^a-zA-Z0-9_-]/g, "_");
     const baseOutputDir = options?.outputDir
       ? path.resolve(options.outputDir)
       : path.resolve(process.cwd(), "src/modules/pinterest-pod/server/data/pinterest_pod/output");
 
-    const handoffDir = path.join(baseOutputDir, workflowId);
+    const handoffDir = path.resolve(baseOutputDir, workflowId);
+    if (!handoffDir.startsWith(baseOutputDir)) {
+      throw new Error(`Invalid workflowId: path traversal detected '${rawWorkflowId}'`);
+    }
     fs.mkdirSync(handoffDir, { recursive: true });
     const handoffFile = path.join(handoffDir, "seo_handoff_payload.json");
     fs.writeFileSync(handoffFile, JSON.stringify(payload, null, 2), "utf8");
@@ -175,14 +179,13 @@ export async function handlePinterestPodSeoHttpRequest(
     // Also write a secondary copy to data/seo_handoffs for audit
     try {
       const seoInboxDir = options?.outputDir
-        ? path.join(options.outputDir, "seo_handoffs")
+        ? path.join(path.resolve(options.outputDir), "seo_handoffs")
         : path.resolve(process.cwd(), "src/modules/pinterest-pod/server/data/seo_handoffs");
-      fs.mkdirSync(seoInboxDir, { recursive: true });
-      fs.writeFileSync(
-        path.join(seoInboxDir, `${workflowId}_seo_payload.json`),
-        JSON.stringify(payload, null, 2),
-        "utf8",
-      );
+      const seoBackupFile = path.resolve(seoInboxDir, `${workflowId}_seo_payload.json`);
+      if (seoBackupFile.startsWith(seoInboxDir)) {
+        fs.mkdirSync(seoInboxDir, { recursive: true });
+        fs.writeFileSync(seoBackupFile, JSON.stringify(payload, null, 2), "utf8");
+      }
     } catch {
       // Non-fatal secondary copy
     }

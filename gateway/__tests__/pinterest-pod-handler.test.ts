@@ -197,3 +197,48 @@ test("handlePinterestPodSeoHttpRequest: successfully processes deliverables and 
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
 });
+
+test("handlePinterestPodSeoHttpRequest: safely sanitizes path-traversal in workflowId", async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ffp_pod_sec_test_"));
+
+  try {
+    const maliciousDeliverables: PinterestPodDeliverables = {
+      ...sampleDeliverables,
+      workflowId: "../../evil_path",
+    };
+
+    const mockSeoRunner = async (input: SeoContentInput): Promise<SeoContentOutput> => ({
+      productTitle: input.title,
+      productDescription: "<p>safe</p>",
+      productHandle: "safe",
+      productSeoTitle: input.title,
+      productSeoDescription: "safe",
+      images: [],
+    });
+
+    const { req, res, getResult } = createMockReqRes({
+      method: "POST",
+      body: maliciousDeliverables,
+    });
+
+    await handlePinterestPodSeoHttpRequest(req, res, {
+      outputDir: tempDir,
+      seoRunner: mockSeoRunner,
+    });
+
+    const result = getResult();
+    assert.equal(result.status, 200);
+
+    // Verify sanitized folder was created INSIDE tempDir and not outside
+    const sanitizedDir = path.join(tempDir, "______evil_path");
+    assert.ok(fs.existsSync(sanitizedDir), "Sanitized directory should be created inside tempDir");
+    assert.ok(fs.existsSync(path.join(sanitizedDir, "seo_handoff_payload.json")));
+
+    // Verify nothing escaped outside tempDir
+    const escapedFile = path.resolve(tempDir, "..", "evil_path");
+    assert.ok(!fs.existsSync(escapedFile), "File should never escape outputDir");
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
