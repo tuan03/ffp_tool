@@ -10,6 +10,10 @@ export {
 
 export { createMockCustomizationManagerRunner } from "./mocks/runner";
 
+export { createCustomizationManagerRoutes } from "./routes";
+export { CustomizationManagerPage } from "./ui/CustomizationManagerPage";
+export type { CustomizationManagerPageProps } from "./ui/CustomizationManagerPage";
+
 export { getCustomizationManagerRunner } from "./runtime";
 
 export {

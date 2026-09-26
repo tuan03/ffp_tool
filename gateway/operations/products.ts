@@ -41,6 +41,10 @@ const PRODUCTS_LIST_QUERY = `
             title
             description
           }
+          metafield(namespace: "custom", key: "amazon_customizer") {
+            id
+            value
+          }
           createdAt
           updatedAt
         }
@@ -92,6 +96,10 @@ const PRODUCTS_GET_QUERY = `
       seo {
         title
         description
+      }
+      metafield(namespace: "custom", key: "amazon_customizer") {
+        id
+        value
       }
       createdAt
       updatedAt
@@ -167,6 +175,7 @@ export interface RawProductNode {
     readonly edges?: readonly { readonly node: RawImageNode }[];
   } | null;
   readonly seo?: { readonly title?: string | null; readonly description?: string | null } | null;
+  readonly metafield?: { readonly id?: string | null; readonly value?: string | null } | null;
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly variants?: {
@@ -263,6 +272,7 @@ export function mapProductNode(node: RawProductNode): ProductSummary {
         : undefined,
     ...(hasMoreVariants !== undefined ? { hasMoreVariants } : {}),
     ...(hasMoreImages !== undefined ? { hasMoreImages } : {}),
+    hasCustomizer: Boolean(node.metafield?.value && node.metafield.value.trim().length > 0),
     createdAt: node.createdAt,
     updatedAt: node.updatedAt,
   };

@@ -124,27 +124,32 @@ type BetterSqlite3Database = {
 };
 
 class SqliteSiteNicheCache implements SiteNicheCache {
-  private dbPromise: Promise<BetterSqlite3Database> | undefined;
+  private dbPromise: Promise<BetterSqlite3Database | null> | undefined;
+  private readonly fallbackCache = new InMemorySiteNicheCache();
 
-  private async getDb(): Promise<BetterSqlite3Database> {
+  private async getDb(): Promise<BetterSqlite3Database | null> {
     if (!this.dbPromise) {
       this.dbPromise = (async () => {
-        const dynamicImport = new Function("specifier", "return import(specifier)") as (
-          specifier: string,
-        ) => Promise<unknown>;
-        const [databaseModule, fsModule, pathModule] = await Promise.all([
-          dynamicImport("better-sqlite3") as Promise<{ default?: new (filename: string) => BetterSqlite3Database } | (new (filename: string) => BetterSqlite3Database)>,
-          dynamicImport("node:fs") as Promise<{ default?: typeof import("node:fs") } & typeof import("node:fs")>,
-          dynamicImport("node:path") as Promise<{ default?: typeof import("node:path") } & typeof import("node:path")>,
-        ]);
-        const Database = (typeof databaseModule === "function" ? databaseModule : (databaseModule as { default: new (filename: string) => BetterSqlite3Database }).default);
-        const path = pathModule.default ?? pathModule;
-        const fs = fsModule.default ?? fsModule;
-        const cachePath = path.resolve(process.cwd(), ".local-data", "seo-content-niche.sqlite3");
-        fs.mkdirSync(path.dirname(cachePath), { recursive: true });
-        const db = new Database(cachePath);
-        db.exec("CREATE TABLE IF NOT EXISTS site_niche_cache (domain TEXT PRIMARY KEY, niche TEXT NOT NULL, expires_at INTEGER NOT NULL)");
-        return db;
+        try {
+          const dynamicImport = new Function("specifier", "return import(specifier)") as (
+            specifier: string,
+          ) => Promise<unknown>;
+          const [databaseModule, fsModule, pathModule] = await Promise.all([
+            dynamicImport("better-sqlite3") as Promise<{ default?: new (filename: string) => BetterSqlite3Database } | (new (filename: string) => BetterSqlite3Database)>,
+            dynamicImport("node:fs") as Promise<{ default?: typeof import("node:fs") } & typeof import("node:fs")>,
+            dynamicImport("node:path") as Promise<{ default?: typeof import("node:path") } & typeof import("node:path")>,
+          ]);
+          const Database = (typeof databaseModule === "function" ? databaseModule : (databaseModule as { default: new (filename: string) => BetterSqlite3Database }).default);
+          const path = pathModule.default ?? pathModule;
+          const fs = fsModule.default ?? fsModule;
+          const cachePath = path.resolve(process.cwd(), ".local-data", "seo-content-niche.sqlite3");
+          fs.mkdirSync(path.dirname(cachePath), { recursive: true });
+          const db = new Database(cachePath);
+          db.exec("CREATE TABLE IF NOT EXISTS site_niche_cache (domain TEXT PRIMARY KEY, niche TEXT NOT NULL, expires_at INTEGER NOT NULL)");
+          return db;
+        } catch {
+          return null;
+        }
       })();
     }
     return this.dbPromise;
@@ -152,12 +157,18 @@ class SqliteSiteNicheCache implements SiteNicheCache {
 
   public async get(domain: string): Promise<string | undefined> {
     const db = await this.getDb();
+    if (!db) {
+      return this.fallbackCache.get(domain);
+    }
     const row = db.prepare("SELECT niche FROM site_niche_cache WHERE domain = ? AND expires_at > ?").get(domain, Date.now()) as { niche?: string } | undefined;
     return row?.niche;
   }
 
   public async set(domain: string, niche: string): Promise<void> {
     const db = await this.getDb();
+    if (!db) {
+      return this.fallbackCache.set(domain, niche);
+    }
     db.prepare("INSERT INTO site_niche_cache(domain, niche, expires_at) VALUES (?, ?, ?) ON CONFLICT(domain) DO UPDATE SET niche = excluded.niche, expires_at = excluded.expires_at").run(domain, niche, Date.now() + 86_400_000);
   }
 }
