@@ -234,6 +234,7 @@ export class DefaultKeywordConflictAnalyzer implements KeywordConflictAnalyzer {
           `Primary provider returned incomplete vector batch: expected ${candidateKeywords.length} query/sim vectors, got ${candidateQueryVectors.length}/${candidateSimVectors.length}`,
         );
       } catch (err) {
+        if (err instanceof Error && err.name === "AbortError") throw err;
         if (this.onFallback) {
           this.onFallback(err);
         } else {

@@ -124,6 +124,7 @@ export interface ProductPipelineMetadata {
     assetsNormalized: number;
   };
   seo: {
+    performance?: SeoPipelinePerformance;
     status: "pending" | "running" | "completed" | "failed";
     engine?: "gemini" | "heuristic" | "mixed";
     fieldsApplied?: string[];
@@ -150,6 +151,19 @@ export interface ProductPipelineMetadata {
     noOp?: boolean;
     timings?: ProductPipelineTimings;
   };
+}
+
+export interface SeoPipelinePerformance {
+  readonly stageDurationsMs: Readonly<Record<string, number>>;
+  readonly providerQueueMs?: number;
+  readonly providerRequestMs?: number;
+  readonly retryWaitMs?: number;
+  readonly requestCount?: number;
+  readonly retryCount?: number;
+  readonly cacheHits?: number;
+  readonly revisionRetries?: number;
+  readonly commitQueueMs?: number;
+  readonly commitMs?: number;
 }
 
 export interface ProductPipelineTimings {

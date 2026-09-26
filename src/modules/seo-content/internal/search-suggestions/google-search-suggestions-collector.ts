@@ -1,3 +1,4 @@
+import { abortableDelay, type ProviderRequestOptions } from "../provider-runtime";
 import { QUERY_SOURCE, shouldUpgradeSource } from "./query-source";
 import {
   canonicalKey,
@@ -23,7 +24,8 @@ import type {
   SearchSuggestionsCollectorInput,
 } from "./search-suggestions-collector";
 
-export interface GoogleSearchSuggestionsCollectorOptions {
+export interface GoogleSearchSuggestionsCollectorOptions extends ProviderRequestOptions {
+  readonly concurrency?: number;
   readonly client: GoogleSuggestClient;
   readonly variantGenerator?: SearchQueryVariantGenerator;
   readonly interRequestDelayMs?: number;
@@ -32,10 +34,6 @@ export interface GoogleSearchSuggestionsCollectorOptions {
 }
 
 export const DEFAULT_INTER_REQUEST_DELAY_MS = 250;
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 export class GoogleSearchSuggestionsCollector
   implements SearchSuggestionsCollector
@@ -49,7 +47,7 @@ export class GoogleSearchSuggestionsCollector
   ) => void;
   private readonly onVariantGenerationFailure?: (error: unknown) => void;
 
-  constructor(options: GoogleSearchSuggestionsCollectorOptions) {
+  constructor(private readonly options: GoogleSearchSuggestionsCollectorOptions) {
     this.client = options.client;
     this.variantGenerator = options.variantGenerator;
     this.interRequestDelayMs =
@@ -61,6 +59,7 @@ export class GoogleSearchSuggestionsCollector
   async collect(
     input: SearchSuggestionsCollectorInput,
   ): Promise<SearchResearchResult> {
+    this.options.signal?.throwIfAborted();
     const selectedSeeds = selectSearchSeeds(input);
     const seedKeywords = selectedSeeds.map((s) => s.query);
     const querySources: Record<string, string> = {};
@@ -80,39 +79,47 @@ export class GoogleSearchSuggestionsCollector
 
     let failedCount = 0;
 
+    type ProbeResult = { suggestions: readonly string[] } | { error: unknown };
+    const results: (ProbeResult | undefined)[] = new Array(probes.length);
+    let nextProbe = 0;
+    let stopScheduling = false;
+    const breaksCircuit = (error: unknown) => error instanceof GoogleSuggestBlockedError
+      || error instanceof GoogleSuggestRateLimitError
+      || (error instanceof GoogleSuggestError && [403, 429].includes(error.status ?? 0));
+    const fetchProbes = async () => {
+      while (!stopScheduling && nextProbe < probes.length) {
+        this.options.signal?.throwIfAborted();
+        const index = nextProbe++;
+        if (index > 0 && this.interRequestDelayMs > 0) {
+          await abortableDelay(this.interRequestDelayMs, this.options.signal);
+        }
+        if (stopScheduling) break;
+        try {
+          results[index] = { suggestions: await this.client.getSuggestions(probes[index].query, this.options) };
+        } catch (error) {
+          this.options.signal?.throwIfAborted();
+          if (error instanceof Error && error.name === "AbortError") throw error;
+          results[index] = { error };
+          if (breaksCircuit(error)) stopScheduling = true;
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.max(1, Math.min(3, this.options.concurrency ?? 1)) }, fetchProbes));
+    this.options.signal?.throwIfAborted();
+    // Reduce in probe order so first-seen priority and evidence remain deterministic.
     for (let i = 0; i < probes.length; i++) {
       const probe = probes[i];
-      const parentSeed = selectedSeeds.find((seed) => seed.query === probe.parentSeed);
-      if (!parentSeed) {
-        continue;
-      }
-
-      if (i > 0 && this.interRequestDelayMs > 0) {
-        await sleep(this.interRequestDelayMs);
-      }
-
-      let rawSuggestions: readonly string[];
-      try {
-        autocompleteProbes.push(probe);
-        rawSuggestions = await this.client.getSuggestions(probe.query);
-      } catch (error) {
+      const result = results[i];
+      if (!result) continue;
+      const parentSeed = selectedSeeds.find(seed => seed.query === probe.parentSeed);
+      if (!parentSeed) continue;
+      autocompleteProbes.push(probe);
+      if ("error" in result) {
         failedCount++;
-
-        // Circuit breaker: 403 or repeated 429 terminates remaining batch
-        const isBlocked =
-          error instanceof GoogleSuggestBlockedError ||
-          (error instanceof GoogleSuggestError && error.status === 403);
-        const isRateLimited =
-          error instanceof GoogleSuggestRateLimitError ||
-          (error instanceof GoogleSuggestError && error.status === 429);
-
-        if (isBlocked || isRateLimited) {
-          break;
-        }
-
-        // Transient errors (network error, timeout, 5xx): continue to next seed
+        if (breaksCircuit(result.error)) break;
         continue;
       }
+      const rawSuggestions = result.suggestions;
 
       let seedAcceptedCount = 0;
       for (const raw of rawSuggestions) {
@@ -132,7 +139,8 @@ export class GoogleSearchSuggestionsCollector
 
         // Case: suggestion matches one of the researched seeds
         if (seedKeyToQuery.has(key)) {
-          const originalSeedQuery = seedKeyToQuery.get(key)!;
+          const originalSeedQuery = seedKeyToQuery.get(key);
+          if (!originalSeedQuery) continue;
           if (
             shouldUpgradeSource(
               querySources[originalSeedQuery],
@@ -190,6 +198,8 @@ export class GoogleSearchSuggestionsCollector
     try {
       return await this.variantGenerator.generate({ ...input, seeds: selectedSeeds });
     } catch (error) {
+      this.options.signal?.throwIfAborted();
+      if (error instanceof Error && error.name === "AbortError") throw error;
       if (this.onVariantGenerationFailure) {
         this.onVariantGenerationFailure(error);
       } else {

@@ -1,7 +1,9 @@
+export { SeoCorpusReservation } from "./corpus-reservation";
 export { seoContentMockData, seoContentMockInput } from "./mocks/data";
 export { runMockSeoContent } from "./mocks/runner";
 export { getSeoContentRunner } from "./runtime";
 export {
+  createSeoContentSession,
   createSeoContentPipelineSummary,
   registerSeoContentKeywords,
   unregisterSeoContentKeywords,
@@ -78,6 +80,7 @@ export type {
   SeoContentOutput,
   SeoContentPipelineSummary,
   SeoContentRunMetadata,
+  SeoPerformanceMetrics,
   SeoContentRunOptions,
   SeoContentWebpAsset,
 } from "./types";

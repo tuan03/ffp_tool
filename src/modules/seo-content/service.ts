@@ -2,6 +2,7 @@ import { loadServerEnvironment } from "../../config/server-environment";
 
 import { AltOnlyImageProcessor } from "./internal/image-processing/image-processor";
 import { FileSeoConflictCorpus } from "./internal/conflict-control/file-seo-conflict-corpus";
+import type { SeoPipelineResume } from "./internal/pipeline";
 import { createSeoPipeline, DEFAULT_SEO_PIPELINE_STAGES } from "./internal/pipeline";
 import { registerProductKeywords } from "./internal/stages/b4-conflict-control";
 import { createB1ProductUnderstandingStage, createDefaultProductImageAnalyzer } from "./internal/stages/b1-product-understanding";
@@ -80,15 +81,35 @@ export async function runSeoContentDetailed(
   input: SeoContentInput,
   options: SeoContentRunOptions = {},
 ): Promise<SeoContentDetailedResult> {
-  const observedFallbackStages: string[] = [];
-  const observedWarnings: string[] = [];
+  return createSeoContentSession(input, options).run();
+}
+
+export function createSeoContentSession(input: SeoContentInput, options: SeoContentRunOptions & { readonly imageMode: "alt_only" }): { run(): Promise<SeoContentAltOnlyDetailedOutput> };
+export function createSeoContentSession(input: SeoContentInput, options?: SeoContentRunOptions): { run(): Promise<SeoContentDetailedResult> };
+export function createSeoContentSession(input: SeoContentInput, options: SeoContentRunOptions = {}): { run(): Promise<SeoContentDetailedResult> } {
+  loadServerEnvironment();
+  let resume: SeoPipelineResume | undefined;
+  let running = false;
+  const stageDurationsMs: Record<string, number> = {};
+  const providerMetrics = { providerQueueMs: 0, providerRequestMs: 0, retryWaitMs: 0, requestCount: 0, retryCount: 0, cacheHits: 0 };
+  const requestOptions = { signal: options.signal, onMetric: (metric: import("./internal/provider-runtime").ProviderMetric) => {
+    providerMetrics.providerQueueMs += metric.queueMs ?? 0;
+    providerMetrics.providerRequestMs += metric.requestMs ?? 0;
+    providerMetrics.retryWaitMs += metric.retryWaitMs ?? 0;
+    if (metric.requestMs !== undefined) providerMetrics.requestCount++;
+    if (metric.retryWaitMs !== undefined) providerMetrics.retryCount++;
+    if (metric.cacheHit) providerMetrics.cacheHits++;
+  } };
+  const observedFallbacks = new Map<string, string[]>();
   const observeFallback = (stage: string, error: unknown) => {
-    if (!observedFallbackStages.includes(stage)) observedFallbackStages.push(stage);
-    observedWarnings.push(error instanceof Error ? error.message : String(error));
+    const warnings = observedFallbacks.get(stage) ?? [];
+    warnings.push(error instanceof Error ? error.message : String(error));
+    observedFallbacks.set(stage, warnings);
   };
   const runtimeStages = [
     createB1ProductUnderstandingStage({
       imageAnalyzer: createDefaultProductImageAnalyzer({
+        ...requestOptions,
         onFallback: (error) => observeFallback("b1", error),
         maxImages: options.imageMode === "alt_only" ? 1 : undefined,
       }),
@@ -96,23 +117,26 @@ export async function runSeoContentDetailed(
     }),
     createB2ShoppingContextStage({
       analyzer: createDefaultShoppingContextAnalyzer({
+        ...requestOptions,
         onFallback: (error) => observeFallback("b2", error),
       }),
     }),
     createB3SearchSuggestionsStage({
       collector: createDefaultSearchSuggestionsCollector({
+        ...requestOptions,
         onPartialFailure: (failedCount, totalCount) => {
           throw new Error(`Google Suggest incomplete: ${failedCount}/${totalCount} seed requests failed.`);
         },
       }),
     }),
-    createB4ConflictControlStage(
-      options.dependencies?.conflictCorpus
-        ? { conflictCorpus: options.dependencies.conflictCorpus as SeoConflictCorpus }
-        : (input.storeId ? { conflictCorpus: new FileSeoConflictCorpus({ storeId: input.storeId }) } : undefined),
-    ),
+    createB4ConflictControlStage({
+      requestOptions,
+      conflictCorpus: options.dependencies?.conflictCorpus as SeoConflictCorpus | undefined
+        ?? (input.storeId ? new FileSeoConflictCorpus({ storeId: input.storeId }) : undefined),
+    }),
     createB5ContentGenerationStage({
       generator: createDefaultB5Generator({
+        ...requestOptions,
         onFallback: (reason, error) => observeFallback("b5", error ?? reason),
       }),
     }),
@@ -121,50 +145,67 @@ export async function runSeoContentDetailed(
       : DEFAULT_SEO_PIPELINE_STAGES[DEFAULT_SEO_PIPELINE_STAGES.length - 1],
   ];
   const pipeline = createSeoPipeline({
-    stages: runtimeStages,
+    stages: runtimeStages.map(stage => ({
+      name: stage.name,
+      execute(context) { observedFallbacks.delete(stage.name); return stage.execute(context); },
+    })),
     siteNicheResolver: getDefaultSiteNicheResolver(),
   });
-  const execution = await pipeline.executeDetailed(input, { signal: options.signal });
-  const generator = execution.context.contentGenerationMetadata?.generator ?? "heuristic";
-  const hasGeminiConfiguration = typeof process !== "undefined" && Boolean(process.env?.GOOGLE_CLOUD_PROJECT?.trim());
-  const configuredEmbeddingProvider = typeof process !== "undefined" ? process.env?.SEO_EMBEDDING_PROVIDER?.trim().toLowerCase() : undefined;
-  const fallbackStages = [...new Set([...observedFallbackStages, ...execution.fallbackStages])];
-  const usedLocalEmbeddingFallback = hasGeminiConfiguration
-    && !["local", "fallback"].includes(configuredEmbeddingProvider ?? "")
-    && Object.values(execution.context.conflictResult?.approvedEmbeddings ?? {})
-      .some((embedding) => !["vertex", "vertex_ai"].includes(embedding.provider));
-  if (usedLocalEmbeddingFallback && !fallbackStages.includes("b4")) {
-    fallbackStages.push("b4");
-    observedWarnings.push("Vertex embeddings were unavailable; local keyword conflict analysis was used.");
+  async function run(): Promise<SeoContentDetailedResult> {
+    if (running) throw new Error("A SEO session cannot run concurrently with itself.");
+    running = true;
+    try {
+      const execution = await pipeline.executeDetailed(input, {
+        signal: options.signal, resume,
+        onStage: (stage, duration) => { stageDurationsMs[stage] = (stageDurationsMs[stage] ?? 0) + duration; },
+      });
+      resume = execution.resume;
+      const observedFallbackStages = [...observedFallbacks.keys()];
+      const observedWarnings = [...observedFallbacks.values()].flat();
+      const generator = execution.context.contentGenerationMetadata?.generator ?? "heuristic";
+      const hasGeminiConfiguration = typeof process !== "undefined" && Boolean(process.env?.GOOGLE_CLOUD_PROJECT?.trim());
+      const configuredEmbeddingProvider = typeof process !== "undefined" ? process.env?.SEO_EMBEDDING_PROVIDER?.trim().toLowerCase() : undefined;
+      const fallbackStages = [...new Set([...observedFallbackStages, ...execution.fallbackStages])];
+      const usedLocalEmbeddingFallback = hasGeminiConfiguration
+        && !["local", "fallback"].includes(configuredEmbeddingProvider ?? "")
+        && Object.values(execution.context.conflictResult?.approvedEmbeddings ?? {})
+          .some((embedding) => !["vertex", "vertex_ai"].includes(embedding.provider));
+      if (usedLocalEmbeddingFallback && !fallbackStages.includes("b4")) {
+        fallbackStages.push("b4");
+        observedWarnings.push("Vertex embeddings were unavailable; local keyword conflict analysis was used.");
+      }
+      if (hasGeminiConfiguration && generator === "heuristic" && !fallbackStages.includes("b5")) {
+        fallbackStages.push("b5");
+      }
+      const engine = !hasGeminiConfiguration
+        ? "heuristic"
+        : generator === "gemini" && fallbackStages.length === 0 && options.imageMode !== "alt_only"
+          ? "gemini"
+          : "mixed";
+      return {
+        output: options.imageMode === "alt_only"
+          ? {
+              ...execution.output,
+              images: execution.output.images.map((image) => ({
+                sourceUrl: image.sourceUrl,
+                alt: image.alt,
+              })),
+            }
+          : execution.output,
+        metadata: {
+          engine,
+          fieldsApplied: ["title", "descriptionHtml", "handle", "seo.title", "seo.description", "media.alt"],
+          fallbackStages,
+          warnings: [...observedWarnings, ...execution.warnings],
+          approvedKeywords: execution.context.conflictResult?.approvedKeywords ?? [],
+          approvedEmbeddings: execution.context.conflictResult?.approvedEmbeddings,
+          corpusRevision: execution.context.conflictResult?.corpusRevision,
+          performance: { stageDurationsMs: { ...stageDurationsMs }, ...providerMetrics },
+        },
+      };
+    } finally { running = false; }
   }
-  if (hasGeminiConfiguration && generator === "heuristic" && !fallbackStages.includes("b5")) {
-    fallbackStages.push("b5");
-  }
-  const engine = !hasGeminiConfiguration
-    ? "heuristic"
-    : generator === "gemini" && fallbackStages.length === 0 && options.imageMode !== "alt_only"
-      ? "gemini"
-      : "mixed";
-  return {
-    output: options.imageMode === "alt_only"
-      ? {
-          ...execution.output,
-          images: execution.output.images.map((image) => ({
-            sourceUrl: image.sourceUrl,
-            alt: image.alt,
-          })),
-        }
-      : execution.output,
-    metadata: {
-      engine,
-      fieldsApplied: ["title", "descriptionHtml", "handle", "seo.title", "seo.description", "media.alt"],
-      fallbackStages,
-      warnings: [...observedWarnings, ...execution.warnings],
-      approvedKeywords: execution.context.conflictResult?.approvedKeywords ?? [],
-      approvedEmbeddings: execution.context.conflictResult?.approvedEmbeddings,
-      corpusRevision: execution.context.conflictResult?.corpusRevision,
-    },
-  };
+  return { run };
 }
 
 export async function registerSeoContentKeywords(
@@ -210,6 +251,7 @@ export function createSeoContentPipelineSummary(
     fieldsApplied: detailed.metadata.fieldsApplied,
     fallbackStages: detailed.metadata.fallbackStages,
     warnings: detailed.metadata.warnings,
+    performance: detailed.metadata.performance,
   };
 }
 

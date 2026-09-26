@@ -1,3 +1,5 @@
+import { abortableDelay, runProviderRequest, type ProviderRequestOptions } from "../provider-runtime";
+import { SingleFlight } from "../single-flight";
 import {
   createSuggestCacheKey,
   defaultGoogleSuggestCache,
@@ -25,7 +27,7 @@ export interface GoogleSuggestConfig {
   readonly cache?: GoogleSuggestCache | null;
 }
 
-export interface GoogleSuggestRequestOptions {
+export interface GoogleSuggestRequestOptions extends ProviderRequestOptions {
   readonly timeoutMs?: number;
   readonly signal?: AbortSignal;
   readonly bypassCache?: boolean;
@@ -43,10 +45,6 @@ export const DEFAULT_GOOGLE_SUGGEST_ENDPOINT =
 export const DEFAULT_TIMEOUT_MS = 3000;
 export const DEFAULT_RETRY_DELAY_MS = 500;
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 function resolveEnvValue(key: string): string | undefined {
   if (typeof process !== "undefined" && process.env) {
     return process.env[key];
@@ -60,6 +58,7 @@ export class UnofficialGoogleSuggestClient implements GoogleSuggestClient {
   readonly endpoint: string;
   readonly defaultTimeoutMs: number;
   readonly retryDelayMs: number;
+  private readonly inFlight = new SingleFlight<readonly string[]>();
   private readonly fetchFn: typeof fetch;
   private readonly cache?: GoogleSuggestCache;
 
@@ -86,6 +85,7 @@ export class UnofficialGoogleSuggestClient implements GoogleSuggestClient {
     query: string,
     options?: GoogleSuggestRequestOptions,
   ): Promise<readonly string[]> {
+    options?.signal?.throwIfAborted();
     const trimmedQuery = query.trim();
     if (!trimmedQuery) {
       return [];
@@ -100,38 +100,43 @@ export class UnofficialGoogleSuggestClient implements GoogleSuggestClient {
     if (!options?.bypassCache && this.cache) {
       const cached = this.cache.get(cacheKey);
       if (cached !== undefined) {
+        options?.onMetric?.({ cacheHit: true });
         return cached;
       }
     }
 
     const timeoutMs = options?.timeoutMs ?? this.defaultTimeoutMs;
 
-    // Retry loop: max 2 attempts (1 initial + 1 retry on retryable error)
-    let lastError: unknown;
-    for (let attempt = 1; attempt <= 2; attempt++) {
-      try {
-        const results = await this.executeRequest(
-          trimmedQuery,
-          timeoutMs,
-          options?.signal,
-        );
+    return this.inFlight.join(cacheKey, async signal => {
+      // Retry loop: max 2 attempts (1 initial + 1 retry on retryable error)
+      let lastError: unknown;
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        try {
+          const results = await runProviderRequest("suggest", requestSignal => this.executeRequest(
+            trimmedQuery, requestSignal,
+          ), { ...options, signal, timeoutMs });
 
-        if (this.cache) {
-          this.cache.set(cacheKey, results);
-        }
+          if (this.cache) {
+            this.cache.set(cacheKey, results);
+          }
 
-        return results;
-      } catch (err) {
-        lastError = err;
-        const isRetryable = this.isRetryableError(err);
-        if (!isRetryable || attempt >= 2) {
-          throw err;
+          return results;
+        } catch (err) {
+          lastError = err;
+          const isRetryable = this.isRetryableError(err);
+          if (!isRetryable || attempt >= 2) {
+            if (err instanceof Error && err.name === "TimeoutError") {
+              throw new GoogleSuggestError(`Google suggest request timed out after ${timeoutMs}ms`, { status: 408, isRetryable: true, cause: err });
+            }
+            throw err;
+          }
+          options?.onMetric?.({ retryWaitMs: this.retryDelayMs });
+          await abortableDelay(this.retryDelayMs, signal);
         }
-        await sleep(this.retryDelayMs);
       }
-    }
 
-    throw lastError;
+      throw lastError;
+    }, options?.signal);
   }
 
   private isRetryableError(err: unknown): boolean {
@@ -162,72 +167,31 @@ export class UnofficialGoogleSuggestClient implements GoogleSuggestClient {
 
   private async executeRequest(
     query: string,
-    timeoutMs: number,
-    parentSignal?: AbortSignal,
+    parentSignal: AbortSignal,
   ): Promise<readonly string[]> {
+    parentSignal?.throwIfAborted();
     const url = new URL(this.endpoint);
     url.searchParams.set("client", "firefox");
     url.searchParams.set("hl", this.language);
     url.searchParams.set("gl", this.country);
     url.searchParams.set("q", query);
 
-    const controller = new AbortController();
-    let timeoutId: NodeJS.Timeout | undefined;
-    let didTimeout = false;
-    let didParentAbort = false;
-
-    const onParentAbort = (): void => {
-      didParentAbort = true;
-      controller.abort();
-    };
-
-    if (parentSignal) {
-      if (parentSignal.aborted) {
-        throw new GoogleSuggestError("Request was aborted before execution", {
-          isRetryable: false,
-        });
-      }
-      parentSignal.addEventListener("abort", onParentAbort, { once: true });
-    }
-
-    timeoutId = setTimeout(() => {
-      didTimeout = true;
-      controller.abort(new Error(`Request timed out after ${timeoutMs}ms`));
-    }, timeoutMs);
 
     let response: Response;
     try {
       response = await this.fetchFn(url.toString(), {
         method: "GET",
-        signal: controller.signal,
+        signal: parentSignal,
         headers: {
           Accept: "application/json, text/plain, */*",
         },
       });
     } catch (fetchErr) {
-      if (didParentAbort || parentSignal?.aborted) {
-        throw new GoogleSuggestError("Google suggest request was aborted", {
-          isRetryable: false,
-          cause: fetchErr,
-        });
-      }
-      if (didTimeout) {
-        throw new GoogleSuggestError(
-          `Google suggest request timed out after ${timeoutMs}ms`,
-          { status: 408, isRetryable: true, cause: fetchErr },
-        );
-      }
+      parentSignal.throwIfAborted();
       throw new GoogleSuggestError(
         `Google suggest network error: ${fetchErr instanceof Error ? fetchErr.message : String(fetchErr)}`,
         { isRetryable: true, cause: fetchErr },
       );
-    } finally {
-      if (timeoutId) {
-        clearTimeout(timeoutId);
-      }
-      if (parentSignal) {
-        parentSignal.removeEventListener("abort", onParentAbort);
-      }
     }
 
     if (!response.ok) {
@@ -259,6 +223,7 @@ export class UnofficialGoogleSuggestClient implements GoogleSuggestClient {
     try {
       rawData = await response.json();
     } catch (parseErr) {
+      parentSignal.throwIfAborted();
       throw new GoogleSuggestError(
         "Failed to parse Google suggest JSON response",
         { isRetryable: false, cause: parseErr },
@@ -278,6 +243,12 @@ export class UnofficialGoogleSuggestClient implements GoogleSuggestClient {
       );
     }
 
+    parentSignal.throwIfAborted();
     return rawData[1];
   }
+}
+
+let sharedClient: UnofficialGoogleSuggestClient | undefined;
+export function getSharedGoogleSuggestClient(): UnofficialGoogleSuggestClient {
+  return sharedClient ??= new UnofficialGoogleSuggestClient({ cache: defaultGoogleSuggestCache });
 }

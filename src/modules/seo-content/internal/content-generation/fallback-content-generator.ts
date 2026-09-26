@@ -31,6 +31,7 @@ export class FallbackContentGenerator implements ContentGenerator {
 
       return { draft, generator: "gemini" };
     } catch (error: unknown) {
+      if (error instanceof Error && error.name === "AbortError") throw error;
       const reason = error instanceof Error ? error.message : String(error);
       if (this.onFallback) {
         this.onFallback(reason, error);

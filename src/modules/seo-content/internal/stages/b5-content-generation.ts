@@ -1,3 +1,4 @@
+import type { ProviderRequestOptions } from "../provider-runtime";
 import { evolveContext } from "../pipeline-context";
 import type {
   ContentGenerationMetadata,
@@ -40,7 +41,7 @@ const DEFAULT_CONSTRAINTS: ContentConstraints = {
   preserveExistingHandle: true,
 };
 
-export function createDefaultB5Generator(options?: {
+export function createDefaultB5Generator(options?: ProviderRequestOptions & {
   readonly onFallback?: (reason: string, error?: unknown) => void;
 }): FallbackContentGenerator | HeuristicContentGenerator {
   const heuristic = new HeuristicContentGenerator();
@@ -56,6 +57,7 @@ export function createDefaultB5Generator(options?: {
         ? Math.max(512, Math.min(8192, Math.trunc(configuredMaxOutputTokens)))
         : 2048;
       const vertexSdk = new GoogleGenAIVertexContentGenerator({
+        ...options,
         projectId,
         location: process.env.GOOGLE_CLOUD_LOCATION || "global",
         defaultModel:
@@ -73,10 +75,7 @@ export function createDefaultB5Generator(options?: {
   return heuristic;
 }
 
-export async function executeB5ContentGeneration(
-  context: SeoPipelineContext,
-  options: B5ContentGenerationOptions = {},
-): Promise<SeoPipelineContext> {
+export function buildB5ContentInput(context: SeoPipelineContext, options: B5ContentGenerationOptions = {}) {
   const constraints: ContentConstraints = {
     ...DEFAULT_CONSTRAINTS,
     ...options.constraints,
@@ -98,6 +97,15 @@ export async function executeB5ContentGeneration(
       useCases: facts.useCases,
     },
   });
+
+  return { facts, keywords, constraints };
+}
+
+export async function executeB5ContentGeneration(
+  context: SeoPipelineContext,
+  options: B5ContentGenerationOptions = {},
+): Promise<SeoPipelineContext> {
+  const { facts, keywords, constraints } = buildB5ContentInput(context, options);
 
   // 3. Obtain content generator
   const activeGenerator = options.generator ?? createDefaultB5Generator();

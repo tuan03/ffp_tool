@@ -31,7 +31,9 @@ import {
   fromCustomizationProduct,
   registerSeoContentKeywords,
   runSeoContentDetailed,
+  createSeoContentSession,
   SeoCorpusCommitCoordinator,
+  SeoCorpusReservation,
   type SeoCorpusCommitResult,
   unregisterSeoContentKeywords,
 } from "../src/modules/seo-content";
@@ -88,6 +90,9 @@ const seoEnvironmentKeys = [
   "GEMINI_ANALYSIS_MODEL",
   "GEMINI_MODEL",
   "GEMINI_VISION_CONCURRENCY",
+  "GEMINI_REQUEST_CONCURRENCY",
+  "SEO_EMBEDDING_CONCURRENCY",
+  "SEO_SUGGEST_CONCURRENCY",
   "GEMINI_RETRY_INITIAL_DELAY_MS",
   "GEMINI_MAX_RETRIES",
   "SEO_SEARCH_PROVIDER",
@@ -110,7 +115,7 @@ env.SHOPIFY_PROXY_CONFIG = env.SHOPIFY_PROXY_CONFIG || env.AMAZON_CRAWLER_PROXY_
 process.env.SHOPIFY_PROXY_CONFIG = env.SHOPIFY_PROXY_CONFIG;
 const coordinatorUrl = (env.SHOPIFY_PIPELINE_COORDINATOR_URL || "http://127.0.0.1:8766").replace(/\/+$/, "");
 const pipelineToken = env.SHOPIFY_PIPELINE_TOKEN?.trim();
-const workerCount = Math.max(1, Math.min(16, Number(env.SHOPIFY_PIPELINE_WORKERS || 4)));
+const workerCount = Math.max(1, Math.min(16, Number(env.SHOPIFY_PIPELINE_WORKERS || 8)));
 const gatewayPort = Math.max(1, Number(env.GATEWAY_PORT || 3001));
 const gatewayUrl = (env.SHOPIFY_GATEWAY_URL || `http://127.0.0.1:${gatewayPort}/api/shopify`).replace(/\/+$/, "");
 const proxyCooldownUntil = new Map<string, number>();
@@ -432,6 +437,7 @@ async function processClaim(
   }, 2_000);
   heartbeat.unref();
 
+  let seoReservation: SeoCorpusReservation | undefined;
   let reservedSeo:
     | {
         readonly input: ReturnType<typeof fromCustomizationProduct>;
@@ -548,23 +554,18 @@ async function processClaim(
         readonly execution: Awaited<ReturnType<typeof runSeoContentDetailed>>;
         readonly product: CrawlProduct;
       }
+      const seoInput = { ...fromCustomizationProduct(baseNormalizedProduct), siteDomain: claimStoreConfig?.shopDomain, storeId: claimStoreId };
+      const seoSession = createSeoContentSession(seoInput, {
+        imageMode: "alt_only", signal: cancellationController.signal,
+        dependencies: { conflictCorpus: new FileSeoConflictCorpus({ storeId: claimStoreId }) },
+      });
       let prepared: SeoCorpusCommitResult<PreparedSeo>;
       try {
         prepared = await seoCorpusCommitCoordinator.prepare<PreparedSeo>({
           signal: cancellationController.signal,
+          corpusKey: new FileSeoConflictCorpus({ storeId: claimStoreId }).getFilePath(),
           runSeo: async () => {
-            const input = {
-              ...fromCustomizationProduct(baseNormalizedProduct),
-              siteDomain: claimStoreConfig?.shopDomain,
-              storeId: claimStoreId,
-            };
-            const execution = await runSeoContentDetailed(input, {
-              imageMode: "alt_only",
-              signal: cancellationController.signal,
-              dependencies: {
-                conflictCorpus: new FileSeoConflictCorpus({ storeId: claimStoreId }),
-              },
-            });
+            const execution = await seoSession.run();
             const product = applySeoContentToCustomizationProduct(
               baseNormalizedProduct,
               execution.output,
@@ -586,11 +587,13 @@ async function processClaim(
           },
           register: async (seo) => registerSeoContentKeywords(seo.input, seo.execution),
         });
-        throwIfCancelled();
         reservedSeo = {
           input: prepared.execution.input,
           execution: prepared.execution.execution,
         };
+        const reservation = reservedSeo;
+        seoReservation = new SeoCorpusReservation(() => unregisterSeoContentKeywords(reservation.input, reservation.execution));
+        throwIfCancelled();
       } catch (error: unknown) {
         if (cancellationController.signal.aborted || (error instanceof Error && error.name === "AbortError")) {
           throw new PipelineCancelledError();
@@ -606,14 +609,24 @@ async function processClaim(
       timings.seoTotalMs = prepared.timings.totalMs;
       if (prepared.revisionRetries > 0) {
         reconciliationWarnings.push(
-          `SEO corpus changed during processing; regenerated SEO ${prepared.revisionRetries} time(s) before review.`,
+          `SEO corpus changed during processing; rechecked keyword allocation ${prepared.revisionRetries} time(s) before review.`,
         );
       }
       logPhase(claim.sourceKey, "seo-and-corpus", timings.seoTotalMs);
 
       const seoProduct = prepared.execution.product;
       const seoExecution = prepared.execution.execution;
-      seoSummary = createSeoContentPipelineSummary(seoExecution);
+      seoSummary = {
+        ...createSeoContentPipelineSummary(seoExecution),
+        performance: {
+          ...seoExecution.metadata.performance,
+          stageDurationsMs: seoExecution.metadata.performance?.stageDurationsMs ?? {},
+          revisionRetries: prepared.revisionRetries,
+          commitQueueMs: prepared.timings.queueWaitMs,
+          commitMs: prepared.timings.registrationMs,
+        },
+      };
+      console.log(JSON.stringify({ taskId: claim.id, step: "seo-performance", ...seoSummary.performance }));
       const imageProfileSlug = claim.settings.imageProfileSlug || "default";
       await postJson(`/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/image-processing`, {
         workerId,
@@ -665,6 +678,7 @@ async function processClaim(
           imageProcessing: imageProcessingSummary,
         },
       });
+      seoReservation?.retain();
       logPhase(claim.sourceKey, "review-ready", Date.now() - pipelineStartedAt);
       return;
     }
@@ -832,7 +846,7 @@ async function processClaim(
           proxyCooldownUntil.set(effectiveProxyStoreId, Date.now() + 30_000);
         }
         if (!syncResult.reconciliationRequired && reservedSeo) {
-          await unregisterSeoContentKeywords(reservedSeo.input, reservedSeo.execution);
+          await seoReservation?.dispose();
           reservedSeo = undefined;
         }
         timings.shopifySyncMs = Date.now() - syncStartedAt;
@@ -914,7 +928,7 @@ async function processClaim(
     }
     if (shouldAcknowledgeStop) {
       if (reservedSeo && !hasStartedShopifyWrite) {
-        await unregisterSeoContentKeywords(reservedSeo.input, reservedSeo.execution).catch(() => undefined);
+        await seoReservation?.dispose().catch(() => undefined);
       }
       await postJson(`/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/cancelled`, {
         workerId,
@@ -947,7 +961,7 @@ async function processClaim(
       Boolean(extractedProductId);
     const reconciliationRequired = isPartialWrite || /unknown write state|partial write|reconciliation/i.test(message);
     if (reservedSeo && !hasStartedShopifyWrite && !reconciliationRequired) {
-      await unregisterSeoContentKeywords(reservedSeo.input, reservedSeo.execution).catch(() => undefined);
+      await seoReservation?.dispose().catch(() => undefined);
     }
     if (extractedProductId) {
       try {
@@ -975,6 +989,11 @@ async function processClaim(
     });
   } finally {
     clearInterval(heartbeat);
+    if (!hasStartedShopifyWrite) {
+      await seoReservation?.dispose().catch(() => {
+        console.warn(JSON.stringify({ taskId: claim.id, step: "seo-reservation-cleanup", failed: true }));
+      });
+    }
   }
 }
 
