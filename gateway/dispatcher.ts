@@ -28,16 +28,22 @@ import {
   executeFilesBulkCreate,
   executeFilesCreate,
   executeFilesDelete,
+  executeFilesList,
   executeFilesStageBinary,
 } from "./operations/files-write";
-import { executeMetafieldsGet, executeMetafieldsSet } from "./operations/metafields-write";
+import {
+  executeMetafieldsDelete,
+  executeMetafieldsGet,
+  executeMetafieldsSet,
+} from "./operations/metafields-write";
+import { executeAmazonAsinPreflight } from "./operations/amazon-asin-preflight";
 import {
   executeStoresGet,
   executeStoresList,
 } from "./operations/store-management";
 import type { ShopifyGraphqlClient } from "./shopify-graphql-client";
 import type { StoreRegistry } from "./store-registry";
-import type { GatewayRequest, GatewayResponse, StoreConfig } from "./types";
+import type { GatewayErrorCode, GatewayRequest, GatewayResponse, StoreConfig } from "./types";
 
 const WRITE_OPERATIONS: ReadonlySet<string> = new Set([
   "products.create",
@@ -52,6 +58,8 @@ const WRITE_OPERATIONS: ReadonlySet<string> = new Set([
   "files.stageBinary",
   "files.delete",
   "metafields.set",
+  "metafields.delete",
+  "products.preflightAmazonAsins",
   "collections.create",
   "collections.update",
   "collections.delete",
@@ -260,46 +268,39 @@ export class GatewayDispatcher {
             };
           }
           if (cached.state === "RECONCILIATION_REQUIRED") {
-            const createdProductId =
-              cached.responseData &&
-              typeof cached.responseData === "object" &&
-              "createdProductId" in (cached.responseData as Record<string, unknown>)
-                ? String((cached.responseData as Record<string, unknown>).createdProductId)
-                : cached.details && "createdProductId" in cached.details
-                ? String(cached.details.createdProductId)
-                : undefined;
-            const updatedProductId =
-              cached.responseData &&
-              typeof cached.responseData === "object" &&
-              "updatedProductId" in (cached.responseData as Record<string, unknown>)
-                ? String((cached.responseData as Record<string, unknown>).updatedProductId)
-                : cached.details && "updatedProductId" in cached.details
-                ? String(cached.details.updatedProductId)
-                : undefined;
-            const updatedProductIds =
-              cached.responseData &&
-              typeof cached.responseData === "object" &&
-              Array.isArray((cached.responseData as Record<string, unknown>).updatedProductIds)
-                ? ((cached.responseData as Record<string, unknown>).updatedProductIds as readonly string[])
-                : cached.details && Array.isArray(cached.details.updatedProductIds)
-                ? (cached.details.updatedProductIds as readonly string[])
-                : undefined;
-            const affectedProductId = createdProductId ?? updatedProductId;
-            const isPartial = Boolean(affectedProductId || (updatedProductIds && updatedProductIds.length > 0));
+            const cachedDetails = cached.details ?? {};
+            const errorCode =
+              typeof cachedDetails.errorCode === "string"
+                ? (cachedDetails.errorCode as GatewayErrorCode)
+                : typeof cachedDetails.causeCode === "string" && cachedDetails.completedChunks
+                ? "SHOPIFY_PARTIAL_WRITE"
+                : (cached.responseData && typeof cached.responseData === "object" && "createdProductId" in (cached.responseData as Record<string, unknown>))
+                ? "SHOPIFY_PARTIAL_WRITE"
+                : (cachedDetails.createdProductId || cachedDetails.updatedProductId || cachedDetails.updatedProductIds)
+                ? "SHOPIFY_PARTIAL_WRITE"
+                : "SHOPIFY_UNKNOWN_WRITE_STATE";
+
+            const baseMsg = `RequestId '${requestId}' is in a reconciliation-required write state on Shopify and requires manual reconciliation before retrying`;
+            const errorMsg =
+              typeof cachedDetails.errorMessage === "string" && !cachedDetails.errorMessage.includes("requires manual reconciliation")
+                ? `${baseMsg}: ${cachedDetails.errorMessage}`
+                : typeof cachedDetails.errorMessage === "string"
+                ? cachedDetails.errorMessage
+                : baseMsg;
 
             throw new GatewayError(
-              `RequestId '${requestId}' is in a reconciliation-required write state on Shopify and requires manual reconciliation before retrying`,
-              isPartial ? "SHOPIFY_PARTIAL_WRITE" : "SHOPIFY_UNKNOWN_WRITE_STATE",
+              errorMsg,
+              errorCode,
               409,
               undefined,
               undefined,
               undefined,
               false,
               {
-                ...(createdProductId ? { createdProductId } : {}),
-                ...(updatedProductId ? { updatedProductId } : {}),
-                ...(updatedProductIds ? { updatedProductIds } : {}),
+                ...cachedDetails,
+                ...(cached.responseData && typeof cached.responseData === "object" ? (cached.responseData as Record<string, unknown>) : {}),
                 reconciliationRequired: true,
+                isReplay: true,
               },
               true,
             );
@@ -355,36 +356,25 @@ export class GatewayDispatcher {
         const isPartialWrite =
           err instanceof GatewayError &&
           (err.code === "SHOPIFY_PARTIAL_WRITE" ||
-            err.reconciliationRequired === true ||
-            Boolean(err.details?.reconciliationRequired));
+            (err.code !== "SHOPIFY_UNKNOWN_WRITE_STATE" &&
+              (err.reconciliationRequired === true || Boolean(err.details?.reconciliationRequired))));
 
         if (isUnknownWriteState || isPartialWrite) {
-          const createdProductId =
-            err instanceof GatewayError && err.details?.createdProductId
-              ? String(err.details.createdProductId)
-              : undefined;
-          const updatedProductId =
-            err instanceof GatewayError && err.details?.updatedProductId
-              ? String(err.details.updatedProductId)
-              : undefined;
-          const updatedProductIds =
-            err instanceof GatewayError && Array.isArray(err.details?.updatedProductIds)
-              ? (err.details.updatedProductIds as readonly string[])
-              : undefined;
+          const errorCode = isPartialWrite ? "SHOPIFY_PARTIAL_WRITE" : "SHOPIFY_UNKNOWN_WRITE_STATE";
+          const errorDetails = err instanceof GatewayError && err.details ? err.details : {};
+          const errorMessage = err instanceof GatewayError ? err.message : String(err);
 
           await this.idempotencyStore.set(idempotencyKey, {
             state: "RECONCILIATION_REQUIRED",
             operation: request.operation,
             payloadHash: canonicalHash,
             responseData: {
-              ...(createdProductId ? { createdProductId } : {}),
-              ...(updatedProductId ? { updatedProductId } : {}),
-              ...(updatedProductIds ? { updatedProductIds } : {}),
+              ...errorDetails,
             },
             details: {
-              ...(createdProductId ? { createdProductId } : {}),
-              ...(updatedProductId ? { updatedProductId } : {}),
-              ...(updatedProductIds ? { updatedProductIds } : {}),
+              ...errorDetails,
+              errorCode,
+              errorMessage,
               reconciliationRequired: true,
             },
             createdAtMs: Date.now(),
@@ -429,6 +419,8 @@ export class GatewayDispatcher {
         return executeCollectionsGet(store, this.graphqlClient, payload);
       case "metafields.get":
         return executeMetafieldsGet(this.graphqlClient, store, payload, mode);
+      case "files.list":
+        return executeFilesList(this.graphqlClient, store, payload, mode);
       default:
         throw new GatewayError(`Unsupported operation: ${operation}`, "NOT_IMPLEMENTED", 501);
     }
@@ -463,9 +455,13 @@ export class GatewayDispatcher {
       case "files.stageBinary":
         return executeFilesStageBinary(store, this.graphqlClient, payload, mode, requestId);
       case "files.delete":
-        return executeFilesDelete(this.graphqlClient, store, payload, mode);
+        return executeFilesDelete(this.graphqlClient, store, payload, mode, requestId);
       case "metafields.set":
         return executeMetafieldsSet(store, this.graphqlClient, payload, mode, requestId);
+      case "metafields.delete":
+        return executeMetafieldsDelete(this.graphqlClient, store, payload, mode, requestId);
+      case "products.preflightAmazonAsins":
+        return executeAmazonAsinPreflight(store, this.graphqlClient, payload, mode, requestId);
       case "collections.create":
         return executeCollectionsCreate(store, this.graphqlClient, payload, mode, requestId);
       case "collections.update":

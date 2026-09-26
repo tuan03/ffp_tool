@@ -3,7 +3,7 @@ import test from "node:test";
 
 import { filterSeoProducts, findNextProductInList } from "../review-navigation";
 import { sanitizeHtmlDescription } from "../sanitize-html";
-import { getInitialSampleViewModels } from "../seo-content-ui-adapter";
+import { getInitialSampleViewModels, getProductSourceOrigin } from "../seo-content-ui-adapter";
 import { buildProductZoomImages } from "../zoom-image-helper";
 import type {
   ReviewDecision,
@@ -264,5 +264,78 @@ test("filterSeoProducts: filters by decisionFilter 'sync_failed' correctly", () 
   assert.equal(failedOnly[0]!.id, modified[1]!.id);
   assert.equal(failedOnly[0]!.shopifySyncStatus, "failed");
   assert.equal(failedOnly[0]!.shopifySyncError, "Shopify Gateway 504 Timeout");
+});
+
+test("getProductSourceOrigin: correctly identifies crawler, pod, and auto_seo origins", () => {
+  const sample = getInitialSampleViewModels();
+
+  const crawlerItem: SeoProductUiViewModel = {
+    ...sample[0]!,
+    sourceOrigin: "distributed_crawler",
+  };
+  const podItem: SeoProductUiViewModel = {
+    ...sample[1]!,
+    sourceOrigin: "pinterest_pod",
+  };
+  const autoSeoItem: SeoProductUiViewModel = {
+    ...sample[2]!,
+    sourceOrigin: "auto_seo",
+  };
+
+  assert.equal(getProductSourceOrigin(crawlerItem), "distributed_crawler");
+  assert.equal(getProductSourceOrigin(podItem), "pinterest_pod");
+  assert.equal(getProductSourceOrigin(autoSeoItem), "auto_seo");
+});
+
+test("filterSeoProducts: filters by sourceOriginFilter (all, distributed_crawler, pinterest_pod, auto_seo)", () => {
+  const sample = getInitialSampleViewModels();
+  const items: SeoProductUiViewModel[] = [
+    { ...sample[0]!, id: "p-crawler", sourceOrigin: "distributed_crawler" },
+    { ...sample[1]!, id: "p-pod", sourceOrigin: "pinterest_pod" },
+    { ...sample[2]!, id: "p-autoseo", sourceOrigin: "auto_seo" },
+  ];
+
+  // All origins
+  const allOrigins = filterSeoProducts(items, {
+    searchQuery: "",
+    statusFilter: "all",
+    decisionFilter: "all",
+    sourceOriginFilter: "all",
+    onlyMockData: false,
+  });
+  assert.equal(allOrigins.length, 3);
+
+  // Distributed Crawler only
+  const crawlerOnly = filterSeoProducts(items, {
+    searchQuery: "",
+    statusFilter: "all",
+    decisionFilter: "all",
+    sourceOriginFilter: "distributed_crawler",
+    onlyMockData: false,
+  });
+  assert.equal(crawlerOnly.length, 1);
+  assert.equal(crawlerOnly[0]!.id, "p-crawler");
+
+  // Pinterest POD only
+  const podOnly = filterSeoProducts(items, {
+    searchQuery: "",
+    statusFilter: "all",
+    decisionFilter: "all",
+    sourceOriginFilter: "pinterest_pod",
+    onlyMockData: false,
+  });
+  assert.equal(podOnly.length, 1);
+  assert.equal(podOnly[0]!.id, "p-pod");
+
+  // Auto SEO only
+  const autoSeoOnly = filterSeoProducts(items, {
+    searchQuery: "",
+    statusFilter: "all",
+    decisionFilter: "all",
+    sourceOriginFilter: "auto_seo",
+    onlyMockData: false,
+  });
+  assert.equal(autoSeoOnly.length, 1);
+  assert.equal(autoSeoOnly[0]!.id, "p-autoseo");
 });
 

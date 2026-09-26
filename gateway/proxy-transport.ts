@@ -19,6 +19,20 @@ export function clearProxyAgentPool(): void {
   proxyAgentPool.clear();
 }
 
+export function evictProxyAgent(proxyUrl: string): void {
+  try {
+    const parsed = new URL(proxyUrl);
+    const normalized = parsed.toString();
+    const agent = proxyAgentPool.get(normalized);
+    if (agent) {
+      void agent.close().catch(() => {});
+      proxyAgentPool.delete(normalized);
+    }
+  } catch {
+    // Ignore invalid proxy url during eviction
+  }
+}
+
 function getOrCreateProxyAgent(normalizedUrl: string): ProxyAgent {
   let agent = proxyAgentPool.get(normalizedUrl);
   if (!agent) {

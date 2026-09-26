@@ -245,8 +245,8 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
         allow_origins=origins,
         allow_origin_regex=lan_origin_pattern,
         allow_credentials=False,
-        allow_methods=["GET", "POST", "PUT", "DELETE"],
-        allow_headers=["Content-Type", "Content-Encoding", "X-Client-Id", "X-Lease-Id", "X-Result-Checksum"],
+        allow_methods=["*"],
+        allow_headers=["*"],
     )
 
     @app.get("/api/v1/health")
@@ -574,7 +574,7 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
         if result.get("deleted"):
             raise HTTPException(status_code=409, detail="Review item was deleted.")
         if result.get("locked"):
-            raise HTTPException(status_code=409, detail="Review item cannot be edited while syncing or after sync.")
+            raise HTTPException(status_code=409, detail="Review item cannot be edited while syncing.")
         return result
 
     @app.post("/api/v1/product-reviews/{item_id}/decision")
@@ -595,7 +595,7 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
         if result.get("deleted"):
             raise HTTPException(status_code=409, detail="Review item was deleted.")
         if result.get("locked"):
-            raise HTTPException(status_code=409, detail="Review item cannot be changed while syncing or after sync.")
+            raise HTTPException(status_code=409, detail="Review item cannot be changed while syncing.")
         return result
 
     @app.post("/api/v1/product-reviews/{item_id}/sync")

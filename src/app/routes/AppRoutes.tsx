@@ -16,6 +16,7 @@ import type {
 } from "../../modules/amazon-crawler";
 import { createAutoSeoRoutes } from "../../modules/auto-seo";
 import type { ShopifyProductForAutoSeoUi } from "../../modules/auto-seo";
+import { createCustomizationManagerRoutes } from "../../modules/customization-manager";
 import { getModuleApiRunner } from "../../modules/module-api";
 import {
   applyApprovedProductUpdates,
@@ -184,6 +185,7 @@ export function AppRoutes({
     };
 
     const autoSeoRoutes = createAutoSeoRoutes(autoSeoClient, handleAutoSeoHandover);
+    const customizationRoutes = createCustomizationManagerRoutes(moduleApiRunner);
 
     const handleSyncApprovedProducts = async (
       items: readonly SeoProductUiViewModel[],
@@ -495,6 +497,7 @@ export function AppRoutes({
           ...distributedCrawlerRoutes,
           ...podRoutes,
           ...autoSeoRoutes,
+          ...customizationRoutes,
           {
             path: "seo-review",
             element: (

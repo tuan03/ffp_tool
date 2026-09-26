@@ -3,6 +3,9 @@ import type { SeoReviewFilterState, SeoReviewViewMode } from "../types";
 export interface SeoBatchToolbarProps {
   readonly totalCount: number;
   readonly filteredCount?: number;
+  readonly crawlCount?: number;
+  readonly podCount?: number;
+  readonly autoSeoCount?: number;
   readonly pendingCount?: number;
   readonly approvedCount?: number;
   readonly approvedUnsyncedCount?: number;
@@ -31,6 +34,9 @@ export interface SeoBatchToolbarProps {
 export function SeoBatchToolbar({
   totalCount,
   filteredCount,
+  crawlCount = 0,
+  podCount = 0,
+  autoSeoCount = 0,
   pendingCount = 0,
   approvedCount = 0,
   approvedUnsyncedCount = 0,
@@ -57,6 +63,83 @@ export function SeoBatchToolbar({
 }: SeoBatchToolbarProps): React.JSX.Element {
   return (
     <div className="space-y-3.5">
+      {/* Product Source Origin Tabs */}
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800/80 pb-3">
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <span className="text-xs font-semibold text-slate-400 mr-1 flex items-center gap-1">
+            <span>🏷️</span>
+            <span>Nguồn sản phẩm:</span>
+          </span>
+          <button
+            type="button"
+            onClick={() => onFilterChange({ sourceOriginFilter: "all" })}
+            className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition cursor-pointer flex items-center gap-1.5 ${
+              !filter.sourceOriginFilter || filter.sourceOriginFilter === "all"
+                ? "bg-slate-700/90 text-white shadow-sm ring-1 ring-slate-500/50"
+                : "bg-slate-900/80 text-slate-400 hover:text-slate-200 border border-slate-800"
+            }`}
+          >
+            <span>🌐</span>
+            <span>Tất cả nguồn</span>
+            <span className="font-mono text-[11px] opacity-80">({totalCount})</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => onFilterChange({ sourceOriginFilter: "distributed_crawler" })}
+            className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition cursor-pointer flex items-center gap-1.5 ${
+              filter.sourceOriginFilter === "distributed_crawler"
+                ? "bg-cyan-950 text-cyan-200 border border-cyan-500 shadow-md shadow-cyan-950/40 ring-1 ring-cyan-500/30"
+                : "bg-slate-900/80 text-cyan-400/80 hover:text-cyan-300 border border-slate-800"
+            }`}
+            title="Sản phẩm cào từ Distributed Crawler (Amazon). Đã tối ưu SEO trong pipeline cào, sẵn sàng cập nhật hoặc duyệt."
+          >
+            <span>⚡</span>
+            <span>Distributed Crawl</span>
+            <span className="font-mono text-[11px] opacity-90">({crawlCount})</span>
+            <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-emerald-950/90 text-emerald-300 border border-emerald-700/60 ml-0.5">
+              ✓ Đã SEO sẵn
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => onFilterChange({ sourceOriginFilter: "pinterest_pod" })}
+            className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition cursor-pointer flex items-center gap-1.5 ${
+              filter.sourceOriginFilter === "pinterest_pod"
+                ? "bg-pink-950 text-pink-200 border border-pink-500 shadow-md shadow-pink-950/40 ring-1 ring-pink-500/30"
+                : "bg-slate-900/80 text-pink-400/80 hover:text-pink-300 border border-slate-800"
+            }`}
+            title="Sản phẩm thiết kế từ Pinterest POD Studio. Cần duyệt lại tiêu đề, mô tả và ảnh in."
+          >
+            <span>🎨</span>
+            <span>Pinterest POD</span>
+            <span className="font-mono text-[11px] opacity-90">({podCount})</span>
+            <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-amber-950/90 text-amber-300 border border-amber-700/60 ml-0.5">
+              ⏳ Cần duyệt lại
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => onFilterChange({ sourceOriginFilter: "auto_seo" })}
+            className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition cursor-pointer flex items-center gap-1.5 ${
+              filter.sourceOriginFilter === "auto_seo"
+                ? "bg-purple-950 text-purple-200 border border-purple-500 shadow-md shadow-purple-950/40 ring-1 ring-purple-500/30"
+                : "bg-slate-900/80 text-purple-400/80 hover:text-purple-300 border border-slate-800"
+            }`}
+            title="Sản phẩm tuyển chọn từ Auto SEO. Cần duyệt lại nội dung SEO trước khi đồng bộ."
+          >
+            <span>🤖</span>
+            <span>Auto SEO</span>
+            <span className="font-mono text-[11px] opacity-90">({autoSeoCount})</span>
+            <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-amber-950/90 text-amber-300 border border-amber-700/60 ml-0.5">
+              ⏳ Cần duyệt lại
+            </span>
+          </button>
+        </div>
+      </div>
+
       {/* Search, Filter Tabs & View Mode Switcher */}
       <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-3">
         {/* Search input */}

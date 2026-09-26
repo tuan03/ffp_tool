@@ -1,3 +1,11 @@
+/**
+ * EXTERNAL ARCHITECTURE DEBT:
+ * This file adapts generic module-api contracts to shopify-sync and customization-manager.
+ * Per AGENTS.md, module-api must not depend on higher-level business modules.
+ * DO NOT add new business module imports or dependencies to this file.
+ * Scheduled for migration to orchestrator / consumer module internal adapters.
+ */
+
 import { runModuleApi } from "./service";
 import type {
   ModuleApiRunner,
@@ -12,7 +20,9 @@ import type {
   ShopifyProduct,
   ShopifyVariantsBulkCreateResponse,
   ShopifyFilesDeleteResponse,
+  ShopifyFilesListResponse,
   ShopifyMetafieldsGetResponse,
+  ShopifyMetafieldsDeleteResponse,
 } from "./types";
 import type { CustomizationGateway } from "../customization-manager";
 import type {
@@ -41,11 +51,12 @@ export interface ResolveShopifyProductForSyncInput {
   readonly storeId: string;
   readonly sourceKey: string;
   readonly mappedProductId?: string;
+  readonly handle?: string;
 }
 
 export interface ResolvedShopifyProductForSync {
   readonly product?: ShopifyProduct;
-  readonly match: "mapping" | "source_tag" | "none";
+  readonly match: "mapping" | "source_tag" | "handle" | "none";
   readonly staleMappedProductId?: string;
 }
 
@@ -73,10 +84,12 @@ export async function resolveShopifyProductForSync(
   const storeId = input.storeId.trim();
   const sourceKey = input.sourceKey.trim();
   const mappedProductId = input.mappedProductId?.trim();
-  if (!storeId || !sourceKey) {
-    throw new Error("storeId and sourceKey are required to reconcile a Shopify product.");
+  const handle = input.handle?.trim();
+  if (!storeId || (!sourceKey && !handle)) {
+    throw new Error("storeId and sourceKey or handle are required to reconcile a Shopify product.");
   }
 
+  // 1. Try mapped ID if provided
   if (mappedProductId) {
     const validMappedId = normalizeShopifyProductGid(mappedProductId);
     if (validMappedId) {
@@ -90,36 +103,90 @@ export async function resolveShopifyProductForSync(
           return { product: mappedResponse.data.product, match: "mapping" };
         }
       } catch {
-        // Fall back to source tag lookup if products.get fails for mappedProductId
+        // Fall back to handle / source tag lookup if products.get fails for mappedProductId
       }
     }
   }
 
-  const sourceTag = `ffp-source:${sourceKey}`;
-  const listed = await input.runner({
-    storeId,
-    operation: "products.list",
-    payload: {
-      limit: 10,
-      query: `tag:"${escapeShopifySearch(sourceTag)}"`,
-    },
-  }) as ShopifyProductsListResponse;
-  const candidate = listed.data.products.find((product) => product.tags.includes(sourceTag));
-  if (!candidate) {
-    return {
-      match: "none",
-      ...(mappedProductId ? { staleMappedProductId: mappedProductId } : {}),
-    };
+  // 2. Try handle lookup if provided (handles are unique per Shopify store)
+  if (handle) {
+    try {
+      const handleListed = (await input.runner({
+        storeId,
+        operation: "products.list",
+        payload: {
+          limit: 5,
+          query: `handle:${escapeShopifySearch(handle)}`,
+        },
+      })) as ShopifyProductsListResponse;
+      const candidateByHandle = handleListed.data?.products?.find(
+        (p) => p.handle.toLowerCase() === handle.toLowerCase(),
+      );
+      if (candidateByHandle) {
+        try {
+          const detail = (await input.runner({
+            storeId,
+            operation: "products.get",
+            payload: { id: candidateByHandle.id },
+          })) as ShopifyProductsGetResponse;
+          return {
+            product: detail.data?.product ?? candidateByHandle,
+            match: "handle",
+            ...(mappedProductId ? { staleMappedProductId: mappedProductId } : {}),
+          };
+        } catch {
+          return {
+            product: candidateByHandle,
+            match: "handle",
+            ...(mappedProductId ? { staleMappedProductId: mappedProductId } : {}),
+          };
+        }
+      }
+    } catch {
+      // Fall back to source tag lookup
+    }
   }
 
-  const detail = await input.runner({
-    storeId,
-    operation: "products.get",
-    payload: { id: candidate.id },
-  }) as ShopifyProductsGetResponse;
+  // 3. Try source tag lookup
+  if (sourceKey) {
+    const sourceTag = `ffp-source:${sourceKey}`;
+    const listed = await input.runner({
+      storeId,
+      operation: "products.list",
+      payload: {
+        limit: 10,
+        query: `tag:"${escapeShopifySearch(sourceTag)}"`,
+      },
+    }) as ShopifyProductsListResponse;
+    const candidate = listed.data?.products?.find((product) =>
+      product.tags.includes(sourceTag) ||
+      product.tags.some((t) => t.toLowerCase() === sourceTag.toLowerCase()) ||
+      product.tags.some((t) => t.toLowerCase().includes(sourceKey.toLowerCase())),
+    );
+    if (candidate) {
+      try {
+        const detail = await input.runner({
+          storeId,
+          operation: "products.get",
+          payload: { id: candidate.id },
+        }) as ShopifyProductsGetResponse;
+        return {
+          product: detail.data?.product ?? candidate,
+          match: "source_tag",
+          ...(mappedProductId ? { staleMappedProductId: mappedProductId } : {}),
+        };
+      } catch {
+        return {
+          product: candidate,
+          match: "source_tag",
+          ...(mappedProductId ? { staleMappedProductId: mappedProductId } : {}),
+        };
+      }
+    }
+  }
+
   return {
-    product: detail.data.product ?? candidate,
-    match: "source_tag",
+    match: "none",
     ...(mappedProductId ? { staleMappedProductId: mappedProductId } : {}),
   };
 }
@@ -186,7 +253,15 @@ export function createShopifyGatewayAdapter(
     if (options.requestId && options.requestId.trim() !== "") {
       return `${options.requestId.trim()}-${baseOp}`;
     }
-    const suffix = stableKey ? stableRequestSuffix(stableKey) : `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const suffix = stableKey ? stableRequestSuffix(stableKey) : undefined;
+    if (!suffix) {
+      if (mode === "apply") {
+        throw new Error(
+          `Deterministic requestId could not be generated for apply operation '${baseOp}'. Provide an explicit requestId or payload.`,
+        );
+      }
+      return `preview-${cleanStoreId}-${baseOp}`;
+    }
     return `sync-${cleanStoreId}-${baseOp}-${suffix}`;
   };
 
@@ -472,15 +547,19 @@ export function createCustomizationGatewayAdapter(
 ): CustomizationGateway {
   const runner = options.runner ?? runModuleApi;
   const mode = options.mode ?? "apply";
-  const getRequestId =
-    options.getRequestId ??
-    ((operation: string) =>
-      `req-${operation}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
-
   const cleanStoreId = storeId.trim();
   if (!cleanStoreId) {
     throw new Error("storeId is required to create CustomizationGateway adapter.");
   }
+
+  const getRequestId =
+    options.getRequestId ??
+    ((operation: string) => {
+      if (options.requestId && options.requestId.trim() !== "") {
+        return `${options.requestId.trim()}:${operation}`;
+      }
+      return `custom-${cleanStoreId}-${operation}`;
+    });
 
   return {
     async getMetafield(input) {
@@ -506,7 +585,8 @@ export function createCustomizationGatewayAdapter(
 
     async setMetafield(input) {
       const requestId = getRequestId(
-        `metafields-set-${stableRequestSuffix(JSON.stringify(input))}`,
+        `metafields-set:${stableRequestSuffix(JSON.stringify(input))}`,
+        input,
       );
       const response = (await runner({
         storeId: cleanStoreId,
@@ -529,37 +609,44 @@ export function createCustomizationGatewayAdapter(
     },
 
     async deleteMetafield(input) {
-      const ownerId = input.ownerId;
-      if (!ownerId) {
-        return { success: true };
+      const ownerId = typeof input.ownerId === "string" ? input.ownerId.trim() : "";
+      const namespace = typeof input.namespace === "string" ? input.namespace.trim() : "";
+      const key = typeof input.key === "string" ? input.key.trim() : "";
+      if (!ownerId || !namespace || !key) {
+        throw new Error("ownerId, namespace, and key are required to delete metafields.");
       }
       const requestId = getRequestId(
-        `metafields-delete-${stableRequestSuffix(JSON.stringify(input))}`,
+        `metafields-delete:${stableRequestSuffix(JSON.stringify({ ownerId, namespace, key }))}`,
+        input,
       );
       const response = (await runner({
         storeId: cleanStoreId,
-        operation: "metafields.set",
+        operation: "metafields.delete",
         mode,
         requestId,
         payload: {
           ownerId,
-          namespace: input.namespace,
-          key: input.key,
-          value: "",
-          type: "json",
+          namespace,
+          key,
         },
-      })) as ShopifyMetafieldsSetResponse;
+      })) as ShopifyMetafieldsDeleteResponse;
 
       return {
-        success: response.data.success,
+        success: response?.data?.success ?? true,
       };
     },
 
     async deleteFiles(input) {
+      const normalizedFileIds = [...input.fileIds].sort();
+      const requestId = getRequestId(
+        `files-delete:${stableRequestSuffix(JSON.stringify(normalizedFileIds))}`,
+        input,
+      );
       const response = (await runner({
         storeId: cleanStoreId,
         operation: "files.delete",
         mode,
+        requestId,
         payload: {
           fileIds: input.fileIds,
         },
@@ -571,8 +658,24 @@ export function createCustomizationGatewayAdapter(
       };
     },
 
-    async queryFiles(_input) {
-      return { files: [] };
+    async queryFiles(input) {
+      const response = (await runner({
+        storeId: cleanStoreId,
+        operation: "files.list",
+        payload: {
+          query: input.query,
+          first: input.first,
+        },
+      })) as ShopifyFilesListResponse;
+
+      return {
+        files: response.data.files.map((f) => ({
+          id: f.id,
+          url: f.url,
+          altText: f.altText,
+          fileStatus: f.fileStatus,
+        })),
+      };
     },
 
     async getProduct(input) {

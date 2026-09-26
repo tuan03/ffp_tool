@@ -57,12 +57,14 @@ class ImageProcessingTests(unittest.TestCase):
             def read(self, _size: int) -> bytes:
                 return b"image-content"
 
+        diagnostics: dict[str, object] = {}
         with patch("engine.image_processing.urllib.request.urlopen", return_value=ImageResponse()) as urlopen:
-            _download_image("https://m.media-amazon.com/images/I/example.jpg")
+            _download_image("https://m.media-amazon.com/images/I/example.jpg", diagnostics=diagnostics)
 
         request = urlopen.call_args.args[0]
         self.assertEqual(request.get_header("Referer"), "https://www.amazon.com/")
         self.assertEqual(request.get_header("Connection"), "close")
+        self.assertEqual(diagnostics["downloadedUrl"], "https://m.media-amazon.com/images/I/example._SL1500_.jpg")
 
     def test_processes_to_configured_jpeg_canvas_deterministically(self) -> None:
         profile = {
@@ -77,6 +79,19 @@ class ImageProcessingTests(unittest.TestCase):
         with Image.open(BytesIO(first)) as image:
             self.assertEqual(image.format, "JPEG")
             self.assertEqual(image.size, (300, 300))
+
+    def test_upscale_fills_canvas_for_smaller_square_source(self) -> None:
+        profile = {
+            "slug": "test", "enabled": True, "randomPixels": 0,
+            "output": {"width": 300, "height": 300, "fit": "contain", "upscale": True, "background": "#ffffff"},
+        }
+
+        processed = process_image_bytes(image_bytes((100, 100), "#336699"), profile)
+
+        with Image.open(BytesIO(processed)) as image:
+            self.assertEqual(image.size, (300, 300))
+            self.assertLess(image.getpixel((0, 0))[0], 100)
+            self.assertGreater(image.getpixel((0, 0))[2], 120)
 
     def test_profile_logo_is_stored_outside_json_and_changes_revision(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -136,6 +151,22 @@ class ImageProcessingTests(unittest.TestCase):
 
             self.assertEqual(result["processed"], 1)
             self.assertEqual(result["product"]["customization"], product["customization"])
+            service.close()
+
+    def test_cache_records_source_size_and_added_padding_for_debugging(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            service = ImageProcessingService(Path(directory))
+            service.profiles.save({"slug": "debug", "enabled": True, "randomPixels": 0}, "debug")
+            media = {"url": "https://example.test/photo.jpg", "kind": "image"}
+
+            with patch("engine.image_processing._download_image", return_value=image_bytes((100, 50))):
+                processed = service.process_product({"media": [media]}, "debug")["product"]["media"][0]
+
+            token = processed["processedFileToken"]
+            metadata = json.loads((service.cache_root / f"{token}.json").read_text(encoding="utf-8"))
+            self.assertEqual(metadata["diagnostics"]["sourceSize"], [100, 50])
+            self.assertEqual(metadata["diagnostics"]["resizedSize"], [1500, 750])
+            self.assertEqual(metadata["diagnostics"]["canvasPadding"], [0, 375, 0, 375])
             service.close()
 
     def test_expired_cache_keeps_images_referenced_by_pending_reviews(self) -> None:

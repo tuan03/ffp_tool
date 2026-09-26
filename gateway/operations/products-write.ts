@@ -53,7 +53,7 @@ const PRODUCT_CREATE_MUTATION = `
         }
         createdAt
         updatedAt
-        variants(first: 100) {
+        variants(first: 250) {
           pageInfo {
             hasNextPage
           }
@@ -78,9 +78,17 @@ const PRODUCT_CREATE_MUTATION = `
 `;
 
 const PRODUCT_HANDLE_LOOKUP_QUERY = `
-  query ProductHandleLookup($handle: String!) {
+  query ProductHandleLookup($handle: String!, $query: String) {
     productByHandle(handle: $handle) {
       id
+    }
+    products(first: 1, query: $query) {
+      edges {
+        node {
+          id
+          handle
+        }
+      }
     }
   }
 `;
@@ -158,7 +166,7 @@ const PRODUCT_UPDATE_MUTATION = `
         }
         createdAt
         updatedAt
-        variants(first: 100) {
+        variants(first: 250) {
           pageInfo {
             hasNextPage
           }
@@ -365,7 +373,15 @@ async function resolveAvailableProductHandle(
   requestedHandle: string,
 ): Promise<string> {
   interface ProductHandleLookupResponse {
-    readonly productByHandle: { readonly id: string } | null;
+    readonly productByHandle?: { readonly id: string } | null;
+    readonly products?: {
+      readonly edges?: readonly {
+        readonly node: {
+          readonly id: string;
+          readonly handle: string;
+        };
+      }[];
+    } | null;
   }
 
   for (let suffix = 1; suffix <= MAX_HANDLE_SUFFIX; suffix += 1) {
@@ -373,9 +389,13 @@ async function resolveAvailableProductHandle(
     const result = await client.query<ProductHandleLookupResponse>(
       store,
       PRODUCT_HANDLE_LOOKUP_QUERY,
-      { handle: candidate },
+      { handle: candidate, query: `handle:${candidate}` },
     );
-    if (!result.productByHandle) {
+    const inUseByHandle = Boolean(result.productByHandle);
+    const inUseByQuery = Boolean(
+      result.products?.edges?.some((e) => e.node.handle.toLowerCase() === candidate.toLowerCase()),
+    );
+    if (!inUseByHandle && !inUseByQuery) {
       return candidate;
     }
   }
@@ -406,6 +426,18 @@ export async function executeProductsCreate(
   const title = typeof productInput.title === "string" ? productInput.title.trim() : "";
   if (!title) {
     throw new GatewayError("Product title is required", "SHOPIFY_USER_ERROR", 400);
+  }
+
+  if (Array.isArray(productInput.variants)) {
+    for (const v of productInput.variants as readonly Record<string, unknown>[]) {
+      if (v && typeof v === "object" && "inventoryQuantity" in v && v.inventoryQuantity !== undefined) {
+        throw new GatewayError(
+          "inventoryQuantity is not supported by Catalog API. Use the Shopify Inventory API.",
+          "SHOPIFY_INVALID_INPUT",
+          400,
+        );
+      }
+    }
   }
 
   if (mode === "preview") {

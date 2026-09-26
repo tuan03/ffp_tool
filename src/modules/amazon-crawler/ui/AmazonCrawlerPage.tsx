@@ -1,10 +1,12 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { notifyUser } from "../../../shared/utils";
 
 import {
   type AmazonCrawlerCacheClearer,
+  type AmazonAsinChecker,
+  type AmazonAsinPreflightMatch,
   type AmazonCrawlerClientSummary,
   type AmazonCrawlerClientsLoader,
   type AmazonCrawlerHandoverHandler,
@@ -20,9 +22,11 @@ import {
   type ImageProcessingProfile,
   type ImageProcessingProfileManager,
 } from "../types";
+import { createAmazonAsinChecker } from "../service";
 
 import {
   abortCrawlerJob,
+  getCrawlerSessionState,
   hydrateCrawlerSessionFromJob,
   resetCrawlerOutput,
   resetCrawlerSettings,
@@ -46,9 +50,12 @@ import {
   shouldShowStandaloneJobControlMessage,
 } from "./job-cancellation";
 import { formatPipelineTimings } from "./pipeline-timings";
+import { runAfterAmazonAsinPreflight } from "./amazon-asin-preflight";
 import { AddStoreModal } from "./components/AddStoreModal";
+import { DeleteStoreModal } from "./components/DeleteStoreModal";
 
 interface AmazonCrawlerPageProps {
+  checkAmazonAsins?: AmazonAsinChecker;
   amazonCrawlerJobs?: AmazonCrawlerJobController;
   clearAmazonCrawlerCache: AmazonCrawlerCacheClearer;
   loadAmazonCrawlerClients: AmazonCrawlerClientsLoader;
@@ -73,6 +80,10 @@ const COMMON_PRODUCT_TYPES = [
   { label: "Ornament (Đồ trang trí)", value: "Ornament" },
   { label: "Sign (Biển hiệu)", value: "Sign" },
 ];
+
+function pipelineStatusLabel(status: string | undefined): string {
+  return status === "waiting_review" ? "SEO complete" : status ?? "Chưa nhận";
+}
 
 export interface StoreProfile {
   readonly storeId: string;
@@ -162,6 +173,7 @@ function isNotFoundError(value: unknown): boolean {
 }
 
 export function AmazonCrawlerPage({
+  checkAmazonAsins = createAmazonAsinChecker(),
   amazonCrawlerJobs,
   clearAmazonCrawlerCache,
   imageProcessingProfiles,
@@ -190,6 +202,10 @@ export function AmazonCrawlerPage({
     isBatchJsonOpen,
   } = session;
   const [isRetryingSync, setIsRetryingSync] = useState(false);
+  const preflightInFlight = useRef(false);
+  const [isCheckingAsins, setIsCheckingAsins] = useState(false);
+  const [asinPreflightError, setAsinPreflightError] = useState<string | null>(null);
+  const [asinPreflightMatches, setAsinPreflightMatches] = useState<readonly AmazonAsinPreflightMatch[]>([]);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
   const [isClearingCache, setIsClearingCache] = useState(false);
   const [cacheMessage, setCacheMessage] = useState<string | null>(null);
@@ -236,6 +252,8 @@ export function AmazonCrawlerPage({
   const [newProductTypeInput, setNewProductTypeInput] = useState("");
   const [isAddingNewType, setIsAddingNewType] = useState(false);
   const [isAddStoreOpen, setIsAddStoreOpen] = useState(false);
+  const [isEditStoreOpen, setIsEditStoreOpen] = useState(false);
+  const [isDeleteStoreOpen, setIsDeleteStoreOpen] = useState(false);
   const [availableCollections, setAvailableCollections] = useState<Array<{ id: string; title: string; productsCount?: number }>>([]);
   const [isLoadingCollections, setIsLoadingCollections] = useState(false);
   const [isCollectionListOpen, setIsCollectionListOpen] = useState(false);
@@ -711,6 +729,13 @@ export function AmazonCrawlerPage({
 
   const currentStoreId = (settings.storeId || "capozen").trim().toLowerCase();
 
+  const selectedStoreProfile = useMemo(() => {
+    return availableStores.find((s) => s.storeId.toLowerCase() === currentStoreId);
+  }, [availableStores, currentStoreId]);
+
+  const activeStoreId = selectedStoreProfile?.storeId || settings.storeId || "capozen";
+  const activeShopDomain = selectedStoreProfile?.shopDomain || `${activeStoreId}.myshopify.com`;
+
   const currentStoreProductTypes = useMemo(() => {
     if (customStoreProductTypes[currentStoreId] && customStoreProductTypes[currentStoreId].length > 0) {
       return customStoreProductTypes[currentStoreId];
@@ -726,6 +751,8 @@ export function AmazonCrawlerPage({
   }, [availableStores, customStoreProductTypes, currentStoreId]);
 
   function handleStoreChange(nextStore: string): void {
+    setAsinPreflightError(null);
+    setAsinPreflightMatches([]);
     const nextStoreLower = nextStore.trim().toLowerCase();
     updateSetting("storeId", nextStore);
     updateSetting("collectionId", "");
@@ -817,11 +844,47 @@ export function AmazonCrawlerPage({
     return !matchesCurrentType && !matchesStore;
   }, [detectedProductNiche, settings.productType, currentStoreProductTypes]);
 
+  async function checkBeforeCrawl(
+    sources: readonly string[], storeId: string, startJob: () => Promise<void>,
+  ): Promise<void> {
+    if (preflightInFlight.current) return;
+    preflightInFlight.current = true;
+    setIsCheckingAsins(true);
+    setAsinPreflightError(null);
+    setAsinPreflightMatches([]);
+    const checkedUrlText = urlText;
+    try {
+      const checked = await runAfterAmazonAsinPreflight(sources, storeId, checkAmazonAsins, async () => {
+        const current = getCrawlerSessionState();
+        if (current.urlText !== checkedUrlText || (current.settings.storeId || "capozen") !== storeId) {
+          throw new Error("Link hoặc store đã thay đổi. Vui lòng bấm Start để kiểm tra lại.");
+        }
+        await startJob();
+      });
+      if (!checked.ready) {
+        setAsinPreflightError("Shopify đang lập chỉ mục custom.amazon_asin. Vui lòng thử lại sau.");
+        return;
+      }
+      if (checked.matches.length > 0) {
+        setAsinPreflightMatches(checked.matches);
+      }
+    } catch (caught: unknown) {
+      setAsinPreflightError(caught instanceof Error ? caught.message : "Không kiểm tra được ASIN trên Shopify.");
+    } finally {
+      preflightInFlight.current = false;
+      setIsCheckingAsins(false);
+    }
+  }
+
   async function handleStart(): Promise<void> {
-    setSyncMessage(null);
-    setCancellationJobId(null);
-    setJobControlMessage(null);
-    await startCrawlerJob({ runAmazonCrawler, urls, settings });
+    const sources = [...urls];
+    const jobSettings = { ...settings };
+    await checkBeforeCrawl(sources, jobSettings.storeId || "capozen", async () => {
+      setSyncMessage(null);
+      setCancellationJobId(null);
+      setJobControlMessage(null);
+      await startCrawlerJob({ runAmazonCrawler, urls: sources, settings: jobSettings });
+    });
   }
 
   async function handleStop(): Promise<void> {
@@ -897,24 +960,24 @@ export function AmazonCrawlerPage({
   }
 
   async function handleRunAgain(job: AmazonCrawlerJobSnapshot): Promise<void> {
-    if (!amazonCrawlerJobs || controlledJobId) return;
-    setControlledJobId(job.jobId);
-    setCancellationJobId(null);
-    try {
-      const replacement = await amazonCrawlerJobs.replace(job.jobId, {
-        ...settings,
-        urls: urls.length > 0 ? urls : job.inputs,
-      });
-      updateCrawlerSession({ activeJobId: replacement.jobId, isRunning: true, progress: replacement.progress, error: null });
-      setJobs((current) => [replacement, ...current]);
-      setJobControlTone("success");
-      setJobControlMessage(`Đã tạo replacement job ${replacement.jobId.slice(0, 8)}.`);
-    } catch (caught: unknown) {
-      setJobControlTone("error");
-      setJobControlMessage(caught instanceof Error ? caught.message : "Không tạo được replacement job.");
-    } finally {
-      setControlledJobId(null);
-    }
+    if (!amazonCrawlerJobs || controlledJobId || isCheckingAsins) return;
+    const sources = urls.length > 0 ? [...urls] : [...job.inputs];
+    await checkBeforeCrawl(sources, settings.storeId || "capozen", async () => {
+      setControlledJobId(job.jobId);
+      setCancellationJobId(null);
+      try {
+        const replacement = await amazonCrawlerJobs.replace(job.jobId, { ...settings, urls: sources });
+        updateCrawlerSession({ activeJobId: replacement.jobId, isRunning: true, progress: replacement.progress, error: null });
+        setJobs((current) => [replacement, ...current]);
+        setJobControlTone("success");
+        setJobControlMessage(`Đã tạo replacement job ${replacement.jobId.slice(0, 8)}.`);
+      } catch (caught: unknown) {
+        setJobControlTone("error");
+        setJobControlMessage(caught instanceof Error ? caught.message : "Không tạo được replacement job.");
+      } finally {
+        setControlledJobId(null);
+      }
+    });
   }
 
   async function handleRetrySyncs(): Promise<void> {
@@ -1052,7 +1115,11 @@ export function AmazonCrawlerPage({
           className="min-h-40 rounded-xl border border-slate-700 bg-slate-950 p-3 font-mono text-sm text-slate-100 outline-none focus:border-cyan-400"
           placeholder={"https://www.amazon.com/dp/B0...\nB0..."}
           value={urlText}
-          onChange={(event) => setCrawlerUrlText(event.target.value)}
+          onChange={(event) => {
+            setCrawlerUrlText(event.target.value);
+            setAsinPreflightError(null);
+            setAsinPreflightMatches([]);
+          }}
         />
       </label>
 
@@ -1119,17 +1186,41 @@ export function AmazonCrawlerPage({
                   ({((settings.storeId || "capozen").split("--")[0] || "CAPOZEN").trim().toUpperCase()})
                 </span>
               </div>
-              <button
-                type="button"
-                onClick={() => setIsAddStoreOpen(true)}
-                className="inline-flex items-center gap-1.5 rounded-md border border-cyan-500/50 bg-cyan-500/10 px-2.5 py-1 text-xs font-semibold text-cyan-300 shadow-sm transition-all hover:border-cyan-400 hover:bg-cyan-500/20 hover:text-white"
-                title="Thêm và kết nối Shopify Store mới"
-              >
-                <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
-                  <path d="M12 4v16m8-8H4" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-                <span>Thêm store</span>
-              </button>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setIsEditStoreOpen(true)}
+                  className="inline-flex items-center gap-1 rounded-md border border-slate-700 bg-slate-800/80 px-2 py-1 text-xs font-medium text-slate-300 shadow-sm transition-all hover:border-slate-600 hover:bg-slate-700 hover:text-white"
+                  title={`Chỉnh sửa cấu hình App hoặc Proxy của store ${activeStoreId}`}
+                >
+                  <svg className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                    <path d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                  <span>Sửa</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsDeleteStoreOpen(true)}
+                  className="inline-flex items-center gap-1 rounded-md border border-rose-500/30 bg-rose-500/10 px-2 py-1 text-xs font-medium text-rose-300 shadow-sm transition-all hover:border-rose-500/50 hover:bg-rose-500/20 hover:text-rose-200"
+                  title={`Xóa store ${activeStoreId} khỏi danh sách`}
+                >
+                  <svg className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                    <path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                  <span>Xóa</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsAddStoreOpen(true)}
+                  className="inline-flex items-center gap-1 rounded-md border border-cyan-500/50 bg-cyan-500/10 px-2 py-1 text-xs font-semibold text-cyan-300 shadow-sm transition-all hover:border-cyan-400 hover:bg-cyan-500/20 hover:text-white"
+                  title="Thêm và kết nối Shopify Store mới"
+                >
+                  <svg className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
+                    <path d="M12 4v16m8-8H4" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                  <span>Thêm</span>
+                </button>
+              </div>
             </div>
             <select
               className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-slate-100 outline-none focus:border-slate-500 text-sm"
@@ -1710,7 +1801,7 @@ export function AmazonCrawlerPage({
                         <button className="rounded border border-emerald-600 px-3 py-1 text-xs font-semibold text-emerald-300" type="button" onClick={() => navigate("/seo-review")}>Kiểm duyệt SEO</button>
                       ) : ["completed", "partial"].includes(job.status) ? (
                         <>
-                          <button className="rounded border border-cyan-600 px-3 py-1 text-xs font-semibold text-cyan-300 disabled:opacity-50" disabled={controlledJobId !== null || coordinatorActiveJob !== undefined} type="button" onClick={() => void handleRunAgain(job)}>Run again</button>
+                          <button className="rounded border border-cyan-600 px-3 py-1 text-xs font-semibold text-cyan-300 disabled:opacity-50" disabled={controlledJobId !== null || coordinatorActiveJob !== undefined || isCheckingAsins} type="button" onClick={() => void handleRunAgain(job)}>Run again</button>
                           <button className="rounded border border-slate-600 px-3 py-1 text-xs font-semibold text-slate-300 disabled:opacity-50" disabled={controlledJobId !== null} type="button" onClick={() => void handleDeleteJob(job.jobId)}>Delete</button>
                         </>
                       ) : null}
@@ -1729,7 +1820,7 @@ export function AmazonCrawlerPage({
       ) : null}
 
       <div className="flex flex-wrap items-center gap-3">
-        <button className="rounded-lg bg-cyan-400 px-5 py-2 font-semibold text-slate-950 disabled:opacity-50" disabled={urls.length === 0 || isRunning || coordinatorActiveJob !== undefined} type="button" onClick={() => void handleStart()}>Start ({urls.length})</button>
+        <button className="rounded-lg bg-cyan-400 px-5 py-2 font-semibold text-slate-950 disabled:opacity-50" disabled={urls.length === 0 || isRunning || isCheckingAsins || coordinatorActiveJob !== undefined} type="button" onClick={() => void handleStart()}>{isCheckingAsins ? "Đang kiểm tra ASIN..." : `Start (${urls.length})`}</button>
         <button className="rounded-lg border border-rose-400 px-5 py-2 font-semibold text-rose-300 disabled:opacity-50" disabled={!isRunning || controlledJobId !== null || isCancellationPending} type="button" onClick={() => void handleStop()}>{isActiveStopPending ? "Đang dừng..." : "Stop"}</button>
         <button className="rounded-lg border border-emerald-500 px-5 py-2 font-semibold text-emerald-300 hover:bg-emerald-950/40" type="button" onClick={() => navigate("/seo-review")}>Mở SEO Review</button>
         {output === null && resultProducts.length === 0 ? null : (
@@ -1771,7 +1862,9 @@ export function AmazonCrawlerPage({
               <option value="" disabled>-- Chọn phiên cào để xem lại --</option>
               {recentJobs.map((job) => {
                 const timeLabel = job.createdAt ? new Date(job.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
-                const productCount = job.productCounts?.completed ?? job.acceptedInputs;
+                const productCount = job.productCounts
+                  ? Object.values(job.productCounts).reduce((total, count) => total + count, 0)
+                  : job.acceptedInputs;
                 return (
                   <option key={job.id} value={job.id}>
                     {timeLabel ? `[${timeLabel}] ` : ""}{job.id.slice(0, 8)}... ({productCount} SP · {job.status})
@@ -1782,6 +1875,17 @@ export function AmazonCrawlerPage({
           </div>
         )}
       </div>
+      {asinPreflightError ? <p role="alert" className="rounded-lg border border-rose-700 bg-rose-950/40 p-3 text-sm text-rose-200">{asinPreflightError}</p> : null}
+      {asinPreflightMatches.length > 0 ? (
+        <div role="alert" className="rounded-lg border border-amber-700 bg-amber-950/30 p-3 text-sm text-amber-200">
+          <p className="font-semibold">Đã có {asinPreflightMatches.length} ASIN trên Shopify. Toàn bộ lô cào đã được chặn.</p>
+          <ul className="mt-2 space-y-1">
+            {asinPreflightMatches.map((match) => (
+              <li key={match.asin}>{match.asin} — <a className="underline" href={match.adminUrl} rel="noreferrer" target="_blank">{match.title}</a></li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
       {hydrateMessage && (
         <div className="flex items-center gap-2 rounded-lg border border-cyan-800/80 bg-cyan-950/30 px-3 py-2 text-xs text-cyan-200">
           {isHydratingJob && <span className="inline-block h-3 w-3 animate-spin rounded-full border border-cyan-300 border-r-transparent" />}
@@ -1801,7 +1905,7 @@ export function AmazonCrawlerPage({
           <div>
             <div className="flex flex-wrap justify-between gap-2 text-sm">
               <span>{progress.message}</span>
-              <strong>{progress.completed}/{progress.total} products</strong>
+              <strong>{progress.completed}/{progress.total} links</strong>
             </div>
             <div className="mt-2 h-2 overflow-hidden rounded bg-slate-800">
               <div className="h-full bg-cyan-400 transition-[width]" style={{ width: `${progress.total > 0 ? Math.min(100, (progress.completed / progress.total) * 100) : 0}%` }} />
@@ -1921,7 +2025,7 @@ export function AmazonCrawlerPage({
                         <span className="mt-1 flex flex-wrap gap-1 text-[11px]">
                           {product.customization ? <span className="rounded bg-violet-900/60 px-1.5 py-0.5 text-violet-200">Customize</span> : null}
                           {product.preset ? <span className="rounded bg-cyan-900/60 px-1.5 py-0.5 text-cyan-200">{product.preset}</span> : null}
-                          {product.pipeline ? <span className={`rounded px-1.5 py-0.5 ${product.pipeline.status === "completed" ? "bg-emerald-900/60 text-emerald-200" : product.pipeline.status === "failed" || product.pipeline.status === "reconciliation_required" ? "bg-rose-900/60 text-rose-200" : "bg-blue-900/60 text-blue-200"}`}>Pipeline: {product.pipeline.status}</span> : null}
+                          {product.pipeline ? <span className={`rounded px-1.5 py-0.5 ${product.pipeline.status === "completed" || product.pipeline.status === "waiting_review" ? "bg-emerald-900/60 text-emerald-200" : product.pipeline.status === "failed" || product.pipeline.status === "reconciliation_required" ? "bg-rose-900/60 text-rose-200" : "bg-blue-900/60 text-blue-200"}`}>Pipeline: {pipelineStatusLabel(product.pipeline.status)}</span> : null}
                           {product.warnings.length ? <span className="rounded bg-amber-900/60 px-1.5 py-0.5 text-amber-200">{product.warnings.length} warning</span> : null}
                         </span>
                       </span>
@@ -1958,7 +2062,7 @@ export function AmazonCrawlerPage({
                       <dl className="mt-4 grid gap-x-5 gap-y-2 text-sm sm:grid-cols-2">
                         <div><dt className="text-slate-500">Matrix</dt><dd>{selectedProduct.variantMatrix.discoveredCount}/{selectedProduct.variantMatrix.expectedCount} · {selectedProduct.variantMatrix.complete ? "Complete" : "Incomplete"}</dd></div>
                         <div><dt className="text-slate-500">Preset</dt><dd>{selectedProduct.preset ?? "—"}</dd></div>
-                        <div><dt className="text-slate-500">Pipeline</dt><dd>{selectedProduct.pipeline?.status ?? "Chưa nhận"}</dd></div>
+                        <div><dt className="text-slate-500">Pipeline</dt><dd className={selectedProduct.pipeline?.status === "waiting_review" ? "text-emerald-300" : undefined}>{pipelineStatusLabel(selectedProduct.pipeline?.status)}</dd></div>
                         <div><dt className="text-slate-500">SEO</dt><dd>{selectedProduct.pipeline?.seo.status ?? "pending"}{selectedProduct.pipeline?.seo.engine ? ` · ${selectedProduct.pipeline.seo.engine}` : ""}</dd></div>
                         <div><dt className="text-slate-500">Ảnh</dt><dd>{selectedProduct.pipeline?.imageProcessing?.status ?? "pending"}{selectedProduct.pipeline?.imageProcessing?.profileSlug ? ` · ${selectedProduct.pipeline.imageProcessing.profileSlug}` : ""}</dd></div>
                         <div><dt className="text-slate-500">Proxy Shopify</dt><dd>{selectedProduct.pipeline?.shopify.proxyProfile ?? "—"}</dd></div>
@@ -2021,8 +2125,12 @@ export function AmazonCrawlerPage({
       )}
 
       <AddStoreModal
-        isOpen={isAddStoreOpen}
-        onClose={() => setIsAddStoreOpen(false)}
+        isOpen={isAddStoreOpen || isEditStoreOpen}
+        editStoreId={isEditStoreOpen ? activeStoreId : null}
+        onClose={() => {
+          setIsAddStoreOpen(false);
+          setIsEditStoreOpen(false);
+        }}
         onStoreAdded={(newStore) => {
           setAvailableStores((prev) => {
             const filtered = prev.filter((s) => s.storeId.toLowerCase() !== newStore.storeId.toLowerCase());
@@ -2051,6 +2159,57 @@ export function AmazonCrawlerPage({
             title: "Store mới đã kết nối",
             message: `Store ${newStore.storeId} (${newStore.shopDomain}) đã sẵn sàng hoạt động!`,
             type: "success",
+          });
+        }}
+        onStoreUpdated={(updatedStore) => {
+          setAvailableStores((prev) =>
+            prev.map((s) =>
+              s.storeId.toLowerCase() === updatedStore.storeId.toLowerCase()
+                ? {
+                    ...s,
+                    shopDomain: updatedStore.shopDomain,
+                    productTypes: updatedStore.productTypes || s.productTypes,
+                    defaultProductType: updatedStore.defaultProductType || s.defaultProductType,
+                  }
+                : s
+            )
+          );
+          if (updatedStore.productTypes && updatedStore.productTypes.length > 0) {
+            const newMap = {
+              ...customStoreProductTypes,
+              [updatedStore.storeId.toLowerCase()]: [...updatedStore.productTypes],
+            };
+            setCustomStoreProductTypes(newMap);
+            try {
+              localStorage.setItem("ffp_store_product_types", JSON.stringify(newMap));
+            } catch {}
+          }
+          notifyUser({
+            title: "Cập nhật store thành công",
+            message: `Store ${updatedStore.storeId} (${updatedStore.shopDomain}) đã được cập nhật cấu hình!`,
+            type: "success",
+          });
+        }}
+      />
+
+      <DeleteStoreModal
+        isOpen={isDeleteStoreOpen}
+        storeId={activeStoreId}
+        shopDomain={activeShopDomain}
+        onClose={() => setIsDeleteStoreOpen(false)}
+        onStoreDeleted={(deletedId) => {
+          setAvailableStores((prev) => {
+            const remaining = prev.filter((s) => s.storeId.toLowerCase() !== deletedId.toLowerCase());
+            if ((settings.storeId || "").toLowerCase() === deletedId.toLowerCase()) {
+              const fallback = remaining[0]?.storeId || "capozen";
+              handleStoreChange(fallback);
+            }
+            return remaining;
+          });
+          notifyUser({
+            title: "Đã xóa store",
+            message: `Store ${deletedId} đã được xóa thành công.`,
+            type: "info",
           });
         }}
       />

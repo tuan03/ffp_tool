@@ -39,6 +39,10 @@ ACTIVE_PRODUCT_STATUSES = {
     "received", "normalizing", "seo", "image_processing", "syncing",
     "shopify_writing", "stopping_after_write", "retry_wait", "sync_queued",
 }
+SEO_READY_PRODUCT_STATUSES = {
+    "waiting_review", "sync_queued", "syncing", "shopify_writing",
+    "stopping_after_write", "completed", "rejected", "reconciliation_required", "deleted",
+}
 CANCELLABLE_PRODUCT_STATUSES = ACTIVE_PRODUCT_STATUSES | {"cancelling"}
 CANCELLATION_UNCONFIRMED_ATTEMPT_STATUSES = {
     "cancelled_unconfirmed",
@@ -914,7 +918,7 @@ class CoordinatorStore:
             review = dict(pipeline_result.get("review") or {})
             if not review or int(review.get("version") or 1) != expected_version:
                 return {"conflict": True}
-            if item.status == "reconciliation_required" or str(review.get("syncStatus") or "idle") in {"queued", "syncing", "synced"}:
+            if item.status == "reconciliation_required" or str(review.get("syncStatus") or "idle") in {"queued", "syncing"}:
                 return {"locked": True}
             product = dict(item.normalized_payload or {})
             field_map = {
@@ -955,6 +959,7 @@ class CoordinatorStore:
             })
             item.normalized_payload = product
             item.status = "waiting_review"
+            item.checksum = hashlib.sha256(json.dumps(product, sort_keys=True).encode("utf-8")).hexdigest()
             pipeline_result["review"] = review
             item.shopify_result = pipeline_result
             self._event(session, item.job_id, "product_review_updated", {
@@ -984,7 +989,7 @@ class CoordinatorStore:
             review = dict(pipeline_result.get("review") or {})
             if not review or int(review.get("version") or 1) != expected_version:
                 return {"conflict": True}
-            if item.status == "reconciliation_required" or str(review.get("syncStatus") or "idle") in {"queued", "syncing", "synced"}:
+            if item.status == "reconciliation_required" or str(review.get("syncStatus") or "idle") in {"queued", "syncing"}:
                 return {"locked": True}
             review.update({
                 "decision": decision,
@@ -1017,7 +1022,7 @@ class CoordinatorStore:
                 return {"notApproved": True}
             if item.status == "reconciliation_required":
                 return {"reconciliationRequired": True}
-            if str(review.get("syncStatus") or "idle") in {"queued", "syncing", "synced"}:
+            if str(review.get("syncStatus") or "idle") in {"queued", "syncing"}:
                 return self._review_snapshot(item, session.get(CrawlJob, item.job_id))
             review.update({
                 "syncStatus": "queued",
@@ -1566,6 +1571,20 @@ class CoordinatorStore:
                         attempt.status = "abandoned"
                         attempt.finished_at = now
                 self._event(session, task.job_id, "task_requeued", {"taskId": task.id, "reason": "lease_expired"})
+            stopped_items = session.scalars(select(CrawlProductItem).where(
+                CrawlProductItem.status == "cancelling",
+                CrawlProductItem.claim_expires_at.is_not(None),
+                CrawlProductItem.claim_expires_at < now,
+            )).all()
+            for item in stopped_items:
+                item.status = "cancelled"
+                item.claimed_by = None
+                item.claim_expires_at = None
+                item.completed_at = now
+                job_ids.add(item.job_id)
+                self._event(session, item.job_id, "product_cancel_claim_expired", {
+                    "productItemId": item.id,
+                })
             for job_id in job_ids:
                 self._refresh_job(session, job_id)
         return {"offlineClients": offline, "requeuedTasks": requeued}
@@ -2251,6 +2270,8 @@ class CoordinatorStore:
             .where(CrawlProductItem.job_id == job.id)
             .group_by(CrawlProductItem.status)
         ).all())
+        product_total = sum(product_counts.values())
+        seo_ready_count = sum(int(product_counts.get(status, 0)) for status in SEO_READY_PRODUCT_STATUSES)
         retry_errors = session.scalars(
             select(CrawlProductItem.last_error).where(
                 CrawlProductItem.job_id == job.id,
@@ -2281,18 +2302,24 @@ class CoordinatorStore:
         else:
             phase = str(latest_batch_progress.get("phase") or ("product" if progress_events else "queued"))
         terminal_count = completed + failed + cancelled
+        if job.status == "review_pending":
+            progress_message = f"SEO hoàn tất {seo_ready_count}/{product_total} sản phẩm; đã chuyển sang SEO Review."
+        elif is_terminal:
+            progress_message = f"Đã xử lý {terminal_count}/{job.accepted_inputs} link."
+        elif has_pipeline_work and terminal_count == job.accepted_inputs:
+            progress_message = (
+                f"Đang xử lý pipeline {phase.upper()}: SEO hoàn tất {seo_ready_count}/{product_total} sản phẩm."
+            )
+        else:
+            progress_message = str(
+                latest_batch_progress.get("message")
+                or f"Đang xử lý {terminal_count}/{job.accepted_inputs} link trên các client."
+            )
         progress = {
             "phase": phase,
             "completed": terminal_count,
             "total": job.accepted_inputs,
-            "message": (
-                f"Đã xử lý {terminal_count}/{job.accepted_inputs} link."
-                if is_terminal else (
-                    f"Đang xử lý pipeline {phase.upper()}: {int(product_counts.get('completed', 0))}/{sum(product_counts.values())} products."
-                    if has_pipeline_work and terminal_count == job.accepted_inputs
-                    else str(latest_batch_progress.get("message") or f"Đang xử lý {terminal_count}/{job.accepted_inputs} link trên các client.")
-                )
-            ),
+            "message": progress_message,
             "items": progress_items,
             "productCounts": product_counts,
         }

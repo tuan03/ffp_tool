@@ -41,6 +41,10 @@ const PRODUCTS_LIST_QUERY = `
             title
             description
           }
+          metafield(namespace: "custom", key: "amazon_customizer") {
+            id
+            value
+          }
           createdAt
           updatedAt
         }
@@ -93,9 +97,13 @@ const PRODUCTS_GET_QUERY = `
         title
         description
       }
+      metafield(namespace: "custom", key: "amazon_customizer") {
+        id
+        value
+      }
       createdAt
       updatedAt
-      variants(first: 100) {
+      variants(first: 250) {
         pageInfo {
           hasNextPage
         }
@@ -167,6 +175,7 @@ export interface RawProductNode {
     readonly edges?: readonly { readonly node: RawImageNode }[];
   } | null;
   readonly seo?: { readonly title?: string | null; readonly description?: string | null } | null;
+  readonly metafield?: { readonly id?: string | null; readonly value?: string | null } | null;
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly variants?: {
@@ -236,6 +245,13 @@ export function mapProductNode(node: RawProductNode): ProductSummary {
       .filter((img): img is ProductImageSummary => img !== undefined);
   }
 
+  if (featuredImage && images && images.length > 0) {
+    const matchedMedia = images.find((img) => img.url === featuredImage.url) ?? images[0];
+    if (matchedMedia?.id) {
+      (featuredImage as { id?: string }).id = matchedMedia.id;
+    }
+  }
+
   const hasMoreVariants = node.variants?.pageInfo?.hasNextPage !== undefined
     ? Boolean(node.variants.pageInfo.hasNextPage)
     : undefined;
@@ -263,6 +279,7 @@ export function mapProductNode(node: RawProductNode): ProductSummary {
         : undefined,
     ...(hasMoreVariants !== undefined ? { hasMoreVariants } : {}),
     ...(hasMoreImages !== undefined ? { hasMoreImages } : {}),
+    hasCustomizer: Boolean(node.metafield?.value && node.metafield.value.trim().length > 0),
     createdAt: node.createdAt,
     updatedAt: node.updatedAt,
   };

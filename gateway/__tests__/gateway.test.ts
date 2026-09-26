@@ -8270,6 +8270,1025 @@ describe("Gateway: Architectural & Operational Hardening (P1)", () => {
       );
     });
   });
+
+  describe("Gateway: metafieldsDelete (Shopify 2026-07)", () => {
+    function setupTestGateway(mockGraphqlDataOrTransport: unknown) {
+      const registry = new InMemoryStoreRegistry([
+        {
+          storeId: "store-test",
+          shopDomain: "store-test.myshopify.com",
+          apiVersion: "2026-07",
+          auth: { type: "static", staticToken: "shpat_mock_123" },
+        },
+      ]);
+
+      const fakeTransport: HttpTransport =
+        typeof mockGraphqlDataOrTransport === "function"
+          ? (mockGraphqlDataOrTransport as HttpTransport)
+          : async () => createMockResponse(mockGraphqlDataOrTransport);
+
+      const client = new ShopifyGraphqlClient({
+        tokenProvider: new StaticAccessTokenProvider(),
+        throttleManager: new InMemoryThrottleManager(),
+        baseTransport: fakeTransport,
+      });
+
+      return new GatewayDispatcher({ storeRegistry: registry, graphqlClient: client });
+    }
+
+    it("executes metafields.delete in preview mode without calling Shopify", async () => {
+      let called = false;
+      const dispatcher = setupTestGateway(async () => {
+        called = true;
+        return createMockResponse({});
+      });
+
+      const resSingle = await dispatcher.dispatch({
+        storeId: "store-test",
+        operation: "metafields.delete",
+        mode: "preview",
+        payload: {
+          ownerId: "gid://shopify/Product/123",
+          namespace: "custom",
+          key: "single_key",
+        },
+      });
+
+      assert.equal(called, false);
+      assert.equal(resSingle.success, true);
+      const dataSingle = resSingle.data as {
+        success: boolean;
+        deletedMetafields: readonly { ownerId: string; namespace: string; key: string }[];
+        notFound: readonly unknown[];
+      };
+      assert.equal(dataSingle.success, true);
+      assert.deepEqual(dataSingle.deletedMetafields, [
+        { ownerId: "gid://shopify/Product/123", namespace: "custom", key: "single_key" },
+      ]);
+      assert.deepEqual(dataSingle.notFound, []);
+
+      const resBatch = await dispatcher.dispatch({
+        storeId: "store-test",
+        operation: "metafields.delete",
+        mode: "preview",
+        payload: {
+          metafields: [
+            { ownerId: "gid://shopify/Product/123", namespace: "custom", key: "k1" },
+            { ownerId: "gid://shopify/Product/123", namespace: "custom", key: "k2" },
+          ],
+        },
+      });
+
+      assert.equal(called, false);
+      assert.equal(resBatch.success, true);
+      const dataBatch = resBatch.data as {
+        success: boolean;
+        deletedMetafields: readonly { ownerId: string; namespace: string; key: string }[];
+        notFound: readonly unknown[];
+      };
+      assert.equal(dataBatch.deletedMetafields.length, 2);
+      assert.deepEqual(dataBatch.notFound, []);
+    });
+
+    it("executes metafields.delete in apply mode for single identifier and calls metafieldsDelete mutation", async () => {
+      let requestPayload: { query: string; variables: { metafields?: unknown[] } } | undefined;
+      const dispatcher = setupTestGateway(async (_url: string, init?: RequestInit) => {
+        requestPayload = JSON.parse(init?.body as string);
+        return createMockResponse({
+          data: {
+            metafieldsDelete: {
+              deletedMetafields: [
+                { ownerId: "gid://shopify/Product/123", namespace: "custom", key: "single_key" },
+              ],
+              userErrors: [],
+            },
+          },
+        });
+      });
+
+      const res = await dispatcher.dispatch({
+        storeId: "store-test",
+        operation: "metafields.delete",
+        mode: "apply",
+        requestId: "req-mf-del-single",
+        payload: {
+          ownerId: "gid://shopify/Product/123",
+          namespace: "custom",
+          key: "single_key",
+        },
+      });
+
+      assert.equal(res.success, true);
+      assert.ok(requestPayload?.query.includes("metafieldsDelete("));
+      assert.deepEqual(requestPayload?.variables.metafields, [
+        { ownerId: "gid://shopify/Product/123", namespace: "custom", key: "single_key" },
+      ]);
+      const data = res.data as {
+        success: boolean;
+        deletedMetafields: readonly { ownerId: string; namespace: string; key: string }[];
+        notFound: readonly unknown[];
+      };
+      assert.equal(data.success, true);
+      assert.equal(data.deletedMetafields.length, 1);
+      assert.deepEqual(data.notFound, []);
+    });
+
+    it("executes metafields.delete in apply mode with batch identifiers and handles null as notFound", async () => {
+      let requestPayload: { query: string; variables: { metafields?: unknown[] } } | undefined;
+      const dispatcher = setupTestGateway(async (_url: string, init?: RequestInit) => {
+        requestPayload = JSON.parse(init?.body as string);
+        return createMockResponse({
+          data: {
+            metafieldsDelete: {
+              deletedMetafields: [
+                { ownerId: "gid://shopify/Product/123", namespace: "custom", key: "found_key" },
+                null,
+              ],
+              userErrors: [],
+            },
+          },
+        });
+      });
+
+      const res = await dispatcher.dispatch({
+        storeId: "store-test",
+        operation: "metafields.delete",
+        mode: "apply",
+        requestId: "req-mf-del-batch",
+        payload: {
+          metafields: [
+            { ownerId: "gid://shopify/Product/123", namespace: "custom", key: "found_key" },
+            { ownerId: "gid://shopify/Product/123", namespace: "custom", key: "missing_key" },
+          ],
+        },
+      });
+
+      assert.equal(res.success, true);
+      assert.ok(requestPayload?.query.includes("metafieldsDelete("));
+      const data = res.data as {
+        success: boolean;
+        deletedMetafields: readonly { ownerId: string; namespace: string; key: string }[];
+        notFound: readonly { ownerId: string; namespace: string; key: string }[];
+      };
+      assert.equal(data.success, true);
+      assert.deepEqual(data.deletedMetafields, [
+        { ownerId: "gid://shopify/Product/123", namespace: "custom", key: "found_key" },
+      ]);
+      assert.deepEqual(data.notFound, [
+        { ownerId: "gid://shopify/Product/123", namespace: "custom", key: "missing_key" },
+      ]);
+    });
+
+    it("rejects metafields.delete when payload has more than 250 identifiers", async () => {
+      const dispatcher = setupTestGateway(async () => createMockResponse({}));
+
+      await assert.rejects(
+        async () => {
+          await dispatcher.dispatch({
+            storeId: "store-test",
+            operation: "metafields.delete",
+            mode: "apply",
+            requestId: "req-mf-del-toomany",
+            payload: {
+              metafields: Array.from({ length: 251 }, (_, i) => ({
+                ownerId: `gid://shopify/Product/${i + 1}`,
+                namespace: "custom",
+                key: `k_${i + 1}`,
+              })),
+            },
+          });
+        },
+        (err: unknown) => {
+          assert.ok(err instanceof GatewayError);
+          assert.equal(err.code, "SHOPIFY_USER_ERROR");
+          assert.ok(err.message.includes("250"));
+          return true;
+        },
+      );
+    });
+
+    it("rejects metafields.delete when payload specifies id alone without ownerId, namespace, key", async () => {
+      const dispatcher = setupTestGateway(async () => createMockResponse({}));
+
+      await assert.rejects(
+        async () => {
+          await dispatcher.dispatch({
+            storeId: "store-test",
+            operation: "metafields.delete",
+            mode: "apply",
+            requestId: "req-mf-del-idonly",
+            payload: {
+              id: "gid://shopify/Metafield/123",
+            },
+          });
+        },
+        (err: unknown) => {
+          assert.ok(err instanceof GatewayError);
+          assert.equal(err.code, "SHOPIFY_USER_ERROR");
+          assert.ok(err.message.includes("Shopify 2026-07 requires (ownerId, namespace, key)"));
+          return true;
+        },
+      );
+    });
+
+    it("rejects metafields.delete when apply mode is missing requestId", async () => {
+      const dispatcher = setupTestGateway(async () => createMockResponse({}));
+
+      await assert.rejects(
+        async () => {
+          await dispatcher.dispatch({
+            storeId: "store-test",
+            operation: "metafields.delete",
+            mode: "apply",
+            payload: {
+              ownerId: "gid://shopify/Product/123",
+              namespace: "custom",
+              key: "single_key",
+            },
+          } as unknown as Parameters<typeof dispatcher.dispatch>[0]);
+        },
+        (err: unknown) => {
+          assert.ok(err instanceof GatewayError);
+          assert.equal(err.code, "SHOPIFY_USER_ERROR");
+          assert.ok(err.message.includes("requestId is required"));
+          return true;
+        },
+      );
+    });
+
+    it("throws SHOPIFY_USER_ERROR when metafieldsDelete returns userErrors", async () => {
+      const dispatcher = setupTestGateway(async () =>
+        createMockResponse({
+          data: {
+            metafieldsDelete: {
+              deletedMetafields: [],
+              userErrors: [{ field: ["metafields"], message: "Metafield identifier is invalid" }],
+            },
+          },
+        }),
+      );
+
+      await assert.rejects(
+        async () => {
+          await dispatcher.dispatch({
+            storeId: "store-test",
+            operation: "metafields.delete",
+            mode: "apply",
+            requestId: "req-mf-del-usererr",
+            payload: {
+              ownerId: "gid://shopify/Product/123",
+              namespace: "custom",
+              key: "single_key",
+            },
+          });
+        },
+        (err: unknown) => {
+          assert.ok(err instanceof GatewayError);
+          assert.equal(err.code, "SHOPIFY_USER_ERROR");
+          assert.ok(err.message.includes("Metafield identifier is invalid"));
+          return true;
+        },
+      );
+    });
+  });
+
+  describe("Gateway: Partial-Write Protection for Multi-Chunk Operations", () => {
+    function setupTestGatewayWithIdempotency(
+      mockGraphqlDataOrTransport: unknown,
+      idempotencyStore?: IdempotencyStore,
+    ) {
+      const registry = new InMemoryStoreRegistry([
+        {
+          storeId: "store-test",
+          shopDomain: "store-test.myshopify.com",
+          apiVersion: "2026-07",
+          auth: { type: "static", staticToken: "shpat_mock_123" },
+        },
+      ]);
+
+      const fakeTransport: HttpTransport =
+        typeof mockGraphqlDataOrTransport === "function"
+          ? (mockGraphqlDataOrTransport as HttpTransport)
+          : async () => createMockResponse(mockGraphqlDataOrTransport);
+
+      const client = new ShopifyGraphqlClient({
+        tokenProvider: new StaticAccessTokenProvider(),
+        throttleManager: new InMemoryThrottleManager(),
+        baseTransport: fakeTransport,
+      });
+
+      return new GatewayDispatcher({
+        storeRegistry: registry,
+        graphqlClient: client,
+        idempotencyStore: idempotencyStore ?? new InMemoryIdempotencyStore(),
+      });
+    }
+
+    it("acceptance test: 600 files batch creation: chunk 0 & 1 succeed, chunk 2 times out -> SHOPIFY_PARTIAL_WRITE with reconciliationRequired and cached replay with 0 new mutations", async () => {
+      let mutationCalls = 0;
+      const idempotencyStore = new InMemoryIdempotencyStore();
+
+      const dispatcher = setupTestGatewayWithIdempotency(
+        async (_url: string, init?: RequestInit) => {
+          const body = JSON.parse(init?.body as string);
+          if (body.query.includes("fileCreate")) {
+            mutationCalls++;
+            if (mutationCalls === 1) {
+              // Chunk 0: 250 files
+              assert.equal(body.variables.files.length, 250);
+              return createMockResponse({
+                data: {
+                  fileCreate: {
+                    files: body.variables.files.map((_: unknown, i: number) => ({
+                      id: `gid://shopify/MediaImage/file-c0-${i}`,
+                      fileStatus: "READY",
+                      image: { url: `https://cdn.shopify.com/files/c0-${i}.jpg` },
+                    })),
+                    userErrors: [],
+                  },
+                },
+              });
+            }
+            if (mutationCalls === 2) {
+              // Chunk 1: 250 files
+              assert.equal(body.variables.files.length, 250);
+              return createMockResponse({
+                data: {
+                  fileCreate: {
+                    files: body.variables.files.map((_: unknown, i: number) => ({
+                      id: `gid://shopify/MediaImage/file-c1-${i}`,
+                      fileStatus: "READY",
+                      image: { url: `https://cdn.shopify.com/files/c1-${i}.jpg` },
+                    })),
+                    userErrors: [],
+                  },
+                },
+              });
+            }
+            if (mutationCalls === 3) {
+              // Chunk 2: 100 files times out
+              assert.equal(body.variables.files.length, 100);
+              const timeoutErr = new Error("The operation was aborted");
+              timeoutErr.name = "AbortError";
+              throw timeoutErr;
+            }
+          }
+          return createMockResponse({});
+        },
+        idempotencyStore,
+      );
+
+      const files600Payload = {
+        files: Array.from({ length: 600 }, (_, i) => ({
+          originalSource: `https://example.com/file-${i}.jpg`,
+          filename: `file-${i}.jpg`,
+        })),
+        pollIntervalMs: 1,
+        maxPollAttempts: 1,
+      };
+
+      // Call 1: initial run throws SHOPIFY_PARTIAL_WRITE
+      await assert.rejects(
+        async () => {
+          await dispatcher.dispatch({
+            storeId: "store-test",
+            operation: "files.bulkCreate",
+            mode: "apply",
+            requestId: "req-600-partial-test",
+            payload: files600Payload,
+          });
+        },
+        (err: unknown) => {
+          assert.ok(err instanceof GatewayError);
+          assert.equal(err.code, "SHOPIFY_PARTIAL_WRITE");
+          assert.equal(err.reconciliationRequired, true);
+          const details = err.details as Record<string, unknown>;
+          assert.equal(details.completedChunks, 2);
+          assert.equal(details.totalChunks, 3);
+          assert.equal(details.failedChunkIndex, 2);
+          assert.equal(details.ambiguousChunkIndex, 2);
+          assert.equal(details.causeCode, "SHOPIFY_UNKNOWN_WRITE_STATE");
+          assert.equal(Array.isArray(details.createdFileIds), true);
+          assert.equal((details.createdFileIds as string[]).length, 500);
+          return true;
+        },
+      );
+      assert.equal(mutationCalls, 3);
+
+      // Call 2: retry with identical requestId, storeId, payload replays cached error with ZERO new mutations
+      await assert.rejects(
+        async () => {
+          await dispatcher.dispatch({
+            storeId: "store-test",
+            operation: "files.bulkCreate",
+            mode: "apply",
+            requestId: "req-600-partial-test",
+            payload: files600Payload,
+          });
+        },
+        (err: unknown) => {
+          assert.ok(err instanceof GatewayError);
+          assert.equal(err.code, "SHOPIFY_PARTIAL_WRITE");
+          assert.equal(err.reconciliationRequired, true);
+          const details = err.details as Record<string, unknown>;
+          assert.equal(details.completedChunks, 2);
+          assert.equal(details.causeCode, "SHOPIFY_UNKNOWN_WRITE_STATE");
+          assert.equal((details.createdFileIds as string[]).length, 500);
+          assert.equal(details.isReplay, true);
+          return true;
+        },
+      );
+      assert.equal(mutationCalls, 3);
+
+      // Contrast: Chunk 0 timeout throws SHOPIFY_UNKNOWN_WRITE_STATE with 0 completed chunks
+      let contrastCalls = 0;
+      const dispatcherContrast = setupTestGatewayWithIdempotency(
+        async (_url: string, init?: RequestInit) => {
+          const body = JSON.parse(init?.body as string);
+          if (body.query.includes("fileCreate")) {
+            contrastCalls++;
+            const timeoutErr = new Error("The operation was aborted");
+            timeoutErr.name = "AbortError";
+            throw timeoutErr;
+          }
+          return createMockResponse({});
+        },
+      );
+
+      await assert.rejects(
+        async () => {
+          await dispatcherContrast.dispatch({
+            storeId: "store-test",
+            operation: "files.bulkCreate",
+            mode: "apply",
+            requestId: "req-contrast-timeout-chunk0",
+            payload: files600Payload,
+          });
+        },
+        (err: unknown) => {
+          assert.ok(err instanceof GatewayError);
+          assert.equal(err.code, "SHOPIFY_UNKNOWN_WRITE_STATE");
+          assert.notEqual(err.code, "SHOPIFY_PARTIAL_WRITE");
+          return true;
+        },
+      );
+      assert.equal(contrastCalls, 1);
+    });
+
+    it("metafields.set: 60 items across 3 chunks (25 + 25 + 10) where chunk 2 fails with userError throws SHOPIFY_PARTIAL_WRITE with metafieldKeys", async () => {
+      let callCount = 0;
+      const dispatcher = setupTestGatewayWithIdempotency(async (_url: string, init?: RequestInit) => {
+        const body = JSON.parse(init?.body as string);
+        if (body.query.includes("metafieldsSet")) {
+          callCount++;
+          if (callCount === 1) {
+            assert.equal(body.variables.metafields.length, 25);
+            return createMockResponse({
+              data: {
+                metafieldsSet: {
+                  metafields: body.variables.metafields.map((m: { key: string }) => ({
+                    id: `gid://shopify/Metafield/${m.key}`,
+                    namespace: "custom",
+                    key: m.key,
+                  })),
+                  userErrors: [],
+                },
+              },
+            });
+          }
+          if (callCount === 2) {
+            assert.equal(body.variables.metafields.length, 25);
+            return createMockResponse({
+              data: {
+                metafieldsSet: {
+                  metafields: body.variables.metafields.map((m: { key: string }) => ({
+                    id: `gid://shopify/Metafield/${m.key}`,
+                    namespace: "custom",
+                    key: m.key,
+                  })),
+                  userErrors: [],
+                },
+              },
+            });
+          }
+          if (callCount === 3) {
+            assert.equal(body.variables.metafields.length, 10);
+            return createMockResponse({
+              data: {
+                metafieldsSet: {
+                  metafields: [],
+                  userErrors: [{ field: ["value"], message: "Invalid JSON format" }],
+                },
+              },
+            });
+          }
+        }
+        return createMockResponse({});
+      });
+
+      const metafields60 = Array.from({ length: 60 }, (_, i) => ({
+        ownerId: "gid://shopify/Product/123",
+        namespace: "custom",
+        key: `mf_key_${i}`,
+        value: `{"val":${i}}`,
+        type: "json",
+      }));
+
+      await assert.rejects(
+        async () => {
+          await dispatcher.dispatch({
+            storeId: "store-test",
+            operation: "metafields.set",
+            mode: "apply",
+            requestId: "req-metafields-partial",
+            payload: {
+              metafields: metafields60,
+            },
+          });
+        },
+        (err: unknown) => {
+          assert.ok(err instanceof GatewayError);
+          assert.equal(err.code, "SHOPIFY_PARTIAL_WRITE");
+          assert.equal(err.reconciliationRequired, true);
+          const details = err.details as Record<string, unknown>;
+          assert.equal(details.completedChunks, 2);
+          assert.equal(details.totalChunks, 3);
+          assert.equal(details.failedChunkIndex, 2);
+          assert.equal(details.causeCode, "SHOPIFY_USER_ERROR");
+          const keys = details.metafieldKeys as string[];
+          assert.equal(Array.isArray(keys), true);
+          assert.equal(keys.length, 50);
+          assert.equal(keys[0], "custom.mf_key_0");
+          assert.equal(keys[49], "custom.mf_key_49");
+          return true;
+        },
+      );
+      assert.equal(callCount, 3);
+    });
+
+    it("variants.bulkCreate: 300 variants across 2 chunks (250 + 50) where chunk 1 fails with userError throws SHOPIFY_PARTIAL_WRITE with createdVariantIds", async () => {
+      let callCount = 0;
+      const dispatcher = setupTestGatewayWithIdempotency(async (_url: string, init?: RequestInit) => {
+        const body = JSON.parse(init?.body as string);
+        if (body.query.includes("productVariantsBulkCreate")) {
+          callCount++;
+          if (callCount === 1) {
+            assert.equal(body.variables.variants.length, 250);
+            return createMockResponse({
+              data: {
+                productVariantsBulkCreate: {
+                  productVariants: body.variables.variants.map((_: unknown, i: number) => ({
+                    id: `gid://shopify/ProductVariant/v-c0-${i}`,
+                    title: `Option ${i}`,
+                    price: "10.00",
+                  })),
+                  userErrors: [],
+                },
+              },
+            });
+          }
+          if (callCount === 2) {
+            assert.equal(body.variables.variants.length, 50);
+            return createMockResponse({
+              data: {
+                productVariantsBulkCreate: {
+                  productVariants: [],
+                  userErrors: [{ field: ["variants"], message: "Option value already exists" }],
+                },
+              },
+            });
+          }
+        }
+        return createMockResponse({});
+      });
+
+      const variants300 = Array.from({ length: 300 }, (_, i) => ({
+        price: "10.00",
+        optionValues: [{ optionName: "Title", name: `Variant ${i}` }],
+      }));
+
+      await assert.rejects(
+        async () => {
+          await dispatcher.dispatch({
+            storeId: "store-test",
+            operation: "variants.bulkCreate",
+            mode: "apply",
+            requestId: "req-variants-partial",
+            payload: {
+              productId: "gid://shopify/Product/123",
+              variants: variants300,
+            },
+          });
+        },
+        (err: unknown) => {
+          assert.ok(err instanceof GatewayError);
+          assert.equal(err.code, "SHOPIFY_PARTIAL_WRITE");
+          assert.equal(err.reconciliationRequired, true);
+          const details = err.details as Record<string, unknown>;
+          assert.equal(details.completedChunks, 1);
+          assert.equal(details.totalChunks, 2);
+          assert.equal(details.failedChunkIndex, 1);
+          assert.equal(details.causeCode, "SHOPIFY_USER_ERROR");
+          const ids = details.createdVariantIds as string[];
+          assert.equal(Array.isArray(ids), true);
+          assert.equal(ids.length, 250);
+          assert.equal(ids[0], "gid://shopify/ProductVariant/v-c0-0");
+          return true;
+        },
+      );
+      assert.equal(callCount, 2);
+    });
+
+    it("files.delete: 300 files across 2 chunks (250 + 50) where chunk 1 fails with userError throws SHOPIFY_PARTIAL_WRITE with deletedFileIds", async () => {
+      let callCount = 0;
+      const dispatcher = setupTestGatewayWithIdempotency(async (_url: string, init?: RequestInit) => {
+        const body = JSON.parse(init?.body as string);
+        if (body.query.includes("fileDelete")) {
+          callCount++;
+          if (callCount === 1) {
+            assert.equal(body.variables.fileIds.length, 250);
+            return createMockResponse({
+              data: {
+                fileDelete: {
+                  deletedFileIds: body.variables.fileIds,
+                  userErrors: [],
+                },
+              },
+            });
+          }
+          if (callCount === 2) {
+            assert.equal(body.variables.fileIds.length, 50);
+            return createMockResponse({
+              data: {
+                fileDelete: {
+                  deletedFileIds: [],
+                  userErrors: [{ field: ["fileIds"], message: "File cannot be deleted" }],
+                },
+              },
+            });
+          }
+        }
+        return createMockResponse({});
+      });
+
+      const fileIds300 = Array.from({ length: 300 }, (_, i) => `gid://shopify/MediaImage/del-${i}`);
+
+      await assert.rejects(
+        async () => {
+          await dispatcher.dispatch({
+            storeId: "store-test",
+            operation: "files.delete",
+            mode: "apply",
+            requestId: "req-files-del-partial",
+            payload: {
+              fileIds: fileIds300,
+            },
+          });
+        },
+        (err: unknown) => {
+          assert.ok(err instanceof GatewayError);
+          assert.equal(err.code, "SHOPIFY_PARTIAL_WRITE");
+          assert.equal(err.reconciliationRequired, true);
+          const details = err.details as Record<string, unknown>;
+          assert.equal(details.completedChunks, 1);
+          assert.equal(details.totalChunks, 2);
+          assert.equal(details.failedChunkIndex, 1);
+          assert.equal(details.causeCode, "SHOPIFY_USER_ERROR");
+          const ids = details.deletedFileIds as string[];
+          assert.equal(Array.isArray(ids), true);
+          assert.equal(ids.length, 250);
+          assert.equal(ids[0], "gid://shopify/MediaImage/del-0");
+          return true;
+        },
+      );
+      assert.equal(callCount, 2);
+    });
+
+    it("variants.bulkCreate: single chunk returning both productVariants and userErrors throws SHOPIFY_PARTIAL_WRITE with createdVariantIds", async () => {
+      let callCount = 0;
+      const idempotencyStore = new InMemoryIdempotencyStore();
+      const dispatcher = setupTestGatewayWithIdempotency(async (_url: string, init?: RequestInit) => {
+        const body = JSON.parse(init?.body as string);
+        if (body.query.includes("productVariantsBulkCreate")) {
+          callCount++;
+          return createMockResponse({
+            data: {
+              productVariantsBulkCreate: {
+                productVariants: [
+                  {
+                    id: "gid://shopify/ProductVariant/v-created-1",
+                    title: "Variant 1",
+                    price: "20.00",
+                  },
+                ],
+                userErrors: [
+                  { field: ["variants", "1"], message: "Barcode already exists on another variant" },
+                ],
+              },
+            },
+          });
+        }
+        return createMockResponse({});
+      }, idempotencyStore);
+
+      const payload = {
+        productId: "gid://shopify/Product/123",
+        variants: [
+          { price: "20.00", optionValues: [{ optionName: "Title", name: "Variant 1" }] },
+          { price: "20.00", optionValues: [{ optionName: "Title", name: "Variant 2" }] },
+        ],
+      };
+
+      // Call 1: initial run detects partial write inside chunk 0
+      await assert.rejects(
+        async () => {
+          await dispatcher.dispatch({
+            storeId: "store-test",
+            operation: "variants.bulkCreate",
+            mode: "apply",
+            requestId: "req-variant-intra-partial",
+            payload,
+          });
+        },
+        (err: unknown) => {
+          assert.ok(err instanceof GatewayError);
+          assert.equal(err.code, "SHOPIFY_PARTIAL_WRITE");
+          assert.equal(err.reconciliationRequired, true);
+          const details = err.details as Record<string, unknown>;
+          const createdIds = details.createdVariantIds as string[];
+          assert.equal(Array.isArray(createdIds), true);
+          assert.deepEqual(createdIds, ["gid://shopify/ProductVariant/v-created-1"]);
+          return true;
+        },
+      );
+      assert.equal(callCount, 1);
+
+      // Call 2: retry with identical requestId replays SHOPIFY_PARTIAL_WRITE with 0 new mutations
+      await assert.rejects(
+        async () => {
+          await dispatcher.dispatch({
+            storeId: "store-test",
+            operation: "variants.bulkCreate",
+            mode: "apply",
+            requestId: "req-variant-intra-partial",
+            payload,
+          });
+        },
+        (err: unknown) => {
+          assert.ok(err instanceof GatewayError);
+          assert.equal(err.code, "SHOPIFY_PARTIAL_WRITE");
+          assert.equal(err.reconciliationRequired, true);
+          assert.equal(err.details?.isReplay, true);
+          return true;
+        },
+      );
+      assert.equal(callCount, 1);
+    });
+
+    it("files.delete: single chunk returning both deletedFileIds and userErrors throws SHOPIFY_PARTIAL_WRITE with deletedFileIds", async () => {
+      let callCount = 0;
+      const idempotencyStore = new InMemoryIdempotencyStore();
+      const dispatcher = setupTestGatewayWithIdempotency(async (_url: string, init?: RequestInit) => {
+        const body = JSON.parse(init?.body as string);
+        if (body.query.includes("fileDelete")) {
+          callCount++;
+          return createMockResponse({
+            data: {
+              fileDelete: {
+                deletedFileIds: ["gid://shopify/MediaImage/del-1"],
+                userErrors: [
+                  { field: ["fileIds", "1"], message: "File del-2 is currently in use" },
+                ],
+              },
+            },
+          });
+        }
+        return createMockResponse({});
+      }, idempotencyStore);
+
+      const payload = {
+        fileIds: ["gid://shopify/MediaImage/del-1", "gid://shopify/MediaImage/del-2"],
+      };
+
+      // Call 1: initial run detects partial write inside chunk 0
+      await assert.rejects(
+        async () => {
+          await dispatcher.dispatch({
+            storeId: "store-test",
+            operation: "files.delete",
+            mode: "apply",
+            requestId: "req-file-intra-partial",
+            payload,
+          });
+        },
+        (err: unknown) => {
+          assert.ok(err instanceof GatewayError);
+          assert.equal(err.code, "SHOPIFY_PARTIAL_WRITE");
+          assert.equal(err.reconciliationRequired, true);
+          const details = err.details as Record<string, unknown>;
+          const deletedIds = details.deletedFileIds as string[];
+          assert.equal(Array.isArray(deletedIds), true);
+          assert.deepEqual(deletedIds, ["gid://shopify/MediaImage/del-1"]);
+          return true;
+        },
+      );
+      assert.equal(callCount, 1);
+
+      // Call 2: retry with identical requestId replays SHOPIFY_PARTIAL_WRITE with 0 new mutations
+      await assert.rejects(
+        async () => {
+          await dispatcher.dispatch({
+            storeId: "store-test",
+            operation: "files.delete",
+            mode: "apply",
+            requestId: "req-file-intra-partial",
+            payload,
+          });
+        },
+        (err: unknown) => {
+          assert.ok(err instanceof GatewayError);
+          assert.equal(err.code, "SHOPIFY_PARTIAL_WRITE");
+          assert.equal(err.reconciliationRequired, true);
+          assert.equal(err.details?.isReplay, true);
+          return true;
+        },
+      );
+      assert.equal(callCount, 1);
+    });
+
+    it("files.bulkCreate: single chunk returning both files and userErrors throws SHOPIFY_PARTIAL_WRITE with createdFileIds", async () => {
+      let callCount = 0;
+      const idempotencyStore = new InMemoryIdempotencyStore();
+      const dispatcher = setupTestGatewayWithIdempotency(async (_url: string, init?: RequestInit) => {
+        const body = JSON.parse(init?.body as string);
+        if (body.query.includes("fileCreate")) {
+          callCount++;
+          return createMockResponse({
+            data: {
+              fileCreate: {
+                files: [
+                  { id: "gid://shopify/MediaImage/file-1", fileStatus: "READY" },
+                  { id: "gid://shopify/MediaImage/file-2", fileStatus: "READY" },
+                  { id: "gid://shopify/MediaImage/file-3", fileStatus: "READY" },
+                ],
+                userErrors: [
+                  { field: ["files", "3"], message: "Invalid image format for file 4" },
+                ],
+              },
+            },
+          });
+        }
+        return createMockResponse({});
+      }, idempotencyStore);
+
+      const payload = {
+        files: [
+          { originalSource: "https://example.com/1.jpg" },
+          { originalSource: "https://example.com/2.jpg" },
+          { originalSource: "https://example.com/3.jpg" },
+          { originalSource: "https://example.com/4.jpg" },
+        ],
+      };
+
+      await assert.rejects(
+        async () => {
+          await dispatcher.dispatch({
+            storeId: "store-test",
+            operation: "files.bulkCreate",
+            mode: "apply",
+            requestId: "req-file-bulk-intra-partial",
+            payload,
+          });
+        },
+        (err: unknown) => {
+          assert.ok(err instanceof GatewayError);
+          assert.equal(err.code, "SHOPIFY_PARTIAL_WRITE");
+          assert.equal(err.reconciliationRequired, true);
+          const details = err.details as Record<string, unknown>;
+          const createdIds = details.createdFileIds as string[];
+          assert.equal(Array.isArray(createdIds), true);
+          assert.deepEqual(createdIds, [
+            "gid://shopify/MediaImage/file-1",
+            "gid://shopify/MediaImage/file-2",
+            "gid://shopify/MediaImage/file-3",
+          ]);
+          return true;
+        },
+      );
+      assert.equal(callCount, 1);
+    });
+
+    it("variants.bulkCreate: 300 variants across 2 chunks (250 success + 20 success & userErrors) preserves ALL 270 IDs", async () => {
+      let callCount = 0;
+      const idempotencyStore = new InMemoryIdempotencyStore();
+      const dispatcher = setupTestGatewayWithIdempotency(async (_url: string, init?: RequestInit) => {
+        const body = JSON.parse(init?.body as string);
+        if (body.query.includes("productVariantsBulkCreate")) {
+          callCount++;
+          if (callCount === 1) {
+            // Chunk 0: 250 variants success
+            assert.equal(body.variables.variants.length, 250);
+            return createMockResponse({
+              data: {
+                productVariantsBulkCreate: {
+                  productVariants: body.variables.variants.map((_: unknown, i: number) => ({
+                    id: `gid://shopify/ProductVariant/c0-var-${i}`,
+                    title: `Option c0-${i}`,
+                    price: "15.00",
+                  })),
+                  userErrors: [],
+                },
+              },
+            });
+          }
+          if (callCount === 2) {
+            // Chunk 1: 50 variants -> 20 created + userErrors
+            assert.equal(body.variables.variants.length, 50);
+            return createMockResponse({
+              data: {
+                productVariantsBulkCreate: {
+                  productVariants: Array.from({ length: 20 }, (_, i) => ({
+                    id: `gid://shopify/ProductVariant/c1-var-${i}`,
+                    title: `Option c1-${i}`,
+                    price: "15.00",
+                  })),
+                  userErrors: [
+                    { field: ["variants", "20"], message: "Barcode already exists on variant 21" },
+                  ],
+                },
+              },
+            });
+          }
+        }
+        return createMockResponse({});
+      }, idempotencyStore);
+
+      const variants300 = Array.from({ length: 300 }, (_, i) => ({
+        price: "15.00",
+        optionValues: [{ optionName: "Title", name: `Variant ${i}` }],
+      }));
+
+      // Call 1: initial run throws SHOPIFY_PARTIAL_WRITE with exactly 270 variant IDs preserved!
+      await assert.rejects(
+        async () => {
+          await dispatcher.dispatch({
+            storeId: "store-test",
+            operation: "variants.bulkCreate",
+            mode: "apply",
+            requestId: "req-300-variants-merge-test",
+            payload: {
+              productId: "gid://shopify/Product/123",
+              variants: variants300,
+            },
+          });
+        },
+        (err: unknown) => {
+          assert.ok(err instanceof GatewayError);
+          assert.equal(err.code, "SHOPIFY_PARTIAL_WRITE");
+          assert.equal(err.reconciliationRequired, true);
+          const details = err.details as Record<string, unknown>;
+          const ids = details.createdVariantIds as string[];
+          assert.equal(Array.isArray(ids), true);
+          // Verify that Chunk 0 (250 IDs) was NOT overwritten by Chunk 1 (20 IDs)!
+          // Total should be exactly 250 + 20 = 270 IDs!
+          assert.equal(ids.length, 270);
+          assert.equal(ids[0], "gid://shopify/ProductVariant/c0-var-0");
+          assert.equal(ids[249], "gid://shopify/ProductVariant/c0-var-249");
+          assert.equal(ids[250], "gid://shopify/ProductVariant/c1-var-0");
+          assert.equal(ids[269], "gid://shopify/ProductVariant/c1-var-19");
+          return true;
+        },
+      );
+      assert.equal(callCount, 2);
+
+      // Call 2: retry with identical requestId replays SHOPIFY_PARTIAL_WRITE with all 270 IDs and ZERO new mutations!
+      await assert.rejects(
+        async () => {
+          await dispatcher.dispatch({
+            storeId: "store-test",
+            operation: "variants.bulkCreate",
+            mode: "apply",
+            requestId: "req-300-variants-merge-test",
+            payload: {
+              productId: "gid://shopify/Product/123",
+              variants: variants300,
+            },
+          });
+        },
+        (err: unknown) => {
+          assert.ok(err instanceof GatewayError);
+          assert.equal(err.code, "SHOPIFY_PARTIAL_WRITE");
+          assert.equal(err.reconciliationRequired, true);
+          const details = err.details as Record<string, unknown>;
+          const ids = details.createdVariantIds as string[];
+          assert.equal(ids.length, 270);
+          assert.equal(details.isReplay, true);
+          return true;
+        },
+      );
+      assert.equal(callCount, 2);
+    });
+  });
 });
 
 

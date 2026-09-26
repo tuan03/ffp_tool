@@ -169,63 +169,6 @@ export function NotificationPermissionBadge(): React.JSX.Element | null {
               </p>
             )}
           </div>
-
-          {/* Detailed Status Breakdown */}
-          <div className="mt-4 rounded-xl border border-slate-800 bg-slate-950/70 p-3 space-y-2 text-xs">
-            <div className="flex items-center justify-between">
-              <span className="text-slate-400">🔊 Chuông báo (Web Audio):</span>
-              <span className={isMuted ? "text-slate-400" : "text-emerald-400 font-semibold"}>
-                {isMuted ? "Đã tắt" : "Hoạt động bình thường ✓"}
-              </span>
-            </div>
-
-            <div className="flex items-center justify-between">
-              <span className="text-slate-400">💬 Thẻ thông báo nổi (In-App):</span>
-              <span className="text-emerald-400 font-semibold">Hoạt động bình thường ✓</span>
-            </div>
-
-            <div className="flex items-center justify-between">
-              <span className="text-slate-400">🖥️ Desktop Notification:</span>
-              <span
-                className={`font-semibold ${
-                  status === "granted" ? "text-emerald-400" : "text-amber-400"
-                }`}
-              >
-                {status === "granted"
-                  ? "Đã cấp quyền ✓"
-                  : status === "insecure-context"
-                    ? "Bị giới hạn do HTTP LAN IP"
-                    : "Bị chặn trong trình duyệt"}
-              </span>
-            </div>
-          </div>
-
-          {/* Explanation note for LAN IP */}
-          {(status === "insecure-context" || status === "denied") && (
-            <div className="mt-3 rounded-xl border border-amber-900/50 bg-amber-950/30 p-2.5 text-[11px] text-amber-300/90 leading-relaxed">
-              <p className="font-semibold flex items-center gap-1 text-amber-200">
-                <span>💡</span> Vì sao Desktop Notification tắt?
-              </p>
-              <p className="mt-1 text-slate-300">
-                Trình duyệt tự động chặn quyền Desktop Toast trên địa chỉ IP LAN không có HTTPS (như{" "}
-                <code className="text-cyan-300 font-mono">192.168.1.x</code>).
-              </p>
-              <p className="mt-1 text-slate-300">
-                👉 <strong>Âm thanh chuông báo và thông báo trên trang vẫn hoạt động 100%!</strong>
-              </p>
-              <p className="mt-1 text-slate-400">
-                Để nhận cả thông báo ngoài màn hình Desktop, bạn chỉ cần mở qua:{" "}
-                <a
-                  href="http://localhost:5173"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-cyan-400 underline hover:text-cyan-300"
-                >
-                  http://localhost:5173
-                </a>
-              </p>
-            </div>
-          )}
         </div>
       )}
     </div>

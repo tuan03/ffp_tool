@@ -1,3 +1,4 @@
+import { getProductSourceOrigin } from "./seo-content-ui-adapter";
 import type {
   SeoProductUiViewModel,
   SeoReviewFilterState,
@@ -86,6 +87,14 @@ export function filterSeoProducts(
         p.handle.source === "mock" ||
         p.images.some((img) => img.alt.source === "mock" || img.webpUrl.source === "mock");
       if (!hasMock) {
+        return false;
+      }
+    }
+
+    // 5. Source Origin filter (Distributed Crawl vs Pinterest POD vs Auto SEO)
+    if (filter.sourceOriginFilter && filter.sourceOriginFilter !== "all") {
+      const origin = getProductSourceOrigin(p);
+      if (origin !== filter.sourceOriginFilter) {
         return false;
       }
     }

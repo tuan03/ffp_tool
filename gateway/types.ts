@@ -149,6 +149,7 @@ export interface ProductSummary {
   readonly seo?: { readonly title?: string; readonly description?: string };
   readonly hasMoreVariants?: boolean;
   readonly hasMoreImages?: boolean;
+  readonly hasCustomizer?: boolean;
   readonly createdAt: string;
   readonly updatedAt: string;
 }

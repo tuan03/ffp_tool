@@ -1,3 +1,4 @@
+import { executeChunkedWrite } from "../chunked-write";
 import { GatewayError, mapUserErrorsToGatewayError, type MutationUserErrorItem } from "../errors";
 import type { ShopifyGraphqlClient } from "../shopify-graphql-client";
 import type { StoreConfig } from "../types";
@@ -58,6 +59,19 @@ interface NormalizedMetafieldItem {
   readonly key: string;
   readonly value: string;
   readonly type: string;
+}
+
+export function getMetafieldMaxBytes(type?: string): number {
+  switch (type) {
+    case "json":
+      return 131072; // 128KB
+    case "url":
+    case "link":
+    case "id":
+      return 2048; // 2KB
+    default:
+      return 65536; // 64KB
+  }
 }
 
 export async function executeMetafieldsSet(
@@ -122,17 +136,20 @@ export async function executeMetafieldsSet(
     }
 
     const byteLength = Buffer.byteLength(valStr, "utf8");
-    if (byteLength > 131072) {
-      throw new GatewayError(
-        "Metafield value exceeds Shopify 128KB UTF-8 byte limit",
-        "SHOPIFY_INVALID_INPUT",
-        400,
-      );
-    }
     const type =
       typeof item.type === "string" && item.type.trim() !== ""
         ? item.type.trim()
         : "json";
+
+    const maxBytes = getMetafieldMaxBytes(type);
+    if (byteLength > maxBytes) {
+      const limitDesc = maxBytes === 131072 ? "128KB" : `${maxBytes / 1024}KB`;
+      throw new GatewayError(
+        `Metafield value exceeds Shopify ${limitDesc} UTF-8 byte limit`,
+        "SHOPIFY_INVALID_INPUT",
+        400,
+      );
+    }
 
     return {
       ownerId,
@@ -158,33 +175,57 @@ export async function executeMetafieldsSet(
     };
   }
 
-  const metafieldInputs = normalized.map((m) => ({
-    ownerId: m.ownerId,
-    namespace: m.namespace,
-    key: m.key,
-    type: m.type,
-    value: m.value,
-  }));
+  const chunkedResult = await executeChunkedWrite<NormalizedMetafieldItem, MetafieldSummary[]>({
+    items: normalized,
+    chunkSize: 25,
+    operationName: "metafields.set",
+    executeChunk: async (chunk, chunkIndex) => {
+      const chunkRequestId = requestId ? `${requestId}:mf:${chunkIndex}` : undefined;
+      const metafieldInputs = chunk.map((m) => ({
+        ownerId: m.ownerId,
+        namespace: m.namespace,
+        key: m.key,
+        type: m.type,
+        value: m.value,
+      }));
 
-  const raw = await client.query<MetafieldsSetResponse>(
-    store,
-    METAFIELDS_SET_MUTATION,
-    { metafields: metafieldInputs },
-    { isWrite: true, requestId },
-  );
+      const raw = await client.query<MetafieldsSetResponse>(
+        store,
+        METAFIELDS_SET_MUTATION,
+        { metafields: metafieldInputs },
+        { isWrite: true, requestId: chunkRequestId },
+      );
 
-  if (raw.metafieldsSet.userErrors && raw.metafieldsSet.userErrors.length > 0) {
-    throw mapUserErrorsToGatewayError(raw.metafieldsSet.userErrors);
-  }
+      if (raw.metafieldsSet.userErrors && raw.metafieldsSet.userErrors.length > 0) {
+        throw mapUserErrorsToGatewayError(raw.metafieldsSet.userErrors);
+      }
 
-  const mappedMetafields: MetafieldSummary[] = (raw.metafieldsSet.metafields ?? []).map((node) => ({
-    id: node.id,
-    namespace: node.namespace,
-    key: node.key,
-    type: node.type,
-    value: node.value,
-    ownerType: node.ownerType ?? undefined,
-  }));
+      const chunkMapped: MetafieldSummary[] = [];
+      if (raw.metafieldsSet.metafields) {
+        for (const node of raw.metafieldsSet.metafields) {
+          chunkMapped.push({
+            id: node.id,
+            namespace: node.namespace,
+            key: node.key,
+            type: node.type,
+            value: node.value,
+            ownerType: node.ownerType ?? undefined,
+          });
+        }
+      }
+      return chunkMapped;
+    },
+    extractCompletedDetails: (completedResults) => {
+      const allMapped = completedResults.flat();
+      return {
+        completedCount: allMapped.length,
+        metafieldIds: allMapped.map((m) => m.id),
+        metafieldKeys: allMapped.map((m) => `${m.namespace}.${m.key}`),
+      };
+    },
+  });
+
+  const mappedMetafields = chunkedResult.chunkResults.flat();
 
   return {
     success: true,
@@ -249,8 +290,11 @@ export async function executeMetafieldsGet(
     throw new GatewayError("ownerId is required", "SHOPIFY_USER_ERROR", 400);
   }
 
-  const namespace = typeof p?.namespace === "string" && p.namespace.trim().length > 0 ? p.namespace.trim() : "custom";
-  const key = typeof p?.key === "string" && p.key.trim().length > 0 ? p.key.trim() : "amazon_customizer";
+  const namespace = typeof p?.namespace === "string" ? p.namespace.trim() : "";
+  const key = typeof p?.key === "string" ? p.key.trim() : "";
+  if (!namespace || !key) {
+    throw new GatewayError("namespace and key are required", "SHOPIFY_USER_ERROR", 400);
+  }
 
   if (executionMode === "preview") {
     return {
@@ -285,5 +329,149 @@ export async function executeMetafieldsGet(
     namespace: mf.namespace,
     key: mf.key,
     type: mf.type,
+  };
+}
+
+export const METAFIELDS_DELETE_MUTATION = `
+  mutation MetafieldsDelete($metafields: [MetafieldIdentifierInput!]!) {
+    metafieldsDelete(metafields: $metafields) {
+      deletedMetafields {
+        ownerId
+        namespace
+        key
+      }
+      userErrors {
+        field
+        message
+      }
+    }
+  }
+`;
+
+export interface MetafieldIdentifier {
+  readonly ownerId: string;
+  readonly namespace: string;
+  readonly key: string;
+}
+
+export interface MetafieldsDeletePayload {
+  readonly id?: string;
+  readonly ownerId?: string;
+  readonly namespace?: string;
+  readonly key?: string;
+  readonly metafields?: readonly MetafieldIdentifier[];
+}
+
+export interface MetafieldsDeleteData {
+  readonly success: boolean;
+  readonly deletedMetafields: readonly MetafieldIdentifier[];
+  readonly notFound: readonly MetafieldIdentifier[];
+  readonly deletedId?: undefined;
+}
+
+interface RawMetafieldsDeleteResponse {
+  readonly metafieldsDelete?: {
+    readonly deletedMetafields?: readonly (MetafieldIdentifier | null)[] | null;
+    readonly userErrors?: readonly MutationUserErrorItem[];
+  } | null;
+}
+
+export async function executeMetafieldsDelete(
+  client: ShopifyGraphqlClient,
+  store: StoreConfig,
+  payload: unknown,
+  executionMode: "preview" | "apply",
+  requestId?: string,
+): Promise<MetafieldsDeleteData> {
+  const p = payload as Record<string, unknown> | null;
+  let rawIdentifiers: readonly Record<string, unknown>[];
+
+  if (Array.isArray(p?.metafields)) {
+    rawIdentifiers = p.metafields as readonly Record<string, unknown>[];
+  } else if (p?.ownerId && p?.namespace && p?.key) {
+    rawIdentifiers = [p];
+  } else if (p?.id) {
+    throw new GatewayError(
+      "Shopify 2026-07 requires (ownerId, namespace, key) identifiers to delete metafields. Specifying 'id' alone is no longer supported.",
+      "SHOPIFY_USER_ERROR",
+      400,
+    );
+  } else {
+    throw new GatewayError(
+      "metafields array or (ownerId, namespace, key) identifier is required to delete metafields",
+      "SHOPIFY_USER_ERROR",
+      400,
+    );
+  }
+
+  if (rawIdentifiers.length === 0) {
+    throw new GatewayError("metafields array cannot be empty", "SHOPIFY_USER_ERROR", 400);
+  }
+
+  if (rawIdentifiers.length > 250) {
+    throw new GatewayError(
+      "metafields array exceeds Shopify limit of 250 identifiers per mutation",
+      "SHOPIFY_USER_ERROR",
+      400,
+    );
+  }
+
+  const identifiers: MetafieldIdentifier[] = rawIdentifiers.map((item, idx) => {
+    const ownerId = typeof item.ownerId === "string" ? item.ownerId.trim() : "";
+    const namespace = typeof item.namespace === "string" ? item.namespace.trim() : "";
+    const key = typeof item.key === "string" ? item.key.trim() : "";
+    if (!ownerId || !namespace || !key) {
+      throw new GatewayError(
+        `ownerId, namespace, and key are required for metafield identifier at index ${idx}`,
+        "SHOPIFY_USER_ERROR",
+        400,
+      );
+    }
+    return { ownerId, namespace, key };
+  });
+
+  if (executionMode === "preview") {
+    return {
+      success: true,
+      deletedMetafields: identifiers,
+      notFound: [],
+      deletedId: undefined,
+    };
+  }
+
+  const raw = await client.query<RawMetafieldsDeleteResponse>(
+    store,
+    METAFIELDS_DELETE_MUTATION,
+    { metafields: identifiers },
+    { isWrite: true, requestId },
+  );
+
+  if (!raw?.metafieldsDelete) {
+    throw new GatewayError("Shopify returned empty metafieldsDelete response", "SHOPIFY_USER_ERROR", 502);
+  }
+
+  if (raw.metafieldsDelete.userErrors && raw.metafieldsDelete.userErrors.length > 0) {
+    throw mapUserErrorsToGatewayError(raw.metafieldsDelete.userErrors);
+  }
+
+  const deletedMetafields: MetafieldIdentifier[] = [];
+  const notFound: MetafieldIdentifier[] = [];
+
+  const rawDeleted = raw.metafieldsDelete.deletedMetafields ?? [];
+  for (let i = 0; i < identifiers.length; i++) {
+    const item = rawDeleted[i];
+    const requested = identifiers[i];
+    if (item && item.ownerId && item.namespace && item.key) {
+      deletedMetafields.push(item);
+    } else {
+      notFound.push(requested);
+    }
+  }
+
+  return {
+    success: true,
+    deletedMetafields,
+    notFound,
+    deletedId: undefined,
   };
 }

@@ -30,6 +30,8 @@ import type {
   ShopifyProductsGetResponse,
   ShopifyProductsListInput,
   ShopifyProductsListResponse,
+  ShopifyProductsPreflightAmazonAsinsInput,
+  ShopifyProductsPreflightAmazonAsinsResponse,
   ShopifyProductsUpdateInput,
   ShopifyProductsUpdateResponse,
   ShopifyStoreSummary,
@@ -43,10 +45,14 @@ import type {
   ShopifyFilesBulkCreateResponse,
   ShopifyFilesDeleteInput,
   ShopifyFilesDeleteResponse,
+  ShopifyFilesListInput,
+  ShopifyFilesListResponse,
   ShopifyMetafieldsSetInput,
   ShopifyMetafieldsSetResponse,
   ShopifyMetafieldsGetInput,
   ShopifyMetafieldsGetResponse,
+  ShopifyMetafieldsDeleteInput,
+  ShopifyMetafieldsDeleteResponse,
   ShopifyVariantsBulkCreateInput,
   ShopifyVariantsBulkCreateResponse,
   ShopifyVariantsBulkUpdateInput,
@@ -158,14 +164,17 @@ export async function runMockModuleApi(input: ShopifyProductsCreateInput): Promi
 export async function runMockModuleApi(input: ShopifyProductsUpdateInput): Promise<ShopifyProductsUpdateResponse>;
 export async function runMockModuleApi(input: ShopifyProductsBulkUpdateInput): Promise<ShopifyProductsBulkUpdateResponse>;
 export async function runMockModuleApi(input: ShopifyProductsDeleteInput): Promise<ShopifyProductsDeleteResponse>;
+export async function runMockModuleApi(input: ShopifyProductsPreflightAmazonAsinsInput): Promise<ShopifyProductsPreflightAmazonAsinsResponse>;
 export async function runMockModuleApi(input: ShopifyVariantsUpdateInput): Promise<ShopifyVariantsUpdateResponse>;
 export async function runMockModuleApi(input: ShopifyVariantsBulkUpdateInput): Promise<ShopifyVariantsBulkUpdateResponse>;
 export async function runMockModuleApi(input: ShopifyVariantsBulkCreateInput): Promise<ShopifyVariantsBulkCreateResponse>;
 export async function runMockModuleApi(input: ShopifyFilesCreateInput): Promise<ShopifyFilesCreateResponse>;
 export async function runMockModuleApi(input: ShopifyFilesBulkCreateInput): Promise<ShopifyFilesBulkCreateResponse>;
 export async function runMockModuleApi(input: ShopifyFilesDeleteInput): Promise<ShopifyFilesDeleteResponse>;
+export async function runMockModuleApi(input: ShopifyFilesListInput): Promise<ShopifyFilesListResponse>;
 export async function runMockModuleApi(input: ShopifyMetafieldsSetInput): Promise<ShopifyMetafieldsSetResponse>;
 export async function runMockModuleApi(input: ShopifyMetafieldsGetInput): Promise<ShopifyMetafieldsGetResponse>;
+export async function runMockModuleApi(input: ShopifyMetafieldsDeleteInput): Promise<ShopifyMetafieldsDeleteResponse>;
 export async function runMockModuleApi(input: ShopifyCollectionsListInput): Promise<ShopifyCollectionsListResponse>;
 export async function runMockModuleApi(input: ShopifyCollectionsGetInput): Promise<ShopifyCollectionsGetResponse>;
 export async function runMockModuleApi(input: ShopifyCollectionsCreateInput): Promise<ShopifyCollectionsCreateResponse>;
@@ -308,6 +317,16 @@ export async function runMockModuleApi(input: ShopifyApiInput): Promise<ShopifyA
     case "products.create": {
       if (!input.payload.product?.title || input.payload.product.title.trim() === "") {
         throw new ShopifyApiError("Product title is required", "SHOPIFY_USER_ERROR");
+      }
+      if (Array.isArray(input.payload.product.variants)) {
+        for (const v of input.payload.product.variants) {
+          if ("inventoryQuantity" in v && v.inventoryQuantity !== undefined) {
+            throw new ShopifyApiError(
+              "inventoryQuantity is not supported by Catalog API. Use the Shopify Inventory API.",
+              "SHOPIFY_INVALID_INPUT",
+            );
+          }
+        }
       }
       const now = new Date().toISOString();
       const variants: ShopifyProductVariant[] =
@@ -558,6 +577,34 @@ export async function runMockModuleApi(input: ShopifyApiInput): Promise<ShopifyA
       };
     }
 
+    case "products.preflightAmazonAsins": {
+      const asins = input.payload.asins || [];
+      const matches = asins
+        .filter((asin) => typeof asin === "string" && asin.trim() !== "")
+        .map((asin) => {
+          if (asin.toUpperCase().includes("MATCH")) {
+            const product = shopifyMockProducts[0];
+            return {
+              asin,
+              productId: product.id,
+              title: product.title,
+              adminUrl: `https://${effectiveStoreId}.myshopify.com/admin/products/${product.id.split("/").pop()}`,
+            };
+          }
+          return undefined;
+        })
+        .filter((m): m is NonNullable<typeof m> => m !== undefined);
+      return {
+        storeId: effectiveStoreId,
+        operation: "products.preflightAmazonAsins",
+        success: true,
+        data: {
+          ready: true,
+          matches,
+        },
+      };
+    }
+
     case "variants.update": {
       if (!input.payload.id || input.payload.id.trim() === "") {
         throw new ShopifyApiError("Variant ID is required", "SHOPIFY_USER_ERROR");
@@ -666,6 +713,16 @@ export async function runMockModuleApi(input: ShopifyApiInput): Promise<ShopifyA
           },
         };
       }
+      if (Array.isArray(input.payload.variants)) {
+        for (const v of input.payload.variants) {
+          if ("inventoryQuantity" in v && v.inventoryQuantity !== undefined) {
+            throw new ShopifyApiError(
+              "inventoryQuantity is not supported by Catalog API. Use the Shopify Inventory API.",
+              "SHOPIFY_INVALID_INPUT",
+            );
+          }
+        }
+      }
       const createdVariants: ShopifyProductVariant[] = input.payload.variants.map((v, idx) => {
         const title =
           typeof v.title === "string" && v.title.trim() !== ""
@@ -771,6 +828,33 @@ export async function runMockModuleApi(input: ShopifyApiInput): Promise<ShopifyA
       };
     }
 
+    case "files.list": {
+      return {
+        storeId: effectiveStoreId,
+        operation: "files.list",
+        success: true,
+        data: {
+          files: [
+            {
+              id: "gid://shopify/MediaImage/mock-file-1",
+              url: "https://quickstart-demo.myshopify.com/cdn/shop/files/mock-1.jpg",
+              altText: "Mock File 1",
+              fileStatus: "READY",
+              createdAt: new Date().toISOString(),
+              width: 1000,
+              height: 1000,
+            },
+          ],
+          pageInfo: {
+            hasNextPage: false,
+            hasPreviousPage: false,
+            startCursor: "cur-1",
+            endCursor: "cur-1",
+          },
+        },
+      };
+    }
+
     case "metafields.set": {
       let rawItems: readonly Record<string, unknown>[];
       if (Array.isArray(input.payload.metafields)) {
@@ -855,6 +939,11 @@ export async function runMockModuleApi(input: ShopifyApiInput): Promise<ShopifyA
       if (!input.payload.ownerId || input.payload.ownerId.trim() === "") {
         throw new ShopifyApiError("ownerId is required", "SHOPIFY_USER_ERROR");
       }
+      const namespace = input.payload.namespace?.trim();
+      const key = input.payload.key?.trim();
+      if (!namespace || !key) {
+        throw new ShopifyApiError("namespace and key are required", "SHOPIFY_USER_ERROR");
+      }
       return {
         storeId: input.storeId,
         operation: "metafields.get",
@@ -862,9 +951,67 @@ export async function runMockModuleApi(input: ShopifyApiInput): Promise<ShopifyA
         data: {
           id: `gid://shopify/Metafield/mock-${Date.now()}`,
           value: null,
-          namespace: input.payload.namespace || "custom",
-          key: input.payload.key || "amazon_customizer",
+          namespace,
+          key,
           type: "json",
+        },
+      };
+    }
+
+    case "metafields.delete": {
+      let identifiers: Array<{ ownerId: string; namespace: string; key: string }> = [];
+      const rawPayload = input.payload as Record<string, unknown>;
+      if (Array.isArray(input.payload.metafields)) {
+        identifiers = input.payload.metafields.map((m) => ({
+          ownerId: m.ownerId?.trim() ?? "",
+          namespace: m.namespace?.trim() ?? "",
+          key: m.key?.trim() ?? "",
+        }));
+      } else if (input.payload.ownerId && input.payload.namespace && input.payload.key) {
+        identifiers = [
+          {
+            ownerId: input.payload.ownerId.trim(),
+            namespace: input.payload.namespace.trim(),
+            key: input.payload.key.trim(),
+          },
+        ];
+      } else if (rawPayload.id) {
+        throw new ShopifyApiError(
+          "Shopify 2026-07 requires (ownerId, namespace, key) identifiers to delete metafields. Specifying 'id' alone is no longer supported.",
+          "SHOPIFY_USER_ERROR",
+        );
+      } else {
+        throw new ShopifyApiError(
+          "metafields array or (ownerId, namespace, key) identifier is required to delete metafields",
+          "SHOPIFY_USER_ERROR",
+        );
+      }
+
+      if (identifiers.length > 250) {
+        throw new ShopifyApiError(
+          "metafields array exceeds Shopify limit of 250 identifiers per mutation",
+          "SHOPIFY_USER_ERROR",
+        );
+      }
+
+      for (const idf of identifiers) {
+        if (!idf.ownerId || !idf.namespace || !idf.key) {
+          throw new ShopifyApiError(
+            "ownerId, namespace, and key are required for metafield identifier",
+            "SHOPIFY_USER_ERROR",
+          );
+        }
+      }
+
+      return {
+        storeId: input.storeId,
+        operation: "metafields.delete",
+        success: true,
+        data: {
+          success: true,
+          deletedMetafields: identifiers,
+          notFound: [],
+          deletedId: undefined,
         },
       };
     }

@@ -10,7 +10,13 @@ import { loadBootstrappedStores, loadLocalEnv } from "./store-config-loader";
 import { InMemoryThrottleManager } from "./throttle-manager";
 import { CompositeTokenProvider } from "./token-provider";
 import { StoreControlPlane } from "./store-control-plane";
-import { handleStoreRegistrationHttpRequest, handleProxyCheckHttpRequest } from "./store-control-handler";
+import {
+  handleStoreRegistrationHttpRequest,
+  handleProxyCheckHttpRequest,
+  handleStoreUpdateHttpRequest,
+  handleStoreDeleteHttpRequest,
+  handleStoreGetHttpRequest,
+} from "./store-control-handler";
 
 export interface GatewayServerOptions {
   readonly port?: number;
@@ -61,7 +67,36 @@ export function startGatewayServer(
       return;
     }
 
-    if (url === "/api/shopify" || url.startsWith("/api/shopify?")) {
+    const isShopify = url === "/api/shopify" || url.startsWith("/api/shopify?");
+    const isAutoSeo = url === "/api/auto-seo/run" || url.startsWith("/api/auto-seo/run?");
+    const isStoreRegister = url === "/api/stores/register" || url.startsWith("/api/stores/register?");
+    const isStoreUpdate = url === "/api/stores/update" || url.startsWith("/api/stores/update?");
+    const isStoreDelete = url === "/api/stores/delete" || url.startsWith("/api/stores/delete?");
+    const isStoreGet = url === "/api/stores/get" || url.startsWith("/api/stores/get?");
+    const isProxyCheck = url === "/api/proxy/check" || url.startsWith("/api/proxy/check?");
+
+    if (isShopify || isAutoSeo || isStoreRegister || isStoreUpdate || isStoreDelete || isStoreGet) {
+      try {
+        const freshStores = loadBootstrappedStores({ env: loadLocalEnv() });
+        const freshIds = new Set(freshStores.map((s) => s.storeId));
+        for (const store of freshStores) {
+          if (!storeRegistry.getStore(store.storeId)) {
+            storeRegistry.registerStore(store);
+          } else {
+            storeRegistry.updateStore(store);
+          }
+        }
+        for (const existing of storeRegistry.listStores()) {
+          if (!freshIds.has(existing.storeId)) {
+            storeRegistry.removeStore(existing.storeId);
+          }
+        }
+      } catch {
+        // non-fatal env sync in gateway server
+      }
+    }
+
+    if (isShopify) {
       if (req.method !== "POST") {
         res.statusCode = 405;
         res.setHeader("Content-Type", "application/json");
@@ -168,6 +203,21 @@ export function startGatewayServer(
 
     if (url === "/api/stores/register" || url.startsWith("/api/stores/register?")) {
       await handleStoreRegistrationHttpRequest(req, res, storeControlPlane, { authToken, maxBodyBytes });
+      return;
+    }
+
+    if (url === "/api/stores/update" || url.startsWith("/api/stores/update?")) {
+      await handleStoreUpdateHttpRequest(req, res, storeControlPlane, { authToken, maxBodyBytes });
+      return;
+    }
+
+    if (url === "/api/stores/delete" || url.startsWith("/api/stores/delete?")) {
+      await handleStoreDeleteHttpRequest(req, res, storeControlPlane, { authToken, maxBodyBytes });
+      return;
+    }
+
+    if (url === "/api/stores/get" || url.startsWith("/api/stores/get?")) {
+      await handleStoreGetHttpRequest(req, res, storeControlPlane, { authToken, maxBodyBytes });
       return;
     }
 

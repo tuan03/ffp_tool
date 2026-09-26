@@ -4,6 +4,7 @@ import type { ShopifyGraphqlClient } from "./shopify-graphql-client";
 import type { TokenProvider } from "./token-provider";
 import type { StoreAuthConfig, StoreConfig, StoreProxyConfig } from "./types";
 import { toStoreSummary, type GatewayStoreSummary } from "./operations/store-management";
+import { evictProxyAgent } from "./proxy-transport";
 import { persistStoreToConfigFile, removeStoreFromConfigFile } from "./store-config-loader";
 
 export type StoreAuthInput =
@@ -31,9 +32,12 @@ export interface RegisterStoreInput {
 export interface UpdateStoreCredentialsInput {
   readonly storeId: string;
   readonly shopDomain?: string;
-  readonly auth: StoreAuthInput;
-  readonly proxy?: StoreProxyConfig;
+  readonly auth?: StoreAuthInput;
+  readonly proxy?: StoreProxyConfig | null;
   readonly apiVersion?: string;
+  readonly skipVerify?: boolean;
+  readonly productTypes?: readonly string[];
+  readonly defaultProductType?: string;
 }
 
 export interface StoreRegistrationResult {
@@ -299,25 +303,74 @@ export class StoreControlPlane {
       typeof input.shopDomain === "string" && input.shopDomain.trim() !== ""
         ? normalizeShopDomain(input.shopDomain)
         : existing.shopDomain;
-    const storeAuth = mapAuthInputToStoreAuthConfig(input.auth);
+
+    let storeAuth = existing.auth;
+    if (input.auth) {
+      if (input.auth.type === "client_credentials") {
+        const clientId = input.auth.clientId?.trim() || existing.auth.clientId || "";
+        const clientSecret = input.auth.clientSecret?.trim() || existing.auth.clientSecret || "";
+        if (!clientId || !clientSecret) {
+          throw new GatewayError("clientId and clientSecret are required", "SHOPIFY_INVALID_INPUT", 400);
+        }
+        storeAuth = { type: "client_credentials", clientId, clientSecret };
+      } else if (input.auth.type === "static_access_token") {
+        const token = input.auth.accessToken?.trim() || existing.auth.staticToken || "";
+        if (!token) {
+          throw new GatewayError("accessToken cannot be empty", "SHOPIFY_INVALID_INPUT", 400);
+        }
+        storeAuth = { type: "static", staticToken: token };
+      }
+    }
+
+    let proxyConfig = existing.proxy;
+    if (input.proxy === null) {
+      proxyConfig = undefined;
+    } else if (input.proxy !== undefined) {
+      const pUrl = input.proxy.url?.trim();
+      if (pUrl) {
+        const pPassword =
+          input.proxy.password !== undefined && input.proxy.password.trim() !== ""
+            ? input.proxy.password.trim()
+            : existing.proxy?.password;
+        proxyConfig = {
+          url: pUrl,
+          username: input.proxy.username?.trim() || undefined,
+          password: pPassword || undefined,
+          failClosed: input.proxy.failClosed !== false,
+        };
+      } else {
+        proxyConfig = undefined;
+      }
+    }
+
     const apiVersion =
       typeof input.apiVersion === "string" && input.apiVersion.trim() !== ""
         ? input.apiVersion.trim()
         : existing.apiVersion;
+
+    const mergedProductTypes =
+      input.productTypes !== undefined ? input.productTypes : existing.productTypes;
+
+    const defaultProductType =
+      input.defaultProductType !== undefined ? input.defaultProductType : existing.defaultProductType;
 
     const candidateConfig: StoreConfig = {
       ...existing,
       shopDomain,
       apiVersion,
       auth: storeAuth,
-      proxy: input.proxy !== undefined ? input.proxy : existing.proxy,
+      proxy: proxyConfig,
+      productTypes: mergedProductTypes,
+      defaultProductType,
     };
 
     // Invalidate token cache before testing new credentials
     this.tokenProvider.invalidate?.(storeId);
 
     // Preflight verification with new credentials
-    await this.verifyStoreCredentials(candidateConfig);
+    if (input.skipVerify !== true) {
+      await this.verifyStoreCredentials(candidateConfig);
+    }
 
     // Update in store registry
     try {
@@ -325,6 +378,10 @@ export class StoreControlPlane {
     } catch (persistErr: unknown) {
       this.tokenProvider.invalidate?.(storeId);
       throw persistErr;
+    }
+
+    if (existing.proxy?.url && existing.proxy.url !== candidateConfig.proxy?.url) {
+      evictProxyAgent(existing.proxy.url);
     }
 
     await this.persistStoreToConfigFile(candidateConfig);
@@ -351,13 +408,18 @@ export class StoreControlPlane {
     // Invalidate token cache before removal
     this.tokenProvider.invalidate?.(trimmedId);
 
+    const existing = await this.storeRegistry.getStore(trimmedId);
+    if (existing?.proxy?.url) {
+      evictProxyAgent(existing.proxy.url);
+    }
+
     const exists = await this.storeRegistry.hasStore(trimmedId);
     if (exists) {
       await this.storeRegistry.removeStore(trimmedId);
       if (this.persistConfigFile) {
         try {
           const file = typeof this.persistConfigFile === "string" ? this.persistConfigFile : "stores.local.json";
-          removeStoreFromConfigFile(trimmedId, { configFile: file });
+          await removeStoreFromConfigFile(trimmedId, { configFile: file });
         } catch {
           // ignore file remove error
         }
@@ -377,7 +439,7 @@ export class StoreControlPlane {
    * Preflight tests store credentials against Shopify without registering or persisting.
    */
   public async testStoreConnection(
-    input: RegisterStoreInput,
+    input: RegisterStoreInput | UpdateStoreCredentialsInput,
   ): Promise<{
     connected: boolean;
     shopDomain: string;
@@ -389,19 +451,61 @@ export class StoreControlPlane {
       throw new GatewayError("Input must be an object", "SHOPIFY_INVALID_INPUT", 400);
     }
     const storeId = typeof input.storeId === "string" ? input.storeId.trim() : "test-store";
-    const normalizedDomain = normalizeShopDomain(input.shopDomain);
-    const storeAuth = mapAuthInputToStoreAuthConfig(input.auth);
+    const existing = await this.storeRegistry.getStore(storeId);
+    const normalizedDomain =
+      input.shopDomain && input.shopDomain.trim()
+        ? normalizeShopDomain(input.shopDomain)
+        : existing?.shopDomain;
+
+    if (!normalizedDomain) {
+      throw new GatewayError("shopDomain is required", "SHOPIFY_INVALID_INPUT", 400);
+    }
+
+    let storeAuth: StoreAuthConfig;
+    if (input.auth) {
+      if (input.auth.type === "client_credentials") {
+        const clientId = input.auth.clientId?.trim() || existing?.auth.clientId || "";
+        const clientSecret = input.auth.clientSecret?.trim() || existing?.auth.clientSecret || "";
+        if (!clientId || !clientSecret) {
+          throw new GatewayError("clientId and clientSecret are required", "SHOPIFY_INVALID_INPUT", 400);
+        }
+        storeAuth = { type: "client_credentials", clientId, clientSecret };
+      } else {
+        const token = input.auth.accessToken?.trim() || existing?.auth.staticToken || "";
+        if (!token) {
+          throw new GatewayError("accessToken cannot be empty", "SHOPIFY_INVALID_INPUT", 400);
+        }
+        storeAuth = { type: "static", staticToken: token };
+      }
+    } else if (existing) {
+      storeAuth = existing.auth;
+    } else {
+      throw new GatewayError("Authentication configuration is required", "SHOPIFY_INVALID_INPUT", 400);
+    }
+
     const apiVersion =
       typeof input.apiVersion === "string" && input.apiVersion.trim() !== ""
         ? input.apiVersion.trim()
-        : "2026-07";
+        : existing?.apiVersion || "2026-07";
+
+    let proxyConfig: StoreProxyConfig | undefined =
+      input.proxy !== undefined
+        ? (input.proxy === null ? undefined : input.proxy)
+        : existing?.proxy;
+
+    if (proxyConfig && !proxyConfig.password && existing?.proxy?.password) {
+      proxyConfig = {
+        ...proxyConfig,
+        password: existing.proxy.password,
+      };
+    }
 
     const candidateConfig: StoreConfig = {
       storeId,
       shopDomain: normalizedDomain,
       apiVersion,
       auth: storeAuth,
-      proxy: input.proxy,
+      proxy: proxyConfig,
     };
 
     await this.verifyStoreCredentials(candidateConfig);
