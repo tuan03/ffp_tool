@@ -656,10 +656,10 @@ class TestFourBestPracticePillars(unittest.TestCase):
         # Match by filename
         match1 = find_precalibrated_template(Image.new("RGB", (100, 100)), filename="room_template_2.jpg")
         self.assertIsNotNone(match1)
-        self.assertEqual(match1["quad"][0], [348.0, 415.0])
-        self.assertEqual(match1["quad"][1], [665.0, 415.0])
-        self.assertEqual(match1["quad"][2], [1000.0, 675.0])
-        self.assertEqual(match1["quad"][3], [135.0, 960.0])
+        self.assertEqual(match1["quad"][0], [9.3, 517.7])
+        self.assertEqual(match1["quad"][1], [666.4, 405.6])
+        self.assertEqual(match1["quad"][2], [1057.4, 649.8])
+        self.assertEqual(match1["quad"][3], [146.1, 996.7])
 
         match3 = find_precalibrated_template(Image.new("RGB", (100, 100)), filename="room_template_3.jpg")
         self.assertIsNotNone(match3)

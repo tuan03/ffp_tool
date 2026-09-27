@@ -95,7 +95,15 @@ def render_product_from_print(
     active_niche = (getattr(target, "niche", "") or "").strip().lower()
     inferred = infer_product_type(active_niche or raw_name)
 
-    if reference_templates:
+    if inferred == "blanket":
+        product, mask = render_blanket_product(artwork, target, max_long_edge)
+        notes = "print artwork rendered as a soft blanket product asset"
+        shape = "rectangle"
+    elif inferred == "rug":
+        product, mask = render_rug_product(artwork, target, max_long_edge)
+        notes = f"print artwork rendered as a {target.rug_shape} rug product asset"
+        shape = target.rug_shape if target.name == "rug" else "rectangle"
+    elif reference_templates:
         canvas = get_or_create_universal_product_canvas(
             target=target,
             reference_templates=reference_templates,
@@ -108,14 +116,6 @@ def render_product_from_print(
         product, mask = render_universal_product(artwork, canvas, target, max_long_edge)
         notes = f"print artwork rendered as a universal {active_niche or target.name} product asset from reference templates"
         shape = canvas.canvas_name
-    elif inferred == "blanket":
-        product, mask = render_blanket_product(artwork, target, max_long_edge)
-        notes = "print artwork rendered as a soft blanket product asset"
-        shape = "rectangle"
-    elif inferred == "rug":
-        product, mask = render_rug_product(artwork, target, max_long_edge)
-        notes = f"print artwork rendered as a {target.rug_shape} rug product asset"
-        shape = target.rug_shape if target.name == "rug" else "rectangle"
     else:
         canvas = get_or_create_universal_product_canvas(
             target=target,

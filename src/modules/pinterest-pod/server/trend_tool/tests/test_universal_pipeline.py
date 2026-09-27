@@ -304,15 +304,41 @@ class TestUniversalPipeline(unittest.TestCase):
         self.assertGreater(canvas.surface_box[2], canvas.surface_box[0])
         self.assertGreater(canvas.surface_box[3], canvas.surface_box[1])
 
-    def test_universal_product_canvas_reference_templates_override_rug_name(self) -> None:
-        """Requirement: When reference templates exist, render_product_from_print must extract carrier from templates,
+    def test_universal_product_canvas_reference_templates_for_carrier_products(self) -> None:
+        """Requirement: When reference templates exist for non-flat goods (e.g. leather bag),
 
-        even if target.name is 'rug' or 'blanket'.
+        render_product_from_print must extract carrier from templates.
         """
-        art_p = self.work_dir / "art_rug_override.png"
+        art_p = self.work_dir / "art_bag_override.png"
         ref_p = self.work_dir / "ref_template.png"
-        prod_p = self.work_dir / "prod_rug_override.png"
-        mask_p = self.work_dir / "mask_rug_override.png"
+        prod_p = self.work_dir / "prod_bag_override.png"
+        mask_p = self.work_dir / "mask_bag_override.png"
+
+        Image.new("RGBA", (500, 500), (255, 0, 0, 255)).save(art_p)
+        Image.new("RGB", (1000, 1000), (240, 240, 240)).save(ref_p)
+        target = ProductTarget(name="custom", width_px=1000, height_px=1000, niche="leather bag")
+
+        rec = render_product_from_print(
+            source_path=art_p,
+            print_path=art_p,
+            product_path=prod_p,
+            mask_path=mask_p,
+            target=target,
+            reference_templates=[ref_p],
+            backend="off",
+        )
+        self.assertIn("from reference templates", rec.notes)
+        self.assertIn("carrier", rec.shape.lower())
+
+    def test_flat_goods_preserve_clean_product_render_with_reference_templates(self) -> None:
+        """Requirement: Flat goods (rugs, blankets) must render pristine 2D catalog assets
+
+        directly from artwork instead of cropping perspective room templates.
+        """
+        art_p = self.work_dir / "art_rug.png"
+        ref_p = self.work_dir / "room_template_1.jpg"
+        prod_p = self.work_dir / "prod_rug.png"
+        mask_p = self.work_dir / "mask_rug.png"
 
         Image.new("RGBA", (500, 500), (255, 0, 0, 255)).save(art_p)
         Image.new("RGB", (1000, 1000), (240, 240, 240)).save(ref_p)
@@ -327,8 +353,7 @@ class TestUniversalPipeline(unittest.TestCase):
             reference_templates=[ref_p],
             backend="off",
         )
-        self.assertIn("from reference templates", rec.notes)
-        self.assertIn("carrier", rec.shape.lower())
+        self.assertIn("rug", rec.notes)
 
     def test_extract_product_canvas_plain_background_transparency(self) -> None:
         """Requirement: Plain studio backgrounds should be made transparent so product cutout serves as clean standalone asset."""
