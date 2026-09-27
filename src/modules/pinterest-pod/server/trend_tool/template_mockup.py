@@ -4,6 +4,7 @@ import hashlib
 import io
 import json
 import logging
+import random
 import re
 import time
 from dataclasses import asdict, dataclass
@@ -447,11 +448,16 @@ def analyze_reference_image(
                         chrome_str = str(val.get("external_chrome_to_preserve", "")).lower()
                         forbidden_terms = ("scallop", "stitched black", "black stitched", "black edge binding", "black fabric edge", "black binding", "edge binding")
                         if not any(t in form_str or t in chrome_str for t in forbidden_terms):
-                            val["is_infographic"] = bool(val.get("is_infographic"))
+                            val["is_infographic"] = bool(val.get("is_infographic")) or bool(val.get("infographic_text_elements"))
                             val["is_plain_background"] = bool(val.get("is_plain_background", False))
-                            if not (val["is_infographic"] and val["is_plain_background"]):
-                                val["chrome_boxes_norm_0_1000"] = []
-                                val["is_plain_background"] = False
+                            all_c = list(val.get("chrome_boxes_norm_0_1000") or [])
+                            for elem in (val.get("infographic_text_elements") or []):
+                                if isinstance(elem, dict) and elem.get("box_2d"):
+                                    all_c.append(elem["box_2d"])
+                            for ex in (val.get("exclusion_zones") or []):
+                                if isinstance(ex, (list, tuple)) and len(ex) == 4:
+                                    all_c.append(list(ex))
+                            val["chrome_boxes_norm_0_1000"] = _normalize_boxes(all_c)
                             return val
             except Exception:
                 pass
@@ -618,16 +624,17 @@ require review instead of publishing an uncertain composite. No niche defaults.
                 if not parsed["chrome_boxes_norm_0_1000"]:
                     parsed["chrome_boxes_norm_0_1000"] = [elem["box_2d"] for elem in norm_elements if "box_2d" in elem]
 
-            if not parsed["is_infographic"]:
-                # Non-infographic photographic lifestyle scenes must not have chrome boxes pasted
-                parsed["chrome_boxes_norm_0_1000"] = []
-                parsed["is_plain_background"] = False
-            else:
-                # For infographics, ensure chrome_boxes contains all banner and exclusion zones
-                if not parsed.get("chrome_boxes_norm_0_1000"):
-                    exclusions = parsed.get("exclusion_zones") or []
-                    text_boxes = [elem.get("box_2d") for elem in (parsed.get("infographic_text_elements") or []) if isinstance(elem, dict) and elem.get("box_2d")]
-                    parsed["chrome_boxes_norm_0_1000"] = _normalize_boxes(exclusions + text_boxes)
+            if parsed.get("infographic_text_elements"):
+                parsed["is_infographic"] = True
+
+            all_chrome = list(parsed.get("chrome_boxes_norm_0_1000") or [])
+            for elem in (parsed.get("infographic_text_elements") or []):
+                if isinstance(elem, dict) and elem.get("box_2d"):
+                    all_chrome.append(elem["box_2d"])
+            for ex in (parsed.get("exclusion_zones") or []):
+                if isinstance(ex, (list, tuple)) and len(ex) == 4:
+                    all_chrome.append(list(ex))
+            parsed["chrome_boxes_norm_0_1000"] = _normalize_boxes(all_chrome)
             if not parsed.get("product_boxes_norm_0_1000"):
                 # Ensure template has product area protection
                 parsed["product_boxes_norm_0_1000"] = [[150, 150, 850, 850]]
@@ -764,16 +771,20 @@ def _refine_surface_plan_for_full_bleed(
                 expanded = center + (pts - center) * (1.0 + expansion_percent)
                 expanded = np.clip(expanded, -100.0, 1100.0)
                 s["quad"] = expanded.round(1).tolist()
-                if "polygon" in s and isinstance(s["polygon"], list):
-                    if len(s["polygon"]) == 4:
-                        s["polygon"] = np.clip(expanded, 0.0, 1000.0).round(1).tolist()
-                    else:
-                        poly_pts = np.asarray(s["polygon"], dtype=float)
-                        s["polygon"] = np.clip(poly_pts, 0.0, 1000.0).round(1).tolist()
-                elif "polygon" not in s:
-                    s["polygon"] = np.clip(expanded, 0.0, 1000.0).round(1).tolist()
             except Exception:
                 pass
+
+        poly = s.get("polygon")
+        if isinstance(poly, list) and len(poly) >= 3:
+            try:
+                poly_pts = np.asarray(poly, dtype=float)
+                poly_center = poly_pts.mean(axis=0)
+                expanded_poly = poly_center + (poly_pts - poly_center) * (1.0 + expansion_percent)
+                s["polygon"] = np.clip(expanded_poly, 0.0, 1000.0).round(1).tolist()
+            except Exception:
+                pass
+        elif "polygon" not in s and isinstance(s.get("quad"), list):
+            s["polygon"] = np.clip(np.asarray(s["quad"], dtype=float), 0.0, 1000.0).round(1).tolist()
 
 
 def build_direct_ai_mockup(
@@ -986,20 +997,23 @@ def build_direct_ai_mockup(
                         reference_analysis=reference_analysis,
                         hybrid_mode=force_hybrid,
                     )
-                    if reference_analysis:
-                        is_infographic = bool(reference_analysis.get("is_infographic"))
-                        if is_infographic:
-                            c_boxes = reference_analysis.get("chrome_boxes_norm_0_1000") or []
-                            p_boxes = reference_analysis.get("product_boxes_norm_0_1000") or []
-                            if not c_boxes:
-                                c_boxes = reference_analysis.get("exclusion_zones") or []
-                            if c_boxes:
-                                generated = composite_infographic_hybrid(
-                                    room_img,
-                                    generated,
-                                    chrome_boxes=c_boxes,
-                                    product_boxes=p_boxes,
-                                )
+                    if reference_analysis and room_img is not None:
+                        c_boxes = list(reference_analysis.get("chrome_boxes_norm_0_1000") or [])
+                        for elem in (reference_analysis.get("infographic_text_elements") or []):
+                            if isinstance(elem, dict) and elem.get("box_2d"):
+                                c_boxes.append(elem["box_2d"])
+                        for ex in (reference_analysis.get("exclusion_zones") or []):
+                            if isinstance(ex, (list, tuple)) and len(ex) == 4:
+                                c_boxes.append(list(ex))
+                        norm_c_boxes = _normalize_boxes(c_boxes)
+                        p_boxes = reference_analysis.get("product_boxes_norm_0_1000") or []
+                        if norm_c_boxes:
+                            generated = composite_infographic_hybrid(
+                                room_img,
+                                generated,
+                                chrome_boxes=norm_c_boxes,
+                                product_boxes=p_boxes,
+                            )
                     candidate_path.parent.mkdir(parents=True, exist_ok=True)
                     generated.save(candidate_path)
 
@@ -1044,6 +1058,13 @@ def build_direct_ai_mockup(
                         correction = f"The prior inpainting attempt was rejected by visual QA: {quality.reason}. Preserve room context and integrate artwork with natural lighting."
                 except Exception as exc:
                     LOG.warning("AI inpainting attempt %d failed: %s", ai_attempt, exc)
+                    err_str = str(exc).lower()
+                    if "429" in err_str or "resource_exhausted" in err_str:
+                        backoff = 4.0 * ai_attempt + random.uniform(1.0, 3.0)
+                        LOG.info("AI inpainting attempt %d hit 429 quota; pausing %.1fs before next attempt...", ai_attempt, backoff)
+                        time.sleep(backoff)
+                    else:
+                        time.sleep(1.0)
 
         # Pillar 2: Reference Geometric Composite Fallback
         # (Used when client is None, offline unit testing, or if AI inpainting is unavailable)
@@ -1497,26 +1518,42 @@ def generate_direct_ai_lifestyle(
     )
     parts.append(types.Part.from_text(text=prompt_str))
 
-    try:
-        response = client.models.generate_content(
-            model=image_model,
-            contents=[
-                types.Content(
-                    role="user",
-                    parts=parts,
+    max_retries = 3
+    last_error: Exception | None = None
+    for call_attempt in range(1, max_retries + 1):
+        try:
+            response = client.models.generate_content(
+                model=image_model,
+                contents=[
+                    types.Content(
+                        role="user",
+                        parts=parts,
+                    )
+                ],
+                config=config,
+            )
+            image_bytes, _ = extract_image_bytes(response)
+            if image_bytes:
+                with Image.open(io.BytesIO(image_bytes)) as generated:
+                    return generated.convert("RGB")
+        except Exception as exc:
+            last_error = exc
+            err_str = str(exc).lower()
+            is_429 = "429" in err_str or "resource_exhausted" in err_str or "too many requests" in err_str
+            if call_attempt < max_retries and (is_429 or is_transient_gemini_error(exc)):
+                backoff = 4.0 * call_attempt + random.uniform(1.0, 3.0)
+                LOG.warning(
+                    "Multimodal generative AI lifestyle transient/429 error on call %d: %s. Retrying in %.1fs...",
+                    call_attempt,
+                    exc,
+                    backoff,
                 )
-            ],
-            config=config,
-        )
-        image_bytes, _ = extract_image_bytes(response)
-        if image_bytes:
-            with Image.open(io.BytesIO(image_bytes)) as generated:
-                return generated.convert("RGB")
-    except Exception as exc:
-        LOG.warning("Multimodal generative AI lifestyle call failed: %s", exc)
-        raise
+                time.sleep(backoff)
+                continue
+            LOG.warning("Multimodal generative AI lifestyle call failed: %s", exc)
+            raise
 
-    raise RuntimeError("direct AI lifestyle generation returned no image.")
+    raise RuntimeError(f"direct AI lifestyle generation returned no image: {last_error or 'unknown'}")
 
 
 def direct_ai_lifestyle_prompt(
@@ -1757,6 +1794,10 @@ def direct_ai_lifestyle_prompt(
             bag_lock = ""
 
         anatomy_lock = (
+            f"- STRICT HUMAN MODEL & PERSON PRESERVATION (MANDATORY):\n"
+            f"  If {room_ref} contains a person, human model, hands, arms, or clothing: you MUST KEEP THE EXACT SAME PERSON, FACE, HAIR, SKIN TONE, CLOTHING, AND POSE from {room_ref}!\n"
+            f"  Strictly DO NOT replace the model with a different person. Strictly DO NOT replace the scene with a different stock model photograph!\n"
+            f"  This is an inpainting task: ONLY replace the print on the {product}'s surface; keep the human model and the rest of the photograph 100% identical to {room_ref}.\n"
             "- HUMAN ANATOMY & PHOTOREALISM MANDATE: Any human models, hands, or arms visible MUST have anatomically perfect hands with exactly 5 distinct fingers, "
             "natural joint articulation, relaxed wrists, and realistic skin texture. Zero dislocated wrists, zero rubber limbs, zero floating handles.\n"
             "- ZERO ARTIFACTS: Absolutely zero stray colored dots (purple/green/cyan/red dots), zero sensor noise, zero circular pixel blemishes, zero watermarks.\n"

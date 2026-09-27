@@ -477,8 +477,11 @@ def compose_reference_artwork(
         except Exception:
             pass
 
-        if not np.any(visible) or np.any(union & visible):
-            raise ValueError("SURFACE_REVIEW_REQUIRED: empty or overlapping printable surfaces")
+        if np.any(union & visible):
+            visible = visible & ~union
+        if not np.any(visible):
+            LOG.info("Surface %s has no visible pixels remaining after overlap clipping; skipping.", surface.get("surface_id", "surface"))
+            continue
 
         # Pillar 3: Precision Homography Projection using cv2.warpPerspective
         src_pts = np.float32([
@@ -573,12 +576,17 @@ def compose_reference_artwork(
             shaded_img = Image.fromarray(shaded)
 
             # Apply subtle micro-texture / textile pile grain (for rugs/blankets) or leather grain (for bags)
-            desc = (str(surface.get("description", "")) + " " + str(plan.get("scene_title", ""))).lower()
-            if any(k in desc for k in ("bag", "leather", "purse", "satchel")):
+            desc = (
+                str(surface.get("description", ""))
+                + " " + str(plan.get("scene_title", ""))
+                + " " + str(plan.get("product_form", ""))
+                + " " + str(plan.get("target_label", ""))
+            ).lower()
+            if any(k in desc for k in ("bag", "leather", "purse", "satchel", "handbag", "wallet", "clutch", "backpack")):
                 from .product_render import add_leather_surface
-                shaded_img = add_leather_surface(shaded_img, strength=0.06)
+                shaded_img = add_leather_surface(shaded_img, strength=0.10)
             else:
-                shaded_img = add_textile_surface(shaded_img, strength=0.06)
+                shaded_img = add_textile_surface(shaded_img, strength=0.07)
 
             # Subtle 2-3px soft contact shadow & edge feathering where product touches floor/base
             try:
@@ -589,8 +597,16 @@ def compose_reference_artwork(
                 # 2-3px contact shadow ambient occlusion darkening at the outer perimeter of the product
                 edge_ao = np.clip(0.85 + 0.15 * (dist / 3.0), 0.85, 1.0)[..., np.newaxis]
                 shaded_arr = np.asarray(shaded_img, dtype=np.float32)
-                shaded_ao = np.clip(shaded_arr * edge_ao, 0, 255).astype(np.uint8)
-                shaded_img = Image.fromarray(shaded_ao)
+                shaded_ao = np.clip(shaded_arr * edge_ao, 0, 255)
+
+                # Occluder contact shadow: cast soft ambient contact shadow under handles, straps, hardware
+                if np.any(exclusion_mask):
+                    dist_to_occ = cv2.distanceTransform((~exclusion_mask).astype(np.uint8) * 255, cv2.DIST_L2, 5)
+                    # Natural contact drop shadow: 0.52 directly at the contact seam, smoothly fading to 1.0 at 16px
+                    occ_shadow = np.clip(0.52 + 0.48 * (dist_to_occ / 16.0), 0.52, 1.0)[..., np.newaxis]
+                    shaded_ao = np.clip(shaded_ao * occ_shadow, 0, 255)
+
+                shaded_img = Image.fromarray(shaded_ao.astype(np.uint8))
 
                 feather_u8 = (feather_alpha * 255.0).astype(np.uint8)
                 feather_u8[~visible] = 0

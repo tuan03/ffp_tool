@@ -1,3 +1,4 @@
+import io
 import sys
 import tempfile
 import unittest
@@ -835,6 +836,92 @@ class TestFourBestPracticePillars(unittest.TestCase):
             self.assertTrue(np.allclose(surface_quad, expected_quad, atol=1.0))
             self.assertNotEqual(surface_quad, stale_quad)
 
+    def test_multi_surface_overlap_graceful_clipping(self):
+        # Surface 1 and Surface 2 overlap slightly (e.g. multi-item bag + wallet set)
+        ref_img = Image.new("RGB", (500, 500), (200, 200, 200))
+        art_img = Image.new("RGB", (100, 100), (255, 0, 0))
+        plan = {
+            "all_printable_surfaces_identified": True,
+            "surfaces": [
+                {
+                    "surface_id": "handbag",
+                    "geometry": "planar",
+                    "confidence": 0.95,
+                    "quad": [[50.0, 50.0], [350.0, 50.0], [350.0, 450.0], [50.0, 450.0]],
+                    "protected_polygons": [],
+                },
+                {
+                    "surface_id": "wallet",
+                    "geometry": "planar",
+                    "confidence": 0.95,
+                    # Overlaps with handbag between x=300 and x=450
+                    "quad": [[300.0, 100.0], [450.0, 100.0], [450.0, 300.0], [300.0, 300.0]],
+                    "protected_polygons": [],
+                },
+            ],
+            "occluders": [],
+        }
+        # Must not raise "SURFACE_REVIEW_REQUIRED: empty or overlapping printable surfaces"
+        comp, mask = compose_reference_artwork(ref_img, art_img, plan)
+        self.assertIsNotNone(comp)
+        self.assertIsNotNone(mask)
+        mask_arr = np.asarray(mask) > 0
+        # Both surfaces contributed to the mask
+        self.assertTrue(mask_arr[100, 100])  # in handbag
+        self.assertTrue(mask_arr[100, 200])  # in wallet
+
+    def test_occluder_contact_shadow_applied(self):
+        # Printable surface with an occluder (handle)
+        ref_img = Image.new("RGB", (500, 500), (240, 240, 240))
+        art_img = Image.new("RGB", (100, 100), (255, 255, 255))
+        plan = {
+            "all_printable_surfaces_identified": True,
+            "surfaces": [
+                {
+                    "surface_id": "bag_body",
+                    "geometry": "planar",
+                    "confidence": 0.95,
+                    "quad": [[100.0, 100.0], [400.0, 100.0], [400.0, 400.0], [100.0, 400.0]],
+                    "protected_polygons": [
+                        [[200.0, 50.0], [300.0, 50.0], [300.0, 120.0], [200.0, 120.0]]
+                    ],
+                }
+            ],
+            "occluders": [],
+        }
+        comp, _ = compose_reference_artwork(ref_img, art_img, plan, photorealistic=True)
+        # Pixel near the handle seam on the printable surface (e.g. x=125, y=65) has occluder contact shadow
+        near_seam_val = comp.getpixel((125, 65))[0]
+        # Pixel far from the handle (e.g. x=125, y=150) is the soft ivory white point (~235)
+        far_val = comp.getpixel((125, 150))[0]
+        self.assertLess(near_seam_val, far_val - 10, f"Expected contact shadow: near={near_seam_val}, far={far_val}")
+
+    def test_generate_direct_ai_lifestyle_429_backoff_retry(self):
+        class FakeClient:
+            def __init__(self):
+                self.calls = 0
+                self.models = self
+
+            def generate_content(self, **kwargs):
+                self.calls += 1
+                if self.calls == 1:
+                    raise Exception("429 RESOURCE_EXHAUSTED: Resource exhausted. Please try again later.")
+                buf = io.BytesIO()
+                Image.new("RGB", (64, 64), (100, 150, 200)).save(buf, format="PNG")
+                mock_part = type("Part", (), {"inline_data": type("Inline", (), {"data": buf.getvalue(), "mime_type": "image/png"})()})()
+                mock_cand = type("Candidate", (), {"content": type("Content", (), {"parts": [mock_part]})()})()
+                return type("Response", (), {"candidates": [mock_cand]})()
+
+        fake_client = FakeClient()
+        art = Image.new("RGB", (50, 50), (255, 255, 255))
+        target = ProductTarget(name="bag", width_px=1000, height_px=1000)
+        from trend_tool.template_mockup import TemplatePose, generate_direct_ai_lifestyle
+        pose = TemplatePose(name="flat_lay", scene="flat lay", placement="center", avoid="blur")
+        result = generate_direct_ai_lifestyle(fake_client, art, target, "gemini-2.5-flash-image", pose)
+        self.assertIsNotNone(result)
+        self.assertEqual(fake_client.calls, 2)
+
 
 if __name__ == "__main__":
     unittest.main()
+
