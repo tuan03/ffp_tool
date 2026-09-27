@@ -19,6 +19,7 @@ import { mockCustomizationConfig } from "../mocks/data";
 import { createCustomizationGatewayAdapter } from "../../module-api/gateway-adapter";
 import type {
   ModuleApiRunner,
+  ShopifyCollection,
   ShopifyProduct,
   ShopifyStoreSummary,
 } from "../../module-api";
@@ -55,6 +56,7 @@ export function CustomizationManagerPage({
 
   // Products Catalog State
   const [products, setProducts] = useState<readonly ShopifyProduct[]>([]);
+  const [collections, setCollections] = useState<readonly ShopifyCollection[]>([]);
   const [isLoadingProducts, setIsLoadingProducts] = useState(false);
   const [configuredProductIds, setConfiguredProductIds] = useState<Set<string>>(
     new Set(["gid://shopify/Product/1001", "1001"]),
@@ -171,6 +173,22 @@ export function CustomizationManagerPage({
             if (match) {
               setActiveProduct(match);
             }
+          }
+        }
+
+        // Also fetch collections for Collection Filter
+        if (moduleApiRunner) {
+          try {
+            const colRes = await moduleApiRunner({
+              storeId: selectedStoreId,
+              operation: "collections.list",
+              payload: { limit: 100 },
+            });
+            if (isMounted && Array.isArray(colRes?.data?.collections)) {
+              setCollections(colRes.data.collections);
+            }
+          } catch {
+            if (isMounted) setCollections([]);
           }
         }
       } catch {
@@ -494,6 +512,7 @@ export function CustomizationManagerPage({
             {/* Product Catalog Table */}
             <ProductCatalogTable
               products={products}
+              collections={collections}
               isLoading={isLoadingProducts}
               configuredProductIds={configuredProductIds}
               onSelectProductForEdit={loadProductConfig}
