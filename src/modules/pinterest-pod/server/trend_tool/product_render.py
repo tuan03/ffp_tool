@@ -502,6 +502,14 @@ def extract_product_canvas_from_reference(
             gc_rect = (margin_x, margin_y, gw - 2 * margin_x, gh - 2 * margin_y)
             cv2.grabCut(c_np, gc_mask, gc_rect, bgdModel, fgdModel, 3, cv2.GC_INIT_WITH_RECT)
             mask_u8 = np.where((gc_mask == 2) | (gc_mask == 0), 0, 255).astype("uint8")
+            try:
+                num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(mask_u8, connectivity=8)
+                areas = stats[1:, cv2.CC_STAT_AREA]
+                if len(areas) > 0:
+                    largest_label = 1 + int(np.argmax(areas))
+                    mask_u8 = np.where(labels == largest_label, mask_u8, 0).astype("uint8")
+            except Exception:
+                pass
             mask_u8 = cv2.GaussianBlur(mask_u8, (3, 3), 0)
         except Exception as gc_exc:
             LOG.warning("GrabCut segmentation failed: %s; using full alpha", gc_exc)
@@ -695,16 +703,17 @@ def render_universal_product(
     is_transparent = (alpha_channel < 240).mean() > 0.10
 
     if is_transparent:
-        base_color = (246, 244, 240, 255) if canvas.material_type == "leather" else (255, 255, 255, 255)
-        clean_base = Image.new("RGBA", art_rgba.size, base_color)
-        clean_base.alpha_composite(art_rgba)
-        art_to_fit = clean_base
+        base_color = (250, 249, 246, 255) if canvas.material_type == "leather" else (255, 255, 255, 255)
+        clean_base = Image.new("RGBA", (sb_w, sb_h), base_color)
+        art_w = max(16, int(sb_w * 0.78))
+        art_h = max(16, int(sb_h * 0.78))
+        art_fit = ImageOps.fit(art_rgba, (art_w, art_h), Image.Resampling.LANCZOS)
+        clean_base.paste(art_fit, ((sb_w - art_fit.width) // 2, (sb_h - art_fit.height) // 2), art_fit)
+        fitted = clean_base
     else:
-        art_to_fit = art_rgba
+        fitted = ImageOps.fit(art_rgba, (sb_w, sb_h), Image.Resampling.LANCZOS)
 
-    fitted = ImageOps.fit(art_to_fit, (sb_w, sb_h), Image.Resampling.LANCZOS)
-
-    if canvas.luminance_map is not None:
+    if canvas.luminance_map is not None and not is_transparent and canvas.material_type != "leather":
         art_np = np.asarray(fitted.convert("RGB"), dtype=np.float32)
         lum_map = canvas.luminance_map
         if lum_map.shape[:2] != (sb_h, sb_w):
