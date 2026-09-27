@@ -344,21 +344,27 @@ You are conducting a strict, unbiased quality assurance (QA) inspection of a com
 Directly compare ORIGINAL SCENE against BACKGROUND_MOCKUP and MASTER ARTWORK.
 The BACKGROUND_MOCKUP must replace the old product print from ORIGINAL SCENE with MASTER ARTWORK while preserving the authentic photograph.
 
-Inspect these 3 mandatory pillars:
+Inspect these mandatory pillars:
 1. Product Shape & Orientation:
    - Does the new product in BACKGROUND_MOCKUP match the EXACT physical footprint, perspective, shape, and orientation of the original product in ORIGINAL SCENE?
    - For example, if ORIGINAL SCENE shows a horizontal rectangular rug on the floor, the product in BACKGROUND_MOCKUP MUST be a horizontal rectangular rug in the exact same orientation. It must NOT be rotated 90 degrees, turned into a vertical column, distorted, or cropped to a wrong aspect ratio.
-2. Critical Content Preservation:
+2. Background Furniture & Architecture Alignment (No Overlap/Clipping):
+   - Does the product conform strictly to its natural floor area without overlapping, cutting into, or clipping through background shelves, bookcases, furniture legs, baseboards, or walls?
+   - Any overlap or clipping of the product into background shelves, bookcases, or walls is an immediate FATAL failure.
+3. Critical Content Preservation:
    - Are ALL foreground humans (children, babies, adult models, hands, feet), toys, room furniture, and infographic text/tables/dimension arrows from ORIGINAL SCENE preserved 100% without being covered, cut through, or obscured by rectangular slabs or artwork overlays?
    - Any covering, cutting through, or alteration of a person, model, toy, or size chart table is an immediate FATAL failure.
-3. Natural Realism & Lighting Artifacts:
-   - Is the product free of artificial bright white circular spotlights, dark grey vignettes, or dingy grey color casts? The product must blend naturally with the ambient room illumination.
-   - Master artwork colors, motifs, and clean white points must be preserved faithfully.
+4. Natural Realism, Shading & Depth (No Flat Paper Sticker Look):
+   - Does the product look like a real physical 3D object integrated into the room? It must have subtle ambient room shading, soft ivory room tone (not raw blinding #FFFFFF computer screen white), realistic micro-texture/pile grain, and subtle contact shadows where it touches the floor.
+   - It must NOT look like a flat, unshaded white paper sticker, cardboard cutout, or raw digital plane pasted in MS Paint!
+   - Is the product free of artificial bright white circular spotlights, dark grey vignettes, or dingy grey color casts? Master artwork colors and motifs must be preserved faithfully.
 
 Return ONLY this JSON schema:
 {
   "product_shape_and_orientation_matched": boolean,
+  "no_furniture_overlap_or_misalignment": boolean,
   "critical_content_preserved": boolean,
+  "realistic_shading_and_depth": boolean,
   "no_artificial_lighting_artifacts": boolean,
   "artwork_identity_preserved": boolean,
   "all_print_surfaces_replaced": boolean,
@@ -372,6 +378,8 @@ Return ONLY this JSON schema:
 }
 
 SCORING RULES:
+- If the product overlaps, clips into, or cuts through background shelves, bookcases, furniture, or walls: listing_realism_score MUST be below 50, no_furniture_overlap_or_misalignment MUST be false.
+- If the product looks like a flat unshaded white paper sticker, cardboard cutout, or lacks realistic ambient shading and depth: listing_realism_score MUST be below 50, realistic_shading_and_depth MUST be false.
 - If ANY critical element (human model, child, toy, size chart table, text banner) is covered, cut through, or obscured: listing_realism_score MUST be below 50, critical_content_preserved MUST be false.
 - If product shape or orientation is wrong (e.g. horizontal rug turned into vertical column): listing_realism_score MUST be below 50, product_shape_and_orientation_matched MUST be false.
 - If there is an artificial spotlight or fake vignette: no_artificial_lighting_artifacts MUST be false.
@@ -404,11 +412,23 @@ SCORING RULES:
             if val_shape is not None
             else _bool(assessment.get("reference_geometry_preserved"))
         )
+        val_furniture = assessment.get("no_furniture_overlap_or_misalignment")
+        no_furniture_ok = (
+            _bool(val_furniture)
+            if val_furniture is not None
+            else _bool(assessment.get("mask_respects_printable_boundaries", True))
+        )
         val_critical = assessment.get("critical_content_preserved")
         critical_content_ok = (
             _bool(val_critical)
             if val_critical is not None
             else (_bool(assessment.get("protected_parts_preserved")) and _bool(assessment.get("mask_respects_printable_boundaries", True)))
+        )
+        val_shading = assessment.get("realistic_shading_and_depth")
+        realistic_shading_ok = (
+            _bool(val_shading)
+            if val_shading is not None
+            else _bool(assessment.get("surface_lighting_preserved", True))
         )
         val_artifacts = assessment.get("no_artificial_lighting_artifacts")
         no_artifacts_ok = (
@@ -423,7 +443,9 @@ SCORING RULES:
         accepted = (
             score >= 70
             and shape_orientation_ok
+            and no_furniture_ok
             and critical_content_ok
+            and realistic_shading_ok
             and no_artifacts_ok
             and artwork_identity_ok
             and all_replaced_ok
@@ -691,7 +713,8 @@ Evaluation criteria:
 3. Quality & Plausibility:
    - For SIZE_CHART: Check that the infographic layout is clean, professional, and visually represents different product size tiers accurately.
    - For MATERIAL_DETAIL: Check that the close-up fabric texture, fiber pile, and edge stitching look tactile, authentic, and high quality.
-   - For ROOM_SCENE: Check that the product integrates believably into the room with correct perspective, realistic contact shadows, and coherent lighting.
+   - For ROOM_SCENE: Check that the product integrates believably into the room with correct perspective, realistic contact shadows, and coherent lighting. Reject mockups where the product looks like a flat unshaded paper sticker, cardboard cutout, or raw digital plane. Reject mockups where the product overlaps, clips into, or cuts through background shelves, bookcases, furniture legs, baseboards, or walls.
+   - 'looks_like_flat_overlay': must be true if the product appears as an unshaded flat 2D sticker or raw pasted overlay lacking room depth, realistic texture, or contact shadow.
    - 'looks_like_wrong_product': must be FALSE unless the product depicted is completely unrelated.
 
 Return JSON only:

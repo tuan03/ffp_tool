@@ -95,8 +95,6 @@ def render_product_from_print(
     active_niche = (getattr(target, "niche", "") or "").strip().lower()
     inferred = infer_product_type(active_niche or raw_name)
 
-    # When reference templates exist, prioritize universal product canvas extraction
-    # from the uploaded physical product templates.
     if reference_templates:
         canvas = get_or_create_universal_product_canvas(
             target=target,
@@ -132,8 +130,16 @@ def render_product_from_print(
         notes = f"print artwork rendered as a universal {active_niche or target.name} product asset"
         shape = canvas.canvas_name
 
-    product.save(product_path)
+    # Add realistic soft contact & drop shadow underneath product for both transparent PNG and white background
+    product_with_shadow = add_product_drop_shadow(product, offset=(0, 8), blur_radius=12.0, shadow_opacity=0.28)
+    product_with_shadow.save(product_path)
     mask.save(mask_path)
+
+    # Save clean white-background product cutout with realistic soft drop shadow
+    white_product_path = product_path.with_name(f"{product_path.stem}_white.png")
+    white_bg = Image.new("RGBA", product.size, (255, 255, 255, 255))
+    white_bg.alpha_composite(product_with_shadow)
+    white_bg.convert("RGB").save(white_product_path)
     return ProductRenderRecord(
         source_path=source_path,
         print_path=print_path,
@@ -171,45 +177,58 @@ def get_or_create_universal_product_canvas(
     # (Strictly avoid multi-panel infographics, diagrams, or spec sheets like room_template_1)
     if reference_templates:
         # Load reference analysis cache if available
-        analysis_by_title: dict[str, dict[str, Any]] = {}
-        analysis_entries: list[dict[str, Any]] = []
+        cdata: dict[str, Any] = {}
         for ref_file in reference_templates:
             ref_cache_path = ref_file.parent / "reference_analysis_cache.json"
             if ref_cache_path.exists() and ref_cache_path.is_file():
                 try:
-                    cdata = json.loads(ref_cache_path.read_text(encoding="utf-8"))
-                    if isinstance(cdata, dict):
-                        for val in cdata.values():
-                            if isinstance(val, dict):
-                                analysis_entries.append(val)
+                    loaded = json.loads(ref_cache_path.read_text(encoding="utf-8"))
+                    if isinstance(loaded, dict):
+                        cdata = loaded
                 except Exception:
                     pass
                 break
+
+        product_label = active_niche or raw_name or "commercial product"
 
         for ref_file in reference_templates:
             if not ref_file.exists() or not ref_file.is_file():
                 continue
             try:
-                # Check if this template was analyzed as an infographic or multi-panel sheet
+                with Image.open(ref_file) as opened_ref:
+                    ref_img = ImageOps.exif_transpose(opened_ref).convert("RGB")
+
+                # Match cache entry specifically for this reference image
+                entry: dict[str, Any] | None = None
+                if cdata:
+                    try:
+                        thumb = ref_img.convert("RGB").resize((min(ref_img.width, 256), min(ref_img.height, 256)))
+                        buf = io.BytesIO()
+                        thumb.save(buf, format="JPEG", quality=75)
+                        t_bytes = buf.getvalue()
+                        for k, v in cdata.items():
+                            if isinstance(v, dict) and k.startswith("v9_surface_"):
+                                cand = "v9_surface_" + hashlib.sha256(t_bytes + product_label.encode("utf-8")).hexdigest()[:16]
+                                if k == cand:
+                                    entry = v
+                                    break
+                    except Exception:
+                        pass
+
+                # Check if this specific template is an infographic or multi-panel sheet
                 is_infographic_template = False
                 cached_box_info: tuple[list[int] | None, list[int] | None] = (None, None)
 
-                for entry in analysis_entries:
-                    # Match by scene context or instance description
+                if entry is not None:
                     title = str(entry.get("scene_title", "")).lower()
                     concept = str(entry.get("visual_concept", "")).lower()
-                    if entry.get("is_infographic") or any(k in title for k in ("infographic", "spec sheet", "quadrant", "grid")):
-                        # Mark as infographic
-                        if ref_file.name in ("room_template_1.jpg", "room_template_2.jpg") or "infographic" in title:
-                            is_infographic_template = True
-                            break
-
+                    if entry.get("is_infographic") or any(k in title or k in concept for k in ("infographic", "spec sheet", "quadrant", "grid", "size chart", "dimension table")):
+                        is_infographic_template = True
                     instances = entry.get("product_instances") or []
                     if len(instances) > 2:
                         is_infographic_template = True
-                        break
 
-                    if not entry.get("is_infographic"):
+                    if not is_infographic_template:
                         p_boxes = entry.get("product_boxes_norm_0_1000") or []
                         hero_c_box: list[int] | None = None
                         for inst in instances:
@@ -225,14 +244,15 @@ def get_or_create_universal_product_canvas(
                             hero_s_box = _normalize_box(p_boxes[0])
                         if hero_c_box or hero_s_box:
                             cached_box_info = (hero_c_box, hero_s_box)
+                else:
+                    stem_lower = ref_file.stem.lower()
+                    if any(k in stem_lower for k in ("infographic", "spec_sheet", "size_chart", "specsheet")):
+                        is_infographic_template = True
 
-                # Strictly skip infographic spec sheets (e.g. room_template_1 with 4 quadrants)
-                if is_infographic_template or ref_file.name == "room_template_1.jpg":
+                if is_infographic_template:
                     LOG.info("Skipping infographic template %s for product carrier extraction", ref_file.name)
                     continue
 
-                with Image.open(ref_file) as opened_ref:
-                    ref_img = ImageOps.exif_transpose(opened_ref).convert("RGB")
                 carrier_canvas = extract_product_canvas_from_reference(
                     ref_img,
                     target=target,
@@ -349,8 +369,13 @@ def extract_product_canvas_from_reference(
         carrier_crop = carrier_crop.resize((new_w, new_h), Image.Resampling.LANCZOS)
         c_w, c_h = new_w, new_h
 
+    is_flat = any(k in niche_label for k in ("rug", "carpet", "mat", "blanket", "throw", "tapestry", "towel", "pillow", "canvas", "poster"))
+
     # Compute surface box relative to carrier crop
-    if surface_box_norm is not None:
+    if is_flat:
+        # Flat POD products: printable surface is 100% full-bleed edge-to-edge right to perimeter
+        surface_box = (0, 0, c_w, c_h)
+    elif surface_box_norm is not None:
         s_ymin, s_xmin, s_ymax, s_xmax = surface_box_norm
         s_left_abs = int(s_xmin * w / 1000.0)
         s_top_abs = int(s_ymin * h / 1000.0)
@@ -383,7 +408,7 @@ def extract_product_canvas_from_reference(
     sb_w = surface_box[2] - surface_box[0]
     sb_h = surface_box[3] - surface_box[1]
 
-    # Convert carrier to RGBA and remove plain studio background if present
+    # Convert carrier to RGBA and construct clean explicit alpha mask defined by product form factor
     carrier_rgba = carrier_crop.convert("RGBA")
     arr = np.asarray(carrier_rgba)
     corners = np.concatenate([
@@ -394,10 +419,38 @@ def extract_product_canvas_from_reference(
     ], axis=0)
     mean_corner_rgb = float(np.mean(corners))
     std_corner_rgb = float(np.std(corners))
-    if mean_corner_rgb > 215 and std_corner_rgb < 25:
-        # Light studio background detected -> flood fill from 4 corners to make background transparent
-        for pt in [(0, 0), (c_w - 1, 0), (0, c_h - 1), (c_w - 1, c_h - 1)]:
-            ImageDraw.floodfill(carrier_rgba, pt, (255, 255, 255, 0), thresh=25)
+    is_plain_studio_bg = mean_corner_rgb > 215 and std_corner_rgb < 25
+
+    # CRITICAL: NEVER use naive corner flood-fill that can eat into white products!
+    # Instead, use an explicit Alpha Mask defined by the product form factor.
+    if is_flat:
+        # Clean rounded rectangle with 24px radius defining crisp product borders
+        radius = max(16, min(c_w, c_h) // 35)
+        product_mask = Image.new("L", (c_w, c_h), 0)
+        ImageDraw.Draw(product_mask).rounded_rectangle((0, 0, c_w - 1, c_h - 1), radius=radius, fill=255)
+        carrier_rgba.putalpha(product_mask)
+    elif is_plain_studio_bg:
+        # Structured product on studio background: explicit form factor mask for product body & handles
+        product_mask = Image.new("L", (c_w, c_h), 0)
+        draw_m = ImageDraw.Draw(product_mask)
+        if is_bag:
+            # Bag body
+            draw_m.rounded_rectangle(
+                (max(2, int(c_w * 0.04)), max(4, int(c_h * 0.18)), min(c_w - 2, int(c_w * 0.96)), min(c_h - 4, int(c_h * 0.96))),
+                radius=max(16, min(c_w, c_h) // 25),
+                fill=255,
+            )
+            # Bag handles at top
+            h_left = int(c_w * 0.25)
+            h_right = int(c_w * 0.75)
+            draw_m.arc((h_left, max(4, int(c_h * 0.04)), h_right, int(c_h * 0.35)), start=180, end=0, fill=255, width=max(12, int(c_w * 0.04)))
+        else:
+            draw_m.rounded_rectangle(
+                (max(2, int(c_w * 0.05)), max(2, int(c_h * 0.05)), min(c_w - 2, int(c_w * 0.95)), min(c_h - 2, int(c_h * 0.95))),
+                radius=max(16, min(c_w, c_h) // 25),
+                fill=255,
+            )
+        carrier_rgba.putalpha(product_mask)
 
     # Extract luminance map for lighting & folds transfer
     surface_crop = carrier_crop.crop(surface_box)
@@ -413,11 +466,17 @@ def extract_product_canvas_from_reference(
     shade = np.clip(blur_lum / max(1.0, median), 0.65, 1.35)
 
     # Soft feathered surface mask
-    mask = Image.new("L", (sb_w, sb_h), 255)
-    radius = max(8, min(sb_w, sb_h) // 25)
-    draw = ImageDraw.Draw(mask)
-    draw.rounded_rectangle((0, 0, sb_w, sb_h), radius=radius, fill=255)
-    mask = mask.filter(ImageFilter.GaussianBlur(radius=max(2, min(sb_w, sb_h) // 60)))
+    mask = Image.new("L", (sb_w, sb_h), 0)
+    if is_flat:
+        radius = max(4, min(sb_w, sb_h) // 60)
+        draw = ImageDraw.Draw(mask)
+        draw.rounded_rectangle((0, 0, sb_w - 1, sb_h - 1), radius=radius, fill=255)
+        mask = mask.filter(ImageFilter.GaussianBlur(radius=1.0))
+    else:
+        radius = max(8, min(sb_w, sb_h) // 25)
+        draw = ImageDraw.Draw(mask)
+        draw.rounded_rectangle((0, 0, sb_w - 1, sb_h - 1), radius=radius, fill=255)
+        mask = mask.filter(ImageFilter.GaussianBlur(radius=max(2, min(sb_w, sb_h) // 60)))
 
     material = "leather" if "leather" in niche_label else ("fabric" if any(k in niche_label for k in ("textile", "fabric", "cloth", "canvas")) else "smooth")
 
@@ -492,6 +551,7 @@ def create_synthetic_carrier(target: ProductTarget, max_long_edge: int, niche_la
     draw = ImageDraw.Draw(carrier)
 
     is_bag = any(k in niche_label for k in ("bag", "handbag", "tote", "purse", "satchel", "backpack"))
+    is_flat = any(k in niche_label for k in ("rug", "carpet", "mat", "blanket", "throw", "tapestry", "towel", "pillow", "canvas", "poster"))
 
     if is_bag:
         body_box = inset_box(product_size, 0.08, 0.18)
@@ -513,6 +573,25 @@ def create_synthetic_carrier(target: ProductTarget, max_long_edge: int, niche_la
             body_box[1] + surface_box[1],
             body_box[0] + surface_box[2],
             body_box[1] + surface_box[3],
+        )
+    elif is_flat:
+        body_box = (0, 0, product_size[0], product_size[1])
+        radius = max(8, min(product_size) // 60)
+        draw.rounded_rectangle(body_box, radius=radius, fill=(245, 245, 247, 255))
+        surface_box = (0, 0, product_size[0], product_size[1])
+        sb_w = product_size[0]
+        sb_h = product_size[1]
+        mask = Image.new("L", (sb_w, sb_h), 255)
+        draw_mask = ImageDraw.Draw(mask)
+        draw_mask.rounded_rectangle(body_box, radius=radius, fill=255)
+        mask = mask.filter(ImageFilter.GaussianBlur(radius=1.0))
+        return UniversalProductCanvas(
+            carrier_image=carrier,
+            surface_box=surface_box,
+            surface_mask=mask,
+            luminance_map=None,
+            material_type="textile",
+            canvas_name=f"{niche_label}_carrier",
         )
     else:
         body_box = inset_box(product_size, 0.05, 0.05)
@@ -564,7 +643,7 @@ def render_universal_product(
 
     if canvas.material_type == "leather":
         fitted = add_leather_surface(fitted, strength=0.08)
-    elif canvas.material_type in {"textile", "fabric", "canvas"}:
+    else:
         fitted = add_textile_surface(fitted, strength=0.09)
 
     mask = canvas.surface_mask
@@ -572,6 +651,9 @@ def render_universal_product(
         mask = mask.resize((sb_w, sb_h), Image.Resampling.BILINEAR)
 
     carrier.paste(fitted, (sb_left, sb_top), mask)
+    if canvas.carrier_image.mode == "RGBA":
+        base_alpha = canvas.carrier_image.getchannel("A")
+        carrier.putalpha(base_alpha)
     alpha = carrier.getchannel("A")
     return carrier, alpha
 
@@ -617,7 +699,8 @@ def render_rug_product(
     canvas.putalpha(mask)
 
     canvas = add_edge_binding(canvas, body_box, radius, opacity=58, oval=shape in {"round", "oval"})
-    if shape in {"rectangle", "runner"}:
+    active_niche = (getattr(target, "niche", "") or "").lower()
+    if shape in {"rectangle", "runner"} and any(k in active_niche for k in ("fringe", "tassel", "persian", "oriental", "boho")):
         canvas = add_rug_fringe(canvas, body_box)
     mask = canvas.getchannel("A")
     return canvas, mask
@@ -681,16 +764,45 @@ def inset_box(size: tuple[int, int], x_ratio: float, y_ratio: float) -> tuple[in
     return x, y, width - x, height - y
 
 
-def add_textile_surface(image: Image.Image, *, strength: float) -> Image.Image:
+def add_textile_surface(image: Image.Image, *, strength: float = 0.08) -> Image.Image:
+    """Adds subtle micro-texture / textile pile grain and woven fibers to give authentic depth."""
     image = image.convert("RGBA")
-    overlay = Image.new("RGBA", image.size, (0, 0, 0, 0))
-    draw = ImageDraw.Draw(overlay)
-    line_alpha = max(5, round(255 * strength))
-    for y in range(0, image.height, 12):
-        draw.line((0, y, image.width, y), fill=(255, 255, 255, line_alpha), width=1)
-    for x in range(0, image.width, 14):
-        draw.line((x, 0, x, image.height), fill=(0, 0, 0, max(3, line_alpha // 3)), width=1)
-    return Image.alpha_composite(image, overlay)
+    w, h = image.size
+    rng = np.random.RandomState(42)
+    noise = rng.normal(0.0, 1.0, (h, w)).astype(np.float32)
+    try:
+        import cv2
+        noise_blurred = cv2.GaussianBlur(noise, (3, 3), 0.8)
+    except Exception:
+        noise_blurred = noise
+
+    y_coords, x_coords = np.ogrid[:h, :w]
+    weave = (np.sin(x_coords * (2 * np.pi / 4.0)) * np.cos(y_coords * (2 * np.pi / 4.0))).astype(np.float32)
+    pile_modulation = (noise_blurred * 0.6 + weave * 0.4) * strength * 25.0
+
+    arr = np.asarray(image, dtype=np.float32)
+    arr[..., :3] = np.clip(arr[..., :3] + pile_modulation[..., np.newaxis], 0, 255)
+    return Image.fromarray(arr.astype(np.uint8))
+
+
+def add_product_drop_shadow(
+    product_rgba: Image.Image,
+    *,
+    offset: tuple[int, int] = (0, 8),
+    blur_radius: float = 12.0,
+    shadow_opacity: float = 0.28,
+) -> Image.Image:
+    """Adds a realistic soft contact & drop shadow underneath the product for e-commerce depth."""
+    alpha = product_rgba.getchannel("A")
+    shadow_mask = alpha.filter(ImageFilter.GaussianBlur(radius=blur_radius))
+    shadow_arr = np.asarray(shadow_mask, dtype=np.float32) * shadow_opacity
+    shadow_u8 = np.clip(shadow_arr, 0, 255).astype(np.uint8)
+
+    shadow_layer = Image.new("RGBA", product_rgba.size, (0, 0, 0, 0))
+    shadow_color = Image.new("RGBA", product_rgba.size, (30, 25, 25, 255))
+    shadow_layer.paste(shadow_color, offset, Image.fromarray(shadow_u8))
+
+    return Image.alpha_composite(shadow_layer, product_rgba)
 
 
 def add_blanket_folds(image: Image.Image) -> Image.Image:

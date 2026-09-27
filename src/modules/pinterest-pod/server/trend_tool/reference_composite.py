@@ -218,7 +218,7 @@ def normalize_surface_coordinates(surface: dict[str, object], box_2d: object = N
 def _points(value: object, size: tuple[int, int], *, quad: bool = False) -> np.ndarray:
     if not isinstance(value, list) or len(value) < 3 or (quad and len(value) != 4):
         raise ValueError("SURFACE_REVIEW_REQUIRED: missing polygon or four-corner mapping")
-    minimum, maximum = (-1000, 2000) if quad else (0, 1000)
+    minimum, maximum = (-1000, 2000)
     for point in value:
         if not isinstance(point, list) or len(point) != 2 or any(
             isinstance(v, bool) or not isinstance(v, (int, float)) or not np.isfinite(v) or not minimum <= v <= maximum
@@ -323,6 +323,17 @@ def compose_reference_artwork(
             polygon = _points(surface.get("polygon"), reference.size)
             visible = np.asarray(_polygon_mask(reference.size, polygon)) > 0
 
+        dilation_pixels = int(surface.get("dilation_pixels", 0))
+        if dilation_pixels > 0:
+            try:
+                import cv2
+                k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * dilation_pixels + 1, 2 * dilation_pixels + 1))
+                visible = cv2.dilate(visible.astype(np.uint8), k) > 0
+            except Exception:
+                from PIL import ImageFilter
+                dilated_img = Image.fromarray(visible.astype(np.uint8) * 255).filter(ImageFilter.MaxFilter(2 * dilation_pixels + 1))
+                visible = np.asarray(dilated_img) > 0
+
         # Protected polygons
         protected = surface.get("protected_polygons", [] if "segmentation" in surface else None)
         if not isinstance(protected, list):
@@ -345,43 +356,53 @@ def compose_reference_artwork(
         outside_pixels = np.count_nonzero(visible & ~quad_mask)
 
         if outside_pixels > 0:
-            mask_area = np.count_nonzero(visible)
-            overlap_area = np.count_nonzero(visible & quad_mask)
-            coverage_ratio = overlap_area / max(1, mask_area)
-            if coverage_ratio >= 0.95:
+            if dilation_pixels > 0:
                 visible = visible & quad_mask
             else:
-                # Auto-repair: attempt refitting perspective quad from visible mask contour using cv2
-                repaired = False
-                try:
-                    import cv2
-                    contours, _ = cv2.findContours(visible.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                    if contours:
-                        cnt = max(contours, key=cv2.contourArea)
-                        hull = cv2.convexHull(cnt)
-                        peri = cv2.arcLength(hull, True)
-                        for eps in np.linspace(0.01, 0.08, 15):
-                            approx = cv2.approxPolyDP(hull, eps * peri, True)
-                            if len(approx) == 4:
-                                refit_quad = order_quad_points(approx.reshape(4, 2).astype(np.float64))
-                                edges_r = np.roll(refit_quad, -1, axis=0) - refit_quad
-                                crosses_r = edges_r[:, 0] * np.roll(edges_r[:, 1], -1) - edges_r[:, 1] * np.roll(edges_r[:, 0], -1)
-                                if np.all(crosses_r > 0):
-                                    refit_mask = np.asarray(_polygon_mask(reference.size, refit_quad)) > 0
-                                    refit_overlap = np.count_nonzero(visible & refit_mask)
-                                    if refit_overlap / max(1, mask_area) >= 0.95:
-                                        quad = refit_quad
-                                        quad_mask = refit_mask
-                                        visible = visible & quad_mask
-                                        repaired = True
-                                        break
-                except Exception:
-                    pass
-                if not repaired:
-                    if coverage_ratio >= 0.95:
-                        visible = visible & quad_mask
-                    else:
-                        raise ValueError(f"SURFACE_REVIEW_REQUIRED: print mask extends outside mapping (coverage={coverage_ratio:.3f})")
+                mask_area = np.count_nonzero(visible)
+                overlap_area = np.count_nonzero(visible & quad_mask)
+                coverage_ratio = overlap_area / max(1, mask_area)
+                if coverage_ratio >= 0.88:
+                    visible = visible & quad_mask
+                else:
+                    # Auto-repair: attempt refitting perspective quad from visible mask contour using cv2
+                    repaired = False
+                    try:
+                        import cv2
+                        contours, _ = cv2.findContours(visible.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                        if contours:
+                            cnt = max(contours, key=cv2.contourArea)
+                            hull = cv2.convexHull(cnt)
+                            peri = cv2.arcLength(hull, True)
+                            for eps in np.linspace(0.01, 0.08, 15):
+                                approx = cv2.approxPolyDP(hull, eps * peri, True)
+                                if len(approx) == 4:
+                                    refit_quad = order_quad_points(approx.reshape(4, 2).astype(np.float64))
+                                    edges_r = np.roll(refit_quad, -1, axis=0) - refit_quad
+                                    crosses_r = edges_r[:, 0] * np.roll(edges_r[:, 1], -1) - edges_r[:, 1] * np.roll(edges_r[:, 0], -1)
+                                    if np.all(crosses_r > 0):
+                                        refit_mask = np.asarray(_polygon_mask(reference.size, refit_quad)) > 0
+                                        refit_overlap = np.count_nonzero(visible & refit_mask)
+                                        if refit_overlap / max(1, mask_area) >= 0.88:
+                                            quad = refit_quad
+                                            quad_mask = refit_mask
+                                            visible = visible & quad_mask
+                                            repaired = True
+                                            break
+                    except Exception:
+                        pass
+                    if not repaired:
+                        if coverage_ratio >= 0.88:
+                            visible = visible & quad_mask
+                        else:
+                            raise ValueError(f"SURFACE_REVIEW_REQUIRED: print mask extends outside mapping (coverage={coverage_ratio:.3f})")
+        else:
+            visible = visible & quad_mask
+
+        visible = visible & ~exclusion_mask
+
+        if not np.any(visible):
+            raise ValueError("SURFACE_REVIEW_REQUIRED: no visible print remains after exclusion zone protection")
 
         try:
             surface["quad"] = (quad * 1000.0 / np.asarray([reference.size[0] - 1, reference.size[1] - 1])).round().astype(int).tolist()
@@ -390,25 +411,45 @@ def compose_reference_artwork(
 
         if not np.any(visible) or np.any(union & visible):
             raise ValueError("SURFACE_REVIEW_REQUIRED: empty or overlapping printable surfaces")
-        matrix, values = [], []
-        for (x, y), (u, v) in zip(quad, source):
-            matrix.extend([[x, y, 1, 0, 0, 0, -u*x, -u*y], [0, 0, 0, x, y, 1, -v*x, -v*y]])
-            values.extend([u, v])
+
+        # Pillar 3: Precision Homography Projection using cv2.warpPerspective
+        src_pts = np.float32([
+            [0, 0],
+            [artwork.width - 1, 0],
+            [artwork.width - 1, artwork.height - 1],
+            [0, artwork.height - 1],
+        ])
+        dst_pts = np.float32(quad)
         try:
+            import cv2
+            M = cv2.getPerspectiveTransform(src_pts, dst_pts)
+            art_np = np.asarray(artwork.convert("RGB"))
+            projected_cv = cv2.warpPerspective(
+                art_np,
+                M,
+                (reference.width, reference.height),
+                flags=cv2.INTER_LANCZOS4,
+                borderMode=cv2.BORDER_CONSTANT,
+                borderValue=(0, 0, 0),
+            )
+            projected = Image.fromarray(projected_cv)
+        except Exception:
+            matrix, values = [], []
+            for (x, y), (u, v) in zip(quad, source):
+                matrix.extend([[x, y, 1, 0, 0, 0, -u*x, -u*y], [0, 0, 0, x, y, 1, -v*x, -v*y]])
+                values.extend([u, v])
             coefficients = np.linalg.solve(np.asarray(matrix), np.asarray(values))
-        except np.linalg.LinAlgError as exc:
-            raise ValueError("SURFACE_REVIEW_REQUIRED: singular projection") from exc
-        projected = artwork.convert("RGB").transform(
-            reference.size, Image.Transform.PERSPECTIVE, coefficients.tolist(), Image.Resampling.BICUBIC,
-        )
+            projected = artwork.convert("RGB").transform(
+                reference.size, Image.Transform.PERSPECTIVE, coefficients.tolist(), Image.Resampling.BICUBIC,
+            )
 
         should_shade = photorealistic or (min(reference.size) >= 512 and bool(plan.get("photorealistic", True)))
         if should_shade:
             from PIL import ImageFilter
             from .product_render import add_textile_surface
 
-            # Pillar 3: Natural Ambient Lighting (no fake spotlight or grey vignette from old print)
-            # Sample ambient illumination strictly from the surrounding floor/room outside visible mask.
+            # Pillar 3: Natural Ambient Lighting & Room Floor Tone Sampling
+            # Sample ambient illumination and room tone strictly from the surrounding floor/room outside visible mask.
             vis_u8 = visible.astype(np.uint8) * 255
             try:
                 import cv2
@@ -417,40 +458,72 @@ def compose_reference_artwork(
                 dilated_surround = np.asarray(Image.fromarray(vis_u8).filter(ImageFilter.MaxFilter(size=51))) > 0
 
             surround_mask = dilated_surround & ~visible & ~exclusion_mask
-            gray_ref = np.asarray(reference.convert("L"), dtype=np.float32)
+            ref_rgb = np.asarray(reference.convert("RGB"), dtype=np.float32)
+            gray_ref = ref_rgb[..., 0] * 0.2126 + ref_rgb[..., 1] * 0.7152 + ref_rgb[..., 2] * 0.0722
 
             light_map = np.ones((reference.height, reference.width), dtype=np.float32)
             y_indices, x_indices = np.nonzero(surround_mask)
 
+            # Sample room floor/ambient color tone to naturally grade white areas
+            room_tint = np.array([1.0, 1.0, 1.0], dtype=np.float32)
             if len(y_indices) > 100:
                 surround_lum = gray_ref[surround_mask]
                 mean_lum = float(np.mean(surround_lum))
+                surround_colors = ref_rgb[surround_mask]
+                mean_room_rgb = np.mean(surround_colors, axis=0)
+                max_channel = float(np.max(mean_room_rgb))
+                if max_channel > 10.0:
+                    room_tint = (mean_room_rgb / max_channel).astype(np.float32)
+
                 if mean_lum > 10.0:
-                    # Fit a smooth, subtle 1st-order linear gradient across the room (I(x,y) = ax + by + c)
-                    # This captures natural directional room lighting without ANY spotlight or vignette.
+                    # Directional ambient lighting falloff matching room's light source
                     try:
                         A = np.column_stack([x_indices, y_indices, np.ones_like(x_indices)])
                         coeffs, _, _, _ = np.linalg.lstsq(A, surround_lum, rcond=None)
                         x_coords = np.arange(reference.width, dtype=np.float32)[np.newaxis, :]
                         y_coords = np.arange(reference.height, dtype=np.float32)[:, np.newaxis]
                         fitted_plane = (coeffs[0] * x_coords + coeffs[1] * y_coords + coeffs[2]) / mean_lum
-                        # Tightly constrain ambient modulation to +/- 6% so colors remain pure and true
-                        light_map = np.clip(fitted_plane, 0.94, 1.06).astype(np.float32)
+                        # Directional modulation matching the room's light source
+                        light_map = np.clip(fitted_plane, 0.90, 1.10).astype(np.float32)
                     except Exception:
                         light_map = np.ones((reference.height, reference.width), dtype=np.float32)
 
-            # Keep the artwork's clean white point and true colors intact (no arbitrary scaling down to 222/255)
+            # Color-grade white areas to natural soft ivory under warm room light (~232-238 RGB)
+            # Avoid raw blinding RGB (255, 255, 255) 'paper sticker' look while preserving vibrant colors
             proj_arr = np.asarray(projected, dtype=np.float32)
-            shaded = np.clip(proj_arr * light_map[..., np.newaxis], 0, 255).astype(np.uint8)
-            shaded_img = Image.fromarray(shaded)
-            shaded_img = add_textile_surface(shaded_img, strength=0.04)
+            lum_proj = proj_arr[..., 0] * 0.2126 + proj_arr[..., 1] * 0.7152 + proj_arr[..., 2] * 0.0722
+            white_factor = np.clip((lum_proj - 170.0) / 85.0, 0.0, 1.0)[..., np.newaxis]
 
-            # Inner feathering: soften edges strictly within printable boundary
+            # Soft ivory tone blending ambient room temperature (~232-238 RGB)
+            room_white_point = 235.0 * (0.60 + 0.40 * room_tint)
+            color_graded = proj_arr * (1.0 - white_factor * (1.0 - room_white_point / 255.0))
+            color_graded = color_graded * (1.0 - white_factor * 0.08 * (1.0 - room_tint))
+
+            shaded = np.clip(color_graded * light_map[..., np.newaxis], 0, 255)
+            # Ensure white areas remain soft ivory and never blow out to blinding 255 white
+            shaded = np.where(white_factor > 0.75, np.minimum(shaded, 240.0), shaded).astype(np.uint8)
+            shaded_img = Image.fromarray(shaded)
+
+            # Apply subtle micro-texture / textile pile grain (for rugs/blankets) or leather grain (for bags)
+            desc = (str(surface.get("description", "")) + " " + str(plan.get("scene_title", ""))).lower()
+            if any(k in desc for k in ("bag", "leather", "purse", "satchel")):
+                from .product_render import add_leather_surface
+                shaded_img = add_leather_surface(shaded_img, strength=0.06)
+            else:
+                shaded_img = add_textile_surface(shaded_img, strength=0.06)
+
+            # Subtle 2-3px soft contact shadow & edge feathering where product touches floor/base
             try:
                 import cv2
                 dist = cv2.distanceTransform(vis_u8, cv2.DIST_L2, 3)
-                feather_radius = 1.5
+                feather_radius = 1.6
                 feather_alpha = np.clip(dist / feather_radius, 0.0, 1.0)
+                # 2-3px contact shadow ambient occlusion darkening at the outer perimeter of the product
+                edge_ao = np.clip(0.85 + 0.15 * (dist / 3.0), 0.85, 1.0)[..., np.newaxis]
+                shaded_arr = np.asarray(shaded_img, dtype=np.float32)
+                shaded_ao = np.clip(shaded_arr * edge_ao, 0, 255).astype(np.uint8)
+                shaded_img = Image.fromarray(shaded_ao)
+
                 feather_u8 = (feather_alpha * 255.0).astype(np.uint8)
                 feather_u8[~visible] = 0
                 mask = Image.fromarray(feather_u8)

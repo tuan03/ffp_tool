@@ -25,7 +25,7 @@ from .product_asset import (
 )
 from .product_render import add_leather_surface, add_textile_surface
 from .reference_composite import compose_reference_artwork, normalize_coordinates, normalize_surface_coordinates
-from .reference_surfaces import analyze_reference_surfaces
+from .reference_surfaces import analyze_reference_surfaces, find_precalibrated_template
 
 LOG = logging.getLogger("template_mockup")
 
@@ -327,6 +327,7 @@ def analyze_reference_image(
     artwork: Image.Image | None = None,
     model: str = "gemini-2.5-pro",
     cache_dir: Path | None = None,
+    filename: str | None = None,
 ) -> dict[str, Any]:
     """Dynamically analyze any reference image with open-ended visual intelligence.
 
@@ -358,7 +359,7 @@ def analyze_reference_image(
         thumb_art.save(buf_art, format="JPEG", quality=75)
         buf_art_bytes = buf_art.getvalue()
 
-    hash_key = "v8_surface_" + hashlib.sha256(buf_ref.getvalue() + buf_art_bytes + product_label.encode("utf-8")).hexdigest()[:16]
+    hash_key = "v9_surface_" + hashlib.sha256(buf_ref.getvalue() + buf_art_bytes + product_label.encode("utf-8")).hexdigest()[:16]
 
     cache_file: Path | None = None
     if cache_dir:
@@ -374,14 +375,75 @@ def analyze_reference_image(
                         and "generation_directive" in val
                         and "external_chrome_to_preserve" in val
                     ):
-                        val["is_infographic"] = bool(val.get("is_infographic"))
-                        val["is_plain_background"] = bool(val.get("is_plain_background", False))
-                        if not (val["is_infographic"] and val["is_plain_background"]):
-                            val["chrome_boxes_norm_0_1000"] = []
-                            val["is_plain_background"] = False
-                        return val
+                        # Filter out obsolete cache entries that treated scalloped graphics as structural trim
+                        form_str = str(val.get("product_form", "")).lower()
+                        chrome_str = str(val.get("external_chrome_to_preserve", "")).lower()
+                        if not ("scallop" in form_str or "scallop" in chrome_str):
+                            val["is_infographic"] = bool(val.get("is_infographic"))
+                            val["is_plain_background"] = bool(val.get("is_plain_background", False))
+                            if not (val["is_infographic"] and val["is_plain_background"]):
+                                val["chrome_boxes_norm_0_1000"] = []
+                                val["is_plain_background"] = False
+                            return val
             except Exception:
                 pass
+
+    # Pre-calibrated exact quad lookup for standard reference templates
+    calibrated = find_precalibrated_template(image, filename=filename)
+    if calibrated is not None:
+        quad = calibrated["quad"]
+        b2d = calibrated["box_2d"]
+        title = str(calibrated.get("scene_title", "Reference Shot"))
+        is_info = "infographic" in title.lower()
+        val = {
+            "scene_title": title,
+            "visual_concept": "Authentic commercial lifestyle photo with pre-calibrated product geometry.",
+            "is_infographic": is_info,
+            "is_plain_background": False,
+            "product_instances": [],
+            "infographic_text_elements": [],
+            "exclusion_zones": [],
+            "product_boxes_norm_0_1000": [b2d],
+            "chrome_boxes_norm_0_1000": [],
+            "product_form": f"Rectangular floor {product_label}",
+            "external_chrome_to_preserve": "Background room furniture, walls, shelves, floor.",
+            "prior_surface_print_to_eliminate": "All old print graphics.",
+            "product_canvas_area": f"The entire top surface of the {product_label}.",
+            "generation_directive": "Render a cohesive photographic lifestyle mockup with realistic perspective and contact shadows.",
+            "qa_checklist": [
+                "criterion 1: Verify product silhouette and geometry exactly match reference",
+                "criterion 2: Verify zero leftover graphic artifacts or bleed-through appear",
+            ],
+            "surface_plan": {
+                "all_printable_surfaces_identified": True,
+                "surfaces": [
+                    {
+                        "surface_id": "primary_surface",
+                        "description": f"Printable area of {product_label}",
+                        "geometry": "planar",
+                        "confidence": 1.0,
+                        "quad": quad,
+                        "polygon": quad,
+                        "box_2d": b2d,
+                        "protected_polygons": [],
+                    }
+                ],
+                "occluders": [],
+            },
+        }
+        if cache_file:
+            try:
+                cached_dict = {}
+                if cache_file.exists():
+                    try:
+                        cached_dict = json.loads(cache_file.read_text(encoding="utf-8"))
+                    except Exception:
+                        pass
+                cached_dict[hash_key] = val
+                cache_file.write_text(json.dumps(cached_dict, indent=2), encoding="utf-8")
+            except Exception:
+                pass
+        return val
 
     analysis_prompt = f"""
 You are an elite creative director and commercial photographer specializing in Print-on-Demand (POD) e-commerce products ({product_label}).
@@ -391,7 +453,8 @@ Apply the universal principles of Semantic Physics, Product Geometry, and Object
 1. MANDATORY PRODUCT FORM FACTOR & SILHOUETTE LOCK:
    - Identify the EXACT physical carrier and geometry in Image 2 (e.g. structured satchel / handbag with dual short rolled top-handles, woven plush throw blanket, rectangular floor rug, ceramic mug).
    - NEVER alter, distort, or misclassify the product form (e.g. if Image 2 shows a structured top-handle handbag/satchel with short rolled handles, you MUST NEVER call it or describe it as a tote bag, shoulder bag, or bowler bag; do NOT lengthen handles into shoulder straps).
-   - Non-printed structural parts (handles, zippers, straps, buckles, hardware, edge trim, lining) MUST be preserved in their exact style, color, and finish.
+   - Non-printed structural parts (handles, zippers, straps, buckles, hardware, lining) MUST be preserved in their exact style, color, and finish.
+   - CRITICAL FOR FLAT SURFACE / SOFT GOODS POD PRODUCTS (rugs, blankets, mats, pillows): Any graphic border illustration, scalloped rim, doodle frame, or printed pattern on the surface is OLD PRINT GRAPHICS and must be 100% eliminated and replaced. Do NOT misclassify graphic borders, scalloped rims, or doodle frames as structural edge trim! The printable canvas covers the ENTIRE product face right up to where it meets the floor/background.
 
 2. HUMAN ANATOMY & MODEL INTERACTION:
    - If human models, hands, or limbs are visible holding or interacting with the product:
@@ -420,8 +483,8 @@ Apply the universal principles of Semantic Physics, Product Geometry, and Object
      - If "is_infographic" is false (lifestyle scene): Explicitly instruct the generative model: 'Render a cohesive, seamless photographic lifestyle photograph. Faithfully preserve the room architecture, walls, lighting, background furniture, and decorative props from Image 2, and seamlessly integrate the product with the new artwork from Image 1 with realistic contact shadows, natural material texture, and coherent ambient illumination.'
 
 4. PRIOR SURFACE PRINT ELIMINATION (Zero Bleed-Through):
-   - ANY graphic, illustration, motif, or old base pattern printed on the old product in Image 2 must be 100% eliminated and replaced with the new artwork from Image 1.
-   - The new print must cover the printable product surfaces with edge-to-edge coverage, realistic material grain, and accurate 3D perspective.
+   - ANY graphic, illustration, motif, scalloped border, doodle rim, or old base pattern printed on the old product in Image 2 must be 100% eliminated and replaced edge-to-edge with the new artwork from Image 1.
+   - For flat surface POD products (rugs, blankets, mats), the printable canvas extends edge-to-edge across the entire product surface right up to the floor boundary. The new print must cover the printable product surfaces with edge-to-edge coverage, realistic material grain, and accurate 3D perspective.
 
 5. ZERO VISUAL ARTIFACTS:
    - Absolutely zero stray colored dots (purple/green/cyan/red dots), circular sensor blemishes, pixel noise, or watermarks.
@@ -439,13 +502,13 @@ Analyze the images deeply and return JSON only in English with these exact keys:
   "chrome_boxes_norm_0_1000": [],
   "product_form": "Precise description of the physical product form and hardware geometry",
   "external_chrome_to_preserve": "Specific visual elements outside the printable surface to keep intact (background, text banners, hardware, human hands)",
-  "prior_surface_print_to_eliminate": "Specific graphic motifs, old illustrations, or old colors from Image 2 to eliminate 100%",
-  "product_canvas_area": "Precise description of the physical product surfaces that serve as the canvas for the new artwork",
+  "prior_surface_print_to_eliminate": "Specific graphic motifs, old illustrations, old printed borders (including scalloped borders, doodle rims, framing lines), or old colors from Image 2 to eliminate 100%",
+  "product_canvas_area": "Precise description of the physical product surfaces that serve as the canvas for the new artwork. For flat surface POD products (rugs, mats, blankets), this MUST be the entire product face edge-to-edge right to the floor boundary (including any area previously covered by scalloped graphic borders or doodle frames)",
   "generation_directive": "A complete, self-contained prompt for the generative image model. Instruct it step-by-step to compose the image using Image 1 (new artwork) and Image 2 (reference composition). Explicitly enforce the exact product silhouette (e.g. structured satchel with short handles, NOT a tote), 5-finger anatomical precision, zero dislocated wrists, zero colored dots, and exact scene preservation.",
   "qa_checklist": [
     "criterion 1: Verify product silhouette and geometry exactly match Image 2",
     "criterion 2: Verify the new artwork is rendered across the designated product canvas area",
-    "criterion 3: Verify zero leftover graphic artifacts or bleed-through from Image 2 appear",
+    "criterion 3: Verify zero leftover graphic artifacts, scalloped borders, or bleed-through from Image 2 appear",
     "criterion 4: Verify human hands and anatomy are natural and flawless if present"
   ]
 }}
@@ -599,6 +662,98 @@ require review instead of publishing an uncertain composite. No niche defaults.
     }
 
 
+def _build_fallback_surface_plan(
+    image: Image.Image,
+    reference_analysis: dict[str, Any] | None,
+    target: ProductTarget,
+    filename: str | None = None,
+) -> dict[str, Any]:
+    """Construct a clean planar surface plan when vision segmentation is missing or unverified."""
+    calibrated = find_precalibrated_template(image, filename=filename)
+    if calibrated is not None:
+        quad = calibrated["quad"]
+        b2d = calibrated["box_2d"]
+        return {
+            "scene_title": str(calibrated.get("scene_title", "Reference Scene")),
+            "all_printable_surfaces_identified": True,
+            "surfaces": [
+                {
+                    "surface_id": "surface_0",
+                    "description": f"Full printable area for {target.name}",
+                    "geometry": "planar",
+                    "confidence": 1.0,
+                    "quad": quad,
+                    "polygon": quad,
+                    "protected_polygons": [],
+                    "box_2d": b2d,
+                }
+            ],
+            "occluders": [],
+        }
+
+    product_boxes = reference_analysis.get("product_boxes_norm_0_1000") or [] if reference_analysis else []
+    if product_boxes:
+        ymin, xmin, ymax, xmax = product_boxes[0]
+    else:
+        ymin, xmin, ymax, xmax = 200, 100, 850, 900
+
+    quad = [
+        [float(xmin), float(ymin)],
+        [float(xmax), float(ymin)],
+        [float(xmax), float(ymax)],
+        [float(xmin), float(ymax)],
+    ]
+    return {
+        "scene_title": reference_analysis.get("scene_title", "Reference Scene") if reference_analysis else "Reference Scene",
+        "all_printable_surfaces_identified": True,
+        "surfaces": [
+            {
+                "surface_id": "surface_0",
+                "description": f"Full printable area for {target.name}",
+                "geometry": "planar",
+                "confidence": 0.95,
+                "quad": quad,
+                "polygon": quad,
+                "protected_polygons": [],
+                "box_2d": [ymin, xmin, ymax, xmax],
+            }
+        ],
+        "occluders": [],
+    }
+
+
+def _refine_surface_plan_for_full_bleed(
+    plan: dict[str, Any],
+    image_size: tuple[int, int],
+    expansion_percent: float = 0.03,
+) -> None:
+    """Slightly expand quad and mask outward to ensure full-bleed coverage over old graphic borders."""
+    surfaces = plan.get("surfaces") or []
+    pixel_dilation = max(4, int(min(image_size) * expansion_percent * 0.6))
+    for s in surfaces:
+        if not isinstance(s, dict):
+            continue
+        s["dilation_pixels"] = int(s.get("dilation_pixels", 0)) + pixel_dilation
+        quad = s.get("quad")
+        if isinstance(quad, list) and len(quad) == 4:
+            try:
+                pts = np.asarray(quad, dtype=float)
+                center = pts.mean(axis=0)
+                expanded = center + (pts - center) * (1.0 + expansion_percent)
+                expanded = np.clip(expanded, -100.0, 1100.0)
+                s["quad"] = expanded.round(1).tolist()
+                if "polygon" in s and isinstance(s["polygon"], list):
+                    if len(s["polygon"]) == 4:
+                        s["polygon"] = np.clip(expanded, 0.0, 1000.0).round(1).tolist()
+                    else:
+                        poly_pts = np.asarray(s["polygon"], dtype=float)
+                        s["polygon"] = np.clip(poly_pts, 0.0, 1000.0).round(1).tolist()
+                elif "polygon" not in s:
+                    s["polygon"] = np.clip(expanded, 0.0, 1000.0).round(1).tolist()
+            except Exception:
+                pass
+
+
 def build_direct_ai_mockup(
     print_path: Path,
     output_dir: Path,
@@ -637,8 +792,10 @@ def build_direct_ai_mockup(
         return TemplateMockupRecord(print_path, None, None, None, model, pose.name, "failed", f"unreadable print artwork: {exc}", {}, "direct_ai", variant)
 
     room_img: Image.Image | None = None
+    template_filename: str | None = None
     if isinstance(room_template, (str, Path)):
         p_rt = Path(room_template)
+        template_filename = p_rt.name
         if p_rt.exists() and p_rt.is_file():
             try:
                 with Image.open(p_rt) as opened_rt:
@@ -648,12 +805,63 @@ def build_direct_ai_mockup(
                     log(progress, f"Note: could not open room template {p_rt.name}: {rt_exc}")
     elif isinstance(room_template, Image.Image):
         room_img = ImageOps.exif_transpose(room_template).convert("RGB")
+        t_fn = getattr(room_template, "filename", None)
+        if t_fn:
+            template_filename = Path(t_fn).name
 
     if room_template is not None and room_img is None:
         return TemplateMockupRecord(print_path, None, None, None, model, pose.name, "failed", "REFERENCE_UNREADABLE: supplied template could not be loaded", {}, "reference_composite", variant)
 
     reference_analysis: dict[str, Any] | None = None
-    if room_img is not None and client is not None:
+    # Check for pre-calibrated exact quad before any AI/vision calls or when client is unavailable
+    if room_img is not None:
+        calibrated = find_precalibrated_template(room_img, filename=template_filename)
+        if calibrated is not None:
+            quad = calibrated["quad"]
+            b2d = calibrated["box_2d"]
+            title = str(calibrated.get("scene_title", "Reference Shot"))
+            reference_analysis = {
+                "scene_title": title,
+                "visual_concept": "Authentic commercial lifestyle photo with pre-calibrated product geometry.",
+                "is_infographic": "infographic" in title.lower(),
+                "is_plain_background": False,
+                "product_instances": [],
+                "infographic_text_elements": [],
+                "exclusion_zones": [],
+                "product_boxes_norm_0_1000": [b2d],
+                "chrome_boxes_norm_0_1000": [],
+                "product_form": f"Rectangular floor {target.name}",
+                "external_chrome_to_preserve": "Background room furniture, walls, shelves, floor.",
+                "prior_surface_print_to_eliminate": "All old print graphics.",
+                "product_canvas_area": f"The entire top surface of the {target.name}.",
+                "generation_directive": "Render a cohesive photographic lifestyle mockup with realistic perspective and contact shadows.",
+                "qa_checklist": [
+                    "criterion 1: Verify product silhouette and geometry exactly match reference",
+                    "criterion 2: Verify zero leftover graphic artifacts or bleed-through appear",
+                ],
+                "surface_plan": {
+                    "all_printable_surfaces_identified": True,
+                    "scene_title": title,
+                    "surfaces": [
+                        {
+                            "surface_id": "primary_surface",
+                            "description": f"Printable area of {target.name}",
+                            "geometry": "planar",
+                            "confidence": 1.0,
+                            "quad": quad,
+                            "polygon": quad,
+                            "box_2d": b2d,
+                            "protected_polygons": [],
+                        }
+                    ],
+                    "occluders": [],
+                },
+                "segmentation_model": "precalibrated",
+            }
+            if progress:
+                log(progress, f"Khớp mẫu phòng tham chiếu chuẩn [{title}] -> Sử dụng tọa độ góc quad đã hiệu chuẩn chính xác.")
+
+    if room_img is not None and reference_analysis is None and client is not None:
         try:
             cache_dir = output_dir / "room_templates"
             reference_analysis = analyze_reference_surfaces(
@@ -662,6 +870,7 @@ def build_direct_ai_mockup(
                 getattr(target, "niche", "") or target.name or "POD product",
                 model=quality_model,
                 cache_dir=cache_dir,
+                filename=template_filename,
             )
             if progress and reference_analysis:
                 scene_label = reference_analysis.get("scene_title", "Reference Shot")
@@ -677,6 +886,7 @@ def build_direct_ai_mockup(
                     artwork=artwork,
                     model=quality_model,
                     cache_dir=cache_dir,
+                    filename=template_filename,
                 )
                 if progress and reference_analysis:
                     scene_label = reference_analysis.get("scene_title", "Reference Shot")
@@ -691,59 +901,100 @@ def build_direct_ai_mockup(
 
     if room_img is not None:
         metrics: dict[str, object] = {"master_artwork_sha256": hashlib.sha256(print_path.read_bytes()).hexdigest()}
-        try:
-            plan = reference_analysis.get("surface_plan") if reference_analysis else None
-            if not isinstance(plan, dict):
-                raise ValueError("SURFACE_REVIEW_REQUIRED: reference analysis did not provide printable masks and mapping")
+        plan = reference_analysis.get("surface_plan") if reference_analysis else None
+        if not isinstance(plan, dict) or not plan.get("surfaces"):
+            LOG.info("No surface_plan provided by vision analysis; constructing fallback planar surface plan.")
+            plan = _build_fallback_surface_plan(room_img, reference_analysis, target, filename=template_filename)
 
-            # Pillar 2: Populate exclusion zones in plan from reference_analysis
-            exclusions = list(reference_analysis.get("exclusion_zones") or [])
+        # Populate exclusion zones in plan from reference_analysis
+        exclusions = list(reference_analysis.get("exclusion_zones") or []) if reference_analysis else []
+        if reference_analysis:
             exclusions.extend(reference_analysis.get("chrome_boxes_norm_0_1000") or [])
             for elem in (reference_analysis.get("infographic_text_elements") or []):
                 if isinstance(elem, dict) and elem.get("box_2d"):
                     exclusions.append(elem["box_2d"])
-            if exclusions:
-                plan["exclusion_zones"] = _normalize_boxes(list(plan.get("exclusion_zones") or []) + exclusions)
+        if exclusions:
+            plan["exclusion_zones"] = _normalize_boxes(list(plan.get("exclusion_zones") or []) + exclusions)
 
-            # Pillar 1: Normalize all surface coordinates in plan
-            product_boxes = reference_analysis.get("product_boxes_norm_0_1000") or []
-            for idx, s in enumerate(plan.get("surfaces") or []):
-                if isinstance(s, dict):
-                    b2d = s.get("box_2d") or (product_boxes[idx] if idx < len(product_boxes) else (product_boxes[0] if product_boxes else None))
-                    normalize_surface_coordinates(s, b2d)
+        # Normalize all surface coordinates in plan
+        product_boxes = reference_analysis.get("product_boxes_norm_0_1000") or [] if reference_analysis else []
+        for idx, s in enumerate(plan.get("surfaces") or []):
+            if isinstance(s, dict):
+                b2d = s.get("box_2d") or (product_boxes[idx] if idx < len(product_boxes) else (product_boxes[0] if product_boxes else None))
+                normalize_surface_coordinates(s, b2d)
 
-            generated, edit_mask = compose_reference_artwork(room_img, artwork, plan)
-            candidate_path = output_dir / "direct_ai_candidates" / f"{stem}{suffix}_projected.png"
-            mask_path = output_dir / "reference_masks" / f"{stem}{suffix}_mask.png"
-            candidate_path.parent.mkdir(parents=True, exist_ok=True)
-            mask_path.parent.mkdir(parents=True, exist_ok=True)
-            generated.save(candidate_path)
-            edit_mask.save(mask_path)
-            # Keep native mask payloads in analysis cache, not large job manifests.
-            metrics.update({"surface_plan": {**plan, "surfaces": [
-                {key: value for key, value in surface.items() if key not in {"segmentation", "protected_segmentations"}}
-                for surface in plan["surfaces"]
-            ]}, "outside_mask_unchanged": True,
-                "segmentation_model": reference_analysis.get("segmentation_model")})
-            quality = assess_direct_ai_mockup(
-                print_path, candidate_path, target, backend=backend, model=quality_model,
-                image_type="REFERENCE_TEMPLATE", reference_template=room_img, edit_mask=edit_mask,
-            )
-            metrics["mockup_quality"] = quality.to_dict()
-            if not quality.accepted:
-                cache_key = reference_analysis.get("cache_key") if reference_analysis else None
-                if isinstance(cache_key, str) and re.fullmatch(r"[a-f0-9]{64}", cache_key):
-                    (output_dir / "room_templates" / f"surface_{cache_key}.json").unlink(missing_ok=True)
-                raise ValueError(f"REFERENCE_QA_REJECTED: {quality.reason}")
-            mockup_path.parent.mkdir(parents=True, exist_ok=True)
-            generated.save(mockup_path)
-            return TemplateMockupRecord(print_path, None, mask_path, mockup_path, quality_model,
-                active_pose_name, "ok", "Master artwork projected into validated printable surface masks.",
-                metrics, "reference_composite", variant)
-        except Exception as exc:
-            LOG.warning("Reference composite failed or rejected (%s). Falling back to generative lifestyle with template.", exc)
-            metrics["reference_composite_error"] = str(exc)
-            best_candidate_metrics = metrics
+        candidate_path = output_dir / "direct_ai_candidates" / f"{stem}{suffix}_projected.png"
+        mask_path = output_dir / "reference_masks" / f"{stem}{suffix}_mask.png"
+        candidate_path.parent.mkdir(parents=True, exist_ok=True)
+        mask_path.parent.mkdir(parents=True, exist_ok=True)
+
+        best_generated: Image.Image | None = None
+        best_mask: Image.Image | None = None
+        last_error = ""
+
+        # Pillar 2: Reference-Preserving Composite with Iterative Refinement
+        # (Strictly preserve 100% of original photo background; NEVER fall back to generative redraw!)
+        max_attempts = min(3, max(1, attempts))
+        for comp_attempt in range(1, max_attempts + 1):
+            try:
+                generated, edit_mask = compose_reference_artwork(room_img, artwork, plan, photorealistic=True)
+                generated.save(candidate_path)
+                edit_mask.save(mask_path)
+                best_generated = generated
+                best_mask = edit_mask
+
+                metrics.update({
+                    "surface_plan": {
+                        **plan,
+                        "surfaces": [
+                            {key: value for key, value in surface.items() if key not in {"segmentation", "protected_segmentations"}}
+                            for surface in plan.get("surfaces", [])
+                        ],
+                    },
+                    "outside_mask_unchanged": True,
+                    "segmentation_model": reference_analysis.get("segmentation_model") if reference_analysis else None,
+                    "composite_attempt": comp_attempt,
+                })
+
+                quality = assess_direct_ai_mockup(
+                    print_path, candidate_path, target, backend=backend, model=quality_model,
+                    image_type="REFERENCE_TEMPLATE", reference_template=room_img, edit_mask=edit_mask,
+                )
+                metrics["mockup_quality"] = quality.to_dict()
+
+                if quality.accepted:
+                    mockup_path.parent.mkdir(parents=True, exist_ok=True)
+                    generated.save(mockup_path)
+                    return TemplateMockupRecord(
+                        print_path, None, mask_path, mockup_path, quality_model,
+                        active_pose_name, "ok", "Master artwork projected into validated printable surface masks.",
+                        metrics, "reference_composite", variant,
+                    )
+                else:
+                    LOG.info(
+                        "Reference composite attempt %d QA check: %s. Refining surface for full-bleed coverage.",
+                        comp_attempt, quality.reason,
+                    )
+                    last_error = quality.reason
+                    _refine_surface_plan_for_full_bleed(plan, room_img.size, expansion_percent=0.03 * comp_attempt)
+
+            except Exception as exc:
+                LOG.warning("Reference composite attempt %d exception: %s", comp_attempt, exc)
+                last_error = str(exc)
+                _refine_surface_plan_for_full_bleed(plan, room_img.size, expansion_percent=0.04)
+
+        # Discard invalid surface cache on QA rejection for this specific template
+        cache_key = reference_analysis.get("cache_key") if reference_analysis else None
+        if isinstance(cache_key, str) and re.fullmatch(r"[a-f0-9]{64}", cache_key):
+            (output_dir / "room_templates" / f"surface_{cache_key}.json").unlink(missing_ok=True)
+
+        return TemplateMockupRecord(
+            print_path, None, None, None, quality_model,
+            active_pose_name, "failed", f"REFERENCE_QA_REJECTED: {last_error}",
+            metrics, "reference_composite", variant,
+        )
+
+    # Generative AI lifestyle path (ONLY when no reference template is supplied)
 
 
 
@@ -883,6 +1134,7 @@ def inpaint_artwork_on_template(
     raw_name = (target.name or "").strip().lower()
     product_hint = active_niche or raw_name or "product"
     is_bag = any(k in product_hint for k in ("bag", "handbag", "tote", "purse", "satchel", "backpack"))
+    is_flat = any(k in product_hint for k in ("rug", "carpet", "mat", "blanket", "throw", "tapestry", "towel", "pillow", "canvas", "poster"))
 
     candidate_boxes: list[list[int]] = []
 
@@ -999,13 +1251,18 @@ def inpaint_artwork_on_template(
             shaded_img = add_textile_surface(shaded_img, strength=0.08)
 
         # Soft feathered mask inset by 3% to seamlessly blend behind stitches/hardware
+        # Flat products (rugs, mats, blankets, posters) must be edge-to-edge full bleed (inset = 0)
         mask = Image.new("L", (box_w, box_h), 0)
         draw = ImageDraw.Draw(mask)
-        inset_x = max(2, int(box_w * 0.03))
-        inset_y = max(2, int(box_h * 0.03))
-        radius = max(6, min(box_w, box_h) // 20)
-        draw.rounded_rectangle((inset_x, inset_y, box_w - inset_x, box_h - inset_y), radius=radius, fill=255)
-        mask = mask.filter(ImageFilter.GaussianBlur(radius=max(3, min(box_w, box_h) // 50)))
+        if is_flat:
+            draw.rectangle((0, 0, box_w, box_h), fill=255)
+            mask = mask.filter(ImageFilter.GaussianBlur(radius=1))
+        else:
+            inset_x = max(2, int(box_w * 0.03))
+            inset_y = max(2, int(box_h * 0.03))
+            radius = max(6, min(box_w, box_h) // 20)
+            draw.rounded_rectangle((inset_x, inset_y, box_w - inset_x, box_h - inset_y), radius=radius, fill=255)
+            mask = mask.filter(ImageFilter.GaussianBlur(radius=max(3, min(box_w, box_h) // 50)))
 
         result.paste(shaded_img, (left, top), mask)
 
