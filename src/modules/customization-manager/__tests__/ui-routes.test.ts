@@ -8,6 +8,7 @@ import {
 import {
   extractProductAsin,
   filterCatalogProducts,
+  buildShopifyAdminUrl,
 } from "../ui/components/ProductCatalogTable";
 import type { ShopifyProduct, ShopifyCollection } from "../../module-api";
 
@@ -24,7 +25,7 @@ describe("Customization Manager: UI & Routes", () => {
   });
 
   describe("Product Catalog Filtering & Scoped Navigation", () => {
-    const sampleProducts: readonly ShopifyProduct[] = [
+    const sampleProducts = [
       {
         id: "gid://shopify/Product/1",
         title: "Funny Personalized Couple Doormat",
@@ -49,9 +50,9 @@ describe("Customization Manager: UI & Routes", () => {
         productType: "Drinkware",
         variants: [{ id: "v3", sku: "MUG-001", price: "15.00" }],
       },
-    ];
+    ] as unknown as readonly ShopifyProduct[];
 
-    const sampleCollections: readonly ShopifyCollection[] = [
+    const sampleCollections = [
       {
         id: "col-1",
         title: "Family Name Rugs",
@@ -64,17 +65,17 @@ describe("Customization Manager: UI & Routes", () => {
         handle: "coffee-mugs",
         productsCount: 1,
       },
-    ];
+    ] as unknown as readonly ShopifyCollection[];
 
     it("extractProductAsin extracts ASIN from tags, sku, handle, and title", () => {
       assert.equal(extractProductAsin(sampleProducts[0]), "B0GQGGXN47");
       assert.equal(extractProductAsin(sampleProducts[1]), null);
 
-      const productWithHandleAsin: ShopifyProduct = {
+      const productWithHandleAsin = {
         id: "4",
         title: "Item",
         handle: "product-b0gqggxn47-test",
-      };
+      } as unknown as ShopifyProduct;
       assert.equal(extractProductAsin(productWithHandleAsin), "B0GQGGXN47");
     });
 
@@ -138,6 +139,25 @@ describe("Customization Manager: UI & Routes", () => {
       const counterLabel = `${indexInFiltered + 1}/${filtered.length}`;
       assert.equal(counterLabel, "1/2");
     });
+
+    it("buildShopifyAdminUrl generates correct admin link for products", () => {
+      assert.equal(
+        buildShopifyAdminUrl("capozen", "gid://shopify/Product/12345678"),
+        "https://admin.shopify.com/store/capozen/products/12345678",
+      );
+      assert.equal(
+        buildShopifyAdminUrl("chillgen.myshopify.com", "888"),
+        "https://admin.shopify.com/store/chillgen/products/888",
+      );
+      assert.equal(
+        buildShopifyAdminUrl("https://jeminise.myshopify.com/", "gid://shopify/Product/999"),
+        "https://admin.shopify.com/store/jeminise/products/999",
+      );
+      assert.equal(buildShopifyAdminUrl("capozen", ""), undefined);
+      assert.equal(buildShopifyAdminUrl("capozen", undefined), undefined);
+      assert.equal(buildShopifyAdminUrl("", "12345"), undefined);
+    });
   });
 });
+
 

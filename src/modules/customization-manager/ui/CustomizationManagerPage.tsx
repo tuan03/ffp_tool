@@ -30,6 +30,7 @@ import { TextInputEditor } from "./components/TextInputEditor";
 import {
   ProductCatalogTable,
   filterCatalogProducts,
+  buildShopifyAdminUrl,
 } from "./components/ProductCatalogTable";
 
 export interface CustomizationManagerPageProps {
@@ -512,6 +513,23 @@ export function CustomizationManagerPage({
     }
   };
 
+  // Active Shopify Store Admin Handle & Product Admin URL
+  const currentStore = stores.find((s) => s.storeId === selectedStoreId);
+  const shopAdminHandle = (
+    currentStore?.shopDomain ||
+    selectedStoreId ||
+    defaultStoreId ||
+    "capozen"
+  )
+    .trim()
+    .replace(/^https?:\/\//i, "")
+    .replace(/\/.*$/, "")
+    .replace(/\.myshopify\.com$/i, "");
+
+  const activeProductAdminUrl = activeProduct
+    ? buildShopifyAdminUrl(shopAdminHandle, activeProduct.id)
+    : undefined;
+
   // Active Mockup Image
   const previewMockupUrl =
     activeSurface?.previewUrl ||
@@ -600,6 +618,7 @@ export function CustomizationManagerPage({
               configuredProductIds={configuredProductIds}
               onSelectProductForEdit={loadProductConfig}
               onDeleteCustomizer={handleDeleteConfig}
+              shopAdminHandle={shopAdminHandle}
               filterMode={filterMode}
               onFilterModeChange={setFilterMode}
               selectedCollectionId={selectedCollectionId}
@@ -683,12 +702,29 @@ export function CustomizationManagerPage({
                     />
                   </div>
                   <div className="min-w-0 flex-1">
-                    <h2
-                      className="text-sm font-bold text-slate-100 truncate"
-                      title={activeProduct.title}
-                    >
-                      {activeProduct.title}
-                    </h2>
+                    <div className="flex items-center gap-2 min-w-0">
+                      <h2
+                        className="text-sm font-bold text-slate-100 truncate"
+                        title={activeProduct.title}
+                      >
+                        {activeProduct.title}
+                      </h2>
+                      {activeProductAdminUrl && (
+                        <a
+                          href={activeProductAdminUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-slate-400 hover:text-emerald-400 transition flex-shrink-0 inline-flex items-center"
+                          title="Mở sản phẩm này trong Shopify Admin"
+                        >
+                          <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                            <polyline points="15 3 21 3 21 9" />
+                            <line x1="10" y1="14" x2="21" y2="3" />
+                          </svg>
+                        </a>
+                      )}
+                    </div>
                     <span className="text-[11px] text-slate-400 block truncate">
                       {activeProduct.handle ? `/${activeProduct.handle}` : activeProduct.id}
                     </span>
@@ -696,8 +732,46 @@ export function CustomizationManagerPage({
                 </div>
               </div>
 
-              {/* Action Buttons: Delete & Save */}
+              {/* Action Buttons: Shopify Admin, Delete & Save */}
               <div className="flex items-center gap-2.5 flex-shrink-0 ml-auto">
+                {activeProductAdminUrl && (
+                  <a
+                    href={activeProductAdminUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-700/60 bg-emerald-950/40 px-3.5 py-2.5 text-xs font-bold text-emerald-300 hover:bg-emerald-900/50 hover:border-emerald-500 hover:text-white transition cursor-pointer shadow-md group"
+                    title="Mở sản phẩm này trong Shopify Admin (tab mới)"
+                  >
+                    <svg
+                      className="w-4 h-4 text-emerald-400 group-hover:scale-110 transition-transform flex-shrink-0"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z" />
+                      <line x1="3" y1="6" x2="21" y2="6" />
+                      <path d="M16 10a4 4 0 0 1-8 0" />
+                    </svg>
+                    <span>Shopify Admin</span>
+                    <svg
+                      className="w-3.5 h-3.5 text-emerald-400/80 group-hover:text-white group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform flex-shrink-0"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                      <polyline points="15 3 21 3 21 9" />
+                      <line x1="10" y1="14" x2="21" y2="3" />
+                    </svg>
+                  </a>
+                )}
+
                 {customization && (
                   <button
                     type="button"

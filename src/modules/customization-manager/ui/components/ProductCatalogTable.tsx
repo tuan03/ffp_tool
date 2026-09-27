@@ -10,6 +10,7 @@ export interface ProductCatalogTableProps {
   readonly onPreviewCustomerView?: (product: ShopifyProduct) => void;
   readonly onCloneProduct?: (product: ShopifyProduct) => void;
   readonly onDeleteCustomizer: (product: ShopifyProduct) => void;
+  readonly shopAdminHandle?: string;
 
   // Optional Controlled Filter Props
   readonly filterMode?: "all" | "collection" | "asin";
@@ -19,6 +20,24 @@ export interface ProductCatalogTableProps {
   readonly searchQuery?: string;
   readonly onSearchQueryChange?: (query: string) => void;
   readonly filteredProducts?: readonly ShopifyProduct[];
+}
+
+export function buildShopifyAdminUrl(
+  shopAdminHandle?: string,
+  productId?: string,
+): string | undefined {
+  if (!productId || typeof productId !== "string") return undefined;
+  const cleanId = productId.trim();
+  const numericId = cleanId.replace(/^gid:\/\/shopify\/Product\//, "");
+  if (!numericId) return undefined;
+  if (!shopAdminHandle || typeof shopAdminHandle !== "string") return undefined;
+  const cleanHandle = shopAdminHandle
+    .trim()
+    .replace(/^https?:\/\//i, "")
+    .replace(/\/.*$/, "")
+    .replace(/\.myshopify\.com$/i, "");
+  if (!cleanHandle) return undefined;
+  return `https://admin.shopify.com/store/${cleanHandle}/products/${numericId}`;
 }
 
 export function extractProductAsin(product: ShopifyProduct): string | null {
@@ -143,6 +162,7 @@ export function ProductCatalogTable({
   configuredProductIds,
   onSelectProductForEdit,
   onDeleteCustomizer,
+  shopAdminHandle,
   filterMode: propFilterMode,
   onFilterModeChange: propOnFilterModeChange,
   selectedCollectionId: propSelectedCollectionId,
@@ -403,6 +423,7 @@ export function ProductCatalogTable({
                     product.images?.[0]?.url ||
                     "https://images.unsplash.com/photo-1521572267360-ee0c2909d518?w=300&auto=format&fit=crop&q=80";
                   const asin = extractProductAsin(product);
+                  const adminUrl = buildShopifyAdminUrl(shopAdminHandle, product.id);
 
                   return (
                     <tr
@@ -437,6 +458,23 @@ export function ProductCatalogTable({
                                   /{product.handle}
                                 </span>
                               )}
+                              {adminUrl && (
+                                <a
+                                  href={adminUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="text-slate-500 hover:text-emerald-400 transition inline-flex items-center gap-0.5 text-[11px] font-medium"
+                                  title="Mở sản phẩm trong Shopify Admin"
+                                >
+                                  <span>Shopify</span>
+                                  <svg className="w-2.5 h-2.5 text-slate-500 hover:text-emerald-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                                    <polyline points="15 3 21 3 21 9" />
+                                    <line x1="10" y1="14" x2="21" y2="3" />
+                                  </svg>
+                                </a>
+                              )}
                               {asin && (
                                 <span
                                   className="inline-flex items-center gap-1 rounded bg-amber-500/10 border border-amber-500/30 px-1.5 py-0.5 text-[10px] font-mono font-bold text-amber-300 shadow-sm"
@@ -465,7 +503,7 @@ export function ProductCatalogTable({
                         )}
                       </td>
 
-                      {/* Direct Actions: Open Studio & Delete */}
+                      {/* Direct Actions: Open Studio & Delete & Shopify Link */}
                       <td className="py-4 pr-6 pl-4 text-right">
                         <div
                           className="flex items-center justify-end gap-2"
@@ -484,6 +522,22 @@ export function ProductCatalogTable({
                             <span>{hasCustomizer ? "🎨" : "✨"}</span>
                             <span>{hasCustomizer ? "Mở Tùy Biến" : "Tạo Mới Tùy Biến"}</span>
                           </button>
+
+                          {adminUrl && (
+                            <a
+                              href={adminUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="rounded-xl border border-slate-800 bg-slate-950/80 p-2 text-slate-400 hover:border-emerald-600/60 hover:bg-emerald-950/40 hover:text-emerald-300 transition cursor-pointer"
+                              title="Mở sản phẩm này trong Shopify Admin"
+                            >
+                              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                                <polyline points="15 3 21 3 21 9" />
+                                <line x1="10" y1="14" x2="21" y2="3" />
+                              </svg>
+                            </a>
+                          )}
 
                           {hasCustomizer && (
                             <button
