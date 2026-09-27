@@ -135,22 +135,49 @@ export function CustomizationManagerPage({
     async function loadStoreProducts() {
       setIsLoadingProducts(true);
       try {
-        let loadedProducts: readonly ShopifyProduct[] = [];
+        let loadedProducts: ShopifyProduct[] = [];
         if (moduleApiRunner) {
           try {
-            const res = await moduleApiRunner({
-              storeId: selectedStoreId,
-              operation: "products.list",
-              payload: { limit: 100 },
-            });
-            if (Array.isArray(res?.data?.products) && res.data.products.length > 0) {
-              loadedProducts = res.data.products;
+            let cursor: string | undefined = undefined;
+            let hasNextPage = true;
+            const seenIds = new Set<string>();
+
+            while (hasNextPage) {
+              const res: any = await moduleApiRunner({
+                storeId: selectedStoreId,
+                operation: "products.list",
+                payload: {
+                  limit: 250,
+                  ...(cursor ? { cursor } : {}),
+                },
+              });
+
+              const pageProducts = res?.data?.products;
+              if (Array.isArray(pageProducts) && pageProducts.length > 0) {
+                for (const p of pageProducts) {
+                  if (p?.id && !seenIds.has(p.id)) {
+                    seenIds.add(p.id);
+                    loadedProducts.push(p);
+                  }
+                }
+              }
+
+              const pageInfo = res?.data?.pageInfo;
+              if (pageInfo?.hasNextPage && pageInfo.endCursor && !seenIds.has(pageInfo.endCursor)) {
+                cursor = pageInfo.endCursor;
+              } else {
+                hasNextPage = false;
+              }
+            }
+
+            if (loadedProducts.length === 0) {
+              loadedProducts = [...shopifyMockProducts];
             }
           } catch {
-            loadedProducts = shopifyMockProducts;
+            loadedProducts = [...shopifyMockProducts];
           }
         } else {
-          loadedProducts = shopifyMockProducts;
+          loadedProducts = [...shopifyMockProducts];
         }
 
         if (isMounted) {
@@ -176,16 +203,44 @@ export function CustomizationManagerPage({
           }
         }
 
-        // Also fetch collections for Collection Filter
+        // Also fetch all collections for Collection Filter
         if (moduleApiRunner) {
           try {
-            const colRes = await moduleApiRunner({
-              storeId: selectedStoreId,
-              operation: "collections.list",
-              payload: { limit: 100 },
-            });
-            if (isMounted && Array.isArray(colRes?.data?.collections)) {
-              setCollections(colRes.data.collections);
+            const allCollections: ShopifyCollection[] = [];
+            let colCursor: string | undefined = undefined;
+            let colHasNextPage = true;
+            const seenColIds = new Set<string>();
+
+            while (colHasNextPage) {
+              const colRes: any = await moduleApiRunner({
+                storeId: selectedStoreId,
+                operation: "collections.list",
+                payload: {
+                  limit: 250,
+                  ...(colCursor ? { cursor: colCursor } : {}),
+                },
+              });
+
+              const pageCollections = colRes?.data?.collections;
+              if (Array.isArray(pageCollections) && pageCollections.length > 0) {
+                for (const col of pageCollections) {
+                  if (col?.id && !seenColIds.has(col.id)) {
+                    seenColIds.add(col.id);
+                    allCollections.push(col);
+                  }
+                }
+              }
+
+              const colPageInfo = colRes?.data?.pageInfo;
+              if (colPageInfo?.hasNextPage && colPageInfo.endCursor) {
+                colCursor = colPageInfo.endCursor;
+              } else {
+                colHasNextPage = false;
+              }
+            }
+
+            if (isMounted) {
+              setCollections(allCollections);
             }
           } catch {
             if (isMounted) setCollections([]);
