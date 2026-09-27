@@ -165,7 +165,7 @@ export function ProductCatalogTable({
   return (
     <div className="space-y-4">
       {/* Search & Header Summary Bar */}
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-800 bg-slate-900/80 p-3.5 shadow-sm backdrop-blur-sm">
+      <div className="relative z-30 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-800 bg-slate-900/80 p-3.5 shadow-sm backdrop-blur-sm">
         {/* Search Input with Shopify-style filter dropdown */}
         <div className="flex-1 min-w-[320px] flex items-center rounded-xl border border-slate-800 bg-slate-950 px-2 py-1 shadow-inner focus-within:border-cyan-500 transition">
           {/* Filter selector popup */}
@@ -185,7 +185,7 @@ export function ProductCatalogTable({
 
             {/* Dropdown Menu */}
             {isFilterDropdownOpen && (
-              <div className="absolute left-0 top-full mt-2 w-56 rounded-2xl border border-slate-800 bg-slate-900/95 p-1.5 shadow-2xl backdrop-blur-md z-30 space-y-0.5">
+              <div className="absolute left-0 top-full mt-2 w-56 rounded-2xl border border-slate-800 bg-slate-900/98 p-1.5 shadow-2xl backdrop-blur-md z-50 space-y-0.5">
                 <button
                   type="button"
                   onClick={() => {
@@ -330,7 +330,7 @@ export function ProductCatalogTable({
       </div>
 
       {/* Products Table Card */}
-      <div className="rounded-2xl border border-slate-800 bg-slate-900/60 shadow-xl overflow-hidden backdrop-blur-md">
+      <div className="relative z-10 rounded-2xl border border-slate-800 bg-slate-900/60 shadow-xl overflow-hidden backdrop-blur-md">
         {isLoading ? (
           <div className="p-16 text-center space-y-3">
             <span className="inline-block animate-spin text-2xl">⏳</span>
