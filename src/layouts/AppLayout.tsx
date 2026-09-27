@@ -21,6 +21,7 @@ export function AppLayout(): React.JSX.Element {
             </NavLink>
 
             <nav className="flex items-center gap-2 text-xs font-medium">
+              <NavLink to="/gpt-seo" className="rounded-lg px-3 py-1.5 text-cyan-300">GPT SEO</NavLink>
               <NavLink
                 to="/amazon-crawler"
                 className={({ isActive }) =>

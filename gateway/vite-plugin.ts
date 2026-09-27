@@ -82,6 +82,13 @@ export function shopifyGatewayDevPlugin(options?: ShopifyGatewayDevPluginOptions
       });
 
       server.middlewares.use(async (req, res, next) => {
+        if (req.url?.startsWith("/api/v1/gpt-seo/")) {
+          if (req.url.startsWith("/api/v1/gpt-seo/admin/") && authToken && isSameOriginRequest(req.headers)) {
+            req.headers["x-gateway-key"] = authToken;
+          }
+          await getCustomGptRuntime().handler(req, res);
+          return;
+        }
         const isShopify = req.url && (req.url === "/api/shopify" || req.url.startsWith("/api/shopify?"));
         const isAutoSeo = req.url && (req.url === "/api/auto-seo/run" || req.url.startsWith("/api/auto-seo/run?"));
         const isPinterestPodHandover = req.url && (req.url === "/api/pinterest-pod/handover-seo" || req.url.startsWith("/api/pinterest-pod/handover-seo?"));
@@ -238,3 +245,4 @@ export function shopifyGatewayDevPlugin(options?: ShopifyGatewayDevPluginOptions
     },
   };
 }
+import { getCustomGptRuntime } from "./custom-gpt-seo/runtime";

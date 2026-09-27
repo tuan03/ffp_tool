@@ -243,6 +243,7 @@ export function ProductCardList({
                         {product.productTitle.value}
                       </span>
                       <SourceBadge source={product.productTitle.source} />
+                      {product.gptJobId && <span className="rounded bg-cyan-950 px-2 py-1 text-xs text-cyan-300">GPT queue</span>}
                       <SourceOriginBadge product={product} showStore targetStoreId={currentStoreId} />
                     </div>
 

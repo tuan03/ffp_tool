@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { getCustomGptRuntime } from "./custom-gpt-seo/runtime";
 import type http from "node:http";
 import type { DatabaseSync } from "node:sqlite";
 
@@ -33,6 +34,7 @@ export interface AutoSeoRunRequest {
 }
 
 export interface AutoSeoRunResult {
+  readonly seoProvider?: "gemini" | "custom_gpt";
   readonly workflowId: string;
   readonly backedUpCount: number;
   readonly backupIds: readonly string[];
@@ -223,6 +225,7 @@ export async function handleAutoSeoRun(
   const request = validateAutoSeoRunInput(body);
   const db = options?.db ?? getAutoSeoDb();
   const runner = options?.seoContentRunner ?? runSeoContent;
+  const selectedSettings = options?.seoContentRunner ? undefined : getCustomGptRuntime().queue.settings(request.storeId);
 
   let backupIds: string[] = [];
   db.exec("BEGIN IMMEDIATE");
@@ -230,6 +233,9 @@ export async function handleAutoSeoRun(
     const backupResult = executeAutoSeoBackup(db, request, {
       onConflict: options?.onConflict ?? request.onConflict,
     });
+    if (selectedSettings?.provider === "custom_gpt") {
+      db.prepare("UPDATE auto_seo_product_backups SET gpt_settings_json=? WHERE workflow_id=? AND store_id=?").run(JSON.stringify(selectedSettings), request.workflowId, request.storeId);
+    }
     db.exec("COMMIT");
     backupIds = [...backupResult.backupIds];
   } catch (dbError) {
@@ -240,6 +246,7 @@ export async function handleAutoSeoRun(
   // Only after successful COMMIT may the system hand off the same products to SEO content runner
   let downstreamStatus: "SENT" | "FAILED" = "FAILED";
   let downstreamError: string | null = null;
+  let seoProvider: "gemini" | "custom_gpt" | undefined;
 
   try {
     const seoResult = await runner({
@@ -247,8 +254,9 @@ export async function handleAutoSeoRun(
       storeId: request.storeId,
       shopDomain: request.shopDomain,
       products: request.products,
-    });
+    }, { providerSettings: selectedSettings });
 
+    seoProvider = seoResult.provider;
     if (seoResult && seoResult.success === true) {
       downstreamStatus = "SENT";
     } else {
@@ -293,6 +301,7 @@ export async function handleAutoSeoRun(
 
   return {
     workflowId: request.workflowId,
+    ...(seoProvider ? { seoProvider } : {}),
     backedUpCount: backupIds.length,
     backupIds,
     downstreamStatus,
