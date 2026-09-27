@@ -277,6 +277,7 @@ def assess_direct_ai_mockup(
     custom_checklist: list[str] | None = None,
     reference_template: Image.Image | None = None,
     edit_mask: Image.Image | None = None,
+    product_render: Path | Image.Image | None = None,
     backend: str,
     model: str,
 ) -> PrintabilityDecision:
@@ -288,6 +289,19 @@ def assess_direct_ai_mockup(
             mockup = opened.convert("RGB")
     except Exception as exc:
         return PrintabilityDecision("direct_ai_mockup", mockup_path, False, f"unreadable direct AI mockup: {exc}", {}, {})
+
+    product_render_img: Image.Image | None = None
+    if isinstance(product_render, (str, Path)):
+        p_pr = Path(product_render)
+        if p_pr.exists() and p_pr.is_file():
+            try:
+                with Image.open(p_pr) as opened_pr:
+                    product_render_img = opened_pr.convert("RGB")
+            except Exception:
+                pass
+    elif isinstance(product_render, Image.Image):
+        product_render_img = product_render.convert("RGB")
+
     metrics = {
         "reference_width": reference.width,
         "reference_height": reference.height,
@@ -295,6 +309,7 @@ def assess_direct_ai_mockup(
         "mockup_height": mockup.height,
         "image_type": image_type,
         "has_custom_checklist": bool(custom_checklist),
+        "has_product_render": product_render_img is not None,
     }
     assessment_prompt = direct_ai_mockup_prompt(
         target, pose_name=pose_name, pose_requirement=pose_requirement,
@@ -360,6 +375,11 @@ Inspect these mandatory pillars:
    - Does the product look like a real physical 3D object integrated into the room? It must have subtle ambient room shading, soft ivory room tone (not raw blinding #FFFFFF computer screen white), realistic micro-texture/pile grain, and subtle contact shadows where it touches the floor.
    - It must NOT look like a flat, unshaded white paper sticker, cardboard cutout, or raw digital plane pasted in MS Paint!
    - Is the product free of artificial bright white circular spotlights, dark grey vignettes, or dingy grey color casts? Master artwork colors and motifs must be preserved faithfully.
+5. Product Carrier, Perimeter Edges & Artwork Placement (versus GROUND_TRUTH_PRODUCT if provided):
+   - Does the product in BACKGROUND_MOCKUP match the physical product carrier, perimeter edge finish, and artwork placement of GROUND_TRUTH_PRODUCT?
+   - For example, if GROUND_TRUTH_PRODUCT has clean straight sewn edges without scallops, BACKGROUND_MOCKUP MUST NOT inherit old scalloped borders, doodle trims, or wavy frames from ORIGINAL SCENE.
+   - Artwork Placement: The artwork layout on the product must match GROUND_TRUTH_PRODUCT (e.g. centered graphic motif vs all-over wallpaper repeat; no empty white voids).
+   - Any inclusion of old scalloped borders or mismatched product carrier is an immediate failure: 'product_carrier_matched' MUST be false.
 
 Return ONLY this JSON schema:
 {
@@ -371,6 +391,7 @@ Return ONLY this JSON schema:
   "artwork_identity_preserved": boolean,
   "all_print_surfaces_replaced": boolean,
   "no_original_print_remaining": boolean,
+  "product_carrier_matched": boolean,
   "reference_geometry_preserved": boolean,
   "protected_parts_preserved": boolean,
   "surface_lighting_preserved": boolean,
@@ -384,6 +405,7 @@ SCORING RULES:
 - If the product looks like a flat unshaded white paper sticker, cardboard cutout, or lacks realistic ambient shading and depth: listing_realism_score MUST be below 50, realistic_shading_and_depth MUST be false.
 - If ANY critical background element or infographic element (size chart table, dimension arrows, text banners, background shelves, bookcases, walls) is covered, cut through, or obscured: listing_realism_score MUST be below 50, critical_content_preserved MUST be false.
 - If product shape or orientation is wrong (e.g. horizontal rug turned into vertical column): listing_realism_score MUST be below 50, product_shape_and_orientation_matched MUST be false.
+- If product carrier, edges, or artwork placement fail to match GROUND_TRUTH_PRODUCT (e.g. scalloped edges from old template are present): listing_realism_score MUST be below 50, product_carrier_matched MUST be false.
 - If there is an artificial spotlight or fake vignette: no_artificial_lighting_artifacts MUST be false.
 - Do NOT penalize or reject for covering up or removing foreground toys or models that were sitting on the old product surface.
 - Only assign score >= 70 if all criteria are fully satisfied and the mockup is a commercial listing photo.
@@ -395,7 +417,9 @@ SCORING RULES:
             assessment_prompt,
             backend=backend,
             model=model,
-            **({"reference_template": reference_template, "edit_mask": edit_mask} if reference_template is not None else {}),
+            reference_template=reference_template,
+            edit_mask=edit_mask,
+            product_render=product_render_img,
         )
     except Exception as exc:
         return PrintabilityDecision("direct_ai_mockup", mockup_path, False, f"direct AI mockup quality assessment failed: {exc}", metrics, {})
@@ -442,6 +466,7 @@ SCORING RULES:
         artwork_identity_ok = _bool(assessment.get("artwork_identity_preserved"))
         all_replaced_ok = _bool(assessment.get("all_print_surfaces_replaced"))
         no_orig_print_ok = _bool(assessment.get("no_original_print_remaining"))
+        carrier_matched = _bool(assessment.get("product_carrier_matched", True))
 
         accepted = (
             score >= 70
@@ -453,6 +478,7 @@ SCORING RULES:
             and artwork_identity_ok
             and all_replaced_ok
             and no_orig_print_ok
+            and carrier_matched
         )
     elif custom_checklist:
         # Fully dynamic evaluation based on the reference image's custom checklist
@@ -775,6 +801,7 @@ def _vision_pair_assessment(
     model: str,
     reference_template: Image.Image | None = None,
     edit_mask: Image.Image | None = None,
+    product_render: Image.Image | None = None,
 ) -> dict[str, object]:
     from google.genai import types
 
@@ -786,6 +813,13 @@ def _vision_pair_assessment(
         if edit_mask is not None:
             reference_parts.append(types.Part.from_text(text="PROJECTION MASK (for reference only: does NOT override original scene content or product orientation)"))
             reference_parts.append(image_part(edit_mask.convert("RGB")))
+        if product_render is not None:
+            reference_parts.append(types.Part.from_text(text="GROUND_TRUTH_PRODUCT (canonical POD product carrier, perimeter edge, and artwork placement)"))
+            reference_parts.append(image_part(product_render))
+    else:
+        if product_render is not None:
+            reference_parts.append(types.Part.from_text(text="GROUND_TRUTH_PRODUCT (canonical POD product carrier, perimeter edge, and artwork placement)"))
+            reference_parts.append(image_part(product_render))
     last_error: Exception | None = None
     for attempt in range(1, 4):
         try:

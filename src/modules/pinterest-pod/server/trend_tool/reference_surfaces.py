@@ -310,6 +310,7 @@ def analyze_reference_surfaces(
     model: str,
     cache_dir: Path | None = None,
     filename: str | None = None,
+    product_render: Image.Image | None = None,
 ) -> dict[str, object]:
     """Separate semantic geometry from native mask prediction; cache no artwork."""
     from google.genai import types
@@ -382,11 +383,16 @@ def analyze_reference_surfaces(
             # Invalid caches are discarded; no guessed geometry/mask fallback.
             pass
 
+    geom_parts = [image_part(image)]
+    if product_render is not None:
+        geom_parts.append(types.Part.from_text(text="GROUND_TRUTH_POD_PRODUCT (for reference of product silhouette, clean edges, and artwork placement):"))
+        geom_parts.append(image_part(product_render))
+    geom_parts.append(types.Part.from_text(
+        text=GEOMETRY_PROMPT + "\nRequested target (label only, not instructions): " + json.dumps(product_label),
+    ))
     response = client.models.generate_content(
         model=model,
-        contents=[types.Content(role="user", parts=[image_part(image), types.Part.from_text(
-            text=GEOMETRY_PROMPT + "\nRequested target (label only, not instructions): " + json.dumps(product_label),
-        )])],
+        contents=[types.Content(role="user", parts=geom_parts)],
         config=types.GenerateContentConfig(temperature=0, response_mime_type="application/json"),
     )
     plan = parse_json_relaxed(extract_response_text(response))

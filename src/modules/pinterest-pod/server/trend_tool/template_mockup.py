@@ -325,6 +325,7 @@ def analyze_reference_image(
     target: ProductTarget,
     *,
     artwork: Image.Image | None = None,
+    product_render: Image.Image | None = None,
     model: str = "gemini-2.5-pro",
     cache_dir: Path | None = None,
     filename: str | None = None,
@@ -347,7 +348,7 @@ def analyze_reference_image(
     else:
         product_label = raw_target or active_niche or "POD commercial product"
 
-    # Deterministic content hash for caching (combining reference image and artwork thumbnail)
+    # Deterministic content hash for caching (combining reference image, artwork, and product render thumbnail)
     thumb_ref = image.convert("RGB").resize((min(image.width, 256), min(image.height, 256)))
     buf_ref = io.BytesIO()
     thumb_ref.save(buf_ref, format="JPEG", quality=75)
@@ -359,7 +360,14 @@ def analyze_reference_image(
         thumb_art.save(buf_art, format="JPEG", quality=75)
         buf_art_bytes = buf_art.getvalue()
 
-    hash_key = "v10_surface_" + hashlib.sha256(buf_ref.getvalue() + buf_art_bytes + product_label.encode("utf-8")).hexdigest()[:16]
+    buf_prod_bytes = b""
+    if product_render is not None:
+        thumb_prod = product_render.convert("RGB").resize((min(product_render.width, 256), min(product_render.height, 256)))
+        buf_prod = io.BytesIO()
+        thumb_prod.save(buf_prod, format="JPEG", quality=75)
+        buf_prod_bytes = buf_prod.getvalue()
+
+    hash_key = "v11_surface_" + hashlib.sha256(buf_ref.getvalue() + buf_art_bytes + buf_prod_bytes + product_label.encode("utf-8")).hexdigest()[:16]
 
     # Pre-calibrated exact quad lookup for standard reference templates (always takes precedence over disk cache)
     calibrated = find_precalibrated_template(image, filename=filename)
@@ -437,7 +445,8 @@ def analyze_reference_image(
                         # Filter out obsolete cache entries that treated scalloped graphics as structural trim
                         form_str = str(val.get("product_form", "")).lower()
                         chrome_str = str(val.get("external_chrome_to_preserve", "")).lower()
-                        if not ("scallop" in form_str or "scallop" in chrome_str):
+                        forbidden_terms = ("scallop", "stitched black", "black stitched", "black edge binding", "black fabric edge", "black binding", "edge binding")
+                        if not any(t in form_str or t in chrome_str for t in forbidden_terms):
                             val["is_infographic"] = bool(val.get("is_infographic"))
                             val["is_plain_background"] = bool(val.get("is_plain_background", False))
                             if not (val["is_infographic"] and val["is_plain_background"]):
@@ -447,24 +456,39 @@ def analyze_reference_image(
             except Exception:
                 pass
 
+    ref_img_label = "Image 3" if product_render is not None else "Image 2"
+    ground_truth_section = ""
+    if product_render is not None:
+        ground_truth_section = """
+CRITICAL GROUND TRUTH PRODUCT GUIDANCE:
+- Image 1: Commercial master print artwork.
+- Image 2: Finished Print-on-Demand (POD) product sample (GROUND TRUTH PRODUCT).
+  Image 2 defines the exact physical carrier form, perimeter edge construction (clean cut/sewn edges with NO scalloped borders, NO extra trims), and master artwork placement!
+  The product in the final mockup MUST match Image 2 in physical silhouette, edge construction, and artwork layout.
+- Image 3: Exemplary marketing reference image (Reference Scene).
+  The product in Image 3 has an OLD PRINT, old borders, or old scalloped trims.
+  CRITICAL: All old graphics, decorative scalloped borders, and text on the product in Image 3 are strictly OLD PRINTS to be 100% eliminated and replaced.
+  Do NOT preserve old scalloped borders or old text frames from Image 3! The product carrier must match Image 2.
+"""
+
     analysis_prompt = f"""
 You are an elite creative director and commercial photographer specializing in Print-on-Demand (POD) e-commerce products ({product_label}).
-You are analyzing an exemplary commercial marketing image (Reference Image 2) to adapt it for a new {product_label} that will feature the new print artwork (Image 1).
-
+You are analyzing an exemplary commercial marketing image ({ref_img_label}) to adapt it for a new {product_label} that will feature the new print artwork (Image 1).
+{ground_truth_section}
 Apply the universal principles of Semantic Physics, Product Geometry, and Object-Print Separation:
 1. MANDATORY PRODUCT FORM FACTOR & SILHOUETTE LOCK:
-   - Identify the EXACT physical carrier and geometry in Image 2 (e.g. structured satchel / handbag with dual short rolled top-handles, woven plush throw blanket, rectangular floor rug, ceramic mug).
-   - NEVER alter, distort, or misclassify the product form (e.g. if Image 2 shows a structured top-handle handbag/satchel with short rolled handles, you MUST NEVER call it or describe it as a tote bag, shoulder bag, or bowler bag; do NOT lengthen handles into shoulder straps).
+   - Identify the EXACT physical carrier and geometry in {ref_img_label} (e.g. structured satchel / handbag with dual short rolled top-handles, woven plush throw blanket, rectangular floor rug, ceramic mug).
+   - NEVER alter, distort, or misclassify the product form (e.g. if {ref_img_label} shows a structured top-handle handbag/satchel with short rolled handles, you MUST NEVER call it or describe it as a tote bag, shoulder bag, or bowler bag; do NOT lengthen handles into shoulder straps).
    - Non-printed structural parts (handles, zippers, straps, buckles, hardware, lining) MUST be preserved in their exact style, color, and finish.
    - CRITICAL FOR FLAT SURFACE / SOFT GOODS POD PRODUCTS (rugs, blankets, mats, pillows): Any graphic border illustration, scalloped rim, doodle frame, or printed pattern on the surface is OLD PRINT GRAPHICS and must be 100% eliminated and replaced. Do NOT misclassify graphic borders, scalloped rims, or doodle frames as structural edge trim! The printable canvas covers the ENTIRE product face right up to where it meets the floor/background.
 
 2. HUMAN ANATOMY & MODEL INTERACTION:
    - If human models, hands, or limbs are visible holding or interacting with the product:
      - The hands, fingers, and wrists MUST be natural and anatomically flawless: exactly 5 distinct fingers, natural joint articulation, relaxed wrists, no dislocated joints, no floating handles.
-     - The model's exact pose, grip, arm position, and clothing from Image 2 must be preserved faithfully.
+     - The model's exact pose, grip, arm position, and clothing from {ref_img_label} must be preserved faithfully.
 
 3. SCENE CLASSIFICATION (INFOGRAPHIC STUDIO SPEC SHEET vs. PHOTOGRAPHIC LIFESTYLE SCENE):
-   - You MUST accurately classify Image 2 into one of two categories:
+   - You MUST accurately classify {ref_img_label} into one of two categories:
      a) PHOTOGRAPHIC LIFESTYLE SCENE: An authentic real-world scene (e.g. living room, bedroom, patio, street scene, tabletop with flowers/decorations, model in an environment).
         - Set "is_infographic": false
         - Set "is_plain_background": false
@@ -472,7 +496,7 @@ Apply the universal principles of Semantic Physics, Product Geometry, and Object
      b) INFOGRAPHIC / STUDIO SPEC SHEET: A commercial catalog specification sheet or product diagram on a plain/solid studio backdrop (white, light gray, solid uniform studio color) featuring graphic text banners, typography callouts, feature arrows, or multi-panel detail insets (e.g. 'PRODUCT DISPLAY', 'CAN BE CARRIED OR LIFTED', 'Exquisite Zipper', feature callout tags).
         - Set "is_infographic": true
         - Set "is_plain_background": true (only if the background is a solid/plain studio color)
-        - "product_instances": list of objects for each product instance shown in Image 2:
+        - "product_instances": list of objects for each product instance shown in {ref_img_label}:
           [{{"instance_id": 1, "box_2d": [ymin, xmin, ymax, xmax], "position": "top-left", "pose_and_presentation": "held by short rolled top-handle in hand from left"}}]
         - "infographic_text_elements": list of graphic text banners, headers, callouts, and logos with exact text, styling, location, and bounding box:
           [{{"element_id": "banner_1", "banner_text": "CAN BE CARRIED OR LIFTED", "element_type": "banner", "position": "bottom-left horizontal ribbon", "visual_style": "yellow rectangular banner with bold black lettering", "box_2d": [ymin, xmin, ymax, xmax]}}]
@@ -481,11 +505,11 @@ Apply the universal principles of Semantic Physics, Product Geometry, and Object
         - "chrome_boxes_norm_0_1000": list of normalized bounding boxes [ymin, xmin, ymax, xmax] for graphic text banners, headers, callout tags, and logos strictly OUTSIDE the product area. IMPORTANT: When detecting bounding boxes for graphic banners, ribbons, or headers, ensure the box completely encloses the entire banner graphic and its full text without truncating any words or letters, and strictly excludes adjacent product surfaces.
    - MANDATORY INSTRUCTION FOR 'generation_directive':
      - If "is_infographic" is true: Instruct the generative model to render the ENTIRE infographic spec sheet directly end-to-end:
-       'Generate a high-resolution commercial infographic product specification sheet based on the exact composition and multi-panel / multi-view layout in Image 2. Render all graphic banners, headers, and text callouts directly with their exact wording and styling in crisp, legible typography. Position each product instance strictly according to its spatial anchor. Keep all exclusion zones (banner areas) completely free of product occlusion. Completely replace the old printed graphics on every product instance with the new artwork from Image 1, conforming to realistic 3D depth and material texture. Ensure 5-finger anatomical precision on hands and zero visual artifacts.'
-     - If "is_infographic" is false (lifestyle scene): Explicitly instruct the generative model: 'Render a cohesive, seamless photographic lifestyle photograph. Faithfully preserve the room architecture, walls, lighting, background furniture, and decorative props from Image 2, and seamlessly integrate the product with the new artwork from Image 1 with realistic contact shadows, natural material texture, and coherent ambient illumination.'
+       'Generate a high-resolution commercial infographic product specification sheet based on the exact composition and multi-panel / multi-view layout in {ref_img_label}. Render all graphic banners, headers, and text callouts directly with their exact wording and styling in crisp, legible typography. Position each product instance strictly according to its spatial anchor. Keep all exclusion zones (banner areas) completely free of product occlusion. Completely replace the old printed graphics on every product instance with the new artwork from Image 1, conforming to realistic 3D depth and material texture. Ensure 5-finger anatomical precision on hands and zero visual artifacts.'
+     - If "is_infographic" is false (lifestyle scene): Explicitly instruct the generative model: 'Render a cohesive, seamless photographic lifestyle photograph. Faithfully preserve the room architecture, walls, lighting, background furniture, and decorative props from {ref_img_label}, and seamlessly integrate the product with the new artwork from Image 1 with realistic contact shadows, natural material texture, and coherent ambient illumination.'
 
 4. PRIOR SURFACE PRINT ELIMINATION (Zero Bleed-Through):
-   - ANY graphic, illustration, motif, scalloped border, doodle rim, or old base pattern printed on the old product in Image 2 must be 100% eliminated and replaced edge-to-edge with the new artwork from Image 1.
+   - ANY graphic, illustration, motif, scalloped border, doodle rim, or old base pattern printed on the old product in {ref_img_label} must be 100% eliminated and replaced edge-to-edge with the new artwork from Image 1.
    - For flat surface POD products (rugs, blankets, mats), the printable canvas extends edge-to-edge across the entire product surface right up to the floor boundary. The new print must cover the printable product surfaces with edge-to-edge coverage, realistic material grain, and accurate 3D perspective.
 
 5. ZERO VISUAL ARTIFACTS:
@@ -504,13 +528,13 @@ Analyze the images deeply and return JSON only in English with these exact keys:
   "chrome_boxes_norm_0_1000": [],
   "product_form": "Precise description of the physical product form and hardware geometry",
   "external_chrome_to_preserve": "Specific visual elements outside the printable surface to keep intact (background, text banners, hardware, human hands)",
-  "prior_surface_print_to_eliminate": "Specific graphic motifs, old illustrations, old printed borders (including scalloped borders, doodle rims, framing lines), or old colors from Image 2 to eliminate 100%",
+  "prior_surface_print_to_eliminate": f"Specific graphic motifs, old illustrations, old printed borders (including scalloped borders, doodle rims, framing lines), or old colors from {ref_img_label} to eliminate 100%",
   "product_canvas_area": "Precise description of the physical product surfaces that serve as the canvas for the new artwork. For flat surface POD products (rugs, mats, blankets), this MUST be the entire product face edge-to-edge right to the floor boundary (including any area previously covered by scalloped graphic borders or doodle frames)",
-  "generation_directive": "A complete, self-contained prompt for the generative image model. Instruct it step-by-step to compose the image using Image 1 (new artwork) and Image 2 (reference composition). Explicitly enforce the exact product silhouette (e.g. structured satchel with short handles, NOT a tote), 5-finger anatomical precision, zero dislocated wrists, zero colored dots, and exact scene preservation.",
+  "generation_directive": f"A complete, self-contained prompt for the generative image model. Instruct it step-by-step to compose the image using Image 1 (new artwork) and {ref_img_label} (reference composition). Explicitly enforce the exact product silhouette (matching Image 2 ground truth if supplied), 5-finger anatomical precision, zero dislocated wrists, zero colored dots, and exact scene preservation.",
   "qa_checklist": [
-    "criterion 1: Verify product silhouette and geometry exactly match Image 2",
+    f"criterion 1: Verify product silhouette and geometry exactly match {ref_img_label}",
     "criterion 2: Verify the new artwork is rendered across the designated product canvas area",
-    "criterion 3: Verify zero leftover graphic artifacts, scalloped borders, or bleed-through from Image 2 appear",
+    f"criterion 3: Verify zero leftover graphic artifacts, scalloped borders, or bleed-through from {ref_img_label} appear",
     "criterion 4: Verify human hands and anatomy are natural and flawless if present"
   ]
 }}
@@ -536,17 +560,13 @@ printable surfaces. Do not substitute bounding boxes for printable boundaries.
 If any surface cannot be accurately mapped, mark coverage false. The caller will
 require review instead of publishing an uncertain composite. No niche defaults.
 """
+    contents_parts = []
     if artwork is not None:
-        contents_parts = [
-            image_part(artwork, max_side=1024, max_bytes=2_000_000),
-            image_part(image, max_side=1024, max_bytes=2_000_000),
-            types.Part.from_text(text=analysis_prompt),
-        ]
-    else:
-        contents_parts = [
-            image_part(image, max_side=1024, max_bytes=2_000_000),
-            types.Part.from_text(text=analysis_prompt),
-        ]
+        contents_parts.append(image_part(artwork, max_side=1024, max_bytes=2_000_000))
+    if product_render is not None:
+        contents_parts.append(image_part(product_render, max_side=1024, max_bytes=2_000_000))
+    contents_parts.append(image_part(image, max_side=1024, max_bytes=2_000_000))
+    contents_parts.append(types.Part.from_text(text=analysis_prompt))
 
     last_error: Exception | None = None
     for attempt in range(1, 4):
@@ -769,6 +789,7 @@ def build_direct_ai_mockup(
     variant: int = 1,
     progress: Any = None,
     room_template: Path | Image.Image | None = None,
+    product_render: Path | Image.Image | None = None,
     **kwargs: Any,
 ) -> TemplateMockupRecord:
     """Project onto supplied references; generate new scenes only without a reference."""
@@ -792,6 +813,34 @@ def build_direct_ai_mockup(
             artwork = ImageOps.exif_transpose(opened).convert("RGB")
     except Exception as exc:
         return TemplateMockupRecord(print_path, None, None, None, model, pose.name, "failed", f"unreadable print artwork: {exc}", {}, "direct_ai", variant)
+
+    product_render_img: Image.Image | None = None
+    if isinstance(product_render, (str, Path)):
+        p_pr = Path(product_render)
+        if p_pr.exists() and p_pr.is_file():
+            try:
+                with Image.open(p_pr) as opened_pr:
+                    product_render_img = ImageOps.exif_transpose(opened_pr).convert("RGB")
+            except Exception as pr_exc:
+                if progress:
+                    log(progress, f"Note: could not open product render {p_pr.name}: {pr_exc}")
+    elif isinstance(product_render, Image.Image):
+        product_render_img = ImageOps.exif_transpose(product_render).convert("RGB")
+    elif product_render is None:
+        base_stem = re.sub(r'_\d+x\d+.*$', '', print_path.stem)
+        candidate_paths = [
+            output_dir.parent / "rendered_products" / f"{base_stem}_product.png",
+            output_dir.parent / "product_cutouts" / f"{base_stem}_product.png",
+            output_dir / f"{base_stem}_product.png",
+        ]
+        for cp in candidate_paths:
+            if cp.exists() and cp.is_file():
+                try:
+                    with Image.open(cp) as opened_pr:
+                        product_render_img = ImageOps.exif_transpose(opened_pr).convert("RGB")
+                    break
+                except Exception:
+                    pass
 
     room_img: Image.Image | None = None
     template_filename: str | None = None
@@ -873,6 +922,7 @@ def build_direct_ai_mockup(
                 model=quality_model,
                 cache_dir=cache_dir,
                 filename=template_filename,
+                product_render=product_render_img,
             )
             if progress and reference_analysis:
                 scene_label = reference_analysis.get("scene_title", "Reference Shot")
@@ -886,6 +936,7 @@ def build_direct_ai_mockup(
                     room_img,
                     target,
                     artwork=artwork,
+                    product_render=product_render_img,
                     model=quality_model,
                     cache_dir=cache_dir,
                     filename=template_filename,
@@ -927,6 +978,7 @@ def build_direct_ai_mockup(
                         pose,
                         correction=correction,
                         room_template=room_img,
+                        product_render=product_render_img,
                         reference_analysis=reference_analysis,
                         hybrid_mode=force_hybrid,
                     )
@@ -957,6 +1009,7 @@ def build_direct_ai_mockup(
                         custom_checklist=custom_qa_checklist,
                         image_type="REFERENCE_TEMPLATE",
                         reference_template=room_img,
+                        product_render=product_render_img,
                         backend=backend,
                         model=quality_model,
                     )
@@ -1045,6 +1098,7 @@ def build_direct_ai_mockup(
                 quality = assess_direct_ai_mockup(
                     print_path, candidate_path, target, backend=backend, model=quality_model,
                     image_type="REFERENCE_TEMPLATE", reference_template=room_img, edit_mask=edit_mask,
+                    product_render=product_render_img,
                 )
                 metrics["mockup_quality"] = quality.to_dict()
 
@@ -1097,6 +1151,7 @@ def build_direct_ai_mockup(
                 pose,
                 correction=correction,
                 room_template=room_img,
+                product_render=product_render_img,
                 reference_analysis=reference_analysis,
                 hybrid_mode=force_hybrid,
             )
@@ -1126,6 +1181,7 @@ def build_direct_ai_mockup(
                 require_matching_pillowcases=pose.name == "bed_full_showcase",
                 custom_checklist=custom_qa_checklist,
                 image_type="DYNAMIC_REFERENCE" if (reference_analysis or room_img is not None) else "ROOM_SCENE",
+                product_render=product_render_img,
                 backend=backend,
                 model=quality_model,
             )
@@ -1392,6 +1448,7 @@ def generate_direct_ai_lifestyle(
     *,
     correction: str = "",
     room_template: Image.Image | None = None,
+    product_render: Image.Image | None = None,
     reference_analysis: dict[str, Any] | None = None,
     hybrid_mode: bool = False,
 ) -> Image.Image:
@@ -1407,6 +1464,8 @@ def generate_direct_ai_lifestyle(
         image_config=types.ImageConfig(aspect_ratio="1:1", image_size="2K", output_mime_type="image/png"),
     )
     parts = [image_part(artwork, max_side=1536, max_bytes=3_500_000)]
+    if product_render is not None:
+        parts.append(image_part(product_render, max_side=1536, max_bytes=3_500_000))
     if room_template is not None:
         parts.append(image_part(room_template, max_side=1536, max_bytes=3_500_000))
     prompt_str = direct_ai_lifestyle_prompt(
@@ -1414,6 +1473,7 @@ def generate_direct_ai_lifestyle(
         pose,
         correction,
         has_room_template=room_template is not None,
+        has_product_render=product_render is not None,
         reference_analysis=reference_analysis,
         hybrid_mode=hybrid_mode,
     )
@@ -1447,6 +1507,7 @@ def direct_ai_lifestyle_prompt(
     correction: str,
     *,
     has_room_template: bool = False,
+    has_product_render: bool = False,
     reference_analysis: dict[str, Any] | None = None,
     hybrid_mode: bool = False,
 ) -> str:
@@ -1533,6 +1594,19 @@ def direct_ai_lifestyle_prompt(
             "Keep any lettering crisp, readable, and elegant. Absolutely no crowded micro-repeats, squished icons, or garbled text on the pillows."
         )
 
+    room_ref = "Image 3" if has_product_render else "Image 2"
+
+    product_ground_truth_lock = ""
+    if has_product_render:
+        product_ground_truth_lock = (
+            "- STRICT GROUND TRUTH PRODUCT CARRIER & EDGE LOCK (CRITICAL - IMAGE 2):\n"
+            "  Image 2 depicts the canonical, finished physical Print-on-Demand (POD) product item that the customer will receive.\n"
+            "  The rendered product in the scene MUST faithfully replicate Image 2:\n"
+            "  1. Exact Physical Perimeter & Edges: If Image 2 shows clean straight sewn edges, you MUST NOT inherit or draw any old scalloped borders, wavy frames, or decorative trims from Image 3!\n"
+            "  2. Master Artwork Placement: The artwork layout, centering, scale, and motif positioning on the product MUST match Image 2 (e.g. centered graphic motif with clean margins, NOT repeating wallpaper patterns, and NO empty white voids/boxes in the middle).\n"
+            "  3. Perimeter Construction: Discard any old graphic borders, scalloped rims, or doodle frames from Image 3. The new product MUST look identical to Image 2 placed seamlessly into the room of Image 3.\n"
+        )
+
     if has_room_template and reference_analysis:
         visual_concept = reference_analysis.get("visual_concept", "")
         preserve = reference_analysis.get("external_chrome_to_preserve") or reference_analysis.get("elements_to_preserve", "")
@@ -1585,8 +1659,8 @@ def direct_ai_lifestyle_prompt(
 
             if hybrid_mode:
                 banner_lock = (
-                    "- STRICT NO-TEXT-BANNER MANDATE (CRITICAL - AVOID DUPLICATE BANNER ARTIFACTS): "
-                    "Image 2 is an infographic / studio spec sheet with graphic text banners, headers, callouts, or typography. "
+                    f"- STRICT NO-TEXT-BANNER MANDATE (CRITICAL - AVOID DUPLICATE BANNER ARTIFACTS): "
+                    f"{room_ref} is an infographic / studio spec sheet with graphic text banners, headers, callouts, or typography. "
                     "You MUST NOT DRAW, RENDER, PAINT, OR HALLUCINATE ANY TEXT BANNERS, HEADERS, CALLOUTS, LABELS, OR TEXT BOXES on the canvas or background! "
                     "Leave all banner and header background areas around the product completely plain, solid, uniform, and empty (e.g. pure clean studio background). "
                     "Native high-resolution vector text banners and infographic chrome will be composited in post-processing. "
@@ -1595,36 +1669,36 @@ def direct_ai_lifestyle_prompt(
                     f"{exclusion_section}\n"
                 )
                 zero_hallucination_rule = (
-                    "- ZERO HALLUCINATIONS / STUDIO PRESERVATION: You MUST preserve 100% of the studio backdrop, product layout, and lighting from Image 2 (EXCEPT text banners, callouts, or typography which MUST NOT be painted on canvas). Do NOT invent a different room, sofa, or street!\n"
+                    f"- ZERO HALLUCINATIONS / STUDIO PRESERVATION: You MUST preserve 100% of the studio backdrop, product layout, and lighting from {room_ref} (EXCEPT text banners, callouts, or typography which MUST NOT be painted on canvas). Do NOT invent a different room, sofa, or street!\n"
                 )
             else:
                 banner_lock = (
-                    "- STRICT INFOGRAPHIC SPEC SHEET & TYPOGRAPHY MANDATE: "
-                    "Image 2 is a commercial infographic / studio spec sheet with graphic text banners, headers, callouts, or multi-panel layouts. "
+                    f"- STRICT INFOGRAPHIC SPEC SHEET & TYPOGRAPHY MANDATE: "
+                    f"{room_ref} is a commercial infographic / studio spec sheet with graphic text banners, headers, callouts, or multi-panel layouts. "
                     "Render the entire infographic directly in one cohesive image with crisp, sharp, legible typography for all banners, headers, and callouts. "
-                    "Faithfully reproduce the exact multi-view / multi-panel composition of Image 2 with zero cut-and-paste seams.\n"
+                    f"Faithfully reproduce the exact multi-view / multi-panel composition of {room_ref} with zero cut-and-paste seams.\n"
                     f"{spatial_section}"
                     f"{text_section}"
                     f"{exclusion_section}\n"
                 )
                 zero_hallucination_rule = (
-                    "- ZERO HALLUCINATIONS / STUDIO PRESERVATION: You MUST preserve 100% of the studio backdrop, product layout, and lighting from Image 2. "
+                    f"- ZERO HALLUCINATIONS / STUDIO PRESERVATION: You MUST preserve 100% of the studio backdrop, product layout, and lighting from {room_ref}. "
                     "Render all graphic banners and text callouts with clean, crisp typography. Do NOT invent a different room, sofa, or street!\n"
                 )
         else:
             zero_hallucination_rule = (
-                "- ZERO HALLUCINATIONS / SEAMLESS LIFESTYLE PRESERVATION: Image 2 is an authentic photographic lifestyle scene. "
-                "You MUST faithfully preserve 100% of the room/environment context: the exact room architecture, walls, flooring, ambient lighting, "
-                "surrounding furniture, and decorative props from Image 2. Do NOT invent a different room, sofa, or street!\n"
-                f"- SEAMLESS PRODUCT INTEGRATION: Seamlessly render the {product} into the exact physical context of Image 2. "
+                f"- ZERO HALLUCINATIONS / SEAMLESS LIFESTYLE PRESERVATION: {room_ref} is an authentic photographic lifestyle scene. "
+                f"You MUST faithfully preserve 100% of the room/environment context: the exact room architecture, walls, flooring, ambient lighting, "
+                f"surrounding furniture, and decorative props from {room_ref}. Do NOT invent a different room, sofa, or street!\n"
+                f"- SEAMLESS PRODUCT INTEGRATION: Seamlessly render the {product} into the exact physical context of {room_ref}. "
                 "The product must be integrated naturally with realistic contact shadows, surface reflections, natural depth of field, and ambient light matching the room.\n"
             )
 
         silhouette_rule = f"- Exact Product Silhouette & Form: {product_form}\n" if product_form else ""
         if is_bag:
             bag_lock = (
-                "- STRICT BAG SILHOUETTE & HARDWARE LOCK: Preserve the exact physical bag shape, proportions, and handle construction from Image 2. "
-                "If Image 2 shows a structured handbag / satchel with dual short rolled top-handles, DO NOT draw a tote bag, DO NOT draw a bowler bag, "
+                f"- STRICT BAG SILHOUETTE & HARDWARE LOCK: Preserve the exact physical bag shape, proportions, and handle construction from {room_ref}. "
+                f"If {room_ref} shows a structured handbag / satchel with dual short rolled top-handles, DO NOT draw a tote bag, DO NOT draw a bowler bag, "
                 "and DO NOT lengthen the handles into shoulder straps.\n"
             )
         else:
@@ -1640,50 +1714,66 @@ def direct_ai_lifestyle_prompt(
         if is_infographic_template:
             if hybrid_mode:
                 product_rule = (
-                    f"STRICT INFOGRAPHIC TEMPLATE PRESERVATION MANDATE: Render the new print artwork from Image 1 onto the product carrier shown in Image 2. "
-                    f"Faithfully reproduce its motifs, colors, and layout across the surface with realistic material texture, folds, and seams as defined in Image 2. "
-                    f"Zero remnants or bleed-through of any old patterns from Image 2."
+                    f"STRICT INFOGRAPHIC TEMPLATE PRESERVATION MANDATE: Render the new print artwork from Image 1 onto the product carrier shown in {room_ref}. "
+                    + ("Replicate the exact product carrier and perimeter edges from Image 2. " if has_product_render else "")
+                    + f"Faithfully reproduce its motifs, colors, and layout across the surface with realistic material texture, folds, and seams as defined in {room_ref}. "
+                    f"Zero remnants or bleed-through of any old patterns from {room_ref}."
                 )
                 listing_requirement = (
-                    f"STRICT TEMPLATE PRESERVATION: Retain the composition, product geometry, and clean background from Image 2 ({scene_title}). DO NOT generate text banners on canvas (banners are composited post-generation). Replace only the designated product surface."
+                    f"STRICT TEMPLATE PRESERVATION: Retain the composition, product geometry, and clean background from {room_ref} ({scene_title}). DO NOT generate text banners on canvas (banners are composited post-generation). Replace only the designated product surface."
                 )
                 constraints = (
                     "STRICT NO TEXT BANNERS: Absolutely zero drawn text banners, zero text boxes, "
                     "no 'CAN BE CARRIED OR LIFTED' or header lettering painted on the canvas. Leave all background areas around product plain, clean, and empty. "
-                    "Preserve all physical elements from Image 2. Retain exact product silhouette. "
-                    "Anatomically perfect hands (5 fingers). Absolutely zero stray colored dots (purple/green dots), "
-                    "no superimposed photographer watermarks, no bleed-through of prior prints from Image 2."
+                    f"Preserve all physical elements from {room_ref}. "
+                    + ("Replicate exact product carrier from Image 2. " if has_product_render else "Retain exact product silhouette. ")
+                    + "Anatomically perfect hands (5 fingers). Absolutely zero stray colored dots (purple/green dots), "
+                    f"no superimposed photographer watermarks, no bleed-through of prior prints from {room_ref}."
                 )
                 composition_rule = (
-                    "Composition: Match the exact framing, perspective, and arrangement of Image 2. Replace only the product carrier surface. Leave infographic text banner areas clean, plain, and empty."
+                    f"Composition: Match the exact framing, perspective, and arrangement of {room_ref}. Replace only the product carrier surface. Leave infographic text banner areas clean, plain, and empty."
                 )
             else:
                 product_rule = (
-                    f"STRICT INFOGRAPHIC SPEC SHEET MANDATE: Render a complete commercial product infographic matching the exact multi-panel / multi-view layout of Image 2. "
-                    f"You MUST render the new print artwork from Image 1 onto EVERY SINGLE product instance shown in Image 2 without exception! "
-                    f"Completely replace and eliminate all prior graphics or motifs ({prior_eliminate}) across ALL instances. "
+                    f"STRICT INFOGRAPHIC SPEC SHEET MANDATE: Render a complete commercial product infographic matching the exact multi-panel / multi-view layout of {room_ref}. "
+                    f"You MUST render the new print artwork from Image 1 onto EVERY SINGLE product instance shown in {room_ref} without exception! "
+                    + ("Replicate the physical carrier and edge construction from Image 2 across all instances. " if has_product_render else "")
+                    + f"Completely replace and eliminate all prior graphics or motifs ({prior_eliminate}) across ALL instances. "
                     f"Faithfully reproduce all graphic text banners, headers, and callouts with crisp, legible typography and authentic studio layout. "
-                    f"Zero remnants or bleed-through of any old patterns from Image 2."
+                    f"Zero remnants or bleed-through of any old patterns from {room_ref}."
                 )
                 listing_requirement = (
-                    f"STRICT TEMPLATE PRESERVATION: Retain the composition, product geometry, typography, and clean background from Image 2 ({scene_title}). "
+                    f"STRICT TEMPLATE PRESERVATION: Retain the composition, product geometry, typography, and clean background from {room_ref} ({scene_title}). "
                     f"Replace all old surface prints across ALL product instances with the new artwork from Image 1."
                 )
                 constraints = (
-                    "Preserve all physical elements and graphic infographic banners from Image 2. Retain exact product silhouette. "
-                    "Replace all old product surface graphics across ALL product instances with the new artwork from Image 1. "
+                    f"Preserve all physical elements and graphic infographic banners from {room_ref}. "
+                    + ("Replicate exact product carrier from Image 2. " if has_product_render else "Retain exact product silhouette. ")
+                    + "Replace all old product surface graphics across ALL product instances with the new artwork from Image 1. "
                     "Render all text banners crisply and legibly without garbled characters. "
                     "Anatomically perfect hands (5 fingers). Absolutely zero stray colored dots (purple/green dots), "
-                    "no superimposed photographer watermarks, no bleed-through of prior prints from Image 2."
+                    f"no superimposed photographer watermarks, no bleed-through of prior prints from {room_ref}."
                 )
                 composition_rule = (
-                    "Composition: Match the exact framing, perspective, and multi-view arrangement of Image 2. Replace the product carrier surfaces on all instances with Image 1."
+                    f"Composition: Match the exact framing, perspective, and multi-view arrangement of {room_ref}. Replace the product carrier surfaces on all instances with Image 1."
+                )
+            if has_product_render:
+                ground_truth_intro_info = (
+                    f"- Image 1: Commercial print artwork.\n"
+                    f"- Image 2: Finished POD product sample (GROUND TRUTH PRODUCT to reproduce across instances).\n"
+                    f"- Image 3: EXACT reference studio template to preserve and adapt.\n"
+                    f"{zero_hallucination_rule}"
+                    f"{product_ground_truth_lock}"
+                )
+            else:
+                ground_truth_intro_info = (
+                    f"- Image 1: Commercial print artwork.\n"
+                    f"- Image 2: EXACT reference studio template to preserve and adapt.\n"
+                    f"{zero_hallucination_rule}"
                 )
             scene_desc = (
                 f"CRITICAL MANDATORY TEMPLATE REPLACEMENT DIRECTIVE ({scene_title}):\n"
-                f"- Image 1: Commercial print artwork.\n"
-                f"- Image 2: EXACT reference studio template to preserve and adapt.\n"
-                f"{zero_hallucination_rule}"
+                f"{ground_truth_intro_info}"
                 f"- External Context/Infographic Chrome to Preserve: {preserve}\n"
                 f"- Product Printable Canvas Area: {placement_zone}\n"
                 f"{silhouette_rule}"
@@ -1692,21 +1782,40 @@ def direct_ai_lifestyle_prompt(
                 f"{banner_lock}"
                 f"{eliminate_section}"
                 f"- Tailored Synthesis Directive:\n{directive}\n"
-                f"- Obey visual physics: Maintain realistic contact shadows, depth-of-field, and lighting temperature from Image 2."
+                f"- Obey visual physics: Maintain realistic contact shadows, depth-of-field, and lighting temperature from {room_ref}."
             )
-            placement = placement_zone or f"Positioned exactly as demonstrated in Image 2 ({scene_title})."
+            placement = placement_zone or f"Positioned exactly as demonstrated in {room_ref} ({scene_title})."
         else:
-            product_rule = (
-                f"STRICT PHOTOGRAPHIC LIFESTYLE INTEGRATION MANDATE: Seamlessly integrate the {product} into the authentic lifestyle scene shown in Image 2. "
-                f"Render the new print artwork from Image 1 across the product surface with realistic 3D volume, authentic material grain, natural cloth/leather folds, "
-                f"and flawless lighting coherence matching the room environment in Image 2. Zero bleed-through of old graphics."
-            )
+            if has_product_render:
+                product_rule = (
+                    f"STRICT PHOTOGRAPHIC LIFESTYLE INTEGRATION MANDATE: Seamlessly integrate the {product} matching Image 2 into the authentic lifestyle scene shown in {room_ref}. "
+                    f"Render the new print artwork from Image 1 across the product surface with realistic 3D volume, authentic material grain, natural cloth/leather folds, "
+                    f"and flawless lighting coherence matching the room environment in {room_ref}. Replicate the perimeter edges and artwork placement of Image 2. Zero bleed-through of old graphics from {room_ref}."
+                )
+            else:
+                product_rule = (
+                    f"STRICT PHOTOGRAPHIC LIFESTYLE INTEGRATION MANDATE: Seamlessly integrate the {product} into the authentic lifestyle scene shown in Image 2. "
+                    f"Render the new print artwork from Image 1 across the product surface with realistic 3D volume, authentic material grain, natural cloth/leather folds, "
+                    f"and flawless lighting coherence matching the room environment in Image 2. Zero bleed-through of old graphics."
+                )
+            if has_product_render:
+                ground_truth_intro = (
+                    f"- Image 1: Commercial print artwork.\n"
+                    f"- Image 2: Finished POD product sample (GROUND TRUTH PRODUCT to reproduce in the scene).\n"
+                    f"- Image 3: Authentic lifestyle photograph to preserve.\n"
+                    f"{zero_hallucination_rule}"
+                    f"{product_ground_truth_lock}"
+                )
+            else:
+                ground_truth_intro = (
+                    f"- Image 1: Commercial print artwork.\n"
+                    f"- Image 2: Authentic lifestyle photograph to preserve.\n"
+                    f"{zero_hallucination_rule}"
+                )
             scene_desc = (
                 f"CRITICAL MANDATORY LIFESTYLE SCENE PRESERVATION ({scene_title}):\n"
-                f"- Image 1: Commercial print artwork.\n"
-                f"- Image 2: Authentic lifestyle photograph to preserve.\n"
-                f"{zero_hallucination_rule}"
-                f"- Room Environment and Context to Preserve: {preserve or 'Preserve all walls, furniture, flooring, decor, and props from Image 2.'}\n"
+                f"{ground_truth_intro}"
+                f"- Room Environment and Context to Preserve: {preserve or f'Preserve all walls, furniture, flooring, decor, and props from {room_ref}.'}\n"
                 f"- Product Placement Area: {placement_zone}\n"
                 f"{silhouette_rule}"
                 f"{bag_lock}"
@@ -1715,19 +1824,22 @@ def direct_ai_lifestyle_prompt(
                 f"- Tailored Synthesis Directive:\n{directive}\n"
                 f"- Visual physics & cohesion: Obey the room's natural lighting, casting realistic soft contact shadows onto nearby surfaces. Ensure seamless photographic coherence."
             )
-            placement = placement_zone or f"Positioned naturally in the scene as shown in Image 2 ({scene_title})."
+            placement = placement_zone or f"Positioned naturally in the scene as shown in {room_ref} ({scene_title})."
             listing_requirement = (
-                f"STRICT LIFESTYLE PRESERVATION: Retain 100% of the room environment, decor, furniture, and lighting from Image 2 ({scene_title}). Seamlessly render the product featuring the new artwork into the room."
+                f"STRICT LIFESTYLE PRESERVATION: Retain 100% of the room environment, decor, furniture, and lighting from {room_ref} ({scene_title}). "
+                f"Seamlessly render the product featuring the new artwork into the room"
+                + (" matching the Image 2 product carrier and edges." if has_product_render else ".")
             )
             constraints = (
-                "Preserve all room environment and background objects from Image 2. Retain exact product silhouette. "
-                "Anatomically perfect hands (5 fingers). Absolutely zero stray colored dots (purple/green dots), "
-                "no garbled lettering, no superimposed photographer watermarks, no bleed-through of prior prints from Image 2."
+                f"Preserve all room environment and background objects from {room_ref}. "
+                + ("Replicate exact product silhouette and clean edges from Image 2 (no scalloped edges from Image 3). " if has_product_render else "Retain exact product silhouette. ")
+                + f"Anatomically perfect hands (5 fingers). Absolutely zero stray colored dots (purple/green dots), "
+                f"no garbled lettering, no superimposed photographer watermarks, no bleed-through of prior prints from {room_ref}."
             )
             composition_rule = (
-                "Composition: Match the exact camera angle, perspective, depth of field, and room arrangement of Image 2. Seamlessly blend the product into the scene."
+                f"Composition: Match the exact camera angle, perspective, depth of field, and room arrangement of {room_ref}. Seamlessly blend the product into the scene."
             )
-        coordinated_products = "None (adhere strictly to the product items present in Image 2)."
+        coordinated_products = f"None (adhere strictly to the product items present in {room_ref})."
 
         return f"""
 Use case: final ecommerce lifestyle product photograph adapting a reference template.
@@ -1739,21 +1851,39 @@ Coordinated products: {coordinated_products}
 Listing-shot requirement: {listing_requirement}
 {composition_rule}
 Constraints: {constraints}
-Retry correction: {correction or "None. Strictly preserve Image 2 layout and replace only the product artwork."}
+Retry correction: {correction or f"None. Strictly preserve {room_ref} layout and replace only the product artwork."}
 """.strip()
     elif has_room_template:
-        scene_desc = (
-            "CRITICAL REFERENCE ROOM TEMPLATE COMPOSITING INSTRUCTION:\n"
-            "- You are provided with TWO reference images: Image 1 is the print artwork. Image 2 is the exact reference scene photograph.\n"
-            "- PRESERVE THE ROOM EXACTLY: You MUST retain the exact walls, flooring, furniture layout, camera perspective, ambient color temperature, and lighting direction from Image 2.\n"
-            "- Do NOT generate a random new room. Keep the exact furniture geometry and ambient room lighting from Image 2.\n"
-            f"- Seamlessly composite the {product} (faithfully displaying the print artwork from Image 1) onto the appropriate surface in Image 2, casting realistic contact shadows and obeying the room's light sources."
-        )
-        placement = pose.placement
-        listing_requirement = f"Preserve Image 2 room scene and layout. Place {product} naturally."
-        constraints = "No random room changes, no superimposed photographer watermarks."
-        coordinated_products = "None."
-        product_rule = f"Create one full-size {product} using Image 1 as the print artwork reference and composite onto Image 2."
+        if has_product_render:
+            scene_desc = (
+                "CRITICAL REFERENCE ROOM TEMPLATE COMPOSITING INSTRUCTION:\n"
+                "- You are provided with THREE images:\n"
+                "  * Image 1: Print artwork.\n"
+                "  * Image 2: Finished POD product sample (GROUND TRUTH PRODUCT).\n"
+                "  * Image 3: Exact reference scene photograph.\n"
+                "- PRESERVE THE ROOM EXACTLY: You MUST retain the exact walls, flooring, furniture layout, camera perspective, ambient color temperature, and lighting direction from Image 3.\n"
+                "- REPRODUCE GROUND TRUTH PRODUCT: The product placed in the room MUST match Image 2 in physical carrier silhouette, edge construction (clean edges, NO scallops/trims from Image 3), and artwork placement.\n"
+                "- Do NOT generate a random new room. Keep the exact furniture geometry and ambient room lighting from Image 3.\n"
+                f"- Seamlessly composite the {product} (faithfully matching Image 2) onto the appropriate surface in Image 3, casting realistic contact shadows and obeying the room's light sources."
+            )
+            placement = pose.placement
+            listing_requirement = f"Preserve Image 3 room scene and layout. Place {product} matching Image 2 naturally."
+            constraints = "No random room changes, no superimposed photographer watermarks, no scalloped borders from Image 3."
+            coordinated_products = "None."
+            product_rule = f"Place one full-size {product} matching Image 2 onto the scene in Image 3."
+        else:
+            scene_desc = (
+                "CRITICAL REFERENCE ROOM TEMPLATE COMPOSITING INSTRUCTION:\n"
+                "- You are provided with TWO reference images: Image 1 is the print artwork. Image 2 is the exact reference scene photograph.\n"
+                "- PRESERVE THE ROOM EXACTLY: You MUST retain the exact walls, flooring, furniture layout, camera perspective, ambient color temperature, and lighting direction from Image 2.\n"
+                "- Do NOT generate a random new room. Keep the exact furniture geometry and ambient room lighting from Image 2.\n"
+                f"- Seamlessly composite the {product} (faithfully displaying the print artwork from Image 1) onto the appropriate surface in Image 2, casting realistic contact shadows and obeying the room's light sources."
+            )
+            placement = pose.placement
+            listing_requirement = f"Preserve Image 2 room scene and layout. Place {product} naturally."
+            constraints = "No random room changes, no superimposed photographer watermarks."
+            coordinated_products = "None."
+            product_rule = f"Create one full-size {product} using Image 1 as the print artwork reference and composite onto Image 2."
 
         return f"""
 Use case: final ecommerce lifestyle product photograph compositing onto reference room.

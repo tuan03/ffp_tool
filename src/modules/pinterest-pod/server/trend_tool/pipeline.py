@@ -1064,6 +1064,15 @@ def run_production_from_candidates(
                         if blender_render and chosen_room is None:
                             rec = build_blender_mockup(print_file, run_dir, cur_target, pose=pose, variant=var_idx, progress=progress)
                         elif direct_render:
+                            base_stem = re.sub(r'_\d+x\d+.*$', '', print_file.stem)
+                            matching_prod_render = None
+                            for cand_p in (
+                                rendered_product_dir / f"{base_stem}_product.png",
+                                product_cutout_dir / f"{base_stem}_product.png",
+                            ):
+                                if cand_p.exists():
+                                    matching_prod_render = cand_p
+                                    break
                             rec = build_direct_ai_mockup(
                                 print_file,
                                 run_dir,
@@ -1076,6 +1085,7 @@ def run_production_from_candidates(
                                 attempts=max(1, config.task4_quality_attempts),
                                 progress=progress,
                                 room_template=chosen_room,
+                                product_render=matching_prod_render,
                             )
                         else:
                             rec = build_template_mockup(
