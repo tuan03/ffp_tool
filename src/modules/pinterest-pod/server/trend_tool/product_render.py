@@ -201,11 +201,18 @@ def get_or_create_universal_product_canvas(
                 if isinstance(v, dict):
                     fn = str(v.get("filename", "")).lower()
                     if fn == rf.name.lower() or stem in fn:
-                        # 1. Strictly penalize infographics and multi-panel spec sheets
-                        if v.get("is_infographic"):
-                            return -100
+                        text_elems = v.get("infographic_text_elements") or []
                         instances = v.get("product_instances") or []
-                        if len(instances) > 2:
+                        title_str = str(v.get("scene_title", "")).lower()
+                        concept_str = str(v.get("visual_concept", "")).lower()
+
+                        # 1. Strictly penalize multi-panel spec sheets and dense infographics (like 4-quadrant feature sheets)
+                        is_dense_infographic = (
+                            len(text_elems) >= 2
+                            or len(instances) > 2
+                            or any(k in title_str or k in concept_str for k in ("quadrant", "2x2", "spec sheet", "features infographic", "product display"))
+                        )
+                        if is_dense_infographic:
                             return -100
 
                         score = 0
@@ -214,16 +221,18 @@ def get_or_create_universal_product_canvas(
                             score += 40
                         # 3. Prefer single focused hero product
                         if len(instances) == 1:
-                            score += 50
+                            score += 60
                             inst = instances[0]
                             if isinstance(inst, dict) and inst.get("box_2d"):
                                 b2d = inst["box_2d"]
                                 center_x = (b2d[1] + b2d[3]) / 2.0
                                 if 350 <= center_x <= 650:
-                                    score += 20
+                                    score += 25
                                 area_ratio = ((b2d[2] - b2d[0]) * (b2d[3] - b2d[1])) / 1_000_000.0
                                 if 0.15 <= area_ratio <= 0.85:
-                                    score += 15
+                                    score += 25
+                        elif len(instances) == 2:
+                            score += 10
                         return score
             return 0
 
@@ -259,17 +268,22 @@ def get_or_create_universal_product_canvas(
                     except Exception:
                         pass
 
-                # Check if this specific template is an infographic or multi-panel sheet
+                # Check if this specific template is a multi-panel spec sheet infographic to skip for carrier extraction
                 is_infographic_template = False
                 cached_box_info: tuple[list[int] | None, list[int] | None] = (None, None)
 
                 if entry is not None:
                     title = str(entry.get("scene_title", "")).lower()
                     concept = str(entry.get("visual_concept", "")).lower()
-                    if entry.get("is_infographic") or any(k in title or k in concept for k in ("infographic", "spec sheet", "quadrant", "grid", "size chart", "dimension table", "product display")):
-                        is_infographic_template = True
+                    text_elems = entry.get("infographic_text_elements") or []
                     instances = entry.get("product_instances") or []
-                    if len(instances) > 2:
+
+                    is_dense_infographic = (
+                        len(text_elems) >= 2
+                        or len(instances) > 2
+                        or any(k in title or k in concept for k in ("quadrant", "2x2", "spec sheet", "features infographic", "product display"))
+                    )
+                    if is_dense_infographic:
                         is_infographic_template = True
 
                     if not is_infographic_template:
@@ -294,7 +308,7 @@ def get_or_create_universal_product_canvas(
                         is_infographic_template = True
 
                 if is_infographic_template:
-                    LOG.info("Skipping infographic template %s for product carrier extraction", ref_file.name)
+                    LOG.info("Skipping multi-panel infographic template %s for product carrier extraction", ref_file.name)
                     continue
 
                 carrier_canvas = extract_product_canvas_from_reference(
@@ -474,26 +488,29 @@ def extract_product_canvas_from_reference(
         ImageDraw.Draw(product_mask).rounded_rectangle((0, 0, c_w - 1, c_h - 1), radius=radius, fill=255)
         carrier_rgba.putalpha(product_mask)
     elif is_plain_studio_bg:
-        # Structured product on studio background: explicit form factor mask for product body & handles
-        product_mask = Image.new("L", (c_w, c_h), 0)
-        draw_m = ImageDraw.Draw(product_mask)
-        if is_bag:
-            # Bag body
-            draw_m.rounded_rectangle(
-                (max(2, int(c_w * 0.04)), max(4, int(c_h * 0.18)), min(c_w - 2, int(c_w * 0.96)), min(c_h - 4, int(c_h * 0.96))),
-                radius=max(16, min(c_w, c_h) // 25),
-                fill=255,
-            )
-            # Bag handles at top
-            h_left = int(c_w * 0.25)
-            h_right = int(c_w * 0.75)
-            draw_m.arc((h_left, max(4, int(c_h * 0.04)), h_right, int(c_h * 0.35)), start=180, end=0, fill=255, width=max(12, int(c_w * 0.04)))
+        # Structured product on studio background: precision segmentation preserving authentic handles and hardware
+        mask_u8 = None
+        try:
+            import cv2
+            c_np = np.asarray(carrier_crop.convert("RGB"))
+            gh, gw = c_np.shape[:2]
+            gc_mask = np.zeros((gh, gw), np.uint8)
+            bgdModel = np.zeros((1, 65), np.float64)
+            fgdModel = np.zeros((1, 65), np.float64)
+            margin_x = max(2, int(gw * 0.015))
+            margin_y = max(2, int(gh * 0.015))
+            gc_rect = (margin_x, margin_y, gw - 2 * margin_x, gh - 2 * margin_y)
+            cv2.grabCut(c_np, gc_mask, gc_rect, bgdModel, fgdModel, 3, cv2.GC_INIT_WITH_RECT)
+            mask_u8 = np.where((gc_mask == 2) | (gc_mask == 0), 0, 255).astype("uint8")
+            mask_u8 = cv2.GaussianBlur(mask_u8, (3, 3), 0)
+        except Exception as gc_exc:
+            LOG.warning("GrabCut segmentation failed: %s; using full alpha", gc_exc)
+            mask_u8 = None
+
+        if mask_u8 is not None:
+            product_mask = Image.fromarray(mask_u8)
         else:
-            draw_m.rounded_rectangle(
-                (max(2, int(c_w * 0.05)), max(2, int(c_h * 0.05)), min(c_w - 2, int(c_w * 0.95)), min(c_h - 2, int(c_h * 0.95))),
-                radius=max(16, min(c_w, c_h) // 25),
-                fill=255,
-            )
+            product_mask = Image.new("L", (c_w, c_h), 255)
         carrier_rgba.putalpha(product_mask)
 
     # Extract luminance map for lighting & folds transfer

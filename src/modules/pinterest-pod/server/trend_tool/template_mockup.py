@@ -743,32 +743,32 @@ def _build_fallback_surface_plan(
         }
 
     product_boxes = reference_analysis.get("product_boxes_norm_0_1000") or [] if reference_analysis else []
-    if product_boxes:
-        ymin, xmin, ymax, xmax = product_boxes[0]
-    else:
-        ymin, xmin, ymax, xmax = 200, 100, 850, 900
+    if not product_boxes:
+        product_boxes = [[200, 100, 850, 900]]
 
-    quad = [
-        [float(xmin), float(ymin)],
-        [float(xmax), float(ymin)],
-        [float(xmax), float(ymax)],
-        [float(xmin), float(ymax)],
-    ]
+    surfaces = []
+    for s_idx, (ymin, xmin, ymax, xmax) in enumerate(product_boxes):
+        quad = [
+            [float(xmin), float(ymin)],
+            [float(xmax), float(ymin)],
+            [float(xmax), float(ymax)],
+            [float(xmin), float(ymax)],
+        ]
+        surfaces.append({
+            "surface_id": f"surface_{s_idx}",
+            "description": f"Printable area {s_idx + 1} for {target.name}",
+            "geometry": "planar",
+            "confidence": 0.95,
+            "quad": quad,
+            "polygon": quad,
+            "protected_polygons": [],
+            "box_2d": [ymin, xmin, ymax, xmax],
+        })
+
     return {
         "scene_title": reference_analysis.get("scene_title", "Reference Scene") if reference_analysis else "Reference Scene",
         "all_printable_surfaces_identified": True,
-        "surfaces": [
-            {
-                "surface_id": "surface_0",
-                "description": f"Full printable area for {target.name}",
-                "geometry": "planar",
-                "confidence": 0.95,
-                "quad": quad,
-                "polygon": quad,
-                "protected_polygons": [],
-                "box_2d": [ymin, xmin, ymax, xmax],
-            }
-        ],
+        "surfaces": surfaces,
         "occluders": [],
     }
 
@@ -997,6 +997,10 @@ def build_direct_ai_mockup(
         # Uses Gemini 2.5 Flash Image to synthesize the product featuring the approved artwork
         # naturally into the room with authentic material texture, room lighting, contact shadows,
         # and full scene preservation.
+        best_candidate_img: Image.Image | None = None
+        best_qa_score: float = -1.0
+        best_candidate_metrics: dict[str, object] = {}
+
         if client is not None:
             ai_attempts = min(3, max(1, attempts))
             last_candidate_img: Image.Image | None = None
@@ -1023,9 +1027,6 @@ def build_direct_ai_mockup(
                         c_boxes = list(reference_analysis.get("chrome_boxes_norm_0_1000") or [])
                         for elem in (reference_analysis.get("infographic_text_elements") or []):
                             if isinstance(elem, dict) and elem.get("box_2d"):
-                                elem_type = str(elem.get("element_type", "")).lower()
-                                if elem_type in ("callout", "feature_pointer", "annotation"):
-                                    continue
                                 c_boxes.append(elem["box_2d"])
                         for ex in (reference_analysis.get("exclusion_zones") or []):
                             if isinstance(ex, (list, tuple)) and len(ex) == 4:
@@ -1060,6 +1061,12 @@ def build_direct_ai_mockup(
                         "generation_attempt": ai_attempt,
                         "mockup_quality": quality.to_dict(),
                     })
+                    q_score = getattr(quality, "score", 0.0) if hasattr(quality, "score") else (85.0 if quality.accepted else 40.0)
+                    if q_score > best_qa_score or best_candidate_img is None:
+                        best_qa_score = q_score
+                        best_candidate_img = generated.copy()
+                        best_candidate_metrics = dict(metrics)
+
                     if quality.accepted:
                         mockup_path.parent.mkdir(parents=True, exist_ok=True)
                         generated.save(mockup_path)
@@ -1153,6 +1160,11 @@ def build_direct_ai_mockup(
                     product_render=product_render_img,
                 )
                 metrics["mockup_quality"] = quality.to_dict()
+                comp_score = getattr(quality, "score", 0.0) if hasattr(quality, "score") else (85.0 if quality.accepted else 45.0)
+                if comp_score > best_qa_score or best_candidate_img is None:
+                    best_qa_score = comp_score
+                    best_candidate_img = generated.copy()
+                    best_candidate_metrics = dict(metrics)
 
                 if quality.accepted:
                     mockup_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1634,7 +1646,9 @@ def direct_ai_lifestyle_prompt(
             f"- You MUST replace the artwork across ALL visible product panels and ALL items in the set with the new design from Image 1.\n"
             f"- Zero tolerance for leaving the old graphic on ANY panel or ANY item (e.g. updating the wallet but leaving the bag unchanged is strictly forbidden).\n"
             f"- Zero tolerance for leaving any partial prior print, floral pattern, or old doodle behind (e.g. completely eliminate and replace any floral band at the bottom of the bag with 100% opacity).\n"
-            f"- Maintain 100% of the authentic room environment: do NOT replace the background, furniture, or props.\n\n"
+            f"- Maintain 100% of the authentic room environment: do NOT replace the background, furniture, or props.\n"
+            f"- CRITICAL TEXT AND BANNER PRESERVATION: You MUST strictly preserve all text banners, title ribbons, callout descriptions, dimension labels, and spec tables EXACTLY as they appear in the original scene. NEVER alter, erase, or rewrite any text.\n"
+            f"- For non-printed detail panels (such as strap hardware close-up, zipper macro shots, lining views): PRESERVE them exactly as they are without adding artwork.\n\n"
         )
 
     is_transparent_artwork = False
@@ -1653,11 +1667,12 @@ def direct_ai_lifestyle_prompt(
         transparent_artwork_block = (
             f"\n[CRITICAL TRANSPARENT / TYPOGRAPHY ARTWORK APPLICATION MANDATE]:\n"
             f"- Image 1 is a standalone graphic or typography design with a TRANSPARENT background (e.g. slogan, quote, or vector motif).\n"
-            f"- The product body MUST be rendered with a CLEAN, UNIFORM, SOLID NEUTRAL BASE:\n"
-            f"  * Replicate the exact clean, solid material carrier and tone shown in Image 2.\n"
+            f"- The product body MUST be rendered with authentic physical material texture (e.g. natural pebbled leather grain, textile weave, or canvas texture):\n"
+            f"  * Replicate the clean solid neutral base tone shown in Image 2, but PRESERVE authentic material grain, natural light gradients, highlights, and soft ambient shadows across the 3D surface.\n"
+            f"  * NEVER render a flat, unshaded, 2D paper cutout or blank sticker plane! The surface must respond naturally to the scene's ambient lighting.\n"
             f"- ABSOLUTELY ZERO PRIOR PRINTS, ZERO OLD GRAPHICS, ZERO BLEED-THROUGH:\n"
             f"  * 100% of the prior printed graphics, illustrations, patterns, or drawings from {room_ref_label} MUST BE COMPLETELY ELIMINATED AND ERASED.\n"
-            f"  * The new typography / graphic from Image 1 must sit cleanly and crisply on the solid product surface with zero remnants of prior prints visible anywhere on the product.\n\n"
+            f"  * The new typography / graphic from Image 1 must sit cleanly and crisply on the textured product surface with zero remnants of prior prints visible anywhere on the product.\n\n"
         )
 
     is_bag = any(k in product for k in ("bag", "handbag", "tote", "purse", "backpack", "clutch", "leather"))
