@@ -359,36 +359,9 @@ def analyze_reference_image(
         thumb_art.save(buf_art, format="JPEG", quality=75)
         buf_art_bytes = buf_art.getvalue()
 
-    hash_key = "v9_surface_" + hashlib.sha256(buf_ref.getvalue() + buf_art_bytes + product_label.encode("utf-8")).hexdigest()[:16]
+    hash_key = "v10_surface_" + hashlib.sha256(buf_ref.getvalue() + buf_art_bytes + product_label.encode("utf-8")).hexdigest()[:16]
 
-    cache_file: Path | None = None
-    if cache_dir:
-        cache_dir.mkdir(parents=True, exist_ok=True)
-        cache_file = cache_dir / "reference_analysis_cache.json"
-        if cache_file.exists():
-            try:
-                cached_dict = json.loads(cache_file.read_text(encoding="utf-8"))
-                if isinstance(cached_dict, dict) and hash_key in cached_dict:
-                    val = cached_dict[hash_key]
-                    if (
-                        isinstance(val, dict)
-                        and "generation_directive" in val
-                        and "external_chrome_to_preserve" in val
-                    ):
-                        # Filter out obsolete cache entries that treated scalloped graphics as structural trim
-                        form_str = str(val.get("product_form", "")).lower()
-                        chrome_str = str(val.get("external_chrome_to_preserve", "")).lower()
-                        if not ("scallop" in form_str or "scallop" in chrome_str):
-                            val["is_infographic"] = bool(val.get("is_infographic"))
-                            val["is_plain_background"] = bool(val.get("is_plain_background", False))
-                            if not (val["is_infographic"] and val["is_plain_background"]):
-                                val["chrome_boxes_norm_0_1000"] = []
-                                val["is_plain_background"] = False
-                            return val
-            except Exception:
-                pass
-
-    # Pre-calibrated exact quad lookup for standard reference templates
+    # Pre-calibrated exact quad lookup for standard reference templates (always takes precedence over disk cache)
     calibrated = find_precalibrated_template(image, filename=filename)
     if calibrated is not None:
         quad = calibrated["quad"]
@@ -431,8 +404,10 @@ def analyze_reference_image(
                 "occluders": [],
             },
         }
-        if cache_file:
+        if cache_dir:
             try:
+                cache_dir.mkdir(parents=True, exist_ok=True)
+                cache_file = cache_dir / "reference_analysis_cache.json"
                 cached_dict = {}
                 if cache_file.exists():
                     try:
@@ -444,6 +419,33 @@ def analyze_reference_image(
             except Exception:
                 pass
         return val
+
+    cache_file: Path | None = None
+    if cache_dir:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        cache_file = cache_dir / "reference_analysis_cache.json"
+        if cache_file.exists():
+            try:
+                cached_dict = json.loads(cache_file.read_text(encoding="utf-8"))
+                if isinstance(cached_dict, dict) and hash_key in cached_dict:
+                    val = cached_dict[hash_key]
+                    if (
+                        isinstance(val, dict)
+                        and "generation_directive" in val
+                        and "external_chrome_to_preserve" in val
+                    ):
+                        # Filter out obsolete cache entries that treated scalloped graphics as structural trim
+                        form_str = str(val.get("product_form", "")).lower()
+                        chrome_str = str(val.get("external_chrome_to_preserve", "")).lower()
+                        if not ("scallop" in form_str or "scallop" in chrome_str):
+                            val["is_infographic"] = bool(val.get("is_infographic"))
+                            val["is_plain_background"] = bool(val.get("is_plain_background", False))
+                            if not (val["is_infographic"] and val["is_plain_background"]):
+                                val["chrome_boxes_norm_0_1000"] = []
+                                val["is_plain_background"] = False
+                            return val
+            except Exception:
+                pass
 
     analysis_prompt = f"""
 You are an elite creative director and commercial photographer specializing in Print-on-Demand (POD) e-commerce products ({product_label}).

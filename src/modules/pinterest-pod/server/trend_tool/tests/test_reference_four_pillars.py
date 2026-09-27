@@ -21,12 +21,14 @@ from trend_tool.reference_composite import (
 from trend_tool.reference_surfaces import (
     PRE_CALIBRATED_TEMPLATES,
     _validate_plan,
+    analyze_reference_surfaces,
     find_precalibrated_template,
     snap_quad_to_edges,
 )
 from trend_tool.template_mockup import (
     _build_fallback_surface_plan,
     _refine_surface_plan_for_full_bleed,
+    analyze_reference_image,
     build_direct_ai_mockup,
 )
 
@@ -784,6 +786,54 @@ class TestFourBestPracticePillars(unittest.TestCase):
             self.assertLessEqual(pt[0], 1000.0)
             self.assertGreaterEqual(pt[1], 0.0)
             self.assertLessEqual(pt[1], 1000.0)
+
+    def test_precalibrated_template_takes_precedence_over_stale_cache(self):
+        import json
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            cache_dir = Path(tmp_dir)
+            stale_quad = [[72.0, 96.0], [1098.0, 139.0], [1054.0, 1100.0], [-100.0, 887.0]]
+            # Poison reference_analysis_cache.json with a bad quad
+            cache_file = cache_dir / "reference_analysis_cache.json"
+            poisoned_cache = {
+                "v9_surface_fake": {
+                    "generation_directive": "stale",
+                    "external_chrome_to_preserve": "stale",
+                    "surface_plan": {"surfaces": [{"quad": stale_quad}]},
+                }
+            }
+            cache_file.write_text(json.dumps(poisoned_cache), encoding="utf-8")
+
+            # Create test image for template 2
+            test_img = Image.new("RGB", (100, 100))
+            target = ProductTarget(name="rug", width_px=1000, height_px=1000)
+
+            # analyze_reference_image must return the calibrated quad, ignoring stale cache
+            analysis = analyze_reference_image(
+                client=None,
+                image=test_img,
+                artwork=None,
+                target=target,
+                cache_dir=cache_dir,
+                filename="room_template_2.jpg",
+            )
+            self.assertIsNotNone(analysis)
+            quad = analysis["surface_plan"]["surfaces"][0]["quad"]
+            expected_quad = PRE_CALIBRATED_TEMPLATES["room_template_2"]["quad"]
+            self.assertEqual(quad, expected_quad)
+
+            # Also verify analyze_reference_surfaces ignores any stale surface_*.json
+            surface_analysis = analyze_reference_surfaces(
+                client=None,
+                image=test_img,
+                product_label="rug",
+                model="test-model",
+                cache_dir=cache_dir,
+                filename="room_template_2.jpg",
+            )
+            self.assertIsNotNone(surface_analysis)
+            surface_quad = surface_analysis["surface_plan"]["surfaces"][0]["quad"]
+            self.assertTrue(np.allclose(surface_quad, expected_quad, atol=1.0))
+            self.assertNotEqual(surface_quad, stale_quad)
 
 
 if __name__ == "__main__":

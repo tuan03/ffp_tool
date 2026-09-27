@@ -207,8 +207,9 @@ def get_or_create_universal_product_canvas(
                         thumb.save(buf, format="JPEG", quality=75)
                         t_bytes = buf.getvalue()
                         for k, v in cdata.items():
-                            if isinstance(v, dict) and k.startswith("v9_surface_"):
-                                cand = "v9_surface_" + hashlib.sha256(t_bytes + product_label.encode("utf-8")).hexdigest()[:16]
+                            if isinstance(v, dict) and (k.startswith("v10_surface_") or k.startswith("v9_surface_")):
+                                prefix = "v10_surface_" if k.startswith("v10_surface_") else "v9_surface_"
+                                cand = prefix + hashlib.sha256(t_bytes + product_label.encode("utf-8")).hexdigest()[:16]
                                 if k == cand:
                                     entry = v
                                     break

@@ -24,7 +24,7 @@ LOG = logging.getLogger(__name__)
 
 
 SEGMENTATION_MODEL = "gemini-2.5-flash"
-ANALYSIS_VERSION = "pixel-uv-v7-full-bleed-pod"
+ANALYSIS_VERSION = "pixel-uv-v8-full-bleed-pod"
 
 GEOMETRY_PROMPT = """
 Analyze only the supplied reference photograph for commercial Print-on-Demand (POD) mockup replacement.
@@ -305,26 +305,7 @@ def analyze_reference_surfaces(
     """Separate semantic geometry from native mask prediction; cache no artwork."""
     from google.genai import types
 
-    buffer = io.BytesIO()
-    image.convert("RGB").save(buffer, format="PNG")
-    key = hashlib.sha256(buffer.getvalue() + json.dumps(
-        [ANALYSIS_VERSION, model, SEGMENTATION_MODEL, product_label], ensure_ascii=True,
-    ).encode()).hexdigest()
-    cache_path = cache_dir / f"surface_{key}.json" if cache_dir is not None else None
-    if cache_path is not None and cache_path.is_file():
-        try:
-            cached = json.loads(cache_path.read_text(encoding="utf-8"))
-            surfaces = _validate_plan(cached["surface_plan"])
-            for surface in surfaces:
-                decode_surface_mask(surface.get("segmentation"), image.size)
-            compose_reference_artwork(image, Image.new("RGB", (16, 16)), cached["surface_plan"])
-            cached["cache_key"] = key
-            return cached
-        except (ValueError, OSError, KeyError, TypeError):
-            # Invalid caches are discarded; no guessed geometry/mask fallback.
-            pass
-
-    # Pre-calibrated exact quad lookup for standard reference templates
+    # Pre-calibrated exact quad lookup for standard reference templates (always takes precedence over disk cache)
     calibrated = find_precalibrated_template(image, filename=filename)
     if calibrated is not None:
         LOG.info("Matched pre-calibrated reference template: %s", calibrated.get("scene_title"))
@@ -359,10 +340,38 @@ def analyze_reference_surfaces(
             "segmentation_model": "precalibrated",
             "cache_key": f"precalibrated_{calibrated['thumb32']}",
         }
-        if cache_path is not None:
-            cache_path.parent.mkdir(parents=True, exist_ok=True)
-            cache_path.write_text(json.dumps(analysis), encoding="utf-8")
+        if cache_dir is not None:
+            try:
+                cache_dir.mkdir(parents=True, exist_ok=True)
+                buffer = io.BytesIO()
+                image.convert("RGB").save(buffer, format="PNG")
+                key = hashlib.sha256(buffer.getvalue() + json.dumps(
+                    [ANALYSIS_VERSION, model, SEGMENTATION_MODEL, product_label], ensure_ascii=True,
+                ).encode()).hexdigest()
+                cache_path = cache_dir / f"surface_{key}.json"
+                cache_path.write_text(json.dumps(analysis), encoding="utf-8")
+            except Exception:
+                pass
         return analysis
+
+    buffer = io.BytesIO()
+    image.convert("RGB").save(buffer, format="PNG")
+    key = hashlib.sha256(buffer.getvalue() + json.dumps(
+        [ANALYSIS_VERSION, model, SEGMENTATION_MODEL, product_label], ensure_ascii=True,
+    ).encode()).hexdigest()
+    cache_path = cache_dir / f"surface_{key}.json" if cache_dir is not None else None
+    if cache_path is not None and cache_path.is_file():
+        try:
+            cached = json.loads(cache_path.read_text(encoding="utf-8"))
+            surfaces = _validate_plan(cached["surface_plan"])
+            for surface in surfaces:
+                decode_surface_mask(surface.get("segmentation"), image.size)
+            compose_reference_artwork(image, Image.new("RGB", (16, 16)), cached["surface_plan"])
+            cached["cache_key"] = key
+            return cached
+        except (ValueError, OSError, KeyError, TypeError):
+            # Invalid caches are discarded; no guessed geometry/mask fallback.
+            pass
 
     response = client.models.generate_content(
         model=model,
