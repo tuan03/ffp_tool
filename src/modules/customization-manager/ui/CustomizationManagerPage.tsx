@@ -506,22 +506,22 @@ export function CustomizationManagerPage({
         {viewMode === "editor" && activeProduct && (
           <div className="space-y-6">
             {/* Studio Navigation & Action Bar */}
-            <div className="flex flex-wrap items-center justify-between gap-4 rounded-3xl border border-slate-800 bg-slate-900/90 p-5 shadow-xl backdrop-blur-md">
-              <div className="flex items-center gap-4">
+            <div className="flex items-center justify-between gap-4 rounded-3xl border border-slate-800 bg-slate-900/90 p-5 shadow-xl backdrop-blur-md min-w-0">
+              <div className="flex items-center gap-3 sm:gap-4 min-w-0 flex-1">
                 <button
                   type="button"
                   onClick={() => {
                     setViewMode("catalog");
                     setSearchParams({ storeId: selectedStoreId });
                   }}
-                  className="inline-flex items-center gap-2 rounded-xl border border-slate-700 bg-slate-800 px-3.5 py-2 text-xs font-bold text-slate-200 hover:bg-slate-700 hover:text-white transition cursor-pointer shadow-sm"
+                  className="inline-flex items-center gap-2 rounded-xl border border-slate-700 bg-slate-800 px-3.5 py-2 text-xs font-bold text-slate-200 hover:bg-slate-700 hover:text-white transition cursor-pointer shadow-sm flex-shrink-0"
                 >
                   <span>←</span>
                   <span>Danh Sách Sản Phẩm</span>
                 </button>
 
                 {/* Quick Next/Prev Product Navigation */}
-                <div className="flex items-center gap-1 bg-slate-950/70 p-1 rounded-xl border border-slate-800 shadow-inner">
+                <div className="flex items-center gap-1 bg-slate-950/70 p-1 rounded-xl border border-slate-800 shadow-inner flex-shrink-0">
                   <button
                     type="button"
                     onClick={() => handleNavigateProduct("prev")}
@@ -559,9 +559,9 @@ export function CustomizationManagerPage({
                   )}
                 </div>
 
-                <div className="h-6 w-px bg-slate-800 hidden sm:block" />
+                <div className="h-6 w-px bg-slate-800 hidden sm:block flex-shrink-0" />
 
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-3 min-w-0 flex-1">
                   <div className="h-10 w-10 flex-shrink-0 rounded-lg overflow-hidden border border-slate-700 bg-slate-950">
                     <img
                       src={
@@ -573,11 +573,14 @@ export function CustomizationManagerPage({
                       className="h-full w-full object-cover"
                     />
                   </div>
-                  <div>
-                    <h2 className="text-sm font-bold text-slate-100 max-w-md truncate">
+                  <div className="min-w-0 flex-1">
+                    <h2
+                      className="text-sm font-bold text-slate-100 truncate"
+                      title={activeProduct.title}
+                    >
                       {activeProduct.title}
                     </h2>
-                    <span className="text-[11px] text-slate-400">
+                    <span className="text-[11px] text-slate-400 block truncate">
                       {activeProduct.handle ? `/${activeProduct.handle}` : activeProduct.id}
                     </span>
                   </div>
@@ -585,7 +588,7 @@ export function CustomizationManagerPage({
               </div>
 
               {/* Action Buttons: Delete & Save */}
-              <div className="flex items-center gap-2.5">
+              <div className="flex items-center gap-2.5 flex-shrink-0 ml-auto">
                 {customization && (
                   <button
                     type="button"
