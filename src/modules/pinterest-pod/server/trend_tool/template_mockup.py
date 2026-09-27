@@ -1653,12 +1653,11 @@ def direct_ai_lifestyle_prompt(
         transparent_artwork_block = (
             f"\n[CRITICAL TRANSPARENT / TYPOGRAPHY ARTWORK APPLICATION MANDATE]:\n"
             f"- Image 1 is a standalone graphic or typography design with a TRANSPARENT background (e.g. slogan, quote, or vector motif).\n"
-            f"- The product body MUST be rendered with a CLEAN, UNIFORM, SOLID BASE COLOR:\n"
-            f"  * For leather / satchel / handbag / luxury goods: Solid elegant cream / off-white / ivory PU leather (identical to the clean carrier in Image 2).\n"
-            f"  * For other products: Solid clean off-white / neutral base.\n"
-            f"- ABSOLUTELY ZERO FLORAL PRINTS, ZERO OLD MOTIFS, ZERO LEFTOVER BACKGROUNDS:\n"
-            f"  * 100% of the old printed flowers, cat graphics, patterns, or drawings from {room_ref_label} MUST BE COMPLETELY ELIMINATED AND ERASED.\n"
-            f"  * The new typography / graphic from Image 1 must sit cleanly and crisply on the solid cream base with zero old motifs visible anywhere on the product.\n\n"
+            f"- The product body MUST be rendered with a CLEAN, UNIFORM, SOLID NEUTRAL BASE:\n"
+            f"  * Replicate the exact clean, solid material carrier and tone shown in Image 2.\n"
+            f"- ABSOLUTELY ZERO PRIOR PRINTS, ZERO OLD GRAPHICS, ZERO BLEED-THROUGH:\n"
+            f"  * 100% of the prior printed graphics, illustrations, patterns, or drawings from {room_ref_label} MUST BE COMPLETELY ELIMINATED AND ERASED.\n"
+            f"  * The new typography / graphic from Image 1 must sit cleanly and crisply on the solid product surface with zero remnants of prior prints visible anywhere on the product.\n\n"
         )
 
     is_bag = any(k in product for k in ("bag", "handbag", "tote", "purse", "backpack", "clutch", "leather"))

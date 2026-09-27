@@ -192,25 +192,39 @@ def get_or_create_universal_product_canvas(
 
         product_label = active_niche or raw_name or "commercial product"
 
-        # Prioritize templates: clean single-product front view (e.g. tabletop, studio) first, strictly deprioritize infographics
+        # Prioritize templates dynamically: single centered hero product on clean background first, strictly deprioritize infographics
         def _score_template(rf: Path) -> int:
             stem = rf.stem.lower()
-            if any(k in stem for k in ("infographic", "spec_sheet", "size_chart", "specsheet", "display", "panel", "diagram")):
+            if any(k in stem for k in ("infographic", "spec_sheet", "size_chart", "specsheet", "diagram")):
                 return -100
             for k, v in cdata.items():
                 if isinstance(v, dict):
                     fn = str(v.get("filename", "")).lower()
-                    title = str(v.get("scene_title", "")).lower()
                     if fn == rf.name.lower() or stem in fn:
-                        if v.get("is_infographic") or any(ik in title for ik in ("infographic", "spec sheet", "quadrant", "grid", "display")):
+                        # 1. Strictly penalize infographics and multi-panel spec sheets
+                        if v.get("is_infographic"):
                             return -100
-                        if any(sk in title for sk in ("satchel", "tabletop", "studio", "pedestal", "front")):
-                            return 80
-            # If template 3 or 2
-            if "3" in stem:
-                return 50
-            if "2" in stem:
-                return 40
+                        instances = v.get("product_instances") or []
+                        if len(instances) > 2:
+                            return -100
+
+                        score = 0
+                        # 2. Prefer clean studio/plain backgrounds for carrier extraction
+                        if v.get("is_plain_background"):
+                            score += 40
+                        # 3. Prefer single focused hero product
+                        if len(instances) == 1:
+                            score += 50
+                            inst = instances[0]
+                            if isinstance(inst, dict) and inst.get("box_2d"):
+                                b2d = inst["box_2d"]
+                                center_x = (b2d[1] + b2d[3]) / 2.0
+                                if 350 <= center_x <= 650:
+                                    score += 20
+                                area_ratio = ((b2d[2] - b2d[0]) * (b2d[3] - b2d[1])) / 1_000_000.0
+                                if 0.15 <= area_ratio <= 0.85:
+                                    score += 15
+                        return score
             return 0
 
         sorted_templates = sorted(
@@ -242,19 +256,6 @@ def get_or_create_universal_product_canvas(
                             if k.endswith(h16) or h16 in k:
                                 entry = v
                                 break
-                        if entry is None:
-                            # Fuzzy title/name match
-                            stem_lower = ref_file.stem.lower()
-                            for k, v in cdata.items():
-                                if not isinstance(v, dict):
-                                    continue
-                                v_title = str(v.get("scene_title", "")).lower()
-                                if "3" in stem_lower and any(w in v_title for w in ("satchel", "tabletop")):
-                                    entry = v
-                                    break
-                                elif "1" in stem_lower and "infographic" in v_title:
-                                    entry = v
-                                    break
                     except Exception:
                         pass
 

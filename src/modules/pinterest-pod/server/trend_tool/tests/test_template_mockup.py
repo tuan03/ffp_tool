@@ -433,8 +433,8 @@ class TestTemplateMockupRefactoring(unittest.TestCase):
             artwork=trans_art,
         )
         self.assertIn("CRITICAL TRANSPARENT / TYPOGRAPHY ARTWORK APPLICATION MANDATE", prompt)
-        self.assertIn("cream", prompt.lower())
-        self.assertIn("ABSOLUTELY ZERO FLORAL PRINTS", prompt)
+        self.assertIn("solid neutral base", prompt.lower())
+        self.assertIn("ABSOLUTELY ZERO PRIOR PRINTS", prompt)
 
     def test_composite_header_banner_full_width_snap(self) -> None:
         """Infographic top header banner snaps to full width [0, 1000] and ymin=0."""
