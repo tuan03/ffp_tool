@@ -1,0 +1,28 @@
+{$SEO_DOMAIN} {
+    @administration path /api/v1/gpt-seo/admin/* /api/shopify /api/auto-seo/* /api/stores/*
+    handle @administration {
+        basic_auth {
+            {$ADMIN_USER} {$ADMIN_PASSWORD_HASH}
+        }
+        reverse_proxy 127.0.0.1:3001 {
+            header_up X-Gateway-Key {$GATEWAY_AUTH_TOKEN}
+        }
+    }
+    handle /api/v1/gpt-seo/* {
+        reverse_proxy 127.0.0.1:3001
+    }
+    handle_path /coordinator/* {
+        basic_auth {
+            {$ADMIN_USER} {$ADMIN_PASSWORD_HASH}
+        }
+        reverse_proxy 127.0.0.1:8766
+    }
+    handle {
+        basic_auth {
+            {$ADMIN_USER} {$ADMIN_PASSWORD_HASH}
+        }
+        root * /opt/ffp-tool/dist
+        try_files {path} /index.html
+        file_server
+    }
+}

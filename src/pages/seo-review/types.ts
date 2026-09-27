@@ -53,6 +53,7 @@ export interface SeoProductBackup {
 
 export interface SeoProductUiViewModel {
   readonly id: string;
+  readonly gptJobId?: string;
   readonly storeId?: string;
   readonly productId?: string;
   readonly asin?: string;

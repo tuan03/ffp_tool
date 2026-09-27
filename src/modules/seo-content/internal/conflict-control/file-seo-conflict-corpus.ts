@@ -460,8 +460,27 @@ export class FileSeoConflictCorpus implements SeoConflictCorpus {
   }
 
   /**
-   * Removes a product and releases all its claimed keywords from the corpus.
+   * Moves draft keyword ownership to a resolved Shopify product atomically.
    */
+  async reassignProduct(source: SeoProductIdentity, target: SeoProductIdentity): Promise<void> {
+    if (!source.storeId || source.storeId !== target.storeId || !target.productId) throw new Error("Identity binding requires the same store and a target product ID");
+    await withFileLock(this.filePath, this.lockTimeoutMs, async () => {
+      const current = await this.readCorpusFile();
+      const sourceProduct = current.products.find(product => isSameProduct(source, product));
+      if (!sourceProduct) return;
+      const targetProduct = current.products.find(product => isSameProduct(target, product));
+      const keywords = [...new Map([...(targetProduct?.keywords ?? []), ...sourceProduct.keywords].map(keyword => [keyword.normalizedKeyword, keyword])).values()]
+        .map((keyword, index) => ({ ...keyword, rank: index + 1 }));
+      const updatedAt = new Date().toISOString();
+      const product: SeoCorpusProduct = { ...sourceProduct, ...targetProduct, ...target, productKey: computeProductKey(target), keywords, updatedAt };
+      const products = current.products.filter(entry => !isSameProduct(source, entry) && !isSameProduct(target, entry));
+      products.push(product);
+      products.sort((left, right) => left.productKey.localeCompare(right.productKey));
+      await this.writeCorpusFile({ ...current, revision: current.revision + 1, updatedAt, products });
+    });
+  }
+
+  /** Removes a product and releases all its claimed keywords from the corpus. */
   async removeProduct(identity: SeoProductIdentity): Promise<void> {
     await withFileLock(this.filePath, this.lockTimeoutMs, async () => {
       const current = await this.readCorpusFile();

@@ -1,0 +1,20 @@
+[Unit]
+Description=FFP gateway and Custom GPT SEO finalizer
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ffp
+WorkingDirectory=/opt/ffp-tool
+EnvironmentFile=/etc/ffp/gateway.env
+ExecStart=/usr/bin/node --import tsx gateway/server.ts
+Restart=on-failure
+RestartSec=5
+MemoryMax=1200M
+CPUQuota=100%
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

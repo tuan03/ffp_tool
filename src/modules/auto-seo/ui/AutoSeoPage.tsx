@@ -290,6 +290,12 @@ export function AutoSeoPage({
         );
       }
 
+      if (backupResult.seoProvider === "custom_gpt") {
+        notifyUser({ title: "Đã xếp hàng GPT SEO", message: `${hydratedProducts.length} sản phẩm đang chờ. Mở Custom GPT để xử lý theo batch.`, type: "success", url: "/gpt-seo" });
+        navigate("/gpt-seo");
+        return;
+      }
+
       const autoSeoProducts = hydratedProducts.map(mapShopifyProductToAutoSeoCandidate);
       const result = await activeClient.runAutoSeo({
         workflowId,

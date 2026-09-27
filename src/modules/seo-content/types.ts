@@ -49,7 +49,7 @@ export interface SeoContentOutput {
   readonly aeo_json_ld?: string;
 }
 
-export type SeoContentEngine = "gemini" | "heuristic" | "mixed";
+export type SeoContentEngine = "gemini" | "heuristic" | "mixed" | "custom_gpt";
 
 export interface SeoPerformanceMetrics {
   readonly revisionRetries?: number;
