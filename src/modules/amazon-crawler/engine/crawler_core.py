@@ -1736,7 +1736,12 @@ class AmazonCrawler:
                 customization = remove_option_choosers(customization)
                 preset = PRESET_ID
             else:
-                final_variants = expand_paid_variants(base_variants, customization)
+                final_variants = expand_paid_variants(
+                    base_variants,
+                    customization,
+                    max_variants=min(100, getattr(self.settings, "max_matrix_variants", 100)),
+                    warnings=warnings,
+                )
                 preset = None
             media_by_identity: dict[str, dict[str, Any]] = {}
             ordered_media_variants = [representative, *(variant for variant in source_variants if variant is not representative)]

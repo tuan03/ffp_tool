@@ -11,7 +11,7 @@ from pathlib import Path
 
 from engine.cache import CACHE_SCHEMA_VERSION, RawFamilyCache
 from engine.crawler_core import AmazonCrawler, CrawlFetchError, CrawlSettings, HttpFetcher, NormalizedInput, effective_product_threads, normalize_amazon_input, parse_product_html
-from engine.customization_converter import expand_paid_variants, normalize_customization, remove_option_choosers
+from engine.customization_converter import expand_paid_variants, money, normalize_customization, remove_option_choosers
 from engine.proxy_profiles import ProxyAssignment
 from engine.variant_presets import PRESET_ID, build_jeminise_variants
 
@@ -812,6 +812,143 @@ class CoreTests(unittest.TestCase):
         self.assertTrue(all("listPrice" not in variant for variant in first))
         self.assertTrue(all(variant["price"] is None for variant in first[4:]))
         self.assertTrue(all(len(variant["metadata"]["paidOptions"]) == 2 for variant in first))
+
+    def test_expand_paid_variants_respects_conditional_rules_and_excludes_inapplicable_branches(self) -> None:
+        customization = {
+            "pricing": {
+                "paidOptionGroups": [
+                    {
+                        "id": "quilt_thick_twin",
+                        "label": "Thicker Quilt Upgrade",
+                        "required": False,
+                        "options": [
+                            {"id": "std", "label": "Standard", "price": money(0)},
+                            {"id": "up_twin", "label": "Thicker Twin (+$20)", "price": money(20)},
+                        ],
+                    },
+                    {
+                        "id": "pillowcases",
+                        "label": "Pillowcases",
+                        "required": False,
+                        "options": [
+                            {"id": "p0", "label": "No Pillowcases", "price": money(0)},
+                            {"id": "p1", "label": "1 Pillowcase (+$10)", "price": money(10)},
+                            {"id": "p2", "label": "2 Pillowcases (+$20)", "price": money(20)},
+                        ],
+                    },
+                ],
+            },
+            "conditionalRules": [
+                {
+                    "ownerComponentId": "quilt_thick_twin",
+                    "dependentId": "type_choice",
+                    "matcher": {"value": "Quilt"},
+                },
+                {
+                    "ownerComponentId": "pillowcases",
+                    "dependentId": "type_choice",
+                    "matcher": {"value": "Quilt"},
+                },
+            ],
+            "componentParent": {},
+        }
+        base_variants = [
+            {
+                "id": "fleece_twin",
+                "sku": "FL-TW",
+                "options": {"Type": "Fleece Blanket", "Size": "Twin"},
+                "price": money(30),
+            },
+            {
+                "id": "quilt_twin",
+                "sku": "QT-TW",
+                "options": {"Type": "Quilt", "Size": "Twin"},
+                "price": money(60),
+            },
+        ]
+        expanded = expand_paid_variants(base_variants, customization)
+        # Fleece has 0 applicable paid groups -> 1 variant
+        fleece_variants = [v for v in expanded if v["options"]["Type"] == "Fleece Blanket"]
+        self.assertEqual(len(fleece_variants), 1)
+        self.assertNotIn("Thicker Quilt Upgrade", fleece_variants[0]["options"])
+        self.assertNotIn("Pillowcases", fleece_variants[0]["options"])
+
+        # Quilt has 2 applicable groups (2 thickness * 3 pillowcases = 6 variants)
+        quilt_variants = [v for v in expanded if v["options"]["Type"] == "Quilt"]
+        self.assertEqual(len(quilt_variants), 6)
+        self.assertEqual(len(expanded), 7)
+
+    def test_expand_paid_variants_deduplicates_mutually_exclusive_same_label_groups(self) -> None:
+        customization = {
+            "pricing": {
+                "paidOptionGroups": [
+                    {
+                        "id": "quilt_thick_throw",
+                        "label": "Thicker Quilt Upgrade",
+                        "required": False,
+                        "options": [
+                            {"id": "t0", "label": "Standard", "price": money(0)},
+                            {"id": "t1", "label": "Thick Throw (+$15)", "price": money(15)},
+                        ],
+                    },
+                    {
+                        "id": "quilt_thick_twin",
+                        "label": "Thicker Quilt Upgrade",
+                        "required": False,
+                        "options": [
+                            {"id": "tw0", "label": "Standard", "price": money(0)},
+                            {"id": "tw1", "label": "Thick Twin (+$20)", "price": money(20)},
+                        ],
+                    },
+                    {
+                        "id": "quilt_thick_full",
+                        "label": "Thicker Quilt Upgrade",
+                        "required": False,
+                        "options": [
+                            {"id": "fu0", "label": "Standard", "price": money(0)},
+                            {"id": "fu1", "label": "Thick Full (+$25)", "price": money(25)},
+                        ],
+                    },
+                ],
+            },
+            "conditionalRules": [],
+            "componentParent": {},
+        }
+        base_variants = [
+            {
+                "id": "quilt_twin",
+                "sku": "QT-TW",
+                "options": {"Type": "Quilt", "Size": "Twin (68\" x 86\")"},
+                "price": money(60),
+            },
+        ]
+        expanded = expand_paid_variants(base_variants, customization)
+        # Should only apply the Twin upgrade (2 options), NOT 2 * 2 * 2 = 8 variants!
+        self.assertEqual(len(expanded), 2)
+        prices = sorted([v["price"]["amount"] for v in expanded])
+        self.assertEqual(prices, [60.0, 80.0])
+
+    def test_expand_paid_variants_circuit_breaker_prevents_explosion(self) -> None:
+        # Simulate runaway Cartesian product: 1 base variant * 11 * 3 * 2 * 2 * 2 * 2 * 2 * 5 * 3 = 15840
+        customization = {
+            "pricing": {
+                "paidOptionGroups": [
+                    {"id": f"group_{i}", "label": f"Option_{i}", "required": True, "options": [{"id": f"o_{i}_1", "label": "A", "price": money(1)}, {"id": f"o_{i}_2", "label": "B", "price": money(2)}]}
+                    for i in range(8)  # 2^8 = 256 combinations > 100 max
+                ],
+            },
+            "conditionalRules": [],
+            "componentParent": {},
+        }
+        base_variants = [
+            {"id": "b1", "sku": "B1", "options": {"Size": "Standard"}, "price": money(50)},
+        ]
+        warnings: list[str] = []
+        expanded = expand_paid_variants(base_variants, customization, max_variants=100, warnings=warnings)
+        # Should trip the safety cap (100) and preserve 1 base variant safely
+        self.assertEqual(len(expanded), 1)
+        self.assertEqual(expanded[0]["id"], "b1")
+        self.assertTrue(any("variant explosion prevented" in w for w in warnings))
 
     def test_auto_split_and_jeminise_replace_variants_per_child(self) -> None:
         raw = {"components": [{"componentType": "TextInputComponent", "id": "name", "label": "Name"}, {"componentType": "OptionChooserComponent", "id": "free", "label": "Free", "options": [{"label": "A", "price": 0}]}]}
