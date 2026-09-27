@@ -351,9 +351,10 @@ Inspect these mandatory pillars:
 2. Background Furniture & Architecture Alignment (No Overlap/Clipping):
    - Does the product conform strictly to its natural floor area without overlapping, cutting into, or clipping through background shelves, bookcases, furniture legs, baseboards, or walls?
    - Any overlap or clipping of the product into background shelves, bookcases, or walls is an immediate FATAL failure.
-3. Critical Content Preservation:
-   - Are ALL foreground humans (children, babies, adult models, hands, feet), toys, room furniture, and infographic text/tables/dimension arrows from ORIGINAL SCENE preserved 100% without being covered, cut through, or obscured by rectangular slabs or artwork overlays?
-   - Any covering, cutting through, or alteration of a person, model, toy, or size chart table is an immediate FATAL failure.
+3. Background Architecture & Infographic Preservation:
+   - Are background room architecture (walls, floors, windows), furniture (shelves, bookcases, desks, tables), and infographic elements (size chart tables, dimension arrows, spec text banners) preserved 100%?
+   - Any covering, cutting through, or distortion of background shelves, bookcases, or infographic tables is an immediate FATAL failure.
+   - Foreground Occluders (People / Toys on the product): If foreground models or toys can be preserved naturally, that is great. HOWEVER, if foreground toys, doodles, or old human models that were sitting on the old product surface have been cleanly replaced or removed to display the new product surface, that is COMPLETELY ACCEPTABLE and expected for a clean e-commerce listing display! Do NOT penalize or reject for removing or covering foreground toys/models.
 4. Natural Realism, Shading & Depth (No Flat Paper Sticker Look):
    - Does the product look like a real physical 3D object integrated into the room? It must have subtle ambient room shading, soft ivory room tone (not raw blinding #FFFFFF computer screen white), realistic micro-texture/pile grain, and subtle contact shadows where it touches the floor.
    - It must NOT look like a flat, unshaded white paper sticker, cardboard cutout, or raw digital plane pasted in MS Paint!
@@ -380,10 +381,11 @@ Return ONLY this JSON schema:
 SCORING RULES:
 - If the product overlaps, clips into, or cuts through background shelves, bookcases, furniture, or walls: listing_realism_score MUST be below 50, no_furniture_overlap_or_misalignment MUST be false.
 - If the product looks like a flat unshaded white paper sticker, cardboard cutout, or lacks realistic ambient shading and depth: listing_realism_score MUST be below 50, realistic_shading_and_depth MUST be false.
-- If ANY critical element (human model, child, toy, size chart table, text banner) is covered, cut through, or obscured: listing_realism_score MUST be below 50, critical_content_preserved MUST be false.
+- If ANY critical background element or infographic element (size chart table, dimension arrows, text banners, background shelves, bookcases, walls) is covered, cut through, or obscured: listing_realism_score MUST be below 50, critical_content_preserved MUST be false.
 - If product shape or orientation is wrong (e.g. horizontal rug turned into vertical column): listing_realism_score MUST be below 50, product_shape_and_orientation_matched MUST be false.
 - If there is an artificial spotlight or fake vignette: no_artificial_lighting_artifacts MUST be false.
-- Only assign score >= 70 if all criteria are fully satisfied and the mockup is a flawless commercial listing photo.
+- Do NOT penalize or reject for covering up or removing foreground toys or models that were sitting on the old product surface.
+- Only assign score >= 70 if all criteria are fully satisfied and the mockup is a commercial listing photo.
 """
     try:
         assessment = _vision_pair_assessment(
