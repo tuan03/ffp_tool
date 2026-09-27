@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import logging
@@ -191,9 +192,34 @@ def get_or_create_universal_product_canvas(
 
         product_label = active_niche or raw_name or "commercial product"
 
-        for ref_file in reference_templates:
-            if not ref_file.exists() or not ref_file.is_file():
-                continue
+        # Prioritize templates: clean single-product front view (e.g. tabletop, studio) first, strictly deprioritize infographics
+        def _score_template(rf: Path) -> int:
+            stem = rf.stem.lower()
+            if any(k in stem for k in ("infographic", "spec_sheet", "size_chart", "specsheet", "display", "panel", "diagram")):
+                return -100
+            for k, v in cdata.items():
+                if isinstance(v, dict):
+                    fn = str(v.get("filename", "")).lower()
+                    title = str(v.get("scene_title", "")).lower()
+                    if fn == rf.name.lower() or stem in fn:
+                        if v.get("is_infographic") or any(ik in title for ik in ("infographic", "spec sheet", "quadrant", "grid", "display")):
+                            return -100
+                        if any(sk in title for sk in ("satchel", "tabletop", "studio", "pedestal", "front")):
+                            return 80
+            # If template 3 or 2
+            if "3" in stem:
+                return 50
+            if "2" in stem:
+                return 40
+            return 0
+
+        sorted_templates = sorted(
+            [rf for rf in reference_templates if rf.exists() and rf.is_file()],
+            key=_score_template,
+            reverse=True,
+        )
+
+        for ref_file in sorted_templates:
             try:
                 with Image.open(ref_file) as opened_ref:
                     ref_img = ImageOps.exif_transpose(opened_ref).convert("RGB")
@@ -206,11 +232,27 @@ def get_or_create_universal_product_canvas(
                         buf = io.BytesIO()
                         thumb.save(buf, format="JPEG", quality=75)
                         t_bytes = buf.getvalue()
+                        h16 = hashlib.sha256(t_bytes + product_label.encode("utf-8")).hexdigest()[:16]
                         for k, v in cdata.items():
-                            if isinstance(v, dict) and (k.startswith("v10_surface_") or k.startswith("v9_surface_")):
-                                prefix = "v10_surface_" if k.startswith("v10_surface_") else "v9_surface_"
-                                cand = prefix + hashlib.sha256(t_bytes + product_label.encode("utf-8")).hexdigest()[:16]
-                                if k == cand:
+                            if not isinstance(v, dict):
+                                continue
+                            if v.get("filename") == ref_file.name:
+                                entry = v
+                                break
+                            if k.endswith(h16) or h16 in k:
+                                entry = v
+                                break
+                        if entry is None:
+                            # Fuzzy title/name match
+                            stem_lower = ref_file.stem.lower()
+                            for k, v in cdata.items():
+                                if not isinstance(v, dict):
+                                    continue
+                                v_title = str(v.get("scene_title", "")).lower()
+                                if "3" in stem_lower and any(w in v_title for w in ("satchel", "tabletop")):
+                                    entry = v
+                                    break
+                                elif "1" in stem_lower and "infographic" in v_title:
                                     entry = v
                                     break
                     except Exception:
@@ -223,7 +265,7 @@ def get_or_create_universal_product_canvas(
                 if entry is not None:
                     title = str(entry.get("scene_title", "")).lower()
                     concept = str(entry.get("visual_concept", "")).lower()
-                    if entry.get("is_infographic") or any(k in title or k in concept for k in ("infographic", "spec sheet", "quadrant", "grid", "size chart", "dimension table")):
+                    if entry.get("is_infographic") or any(k in title or k in concept for k in ("infographic", "spec sheet", "quadrant", "grid", "size chart", "dimension table", "product display")):
                         is_infographic_template = True
                     instances = entry.get("product_instances") or []
                     if len(instances) > 2:
@@ -247,7 +289,7 @@ def get_or_create_universal_product_canvas(
                             cached_box_info = (hero_c_box, hero_s_box)
                 else:
                     stem_lower = ref_file.stem.lower()
-                    if any(k in stem_lower for k in ("infographic", "spec_sheet", "size_chart", "specsheet")):
+                    if any(k in stem_lower for k in ("infographic", "spec_sheet", "size_chart", "specsheet", "display")):
                         is_infographic_template = True
 
                 if is_infographic_template:
@@ -630,7 +672,19 @@ def render_universal_product(
     sb_w = max(16, sb_right - sb_left)
     sb_h = max(16, sb_bottom - sb_top)
 
-    fitted = ImageOps.fit(artwork.convert("RGBA"), (sb_w, sb_h), Image.Resampling.LANCZOS)
+    art_rgba = artwork.convert("RGBA")
+    alpha_channel = np.asarray(art_rgba.getchannel("A"))
+    is_transparent = (alpha_channel < 240).mean() > 0.10
+
+    if is_transparent:
+        base_color = (246, 244, 240, 255) if canvas.material_type == "leather" else (255, 255, 255, 255)
+        clean_base = Image.new("RGBA", art_rgba.size, base_color)
+        clean_base.alpha_composite(art_rgba)
+        art_to_fit = clean_base
+    else:
+        art_to_fit = art_rgba
+
+    fitted = ImageOps.fit(art_to_fit, (sb_w, sb_h), Image.Resampling.LANCZOS)
 
     if canvas.luminance_map is not None:
         art_np = np.asarray(fitted.convert("RGB"), dtype=np.float32)
@@ -650,6 +704,12 @@ def render_universal_product(
     mask = canvas.surface_mask
     if mask.size != (sb_w, sb_h):
         mask = mask.resize((sb_w, sb_h), Image.Resampling.BILINEAR)
+
+    # If artwork was transparent, pre-fill carrier surface box with solid base color to avoid bleed-through
+    if is_transparent and carrier.mode == "RGBA":
+        base_c = (246, 244, 240, 255) if canvas.material_type == "leather" else (255, 255, 255, 255)
+        carrier_draw = ImageDraw.Draw(carrier)
+        carrier_draw.rectangle((sb_left, sb_top, sb_right, sb_bottom), fill=base_c)
 
     carrier.paste(fitted, (sb_left, sb_top), mask)
     if canvas.carrier_image.mode == "RGBA":

@@ -247,19 +247,24 @@ def normalize_surface_coordinates(surface: dict[str, object], box_2d: object = N
         else:
             norm_p, swapped = _normalize_points(surface["polygon"], b2d, is_quad=False)
             surface["polygon"] = norm_p
-            if swapped:
-                is_inverted = True
-
     if "protected_polygons" in surface and isinstance(surface["protected_polygons"], list):
+        clean_protected = []
+        for poly in surface["protected_polygons"]:
+            if isinstance(poly, dict):
+                if "polygon" in poly:
+                    poly = poly["polygon"]
+                elif "points" in poly:
+                    poly = poly["points"]
+            if poly and isinstance(poly, (list, tuple)):
+                clean_protected.append(poly)
         if is_inverted:
             surface["protected_polygons"] = [
-                _swap_points(poly) for poly in surface["protected_polygons"] if poly
+                _swap_points(poly) for poly in clean_protected
             ]
         else:
             surface["protected_polygons"] = [
                 _normalize_points(poly, b2d, is_quad=False)[0]
-                for poly in surface["protected_polygons"]
-                if poly
+                for poly in clean_protected
             ]
 
 
@@ -407,6 +412,13 @@ def compose_reference_artwork(
         if not isinstance(protected, list):
             raise ValueError("SURFACE_REVIEW_REQUIRED: explicit occlusion review is required")
         for polygon_value in protected:
+            if isinstance(polygon_value, dict):
+                if "polygon" in polygon_value:
+                    polygon_value = polygon_value["polygon"]
+                elif "points" in polygon_value:
+                    polygon_value = polygon_value["points"]
+            if not isinstance(polygon_value, (list, tuple)) or len(polygon_value) < 3:
+                continue
             poly_norm = normalize_coordinates(polygon_value, b2d, is_quad=False)
             poly_m = np.asarray(_polygon_mask(reference.size, _points(poly_norm, reference.size))) > 0
             exclusion_mask |= poly_m

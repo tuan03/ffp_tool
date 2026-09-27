@@ -234,6 +234,18 @@ def composite_infographic_hybrid(
         if ymax >= 975:
             ymax = 1000
 
+        # Full-width header banner snap: top banner ribbons across infographic headers
+        if ymin <= 100 and (xmax - xmin) >= 300:
+            ymin = 0
+            xmin = 0
+            xmax = 1000
+
+        # Full-width footer banner snap: bottom ribbons across infographic footers
+        if ymax >= 900 and (xmax - xmin) >= 300:
+            ymax = 1000
+            xmin = 0
+            xmax = 1000
+
         # Auto-expand ribbon banners anchored to margins to prevent text clipping
         is_h_ribbon = (xmax - xmin) > 1.2 * (ymax - ymin) and (ymax - ymin) <= 250
         if is_h_ribbon and xmin == 0 and xmax < 975:
@@ -413,6 +425,8 @@ def analyze_reference_image(
                 "occluders": [],
             },
         }
+        if filename:
+            val["filename"] = filename
         if cache_dir:
             try:
                 cache_dir.mkdir(parents=True, exist_ok=True)
@@ -453,6 +467,9 @@ def analyze_reference_image(
                             all_c = list(val.get("chrome_boxes_norm_0_1000") or [])
                             for elem in (val.get("infographic_text_elements") or []):
                                 if isinstance(elem, dict) and elem.get("box_2d"):
+                                    elem_type = str(elem.get("element_type", "")).lower()
+                                    if elem_type in ("callout", "feature_pointer", "annotation"):
+                                        continue
                                     all_c.append(elem["box_2d"])
                             for ex in (val.get("exclusion_zones") or []):
                                 if isinstance(ex, (list, tuple)) and len(ex) == 4:
@@ -630,6 +647,9 @@ require review instead of publishing an uncertain composite. No niche defaults.
             all_chrome = list(parsed.get("chrome_boxes_norm_0_1000") or [])
             for elem in (parsed.get("infographic_text_elements") or []):
                 if isinstance(elem, dict) and elem.get("box_2d"):
+                    elem_type = str(elem.get("element_type", "")).lower()
+                    if elem_type in ("callout", "feature_pointer", "annotation"):
+                        continue
                     all_chrome.append(elem["box_2d"])
             for ex in (parsed.get("exclusion_zones") or []):
                 if isinstance(ex, (list, tuple)) and len(ex) == 4:
@@ -657,6 +677,8 @@ require review instead of publishing an uncertain composite. No niche defaults.
                     all_cached = json.loads(cache_file.read_text(encoding="utf-8")) if cache_file.exists() else {}
                 except Exception:
                     all_cached = {}
+                if filename:
+                    parsed["filename"] = filename
                 all_cached[hash_key] = parsed
                 cache_file.write_text(json.dumps(all_cached, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -1001,6 +1023,9 @@ def build_direct_ai_mockup(
                         c_boxes = list(reference_analysis.get("chrome_boxes_norm_0_1000") or [])
                         for elem in (reference_analysis.get("infographic_text_elements") or []):
                             if isinstance(elem, dict) and elem.get("box_2d"):
+                                elem_type = str(elem.get("element_type", "")).lower()
+                                if elem_type in ("callout", "feature_pointer", "annotation"):
+                                    continue
                                 c_boxes.append(elem["box_2d"])
                         for ex in (reference_analysis.get("exclusion_zones") or []):
                             if isinstance(ex, (list, tuple)) and len(ex) == 4:
@@ -1515,6 +1540,7 @@ def generate_direct_ai_lifestyle(
         prior_qa_reason=prior_qa_reason,
         reference_analysis=reference_analysis,
         hybrid_mode=hybrid_mode,
+        artwork=artwork,
     )
     parts.append(types.Part.from_text(text=prompt_str))
 
@@ -1567,6 +1593,7 @@ def direct_ai_lifestyle_prompt(
     prior_qa_reason: str = "",
     reference_analysis: dict[str, Any] | None = None,
     hybrid_mode: bool = False,
+    artwork: Image.Image | None = None,
 ) -> str:
     raw_target = target.name.strip().lower()
     active_niche = (getattr(target, "niche", "") or "").strip().lower()
@@ -1598,14 +1625,40 @@ def direct_ai_lifestyle_prompt(
 
     is_info = bool(reference_analysis.get("is_infographic")) if reference_analysis else False
     num_surfaces = len((reference_analysis.get("surface_plan") or {}).get("surfaces", [])) if reference_analysis else 0
+    instances = reference_analysis.get("product_instances") or [] if reference_analysis else []
     multi_panel_block = ""
-    if is_info or num_surfaces > 1:
+    if is_info or num_surfaces > 1 or len(instances) > 1:
         multi_panel_block = (
             f"\n[MULTI-PANEL & MULTI-ITEM ARTWORK REPLACEMENT MANDATE]:\n"
             f"- This template contains MULTIPLE product views, panels, or coordinated items (e.g. main front view, detail close-ups, or a coordinated set like a handbag and wallet).\n"
             f"- You MUST replace the artwork across ALL visible product panels and ALL items in the set with the new design from Image 1.\n"
             f"- Zero tolerance for leaving the old graphic on ANY panel or ANY item (e.g. updating the wallet but leaving the bag unchanged is strictly forbidden).\n"
-            f"- Zero tolerance for leaving any partial prior print, floral pattern, or old doodle behind (e.g. completely eliminate and replace any floral band at the bottom of the bag with 100% opacity).\n\n"
+            f"- Zero tolerance for leaving any partial prior print, floral pattern, or old doodle behind (e.g. completely eliminate and replace any floral band at the bottom of the bag with 100% opacity).\n"
+            f"- Maintain 100% of the authentic room environment: do NOT replace the background, furniture, or props.\n\n"
+        )
+
+    is_transparent_artwork = False
+    if artwork is not None:
+        try:
+            art_rgba = artwork.convert("RGBA")
+            alpha_np = np.asarray(art_rgba.getchannel("A"))
+            if (alpha_np < 240).mean() > 0.10:
+                is_transparent_artwork = True
+        except Exception:
+            pass
+
+    transparent_artwork_block = ""
+    if is_transparent_artwork:
+        room_ref_label = "Image 3" if has_product_render else "Image 2"
+        transparent_artwork_block = (
+            f"\n[CRITICAL TRANSPARENT / TYPOGRAPHY ARTWORK APPLICATION MANDATE]:\n"
+            f"- Image 1 is a standalone graphic or typography design with a TRANSPARENT background (e.g. slogan, quote, or vector motif).\n"
+            f"- The product body MUST be rendered with a CLEAN, UNIFORM, SOLID BASE COLOR:\n"
+            f"  * For leather / satchel / handbag / luxury goods: Solid elegant cream / off-white / ivory PU leather (identical to the clean carrier in Image 2).\n"
+            f"  * For other products: Solid clean off-white / neutral base.\n"
+            f"- ABSOLUTELY ZERO FLORAL PRINTS, ZERO OLD MOTIFS, ZERO LEFTOVER BACKGROUNDS:\n"
+            f"  * 100% of the old printed flowers, cat graphics, patterns, or drawings from {room_ref_label} MUST BE COMPLETELY ELIMINATED AND ERASED.\n"
+            f"  * The new typography / graphic from Image 1 must sit cleanly and crisply on the solid cream base with zero old motifs visible anywhere on the product.\n\n"
         )
 
     is_bag = any(k in product for k in ("bag", "handbag", "tote", "purse", "backpack", "clutch", "leather"))
@@ -1936,7 +1989,7 @@ def direct_ai_lifestyle_prompt(
 
         return f"""
 Use case: final ecommerce lifestyle product photograph adapting a reference template.
-{visual_feedback_block}{multi_panel_block}{product_rule}
+{visual_feedback_block}{multi_panel_block}{transparent_artwork_block}{product_rule}
 {scene_desc}
 Placement: {placement}.
 Photorealism requirements: The product must have authentic 3D geometry, natural lighting, visible physical thickness, physically correct occlusion, soft contact shadows, and realistic surface finish. It must look like an actual camera photograph, not a 2D collage, poster, sticker, rendering, or graphic illustration.
@@ -1980,7 +2033,7 @@ Retry correction: {correction or f"None. Strictly preserve {room_ref} layout and
 
         return f"""
 Use case: final ecommerce lifestyle product photograph compositing onto reference room.
-{visual_feedback_block}{multi_panel_block}{product_rule}
+{visual_feedback_block}{multi_panel_block}{transparent_artwork_block}{product_rule}
 {scene_desc}
 Placement: {placement}.
 Photorealism requirements: The product must have authentic 3D geometry, natural lighting, visible thickness, physically correct occlusion, soft contact shadows, and realistic surface finish. It must look like an actual camera photograph, not a 2D collage, poster, sticker, rendering, or graphic illustration.
