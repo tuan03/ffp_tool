@@ -131,7 +131,7 @@ def save_room_template_images(items: list[Any], target_dir: Path) -> list[Path]:
                 mime = header.split(";")[0].split(":")[1]
                 ext = ".png" if "png" in mime else ".jpg"
                 img_bytes = base64.b64decode(data)
-                dest_filename = f"room_template_{idx}{ext}"
+                dest_filename = f"user_template_{idx}{ext}"
                 dest = target_dir / dest_filename
                 dest.write_bytes(img_bytes)
                 saved_paths.append(dest)
@@ -142,7 +142,7 @@ def save_room_template_images(items: list[Any], target_dir: Path) -> list[Path]:
         # 3. Check if it's an HTTP/HTTPS URL
         if url.startswith(("http://", "https://")):
             try:
-                dest = target_dir / f"room_template_{idx}.jpg"
+                dest = target_dir / f"user_template_{idx}.jpg"
                 req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
                 with urllib.request.urlopen(req, timeout=15) as resp:
                     dest.write_bytes(resp.read())

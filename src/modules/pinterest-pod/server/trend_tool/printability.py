@@ -302,43 +302,44 @@ def assess_direct_ai_mockup(
         custom_checklist=custom_checklist, image_type=image_type,
     ) if reference_template is None else ""
     if reference_template is not None:
-        if edit_mask is None or reference_template.size != mockup.size or edit_mask.size != mockup.size:
-            return PrintabilityDecision("direct_ai_mockup", mockup_path, False, "reference/mask dimensions mismatch", metrics, {})
-        ref_rgb = np.asarray(reference_template.convert("RGB"))
-        mock_rgb = np.asarray(mockup)
-        mask_bin = np.asarray(edit_mask.convert("L")) > 0
-        mask_u8 = mask_bin.astype(np.uint8) * 255
+        if edit_mask is not None:
+            if reference_template.size != mockup.size or edit_mask.size != mockup.size:
+                return PrintabilityDecision("direct_ai_mockup", mockup_path, False, "reference/mask dimensions mismatch", metrics, {})
+            ref_rgb = np.asarray(reference_template.convert("RGB"))
+            mock_rgb = np.asarray(mockup)
+            mask_bin = np.asarray(edit_mask.convert("L")) > 0
+            mask_u8 = mask_bin.astype(np.uint8) * 255
 
-        # 3-Zone Integrity Check:
-        # Zone 1: Inner artwork zone (inside mask) where master artwork is placed
-        # Zone 2: 1-2px transition seam (allows sub-pixel anti-aliasing blending)
-        # Zone 3: Strict protected background (outside 2px dilated margin) where bit-for-bit identity is enforced
-        try:
-            import cv2
-            kernel = np.ones((3, 3), np.uint8)
-            dilated_mask = cv2.dilate(mask_u8, kernel, iterations=2) > 0
-        except Exception:
-            from PIL import ImageFilter
-            dilated_img = Image.fromarray(mask_u8).filter(ImageFilter.MaxFilter(size=5))
-            dilated_mask = np.asarray(dilated_img) > 0
+            # 3-Zone Integrity Check (for geometric composites with binary edit mask):
+            # Zone 1: Inner artwork zone (inside mask) where master artwork is placed
+            # Zone 2: 1-2px transition seam (allows sub-pixel anti-aliasing blending)
+            # Zone 3: Strict protected background (outside 2px dilated margin) where bit-for-bit identity is enforced
+            try:
+                import cv2
+                kernel = np.ones((3, 3), np.uint8)
+                dilated_mask = cv2.dilate(mask_u8, kernel, iterations=2) > 0
+            except Exception:
+                from PIL import ImageFilter
+                dilated_img = Image.fromarray(mask_u8).filter(ImageFilter.MaxFilter(size=5))
+                dilated_mask = np.asarray(dilated_img) > 0
 
-        transition_seam = dilated_mask & ~mask_bin
-        strict_background = ~dilated_mask
+            transition_seam = dilated_mask & ~mask_bin
+            strict_background = ~dilated_mask
 
-        strict_diff_count = int(np.count_nonzero(np.any(ref_rgb[strict_background] != mock_rgb[strict_background], axis=-1))) if np.any(strict_background) else 0
-        seam_diff_count = int(np.count_nonzero(np.any(ref_rgb[transition_seam] != mock_rgb[transition_seam], axis=-1))) if np.any(transition_seam) else 0
+            strict_diff_count = int(np.count_nonzero(np.any(ref_rgb[strict_background] != mock_rgb[strict_background], axis=-1))) if np.any(strict_background) else 0
+            seam_diff_count = int(np.count_nonzero(np.any(ref_rgb[transition_seam] != mock_rgb[transition_seam], axis=-1))) if np.any(transition_seam) else 0
 
-        metrics["zone_integrity"] = {
-            "inner_artwork_pixels": int(np.count_nonzero(mask_bin)),
-            "transition_seam_pixels": int(np.count_nonzero(transition_seam)),
-            "transition_seam_modified": seam_diff_count,
-            "strict_background_pixels": int(np.count_nonzero(strict_background)),
-            "strict_background_diff": strict_diff_count,
-            "strict_background_preserved": strict_diff_count == 0,
-        }
+            metrics["zone_integrity"] = {
+                "inner_artwork_pixels": int(np.count_nonzero(mask_bin)),
+                "transition_seam_pixels": int(np.count_nonzero(transition_seam)),
+                "transition_seam_modified": seam_diff_count,
+                "strict_background_pixels": int(np.count_nonzero(strict_background)),
+                "strict_background_diff": strict_diff_count,
+                "strict_background_preserved": strict_diff_count == 0,
+            }
 
-        if strict_diff_count > 0:
-            return PrintabilityDecision("direct_ai_mockup", mockup_path, False, "pixels outside printable mask changed", metrics, {})
+            if strict_diff_count > 0:
+                return PrintabilityDecision("direct_ai_mockup", mockup_path, False, "pixels outside printable mask changed", metrics, {})
         assessment_prompt = """
 You are conducting a strict, unbiased quality assurance (QA) inspection of a commercial Print-on-Demand (POD) mockup.
 Directly compare ORIGINAL SCENE against BACKGROUND_MOCKUP and MASTER ARTWORK.
@@ -779,11 +780,12 @@ def _vision_pair_assessment(
 
     client = create_gemini_client(backend)
     reference_parts = []
-    if reference_template is not None and edit_mask is not None:
-        reference_parts = [
-            types.Part.from_text(text="ORIGINAL SCENE"), image_part(reference_template),
-            types.Part.from_text(text="PROJECTION MASK (for reference only: does NOT override original scene content or product orientation)"), image_part(edit_mask.convert("RGB")),
-        ]
+    if reference_template is not None:
+        reference_parts.append(types.Part.from_text(text="ORIGINAL SCENE"))
+        reference_parts.append(image_part(reference_template))
+        if edit_mask is not None:
+            reference_parts.append(types.Part.from_text(text="PROJECTION MASK (for reference only: does NOT override original scene content or product orientation)"))
+            reference_parts.append(image_part(edit_mask.convert("RGB")))
     last_error: Exception | None = None
     for attempt in range(1, 4):
         try:

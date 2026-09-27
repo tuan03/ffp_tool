@@ -902,7 +902,93 @@ def build_direct_ai_mockup(
     best_candidate_metrics: dict[str, object] = {}
 
     if room_img is not None:
-        metrics: dict[str, object] = {"master_artwork_sha256": hashlib.sha256(print_path.read_bytes()).hexdigest()}
+        metrics: dict[str, object] = {
+            "master_artwork_sha256": hashlib.sha256(print_path.read_bytes()).hexdigest(),
+            "has_room_template": True,
+        }
+        if reference_analysis:
+            metrics["reference_analysis"] = reference_analysis
+
+        # Pillar 1: AI-Native Multimodal Inpainting / Lifestyle Integration
+        # Uses Gemini 2.5 Flash Image to synthesize the product featuring the approved artwork
+        # naturally into the room with authentic material texture, room lighting, contact shadows,
+        # and full scene preservation.
+        if client is not None:
+            ai_attempts = min(3, max(1, attempts))
+            for ai_attempt in range(1, ai_attempts + 1):
+                candidate_path = output_dir / "direct_ai_candidates" / f"{stem}{suffix}_ai_attempt_{ai_attempt}.png"
+                force_hybrid = bool(kwargs.get("force_hybrid_composite", False))
+                try:
+                    generated = generate_direct_ai_lifestyle(
+                        client,
+                        artwork,
+                        target,
+                        model,
+                        pose,
+                        correction=correction,
+                        room_template=room_img,
+                        reference_analysis=reference_analysis,
+                        hybrid_mode=force_hybrid,
+                    )
+                    if reference_analysis:
+                        is_infographic = bool(reference_analysis.get("is_infographic"))
+                        if is_infographic:
+                            c_boxes = reference_analysis.get("chrome_boxes_norm_0_1000") or []
+                            p_boxes = reference_analysis.get("product_boxes_norm_0_1000") or []
+                            if not c_boxes:
+                                c_boxes = reference_analysis.get("exclusion_zones") or []
+                            if c_boxes:
+                                generated = composite_infographic_hybrid(
+                                    room_img,
+                                    generated,
+                                    chrome_boxes=c_boxes,
+                                    product_boxes=p_boxes,
+                                )
+                    candidate_path.parent.mkdir(parents=True, exist_ok=True)
+                    generated.save(candidate_path)
+
+                    quality = assess_direct_ai_mockup(
+                        print_path,
+                        candidate_path,
+                        target,
+                        pose_name=active_pose_name,
+                        pose_requirement=reference_analysis.get("generation_directive", pose.display_rule or pose.placement) if reference_analysis else (pose.display_rule or pose.placement),
+                        require_matching_pillowcases=pose.name == "bed_full_showcase",
+                        custom_checklist=custom_qa_checklist,
+                        image_type="REFERENCE_TEMPLATE",
+                        reference_template=room_img,
+                        backend=backend,
+                        model=quality_model,
+                    )
+                    metrics.update({
+                        "generation_attempt": ai_attempt,
+                        "mockup_quality": quality.to_dict(),
+                    })
+                    if quality.accepted:
+                        mockup_path.parent.mkdir(parents=True, exist_ok=True)
+                        generated.save(mockup_path)
+                        return TemplateMockupRecord(
+                            print_path,
+                            None,
+                            None,
+                            mockup_path,
+                            model,
+                            active_pose_name,
+                            "ok",
+                            "Gemini synthesized the product with the approved artwork into the reference scene.",
+                            metrics,
+                            "direct_ai",
+                            variant,
+                        )
+                    else:
+                        LOG.info("AI inpainting attempt %d QA check: %s", ai_attempt, quality.reason)
+                        correction = f"The prior inpainting attempt was rejected by visual QA: {quality.reason}. Preserve room context and integrate artwork with natural lighting."
+                except Exception as exc:
+                    LOG.warning("AI inpainting attempt %d failed: %s", ai_attempt, exc)
+
+        # Pillar 2: Reference Geometric Composite Fallback
+        # (Used when client is None, offline unit testing, or if AI inpainting is unavailable)
+        LOG.info("Proceeding to reference geometric composite for template: %s", template_filename)
         plan = reference_analysis.get("surface_plan") if reference_analysis else None
         if not isinstance(plan, dict) or not plan.get("surfaces"):
             LOG.info("No surface_plan provided by vision analysis; constructing fallback planar surface plan.")
@@ -934,8 +1020,6 @@ def build_direct_ai_mockup(
         best_mask: Image.Image | None = None
         last_error = ""
 
-        # Pillar 2: Reference-Preserving Composite with Iterative Refinement
-        # (Strictly preserve 100% of original photo background; NEVER fall back to generative redraw!)
         max_attempts = min(3, max(1, attempts))
         for comp_attempt in range(1, max_attempts + 1):
             try:
