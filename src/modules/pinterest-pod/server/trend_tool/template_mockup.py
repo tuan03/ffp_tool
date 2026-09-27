@@ -1027,10 +1027,12 @@ def build_direct_ai_mockup(
                         c_boxes = list(reference_analysis.get("chrome_boxes_norm_0_1000") or [])
                         for elem in (reference_analysis.get("infographic_text_elements") or []):
                             if isinstance(elem, dict) and elem.get("box_2d"):
-                                c_boxes.append(elem["box_2d"])
-                        for ex in (reference_analysis.get("exclusion_zones") or []):
-                            if isinstance(ex, (list, tuple)) and len(ex) == 4:
-                                c_boxes.append(list(ex))
+                                elem_type = str(elem.get("element_type", "")).lower()
+                                if elem_type in ("callout", "feature_pointer", "annotation", "pointer", "detail", "spec"):
+                                    continue
+                                b = elem["box_2d"]
+                                if b[0] <= 120 or b[2] >= 920:
+                                    c_boxes.append(b)
                         norm_c_boxes = _normalize_boxes(c_boxes)
                         p_boxes = reference_analysis.get("product_boxes_norm_0_1000") or []
                         if norm_c_boxes:

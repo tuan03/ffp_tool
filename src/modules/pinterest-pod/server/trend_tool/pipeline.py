@@ -1163,10 +1163,10 @@ def run_production_from_candidates(
                             
                             best_found: Path | None = None
                             for cand_file in (
-                                candidates_dir / f"{c_stem}{suffix}_projected.png",
                                 candidates_dir / f"{c_stem}{suffix}_ai_attempt_3.png",
                                 candidates_dir / f"{c_stem}{suffix}_ai_attempt_2.png",
                                 candidates_dir / f"{c_stem}{suffix}_ai_attempt_1.png",
+                                candidates_dir / f"{c_stem}{suffix}_projected.png",
                             ):
                                 if cand_file.exists() and cand_file.stat().st_size > 1000:
                                     best_found = cand_file
@@ -1175,6 +1175,10 @@ def run_production_from_candidates(
                             if best_found:
                                 lifestyle_copy.write_bytes(best_found.read_bytes())
                                 mockups.append(lifestyle_copy)
+                                if template_mockup_records:
+                                    template_mockup_records[-1]["status"] = "ok"
+                                    template_mockup_records[-1]["mockup_path"] = str(lifestyle_copy)
+                                    template_mockup_records[-1]["notes"] = "guaranteed_deliverable_via_output_guard"
                                 ai_background_final_records.append({
                                     "source_path": best_found,
                                     "lifestyle_path": lifestyle_copy,
