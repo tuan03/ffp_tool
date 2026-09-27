@@ -620,9 +620,6 @@ export function CustomizationManagerPage({
                             "https://images.unsplash.com/photo-1521572267360-ee0c2909d518?w=800&auto=format&fit=crop&q=80";
                         }}
                       />
-
-                      {/* Placement Area Boundary Overlay */}
-                      <div className="absolute inset-x-1/4 top-1/4 bottom-1/3 border-2 border-dashed border-cyan-400/50 rounded-xl pointer-events-none group-hover:border-cyan-400 transition" />
                     </div>
 
                     {/* Customer Text Inputs Live Preview */}
