@@ -375,11 +375,11 @@ Inspect these mandatory pillars:
    - Does the product look like a real physical 3D object integrated into the room? It must have subtle ambient room shading, soft ivory room tone (not raw blinding #FFFFFF computer screen white), realistic micro-texture/pile grain, and subtle contact shadows where it touches the floor.
    - It must NOT look like a flat, unshaded white paper sticker, cardboard cutout, or raw digital plane pasted in MS Paint!
    - Is the product free of artificial bright white circular spotlights, dark grey vignettes, or dingy grey color casts? Master artwork colors and motifs must be preserved faithfully.
-5. Product Carrier, Perimeter Edges & Artwork Placement (versus GROUND_TRUTH_PRODUCT if provided):
-   - Does the product in BACKGROUND_MOCKUP match the physical product carrier, perimeter edge finish, and artwork placement of GROUND_TRUTH_PRODUCT?
-   - For example, if GROUND_TRUTH_PRODUCT has clean straight sewn edges without scallops, BACKGROUND_MOCKUP MUST NOT inherit old scalloped borders, doodle trims, or wavy frames from ORIGINAL SCENE.
-   - Artwork Placement: The artwork layout on the product must match GROUND_TRUTH_PRODUCT (e.g. centered graphic motif vs all-over wallpaper repeat; no empty white voids).
-   - Any inclusion of old scalloped borders or mismatched product carrier is an immediate failure: 'product_carrier_matched' MUST be false.
+5. Master Artwork Fidelity & Edge Construction (versus GROUND_TRUTH_PRODUCT if provided):
+   - Does the artwork in BACKGROUND_MOCKUP faithfully reflect the design, colors, and layout shown in GROUND_TRUTH_PRODUCT / MASTER ARTWORK?
+   - Perimeter Construction: If GROUND_TRUTH_PRODUCT shows clean finished edges without old scalloped borders, BACKGROUND_MOCKUP MUST NOT inherit old decorative scalloped borders, doodle trims, or old graphic frames from ORIGINAL SCENE.
+   - Natural Product Variety: If ORIGINAL SCENE shows a specific style of the product (e.g. a tote bag, satchel, or shoulder bag) that belongs to the target product category, preserving that authentic original scene product silhouette is EXPECTED and DESIRED! Do NOT fail 'product_carrier_matched' merely because the product in ORIGINAL SCENE has a slightly different handle length or silhouette than GROUND_TRUTH_PRODUCT, as long as it belongs to the target niche and the artwork is applied cleanly.
+   - Any inclusion of old scalloped borders from the previous template is an immediate failure: 'product_carrier_matched' MUST be false.
 
 Return ONLY this JSON schema:
 {
@@ -405,7 +405,7 @@ SCORING RULES:
 - If the product looks like a flat unshaded white paper sticker, cardboard cutout, or lacks realistic ambient shading and depth: listing_realism_score MUST be below 50, realistic_shading_and_depth MUST be false.
 - If ANY critical background element or infographic element (size chart table, dimension arrows, text banners, background shelves, bookcases, walls) is covered, cut through, or obscured: listing_realism_score MUST be below 50, critical_content_preserved MUST be false.
 - If product shape or orientation is wrong (e.g. horizontal rug turned into vertical column): listing_realism_score MUST be below 50, product_shape_and_orientation_matched MUST be false.
-- If product carrier, edges, or artwork placement fail to match GROUND_TRUTH_PRODUCT (e.g. scalloped edges from old template are present): listing_realism_score MUST be below 50, product_carrier_matched MUST be false.
+- If old scalloped borders or doodle frames from old template are inherited, or if the product is an entirely wrong category (e.g. a rug when bag is required): listing_realism_score MUST be below 50, product_carrier_matched MUST be false.
 - If there is an artificial spotlight or fake vignette: no_artificial_lighting_artifacts MUST be false.
 - Do NOT penalize or reject for covering up or removing foreground toys or models that were sitting on the old product surface.
 - Only assign score >= 70 if all criteria are fully satisfied and the mockup is a commercial listing photo.

@@ -1564,10 +1564,11 @@ def direct_ai_lifestyle_prompt(
     multi_panel_block = ""
     if is_info or num_surfaces > 1:
         multi_panel_block = (
-            f"\n[MULTI-PANEL ARTWORK REPLACEMENT MANDATE]:\n"
-            f"- This template contains MULTIPLE product views/panels showing the print design (e.g. main front view, interior view, detail close-up).\n"
-            f"- You MUST replace the artwork across ALL visible product panels with the new design from Image 1.\n"
-            f"- Zero tolerance for leaving the old graphic on ANY panel, and zero tolerance for leaving any residual discolored artifacts.\n\n"
+            f"\n[MULTI-PANEL & MULTI-ITEM ARTWORK REPLACEMENT MANDATE]:\n"
+            f"- This template contains MULTIPLE product views, panels, or coordinated items (e.g. main front view, detail close-ups, or a coordinated set like a handbag and wallet).\n"
+            f"- You MUST replace the artwork across ALL visible product panels and ALL items in the set with the new design from Image 1.\n"
+            f"- Zero tolerance for leaving the old graphic on ANY panel or ANY item (e.g. updating the wallet but leaving the bag unchanged is strictly forbidden).\n"
+            f"- Zero tolerance for leaving any partial prior print, floral pattern, or old doodle behind (e.g. completely eliminate and replace any floral band at the bottom of the bag with 100% opacity).\n\n"
         )
 
     is_bag = any(k in product for k in ("bag", "handbag", "tote", "purse", "backpack", "clutch", "leather"))
@@ -1648,12 +1649,12 @@ def direct_ai_lifestyle_prompt(
     product_ground_truth_lock = ""
     if has_product_render:
         product_ground_truth_lock = (
-            "- STRICT GROUND TRUTH PRODUCT CARRIER & EDGE LOCK (CRITICAL - IMAGE 2):\n"
-            "  Image 2 depicts the canonical, finished physical Print-on-Demand (POD) product item that the customer will receive.\n"
-            "  The rendered product in the scene MUST faithfully replicate Image 2:\n"
-            "  1. Exact Physical Perimeter & Edges: If Image 2 shows clean straight sewn edges, you MUST NOT inherit or draw any old scalloped borders, wavy frames, or decorative trims from Image 3!\n"
-            "  2. Master Artwork Placement: The artwork layout, centering, scale, and motif positioning on the product MUST match Image 2 (e.g. centered graphic motif with clean margins, NOT repeating wallpaper patterns, and NO empty white voids/boxes in the middle).\n"
-            "  3. Perimeter Construction: Discard any old graphic borders, scalloped rims, or doodle frames from Image 3. The new product MUST look identical to Image 2 placed seamlessly into the room of Image 3.\n"
+            f"- ARTWORK APPLICATION & PRINT FIDELITY REFERENCE (CRITICAL - IMAGE 2):\n"
+            f"  Image 2 depicts the master artwork printed on the product material with clean edges and proper scale.\n"
+            f"  The rendered product in {room_ref} MUST faithfully replicate the print fidelity of Image 2:\n"
+            f"  1. Master Artwork Fidelity: The artwork motif, colors, typography, and placement on the product in {room_ref} must match Image 2 (sharp, high-contrast, fully opaque, not a faded or semi-transparent overlay).\n"
+            f"  2. Preserve Existing Scene Product Form: Keep the EXACT physical product form, silhouette, handles, zippers, and orientation already present in {room_ref}. DO NOT swap or replace the bag/product in {room_ref} with a different model from Image 2!\n"
+            f"  3. 100% Full-Opacity Surface Coverage: Discard all prior surface prints, floral patterns, and graphics from {room_ref}. The new artwork must completely replace the old print with 100% opacity across all visible panels and matching items.\n"
         )
 
     if has_room_template and reference_analysis:
@@ -1746,9 +1747,11 @@ def direct_ai_lifestyle_prompt(
         silhouette_rule = f"- Exact Product Silhouette & Form: {product_form}\n" if product_form else ""
         if is_bag:
             bag_lock = (
-                f"- STRICT BAG SILHOUETTE & HARDWARE LOCK: Preserve the exact physical bag shape, proportions, and handle construction from {room_ref}. "
-                f"If {room_ref} shows a structured handbag / satchel with dual short rolled top-handles, DO NOT draw a tote bag, DO NOT draw a bowler bag, "
-                "and DO NOT lengthen the handles into shoulder straps.\n"
+                f"- STRICT BAG SILHOUETTE & HARDWARE LOCK: Preserve the EXACT physical bag shape, model, proportions, and handle construction already present in {room_ref}.\n"
+                f"  * If {room_ref} shows a tote bag, RETAIN the tote bag with its tall handles. DO NOT replace it with a satchel or structured box bag!\n"
+                f"  * If {room_ref} shows a structured handbag/satchel, RETAIN the satchel. DO NOT replace it with a tote bag!\n"
+                f"  * If {room_ref} shows a coordinated set (e.g. handbag + matching wallet/clutch), RETAIN BOTH items and apply the new artwork to BOTH!\n"
+                f"  * Never alter the bag's hardware, handle length, or silhouette to match Image 2. Image 2 is only an artwork print reference.\n"
             )
         else:
             bag_lock = ""

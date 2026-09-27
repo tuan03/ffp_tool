@@ -350,7 +350,14 @@ def compose_reference_artwork(
                 except (ValueError, TypeError):
                     pass
 
-        if geometry in {"curved", "folded"} or "vertices" in surface:
+        has_mesh = (
+            (geometry in {"curved", "folded"} or "vertices" in surface)
+            and isinstance(surface.get("vertices"), list)
+            and len(surface.get("vertices", [])) >= 3
+            and isinstance(surface.get("triangles"), list)
+            and len(surface.get("triangles", [])) >= 1
+        )
+        if has_mesh:
             visible = _visible_segmentation(surface, reference.size)
             if np.any(visible & exclusion_mask):
                 visible = visible & ~exclusion_mask
@@ -364,7 +371,21 @@ def compose_reference_artwork(
             union |= visible
             continue
 
-        quad = _points(surface.get("quad"), reference.size, quad=True)
+        quad_raw = surface.get("quad")
+        if not quad_raw and surface.get("box_2d"):
+            b = surface["box_2d"]
+            if isinstance(b, (list, tuple)) and len(b) == 4:
+                quad_raw = [[b[1], b[0]], [b[3], b[0]], [b[3], b[2]], [b[1], b[2]]]
+        elif not quad_raw and surface.get("polygon"):
+            poly = surface["polygon"]
+            if isinstance(poly, list) and len(poly) >= 3:
+                xs = [p[0] for p in poly if isinstance(p, list) and len(p) >= 2]
+                ys = [p[1] for p in poly if isinstance(p, list) and len(p) >= 2]
+                if xs and ys:
+                    min_x, max_x = min(xs), max(xs)
+                    min_y, max_y = min(ys), max(ys)
+                    quad_raw = [[min_x, min_y], [max_x, min_y], [max_x, max_y], [min_x, max_y]]
+        quad = _points(quad_raw, reference.size, quad=True)
         if surface.get("segmentation") or surface.get("polygon"):
             visible = _visible_segmentation(surface, reference.size)
         else:
