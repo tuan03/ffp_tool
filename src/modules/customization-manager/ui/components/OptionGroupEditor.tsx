@@ -17,25 +17,6 @@ export function OptionGroupEditor({
     groups[0]?.id ?? null,
   );
 
-  const handleAddGroup = () => {
-    const timestamp = Date.now();
-    const newGroup: CustomizationOptionGroup = {
-      id: `group_${timestamp}`,
-      label: `Tùy chọn mới ${groups.length + 1}`,
-      type: "select",
-      required: false,
-      options: [
-        {
-          id: `opt_${timestamp}_1`,
-          label: "Lựa chọn 1",
-          isAvailable: true,
-        },
-      ],
-    };
-    onChange([...groups, newGroup]);
-    setExpandedGroupId(newGroup.id);
-  };
-
   const handleRemoveGroup = (groupId: string) => {
     const target = groups.find((g) => g.id === groupId);
     if (!window.confirm(`Bạn có chắc chắn muốn xóa nhóm tùy chọn "${target?.label || groupId}"?`)) {
@@ -55,20 +36,6 @@ export function OptionGroupEditor({
     const next = [...groups];
     next[index] = updater(next[index]);
     onChange(next);
-  };
-
-  const handleAddOption = (groupIndex: number) => {
-    const targetGroup = groups[groupIndex];
-    const timestamp = Date.now();
-    const newOption: CustomizationOption = {
-      id: `opt_${timestamp}`,
-      label: `Option ${(targetGroup.options?.length ?? 0) + 1}`,
-      isAvailable: true,
-    };
-    handleUpdateGroup(groupIndex, (prev) => ({
-      ...prev,
-      options: [...(prev.options || []), newOption],
-    }));
   };
 
   const handleRemoveOption = (groupIndex: number, optionIndex: number) => {
@@ -96,25 +63,11 @@ export function OptionGroupEditor({
         <h3 className="text-sm font-bold text-slate-200">
           Nhóm Tùy Chọn
         </h3>
-        <button
-          type="button"
-          onClick={handleAddGroup}
-          className="inline-flex items-center gap-1.5 rounded-xl bg-cyan-600 px-3.5 py-2 text-xs font-bold text-white shadow-sm hover:bg-cyan-500 transition cursor-pointer"
-        >
-          + Thêm Nhóm Tùy Chọn
-        </button>
       </div>
 
       {groups.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-slate-800 bg-slate-900/30 p-8 text-center">
           <p className="text-xs text-slate-400">Chưa có nhóm tùy chọn nào.</p>
-          <button
-            type="button"
-            onClick={handleAddGroup}
-            className="mt-3 inline-flex items-center gap-1.5 rounded-xl bg-slate-800 px-3.5 py-2 text-xs font-medium text-cyan-400 hover:bg-slate-700 transition cursor-pointer"
-          >
-            + Tạo Nhóm Tùy Chọn
-          </button>
         </div>
       ) : (
         <div className="space-y-3">
@@ -249,13 +202,6 @@ export function OptionGroupEditor({
                         <span className="text-xs font-semibold text-slate-300">
                           Danh sách lựa chọn ({group.options?.length ?? 0})
                         </span>
-                        <button
-                          type="button"
-                          onClick={() => handleAddOption(groupIndex)}
-                          className="inline-flex items-center gap-1 rounded-lg bg-slate-800 px-2.5 py-1 text-xs font-medium text-cyan-400 hover:bg-slate-700 transition cursor-pointer"
-                        >
-                          + Thêm Lựa Chọn
-                        </button>
                       </div>
 
                       <div className="space-y-2">

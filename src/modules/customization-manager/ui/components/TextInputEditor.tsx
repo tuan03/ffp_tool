@@ -10,19 +10,6 @@ export function TextInputEditor({
   textInputs,
   onChange,
 }: TextInputEditorProps): React.JSX.Element {
-  const handleAddTextInput = () => {
-    const newId = `text_${Date.now()}`;
-    const newItem: CustomizationTextInput = {
-      id: newId,
-      type: "TextInputComponent",
-      label: `Customize Text ${textInputs.length + 1}`,
-      placeholder: "The Smiths Family",
-      required: false,
-      maxLength: 50,
-    };
-    onChange([...textInputs, newItem]);
-  };
-
   const handleRemoveTextInput = (index: number) => {
     if (!window.confirm(`Bạn có chắc chắn muốn xóa trường chữ "${textInputs[index].label}" không?`)) {
       return;
@@ -42,25 +29,11 @@ export function TextInputEditor({
         <h3 className="text-sm font-bold text-slate-200">
           Chữ Tùy Biến (Text)
         </h3>
-        <button
-          type="button"
-          onClick={handleAddTextInput}
-          className="inline-flex items-center gap-1.5 rounded-xl bg-cyan-600 px-3.5 py-2 text-xs font-bold text-white shadow-sm hover:bg-cyan-500 transition cursor-pointer"
-        >
-          + Thêm Ô Nhập Chữ
-        </button>
       </div>
 
       {textInputs.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-slate-800 bg-slate-900/30 p-6 text-center">
           <p className="text-xs text-slate-400">Không có trường nhập chữ nào.</p>
-          <button
-            type="button"
-            onClick={handleAddTextInput}
-            className="mt-3 inline-flex items-center gap-1.5 rounded-xl bg-slate-800 px-3.5 py-2 text-xs font-medium text-cyan-400 hover:bg-slate-700 transition cursor-pointer"
-          >
-            + Thêm Ô Nhập Chữ
-          </button>
         </div>
       ) : (
         <div className="space-y-3">

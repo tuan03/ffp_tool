@@ -25,25 +25,6 @@ export function SurfaceManager({
 }: SurfaceManagerProps): React.JSX.Element {
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
 
-  const handleAddSurface = () => {
-    const newId = `surface_${Date.now()}`;
-    const newSurface: SurfaceItem = {
-      name: `Surface ${surfaces.length + 1}`,
-      surfaceId: newId,
-      previewUrl: "",
-      fileId: "",
-      placements: [
-        {
-          name: "Main Area",
-          placementId: `placement_${Date.now()}`,
-          allowedTypes: ["text", "image"],
-        },
-      ],
-    };
-    onChange([...surfaces, newSurface]);
-    setEditingIndex(surfaces.length);
-  };
-
   const handleRemoveSurface = (index: number) => {
     if (!window.confirm(`Bạn có chắc chắn muốn xóa mặt in "${surfaces[index].name}" không?`)) {
       return;
@@ -71,17 +52,6 @@ export function SurfaceManager({
     onChange(updated);
   };
 
-  const handleAddPlacement = (surfaceIndex: number) => {
-    const surface = surfaces[surfaceIndex];
-    const newPlacement: PlacementItem = {
-      name: `Placement ${(surface.placements?.length ?? 0) + 1}`,
-      placementId: `place_${Date.now()}`,
-      allowedTypes: ["text", "image"],
-    };
-    const updatedPlacements = [...(surface.placements ?? []), newPlacement];
-    handleUpdateSurfaceField(surfaceIndex, "placements", updatedPlacements);
-  };
-
   const handleRemovePlacement = (surfaceIndex: number, placementIndex: number) => {
     const surface = surfaces[surfaceIndex];
     const updatedPlacements = (surface.placements ?? []).filter((_, i) => i !== placementIndex);
@@ -94,25 +64,11 @@ export function SurfaceManager({
         <h3 className="text-sm font-bold text-slate-200">
           Mặt In
         </h3>
-        <button
-          type="button"
-          onClick={handleAddSurface}
-          className="inline-flex items-center gap-1.5 rounded-xl bg-cyan-600 px-3.5 py-2 text-xs font-bold text-white shadow-sm hover:bg-cyan-500 transition whitespace-nowrap cursor-pointer"
-        >
-          + Thêm Mặt In
-        </button>
       </div>
 
       {surfaces.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-slate-800 p-8 text-center bg-slate-900/30">
-          <p className="text-xs text-slate-400 mb-3">Chưa có mặt in nào.</p>
-          <button
-            type="button"
-            onClick={handleAddSurface}
-            className="rounded-xl bg-slate-800 px-3.5 py-2 text-xs font-medium text-cyan-400 hover:bg-slate-700 transition cursor-pointer"
-          >
-            + Tạo Mặt In
-          </button>
+          <p className="text-xs text-slate-400">Chưa có mặt in nào.</p>
         </div>
       ) : (
         <div className="space-y-3">
@@ -204,13 +160,6 @@ export function SurfaceManager({
                         <span className="text-[11px] font-semibold text-slate-300">
                           Vùng in ({surface.placements?.length ?? 0})
                         </span>
-                        <button
-                          type="button"
-                          onClick={() => handleAddPlacement(idx)}
-                          className="text-[11px] font-bold text-cyan-400 hover:text-cyan-300 cursor-pointer"
-                        >
-                          + Thêm vùng in
-                        </button>
                       </div>
 
                       <div className="space-y-2">

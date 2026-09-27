@@ -573,37 +573,14 @@ export function CustomizationManagerPage({
                 <p className="text-xs text-slate-400">Đang nạp cấu hình tùy biến của sản phẩm...</p>
               </div>
             ) : !customization ? (
-              <div className="rounded-3xl border border-dashed border-slate-800 bg-slate-900/40 p-16 text-center space-y-4">
+              <div className="rounded-3xl border border-dashed border-slate-800 bg-slate-900/40 p-16 text-center space-y-3">
                 <span className="text-4xl block">🎨</span>
                 <h3 className="text-base font-bold text-slate-200">
                   Sản phẩm này chưa có cấu hình tùy biến
                 </h3>
                 <p className="text-xs text-slate-400 max-w-md mx-auto">
-                  Bạn có thể khởi tạo cấu hình in ấn ngay bây giờ từ hình ảnh hiện tại của sản phẩm để bắt đầu tùy chỉnh.
+                  Sản phẩm này hiện chưa có Metafield Amazon Customizer trên Shopify.
                 </p>
-                <div className="flex items-center justify-center gap-3 pt-2">
-                  <button
-                    type="button"
-                    onClick={handleInitializeFromProduct}
-                    className="inline-flex items-center gap-2 rounded-xl bg-cyan-600 px-5 py-2.5 text-xs font-bold text-white shadow-lg shadow-cyan-950/50 hover:bg-cyan-500 transition cursor-pointer"
-                  >
-                    <span>✨</span>
-                    <span>Khởi Tạo Cấu Hình Ngay</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setCustomization(mockCustomizationConfig);
-                      setStatusMessage({
-                        type: "info",
-                        text: "Đã nạp mẫu cấu hình chăn ga demo. Bạn có thể sửa đổi và bấm Lưu.",
-                      });
-                    }}
-                    className="inline-flex items-center gap-2 rounded-xl border border-slate-700 bg-slate-800 px-4 py-2.5 text-xs font-semibold text-slate-300 hover:bg-slate-700 transition cursor-pointer"
-                  >
-                    <span>Nạp Bản Mẫu Demo</span>
-                  </button>
-                </div>
               </div>
             ) : (
               /* UNIFIED 2-COLUMN STUDIO: Live Customer Preview on Left, Direct Controls on Right */
