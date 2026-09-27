@@ -53,13 +53,61 @@ def decode_surface_mask(payload: object, size: tuple[int, int]) -> Image.Image:
     return mask
 
 
+def _extract_surface_mask(surface: dict[str, object], size: tuple[int, int]) -> np.ndarray:
+    """Extract boolean mask from bitmap segmentation, polygon, quad, or box_2d."""
+    seg = surface.get("segmentation")
+    if isinstance(seg, dict):
+        try:
+            return np.asarray(decode_surface_mask(seg, size)) > 0
+        except Exception as exc:
+            LOG.info("Segmentation bitmap decode failed (%s); falling back to polygon mask", exc)
+
+    poly = surface.get("polygon") or surface.get("quad")
+    if poly:
+        try:
+            pts = _points(poly, size)
+            return np.asarray(_polygon_mask(size, pts)) > 0
+        except Exception as poly_exc:
+            LOG.info("Polygon extraction failed (%s); checking box_2d", poly_exc)
+
+    box = surface.get("box_2d")
+    if box and isinstance(box, (list, tuple)) and len(box) == 4:
+        try:
+            y0, x0, y1, x1 = [float(v) for v in box]
+            mask = np.zeros((size[1], size[0]), dtype=bool)
+            py0 = max(0, min(size[1] - 1, int(round(y0 * (size[1] - 1) / 1000.0))))
+            px0 = max(0, min(size[0] - 1, int(round(x0 * (size[0] - 1) / 1000.0))))
+            py1 = max(0, min(size[1], int(round(y1 * (size[1] - 1) / 1000.0)) + 1))
+            px1 = max(0, min(size[0], int(round(x1 * (size[0] - 1) / 1000.0)) + 1))
+            if px1 > px0 and py1 > py0:
+                mask[py0:py1, px0:px1] = True
+                return mask
+        except Exception:
+            pass
+
+    raise ValueError("SURFACE_REVIEW_REQUIRED: no usable segmentation, polygon, or quad provided")
+
+
 def _visible_segmentation(surface: dict[str, object], size: tuple[int, int]) -> np.ndarray:
-    visible = np.asarray(decode_surface_mask(surface.get("segmentation"), size)) > 0
+    visible = _extract_surface_mask(surface, size)
     protected = surface.get("protected_segmentations", [])
     if not isinstance(protected, list):
         raise ValueError("SURFACE_REVIEW_REQUIRED: invalid foreground segmentations")
     for payload in protected:
-        visible &= np.asarray(decode_surface_mask(payload, size)) == 0
+        if isinstance(payload, dict):
+            try:
+                visible &= np.asarray(decode_surface_mask(payload, size)) == 0
+            except Exception:
+                pass
+    protected_polys = surface.get("protected_polygons", [])
+    if isinstance(protected_polys, list):
+        for poly_val in protected_polys:
+            if poly_val:
+                try:
+                    poly_pts = _points(poly_val, size)
+                    visible &= np.asarray(_polygon_mask(size, poly_pts)) == 0
+                except Exception:
+                    pass
     if not np.any(visible):
         raise ValueError("SURFACE_REVIEW_REQUIRED: no visible print remains after foreground protection")
     return visible
@@ -317,11 +365,10 @@ def compose_reference_artwork(
             continue
 
         quad = _points(surface.get("quad"), reference.size, quad=True)
-        if "segmentation" in surface:
+        if surface.get("segmentation") or surface.get("polygon"):
             visible = _visible_segmentation(surface, reference.size)
         else:
-            polygon = _points(surface.get("polygon"), reference.size)
-            visible = np.asarray(_polygon_mask(reference.size, polygon)) > 0
+            visible = np.asarray(_polygon_mask(reference.size, quad)) > 0
 
         dilation_pixels = int(surface.get("dilation_pixels", 0))
         if dilation_pixels > 0:

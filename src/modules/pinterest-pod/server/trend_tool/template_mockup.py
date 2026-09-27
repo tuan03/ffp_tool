@@ -966,6 +966,8 @@ def build_direct_ai_mockup(
         # and full scene preservation.
         if client is not None:
             ai_attempts = min(3, max(1, attempts))
+            last_candidate_img: Image.Image | None = None
+            last_qa_reason: str = ""
             for ai_attempt in range(1, ai_attempts + 1):
                 candidate_path = output_dir / "direct_ai_candidates" / f"{stem}{suffix}_ai_attempt_{ai_attempt}.png"
                 force_hybrid = bool(kwargs.get("force_hybrid_composite", False))
@@ -979,6 +981,8 @@ def build_direct_ai_mockup(
                         correction=correction,
                         room_template=room_img,
                         product_render=product_render_img,
+                        prior_candidate=last_candidate_img,
+                        prior_qa_reason=last_qa_reason,
                         reference_analysis=reference_analysis,
                         hybrid_mode=force_hybrid,
                     )
@@ -1035,6 +1039,8 @@ def build_direct_ai_mockup(
                         )
                     else:
                         LOG.info("AI inpainting attempt %d QA check: %s", ai_attempt, quality.reason)
+                        last_candidate_img = generated.copy()
+                        last_qa_reason = quality.reason
                         correction = f"The prior inpainting attempt was rejected by visual QA: {quality.reason}. Preserve room context and integrate artwork with natural lighting."
                 except Exception as exc:
                     LOG.warning("AI inpainting attempt %d failed: %s", ai_attempt, exc)
@@ -1139,6 +1145,8 @@ def build_direct_ai_mockup(
 
 
     attempts_to_run = max(1, attempts) if client is not None else 0
+    last_candidate_img: Image.Image | None = None
+    last_qa_reason: str = ""
     for attempt in range(1, attempts_to_run + 1):
         candidate_path = output_dir / "direct_ai_candidates" / f"{stem}{suffix}_attempt_{attempt}.png"
         force_hybrid = bool(kwargs.get("force_hybrid_composite", False))
@@ -1152,6 +1160,8 @@ def build_direct_ai_mockup(
                 correction=correction,
                 room_template=room_img,
                 product_render=product_render_img,
+                prior_candidate=last_candidate_img,
+                prior_qa_reason=last_qa_reason,
                 reference_analysis=reference_analysis,
                 hybrid_mode=force_hybrid,
             )
@@ -1196,6 +1206,8 @@ def build_direct_ai_mockup(
             best_candidate_metrics = metrics_dict
 
             if not quality.accepted:
+                last_candidate_img = generated.copy()
+                last_qa_reason = quality.reason
                 raise RuntimeError(f"direct AI mockup QA rejected: {quality.reason}")
             mockup_path.parent.mkdir(parents=True, exist_ok=True)
             generated.save(mockup_path)
@@ -1449,6 +1461,8 @@ def generate_direct_ai_lifestyle(
     correction: str = "",
     room_template: Image.Image | None = None,
     product_render: Image.Image | None = None,
+    prior_candidate: Image.Image | None = None,
+    prior_qa_reason: str = "",
     reference_analysis: dict[str, Any] | None = None,
     hybrid_mode: bool = False,
 ) -> Image.Image:
@@ -1468,12 +1482,16 @@ def generate_direct_ai_lifestyle(
         parts.append(image_part(product_render, max_side=1536, max_bytes=3_500_000))
     if room_template is not None:
         parts.append(image_part(room_template, max_side=1536, max_bytes=3_500_000))
+    if prior_candidate is not None:
+        parts.append(image_part(prior_candidate, max_side=1536, max_bytes=3_500_000))
     prompt_str = direct_ai_lifestyle_prompt(
         target,
         pose,
         correction,
         has_room_template=room_template is not None,
         has_product_render=product_render is not None,
+        has_prior_candidate=prior_candidate is not None,
+        prior_qa_reason=prior_qa_reason,
         reference_analysis=reference_analysis,
         hybrid_mode=hybrid_mode,
     )
@@ -1508,6 +1526,8 @@ def direct_ai_lifestyle_prompt(
     *,
     has_room_template: bool = False,
     has_product_render: bool = False,
+    has_prior_candidate: bool = False,
+    prior_qa_reason: str = "",
     reference_analysis: dict[str, Any] | None = None,
     hybrid_mode: bool = False,
 ) -> str:
@@ -1520,6 +1540,35 @@ def direct_ai_lifestyle_prompt(
 
     coordinated_products = ""
     scene_title = reference_analysis.get("scene_title", "Reference Listing Shot") if reference_analysis else ""
+
+    visual_feedback_block = ""
+    if has_prior_candidate and prior_qa_reason:
+        cand_idx = 1 + (1 if has_product_render else 0) + (1 if has_room_template else 0) + 1
+        cand_label = f"Image {cand_idx}"
+        target_scene_ref = "Image 3" if (has_product_render and has_room_template) else ("Image 2" if has_room_template else "the scene")
+        visual_feedback_block = (
+            f"\n================================================================================\n"
+            f"[CRITICAL MULTIMODAL RETRY MANDATE - SURGICAL DEFECT CORRECTION]:\n"
+            f"- {cand_label} is your PREVIOUS GENERATION ATTEMPT, which was REJECTED by Visual Quality Inspection with this specific flaw:\n"
+            f"  >> \"{prior_qa_reason}\"\n"
+            f"- EXAMINE {cand_label} CLOSELY: Compare it directly against the reference images:\n"
+            f"  1. If any old artwork remnants, blurry artifacts, or discolored patches are visible on {cand_label}: COMPLETELY ERASE and REPLACE them with the clean new artwork from Image 1.\n"
+            f"  2. If the product looks flat, sticker-like, or lacks depth on {cand_label}: RESTORE natural ambient contact shadows, handle drop shadows, and authentic material depth.\n"
+            f"  3. If room context was altered on {cand_label}: Strictly preserve 100% of the authentic scene from {target_scene_ref}.\n"
+            f"- RETAIN the good framing and perspective from {cand_label}, but SURGICALLY ELIMINATE the defect!\n"
+            f"================================================================================\n\n"
+        )
+
+    is_info = bool(reference_analysis.get("is_infographic")) if reference_analysis else False
+    num_surfaces = len((reference_analysis.get("surface_plan") or {}).get("surfaces", [])) if reference_analysis else 0
+    multi_panel_block = ""
+    if is_info or num_surfaces > 1:
+        multi_panel_block = (
+            f"\n[MULTI-PANEL ARTWORK REPLACEMENT MANDATE]:\n"
+            f"- This template contains MULTIPLE product views/panels showing the print design (e.g. main front view, interior view, detail close-up).\n"
+            f"- You MUST replace the artwork across ALL visible product panels with the new design from Image 1.\n"
+            f"- Zero tolerance for leaving the old graphic on ANY panel, and zero tolerance for leaving any residual discolored artifacts.\n\n"
+        )
 
     is_bag = any(k in product for k in ("bag", "handbag", "tote", "purse", "backpack", "clutch", "leather"))
     is_blanket = any(k in product for k in ("blanket", "throw", "quilt"))
@@ -1843,7 +1892,7 @@ def direct_ai_lifestyle_prompt(
 
         return f"""
 Use case: final ecommerce lifestyle product photograph adapting a reference template.
-{product_rule}
+{visual_feedback_block}{multi_panel_block}{product_rule}
 {scene_desc}
 Placement: {placement}.
 Photorealism requirements: The product must have authentic 3D geometry, natural lighting, visible physical thickness, physically correct occlusion, soft contact shadows, and realistic surface finish. It must look like an actual camera photograph, not a 2D collage, poster, sticker, rendering, or graphic illustration.
@@ -1887,7 +1936,7 @@ Retry correction: {correction or f"None. Strictly preserve {room_ref} layout and
 
         return f"""
 Use case: final ecommerce lifestyle product photograph compositing onto reference room.
-{product_rule}
+{visual_feedback_block}{multi_panel_block}{product_rule}
 {scene_desc}
 Placement: {placement}.
 Photorealism requirements: The product must have authentic 3D geometry, natural lighting, visible thickness, physically correct occlusion, soft contact shadows, and realistic surface finish. It must look like an actual camera photograph, not a 2D collage, poster, sticker, rendering, or graphic illustration.
@@ -1903,7 +1952,7 @@ Retry correction: {correction or "None. Strictly preserve Image 2 room and compo
 
     return f"""
 Use case: final ecommerce lifestyle product photograph.
-{product_rule}
+{visual_feedback_block}{product_rule}
 {scene_desc}
 Placement: {placement}.
 Photorealism requirements: The product must have authentic 3D geometry, natural lighting, visible physical thickness, physically correct occlusion, soft contact shadows, and realistic surface finish. It must look like an actual camera photograph, not a 2D collage, poster, sticker, rendering, or graphic illustration.
