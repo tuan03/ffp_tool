@@ -387,6 +387,33 @@ export function CustomizationManagerPage({
   const optionGroups = customization?.optionGroups || [];
   const totalOptionsCount = textInputs.length + optionGroups.length;
 
+  // Product Navigation (Next / Previous)
+  const currentProductIndex = products.findIndex((p) => {
+    if (!activeProduct) return false;
+    if (p.id === activeProduct.id) return true;
+    const cleanPId = p.id.replace("gid://shopify/Product/", "");
+    const cleanActiveId = activeProduct.id.replace("gid://shopify/Product/", "");
+    if (cleanPId === cleanActiveId) return true;
+    return Boolean(p.handle && p.handle === activeProduct.handle);
+  });
+  const hasPrevProduct = currentProductIndex > 0;
+  const hasNextProduct = currentProductIndex >= 0 && currentProductIndex < products.length - 1;
+
+  const handleNavigateProduct = (direction: "prev" | "next") => {
+    if (isLoadingConfig) return;
+    if (direction === "prev" && hasPrevProduct) {
+      const target = products[currentProductIndex - 1];
+      if (target) {
+        void loadProductConfig(target);
+      }
+    } else if (direction === "next" && hasNextProduct) {
+      const target = products[currentProductIndex + 1];
+      if (target) {
+        void loadProductConfig(target);
+      }
+    }
+  };
+
   // Active Mockup Image
   const previewMockupUrl =
     activeSurface?.previewUrl ||
@@ -492,6 +519,45 @@ export function CustomizationManagerPage({
                   <span>←</span>
                   <span>Danh Sách Sản Phẩm</span>
                 </button>
+
+                {/* Quick Next/Prev Product Navigation */}
+                <div className="flex items-center gap-1 bg-slate-950/70 p-1 rounded-xl border border-slate-800 shadow-inner">
+                  <button
+                    type="button"
+                    onClick={() => handleNavigateProduct("prev")}
+                    disabled={!hasPrevProduct || isLoadingConfig}
+                    className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-300 hover:bg-slate-800 hover:text-white disabled:opacity-25 disabled:hover:bg-transparent transition cursor-pointer disabled:cursor-not-allowed"
+                    title={
+                      hasPrevProduct
+                        ? `Sản phẩm trước: ${products[currentProductIndex - 1]?.title}`
+                        : "Đang ở sản phẩm đầu tiên"
+                    }
+                  >
+                    <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="18 15 12 9 6 15" />
+                    </svg>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleNavigateProduct("next")}
+                    disabled={!hasNextProduct || isLoadingConfig}
+                    className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-300 hover:bg-slate-800 hover:text-white disabled:opacity-25 disabled:hover:bg-transparent transition cursor-pointer disabled:cursor-not-allowed"
+                    title={
+                      hasNextProduct
+                        ? `Sản phẩm tiếp theo: ${products[currentProductIndex + 1]?.title}`
+                        : "Đang ở sản phẩm cuối cùng"
+                    }
+                  >
+                    <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="6 9 12 15 18 9" />
+                    </svg>
+                  </button>
+                  {products.length > 0 && currentProductIndex >= 0 && (
+                    <span className="px-2 text-[11px] font-mono font-medium text-slate-400 select-none">
+                      {currentProductIndex + 1}/{products.length}
+                    </span>
+                  )}
+                </div>
 
                 <div className="h-6 w-px bg-slate-800 hidden sm:block" />
 
