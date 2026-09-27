@@ -10,6 +10,15 @@ export interface ProductCatalogTableProps {
   readonly onPreviewCustomerView?: (product: ShopifyProduct) => void;
   readonly onCloneProduct?: (product: ShopifyProduct) => void;
   readonly onDeleteCustomizer: (product: ShopifyProduct) => void;
+
+  // Optional Controlled Filter Props
+  readonly filterMode?: "all" | "collection" | "asin";
+  readonly onFilterModeChange?: (mode: "all" | "collection" | "asin") => void;
+  readonly selectedCollectionId?: string;
+  readonly onSelectedCollectionIdChange?: (id: string) => void;
+  readonly searchQuery?: string;
+  readonly onSearchQueryChange?: (query: string) => void;
+  readonly filteredProducts?: readonly ShopifyProduct[];
 }
 
 export function extractProductAsin(product: ShopifyProduct): string | null {
@@ -50,6 +59,83 @@ export function extractProductAsin(product: ShopifyProduct): string | null {
   return null;
 }
 
+export function filterCatalogProducts(
+  products: readonly ShopifyProduct[],
+  collections: readonly ShopifyCollection[],
+  filterMode: "all" | "collection" | "asin",
+  selectedCollectionId: string,
+  searchQuery: string,
+): readonly ShopifyProduct[] {
+  let result = products;
+
+  if (filterMode === "collection") {
+    if (selectedCollectionId) {
+      const col = collections.find((c) => c.id === selectedCollectionId);
+      if (col) {
+        const colTitleLower = col.title.toLowerCase().trim();
+        const colHandleLower = (col.handle || "").toLowerCase().trim();
+        result = result.filter((p) => {
+          const hasTag = (p.tags || []).some(
+            (t) =>
+              t.toLowerCase() === colTitleLower ||
+              t.toLowerCase() === colHandleLower ||
+              t.toLowerCase().includes(colHandleLower),
+          );
+          const inType = (p.productType || "").toLowerCase().includes(colTitleLower);
+          const inTitle = (p.title || "").toLowerCase().includes(colTitleLower);
+          const inHandle = (p.handle || "").toLowerCase().includes(colHandleLower);
+          return hasTag || inType || inTitle || inHandle;
+        });
+      }
+    }
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase().trim();
+      result = result.filter((p) => {
+        const titleMatch = (p.title || "").toLowerCase().includes(q);
+        const handleMatch = (p.handle || "").toLowerCase().includes(q);
+        const tagMatch = (p.tags || []).some((t) => t.toLowerCase().includes(q));
+        return titleMatch || handleMatch || tagMatch;
+      });
+    }
+  } else if (filterMode === "asin") {
+    const q = searchQuery.trim().toUpperCase();
+    if (q) {
+      result = result.filter((p) => {
+        const asin = extractProductAsin(p);
+        if (asin && asin.includes(q)) return true;
+        const tagMatch = (p.tags || []).some((t) => t.toUpperCase().includes(q));
+        const skuMatch = (p.variants || []).some((v) => (v.sku || "").toUpperCase().includes(q));
+        const titleMatch = (p.title || "").toUpperCase().includes(q);
+        const handleMatch = (p.handle || "").toUpperCase().includes(q);
+        return tagMatch || skuMatch || titleMatch || handleMatch;
+      });
+    } else {
+      // Prioritize showing products with detected ASIN
+      const asinProducts = result.filter((p) => extractProductAsin(p) !== null);
+      if (asinProducts.length > 0) {
+        result = asinProducts;
+      }
+    }
+  } else {
+    // filterMode === "all"
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase().trim();
+      const qUpper = searchQuery.trim().toUpperCase();
+      result = result.filter((p) => {
+        const titleMatch = (p.title || "").toLowerCase().includes(q);
+        const handleMatch = (p.handle || "").toLowerCase().includes(q);
+        const tagMatch = (p.tags || []).some((t) => t.toLowerCase().includes(q));
+        const skuMatch = (p.variants || []).some((v) => (v.sku || "").toUpperCase().includes(qUpper));
+        const asin = extractProductAsin(p);
+        const asinMatch = asin ? asin.includes(qUpper) : false;
+        return titleMatch || handleMatch || tagMatch || skuMatch || asinMatch;
+      });
+    }
+  }
+
+  return result;
+}
+
 export function ProductCatalogTable({
   products,
   collections = [],
@@ -57,14 +143,31 @@ export function ProductCatalogTable({
   configuredProductIds,
   onSelectProductForEdit,
   onDeleteCustomizer,
+  filterMode: propFilterMode,
+  onFilterModeChange: propOnFilterModeChange,
+  selectedCollectionId: propSelectedCollectionId,
+  onSelectedCollectionIdChange: propOnSelectedCollectionIdChange,
+  searchQuery: propSearchQuery,
+  onSearchQueryChange: propOnSearchQueryChange,
+  filteredProducts: propFilteredProducts,
 }: ProductCatalogTableProps): React.JSX.Element {
-  const [filterMode, setFilterMode] = useState<"all" | "collection" | "asin">("all");
+  const [internalFilterMode, setInternalFilterMode] = useState<"all" | "collection" | "asin">("all");
+  const [internalCollectionId, setInternalCollectionId] = useState<string>("");
+  const [internalSearchQuery, setInternalSearchQuery] = useState("");
   const [isFilterDropdownOpen, setIsFilterDropdownOpen] = useState(false);
-  const [selectedCollectionId, setSelectedCollectionId] = useState<string>("");
-  const [searchQuery, setSearchQuery] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 10;
   const filterDropdownRef = useRef<HTMLDivElement>(null);
+
+  const filterMode = propFilterMode !== undefined ? propFilterMode : internalFilterMode;
+  const setFilterMode = propOnFilterModeChange ?? setInternalFilterMode;
+
+  const selectedCollectionId =
+    propSelectedCollectionId !== undefined ? propSelectedCollectionId : internalCollectionId;
+  const setSelectedCollectionId = propOnSelectedCollectionIdChange ?? setInternalCollectionId;
+
+  const searchQuery = propSearchQuery !== undefined ? propSearchQuery : internalSearchQuery;
+  const setSearchQuery = propOnSearchQueryChange ?? setInternalSearchQuery;
 
   // Close filter dropdown when clicking outside
   useEffect(() => {
@@ -82,77 +185,13 @@ export function ProductCatalogTable({
     };
   }, []);
 
-  // Filtered products list by filterMode, selectedCollectionId, and searchQuery
+  // Filtered products list
   const filteredProducts = useMemo(() => {
-    let result = products;
-
-    if (filterMode === "collection") {
-      if (selectedCollectionId) {
-        const col = collections.find((c) => c.id === selectedCollectionId);
-        if (col) {
-          const colTitleLower = col.title.toLowerCase().trim();
-          const colHandleLower = (col.handle || "").toLowerCase().trim();
-          result = result.filter((p) => {
-            const hasTag = (p.tags || []).some(
-              (t) =>
-                t.toLowerCase() === colTitleLower ||
-                t.toLowerCase() === colHandleLower ||
-                t.toLowerCase().includes(colHandleLower),
-            );
-            const inType = (p.productType || "").toLowerCase().includes(colTitleLower);
-            const inTitle = (p.title || "").toLowerCase().includes(colTitleLower);
-            const inHandle = (p.handle || "").toLowerCase().includes(colHandleLower);
-            return hasTag || inType || inTitle || inHandle;
-          });
-        }
-      }
-      if (searchQuery.trim()) {
-        const q = searchQuery.toLowerCase().trim();
-        result = result.filter((p) => {
-          const titleMatch = (p.title || "").toLowerCase().includes(q);
-          const handleMatch = (p.handle || "").toLowerCase().includes(q);
-          const tagMatch = (p.tags || []).some((t) => t.toLowerCase().includes(q));
-          return titleMatch || handleMatch || tagMatch;
-        });
-      }
-    } else if (filterMode === "asin") {
-      const q = searchQuery.trim().toUpperCase();
-      if (q) {
-        result = result.filter((p) => {
-          const asin = extractProductAsin(p);
-          if (asin && asin.includes(q)) return true;
-          const tagMatch = (p.tags || []).some((t) => t.toUpperCase().includes(q));
-          const skuMatch = (p.variants || []).some((v) => (v.sku || "").toUpperCase().includes(q));
-          const titleMatch = (p.title || "").toUpperCase().includes(q);
-          const handleMatch = (p.handle || "").toUpperCase().includes(q);
-          return tagMatch || skuMatch || titleMatch || handleMatch;
-        });
-      } else {
-        // If query is empty in ASIN mode, prioritize showing products that have an Amazon ASIN detected
-        const asinProducts = result.filter((p) => extractProductAsin(p) !== null);
-        if (asinProducts.length > 0) {
-          result = asinProducts;
-        }
-      }
-    } else {
-      // filterMode === "all"
-      if (searchQuery.trim()) {
-        const q = searchQuery.toLowerCase().trim();
-        const qUpper = searchQuery.trim().toUpperCase();
-        result = result.filter((p) => {
-          const titleMatch = (p.title || "").toLowerCase().includes(q);
-          const handleMatch = (p.handle || "").toLowerCase().includes(q);
-          const tagMatch = (p.tags || []).some((t) => t.toLowerCase().includes(q));
-          const skuMatch = (p.variants || []).some((v) => (v.sku || "").toUpperCase().includes(qUpper));
-          const asin = extractProductAsin(p);
-          const asinMatch = asin ? asin.includes(qUpper) : false;
-          return titleMatch || handleMatch || tagMatch || skuMatch || asinMatch;
-        });
-      }
+    if (propFilteredProducts !== undefined) {
+      return propFilteredProducts;
     }
-
-    return result;
-  }, [products, collections, filterMode, selectedCollectionId, searchQuery]);
+    return filterCatalogProducts(products, collections, filterMode, selectedCollectionId, searchQuery);
+  }, [propFilteredProducts, products, collections, filterMode, selectedCollectionId, searchQuery]);
 
   // Pagination calculation
   const totalPages = Math.max(1, Math.ceil(filteredProducts.length / pageSize));

@@ -27,7 +27,10 @@ import { shopifyMockProducts } from "../../module-api/mocks/data";
 import { SurfaceManager } from "./components/SurfaceManager";
 import { OptionGroupEditor } from "./components/OptionGroupEditor";
 import { TextInputEditor } from "./components/TextInputEditor";
-import { ProductCatalogTable } from "./components/ProductCatalogTable";
+import {
+  ProductCatalogTable,
+  filterCatalogProducts,
+} from "./components/ProductCatalogTable";
 
 export interface CustomizationManagerPageProps {
   readonly moduleApiRunner?: ModuleApiRunner;
@@ -61,6 +64,15 @@ export function CustomizationManagerPage({
   const [configuredProductIds, setConfiguredProductIds] = useState<Set<string>>(
     new Set(["gid://shopify/Product/1001", "1001"]),
   );
+
+  // Catalog Filter State (scoped navigation in editor)
+  const [filterMode, setFilterMode] = useState<"all" | "collection" | "asin">("all");
+  const [selectedCollectionId, setSelectedCollectionId] = useState<string>("");
+  const [searchQuery, setSearchQuery] = useState("");
+
+  const filteredProducts = useMemo(() => {
+    return filterCatalogProducts(products, collections, filterMode, selectedCollectionId, searchQuery);
+  }, [products, collections, filterMode, selectedCollectionId, searchQuery]);
 
   // Active View Mode: 'catalog' or 'editor'
   const [viewMode, setViewMode] = useState<"catalog" | "editor">(
@@ -460,8 +472,21 @@ export function CustomizationManagerPage({
   const optionGroups = customization?.optionGroups || [];
   const totalOptionsCount = textInputs.length + optionGroups.length;
 
-  // Product Navigation (Next / Previous)
-  const currentProductIndex = products.findIndex((p) => {
+  // Product Navigation (Next / Previous scoped to filtered products if active, fallback to all products)
+  const isProductInFiltered = useMemo(() => {
+    if (!activeProduct) return false;
+    return filteredProducts.some((p) => {
+      if (p.id === activeProduct.id) return true;
+      const cleanPId = p.id.replace("gid://shopify/Product/", "");
+      const cleanActiveId = activeProduct.id.replace("gid://shopify/Product/", "");
+      if (cleanPId === cleanActiveId) return true;
+      return Boolean(p.handle && p.handle === activeProduct.handle);
+    });
+  }, [filteredProducts, activeProduct]);
+
+  const navProducts = isProductInFiltered ? filteredProducts : products;
+
+  const currentProductIndex = navProducts.findIndex((p) => {
     if (!activeProduct) return false;
     if (p.id === activeProduct.id) return true;
     const cleanPId = p.id.replace("gid://shopify/Product/", "");
@@ -470,17 +495,17 @@ export function CustomizationManagerPage({
     return Boolean(p.handle && p.handle === activeProduct.handle);
   });
   const hasPrevProduct = currentProductIndex > 0;
-  const hasNextProduct = currentProductIndex >= 0 && currentProductIndex < products.length - 1;
+  const hasNextProduct = currentProductIndex >= 0 && currentProductIndex < navProducts.length - 1;
 
   const handleNavigateProduct = (direction: "prev" | "next") => {
     if (isLoadingConfig) return;
     if (direction === "prev" && hasPrevProduct) {
-      const target = products[currentProductIndex - 1];
+      const target = navProducts[currentProductIndex - 1];
       if (target) {
         void loadProductConfig(target);
       }
     } else if (direction === "next" && hasNextProduct) {
-      const target = products[currentProductIndex + 1];
+      const target = navProducts[currentProductIndex + 1];
       if (target) {
         void loadProductConfig(target);
       }
@@ -528,6 +553,9 @@ export function CustomizationManagerPage({
                   value={selectedStoreId}
                   onChange={(e) => {
                     setSelectedStoreId(e.target.value);
+                    setFilterMode("all");
+                    setSelectedCollectionId("");
+                    setSearchQuery("");
                     setSearchParams({ storeId: e.target.value });
                   }}
                   disabled={isLoadingStores}
@@ -572,6 +600,13 @@ export function CustomizationManagerPage({
               configuredProductIds={configuredProductIds}
               onSelectProductForEdit={loadProductConfig}
               onDeleteCustomizer={handleDeleteConfig}
+              filterMode={filterMode}
+              onFilterModeChange={setFilterMode}
+              selectedCollectionId={selectedCollectionId}
+              onSelectedCollectionIdChange={setSelectedCollectionId}
+              searchQuery={searchQuery}
+              onSearchQueryChange={setSearchQuery}
+              filteredProducts={filteredProducts}
             />
           </div>
         )}
@@ -603,7 +638,7 @@ export function CustomizationManagerPage({
                     className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-300 hover:bg-slate-800 hover:text-white disabled:opacity-25 disabled:hover:bg-transparent transition cursor-pointer disabled:cursor-not-allowed"
                     title={
                       hasPrevProduct
-                        ? `Sản phẩm trước: ${products[currentProductIndex - 1]?.title}`
+                        ? `Sản phẩm trước: ${navProducts[currentProductIndex - 1]?.title}`
                         : "Đang ở sản phẩm đầu tiên"
                     }
                   >
@@ -618,7 +653,7 @@ export function CustomizationManagerPage({
                     className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-300 hover:bg-slate-800 hover:text-white disabled:opacity-25 disabled:hover:bg-transparent transition cursor-pointer disabled:cursor-not-allowed"
                     title={
                       hasNextProduct
-                        ? `Sản phẩm tiếp theo: ${products[currentProductIndex + 1]?.title}`
+                        ? `Sản phẩm tiếp theo: ${navProducts[currentProductIndex + 1]?.title}`
                         : "Đang ở sản phẩm cuối cùng"
                     }
                   >
@@ -626,9 +661,9 @@ export function CustomizationManagerPage({
                       <polyline points="6 9 12 15 18 9" />
                     </svg>
                   </button>
-                  {products.length > 0 && currentProductIndex >= 0 && (
+                  {navProducts.length > 0 && currentProductIndex >= 0 && (
                     <span className="px-2 text-[11px] font-mono font-medium text-slate-400 select-none">
-                      {currentProductIndex + 1}/{products.length}
+                      {currentProductIndex + 1}/{navProducts.length}
                     </span>
                   )}
                 </div>
