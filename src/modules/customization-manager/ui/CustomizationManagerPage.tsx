@@ -605,30 +605,24 @@ export function CustomizationManagerPage({
                 <div className="lg:col-span-6 space-y-4">
                   <div className="rounded-3xl border border-slate-800 bg-slate-900/70 p-6 shadow-xl backdrop-blur-md space-y-5">
                     {/* Surface Switcher Pills */}
-                    <div className="flex items-center justify-between gap-3 border-b border-slate-800 pb-4">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-xs font-bold text-slate-300 uppercase tracking-wider mr-1">
-                          Mặt in:
-                        </span>
-                        {surfaces.map((s, idx) => (
-                          <button
-                            key={s.surfaceId || idx}
-                            type="button"
-                            onClick={() => setActiveSurfaceIndex(idx)}
-                            className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer ${
-                              activeSurfaceIndex === idx
-                                ? "bg-cyan-600 text-white shadow-md shadow-cyan-950/40"
-                                : "border border-slate-800 bg-slate-950 text-slate-400 hover:text-slate-200"
-                            }`}
-                          >
-                            {s.name || `Mặt in ${idx + 1}`}
-                          </button>
-                        ))}
-                      </div>
-
-                      <span className="rounded-full bg-emerald-950/80 border border-emerald-800 px-2.5 py-0.5 text-[10px] font-semibold text-emerald-300 uppercase tracking-wider">
-                        Góc Nhìn Khách Hàng
+                    <div className="flex items-center gap-2 flex-wrap border-b border-slate-800 pb-4">
+                      <span className="text-xs font-bold text-slate-300 uppercase tracking-wider mr-1">
+                        Mặt in:
                       </span>
+                      {surfaces.map((s, idx) => (
+                        <button
+                          key={s.surfaceId || idx}
+                          type="button"
+                          onClick={() => setActiveSurfaceIndex(idx)}
+                          className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer ${
+                            activeSurfaceIndex === idx
+                              ? "bg-cyan-600 text-white shadow-md shadow-cyan-950/40"
+                              : "border border-slate-800 bg-slate-950 text-slate-400 hover:text-slate-200"
+                          }`}
+                        >
+                          {s.name || `Mặt in ${idx + 1}`}
+                        </button>
+                      ))}
                     </div>
 
                     {/* Interactive Mockup Container */}
@@ -643,12 +637,8 @@ export function CustomizationManagerPage({
                         }}
                       />
 
-                      {/* Placement Area Overlay */}
-                      <div className="absolute inset-x-1/4 top-1/4 bottom-1/3 border-2 border-dashed border-cyan-400/60 rounded-xl flex items-center justify-center p-3 pointer-events-none group-hover:border-cyan-400 transition">
-                        <span className="text-xs font-semibold text-cyan-200/90 bg-slate-950/70 px-2.5 py-1 rounded-lg border border-cyan-500/30 shadow-sm">
-                          Vùng in (Print Area)
-                        </span>
-                      </div>
+                      {/* Placement Area Boundary Overlay */}
+                      <div className="absolute inset-x-1/4 top-1/4 bottom-1/3 border-2 border-dashed border-cyan-400/50 rounded-xl pointer-events-none group-hover:border-cyan-400 transition" />
                     </div>
                   </div>
                 </div>
@@ -667,7 +657,7 @@ export function CustomizationManagerPage({
                             : "text-slate-400 hover:text-slate-200"
                         }`}
                       >
-                        🖼️ Mặt In & Phôi ({surfaces.length})
+                        🖼️ Mặt In ({surfaces.length})
                       </button>
 
                       <button
@@ -679,7 +669,7 @@ export function CustomizationManagerPage({
                             : "text-slate-400 hover:text-slate-200"
                         }`}
                       >
-                        🎨 Lựa Chọn & Màu ({(customization.optionGroups || []).length})
+                        🎨 Tùy Chọn ({(customization.optionGroups || []).length})
                       </button>
 
                       <button

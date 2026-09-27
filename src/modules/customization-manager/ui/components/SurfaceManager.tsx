@@ -90,33 +90,28 @@ export function SurfaceManager({
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div>
-          <h3 className="text-sm font-semibold text-slate-200">
-            Mặt In & Phôi Thiết Kế (Surfaces & Mockups)
-          </h3>
-          <p className="text-xs text-slate-400 mt-0.5">
-            Quản lý các mặt hiển thị của sản phẩm (Front, Back, Side...) cùng phôi mockup và vùng thiết kế.
-          </p>
-        </div>
+      <div className="flex items-center justify-between gap-3">
+        <h3 className="text-sm font-bold text-slate-200">
+          Mặt In
+        </h3>
         <button
           type="button"
           onClick={handleAddSurface}
-          className="inline-flex items-center gap-1.5 rounded-xl bg-cyan-600 px-3.5 py-2 text-xs font-semibold text-white shadow-sm hover:bg-cyan-500 transition flex-shrink-0 self-start sm:self-auto whitespace-nowrap cursor-pointer"
+          className="inline-flex items-center gap-1.5 rounded-xl bg-cyan-600 px-3.5 py-2 text-xs font-bold text-white shadow-sm hover:bg-cyan-500 transition whitespace-nowrap cursor-pointer"
         >
-          <span className="text-base leading-none">+</span> Thêm Mặt In
+          + Thêm Mặt In
         </button>
       </div>
 
       {surfaces.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-slate-800 p-8 text-center bg-slate-900/30">
-          <p className="text-xs text-slate-400 mb-3">Chưa có mặt in nào được cấu hình cho sản phẩm này.</p>
+          <p className="text-xs text-slate-400 mb-3">Chưa có mặt in nào.</p>
           <button
             type="button"
             onClick={handleAddSurface}
             className="rounded-xl bg-slate-800 px-3.5 py-2 text-xs font-medium text-cyan-400 hover:bg-slate-700 transition cursor-pointer"
           >
-            + Tạo Mặt In Đầu Tiên
+            + Tạo Mặt In
           </button>
         </div>
       ) : (
@@ -133,19 +128,19 @@ export function SurfaceManager({
                 }`}
               >
                 {/* Surface Header */}
-                <div className="flex items-center justify-between gap-3 mb-2">
+                <div className={`flex items-center justify-between gap-3 ${isEditing ? "mb-3" : ""}`}>
                   <div className="flex items-center gap-3 min-w-0 flex-1">
                     {surface.previewUrl ? (
                       <img
                         src={surface.previewUrl}
                         alt={surface.name}
-                        className="h-11 w-11 rounded-xl border border-slate-700 bg-slate-950 object-cover flex-shrink-0"
+                        className="h-10 w-10 rounded-xl border border-slate-700 bg-slate-950 object-cover flex-shrink-0"
                         onError={(e) => {
                           (e.target as HTMLElement).style.display = "none";
                         }}
                       />
                     ) : (
-                      <div className="flex h-11 w-11 items-center justify-center rounded-xl border border-slate-800 bg-slate-950 text-slate-500 text-xs flex-shrink-0">
+                      <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-slate-800 bg-slate-950 text-slate-500 text-xs flex-shrink-0">
                         🖼️
                       </div>
                     )}
@@ -153,9 +148,6 @@ export function SurfaceManager({
                       <h4 className="text-xs font-bold text-slate-200 truncate">
                         {surface.name || "Chưa đặt tên"}
                       </h4>
-                      <span className="text-[10px] font-mono text-slate-500 block truncate">
-                        ID: {surface.surfaceId}
-                      </span>
                     </div>
                   </div>
 
@@ -178,69 +170,44 @@ export function SurfaceManager({
                   </div>
                 </div>
 
-                {/* Surface Details (Editable or Compact) */}
-                {isEditing ? (
-                  <div className="space-y-3 pt-2 border-t border-slate-800 text-xs">
+                {/* Surface Details (Editable) */}
+                {isEditing && (
+                  <div className="space-y-3 pt-3 border-t border-slate-800 text-xs">
                     <div>
                       <label className="block text-[11px] font-medium text-slate-400 mb-1">
-                        Tên Mặt In (Surface Name)
+                        Tên mặt in
                       </label>
                       <input
                         type="text"
                         value={surface.name}
                         onChange={(e) => handleUpdateSurfaceField(idx, "name", e.target.value)}
-                        className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100 focus:border-cyan-500 focus:outline-none"
+                        className="w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-slate-100 focus:border-cyan-500 focus:outline-none"
                       />
                     </div>
 
                     <div>
                       <label className="block text-[11px] font-medium text-slate-400 mb-1">
-                        Surface ID
-                      </label>
-                      <input
-                        type="text"
-                        value={surface.surfaceId}
-                        onChange={(e) => handleUpdateSurfaceField(idx, "surfaceId", e.target.value)}
-                        className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs font-mono text-slate-300 focus:border-cyan-500 focus:outline-none"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-[11px] font-medium text-slate-400 mb-1">
-                        Mockup Preview URL (Shopify CDN hoặc liên kết ảnh phôi)
+                        Link ảnh phôi (URL)
                       </label>
                       <input
                         type="url"
-                        placeholder="https://cdn.shopify.com/s/files/.../mockup.png"
+                        placeholder="https://cdn.shopify.com/.../mockup.png"
                         value={surface.previewUrl ?? ""}
                         onChange={(e) => handleUpdateSurfaceField(idx, "previewUrl", e.target.value)}
-                        className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100 focus:border-cyan-500 focus:outline-none"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-[11px] font-medium text-slate-400 mb-1">
-                        Shopify MediaImage File ID (Phục vụ dọn rác tự động)
-                      </label>
-                      <input
-                        type="text"
-                        placeholder="gid://shopify/MediaImage/..."
-                        value={surface.fileId ?? ""}
-                        onChange={(e) => handleUpdateSurfaceField(idx, "fileId", e.target.value)}
-                        className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs font-mono text-slate-300 focus:border-cyan-500 focus:outline-none"
+                        className="w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-slate-100 focus:border-cyan-500 focus:outline-none"
                       />
                     </div>
 
                     {/* Placements Section */}
-                    <div className="mt-3 pt-3 border-t border-slate-800">
+                    <div className="pt-2 border-t border-slate-800">
                       <div className="flex items-center justify-between mb-2">
                         <span className="text-[11px] font-semibold text-slate-300">
-                          Vùng In (Placements: {surface.placements?.length ?? 0})
+                          Vùng in ({surface.placements?.length ?? 0})
                         </span>
                         <button
                           type="button"
                           onClick={() => handleAddPlacement(idx)}
-                          className="text-[11px] text-cyan-400 hover:text-cyan-300"
+                          className="text-[11px] font-bold text-cyan-400 hover:text-cyan-300 cursor-pointer"
                         >
                           + Thêm vùng in
                         </button>
@@ -250,28 +217,13 @@ export function SurfaceManager({
                         {surface.placements?.map((p, pIdx) => (
                           <div
                             key={p.placementId || pIdx}
-                            className="flex items-center justify-between gap-2 rounded-md bg-slate-950/80 p-2 border border-slate-800 text-[11px]"
+                            className="flex items-center justify-between gap-2 rounded-xl bg-slate-950 p-2.5 border border-slate-800 text-xs"
                           >
-                            <div className="flex-1">
-                              <span className="font-medium text-slate-200">{p.name}</span>
-                              <span className="ml-2 font-mono text-[10px] text-slate-500">
-                                ({p.placementId})
-                              </span>
-                              <div className="mt-0.5 flex gap-1">
-                                {p.allowedTypes.map((t) => (
-                                  <span
-                                    key={t}
-                                    className="rounded bg-slate-800 px-1 py-0.2 text-[9px] text-slate-400"
-                                  >
-                                    {t}
-                                  </span>
-                                ))}
-                              </div>
-                            </div>
+                            <span className="font-medium text-slate-200">{p.name}</span>
                             <button
                               type="button"
                               onClick={() => handleRemovePlacement(idx, pIdx)}
-                              className="text-rose-400 hover:text-rose-300 px-1"
+                              className="text-rose-400 hover:text-rose-300 px-1 cursor-pointer"
                               title="Xóa vùng in"
                             >
                               ✕
@@ -280,23 +232,6 @@ export function SurfaceManager({
                         ))}
                       </div>
                     </div>
-                  </div>
-                ) : (
-                  <div className="text-[11px] text-slate-400">
-                    <div className="flex justify-between py-0.5">
-                      <span>Vùng in (Placements):</span>
-                      <span className="text-slate-200 font-medium">
-                        {surface.placements?.length ?? 0} vùng
-                      </span>
-                    </div>
-                    {surface.fileId && (
-                      <div className="flex justify-between py-0.5">
-                        <span>File ID:</span>
-                        <span className="font-mono text-slate-300 truncate max-w-[200px]">
-                          {surface.fileId}
-                        </span>
-                      </div>
-                    )}
                   </div>
                 )}
               </div>

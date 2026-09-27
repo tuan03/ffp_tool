@@ -36,16 +36,11 @@ export function AssetInspector({
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <div>
-          <h3 className="text-sm font-semibold text-slate-200">
-            Quản Lý Tài Nguyên CDN (Asset Inspector & Tracking)
-          </h3>
-          <p className="text-xs text-slate-400">
-            Danh sách file ảnh phôi, clipart, swatch được lưu trữ trên Shopify CDN. Khi xóa hoặc thay đổi, hệ thống sẽ thực hiện dọn dẹp delta tự động.
-          </p>
-        </div>
+        <h3 className="text-sm font-bold text-slate-200">
+          Tài Nguyên CDN ({assets.length})
+        </h3>
         <div className="text-xs font-mono text-cyan-400 bg-cyan-950/40 border border-cyan-800/60 px-2.5 py-1 rounded-lg">
-          {assets.length} Assets • {trackedFileIds.length} File GIDs
+          {trackedFileIds.length} Files tracked
         </div>
       </div>
 

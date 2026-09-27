@@ -93,32 +93,27 @@ export function OptionGroupEditor({
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <div>
-          <h3 className="text-sm font-semibold text-slate-200">
-            Nhóm Tùy Chọn & Biến Thể (Option Groups & Choices)
-          </h3>
-          <p className="text-xs text-slate-400">
-            Cấu hình các bộ chọn cho khách hàng: Màu sắc (Color Swatches), Font chữ, Kích cỡ phôi, Clipart, và phụ phí (Price Adjustments).
-          </p>
-        </div>
+        <h3 className="text-sm font-bold text-slate-200">
+          Nhóm Tùy Chọn
+        </h3>
         <button
           type="button"
           onClick={handleAddGroup}
-          className="inline-flex items-center gap-1.5 rounded-lg bg-cyan-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-cyan-500 transition cursor-pointer"
+          className="inline-flex items-center gap-1.5 rounded-xl bg-cyan-600 px-3.5 py-2 text-xs font-bold text-white shadow-sm hover:bg-cyan-500 transition cursor-pointer"
         >
-          <span>+</span> Thêm nhóm tùy chọn
+          + Thêm Nhóm Tùy Chọn
         </button>
       </div>
 
       {groups.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-slate-800 bg-slate-900/30 p-8 text-center">
-          <p className="text-xs text-slate-400">Chưa có nhóm tùy chọn nào được định nghĩa.</p>
+        <div className="rounded-2xl border border-dashed border-slate-800 bg-slate-900/30 p-8 text-center">
+          <p className="text-xs text-slate-400">Chưa có nhóm tùy chọn nào.</p>
           <button
             type="button"
             onClick={handleAddGroup}
-            className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-medium text-cyan-400 hover:bg-slate-700 transition"
+            className="mt-3 inline-flex items-center gap-1.5 rounded-xl bg-slate-800 px-3.5 py-2 text-xs font-medium text-cyan-400 hover:bg-slate-700 transition cursor-pointer"
           >
-            Tạo nhóm tùy chọn đầu tiên
+            + Tạo Nhóm Tùy Chọn
           </button>
         </div>
       ) : (
@@ -128,22 +123,19 @@ export function OptionGroupEditor({
             return (
               <div
                 key={group.id}
-                className="overflow-hidden rounded-xl border border-slate-800 bg-slate-900/60 shadow-sm"
+                className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-900/60 shadow-sm"
               >
                 {/* Group Accordion Header */}
                 <div
-                  className="flex items-center justify-between px-4 py-3 bg-slate-900/90 cursor-pointer select-none hover:bg-slate-850 transition"
+                  className="flex items-center justify-between px-4 py-3 bg-slate-900/90 cursor-pointer select-none hover:bg-slate-800/80 transition"
                   onClick={() => setExpandedGroupId(isExpanded ? null : group.id)}
                 >
-                  <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-2.5">
                     <span className="text-xs text-slate-500 font-mono">
                       {isExpanded ? "▼" : "▶"}
                     </span>
-                    <span className="font-semibold text-xs text-slate-200">
+                    <span className="font-bold text-xs text-slate-200">
                       {group.label || group.id}
-                    </span>
-                    <span className="rounded bg-slate-800 px-2 py-0.5 text-[10px] font-mono text-cyan-400">
-                      ID: {group.id}
                     </span>
                     {group.required && (
                       <span className="rounded bg-rose-950/80 border border-rose-800 px-1.5 py-0.5 text-[10px] text-rose-300 font-medium">
@@ -159,7 +151,7 @@ export function OptionGroupEditor({
                     <button
                       type="button"
                       onClick={() => handleRemoveGroup(group.id)}
-                      className="rounded p-1 text-slate-400 hover:bg-rose-950 hover:text-rose-400 transition"
+                      className="rounded p-1 text-slate-400 hover:bg-rose-950 hover:text-rose-400 transition cursor-pointer"
                       title="Xóa nhóm này"
                     >
                       ✕
@@ -171,10 +163,10 @@ export function OptionGroupEditor({
                 {isExpanded && (
                   <div className="border-t border-slate-800/80 p-4 space-y-4">
                     {/* Basic Group Settings */}
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                       <div>
                         <label className="block text-[11px] font-medium text-slate-400 mb-1">
-                          Tên nhóm (Label)
+                          Tên nhóm
                         </label>
                         <input
                           type="text"
@@ -185,31 +177,14 @@ export function OptionGroupEditor({
                               label: e.target.value,
                             }))
                           }
-                          className="w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-1.5 text-xs text-slate-200 focus:border-cyan-500 focus:outline-none"
-                          placeholder="ví dụ: Màu sắc hoặc Font chữ"
+                          className="w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-slate-200 focus:border-cyan-500 focus:outline-none"
+                          placeholder="Ví dụ: Màu sắc, Kích cỡ..."
                         />
                       </div>
 
                       <div>
                         <label className="block text-[11px] font-medium text-slate-400 mb-1">
-                          Group ID (Định danh)
-                        </label>
-                        <input
-                          type="text"
-                          value={group.id}
-                          onChange={(e) =>
-                            handleUpdateGroup(groupIndex, (prev) => ({
-                              ...prev,
-                              id: e.target.value,
-                            }))
-                          }
-                          className="w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-1.5 text-xs font-mono text-cyan-300 focus:border-cyan-500 focus:outline-none"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-[11px] font-medium text-slate-400 mb-1">
-                          Kiểu hiển thị (Type)
+                          Kiểu hiển thị
                         </label>
                         <select
                           value={group.type || "select"}
@@ -219,13 +194,13 @@ export function OptionGroupEditor({
                               type: e.target.value,
                             }))
                           }
-                          className="w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-1.5 text-xs text-slate-200 focus:border-cyan-500 focus:outline-none"
+                          className="w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-slate-200 focus:border-cyan-500 focus:outline-none"
                         >
-                          <option value="select">Hộp chọn thả xuống (Dropdown Select)</option>
-                          <option value="radio">Radio Buttons</option>
+                          <option value="select">Hộp chọn (Dropdown)</option>
+                          <option value="radio">Nút chọn (Radio)</option>
                           <option value="color">Mẫu màu sắc (Color Swatches)</option>
-                          <option value="font">Lựa chọn Font chữ</option>
-                          <option value="clipart">Mẫu clipart / icon</option>
+                          <option value="font">Font chữ</option>
+                          <option value="clipart">Hình ảnh (Clipart)</option>
                         </select>
                       </div>
                     </div>
@@ -243,11 +218,11 @@ export function OptionGroupEditor({
                           }
                           className="rounded border-slate-700 bg-slate-950 text-cyan-500 focus:ring-0"
                         />
-                        <span>Khách hàng bắt buộc phải chọn (Required)</span>
+                        <span>Bắt buộc chọn</span>
                       </label>
 
                       <div className="flex items-center gap-2">
-                        <span className="text-xs text-slate-400">Tùy chọn mặc định:</span>
+                        <span className="text-xs text-slate-400">Mặc định:</span>
                         <select
                           value={group.defaultOptionId || ""}
                           onChange={(e) =>
@@ -256,9 +231,9 @@ export function OptionGroupEditor({
                               defaultOptionId: e.target.value || undefined,
                             }))
                           }
-                          className="rounded-lg border border-slate-800 bg-slate-950 px-2.5 py-1 text-xs text-slate-200 focus:border-cyan-500 focus:outline-none"
+                          className="rounded-xl border border-slate-800 bg-slate-950 px-3 py-1.5 text-xs text-slate-200 focus:border-cyan-500 focus:outline-none"
                         >
-                          <option value="">-- Không có mặc định --</option>
+                          <option value="">-- Không có --</option>
                           {(group.options || []).map((opt: CustomizationOption) => (
                             <option key={opt.id} value={opt.id}>
                               {opt.label || opt.id}
@@ -272,14 +247,14 @@ export function OptionGroupEditor({
                     <div className="mt-4 pt-3 border-t border-slate-800/80">
                       <div className="flex items-center justify-between mb-2">
                         <span className="text-xs font-semibold text-slate-300">
-                          Danh sách giá trị ({group.options?.length ?? 0})
+                          Danh sách lựa chọn ({group.options?.length ?? 0})
                         </span>
                         <button
                           type="button"
                           onClick={() => handleAddOption(groupIndex)}
-                          className="inline-flex items-center gap-1 rounded bg-slate-800 px-2 py-1 text-[11px] font-medium text-cyan-400 hover:bg-slate-700 transition"
+                          className="inline-flex items-center gap-1 rounded-lg bg-slate-800 px-2.5 py-1 text-xs font-medium text-cyan-400 hover:bg-slate-700 transition cursor-pointer"
                         >
-                          + Thêm Option
+                          + Thêm Lựa Chọn
                         </button>
                       </div>
 
@@ -287,23 +262,19 @@ export function OptionGroupEditor({
                         {(group.options || []).map((option: CustomizationOption, optIdx: number) => (
                           <div
                             key={option.id || optIdx}
-                            className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-800/60 bg-slate-950/70 p-2.5 text-xs"
+                            className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-800 bg-slate-950/70 p-2.5 text-xs"
                           >
                             {/* Thumbnail preview if any */}
                             {option.thumbnailImage?.url ? (
                               <img
                                 src={option.thumbnailImage.url}
                                 alt={option.label}
-                                className="h-7 w-7 rounded object-cover border border-slate-700 bg-slate-900"
+                                className="h-7 w-7 rounded-lg object-cover border border-slate-700 bg-slate-900"
                               />
-                            ) : (
-                              <div className="h-7 w-7 rounded border border-dashed border-slate-800 bg-slate-900/50 flex items-center justify-center text-[10px] text-slate-600">
-                                🖼️
-                              </div>
-                            )}
+                            ) : null}
 
                             {/* Label */}
-                            <div className="flex-1 min-w-[130px]">
+                            <div className="flex-1 min-w-[140px]">
                               <input
                                 type="text"
                                 value={option.label || ""}
@@ -313,24 +284,8 @@ export function OptionGroupEditor({
                                     label: e.target.value,
                                   }))
                                 }
-                                placeholder="Tên option (Label)"
-                                className="w-full rounded border border-slate-800 bg-slate-900 px-2 py-1 text-xs text-slate-200 focus:border-cyan-500 focus:outline-none"
-                              />
-                            </div>
-
-                            {/* ID */}
-                            <div className="w-28">
-                              <input
-                                type="text"
-                                value={option.id}
-                                onChange={(e) =>
-                                  handleUpdateOption(groupIndex, optIdx, (prev) => ({
-                                    ...prev,
-                                    id: e.target.value,
-                                  }))
-                                }
-                                placeholder="ID"
-                                className="w-full rounded border border-slate-800 bg-slate-900 px-2 py-1 text-[11px] font-mono text-cyan-400 focus:border-cyan-500 focus:outline-none"
+                                placeholder="Tên lựa chọn"
+                                className="w-full rounded-lg border border-slate-800 bg-slate-900 px-2.5 py-1.5 text-xs text-slate-200 focus:border-cyan-500 focus:outline-none"
                               />
                             </div>
 
@@ -347,13 +302,13 @@ export function OptionGroupEditor({
                                       : null,
                                   }))
                                 }
-                                placeholder="Thumbnail CDN URL..."
-                                className="w-full rounded border border-slate-800 bg-slate-900 px-2 py-1 text-[11px] text-slate-300 focus:border-cyan-500 focus:outline-none"
+                                placeholder="Link ảnh (nếu có)"
+                                className="w-full rounded-lg border border-slate-800 bg-slate-900 px-2.5 py-1.5 text-xs text-slate-300 focus:border-cyan-500 focus:outline-none"
                               />
                             </div>
 
                             {/* Price adjustment */}
-                            <div className="w-24">
+                            <div className="w-28">
                               <input
                                 type="number"
                                 step="0.5"
@@ -368,7 +323,7 @@ export function OptionGroupEditor({
                                   }));
                                 }}
                                 placeholder="+ Phụ phí $"
-                                className="w-full rounded border border-slate-800 bg-slate-900 px-2 py-1 text-[11px] text-emerald-400 focus:border-emerald-500 focus:outline-none"
+                                className="w-full rounded-lg border border-slate-800 bg-slate-900 px-2.5 py-1.5 text-xs text-emerald-400 focus:border-emerald-500 focus:outline-none"
                               />
                             </div>
 
@@ -376,8 +331,8 @@ export function OptionGroupEditor({
                             <button
                               type="button"
                               onClick={() => handleRemoveOption(groupIndex, optIdx)}
-                              className="rounded p-1 text-slate-500 hover:bg-rose-950 hover:text-rose-400 transition"
-                              title="Xóa option này"
+                              className="rounded-lg p-1.5 text-slate-400 hover:bg-rose-950 hover:text-rose-400 transition cursor-pointer"
+                              title="Xóa lựa chọn này"
                             >
                               ✕
                             </button>
