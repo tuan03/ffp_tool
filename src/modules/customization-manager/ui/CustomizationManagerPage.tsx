@@ -1,7 +1,10 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 
-import type { ProductCustomization } from "../../customization-normalizer";
+import type {
+  CustomizationTextInput,
+  ProductCustomization,
+} from "../../customization-normalizer";
 import {
   deleteCustomization,
   readCustomization,
@@ -22,6 +25,7 @@ import type {
 import { shopifyMockProducts } from "../../module-api/mocks/data";
 import { SurfaceManager } from "./components/SurfaceManager";
 import { OptionGroupEditor } from "./components/OptionGroupEditor";
+import { TextInputEditor } from "./components/TextInputEditor";
 import { ProductCatalogTable } from "./components/ProductCatalogTable";
 
 export interface CustomizationManagerPageProps {
@@ -376,9 +380,12 @@ export function CustomizationManagerPage({
     }
   };
 
-  // Active Surface for Preview Mockup
+  // Active Surface & Options for Preview Mockup
   const surfaces = (customization?.surfaces as any[]) || [];
   const activeSurface = surfaces[activeSurfaceIndex] || surfaces[0] || null;
+  const textInputs = (customization?.textInputs as CustomizationTextInput[]) || [];
+  const optionGroups = customization?.optionGroups || [];
+  const totalOptionsCount = textInputs.length + optionGroups.length;
 
   // Active Mockup Image
   const previewMockupUrl =
@@ -640,6 +647,38 @@ export function CustomizationManagerPage({
                       {/* Placement Area Boundary Overlay */}
                       <div className="absolute inset-x-1/4 top-1/4 bottom-1/3 border-2 border-dashed border-cyan-400/50 rounded-xl pointer-events-none group-hover:border-cyan-400 transition" />
                     </div>
+
+                    {/* Customer Text Inputs Live Preview */}
+                    {textInputs.length > 0 && (
+                      <div className="space-y-2.5 pt-2">
+                        {textInputs.map((ti) => (
+                          <div
+                            key={ti.id}
+                            className="rounded-2xl border border-slate-800 bg-slate-950 p-3.5 space-y-2 shadow-inner"
+                          >
+                            <div className="flex items-center justify-between text-xs">
+                              <span className="font-bold text-slate-200">
+                                {ti.label || "Customize Text"}{" "}
+                                <span className="text-[11px] font-normal text-slate-400">
+                                  {ti.required ? "(bắt buộc)" : "(optional)"}
+                                </span>
+                              </span>
+                              {ti.maxLength && (
+                                <span className="text-[11px] font-mono text-slate-500">
+                                  0/{ti.maxLength}
+                                </span>
+                              )}
+                            </div>
+                            <input
+                              type="text"
+                              placeholder={ti.placeholder || "The Smiths Family"}
+                              disabled
+                              className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-300 placeholder-slate-500 cursor-not-allowed select-none"
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -669,7 +708,7 @@ export function CustomizationManagerPage({
                             : "text-slate-400 hover:text-slate-200"
                         }`}
                       >
-                        🎨 Tùy Chọn ({(customization.optionGroups || []).length})
+                        🎨 Tùy Chọn ({totalOptionsCount})
                       </button>
 
                       <button
@@ -698,11 +737,23 @@ export function CustomizationManagerPage({
                       </div>
                     )}
 
-                    {/* Sub-tab 2: Option Groups & Choices Editor */}
+                    {/* Sub-tab 2: Text Inputs & Option Groups Editor */}
                     {studioTab === "options" && (
-                      <div className="space-y-4">
+                      <div className="space-y-6">
+                        {/* 1. Text Inputs (Chữ tùy biến: Customize Text, Name...) */}
+                        <TextInputEditor
+                          textInputs={textInputs}
+                          onChange={(updated) =>
+                            setCustomization({ ...customization, textInputs: updated })
+                          }
+                        />
+
+                        {/* Divider */}
+                        <div className="h-px bg-slate-800" />
+
+                        {/* 2. Option Groups & Choices */}
                         <OptionGroupEditor
-                          groups={customization.optionGroups || []}
+                          groups={optionGroups}
                           onChange={(updated) =>
                             setCustomization({ ...customization, optionGroups: updated })
                           }
