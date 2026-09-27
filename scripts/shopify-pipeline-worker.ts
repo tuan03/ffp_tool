@@ -1,6 +1,10 @@
 import { createHash } from "node:crypto";
 import { setDefaultResultOrder } from "node:dns";
 import { hostname } from "node:os";
+import { acquireCustomGptSync } from "./custom-gpt-sync-guard";
+import type { GptSeoJob, GptSeoSettings } from "../src/modules/custom-gpt-seo";
+import type { SeoContentDetailedOutput } from "../src/modules/seo-content";
+import { bindExternalSeoProduct } from "../src/modules/seo-content";
 
 import {
   loadBootstrappedStores,
@@ -47,6 +51,7 @@ interface PipelineClaim {
   readonly checksum: string;
   readonly attempt: number;
   readonly stage?: "prepare" | "sync";
+  readonly externalSeo?: { readonly jobId: string } | null;
   readonly inputAsin: string;
   readonly product: CrawlProduct;
   readonly review?: {
@@ -385,6 +390,17 @@ async function processClaim(
     if (cancellationController.signal.aborted) throw new PipelineCancelledError();
   };
   const isSyncStage = claim.stage === "sync";
+  const targetStore = typeof claim.settings.storeId === "string" ? claim.settings.storeId : storeId;
+  const gptBase = new URL("/api/v1/gpt-seo/admin/", gatewayUrl);
+  async function gptRequest<T>(route: string, body?: unknown): Promise<T> {
+    const url = new URL(route, gptBase);
+    url.searchParams.set("storeId", targetStore || "");
+    const response = await fetch(url, { method: body ? "POST" : "GET", headers: { "Content-Type": "application/json", "x-gateway-key": env.GATEWAY_AUTH_TOKEN || "" }, ...(body ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout(15_000) });
+    if (!response.ok) throw new Error(`GPT SEO gateway returned ${response.status}`);
+    return await response.json() as T;
+  }
+  let gptSyncToken: string | undefined;
+  let externalSeoExecution: SeoContentDetailedOutput | undefined;
   let baseNormalizedProduct = claim.product;
   let assetsNormalized = Number(claim.review?.assetsNormalized ?? 0);
   if (!isSyncStage) {
@@ -419,6 +435,31 @@ async function processClaim(
       normalizedProduct: baseNormalizedProduct,
       seo: { status: "running" },
     });
+    try {
+      // Existing loopback Gemini installations do not require a gateway key.
+      // A Custom GPT installation explicitly requires that key for its admin API.
+      const settings = env.GATEWAY_AUTH_TOKEN
+        ? await gptRequest<GptSeoSettings>("settings")
+        : { provider: "gemini" as const };
+      if (claim.externalSeo || settings.provider === "custom_gpt") {
+        if (claim.existingShopify?.productId) await gptRequest("bind-product", { sourceIdentity: claim.sourceKey, productId: claim.existingShopify.productId });
+        const externalJob = claim.externalSeo
+          ? await gptRequest<GptSeoJob>(`job?jobId=${encodeURIComponent(claim.externalSeo.jobId)}`)
+          : await gptRequest<GptSeoJob>("enqueue", { storeId: targetStore, source: "amazon", sourceIdentity: claim.sourceKey, sourceRevision: claim.checksum, input: { ...fromCustomizationProduct(baseNormalizedProduct), productId: claim.existingShopify?.productId || `amazon:${claim.sourceKey}` }, original: baseNormalizedProduct });
+        if (externalJob.status === "CANCELLED" || externalJob.status === "FAILED") {
+          await failClaim(claim, workerId, new Error(`GPT SEO job ${externalJob.status.toLowerCase()}: ${externalJob.error || "operator action required"}`), { retryable: false, phase: "seo", timings });
+          return;
+        }
+        if (externalJob.status !== "REVIEW_READY") {
+          await postJson(`/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/external-seo`, { workerId, externalJobId: externalJob.id });
+          return;
+        }
+        externalSeoExecution = externalJob.result as SeoContentDetailedOutput;
+      }
+    } catch (error) {
+      await failClaim(claim, workerId, error, { retryable: true, phase: "seo", timings });
+      return;
+    }
   }
 
   let hasStartedShopifyWrite = false;
@@ -555,16 +596,21 @@ async function processClaim(
         readonly product: CrawlProduct;
       }
       const seoInput = { ...fromCustomizationProduct(baseNormalizedProduct), siteDomain: claimStoreConfig?.shopDomain, storeId: claimStoreId };
-      const seoSession = createSeoContentSession(seoInput, {
+      const seoSession = externalSeoExecution ? undefined : createSeoContentSession(seoInput, {
         imageMode: "alt_only", signal: cancellationController.signal,
         dependencies: { conflictCorpus: new FileSeoConflictCorpus({ storeId: claimStoreId }) },
       });
       let prepared: SeoCorpusCommitResult<PreparedSeo>;
       try {
-        prepared = await seoCorpusCommitCoordinator.prepare<PreparedSeo>({
+        prepared = externalSeoExecution ? {
+          execution: { input: seoInput, execution: externalSeoExecution, product: applySeoContentToCustomizationProduct(baseNormalizedProduct, externalSeoExecution.output, { ensureUniqueHandle: true, existingShopifyHandle: existingProductHandle }) },
+          revisionRetries: 0,
+          timings: { initialSeoMs: 0, queueWaitMs: 0, rebaseSeoMs: 0, registrationMs: 0, totalMs: 0 },
+        } : await seoCorpusCommitCoordinator.prepare<PreparedSeo>({
           signal: cancellationController.signal,
           corpusKey: new FileSeoConflictCorpus({ storeId: claimStoreId }).getFilePath(),
           runSeo: async () => {
+            if (!seoSession) throw new Error("Gemini SEO session was not initialized");
             const execution = await seoSession.run();
             const product = applySeoContentToCustomizationProduct(
               baseNormalizedProduct,
@@ -592,7 +638,7 @@ async function processClaim(
           execution: prepared.execution.execution,
         };
         const reservation = reservedSeo;
-        seoReservation = new SeoCorpusReservation(() => unregisterSeoContentKeywords(reservation.input, reservation.execution));
+        if (!externalSeoExecution) seoReservation = new SeoCorpusReservation(() => unregisterSeoContentKeywords(reservation.input, reservation.execution));
         throwIfCancelled();
       } catch (error: unknown) {
         if (cancellationController.signal.aborted || (error instanceof Error && error.name === "AbortError")) {
@@ -698,6 +744,15 @@ async function processClaim(
     if (isNoOp) {
       shopifyProduct = stripProcessingTokens(shopifyProduct);
     }
+    if (claim.externalSeo) {
+      const jobId = claim.externalSeo.jobId;
+      gptSyncToken = await acquireCustomGptSync({
+        isApproved: claim.review?.decision === "approved", isCheckpointUnchanged: isNoOp,
+        readState: () => gptRequest<{ status: string } | null>(`sync-state?jobId=${encodeURIComponent(jobId)}`),
+        saveApproval: () => gptRequest("review-state", { jobId, state: { reviewDecision: "approved", updatedAt: Date.now() } }),
+        beginSync: () => gptRequest<{ token: string }>("begin-sync", { jobId }),
+      });
+    }
     if (!isNoOp && shopifyProduct.media?.some((media) => Boolean((media as ProcessedImageMedia).processedFileToken))) {
       const uploadStartedAt = Date.now();
       try {
@@ -802,7 +857,7 @@ async function processClaim(
       });
     }
 
-    if (syncResult.success && syncResult.productId && collectionIds.length > 0) {
+    if (!isNoOp && syncResult.success && syncResult.productId && collectionIds.length > 0) {
       for (const colId of collectionIds) {
         try {
           await runner({
@@ -878,7 +933,14 @@ async function processClaim(
       });
       stopRequested = stopRequested || checkpoint.stopRequested;
     }
+    if (claim.externalSeo && gptSyncToken) {
+      await gptRequest("finish-sync", { jobId: claim.externalSeo.jobId, token: gptSyncToken, status: "SYNCED" });
+      gptSyncToken = undefined;
+    }
     existingProductId = syncResult.productId ?? existingProductId;
+    if (claim.externalSeo && existingProductId && claimStoreId) {
+      await bindExternalSeoProduct({ storeId: claimStoreId, sourceIdentity: claim.sourceKey, productId: existingProductId });
+    }
     existingProductHandle = syncResult.productHandle ?? existingProductHandle;
     existingManagedResources = syncResult.managedResources ?? existingManagedResources;
     timings.totalMs = Date.now() - pipelineStartedAt;
@@ -988,6 +1050,11 @@ async function processClaim(
       createdProductId: extractedProductId,
     });
   } finally {
+    if (claim.externalSeo && gptSyncToken) {
+      await gptRequest("finish-sync", { jobId: claim.externalSeo.jobId, token: gptSyncToken, status: hasStartedShopifyWrite ? "UNKNOWN" : "NOT_STARTED" }).catch(() => {
+        console.warn("GPT SEO sync state requires reconciliation");
+      });
+    }
     clearInterval(heartbeat);
     if (!hasStartedShopifyWrite) {
       await seoReservation?.dispose().catch(() => {

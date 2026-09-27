@@ -84,3 +84,4 @@ export type {
   SeoContentRunOptions,
   SeoContentWebpAsset,
 } from "./types";
+export { validateExternalSeoAnalysis, researchExternalSeo, checkExternalSeoKeywords, finalizeExternalSeo, bindExternalSeoProduct } from "./external-seo";

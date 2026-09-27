@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 
 import { environment } from "../../config/environment";
+import { getCustomGptClient } from "../../modules/custom-gpt-seo";
+import { adaptCustomGptReview } from "./custom-gpt-review";
 import type { AmazonCrawlerReviewClient } from "../../modules/amazon-crawler";
 import { getModuleApiRunner, type ModuleApiRunner } from "../../modules/module-api";
 import {
@@ -298,6 +300,50 @@ export function SeoReviewPage({
     }
     return "capozen";
   });
+
+  const gptClient = useMemo(() => getCustomGptClient(environment), []);
+  const [gptOffset, setGptOffset] = useState(0);
+  const [hasMoreGptReviews, setHasMoreGptReviews] = useState(false);
+  const persistedGptReviews = useRef(new Map<string, string>());
+  const gptSaveChain = useRef(Promise.resolve());
+  useEffect(() => {
+    let cancelled = false;
+    async function loadGptReviews(): Promise<void> {
+      const loaded: SeoProductUiViewModel[] = [];
+      {
+        const page = await gptClient.list(selectedStoreId, gptOffset, "REVIEW_READY");
+        if (!cancelled) setHasMoreGptReviews(page.jobs.length === 50);
+        for (const summary of page.jobs) {
+          if (summary.source !== "auto_seo" || summary.status !== "REVIEW_READY") continue;
+          const job = await gptClient.job(selectedStoreId, summary.id);
+          const saved = await gptClient.reviewState(selectedStoreId, job.id);
+          const viewModel = adaptCustomGptReview(job, saved);
+          loaded.push(viewModel);
+        }
+      }
+      if (cancelled) return;
+      for (const product of loaded) persistedGptReviews.current.set(product.id, JSON.stringify(product));
+      setProducts(current => [...current.filter(product => !product.gptJobId || product.storeId !== selectedStoreId), ...loaded]);
+    }
+    void loadGptReviews().catch(() => {
+      if (!cancelled) notifyUser({ title: "GPT SEO", message: "Không tải được kết quả GPT từ server. Mở GPT SEO để kiểm tra kết nối.", type: "error" });
+    });
+    return () => { cancelled = true; };
+  }, [gptClient, selectedStoreId, gptOffset]);
+
+  useEffect(() => {
+    for (const product of products) {
+      if (!product.gptJobId || !product.storeId || !persistedGptReviews.current.has(product.id)) continue;
+      const serialized = JSON.stringify(product);
+      if (persistedGptReviews.current.get(product.id) === serialized) continue;
+      persistedGptReviews.current.set(product.id, serialized);
+      const jobId = product.gptJobId; const targetStore = product.storeId;
+      gptSaveChain.current = gptSaveChain.current.then(async () => { await gptClient.saveReviewState(targetStore, jobId, product); }).catch(() => {
+        persistedGptReviews.current.set(product.id, "");
+        notifyUser({ title: "GPT SEO", message: "Không lưu được trạng thái Review. Giữ trang mở và kiểm tra kết nối trước khi tiếp tục.", type: "error" });
+      });
+    }
+  }, [products, gptClient]);
 
   // Sync selectedStoreId whenever urlStoreId query param changes
   useEffect(() => {
@@ -607,7 +653,13 @@ export function SeoReviewPage({
   // Push to Shopify Store handlers
   async function triggerPushToShopify(targetProduct: SeoProductUiViewModel) {
     const targetStore = effectiveStoreId;
+    let gptSyncToken: string | undefined;
     try {
+      if (targetProduct.gptJobId) {
+        if (targetProduct.storeId !== targetStore) throw new Error("GPT SEO review belongs to another store");
+        await gptSaveChain.current;
+        gptSyncToken = (await gptClient.beginSync(targetStore, targetProduct.gptJobId)).token;
+      }
       const result = await pushSeoReviewProductToShopify(
         toPushProductItem(targetProduct),
         {
@@ -616,6 +668,7 @@ export function SeoReviewPage({
         },
       );
 
+      if (targetProduct.gptJobId && gptSyncToken) await gptClient.finishSync(targetStore, targetProduct.gptJobId, gptSyncToken, result.success ? "SYNCED" : "UNKNOWN");
       if (result.success) {
         if (targetProduct.coordinatorReview && amazonCrawlerReviews) {
           void amazonCrawlerReviews.markSynced(targetProduct.coordinatorReview.itemId, {
@@ -679,6 +732,9 @@ export function SeoReviewPage({
         }),
       );
     } catch (err: unknown) {
+      if (targetProduct.gptJobId && gptSyncToken) {
+        await gptClient.finishSync(targetStore, targetProduct.gptJobId, gptSyncToken, "UNKNOWN").catch(() => undefined);
+      }
       const message = err instanceof Error ? err.message : String(err);
       notifyUser({
         title: "❌ Shopify Sync thất bại",
@@ -704,6 +760,10 @@ export function SeoReviewPage({
   }
 
   async function triggerBatchPushToShopify(targets: readonly SeoProductUiViewModel[]) {
+    if (targets.some(target => target.gptJobId)) {
+      for (const target of targets) await triggerPushToShopify(target);
+      return;
+    }
     try {
       const pushItems = targets.map(toPushProductItem);
       const results = await pushSeoReviewProductsBatch(
@@ -1160,6 +1220,7 @@ export function SeoReviewPage({
       revertError: undefined,
       syncError: undefined,
       lastSyncedAt: undefined,
+      ...(p.gptJobId ? { shopifySyncStatus: "idle" as const, shopifySyncedAt: undefined, shopifySyncError: undefined } : {}),
       lastRevertedAt: Date.now(),
       updatedAt: Date.now(),
     };
@@ -1744,6 +1805,11 @@ export function SeoReviewPage({
 
   return (
     <div className="space-y-6">
+      <div className="flex items-center gap-4 text-sm text-cyan-300">
+        <span>GPT Custom: trang {Math.floor(gptOffset / 50) + 1}</span>
+        <button type="button" disabled={gptOffset === 0} onClick={() => setGptOffset(Math.max(0, gptOffset - 50))}>Trang trước</button>
+        <button type="button" disabled={!hasMoreGptReviews} onClick={() => setGptOffset(gptOffset + 50)}>Trang sau</button>
+      </div>
       {/* Page Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-800 pb-5">
         <div>

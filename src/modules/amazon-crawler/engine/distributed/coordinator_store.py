@@ -666,7 +666,7 @@ class CoordinatorStore:
                         & (CrawlProductItem.claim_expires_at < now)
                     )
                 )
-                .order_by(CrawlProductItem.created_at)
+                .order_by(CrawlProductItem.next_attempt_at.asc().nulls_first(), CrawlProductItem.created_at)
                 .limit(min(100, count * 10))
                 .with_for_update(skip_locked=True)
             ).all()
@@ -725,7 +725,8 @@ class CoordinatorStore:
                 item.status = "syncing" if is_sync_claim else "normalizing"
                 item.claimed_by = worker_id
                 item.claim_expires_at = claim_until
-                item.attempt_count += 1
+                if not pipeline_result.get("externalSeo"):
+                    item.attempt_count += 1
                 link = session.scalar(select(ShopifyProductLink).where(
                     ShopifyProductLink.store_id == effective_store,
                     ShopifyProductLink.source_key == item.source_key,
@@ -742,6 +743,7 @@ class CoordinatorStore:
                     "checksum": item.checksum,
                     "attempt": item.attempt_count,
                     "stage": "sync" if is_sync_claim else "prepare",
+                    "externalSeo": pipeline_result.get("externalSeo"),
                     "inputAsin": task.asin,
                     "product": item.normalized_payload if is_sync_claim else item.raw_payload,
                     "settings": job_settings,
@@ -760,6 +762,20 @@ class CoordinatorStore:
                 })
                 self._refresh_job(session, item.job_id)
         return claimed
+
+    def defer_external_seo(self, item_id: str, *, worker_id: str, external_job_id: str) -> bool:
+        """Park the item without occupying a worker while a human-driven GPT processes it."""
+        with self.sessions.begin() as session:
+            item = session.get(CrawlProductItem, item_id)
+            if item is None or item.claimed_by != worker_id or item.status != "seo":
+                return False
+            item.shopify_result = {**dict(item.shopify_result or {}), "externalSeo": {"jobId": external_job_id}, "seo": {"status": "pending", "engine": "custom_gpt"}}
+            item.status = "retry_wait"
+            item.next_attempt_at = utc_now() + timedelta(seconds=60)
+            item.claimed_by = None
+            item.claim_expires_at = None
+            self._refresh_job(session, item.job_id)
+            return True
 
     def mark_product_review_ready(
         self,
@@ -1153,7 +1169,7 @@ class CoordinatorStore:
             if item is None or item.claimed_by != worker_id or item.status != "normalizing":
                 return False
             item.normalized_payload = normalized_payload
-            item.shopify_result = {"seo": seo_summary}
+            item.shopify_result = {**dict(item.shopify_result or {}), "seo": seo_summary}
             item.status = "seo"
             item.claim_expires_at = utc_now() + timedelta(seconds=180)
             self._event(session, item.job_id, "product_seo", {

@@ -57,6 +57,9 @@ export function initAutoSeoDbSchema(db: DatabaseSync): void {
     CREATE INDEX IF NOT EXISTS idx_auto_seo_created_at
     ON auto_seo_product_backups(created_at);
   `);
+  if (!db.prepare("PRAGMA table_info(auto_seo_product_backups)").all().some(column => column.name === "gpt_settings_json")) {
+    db.exec("ALTER TABLE auto_seo_product_backups ADD COLUMN gpt_settings_json TEXT");
+  }
 }
 
 export const INSERT_AUTO_SEO_BACKUP_SQL = `

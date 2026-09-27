@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { createBrowserRouter, Navigate, RouterProvider } from "react-router-dom";
 
 import { environment } from "../../config/environment";
+import { createCustomGptClient, createCustomGptSeoRoutes, getCustomGptClient } from "../../modules/custom-gpt-seo";
 import { AppLayout } from "../../layouts/AppLayout";
 import { amazonCrawlerRoutes } from "../../modules/amazon-crawler";
 import type {
@@ -155,6 +156,12 @@ export function AppRoutes({
       const effectiveStoreId =
         storeId ||
         shopifyProducts.find((p) => p.storeId)?.storeId;
+
+      if (environment !== "mock" && effectiveStoreId) {
+        const settings = await createCustomGptClient().settings(effectiveStoreId);
+        // The backup endpoint already enqueued this snapshot on the server.
+        if (settings.provider === "custom_gpt") return;
+      }
 
       const result = await handoverAutoSeoToSeo(
         {
@@ -515,6 +522,7 @@ export function AppRoutes({
           ...distributedCrawlerRoutes,
           ...podRoutes,
           ...autoSeoRoutes,
+          ...createCustomGptSeoRoutes(getCustomGptClient(environment)),
           ...customizationRoutes,
           {
             path: "seo-review",

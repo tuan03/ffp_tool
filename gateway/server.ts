@@ -1,4 +1,5 @@
 import http from "node:http";
+import { getCustomGptRuntime } from "./custom-gpt-seo/runtime";
 
 import { GatewayDispatcher } from "./dispatcher";
 import { handleAutoSeoHttpRequest } from "./auto-seo-handler";
@@ -44,6 +45,7 @@ export function startGatewayServer(
   assertHostSecurity(host, authToken, "gateway server");
 
   const stores = loadBootstrappedStores({ env });
+  if (env.GPT_SEO_ACTION_KEY || process.env.GPT_SEO_ACTION_KEY) getCustomGptRuntime();
 
   const storeRegistry = new InMemoryStoreRegistry(stores);
   const tokenProvider = new CompositeTokenProvider();
@@ -61,6 +63,10 @@ export function startGatewayServer(
 
   const server = http.createServer(async (req, res) => {
     const url = req.url || "/";
+    if (url.startsWith("/api/v1/gpt-seo/")) {
+      await getCustomGptRuntime().handler(req, res);
+      return;
+    }
     if (url === "/health") {
       res.statusCode = 200;
       res.setHeader("Content-Type", "application/json");
