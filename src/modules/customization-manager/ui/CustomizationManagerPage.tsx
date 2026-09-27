@@ -76,11 +76,8 @@ export function CustomizationManagerPage({
   const [isDeleting, setIsDeleting] = useState(false);
   const [statusMessage, setStatusMessage] = useState<{ type: "success" | "error" | "info"; text: string } | null>(null);
 
-  // Live Customer Preview Interactive State
+  // Live Customer Preview Surface State
   const [activeSurfaceIndex, setActiveSurfaceIndex] = useState(0);
-  const [previewTestText, setPreviewTestText] = useState("Tên Của Bạn");
-  const [previewTestFont, setPreviewTestFont] = useState("sans-serif");
-  const [previewTestColor, setPreviewTestColor] = useState("#ffffff");
 
   // Gateway Adapter for Customization API
   const gateway: CustomizationGateway = useMemo(() => {
@@ -646,87 +643,11 @@ export function CustomizationManagerPage({
                         }}
                       />
 
-                      {/* Real-time Placement Area Overlay with Live Text */}
+                      {/* Placement Area Overlay */}
                       <div className="absolute inset-x-1/4 top-1/4 bottom-1/3 border-2 border-dashed border-cyan-400/60 rounded-xl flex items-center justify-center p-3 pointer-events-none group-hover:border-cyan-400 transition">
-                        <div
-                          className="text-center font-bold break-words max-w-full drop-shadow-md select-none transition-all duration-200"
-                          style={{
-                            fontFamily: previewTestFont,
-                            color: previewTestColor,
-                            fontSize:
-                              previewTestText.length > 20
-                                ? "14px"
-                                : previewTestText.length > 10
-                                  ? "18px"
-                                  : "24px",
-                          }}
-                        >
-                          {previewTestText || "Nhập tên của bạn"}
-                        </div>
-                        <span className="absolute top-1 left-1.5 text-[9px] font-mono text-cyan-300/80 bg-slate-950/80 px-1.5 py-0.5 rounded">
+                        <span className="text-xs font-semibold text-cyan-200/90 bg-slate-950/70 px-2.5 py-1 rounded-lg border border-cyan-500/30 shadow-sm">
                           Vùng in (Print Area)
                         </span>
-                      </div>
-                    </div>
-
-                    {/* Customer Interactive Test Controls */}
-                    <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4 space-y-3">
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="font-semibold text-slate-300">
-                          ✍️ Thử nghiệm góc nhìn khách hàng (Live Sandbox):
-                        </span>
-                        <span className="text-[11px] text-slate-500">
-                          Thay đổi bên dưới sẽ phản chiếu ngay lên mockup
-                        </span>
-                      </div>
-
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                        <div className="sm:col-span-1">
-                          <label className="block text-[11px] text-slate-400 mb-1">
-                            Nội dung chữ in:
-                          </label>
-                          <input
-                            type="text"
-                            value={previewTestText}
-                            onChange={(e) => setPreviewTestText(e.target.value)}
-                            placeholder="Nhập tên..."
-                            maxLength={30}
-                            className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-1.5 text-xs text-slate-200 focus:border-cyan-500 focus:outline-none"
-                          />
-                        </div>
-
-                        <div>
-                          <label className="block text-[11px] text-slate-400 mb-1">
-                            Kiểu font:
-                          </label>
-                          <select
-                            value={previewTestFont}
-                            onChange={(e) => setPreviewTestFont(e.target.value)}
-                            className="w-full rounded-xl border border-slate-800 bg-slate-900 px-2.5 py-1.5 text-xs text-slate-200 focus:border-cyan-500 focus:outline-none cursor-pointer"
-                          >
-                            <option value="sans-serif">Mặc định (Sans-serif)</option>
-                            <option value="'Playfair Display', serif">Playfair Serif</option>
-                            <option value="'Pacifico', cursive">Viết tay Pacifico</option>
-                            <option value="'Impact', fantasy">Đậm nét Impact</option>
-                          </select>
-                        </div>
-
-                        <div>
-                          <label className="block text-[11px] text-slate-400 mb-1">
-                            Màu chữ:
-                          </label>
-                          <div className="flex items-center gap-2">
-                            <input
-                              type="color"
-                              value={previewTestColor}
-                              onChange={(e) => setPreviewTestColor(e.target.value)}
-                              className="h-8 w-10 cursor-pointer rounded-lg border border-slate-800 bg-slate-900 p-0.5"
-                            />
-                            <span className="text-xs font-mono text-slate-400 uppercase">
-                              {previewTestColor}
-                            </span>
-                          </div>
-                        </div>
                       </div>
                     </div>
                   </div>
