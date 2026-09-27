@@ -4,6 +4,8 @@ This module supports Amazon → Customize → SEO and Auto SEO → backup → SE
 
 ## Setup
 
+For commands and expected results, follow the [step-by-step setup guide](setup.md): local setup, HTTPS, GPT Builder and the first batch.
+
 1. Deploy the gateway and pipeline worker, with the existing Amazon coordinator for Amazon flows. Use a supported Node 22 patch release with `node:sqlite` (tested locally on 22.22.0). Keep SQLite and `.runtime` on persistent local storage shared by the gateway and pipeline worker; do not deploy multiple gateway writers across machines.
 2. Configure server-only environment variables:
 
