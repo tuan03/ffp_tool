@@ -90,87 +90,87 @@ export function SurfaceManager({
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h3 className="text-sm font-semibold text-slate-200">
             Mặt In & Phôi Thiết Kế (Surfaces & Mockups)
           </h3>
-          <p className="text-xs text-slate-400">
-            Quản lý các mặt hiển thị của sản phẩm (Front, Back, Side...) cùng phôi mockup và vùng thiết kế (Placements).
+          <p className="text-xs text-slate-400 mt-0.5">
+            Quản lý các mặt hiển thị của sản phẩm (Front, Back, Side...) cùng phôi mockup và vùng thiết kế.
           </p>
         </div>
         <button
           type="button"
           onClick={handleAddSurface}
-          className="inline-flex items-center gap-1.5 rounded-lg bg-cyan-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-cyan-500 transition"
+          className="inline-flex items-center gap-1.5 rounded-xl bg-cyan-600 px-3.5 py-2 text-xs font-semibold text-white shadow-sm hover:bg-cyan-500 transition flex-shrink-0 self-start sm:self-auto whitespace-nowrap cursor-pointer"
         >
           <span className="text-base leading-none">+</span> Thêm Mặt In
         </button>
       </div>
 
       {surfaces.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-slate-800 p-8 text-center bg-slate-900/30">
+        <div className="rounded-2xl border border-dashed border-slate-800 p-8 text-center bg-slate-900/30">
           <p className="text-xs text-slate-400 mb-3">Chưa có mặt in nào được cấu hình cho sản phẩm này.</p>
           <button
             type="button"
             onClick={handleAddSurface}
-            className="rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-medium text-cyan-400 hover:bg-slate-700 transition"
+            className="rounded-xl bg-slate-800 px-3.5 py-2 text-xs font-medium text-cyan-400 hover:bg-slate-700 transition cursor-pointer"
           >
             + Tạo Mặt In Đầu Tiên
           </button>
         </div>
       ) : (
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <div className="space-y-3">
           {surfaces.map((surface, idx) => {
             const isEditing = editingIndex === idx;
             return (
               <div
                 key={surface.surfaceId || idx}
-                className={`rounded-xl border p-4 transition-all ${
+                className={`rounded-2xl border p-4 transition-all ${
                   isEditing
                     ? "border-cyan-500/80 bg-slate-900/90 shadow-md shadow-cyan-950/20"
                     : "border-slate-800 bg-slate-900/50 hover:border-slate-700"
                 }`}
               >
                 {/* Surface Header */}
-                <div className="flex items-start justify-between gap-3 mb-3">
-                  <div className="flex items-center gap-2.5">
+                <div className="flex items-center justify-between gap-3 mb-2">
+                  <div className="flex items-center gap-3 min-w-0 flex-1">
                     {surface.previewUrl ? (
                       <img
                         src={surface.previewUrl}
                         alt={surface.name}
-                        className="h-10 w-10 rounded-lg border border-slate-700 bg-slate-950 object-cover"
+                        className="h-11 w-11 rounded-xl border border-slate-700 bg-slate-950 object-cover flex-shrink-0"
                         onError={(e) => {
                           (e.target as HTMLElement).style.display = "none";
                         }}
                       />
                     ) : (
-                      <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-slate-800 bg-slate-950 text-slate-500 text-xs">
+                      <div className="flex h-11 w-11 items-center justify-center rounded-xl border border-slate-800 bg-slate-950 text-slate-500 text-xs flex-shrink-0">
                         🖼️
                       </div>
                     )}
-                    <div>
-                      <h4 className="text-xs font-semibold text-slate-200">
+                    <div className="min-w-0 flex-1">
+                      <h4 className="text-xs font-bold text-slate-200 truncate">
                         {surface.name || "Chưa đặt tên"}
                       </h4>
-                      <span className="text-[10px] font-mono text-slate-500">
+                      <span className="text-[10px] font-mono text-slate-500 block truncate">
                         ID: {surface.surfaceId}
                       </span>
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-1.5">
+                  <div className="flex items-center gap-1.5 flex-shrink-0">
                     <button
                       type="button"
                       onClick={() => setEditingIndex(isEditing ? null : idx)}
-                      className="rounded-md border border-slate-700 bg-slate-800 px-2.5 py-1 text-[11px] font-medium text-slate-300 hover:bg-slate-700 transition"
+                      className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-[11px] font-semibold text-slate-300 hover:bg-slate-700 hover:text-white transition whitespace-nowrap cursor-pointer"
                     >
                       {isEditing ? "Thu gọn" : "Chỉnh sửa"}
                     </button>
                     <button
                       type="button"
                       onClick={() => handleRemoveSurface(idx)}
-                      className="rounded-md border border-rose-900/40 bg-rose-950/30 px-2.5 py-1 text-[11px] font-medium text-rose-300 hover:bg-rose-900/50 transition"
+                      className="rounded-lg border border-rose-900/60 bg-rose-950/40 px-2.5 py-1.5 text-[11px] font-semibold text-rose-300 hover:bg-rose-900/60 transition whitespace-nowrap cursor-pointer"
                       title="Xóa mặt in"
                     >
                       Xóa

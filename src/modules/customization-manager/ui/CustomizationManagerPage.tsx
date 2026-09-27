@@ -393,7 +393,7 @@ export function CustomizationManagerPage({
 
   return (
     <div className="min-h-screen bg-slate-950 p-4 md:p-8 text-slate-100 font-sans">
-      <div className="mx-auto max-w-7xl space-y-6">
+      <div className="mx-auto max-w-[1536px] space-y-6">
         {/* VIEW MODE 1: CATALOG VIEW */}
         {viewMode === "catalog" && (
           <div className="space-y-6">
@@ -603,9 +603,9 @@ export function CustomizationManagerPage({
               </div>
             ) : (
               /* UNIFIED 2-COLUMN STUDIO: Live Customer Preview on Left, Direct Controls on Right */
-              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-                {/* LEFT COLUMN: Customer Mockup Canvas & Live Preview (7/12) */}
-                <div className="lg:col-span-7 space-y-4">
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+                {/* LEFT COLUMN: Customer Mockup Canvas & Live Preview (6/12) */}
+                <div className="lg:col-span-6 space-y-4">
                   <div className="rounded-3xl border border-slate-800 bg-slate-900/70 p-6 shadow-xl backdrop-blur-md space-y-5">
                     {/* Surface Switcher Pills */}
                     <div className="flex items-center justify-between gap-3 border-b border-slate-800 pb-4">
@@ -732,8 +732,8 @@ export function CustomizationManagerPage({
                   </div>
                 </div>
 
-                {/* RIGHT COLUMN: Direct Customizer Configuration (5/12) */}
-                <div className="lg:col-span-5 space-y-4">
+                {/* RIGHT COLUMN: Direct Customizer Configuration (6/12) */}
+                <div className="lg:col-span-6 space-y-4">
                   <div className="rounded-3xl border border-slate-800 bg-slate-900/70 p-6 shadow-xl backdrop-blur-md space-y-5">
                     {/* Studio Sub-tabs */}
                     <div className="flex items-center gap-1.5 bg-slate-950 p-1.5 rounded-2xl border border-slate-800">
