@@ -12,7 +12,9 @@ export interface OptionGroupEditorProps {
 export function OptionGroupEditor({
   groups,
   onChange,
-}: OptionGroupEditorProps): React.JSX.Element {
+}: OptionGroupEditorProps): React.JSX.Element | null {
+  if (groups.length === 0) return null;
+
   const [expandedGroupId, setExpandedGroupId] = useState<string | null>(
     groups[0]?.id ?? null,
   );
@@ -58,20 +60,8 @@ export function OptionGroupEditor({
   };
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h3 className="text-sm font-bold text-slate-200">
-          Nhóm Tùy Chọn
-        </h3>
-      </div>
-
-      {groups.length === 0 ? (
-        <div className="rounded-2xl border border-dashed border-slate-800 bg-slate-900/30 p-8 text-center">
-          <p className="text-xs text-slate-400">Chưa có nhóm tùy chọn nào.</p>
-        </div>
-      ) : (
-        <div className="space-y-3">
-          {groups.map((group, groupIndex) => {
+    <div className="space-y-3">
+      {groups.map((group, groupIndex) => {
             const isExpanded = expandedGroupId === group.id;
             return (
               <div
@@ -291,8 +281,6 @@ export function OptionGroupEditor({
               </div>
             );
           })}
-        </div>
-      )}
     </div>
   );
 }

@@ -713,25 +713,27 @@ export function CustomizationManagerPage({
 
                     {/* Sub-tab 2: Text Inputs & Option Groups Editor */}
                     {studioTab === "options" && (
-                      <div className="space-y-6">
-                        {/* 1. Text Inputs (Chữ tùy biến: Customize Text, Name...) */}
-                        <TextInputEditor
-                          textInputs={textInputs}
-                          onChange={(updated) =>
-                            setCustomization({ ...customization, textInputs: updated })
-                          }
-                        />
-
-                        {/* Divider */}
-                        <div className="h-px bg-slate-800" />
-
-                        {/* 2. Option Groups & Choices */}
-                        <OptionGroupEditor
-                          groups={optionGroups}
-                          onChange={(updated) =>
-                            setCustomization({ ...customization, optionGroups: updated })
-                          }
-                        />
+                      <div className="space-y-3">
+                        {totalOptionsCount === 0 ? (
+                          <div className="rounded-2xl border border-dashed border-slate-800 bg-slate-900/30 p-8 text-center text-xs text-slate-400">
+                            Sản phẩm này chưa có trường tùy biến nào.
+                          </div>
+                        ) : (
+                          <>
+                            <TextInputEditor
+                              textInputs={textInputs}
+                              onChange={(updated) =>
+                                setCustomization({ ...customization, textInputs: updated })
+                              }
+                            />
+                            <OptionGroupEditor
+                              groups={optionGroups}
+                              onChange={(updated) =>
+                                setCustomization({ ...customization, optionGroups: updated })
+                              }
+                            />
+                          </>
+                        )}
                       </div>
                     )}
 
