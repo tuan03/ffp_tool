@@ -15,7 +15,7 @@ import type {
   AmazonCrawlerSyncRetrier,
   ImageProcessingProfileManager,
 } from "../../modules/amazon-crawler";
-import { createAutoSeoRoutes } from "../../modules/auto-seo";
+import { createAutoSeoRoutes, getAutoSeoClient } from "../../modules/auto-seo";
 import type { ShopifyProductForAutoSeoUi } from "../../modules/auto-seo";
 import { createCustomizationManagerRoutes } from "../../modules/customization-manager";
 import { getModuleApiRunner } from "../../modules/module-api";
@@ -77,7 +77,10 @@ export function AppRoutes({
     const crawlerClient = getProductCrawlerClient(environment);
     const crawlerRoutes = createProductCrawlerRoutes(crawlerClient);
     const moduleApiRunner = getModuleApiRunner(environment);
-    const autoSeoClient = createAutoSeoModuleApiClient(moduleApiRunner);
+    const autoSeoClient =
+      environment === "mock"
+        ? getAutoSeoClient("mock")
+        : createAutoSeoModuleApiClient(moduleApiRunner);
     const seoRunner = getSeoContentRunner(environment);
 
     const handlePinterestHandover = async (
