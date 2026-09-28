@@ -2,18 +2,18 @@ import { useMemo, useState } from "react";
 import type {
   DeliverablesData,
   PinterestPodDeliverables,
+  SeoHandoverResponse,
   SummaryMetrics,
 } from "../../types";
 import { ComparisonTable } from "./ComparisonTable";
-import { DirectShopifySyncModal } from "./DirectShopifySyncModal";
 import type { LightboxImageItem } from "./ImageLightboxModal";
 import { buildProductGroups, type ProductGroup } from "./product-groups";
+import { SeoHandoffModal } from "./SeoHandoffModal";
 
 interface DeliverablesShowcaseProps {
   readonly deliverables: DeliverablesData;
   readonly summaryMetrics?: SummaryMetrics;
   readonly seoPayload?: PinterestPodDeliverables;
-  readonly jobId?: string | null;
   readonly onPreviewImage?: (item: LightboxImageItem) => void;
   readonly onHandoverToSeo?: (payload: PinterestPodDeliverables, serverViewModels?: readonly unknown[]) => Promise<void>;
 }
@@ -24,13 +24,12 @@ export function DeliverablesShowcase({
   deliverables,
   summaryMetrics,
   seoPayload,
-  jobId,
   onPreviewImage,
   onHandoverToSeo,
 }: DeliverablesShowcaseProps): React.JSX.Element {
   const [activeTab, setActiveTab] = useState<TabKey>("cmyk");
   const [mockupViewMode, setMockupViewMode] = useState<"by_product" | "all">("by_product");
-  const [showDirectSyncModal, setShowDirectSyncModal] = useState(false);
+  const [showSeoModal, setShowSeoModal] = useState(false);
   const [isZipping, setIsZipping] = useState(false);
   const [zipMessage, setZipMessage] = useState<string | null>(null);
 
@@ -54,7 +53,8 @@ export function DeliverablesShowcase({
     return initial;
   });
 
-  const [syncToast, setSyncToast] = useState<string | null>(null);
+  const [handoffToast, setHandoffToast] = useState<string | null>(null);
+  const [handoffResult, setHandoffResult] = useState<SeoHandoverResponse | null>(null);
 
   const isMockupApproved = (url: string, filename?: string): boolean => {
     if (approvedMockupKeys.has(url)) return true;
@@ -118,7 +118,7 @@ export function DeliverablesShowcase({
 
   // Filtered SEO payload: compute only when modal is open to avoid unnecessary recalculations during tab browsing
   const filteredSeoPayload: PinterestPodDeliverables | undefined = useMemo(() => {
-    if (!seoPayload || !showDirectSyncModal) return undefined;
+    if (!seoPayload || !showSeoModal) return undefined;
     return {
       ...seoPayload,
       items: seoPayload.items.map((item) => ({
@@ -126,7 +126,7 @@ export function DeliverablesShowcase({
         composedMockups: item.composedMockups.filter((m) => isMockupApproved(m.mockupUrl)),
       })),
     };
-  }, [seoPayload, showDirectSyncModal, approvedMockupKeys]);
+  }, [seoPayload, showSeoModal, approvedMockupKeys]);
 
   const metrics: SummaryMetrics = summaryMetrics ?? {
     rgb_4k_count: printCmykImages.length,
@@ -143,17 +143,6 @@ export function DeliverablesShowcase({
     setZipMessage(null);
     setTimeout(() => {
       setIsZipping(false);
-      if (jobId) {
-        const link = document.createElement("a");
-        link.href = `/api/pinterest-pod/jobs/${encodeURIComponent(jobId)}/download-zip`;
-        link.download = `pod_deliverables_${jobId}.zip`;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        setZipMessage(`✓ Đã bắt đầu tải gói ZIP thành phẩm (${totalProduced} bản in CMYK 300DPI, ${lifestyleMockups.length} mockups AI)!`);
-        setTimeout(() => setZipMessage(null), 5000);
-        return;
-      }
       // Generate a mock manifest JSON blob representing the zip package contents
       const manifest = {
         package: "pinterest_pod_deliverables",
@@ -167,14 +156,12 @@ export function DeliverablesShowcase({
       const a = document.createElement("a");
       a.href = url;
       a.download = `pod_deliverables_manifest_${Date.now()}.json`;
-      document.body.appendChild(a);
       a.click();
-      document.body.removeChild(a);
       setTimeout(() => URL.revokeObjectURL(url), 1000);
 
       setZipMessage(`✓ Đã bắt đầu tải gói ZIP thành phẩm (${totalProduced} bản in CMYK 300DPI, ${lifestyleMockups.length} mockups AI)!`);
       setTimeout(() => setZipMessage(null), 5000);
-    }, 400);
+    }, 600);
   }
 
   return (
@@ -196,17 +183,17 @@ export function DeliverablesShowcase({
         </div>
       )}
 
-      {/* Shopify Sync Toast Notification */}
-      {syncToast && (
+      {/* SEO Handoff Toast Notification */}
+      {handoffToast && (
         <div className="flex items-center justify-between rounded-xl border border-emerald-700 bg-emerald-950/90 p-3.5 text-xs text-emerald-200 shadow-lg animate-fade-in">
           <div className="flex items-center gap-2">
             <span className="text-base">✨</span>
-            <span className="font-semibold">{syncToast}</span>
+            <span className="font-semibold">{handoffToast}</span>
           </div>
           <button
             type="button"
-            onClick={() => setSyncToast(null)}
-            className="text-emerald-400 hover:text-white ml-2 cursor-pointer"
+            onClick={() => setHandoffToast(null)}
+            className="text-emerald-400 hover:text-white ml-2"
           >
             ✕
           </button>
@@ -382,7 +369,7 @@ export function DeliverablesShowcase({
             <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-800 bg-slate-950/70 p-3.5 shadow-inner">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-xs font-semibold text-slate-300">
-                  Duyệt ảnh mockup đồng bộ Shopify:
+                  Duyệt ảnh mockup gửi sang SEO:
                 </span>
                 <span
                   className={`rounded-full px-2.5 py-0.5 text-xs font-bold border ${
@@ -584,8 +571,8 @@ export function DeliverablesShowcase({
                                     }`}
                                     title={
                                       approved
-                                        ? "Bấm để bỏ qua mockup này khi đồng bộ Shopify"
-                                        : "Bấm để cho phép đồng bộ mockup này sang Shopify"
+                                        ? "Bấm để bỏ qua mockup này khi gửi sang SEO"
+                                        : "Bấm để cho phép gửi mockup này sang SEO"
                                     }
                                   >
                                     <span>{approved ? "✓" : "✕"}</span>
@@ -638,7 +625,7 @@ export function DeliverablesShowcase({
                                             approved ? "text-emerald-400" : "text-slate-500"
                                           }`}
                                         >
-                                          {approved ? "• Sẵn sàng Shopify" : "• Đã loại bỏ"}
+                                          {approved ? "• Sẵn sàng SEO" : "• Đã loại bỏ"}
                                         </span>
                                       </div>
                                       <a
@@ -695,8 +682,8 @@ export function DeliverablesShowcase({
                         }`}
                         title={
                           approved
-                            ? "Bấm để bỏ qua mockup này khi đồng bộ Shopify"
-                            : "Bấm để cho phép đồng bộ mockup này sang Shopify"
+                            ? "Bấm để bỏ qua mockup này khi gửi sang SEO"
+                            : "Bấm để cho phép gửi mockup này sang SEO"
                         }
                       >
                         <span>{approved ? "✓" : "✕"}</span>
@@ -748,7 +735,7 @@ export function DeliverablesShowcase({
                                 approved ? "text-emerald-400" : "text-slate-500"
                               }`}
                             >
-                              {approved ? "• Sẵn sàng Shopify" : "• Đã loại bỏ"}
+                              {approved ? "• Sẵn sàng SEO" : "• Đã loại bỏ"}
                             </span>
                           </div>
                           <a
@@ -835,7 +822,7 @@ export function DeliverablesShowcase({
       {/* Footer Actions */}
       <div className="flex flex-col sm:flex-row items-center justify-between gap-3 border-t border-slate-800 pt-5">
         <div className="text-xs text-slate-400">
-          Thành phẩm đã sẵn sàng tải file in CMYK xưởng và đẩy trực tiếp lên Shopify Store.
+          Thành phẩm đã sẵn sàng chuyển giao cho quy trình SEO &amp; Content viết bài bán hàng.
         </div>
 
         <div className="flex items-center gap-3 w-full sm:w-auto">
@@ -843,7 +830,7 @@ export function DeliverablesShowcase({
             type="button"
             onClick={handleDownloadZip}
             disabled={isZipping}
-            className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 rounded-xl border border-slate-700 bg-slate-800 px-4 py-2.5 text-xs font-semibold text-slate-200 shadow transition hover:bg-slate-700 hover:text-white disabled:opacity-50 cursor-pointer"
+            className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 rounded-xl border border-slate-700 bg-slate-800 px-4 py-2.5 text-xs font-semibold text-slate-200 shadow transition hover:bg-slate-700 hover:text-white disabled:opacity-50"
           >
             <span>{isZipping ? "⏳" : "📦"}</span>
             <span>{isZipping ? "Đang nén ZIP..." : "Tải toàn bộ file in ZIP ↓"}</span>
@@ -853,30 +840,37 @@ export function DeliverablesShowcase({
             <button
               type="button"
               onClick={() => {
-                setShowDirectSyncModal(true);
+                setHandoffResult(null);
+                setShowSeoModal(true);
               }}
-              className="flex-1 sm:flex-none flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 px-5 py-2.5 text-xs font-bold text-slate-950 shadow-lg shadow-emerald-500/25 transition hover:from-emerald-400 hover:to-teal-500 hover:shadow-emerald-500/40 cursor-pointer"
+              className="flex-1 sm:flex-none flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 px-5 py-2.5 text-xs font-bold text-slate-950 shadow-lg shadow-emerald-500/25 transition hover:from-emerald-400 hover:to-teal-500 hover:shadow-emerald-500/40"
             >
-              <span>🚀</span>
+              <span>✨</span>
               <span>
-                {`Đẩy trực tiếp lên Shopify Store (${printCmykImages.length} mẫu + ${approvedMockupCount}/${lifestyleMockups.length} mockup) ➔`}
+                {`Bàn giao sang SEO (${printCmykImages.length} file in + ${approvedMockupCount}/${lifestyleMockups.length} mockup) ➔`}
               </span>
             </button>
           )}
         </div>
       </div>
 
-      {/* Direct Shopify Sync Modal */}
-      {showDirectSyncModal && (filteredSeoPayload || seoPayload) && (
-        <DirectShopifySyncModal
-          isOpen={showDirectSyncModal}
+      {/* SEO Handoff Modal */}
+      {showSeoModal && (filteredSeoPayload || seoPayload) && (
+        <SeoHandoffModal
           payload={filteredSeoPayload ?? seoPayload!}
           deliverables={deliverables}
-          approvedMockupCount={approvedMockupCount}
-          onClose={() => setShowDirectSyncModal(false)}
-          onSyncSuccess={(res) => {
-            setSyncToast(res.message);
+          approvedMockupKeys={approvedMockupKeys}
+          onToggleMockup={toggleMockupApproval}
+          onSelectAllMockups={handleSelectAllMockups}
+          onDeselectAllMockups={handleDeselectAllMockups}
+          onPreviewImage={onPreviewImage}
+          handoffResult={handoffResult}
+          onHandoverToSeo={onHandoverToSeo}
+          onHandoffSuccess={(res) => {
+            setHandoffResult(res);
+            setHandoffToast(res.message);
           }}
+          onClose={() => setShowSeoModal(false)}
         />
       )}
     </section>
