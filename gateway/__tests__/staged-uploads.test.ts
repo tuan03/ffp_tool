@@ -415,18 +415,27 @@ test("assertPathInAllowedRoots blocks arbitrary file reads, traversal, and symli
 
   const symlinkPath = path.join(testRoot, `symlink-test-${Date.now()}.png`);
   try {
-    fs.symlinkSync("/etc/hosts", symlinkPath);
-    assert.throws(
-      () => {
-        assertPathInAllowedRoots(symlinkPath);
-      },
-      (err: unknown) => {
-        assert.ok(err instanceof GatewayError);
-        assert.equal(err.code, "SHOPIFY_SECURITY_ERROR");
-        assert.equal(err.httpStatus, 403);
-        return true;
-      },
-    );
+    try {
+      fs.symlinkSync("/etc/hosts", symlinkPath);
+    } catch (symlinkErr: unknown) {
+      const isWindowsEperm =
+        process.platform === "win32" &&
+        (symlinkErr as NodeJS.ErrnoException).code === "EPERM";
+      if (!isWindowsEperm) throw symlinkErr;
+    }
+    if (fs.existsSync(symlinkPath)) {
+      assert.throws(
+        () => {
+          assertPathInAllowedRoots(symlinkPath);
+        },
+        (err: unknown) => {
+          assert.ok(err instanceof GatewayError);
+          assert.equal(err.code, "SHOPIFY_SECURITY_ERROR");
+          assert.equal(err.httpStatus, 403);
+          return true;
+        },
+      );
+    }
   } finally {
     if (fs.existsSync(symlinkPath)) {
       fs.unlinkSync(symlinkPath);

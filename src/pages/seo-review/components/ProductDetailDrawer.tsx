@@ -271,12 +271,13 @@ export function ProductDetailDrawer({
                     <span>Shopify: Đã hoàn tác {product.storeId ? `(${product.storeId})` : ""}</span>
                   </span>
                 )}
-                {!product.lastRevertedAt && (!product.shopifySyncStatus || product.shopifySyncStatus === "idle") && (
-                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-slate-800 text-slate-400 border border-slate-700">
-                    <span className="h-2 w-2 rounded-full bg-slate-500" />
-                    <span>Chưa đẩy Store</span>
-                  </span>
-                )}
+                {!(product.lastRevertedAt && product.reviewDecision !== "approved") &&
+                  (!product.shopifySyncStatus || product.shopifySyncStatus === "idle") && (
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-slate-800 text-slate-400 border border-slate-700">
+                      <span className="h-2 w-2 rounded-full bg-slate-500" />
+                      <span>Chưa đẩy Store</span>
+                    </span>
+                  )}
                 {product.shopifySyncStatus === "failed" && (
                   <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-rose-500/15 text-rose-300 border border-rose-500/30">
                     <span className="h-2 w-2 rounded-full bg-rose-400" />

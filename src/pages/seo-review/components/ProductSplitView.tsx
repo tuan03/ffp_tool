@@ -398,7 +398,7 @@ export function ProductSplitView({
                             : `Đã hoàn tác: ${new Date(product.lastRevertedAt).toLocaleString()}`
                         }
                       >
-                        ↩ Reverted
+                        ↩ Đã hoàn tác
                       </span>
                     )}
                     {product.syncError && !product.isSyncing && (
@@ -475,6 +475,26 @@ export function ProductSplitView({
                   <span className="text-xs text-slate-400">| Trạng thái:</span>
                   {renderReviewBadge(activeProduct.reviewDecision)}
                   {renderShopifySyncBadge(activeProduct)}
+                  {activeProduct.lastRevertedAt && activeProduct.reviewDecision !== "approved" && (
+                    <span
+                      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-500/15 text-amber-300 border border-amber-500/30"
+                      title={
+                        activeProduct.previousSyncedAt
+                          ? `Đã sync: ${new Date(activeProduct.previousSyncedAt).toLocaleString()} — Hoàn tác: ${new Date(activeProduct.lastRevertedAt).toLocaleString()}`
+                          : `Đã hoàn tác: ${new Date(activeProduct.lastRevertedAt).toLocaleString()}`
+                      }
+                    >
+                      <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+                      <span>Shopify: Đã hoàn tác {activeProduct.storeId ? `(${activeProduct.storeId})` : ""}</span>
+                    </span>
+                  )}
+                  {!(activeProduct.lastRevertedAt && activeProduct.reviewDecision !== "approved") &&
+                    (!activeProduct.shopifySyncStatus || activeProduct.shopifySyncStatus === "idle") && (
+                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-800 text-slate-400 border border-slate-700">
+                        <span className="h-1.5 w-1.5 rounded-full bg-slate-500" />
+                        <span>Chưa đẩy Store</span>
+                      </span>
+                    )}
                 </div>
                 <div className="flex items-center gap-2">
                   {renderSeoStatusBadge(activeProduct.seoStatus.value, activeProduct.seoStatus.source === "mock")}

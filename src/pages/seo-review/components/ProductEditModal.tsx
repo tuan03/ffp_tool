@@ -57,13 +57,16 @@ function EditModalInner({
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
-  const wasAlreadySynced = Boolean(
-    (product.shopifySyncStatus === "synced" && !(product.lastRevertedAt && product.reviewDecision !== "approved")) ||
-    product.shopifySyncedAt ||
-    product.lastSyncedAt ||
-    product.shopifyAdminUrl ||
-    (product.productId && product.productId.startsWith("gid://shopify/Product/")),
-  );
+  const isCurrentlyReverted = Boolean(product.lastRevertedAt && product.reviewDecision !== "approved");
+  const wasAlreadySynced =
+    !isCurrentlyReverted &&
+    Boolean(
+      product.shopifySyncStatus === "synced" ||
+        product.shopifySyncedAt ||
+        product.lastSyncedAt ||
+        product.shopifyAdminUrl ||
+        (product.productId && product.productId.startsWith("gid://shopify/Product/")),
+    );
 
   async function handleSubmit(e: React.FormEvent): Promise<void> {
     e.preventDefault();

@@ -158,3 +158,90 @@ test("Re-syncing after approval clears lastRevertedAt and previousSyncedAt and s
   assert.equal(freshSynced.previousSyncedAt, undefined);
   assert.equal(calculateSyncedStat([freshSynced]), 1);
 });
+
+function computeWasAlreadySynced(product: SeoProductUiViewModel): boolean {
+  const isCurrentlyReverted = Boolean(product.lastRevertedAt && product.reviewDecision !== "approved");
+  return (
+    !isCurrentlyReverted &&
+    Boolean(
+      product.shopifySyncStatus === "synced" ||
+        product.shopifySyncedAt ||
+        product.lastSyncedAt ||
+        product.shopifyAdminUrl ||
+        (product.productId && product.productId.startsWith("gid://shopify/Product/")),
+    )
+  );
+}
+
+function resolveSyncBadgeDisplay(product: SeoProductUiViewModel): "synced" | "reverted" | "idle" | "other" {
+  if (product.shopifySyncStatus === "synced" && !(product.lastRevertedAt && product.reviewDecision !== "approved")) {
+    return "synced";
+  }
+  if (product.lastRevertedAt && product.reviewDecision !== "approved") {
+    return "reverted";
+  }
+  if (!(product.lastRevertedAt && product.reviewDecision !== "approved") && (!product.shopifySyncStatus || product.shopifySyncStatus === "idle")) {
+    return "idle";
+  }
+  return "other";
+}
+
+function computeApprovedUnsyncedStat(products: readonly SeoProductUiViewModel[]): number {
+  return products.filter(
+    (p) =>
+      p.reviewDecision === "approved" &&
+      !p.isSyncing &&
+      !p.isReverting &&
+      !["queued", "syncing", "synced"].includes(p.shopifySyncStatus || "idle"),
+  ).length;
+}
+
+test("wasAlreadySynced is false after rollback even when productId and shopifyAdminUrl are present", () => {
+  const sample = getInitialSampleViewModels()[0]!;
+  const revertedProduct: SeoProductUiViewModel = {
+    ...sample,
+    productId: "gid://shopify/Product/987654321",
+    shopifyAdminUrl: "https://admin.shopify.com/store/capozen/products/987654321",
+    reviewDecision: "pending",
+    shopifySyncStatus: "idle",
+    lastRevertedAt: Date.now(),
+    previousSyncedAt: 1774000000000,
+    shopifySyncedAt: undefined,
+    lastSyncedAt: undefined,
+  };
+
+  assert.equal(
+    computeWasAlreadySynced(revertedProduct),
+    false,
+    "wasAlreadySynced must evaluate to false for a reverted pending product",
+  );
+});
+
+test("Re-approving a product after rollback transitions badge from 'reverted' to 'idle' (Chưa đẩy Store)", () => {
+  const sample = getInitialSampleViewModels()[0]!;
+  const revertedProduct: SeoProductUiViewModel = {
+    ...sample,
+    storeId: "capozen",
+    reviewDecision: "pending",
+    shopifySyncStatus: "idle",
+    lastRevertedAt: Date.now() - 60000,
+    previousSyncedAt: Date.now() - 120000,
+  };
+
+  // While reverted: badge shows 'reverted'
+  assert.equal(resolveSyncBadgeDisplay(revertedProduct), "reverted");
+  assert.equal(calculateSyncedStat([revertedProduct]), 0);
+  assert.equal(computeApprovedUnsyncedStat([revertedProduct]), 0);
+
+  // User subsequently approves the reverted product before pushing to Shopify:
+  const reApprovedProduct: SeoProductUiViewModel = {
+    ...revertedProduct,
+    reviewDecision: "approved",
+  };
+
+  // Now badge must show 'idle' (Chưa đẩy Store), NOT 'reverted' and NOT 'synced'
+  assert.equal(resolveSyncBadgeDisplay(reApprovedProduct), "idle");
+  assert.equal(calculateSyncedStat([reApprovedProduct]), 0, "Synced stat must still be 0 before push");
+  assert.equal(computeApprovedUnsyncedStat([reApprovedProduct]), 1, "Must be counted as approved unsynced");
+});
+

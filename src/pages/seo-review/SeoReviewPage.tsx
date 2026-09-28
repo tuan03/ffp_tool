@@ -1522,13 +1522,16 @@ export function SeoReviewPage({
     const target = products.find((product) => product.id === id);
     if (!target) return false;
 
-    const wasAlreadySynced = Boolean(
-      target.shopifySyncStatus === "synced" ||
-      target.shopifySyncedAt ||
-      target.lastSyncedAt ||
-      target.shopifyAdminUrl ||
-      (target.productId && target.productId.startsWith("gid://shopify/Product/")),
-    );
+    const isCurrentlyReverted = Boolean(target.lastRevertedAt && target.reviewDecision !== "approved");
+    const wasAlreadySynced =
+      !isCurrentlyReverted &&
+      Boolean(
+        target.shopifySyncStatus === "synced" ||
+          target.shopifySyncedAt ||
+          target.lastSyncedAt ||
+          target.shopifyAdminUrl ||
+          (target.productId && target.productId.startsWith("gid://shopify/Product/")),
+      );
 
     let nextVersion = target?.coordinatorReview?.version;
     try {
