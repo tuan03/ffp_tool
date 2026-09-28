@@ -270,6 +270,7 @@ class BrowserStageTimeoutTests(unittest.IsolatedAsyncioTestCase):
     async def test_selector_timeout_has_structured_stage(self) -> None:
         class HungPage:
             async def goto(self, *_args, **_kwargs): pass
+            async def content(self): return ""
             async def wait_for_selector(self, *_args, **_kwargs):
                 await asyncio.Event().wait()
         with self.assertRaises(CrawlTimeout) as caught:

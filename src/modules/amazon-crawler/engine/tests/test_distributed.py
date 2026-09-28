@@ -46,6 +46,7 @@ from engine.distributed.coordinator_server import ConnectionManager, create_coor
 from engine.distributed.coordinator_store import ActiveJobExistsError, CoordinatorStore
 from engine.distributed.protocol import AgentLimits, hello_message, payload_checksum, settings_fingerprint, utc_iso, utc_now
 from engine.proxy_profiles import resolve_proxy_assignments
+from engine.tests.test_core import cache_family, cache_partial
 
 
 def client_hello(client_id: str = "client-a", slots: int = 2) -> dict[str, object]:
@@ -270,7 +271,7 @@ class DistributedCacheControlTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             cache = RawFamilyCache(root / ".runtime" / "cache")
-            cache.save("B012345678", {"variantMatrix": {"complete": True}})
+            cache.save("B012345678", cache_family())
             config = AgentConfig(
                 server_url="http://127.0.0.1:8766", display_name="test", max_concurrent_inputs=1,
                 limits=AgentLimits(), data_directory=root / "agent-data",
@@ -288,7 +289,7 @@ class DistributedCacheControlTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             cache = RawFamilyCache(root / ".runtime" / "cache")
-            cache.save("B012345678", {"variantMatrix": {"complete": True}})
+            cache.save("B012345678", cache_family())
             agent = DistributedCrawlerAgent(
                 project_root=root,
                 config=AgentConfig(
@@ -308,8 +309,8 @@ class DistributedCacheControlTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             cache = RawFamilyCache(root / ".runtime" / "cache")
-            cache.save("B012345678", {"variantMatrix": {"complete": True}})
-            cache.save_partial("B012345679", {"parent": {"asin": "B012345679"}})
+            cache.save("B012345678", cache_family())
+            cache.save_partial("B012345679", cache_partial())
             agent = DistributedCrawlerAgent(
                 project_root=root,
                 config=AgentConfig(
@@ -335,7 +336,7 @@ class DistributedCacheControlTests(unittest.IsolatedAsyncioTestCase):
             other_zip_key = "B012345678:90001:us-v1"
             other_asin_key = "B012345679:10001:us-v1"
             for key in (selected_key, other_zip_key, other_asin_key):
-                cache.save(key, {"variantMatrix": {"complete": True}})
+                cache.save(key, cache_family())
             cache.save_partial(selected_key, {"parent": {"asin": "B012345678"}})
             agent = DistributedCrawlerAgent(
                 project_root=root,
@@ -359,7 +360,7 @@ class DistributedCacheControlTests(unittest.IsolatedAsyncioTestCase):
             root = Path(directory)
             cache = RawFamilyCache(root / ".runtime" / "cache")
             key = "B012345678:10001:us-v1"
-            cache.save(key, {"variantMatrix": {"complete": True}})
+            cache.save(key, cache_family())
             agent = DistributedCrawlerAgent(
                 project_root=root,
                 config=AgentConfig(
@@ -393,7 +394,7 @@ class DistributedCacheControlTests(unittest.IsolatedAsyncioTestCase):
             root = Path(directory)
             cache = RawFamilyCache(root / ".runtime" / "cache")
             key = "B012345678:10001:us-v1"
-            cache.save(key, {"variantMatrix": {"complete": True}})
+            cache.save(key, cache_family())
             agent = DistributedCrawlerAgent(
                 project_root=root,
                 config=AgentConfig(
@@ -418,7 +419,7 @@ class DistributedCacheControlTests(unittest.IsolatedAsyncioTestCase):
             root = Path(directory)
             cache = RawFamilyCache(root / ".runtime" / "cache")
             key = "B012345678:10001:us-v1"
-            cache.save(key, {"variantMatrix": {"complete": True}})
+            cache.save(key, cache_family())
             agent = DistributedCrawlerAgent(
                 project_root=root,
                 config=AgentConfig(
@@ -437,7 +438,7 @@ class DistributedCacheControlTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             cache = RawFamilyCache(root / ".runtime" / "cache")
-            cache.save("B012345678:10001:us-v1", {"variantMatrix": {"complete": True}})
+            cache.save("B012345678:10001:us-v1", cache_family())
             temporary_file = cache.directory / ".amazon-cache-abandoned.tmp"
             temporary_file.write_text("partial write", encoding="utf-8")
             agent = DistributedCrawlerAgent(
@@ -493,7 +494,7 @@ class DistributedCacheControlTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             cache = RawFamilyCache(root / ".runtime" / "cache")
-            cache.save("B012345678:10001:us-v1", {"variantMatrix": {"complete": True}})
+            cache.save("B012345678:10001:us-v1", cache_family())
             temporary_file = cache.directory / ".amazon-cache-abandoned.tmp"
             temporary_file.write_text("partial write", encoding="utf-8")
             agent = DistributedCrawlerAgent(
@@ -1877,7 +1878,8 @@ class CoordinatorStoreTests(unittest.TestCase):
         self.assertEqual(reaped["requeuedTasks"], 0)
         self.assertEqual(self.store.get_job(str(job["id"]))["taskCounts"], {"completed": 1})
 
-    def test_third_crawl_failure_makes_task_terminal(self) -> None:
+    @patch("engine.distributed.coordinator_store.retry_delay", return_value=0)
+    def test_third_crawl_failure_makes_task_terminal(self, _retry_delay) -> None:
         job = self.store.create_job({"urls": ["B0FR4MSS2H"]})
         self.store.register_client(client_hello(slots=1))
 
@@ -1913,7 +1915,7 @@ class CoordinatorStoreTests(unittest.TestCase):
         lease = self.store.lease_tasks("client-a", 1)[0]
         self.store.fail_task("client-a", {
             "taskId": lease["taskId"], "leaseId": lease["leaseId"],
-            "error": {"status": "not_found", "reason": "not_found", "retryable": False,
+            "error": {"status": "not_found", "reason": "not_found", "retryable": False, "notFoundConfirmed": True,
                       "retryAfter": (utc_now() + timedelta(days=1)).isoformat()},
         })
         self.assertEqual(self.store.get_job(str(first["id"]))["status"], "partial")
@@ -1938,7 +1940,8 @@ class CoordinatorStoreTests(unittest.TestCase):
         })
         self.assertEqual(self.store.lease_tasks("client-a", 1), [])
 
-    def test_partial_retry_prefers_agent_with_saved_variants_and_falls_back_when_offline(self) -> None:
+    @patch("engine.distributed.coordinator_store.retry_delay", return_value=1)
+    def test_partial_retry_prefers_agent_with_saved_variants_and_falls_back_when_offline(self, _retry_delay) -> None:
         self.store.create_job({"urls": ["B0FR4MSS2H"]})
         self.store.register_client(client_hello("client-a", slots=1))
         self.store.register_client(client_hello("client-b", slots=1))
@@ -1961,7 +1964,8 @@ class CoordinatorStoreTests(unittest.TestCase):
         with patch("engine.distributed.coordinator_store.utc_now", return_value=utc_now() + timedelta(seconds=2)):
             self.assertEqual(len(self.store.lease_tasks("client-b", 1)), 1)
 
-    def test_mixed_partial_failure_retries_remaining_child_and_preserves_asin_lists(self) -> None:
+    @patch("engine.distributed.coordinator_store.retry_delay", return_value=1)
+    def test_mixed_partial_failure_retries_remaining_child_and_preserves_asin_lists(self, _retry_delay) -> None:
         job = self.store.create_job({"urls": ["B012345678"]})
         self.store.register_client(client_hello(slots=1))
         first = self.store.lease_tasks("client-a", 1)[0]
@@ -2739,7 +2743,7 @@ class CoordinatorApiTests(unittest.TestCase):
                 cache_key = store._negative_key("B012345678", "90001")
                 with store.sessions.begin() as session:
                     store._store_negative(session, cache_key, {
-                        "status": "not_found", "reason": "product not found", "retryable": False,
+                        "status": "not_found", "reason": "product not found", "retryable": False, "notFoundConfirmed": True,
                         "retryAfter": utc_iso(utc_now() + timedelta(hours=1)),
                     })
                 generation = store.current_cache_generation()

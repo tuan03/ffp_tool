@@ -256,6 +256,18 @@ def source_variant(asin: str, design: str, size: str, customization: dict | None
     }
 
 
+def cache_family() -> dict:
+    return {
+        "parentAsin": "B012345678", "sourceTitle": "Cached product", "canonicalUrl": "https://www.amazon.com/dp/B012345678",
+        "variantMatrix": {"complete": True}, "customizationChecked": True, "diagnostics": {},
+        "sourceVariants": [source_variant("B012345678", "Ocean", "Twin")],
+    }
+
+
+def cache_partial() -> dict:
+    return {"parent": parse_product_html(PRODUCT_HTML, "B012345678", "https://www.amazon.com/dp/B012345678"), "family": cache_family()}
+
+
 class CoreTests(unittest.TestCase):
     def test_default_crawl_uses_required_los_angeles_delivery_zip(self) -> None:
         self.assertEqual(CrawlSettings().amazon_zip, "90001")
@@ -1144,7 +1156,8 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(len({variant["sku"] for variant in variants}), 47)
 
     def test_versioned_cache_invalidates_incomplete_matrix(self) -> None:
-        family = {"variantMatrix": {"complete": False}, "customizationChecked": True}
+        family = cache_family()
+        family["variantMatrix"]["complete"] = False
         with tempfile.TemporaryDirectory() as directory:
             cache = RawFamilyCache(Path(directory))
             cache.save("B012345678", family)
@@ -1166,8 +1179,8 @@ class CoreTests(unittest.TestCase):
             self.assertIsNone(cache.load_failure("B012345678:90001:us-v1"))
 
     def test_crawl_failure_reasons_have_distinct_retry_policies(self) -> None:
-        self.assertEqual(classify_crawl_failure(RuntimeError("HTTP Error 404"))["status"], "not_found")
-        self.assertFalse(classify_crawl_failure(RuntimeError("HTTP Error 404"))["retryable"])
+        self.assertEqual(classify_crawl_failure(RuntimeError("HTTP Error 404"))["status"], "network_error")
+        self.assertTrue(classify_crawl_failure(RuntimeError("HTTP Error 404"))["retryable"])
         self.assertEqual(classify_crawl_failure(RuntimeError("Amazon CAPTCHA detected"))["reason"], "captcha")
         self.assertEqual(classify_crawl_failure(TimeoutError("timed out"))["status"], "network_error")
         self.assertEqual(classify_crawl_failure(ValueError("Amazon HTML does not contain a product title."))["status"], "parser_error")
@@ -1177,7 +1190,7 @@ class CoreTests(unittest.TestCase):
     def test_partial_cache_keeps_successful_variants_for_resume(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             cache = RawFamilyCache(Path(directory))
-            partial = {"parent": {"asin": "B012345678"}, "family": {"sourceVariants": [{"asin": "B012345678"}]}}
+            partial = cache_partial()
             cache.save_partial("B012345678:90001:us-v1", partial)
             self.assertEqual(cache.load_partial("B012345678:90001:us-v1"), partial)
             self.assertIsNone(cache.load("B012345678:90001:us-v1"))

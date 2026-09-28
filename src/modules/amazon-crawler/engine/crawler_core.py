@@ -31,6 +31,7 @@ from .bounded_http import BoundedHTTPHandler, BoundedHTTPSHandler
 from .customization_converter import expand_paid_variants, normalize_customization, remove_option_choosers
 from .playwright_pool import CaptchaTimeout, PlaywrightPool, html_is_captcha
 from .proxy_profiles import ProxyAssignment, resolve_proxy_assignments
+from .retry_policy import FetchFailure, RETRY_FIELDS, response_failure, retry_delay
 from .variant_presets import PRESET_ID, build_jeminise_variants
 from .timeouts import CrawlTimeout, TIMEOUT_FIELDS, acquire_slot, bounded_method, check_deadline, remaining_seconds, timeout_scope, transport_context, wait_blocking
 
@@ -655,6 +656,7 @@ class HttpFetcher:
         self._session_failures: dict[int, float] = {}
         self._us_profile_applied: dict[int, bool] = {}
         self._blocked_until: dict[int, float] = {}
+        self._blocked_failures: dict[int, FetchFailure] = {}
         self._assignment_slots = {
             assignment.index: threading.BoundedSemaphore(1)
             for assignment in self.assignments
@@ -696,6 +698,19 @@ class HttpFetcher:
                     if abandoned.is_set():
                         raise InterruptedError("HTTP response abandoned.")
                     return response.read(), getattr(response, "status", None)
+            except urllib.error.HTTPError as error:
+                try:
+                    connection = getattr(getattr(getattr(error, "fp", None), "raw", None), "_sock", None)
+                    if connection is not None:
+                        sockets.append(connection)
+                    prefix = error.read(512 * 1024)
+                    body = prefix.decode("utf-8", errors="replace")
+                    failure = response_failure(error.code, body, error.headers)
+                    if failure is not None:
+                        raise failure from error
+                    return prefix + error.read(), error.code
+                finally:
+                    error.close()
             except urllib.error.URLError as error:
                 if isinstance(error.reason, CrawlTimeout):
                     raise error.reason
@@ -734,9 +749,11 @@ class HttpFetcher:
                 if self._blocked_until.get(assignment.index, 0) <= now
             ]
 
-    def _block_assignment(self, assignment: ProxyAssignment, seconds: int = 300) -> None:
+    def _block_assignment(self, assignment: ProxyAssignment, seconds: float = 300, failure: FetchFailure | None = None) -> None:
         with self._lock:
             self._blocked_until[assignment.index] = time.monotonic() + seconds
+            if failure is not None:
+                self._blocked_failures[assignment.index] = failure
 
     def _opener(self, assignment: ProxyAssignment, cookie_jar: http.cookiejar.CookieJar | None = None) -> urllib.request.OpenerDirector:
         handlers: list[Any] = [BoundedHTTPHandler(self.dns_timeout, self.connect_timeout), BoundedHTTPSHandler(self.dns_timeout, self.connect_timeout)]
@@ -770,7 +787,10 @@ class HttpFetcher:
                 opener = self._opener(assignment, jar)
                 try:
                     home_request = urllib.request.Request(f"{AMAZON_ORIGIN}/?language=en_US&currency=USD", headers=headers)
-                    self._read_response(opener, home_request, timeout=min(12, self.response_timeout))
+                    home_body, home_status = self._read_response(opener, home_request, timeout=min(12, self.response_timeout))
+                    failure = response_failure(home_status, home_body.decode("utf-8", errors="replace"))
+                    if failure is not None:
+                        raise failure
                     payload = urllib.parse.urlencode({
                         "locationType": "LOCATION_INPUT", "zipCode": self.zip_code, "storeContext": "generic",
                         "deviceType": "web", "pageType": "Gateway", "actionSource": "glow",
@@ -781,7 +801,10 @@ class HttpFetcher:
                         "Origin": AMAZON_ORIGIN, "Referer": f"{AMAZON_ORIGIN}/", "X-Requested-With": "XMLHttpRequest",
                     }
                     request = urllib.request.Request(f"{AMAZON_ORIGIN}/gp/delivery/ajax/address-change.html", data=payload, headers=location_headers)
-                    response_body, _ = self._read_response(opener, request, timeout=min(12, self.response_timeout))
+                    response_body, response_status = self._read_response(opener, request, timeout=min(12, self.response_timeout))
+                    failure = response_failure(response_status, response_body.decode("utf-8", errors="replace"))
+                    if failure is not None:
+                        raise failure
                     result = json.loads(response_body.decode("utf-8", errors="replace"))
                     if not result.get("isAddressUpdated") and not result.get("successful"):
                         raise RuntimeError(f"Amazon rejected US ZIP {self.zip_code}: {result}")
@@ -793,10 +816,10 @@ class HttpFetcher:
                     self._session_failures.pop(assignment.index, None)
                     return cookie_header
                 except Exception as error:
-                    if isinstance(error, CrawlTimeout):
+                    if isinstance(error, (CrawlTimeout, FetchFailure, InterruptedError)):
                         raise
                     last_error = error
-                    self._wait_before_retry(0.7 * (attempt + 1))
+                    self._wait_before_retry(retry_delay(attempt + 1, base=0.7))
             self._session_failures[assignment.index] = time.monotonic()
             self._us_profile_applied[assignment.index] = False
             return DEFAULT_HEADERS["Cookie"]
@@ -817,6 +840,11 @@ class HttpFetcher:
         diagnostics: list[dict[str, Any]] = []
         available_assignments = self._available_assignments()
         if not available_assignments:
+            with self._lock:
+                rate_failures = [failure for index, failure in self._blocked_failures.items()
+                                 if self._blocked_until.get(index, 0) > time.monotonic() and failure.reason in {"http_429", "http_503"}]
+            if rate_failures:
+                raise rate_failures[0]
             error = RuntimeError("All HTTP network routes are temporarily cooling down.")
             diagnostics.append({
                 "attempt": 1,
@@ -833,6 +861,8 @@ class HttpFetcher:
         )
         for attempt, assignment in enumerate(route_assignments, start=1):
             self._check_cancelled()
+            if assignment not in self._available_assignments():
+                continue
             candidate = candidates[(attempt - 1) % len(candidates)]
             started = time.monotonic()
             trace: dict[str, Any] = {
@@ -880,6 +910,10 @@ class HttpFetcher:
                     )
                     if outcome in {"captcha", "location"}:
                         self._block_assignment(assignment)
+                    if isinstance(caught, FetchFailure):
+                        trace["httpStatus"] = caught.http_status
+                        if caught.reason in {"http_429", "http_503"}:
+                            self._block_assignment(assignment, retry_delay(attempt, retry_after=caught.delay), caught)
                     trace.update({"outcome": outcome, "error": message})
                     if isinstance(caught, CrawlTimeout):
                         trace.update(caught.details)
@@ -887,9 +921,11 @@ class HttpFetcher:
                     trace["durationMs"] = round((time.monotonic() - started) * 1000)
             diagnostics.append(trace)
             self._thread_diagnostics.attempts = diagnostics
-            if attempt < len(route_assignments):
-                self._wait_before_retry(0.25 * attempt)
-        if isinstance(error, CrawlTimeout):
+            if attempt < len(route_assignments) and any(candidate in self._available_assignments() for candidate in route_assignments[attempt:]):
+                self._wait_before_retry(retry_delay(attempt, retry_after=error.delay if isinstance(error, FetchFailure) and error.reason in {"http_429", "http_503"} else 0))
+        if isinstance(error, (CrawlTimeout, FetchFailure)):
+            if isinstance(error, FetchFailure):
+                setattr(error, "diagnostics", diagnostics)
             raise error
         raise HttpFetchError(f"HTTP fetch failed after {len(diagnostics)} network attempts: {error}", diagnostics)
 
@@ -936,12 +972,16 @@ class PartialCrawlError(RuntimeError):
 
 
 def classify_crawl_failure(error: Exception) -> dict[str, Any]:
+    if isinstance(error, FetchFailure):
+        return error.policy()
     if isinstance(error, CrawlTimeout):
         captcha = error.details["stage"] == "captcha"
         return {"status": "temporarily_blocked" if captcha else "network_error", "reason": "captcha" if captcha else "timeout", "retryable": error.details["isRetryable"], "retryAfterSeconds": 120 if captcha else 30, **error.details}
     if isinstance(error, CachedCrawlFailure):
         failure = error.failure
-        return {**failure, "retryable": failure.get("isRetryable", failure["status"] in {"temporarily_blocked", "network_error"})}
+        return {**failure, "retryable": failure.get("isRetryable", failure.get("retryable", failure["status"] in {"temporarily_blocked", "network_error"}))}
+    if isinstance(error, urllib.error.HTTPError):
+        return response_failure(error.code, "", error.headers).policy()
     message = str(error).casefold()
     diagnostics = getattr(error, "diagnostics", {})
     traces = diagnostics.get("fetchTrace", {}) if isinstance(diagnostics, dict) else {}
@@ -952,7 +992,7 @@ def classify_crawl_failure(error: Exception) -> dict[str, Any]:
     if has_captcha:
         return {"status": "temporarily_blocked", "reason": "captcha", "retryable": True, "retryAfterSeconds": 120}
     if "http error 404" in message or "product not found" in message:
-        return {"status": "not_found", "reason": "not_found", "retryable": False, "retryAfterSeconds": 86400}
+        return {"status": "network_error", "reason": "not_found_unverified", "retryable": True, "retryAfterSeconds": 30}
     if "does not contain a product title" in message or "does not contain a usable product document" in message:
         return {"status": "parser_error", "reason": "html_changed", "retryable": False, "retryAfterSeconds": 600}
     if "no selling price" in message or isinstance(error, (HttpFetchError, CrawlFetchError, TimeoutError, urllib.error.URLError, ConnectionError)):
@@ -1183,6 +1223,8 @@ class AmazonCrawler:
             }
         except Exception as http_error:
             check_deadline()
+            if isinstance(http_error, FetchFailure) and http_error.reason in {"http_429", "http_503"}:
+                raise  # Browser navigation through the same IP must not bypass Retry-After.
             if not http_trace:
                 http_trace = deepcopy(getattr(http_error, "diagnostics", []))
             text = str(http_error).casefold()
@@ -1235,9 +1277,13 @@ class AmazonCrawler:
                         trace["profiles"] = read_browser_trace()
                     trace.update({"outcome": "error", "error": _exception_message(caught)})
                     playwright_trace.append(trace)
+                    if isinstance(caught, FetchFailure) and (not caught.retryable or caught.reason in {"captcha", "http_429", "http_503"}):
+                        break
+                    if isinstance(caught, ValueError) and classify_crawl_failure(caught)["status"] == "parser_error":
+                        break
                     if isinstance(caught, CrawlTimeout) and caught.details["stage"] == "captcha":
                         break
-            if isinstance(browser_error, CrawlTimeout):
+            if isinstance(browser_error, (CrawlTimeout, FetchFailure)):
                 raise browser_error
             if isinstance(http_error, CrawlTimeout):
                 raise http_error
@@ -1288,6 +1334,9 @@ class AmazonCrawler:
                 return refreshed, []
             errors.append("HTTP retry still omitted gc:productInfo or customizationFormLink")
         except Exception as error:
+            check_deadline()
+            if isinstance(error, InterruptedError) or (isinstance(error, FetchFailure) and error.reason in {"http_429", "http_503"}):
+                raise
             errors.append(f"HTTP retry: {_exception_message(error)}")
 
         self._report_progress(
@@ -1308,7 +1357,7 @@ class AmazonCrawler:
             if self._has_customization_entry(refreshed):
                 return refreshed, []
             errors.append("Playwright response still omitted gc:productInfo or customizationFormLink")
-        except (InterruptedError, CaptchaTimeout, CrawlTimeout):
+        except (InterruptedError, CaptchaTimeout, CrawlTimeout, FetchFailure):
             raise
         except Exception as error:
             errors.append(f"Playwright retry: {_exception_message(error)}")
@@ -1332,6 +1381,8 @@ class AmazonCrawler:
             return {"state": customization_raw, "widget": widget}, warnings, True
         except Exception as http_error:
             check_deadline()
+            if isinstance(http_error, FetchFailure) and http_error.reason in {"http_429", "http_503"}:
+                raise
             try:
                 fetch_customization_form = getattr(self.browser_pool, "fetch_customization_form", None)
                 if callable(fetch_customization_form):
@@ -1344,7 +1395,7 @@ class AmazonCrawler:
                 warnings.extend(widget_warnings)
                 return {"state": customization_raw, "widget": widget}, warnings, True
             except Exception as browser_error:
-                if isinstance(browser_error, CrawlTimeout):
+                if isinstance(browser_error, (CrawlTimeout, FetchFailure, CaptchaTimeout, InterruptedError)):
                     raise
                 if isinstance(http_error, CrawlTimeout):
                     raise http_error
@@ -1368,42 +1419,47 @@ class AmazonCrawler:
             and variant.get("hasCustomizationSignal") is True
         ]
         for variant in candidates:
-            asin = str(variant["asin"])
-            options = dict(variant.get("options") or {})
-            recovered, recovery_errors = self._recover_customization_entry(
-                asin=asin,
-                source=source,
-                options=options,
-            )
-            if recovered is None:
-                variant["customizationComplete"] = False
-                variant["warnings"] = [
-                    "Family contains Amazon Customize, but this child ASIN omitted its form payload after retries: "
-                    + "; ".join(recovery_errors)
-                ]
+            child_key = f"{variant['asin']}:{self.settings.amazon_zip}:us-v1"
+            if self.cache.load_failure(child_key) is not None:
                 continue
-            customization_raw = recovered.get("customizationRaw")
-            warnings = list(recovered.get("customizationWarnings", []))
-            form_url = recovered.get("customizationFormUrl")
-            customization_complete = not warnings
-            if form_url:
-                customization_raw, form_warnings, form_complete = self._fetch_customization_form(
-                    form_url=str(form_url),
-                    customization_raw=customization_raw,
-                )
-                warnings.extend(form_warnings)
-                customization_complete = customization_complete and form_complete
-            customization, normalization_warnings = (
-                normalize_customization(customization_raw)
-                if customization_raw is not None
-                else (None, [])
+            try:
+                self._retry_variant_customization(variant, source)
+            except (FetchFailure, CaptchaTimeout, CrawlTimeout) as error:
+                check_deadline()
+                policy = classify_crawl_failure(error)
+                self.cache.save_failure(child_key, status=policy["status"], reason=policy["reason"],
+                    retry_after_seconds=policy["retryAfterSeconds"],
+                    details={key: policy[key] for key in (*TIMEOUT_FIELDS, *RETRY_FIELDS) if key in policy})
+                variant["customizationComplete"] = False
+                variant["warnings"] = [*variant.get("warnings", []), f"Customization retry failed: {error}"]
+
+    def _retry_variant_customization(self, variant: dict[str, Any], source: str) -> None:
+        recovered, recovery_errors = self._recover_customization_entry(
+            asin=str(variant["asin"]), source=source, options=dict(variant.get("options") or {}),
+        )
+        if recovered is None:
+            variant["customizationComplete"] = False
+            variant["warnings"] = [
+                "Family contains Amazon Customize, but this child ASIN omitted its form payload after retries: " + "; ".join(recovery_errors)
+            ]
+            return
+        customization_raw = recovered.get("customizationRaw")
+        warnings = list(recovered.get("customizationWarnings", []))
+        form_url = recovered.get("customizationFormUrl")
+        customization_complete = not warnings
+        if form_url:
+            customization_raw, form_warnings, form_complete = self._fetch_customization_form(
+                form_url=str(form_url), customization_raw=customization_raw,
             )
-            warnings.extend(normalization_warnings)
-            variant["customizationRaw"] = customization_raw
-            variant["customization"] = customization
-            variant["customizationFingerprint"] = customization.get("fingerprint") if customization else None
-            variant["customizationComplete"] = customization_complete and customization is not None
-            variant["warnings"] = warnings
+            warnings.extend(form_warnings)
+            customization_complete = customization_complete and form_complete
+        customization, normalization_warnings = normalize_customization(customization_raw) if customization_raw is not None else (None, [])
+        warnings.extend(normalization_warnings)
+        variant["customizationRaw"] = customization_raw
+        variant["customization"] = customization
+        variant["customizationFingerprint"] = customization.get("fingerprint") if customization else None
+        variant["customizationComplete"] = customization_complete and customization is not None
+        variant["warnings"] = warnings
 
     @bounded_method("asin", "asin_timeout_seconds")
     def _crawl_family(
@@ -1442,7 +1498,7 @@ class AmazonCrawler:
         checkpoint_parent = checkpoint.get("parent") if isinstance(checkpoint, dict) else None
         if not (
             isinstance(checkpoint_parent, dict)
-            and isinstance(checkpoint_parent.get("parent"), dict)
+            and self.cache.valid_parent(checkpoint_parent.get("parent"))
             and isinstance(checkpoint_parent.get("diagnostics"), dict)
         ):
             checkpoint_parent = None
@@ -1568,7 +1624,7 @@ class AmazonCrawler:
             saved_customization = child_checkpoint.get("customization") if isinstance(child_checkpoint, dict) else None
             saved_variant = saved_customization.get("variant") if isinstance(saved_customization, dict) else None
             if (
-                isinstance(saved_variant, dict) and self._variant_cache_complete(saved_variant)
+                isinstance(saved_variant, dict) and isinstance(saved_variant.get("diagnostics", {}), dict) and self._variant_cache_complete(saved_variant)
                 and saved_variant.get("options") == asin_options.get(asin, {})
             ):
                 if not child_checkpoint.get("complete"):
@@ -1826,7 +1882,7 @@ class AmazonCrawler:
                             f"{asin}:{self.settings.amazon_zip}:us-v1",
                             status=policy["status"], reason=policy["reason"],
                             retry_after_seconds=policy["retryAfterSeconds"],
-                            details={key: policy[key] for key in TIMEOUT_FIELDS if key in policy},
+                            details={key: policy[key] for key in (*TIMEOUT_FIELDS, *RETRY_FIELDS) if key in policy},
                         )
                     failed_diagnostics = deepcopy(getattr(error, "diagnostics", {
                         "fetchMode": "failed", "attempts": 0, "captchaEncountered": False,
@@ -2218,7 +2274,11 @@ class AmazonCrawler:
                         terminal_failure["retryAfter"] if terminal_failure else None
                     ),
                 )
-                if is_capped:
+                if any(failure.get("reason") == "captcha" for failure in failures):
+                    reason, code = "captcha", "PARTIAL_CRAWL"
+                elif any(failure.get("reason") in {"http_429", "http_503"} for failure in failures):
+                    reason, code = next(failure["reason"] for failure in failures if failure.get("reason") in {"http_429", "http_503"}), "PARTIAL_CRAWL"
+                elif is_capped:
                     reason, code = "variant_limit", "PARTIAL_CRAWL"
                 elif asin_status["retryableAsins"] and asin_status["nonRetryableAsins"]:
                     reason, code = "mixed_failures", "PARTIAL_CRAWL"
@@ -2290,14 +2350,14 @@ class AmazonCrawler:
                         f"{normalized.asin}:{self.settings.amazon_zip}:us-v1",
                         status=policy["status"], reason=policy["reason"],
                         retry_after_seconds=policy["retryAfterSeconds"],
-                        details={key: policy[key] for key in TIMEOUT_FIELDS if key in policy},
+                        details={key: policy[key] for key in (*TIMEOUT_FIELDS, *RETRY_FIELDS) if key in policy},
                     ))
                     input_error = {
                         "source": normalized.source, "code": "CRAWL_TIMEOUT" if policy.get("stage") else policy["status"].upper(),
                         "status": policy["status"], "reason": policy["reason"],
                         "retryAfter": failure["retryAfter"], "message": str(error),
                         "retryable": policy["retryable"], **asin_status,
-                        **{key: failure[key] for key in TIMEOUT_FIELDS if key in failure},
+                        **{key: failure[key] for key in (*TIMEOUT_FIELDS, *RETRY_FIELDS) if key in failure},
                     }
                     errors.append(input_error)
                     input_errors.append(input_error)

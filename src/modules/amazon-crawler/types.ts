@@ -213,6 +213,8 @@ export interface AmazonCrawlerError {
   elapsedMs?: number;
   isRetryable?: boolean;
   asin?: string;
+  httpStatus?: number | null;
+  notFoundConfirmed?: boolean;
   message: string;
   retryable: boolean;
   completedAsins?: string[];

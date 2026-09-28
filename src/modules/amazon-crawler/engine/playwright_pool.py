@@ -14,6 +14,7 @@ from bs4 import BeautifulSoup
 
 from .amazon_locale import USER_AGENT, force_us_profile_url, html_is_location_blocked, playwright_us_cookies
 from .proxy_profiles import ProxyAssignment
+from .retry_policy import FetchFailure, html_is_captcha, parser_failure, response_failure, retry_delay
 from .timeouts import CrawlTimeout, async_bounded_method, await_stage, check_deadline, remaining_seconds, timeout_scope, transport_context
 
 
@@ -23,16 +24,6 @@ class PlaywrightUnavailable(RuntimeError):
 
 class CaptchaTimeout(RuntimeError):
     pass
-
-
-def html_is_captcha(html: str) -> bool:
-    lowered = html.casefold()
-    markers = (
-        "validatecaptcha", "opfcaptcha.amazon.com", "enter the characters you see below", "captchacharacters",
-        "click the button below to continue shopping", "api-services-support@amazon.com",
-        "sorry, we just need to make sure you're not a robot", "robot check",
-    )
-    return bool(html) and any(marker in lowered for marker in markers)
 
 
 def _has_button_only_continue_challenge(html: str) -> bool:
@@ -279,7 +270,7 @@ class PlaywrightPool:
                 cancel_event,
                 allow_manual_captcha=allow_manual_captcha,
             )
-        except (CaptchaTimeout, CrawlTimeout):
+        except (CaptchaTimeout, CrawlTimeout, FetchFailure, InterruptedError):
             try:
                 await context.close()
             except Exception:
@@ -300,7 +291,11 @@ class PlaywrightPool:
         timeout_ms = int(min(15, self.navigation_timeout) * 1000)
         home_url = "https://www.amazon.com/?language=en_US&currency=USD"
         try:
-            await await_stage(page.goto(home_url, wait_until="commit", timeout=timeout_ms), "navigation", timeout_ms / 1000)
+            response = await await_stage(page.goto(home_url, wait_until="commit", timeout=timeout_ms), "navigation", timeout_ms / 1000)
+            html = await await_stage(page.content(), "selector", min(5, self.selector_timeout))
+            failure = response_failure(getattr(response, "status", None), html, getattr(response, "headers", {}))
+            if failure is not None and failure.reason != "captcha":
+                raise failure
             try:
                 await await_stage(page.wait_for_selector("body", state="attached", timeout=min(5, self.selector_timeout) * 1000), "selector", min(5, self.selector_timeout))
             except CrawlTimeout:
@@ -333,12 +328,17 @@ class PlaywrightPool:
                         const text = await response.text();
                         let payload = null;
                         try { payload = JSON.parse(text); } catch {}
-                        return { ok: response.ok, status: response.status, text: text.slice(0, 300), payload };
+                        return { ok: response.ok, status: response.status, text: text.slice(0, 300), payload,
+                                 headers: {"Retry-After": response.headers.get("Retry-After") || ""} };
                     } finally { clearTimeout(timer); }
                 }""",
                 {"zipCode": self.zip_code, "timeoutMs": timeout_ms},
             )
             payload = result.get("payload") if isinstance(result, dict) else None
+            if isinstance(result, dict):
+                failure = response_failure(result.get("status"), str(result.get("text") or ""), result.get("headers"))
+                if failure is not None:
+                    raise failure
             return bool(
                 isinstance(result, dict)
                 and result.get("ok")
@@ -349,10 +349,29 @@ class PlaywrightPool:
 
     @staticmethod
     async def _load_product_page(page: Any, url: str, navigation_timeout: float = 60, selector_timeout: float = 15) -> str:
-        await await_stage(page.goto(force_us_profile_url(url), wait_until="commit", timeout=navigation_timeout * 1000), "navigation", navigation_timeout)
+        response = await await_stage(page.goto(force_us_profile_url(url), wait_until="commit", timeout=navigation_timeout * 1000), "navigation", navigation_timeout)
+        status = getattr(response, "status", None)
+        headers = getattr(response, "headers", {})
+        html = await await_stage(page.content(), "selector", selector_timeout)
+        if html_is_captcha(html):
+            return html
+        failure = response_failure(status, html, headers, verified=True)
+        if failure is not None and failure.reason != "not_found_unverified":
+            raise failure
         try:
             await await_stage(page.wait_for_selector("#productTitle, #ppd, #dp-container", state="attached", timeout=selector_timeout * 1000), "selector", selector_timeout)
-        except CrawlTimeout:
+        except CrawlTimeout as error:
+            check_deadline()  # Preserve child/family/job deadlines rather than treating them as parser failures.
+            if error.details["stage"] != "selector":
+                raise
+            html = await await_stage(page.content(), "selector", selector_timeout)
+            if html_is_captcha(html):
+                return html
+            failure = response_failure(status, html, headers, verified=True)
+            if failure is not None:
+                raise failure
+            if BeautifulSoup(html, "html.parser").get_text(" ", strip=True):
+                raise parser_failure() from error
             raise
         except Exception:
             pass
@@ -363,7 +382,7 @@ class PlaywrightPool:
                 timeout=5_000,
             ), "selector", min(5, selector_timeout))
         except CrawlTimeout:
-            raise
+            check_deadline()  # Optional gallery selectors may be absent on otherwise usable products.
         except Exception:
             pass
         # Amazon lazily materializes part of the gallery. Scrolling and clicking
@@ -434,7 +453,13 @@ class PlaywrightPool:
         selector_timeout: float = 15,
     ) -> str:
         started = time.monotonic()
-        await await_stage(page.goto(force_us_profile_url(url), wait_until="commit", timeout=navigation_timeout * 1000), "navigation", navigation_timeout)
+        response = await await_stage(page.goto(force_us_profile_url(url), wait_until="commit", timeout=navigation_timeout * 1000), "navigation", navigation_timeout)
+        html = await await_stage(page.content(), "selector", selector_timeout)
+        if html_is_captcha(html):
+            return html
+        failure = response_failure(getattr(response, "status", None), html, getattr(response, "headers", {}))
+        if failure is not None:
+            raise failure
         try:
             await await_stage(page.wait_for_selector("body", state="attached", timeout=min(10, selector_timeout) * 1000), "selector", min(10, selector_timeout))
         except CrawlTimeout:
@@ -452,6 +477,8 @@ class PlaywrightPool:
                 return html
             await page.wait_for_timeout(250)
             html = await page.content()
+        if BeautifulSoup(html, "html.parser").get_text(" ", strip=True) and "loading" not in html.casefold():
+            raise parser_failure("customization")
         raise CrawlTimeout("customization", started=started)
 
     async def _ensure_context(
@@ -542,6 +569,8 @@ class PlaywrightPool:
     def _block_profile(self, index: int, error: Exception) -> None:
         message = str(error).casefold()
         seconds = 300 if isinstance(error, CaptchaTimeout) or "captcha" in message or "location" in message else 30
+        if isinstance(error, FetchFailure) and error.reason in {"http_429", "http_503"}:
+            seconds = max(seconds, error.delay)
         self._blocked_until[index] = time.monotonic() + seconds
 
     async def _run_with_profile_slot(
@@ -724,7 +753,7 @@ class PlaywrightPool:
                     marker.casefold() in html.casefold()
                     for marker in customization_markers
                 ):
-                    raise RuntimeError("Amazon Customize markers did not appear after rendering the page.")
+                    raise parser_failure("customization")
                 return html, index
             except Exception as error:
                 message = str(error).casefold()
@@ -817,10 +846,15 @@ class PlaywrightPool:
                 if isinstance(profile_index, int) and should_cooldown_profile:
                     self._block_profile(profile_index, error)
                 diagnostics.append(self._browser_error_trace(attempt, profile_index, error, "error"))
+                if isinstance(error, FetchFailure):
+                    diagnostics[-1]["httpStatus"] = error.http_status
+                    if not error.retryable or error.reason == "captcha":
+                        setattr(error, "diagnostics", diagnostics)
+                        raise
                 if isinstance(error, CrawlTimeout) and error.details["stage"] == "captcha":
                     setattr(error, "diagnostics", diagnostics)
                     raise
-                is_retryable = isinstance(error, CrawlTimeout) or any(marker in message for marker in (
+                is_retryable = isinstance(error, (CrawlTimeout, FetchFailure)) or any(marker in message for marker in (
                     "closed", "target page", "net::err_", "timeout", "connection", "navigation",
                     "amazon us zip", "http_response_code_failure", "cooling down", "location",
                     "customize markers",
@@ -828,7 +862,7 @@ class PlaywrightPool:
                 if not is_retryable or is_last_route:
                     setattr(error, "diagnostics", diagnostics)
                     raise
-                await asyncio.sleep(0.25 * attempt)
+                await asyncio.sleep(remaining_seconds(retry_delay(attempt, retry_after=error.delay if isinstance(error, FetchFailure) and error.reason in {"http_429", "http_503"} else 0)))
         if isinstance(last_error, CaptchaTimeout):
             error: Exception = CaptchaTimeout(f"All browser routes encountered CAPTCHA: {last_error}")
         else:

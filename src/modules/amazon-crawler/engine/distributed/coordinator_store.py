@@ -18,6 +18,7 @@ from sqlalchemy.orm import selectinload
 
 from ..crawler_core import CrawlSettings, normalize_amazon_input
 from ..timeouts import CrawlTimeout, TIMEOUT_FIELDS
+from ..retry_policy import RETRY_FIELDS, retry_delay
 from .coordinator_models import (
     ClientRecord,
     CoordinatorState,
@@ -64,6 +65,7 @@ PRODUCT_INVALIDATION_GENERATION_KEY = "product_cache_invalidation_generation"
 PRODUCT_INVALIDATION_PREFIX = "product_cache_invalidation:"
 TEMPORARY_CLEANUP_GENERATION_KEY = "agent_temporary_cleanup_generation"
 NEGATIVE_CACHE_PREFIX = "amazon-negative:"
+CLIENT_RATE_COOLDOWN_PREFIX = f"{NEGATIVE_CACHE_PREFIX}client-rate:"
 CAPTCHA_COOLDOWN_KEY = "amazon-captcha-cooldown"
 
 
@@ -332,7 +334,7 @@ class CoordinatorStore:
         except (ValueError, TypeError, KeyError):
             session.delete(state)
             return None
-        if is_expired:
+        if is_expired or (failure.get("status") == "not_found" and failure.get("notFoundConfirmed") is not True):
             session.delete(state)
             return None
         return failure if isinstance(failure, dict) else None
@@ -349,7 +351,7 @@ class CoordinatorStore:
         if is_expired:
             return
         failure = {
-            **{field: error[field] for field in TIMEOUT_FIELDS if field in error},
+            **{field: error[field] for field in (*TIMEOUT_FIELDS, *RETRY_FIELDS) if field in error},
             "status": error["status"], "reason": str(error.get("reason") or error["status"]),
             "retryable": bool(error.get("retryable")), "retryAfter": error["retryAfter"],
             "code": str(error.get("code") or error["status"]).upper(),
@@ -613,6 +615,8 @@ class CoordinatorStore:
                 return []
             if self._active_negative(session, CAPTCHA_COOLDOWN_KEY, now) is not None:
                 return []
+            if self._active_negative(session, f"{CLIENT_RATE_COOLDOWN_PREFIX}{client_id}", now) is not None:
+                return []
             tasks = session.scalars(
                 select(CrawlTask)
                 .join(CrawlJob, CrawlTask.job_id == CrawlJob.id)
@@ -715,6 +719,9 @@ class CoordinatorStore:
         task_id = str(payload.get("taskId") or "")
         lease_id = str(payload.get("leaseId") or "")
         error = dict(payload["error"]) if isinstance(payload.get("error"), dict) else {"message": str(payload.get("error") or "Unknown crawler error")}
+        if error.get("status") == "not_found" and error.get("notFoundConfirmed") is not True:
+            error.update({"status": "network_error", "reason": "not_found_unverified", "code": "NETWORK_ERROR", "retryable": True, "isRetryable": True,
+                          "retryAfter": utc_iso(utc_now() + timedelta(seconds=retry_delay(1, base=30)))})
         if error.get("status") == "partial":
             error["resumeClientId"] = client_id
         retryable = bool(error.get("retryable", True))
@@ -729,12 +736,22 @@ class CoordinatorStore:
             if task.assigned_client_id != client_id or task.lease_id != lease_id:
                 return {"status": "stale"}
             task.failure_count += 1
+            if retryable:
+                now = utc_now()
+                try:
+                    minimum_delay = max(0, (datetime.fromisoformat(str(error.get("retryAfter")).replace("Z", "+00:00")) - now).total_seconds())
+                except (ValueError, TypeError):
+                    minimum_delay = 0
+                seconds = retry_delay(task.failure_count, base=120 if error.get("reason") == "captcha" else 30, retry_after=minimum_delay)
+                error["retryAfter"] = utc_iso(now + timedelta(seconds=seconds))
             task.last_error = error
             job = session.get(CrawlJob, task.job_id)
             amazon_zip = str((job.settings if job else {}).get("amazonZip") or "90001")
             self._store_negative(session, self._negative_key(task.asin, amazon_zip), error)
             if error.get("reason") == "captcha":
                 self._store_negative(session, CAPTCHA_COOLDOWN_KEY, error)
+            if error.get("reason") in {"http_429", "http_503"}:
+                self._store_negative(session, f"{CLIENT_RATE_COOLDOWN_PREFIX}{client_id}", error)
             task.status = "queued" if retryable and task.failure_count < MAX_CRAWL_FAILURES else "failed"
             if task.status == "failed":
                 task.completed_at = utc_now()
@@ -1933,7 +1950,7 @@ class CoordinatorStore:
                     attempt_started = session.scalar(select(TaskAttempt.leased_at).where(TaskAttempt.lease_id == old_lease))
                     elapsed = (now - _as_utc(attempt_started)).total_seconds() if attempt_started else 0
                     error = CrawlTimeout("asin", started=time.monotonic() - elapsed).as_error(task.source)
-                    error.update({"elapsedMs": round(elapsed * 1000), "retryAfter": utc_iso(now + timedelta(seconds=30)),
+                    error.update({"elapsedMs": round(elapsed * 1000), "retryAfter": utc_iso(now + timedelta(seconds=retry_delay(task.failure_count + 1, base=30))),
                                   "attempt": task.failure_count + 1, "resumeClientId": task.assigned_client_id})
                     task.failure_count += 1
                     task.last_error = error
@@ -2722,7 +2739,7 @@ class CoordinatorStore:
                         **{key: last_error[key] for key in (
                             "status", "reason", "retryAfter", "completedAsins", "failedAsins",
                             "retryableAsins", "nonRetryableAsins",
-                            *TIMEOUT_FIELDS,
+                            *TIMEOUT_FIELDS, *RETRY_FIELDS,
                         ) if key in last_error},
                     })
             product_values = list(products.values())

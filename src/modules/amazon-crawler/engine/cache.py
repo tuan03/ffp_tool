@@ -7,12 +7,18 @@ import json
 import os
 import tempfile
 import threading
+import uuid
+import math
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from .retry_policy import retry_delay
+
 CACHE_SCHEMA_VERSION = 8
 CACHE_IO_LOCK = threading.RLock()
+CACHE_QUARANTINE_LIMIT = 20
+CACHE_QUARANTINE_BYTES = 50 * 1024 * 1024
 
 
 class RawFamilyCache:
@@ -24,12 +30,66 @@ class RawFamilyCache:
         return self.directory / f"{kind}-{key}.json"
 
     def _read(self, asin: str, kind: str) -> dict[str, Any] | None:
-        try:
-            with CACHE_IO_LOCK:
+        with CACHE_IO_LOCK:
+            try:
                 payload = json.loads(self._path(asin, kind).read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            return None
-        return payload if isinstance(payload, dict) and payload.get("schemaVersion") == CACHE_SCHEMA_VERSION else None
+            except OSError:
+                return None
+            except (ValueError, UnicodeError):
+                self._quarantine(self._path(asin, kind))
+                return None
+            if not isinstance(payload, dict):
+                self._quarantine(self._path(asin, kind))
+                return None
+            return payload if payload.get("schemaVersion") == CACHE_SCHEMA_VERSION else None
+
+    def _quarantine(self, path: Path) -> None:
+        """Preserve corrupt entries for inspection; keep at most twenty files."""
+        with CACHE_IO_LOCK:
+            try:
+                directory = self.directory / "quarantine"
+                directory.mkdir(parents=True, exist_ok=True)
+                os.replace(path, directory / f"{path.name}-{uuid.uuid4().hex}.corrupt")
+                paths = sorted(directory.glob("*.corrupt"), key=lambda file: file.stat().st_mtime, reverse=True)
+                total_bytes = 0
+                for index, old in enumerate(paths):
+                    total_bytes += old.stat().st_size
+                    if index >= CACHE_QUARANTINE_LIMIT or total_bytes > CACHE_QUARANTINE_BYTES:
+                        old.unlink(missing_ok=True)
+            except OSError:
+                pass  # A read-only cache must still behave as a miss rather than a parser failure.
+
+    @staticmethod
+    def valid_parent(parent: Any) -> bool:
+        return isinstance(parent, dict) and all(isinstance(parent.get(key), str) for key in ("asin", "title", "parentAsin")) and all(
+            isinstance(parent.get(key), dict) for key in ("asinOptions", "dimensions")
+        ) and all(isinstance(options, dict) for options in parent["asinOptions"].values()) and all(
+            isinstance(values, list) for values in parent["dimensions"].values()
+        )
+
+    @staticmethod
+    def valid_family(family: Any) -> bool:
+        if not isinstance(family, dict) or not all(isinstance(family.get(key), str) for key in ("parentAsin", "sourceTitle", "canonicalUrl")):
+            return False
+        if not isinstance(family.get("diagnostics"), dict) or not isinstance(family.get("variantMatrix"), dict):
+            return False
+        matrix = family["variantMatrix"]
+        if "dimensions" in matrix and (not isinstance(matrix["dimensions"], dict) or any(not isinstance(values, list) for values in matrix["dimensions"].values())):
+            return False
+        variants = family.get("sourceVariants")
+        if not isinstance(variants, list) or not variants:
+            return False
+        for variant in variants:
+            if not isinstance(variant, dict) or not isinstance(variant.get("asin"), str) or not isinstance(variant.get("options"), dict):
+                return False
+            if not isinstance(variant.get("media", []), list) or not isinstance(variant.get("warnings", []), list) or not isinstance(variant.get("diagnostics", {}), dict):
+                return False
+            if any(not isinstance(warning, str) for warning in variant.get("warnings", [])) or any(not isinstance(media, dict) for media in variant.get("media", [])):
+                return False
+            price = variant.get("price")
+            if price is not None and (not isinstance(price, dict) or not isinstance(price.get("amount"), (int, float)) or not math.isfinite(price["amount"]) or not isinstance(price.get("currency"), str)):
+                return False
+        return all(isinstance(family.get(key, []), list) for key in ("media", "bulletPoints", "categories")) and isinstance(family.get("productDetails", {}), dict)
 
     def _write(self, asin: str, kind: str, payload: dict[str, Any]) -> None:
         with CACHE_IO_LOCK:
@@ -50,11 +110,16 @@ class RawFamilyCache:
             self._path(asin, kind).unlink(missing_ok=True)
 
     def load(self, asin: str, *, require_matrix: bool = True, require_customization: bool = False) -> dict[str, Any] | None:
+        with CACHE_IO_LOCK:
+            return self._load_family(asin, require_matrix=require_matrix, require_customization=require_customization)
+
+    def _load_family(self, asin: str, *, require_matrix: bool, require_customization: bool) -> dict[str, Any] | None:
         payload = self._read(asin, "family")
         if payload is None:
             return None
         family = payload.get("family")
-        if not isinstance(family, dict):
+        if not self.valid_family(family):
+            self._quarantine(self._path(asin, "family"))
             return None
         if require_matrix and family.get("variantMatrix", {}).get("complete") is not True:
             return None
@@ -151,18 +216,29 @@ class RawFamilyCache:
             payload = self._read(asin, "failure")
             failure = payload.get("failure") if payload else None
             if not isinstance(failure, dict):
+                if payload:
+                    self._quarantine(self._path(asin, "failure"))
                 return None
             try:
                 retry_after = datetime.fromisoformat(str(failure["retryAfter"]))
                 is_expired = retry_after <= datetime.now(timezone.utc)
             except (KeyError, ValueError, TypeError):
+                self._quarantine(self._path(asin, "failure"))
+                return None
+            if failure.get("status") not in {"not_found", "temporarily_blocked", "network_error", "parser_error", "partial"}:
+                self._quarantine(self._path(asin, "failure"))
+                return None
+            if failure.get("status") == "not_found" and failure.get("notFoundConfirmed") is not True:
+                self._remove(asin, "failure")  # Older records did not distinguish unverified HTTP 404.
                 return None
             if is_expired:
                 self._remove(asin, "failure")
                 return None
             return failure
 
-    def save_failure(self, asin: str, *, status: str, reason: str, retry_after_seconds: int, details: dict[str, Any] | None = None) -> dict[str, Any]:
+    def save_failure(self, asin: str, *, status: str, reason: str, retry_after_seconds: float, details: dict[str, Any] | None = None) -> dict[str, Any]:
+        if status == "network_error" and retry_after_seconds >= 0:
+            retry_after_seconds = retry_delay(1, base=30, retry_after=retry_after_seconds)
         failure = {
             **(details or {}),
             "asin": asin.split(":", 1)[0], "status": status, "reason": reason,
@@ -179,8 +255,11 @@ class RawFamilyCache:
         removed_files = 0
         removed_bytes = 0
         with CACHE_IO_LOCK:
-            for kind in ("family", "failure", "partial", "checkpoint"):
-                path = self._checkpoint_path(cache_key) if kind == "checkpoint" else self._path(cache_key, kind)
+            paths = [self._checkpoint_path(cache_key) if kind == "checkpoint" else self._path(cache_key, kind)
+                     for kind in ("family", "failure", "partial", "checkpoint")]
+            digest = self._path(cache_key).stem.removeprefix("family-")
+            paths.extend(self.directory.glob(f"quarantine/*-{digest}.json-*.corrupt"))
+            for path in paths:
                 try:
                     size = path.stat().st_size
                     path.unlink()
@@ -195,10 +274,19 @@ class RawFamilyCache:
             payload = self._read(asin, "partial")
             partial = payload.get("partial") if payload else None
             if not isinstance(partial, dict):
+                if payload:
+                    self._quarantine(self._path(asin, "partial"))
                 return None
             try:
                 is_expired = datetime.fromisoformat(str(payload["expiresAt"])) <= datetime.now(timezone.utc)
             except (KeyError, ValueError, TypeError):
+                self._quarantine(self._path(asin, "partial"))
+                return None
+            if not self.valid_parent(partial.get("parent")) or not self.valid_family(partial.get("family")) or any(
+                key in partial and (not isinstance(partial[key], list) or any(not isinstance(child, str) for child in partial[key]))
+                for key in ("completedAsins", "failedAsins", "retryableAsins", "nonRetryableAsins")
+            ):
+                self._quarantine(self._path(asin, "partial"))
                 return None
             if is_expired:
                 self._remove(asin, "partial")
@@ -220,6 +308,7 @@ class RawFamilyCache:
                 *self.directory.glob("family-*.json"), *self.directory.glob("failure-*.json"),
                 *self.directory.glob("partial-*.json"), *self.directory.glob("checkpoint-*.jsonl"),
                 *self.directory.glob(".amazon-cache-*.tmp"),
+                *self.directory.glob("quarantine/*.corrupt"),
             ]
             for path in paths:
                 if not path.is_file():
