@@ -46,15 +46,15 @@ Bước này khai báo key nào được phép truy cập queue của store nào
 nano /opt/ffp-tool/.env
 ```
 
-Lấy chính xác key Capozen hiện tại từ `GPT_SEO_ACTION_KEY`, rồi thêm một dòng:
+Tìm dòng `GPT_SEO_ACTION_KEYS_JSON` hiện tại và thêm store mới vào JSON trên chính dòng đó. Giữ nguyên toàn bộ store và key đang có:
 
 ```dotenv
 GPT_SEO_ACTION_KEYS_JSON={"capozen":"<key-capozen-hien-tai>","jeminise":"<key-moi>"}
 ```
 
-Thay `jeminise` bằng Store ID thực tế. JSON phải nằm trên một dòng, không có dấu phẩy thừa và mỗi store phải dùng key khác nhau.
+Thay `jeminise` bằng Store ID thực tế và `<key-moi>` bằng key vừa tạo ở bước 2. JSON phải nằm trên một dòng, không có dấu phẩy thừa và mỗi store phải dùng key khác nhau.
 
-Khi biến JSON tồn tại, nó được ưu tiên hoàn toàn. Nếu chép sai key Capozen, GPT Capozen cũ sẽ nhận `401`.
+Không xóa hoặc đổi key của các store đang hoạt động. Nếu chép sai key Capozen, GPT Capozen cũ sẽ nhận `401`.
 
 ## 4. Khởi động lại
 
