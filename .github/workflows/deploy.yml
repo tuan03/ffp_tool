@@ -82,9 +82,6 @@ jobs:
           key: ${{ secrets.VPS_SSH_KEY }}
           envs: DOCKER_IMAGE,GHCR_USER,GHCR_TOKEN,TARGET_DOMAIN,ENV_B64
           script: |
-            bash -e << 'DEPLOYSCRIPT'
-            set -e
-
             DEPLOY_DIR="/opt/ffp-tool"
             echo "=== [1/6] Preparing deployment directory at $DEPLOY_DIR ==="
             sudo mkdir -p "$DEPLOY_DIR"
@@ -100,14 +97,7 @@ jobs:
             if [ -n "$APP_PORT" ]; then
               echo "Using existing configured APP_PORT: $APP_PORT"
             else
-              APP_PORT=$(python3 -c "
-import socket
-for p in range(3010, 4000):
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        if s.connect_ex(('127.0.0.1', p)) != 0:
-            print(p)
-            break
-" 2>/dev/null || echo "3010")
+              APP_PORT=$(python3 -c "import socket; print(next(p for p in range(3010, 4000) if socket.socket().connect_ex(('127.0.0.1', p)) != 0))" 2>/dev/null || echo "3010")
               echo "Auto-detected available port: $APP_PORT"
             fi
 
@@ -117,12 +107,7 @@ for p in range(3010, 4000):
               if [ -n "$ENV_B64" ]; then
                 printf '%s' "$ENV_B64" | base64 -d > .env
               else
-                cat <<'ENV_EOF' > .env
-            NODE_ENV=production
-            GATEWAY_HOST=0.0.0.0
-            GATEWAY_PORT=3001
-            STATIC_DIR=/app/dist
-            ENV_EOF
+                printf '%s\n' "NODE_ENV=production" "GATEWAY_HOST=0.0.0.0" "GATEWAY_PORT=3001" "STATIC_DIR=/app/dist" > .env
               fi
               if ! grep -q "^APP_PORT=" .env 2>/dev/null; then
                 echo "APP_PORT=$APP_PORT" >> .env
@@ -137,26 +122,25 @@ for p in range(3010, 4000):
             fi
 
             echo "=== [4/6] Setting up compose.prod.yaml ==="
-            cat <<'COMPOSE_EOF' > compose.prod.yaml
-            services:
-              app:
-                image: ${DOCKER_IMAGE}
-                container_name: ffp-tool-app
-                restart: unless-stopped
-                ports:
-                  - "127.0.0.1:${APP_PORT:-3010}:3001"
-                env_file:
-                  - .env
-                volumes:
-                  - ./data:/app/.local-data
-                  - ./runtime:/app/.runtime
-                healthcheck:
-                  test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/health').then(r => r.ok ? process.exit(0) : process.exit(1)).catch(() => process.exit(1))"]
-                  interval: 15s
-                  timeout: 5s
-                  retries: 3
-                  start_period: 10s
-            COMPOSE_EOF
+            printf '%s\n' \
+              "services:" \
+              "  app:" \
+              "    image: \${DOCKER_IMAGE}" \
+              "    container_name: ffp-tool-app" \
+              "    restart: unless-stopped" \
+              "    ports:" \
+              "      - \"127.0.0.1:\${APP_PORT:-3010}:3001\"" \
+              "    env_file:" \
+              "      - .env" \
+              "    volumes:" \
+              "      - ./data:/app/.local-data" \
+              "      - ./runtime:/app/.runtime" \
+              "    healthcheck:" \
+              "      test: [\"CMD\", \"node\", \"-e\", \"fetch('http://127.0.0.1:3001/health').then(r => r.ok ? process.exit(0) : process.exit(1)).catch(() => process.exit(1))\"]" \
+              "      interval: 15s" \
+              "      timeout: 5s" \
+              "      retries: 3" \
+              "      start_period: 10s" > compose.prod.yaml
 
             echo "=== [5/6] Pulling and restarting Docker container ==="
             echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
@@ -172,34 +156,27 @@ for p in range(3010, 4000):
 
             if [ ! -f "$NGINX_CONF" ]; then
               echo "Setting up new Nginx site configuration for $DOMAIN..."
-              sudo bash -c "cat <<'NGINX_EOF' > '$NGINX_CONF'
-            server {
-                listen 80;
-                listen [::]:80;
-                server_name $DOMAIN;
-
-                client_max_body_size 30M;
-
-                location / {
-                    proxy_pass http://127.0.0.1:$APP_PORT;
-                    proxy_http_version 1.1;
-
-                    proxy_set_header Upgrade \$http_upgrade;
-                    proxy_set_header Connection \"upgrade\";
-
-                    proxy_set_header Host \$host;
-                    proxy_set_header X-Real-IP \$remote_addr;
-                    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-                    proxy_set_header X-Forwarded-Proto \$scheme;
-
-                    proxy_pass_request_headers on;
-
-                    proxy_connect_timeout 60s;
-                    proxy_send_timeout 60s;
-                    proxy_read_timeout 60s;
-                }
-            }
-            NGINX_EOF"
+              sudo bash -c "printf '%s\n' \
+                'server {' \
+                '    listen 80;' \
+                '    listen [::]:80;' \
+                '    server_name $DOMAIN;' \
+                '    client_max_body_size 30M;' \
+                '    location / {' \
+                '        proxy_pass http://127.0.0.1:$APP_PORT;' \
+                '        proxy_http_version 1.1;' \
+                '        proxy_set_header Upgrade \$http_upgrade;' \
+                '        proxy_set_header Connection \"upgrade\";' \
+                '        proxy_set_header Host \$host;' \
+                '        proxy_set_header X-Real-IP \$remote_addr;' \
+                '        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;' \
+                '        proxy_set_header X-Forwarded-Proto \$scheme;' \
+                '        proxy_pass_request_headers on;' \
+                '        proxy_connect_timeout 60s;' \
+                '        proxy_send_timeout 60s;' \
+                '        proxy_read_timeout 60s;' \
+                '    }' \
+                '}' > '$NGINX_CONF'"
               sudo ln -sf "$NGINX_CONF" "$NGINX_ENABLED"
               sudo nginx -t
               sudo systemctl reload nginx
@@ -215,4 +192,3 @@ for p in range(3010, 4000):
 
             echo "Deployment to $DOMAIN completed successfully!"
             docker compose -f compose.prod.yaml ps
-            DEPLOYSCRIPT
