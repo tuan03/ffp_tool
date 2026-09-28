@@ -2623,8 +2623,12 @@ class CoordinatorStore:
                 select(JobEvent).where(JobEvent.job_id == job.id).order_by(JobEvent.id)
             ).all()
             for ev in events:
-                if isinstance(ev.payload, dict) and "message" in ev.payload:
-                    logs.append(str(ev.payload["message"]))
+                if isinstance(ev.payload, dict):
+                    msg = ev.payload.get("message")
+                    if not msg and isinstance(ev.payload.get("progress"), dict):
+                        msg = ev.payload["progress"].get("message")
+                    if msg:
+                        logs.append(str(msg))
             snapshot.update({
                 "ok": True,
                 "jobId": job.id,
@@ -2642,7 +2646,8 @@ class CoordinatorStore:
             if job.status == "queued":
                 snapshot["stepper"] = {"current_step": 1, "percent": 10, "current_message": "Đang xếp hàng chờ Agent kết nối..."}
             elif job.status == "running":
-                snapshot["stepper"] = {"current_step": 2, "percent": 50, "current_message": "Agent đang thực thi..."}
+                latest_msg = logs[-1] if logs else "Agent đang thực thi..."
+                snapshot["stepper"] = {"current_step": 2, "percent": 50, "current_message": latest_msg}
             elif job.status == "ready_for_review":
                 snapshot["stepper"] = {"current_step": 2, "percent": 100, "current_message": "Đã quét xong ứng viên! Sẵn sàng duyệt mẫu."}
             elif job.status == "completed":

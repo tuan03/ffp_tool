@@ -163,7 +163,7 @@ class ConnectionManager:
                 pending["event"].set()
         try:
             await asyncio.wait_for(pending["event"].wait(), timeout=timeout_seconds)
-        except TimeoutError:
+        except (TimeoutError, asyncio.TimeoutError):
             pass
         async with self.lock:
             self.cache_requests.pop(request_id, None)
@@ -220,7 +220,7 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
                     next_cleanup_at = loop_time + 60
                 try:
                     await asyncio.wait_for(stop.wait(), timeout=5)
-                except TimeoutError:
+                except (TimeoutError, asyncio.TimeoutError):
                     pass
 
         task = asyncio.create_task(reap_loop())

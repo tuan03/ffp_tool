@@ -309,7 +309,7 @@ class DistributedCrawlerAgent:
                 self.on_status({**self.status_snapshot(), "lastError": str(error)})
                 try:
                     await asyncio.wait_for(self.stop_event.wait(), timeout=delay + random.random())
-                except TimeoutError:
+                except (TimeoutError, asyncio.TimeoutError):
                     pass
                 delay = min(30.0, delay * 2)
 
@@ -487,8 +487,15 @@ class DistributedCrawlerAgent:
     async def _execution_loop(self) -> None:
         backlog: deque[dict[str, Any]] = deque()
         loop = asyncio.get_running_loop()
-        while True:
-            first = backlog.popleft() if backlog else await self.assignment_queue.get()
+        while not self.stop_event.is_set():
+            try:
+                first = backlog.popleft() if backlog else await self.assignment_queue.get()
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                await asyncio.sleep(0.1)
+                continue
+
             batch = [first]
             batch_key = (first["jobId"], first["settingsFingerprint"])
             deadline = loop.time() + 0.4
@@ -498,7 +505,7 @@ class DistributedCrawlerAgent:
                     break
                 try:
                     candidate = await asyncio.wait_for(self.assignment_queue.get(), timeout=remaining)
-                except TimeoutError:
+                except (TimeoutError, asyncio.TimeoutError):
                     break
                 candidate_key = (candidate["jobId"], candidate["settingsFingerprint"])
                 if candidate_key == batch_key:
@@ -524,6 +531,7 @@ class DistributedCrawlerAgent:
                 self._publish_status()
                 continue
             task_ids = [str(assignment["taskId"]) for assignment in batch]
+            self.executing_task_ids.update(task_ids)
             self.store.mark_running(task_ids)
             cancel_event = threading.Event()
             job_id = str(first["jobId"])
@@ -800,9 +808,16 @@ class DistributedCrawlerAgent:
             resolved_source = req_body.get("jobId") or req_body.get("job_id") or first.get("source")
             if resolved_source:
                 req_body["source_run_id"] = str(resolved_source)
+        if "workflow_stage" not in req_body:
+            req_body["workflow_stage"] = req_body.get("stage") or req_body.get("action") or "crawl_and_review"
+
+        def on_pod_progress(msg: str) -> None:
+            enqueue_progress(msg, 50)
 
         try:
-            pod_bridge._run_local_pipeline_worker(job_id, req_body, self.config.server_url, cancel_event)
+            pod_bridge._run_local_pipeline_worker(
+                job_id, req_body, self.config.server_url, cancel_event, progress_callback=on_pod_progress
+            )
         except Exception as exc:
             if cancel_event.is_set():
                 enqueue_cancelled()
