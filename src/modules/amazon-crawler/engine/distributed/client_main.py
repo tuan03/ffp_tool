@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from ..observability import redact
+
 import argparse
 import asyncio
 import json
@@ -79,10 +81,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     except KeyboardInterrupt:
         return 130
     except AgentAlreadyRunningError as error:
-        print(str(error), file=sys.stderr)
+        print(redact(error), file=sys.stderr)
         return 2
     except Exception as error:
-        print(f"FFP Amazon Crawler could not start: {error}", file=sys.stderr)
+        print(f"FFP Amazon Crawler could not start: {redact(error)}", file=sys.stderr)
         return 1
 
 

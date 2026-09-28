@@ -247,6 +247,29 @@ class JobEvent(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, index=True)
 
 
+class CrawlTelemetryEvent(Base):
+    __tablename__ = "crawl_telemetry_events"
+    __table_args__ = (
+        Index("ix_crawl_telemetry_metrics", "created_at", "event_type", "result"),
+        Index("ix_crawl_telemetry_trace", "job_id", "family_request_id", "created_at", "sequence"),
+    )
+
+    sequence: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    id: Mapped[str] = mapped_column(String(64), unique=True)
+    job_id: Mapped[str] = mapped_column(ForeignKey("crawl_jobs.id", ondelete="CASCADE"))
+    task_id: Mapped[str] = mapped_column(ForeignKey("crawl_tasks.id", ondelete="CASCADE"))
+    client_id: Mapped[str] = mapped_column(String(64))
+    lease_id: Mapped[str] = mapped_column(String(40))
+    request_id: Mapped[str] = mapped_column(String(64), index=True)
+    family_request_id: Mapped[str] = mapped_column(String(64))
+    event_type: Mapped[str] = mapped_column(String(32))
+    result: Mapped[str] = mapped_column(String(32))
+    duration_ms: Mapped[int] = mapped_column(Integer, default=0)
+    captcha_encountered: Mapped[bool] = mapped_column(Boolean, default=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON_VALUE, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
 class InvalidJobInput(Base):
     __tablename__ = "invalid_job_inputs"
 

@@ -34,6 +34,7 @@ from .proxy_profiles import ProxyAssignment, resolve_proxy_assignments
 from .retry_policy import FetchFailure, RETRY_FIELDS, response_failure, retry_delay
 from .variant_presets import PRESET_ID, build_jeminise_variants
 from .timeouts import CrawlTimeout, TIMEOUT_FIELDS, acquire_slot, bounded_method, check_deadline, remaining_seconds, timeout_scope, transport_context, wait_blocking
+from .observability import asin_scope, emit_event, mark_captcha, observe_attempt, observed_stage, redact, trace_fields, trace_scope, write_log
 
 ASIN_RE = re.compile(r"(?<![A-Z0-9])([A-Z0-9]{10})(?![A-Z0-9])", re.I)
 AMAZON_HOST_RE = re.compile(r"(^|\.)amazon\.[a-z.]+$", re.I)
@@ -226,7 +227,7 @@ def _stable_token(*values: str, length: int = 20) -> str:
 
 
 def _exception_message(error: BaseException) -> str:
-    message = str(error).strip()
+    message = redact(error).strip()
     return message or type(error).__name__
 
 
@@ -873,7 +874,10 @@ class HttpFetcher:
                 "candidate": attempt - 1 if attempt <= len(candidates) else (attempt - 1) % len(candidates),
             }
             slot = acquire_slot(self._assignment_slots[assignment.index], self.cancel_event) if assignment.is_enabled else contextlib.nullcontext()
-            with transport_context(attempt=attempt, route="proxy" if assignment.is_enabled else "direct", profile=assignment.name), slot:
+            with transport_context(attempt=attempt, route="proxy" if assignment.is_enabled else "direct", profile=assignment.name), slot, observe_attempt(
+                "http_attempt", stage=trace_fields().get("stage", "page"), attempt=attempt,
+                route="proxy" if assignment.is_enabled else "direct", profile=assignment.name,
+            ) as attempt_event:
                 try:
                     cookie_header = self._bootstrap_us_cookie(assignment)
                     trace["usProfileApplied"] = self._us_profile_applied.get(assignment.index) is True
@@ -890,6 +894,7 @@ class HttpFetcher:
                     body = response_body.decode("utf-8", errors="replace")
                     trace["httpStatus"] = response_status
                     if html_is_captcha(body):
+                        mark_captcha()
                         raise RuntimeError("Amazon CAPTCHA/bot-check page detected.")
                     if html_is_location_blocked(body):
                         raise RuntimeError(f"Amazon offer is blocked outside US ZIP {self.zip_code}.")
@@ -915,10 +920,12 @@ class HttpFetcher:
                         if caught.reason in {"http_429", "http_503"}:
                             self._block_assignment(assignment, retry_delay(attempt, retry_after=caught.delay), caught)
                     trace.update({"outcome": outcome, "error": message})
+                    attempt_event.update(result=outcome, error=message, httpStatus=trace.get("httpStatus"))
                     if isinstance(caught, CrawlTimeout):
                         trace.update(caught.details)
                 finally:
                     trace["durationMs"] = round((time.monotonic() - started) * 1000)
+                    trace.update(trace_fields())
             diagnostics.append(trace)
             self._thread_diagnostics.attempts = diagnostics
             if attempt < len(route_assignments) and any(candidate in self._available_assignments() for candidate in route_assignments[attempt:]):
@@ -1191,6 +1198,7 @@ class AmazonCrawler:
             "mediaCount": len(parsed.get("media") or []),
         }
 
+    @observed_stage("page", event="page_fetch")
     def _fetch_parsed(
         self,
         normalized: NormalizedInput,
@@ -1238,6 +1246,8 @@ class AmazonCrawler:
                 2,
                 int(getattr(self.browser_pool, "profiles", self.settings.browser_profiles)),
             )
+            if parse_attempts:
+                emit_event("playwright_fallback", stage="page", result="running")
             for browser_attempt in range(1, parse_attempts + 1):
                 trace: dict[str, Any] = {"attempt": browser_attempt}
                 try:
@@ -1309,6 +1319,7 @@ class AmazonCrawler:
         return bool(child.get("customizationFormUrl"))
 
     @bounded_method("customization", "customization_timeout_seconds")
+    @observed_stage("customization_entry")
     def _recover_customization_entry(
         self,
         *,
@@ -1364,6 +1375,7 @@ class AmazonCrawler:
         return None, errors
 
     @bounded_method("customization", "customization_timeout_seconds")
+    @observed_stage("customization_form")
     def _fetch_customization_form(
         self,
         *,
@@ -1431,7 +1443,7 @@ class AmazonCrawler:
                     retry_after_seconds=policy["retryAfterSeconds"],
                     details={key: policy[key] for key in (*TIMEOUT_FIELDS, *RETRY_FIELDS) if key in policy})
                 variant["customizationComplete"] = False
-                variant["warnings"] = [*variant.get("warnings", []), f"Customization retry failed: {error}"]
+                variant["warnings"] = [*variant.get("warnings", []), f"Customization retry failed: {_exception_message(error)}"]
 
     def _retry_variant_customization(self, variant: dict[str, Any], source: str) -> None:
         recovered, recovery_errors = self._recover_customization_entry(
@@ -1474,10 +1486,15 @@ class AmazonCrawler:
     def _crawl_family_locked(self, normalized: NormalizedInput, on_product_complete: ProductCompletionCallback | None) -> dict[str, Any]:
         cache_key = f"{normalized.asin}:{self.settings.amazon_zip}:us-v1"
         cached = self.cache.load(cache_key, require_customization=True)
+        emit_event("family_cache", cacheKey=cache_key, cacheKind="family", result="hit" if cached is not None else "miss")
         if cached is not None:
             family = deepcopy(cached)
             family["diagnostics"]["cacheHit"] = True
             family["diagnostics"]["fetchMode"] = "cache"
+            family["diagnostics"].update(trace_fields())
+            for variant in family.get("sourceVariants", []):
+                with asin_scope(variant["asin"]):
+                    variant.setdefault("diagnostics", {}).update(trace_fields())
             cached_variants = len(family.get("sourceVariants", []))
             self._report_progress(
                 phase="product",
@@ -1543,6 +1560,7 @@ class AmazonCrawler:
             parent["dimensions"] = deepcopy(checkpoint_matrix["dimensions"])
             if isinstance(checkpoint_matrix.get("diagnostics"), dict):
                 diagnostics.update(deepcopy(checkpoint_matrix["diagnostics"]))
+        diagnostics.update(trace_fields())
         # parentAsin identifies the variation family and is often not a
         # purchasable child. Adding it as a source variant makes Amazon redirect
         # to the default child and contaminates that variant with another ASIN's
@@ -1586,7 +1604,7 @@ class AmazonCrawler:
             except (InterruptedError, CaptchaTimeout, CrawlTimeout):
                 raise
             except Exception as error:
-                diagnostics["matrixWarning"] = f"Variant matrix browser sweep failed: {error}"
+                diagnostics["matrixWarning"] = f"Variant matrix browser sweep failed: {_exception_message(error)}"
             expected_count = 1
             for values in parent["dimensions"].values():
                 expected_count *= max(1, len(values))
@@ -1634,7 +1652,9 @@ class AmazonCrawler:
             ):
                 if not child_checkpoint.get("complete"):
                     self.cache.append_checkpoint(cache_key, "child_complete", {"asin": asin})
-                return deepcopy(saved_variant)
+                restored_variant = deepcopy(saved_variant)
+                restored_variant.setdefault("diagnostics", {}).update(trace_fields())
+                return restored_variant
             if previous_family is not None:
                 previous_variant = next(
                     (variant for variant in previous_family.get("sourceVariants", []) if variant.get("asin") == asin), None
@@ -1643,7 +1663,9 @@ class AmazonCrawler:
                     isinstance(previous_variant, dict) and self._variant_cache_complete(previous_variant)
                     and previous_variant.get("options") == asin_options.get(asin, {})
                 ):
-                    return deepcopy(previous_variant)
+                    restored_variant = deepcopy(previous_variant)
+                    restored_variant.setdefault("diagnostics", {}).update(trace_fields())
+                    return restored_variant
             child_key = f"{asin}:{self.settings.amazon_zip}:us-v1"
             child_failure = self.cache.load_failure(child_key)
             if child_failure is not None:
@@ -1676,7 +1698,7 @@ class AmazonCrawler:
             else:
                 if asin == parent["asin"] and parent.get("price") is not None:
                     child = deepcopy(parent)
-                    child_diagnostics = diagnostics
+                    child_diagnostics = deepcopy(diagnostics)
                 else:
                     with acquire_slot(self._variant_fetch_slots, self.cancel_event):
                         child, child_diagnostics = self._fetch_parsed(normalize_amazon_input(asin))
@@ -1688,6 +1710,7 @@ class AmazonCrawler:
                 self.cache.append_checkpoint(cache_key, "child_page_complete", {
                     "asin": asin, "child": child, "diagnostics": child_diagnostics,
                 })
+            child_diagnostics.update(trace_fields())
             gallery_warnings: list[str] = []
             saved_media = child_checkpoint.get("media") if isinstance(child_checkpoint, dict) else None
             if not (isinstance(saved_media, dict) and isinstance(saved_media.get("child"), dict)):
@@ -1715,7 +1738,7 @@ class AmazonCrawler:
                 except (InterruptedError, CaptchaTimeout, CrawlTimeout):
                     raise
                 except Exception as error:
-                    gallery_warnings.append(f"Full gallery browser fallback failed for {asin}: {error}")
+                    gallery_warnings.append(f"Full gallery browser fallback failed for {asin}: {_exception_message(error)}")
             if saved_media is None and not gallery_warnings:
                 self.cache.append_checkpoint(cache_key, "media_complete", {"asin": asin, "child": child})
             if isinstance(saved_variant, dict) and saved_variant.get("customizationComplete") is True:
@@ -1866,7 +1889,7 @@ class AmazonCrawler:
                 emitted_groups.add(split_value)
 
         def crawl_child_with_deadline(asin: str) -> dict[str, Any]:
-            with transport_context(childAsin=asin), timeout_scope("child", self.settings.child_timeout_seconds):
+            with asin_scope(asin), trace_scope(stage="child"), transport_context(childAsin=asin), timeout_scope("child", self.settings.child_timeout_seconds):
                 variant = crawl_child(asin)
                 check_deadline()
                 return variant
@@ -1883,6 +1906,10 @@ class AmazonCrawler:
                 except Exception as error:
                     if not isinstance(error, CachedCrawlFailure):
                         policy = classify_crawl_failure(error)
+                        with asin_scope(asin):
+                            emit_event("child_failed", stage="child", result=policy["status"], reason=policy["reason"], error=_exception_message(error))
+                            if policy["status"] == "parser_error":
+                                emit_event("parser_failure", stage="child", result="parser_error")
                         self.cache.save_failure(
                             f"{asin}:{self.settings.amazon_zip}:us-v1",
                             status=policy["status"], reason=policy["reason"],
@@ -1900,7 +1927,7 @@ class AmazonCrawler:
                         "price": None, "media": [],
                         "description": None, "bulletPoints": [], "categories": [], "productDetails": {},
                         "customizationRaw": None, "customization": None, "customizationFingerprint": None,
-                        "priceInference": {"isInferred": False, "sourceAsins": []}, "warnings": [str(error)],
+                        "priceInference": {"isInferred": False, "sourceAsins": []}, "warnings": [_exception_message(error)],
                         "diagnostics": failed_diagnostics,
                     })
                 emit_completed_group(asin)
@@ -2192,6 +2219,8 @@ class AmazonCrawler:
         on_input_complete: InputCompletionCallback | None = None,
         on_product_complete: ProductCompletionCallback | None = None,
         write_export: bool = True,
+        trace_contexts: dict[str, dict[str, Any]] | None = None,
+        on_telemetry: Callable[[dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
         started_at = _now_iso()
         started_time = time.monotonic()
@@ -2209,7 +2238,7 @@ class AmazonCrawler:
             except ValueError as error:
                 errors.append({
                     "source": source, "code": "INVALID_INPUT", "status": "invalid_asin",
-                    "reason": "invalid_format", "message": str(error), "retryable": False,
+                    "reason": "invalid_format", "message": _exception_message(error), "retryable": False,
                 })
         rejected_inputs = len(errors)
         products: list[dict[str, Any]] = []
@@ -2220,7 +2249,7 @@ class AmazonCrawler:
         completed = 0
         self._initialize_progress(normalized_inputs)
 
-        def crawl_one(normalized: NormalizedInput) -> tuple[NormalizedInput, list[dict[str, Any]], dict[str, list[str]]]:
+        def crawl_one_body(normalized: NormalizedInput) -> tuple[NormalizedInput, list[dict[str, Any]], dict[str, list[str]]]:
             self._check_cancelled()
             emitted_product_ids: set[str] = set()
 
@@ -2299,6 +2328,44 @@ class AmazonCrawler:
                 )
             return normalized, family_products, self._family_asin_status(family)
 
+        def input_context(normalized: NormalizedInput) -> dict[str, Any]:
+            supplied = (trace_contexts or {}).get(normalized.asin, {})
+            request_id = str(supplied.get("requestId") or _stable_token(job_id, normalized.asin))
+            return {"jobId": job_id, "taskId": supplied.get("taskId", request_id),
+                    "agentId": supplied.get("agentId", "local"), "leaseId": supplied.get("leaseId", "local"),
+                    "requestId": request_id, "familyRequestId": request_id,
+                    "taskAttempt": supplied.get("taskAttempt", 1), "attempt": 1,
+                    "asin": normalized.asin, "rootAsin": normalized.asin,
+                    "cacheKey": f"{normalized.asin}:{self.settings.amazon_zip}:us-v1", "stage": "family"}
+
+        def telemetry(event: dict[str, Any]) -> None:
+            write_log(self.root / ".runtime" / "logs" / "crawler-trace.jsonl", event)
+            if on_telemetry is not None:
+                on_telemetry(event)
+
+        def crawl_one(normalized: NormalizedInput) -> tuple[NormalizedInput, list[dict[str, Any]], dict[str, list[str]]]:
+            with trace_scope(on_event=telemetry, **input_context(normalized)):
+                began = time.monotonic()
+                emit_event("family_started", result="running")
+                outcome = "completed"
+                failure_details = {}
+                try:
+                    return crawl_one_body(normalized)
+                except PartialCrawlError as error:
+                    outcome = "partial"
+                    failure_details = {"reason": error.reason, "isRetryable": error.retryable}
+                    raise
+                except BaseException as error:
+                    policy = classify_crawl_failure(error) if isinstance(error, Exception) else {}
+                    outcome = "cancelled" if isinstance(error, InterruptedError) else policy.get("status", "error")
+                    failure_details = {"error": _exception_message(error), "reason": policy.get("reason"),
+                                       "isRetryable": policy.get("retryable")}
+                    if outcome == "parser_error" and not isinstance(error, CachedCrawlFailure):
+                        emit_event("parser_failure", result="parser_error")
+                    raise
+                finally:
+                    emit_event("family_completed", result=outcome, durationMs=round((time.monotonic() - began) * 1000), **failure_details)
+
         product_worker_count = effective_product_threads(len(normalized_inputs), self.settings)
         self._report_progress(
             phase="product",
@@ -2335,7 +2402,7 @@ class AmazonCrawler:
                     input_error = {
                         **error.timeout_details,
                         "source": normalized.source, "code": error.code, "status": "partial",
-                        "reason": error.reason, "message": str(error),
+                        "reason": error.reason, "message": _exception_message(error),
                         "retryable": error.retryable, "retryAfter": error.retry_after,
                         **asin_status,
                         **({"isRetryable": error.retryable} if error.timeout_details else {}),
@@ -2360,14 +2427,14 @@ class AmazonCrawler:
                     input_error = {
                         "source": normalized.source, "code": "CRAWL_TIMEOUT" if policy.get("stage") else policy["status"].upper(),
                         "status": policy["status"], "reason": policy["reason"],
-                        "retryAfter": failure["retryAfter"], "message": str(error),
+                        "retryAfter": failure["retryAfter"], "message": _exception_message(error),
                         "retryable": policy["retryable"], **asin_status,
                         **{key: failure[key] for key in (*TIMEOUT_FIELDS, *RETRY_FIELDS) if key in failure},
                     }
                     errors.append(input_error)
                     input_errors.append(input_error)
                     item_status = "failed"
-                    item_message = f"Cào thất bại: {error}"
+                    item_message = f"Cào thất bại: {_exception_message(error)}"
                 completed_asins.extend(asin_status["completedAsins"])
                 failed_asins.extend(asin_status["failedAsins"])
                 retryable_asins.extend(asin_status["retryableAsins"])
@@ -2383,6 +2450,7 @@ class AmazonCrawler:
                 )
                 if on_input_complete is not None:
                     on_input_complete({
+                        **input_context(normalized),
                         "source": normalized.source,
                         "asin": normalized.asin,
                         "status": item_status,

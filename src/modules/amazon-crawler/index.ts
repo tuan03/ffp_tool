@@ -3,6 +3,10 @@ export { getAmazonCrawlerCacheClearer, getAmazonCrawlerClientsLoader, getAmazonC
 export { AmazonCrawlerServiceError, createAmazonCrawlerCacheClearer, createAmazonCrawlerClientsLoader, createAmazonCrawlerJobController, createAmazonCrawlerJobLoader, createAmazonCrawlerReviewClient, createAmazonCrawlerRunner, createAmazonCrawlerSyncRetrier, createImageProcessingProfileManager, serializeAmazonCrawlerInput } from "./service";
 export { DEFAULT_AMAZON_CRAWLER_SETTINGS } from "./types";
 export type {
+  AmazonCrawlerMetrics,
+  AmazonCrawlerTraceEvent,
+  AmazonCrawlerTracePage,
+  AmazonCrawlerAgentObservability,
   AmazonCrawlerError,
   AmazonCrawlerCacheClearer,
   AmazonCrawlerCacheClearResult,

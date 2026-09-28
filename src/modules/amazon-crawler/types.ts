@@ -330,6 +330,13 @@ export interface SplitContext {
 }
 
 export interface ProductDiagnostics {
+  requestId?: string;
+  familyRequestId?: string;
+  jobId?: string;
+  taskId?: string;
+  agentId?: string;
+  cacheKey?: string;
+  taskAttempt?: number;
   fetchMode: "http" | "playwright" | "cache" | "mixed" | "failed";
   attempts: number;
   captchaEncountered: boolean;
@@ -470,6 +477,8 @@ export interface AmazonCrawlerCancellationSummary {
 }
 
 export interface AmazonCrawlerJobController {
+  metrics?(jobId?: string): Promise<AmazonCrawlerMetrics>;
+  trace?(jobId: string, requestId: string, cursor?: string): Promise<AmazonCrawlerTracePage>;
   list(limit?: number): Promise<readonly AmazonCrawlerJobSnapshot[]>;
   get(jobId: string): Promise<AmazonCrawlerJobSnapshot>;
   cancel(jobId: string, options?: { force?: boolean }): Promise<AmazonCrawlerJobSnapshot>;
@@ -477,6 +486,74 @@ export interface AmazonCrawlerJobController {
   clearTemporaryData(): Promise<AmazonCrawlerCacheClearResult>;
   replace(jobId: string, input: AmazonCrawlerInput): Promise<AmazonCrawlerJobSnapshot>;
   delete(jobId: string): Promise<void>;
+}
+
+export interface AmazonCrawlerAgentObservability {
+  cache: Readonly<Record<string, number>>;
+  resources: {
+    rssBytes?: number;
+    browserProcesses?: number;
+    browserContexts?: number;
+    browserPages?: number;
+    processCount?: number;
+    isComplete: boolean;
+  };
+  backlog: number;
+  dropped: number;
+  sampledAt?: string;
+}
+
+export interface AmazonCrawlerMetrics {
+  windowStartedAt: string;
+  retainedSince: string | null;
+  sampledAt: string;
+  jobId: string | null;
+  counts: {
+    familyCacheHits: number;
+    familyCacheMisses: number;
+    httpAttempts: number;
+    httpSuccesses: number;
+    browserAttempts: number;
+    pageFetches: number;
+    playwrightFallbacks: number;
+    captchaAttempts: number;
+    familyAttempts: number;
+    partialFamilies: number;
+    parserFailures: number;
+    networkRetries: number;
+    taskRetries: number;
+    retryCount: number;
+  };
+  rates: { cacheHit: number | null; httpSuccess: number | null; playwrightFallback: number | null; captcha: number | null };
+  averageCrawlDurationMs: number | null;
+  queue: { crawl: number; crawlActive: number; pipeline: number };
+  agents: Array<AmazonCrawlerAgentObservability & { agentId: string; displayName: string }>;
+}
+
+export interface AmazonCrawlerTraceEvent {
+  eventId: string;
+  event: string;
+  timestamp: string;
+  requestId: string;
+  familyRequestId: string;
+  jobId: string;
+  taskId: string;
+  agentId: string;
+  asin: string;
+  stage?: string;
+  route?: string;
+  profile?: string;
+  cacheKey?: string;
+  attempt?: number;
+  taskAttempt?: number;
+  durationMs?: number;
+  result: string;
+  error?: string;
+}
+
+export interface AmazonCrawlerTracePage {
+  events: AmazonCrawlerTraceEvent[];
+  nextCursor: string | null;
 }
 
 export interface AmazonCrawlerRunner {

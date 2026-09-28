@@ -6,6 +6,7 @@ import asyncio
 import gzip
 import json
 import random
+import sqlite3
 import threading
 import time
 import urllib.error
@@ -20,6 +21,8 @@ import websockets
 from ..crawler_core import AmazonCrawler, CrawlSettings
 from ..cache import RawFamilyCache
 from ..process_crawler import ProcessCrawler
+from ..observability import redact, safe_fields, write_log
+from ..runtime_resources import sample_resources
 from . import AGENT_VERSION
 from .client_config import AgentConfig
 from .client_store import ClientStore
@@ -99,16 +102,30 @@ class DistributedCrawlerAgent:
         self._running_crawlers_lock = threading.Lock()
         self._debug_log_lock = threading.Lock()
         self._debug_log_path = config.data_directory / "agent-debug.jsonl"
+        self._resources: dict[str, Any] = {}
+        self._telemetry_losses = 0
 
     def _debug_event(self, event: str, **details: Any) -> None:
         payload = {"timestamp": utc_iso(), "event": event, "clientId": self.client_id, **details}
+        write_log(self._debug_log_path, payload)
+
+    def _record_telemetry(self, event: dict[str, Any]) -> None:
         try:
-            with self._debug_log_lock:
-                self._debug_log_path.parent.mkdir(parents=True, exist_ok=True)
-                with self._debug_log_path.open("a", encoding="utf-8") as stream:
-                    stream.write(json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n")
-        except OSError:
-            return
+            self.store.spool_telemetry(event)
+        except (OSError, sqlite3.Error):
+            self._telemetry_losses += 1
+
+    def _telemetry_snapshot(self) -> dict[str, Any]:
+        status = self.store.telemetry_status()
+        return {"cache": self.cache.metrics_snapshot(), "resources": self._resources,
+                **status, "dropped": status["dropped"] + self._telemetry_losses}
+
+    def _sample_resources(self) -> dict[str, Any]:
+        resources = sample_resources()
+        with self._running_crawlers_lock:
+            pools = [dict(getattr(crawler, "browser_pool_state", getattr(crawler, "_browser_pool_state", {}))) for crawler in self._running_crawlers.values()]
+        resources.update({key: sum(int(pool.get(key, 0)) for pool in pools) for key in ("browserContexts", "browserPages")})
+        return resources
 
     def status_snapshot(self) -> dict[str, Any]:
         return {
@@ -121,6 +138,7 @@ class DistributedCrawlerAgent:
             "pendingUploads": len(self.store.pending_results()) + len(self.store.pending_products()),
             "isPaused": self._paused,
             "cache": self.cache.metrics_snapshot(),
+            "observability": self._telemetry_snapshot(),
         }
 
     def _publish_status(self) -> None:
@@ -304,6 +322,7 @@ class DistributedCrawlerAgent:
                         asyncio.create_task(self._receiver(websocket)),
                         asyncio.create_task(self._heartbeat_loop()),
                         asyncio.create_task(self._upload_loop()),
+                        asyncio.create_task(self._telemetry_loop()),
                     ]
                     stop_waiter = asyncio.create_task(self.stop_event.wait())
                     tasks = [*connection_tasks, stop_waiter]
@@ -324,7 +343,7 @@ class DistributedCrawlerAgent:
             except Exception as error:
                 self.connection_status = "offline"
                 self._publish_status()
-                self.on_status({**self.status_snapshot(), "lastError": str(error)})
+                self.on_status({**self.status_snapshot(), "lastError": redact(error)})
                 try:
                     await asyncio.wait_for(self.stop_event.wait(), timeout=delay + random.random())
                 except TimeoutError:
@@ -347,6 +366,10 @@ class DistributedCrawlerAgent:
                     self.active[task_id] = payload
                     await self.assignment_queue.put(payload)
                     self._publish_status()
+            elif message_type == "telemetry_ack":
+                event_ids = payload.get("eventIds")
+                if isinstance(event_ids, list):
+                    await asyncio.to_thread(self.store.acknowledge_telemetry, [event_id for event_id in event_ids[:64] if isinstance(event_id, str)])
             elif message_type == "cancel":
                 job_id = str(payload.get("jobId") or "")
                 generation = max(0, int(payload.get("cacheGeneration") or 0))
@@ -416,7 +439,7 @@ class DistributedCrawlerAgent:
         except OSError as error:
             return {
                 "type": "cache_cleared", "requestId": request_id,
-                "removedFiles": 0, "removedBytes": 0, "error": str(error),
+                "removedFiles": 0, "removedBytes": 0, "error": redact(error),
             }
 
     async def _invalidate_product_cache(self, asin: str, amazon_zip: str, generation: int) -> dict[str, int]:
@@ -435,7 +458,7 @@ class DistributedCrawlerAgent:
             return {"type": "product_cache_invalidated", "requestId": request_id, **result, "error": None}
         except OSError as error:
             return {"type": "product_cache_invalidated", "requestId": request_id,
-                    "removedFiles": 0, "removedBytes": 0, "error": str(error)}
+                    "removedFiles": 0, "removedBytes": 0, "error": redact(error)}
 
     async def clear_temporary_data(
         self, request_id: str, valid_job_ids: set[str], *, generation: int = 0,
@@ -451,7 +474,7 @@ class DistributedCrawlerAgent:
                     "discardedJobs": discarded_jobs, **result, "error": None}
         except OSError as error:
             return {"type": "temporary_data_cleared", "requestId": request_id,
-                    "discardedJobs": 0, "removedFiles": 0, "removedBytes": 0, "error": str(error)}
+                    "discardedJobs": 0, "removedFiles": 0, "removedBytes": 0, "error": redact(error)}
 
     async def _ensure_cache_generation(self, generation: int) -> dict[str, Any]:
         async with self._cache_cleanup_lock:
@@ -534,19 +557,20 @@ class DistributedCrawlerAgent:
                     "stop_cleanup_failed",
                     jobId=job_id,
                     cacheGeneration=generation,
-                    error=str(error),
+                    error=redact(error),
                 )
                 await self.outbound_queue.put({
                     "type": "stop_cleanup_ack",
                     "jobId": job_id,
                     "cacheGeneration": generation,
-                    "error": str(error),
+                    "error": redact(error),
                 })
                 await asyncio.sleep(1)
 
     async def _heartbeat_loop(self) -> None:
         while True:
             await asyncio.to_thread(self.cache.maintain)
+            self._resources = await asyncio.to_thread(self._sample_resources)
             running = [
                 {"taskId": task_id, "leaseId": assignment["leaseId"]}
                 for task_id, assignment in self.active.items()
@@ -558,8 +582,16 @@ class DistributedCrawlerAgent:
                 ),
                 "availableSlots": self._available_slots(),
                 "running": running,
+                "observability": self._telemetry_snapshot(),
             })
             await asyncio.sleep(HEARTBEAT_INTERVAL_SECONDS)
+
+    async def _telemetry_loop(self) -> None:
+        while True:
+            events = await asyncio.to_thread(self.store.pending_telemetry)
+            if events:
+                await self.outbound_queue.put({"type": "telemetry", "events": events})
+            await asyncio.sleep(1)
 
     def _available_slots(self) -> int:
         if self._paused or self._pending_stop_cleanups:
@@ -620,7 +652,7 @@ class DistributedCrawlerAgent:
                         "taskId": assignment["taskId"],
                         "leaseId": assignment["leaseId"],
                         "error": {
-                            "message": f"Crawler batch could not start or complete: {error}",
+                            "message": f"Crawler batch could not start or complete: {redact(error)}",
                             "retryable": True,
                         },
                     })
@@ -684,6 +716,7 @@ class DistributedCrawlerAgent:
             envelope = {
                 "version": "distributed-1", "agentVersion": AGENT_VERSION,
                 "taskId": assignment["taskId"], "jobId": assignment["jobId"],
+                "requestId": assignment.get("requestId", assignment["taskId"]),
                 "leaseId": assignment["leaseId"], "clientId": self.client_id,
                 "source": assignment["source"], "asin": assignment["asin"],
                 "requestedSettingsFingerprint": assignment["settingsFingerprint"],
@@ -767,12 +800,20 @@ class DistributedCrawlerAgent:
         with self._running_crawlers_lock:
             self._running_crawlers[str(first["jobId"])] = crawler
         try:
+            trace_arguments = {
+                "trace_contexts": {str(assignment["asin"]): {
+                    "taskId": assignment["taskId"], "leaseId": assignment["leaseId"], "agentId": self.client_id,
+                    "requestId": assignment.get("requestId", assignment["taskId"]), "taskAttempt": assignment.get("taskAttempt", 1),
+                } for assignment in batch},
+                "on_telemetry": self._record_telemetry,
+            } if isinstance(crawler, (AmazonCrawler, ProcessCrawler)) else {}
             crawler.run(
                 job_id=str(first["jobId"]),
                 sources=[str(assignment["url"]) for assignment in batch],
                 on_input_complete=completed,
                 on_product_complete=product_completed,
                 write_export=False,
+                **trace_arguments,
             )
         finally:
             if cancel_event.is_set():
@@ -826,7 +867,7 @@ class DistributedCrawlerAgent:
                     elif response.get("status") in {"accepted", "duplicate"}:
                         self.store.acknowledge_product(task_id, product["productKey"])
                 except Exception as error:
-                    self.store.product_failed(task_id, product["productKey"], str(error))
+                    self.store.product_failed(task_id, product["productKey"], redact(error))
                     upload_failed = True
                     retry_delay = max(retry_delay, min(30, 2 ** min(int(product.get("attempts", 0)), 5)))
             pending = self.store.pending_results()
@@ -843,7 +884,7 @@ class DistributedCrawlerAgent:
                         self.active.pop(result["taskId"], None)
                         await self.outbound_queue.put({"type": "ready", "availableSlots": self._available_slots()})
                 except Exception as error:
-                    self.store.result_failed(result["taskId"], str(error))
+                    self.store.result_failed(result["taskId"], redact(error))
                     upload_failed = True
                     retry_delay = max(retry_delay, min(30, 2 ** min(int(result.get("attempts", 0)), 5)))
             self._publish_status()

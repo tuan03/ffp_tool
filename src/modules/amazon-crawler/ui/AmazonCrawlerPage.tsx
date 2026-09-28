@@ -23,6 +23,7 @@ import {
   type ImageProcessingProfileManager,
 } from "../types";
 import { createAmazonAsinChecker } from "../service";
+import { CrawlerObservability } from "./components/CrawlerObservability";
 
 import {
   abortCrawlerJob,
@@ -1178,6 +1179,10 @@ export function AmazonCrawlerPage({
           </div>
         ) : null}
       </section>
+
+      <CrawlerObservability controller={amazonCrawlerJobs}
+        jobId={selectedProduct?.diagnostics.jobId ?? activeJobId ?? lastJobId ?? undefined}
+        requestId={selectedProduct?.diagnostics.familyRequestId ?? selectedProduct?.diagnostics.requestId} />
 
       <label className="grid gap-2 text-sm font-medium text-slate-200">
         Amazon URLs hoặc ASIN, mỗi dòng một giá trị

@@ -5,11 +5,13 @@ from __future__ import annotations
 import json
 import sqlite3
 import uuid
+import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
 from .protocol import utc_iso
+from ..observability import safe_fields
 
 
 SCHEMA = """
@@ -58,6 +60,12 @@ CREATE TABLE IF NOT EXISTS agent_state (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS telemetry_spool (
+    event_id TEXT PRIMARY KEY,
+    payload_json TEXT NOT NULL,
+    created_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS telemetry_spool_created ON telemetry_spool(created_at);
 """
 
 
@@ -91,6 +99,42 @@ class ClientStore:
             connection.execute("INSERT INTO agent_identity(singleton, client_id) VALUES (1, ?)", (client_id,))
             connection.commit()
             return client_id
+
+    def spool_telemetry(self, event: dict[str, Any], *, maximum: int = 10000) -> None:
+        payload = json.dumps(safe_fields(event), ensure_ascii=False, separators=(",", ":"))
+        if len(payload.encode("utf-8")) > 4096:
+            self.count_telemetry_dropped()
+            return
+        with self._connection() as connection:
+            connection.execute("INSERT OR IGNORE INTO telemetry_spool VALUES (?,?,?)", (event["eventId"], payload, time.time()))
+            count = connection.execute("SELECT COUNT(*) FROM telemetry_spool").fetchone()[0]
+            excess = max(0, count - maximum)
+            if excess:
+                connection.execute("DELETE FROM telemetry_spool WHERE event_id IN (SELECT event_id FROM telemetry_spool ORDER BY created_at LIMIT ?)", (excess,))
+                self._count_dropped(connection, excess)
+
+    @staticmethod
+    def _count_dropped(connection, amount: int) -> None:
+        connection.execute("INSERT INTO agent_state VALUES ('telemetry_dropped',?) ON CONFLICT(key) DO UPDATE SET value=CAST(value AS INTEGER)+CAST(excluded.value AS INTEGER)", (str(amount),))
+
+    def count_telemetry_dropped(self) -> None:
+        with self._connection() as connection:
+            self._count_dropped(connection, 1)
+
+    def pending_telemetry(self, limit: int = 64) -> list[dict[str, Any]]:
+        with self._connection() as connection:
+            rows = connection.execute("SELECT payload_json FROM telemetry_spool ORDER BY created_at LIMIT ?", (max(1, min(limit, 64)),)).fetchall()
+        return [json.loads(row[0]) for row in rows]
+
+    def telemetry_status(self) -> dict[str, int]:
+        with self._connection() as connection:
+            backlog = connection.execute("SELECT COUNT(*) FROM telemetry_spool").fetchone()[0]
+            dropped = connection.execute("SELECT value FROM agent_state WHERE key='telemetry_dropped'").fetchone()
+        return {"backlog": backlog, "dropped": int(dropped[0]) if dropped else 0}
+
+    def acknowledge_telemetry(self, event_ids: list[str]) -> None:
+        with self._connection() as connection:
+            connection.executemany("DELETE FROM telemetry_spool WHERE event_id=?", [(event_id,) for event_id in event_ids[:64]])
 
     def save_assignment(self, assignment: dict[str, Any]) -> None:
         now = utc_iso()

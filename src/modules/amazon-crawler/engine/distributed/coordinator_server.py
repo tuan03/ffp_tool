@@ -23,6 +23,7 @@ from . import PROTOCOL_VERSION, SUPPORTED_PROTOCOL_VERSIONS
 from .coordinator_models import Base, create_database_engine, create_session_factory
 from .coordinator_store import ActiveJobExistsError, CoordinatorStore
 from .protocol import HEARTBEAT_INTERVAL_SECONDS, LEASE_SECONDS, payload_checksum, require_message, utc_iso
+from ..observability import safe_fields, write_log
 
 
 class ResultPayloadTooLarge(ValueError):
@@ -30,12 +31,14 @@ class ResultPayloadTooLarge(ValueError):
 
 
 def debug_event(event: str, **details: Any) -> None:
-    print(json.dumps({
+    payload = safe_fields({
         "timestamp": utc_iso(),
         "component": "crawler-coordinator",
         "event": event,
         **details,
-    }, ensure_ascii=False), flush=True)
+    })
+    write_log(Path(".runtime/logs/coordinator-debug.jsonl"), payload)
+    print(json.dumps(payload, ensure_ascii=False), flush=True)
 
 
 def positive_environment_integer(name: str, default: int) -> int:
@@ -220,6 +223,7 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
                 await asyncio.to_thread(store.purge_stopped_jobs)
                 loop_time = asyncio.get_running_loop().time()
                 if loop_time >= next_cleanup_at:
+                    await asyncio.to_thread(store.cleanup_telemetry)
                     await asyncio.to_thread(
                         store.cleanup_history,
                         retention_minutes=history_retention_minutes,
@@ -270,6 +274,21 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
             "protocolVersion": PROTOCOL_VERSION,
             "workerProtocolVersion": PROTOCOL_VERSION,
         }
+
+    @app.get("/api/v1/crawler-metrics")
+    def get_crawler_metrics(job_id: str | None = Query(default=None, alias="jobId", max_length=40)) -> dict[str, Any]:
+        return store.crawler_metrics(job_id=job_id)
+
+    @app.get("/api/v1/crawl-jobs/{job_id}/traces/{request_id}")
+    def get_crawl_trace(job_id: str, request_id: str, cursor: str | None = Query(default=None, max_length=64),
+                        limit: int = Query(default=50, ge=1, le=100)) -> dict[str, Any]:
+        try:
+            trace = store.crawl_trace(job_id, request_id, cursor=cursor, limit=limit)
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        if trace is None:
+            raise HTTPException(status_code=404, detail="Crawl job was not found.")
+        return trace
 
     @app.post("/api/v1/crawl-jobs", status_code=202)
     async def create_job(payload: dict[str, Any]) -> dict[str, Any]:
@@ -1164,6 +1183,7 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
                         client_id,
                         running,
                         str(message.get("status") or "online"),
+                        message.get("observability"),
                     )
                     for cancelled_job_id in cancelled_job_ids:
                         await websocket.send_json({
@@ -1180,6 +1200,9 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
                         await assign(int(message.get("availableSlots") or 0))
                 elif message_type == "progress":
                     await asyncio.to_thread(store.update_progress, client_id, message)
+                elif message_type == "telemetry":
+                    event_ids = await asyncio.to_thread(store.accept_telemetry, client_id, message.get("events"))
+                    await websocket.send_json({"type": "telemetry_ack", "eventIds": event_ids})
                 elif message_type == "task_failed":
                     response = await asyncio.to_thread(store.fail_task, client_id, message)
                     await websocket.send_json({"type": "task_failed_ack", "taskId": message.get("taskId"), **response})

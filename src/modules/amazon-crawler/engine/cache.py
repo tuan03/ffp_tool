@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .observability import emit_event
+
 import hashlib
 import json
 import os
@@ -114,6 +116,7 @@ class RawFamilyCache:
             self._write(asin, kind, payload)
         self.storage.register(path, cache_digest(asin), expires=expires)
         self.storage.count("hit")
+        emit_event("cache_read", cacheKey=asin, cacheKind=kind, result="hit")
 
     def _quarantine(self, path: Path) -> None:
         """Preserve corrupt entries for inspection; keep at most twenty files."""
@@ -213,7 +216,9 @@ class RawFamilyCache:
                     expires = datetime.fromisoformat(str(timestamp)).timestamp()
                 except (ValueError, TypeError):
                     pass
-            return self._replace_bytes(asin, self._path(asin, kind), content, expires)
+            written = self._replace_bytes(asin, self._path(asin, kind), content, expires)
+            emit_event("cache_write", cacheKey=asin, cacheKind=kind, result="saved" if written else "rejected")
+            return written
 
     def _remove(self, asin: str, kind: str) -> None:
         with self._guard(asin):
@@ -303,6 +308,7 @@ class RawFamilyCache:
                 handle.flush()
                 os.fsync(handle.fileno())
             self.storage.register(path, cache_digest(asin), expires=time.time() + self.limits.checkpoint_ttl_seconds)
+        emit_event("checkpoint", stage=stage, cacheKey=asin, cacheKind="checkpoint", result="saved")
 
     def load_checkpoint(self, asin: str, *, ttl_seconds: int = 86400) -> dict[str, Any] | None:
         with self._guard(asin):

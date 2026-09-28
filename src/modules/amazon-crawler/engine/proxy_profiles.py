@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .observability import register_redactions
+
 import json
 import os
 import re
@@ -116,4 +118,5 @@ def resolve_proxy_assignments(
             username=str(proxy.get("username") or "").strip() or None,
             password=str(proxy.get("password") or "") or None,
         ))
+    register_redactions([credential for assignment in assignments for credential in (assignment.username, assignment.password)])
     return assignments, warnings

@@ -27,6 +27,7 @@ import type {
   ImageProcessingProfileManager,
 } from "./types";
 import { DEFAULT_AMAZON_CRAWLER_SETTINGS } from "./types";
+import { readCrawlerMetrics, readCrawlerTrace } from "./observability-response";
 
 interface JobCreatedResponse {
   jobId: string;
@@ -55,8 +56,8 @@ export class AmazonCrawlerServiceError extends Error {
   public readonly code: string;
   public readonly status: number | null;
 
-  public constructor(message: string, code: string, status: number | null = null) {
-    super(message);
+  public constructor(message: string, code: string, status: number | null = null, options?: ErrorOptions) {
+    super(message, options);
     this.name = "AmazonCrawlerServiceError";
     this.code = code;
     this.status = status;
@@ -443,6 +444,18 @@ export function createAmazonCrawlerJobController({
   const baseUrl = normalizeEngineUrl(engineUrl);
   const jobUrl = (jobId: string): string => `${baseUrl}/api/v1/crawl-jobs/${encodeURIComponent(jobId)}`;
   return {
+    async metrics(jobId) {
+      const query = jobId ? `?jobId=${encodeURIComponent(jobId)}` : "";
+      const payload = await readJson(await fetchImplementation(`${baseUrl}/api/v1/crawler-metrics${query}`, { signal: AbortSignal.timeout(10_000) }));
+      try { return readCrawlerMetrics(payload); }
+      catch (cause: unknown) { throw new AmazonCrawlerServiceError("Coordinator returned invalid crawler metrics.", "INVALID_ENGINE_RESPONSE", undefined, { cause }); }
+    },
+    async trace(jobId, requestId, cursor) {
+      const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : "";
+      const payload = await readJson(await fetchImplementation(`${jobUrl(jobId)}/traces/${encodeURIComponent(requestId)}${query}`, { signal: AbortSignal.timeout(10_000) }));
+      try { return readCrawlerTrace(payload); }
+      catch (cause: unknown) { throw new AmazonCrawlerServiceError("Coordinator returned an invalid crawler trace.", "INVALID_ENGINE_RESPONSE", undefined, { cause }); }
+    },
     async list(limit = 50) {
       const payload = await readJson(await fetchImplementation(`${baseUrl}/api/v1/crawl-jobs?limit=${Math.max(1, Math.min(500, limit))}`));
       if (!Array.isArray(payload)) {

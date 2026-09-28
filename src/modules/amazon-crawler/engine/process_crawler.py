@@ -17,10 +17,12 @@ from typing import Any
 from .cache import RawFamilyCache
 from .crawler_core import SCHEMA_VERSION, AmazonCrawler, CrawlSettings, normalize_amazon_input
 from .timeouts import CrawlTimeout, observe_deadlines
+from .observability import emit_event, redact, trace_scope
 
 
 def _crawl_process(connection, factory, root: str, settings: dict[str, Any], proxy_config_path: str | None,
-                   job_id: str, sources: list[str], write_export: bool, stream_results: bool = False) -> None:
+                   job_id: str, sources: list[str], write_export: bool, stream_results: bool = False,
+                   trace_contexts: dict[str, dict[str, Any]] | None = None) -> None:
     if os.name != "nt":
         os.setsid()
     crawler = None
@@ -34,14 +36,15 @@ def _crawl_process(connection, factory, root: str, settings: dict[str, Any], pro
                           cancel_event=threading.Event(),
                           proxy_config_path=Path(proxy_config_path) if proxy_config_path else None)
         with observe_deadlines(lambda deadline: send("deadline", deadline)):
+            telemetry_arguments = {"trace_contexts": trace_contexts, "on_telemetry": lambda event: send("telemetry", event)} if isinstance(crawler, AmazonCrawler) else {}
             output = crawler.run(job_id=job_id, sources=sources, write_export=write_export,
                                  on_input_complete=lambda result: send("input", result),
-                                 on_product_complete=lambda product: send("product", product))
+                                 on_product_complete=lambda product: send("product", product), **telemetry_arguments)
         crawler.browser_pool.close()
         send("result", {"status": output["status"]} if stream_results else output)
     except Exception as error:
         send("error", error.as_error("") if isinstance(error, CrawlTimeout) else {
-            "code": "CRAWLER_WORKER_FAILED", "message": str(error), "retryable": True,
+            "code": "CRAWLER_WORKER_FAILED", "message": redact(error), "retryable": True,
         })
     finally:
         connection.close()
@@ -68,6 +71,7 @@ class ProcessCrawler:
         self._process = None
         self._process_lock = threading.Lock()
         self._closed = threading.Event()
+        self.browser_pool_state: dict[str, Any] = {}
 
     def close(self) -> None:
         """Terminate only this worker and its browser descendants, before reusing capacity."""
@@ -102,7 +106,7 @@ class ProcessCrawler:
         return min(default, max(0, (deadline - datetime.now(timezone.utc)).total_seconds()))
 
     def run(self, *, job_id: str, sources: list[str], on_input_complete=None,
-            on_product_complete=None, write_export: bool = True) -> dict[str, Any]:
+            on_product_complete=None, write_export: bool = True, trace_contexts=None, on_telemetry=None) -> dict[str, Any]:
         context = multiprocessing.get_context("spawn")
         reader, writer = context.Pipe(duplex=False)
         pending: dict[str, str] = {}
@@ -125,7 +129,7 @@ class ProcessCrawler:
         completions: list[dict[str, Any]] = []
         product_results: list[dict[str, Any]] = []
         process = context.Process(target=_crawl_process, args=(writer, self.factory, str(self.root), asdict(self.settings),
-            str(self.proxy_config_path) if self.proxy_config_path else None, job_id, sources, write_export, on_input_complete is not None), daemon=False)
+            str(self.proxy_config_path) if self.proxy_config_path else None, job_id, sources, write_export, on_input_complete is not None, trace_contexts), daemon=False)
         self._process = process
         if self._closed.is_set() or self.cancel_event.is_set():
             reader.close()
@@ -203,12 +207,16 @@ class ProcessCrawler:
                         worker_error = {"code": "CRAWLER_WORKER_EXITED", "message": "Crawler worker exited without completing its inputs.", "retryable": True}
                         break
                     continue
-                if kind == "deadline":
+                if kind == "telemetry":
+                    if on_telemetry:
+                        on_telemetry(payload)
+                elif kind == "deadline":
                     if payload["state"] == "started":
                         stage_deadlines[payload["id"]] = payload
                     else:
                         stage_deadlines.pop(payload["id"], None)
                 elif kind == "progress":
+                    self.browser_pool_state = dict(payload.get("browserPool") or {})
                     for item in payload.get("items", []):
                         asin = str(item.get("asin") or "")
                         if asin in pending and item.get("status") == "running":
@@ -280,6 +288,12 @@ class ProcessCrawler:
                 if failed_asins and not retryable_asins and (checkpoint.get("matrix") or {}).get("complete") is True:
                     error.update({"retryable": False, "isRetryable": False, "retryAfter": None})
                 error.update(asin_status)
+                if on_telemetry:
+                    supplied = (trace_contexts or {}).get(asin, {})
+                    with trace_scope(on_event=on_telemetry, jobId=job_id, asin=asin, rootAsin=asin,
+                                     cacheKey=cache_key, stage=error.get("stage", "worker"), **supplied):
+                        emit_event("family_completed", result="partial" if completed_asins else "timeout" if error.get("stage") else "error",
+                                   reason=error.get("reason"), durationMs=round((time.monotonic() - input_started.get(asin, started)) * 1000))
                 completion = {"source": source, "asin": asin, "status": "failed",
                     "products": [result["product"] for result in product_results if result.get("asin") == asin],
                     "errors": [error], "warnings": [], "completedAt": datetime.now(timezone.utc).isoformat(),
@@ -298,8 +312,19 @@ class ProcessCrawler:
                     "errors": [error for completion in completions for error in completion.get("errors", [])],
                     **{key: sorted({asin for completion in completions for asin in completion.get(key, [])})
                        for key in ("completedAsins", "failedAsins", "retryableAsins", "nonRetryableAsins")}}
+        except InterruptedError:
+            self.close()
+            if on_telemetry:
+                for asin in pending:
+                    supplied = (trace_contexts or {}).get(asin, {})
+                    with trace_scope(on_event=on_telemetry, jobId=job_id, asin=asin, rootAsin=asin,
+                                     cacheKey=f"{asin}:{self.settings.amazon_zip}:us-v1", stage="worker", **supplied):
+                        emit_event("family_completed", result="cancelled",
+                                   durationMs=round((time.monotonic() - input_started.get(asin, started)) * 1000))
+            raise
         finally:
             self.close()
+            self.browser_pool_state = {}
             reader_stop.set()
             reader.close()
             receiver.join(timeout=1)

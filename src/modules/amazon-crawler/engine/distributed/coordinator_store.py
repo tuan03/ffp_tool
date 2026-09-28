@@ -34,8 +34,11 @@ from .coordinator_models import (
     ShopifyProductLink,
     TaskAttempt,
     TaskResult,
+    CrawlTelemetryEvent,
 )
 from .protocol import CLIENT_OFFLINE_SECONDS, LEASE_SECONDS, MAX_CRAWL_FAILURES, settings_fingerprint, utc_iso, utc_now
+from .coordinator_observability import CoordinatorObservability, bounded_agent_telemetry
+from ..observability import ERROR_LOG_FIELDS, redact, safe_fields
 
 
 TERMINAL_TASK_STATUSES = {"completed", "failed", "cancelled"}
@@ -73,7 +76,7 @@ def _bounded_progress(payload: Any) -> dict[str, Any]:
     if not isinstance(payload, dict):
         return {}
     progress = {
-        key: str(payload[key])[:240]
+        key: redact(payload[key], limit=240)
         for key in ("phase", "message", "source", "status")
         if isinstance(payload.get(key), str)
     }
@@ -87,7 +90,7 @@ def _bounded_progress(payload: Any) -> dict[str, Any]:
             if not isinstance(raw_item, dict):
                 continue
             item = {
-                key: str(raw_item[key])[:240]
+                key: redact(raw_item[key], limit=240)
                 for key in ("source", "asin", "phase", "status", "message", "currentAsin", "networkRoute", "browserProfile")
                 if isinstance(raw_item.get(key), str)
             }
@@ -162,7 +165,7 @@ def _shopify_sync_lock_key(store_id: str, source_key: str) -> int:
     return int.from_bytes(digest[:8], byteorder="big", signed=True)
 
 
-class CoordinatorStore:
+class CoordinatorStore(CoordinatorObservability):
     def __init__(self, session_factory) -> None:
         self.sessions = session_factory
         self._product_claim_lock = Lock()
@@ -170,6 +173,13 @@ class CoordinatorStore:
 
     @staticmethod
     def _event(session, job_id: str, event_type: str, payload: dict[str, Any]) -> None:
+        payload = dict(payload)
+        if "error" in payload:
+            error = payload["error"]
+            payload["error"] = safe_fields(error, ERROR_LOG_FIELDS) if isinstance(error, dict) else redact(error)
+        for key in ("message", "reason"):
+            if isinstance(payload.get(key), str):
+                payload[key] = redact(payload[key])
         session.add(JobEvent(job_id=job_id, event_type=event_type, payload=payload))
 
     @staticmethod
@@ -508,7 +518,7 @@ class CoordinatorStore:
         renewed = now + timedelta(seconds=LEASE_SECONDS)
         return min(renewed, deadline) if deadline else renewed
 
-    def heartbeat(self, client_id: str, running: list[dict[str, Any]], status: str = "online") -> list[str]:
+    def heartbeat(self, client_id: str, running: list[dict[str, Any]], status: str = "online", telemetry: Any = None) -> list[str]:
         now = utc_now()
         cancelled_job_ids: set[str] = set()
         active_leases = {
@@ -522,6 +532,8 @@ class CoordinatorStore:
                 return []
             client.status = status if status in {"online", "busy", "waiting_captcha", "paused"} else "online"
             client.last_seen_at = now
+            if telemetry is not None:
+                client.capabilities = {**client.capabilities, "observability": bounded_agent_telemetry(telemetry)}
             for active in running:
                 task_id = str(active.get("taskId") or "")
                 lease_id = str(active.get("leaseId") or "")
@@ -660,11 +672,13 @@ class CoordinatorStore:
                 asin_deadline = now + timedelta(seconds=float(job.settings.get("asinTimeoutSeconds", 1800)))
                 task.lease_expires_at = min(now + timedelta(seconds=LEASE_SECONDS), job_deadline, asin_deadline)
                 task.started_at = task.started_at or now
+                ordinal = int(session.scalar(select(func.count(TaskAttempt.id)).where(TaskAttempt.task_id == task.id)) or 0) + 1
                 attempt = TaskAttempt(
                     id=_id(), task_id=task.id, client_id=client_id,
                     lease_id=lease_id, status="leased", leased_at=now,
                 )
                 session.add(attempt)
+                self.record_task_trace(session, task, attempt, "task_retry" if ordinal > 1 else "task_leased", ordinal=ordinal)
                 self._refresh_job(session, task.job_id)
                 leases.append({
                     "type": "assignment",
@@ -673,6 +687,8 @@ class CoordinatorStore:
                     "leaseId": lease_id,
                     "source": task.source,
                     "asin": task.asin,
+                    "requestId": task.id,
+                    "taskAttempt": ordinal,
                     "url": task.canonical_url,
                     "settings": dict(job.settings if job else {}),
                     "settingsFingerprint": settings_fingerprint(dict(job.settings if job else {})),
@@ -1755,6 +1771,7 @@ class CoordinatorStore:
                     CrawlTask.job_id.in_(job_ids),
                 )).all())
                 session.execute(delete(JobEvent).where(JobEvent.job_id.in_(job_ids)))
+                session.execute(delete(CrawlTelemetryEvent).where(CrawlTelemetryEvent.job_id.in_(job_ids)))
                 session.execute(delete(InvalidJobInput).where(InvalidJobInput.job_id.in_(job_ids)))
                 session.execute(delete(CrawlProductItem).where(CrawlProductItem.job_id.in_(job_ids)))
                 if task_ids:
@@ -2351,6 +2368,7 @@ class CoordinatorStore:
     def _purge_job_rows(session, job_id: str) -> None:
         task_ids = session.scalars(select(CrawlTask.id).where(CrawlTask.job_id == job_id)).all()
         session.execute(delete(JobEvent).where(JobEvent.job_id == job_id))
+        session.execute(delete(CrawlTelemetryEvent).where(CrawlTelemetryEvent.job_id == job_id))
         session.execute(delete(InvalidJobInput).where(InvalidJobInput.job_id == job_id))
         session.execute(delete(CrawlProductItem).where(CrawlProductItem.job_id == job_id))
         if task_ids:
@@ -2788,6 +2806,7 @@ class CoordinatorStore:
             "activeTasks": active_tasks,
             "limits": client.limits, "connectedAt": utc_iso(client.connected_at) if client.connected_at else None,
             "lastSeenAt": utc_iso(client.last_seen_at),
+            "observability": client.capabilities.get("observability"),
         }
 
     @staticmethod

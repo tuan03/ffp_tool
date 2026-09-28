@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .observability import mark_captcha, observe_attempt, observed_stage, redact, trace_fields, trace_scope
+
 import asyncio
 import concurrent.futures
 import sys
@@ -551,6 +553,8 @@ class PlaywrightPool:
             "proxyActive": self._active_proxy,
             "directQueued": self._queued_direct,
             "proxyQueued": self._queued_proxy,
+            "browserContexts": sum(context is not None for context in self._contexts),
+            "browserPages": sum(len(getattr(context, "pages", [])) for context in self._contexts if context is not None),
         }
 
     def _emit_activity(self, url: str, index: int | None = None) -> None:
@@ -612,8 +616,12 @@ class PlaywrightPool:
                 self._queued_proxy -= 1
                 self._active_proxy += 1
             self._emit_activity(url, index)
-            with transport_context(profile=self.proxy_assignments[index].name, route=route):
+            with transport_context(profile=self.proxy_assignments[index].name, route=route), observe_attempt(
+                "browser_attempt", stage=trace_fields().get("stage", "browser"),
+                attempt=trace_fields().get("attempt", 1), profile=self.proxy_assignments[index].name, route=route,
+            ):
                 context = await self._ensure_context(index, cancel_event, allow_manual_captcha)
+                self._emit_activity(url, index)
                 return await operation(index, context)
         except Exception as error:
             if index is not None:
@@ -661,6 +669,7 @@ class PlaywrightPool:
     @async_bounded_method("captcha", "captcha_timeout")
     async def _solve_captcha(self, page: Any, url: str, cancel_event: threading.Event | None,
                              *, html: str, allow_manual: bool) -> str:
+        mark_captcha()
         if _has_button_only_continue_challenge(html):
             if cancel_event and cancel_event.is_set():
                 raise InterruptedError("Crawler job cancelled while waiting for CAPTCHA.")
@@ -707,6 +716,7 @@ class PlaywrightPool:
             try:
                 await self._ensure_us_profile(index, context, cancel_event, allow_manual_captcha)
                 page = await context.new_page()
+                self._emit_activity(url, index)
                 if customization_markers is None:
                     html = await self._load_product_page(page, url, self.navigation_timeout, self.selector_timeout)
                 else:
@@ -808,10 +818,11 @@ class PlaywrightPool:
                 }
                 if customization_markers is not None:
                     fetch_options["customization_markers"] = customization_markers
-                with transport_context(attempt=attempt, route=route):
+                with transport_context(attempt=attempt, route=route), trace_scope(attempt=attempt, route=route):
                     html, profile_index = await self._fetch_once(url, cancel_event, **fetch_options)
                 assignment = self.proxy_assignments[profile_index]
                 diagnostics.append({
+                    **trace_fields(),
                     "attempt": attempt,
                     "profile": assignment.name,
                     "proxyEnabled": assignment.is_enabled,
@@ -881,10 +892,11 @@ class PlaywrightPool:
             "attempt": attempt,
             "amazonZip": self.zip_code,
             "outcome": outcome,
-            "error": str(error),
+            "error": redact(error),
         }
         if isinstance(error, CrawlTimeout):
             trace.update(error.details)
+        trace.update({key: value for key, value in trace_fields().items() if key not in {"attempt", "route", "profile"}})
         if isinstance(profile_index, int) and 0 <= profile_index < len(self.proxy_assignments):
             assignment = self.proxy_assignments[profile_index]
             trace.update({
@@ -915,6 +927,7 @@ class PlaywrightPool:
     def fetch_proxy_fallback(self, url: str, *, cancel_event: threading.Event | None = None) -> str:
         return self.fetch(url, cancel_event=cancel_event, prefer_proxy=True)
 
+    @observed_stage("media")
     def fetch_gallery(self, url: str, *, cancel_event: threading.Event | None = None) -> str:
         """Render the complete image gallery using the normal direct/proxy routing."""
         return self.fetch(url, cancel_event=cancel_event)
@@ -975,6 +988,7 @@ class PlaywrightPool:
         async def sweep_context(index: int, context: Any) -> list[str]:
             await self._ensure_us_profile(index, context, cancel_event, True)
             page = await context.new_page()
+            self._emit_activity(url, index)
             pages: list[str] = []
             seen_asins: set[str] = set()
             try:
@@ -1028,6 +1042,7 @@ class PlaywrightPool:
             allow_manual_captcha=True,
         )
 
+    @observed_stage("matrix")
     def sweep_variant_matrix(
         self,
         url: str,
