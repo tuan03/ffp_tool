@@ -32,3 +32,31 @@ test("new-store guide documents VPS login and the private key is ignored", async
   );
   assert.match(gitignore, /^\/wrydeco-vps_key\.pem$/m);
 });
+
+test("production deployment writes APP_PORT on a new line", async () => {
+  const workflow = await readFile(".github/workflows/deploy.yml", "utf8");
+
+  assert.match(workflow, /printf '\\nAPP_PORT=%s\\n' "\$APP_PORT" >> \.env/);
+  assert.doesNotMatch(workflow, /echo "APP_PORT=\$APP_PORT" >> \.env/);
+});
+
+test("production deployment preserves a VPS action-key map when the environment secret omits it", async () => {
+  const workflow = await readFile(".github/workflows/deploy.yml", "utf8");
+
+  assert.match(workflow, /EXISTING_GPT_SEO_ACTION_KEYS_JSON=/);
+  assert.match(workflow, /INCOMING_GPT_SEO_ACTION_KEYS_JSON=/);
+  assert.match(workflow, /GPT_SEO_ACTION_KEYS_JSON=%s/);
+});
+
+test("production deployment exports the GPT SEO restart script from the container", async () => {
+  const workflow = await readFile(".github/workflows/deploy.yml", "utf8");
+
+  assert.match(workflow, /docker cp ffp-tool-app:\/app\/scripts\/restart-gpt-seo\.sh scripts\/restart-gpt-seo\.sh/);
+  assert.match(workflow, /chmod 755 scripts\/restart-gpt-seo\.sh/);
+});
+
+test("production deployment fails when the health endpoint stays unavailable", async () => {
+  const workflow = await readFile(".github/workflows/deploy.yml", "utf8");
+
+  assert.match(workflow, /if \[ "\$HEALTHY" = "false" \]; then[\s\S]*?docker compose -f compose\.prod\.yaml logs --tail=50[\s\S]*?exit 1[\s\S]*?fi/);
+});
