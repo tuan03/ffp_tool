@@ -41,7 +41,12 @@ export interface GeminiRetryOptions {
  * Determines whether an error from Google Gemini / Vertex AI is a rate limit (429)
  * or transient error that should be retried with exponential backoff.
  */
-export function isGeminiRateLimitOrTransientError(error: unknown): boolean {
+export function isGeminiRateLimitOrTransientError(
+  error: unknown,
+  seen = new WeakSet<object>(),
+  depth = 0,
+): boolean {
+  if (depth > 5) return false;
   if (error instanceof Error && error.name === "AbortError") return false;
   if (error instanceof Error && error.name === "TimeoutError") return true;
   if (!error) {
@@ -57,6 +62,13 @@ export function isGeminiRateLimitOrTransientError(error: unknown): boolean {
     return false;
   }
 
+  if (typeof error === "object" && error !== null) {
+    if (seen.has(error)) {
+      return false;
+    }
+    seen.add(error);
+  }
+
   const err = error as Record<string, unknown>;
 
   if (err.name === "GeminiGeneratorError" || "isRetryable" in err) {
@@ -66,18 +78,27 @@ export function isGeminiRateLimitOrTransientError(error: unknown): boolean {
   }
 
   // Check nested error object (e.g., Google Cloud REST API body: { error: { code: 429, message: "...", status: "RESOURCE_EXHAUSTED" } })
-  if (err.error && typeof err.error === "object" && err.error !== error) {
-    if (isGeminiRateLimitOrTransientError(err.error)) {
+  if (err.error && typeof err.error === "object") {
+    if (isGeminiRateLimitOrTransientError(err.error, seen, depth + 1)) {
       return true;
     }
   }
+
+  const resp =
+    err.response && typeof err.response === "object"
+      ? (err.response as Record<string, unknown>)
+      : undefined;
 
   const rawStatus =
     err.status !== undefined
       ? err.status
       : err.statusCode !== undefined
         ? err.statusCode
-        : err.code;
+        : err.code !== undefined
+          ? err.code
+          : resp?.status !== undefined
+            ? resp.status
+            : resp?.statusCode;
 
   if (typeof rawStatus === "number") {
     // HTTP status codes
@@ -106,6 +127,7 @@ export function isGeminiRateLimitOrTransientError(error: unknown): boolean {
   // Gather message fragments across Error instance or plain error objects
   const textFragments: string[] = [];
   if (error instanceof Error) {
+    textFragments.push(error.name);
     textFragments.push(error.message);
   } else if (typeof err.message === "string") {
     textFragments.push(err.message);
@@ -117,8 +139,19 @@ export function isGeminiRateLimitOrTransientError(error: unknown): boolean {
   if (typeof err.statusText === "string") {
     textFragments.push(err.statusText);
   }
+  if (resp && typeof resp.statusText === "string") {
+    textFragments.push(resp.statusText);
+  }
   if (typeof error === "string") {
     textFragments.push(error);
+  }
+
+  if (resp && resp.data && typeof resp.data === "object") {
+    if (isGeminiRateLimitOrTransientError(resp.data, seen, depth + 1)) {
+      return true;
+    }
+  } else if (resp && typeof resp.data === "string") {
+    textFragments.push(resp.data);
   }
 
   const upperMessage = textFragments.join(" ").toUpperCase();
@@ -134,10 +167,15 @@ export function isGeminiRateLimitOrTransientError(error: unknown): boolean {
     "UNAVAILABLE",
     "503",
     "504",
+    "502",
+    "500",
     "DEADLINE_EXCEEDED",
     "ECONNRESET",
     "ETIMEDOUT",
     "FETCH FAILED",
+    "FAILED TO FETCH",
+    "FETCH ERROR",
+    "NETWORK ERROR",
     "OVERLOADED",
   ];
 
@@ -147,8 +185,26 @@ export function isGeminiRateLimitOrTransientError(error: unknown): boolean {
     }
   }
 
-  if (err.cause && err.cause !== error) {
-    return isGeminiRateLimitOrTransientError(err.cause);
+  if (
+    (error instanceof TypeError || err.name === "TypeError") &&
+    (upperMessage.includes("FETCH") || (typeof err.message === "string" && /fetch/i.test(err.message)))
+  ) {
+    return true;
+  }
+
+  if (err.cause !== undefined && err.cause !== null) {
+    if (typeof err.cause === "object") {
+      if (isGeminiRateLimitOrTransientError(err.cause, seen, depth + 1)) {
+        return true;
+      }
+    } else if (typeof err.cause === "string") {
+      const upperCause = err.cause.toUpperCase();
+      for (const keyword of transientKeywords) {
+        if (upperCause.includes(keyword)) {
+          return true;
+        }
+      }
+    }
   }
 
   return false;

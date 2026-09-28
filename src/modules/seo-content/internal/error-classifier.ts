@@ -69,8 +69,12 @@ interface ExtractedErrorInfo {
   readonly isTimeout: boolean;
 }
 
-function extractErrorInfo(error: unknown): ExtractedErrorInfo {
-  if (error === null || error === undefined) {
+function extractErrorInfo(
+  error: unknown,
+  seen = new WeakSet<object>(),
+  depth = 0,
+): ExtractedErrorInfo {
+  if (error === null || error === undefined || depth > 5) {
     return { text: "", isTimeout: false };
   }
 
@@ -80,10 +84,20 @@ function extractErrorInfo(error: unknown): ExtractedErrorInfo {
   let finishReason: string | undefined;
   let isTimeout = false;
 
+  if (typeof error === "object") {
+    if (seen.has(error)) {
+      return { text: "", isTimeout: false };
+    }
+    seen.add(error);
+  }
+
   if (error instanceof Error) {
     fragments.push(error.name);
     fragments.push(error.message);
-    if (error.name === "TimeoutError" || error.name === "DOMException" && error.message.includes("timed out")) {
+    if (
+      error.name === "TimeoutError" ||
+      (error.name === "DOMException" && error.message.includes("timed out"))
+    ) {
       isTimeout = true;
     }
   }
@@ -116,12 +130,46 @@ function extractErrorInfo(error: unknown): ExtractedErrorInfo {
       fragments.push(rec.finishReason);
     }
 
+    // Inspect Axios response object (error.response?.status, error.response?.data)
+    if (rec.response && typeof rec.response === "object") {
+      const resp = rec.response as Record<string, unknown>;
+      if (typeof resp.statusText === "string") {
+        fragments.push(resp.statusText);
+      }
+      const respStatus = resp.status !== undefined ? resp.status : resp.statusCode;
+      if (typeof respStatus === "number") {
+        status = respStatus;
+      } else if (typeof respStatus === "string") {
+        const parsed = Number(respStatus);
+        if (!Number.isNaN(parsed)) {
+          status = parsed;
+        } else {
+          statusStr = respStatus;
+        }
+      }
+
+      if (resp.data && typeof resp.data === "object") {
+        const nestedData = extractErrorInfo(resp.data, seen, depth + 1);
+        fragments.push(nestedData.text);
+        if (status === undefined && nestedData.status !== undefined) {
+          status = nestedData.status;
+        }
+        if (statusStr === undefined && nestedData.statusStr !== undefined) {
+          statusStr = nestedData.statusStr;
+        }
+      } else if (typeof resp.data === "string") {
+        fragments.push(resp.data);
+      }
+    }
+
     const rawStatus =
-      rec.status !== undefined
-        ? rec.status
-        : rec.statusCode !== undefined
-          ? rec.statusCode
-          : rec.code;
+      status !== undefined
+        ? status
+        : rec.status !== undefined
+          ? rec.status
+          : rec.statusCode !== undefined
+            ? rec.statusCode
+            : rec.code;
 
     if (typeof rawStatus === "number") {
       status = rawStatus;
@@ -135,8 +183,8 @@ function extractErrorInfo(error: unknown): ExtractedErrorInfo {
     }
 
     // Inspect nested error object (e.g. Google Cloud API body { error: { code: 429, message: ... } })
-    if (rec.error && typeof rec.error === "object" && rec.error !== error) {
-      const nested = extractErrorInfo(rec.error);
+    if (rec.error && typeof rec.error === "object") {
+      const nested = extractErrorInfo(rec.error, seen, depth + 1);
       fragments.push(nested.text);
       if (status === undefined && nested.status !== undefined) {
         status = nested.status;
@@ -152,18 +200,22 @@ function extractErrorInfo(error: unknown): ExtractedErrorInfo {
       }
     }
 
-    // Inspect nested cause
-    if (rec.cause && typeof rec.cause === "object" && rec.cause !== error) {
-      const nested = extractErrorInfo(rec.cause);
-      fragments.push(nested.text);
-      if (status === undefined && nested.status !== undefined) {
-        status = nested.status;
-      }
-      if (statusStr === undefined && nested.statusStr !== undefined) {
-        statusStr = nested.statusStr;
-      }
-      if (!isTimeout && nested.isTimeout) {
-        isTimeout = true;
+    // Inspect nested cause (supports object and string causes, with cycle protection)
+    if (rec.cause !== undefined && rec.cause !== null) {
+      if (typeof rec.cause === "object") {
+        const nested = extractErrorInfo(rec.cause, seen, depth + 1);
+        fragments.push(nested.text);
+        if (status === undefined && nested.status !== undefined) {
+          status = nested.status;
+        }
+        if (statusStr === undefined && nested.statusStr !== undefined) {
+          statusStr = nested.statusStr;
+        }
+        if (!isTimeout && nested.isTimeout) {
+          isTimeout = true;
+        }
+      } else if (typeof rec.cause === "string") {
+        fragments.push(rec.cause);
       }
     }
   }
@@ -211,14 +263,21 @@ export function classifyError(error: unknown): ClassifiedErrorResolution {
 
   // 2. CIRCUIT_BREAKER_MISSING_MODEL
   // 404 specifically for Gemini model resource, not for an image or item
-  if (
-    (status === 404 || statusStr === "NOT_FOUND") &&
+  const isModelMissing =
+    (status === 404 ||
+      statusStr === "NOT_FOUND" ||
+      text.includes("404") ||
+      text.includes("NOT FOUND") ||
+      text.includes("NOT_FOUND")) &&
     (text.includes("MODELS/") ||
       text.includes("MODEL NOT FOUND") ||
       text.includes("PUBLISHER MODEL") ||
       text.includes("NOT FOUND FOR MODEL") ||
-      text.includes("UNKNOWN MODEL"))
-  ) {
+      text.includes("UNKNOWN MODEL") ||
+      text.includes("IS NOT FOUND FOR API VERSION") ||
+      /MODELS\/.*NOT FOUND/i.test(text));
+
+  if (isModelMissing) {
     return {
       action: CLASSIFIED_ERROR_ACTIONS.CIRCUIT_BREAKER_MISSING_MODEL,
       isRetryable: false,
@@ -357,7 +416,7 @@ export function classifyError(error: unknown): ClassifiedErrorResolution {
   }
 
   // 9. TRANSIENT_RETRY
-  // Gemini 5xx / Service unavailable / Network connection reset
+  // Gemini 5xx / Service unavailable / Network connection reset / Browser fetch failure
   if (
     (status !== undefined && [500, 502, 503, 504].includes(status)) ||
     status === 14 || // gRPC UNAVAILABLE
@@ -369,14 +428,18 @@ export function classifyError(error: unknown): ClassifiedErrorResolution {
     text.includes("500") ||
     text.includes("ECONNRESET") ||
     text.includes("FETCH FAILED") ||
-    text.includes("OVERLOADED")
+    text.includes("FAILED TO FETCH") ||
+    text.includes("FETCH ERROR") ||
+    text.includes("NETWORK ERROR") ||
+    text.includes("OVERLOADED") ||
+    ((error instanceof TypeError || text.includes("TYPEERROR")) && text.includes("FETCH"))
   ) {
     return {
       action: CLASSIFIED_ERROR_ACTIONS.TRANSIENT_RETRY,
       isRetryable: true,
       maxRetries: 3,
       retryStrategy: "jitter_backoff",
-      reason: "Gemini transient upstream error (5xx / unavailable). Retrying with backoff.",
+      reason: "Gemini transient upstream error (5xx / unavailable / network). Retrying with backoff.",
     };
   }
 
