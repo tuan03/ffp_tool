@@ -162,8 +162,9 @@ class RawFamilyCache:
                 return None
             return failure
 
-    def save_failure(self, asin: str, *, status: str, reason: str, retry_after_seconds: int) -> dict[str, Any]:
+    def save_failure(self, asin: str, *, status: str, reason: str, retry_after_seconds: int, details: dict[str, Any] | None = None) -> dict[str, Any]:
         failure = {
+            **(details or {}),
             "asin": asin.split(":", 1)[0], "status": status, "reason": reason,
             "retryAfter": (datetime.now(timezone.utc) + timedelta(seconds=retry_after_seconds)).isoformat(),
         }

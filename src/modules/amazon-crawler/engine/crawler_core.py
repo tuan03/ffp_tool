@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import concurrent.futures
 import contextlib
+import contextvars
 import hashlib
 import html as html_module
 import http.cookiejar
 import json
 import os
-import queue
 import re
 import tempfile
 import threading
@@ -27,10 +27,12 @@ from bs4 import BeautifulSoup
 
 from .amazon_locale import AMAZON_ORIGIN, DEFAULT_HEADERS, force_us_profile_url, html_is_location_blocked
 from .cache import RawFamilyCache
+from .bounded_http import BoundedHTTPHandler, BoundedHTTPSHandler
 from .customization_converter import expand_paid_variants, normalize_customization, remove_option_choosers
 from .playwright_pool import CaptchaTimeout, PlaywrightPool, html_is_captcha
 from .proxy_profiles import ProxyAssignment, resolve_proxy_assignments
 from .variant_presets import PRESET_ID, build_jeminise_variants
+from .timeouts import CrawlTimeout, TIMEOUT_FIELDS, acquire_slot, bounded_method, check_deadline, remaining_seconds, timeout_scope, transport_context, wait_blocking
 
 ASIN_RE = re.compile(r"(?<![A-Z0-9])([A-Z0-9]{10})(?![A-Z0-9])", re.I)
 AMAZON_HOST_RE = re.compile(r"(^|\.)amazon\.[a-z.]+$", re.I)
@@ -56,6 +58,15 @@ class CrawlSettings:
     headless: bool = False
     amazon_zip: str = "90001"
     captcha_timeout_seconds: int = 180
+    dns_timeout_seconds: int = 10
+    connect_timeout_seconds: int = 15
+    http_response_timeout_seconds: int = 90
+    navigation_timeout_seconds: int = 60
+    selector_timeout_seconds: int = 15
+    customization_timeout_seconds: int = 120
+    child_timeout_seconds: int = 300
+    asin_timeout_seconds: int = 1800
+    job_timeout_seconds: int = 21600
     max_matrix_variants: int = 500
     store_id: str = ""
     price_addition: float = 0.0
@@ -116,6 +127,15 @@ class CrawlSettings:
             headless=bool(payload.get("headless", False)),
             amazon_zip=zip_code,
             captcha_timeout_seconds=bounded("captchaTimeoutSeconds", 180, 30, 900),
+            dns_timeout_seconds=bounded("dnsTimeoutSeconds", 10, 1, 120),
+            connect_timeout_seconds=bounded("connectTimeoutSeconds", 15, 1, 120),
+            http_response_timeout_seconds=bounded("httpResponseTimeoutSeconds", 90, 1, 600),
+            navigation_timeout_seconds=bounded("navigationTimeoutSeconds", 60, 1, 300),
+            selector_timeout_seconds=bounded("selectorTimeoutSeconds", 15, 1, 120),
+            customization_timeout_seconds=bounded("customizationTimeoutSeconds", 120, 1, 900),
+            child_timeout_seconds=bounded("childTimeoutSeconds", 300, 1, 3600),
+            asin_timeout_seconds=bounded("asinTimeoutSeconds", 1800, 1, 14400),
+            job_timeout_seconds=bounded("jobTimeoutSeconds", 21600, 1, 86400),
             max_matrix_variants=bounded("maxMatrixVariants", 500, 1, 5000),
             store_id=str(payload.get("storeId") or "").strip(),
             price_addition=max(0.0, safe_float("priceAddition", 0.0)),
@@ -136,6 +156,13 @@ class CrawlSettings:
             "browserTabs": values["browser_tabs"], "headless": values["headless"],
             "amazonZip": values["amazon_zip"], "captchaTimeoutSeconds": values["captcha_timeout_seconds"],
             "maxMatrixVariants": values["max_matrix_variants"],
+            **{key: values[field] for key, field in (
+                ("dnsTimeoutSeconds", "dns_timeout_seconds"), ("connectTimeoutSeconds", "connect_timeout_seconds"),
+                ("httpResponseTimeoutSeconds", "http_response_timeout_seconds"), ("navigationTimeoutSeconds", "navigation_timeout_seconds"),
+                ("selectorTimeoutSeconds", "selector_timeout_seconds"), ("customizationTimeoutSeconds", "customization_timeout_seconds"),
+                ("childTimeoutSeconds", "child_timeout_seconds"), ("asinTimeoutSeconds", "asin_timeout_seconds"),
+                ("jobTimeoutSeconds", "job_timeout_seconds"),
+            )},
             "storeId": values["store_id"],
             "priceAddition": values["price_addition"],
             "discountPercent": values["discount_percent"],
@@ -616,6 +643,9 @@ class HttpFetcher:
         retries: int = 3,
         assignments: list[ProxyAssignment] | None = None,
         cancel_event: threading.Event | None = None,
+        dns_timeout: float = 10,
+        connect_timeout: float = 15,
+        response_timeout: float = 90,
     ) -> None:
         self.zip_code = zip_code
         self.retries = retries
@@ -631,6 +661,9 @@ class HttpFetcher:
         }
         self._thread_diagnostics = threading.local()
         self.cancel_event = cancel_event
+        self.dns_timeout = dns_timeout
+        self.connect_timeout = connect_timeout
+        self.response_timeout = response_timeout
 
     def _check_cancelled(self) -> None:
         if self.cancel_event is not None and self.cancel_event.is_set():
@@ -643,33 +676,51 @@ class HttpFetcher:
         *,
         timeout: float,
     ) -> tuple[bytes, int | None]:
-        """Read urllib in a daemon thread so Stop can release the crawler promptly."""
-        outcome: queue.Queue[tuple[bytes, int | None] | Exception] = queue.Queue(maxsize=1)
-
-        def read() -> None:
+        """Enforce a total response budget, including a continuously trickling body."""
+        abandoned = threading.Event()
+        sockets: list[Any] = []
+        def abandon() -> None:
+            abandoned.set()
+            for connection in sockets:
+                try:
+                    connection.shutdown(2)
+                except OSError:
+                    pass
+        def read() -> tuple[bytes, int | None]:
             try:
-                with opener.open(request, timeout=timeout) as response:
-                    outcome.put((response.read(), getattr(response, "status", None)))
-            except Exception as error:
-                outcome.put(error)
-
-        threading.Thread(target=read, name="amazon-http-request", daemon=True).start()
-        while True:
-            self._check_cancelled()
+                with opener.open(request, timeout=remaining_seconds(timeout)) as response:
+                    connection = getattr(getattr(getattr(response, "fp", None), "raw", None), "_sock", None)
+                    if connection is not None:
+                        sockets.append(connection)
+                        connection.settimeout(remaining_seconds(timeout))
+                    if abandoned.is_set():
+                        raise InterruptedError("HTTP response abandoned.")
+                    return response.read(), getattr(response, "status", None)
+            except urllib.error.URLError as error:
+                if isinstance(error.reason, CrawlTimeout):
+                    raise error.reason
+                raise
+        with timeout_scope("http_response", timeout):
+            started = time.monotonic()
             try:
-                response = outcome.get(timeout=0.1)
-            except queue.Empty:
-                continue
-            if isinstance(response, Exception):
-                raise response
-            return response
+                return wait_blocking(read, cancel_event=self.cancel_event, abandon=abandon)
+            except CrawlTimeout:
+                raise
+            except urllib.error.URLError as error:
+                if isinstance(error.reason, TimeoutError):
+                    raise CrawlTimeout("http_response", started=started) from error
+                raise
+            except TimeoutError as error:
+                raise CrawlTimeout("http_response", started=started) from error
 
     def _wait_before_retry(self, seconds: float) -> None:
+        seconds = remaining_seconds(seconds)
         if self.cancel_event is not None:
             if self.cancel_event.wait(seconds):
                 self._check_cancelled()
             return
         time.sleep(seconds)
+        check_deadline()
 
     def last_diagnostics(self) -> list[dict[str, Any]]:
         return deepcopy(getattr(self._thread_diagnostics, "attempts", []))
@@ -687,9 +738,8 @@ class HttpFetcher:
         with self._lock:
             self._blocked_until[assignment.index] = time.monotonic() + seconds
 
-    @staticmethod
-    def _opener(assignment: ProxyAssignment, cookie_jar: http.cookiejar.CookieJar | None = None) -> urllib.request.OpenerDirector:
-        handlers: list[Any] = []
+    def _opener(self, assignment: ProxyAssignment, cookie_jar: http.cookiejar.CookieJar | None = None) -> urllib.request.OpenerDirector:
+        handlers: list[Any] = [BoundedHTTPHandler(self.dns_timeout, self.connect_timeout), BoundedHTTPSHandler(self.dns_timeout, self.connect_timeout)]
         proxy_url = assignment.urllib_url()
         if proxy_url:
             handlers.append(urllib.request.ProxyHandler({"http": proxy_url, "https": proxy_url}))
@@ -702,7 +752,7 @@ class HttpFetcher:
         return urllib.request.build_opener(*handlers)
 
     def _bootstrap_us_cookie(self, assignment: ProxyAssignment) -> str:
-        with self._lock:
+        with acquire_slot(self._lock, self.cancel_event):
             cached = self._session_cookies.get(assignment.index)
             if cached:
                 return cached
@@ -720,7 +770,7 @@ class HttpFetcher:
                 opener = self._opener(assignment, jar)
                 try:
                     home_request = urllib.request.Request(f"{AMAZON_ORIGIN}/?language=en_US&currency=USD", headers=headers)
-                    self._read_response(opener, home_request, timeout=12)
+                    self._read_response(opener, home_request, timeout=min(12, self.response_timeout))
                     payload = urllib.parse.urlencode({
                         "locationType": "LOCATION_INPUT", "zipCode": self.zip_code, "storeContext": "generic",
                         "deviceType": "web", "pageType": "Gateway", "actionSource": "glow",
@@ -731,7 +781,7 @@ class HttpFetcher:
                         "Origin": AMAZON_ORIGIN, "Referer": f"{AMAZON_ORIGIN}/", "X-Requested-With": "XMLHttpRequest",
                     }
                     request = urllib.request.Request(f"{AMAZON_ORIGIN}/gp/delivery/ajax/address-change.html", data=payload, headers=location_headers)
-                    response_body, _ = self._read_response(opener, request, timeout=12)
+                    response_body, _ = self._read_response(opener, request, timeout=min(12, self.response_timeout))
                     result = json.loads(response_body.decode("utf-8", errors="replace"))
                     if not result.get("isAddressUpdated") and not result.get("successful"):
                         raise RuntimeError(f"Amazon rejected US ZIP {self.zip_code}: {result}")
@@ -743,6 +793,8 @@ class HttpFetcher:
                     self._session_failures.pop(assignment.index, None)
                     return cookie_header
                 except Exception as error:
+                    if isinstance(error, CrawlTimeout):
+                        raise
                     last_error = error
                     self._wait_before_retry(0.7 * (attempt + 1))
             self._session_failures[assignment.index] = time.monotonic()
@@ -790,8 +842,8 @@ class HttpFetcher:
                 "amazonZip": self.zip_code,
                 "candidate": attempt - 1 if attempt <= len(candidates) else (attempt - 1) % len(candidates),
             }
-            slot = self._assignment_slots[assignment.index] if assignment.is_enabled else contextlib.nullcontext()
-            with slot:
+            slot = acquire_slot(self._assignment_slots[assignment.index], self.cancel_event) if assignment.is_enabled else contextlib.nullcontext()
+            with transport_context(attempt=attempt, route="proxy" if assignment.is_enabled else "direct", profile=assignment.name), slot:
                 try:
                     cookie_header = self._bootstrap_us_cookie(assignment)
                     trace["usProfileApplied"] = self._us_profile_applied.get(assignment.index) is True
@@ -803,7 +855,7 @@ class HttpFetcher:
                     response_body, response_status = self._read_response(
                         self._opener(assignment),
                         request,
-                        timeout=90,
+                        timeout=self.response_timeout,
                     )
                     body = response_body.decode("utf-8", errors="replace")
                     trace["httpStatus"] = response_status
@@ -820,6 +872,7 @@ class HttpFetcher:
                     self._thread_diagnostics.attempts = diagnostics
                     return body, attempt
                 except (urllib.error.URLError, TimeoutError, RuntimeError) as caught:
+                    check_deadline()
                     error = caught
                     message = _exception_message(caught)
                     outcome = "captcha" if "captcha" in message.casefold() else (
@@ -828,12 +881,16 @@ class HttpFetcher:
                     if outcome in {"captcha", "location"}:
                         self._block_assignment(assignment)
                     trace.update({"outcome": outcome, "error": message})
+                    if isinstance(caught, CrawlTimeout):
+                        trace.update(caught.details)
                 finally:
                     trace["durationMs"] = round((time.monotonic() - started) * 1000)
             diagnostics.append(trace)
             self._thread_diagnostics.attempts = diagnostics
             if attempt < len(route_assignments):
                 self._wait_before_retry(0.25 * attempt)
+        if isinstance(error, CrawlTimeout):
+            raise error
         raise HttpFetchError(f"HTTP fetch failed after {len(diagnostics)} network attempts: {error}", diagnostics)
 
 
@@ -862,7 +919,7 @@ class CachedCrawlFailure(RuntimeError):
 class PartialCrawlError(RuntimeError):
     def __init__(
         self, products: list[dict[str, Any]], retry_after: str | None,
-        *, retryable: bool, reason: str, code: str, asin_status: dict[str, list[str]],
+        *, retryable: bool, reason: str, code: str, asin_status: dict[str, list[str]], timeout_details: dict[str, Any] | None = None,
     ) -> None:
         message = {
             "PARSER_ERROR": "Amazon HTML parser could not read a child product; check for HTML changes.",
@@ -875,12 +932,16 @@ class PartialCrawlError(RuntimeError):
         self.reason = reason
         self.code = code
         self.asin_status = asin_status
+        self.timeout_details = timeout_details or {}
 
 
 def classify_crawl_failure(error: Exception) -> dict[str, Any]:
+    if isinstance(error, CrawlTimeout):
+        captcha = error.details["stage"] == "captcha"
+        return {"status": "temporarily_blocked" if captcha else "network_error", "reason": "captcha" if captcha else "timeout", "retryable": error.details["isRetryable"], "retryAfterSeconds": 120 if captcha else 30, **error.details}
     if isinstance(error, CachedCrawlFailure):
         failure = error.failure
-        return {**failure, "retryable": failure["status"] in {"temporarily_blocked", "network_error"}}
+        return {**failure, "retryable": failure.get("isRetryable", failure["status"] in {"temporarily_blocked", "network_error"})}
     message = str(error).casefold()
     diagnostics = getattr(error, "diagnostics", {})
     traces = diagnostics.get("fetchTrace", {}) if isinstance(diagnostics, dict) else {}
@@ -933,6 +994,9 @@ class AmazonCrawler:
             zip_code=settings.amazon_zip,
             assignments=proxy_assignments,
             cancel_event=self.cancel_event,
+            dns_timeout=settings.dns_timeout_seconds,
+            connect_timeout=settings.connect_timeout_seconds,
+            response_timeout=settings.http_response_timeout_seconds,
         )
         self._http_slots = threading.BoundedSemaphore(settings.urllib_threads)
         # Family workers share the same browser/proxy capacity across all inputs.
@@ -947,6 +1011,9 @@ class AmazonCrawler:
             proxy_assignments=proxy_assignments,
             on_captcha=self._captcha_progress,
             on_activity=self._browser_activity,
+            navigation_timeout=settings.navigation_timeout_seconds,
+            selector_timeout=settings.selector_timeout_seconds,
+            customization_timeout=settings.customization_timeout_seconds,
         )
         self._browser_pool_state["directProfiles"] = int(
             getattr(self.browser_pool, "profiles", settings.browser_profiles)
@@ -1067,6 +1134,7 @@ class AmazonCrawler:
         )
 
     def _check_cancelled(self) -> None:
+        check_deadline()
         if self.cancel_event.is_set():
             raise InterruptedError("Crawler job was cancelled.")
 
@@ -1095,7 +1163,7 @@ class AmazonCrawler:
         http_trace: list[dict[str, Any]] = []
         playwright_trace: list[dict[str, Any]] = []
         try:
-            with self._http_slots:
+            with acquire_slot(self._http_slots, self.cancel_event):
                 html, attempts = self.fetcher.fetch(normalized.canonical_url)
             read_http_trace = getattr(self.fetcher, "last_diagnostics", None)
             if callable(read_http_trace):
@@ -1114,6 +1182,7 @@ class AmazonCrawler:
                 "fetchTrace": {"http": http_trace, "playwright": []},
             }
         except Exception as http_error:
+            check_deadline()
             if not http_trace:
                 http_trace = deepcopy(getattr(http_error, "diagnostics", []))
             text = str(http_error).casefold()
@@ -1159,12 +1228,19 @@ class AmazonCrawler:
                     playwright_trace.append(trace)
                     break
                 except Exception as caught:
+                    check_deadline()
                     browser_error = caught
                     read_browser_trace = getattr(self.browser_pool, "last_diagnostics", None)
                     if callable(read_browser_trace):
                         trace["profiles"] = read_browser_trace()
                     trace.update({"outcome": "error", "error": _exception_message(caught)})
                     playwright_trace.append(trace)
+                    if isinstance(caught, CrawlTimeout) and caught.details["stage"] == "captcha":
+                        break
+            if isinstance(browser_error, CrawlTimeout):
+                raise browser_error
+            if isinstance(http_error, CrawlTimeout):
+                raise http_error
             diagnostics = {
                 "fetchMode": "failed",
                 "attempts": len(http_trace) + len(playwright_trace),
@@ -1186,6 +1262,7 @@ class AmazonCrawler:
     def _has_customization_entry(child: dict[str, Any]) -> bool:
         return bool(child.get("customizationFormUrl"))
 
+    @bounded_method("customization", "customization_timeout_seconds")
     def _recover_customization_entry(
         self,
         *,
@@ -1202,7 +1279,7 @@ class AmazonCrawler:
             item_updates={"status": "running", "currentAsin": asin, "currentOptions": options},
         )
         try:
-            with self._http_slots:
+            with acquire_slot(self._http_slots, self.cancel_event):
                 html, _ = self.fetcher.fetch(url)
             refreshed = parse_product_html(html, asin, url)
             if refreshed.get("asin") != asin:
@@ -1231,12 +1308,13 @@ class AmazonCrawler:
             if self._has_customization_entry(refreshed):
                 return refreshed, []
             errors.append("Playwright response still omitted gc:productInfo or customizationFormLink")
-        except (InterruptedError, CaptchaTimeout):
+        except (InterruptedError, CaptchaTimeout, CrawlTimeout):
             raise
         except Exception as error:
             errors.append(f"Playwright retry: {_exception_message(error)}")
         return None, errors
 
+    @bounded_method("customization", "customization_timeout_seconds")
     def _fetch_customization_form(
         self,
         *,
@@ -1245,7 +1323,7 @@ class AmazonCrawler:
     ) -> tuple[Any, list[str], bool]:
         warnings: list[str] = []
         try:
-            with self._http_slots:
+            with acquire_slot(self._http_slots, self.cancel_event):
                 form_html, _ = self.fetcher.fetch(form_url)
             widget, widget_warnings, _ = _extract_customization(form_html)
             if widget is None:
@@ -1253,6 +1331,7 @@ class AmazonCrawler:
             warnings.extend(widget_warnings)
             return {"state": customization_raw, "widget": widget}, warnings, True
         except Exception as http_error:
+            check_deadline()
             try:
                 fetch_customization_form = getattr(self.browser_pool, "fetch_customization_form", None)
                 if callable(fetch_customization_form):
@@ -1265,6 +1344,10 @@ class AmazonCrawler:
                 warnings.extend(widget_warnings)
                 return {"state": customization_raw, "widget": widget}, warnings, True
             except Exception as browser_error:
+                if isinstance(browser_error, CrawlTimeout):
+                    raise
+                if isinstance(http_error, CrawlTimeout):
+                    raise http_error
                 warnings.append(
                     f"Customization form fetch failed: {_exception_message(http_error)}; "
                     f"Playwright {_exception_message(browser_error)}"
@@ -1322,6 +1405,7 @@ class AmazonCrawler:
             variant["customizationComplete"] = customization_complete and customization is not None
             variant["warnings"] = warnings
 
+    @bounded_method("asin", "asin_timeout_seconds")
     def _crawl_family(
         self,
         normalized: NormalizedInput,
@@ -1386,7 +1470,7 @@ class AmazonCrawler:
             parent = deepcopy(previous_parent)
             diagnostics = deepcopy(previous_family["diagnostics"])
         else:
-            with self._variant_fetch_slots:
+            with acquire_slot(self._variant_fetch_slots, self.cancel_event):
                 parent, diagnostics = self._fetch_parsed(normalized, require_price=False)
             self.cache.clear_failure(cache_key)
         if checkpoint_parent is None:
@@ -1438,7 +1522,7 @@ class AmazonCrawler:
                         asin_options.setdefault(asin, options)
                     if len(asin_options) >= self.settings.max_matrix_variants:
                         break
-            except (InterruptedError, CaptchaTimeout):
+            except (InterruptedError, CaptchaTimeout, CrawlTimeout):
                 raise
             except Exception as error:
                 diagnostics["matrixWarning"] = f"Variant matrix browser sweep failed: {error}"
@@ -1533,7 +1617,7 @@ class AmazonCrawler:
                     child = deepcopy(parent)
                     child_diagnostics = diagnostics
                 else:
-                    with self._variant_fetch_slots:
+                    with acquire_slot(self._variant_fetch_slots, self.cancel_event):
                         child, child_diagnostics = self._fetch_parsed(normalize_amazon_input(asin))
                 if child["asin"] != asin:
                     raise CrawlFetchError(
@@ -1567,7 +1651,7 @@ class AmazonCrawler:
                         )
                     elif len(gallery_media) > len(child.get("media") or []):
                         child["media"] = gallery_media
-                except (InterruptedError, CaptchaTimeout):
+                except (InterruptedError, CaptchaTimeout, CrawlTimeout):
                     raise
                 except Exception as error:
                     gallery_warnings.append(f"Full gallery browser fallback failed for {asin}: {error}")
@@ -1586,75 +1670,77 @@ class AmazonCrawler:
                 if self._variant_cache_complete(variant):
                     self.cache.append_checkpoint(cache_key, "child_complete", {"asin": asin})
                 return variant
-            customization_raw = child.get("customizationRaw")
-            form_url = child.get("customizationFormUrl")
-            customization_warnings = list(child.get("customizationWarnings", []))
-            has_customization_signal = bool(
-                customization_raw is not None
-                or form_url
-                or child.get("customizationWarnings")
-            )
-            if child.get("customizationWarnings") and not self._has_customization_entry(child):
-                recovered_child, recovery_errors = self._recover_customization_entry(
-                    asin=asin,
-                    source=normalized.source,
-                    options=options,
+            with timeout_scope("customization", self.settings.customization_timeout_seconds):
+                customization_raw = child.get("customizationRaw")
+                form_url = child.get("customizationFormUrl")
+                customization_warnings = list(child.get("customizationWarnings", []))
+                has_customization_signal = bool(
+                    customization_raw is not None
+                    or form_url
+                    or child.get("customizationWarnings")
                 )
-                if recovered_child is not None:
-                    customization_raw = recovered_child.get("customizationRaw")
-                    form_url = recovered_child.get("customizationFormUrl")
-                    customization_warnings = list(recovered_child.get("customizationWarnings", []))
-                else:
-                    customization_warnings = [
-                        "Amazon indicated customization but omitted its form payload after HTTP and Playwright retries: "
-                        + "; ".join(recovery_errors)
-                    ]
-            customization_complete = not customization_warnings
-            warnings = gallery_warnings + customization_warnings
-            if form_url:
-                with active_variants_lock:
-                    current_active_snapshot = active_variant_snapshot()
-                self._report_progress(
-                    phase="customization",
-                    message=f"Đang tải Amazon Customize cho {asin} — {option_text}",
-                    source=normalized.source,
-                    item_updates={
-                        "status": "running",
-                        "variantTotal": variant_total,
-                        "currentAsin": asin,
-                        "currentOptions": options,
-                        "activeVariants": current_active_snapshot,
-                    },
-                )
-                customization_raw, form_warnings, form_complete = self._fetch_customization_form(
-                    form_url=str(form_url),
-                    customization_raw=customization_raw,
-                )
-                warnings.extend(form_warnings)
-                customization_complete = customization_complete and form_complete
-            if child["asin"] != asin:
-                warnings.append(f"Requested child ASIN {asin}, but Amazon returned {child['asin']}.")
-            normalized_customization, custom_warnings = normalize_customization(customization_raw) if customization_raw is not None else (None, [])
-            warnings.extend(custom_warnings)
-            self.cache.clear_failure(child_key)
-            variant = {
-                "asin": asin, "url": f"https://www.amazon.com/dp/{asin}", "options": options,
-                "price": child.get("price"),
-                "media": child.get("media", []),
-                "description": child.get("description"), "bulletPoints": child.get("bulletPoints", []),
-                "categories": child.get("categories", []), "productDetails": child.get("productDetails", {}),
-                "customizationRaw": customization_raw, "customization": normalized_customization,
-                "customizationFingerprint": normalized_customization.get("fingerprint") if normalized_customization else None,
-                "customizationComplete": customization_complete,
-                "hasCustomizationSignal": has_customization_signal,
-                "priceInference": {"isInferred": False, "sourceAsins": []}, "warnings": warnings,
-                "diagnostics": child_diagnostics,
-            }
-            if customization_complete:
-                self.cache.append_checkpoint(cache_key, "customization_complete", {"asin": asin, "variant": variant})
-            if self._variant_cache_complete(variant):
-                self.cache.append_checkpoint(cache_key, "child_complete", {"asin": asin})
-            return variant
+                if child.get("customizationWarnings") and not self._has_customization_entry(child):
+                    recovered_child, recovery_errors = self._recover_customization_entry(
+                        asin=asin,
+                        source=normalized.source,
+                        options=options,
+                    )
+                    if recovered_child is not None:
+                        customization_raw = recovered_child.get("customizationRaw")
+                        form_url = recovered_child.get("customizationFormUrl")
+                        customization_warnings = list(recovered_child.get("customizationWarnings", []))
+                    else:
+                        customization_warnings = [
+                            "Amazon indicated customization but omitted its form payload after HTTP and Playwright retries: "
+                            + "; ".join(recovery_errors)
+                        ]
+                customization_complete = not customization_warnings
+                warnings = gallery_warnings + customization_warnings
+                if form_url:
+                    with active_variants_lock:
+                        current_active_snapshot = active_variant_snapshot()
+                    self._report_progress(
+                        phase="customization",
+                        message=f"Đang tải Amazon Customize cho {asin} — {option_text}",
+                        source=normalized.source,
+                        item_updates={
+                            "status": "running",
+                            "variantTotal": variant_total,
+                            "currentAsin": asin,
+                            "currentOptions": options,
+                            "activeVariants": current_active_snapshot,
+                        },
+                    )
+                    customization_raw, form_warnings, form_complete = self._fetch_customization_form(
+                        form_url=str(form_url),
+                        customization_raw=customization_raw,
+                    )
+                    warnings.extend(form_warnings)
+                    customization_complete = customization_complete and form_complete
+                if child["asin"] != asin:
+                    warnings.append(f"Requested child ASIN {asin}, but Amazon returned {child['asin']}.")
+                normalized_customization, custom_warnings = normalize_customization(customization_raw) if customization_raw is not None else (None, [])
+                warnings.extend(custom_warnings)
+                self.cache.clear_failure(child_key)
+                variant = {
+                    "asin": asin, "url": f"https://www.amazon.com/dp/{asin}", "options": options,
+                    "price": child.get("price"),
+                    "media": child.get("media", []),
+                    "description": child.get("description"), "bulletPoints": child.get("bulletPoints", []),
+                    "categories": child.get("categories", []), "productDetails": child.get("productDetails", {}),
+                    "customizationRaw": customization_raw, "customization": normalized_customization,
+                    "customizationFingerprint": normalized_customization.get("fingerprint") if normalized_customization else None,
+                    "customizationComplete": customization_complete,
+                    "hasCustomizationSignal": has_customization_signal,
+                    "priceInference": {"isInferred": False, "sourceAsins": []}, "warnings": warnings,
+                    "diagnostics": child_diagnostics,
+                }
+                check_deadline()
+                if customization_complete:
+                    self.cache.append_checkpoint(cache_key, "customization_complete", {"asin": asin, "variant": variant})
+                if self._variant_cache_complete(variant):
+                    self.cache.append_checkpoint(cache_key, "child_complete", {"asin": asin})
+                return variant
 
         self._report_progress(
             phase="product",
@@ -1718,8 +1804,14 @@ class AmazonCrawler:
                 on_product_complete(product)
                 emitted_groups.add(split_value)
 
+        def crawl_child_with_deadline(asin: str) -> dict[str, Any]:
+            with transport_context(childAsin=asin), timeout_scope("child", self.settings.child_timeout_seconds):
+                variant = crawl_child(asin)
+                check_deadline()
+                return variant
+
         with concurrent.futures.ThreadPoolExecutor(max_workers=self.settings.variant_threads) as executor:
-            futures = {executor.submit(crawl_child, asin): asin for asin in discovered_asins}
+            futures = {executor.submit(contextvars.copy_context().run, crawl_child_with_deadline, asin): asin for asin in discovered_asins}
             for future in concurrent.futures.as_completed(futures):
                 asin = futures[future]
                 options = deepcopy(asin_options.get(asin, {}))
@@ -1734,6 +1826,7 @@ class AmazonCrawler:
                             f"{asin}:{self.settings.amazon_zip}:us-v1",
                             status=policy["status"], reason=policy["reason"],
                             retry_after_seconds=policy["retryAfterSeconds"],
+                            details={key: policy[key] for key in TIMEOUT_FIELDS if key in policy},
                         )
                     failed_diagnostics = deepcopy(getattr(error, "diagnostics", {
                         "fetchMode": "failed", "attempts": 0, "captchaEncountered": False,
@@ -2029,6 +2122,7 @@ class AmazonCrawler:
             })
         return products
 
+    @bounded_method("job", "job_timeout_seconds")
     def run(
         self,
         *,
@@ -2136,6 +2230,7 @@ class AmazonCrawler:
                     family_products, retry_after,
                     retryable=retryable, reason=reason, code=code,
                     asin_status=asin_status,
+                    timeout_details=next(({key: failure[key] for key in TIMEOUT_FIELDS if key in failure} for failure in failures + terminal_failures if failure.get("stage")), {}),
                 )
             return normalized, family_products, self._family_asin_status(family)
 
@@ -2150,7 +2245,7 @@ class AmazonCrawler:
             ),
         )
         with concurrent.futures.ThreadPoolExecutor(max_workers=product_worker_count) as executor:
-            futures = {executor.submit(crawl_one, normalized): (normalized, time.monotonic()) for normalized in normalized_inputs}
+            futures = {executor.submit(contextvars.copy_context().run, crawl_one, normalized): (normalized, time.monotonic()) for normalized in normalized_inputs}
             for future in concurrent.futures.as_completed(futures):
                 normalized, input_started_time = futures[future]
                 item_status = "completed"
@@ -2173,10 +2268,12 @@ class AmazonCrawler:
                     asin_status = error.asin_status
                     products.extend(family_products)
                     input_error = {
+                        **error.timeout_details,
                         "source": normalized.source, "code": error.code, "status": "partial",
                         "reason": error.reason, "message": str(error),
                         "retryable": error.retryable, "retryAfter": error.retry_after,
                         **asin_status,
+                        **({"isRetryable": error.retryable} if error.timeout_details else {}),
                     }
                     errors.append(input_error)
                     input_errors.append(input_error)
@@ -2189,16 +2286,18 @@ class AmazonCrawler:
                         "retryableAsins": [normalized.asin] if policy["retryable"] else [],
                         "nonRetryableAsins": [] if policy["retryable"] else [normalized.asin],
                     }
-                    failure = error.failure if isinstance(error, CachedCrawlFailure) else self.cache.save_failure(
+                    failure = {**policy, "retryAfter": None} if policy.get("stage") == "job" else (error.failure if isinstance(error, CachedCrawlFailure) else self.cache.save_failure(
                         f"{normalized.asin}:{self.settings.amazon_zip}:us-v1",
                         status=policy["status"], reason=policy["reason"],
                         retry_after_seconds=policy["retryAfterSeconds"],
-                    )
+                        details={key: policy[key] for key in TIMEOUT_FIELDS if key in policy},
+                    ))
                     input_error = {
-                        "source": normalized.source, "code": policy["status"].upper(),
+                        "source": normalized.source, "code": "CRAWL_TIMEOUT" if policy.get("stage") else policy["status"].upper(),
                         "status": policy["status"], "reason": policy["reason"],
                         "retryAfter": failure["retryAfter"], "message": str(error),
                         "retryable": policy["retryable"], **asin_status,
+                        **{key: failure[key] for key in TIMEOUT_FIELDS if key in failure},
                     }
                     errors.append(input_error)
                     input_errors.append(input_error)

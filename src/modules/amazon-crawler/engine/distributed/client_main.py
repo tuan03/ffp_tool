@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import multiprocessing
 import os
 import sys
 from pathlib import Path
@@ -39,6 +40,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    multiprocessing.freeze_support()
     _configure_packaged_browser()
     from .client_agent import DistributedCrawlerAgent
     from .client_config import AgentConfig

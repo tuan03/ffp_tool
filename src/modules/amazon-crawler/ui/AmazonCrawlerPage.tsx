@@ -1817,6 +1817,21 @@ export function AmazonCrawlerPage({
           <NumberSetting label="Matrix cap" min={1} max={5000} value={settings.maxMatrixVariants} onChange={(value) => updateSetting("maxMatrixVariants", value)} />
           <label className="grid gap-1 text-sm text-slate-300">Amazon ZIP<input className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2" value={settings.amazonZip} onChange={(event) => updateSetting("amazonZip", event.target.value)} /></label>
           <label className="flex items-center gap-2 self-end p-2 text-sm"><input checked={settings.headless} type="checkbox" onChange={(event) => updateSetting("headless", event.target.checked)} /> Headless browser</label>
+          <details className="sm:col-span-3">
+            <summary className="cursor-pointer text-sm font-semibold text-cyan-300">Giới hạn thời gian xử lý</summary>
+            <p className="mt-2 text-xs text-slate-400">Đơn vị giây. Mỗi bước tuân theo thời gian còn lại của child, family và job. Tăng giới hạn family hoặc job khi crawl nhiều variants.</p>
+            <div className="mt-3 grid gap-3 sm:grid-cols-3">
+              <NumberSetting label="DNS" min={1} max={120} value={settings.dnsTimeoutSeconds ?? 10} onChange={(value) => updateSetting("dnsTimeoutSeconds", value)} />
+              <NumberSetting label="Kết nối" min={1} max={120} value={settings.connectTimeoutSeconds ?? 15} onChange={(value) => updateSetting("connectTimeoutSeconds", value)} />
+              <NumberSetting label="HTTP response" min={1} max={600} value={settings.httpResponseTimeoutSeconds ?? 90} onChange={(value) => updateSetting("httpResponseTimeoutSeconds", value)} />
+              <NumberSetting label="Browser navigation" min={1} max={300} value={settings.navigationTimeoutSeconds ?? 60} onChange={(value) => updateSetting("navigationTimeoutSeconds", value)} />
+              <NumberSetting label="Selector" min={1} max={120} value={settings.selectorTimeoutSeconds ?? 15} onChange={(value) => updateSetting("selectorTimeoutSeconds", value)} />
+              <NumberSetting label="Customization" min={1} max={900} value={settings.customizationTimeoutSeconds ?? 120} onChange={(value) => updateSetting("customizationTimeoutSeconds", value)} />
+              <NumberSetting label="Một child ASIN" min={1} max={3600} value={settings.childTimeoutSeconds ?? 300} onChange={(value) => updateSetting("childTimeoutSeconds", value)} />
+              <NumberSetting label="Toàn ASIN / family" min={1} max={14400} value={settings.asinTimeoutSeconds ?? 1800} onChange={(value) => updateSetting("asinTimeoutSeconds", value)} />
+              <NumberSetting label="Toàn job" min={1} max={86400} value={settings.jobTimeoutSeconds ?? 21600} onChange={(value) => updateSetting("jobTimeoutSeconds", value)} />
+            </div>
+          </details>
         </div>
       ) : null}
 
@@ -2260,7 +2275,10 @@ export function AmazonCrawlerPage({
               )}
             </div>
           )}
-          {output?.errors.map((crawlError) => <p key={`${crawlError.source}-${crawlError.code}`} className="rounded-lg border border-rose-700 p-3 text-rose-200">{crawlError.source}: {crawlError.message}</p>)}
+          {output?.errors.map((crawlError) => <div key={`${crawlError.source}-${crawlError.code}`} className="rounded-lg border border-rose-700 p-3 text-rose-200">
+            <p>{crawlError.source}: {crawlError.code === "WORKER_INTERRUPTED" ? "Family bị gián đoạn khi worker khởi động lại; dữ liệu đã lấy vẫn được giữ." : crawlError.stage ? `Quá thời gian xử lý ở bước ${crawlError.stage}.` : crawlError.message}</p>
+            {crawlError.stage ? <details className="mt-2"><summary className="cursor-pointer text-xs">Chi tiết timeout</summary><pre className="mt-2 overflow-auto text-xs">{JSON.stringify({ stage: crawlError.stage, attempt: crawlError.attempt, route: crawlError.route, profile: crawlError.profile, elapsedMs: crawlError.elapsedMs, isRetryable: crawlError.isRetryable, retryAfter: crawlError.retryAfter }, null, 2)}</pre></details> : null}
+          </div>)}
           {output?.status === "partial" ? <button className="rounded-lg border border-amber-600 px-3 py-2 text-sm font-semibold text-amber-200 disabled:opacity-50" disabled={isRetryingSync} type="button" onClick={() => void handleRetrySyncs()}>{isRetryingSync ? "Đang retry..." : "Retry Shopify lỗi"}</button> : null}
           {syncMessage ? <p className="text-sm text-amber-200">{syncMessage}</p> : null}
           {output ? <button className="text-sm font-semibold text-cyan-300" type="button" onClick={toggleCrawlerBatchJsonOpen}>{isBatchJsonOpen ? "Ẩn" : "Hiện"} Raw JSON toàn batch</button> : null}

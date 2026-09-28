@@ -15,7 +15,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
 from .cache import RawFamilyCache
-from .crawler_core import AmazonCrawler, CrawlSettings
+from .crawler_core import CrawlSettings
+from .process_crawler import ProcessCrawler
 
 MODULE_ROOT = Path(__file__).resolve().parents[1]
 PROJECT_ROOT = Path(__file__).resolve().parents[4]
@@ -80,7 +81,7 @@ def _run_job(job: Job) -> None:
     with job.lock:
         job.status = "running"
         job.progress = {"phase": "product", "completed": 0, "total": len(job.sources), "message": "Đang khởi động crawler..."}
-    crawler = AmazonCrawler(root=PROJECT_ROOT, settings=job.settings, progress=job.update_progress, cancel_event=job.cancel_event)
+    crawler = ProcessCrawler(root=PROJECT_ROOT, settings=job.settings, progress=job.update_progress, cancel_event=job.cancel_event)
     try:
         output = crawler.run(job_id=job.job_id, sources=job.sources)
         with job.lock:

@@ -19,6 +19,7 @@ import websockets
 
 from ..crawler_core import AmazonCrawler, CrawlSettings
 from ..cache import RawFamilyCache
+from ..process_crawler import ProcessCrawler
 from . import AGENT_VERSION
 from .client_config import AgentConfig
 from .client_store import ClientStore
@@ -747,12 +748,18 @@ class DistributedCrawlerAgent:
             )
             loop.call_soon_threadsafe(self._publish_status)
 
-        crawler = self.crawler_factory(
+        factory = ProcessCrawler if self.crawler_factory is AmazonCrawler else self.crawler_factory
+        deadline_arguments = {
+            "job_deadline_at": min((str(assignment["jobDeadlineAt"]) for assignment in batch if assignment.get("jobDeadlineAt")), default=None),
+            "asin_deadline_at": min((str(assignment["asinDeadlineAt"]) for assignment in batch if assignment.get("asinDeadlineAt")), default=None),
+        } if factory is ProcessCrawler else {}
+        crawler = factory(
             root=self.project_root,
             settings=settings,
             progress=progress,
             cancel_event=cancel_event,
             proxy_config_path=self.config.proxy_config_path,
+            **deadline_arguments,
         )
         with self._running_crawlers_lock:
             self._running_crawlers[str(first["jobId"])] = crawler

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 import uuid
 from collections import Counter
 from datetime import datetime, timedelta
@@ -16,6 +17,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import selectinload
 
 from ..crawler_core import CrawlSettings, normalize_amazon_input
+from ..timeouts import CrawlTimeout, TIMEOUT_FIELDS
 from .coordinator_models import (
     ClientRecord,
     CoordinatorState,
@@ -273,6 +275,7 @@ class CoordinatorStore:
                 status="queued",
                 settings=settings,
                 requested_inputs=len(raw_urls),
+                created_at=utc_now(),
             )
             session.add(job)
             session.add(CrawlJobControl(
@@ -346,6 +349,7 @@ class CoordinatorStore:
         if is_expired:
             return
         failure = {
+            **{field: error[field] for field in TIMEOUT_FIELDS if field in error},
             "status": error["status"], "reason": str(error.get("reason") or error["status"]),
             "retryable": bool(error.get("retryable")), "retryAfter": error["retryAfter"],
             "code": str(error.get("code") or error["status"]).upper(),
@@ -487,9 +491,23 @@ class CoordinatorStore:
             client.last_seen_at = now
             return self._client_snapshot(client)
 
+    def _task_deadline(self, session, task: CrawlTask) -> datetime | None:
+        attempt_started = session.scalar(select(TaskAttempt.leased_at).where(TaskAttempt.lease_id == task.lease_id))
+        job = session.get(CrawlJob, task.job_id)
+        if attempt_started is None or job is None:
+            return None
+        return min(
+            _as_utc(attempt_started) + timedelta(seconds=float(job.settings.get("asinTimeoutSeconds", 1800))),
+            _as_utc(job.created_at) + timedelta(seconds=float(job.settings.get("jobTimeoutSeconds", 21600))),
+        )
+
+    def _renew_lease(self, session, task: CrawlTask, now: datetime) -> datetime:
+        deadline = self._task_deadline(session, task)
+        renewed = now + timedelta(seconds=LEASE_SECONDS)
+        return min(renewed, deadline) if deadline else renewed
+
     def heartbeat(self, client_id: str, running: list[dict[str, Any]], status: str = "online") -> list[str]:
         now = utc_now()
-        lease_until = now + timedelta(seconds=LEASE_SECONDS)
         cancelled_job_ids: set[str] = set()
         active_leases = {
             (str(active.get("taskId") or ""), str(active.get("leaseId") or ""))
@@ -508,7 +526,7 @@ class CoordinatorStore:
                 task = session.get(CrawlTask, task_id)
                 if task and task.lease_id == lease_id and task.assigned_client_id == client_id and task.status in {"leased", "running"}:
                     task.status = "running"
-                    task.lease_expires_at = lease_until
+                    task.lease_expires_at = self._renew_lease(session, task, now)
                 elif (
                     task
                     and task.status in {"cancelling", "cancelled"}
@@ -634,7 +652,9 @@ class CoordinatorStore:
                 task.status = "leased"
                 task.assigned_client_id = client_id
                 task.lease_id = lease_id
-                task.lease_expires_at = now + timedelta(seconds=LEASE_SECONDS)
+                job_deadline = _as_utc(job.created_at) + timedelta(seconds=float(job.settings.get("jobTimeoutSeconds", 21600)))
+                asin_deadline = now + timedelta(seconds=float(job.settings.get("asinTimeoutSeconds", 1800)))
+                task.lease_expires_at = min(now + timedelta(seconds=LEASE_SECONDS), job_deadline, asin_deadline)
                 task.started_at = task.started_at or now
                 attempt = TaskAttempt(
                     id=_id(), task_id=task.id, client_id=client_id,
@@ -653,6 +673,8 @@ class CoordinatorStore:
                     "settings": dict(job.settings if job else {}),
                     "settingsFingerprint": settings_fingerprint(dict(job.settings if job else {})),
                     "leaseExpiresAt": utc_iso(task.lease_expires_at),
+                    "jobDeadlineAt": utc_iso(job_deadline),
+                    "asinDeadlineAt": utc_iso(asin_deadline),
                 })
                 self._event(session, task.job_id, "task_leased", {"taskId": task.id, "clientId": client_id})
                 if len(leases) >= count:
@@ -684,7 +706,7 @@ class CoordinatorStore:
             if task.assigned_client_id != client_id or task.lease_id != lease_id:
                 return
             task.status = "running"
-            task.lease_expires_at = utc_now() + timedelta(seconds=LEASE_SECONDS)
+            task.lease_expires_at = self._renew_lease(session, task, utc_now())
             self._event(session, task.job_id, "task_progress", {
                 "taskId": task.id, "clientId": client_id, "progress": _bounded_progress(payload.get("progress")),
             })
@@ -1834,8 +1856,28 @@ class CoordinatorStore:
             self._refresh_job(session, item.job_id)
             return next_status
 
+    def _expire_jobs(self, now: datetime) -> None:
+        with self.sessions() as session:
+            expired = [job.id for job in session.scalars(select(CrawlJob).where(CrawlJob.status.in_(["queued", "running"])))
+                       if now >= _as_utc(job.created_at) + timedelta(seconds=float(job.settings.get("jobTimeoutSeconds", 21600)))]
+        for job_id in expired:
+            with self.sessions.begin() as session:
+                job = session.get(CrawlJob, job_id)
+                if job is None or job.status not in {"queued", "running"}:
+                    continue
+                elapsed = (now - _as_utc(job.created_at)).total_seconds()
+                error = CrawlTimeout("job", started=time.monotonic() - elapsed).as_error("")
+                tasks = session.scalars(select(CrawlTask).where(CrawlTask.job_id == job_id)).all()
+                unfinished = [task for task in tasks if task.status not in TERMINAL_TASK_STATUSES]
+                for task in unfinished or tasks[:1]:
+                    task.last_error = {**error, "source": task.source}
+                self._event(session, job_id, "job_timed_out", error)
+            # Reuse Stop's handling of in-flight Shopify writes and agent acknowledgements; it preserves product caches.
+            self.cancel_job(job_id)
+
     def reap_expired(self) -> dict[str, int]:
         now = utc_now()
+        self._expire_jobs(now)
         offline_before = now - timedelta(seconds=CLIENT_OFFLINE_SECONDS)
         offline = 0
         requeued = 0
@@ -1886,7 +1928,21 @@ class CoordinatorStore:
                             attempt.status = "abandoned"
                             attempt.finished_at = now
                     continue
-                task.status = "queued"
+                deadline = self._task_deadline(session, task)
+                if deadline is not None and now >= deadline:
+                    attempt_started = session.scalar(select(TaskAttempt.leased_at).where(TaskAttempt.lease_id == old_lease))
+                    elapsed = (now - _as_utc(attempt_started)).total_seconds() if attempt_started else 0
+                    error = CrawlTimeout("asin", started=time.monotonic() - elapsed).as_error(task.source)
+                    error.update({"elapsedMs": round(elapsed * 1000), "retryAfter": utc_iso(now + timedelta(seconds=30)),
+                                  "attempt": task.failure_count + 1, "resumeClientId": task.assigned_client_id})
+                    task.failure_count += 1
+                    task.last_error = error
+                    job = session.get(CrawlJob, task.job_id)
+                    self._store_negative(session, self._negative_key(task.asin, str(job.settings.get("amazonZip", "90001"))), error)
+                    self._event(session, task.job_id, "task_timed_out", {"taskId": task.id, "error": error})
+                task.status = "failed" if task.failure_count >= MAX_CRAWL_FAILURES else "queued"
+                if task.status == "failed":
+                    task.completed_at = now
                 task.assigned_client_id = None
                 task.lease_id = None
                 task.lease_expires_at = None
@@ -1895,7 +1951,8 @@ class CoordinatorStore:
                 if old_lease:
                     attempt = session.scalar(select(TaskAttempt).where(TaskAttempt.lease_id == old_lease))
                     if attempt:
-                        attempt.status = "abandoned"
+                        attempt.status = "failed" if deadline is not None and now >= deadline else "abandoned"
+                        attempt.error = task.last_error if attempt.status == "failed" else attempt.error
                         attempt.finished_at = now
                 self._event(session, task.job_id, "task_requeued", {"taskId": task.id, "reason": "lease_expired"})
             stopped_items = session.scalars(select(CrawlProductItem).where(
@@ -2417,6 +2474,10 @@ class CoordinatorStore:
         elif product_counts.get("normalizing") or product_counts.get("received"):
             phase = "normalization"
         errors = int(job.rejected_inputs) + int(task_counts.get("failed", 0)) + int(product_counts.get("failed", 0))
+        if job.status in {"cancelling", "cancelled"}:
+            errors += int(session.scalar(select(func.count(CrawlTask.id)).where(
+                CrawlTask.job_id == job.id, CrawlTask.status != "failed", CrawlTask.last_error["stage"].as_string() == "job",
+            )) or 0)
         message = str(latest.get("message") or f"Đã xử lý {completed}/{job.accepted_inputs} link.")
         if phase in {"seo", "image_processing", "shopify"}:
             message = f"Đang xử lý {phase}: {completed}/{job.accepted_inputs} link đã crawl."
@@ -2650,7 +2711,7 @@ class CoordinatorStore:
                                 products[str(product["id"])] = product
                     errors.extend(error for error in result.get("errors", []) if isinstance(error, dict))
                     warnings.extend(str(warning) for warning in result.get("warnings", []) if isinstance(warning, str))
-                elif task.status == "failed":
+                if (task.status == "failed" and not task.result) or (task.last_error or {}).get("stage") == "job":
                     last_error = task.last_error or {}
                     collect_asins(last_error)
                     errors.append({
@@ -2661,6 +2722,7 @@ class CoordinatorStore:
                         **{key: last_error[key] for key in (
                             "status", "reason", "retryAfter", "completedAsins", "failedAsins",
                             "retryableAsins", "nonRetryableAsins",
+                            *TIMEOUT_FIELDS,
                         ) if key in last_error},
                     })
             product_values = list(products.values())

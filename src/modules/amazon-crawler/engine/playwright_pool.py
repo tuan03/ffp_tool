@@ -14,6 +14,7 @@ from bs4 import BeautifulSoup
 
 from .amazon_locale import USER_AGENT, force_us_profile_url, html_is_location_blocked, playwright_us_cookies
 from .proxy_profiles import ProxyAssignment
+from .timeouts import CrawlTimeout, async_bounded_method, await_stage, check_deadline, remaining_seconds, timeout_scope, transport_context
 
 
 class PlaywrightUnavailable(RuntimeError):
@@ -75,6 +76,9 @@ class PlaywrightPool:
         tabs_per_profile: int,
         headless: bool,
         captcha_timeout: int,
+        navigation_timeout: float = 60,
+        selector_timeout: float = 15,
+        customization_timeout: float = 120,
         zip_code: str,
         proxy_assignments: list[ProxyAssignment] | None = None,
         on_captcha: Callable[[str], None] | None = None,
@@ -85,6 +89,9 @@ class PlaywrightPool:
         self.tabs_per_profile = max(1, tabs_per_profile)
         self.headless = headless
         self.captcha_timeout = captcha_timeout
+        self.navigation_timeout = navigation_timeout
+        self.selector_timeout = selector_timeout
+        self.customization_timeout = customization_timeout
         self.zip_code = zip_code
         configured_proxies = [assignment for assignment in proxy_assignments or [] if assignment.is_enabled][:self.profiles]
         direct_assignments = [
@@ -168,15 +175,36 @@ class PlaywrightPool:
                     daemon=True,
                 )
                 self._loop_thread.start()
-        self._loop_ready.wait()
+        if not self._loop_ready.wait(timeout=remaining_seconds(5)):
+            check_deadline()
+            raise CrawlTimeout("browser_startup", started=time.monotonic() - 5)
         if self._loop is None:
             raise RuntimeError("Playwright event loop failed to start.")
         return self._loop
 
     def _submit(self, awaitable: Awaitable[T]) -> T:
-        loop = self._ensure_loop()
-        future = asyncio.run_coroutine_threadsafe(awaitable, loop)
-        return future.result()
+        future = None
+        try:
+            with timeout_scope("browser", max(1, self.total_profiles) * (self.navigation_timeout + self.captcha_timeout + self.customization_timeout + 60)):
+                loop = self._ensure_loop()
+                future = asyncio.run_coroutine_threadsafe(awaitable, loop)
+                while True:
+                    check_deadline()
+                    try:
+                        return future.result(timeout=remaining_seconds(0.05))
+                    except CrawlTimeout:
+                        raise
+                    except concurrent.futures.TimeoutError:
+                        if future.done():
+                            return future.result()
+        except BaseException:
+            if future is not None:
+                future.cancel()
+            else:
+                close = getattr(awaitable, "close", None)
+                if callable(close):
+                    close()
+            raise
 
     def _ensure_async_state(self) -> None:
         loop = asyncio.get_running_loop()
@@ -251,7 +279,7 @@ class PlaywrightPool:
                 cancel_event,
                 allow_manual_captcha=allow_manual_captcha,
             )
-        except CaptchaTimeout:
+        except (CaptchaTimeout, CrawlTimeout):
             try:
                 await context.close()
             except Exception:
@@ -269,16 +297,14 @@ class PlaywrightPool:
         allow_manual_captcha: bool = True,
     ) -> bool:
         page = await context.new_page()
-        timeout_ms = 15_000
+        timeout_ms = int(min(15, self.navigation_timeout) * 1000)
         home_url = "https://www.amazon.com/?language=en_US&currency=USD"
         try:
-            await page.goto(
-                home_url,
-                wait_until="commit",
-                timeout=timeout_ms,
-            )
+            await await_stage(page.goto(home_url, wait_until="commit", timeout=timeout_ms), "navigation", timeout_ms / 1000)
             try:
-                await page.wait_for_selector("body", state="attached", timeout=5_000)
+                await await_stage(page.wait_for_selector("body", state="attached", timeout=min(5, self.selector_timeout) * 1000), "selector", min(5, self.selector_timeout))
+            except CrawlTimeout:
+                raise
             except Exception:
                 pass
             await self._wait_for_captcha(
@@ -322,18 +348,22 @@ class PlaywrightPool:
             await page.close()
 
     @staticmethod
-    async def _load_product_page(page: Any, url: str) -> str:
-        await page.goto(force_us_profile_url(url), wait_until="commit", timeout=60_000)
+    async def _load_product_page(page: Any, url: str, navigation_timeout: float = 60, selector_timeout: float = 15) -> str:
+        await await_stage(page.goto(force_us_profile_url(url), wait_until="commit", timeout=navigation_timeout * 1000), "navigation", navigation_timeout)
         try:
-            await page.wait_for_selector("#productTitle, #ppd, #dp-container", state="attached", timeout=15_000)
+            await await_stage(page.wait_for_selector("#productTitle, #ppd, #dp-container", state="attached", timeout=selector_timeout * 1000), "selector", selector_timeout)
+        except CrawlTimeout:
+            raise
         except Exception:
             pass
         try:
-            await page.wait_for_selector(
+            await await_stage(page.wait_for_selector(
                 "#landingImage, #imgBlkFront, #main-image, #altImages",
                 state="attached",
                 timeout=5_000,
-            )
+            ), "selector", min(5, selector_timeout))
+        except CrawlTimeout:
+            raise
         except Exception:
             pass
         # Amazon lazily materializes part of the gallery. Scrolling and clicking
@@ -400,10 +430,15 @@ class PlaywrightPool:
         *,
         markers: tuple[str, ...],
         timeout_ms: int = 20_000,
+        navigation_timeout: float = 60,
+        selector_timeout: float = 15,
     ) -> str:
-        await page.goto(force_us_profile_url(url), wait_until="commit", timeout=60_000)
+        started = time.monotonic()
+        await await_stage(page.goto(force_us_profile_url(url), wait_until="commit", timeout=navigation_timeout * 1000), "navigation", navigation_timeout)
         try:
-            await page.wait_for_selector("body", state="attached", timeout=10_000)
+            await await_stage(page.wait_for_selector("body", state="attached", timeout=min(10, selector_timeout) * 1000), "selector", min(10, selector_timeout))
+        except CrawlTimeout:
+            raise
         except Exception:
             pass
         attempts = max(1, timeout_ms // 250)
@@ -417,7 +452,7 @@ class PlaywrightPool:
                 return html
             await page.wait_for_timeout(250)
             html = await page.content()
-        raise RuntimeError("Amazon Customize markers did not appear before the render timeout.")
+        raise CrawlTimeout("customization", started=started)
 
     async def _ensure_context(
         self,
@@ -534,7 +569,7 @@ class PlaywrightPool:
         try:
             slot_count = len(route_indices) * self.tabs_per_profile
             for _ in range(slot_count):
-                candidate = await queue.get()
+                candidate = await await_stage(queue.get(), "browser_slot", self.navigation_timeout)
                 if self._blocked_until.get(candidate, 0) <= time.monotonic():
                     index = candidate
                     break
@@ -548,8 +583,9 @@ class PlaywrightPool:
                 self._queued_proxy -= 1
                 self._active_proxy += 1
             self._emit_activity(url, index)
-            context = await self._ensure_context(index, cancel_event, allow_manual_captcha)
-            return await operation(index, context)
+            with transport_context(profile=self.proxy_assignments[index].name, route=route):
+                context = await self._ensure_context(index, cancel_event, allow_manual_captcha)
+                return await operation(index, context)
         except Exception as error:
             if index is not None:
                 setattr(error, "browser_profile_index", index)
@@ -588,9 +624,14 @@ class PlaywrightPool:
         *,
         allow_manual: bool = True,
     ) -> str:
-        html = await page.content()
+        html = await await_stage(page.content(), "selector", self.selector_timeout)
         if not html_is_captcha(html):
             return html
+        return await self._solve_captcha(page, url, cancel_event, html=html, allow_manual=allow_manual)
+
+    @async_bounded_method("captcha", "captcha_timeout")
+    async def _solve_captcha(self, page: Any, url: str, cancel_event: threading.Event | None,
+                             *, html: str, allow_manual: bool) -> str:
         if _has_button_only_continue_challenge(html):
             if cancel_event and cancel_event.is_set():
                 raise InterruptedError("Crawler job cancelled while waiting for CAPTCHA.")
@@ -618,7 +659,7 @@ class PlaywrightPool:
             if cancel_event and cancel_event.is_set():
                 raise InterruptedError("Crawler job cancelled while waiting for CAPTCHA.")
             if time.monotonic() >= deadline:
-                raise CaptchaTimeout(f"CAPTCHA was not solved within {self.captcha_timeout} seconds.")
+                raise CrawlTimeout("captcha", started=deadline - self.captcha_timeout)
             await page.wait_for_timeout(1000)
             html = await page.content()
         return html
@@ -638,13 +679,14 @@ class PlaywrightPool:
                 await self._ensure_us_profile(index, context, cancel_event, allow_manual_captcha)
                 page = await context.new_page()
                 if customization_markers is None:
-                    html = await self._load_product_page(page, url)
+                    html = await self._load_product_page(page, url, self.navigation_timeout, self.selector_timeout)
                 else:
-                    html = await self._load_customization_page(
+                    html = await await_stage(self._load_customization_page(
                         page,
                         url,
                         markers=customization_markers,
-                    )
+                        navigation_timeout=self.navigation_timeout, selector_timeout=self.selector_timeout,
+                    ), "customization", self.customization_timeout)
                 html = await self._wait_for_captcha(
                     page,
                     url,
@@ -660,13 +702,14 @@ class PlaywrightPool:
                         raise RuntimeError(f"Unable to switch Amazon profile to US ZIP {self.zip_code}.")
                     self._us_profile_applied[index] = True
                     if customization_markers is None:
-                        html = await self._load_product_page(page, url)
+                        html = await self._load_product_page(page, url, self.navigation_timeout, self.selector_timeout)
                     else:
-                        html = await self._load_customization_page(
+                        html = await await_stage(self._load_customization_page(
                             page,
                             url,
                             markers=customization_markers,
-                        )
+                            navigation_timeout=self.navigation_timeout, selector_timeout=self.selector_timeout,
+                        ), "customization", self.customization_timeout)
                     html = await self._wait_for_captcha(
                         page,
                         url,
@@ -736,7 +779,8 @@ class PlaywrightPool:
                 }
                 if customization_markers is not None:
                     fetch_options["customization_markers"] = customization_markers
-                html, profile_index = await self._fetch_once(url, cancel_event, **fetch_options)
+                with transport_context(attempt=attempt, route=route):
+                    html, profile_index = await self._fetch_once(url, cancel_event, **fetch_options)
                 assignment = self.proxy_assignments[profile_index]
                 diagnostics.append({
                     "attempt": attempt,
@@ -759,6 +803,7 @@ class PlaywrightPool:
                     setattr(error, "diagnostics", diagnostics)
                     raise
             except Exception as error:
+                check_deadline()
                 last_error = error
                 profile_index = getattr(error, "browser_profile_index", None)
                 message = str(error).casefold()
@@ -772,7 +817,10 @@ class PlaywrightPool:
                 if isinstance(profile_index, int) and should_cooldown_profile:
                     self._block_profile(profile_index, error)
                 diagnostics.append(self._browser_error_trace(attempt, profile_index, error, "error"))
-                is_retryable = any(marker in message for marker in (
+                if isinstance(error, CrawlTimeout) and error.details["stage"] == "captcha":
+                    setattr(error, "diagnostics", diagnostics)
+                    raise
+                is_retryable = isinstance(error, CrawlTimeout) or any(marker in message for marker in (
                     "closed", "target page", "net::err_", "timeout", "connection", "navigation",
                     "amazon us zip", "http_response_code_failure", "cooling down", "location",
                     "customize markers",
@@ -801,6 +849,8 @@ class PlaywrightPool:
             "outcome": outcome,
             "error": str(error),
         }
+        if isinstance(error, CrawlTimeout):
+            trace.update(error.details)
         if isinstance(profile_index, int) and 0 <= profile_index < len(self.proxy_assignments):
             assignment = self.proxy_assignments[profile_index]
             trace.update({
@@ -894,13 +944,13 @@ class PlaywrightPool:
             pages: list[str] = []
             seen_asins: set[str] = set()
             try:
-                html = await self._load_product_page(page, url)
+                html = await self._load_product_page(page, url, self.navigation_timeout, self.selector_timeout)
                 html = await self._wait_for_captcha(page, url, cancel_event)
                 if html_is_location_blocked(html):
                     if not await self._set_amazon_zip(context, cancel_event):
                         raise RuntimeError(f"Unable to switch Amazon profile to US ZIP {self.zip_code}.")
                     self._us_profile_applied[index] = True
-                    html = await self._load_product_page(page, url)
+                    html = await self._load_product_page(page, url, self.navigation_timeout, self.selector_timeout)
                     html = await self._wait_for_captcha(page, url, cancel_event)
                 pages.append(html)
                 selectors = [

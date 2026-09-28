@@ -560,6 +560,17 @@ test("job loader loads job snapshot, products and results from coordinator", asy
   assert.equal(recent[0]?.id, "job-abc");
 });
 
+test("mock runner and request serialization preserve configurable timeout budgets", async () => {
+  const timeoutInput = { ...input, dnsTimeoutSeconds: 3, connectTimeoutSeconds: 5, childTimeoutSeconds: 60, asinTimeoutSeconds: 120, jobTimeoutSeconds: 360 };
+  const output = await getAmazonCrawlerRunner("mock", "http://unused.test")({ input: timeoutInput });
+  assert.equal(output.settings.dnsTimeoutSeconds, 3);
+  assert.equal(output.settings.connectTimeoutSeconds, 5);
+  assert.equal(output.settings.childTimeoutSeconds, 60);
+  assert.equal(output.settings.asinTimeoutSeconds, 120);
+  assert.equal(output.settings.jobTimeoutSeconds, 360);
+  assert.equal(JSON.parse(serializeAmazonCrawlerInput(timeoutInput)).jobTimeoutSeconds, 360);
+});
+
 test("running job loader pages product summaries and reuses loaded details", async () => {
   const products = amazonCrawlerMockOutput.products.slice(0, 2);
   assert.equal(products.length, 2);

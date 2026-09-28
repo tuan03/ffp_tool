@@ -30,6 +30,15 @@ export interface AmazonCrawlerSettings {
   headless: boolean;
   amazonZip: string;
   captchaTimeoutSeconds: number;
+  dnsTimeoutSeconds?: number;
+  connectTimeoutSeconds?: number;
+  httpResponseTimeoutSeconds?: number;
+  navigationTimeoutSeconds?: number;
+  selectorTimeoutSeconds?: number;
+  customizationTimeoutSeconds?: number;
+  childTimeoutSeconds?: number;
+  asinTimeoutSeconds?: number;
+  jobTimeoutSeconds?: number;
   maxMatrixVariants: number;
   storeId?: string;
   priceAddition?: number;
@@ -196,7 +205,14 @@ export interface AmazonCrawlerError {
   code: string;
   status?: "not_found" | "temporarily_blocked" | "network_error" | "invalid_asin" | "parser_error" | "partial";
   reason?: string;
-  retryAfter?: string;
+  retryAfter?: string | null;
+  stage?: string;
+  attempt?: number;
+  route?: string | null;
+  profile?: string | null;
+  elapsedMs?: number;
+  isRetryable?: boolean;
+  asin?: string;
   message: string;
   retryable: boolean;
   completedAsins?: string[];
@@ -623,6 +639,15 @@ export const DEFAULT_AMAZON_CRAWLER_SETTINGS: AmazonCrawlerSettings = {
   headless: false,
   amazonZip: "90001",
   captchaTimeoutSeconds: 180,
+  dnsTimeoutSeconds: 10,
+  connectTimeoutSeconds: 15,
+  httpResponseTimeoutSeconds: 90,
+  navigationTimeoutSeconds: 60,
+  selectorTimeoutSeconds: 15,
+  customizationTimeoutSeconds: 120,
+  childTimeoutSeconds: 300,
+  asinTimeoutSeconds: 1800,
+  jobTimeoutSeconds: 21600,
   maxMatrixVariants: 500,
   storeId: "capozen",
   priceAddition: 0,
