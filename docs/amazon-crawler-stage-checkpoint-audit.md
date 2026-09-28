@@ -23,8 +23,18 @@ Checkpoint lưu dạng journal cục bộ trong `.runtime/cache/checkpoint-*.jso
 - `npm run typecheck`, `npm run build` và `npm run build:mock`: qua.
 - `npm test`: tooling 6/6 và web 666/666 qua; gateway 250/251. Test gateway về symlink `/etc/hosts` trên Windows vẫn trả `SHOPIFY_USER_ERROR` thay vì `SHOPIFY_SECURITY_ERROR`. Đây là lỗi có sẵn ngoài Amazon Crawler; lệnh tổng dừng trước khi chạy engine, nên engine được chạy riêng ở trên.
 
+### Chạy thử Amazon thật: `B0FY3HS8JT` (28/09/2026)
+
+Chạy headless với ZIP `90001` và cache tách biệt, không tạo export hay đồng bộ Shopify.
+
+- Lượt crawl đầu hoàn tất trong 60,6 giây: 12 source variants, 12 sản phẩm, không có lỗi; family cache được ghi thành công.
+- Lượt chạy lại trên cùng cache hoàn tất trong 0,03 giây; cả 12 sản phẩm báo `cacheHit: true`.
+- Thử checkpoint: ngắt có kiểm soát ngay sau khi child đầu tiên hoàn tất. Journal lúc đó chứa parent, matrix và child `B0FY3HS8JT`. Tạo crawler mới với cùng thư mục cache rồi chạy tiếp: family hoàn tất 12 source variants; parent và child đã lưu không bị tải lại, 11 child còn lại được lấy tiếp.
+
+Thử nghiệm checkpoint tạo crawler mới trong cùng tiến trình sau một ngắt có kiểm soát; chưa đo bằng cách kill tiến trình hệ điều hành. Thời gian trên là số đo của lần chạy này, không phải cam kết hiệu năng.
+
 ## Giới hạn vận hành
 
 - Checkpoint nằm trên đĩa của agent. Sau khi **chính agent đó** khởi động lại với cùng `project_root`, nó có thể tiếp tục từ bước còn thiếu. Nếu coordinator chuyển task sang agent khác, agent mới không có journal cũ và có thể phải crawl lại family.
 - Nếu crash trước khi một bước được ghi và `fsync` xong, riêng bước đang chạy phải làm lại. Checkpoint không khôi phục trạng thái giữa một request Amazon đang dở.
-- Chưa chạy crawl trực tiếp tới Amazon để đo mức giảm request trong môi trường thật.
+- Kết quả trên xác nhận một ASIN thật trong một môi trường thử; hiệu quả với ASIN khác và trường hợp coordinator chuyển task sang agent khác chưa được đo.
