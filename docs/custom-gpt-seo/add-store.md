@@ -50,35 +50,13 @@ Khi biến JSON tồn tại, nó được ưu tiên hoàn toàn. Nếu chép sai
 
 ## 4. Khởi động lại
 
-Bước này kiểm tra cấu hình rồi tạo lại container để server nạp map Action Key mới. Dữ liệu queue vẫn nằm trong volume, không bị xóa.
+Bước này chạy script có sẵn để kiểm tra cấu hình, tạo lại container, chờ server hoạt động và kiểm tra website. Dữ liệu queue vẫn nằm trong volume, không bị xóa.
 
 ```bash
-cd /opt/ffp-tool
-
-# Lấy đúng image mà container hiện tại đang sử dụng.
-CURRENT_IMAGE="$(docker inspect --format '{{.Config.Image}}' ffp-tool-app)"
-export DOCKER_IMAGE="$CURRENT_IMAGE"
-
-# Giữ Docker cùng cổng 3010 mà Nginx đang chuyển tiếp tới.
-export APP_PORT=3010
-
-# Kiểm tra file Compose trước khi restart.
-docker compose -f compose.prod.yaml config -q
-
-# Tạo lại riêng dịch vụ app để nạp .env mới.
-docker compose -f compose.prod.yaml up -d --force-recreate app
-
-# Xem container đã chạy và chuyển sang healthy hay chưa.
-docker compose -f compose.prod.yaml ps
+bash /opt/ffp-tool/scripts/restart-gpt-seo.sh
 ```
 
-Container phải chuyển sang `healthy`. Lệnh sau gọi health endpoint qua domain công khai:
-
-```bash
-curl -sS -o /dev/null -w '%{http_code}\n' https://ffp.b6-team.site/health
-```
-
-Kết quả phải là `200`.
+Script tự lấy Docker image hiện tại, dùng cổng `3010`, kiểm tra Compose và chỉ báo thành công khi website trả `HTTP 200`. Nếu có lỗi, script dừng ngay và hiển thị bước bị lỗi.
 
 ## 5. Tạo GPT cho store mới
 
