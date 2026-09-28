@@ -1401,6 +1401,51 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(output["errors"][0]["code"], "PARSER_ERROR")
             self.assertFalse(output["errors"][0]["retryable"])
 
+    def test_mixed_child_failures_report_asins_and_retry_recoverable_child(self) -> None:
+        class MixedFailureCrawler(ParentFamilyCrawler):
+            def __init__(self, **kwargs: object) -> None:
+                super().__init__(**kwargs)
+                self.fetches: list[str] = []
+                self.should_fail_network = True
+
+            def _fetch_parsed(self, normalized: NormalizedInput, *, require_price: bool = True) -> tuple[dict, dict]:
+                self.fetches.append(normalized.asin)
+                if normalized.asin == "B012345679":
+                    raise ValueError("Amazon HTML does not contain a product title.")
+                if normalized.asin == "B012345680" and self.should_fail_network:
+                    raise TimeoutError("network timed out")
+                parsed, diagnostics = super()._fetch_parsed(normalized, require_price=require_price)
+                parsed["dimensions"]["Design"].append("Desert")
+                parsed["asinOptions"]["B012345680"] = {"Design": "Desert"}
+                return parsed, diagnostics
+
+        with tempfile.TemporaryDirectory() as directory:
+            crawler = MixedFailureCrawler(root=Path(directory), settings=CrawlSettings(variant_threads=1), browser_pool=FakeBrowser(PRODUCT_HTML))
+            first = crawler.run(job_id="mixed-first", sources=["B012345678"], write_export=False)
+            self.assertEqual(first["status"], "partial")
+            self.assertEqual(first["completedAsins"], ["B012345678"])
+            self.assertEqual(first["failedAsins"], ["B012345679", "B012345680"])
+            self.assertEqual(first["retryableAsins"], ["B012345680"])
+            self.assertEqual(first["nonRetryableAsins"], ["B012345679"])
+            self.assertTrue(first["errors"][0]["retryable"])
+            self.assertEqual(first["errors"][0]["retryableAsins"], ["B012345680"])
+            partial = crawler.cache.load_partial("B012345678:90001:us-v1")
+            self.assertEqual(partial["completedAsins"], ["B012345678"])
+            self.assertEqual(partial["failedAsins"], ["B012345679", "B012345680"])
+            self.assertEqual(partial["completedAsins"], first["completedAsins"])
+            self.assertEqual(partial["failedAsins"], first["failedAsins"])
+
+            crawler.should_fail_network = False
+            crawler.cache.clear_failure("B012345680:90001:us-v1")
+            second = crawler.run(job_id="mixed-second", sources=["B012345678"], write_export=False)
+            self.assertEqual(second["completedAsins"], ["B012345678", "B012345680"])
+            self.assertEqual(second["failedAsins"], ["B012345679"])
+            self.assertEqual(second["retryableAsins"], [])
+            self.assertEqual(second["nonRetryableAsins"], ["B012345679"])
+            self.assertFalse(second["errors"][0]["retryable"])
+            self.assertEqual(crawler.cache.load_partial("B012345678:90001:us-v1")["completedAsins"], ["B012345678", "B012345680"])
+            self.assertEqual(crawler.fetches, ["B012345678", "B012345679", "B012345680", "B012345680"])
+
     def test_gallery_failure_blocks_publishing_incomplete_product(self) -> None:
         product = {
             "variantMatrix": {"complete": True},

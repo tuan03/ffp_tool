@@ -959,6 +959,10 @@ class ClientAgentTests(unittest.IsolatedAsyncioTestCase):
                     "status": "completed",
                     "products": [product],
                     "errors": [],
+                    "completedAsins": ["B0FR4MSS2H"],
+                    "failedAsins": [],
+                    "retryableAsins": [],
+                    "nonRetryableAsins": [],
                     "warnings": [],
                     "completedAt": "2026-09-22T00:00:01Z",
                     "durationMs": 1000,
@@ -1004,6 +1008,7 @@ class ClientAgentTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(pending_products[0]["productKey"], "amazon:B0FR4MSS2H:design:ocean")
             self.assertEqual(pending_products[0]["payload"]["jobId"], "job-1")
             self.assertEqual(len(pending_results), 1)
+            self.assertEqual(pending_results[0]["payload"]["completedAsins"], ["B0FR4MSS2H"])
 
     def test_paused_agent_advertises_no_available_slots(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -1884,6 +1889,41 @@ class CoordinatorStoreTests(unittest.TestCase):
             session.get(ClientRecord, "client-a").status = "offline"
         with patch("engine.distributed.coordinator_store.utc_now", return_value=utc_now() + timedelta(seconds=2)):
             self.assertEqual(len(self.store.lease_tasks("client-b", 1)), 1)
+
+    def test_mixed_partial_failure_retries_remaining_child_and_preserves_asin_lists(self) -> None:
+        job = self.store.create_job({"urls": ["B012345678"]})
+        self.store.register_client(client_hello(slots=1))
+        first = self.store.lease_tasks("client-a", 1)[0]
+        initial_error = {
+            "status": "partial", "reason": "mixed_failures", "code": "PARTIAL_CRAWL",
+            "message": "Family has incomplete children.", "retryable": True,
+            "retryAfter": (utc_now() + timedelta(seconds=1)).isoformat(),
+            "completedAsins": ["B012345678"],
+            "failedAsins": ["B012345679", "B012345680"],
+            "retryableAsins": ["B012345680"],
+            "nonRetryableAsins": ["B012345679"],
+        }
+        self.assertEqual(self.store.fail_task("client-a", {
+            "taskId": first["taskId"], "leaseId": first["leaseId"], "error": initial_error,
+        })["status"], "queued")
+        with patch("engine.distributed.coordinator_store.utc_now", return_value=utc_now() + timedelta(seconds=2)):
+            second = self.store.lease_tasks("client-a", 1)[0]
+        final_error = {
+            **initial_error,
+            "retryable": False,
+            "completedAsins": ["B012345678", "B012345680"],
+            "failedAsins": ["B012345679"],
+            "retryableAsins": [],
+        }
+        self.store.fail_task("client-a", {
+            "taskId": second["taskId"], "leaseId": second["leaseId"], "error": final_error,
+        })
+        output = self.store.job_results(str(job["id"]))
+        self.assertEqual(output["completedAsins"], ["B012345678", "B012345680"])
+        self.assertEqual(output["failedAsins"], ["B012345679"])
+        self.assertEqual(output["retryableAsins"], [])
+        self.assertEqual(output["nonRetryableAsins"], ["B012345679"])
+        self.assertEqual(output["errors"][0]["completedAsins"], ["B012345678", "B012345680"])
 
     def test_expired_lease_requeues_without_counting_as_crawl_failure(self) -> None:
         self._create_four_task_job()

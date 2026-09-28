@@ -294,6 +294,9 @@ class CoordinatorStore:
             "retryable": bool(error.get("retryable")), "retryAfter": error["retryAfter"],
             "code": str(error.get("code") or error["status"]).upper(),
             "message": str(error.get("message") or "Amazon crawl failed."),
+            **{key: error[key] for key in (
+                "completedAsins", "failedAsins", "retryableAsins", "nonRetryableAsins",
+            ) if isinstance(error.get(key), list)},
         }
         if error.get("status") == "partial" and error.get("resumeClientId"):
             failure["resumeClientId"] = str(error["resumeClientId"])
@@ -2412,6 +2415,17 @@ class CoordinatorStore:
             invalid = session.scalars(select(InvalidJobInput).where(InvalidJobInput.job_id == job_id).order_by(InvalidJobInput.ordinal)).all()
             products: dict[str, dict[str, Any]] = {}
             warnings: list[str] = []
+            asin_lists: dict[str, list[str]] = {
+                "completedAsins": [], "failedAsins": [],
+                "retryableAsins": [], "nonRetryableAsins": [],
+            }
+
+            def collect_asins(payload: dict[str, Any]) -> None:
+                for key, values in asin_lists.items():
+                    candidates = payload.get(key)
+                    if isinstance(candidates, list):
+                        values.extend(asin for asin in candidates if isinstance(asin, str))
+
             errors: list[dict[str, Any]] = [
                 {
                     "source": entry.source, "code": "INVALID_INPUT", "status": "invalid_asin",
@@ -2442,6 +2456,7 @@ class CoordinatorStore:
             for task in tasks:
                 if task.result:
                     result = dict(task.result.payload)
+                    collect_asins(result)
                     if not pipeline_items:
                         for product in result.get("products", []):
                             if isinstance(product, dict) and product.get("id"):
@@ -2450,12 +2465,16 @@ class CoordinatorStore:
                     warnings.extend(str(warning) for warning in result.get("warnings", []) if isinstance(warning, str))
                 elif task.status == "failed":
                     last_error = task.last_error or {}
+                    collect_asins(last_error)
                     errors.append({
                         "source": task.source,
                         "code": str(last_error.get("code") or "CRAWL_FAILED"),
                         "message": str(last_error.get("message") or "Crawler failed."),
                         "retryable": bool(last_error.get("retryable", True)),
-                        **{key: last_error[key] for key in ("status", "reason", "retryAfter") if key in last_error},
+                        **{key: last_error[key] for key in (
+                            "status", "reason", "retryAfter", "completedAsins", "failedAsins",
+                            "retryableAsins", "nonRetryableAsins",
+                        ) if key in last_error},
                     })
             product_values = list(products.values())
             started_at = _as_utc(job.started_at or job.created_at)
@@ -2470,6 +2489,7 @@ class CoordinatorStore:
                 "settings": job.settings,
                 "products": product_values,
                 "errors": errors,
+                **{key: sorted(set(values)) for key, values in asin_lists.items()},
                 "warnings": list(dict.fromkeys(warnings)),
                 "statistics": {
                     "requestedInputs": job.requested_inputs,

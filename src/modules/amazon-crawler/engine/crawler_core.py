@@ -862,7 +862,7 @@ class CachedCrawlFailure(RuntimeError):
 class PartialCrawlError(RuntimeError):
     def __init__(
         self, products: list[dict[str, Any]], retry_after: str | None,
-        *, retryable: bool, reason: str, code: str,
+        *, retryable: bool, reason: str, code: str, asin_status: dict[str, list[str]],
     ) -> None:
         message = {
             "PARSER_ERROR": "Amazon HTML parser could not read a child product; check for HTML changes.",
@@ -874,6 +874,7 @@ class PartialCrawlError(RuntimeError):
         self.retryable = retryable
         self.reason = reason
         self.code = code
+        self.asin_status = asin_status
 
 
 def classify_crawl_failure(error: Exception) -> dict[str, Any]:
@@ -1789,7 +1790,9 @@ class AmazonCrawler:
             self.cache.save(cache_key, family)
         else:
             parent["asinOptions"] = asin_options
-            self.cache.save_partial(cache_key, {"parent": parent, "family": family})
+            self.cache.save_partial(cache_key, {
+                "parent": parent, "family": family, **self._family_asin_status(family),
+            })
         self._report_progress(
             phase="product",
             message=f"Đã lấy đủ dữ liệu {variant_completed}/{variant_total} variants; đang tách sản phẩm.",
@@ -1811,6 +1814,31 @@ class AmazonCrawler:
             and (variant.get("diagnostics") or {}).get("fetchMode") != "failed"
             and not any("gallery" in str(warning).casefold() for warning in variant.get("warnings", []))
         )
+
+    def _family_asin_status(self, family: dict[str, Any]) -> dict[str, list[str]]:
+        completed_asins: list[str] = []
+        failed_asins: list[str] = []
+        retryable_asins: list[str] = []
+        non_retryable_asins: list[str] = []
+        for variant in family.get("sourceVariants", []):
+            if not isinstance(variant, dict) or not isinstance(variant.get("asin"), str):
+                continue
+            asin = variant["asin"]
+            if self._variant_cache_complete(variant):
+                completed_asins.append(asin)
+                continue
+            failed_asins.append(asin)
+            failure = self.cache.load_failure(f"{asin}:{self.settings.amazon_zip}:us-v1")
+            if failure is not None and failure.get("status") in {"not_found", "parser_error", "invalid_asin"}:
+                non_retryable_asins.append(asin)
+            else:
+                retryable_asins.append(asin)
+        return {
+            "completedAsins": sorted(set(completed_asins)),
+            "failedAsins": sorted(set(failed_asins)),
+            "retryableAsins": sorted(set(retryable_asins)),
+            "nonRetryableAsins": sorted(set(non_retryable_asins)),
+        }
 
     @staticmethod
     def _infer_consensus_prices(variants: list[dict[str, Any]]) -> None:
@@ -2030,10 +2058,14 @@ class AmazonCrawler:
                 })
         rejected_inputs = len(errors)
         products: list[dict[str, Any]] = []
+        completed_asins: list[str] = []
+        failed_asins: list[str] = []
+        retryable_asins: list[str] = []
+        non_retryable_asins: list[str] = []
         completed = 0
         self._initialize_progress(normalized_inputs)
 
-        def crawl_one(normalized: NormalizedInput) -> tuple[NormalizedInput, list[dict[str, Any]]]:
+        def crawl_one(normalized: NormalizedInput) -> tuple[NormalizedInput, list[dict[str, Any]], dict[str, list[str]]]:
             self._check_cancelled()
             emitted_product_ids: set[str] = set()
 
@@ -2063,29 +2095,49 @@ class AmazonCrawler:
                 family.get("variantMatrix", {}).get("complete") is not True
                 or any(not self._variant_cache_complete(variant) for variant in family.get("sourceVariants", []))
             ):
+                asin_status = self._family_asin_status(family)
                 failures = [
                     failure
                     for variant in family.get("sourceVariants", [])
+                    if variant["asin"] in asin_status["retryableAsins"]
                     if (failure := self.cache.load_failure(
                         f"{variant['asin']}:{self.settings.amazon_zip}:us-v1"
                     )) is not None
                 ]
-                retry_after = max(
-                    (failure["retryAfter"] for failure in failures),
-                    default=(datetime.now(timezone.utc) + timedelta(seconds=30)).isoformat(),
-                )
-                terminal_failure = next(
-                    (failure for failure in failures if failure["status"] in {"not_found", "parser_error"}), None
-                )
+                terminal_failures = [
+                    failure
+                    for variant in family.get("sourceVariants", [])
+                    if variant["asin"] in asin_status["nonRetryableAsins"]
+                    if (failure := self.cache.load_failure(
+                        f"{variant['asin']}:{self.settings.amazon_zip}:us-v1"
+                    )) is not None
+                ]
                 matrix = family.get("variantMatrix", {})
                 is_capped = matrix.get("complete") is False and matrix.get("discoveredCount", 0) >= matrix.get("safetyCap", 500)
+                retryable = not is_capped and bool(
+                    asin_status["retryableAsins"] or matrix.get("complete") is False
+                )
+                terminal_failure = terminal_failures[0] if terminal_failures else None
+                retry_after = max(
+                    (failure["retryAfter"] for failure in failures),
+                    default=(datetime.now(timezone.utc) + timedelta(seconds=30)).isoformat() if retryable else (
+                        terminal_failure["retryAfter"] if terminal_failure else None
+                    ),
+                )
+                if is_capped:
+                    reason, code = "variant_limit", "PARTIAL_CRAWL"
+                elif asin_status["retryableAsins"] and asin_status["nonRetryableAsins"]:
+                    reason, code = "mixed_failures", "PARTIAL_CRAWL"
+                elif terminal_failure and not retryable:
+                    reason, code = terminal_failure["reason"], terminal_failure["status"].upper()
+                else:
+                    reason, code = "incomplete", "PARTIAL_CRAWL"
                 raise PartialCrawlError(
                     family_products, retry_after,
-                    retryable=terminal_failure is None and not is_capped,
-                    reason=terminal_failure["reason"] if terminal_failure else ("variant_limit" if is_capped else "incomplete"),
-                    code=terminal_failure["status"].upper() if terminal_failure else "PARTIAL_CRAWL",
+                    retryable=retryable, reason=reason, code=code,
+                    asin_status=asin_status,
                 )
-            return normalized, family_products
+            return normalized, family_products, self._family_asin_status(family)
 
         product_worker_count = effective_product_threads(len(normalized_inputs), self.settings)
         self._report_progress(
@@ -2105,8 +2157,12 @@ class AmazonCrawler:
                 item_message = "Đã hoàn tất sản phẩm."
                 family_products: list[dict[str, Any]] = []
                 input_errors: list[dict[str, Any]] = []
+                asin_status = {
+                    "completedAsins": [], "failedAsins": [],
+                    "retryableAsins": [], "nonRetryableAsins": [],
+                }
                 try:
-                    _, family_products = future.result()
+                    _, family_products, asin_status = future.result()
                     products.extend(family_products)
                 except InterruptedError:
                     self.cancel_event.set()
@@ -2114,11 +2170,13 @@ class AmazonCrawler:
                     item_message = "Đã dừng xử lý sản phẩm."
                 except PartialCrawlError as error:
                     family_products = error.products
+                    asin_status = error.asin_status
                     products.extend(family_products)
                     input_error = {
                         "source": normalized.source, "code": error.code, "status": "partial",
                         "reason": error.reason, "message": str(error),
                         "retryable": error.retryable, "retryAfter": error.retry_after,
+                        **asin_status,
                     }
                     errors.append(input_error)
                     input_errors.append(input_error)
@@ -2126,6 +2184,11 @@ class AmazonCrawler:
                     item_message = "Cào chưa đủ dữ liệu; sẽ thử lại phần thiếu."
                 except Exception as error:
                     policy = classify_crawl_failure(error)
+                    asin_status = {
+                        "completedAsins": [], "failedAsins": [normalized.asin],
+                        "retryableAsins": [normalized.asin] if policy["retryable"] else [],
+                        "nonRetryableAsins": [] if policy["retryable"] else [normalized.asin],
+                    }
                     failure = error.failure if isinstance(error, CachedCrawlFailure) else self.cache.save_failure(
                         f"{normalized.asin}:{self.settings.amazon_zip}:us-v1",
                         status=policy["status"], reason=policy["reason"],
@@ -2135,12 +2198,16 @@ class AmazonCrawler:
                         "source": normalized.source, "code": policy["status"].upper(),
                         "status": policy["status"], "reason": policy["reason"],
                         "retryAfter": failure["retryAfter"], "message": str(error),
-                        "retryable": policy["retryable"],
+                        "retryable": policy["retryable"], **asin_status,
                     }
                     errors.append(input_error)
                     input_errors.append(input_error)
                     item_status = "failed"
                     item_message = f"Cào thất bại: {error}"
+                completed_asins.extend(asin_status["completedAsins"])
+                failed_asins.extend(asin_status["failedAsins"])
+                retryable_asins.extend(asin_status["retryableAsins"])
+                non_retryable_asins.extend(asin_status["nonRetryableAsins"])
                 completed += 1
                 self._report_progress(
                     phase="product",
@@ -2164,6 +2231,7 @@ class AmazonCrawler:
                         }),
                         "completedAt": _now_iso(),
                         "durationMs": round((time.monotonic() - input_started_time) * 1000),
+                        **asin_status,
                     })
         products_by_id = {product["id"]: product for product in products}
         products = list(products_by_id.values())
@@ -2173,6 +2241,10 @@ class AmazonCrawler:
             "version": SCHEMA_VERSION, "jobId": job_id, "status": status,
             "startedAt": started_at, "completedAt": completed_at, "settings": self.settings.api_dict(),
             "products": products, "errors": errors,
+            "completedAsins": sorted(set(completed_asins)),
+            "failedAsins": sorted(set(failed_asins)),
+            "retryableAsins": sorted(set(retryable_asins)),
+            "nonRetryableAsins": sorted(set(non_retryable_asins)),
             "warnings": sorted(set(self.proxy_warnings) | {warning for product in products for warning in product.get("warnings", [])}),
             "statistics": {
                 "requestedInputs": len(sources), "acceptedInputs": len(normalized_inputs),

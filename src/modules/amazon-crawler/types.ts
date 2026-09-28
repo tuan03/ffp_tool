@@ -197,6 +197,10 @@ export interface AmazonCrawlerError {
   retryAfter?: string;
   message: string;
   retryable: boolean;
+  completedAsins?: string[];
+  failedAsins?: string[];
+  retryableAsins?: string[];
+  nonRetryableAsins?: string[];
 }
 
 export interface ProductMedia {
@@ -369,6 +373,10 @@ export interface AmazonCrawlerOutput {
   settings: AmazonCrawlerSettings;
   products: AmazonCrawlerProduct[];
   errors: AmazonCrawlerError[];
+  completedAsins?: string[];
+  failedAsins?: string[];
+  retryableAsins?: string[];
+  nonRetryableAsins?: string[];
   warnings: string[];
   statistics: AmazonCrawlerStatistics;
   exportFilename: string | null;

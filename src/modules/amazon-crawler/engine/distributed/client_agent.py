@@ -673,6 +673,9 @@ class DistributedCrawlerAgent:
                 "status": input_result["status"], "products": input_result["products"],
                 "errors": input_result["errors"], "warnings": input_result["warnings"],
                 "durationMs": input_result["durationMs"],
+                **{key: input_result.get(key, []) for key in (
+                    "completedAsins", "failedAsins", "retryableAsins", "nonRetryableAsins",
+                )},
             }
             envelope = {
                 "version": "distributed-1", "agentVersion": AGENT_VERSION,

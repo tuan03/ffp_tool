@@ -307,6 +307,9 @@ test("mock runtime returns fresh contract data", async () => {
   firstProduct.variants.push(firstVariant);
   assert.equal(second.products[0]?.variants.length, originalVariantCount);
   assert.notEqual(firstProduct.variants.length, second.products[0]?.variants.length);
+  assert.equal(first.completedAsins?.length, 5);
+  first.completedAsins?.push("B0NEW00001");
+  assert.equal(second.completedAsins?.includes("B0NEW00001"), false);
 });
 
 test("module exports route and stable input serialization", () => {
