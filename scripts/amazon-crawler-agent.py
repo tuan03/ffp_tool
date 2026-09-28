@@ -10,6 +10,9 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 AMAZON_CRAWLER_ROOT = REPOSITORY_ROOT / "src" / "modules" / "amazon-crawler"
 if AMAZON_CRAWLER_ROOT.is_dir():
     sys.path.insert(0, str(AMAZON_CRAWLER_ROOT))
+PINTEREST_POD_ROOT = REPOSITORY_ROOT / "src" / "modules" / "pinterest-pod" / "server"
+if PINTEREST_POD_ROOT.is_dir():
+    sys.path.insert(0, str(PINTEREST_POD_ROOT))
 
 from engine.distributed.client_main import main
 

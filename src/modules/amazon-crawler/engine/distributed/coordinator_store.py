@@ -171,12 +171,21 @@ class CoordinatorStore:
                 job.started_at = job.started_at or utc_now()
                 job.completed_at = None
             else:
-                product_failed = any(
-                    product_statuses.get(status, 0)
-                    for status in {"failed", "reconciliation_required", "cancelled", "rejected"}
-                )
-                job.status = "partial" if statuses.get("failed", 0) or job.rejected_inputs or product_failed else "completed"
-                job.completed_at = utc_now()
+                if (job.settings or {}).get("channel") == "pinterest":
+                    if statuses.get("failed", 0) == total:
+                        job.status = "failed"
+                    elif (job.settings or {}).get("stage") in {"crawl", "crawl_and_review"}:
+                        job.status = "ready_for_review"
+                    else:
+                        job.status = "completed"
+                    job.completed_at = utc_now()
+                else:
+                    product_failed = any(
+                        product_statuses.get(status, 0)
+                        for status in {"failed", "reconciliation_required", "cancelled", "rejected"}
+                    )
+                    job.status = "partial" if statuses.get("failed", 0) or job.rejected_inputs or product_failed else "completed"
+                    job.completed_at = utc_now()
         elif statuses.get("leased", 0) or statuses.get("running", 0) or statuses.get("completed", 0):
             job.status = "running"
             job.started_at = job.started_at or utc_now()
@@ -242,6 +251,47 @@ class CoordinatorStore:
             self._event(session, job.id, "job_created", {"accepted": accepted, "rejected": rejected})
             self._refresh_job(session, job.id)
             return self._job_snapshot(session, job)
+
+    def create_pinterest_job(self, payload: dict[str, Any]) -> dict[str, Any]:
+        niche = str(payload.get("niche") or payload.get("source") or "").strip()
+        stage = str(payload.get("workflow_stage") or payload.get("stage") or "crawl").lower().strip()
+        workflow_stage = "production" if stage in {"produce", "production"} else "crawl_and_review"
+        settings = dict(payload)
+        settings["channel"] = "pinterest"
+        settings["stage"] = stage
+        settings["action"] = stage
+        settings["workflow_stage"] = workflow_stage
+        external_request_id = str(payload.get("externalRequestId") or "").strip() or None
+        with self._job_creation_lock, self.sessions.begin() as session:
+            job = CrawlJob(
+                id=_id(),
+                external_request_id=external_request_id,
+                status="queued",
+                settings=settings,
+                requested_inputs=1,
+                accepted_inputs=1,
+                rejected_inputs=0,
+            )
+            session.add(job)
+            session.add(CrawlJobControl(
+                job_id=job.id,
+                state="active",
+                priority=max(0, min(100, int(payload.get("schedulerPriority") or 10))),
+            ))
+            task = CrawlTask(
+                id=_id(),
+                job_id=job.id,
+                ordinal=0,
+                source=niche or f"pinterest-{stage}",
+                asin=f"PIN_{stage[:6].upper()}",
+                canonical_url=f"pinterest://{stage}/{niche}",
+                status="queued",
+            )
+            session.add(task)
+            self._event(session, job.id, "job_created", {"channel": "pinterest", "stage": stage})
+            self._refresh_job(session, job.id)
+            return self._job_snapshot(session, job)
+
 
     @staticmethod
     def _cache_generation(session) -> int:
@@ -395,18 +445,28 @@ class CoordinatorStore:
                 )
             ) or 0
             count = min(count, max(0, client.max_concurrent_inputs - int(active_count)))
-            if count == 0:
-                return []
+            client_caps = client.capabilities if isinstance(client.capabilities, dict) else {}
+            can_pinterest = bool(client_caps.get("pinterest", False))
+            can_amazon = bool(client_caps.get("amazon", True))
             tasks = session.scalars(
                 select(CrawlTask)
                 .join(CrawlJob, CrawlTask.job_id == CrawlJob.id)
                 .outerjoin(CrawlJobControl, CrawlJobControl.job_id == CrawlJob.id)
                 .where(CrawlTask.status == "queued", CrawlJob.status.in_(["queued", "running"]))
                 .order_by(func.coalesce(CrawlJobControl.priority, 0).desc(), CrawlJob.created_at, CrawlTask.ordinal)
-                .limit(count)
+                .limit(count * 2)
                 .with_for_update(skip_locked=True)
             ).all()
             for task in tasks:
+                if len(leases) >= count:
+                    break
+                job = session.get(CrawlJob, task.job_id)
+                job_settings = dict(job.settings if job else {})
+                channel = str(job_settings.get("channel", "amazon")).lower()
+                if channel == "pinterest" and not can_pinterest:
+                    continue
+                if channel == "amazon" and not can_amazon:
+                    continue
                 lease_id = _id()
                 task.status = "leased"
                 task.assigned_client_id = client_id
@@ -419,7 +479,6 @@ class CoordinatorStore:
                 )
                 session.add(attempt)
                 self._refresh_job(session, task.job_id)
-                job = session.get(CrawlJob, task.job_id)
                 leases.append({
                     "type": "assignment",
                     "taskId": task.id,
@@ -428,8 +487,10 @@ class CoordinatorStore:
                     "source": task.source,
                     "asin": task.asin,
                     "url": task.canonical_url,
-                    "settings": dict(job.settings if job else {}),
-                    "settingsFingerprint": settings_fingerprint(dict(job.settings if job else {})),
+                    "channel": channel,
+                    "action": str(job_settings.get("action") or job_settings.get("stage", "crawl")),
+                    "settings": job_settings,
+                    "settingsFingerprint": settings_fingerprint(job_settings),
                     "leaseExpiresAt": utc_iso(task.lease_expires_at),
                 })
                 self._event(session, task.job_id, "task_leased", {"taskId": task.id, "clientId": client_id})
@@ -2513,7 +2574,7 @@ class CoordinatorStore:
                 "status": cleanup.status,
                 "error": cleanup.error,
             })
-        return {
+        snapshot = {
             "id": job.id, "externalRequestId": job.external_request_id, "status": job.status,
             "settings": job.settings, "settingsFingerprint": settings_fingerprint(job.settings),
             "inputs": [task.source for task in tasks],
@@ -2535,3 +2596,57 @@ class CoordinatorStore:
             "createdAt": utc_iso(job.created_at), "startedAt": utc_iso(job.started_at) if job.started_at else None,
             "completedAt": utc_iso(job.completed_at) if job.completed_at else None,
         }
+        if (job.settings or {}).get("channel") == "pinterest":
+            candidates: list[Any] = []
+            rejected_candidates: list[Any] = []
+            deliverables: dict[str, Any] = {}
+            summary_metrics: dict[str, Any] = {}
+            logs: list[str] = []
+            for task in tasks:
+                if task.result and isinstance(task.result.payload, dict):
+                    res_cands = task.result.payload.get("candidates")
+                    if isinstance(res_cands, list) and not candidates:
+                        candidates = res_cands
+                    res_rejected = task.result.payload.get("rejected_candidates")
+                    if isinstance(res_rejected, list) and not rejected_candidates:
+                        rejected_candidates = res_rejected
+                    res_deliv = task.result.payload.get("deliverables")
+                    if isinstance(res_deliv, dict) and not deliverables:
+                        deliverables = res_deliv
+                    res_metrics = task.result.payload.get("summaryMetrics") or task.result.payload.get("summary_metrics")
+                    if isinstance(res_metrics, dict) and not summary_metrics:
+                        summary_metrics = res_metrics
+                    res_logs = task.result.payload.get("logs")
+                    if isinstance(res_logs, list):
+                        logs.extend(res_logs)
+            events = session.scalars(
+                select(JobEvent).where(JobEvent.job_id == job.id).order_by(JobEvent.id)
+            ).all()
+            for ev in events:
+                if isinstance(ev.payload, dict) and "message" in ev.payload:
+                    logs.append(str(ev.payload["message"]))
+            snapshot.update({
+                "ok": True,
+                "jobId": job.id,
+                "job_id": job.id,
+                "niche": (job.settings or {}).get("niche"),
+                "product": (job.settings or {}).get("product"),
+                "candidates": candidates,
+                "rejected_candidates": rejected_candidates,
+                "total_candidates": len(candidates),
+                "deliverables": deliverables,
+                "summaryMetrics": summary_metrics,
+                "summary_metrics": summary_metrics,
+                "logs": logs,
+            })
+            if job.status == "queued":
+                snapshot["stepper"] = {"current_step": 1, "percent": 10, "current_message": "Đang xếp hàng chờ Agent kết nối..."}
+            elif job.status == "running":
+                snapshot["stepper"] = {"current_step": 2, "percent": 50, "current_message": "Agent đang thực thi..."}
+            elif job.status == "ready_for_review":
+                snapshot["stepper"] = {"current_step": 2, "percent": 100, "current_message": "Đã quét xong ứng viên! Sẵn sàng duyệt mẫu."}
+            elif job.status == "completed":
+                snapshot["stepper"] = {"current_step": 4, "percent": 100, "current_message": "Hoàn thành! Đã tạo đầy đủ mockup AI & file in CMYK xưởng."}
+            elif job.status == "failed":
+                snapshot["stepper"] = {"current_step": 1, "percent": 0, "current_message": "Tác vụ thất bại."}
+        return snapshot

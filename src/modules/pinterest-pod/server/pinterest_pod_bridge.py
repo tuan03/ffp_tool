@@ -1775,7 +1775,7 @@ def _run_local_pipeline_worker(job_id: str, req_body: dict[str, Any], base_url: 
                 )
         elif stage == "production":
             selected = req_body.get("selected_candidates") or []
-            src_run_id = req_body.get("source_run_id")
+            src_run_id = req_body.get("source_run_id") or req_body.get("jobId") or req_body.get("job_id")
             src_dir = resolve_run_dir(src_run_id) if src_run_id else None
 
             # Resolve candidate dictionaries from source run's candidate_review.json if strings/IDs were passed

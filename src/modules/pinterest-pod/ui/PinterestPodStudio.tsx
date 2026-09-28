@@ -47,6 +47,10 @@ export function PinterestPodStudio({
   const [authStatus, setAuthStatus] = useState<PinterestAuthStatus | null>(null);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
 
+  // Distributed Agent State
+  const [isAgentConnected, setIsAgentConnected] = useState(false);
+  const [agentName, setAgentName] = useState<string | undefined>(undefined);
+
   // Form State
   const [niche, setNiche] = useState("Halloween spooky cute");
   const [product, setProduct] = useState<PinterestProductType>("bag");
@@ -405,6 +409,45 @@ export function PinterestPodStudio({
     return () => {
       isMountedRef.current = false;
       stopPolling();
+    };
+  }, [client]);
+
+  // Poll connected crawler agents periodically
+  useEffect(() => {
+    let timer: ReturnType<typeof setInterval> | null = null;
+
+    async function checkAgentStatus(): Promise<void> {
+      try {
+        if (!client.getCrawlerClients) return;
+        const clients = await client.getCrawlerClients();
+        if (!isMountedRef.current) return;
+        const activeAgent = clients.find(
+          (c) => c.isConnected && (!c.capabilities || c.capabilities.pinterest !== false),
+        );
+        if (activeAgent) {
+          setIsAgentConnected(true);
+          setAgentName(activeAgent.displayName || activeAgent.id);
+        } else {
+          setIsAgentConnected(false);
+          setAgentName(undefined);
+        }
+      } catch {
+        if (isMountedRef.current) {
+          setIsAgentConnected(false);
+          setAgentName(undefined);
+        }
+      }
+    }
+
+    void checkAgentStatus();
+    timer = setInterval(() => {
+      void checkAgentStatus();
+    }, 5000);
+
+    return () => {
+      if (timer !== null) {
+        clearInterval(timer);
+      }
     };
   }, [client]);
 
@@ -879,7 +922,7 @@ export function PinterestPodStudio({
 
   // Packaged SEO payload when deliverables available
   const seoPayload = useMemo(() => {
-    if (!deliverables || !jobId || jobStatus !== "completed") return undefined;
+    if (!deliverables || !jobId) return undefined;
     return packageDeliverablesForSeo(
       {
         ok: true,
@@ -904,7 +947,7 @@ export function PinterestPodStudio({
         variants: shopifySettings.variants,
       },
     );
-  }, [deliverables, jobId, jobStatus, candidates, product, selectedCandidateIds, shopifySettings]);
+  }, [deliverables, jobId, candidates, product, selectedCandidateIds, shopifySettings]);
 
   const hasStage2 = candidates.length > 0 || jobStatus === "ready_for_review";
   const hasDeliverables =
@@ -954,11 +997,28 @@ export function PinterestPodStudio({
         recentRuns={recentRuns}
         onLoadJob={(targetId) => void handleLoadJob(targetId)}
         onNewJob={handleNewJob}
+        isAgentConnected={isAgentConnected}
+        agentName={agentName}
       />
 
       {/* TAB 1: Quét Trend & Khởi tạo Job */}
       {currentStage === 1 && (
         <div className="flex flex-col gap-5 animate-in fade-in duration-200">
+          {/* Agent Offline Notice Banner */}
+          {!isAgentConnected && (
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 rounded-xl border border-slate-700/80 bg-slate-800/40 p-3 text-xs text-slate-300">
+              <div className="flex items-center gap-2.5">
+                <span className="text-base">💻</span>
+                <div>
+                  <span className="font-semibold text-slate-200">Local Agent Ngoại Tuyến: </span>
+                  <span className="text-slate-400">
+                    Để thực thi cào Playwright và render CMYK 300DPI mà không gây tải/OOM cho VPS, hãy chạy lệnh{" "}
+                    <code className="rounded bg-slate-900 px-1.5 py-0.5 font-mono text-cyan-300">npm run dev:agent</code> trên máy cá nhân của bạn.
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
           {/* Active Job Alert Banner with Stop & Unlock */}
           {(jobStatus === "running" || jobStatus === "producing") && (
             <div className="flex flex-col sm:flex-row items-center justify-between gap-3 rounded-xl border border-cyan-500/60 bg-gradient-to-r from-slate-900 via-cyan-950/40 to-slate-900 p-4 text-xs shadow-lg">

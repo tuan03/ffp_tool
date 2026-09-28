@@ -374,6 +374,7 @@ export function ProductionStep({
           deliverables={deliverables}
           summaryMetrics={summaryMetrics}
           seoPayload={seoPayload}
+          jobId={jobId}
           onPreviewImage={onPreviewImage}
           onHandoverToSeo={onHandoverToSeo}
         />
