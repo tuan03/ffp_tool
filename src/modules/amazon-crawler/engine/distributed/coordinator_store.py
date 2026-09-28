@@ -65,6 +65,62 @@ NEGATIVE_CACHE_PREFIX = "amazon-negative:"
 CAPTCHA_COOLDOWN_KEY = "amazon-captcha-cooldown"
 
 
+def _bounded_progress(payload: Any) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        return {}
+    progress = {
+        key: str(payload[key])[:240]
+        for key in ("phase", "message", "source", "status")
+        if isinstance(payload.get(key), str)
+    }
+    for key in ("completed", "total"):
+        if isinstance(payload.get(key), int):
+            progress[key] = max(0, payload[key])
+    items = payload.get("items")
+    if isinstance(items, list):
+        progress["items"] = []
+        for raw_item in items[:20]:
+            if not isinstance(raw_item, dict):
+                continue
+            item = {
+                key: str(raw_item[key])[:240]
+                for key in ("source", "asin", "phase", "status", "message", "currentAsin", "networkRoute", "browserProfile")
+                if isinstance(raw_item.get(key), str)
+            }
+            for key in ("variantCompleted", "variantTotal"):
+                if isinstance(raw_item.get(key), int):
+                    item[key] = max(0, raw_item[key])
+            options = raw_item.get("currentOptions")
+            if isinstance(options, dict):
+                item["currentOptions"] = {
+                    str(key)[:80]: str(value)[:80]
+                    for key, value in list(options.items())[:8]
+                }
+            variants = raw_item.get("activeVariants")
+            if isinstance(variants, list):
+                item["activeVariants"] = [
+                    {"asin": str(variant.get("asin") or "")[:10], "options": {
+                        str(key)[:80]: str(value)[:80]
+                        for key, value in list((variant.get("options") or {}).items())[:8]
+                    }}
+                    for variant in variants[:16]
+                    if isinstance(variant, dict) and isinstance(variant.get("options") or {}, dict)
+                ]
+            progress["items"].append(item)
+    pool = payload.get("browserPool")
+    if isinstance(pool, dict):
+        bounded_pool = {}
+        for key in (
+            "directProfiles", "proxyProfiles", "tabsPerProfile", "directActive", "proxyActive",
+            "directQueued", "proxyQueued",
+        ):
+            value = pool.get(key)
+            if isinstance(value, int):
+                bounded_pool[key] = max(0, value)
+        progress["browserPool"] = bounded_pool
+    return progress
+
+
 class ActiveJobExistsError(RuntimeError):
     def __init__(self, job_id: str) -> None:
         super().__init__(f"Crawl job {job_id} is still active.")
@@ -630,7 +686,7 @@ class CoordinatorStore:
             task.status = "running"
             task.lease_expires_at = utc_now() + timedelta(seconds=LEASE_SECONDS)
             self._event(session, task.job_id, "task_progress", {
-                "taskId": task.id, "clientId": client_id, "progress": payload.get("progress") or {},
+                "taskId": task.id, "clientId": client_id, "progress": _bounded_progress(payload.get("progress")),
             })
 
     def fail_task(self, client_id: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -2296,10 +2352,105 @@ class CoordinatorStore:
             job = session.get(CrawlJob, job_id)
             return self._job_snapshot(session, job) if job else None
 
+    def job_summary(self, job_id: str) -> dict[str, Any] | None:
+        with self.sessions() as session:
+            job = session.get(CrawlJob, job_id)
+            return self._job_summary(session, job) if job else None
+
+    def job_metadata(self, job_id: str) -> dict[str, Any] | None:
+        with self.sessions() as session:
+            job = session.get(CrawlJob, job_id)
+            if job is None:
+                return None
+            return {"id": job.id, "settings": job.settings}
+
+    @staticmethod
+    def _job_summary(session, job: CrawlJob) -> dict[str, Any]:
+        task_counts = dict(session.execute(
+            select(CrawlTask.status, func.count(CrawlTask.id))
+            .where(CrawlTask.job_id == job.id).group_by(CrawlTask.status)
+        ).all())
+        product_counts = dict(session.execute(
+            select(CrawlProductItem.status, func.count(CrawlProductItem.id))
+            .where(CrawlProductItem.job_id == job.id).group_by(CrawlProductItem.status)
+        ).all())
+        completed = sum(int(task_counts.get(status, 0)) for status in TERMINAL_TASK_STATUSES)
+        event_payload = session.scalar(
+            select(JobEvent.payload).where(JobEvent.job_id == job.id, JobEvent.event_type == "task_progress")
+            .order_by(JobEvent.id.desc()).limit(1)
+        )
+        latest = event_payload.get("progress", {}) if isinstance(event_payload, dict) else {}
+        latest = latest if isinstance(latest, dict) else {}
+        current_asin = None
+        active = session.execute(
+            select(CrawlTask.id, CrawlTask.asin).where(
+                CrawlTask.job_id == job.id, CrawlTask.status.in_(["leased", "running"]),
+            ).order_by(CrawlTask.ordinal).limit(1)
+        ).first()
+        if active:
+            current_asin = active.asin
+            if isinstance(event_payload, dict) and event_payload.get("taskId") == active.id:
+                items = latest.get("items")
+                if isinstance(items, list) and items and isinstance(items[0], dict):
+                    current_asin = str(items[0].get("currentAsin") or active.asin)
+        retry_error = None
+        if product_counts.get("retry_wait"):
+            retry_error = session.scalar(
+                select(CrawlProductItem.last_error).where(
+                    CrawlProductItem.job_id == job.id, CrawlProductItem.status == "retry_wait",
+                ).limit(1)
+            )
+        retry_phase = str(retry_error.get("phase") or "shopify") if isinstance(retry_error, dict) else None
+        phase = str(latest.get("phase") or "product")
+        if job.status in {"completed", "partial", "cancelled", "review_pending"}:
+            phase = "export" if job.status != "review_pending" else "review"
+        elif product_counts.get("syncing") or product_counts.get("shopify_writing") or retry_phase == "shopify":
+            phase = "shopify"
+        elif retry_phase == "image_processing":
+            phase = "image_processing"
+        elif retry_phase == "seo":
+            phase = "seo"
+        elif product_counts.get("seo"):
+            phase = "seo"
+        elif product_counts.get("image_processing"):
+            phase = "image_processing"
+        elif product_counts.get("normalizing") or product_counts.get("received"):
+            phase = "normalization"
+        errors = int(job.rejected_inputs) + int(task_counts.get("failed", 0)) + int(product_counts.get("failed", 0))
+        message = str(latest.get("message") or f"Đã xử lý {completed}/{job.accepted_inputs} link.")
+        if phase in {"seo", "image_processing", "shopify"}:
+            message = f"Đang xử lý {phase}: {completed}/{job.accepted_inputs} link đã crawl."
+        elif job.status in {"completed", "partial", "cancelled", "review_pending"}:
+            message = f"Đã xử lý {completed}/{job.accepted_inputs} link."
+        return {
+            "id": job.id, "status": job.status,
+            "completed": completed, "total": job.accepted_inputs,
+            "currentAsin": current_asin, "errors": errors,
+            "progress": {
+                "phase": phase, "completed": completed, "total": job.accepted_inputs,
+                "message": message[:240],
+            },
+            "taskCounts": task_counts, "productCounts": product_counts,
+            "createdAt": utc_iso(job.created_at),
+            "startedAt": utc_iso(job.started_at) if job.started_at else None,
+            "completedAt": utc_iso(job.completed_at) if job.completed_at else None,
+        }
+
     def list_jobs(self, limit: int = 100) -> list[dict[str, Any]]:
         with self.sessions() as session:
             jobs = session.scalars(select(CrawlJob).order_by(CrawlJob.created_at.desc()).limit(max(1, min(limit, 500)))).all()
-            return [self._job_snapshot(session, job) for job in jobs]
+            snapshots = []
+            for job in jobs:
+                if job.status == "cancelling":
+                    snapshots.append(self._job_snapshot(session, job, include_task_details=False))
+                    continue
+                snapshot = self._job_summary(session, job)
+                snapshot["settings"] = job.settings
+                snapshot["inputs"] = session.scalars(
+                    select(CrawlTask.source).where(CrawlTask.job_id == job.id).order_by(CrawlTask.ordinal)
+                ).all()
+                snapshots.append(snapshot)
+            return snapshots
 
     def list_clients(self) -> list[dict[str, Any]]:
         with self.sessions() as session:
@@ -2364,19 +2515,55 @@ class CoordinatorStore:
         }
         return product
 
-    def job_products(self, job_id: str) -> dict[str, Any] | None:
+    def job_products(self, job_id: str, *, cursor: str | None = None, limit: int = 50) -> dict[str, Any] | None:
         with self.sessions() as session:
             if session.get(CrawlJob, job_id) is None:
                 return None
-            items = session.scalars(
-                select(CrawlProductItem)
-                .where(CrawlProductItem.job_id == job_id)
-                .order_by(CrawlProductItem.created_at)
-            ).all()
+            page_size = max(1, min(limit, 100))
+            query = select(
+                CrawlProductItem.id, CrawlProductItem.product_id,
+                CrawlProductItem.source_key, CrawlProductItem.status,
+            ).where(CrawlProductItem.job_id == job_id)
+            if cursor:
+                query = query.where(CrawlProductItem.id > cursor)
+            rows = session.execute(query.order_by(CrawlProductItem.id).limit(page_size + 1)).all()
             return {
                 "jobId": job_id,
-                "products": [self._product_pipeline_snapshot(item) for item in items],
+                "products": [
+                    {"id": row.id, "productId": row.product_id, "sourceKey": row.source_key, "status": row.status}
+                    for row in rows[:page_size]
+                ],
+                "nextCursor": rows[page_size - 1].id if len(rows) > page_size else None,
             }
+
+    def job_product(self, job_id: str, item_id: str) -> dict[str, Any] | None:
+        with self.sessions() as session:
+            item = session.scalar(select(CrawlProductItem).where(
+                CrawlProductItem.job_id == job_id, CrawlProductItem.id == item_id,
+            ))
+            if item is None:
+                return None
+            product = self._product_pipeline_snapshot(item)
+            variants = product.pop("variants", [])
+            product["variantCount"] = len(variants) if isinstance(variants, list) else 0
+            return product
+
+    def job_product_variants(
+        self, job_id: str, item_id: str, *, cursor: int = 0, limit: int = 50,
+    ) -> dict[str, Any] | None:
+        with self.sessions() as session:
+            item = session.scalar(select(CrawlProductItem).where(
+                CrawlProductItem.job_id == job_id, CrawlProductItem.id == item_id,
+            ))
+            if item is None:
+                return None
+            payload = item.normalized_payload or item.raw_payload
+            variants = payload.get("variants", [])
+            variants = variants if isinstance(variants, list) else []
+            page_size = max(1, min(limit, 100))
+            offset = max(0, cursor)
+            next_cursor = offset + page_size if offset + page_size < len(variants) else None
+            return {"variants": variants[offset:offset + page_size], "nextCursor": next_cursor}
 
     def retry_failed_syncs(self, job_id: str) -> dict[str, Any] | None:
         with self.sessions.begin() as session:
@@ -2525,7 +2712,7 @@ class CoordinatorStore:
         }
 
     @staticmethod
-    def _job_snapshot(session, job: CrawlJob) -> dict[str, Any]:
+    def _job_snapshot(session, job: CrawlJob, *, include_task_details: bool = True) -> dict[str, Any]:
         counts = dict(session.execute(
             select(CrawlTask.status, func.count(CrawlTask.id)).where(CrawlTask.job_id == job.id).group_by(CrawlTask.status)
         ).all())
@@ -2537,12 +2724,12 @@ class CoordinatorStore:
             .options(selectinload(CrawlTask.result))
             .where(CrawlTask.job_id == job.id)
             .order_by(CrawlTask.ordinal)
-        ).all()
+        ).all() if include_task_details else []
         progress_events = session.scalars(
             select(JobEvent)
             .where(JobEvent.job_id == job.id, JobEvent.event_type == "task_progress")
             .order_by(JobEvent.id)
-        ).all()
+        ).all() if include_task_details else []
         latest_progress: dict[str, dict[str, Any]] = {}
         latest_batch_progress: dict[str, Any] = {}
         for event in progress_events:
@@ -2676,7 +2863,10 @@ class CoordinatorStore:
                 "hasReceived": received_task_count == task_count,
             })
         pending_pipeline = []
-        for item in session.scalars(select(CrawlProductItem).where(
+        for item in session.execute(select(
+            CrawlProductItem.id, CrawlProductItem.source_key,
+            CrawlProductItem.claimed_by, CrawlProductItem.shopify_result,
+        ).where(
             CrawlProductItem.job_id == job.id,
             CrawlProductItem.status.in_(["cancelling", "stopping_after_write"]),
         ).order_by(CrawlProductItem.created_at)):
@@ -2703,7 +2893,7 @@ class CoordinatorStore:
                 "status": cleanup.status,
                 "error": cleanup.error,
             })
-        return {
+        snapshot = {
             "id": job.id, "externalRequestId": job.external_request_id, "status": job.status,
             "settings": job.settings, "settingsFingerprint": settings_fingerprint(job.settings),
             "inputs": [task.source for task in tasks],
@@ -2725,3 +2915,10 @@ class CoordinatorStore:
             "createdAt": utc_iso(job.created_at), "startedAt": utc_iso(job.started_at) if job.started_at else None,
             "completedAt": utc_iso(job.completed_at) if job.completed_at else None,
         }
+        if not include_task_details:
+            summary = CoordinatorStore._job_summary(session, job)
+            snapshot.update({key: summary[key] for key in ("completed", "total", "currentAsin", "errors", "progress")})
+            snapshot["inputs"] = session.scalars(
+                select(CrawlTask.source).where(CrawlTask.job_id == job.id).order_by(CrawlTask.ordinal)
+            ).all()
+        return snapshot

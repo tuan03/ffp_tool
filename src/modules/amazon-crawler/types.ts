@@ -94,6 +94,8 @@ export interface AmazonCrawlerProgress {
   completed: number;
   total: number;
   message: string;
+  currentAsin?: string;
+  errors?: number;
   source?: string;
   items?: AmazonCrawlerProgressItem[];
   browserPool?: AmazonCrawlerBrowserPoolProgress;

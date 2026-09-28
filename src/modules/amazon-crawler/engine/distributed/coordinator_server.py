@@ -301,6 +301,20 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
             raise HTTPException(status_code=404, detail="Crawl job was not found.")
         return snapshot
 
+    @app.get("/api/v1/crawl-jobs/{job_id}/summary")
+    def get_job_summary(job_id: str) -> dict[str, Any]:
+        summary = store.job_summary(job_id)
+        if summary is None:
+            raise HTTPException(status_code=404, detail="Crawl job was not found.")
+        return summary
+
+    @app.get("/api/v1/crawl-jobs/{job_id}/metadata")
+    def get_job_metadata(job_id: str) -> dict[str, Any]:
+        metadata = store.job_metadata(job_id)
+        if metadata is None:
+            raise HTTPException(status_code=404, detail="Crawl job was not found.")
+        return metadata
+
     @app.get("/api/v1/crawl-jobs/{job_id}/results")
     def get_results(job_id: str) -> dict[str, Any]:
         result = store.job_results(job_id)
@@ -309,10 +323,28 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
         return result
 
     @app.get("/api/v1/crawl-jobs/{job_id}/products")
-    def get_job_products(job_id: str) -> dict[str, Any]:
-        result = store.job_products(job_id)
+    def get_job_products(
+        job_id: str, cursor: str | None = None, limit: int = Query(50, ge=1, le=100),
+    ) -> dict[str, Any]:
+        result = store.job_products(job_id, cursor=cursor, limit=limit)
         if result is None:
             raise HTTPException(status_code=404, detail="Crawl job was not found.")
+        return result
+
+    @app.get("/api/v1/crawl-jobs/{job_id}/products/{item_id}")
+    def get_job_product(job_id: str, item_id: str) -> dict[str, Any]:
+        result = store.job_product(job_id, item_id)
+        if result is None:
+            raise HTTPException(status_code=404, detail="Product was not found in crawl job.")
+        return result
+
+    @app.get("/api/v1/crawl-jobs/{job_id}/products/{item_id}/variants")
+    def get_job_product_variants(
+        job_id: str, item_id: str, cursor: int = Query(0, ge=0), limit: int = Query(50, ge=1, le=100),
+    ) -> dict[str, Any]:
+        result = store.job_product_variants(job_id, item_id, cursor=cursor, limit=limit)
+        if result is None:
+            raise HTTPException(status_code=404, detail="Product was not found in crawl job.")
         return result
 
     @app.get("/api/v1/crawl-jobs/{job_id}/export")

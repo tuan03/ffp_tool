@@ -2039,6 +2039,13 @@ export function AmazonCrawlerPage({
               <span>{progress.message}</span>
               <strong>{progress.completed}/{progress.total} links</strong>
             </div>
+            {progress.currentAsin || progress.errors ? (
+              <p className="mt-1 text-xs text-slate-400">
+                {progress.currentAsin ? `Đang xử lý: ${progress.currentAsin}` : ""}
+                {progress.currentAsin && progress.errors ? " · " : ""}
+                {progress.errors ? `${progress.errors} lỗi` : ""}
+              </p>
+            ) : null}
             <div className="mt-2 h-2 overflow-hidden rounded bg-slate-800">
               <div className="h-full bg-cyan-400 transition-[width]" style={{ width: `${progress.total > 0 ? Math.min(100, (progress.completed / progress.total) * 100) : 0}%` }} />
             </div>

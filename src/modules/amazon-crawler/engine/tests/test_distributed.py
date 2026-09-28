@@ -1712,12 +1712,12 @@ class CoordinatorStoreTests(unittest.TestCase):
         self.store.update_progress("client-a", {
             "taskId": lease["taskId"], "leaseId": lease["leaseId"],
             "progress": {
-                "phase": "variant_matrix", "message": "Đang cào variant 3/14",
+                "phase": "variant_matrix", "message": "Đang cào variant 3/14", "html": "X" * 100_000,
                 "items": [{
                     "source": "B0FR4MSS2H", "asin": "B0FR4MSS2H", "status": "running",
                     "phase": "variant_matrix", "message": "Đang cào variant 3/14",
                     "variantCompleted": 3, "variantTotal": 14, "currentAsin": "B0CHILD003",
-                    "currentOptions": {"Size": "Large"},
+                    "currentOptions": {"Size": "Large"}, "customizationRaw": "Y" * 100_000,
                 }],
             },
         })
@@ -1729,6 +1729,77 @@ class CoordinatorStoreTests(unittest.TestCase):
         self.assertEqual(progress_item["variantCompleted"], 3)
         self.assertEqual(progress_item["variantTotal"], 14)
         self.assertEqual(progress_item["currentOptions"], {"Size": "Large"})
+        self.assertNotIn("customizationRaw", progress_item)
+        self.assertNotIn("html", snapshot["progress"])
+        self.assertEqual(self.store.job_summary(str(job["id"]))["currentAsin"], "B0CHILD003")
+
+    def test_summary_and_product_pages_keep_large_payloads_out_of_polling(self) -> None:
+        from sqlalchemy import event
+
+        job = self.store.create_job({"urls": ["B0FR4MSS2H"]})
+        with self.sessions.begin() as session:
+            task = session.scalar(select(CrawlTask).where(CrawlTask.job_id == job["id"]))
+            for index in range(3):
+                session.add(CrawlProductItem(
+                    id=f"item-{index}", job_id=job["id"], task_id=task.id,
+                    source_key=f"source-{index}", product_id=f"product-{index}",
+                    client_id="client-a", lease_id="lease-a", checksum=f"checksum-{index}",
+                    raw_payload={
+                        "id": f"product-{index}", "title": "Large product",
+                        "descriptionHtml": "X" * 100_000,
+                        "sourceVariants": [{"asin": "B0FR4MSS2H", "media": [{"url": "image"}]}],
+                        "variants": [{"id": f"variant-{number}"} for number in range(3)],
+                    },
+                    status="received",
+                ))
+        queries: list[str] = []
+
+        def record_query(connection, cursor, statement, parameters, context, executemany) -> None:
+            queries.append(statement.lower())
+
+        event.listen(self.engine, "before_cursor_execute", record_query)
+        try:
+            summary = self.store.job_summary(str(job["id"]))
+            first_page = self.store.job_products(str(job["id"]), limit=2)
+        finally:
+            event.remove(self.engine, "before_cursor_execute", record_query)
+        self.assertFalse(any("task_results" in query or "raw_payload" in query or "normalized_payload" in query for query in queries))
+        self.assertEqual(summary["total"], 1)
+        self.assertNotIn("products", summary)
+        self.assertNotIn("X" * 100, str(summary))
+        self.assertEqual([product["id"] for product in first_page["products"]], ["item-0", "item-1"])
+        self.assertNotIn("descriptionHtml", str(first_page))
+        second_page = self.store.job_products(str(job["id"]), cursor=first_page["nextCursor"], limit=2)
+        self.assertEqual([product["id"] for product in second_page["products"]], ["item-2"])
+        self.assertIsNone(second_page["nextCursor"])
+        detail = self.store.job_product(str(job["id"]), "item-0")
+        self.assertEqual(detail["variantCount"], 3)
+        self.assertNotIn("variants", detail)
+        self.assertEqual(detail["descriptionHtml"], "X" * 100_000)
+        variants = self.store.job_product_variants(str(job["id"]), "item-0", limit=2)
+        self.assertEqual([variant["id"] for variant in variants["variants"]], ["variant-0", "variant-1"])
+        self.assertEqual(variants["nextCursor"], 2)
+
+    def test_cancelling_job_list_does_not_load_result_or_product_payloads(self) -> None:
+        from sqlalchemy import event
+
+        job = self.store.create_job({"urls": ["B0FR4MSS2H"]})
+        self.store.register_client(client_hello(slots=1))
+        self.store.lease_tasks("client-a", 1)
+        self.store.cancel_job(str(job["id"]))
+        queries: list[str] = []
+
+        def record_query(connection, cursor, statement, parameters, context, executemany) -> None:
+            queries.append(statement.lower())
+
+        event.listen(self.engine, "before_cursor_execute", record_query)
+        try:
+            listing = self.store.list_jobs()
+        finally:
+            event.remove(self.engine, "before_cursor_execute", record_query)
+        self.assertEqual(listing[0]["status"], "cancelling")
+        self.assertEqual(listing[0]["cancellation"]["pendingAgents"][0]["clientId"], "client-a")
+        self.assertFalse(any("task_results" in query or "raw_payload" in query or "normalized_payload" in query for query in queries))
 
     def test_completed_task_progress_uses_durable_result_counts_instead_of_stale_events(self) -> None:
         job = self.store.create_job({"urls": ["B0FR4MSS2H"]})
@@ -2187,8 +2258,8 @@ class CoordinatorStoreTests(unittest.TestCase):
 
         reviews = self.store.list_product_reviews()
         self.assertEqual(len(reviews), 1)
-        snapshot = self.store.job_products(str(job["id"]))
-        self.assertEqual(snapshot["products"][0]["pipeline"]["seo"]["performance"]["cacheHits"], 2)
+        snapshot = self.store.job_product(str(job["id"]), claim["id"])
+        self.assertEqual(snapshot["pipeline"]["seo"]["performance"]["cacheHits"], 2)
         self.assertEqual(reviews[0]["decision"], "pending")
         self.assertEqual(reviews[0]["syncStatus"], "idle")
         self.assertEqual(self.store.get_job(str(job["id"]))["status"], "review_pending")
@@ -2562,7 +2633,7 @@ class CoordinatorStoreTests(unittest.TestCase):
             retryable=True,
             reconciliation_required=False,
         )
-        public_product = self.store.job_products(str(job["id"]))["products"][0]
+        public_product = self.store.job_product(str(job["id"]), claim["id"])
 
         self.assertEqual(status, "retry_wait")
         self.assertEqual(public_product["pipeline"]["status"], "retry_wait")
@@ -2595,7 +2666,7 @@ class CoordinatorStoreTests(unittest.TestCase):
             retryable=False,
             reconciliation_required=False,
         )
-        public_product = self.store.job_products(str(job["id"]))["products"][0]
+        public_product = self.store.job_product(str(job["id"]), claim["id"])
 
         self.assertEqual(public_product["pipeline"]["shopify"]["timings"], {"pipeline": timings})
 
@@ -2621,6 +2692,40 @@ class CoordinatorApiTests(unittest.TestCase):
         cache_override = patch.dict(os.environ, {"IMAGE_PROCESSING_CACHE_DIR": image_cache.name})
         cache_override.start()
         self.addCleanup(cache_override.stop)
+
+    def test_summary_and_paged_product_routes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = Path(directory) / "coordinator.sqlite3"
+            app = create_coordinator_app(database_url=f"sqlite:///{database_path.as_posix()}")
+            with TestClient(app) as client:
+                job = client.post("/api/v1/crawl-jobs", json={"urls": ["B0FR4MSS2H"]}).json()
+                store = app.state.store
+                with store.sessions.begin() as session:
+                    task = session.scalar(select(CrawlTask).where(CrawlTask.job_id == job["id"]))
+                    session.add(CrawlProductItem(
+                        id="item-1", job_id=job["id"], task_id=task.id,
+                        source_key="source-1", product_id="product-1", client_id="client-a",
+                        lease_id="lease-a", checksum="checksum-1", status="received",
+                        raw_payload={"id": "product-1", "descriptionHtml": "X" * 100_000,
+                                     "variants": [{"id": "v1"}, {"id": "v2"}]},
+                    ))
+                base = f"/api/v1/crawl-jobs/{job['id']}"
+                self.assertEqual(client.get(f"{base}/metadata").json()["settings"]["amazonZip"], "90001")
+                summary = client.get(f"{base}/summary")
+                self.assertEqual(summary.status_code, 200)
+                self.assertNotIn("X" * 100, summary.text)
+                listing = client.get(f"{base}/products?limit=1")
+                self.assertEqual(listing.json()["products"][0]["id"], "item-1")
+                self.assertNotIn("descriptionHtml", listing.text)
+                detail = client.get(f"{base}/products/item-1")
+                self.assertEqual(detail.json()["variantCount"], 2)
+                self.assertNotIn("variants", detail.json())
+                self.assertEqual(client.get(f"{base}/products/item-1/variants?limit=1").json()["nextCursor"], 1)
+                self.assertEqual(client.get(f"{base}/products/item-1/variants?cursor=1").json()["variants"][0]["id"], "v2")
+                self.assertEqual(client.get(f"{base}/products?limit=101").status_code, 422)
+                self.assertEqual(client.get(f"{base}/products/unknown").status_code, 404)
+                self.assertEqual(client.get("/api/v1/crawl-jobs/unknown/summary").status_code, 404)
+                self.assertEqual(client.get(f"{base}/products/item-1/variants?cursor=-1").status_code, 422)
 
     def test_cancel_keeps_negative_and_image_cache_until_explicit_clear(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
