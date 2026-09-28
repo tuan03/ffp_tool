@@ -1210,6 +1210,163 @@ class CoreTests(unittest.TestCase):
             self.assertTrue(all(variant["price"] is not None for variant in second["sourceVariants"]))
             self.assertIsNotNone(crawler.cache.load("B012345678:90001:us-v1", require_customization=True))
 
+    def test_restart_after_child_crash_keeps_completed_family_work(self) -> None:
+        class CrashingCrawler(ParentFamilyCrawler):
+            def __init__(self, **kwargs: object) -> None:
+                super().__init__(**kwargs)
+                self.fetches: list[str] = []
+                self.should_crash = True
+
+            def _fetch_parsed(self, normalized: NormalizedInput, *, require_price: bool = True) -> tuple[dict, dict]:
+                self.fetches.append(normalized.asin)
+                if normalized.asin == "B012345679" and self.should_crash:
+                    raise KeyboardInterrupt("agent terminated during child crawl")
+                return super()._fetch_parsed(normalized, require_price=require_price)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            normalized = normalize_amazon_input("B012345678")
+            first = CrashingCrawler(root=root, settings=CrawlSettings(variant_threads=1), browser_pool=FakeBrowser(PRODUCT_HTML))
+            with self.assertRaises(KeyboardInterrupt):
+                first._crawl_family(normalized)
+
+            restarted = CrashingCrawler(root=root, settings=CrawlSettings(variant_threads=1), browser_pool=FakeBrowser(PRODUCT_HTML))
+            restarted.should_crash = False
+            family = restarted._crawl_family(normalized)
+
+            self.assertEqual(restarted.fetches, ["B012345679"])
+            self.assertTrue(all(variant["price"] is not None for variant in family["sourceVariants"]))
+            self.assertIsNotNone(restarted.cache.load("B012345678:90001:us-v1", require_customization=True))
+
+    def test_restart_after_last_child_skips_all_amazon_fetches(self) -> None:
+        class RecordingCrawler(ParentFamilyCrawler):
+            def __init__(self, **kwargs: object) -> None:
+                super().__init__(**kwargs)
+                self.fetches: list[str] = []
+
+            def _fetch_parsed(self, normalized: NormalizedInput, *, require_price: bool = True) -> tuple[dict, dict]:
+                self.fetches.append(normalized.asin)
+                return super()._fetch_parsed(normalized, require_price=require_price)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            normalized = normalize_amazon_input("B012345678")
+            first = RecordingCrawler(root=root, settings=CrawlSettings(variant_threads=1), browser_pool=FakeBrowser(PRODUCT_HTML))
+
+            def crash_before_family_save(_cache_key: str, _family: dict) -> None:
+                raise KeyboardInterrupt("agent terminated after last child")
+
+            first.cache.save = crash_before_family_save
+            with self.assertRaises(KeyboardInterrupt):
+                first._crawl_family(normalized)
+
+            restarted = RecordingCrawler(root=root, settings=CrawlSettings(variant_threads=1), browser_pool=FakeBrowser(PRODUCT_HTML))
+            family = restarted._crawl_family(normalized)
+            self.assertEqual(restarted.fetches, [])
+            self.assertTrue(all(variant["price"] is not None for variant in family["sourceVariants"]))
+            self.assertIsNone(restarted.cache.load_checkpoint("B012345678:90001:us-v1"))
+
+    def test_checkpoint_recovers_after_torn_write_and_invalidation_removes_it(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            cache = RawFamilyCache(Path(directory))
+            key = "B012345678:90001:us-v1"
+            cache.append_checkpoint(key, "parent_complete", {"parent": {"asin": "B012345678"}, "diagnostics": {}})
+            checkpoint_path = next(Path(directory).glob("checkpoint-*.jsonl"))
+            with checkpoint_path.open("ab") as handle:
+                handle.write(b'{"schemaVersion":\xc3')
+            cache.append_checkpoint(key, "matrix_complete", {"asinOptions": {"B012345678": {}}, "dimensions": {}})
+
+            restarted = RawFamilyCache(Path(directory))
+            self.assertEqual(restarted.load_checkpoint(key)["matrix"]["asinOptions"], {"B012345678": {}})
+            restarted.invalidate(key)
+            self.assertIsNone(restarted.load_checkpoint(key))
+
+    def test_incomplete_matrix_is_swept_again_after_restart(self) -> None:
+        class IncompleteMatrixCrawler(ParentFamilyCrawler):
+            def _fetch_parsed(self, normalized: NormalizedInput, *, require_price: bool = True) -> tuple[dict, dict]:
+                parsed, diagnostics = super()._fetch_parsed(normalized, require_price=require_price)
+                parsed["dimensions"]["Design"].append("Desert")
+                return parsed, diagnostics
+
+        class MatrixBrowser(FakeBrowser):
+            def __init__(self) -> None:
+                super().__init__(PRODUCT_HTML)
+                self.sweeps = 0
+
+            def sweep_variant_matrix(self, *_args: object, **_kwargs: object) -> list[str]:
+                self.sweeps += 1
+                return []
+
+        with tempfile.TemporaryDirectory() as directory:
+            browser = MatrixBrowser()
+            root = Path(directory)
+            settings = CrawlSettings(variant_threads=1)
+            normalized = normalize_amazon_input("B012345678")
+            IncompleteMatrixCrawler(root=root, settings=settings, browser_pool=browser)._crawl_family(normalized)
+            IncompleteMatrixCrawler(root=root, settings=settings, browser_pool=browser)._crawl_family(normalized)
+            self.assertEqual(browser.sweeps, 2)
+
+    def test_restart_after_media_checkpoint_skips_completed_gallery(self) -> None:
+        class GalleryBrowser(FakeBrowser):
+            def __init__(self) -> None:
+                super().__init__(PRODUCT_HTML)
+                self.gallery_calls: list[str] = []
+
+            def fetch_gallery(self, url: str, *, cancel_event: threading.Event | None = None) -> str:
+                self.gallery_calls.append(url)
+                return PRODUCT_HTML
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            settings = CrawlSettings(variant_threads=1)
+            normalized = normalize_amazon_input("B012345678")
+            first = ParentFamilyCrawler(root=root, settings=settings, browser_pool=GalleryBrowser())
+            append_checkpoint = first.cache.append_checkpoint
+
+            def crash_before_customization(cache_key: str, stage: str, payload: dict) -> None:
+                if stage == "customization_complete" and payload.get("asin") == "B012345678":
+                    raise KeyboardInterrupt("agent terminated after media")
+                append_checkpoint(cache_key, stage, payload)
+
+            first.cache.append_checkpoint = crash_before_customization
+            with self.assertRaises(KeyboardInterrupt):
+                first._crawl_family(normalized)
+
+            browser = GalleryBrowser()
+            restarted = ParentFamilyCrawler(root=root, settings=settings, browser_pool=browser)
+            restarted._crawl_family(normalized)
+            self.assertNotIn("https://www.amazon.com/dp/B012345678", browser.gallery_calls)
+
+    def test_restart_after_customization_checkpoint_skips_completed_child(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            settings = CrawlSettings(variant_threads=1)
+            normalized = normalize_amazon_input("B012345678")
+            first = ParentFamilyCrawler(root=root, settings=settings, browser_pool=FakeBrowser(PRODUCT_HTML))
+            append_checkpoint = first.cache.append_checkpoint
+
+            def crash_before_child_complete(cache_key: str, stage: str, payload: dict) -> None:
+                if stage == "child_complete" and payload.get("asin") == "B012345678":
+                    raise KeyboardInterrupt("agent terminated after customization")
+                append_checkpoint(cache_key, stage, payload)
+
+            first.cache.append_checkpoint = crash_before_child_complete
+            with self.assertRaises(KeyboardInterrupt):
+                first._crawl_family(normalized)
+
+            restarted = ParentFamilyCrawler(root=root, settings=settings, browser_pool=FakeBrowser(PRODUCT_HTML))
+            resumed_stages: list[tuple[str, str]] = []
+            restarted_append = restarted.cache.append_checkpoint
+
+            def record_checkpoint(cache_key: str, stage: str, payload: dict) -> None:
+                resumed_stages.append((stage, str(payload.get("asin") or "")))
+                restarted_append(cache_key, stage, payload)
+
+            restarted.cache.append_checkpoint = record_checkpoint
+            restarted._crawl_family(normalized)
+            self.assertIn(("child_complete", "B012345678"), resumed_stages)
+            self.assertNotIn(("customization_complete", "B012345678"), resumed_stages)
+
     def test_failed_parent_uses_negative_cache_on_next_job(self) -> None:
         class BlockedCrawler(ParentFamilyCrawler):
             def __init__(self, **kwargs: object) -> None:

@@ -75,6 +75,76 @@ class RawFamilyCache:
         self._write(asin, "family", {"family": family})
         self._remove(asin, "failure")
         self._remove(asin, "partial")
+        self._remove_checkpoint(asin)
+
+    def _checkpoint_path(self, asin: str) -> Path:
+        return self._path(asin, "checkpoint").with_suffix(".jsonl")
+
+    def _remove_checkpoint(self, asin: str) -> None:
+        with CACHE_IO_LOCK:
+            self._checkpoint_path(asin).unlink(missing_ok=True)
+
+    def append_checkpoint(self, asin: str, stage: str, payload: dict[str, Any]) -> None:
+        """Durably append one completed crawl stage without rewriting earlier children."""
+        record = json.dumps(
+            {"schemaVersion": CACHE_SCHEMA_VERSION, "stage": stage, "payload": payload},
+            ensure_ascii=False, separators=(",", ":"),
+        ).encode("utf-8") + b"\n"
+        with CACHE_IO_LOCK:
+            self.directory.mkdir(parents=True, exist_ok=True)
+            with self._checkpoint_path(asin).open("a+b") as handle:
+                handle.seek(0, os.SEEK_END)
+                if handle.tell():
+                    handle.seek(-1, os.SEEK_END)
+                    if handle.read(1) != b"\n":
+                        handle.write(b"\n")
+                handle.write(record)
+                handle.flush()
+                os.fsync(handle.fileno())
+
+    def load_checkpoint(self, asin: str, *, ttl_seconds: int = 86400) -> dict[str, Any] | None:
+        with CACHE_IO_LOCK:
+            path = self._checkpoint_path(asin)
+            try:
+                if datetime.fromtimestamp(path.stat().st_mtime, timezone.utc) + timedelta(seconds=ttl_seconds) <= datetime.now(timezone.utc):
+                    path.unlink(missing_ok=True)
+                    return None
+                lines = path.read_bytes().splitlines()
+            except OSError:
+                return None
+        checkpoint: dict[str, Any] = {"parent": None, "matrix": None, "children": {}}
+        for line in lines:
+            try:
+                record = json.loads(line)
+            except (ValueError, UnicodeError):
+                continue  # A crash may leave an incomplete final line.
+            if not isinstance(record, dict) or record.get("schemaVersion") != CACHE_SCHEMA_VERSION:
+                continue
+            stage = record.get("stage")
+            payload = record.get("payload")
+            if not isinstance(payload, dict):
+                continue
+            if stage == "parent_complete":
+                if checkpoint["parent"] != payload:
+                    checkpoint = {"parent": payload, "matrix": None, "children": {}}
+            elif stage in {"matrix_snapshot", "matrix_complete"} and checkpoint["parent"] is not None:
+                if checkpoint["matrix"] != payload:
+                    checkpoint["matrix"] = payload
+            elif stage in {"child_page_complete", "media_complete", "customization_complete", "child_complete"} and checkpoint["matrix"] is not None:
+                child_asin = payload.get("asin")
+                if not isinstance(child_asin, str):
+                    continue
+                child = checkpoint["children"].setdefault(child_asin, {})
+                if stage == "child_page_complete":
+                    child.clear()
+                    child["page"] = payload
+                elif stage == "media_complete":
+                    child["media"] = payload
+                elif stage == "customization_complete":
+                    child["customization"] = payload
+                else:
+                    child["complete"] = True
+        return checkpoint if checkpoint["parent"] is not None else None
 
     def load_failure(self, asin: str) -> dict[str, Any] | None:
         with CACHE_IO_LOCK:
@@ -108,8 +178,8 @@ class RawFamilyCache:
         removed_files = 0
         removed_bytes = 0
         with CACHE_IO_LOCK:
-            for kind in ("family", "failure", "partial"):
-                path = self._path(cache_key, kind)
+            for kind in ("family", "failure", "partial", "checkpoint"):
+                path = self._checkpoint_path(cache_key) if kind == "checkpoint" else self._path(cache_key, kind)
                 try:
                     size = path.stat().st_size
                     path.unlink()
@@ -147,7 +217,8 @@ class RawFamilyCache:
                 return {"removedFiles": 0, "removedBytes": 0}
             paths = [
                 *self.directory.glob("family-*.json"), *self.directory.glob("failure-*.json"),
-                *self.directory.glob("partial-*.json"), *self.directory.glob(".amazon-cache-*.tmp"),
+                *self.directory.glob("partial-*.json"), *self.directory.glob("checkpoint-*.jsonl"),
+                *self.directory.glob(".amazon-cache-*.tmp"),
             ]
             for path in paths:
                 if not path.is_file():

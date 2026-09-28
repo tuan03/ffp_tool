@@ -1347,27 +1347,56 @@ class AmazonCrawler:
         failure = self.cache.load_failure(cache_key)
         if failure is not None:
             raise CachedCrawlFailure(failure)
+        checkpoint = self.cache.load_checkpoint(cache_key)
         partial = self.cache.load_partial(cache_key)
         previous_family = partial.get("family") if isinstance(partial, dict) else None
         previous_parent = partial.get("parent") if isinstance(partial, dict) else None
         if not isinstance(previous_family, dict) or not isinstance(previous_parent, dict):
             previous_family = None
             previous_parent = None
+        checkpoint_parent = checkpoint.get("parent") if isinstance(checkpoint, dict) else None
+        if not (
+            isinstance(checkpoint_parent, dict)
+            and isinstance(checkpoint_parent.get("parent"), dict)
+            and isinstance(checkpoint_parent.get("diagnostics"), dict)
+        ):
+            checkpoint_parent = None
+        checkpoint_matrix = checkpoint.get("matrix") if isinstance(checkpoint, dict) else None
+        if not (
+            isinstance(checkpoint_matrix, dict)
+            and isinstance(checkpoint_matrix.get("asinOptions"), dict)
+            and isinstance(checkpoint_matrix.get("dimensions"), dict)
+        ):
+            checkpoint_matrix = None
+        checkpoint_children = checkpoint.get("children", {}) if isinstance(checkpoint, dict) else {}
+        if checkpoint_parent is None:
+            checkpoint_matrix = None
+            checkpoint_children = {}
         self._report_progress(
             phase="product",
             message=f"Đang tải trang Amazon {normalized.asin}...",
             source=normalized.source,
             item_updates={"status": "running", "currentAsin": normalized.asin},
         )
-        if previous_parent is not None and previous_family is not None:
+        if checkpoint_parent is not None:
+            parent = deepcopy(checkpoint_parent["parent"])
+            diagnostics = deepcopy(checkpoint_parent["diagnostics"])
+        elif previous_parent is not None and previous_family is not None:
             parent = deepcopy(previous_parent)
             diagnostics = deepcopy(previous_family["diagnostics"])
         else:
             with self._variant_fetch_slots:
                 parent, diagnostics = self._fetch_parsed(normalized, require_price=False)
             self.cache.clear_failure(cache_key)
+        if checkpoint_parent is None:
+            self.cache.append_checkpoint(cache_key, "parent_complete", {"parent": parent, "diagnostics": diagnostics})
         parent_asin = parent["parentAsin"]
         asin_options: dict[str, dict[str, str]] = dict(parent["asinOptions"])
+        if checkpoint_matrix is not None:
+            asin_options = deepcopy(checkpoint_matrix["asinOptions"])
+            parent["dimensions"] = deepcopy(checkpoint_matrix["dimensions"])
+            if isinstance(checkpoint_matrix.get("diagnostics"), dict):
+                diagnostics.update(deepcopy(checkpoint_matrix["diagnostics"]))
         # parentAsin identifies the variation family and is often not a
         # purchasable child. Adding it as a source variant makes Amazon redirect
         # to the default child and contaminates that variant with another ASIN's
@@ -1379,7 +1408,11 @@ class AmazonCrawler:
             expected_count *= max(1, len(values))
         expected_count = max(expected_count, len(asin_options))
         sweep = getattr(self.browser_pool, "sweep_variant_matrix", None)
-        if len(asin_options) < expected_count and callable(sweep):
+        if (
+            len(asin_options) < expected_count and callable(sweep)
+            and (checkpoint_matrix is None or checkpoint_matrix.get("complete") is not True)
+        ):
+            diagnostics.pop("matrixWarning", None)
             self._report_progress(
                 phase="variant_matrix",
                 message=f"Đang quét variant matrix {len(asin_options)}/{expected_count} cho {parent_asin}...",
@@ -1415,6 +1448,13 @@ class AmazonCrawler:
         discovered_asins = list(asin_options)
         is_capped = len(discovered_asins) > self.settings.max_matrix_variants
         discovered_asins = discovered_asins[:self.settings.max_matrix_variants]
+        matrix_is_complete = not is_capped and len(asin_options) >= expected_count
+        if checkpoint_matrix is None or checkpoint_matrix.get("complete") is not True:
+            self.cache.append_checkpoint(cache_key, "matrix_complete" if matrix_is_complete else "matrix_snapshot", {
+                "asinOptions": asin_options, "dimensions": parent["dimensions"],
+                "expectedCount": expected_count, "isCapped": is_capped, "complete": matrix_is_complete,
+                "diagnostics": diagnostics,
+            })
         variants: list[dict[str, Any]] = []
         variant_total = len(discovered_asins)
         preliminary_variants = [
@@ -1439,11 +1479,24 @@ class AmazonCrawler:
 
         def crawl_child(asin: str) -> dict[str, Any]:
             self._check_cancelled()
+            child_checkpoint = checkpoint_children.get(asin, {}) if isinstance(checkpoint_children, dict) else {}
+            saved_customization = child_checkpoint.get("customization") if isinstance(child_checkpoint, dict) else None
+            saved_variant = saved_customization.get("variant") if isinstance(saved_customization, dict) else None
+            if (
+                isinstance(saved_variant, dict) and self._variant_cache_complete(saved_variant)
+                and saved_variant.get("options") == asin_options.get(asin, {})
+            ):
+                if not child_checkpoint.get("complete"):
+                    self.cache.append_checkpoint(cache_key, "child_complete", {"asin": asin})
+                return deepcopy(saved_variant)
             if previous_family is not None:
                 previous_variant = next(
                     (variant for variant in previous_family.get("sourceVariants", []) if variant.get("asin") == asin), None
                 )
-                if isinstance(previous_variant, dict) and self._variant_cache_complete(previous_variant):
+                if (
+                    isinstance(previous_variant, dict) and self._variant_cache_complete(previous_variant)
+                    and previous_variant.get("options") == asin_options.get(asin, {})
+                ):
                     return deepcopy(previous_variant)
             child_key = f"{asin}:{self.settings.amazon_zip}:us-v1"
             child_failure = self.cache.load_failure(child_key)
@@ -1466,19 +1519,36 @@ class AmazonCrawler:
                     "activeVariants": active_snapshot,
                 },
             )
-            if asin == parent["asin"] and parent.get("price") is not None:
-                child = deepcopy(parent)
-                child_diagnostics = diagnostics
+            saved_page = child_checkpoint.get("page") if isinstance(child_checkpoint, dict) else None
+            if (
+                isinstance(saved_page, dict) and isinstance(saved_page.get("child"), dict)
+                and isinstance(saved_page.get("diagnostics"), dict)
+                and saved_page["child"].get("price") is not None
+            ):
+                child = deepcopy(saved_page["child"])
+                child_diagnostics = deepcopy(saved_page["diagnostics"])
             else:
-                with self._variant_fetch_slots:
-                    child, child_diagnostics = self._fetch_parsed(normalize_amazon_input(asin))
+                if asin == parent["asin"] and parent.get("price") is not None:
+                    child = deepcopy(parent)
+                    child_diagnostics = diagnostics
+                else:
+                    with self._variant_fetch_slots:
+                        child, child_diagnostics = self._fetch_parsed(normalize_amazon_input(asin))
                 if child["asin"] != asin:
                     raise CrawlFetchError(
                         f"Requested child ASIN {asin}, but Amazon returned {child['asin']}.",
                         {**child_diagnostics, "fetchMode": "failed"},
                     )
+                self.cache.append_checkpoint(cache_key, "child_page_complete", {
+                    "asin": asin, "child": child, "diagnostics": child_diagnostics,
+                })
             gallery_warnings: list[str] = []
-            if len(child.get("media") or []) <= 1 and hasattr(self.browser_pool, "fetch_gallery"):
+            saved_media = child_checkpoint.get("media") if isinstance(child_checkpoint, dict) else None
+            if not (isinstance(saved_media, dict) and isinstance(saved_media.get("child"), dict)):
+                saved_media = None
+            if saved_media is not None:
+                child = deepcopy(saved_media["child"])
+            elif len(child.get("media") or []) <= 1 and hasattr(self.browser_pool, "fetch_gallery"):
                 try:
                     gallery_html = self.browser_pool.fetch_gallery(
                         f"https://www.amazon.com/dp/{asin}",
@@ -1500,6 +1570,21 @@ class AmazonCrawler:
                     raise
                 except Exception as error:
                     gallery_warnings.append(f"Full gallery browser fallback failed for {asin}: {error}")
+            if saved_media is None and not gallery_warnings:
+                self.cache.append_checkpoint(cache_key, "media_complete", {"asin": asin, "child": child})
+            if isinstance(saved_variant, dict) and saved_variant.get("customizationComplete") is True:
+                variant = deepcopy(saved_variant)
+                variant["options"] = deepcopy(options)
+                variant["price"] = child.get("price")
+                variant["media"] = deepcopy(child.get("media", []))
+                variant["diagnostics"] = deepcopy(child_diagnostics)
+                variant["warnings"] = [
+                    warning for warning in variant.get("warnings", [])
+                    if "gallery" not in str(warning).casefold()
+                ] + gallery_warnings
+                if self._variant_cache_complete(variant):
+                    self.cache.append_checkpoint(cache_key, "child_complete", {"asin": asin})
+                return variant
             customization_raw = child.get("customizationRaw")
             form_url = child.get("customizationFormUrl")
             customization_warnings = list(child.get("customizationWarnings", []))
@@ -1551,7 +1636,7 @@ class AmazonCrawler:
             normalized_customization, custom_warnings = normalize_customization(customization_raw) if customization_raw is not None else (None, [])
             warnings.extend(custom_warnings)
             self.cache.clear_failure(child_key)
-            return {
+            variant = {
                 "asin": asin, "url": f"https://www.amazon.com/dp/{asin}", "options": options,
                 "price": child.get("price"),
                 "media": child.get("media", []),
@@ -1564,6 +1649,11 @@ class AmazonCrawler:
                 "priceInference": {"isInferred": False, "sourceAsins": []}, "warnings": warnings,
                 "diagnostics": child_diagnostics,
             }
+            if customization_complete:
+                self.cache.append_checkpoint(cache_key, "customization_complete", {"asin": asin, "variant": variant})
+            if self._variant_cache_complete(variant):
+                self.cache.append_checkpoint(cache_key, "child_complete", {"asin": asin})
+            return variant
 
         self._report_progress(
             phase="product",
