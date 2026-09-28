@@ -1,6 +1,6 @@
 import type { SeoContentInput, SeoContentOutput } from "../types";
 import type { SeoPipelineContext, SeoPipelineStage } from "./domain-types";
-import { createInitialContext, finalizePipelineOutput } from "./pipeline-context";
+import { createInitialContext, evolveContext, finalizePipelineOutput } from "./pipeline-context";
 import { SeoStageError, SeoTimeoutError, wrapStageError } from "./pipeline-errors";
 import { b1ProductUnderstandingStage } from "./stages/b1-product-understanding";
 import { b2ShoppingContextStage } from "./stages/b2-shopping-context";
@@ -10,6 +10,8 @@ import { b5ContentGenerationStage, buildB5ContentInput } from "./stages/b5-conte
 import { b6ImageProcessingStage } from "./stages/b6-image-processing";
 import type { SiteNicheResolver } from "./site-niche/site-niche-resolver";
 import { resolveStoreProfile } from "./store-profiles";
+import type { SeoCheckpoint, SeoCheckpointStore } from "./checkpoint";
+import { FileSeoCheckpointStore, SeoCheckpointManager } from "./checkpoint";
 
 export type { SeoPipelineStage };
 
@@ -42,12 +44,35 @@ export function getStageTimeoutMs(
 }
 
 
+/**
+ * Extracts updated fields between two consecutive pipeline contexts,
+ * excluding the immutable source field.
+ */
+export function extractContextUpdates(
+  previousContext: SeoPipelineContext,
+  nextContext: SeoPipelineContext,
+): Partial<Omit<SeoPipelineContext, "source">> {
+  const updates: Partial<Omit<SeoPipelineContext, "source">> = {};
+  for (const key of Object.keys(nextContext) as Array<keyof SeoPipelineContext>) {
+    if (key === "source") continue;
+    if (nextContext[key] !== previousContext[key] && nextContext[key] !== undefined) {
+      (updates as Record<string, unknown>)[key] = nextContext[key];
+    }
+  }
+  return updates;
+}
+
 export interface SeoPipelineExecutionOptions {
   readonly signal?: AbortSignal;
   readonly resume?: SeoPipelineResume;
   readonly onStage?: (stage: string, durationMs: number) => void;
   readonly stageTimeouts?: Partial<Record<string, number>>;
   readonly overallTimeoutMs?: number;
+  readonly checkpointManager?: SeoCheckpointManager;
+  readonly checkpointStore?: SeoCheckpointStore;
+  readonly promptVersions?: Partial<Record<string, string>>;
+  readonly stageModels?: Partial<Record<string, string>>;
+  readonly skipCache?: boolean;
 }
 
 export interface SeoPipelineResume {
@@ -79,6 +104,7 @@ export interface SeoPipeline {
     readonly fallbackStages: readonly string[];
     readonly warnings: readonly string[];
     readonly resume?: SeoPipelineResume;
+    readonly checkpoint?: SeoCheckpoint;
   }>;
 }
 
@@ -118,6 +144,11 @@ export interface SeoPipelineOptions {
   readonly siteNicheResolver?: Pick<SiteNicheResolver, "resolve">;
   readonly stageTimeouts?: Partial<Record<string, number>>;
   readonly overallTimeoutMs?: number;
+  readonly checkpointManager?: SeoCheckpointManager;
+  readonly checkpointStore?: SeoCheckpointStore;
+  readonly enableCheckpointing?: boolean;
+  readonly promptVersions?: Partial<Record<string, string>>;
+  readonly stageModels?: Partial<Record<string, string>>;
 }
 
 function isPipelineOptions(
@@ -177,13 +208,62 @@ export function createSeoPipeline(
       }
     }
 
+    const checkpointManager = executionOptions.checkpointManager
+      ?? (executionOptions.checkpointStore
+        ? new SeoCheckpointManager({ store: executionOptions.checkpointStore })
+        : pipelineOptions?.checkpointManager
+          ?? (pipelineOptions?.checkpointStore
+            ? new SeoCheckpointManager({ store: pipelineOptions.checkpointStore })
+            : pipelineOptions?.enableCheckpointing
+              ? new SeoCheckpointManager({ store: new FileSeoCheckpointStore() })
+              : undefined));
+
+    let checkpoint: SeoCheckpoint | null = null;
+    let canReuseFromCache = false;
+    const stageHashes = new Map<string, string>();
+    const stageUpstreamHashes = new Map<string, string>();
+
+    if (checkpointManager && !resume) {
+      const inputHash = checkpointManager.computeProductInputHash(input);
+      checkpoint = await checkpointManager.loadCheckpoint(inputHash);
+
+      let lastHash = inputHash;
+      for (const stage of stages) {
+        const promptVer = executionOptions.promptVersions?.[stage.name]
+          ?? pipelineOptions?.promptVersions?.[stage.name]
+          ?? checkpointManager.getDefaultPromptVersion(stage.name);
+        const model = executionOptions.stageModels?.[stage.name]
+          ?? pipelineOptions?.stageModels?.[stage.name]
+          ?? checkpointManager.getDefaultModel(stage.name);
+
+        stageUpstreamHashes.set(stage.name, lastHash);
+        const sHash = checkpointManager.computeStageHash(
+          stage.name,
+          inputHash,
+          lastHash,
+          promptVer,
+          model,
+        );
+        stageHashes.set(stage.name, sHash);
+        lastHash = sHash;
+      }
+
+      canReuseFromCache = !executionOptions.skipCache && Boolean(checkpoint);
+    }
+
     try {
       throwIfAborted(overallController.signal);
+      const isB1Cached = Boolean(
+        canReuseFromCache
+        && checkpoint?.stages.b1?.status === "completed"
+        && checkpoint?.stages.b1?.stageHash === stageHashes.get("b1"),
+      );
+
       const storeProfile = resolveStoreProfile({
         storeId: input.storeId,
         siteDomain: input.siteDomain ?? input.url,
       });
-      const resolution = !resume && siteNicheResolver
+      const resolution = !resume && !isB1Cached && siteNicheResolver
         ? await awaitWithAbort(siteNicheResolver.resolve({
             signal: overallController.signal,
             siteDomain: input.siteDomain ?? "",
@@ -222,6 +302,33 @@ export function createSeoPipeline(
         }
         if (reuseContent && ["b5", "b6"].includes(stage.name)) continue;
 
+        if (checkpointManager && !resume) {
+          const expectedStageHash = stageHashes.get(stage.name) ?? "";
+          if (canReuseFromCache && checkpoint) {
+            const stageCp = checkpoint.stages[stage.name];
+            if (stageCp && stageCp.status === "completed" && stageCp.stageHash === expectedStageHash) {
+              if (stageCp.contextUpdates) {
+                currentContext = evolveContext(currentContext, stageCp.contextUpdates);
+              }
+              if (stageCp.fallbacks && stageCp.fallbacks.length > 0) {
+                fallbackStages.push(...stageCp.fallbacks);
+              }
+              if (stageCp.warnings && stageCp.warnings.length > 0) {
+                warnings.push(...stageCp.warnings);
+              }
+              executionOptions.onStage?.(stage.name, stageCp.durationMs);
+              if (stage.name === "b3") {
+                research = currentContext;
+                researchFallbacks = [...fallbackStages];
+                researchWarnings = [...warnings];
+              }
+              continue;
+            } else {
+              canReuseFromCache = false;
+            }
+          }
+        }
+
         throwIfAborted(overallController.signal);
 
         const stageStartedAt = Date.now();
@@ -258,6 +365,8 @@ export function createSeoPipeline(
           }
         }
 
+        const beforeContext = currentContext;
+
         try {
           throwIfAborted(stageController.signal);
           const nextContext = await awaitWithAbort<SeoPipelineContext>(stage.execute(currentContext), stageController.signal);
@@ -272,6 +381,27 @@ export function createSeoPipeline(
           }
 
           currentContext = nextContext;
+
+          if (checkpointManager && !resume) {
+            const expectedStageHash = stageHashes.get(stage.name) ?? "";
+            const upstreamHash = stageUpstreamHashes.get(stage.name);
+            const promptVersion = executionOptions.promptVersions?.[stage.name]
+              ?? pipelineOptions?.promptVersions?.[stage.name]
+              ?? checkpointManager.getDefaultPromptVersion(stage.name);
+            const model = executionOptions.stageModels?.[stage.name]
+              ?? pipelineOptions?.stageModels?.[stage.name]
+              ?? checkpointManager.getDefaultModel(stage.name);
+            const contextUpdates = extractContextUpdates(beforeContext, nextContext);
+
+            checkpoint = await checkpointManager.recordStageSuccess(input, stage.name, {
+              stageHash: expectedStageHash,
+              upstreamHash,
+              promptVersion,
+              model,
+              durationMs: Date.now() - stageStartedAt,
+              contextUpdates,
+            });
+          }
         } catch (error: unknown) {
           if (overallController.signal.aborted) {
             throw overallController.signal.reason instanceof Error
@@ -279,6 +409,16 @@ export function createSeoPipeline(
               : createAbortError(overallController.signal.reason);
           }
           if (error instanceof Error && error.name === "AbortError") throw error;
+
+          const expectedStageHash = stageHashes.get(stage.name) ?? "";
+          const upstreamHash = stageUpstreamHashes.get(stage.name);
+          const promptVersion = executionOptions.promptVersions?.[stage.name]
+            ?? pipelineOptions?.promptVersions?.[stage.name]
+            ?? checkpointManager?.getDefaultPromptVersion(stage.name);
+          const model = executionOptions.stageModels?.[stage.name]
+            ?? pipelineOptions?.stageModels?.[stage.name]
+            ?? checkpointManager?.getDefaultModel(stage.name);
+
           if (error instanceof SeoTimeoutError) {
             if (error.isRecoverable) {
               fallbackStages.push(stage.name);
@@ -286,10 +426,32 @@ export function createSeoPipeline(
               console.warn(
                 `[SEO Pipeline] Non-fatal timeout warning in stage ${stage.name}: ${error.message}`,
               );
+              if (checkpointManager && !resume) {
+                checkpoint = await checkpointManager.recordStageSuccess(input, stage.name, {
+                  stageHash: expectedStageHash,
+                  upstreamHash,
+                  promptVersion,
+                  model,
+                  durationMs: Date.now() - stageStartedAt,
+                  fallbacks: [stage.name],
+                  warnings: [error.message],
+                }).catch(() => checkpoint);
+              }
               continue;
+            }
+            if (checkpointManager && !resume) {
+              checkpoint = await checkpointManager.recordStageFailure(input, stage.name, {
+                stageHash: expectedStageHash,
+                upstreamHash,
+                promptVersion,
+                model,
+                durationMs: Date.now() - stageStartedAt,
+                error,
+              }).catch(() => checkpoint);
             }
             throw error;
           }
+
           const stageError = wrapStageError(stage.name, error);
           if (stageError.isRecoverable) {
             fallbackStages.push(stage.name);
@@ -297,7 +459,28 @@ export function createSeoPipeline(
             console.warn(
               `[SEO Pipeline] Non-fatal warning in stage ${stage.name}: ${stageError.message}`,
             );
+            if (checkpointManager && !resume) {
+              checkpoint = await checkpointManager.recordStageSuccess(input, stage.name, {
+                stageHash: expectedStageHash,
+                upstreamHash,
+                promptVersion,
+                model,
+                durationMs: Date.now() - stageStartedAt,
+                fallbacks: [stage.name],
+                warnings: [stageError.message],
+              }).catch(() => checkpoint);
+            }
           } else {
+            if (checkpointManager && !resume) {
+              checkpoint = await checkpointManager.recordStageFailure(input, stage.name, {
+                stageHash: expectedStageHash,
+                upstreamHash,
+                promptVersion,
+                model,
+                durationMs: Date.now() - stageStartedAt,
+                error: stageError,
+              }).catch(() => checkpoint);
+            }
             throw stageError;
           }
         } finally {
@@ -325,6 +508,7 @@ export function createSeoPipeline(
           contentFallbacks: fallbackStages.slice(contentFallbackStart),
           contentWarnings: warnings.slice(contentWarningStart),
         } : undefined,
+        checkpoint: checkpoint ?? undefined,
       };
     } finally {
       if (overallTimer !== undefined) {

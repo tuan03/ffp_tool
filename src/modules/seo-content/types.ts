@@ -140,6 +140,8 @@ export interface SeoContentPipelineSummary {
 
 export interface SeoContentDependencies {
   readonly conflictCorpus?: unknown;
+  readonly checkpointManager?: unknown;
+  readonly checkpointStore?: unknown;
 }
 
 export interface SeoContentRunOptions {

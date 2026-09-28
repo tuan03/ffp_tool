@@ -2,6 +2,8 @@ import { loadServerEnvironment } from "../../config/server-environment";
 
 import { AltOnlyImageProcessor } from "./internal/image-processing/image-processor";
 import { FileSeoConflictCorpus } from "./internal/conflict-control/file-seo-conflict-corpus";
+import type { SeoCheckpointManager, SeoCheckpointStore } from "./internal/checkpoint";
+import { FileSeoCheckpointStore, SeoCheckpointManager as DefaultSeoCheckpointManager } from "./internal/checkpoint";
 import type { SeoPipelineResume } from "./internal/pipeline";
 import { createSeoPipeline, DEFAULT_SEO_PIPELINE_STAGES } from "./internal/pipeline";
 import { registerProductKeywords } from "./internal/stages/b4-conflict-control";
@@ -148,12 +150,17 @@ export function createSeoContentSession(input: SeoContentInput, options: SeoCont
       ? createB6ImageProcessingStage({ imageProcessor: new AltOnlyImageProcessor() })
       : DEFAULT_SEO_PIPELINE_STAGES[DEFAULT_SEO_PIPELINE_STAGES.length - 1],
   ];
+  const checkpointStore = (options.dependencies?.checkpointStore as SeoCheckpointStore | undefined)
+    ?? new FileSeoCheckpointStore();
+  const checkpointManager = (options.dependencies?.checkpointManager as SeoCheckpointManager | undefined)
+    ?? new DefaultSeoCheckpointManager({ store: checkpointStore });
   const pipeline = createSeoPipeline({
     stages: runtimeStages.map(stage => ({
       name: stage.name,
       execute(context) { observedFallbacks.delete(stage.name); return stage.execute(context); },
     })),
     siteNicheResolver: getDefaultSiteNicheResolver(),
+    checkpointManager,
   });
   async function run(): Promise<SeoContentDetailedResult> {
     if (running) throw new Error("A SEO session cannot run concurrently with itself.");
