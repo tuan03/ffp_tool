@@ -48,7 +48,7 @@ export function startGatewayServer(
   assertHostSecurity(host, authToken, "gateway server");
 
   const stores = loadBootstrappedStores({ env });
-  if (env.GPT_SEO_ACTION_KEY || process.env.GPT_SEO_ACTION_KEY) getCustomGptRuntime();
+  if (env.GPT_SEO_ACTION_KEYS_JSON || process.env.GPT_SEO_ACTION_KEYS_JSON || env.GPT_SEO_ACTION_KEY || process.env.GPT_SEO_ACTION_KEY) getCustomGptRuntime();
 
   const storeRegistry = new InMemoryStoreRegistry(stores);
   const tokenProvider = new CompositeTokenProvider();

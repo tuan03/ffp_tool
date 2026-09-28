@@ -21,3 +21,86 @@ test("Actions reject missing keys and cannot access administration or another st
     assert.equal((await fetch(`${base}/api/v1/gpt-seo/queue?storeId=other`, { headers: { Authorization: "Bearer action-key" } })).status, 403);
   } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); db.close(); }
 });
+
+test("Actions resolve independent stores from their Bearer keys", async () => {
+  const db = new DatabaseSync(":memory:");
+  const queue = new CustomGptQueue(db);
+  const handler = createCustomGptHandler({
+    queue,
+    actionKeys: { capozen: "capozen-key", wrydeco: "wrydeco-key" },
+    storeId: "capozen",
+    adminKey: "admin-key",
+  });
+  const server = http.createServer((req, res) => { void handler(req, res); });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+  const base = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const capozenContext = await fetch(`${base}/api/v1/gpt-seo/context`, { headers: { Authorization: "Bearer capozen-key" } });
+    assert.equal(capozenContext.status, 200);
+    assert.equal((await capozenContext.json() as { storeId: string }).storeId, "capozen");
+
+    const wrydecoContext = await fetch(`${base}/api/v1/gpt-seo/context`, { headers: { Authorization: "Bearer wrydeco-key" } });
+    assert.equal(wrydecoContext.status, 200);
+    assert.equal((await wrydecoContext.json() as { storeId: string }).storeId, "wrydeco");
+
+    assert.equal((await fetch(`${base}/api/v1/gpt-seo/queue?storeId=wrydeco`, { headers: { Authorization: "Bearer capozen-key" } })).status, 403);
+    assert.equal((await fetch(`${base}/api/v1/gpt-seo/queue`, { headers: { Authorization: "Bearer unknown-key" } })).status, 401);
+    assert.equal((await fetch(`${base}/api/v1/gpt-seo/admin/settings?storeId=wrydeco`, { headers: { Authorization: "Bearer admin-key" } })).status, 200);
+  } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); db.close(); }
+});
+
+test("Actions reject an Action key that duplicates the administration key", () => {
+  const db = new DatabaseSync(":memory:");
+  const queue = new CustomGptQueue(db);
+  try {
+    assert.throws(
+      () => createCustomGptHandler({ queue, actionKeys: { capozen: "shared-key" }, storeId: "capozen", adminKey: "shared-key" }),
+      /must differ from the administration key/,
+    );
+  } finally { db.close(); }
+});
+
+test("signed image URLs remain scoped to the authenticated store", async () => {
+  const db = new DatabaseSync(":memory:");
+  const queue = new CustomGptQueue(db);
+  const handler = createCustomGptHandler({
+    queue,
+    actionKeys: { capozen: "capozen-key", wrydeco: "wrydeco-key" },
+    storeId: "capozen",
+    adminKey: "admin-key",
+    publicUrl: "https://seo.example.test",
+  });
+  const job = queue.enqueue({
+    storeId: "capozen",
+    source: "auto_seo",
+    sourceIdentity: "product-1",
+    input: {
+      title: "Product",
+      description: "Description",
+      handle: "product",
+      niche: "home",
+      images: [{ id: "front", url: "https://cdn.shopify.com/front.png" }],
+    },
+    original: {},
+  });
+  const server = http.createServer((req, res) => { void handler(req, res); });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+  const base = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const response = await fetch(`${base}/api/v1/gpt-seo/images?jobId=${job.id}`, { headers: { Authorization: "Bearer capozen-key" } });
+    assert.equal(response.status, 200);
+    const payload = await response.json() as { images: readonly { url: string }[] };
+    const signedUrl = new URL(payload.images[0].url);
+    assert.equal(signedUrl.searchParams.get("storeId"), "capozen");
+    signedUrl.searchParams.set("storeId", "wrydeco");
+    signedUrl.host = `127.0.0.1:${address.port}`;
+    signedUrl.protocol = "http:";
+    assert.equal((await fetch(signedUrl)).status, 401);
+  } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); db.close(); }
+});

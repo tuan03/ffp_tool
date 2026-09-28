@@ -9,6 +9,7 @@ import { signImage, verifyImageSignature, downloadProductImage } from "./images"
 export interface CustomGptHandlerOptions {
   readonly queue: CustomGptQueue;
   readonly actionKey?: string;
+  readonly actionKeys?: Readonly<Record<string, string>>;
   readonly adminKey?: string;
   readonly storeId: string;
   readonly research?: typeof researchExternalSeo;
@@ -64,6 +65,18 @@ function send(res: ServerResponse, status: number, payload: unknown, maxLength =
 
 export function createCustomGptHandler(options: CustomGptHandlerOptions) {
   const { queue } = options;
+  const actionKeys: Readonly<Record<string, string>> = {
+    ...(options.actionKey ? { [options.storeId]: options.actionKey } : {}),
+    ...options.actionKeys,
+  };
+  const actionKeyEntries = Object.entries(actionKeys);
+  if (new Set(actionKeyEntries.map(([, actionKey]) => actionKey)).size !== actionKeyEntries.length) throw new Error("Custom GPT action keys must be unique per store");
+  if (options.adminKey && actionKeyEntries.some(([, actionKey]) => actionKey === options.adminKey)) throw new Error("Custom GPT Action keys must differ from the administration key");
+  const resolveActionStoreId = (bearer: string | undefined): string | undefined => {
+    let matchedStoreId: string | undefined;
+    for (const [storeId, actionKey] of actionKeyEntries) if (authorized(bearer, actionKey)) matchedStoreId = storeId;
+    return matchedStoreId;
+  };
   let windowStart = 0; let requestCount = 0;
   let isDownloadingImage = false;
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
@@ -72,8 +85,11 @@ export function createCustomGptHandler(options: CustomGptHandlerOptions) {
     const isAdmin = route.startsWith("admin/");
     const bearer = req.headers.authorization?.replace(/^Bearer /, "");
     const gatewayKey = typeof req.headers["x-gateway-key"] === "string" ? req.headers["x-gateway-key"] : undefined;
-    const signedImage = route === "media" && req.method === "GET" && options.actionKey && verifyImageSignature(options.actionKey, url.searchParams.get("jobId") || "", url.searchParams.get("imageId") || "", Number(url.searchParams.get("expires")), url.searchParams.get("signature") || "");
-    if (!signedImage && !authorized(isAdmin ? gatewayKey || bearer : bearer, isAdmin ? options.adminKey : options.actionKey)) { send(res, 401, { error: { code: "UNAUTHORIZED", message: "Invalid credentials" } }); return; }
+    const signedImageStoreId = url.searchParams.get("storeId") || "";
+    const signedImageKey = actionKeys[signedImageStoreId];
+    const signedImage = Boolean(route === "media" && req.method === "GET" && signedImageKey && verifyImageSignature(signedImageKey, url.searchParams.get("jobId") || "", url.searchParams.get("imageId") || "", Number(url.searchParams.get("expires")), url.searchParams.get("signature") || ""));
+    const actionStoreId = isAdmin ? undefined : resolveActionStoreId(bearer);
+    if (!signedImage && !(isAdmin ? authorized(gatewayKey || bearer, options.adminKey) : actionStoreId)) { send(res, 401, { error: { code: "UNAUTHORIZED", message: "Invalid credentials" } }); return; }
     if (!isAdmin) {
       if (Date.now() - windowStart > 60_000) { windowStart = Date.now(); requestCount = 0; }
       if (++requestCount > 120) { res.setHeader("Retry-After", "60"); send(res, 429, { error: { code: "RATE_LIMITED", message: "Retry after 60 seconds" } }); return; }
@@ -81,8 +97,9 @@ export function createCustomGptHandler(options: CustomGptHandlerOptions) {
     try {
       if (!["GET", "POST"].includes(req.method || "")) { send(res, 405, { error: { code: "METHOD_NOT_ALLOWED" } }); return; }
       const body = req.method === "POST" ? await readBody(req, isAdmin ? 8_000_000 : 90_000) : {};
-      const storeId = String(body.storeId || url.searchParams.get("storeId") || options.storeId);
-      if (!/^[a-zA-Z0-9_-]{1,100}$/.test(storeId) || (!isAdmin && storeId !== options.storeId)) { send(res, 403, { error: { code: "STORE_FORBIDDEN" } }); return; }
+      const authenticatedStoreId = signedImage ? signedImageStoreId : actionStoreId;
+      const storeId = String(body.storeId || url.searchParams.get("storeId") || authenticatedStoreId || options.storeId);
+      if (!/^[a-zA-Z0-9_-]{1,100}$/.test(storeId) || (!isAdmin && storeId !== authenticatedStoreId)) { send(res, 403, { error: { code: "STORE_FORBIDDEN" } }); return; }
       const jobId = String(body.jobId || url.searchParams.get("jobId") || "");
       const batchId = String(body.batchId || url.searchParams.get("batchId") || "");
       const leaseToken = String(body.leaseToken || "");
@@ -117,10 +134,11 @@ export function createCustomGptHandler(options: CustomGptHandlerOptions) {
           const job = queue.get(storeId, jobId);
           result = { jobId, images: job.input.images.slice(offset, offset + 5).map((image, index) => {
             const id = image.id || `image-${offset + index + 1}`;
-            if (!options.publicUrl || !options.actionKey) return { ...image, id };
+            const actionKey = actionKeys[storeId];
+            if (!options.publicUrl || !actionKey) return { ...image, id };
             const expires = Date.now() + 10 * 60_000;
             const media = new URL("/api/v1/gpt-seo/media", options.publicUrl);
-            media.search = new URLSearchParams({ jobId, imageId: id, expires: String(expires), signature: signImage(options.actionKey, jobId, id, expires) }).toString();
+            media.search = new URLSearchParams({ storeId, jobId, imageId: id, expires: String(expires), signature: signImage(actionKey, jobId, id, expires) }).toString();
             return { id, url: media.href, alt: image.alt };
           }), nextOffset: offset + 5 < job.input.images.length ? offset + 5 : null, instructions: "Inspect each image visually. If URLs cannot be viewed, ask the operator to attach these images. Do not infer evidence from filenames." }; break;
         }
