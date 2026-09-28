@@ -130,7 +130,7 @@ export function ProductListTable({
         </span>
       );
     }
-    if (product.shopifySyncStatus === "synced") {
+    if (product.shopifySyncStatus === "synced" && !(product.lastRevertedAt && product.reviewDecision !== "approved")) {
       const isCrossStore = Boolean(
         currentStoreId && product.storeId && currentStoreId.toLowerCase() !== product.storeId.toLowerCase(),
       );
@@ -463,7 +463,14 @@ export function ProductListTable({
                         </div>
                       )}
                       {product.lastRevertedAt && product.reviewDecision !== "approved" && (
-                        <div className="text-[10px] text-amber-400 font-medium">
+                        <div
+                          className="text-[10px] text-amber-400 font-medium"
+                          title={
+                            product.previousSyncedAt
+                              ? `Đã sync: ${new Date(product.previousSyncedAt).toLocaleString()} — Đã hoàn tác: ${new Date(product.lastRevertedAt).toLocaleString()}`
+                              : `Đã hoàn tác: ${new Date(product.lastRevertedAt).toLocaleString()}`
+                          }
+                        >
                           ↩ Đã hoàn tác
                         </div>
                       )}
@@ -534,7 +541,9 @@ export function ProductListTable({
                             </button>
                           ) : null}
 
-                        {product.shopifySyncStatus === "synced" && onRetrySync ? (
+                        {product.shopifySyncStatus === "synced" &&
+                        !(product.lastRevertedAt && product.reviewDecision !== "approved") &&
+                        onRetrySync ? (
                           <button
                             type="button"
                             title={
@@ -857,9 +866,16 @@ export function ProductListTable({
                                 </span>
                               )}
                               {product.lastRevertedAt && product.reviewDecision !== "approved" && (
-                                <span className="text-xs text-amber-300 bg-amber-950/40 border border-amber-900/60 px-2.5 py-1 rounded-lg">
-                                  <span className="font-bold">↩ Đã hoàn tác gốc:</span>{" "}
-                                  {new Date(product.lastRevertedAt).toLocaleString()}
+                                <span className="text-xs text-amber-300 bg-amber-950/40 border border-amber-900/60 px-2.5 py-1 rounded-lg inline-flex items-center gap-2">
+                                  <span>
+                                    <span className="font-bold">↩ Trạng thái:</span> Đã hoàn tác (
+                                    {new Date(product.lastRevertedAt).toLocaleString()})
+                                  </span>
+                                  {product.previousSyncedAt && (
+                                    <span className="text-amber-400/70 text-[11px] border-l border-amber-800/60 pl-2">
+                                      Lịch sử sync: {new Date(product.previousSyncedAt).toLocaleString()}
+                                    </span>
+                                  )}
                                 </span>
                               )}
                             </div>

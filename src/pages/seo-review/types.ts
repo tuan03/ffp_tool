@@ -106,6 +106,7 @@ export interface SeoProductUiViewModel {
   readonly isReverting?: boolean;
   readonly revertError?: string;
   readonly lastRevertedAt?: number;
+  readonly previousSyncedAt?: number;
   readonly originalBackup?: SeoProductBackup;
 }
 

@@ -166,6 +166,15 @@ export function SeoReviewPage({
                 let updated = p;
                 if (updated.isSyncing) updated = { ...updated, isSyncing: false };
                 if (updated.isReverting) updated = { ...updated, isReverting: false };
+                if (updated.lastRevertedAt && updated.reviewDecision !== "approved" && updated.shopifySyncStatus === "synced") {
+                  updated = {
+                    ...updated,
+                    shopifySyncStatus: "idle" as const,
+                    previousSyncedAt: updated.shopifySyncedAt || updated.lastSyncedAt || updated.previousSyncedAt,
+                    shopifySyncedAt: undefined,
+                    lastSyncedAt: undefined,
+                  };
+                }
                 return updated;
               });
 
@@ -221,6 +230,33 @@ export function SeoReviewPage({
               syncError: existing.syncError || fresh.syncError,
               isSyncing: false,
             };
+          }
+
+          // Preserve local rollback state if existing was reverted
+          if (existing.lastRevertedAt && existing.reviewDecision !== "approved") {
+            return {
+              ...fresh,
+              productTitle: existing.productTitle,
+              productDescription: existing.productDescription,
+              seoTitle: existing.seoTitle,
+              seoDescription: existing.seoDescription,
+              handle: existing.handle,
+              reviewDecision: "pending" as const,
+              shopifySyncStatus: "idle" as const,
+              shopifySyncedAt: undefined,
+              lastSyncedAt: undefined,
+              previousSyncedAt: existing.previousSyncedAt,
+              lastRevertedAt: existing.lastRevertedAt,
+              originalBackup: existing.originalBackup ?? fresh.originalBackup,
+              isReverting: false,
+            };
+          }
+
+          if (existing.originalBackup && !fresh.originalBackup) {
+            fresh = { ...fresh, originalBackup: existing.originalBackup };
+          }
+          if (existing.previousSyncedAt && !fresh.previousSyncedAt) {
+            fresh = { ...fresh, previousSyncedAt: existing.previousSyncedAt };
           }
 
           return fresh;
@@ -580,7 +616,9 @@ export function SeoReviewPage({
       (p) => p.reviewDecision === "approved" && !p.isSyncing && !p.isReverting && !["queued", "syncing", "synced"].includes(p.shopifySyncStatus || "idle"),
     ).length;
     const rejected = storeScopedProducts.filter((p) => p.reviewDecision === "rejected").length;
-    const synced = storeScopedProducts.filter((p) => p.shopifySyncStatus === "synced").length;
+    const synced = storeScopedProducts.filter(
+      (p) => p.shopifySyncStatus === "synced" && !(p.lastRevertedAt && p.reviewDecision !== "approved"),
+    ).length;
     const syncing = storeScopedProducts.filter((p) => p.shopifySyncStatus === "syncing" || p.isSyncing).length;
     const syncFailed = storeScopedProducts.filter((p) => p.shopifySyncStatus === "failed").length;
     const hasMock = storeScopedProducts.filter((p) =>
@@ -715,6 +753,9 @@ export function SeoReviewPage({
                 : p.handle,
               shopifyAdminUrl: result.adminUrl ?? p.shopifyAdminUrl,
               shopifySyncedAt: Date.now(),
+              lastSyncedAt: Date.now(),
+              lastRevertedAt: undefined,
+              previousSyncedAt: undefined,
               shopifySyncError: undefined,
               syncError: undefined,
               updatedAt: Date.now(),
@@ -807,6 +848,9 @@ export function SeoReviewPage({
                     : p.handle,
                   shopifyAdminUrl: res.adminUrl ?? p.shopifyAdminUrl,
                   shopifySyncedAt: Date.now(),
+                  lastSyncedAt: Date.now(),
+                  lastRevertedAt: undefined,
+                  previousSyncedAt: undefined,
                   shopifySyncError: undefined,
                   syncError: undefined,
                   updatedAt: Date.now(),
@@ -1202,6 +1246,8 @@ export function SeoReviewPage({
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/^-+|-+$/g, "");
 
+    const previousSyncedAt = p.shopifySyncedAt || p.lastSyncedAt || p.previousSyncedAt;
+
     return {
       ...p,
       productTitle: { value: backup.productTitle, source: "real" },
@@ -1215,12 +1261,16 @@ export function SeoReviewPage({
         value: backup.seoDescription ?? "",
         source: "real",
       },
-      reviewDecision: "pending",
-      isReverting: false,
-      revertError: undefined,
+      reviewDecision: "pending" as const,
+      shopifySyncStatus: "idle" as const,
+      shopifySyncedAt: undefined,
+      shopifySyncError: undefined,
+      isSyncing: false,
       syncError: undefined,
       lastSyncedAt: undefined,
-      ...(p.gptJobId ? { shopifySyncStatus: "idle" as const, shopifySyncedAt: undefined, shopifySyncError: undefined } : {}),
+      previousSyncedAt,
+      isReverting: false,
+      revertError: undefined,
       lastRevertedAt: Date.now(),
       updatedAt: Date.now(),
     };
@@ -1269,6 +1319,9 @@ export function SeoReviewPage({
         ) ?? result.items[0];
 
       if (itemResult?.ok) {
+        if (target.coordinatorReview && amazonCrawlerReviews) {
+          void amazonCrawlerReviews.decide(target.coordinatorReview.itemId, target.coordinatorReview.version, "pending").catch(() => {});
+        }
         setProducts((prev) =>
           prev.map((p) => (p.id === id ? restoreProductFromBackup(p) : p)),
         );
@@ -1379,6 +1432,9 @@ export function SeoReviewPage({
         if (itemRes?.ok) {
           successCount++;
           successfulIds.add(target.id);
+          if (target.coordinatorReview && amazonCrawlerReviews) {
+            void amazonCrawlerReviews.decide(target.coordinatorReview.itemId, target.coordinatorReview.version, "pending").catch(() => {});
+          }
         } else {
           failCount++;
         }
@@ -1570,6 +1626,9 @@ export function SeoReviewPage({
               : updatedProductBase.handle,
             shopifyAdminUrl: pushResult.adminUrl ?? target.shopifyAdminUrl,
             shopifySyncedAt: Date.now(),
+            lastSyncedAt: Date.now(),
+            lastRevertedAt: undefined,
+            previousSyncedAt: undefined,
             shopifySyncError: undefined,
             updatedAt: Date.now(),
           };

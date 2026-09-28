@@ -58,7 +58,7 @@ function EditModalInner({
   const [saveError, setSaveError] = useState<string | null>(null);
 
   const wasAlreadySynced = Boolean(
-    product.shopifySyncStatus === "synced" ||
+    (product.shopifySyncStatus === "synced" && !(product.lastRevertedAt && product.reviewDecision !== "approved")) ||
     product.shopifySyncedAt ||
     product.lastSyncedAt ||
     product.shopifyAdminUrl ||

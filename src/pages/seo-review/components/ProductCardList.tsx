@@ -102,7 +102,7 @@ export function ProductCardList({
         </span>
       );
     }
-    if (product.shopifySyncStatus === "synced") {
+    if (product.shopifySyncStatus === "synced" && !(product.lastRevertedAt && product.reviewDecision !== "approved")) {
       const isCrossStore = Boolean(
         currentStoreId && product.storeId && currentStoreId.toLowerCase() !== product.storeId.toLowerCase(),
       );
@@ -265,7 +265,11 @@ export function ProductCardList({
                   {product.lastRevertedAt && product.reviewDecision !== "approved" && (
                     <span
                       className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-amber-950/70 text-amber-300 border border-amber-800/60"
-                      title={`Đã hoàn tác dữ liệu gốc: ${new Date(product.lastRevertedAt).toLocaleString()}`}
+                      title={
+                        product.previousSyncedAt
+                          ? `Đã sync: ${new Date(product.previousSyncedAt).toLocaleString()} — Hoàn tác: ${new Date(product.lastRevertedAt).toLocaleString()}`
+                          : `Đã hoàn tác dữ liệu gốc: ${new Date(product.lastRevertedAt).toLocaleString()}`
+                      }
                     >
                       <span>↩</span>
                       <span>Đã hoàn tác</span>
@@ -359,7 +363,9 @@ export function ProductCardList({
                       </button>
                     ) : null}
 
-                  {product.shopifySyncStatus === "synced" && onRetrySync ? (
+                  {product.shopifySyncStatus === "synced" &&
+                  !(product.lastRevertedAt && product.reviewDecision !== "approved") &&
+                  onRetrySync ? (
                     <button
                       type="button"
                       title={

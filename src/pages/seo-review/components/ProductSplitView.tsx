@@ -195,7 +195,7 @@ export function ProductSplitView({
         </span>
       );
     }
-    if (product.shopifySyncStatus === "synced") {
+    if (product.shopifySyncStatus === "synced" && !(product.lastRevertedAt && product.reviewDecision !== "approved")) {
       const isCrossStore = Boolean(
         currentStoreId && product.storeId && currentStoreId.toLowerCase() !== product.storeId.toLowerCase(),
       );
@@ -390,7 +390,14 @@ export function ProductSplitView({
                       </span>
                     )}
                     {product.lastRevertedAt && product.reviewDecision !== "approved" && !product.isSyncing && !product.isReverting && (
-                      <span className="text-[10px] text-amber-400 font-medium" title={`Đã hoàn tác: ${new Date(product.lastRevertedAt).toLocaleString()}`}>
+                      <span
+                        className="text-[10px] text-amber-400 font-medium"
+                        title={
+                          product.previousSyncedAt
+                            ? `Đã sync: ${new Date(product.previousSyncedAt).toLocaleString()} — Hoàn tác: ${new Date(product.lastRevertedAt).toLocaleString()}`
+                            : `Đã hoàn tác: ${new Date(product.lastRevertedAt).toLocaleString()}`
+                        }
+                      >
                         ↩ Reverted
                       </span>
                     )}
@@ -486,13 +493,21 @@ export function ProductSplitView({
               )}
 
               {activeProduct.lastRevertedAt && activeProduct.reviewDecision !== "approved" && (
-                <div className="rounded-lg border border-amber-900/60 bg-amber-950/40 p-2.5 text-xs text-amber-300 flex items-center justify-between">
-                  <span className="flex items-center gap-1.5 font-medium">
-                    <span>↩</span> Đã hoàn tác về dữ liệu gốc thành công
-                  </span>
-                  <span className="font-mono text-[11px] text-amber-400/80">
-                    {new Date(activeProduct.lastRevertedAt).toLocaleTimeString()}
-                  </span>
+                <div className="rounded-lg border border-amber-900/60 bg-amber-950/40 p-2.5 text-xs text-amber-300 space-y-1">
+                  <div className="flex items-center justify-between">
+                    <span className="flex items-center gap-1.5 font-medium">
+                      <span>↩</span> Trạng thái hiện tại: Đã hoàn tác về dữ liệu gốc
+                    </span>
+                    <span className="font-mono text-[11px] text-amber-400/80">
+                      {new Date(activeProduct.lastRevertedAt).toLocaleTimeString()}
+                    </span>
+                  </div>
+                  {activeProduct.previousSyncedAt && (
+                    <div className="text-[10px] text-amber-400/70 border-t border-amber-900/40 pt-1 flex items-center justify-between font-mono">
+                      <span>Lịch sử: Từng đồng bộ Shopify lúc</span>
+                      <span>{new Date(activeProduct.previousSyncedAt).toLocaleString()}</span>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -763,7 +778,9 @@ export function ProductSplitView({
                     </button>
                   ) : null}
 
-                {activeProduct.shopifySyncStatus === "synced" && onRetrySync ? (
+                {activeProduct.shopifySyncStatus === "synced" &&
+                !(activeProduct.lastRevertedAt && activeProduct.reviewDecision !== "approved") &&
+                onRetrySync ? (
                   <button
                     type="button"
                     title={

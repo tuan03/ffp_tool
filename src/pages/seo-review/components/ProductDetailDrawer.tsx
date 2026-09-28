@@ -237,7 +237,7 @@ export function ProductDetailDrawer({
                     <span>Đang đồng bộ Store...</span>
                   </span>
                 )}
-                {product.shopifySyncStatus === "synced" && (
+                {product.shopifySyncStatus === "synced" && !(product.lastRevertedAt && product.reviewDecision !== "approved") && (
                   <span
                     className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold ${
                       currentStoreId && product.storeId && currentStoreId.toLowerCase() !== product.storeId.toLowerCase()
@@ -263,6 +263,18 @@ export function ProductDetailDrawer({
                         Shopify Admin ↗
                       </a>
                     )}
+                  </span>
+                )}
+                {product.lastRevertedAt && product.reviewDecision !== "approved" && (
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-500/15 text-amber-300 border border-amber-500/30">
+                    <span className="h-2 w-2 rounded-full bg-amber-400" />
+                    <span>Shopify: Đã hoàn tác {product.storeId ? `(${product.storeId})` : ""}</span>
+                  </span>
+                )}
+                {!product.lastRevertedAt && (!product.shopifySyncStatus || product.shopifySyncStatus === "idle") && (
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-slate-800 text-slate-400 border border-slate-700">
+                    <span className="h-2 w-2 rounded-full bg-slate-500" />
+                    <span>Chưa đẩy Store</span>
                   </span>
                 )}
                 {product.shopifySyncStatus === "failed" && (
@@ -303,13 +315,21 @@ export function ProductDetailDrawer({
             )}
 
             {product.lastRevertedAt && product.reviewDecision !== "approved" && (
-              <div className="rounded-xl border border-amber-900/60 bg-amber-950/40 p-3.5 text-xs text-amber-300 flex items-center justify-between">
-                <span className="flex items-center gap-1.5 font-medium">
-                  <span>↩</span> Đã hoàn tác về dữ liệu gốc thành công
-                </span>
-                <span className="font-mono text-amber-400">
-                  {new Date(product.lastRevertedAt).toLocaleString()}
-                </span>
+              <div className="rounded-xl border border-amber-900/60 bg-amber-950/40 p-3.5 text-xs text-amber-300 space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="flex items-center gap-1.5 font-medium">
+                    <span>↩</span> Trạng thái hiện tại: Đã hoàn tác về dữ liệu gốc
+                  </span>
+                  <span className="font-mono text-amber-400">
+                    {new Date(product.lastRevertedAt).toLocaleString()}
+                  </span>
+                </div>
+                {product.previousSyncedAt && (
+                  <div className="text-[11px] text-amber-400/70 border-t border-amber-900/40 pt-1 flex items-center justify-between font-mono">
+                    <span>Lịch sử: Từng đồng bộ Shopify lúc</span>
+                    <span>{new Date(product.previousSyncedAt).toLocaleString()}</span>
+                  </div>
+                )}
               </div>
             )}
 
@@ -976,7 +996,9 @@ export function ProductDetailDrawer({
                   </button>
                 )}
 
-              {product.shopifySyncStatus === "synced" && onRetrySync && (
+              {product.shopifySyncStatus === "synced" &&
+                !(product.lastRevertedAt && product.reviewDecision !== "approved") &&
+                onRetrySync && (
                 <button
                   type="button"
                   title={
