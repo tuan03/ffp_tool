@@ -1,5 +1,6 @@
 import { Fragment, useState } from "react";
 
+import { canRollbackProduct } from "../review-navigation";
 import { sanitizeHtmlDescription } from "../sanitize-html";
 import { buildProductZoomImages } from "../zoom-image-helper";
 import { SeoSerpPreview } from "./SeoSerpPreview";
@@ -156,6 +157,29 @@ export function ProductListTable({
               ↗
             </a>
           ) : null}
+        </span>
+      );
+    }
+    if (product.lastRevertedAt && product.reviewDecision !== "approved") {
+      return (
+        <span
+          className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold bg-amber-500/15 text-amber-300 border border-amber-500/30"
+          title={
+            product.previousSyncedAt
+              ? `Đã sync: ${new Date(product.previousSyncedAt).toLocaleString()} — Hoàn tác: ${new Date(product.lastRevertedAt).toLocaleString()}`
+              : `Đã hoàn tác: ${new Date(product.lastRevertedAt).toLocaleString()}`
+          }
+        >
+          <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+          <span>Shopify: Đã hoàn tác {product.storeId ? `(${product.storeId})` : ""}</span>
+        </span>
+      );
+    }
+    if (!product.shopifySyncStatus || product.shopifySyncStatus === "idle") {
+      return (
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-slate-800 text-slate-400 border border-slate-700">
+          <span className="h-1.5 w-1.5 rounded-full bg-slate-500" />
+          <span>Chưa đẩy Store</span>
         </span>
       );
     }
@@ -577,8 +601,7 @@ export function ProductListTable({
                         ) : null}
 
                         {/* Nút Hoàn tác dữ liệu cũ (chỉ hiện khi đã duyệt/sync và có bản backup) */}
-                        {Boolean(product.originalBackup) &&
-                          (product.reviewDecision === "approved" || Boolean(product.lastSyncedAt)) && (
+                        {canRollbackProduct(product) && (
                             <button
                               type="button"
                               title={
@@ -881,8 +904,7 @@ export function ProductListTable({
                             </div>
                             <div className="flex items-center gap-2">
                               {/* Nút Hoàn tác dữ liệu cũ */}
-                              {Boolean(product.originalBackup) &&
-                                (product.reviewDecision === "approved" || Boolean(product.lastSyncedAt)) && (
+                              {canRollbackProduct(product) && (
                                   <button
                                     type="button"
                                     onClick={() => onRollbackProduct?.(product.id)}

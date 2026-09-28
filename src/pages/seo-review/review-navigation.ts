@@ -102,3 +102,29 @@ export function filterSeoProducts(
     return true;
   });
 }
+
+/**
+ * Evaluates whether a product is eligible for rollback to its backup version.
+ * Requires an existing backup, not actively syncing or reverting, not already reverted,
+ * and having been either approved, previously synced, or having a sync timestamp.
+ */
+export function canRollbackProduct(
+  product: SeoProductUiViewModel,
+): product is SeoProductUiViewModel & { readonly originalBackup: NonNullable<SeoProductUiViewModel["originalBackup"]> } {
+  if (!product.originalBackup) {
+    return false;
+  }
+  if (product.isSyncing || product.isReverting) {
+    return false;
+  }
+  // Once reverted, cannot rollback again until it is re-approved or re-synced
+  if (product.lastRevertedAt && product.reviewDecision !== "approved") {
+    return false;
+  }
+  return Boolean(
+    product.reviewDecision === "approved" ||
+      product.shopifySyncStatus === "synced" ||
+      product.lastSyncedAt ||
+      product.shopifySyncedAt,
+  );
+}

@@ -1,5 +1,6 @@
 import { SourceBadge } from "./SourceBadge";
 import { SourceOriginBadge } from "./SourceOriginBadge";
+import { canRollbackProduct } from "../review-navigation";
 import type { SeoProcessingStatus, SeoProductUiViewModel } from "../types";
 
 export interface ProductCardListProps {
@@ -128,6 +129,29 @@ export function ProductCardList({
               Shopify ↗
             </a>
           ) : null}
+        </span>
+      );
+    }
+    if (product.lastRevertedAt && product.reviewDecision !== "approved") {
+      return (
+        <span
+          className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-500/15 text-amber-300 border border-amber-500/30"
+          title={
+            product.previousSyncedAt
+              ? `Đã sync: ${new Date(product.previousSyncedAt).toLocaleString()} — Hoàn tác: ${new Date(product.lastRevertedAt).toLocaleString()}`
+              : `Đã hoàn tác: ${new Date(product.lastRevertedAt).toLocaleString()}`
+          }
+        >
+          <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+          <span>Shopify: Đã hoàn tác {product.storeId ? `(${product.storeId})` : ""}</span>
+        </span>
+      );
+    }
+    if (!product.shopifySyncStatus || product.shopifySyncStatus === "idle") {
+      return (
+        <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-800 text-slate-400 border border-slate-700">
+          <span className="h-1.5 w-1.5 rounded-full bg-slate-500" />
+          <span>Chưa đẩy Store</span>
         </span>
       );
     }
@@ -416,8 +440,7 @@ export function ProductCardList({
                   ) : null}
 
                   {/* Nút Hoàn tác (chỉ hiện khi đã duyệt/sync và có bản backup) */}
-                  {Boolean(product.originalBackup) &&
-                    (product.reviewDecision === "approved" || Boolean(product.lastSyncedAt)) && (
+                  {canRollbackProduct(product) && (
                       <button
                         type="button"
                         title={
@@ -515,6 +538,24 @@ export function ProductCardList({
               </div>
             </div>
 
+            {/* Reverted state & history banner */}
+            {product.lastRevertedAt && product.reviewDecision !== "approved" && (
+              <div className="mx-3 mb-3 rounded-xl border border-amber-900/60 bg-amber-950/40 p-3 text-xs text-amber-300 space-y-1">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <span className="flex items-center gap-1.5 font-medium">
+                    <span>↩</span> Trạng thái hiện tại: Đã hoàn tác về dữ liệu gốc
+                  </span>
+                  <span className="font-mono text-amber-400/90 text-[11px]">
+                    {new Date(product.lastRevertedAt).toLocaleString()}
+                  </span>
+                </div>
+                {product.previousSyncedAt && (
+                  <div className="text-[11px] text-amber-400/80 pl-4">
+                    Lịch sử: Đã từng đồng bộ lên Shopify {product.storeId ? `(${product.storeId}) ` : ""}lúc {new Date(product.previousSyncedAt).toLocaleString()}, sau đó hoàn tác.
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         );
       })}

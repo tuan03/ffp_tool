@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 
+import { canRollbackProduct } from "../review-navigation";
 import { sanitizeHtmlDescription } from "../sanitize-html";
 import { buildProductZoomImages } from "../zoom-image-helper";
 import { SeoSerpPreview } from "./SeoSerpPreview";
@@ -726,8 +727,7 @@ export function ProductSplitView({
 
               <div className="flex items-center gap-2">
                 {/* Nút Hoàn tác dữ liệu cũ */}
-                {Boolean(activeProduct.originalBackup) &&
-                  (activeProduct.reviewDecision === "approved" || Boolean(activeProduct.lastSyncedAt)) && (
+                {canRollbackProduct(activeProduct) && (
                     <button
                       type="button"
                       onClick={() => onRollbackProduct?.(activeProduct.id)}

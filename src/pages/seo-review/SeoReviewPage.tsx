@@ -22,7 +22,7 @@ import { ProductListTable } from "./components/ProductListTable";
 import { ProductSplitView } from "./components/ProductSplitView";
 import { SeoBatchToolbar } from "./components/SeoBatchToolbar";
 import { ShopifySyncErrorModal } from "./components/ShopifySyncErrorModal";
-import { filterSeoProducts, findNextProductInList } from "./review-navigation";
+import { canRollbackProduct, filterSeoProducts, findNextProductInList } from "./review-navigation";
 import { buildProductRawJson } from "./product-raw-json-helper";
 import { adaptAmazonCrawlerReviewToViewModel, getProductSourceOrigin } from "./seo-content-ui-adapter";
 import type {
@@ -1246,7 +1246,11 @@ export function SeoReviewPage({
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/^-+|-+$/g, "");
 
-    const previousSyncedAt = p.shopifySyncedAt || p.lastSyncedAt || p.previousSyncedAt;
+    const previousSyncedAt =
+      p.shopifySyncedAt ||
+      p.lastSyncedAt ||
+      p.previousSyncedAt ||
+      (p.shopifySyncStatus === "synced" ? p.updatedAt || Date.now() : undefined);
 
     return {
       ...p,
@@ -1280,8 +1284,6 @@ export function SeoReviewPage({
     const target = products.find((p) => p.id === id);
     if (!target) return;
     if (target.isSyncing || target.isReverting) return;
-    if (target.reviewDecision !== "approved" && !target.lastSyncedAt) return;
-
     if (!target.originalBackup) {
       setSyncFeedback({
         type: "error",
@@ -1289,6 +1291,7 @@ export function SeoReviewPage({
       });
       return;
     }
+    if (!canRollbackProduct(target)) return;
 
     if (!onRollbackApprovedProducts) {
       setProducts((prev) =>
@@ -1371,12 +1374,7 @@ export function SeoReviewPage({
 
   async function handleRollbackSelected(): Promise<void> {
     const targets = products.filter(
-      (p) =>
-        selectedIds.has(p.id) &&
-        Boolean(p.originalBackup) &&
-        (p.reviewDecision === "approved" || Boolean(p.lastSyncedAt)) &&
-        !p.isSyncing &&
-        !p.isReverting,
+      (p) => selectedIds.has(p.id) && canRollbackProduct(p),
     );
     if (targets.length === 0) return;
 
@@ -1851,14 +1849,7 @@ export function SeoReviewPage({
   }
 
   const canRollbackSelectedCount = useMemo(() => {
-    return products.filter(
-      (p) =>
-        selectedIds.has(p.id) &&
-        Boolean(p.originalBackup) &&
-        (p.reviewDecision === "approved" || Boolean(p.lastSyncedAt)) &&
-        !p.isSyncing &&
-        !p.isReverting,
-    ).length;
+    return products.filter((p) => selectedIds.has(p.id) && canRollbackProduct(p)).length;
   }, [products, selectedIds]);
 
   const isRevertingSelected = useMemo(() => {

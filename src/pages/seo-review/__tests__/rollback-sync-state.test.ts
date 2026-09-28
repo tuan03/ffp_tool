@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { getInitialSampleViewModels } from "../seo-content-ui-adapter";
+import { canRollbackProduct } from "../review-navigation";
 import type { SeoProductUiViewModel } from "../types";
 
 /**
@@ -15,7 +16,11 @@ function restoreProductFromBackup(p: SeoProductUiViewModel): SeoProductUiViewMod
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
 
-  const previousSyncedAt = p.shopifySyncedAt || p.lastSyncedAt || p.previousSyncedAt;
+  const previousSyncedAt =
+    p.shopifySyncedAt ||
+    p.lastSyncedAt ||
+    p.previousSyncedAt ||
+    (p.shopifySyncStatus === "synced" ? p.updatedAt || Date.now() : undefined);
 
   return {
     ...p,
@@ -243,5 +248,111 @@ test("Re-approving a product after rollback transitions badge from 'reverted' to
   assert.equal(resolveSyncBadgeDisplay(reApprovedProduct), "idle");
   assert.equal(calculateSyncedStat([reApprovedProduct]), 0, "Synced stat must still be 0 before push");
   assert.equal(computeApprovedUnsyncedStat([reApprovedProduct]), 1, "Must be counted as approved unsynced");
+});
+
+test("restoreProductFromBackup falls back to updatedAt when timestamps are omitted on synced product", () => {
+  const sample = getInitialSampleViewModels()[0]!;
+  const updatedAt = 1774005000000;
+
+  const syncedWithoutTimestamps: SeoProductUiViewModel = {
+    ...sample,
+    reviewDecision: "approved",
+    shopifySyncStatus: "synced",
+    shopifySyncedAt: undefined,
+    lastSyncedAt: undefined,
+    previousSyncedAt: undefined,
+    updatedAt,
+    originalBackup: {
+      productTitle: "Original Title",
+      productDescription: "Original Desc",
+    },
+  };
+
+  const reverted = restoreProductFromBackup(syncedWithoutTimestamps);
+  assert.equal(
+    reverted.previousSyncedAt,
+    updatedAt,
+    "previousSyncedAt must fall back to updatedAt when sync timestamps were undefined",
+  );
+  assert.equal(reverted.shopifySyncStatus, "idle");
+  assert.equal(reverted.reviewDecision, "pending");
+});
+
+test("canRollbackProduct enforces strict eligibility across all product lifecycle states", () => {
+  const sample = getInitialSampleViewModels()[0]!;
+
+  // 1. Without originalBackup -> cannot rollback
+  const noBackup: SeoProductUiViewModel = {
+    ...sample,
+    reviewDecision: "approved",
+    shopifySyncStatus: "synced",
+    originalBackup: undefined,
+  };
+  assert.equal(canRollbackProduct(noBackup), false, "Cannot rollback without originalBackup");
+
+  // 2. Approved with backup -> can rollback
+  const approvedWithBackup: SeoProductUiViewModel = {
+    ...sample,
+    reviewDecision: "approved",
+    shopifySyncStatus: "idle",
+    originalBackup: { productTitle: "T", productDescription: "D" },
+  };
+  assert.equal(canRollbackProduct(approvedWithBackup), true, "Can rollback approved product with backup");
+
+  // 3. Synced on Shopify with backup (even if pending) -> can rollback
+  const syncedPendingWithBackup: SeoProductUiViewModel = {
+    ...sample,
+    reviewDecision: "pending",
+    shopifySyncStatus: "synced",
+    originalBackup: { productTitle: "T", productDescription: "D" },
+  };
+  assert.equal(canRollbackProduct(syncedPendingWithBackup), true, "Can rollback synced pending product with backup");
+
+  // 4. Has shopifySyncedAt or lastSyncedAt with backup (even if pending) -> can rollback
+  const timestampPendingWithBackup: SeoProductUiViewModel = {
+    ...sample,
+    reviewDecision: "pending",
+    shopifySyncStatus: "idle",
+    lastSyncedAt: Date.now() - 5000,
+    originalBackup: { productTitle: "T", productDescription: "D" },
+  };
+  assert.equal(canRollbackProduct(timestampPendingWithBackup), true, "Can rollback if lastSyncedAt exists");
+
+  // 5. While isSyncing or isReverting -> blocked
+  assert.equal(
+    canRollbackProduct({ ...approvedWithBackup, isSyncing: true }),
+    false,
+    "Cannot rollback while isSyncing is true",
+  );
+  assert.equal(
+    canRollbackProduct({ ...approvedWithBackup, isReverting: true }),
+    false,
+    "Cannot rollback while isReverting is true",
+  );
+
+  // 6. Already reverted (lastRevertedAt set and pending) -> blocked from redundant rollback
+  const alreadyReverted: SeoProductUiViewModel = {
+    ...sample,
+    reviewDecision: "pending",
+    shopifySyncStatus: "idle",
+    lastRevertedAt: Date.now() - 1000,
+    originalBackup: { productTitle: "T", productDescription: "D" },
+  };
+  assert.equal(
+    canRollbackProduct(alreadyReverted),
+    false,
+    "Cannot rollback again once already reverted to backup",
+  );
+
+  // 7. If re-approved after rollback -> rollback becomes available again
+  const reApprovedAfterRevert: SeoProductUiViewModel = {
+    ...alreadyReverted,
+    reviewDecision: "approved",
+  };
+  assert.equal(
+    canRollbackProduct(reApprovedAfterRevert),
+    true,
+    "Can rollback again if product is re-approved",
+  );
 });
 

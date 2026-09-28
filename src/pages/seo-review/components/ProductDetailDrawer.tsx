@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 
+import { canRollbackProduct } from "../review-navigation";
 import { sanitizeHtmlDescription } from "../sanitize-html";
 import { buildProductZoomImages } from "../zoom-image-helper";
 import { serializeProductRawJson } from "../product-raw-json-helper";
@@ -1031,8 +1032,7 @@ export function ProductDetailDrawer({
               </a>
 
               {/* Nút Hoàn tác dữ liệu cũ */}
-              {Boolean(product.originalBackup) &&
-                (product.reviewDecision === "approved" || Boolean(product.lastSyncedAt)) && (
+              {canRollbackProduct(product) && (
                   <button
                     type="button"
                     onClick={() => onRollback?.(product.id)}
