@@ -77,6 +77,8 @@ export type {
   SeoContentDetailedResult,
   SeoContentEngine,
   SeoContentInput,
+  VariantSample,
+  VariantSummary,
   SeoContentOutput,
   SeoContentPipelineSummary,
   SeoContentRunMetadata,
@@ -84,4 +86,15 @@ export type {
   SeoContentRunOptions,
   SeoContentWebpAsset,
 } from "./types";
+export { summarizeVariants } from "./internal/variant-summarizer";
+export {
+  classifyError,
+  getJitterBackoffDelayMs,
+  CLASSIFIED_ERROR_ACTIONS,
+  DEFAULT_JITTER_SCHEDULE,
+} from "./internal/error-classifier";
+export type {
+  ClassifiedErrorAction,
+  ClassifiedErrorResolution,
+} from "./internal/error-classifier";
 export { validateExternalSeoAnalysis, researchExternalSeo, checkExternalSeoKeywords, finalizeExternalSeo, bindExternalSeoProduct } from "./external-seo";

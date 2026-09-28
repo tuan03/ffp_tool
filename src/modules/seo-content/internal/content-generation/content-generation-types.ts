@@ -1,3 +1,4 @@
+import type { VariantSummary } from "../../types";
 import type { ContentGenerationMetadata, ContentResult } from "../domain-types";
 import type { StoreContentProfile } from "../store-profiles/types";
 
@@ -17,6 +18,7 @@ export interface ContentFactSheet {
   readonly useCases: readonly string[];
   readonly personalizationSupported: boolean;
   readonly variantLabel?: string;
+  readonly variantSummary?: VariantSummary;
   readonly storeProfile?: StoreContentProfile;
 }
 

@@ -5,6 +5,21 @@ export interface SeoContentImageInput {
   readonly localFilePath?: string;
 }
 
+export interface VariantSample {
+  readonly title: string;
+  readonly price?: string;
+  readonly sku?: string;
+  readonly options?: Readonly<Record<string, string>>;
+}
+
+export interface VariantSummary {
+  readonly variantCount: number;
+  readonly optionNames: readonly string[];
+  readonly sampleVariants: readonly VariantSample[];
+  readonly minPrice?: number;
+  readonly maxPrice?: number;
+}
+
 export interface SeoContentInput {
   readonly images: readonly SeoContentImageInput[];
   /** Public storefront domain used to infer the workflow niche before B1. */
@@ -17,6 +32,8 @@ export interface SeoContentInput {
   readonly url?: string;
   readonly storeId?: string;
   readonly variantLabel?: string;
+  readonly variants?: readonly unknown[];
+  readonly variantSummary?: VariantSummary;
 }
 
 export interface SeoContentWebpAsset {

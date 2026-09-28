@@ -2,6 +2,7 @@ import type { SeoContentInput } from "../../types";
 import type { ProductUnderstanding, SeoPipelineContext } from "../domain-types";
 import type { ContentFactSheet } from "./content-generation-types";
 import { resolveStoreProfile } from "../store-profiles";
+import { summarizeVariants } from "../variant-summarizer";
 
 const PERSONALIZATION_PATTERN =
   /\b(personalized|personalised|personalization|personalisation|custom\s+name|your\s+name|custom\s+text|custom\s+photo|upload\s+photo|custom\s+image|monogram|initials|customizable|customisable|engraved|engraving|custom\s+song|custom\s+spotify)\b/i;
@@ -79,6 +80,10 @@ export function buildContentFactSheet(
     sanitizedNiche ||
     "product";
 
+  const variantSummary =
+    source.variantSummary ??
+    (source.variants && source.variants.length > 0 ? summarizeVariants(source.variants) : undefined);
+
   return {
     originalTitle: source.title.trim(),
     originalDescription: source.description.trim(),
@@ -95,6 +100,7 @@ export function buildContentFactSheet(
     useCases: shoppingContext?.useCases ?? [],
     personalizationSupported,
     variantLabel: sanitizeFactText(source.variantLabel),
+    variantSummary,
     storeProfile,
   };
 }

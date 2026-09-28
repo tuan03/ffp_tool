@@ -1,4 +1,26 @@
 import { abortableDelay } from "../provider-runtime";
+import {
+  classifyError,
+  getJitterBackoffDelayMs,
+  CLASSIFIED_ERROR_ACTIONS,
+  DEFAULT_JITTER_SCHEDULE,
+} from "../error-classifier";
+import type {
+  ClassifiedErrorAction,
+  ClassifiedErrorResolution,
+} from "../error-classifier";
+
+export {
+  classifyError,
+  getJitterBackoffDelayMs,
+  CLASSIFIED_ERROR_ACTIONS,
+  DEFAULT_JITTER_SCHEDULE,
+};
+export type {
+  ClassifiedErrorAction,
+  ClassifiedErrorResolution,
+};
+
 export const GEMINI_RETRIES_EXHAUSTED = Symbol.for("gemini.retries_exhausted");
 
 export interface GeminiRetryOptions {
@@ -8,6 +30,8 @@ export interface GeminiRetryOptions {
   readonly backoffMultiplier?: number;
   readonly maxDelayMs?: number;
   readonly jitterMs?: number;
+  readonly useJitterSchedule?: boolean;
+  readonly baseSchedule?: readonly number[];
   readonly onRetry?: (error: unknown, attempt: number, delayMs: number) => void;
   readonly sleepFn?: (ms: number) => Promise<void>;
   readonly randomFn?: () => number;
@@ -179,9 +203,18 @@ export async function executeWithExponentialBackoff<T>(
         throw error;
       }
 
-      const baseDelay = initialDelayMs * Math.pow(backoffMultiplier, attempt - 1);
-      const jitter = Math.floor(randomFn() * Math.max(0, jitterMs));
-      const delayMs = Math.min(maxDelayMs, baseDelay + jitter);
+      let delayMs: number;
+      if (options?.useJitterSchedule || options?.baseSchedule) {
+        delayMs = getJitterBackoffDelayMs(
+          attempt,
+          options.baseSchedule ?? DEFAULT_JITTER_SCHEDULE,
+          randomFn,
+        );
+      } else {
+        const baseDelay = initialDelayMs * Math.pow(backoffMultiplier, attempt - 1);
+        const jitter = Math.floor(randomFn() * Math.max(0, jitterMs));
+        delayMs = Math.min(maxDelayMs, baseDelay + jitter);
+      }
 
       if (options?.onRetry) {
         options.onRetry(error, attempt, delayMs);
@@ -196,3 +229,71 @@ export async function executeWithExponentialBackoff<T>(
     }
   }
 }
+
+/**
+ * Executes an asynchronous action using classified error handling and jitter backoff.
+ * Rejects immediately on non-retryable actions (INPUT_TOO_LARGE_REJECT, FATAL_INVALID_CONFIG,
+ * SAFETY_MANUAL_REVIEW, CIRCUIT_BREAKER_MISSING_MODEL, QUEUE_PAUSE_CREDENTIAL_ERROR).
+ * Retries on THROTTLE_RATE_LIMIT, TRANSIENT_RETRY, TIMEOUT_RETRY, TRUNCATED_JSON_RECOMPACT
+ * using the configured jitter backoff schedule.
+ */
+export async function executeWithClassifiedRetry<T>(
+  action: () => Promise<T>,
+  options?: GeminiRetryOptions,
+): Promise<T> {
+  const env = typeof process !== "undefined" && process.env ? process.env : undefined;
+  const rawMaxRetries =
+    options?.maxRetries ??
+    (env?.GEMINI_MAX_RETRIES ? Number(env.GEMINI_MAX_RETRIES) : undefined);
+  const maxRetries =
+    Number.isInteger(rawMaxRetries) && rawMaxRetries! >= 0 ? rawMaxRetries! : 4;
+
+  const sleepFn =
+    options?.sleepFn ??
+    ((ms: number) => abortableDelay(ms, options?.signal));
+  const randomFn = options?.randomFn ?? Math.random;
+  const baseSchedule = options?.baseSchedule ?? DEFAULT_JITTER_SCHEDULE;
+
+  let attempt = 1;
+  while (true) {
+    options?.signal?.throwIfAborted();
+    try {
+      return await action();
+    } catch (error: unknown) {
+      const resolution = classifyError(error);
+
+      // Inner retries exhausted check
+      const alreadyExhausted =
+        typeof error === "object" &&
+        error !== null &&
+        Boolean((error as Record<symbol, unknown>)[GEMINI_RETRIES_EXHAUSTED]);
+
+      const allowedRetries = Math.min(maxRetries, resolution.maxRetries);
+
+      if (!resolution.isRetryable || alreadyExhausted || attempt > allowedRetries) {
+        if (typeof error === "object" && error !== null) {
+          try {
+            (error as Record<symbol, unknown>)[GEMINI_RETRIES_EXHAUSTED] = true;
+          } catch {
+            // Ignore if error object is frozen or non-extensible
+          }
+        }
+        throw error;
+      }
+
+      const delayMs = getJitterBackoffDelayMs(attempt, baseSchedule, randomFn);
+
+      if (options?.onRetry) {
+        options.onRetry(error, attempt, delayMs);
+      } else {
+        console.warn(
+          `[Classified Retry] Action: ${resolution.action}. Retrying attempt ${attempt}/${allowedRetries} after ${delayMs}ms. Reason: ${resolution.reason}`,
+        );
+      }
+
+      await sleepFn(delayMs);
+      attempt++;
+    }
+  }
+}
+

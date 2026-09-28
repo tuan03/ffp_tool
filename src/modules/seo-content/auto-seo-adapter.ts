@@ -209,6 +209,7 @@ export function fromAutoSeoProduct(
     images,
     ...(productId ? { productId } : {}),
     ...(typeof product.onlineStoreUrl === "string" && product.onlineStoreUrl ? { url: product.onlineStoreUrl } : {}),
+    ...(Array.isArray(product.variants) ? { variants: product.variants } : {}),
   };
 }
 
