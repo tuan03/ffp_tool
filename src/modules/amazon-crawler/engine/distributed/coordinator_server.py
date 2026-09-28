@@ -335,6 +335,7 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
             "discard": True,
             "cacheGeneration": cache_generation,
         })
+        await asyncio.to_thread(store.clear_negative_cache)
         protected_tokens = await asyncio.to_thread(store.review_image_tokens)
         await asyncio.to_thread(image_service.clear_cache, protected_tokens)
         await asyncio.to_thread(store.purge_stopped_jobs)
@@ -412,6 +413,7 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
 
     @app.delete("/api/v1/clients/cache")
     async def clear_client_caches() -> dict[str, Any]:
+        await asyncio.to_thread(store.clear_negative_cache)
         result = await manager.clear_client_caches()
         protected_tokens = await asyncio.to_thread(store.review_image_tokens)
         image_cache = await asyncio.to_thread(image_service.clear_cache, protected_tokens)

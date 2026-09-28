@@ -6,11 +6,13 @@ import hashlib
 import json
 import uuid
 from collections import Counter
-from datetime import timedelta
+from datetime import datetime, timedelta
 from threading import Lock
 from typing import Any
 
 from sqlalchemy import delete, func, select, text
+from sqlalchemy.dialects.postgresql import insert as postgres_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import selectinload
 
 from ..crawler_core import CrawlSettings, normalize_amazon_input
@@ -56,6 +58,8 @@ CANCELLATION_PENDING_ATTEMPT_STATUSES = {
 TOMBSTONE_RETENTION_DAYS = 30
 ACTIVE_JOB_STATUSES = {"queued", "running", "cancelling"}
 CACHE_GENERATION_KEY = "agent_cache_generation"
+NEGATIVE_CACHE_PREFIX = "amazon-negative:"
+CAPTCHA_COOLDOWN_KEY = "amazon-captcha-cooldown"
 
 
 class ActiveJobExistsError(RuntimeError):
@@ -227,9 +231,16 @@ class CoordinatorStore:
                     if normalized.asin in seen_asins:
                         continue
                     seen_asins.add(normalized.asin)
+                    negative = self._active_negative(
+                        session, self._negative_key(normalized.asin, str(settings["amazonZip"])), utc_now()
+                    )
+                    is_terminal = negative is not None and negative.get("retryable") is False
                     session.add(CrawlTask(
                         id=_id(), job_id=job.id, ordinal=ordinal, source=source,
-                        asin=normalized.asin, canonical_url=normalized.canonical_url, status="queued",
+                        asin=normalized.asin, canonical_url=normalized.canonical_url,
+                        status="failed" if is_terminal else "queued",
+                        last_error=negative,
+                        completed_at=utc_now() if is_terminal else None,
                     ))
                     accepted += 1
                 except ValueError as error:
@@ -242,6 +253,56 @@ class CoordinatorStore:
             self._event(session, job.id, "job_created", {"accepted": accepted, "rejected": rejected})
             self._refresh_job(session, job.id)
             return self._job_snapshot(session, job)
+
+    @staticmethod
+    def _negative_key(asin: str, amazon_zip: str) -> str:
+        return f"{NEGATIVE_CACHE_PREFIX}{asin}:{amazon_zip}"
+
+    @staticmethod
+    def _active_negative(session, key: str, now: datetime) -> dict[str, Any] | None:
+        state = session.get(CoordinatorState, key)
+        if state is None:
+            return None
+        try:
+            failure = json.loads(state.value)
+            retry_after = datetime.fromisoformat(str(failure["retryAfter"]).replace("Z", "+00:00"))
+            is_expired = retry_after <= now
+        except (ValueError, TypeError, KeyError):
+            session.delete(state)
+            return None
+        if is_expired:
+            session.delete(state)
+            return None
+        return failure if isinstance(failure, dict) else None
+
+    @staticmethod
+    def _store_negative(session, key: str, error: dict[str, Any]) -> None:
+        if error.get("status") not in {"not_found", "temporarily_blocked", "network_error", "parser_error", "partial"}:
+            return
+        try:
+            retry_after = datetime.fromisoformat(str(error["retryAfter"]).replace("Z", "+00:00"))
+            is_expired = retry_after <= utc_now()
+        except (ValueError, TypeError, KeyError):
+            return
+        if is_expired:
+            return
+        failure = {
+            "status": error["status"], "reason": str(error.get("reason") or error["status"]),
+            "retryable": bool(error.get("retryable")), "retryAfter": error["retryAfter"],
+            "code": str(error.get("code") or error["status"]).upper(),
+            "message": str(error.get("message") or "Amazon crawl failed."),
+        }
+        if error.get("status") == "partial" and error.get("resumeClientId"):
+            failure["resumeClientId"] = str(error["resumeClientId"])
+        dialect = session.get_bind().dialect.name
+        if dialect == "postgresql":
+            statement = postgres_insert(CoordinatorState).values(key=key, value=json.dumps(failure))
+        else:
+            statement = sqlite_insert(CoordinatorState).values(key=key, value=json.dumps(failure))
+        session.execute(statement.on_conflict_do_update(
+            index_elements=[CoordinatorState.key],
+            set_={"value": json.dumps(failure), "updated_at": utc_now()},
+        ))
 
     @staticmethod
     def _cache_generation(session) -> int:
@@ -266,6 +327,11 @@ class CoordinatorStore:
     def current_cache_generation(self) -> int:
         with self.sessions() as session:
             return self._cache_generation(session)
+
+    def clear_negative_cache(self) -> None:
+        with self.sessions.begin() as session:
+            session.execute(delete(CoordinatorState).where(CoordinatorState.key.like(f"{NEGATIVE_CACHE_PREFIX}%")))
+            session.execute(delete(CoordinatorState).where(CoordinatorState.key == CAPTCHA_COOLDOWN_KEY))
 
     def register_client(self, hello: dict[str, Any]) -> dict[str, Any]:
         client_id = str(hello.get("clientId") or "").strip()
@@ -397,16 +463,43 @@ class CoordinatorStore:
             count = min(count, max(0, client.max_concurrent_inputs - int(active_count)))
             if count == 0:
                 return []
+            if self._active_negative(session, CAPTCHA_COOLDOWN_KEY, now) is not None:
+                return []
             tasks = session.scalars(
                 select(CrawlTask)
                 .join(CrawlJob, CrawlTask.job_id == CrawlJob.id)
                 .outerjoin(CrawlJobControl, CrawlJobControl.job_id == CrawlJob.id)
                 .where(CrawlTask.status == "queued", CrawlJob.status.in_(["queued", "running"]))
                 .order_by(func.coalesce(CrawlJobControl.priority, 0).desc(), CrawlJob.created_at, CrawlTask.ordinal)
-                .limit(count)
                 .with_for_update(skip_locked=True)
             ).all()
             for task in tasks:
+                job = session.get(CrawlJob, task.job_id)
+                amazon_zip = str((job.settings if job else {}).get("amazonZip") or "90001")
+                negative = self._active_negative(session, self._negative_key(task.asin, amazon_zip), now)
+                if negative is not None:
+                    task.last_error = negative
+                    if negative.get("retryable") is False:
+                        task.status = "failed"
+                        task.completed_at = now
+                        self._refresh_job(session, task.job_id)
+                        continue
+                retry_after = (task.last_error or {}).get("retryAfter")
+                if retry_after:
+                    try:
+                        if datetime.fromisoformat(str(retry_after).replace("Z", "+00:00")) > now:
+                            continue
+                    except (TypeError, ValueError):
+                        pass
+                resume_client_id = str((task.last_error or {}).get("resumeClientId") or "")
+                if resume_client_id and resume_client_id != client_id:
+                    resume_client = session.get(ClientRecord, resume_client_id)
+                    if (
+                        resume_client is not None
+                        and resume_client.status in {"online", "busy", "waiting_captcha"}
+                        and _as_utc(resume_client.last_seen_at) >= now - timedelta(seconds=CLIENT_OFFLINE_SECONDS)
+                    ):
+                        continue
                 lease_id = _id()
                 task.status = "leased"
                 task.assigned_client_id = client_id
@@ -419,7 +512,6 @@ class CoordinatorStore:
                 )
                 session.add(attempt)
                 self._refresh_job(session, task.job_id)
-                job = session.get(CrawlJob, task.job_id)
                 leases.append({
                     "type": "assignment",
                     "taskId": task.id,
@@ -433,6 +525,8 @@ class CoordinatorStore:
                     "leaseExpiresAt": utc_iso(task.lease_expires_at),
                 })
                 self._event(session, task.job_id, "task_leased", {"taskId": task.id, "clientId": client_id})
+                if len(leases) >= count:
+                    break
             if leases:
                 client.status = "busy"
                 client.last_seen_at = now
@@ -468,7 +562,9 @@ class CoordinatorStore:
     def fail_task(self, client_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         task_id = str(payload.get("taskId") or "")
         lease_id = str(payload.get("leaseId") or "")
-        error = payload.get("error") if isinstance(payload.get("error"), dict) else {"message": str(payload.get("error") or "Unknown crawler error")}
+        error = dict(payload["error"]) if isinstance(payload.get("error"), dict) else {"message": str(payload.get("error") or "Unknown crawler error")}
+        if error.get("status") == "partial":
+            error["resumeClientId"] = client_id
         retryable = bool(error.get("retryable", True))
         with self.sessions.begin() as session:
             task = session.get(CrawlTask, task_id)
@@ -482,6 +578,11 @@ class CoordinatorStore:
                 return {"status": "stale"}
             task.failure_count += 1
             task.last_error = error
+            job = session.get(CrawlJob, task.job_id)
+            amazon_zip = str((job.settings if job else {}).get("amazonZip") or "90001")
+            self._store_negative(session, self._negative_key(task.asin, amazon_zip), error)
+            if error.get("reason") == "captcha":
+                self._store_negative(session, CAPTCHA_COOLDOWN_KEY, error)
             task.status = "queued" if retryable and task.failure_count < MAX_CRAWL_FAILURES else "failed"
             if task.status == "failed":
                 task.completed_at = utc_now()
@@ -540,6 +641,11 @@ class CoordinatorStore:
                 checksum=checksum, payload=stored_payload,
             ))
             task.status = "completed"
+            job = session.get(CrawlJob, task.job_id)
+            amazon_zip = str((job.settings if job else {}).get("amazonZip") or "90001")
+            negative = session.get(CoordinatorState, self._negative_key(task.asin, amazon_zip))
+            if negative is not None:
+                session.delete(negative)
             task.completed_at = utc_now()
             task.assigned_client_id = client_id
             task.lease_id = lease_id
@@ -2250,7 +2356,10 @@ class CoordinatorStore:
             products: dict[str, dict[str, Any]] = {}
             warnings: list[str] = []
             errors: list[dict[str, Any]] = [
-                {"source": entry.source, "code": "INVALID_INPUT", "message": entry.message, "retryable": False}
+                {
+                    "source": entry.source, "code": "INVALID_INPUT", "status": "invalid_asin",
+                    "reason": "invalid_format", "message": entry.message, "retryable": False,
+                }
                 for entry in invalid
             ]
             pipeline_items = session.scalars(
@@ -2283,9 +2392,13 @@ class CoordinatorStore:
                     errors.extend(error for error in result.get("errors", []) if isinstance(error, dict))
                     warnings.extend(str(warning) for warning in result.get("warnings", []) if isinstance(warning, str))
                 elif task.status == "failed":
+                    last_error = task.last_error or {}
                     errors.append({
-                        "source": task.source, "code": "CRAWL_FAILED",
-                        "message": str((task.last_error or {}).get("message") or "Crawler failed."), "retryable": True,
+                        "source": task.source,
+                        "code": str(last_error.get("code") or "CRAWL_FAILED"),
+                        "message": str(last_error.get("message") or "Crawler failed."),
+                        "retryable": bool(last_error.get("retryable", True)),
+                        **{key: last_error[key] for key in ("status", "reason", "retryAfter") if key in last_error},
                     })
             product_values = list(products.values())
             started_at = _as_utc(job.started_at or job.created_at)

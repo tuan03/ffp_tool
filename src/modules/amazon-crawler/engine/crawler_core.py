@@ -19,7 +19,7 @@ import urllib.parse
 import urllib.request
 from copy import deepcopy
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
 
@@ -853,6 +853,51 @@ class CrawlFetchError(RuntimeError):
         self.diagnostics = diagnostics
 
 
+class CachedCrawlFailure(RuntimeError):
+    def __init__(self, failure: dict[str, Any]) -> None:
+        super().__init__(f"Amazon crawl is cooling down: {failure['reason']} until {failure['retryAfter']}.")
+        self.failure = failure
+
+
+class PartialCrawlError(RuntimeError):
+    def __init__(
+        self, products: list[dict[str, Any]], retry_after: str | None,
+        *, retryable: bool, reason: str, code: str,
+    ) -> None:
+        message = {
+            "PARSER_ERROR": "Amazon HTML parser could not read a child product; check for HTML changes.",
+            "NOT_FOUND": "An Amazon child product was not found.",
+        }.get(code, "Amazon family has missing variant or media data.")
+        super().__init__(message)
+        self.products = products
+        self.retry_after = retry_after
+        self.retryable = retryable
+        self.reason = reason
+        self.code = code
+
+
+def classify_crawl_failure(error: Exception) -> dict[str, Any]:
+    if isinstance(error, CachedCrawlFailure):
+        failure = error.failure
+        return {**failure, "retryable": failure["status"] in {"temporarily_blocked", "network_error"}}
+    message = str(error).casefold()
+    diagnostics = getattr(error, "diagnostics", {})
+    traces = diagnostics.get("fetchTrace", {}) if isinstance(diagnostics, dict) else {}
+    browser_trace = traces.get("playwright", []) if isinstance(traces, dict) else []
+    has_captcha = isinstance(error, CaptchaTimeout) or "captcha" in message or "bot-check" in message or any(
+        isinstance(attempt, dict) and attempt.get("outcome") == "captcha" for attempt in browser_trace
+    )
+    if has_captcha:
+        return {"status": "temporarily_blocked", "reason": "captcha", "retryable": True, "retryAfterSeconds": 120}
+    if "http error 404" in message or "product not found" in message:
+        return {"status": "not_found", "reason": "not_found", "retryable": False, "retryAfterSeconds": 86400}
+    if "does not contain a product title" in message or "does not contain a usable product document" in message:
+        return {"status": "parser_error", "reason": "html_changed", "retryable": False, "retryAfterSeconds": 600}
+    if "no selling price" in message or isinstance(error, (HttpFetchError, CrawlFetchError, TimeoutError, urllib.error.URLError, ConnectionError)):
+        return {"status": "network_error", "reason": "network_error", "retryable": True, "retryAfterSeconds": 30}
+    return {"status": "parser_error", "reason": "unexpected_crawler_error", "retryable": False, "retryAfterSeconds": 600}
+
+
 def effective_product_threads(input_count: int, settings: CrawlSettings) -> int:
     return min(input_count or 1, max(settings.product_threads, settings.browser_profiles))
 
@@ -1299,14 +1344,28 @@ class AmazonCrawler:
                 },
             )
             return family
+        failure = self.cache.load_failure(cache_key)
+        if failure is not None:
+            raise CachedCrawlFailure(failure)
+        partial = self.cache.load_partial(cache_key)
+        previous_family = partial.get("family") if isinstance(partial, dict) else None
+        previous_parent = partial.get("parent") if isinstance(partial, dict) else None
+        if not isinstance(previous_family, dict) or not isinstance(previous_parent, dict):
+            previous_family = None
+            previous_parent = None
         self._report_progress(
             phase="product",
             message=f"Đang tải trang Amazon {normalized.asin}...",
             source=normalized.source,
             item_updates={"status": "running", "currentAsin": normalized.asin},
         )
-        with self._variant_fetch_slots:
-            parent, diagnostics = self._fetch_parsed(normalized, require_price=False)
+        if previous_parent is not None and previous_family is not None:
+            parent = deepcopy(previous_parent)
+            diagnostics = deepcopy(previous_family["diagnostics"])
+        else:
+            with self._variant_fetch_slots:
+                parent, diagnostics = self._fetch_parsed(normalized, require_price=False)
+            self.cache.clear_failure(cache_key)
         parent_asin = parent["parentAsin"]
         asin_options: dict[str, dict[str, str]] = dict(parent["asinOptions"])
         # parentAsin identifies the variation family and is often not a
@@ -1380,6 +1439,16 @@ class AmazonCrawler:
 
         def crawl_child(asin: str) -> dict[str, Any]:
             self._check_cancelled()
+            if previous_family is not None:
+                previous_variant = next(
+                    (variant for variant in previous_family.get("sourceVariants", []) if variant.get("asin") == asin), None
+                )
+                if isinstance(previous_variant, dict) and self._variant_cache_complete(previous_variant):
+                    return deepcopy(previous_variant)
+            child_key = f"{asin}:{self.settings.amazon_zip}:us-v1"
+            child_failure = self.cache.load_failure(child_key)
+            if child_failure is not None:
+                raise CachedCrawlFailure(child_failure)
             options = deepcopy(asin_options.get(asin, {}))
             with active_variants_lock:
                 active_variants[asin] = options
@@ -1481,6 +1550,7 @@ class AmazonCrawler:
                 warnings.append(f"Requested child ASIN {asin}, but Amazon returned {child['asin']}.")
             normalized_customization, custom_warnings = normalize_customization(customization_raw) if customization_raw is not None else (None, [])
             warnings.extend(custom_warnings)
+            self.cache.clear_failure(child_key)
             return {
                 "asin": asin, "url": f"https://www.amazon.com/dp/{asin}", "options": options,
                 "price": child.get("price"),
@@ -1564,7 +1634,16 @@ class AmazonCrawler:
                 options = deepcopy(asin_options.get(asin, {}))
                 try:
                     variants.append(future.result())
+                except InterruptedError:
+                    raise
                 except Exception as error:
+                    if not isinstance(error, CachedCrawlFailure):
+                        policy = classify_crawl_failure(error)
+                        self.cache.save_failure(
+                            f"{asin}:{self.settings.amazon_zip}:us-v1",
+                            status=policy["status"], reason=policy["reason"],
+                            retry_after_seconds=policy["retryAfterSeconds"],
+                        )
                     failed_diagnostics = deepcopy(getattr(error, "diagnostics", {
                         "fetchMode": "failed", "attempts": 0, "captchaEncountered": False,
                         "locationFallbackUsed": False, "amazonZip": self.settings.amazon_zip,
@@ -1612,8 +1691,15 @@ class AmazonCrawler:
         }
         if is_capped:
             family["variantMatrix"]["complete"] = False
-        if family["variantMatrix"]["complete"] and family["customizationChecked"]:
+        is_complete = (
+            family["variantMatrix"]["complete"] and family["customizationChecked"]
+            and all(self._variant_cache_complete(variant) for variant in variants)
+        )
+        if is_complete:
             self.cache.save(cache_key, family)
+        else:
+            parent["asinOptions"] = asin_options
+            self.cache.save_partial(cache_key, {"parent": parent, "family": family})
         self._report_progress(
             phase="product",
             message=f"Đã lấy đủ dữ liệu {variant_completed}/{variant_total} variants; đang tách sản phẩm.",
@@ -1626,6 +1712,15 @@ class AmazonCrawler:
             },
         )
         return family
+
+    @staticmethod
+    def _variant_cache_complete(variant: dict[str, Any]) -> bool:
+        return bool(
+            variant.get("price") is not None
+            and variant.get("customizationComplete") is True
+            and (variant.get("diagnostics") or {}).get("fetchMode") != "failed"
+            and not any("gallery" in str(warning).casefold() for warning in variant.get("warnings", []))
+        )
 
     @staticmethod
     def _infer_consensus_prices(variants: list[dict[str, Any]]) -> None:
@@ -1676,6 +1771,12 @@ class AmazonCrawler:
             for variant in source_variants
         ):
             blockers.append("customization_incomplete")
+        if any(
+            isinstance(variant, dict)
+            and any("gallery" in str(warning).casefold() for warning in variant.get("warnings", []))
+            for variant in source_variants
+        ):
+            blockers.append("media_incomplete")
         return blockers
 
     def _products_from_family(
@@ -1833,7 +1934,10 @@ class AmazonCrawler:
                     seen_asins.add(normalized.asin)
                     normalized_inputs.append(normalized)
             except ValueError as error:
-                errors.append({"source": source, "code": "INVALID_INPUT", "message": str(error), "retryable": False})
+                errors.append({
+                    "source": source, "code": "INVALID_INPUT", "status": "invalid_asin",
+                    "reason": "invalid_format", "message": str(error), "retryable": False,
+                })
         rejected_inputs = len(errors)
         products: list[dict[str, Any]] = []
         completed = 0
@@ -1865,6 +1969,32 @@ class AmazonCrawler:
                     if product_id in emitted_product_ids or self._product_publish_blockers(product):
                         continue
                     product_completed(product)
+            if family.get("customizationChecked") is not None and (
+                family.get("variantMatrix", {}).get("complete") is not True
+                or any(not self._variant_cache_complete(variant) for variant in family.get("sourceVariants", []))
+            ):
+                failures = [
+                    failure
+                    for variant in family.get("sourceVariants", [])
+                    if (failure := self.cache.load_failure(
+                        f"{variant['asin']}:{self.settings.amazon_zip}:us-v1"
+                    )) is not None
+                ]
+                retry_after = max(
+                    (failure["retryAfter"] for failure in failures),
+                    default=(datetime.now(timezone.utc) + timedelta(seconds=30)).isoformat(),
+                )
+                terminal_failure = next(
+                    (failure for failure in failures if failure["status"] in {"not_found", "parser_error"}), None
+                )
+                matrix = family.get("variantMatrix", {})
+                is_capped = matrix.get("complete") is False and matrix.get("discoveredCount", 0) >= matrix.get("safetyCap", 500)
+                raise PartialCrawlError(
+                    family_products, retry_after,
+                    retryable=terminal_failure is None and not is_capped,
+                    reason=terminal_failure["reason"] if terminal_failure else ("variant_limit" if is_capped else "incomplete"),
+                    code=terminal_failure["status"].upper() if terminal_failure else "PARTIAL_CRAWL",
+                )
             return normalized, family_products
 
         product_worker_count = effective_product_threads(len(normalized_inputs), self.settings)
@@ -1892,8 +2022,31 @@ class AmazonCrawler:
                     self.cancel_event.set()
                     item_status = "cancelled"
                     item_message = "Đã dừng xử lý sản phẩm."
+                except PartialCrawlError as error:
+                    family_products = error.products
+                    products.extend(family_products)
+                    input_error = {
+                        "source": normalized.source, "code": error.code, "status": "partial",
+                        "reason": error.reason, "message": str(error),
+                        "retryable": error.retryable, "retryAfter": error.retry_after,
+                    }
+                    errors.append(input_error)
+                    input_errors.append(input_error)
+                    item_status = "failed"
+                    item_message = "Cào chưa đủ dữ liệu; sẽ thử lại phần thiếu."
                 except Exception as error:
-                    input_error = {"source": normalized.source, "code": "CRAWL_FAILED", "message": str(error), "retryable": True}
+                    policy = classify_crawl_failure(error)
+                    failure = error.failure if isinstance(error, CachedCrawlFailure) else self.cache.save_failure(
+                        f"{normalized.asin}:{self.settings.amazon_zip}:us-v1",
+                        status=policy["status"], reason=policy["reason"],
+                        retry_after_seconds=policy["retryAfterSeconds"],
+                    )
+                    input_error = {
+                        "source": normalized.source, "code": policy["status"].upper(),
+                        "status": policy["status"], "reason": policy["reason"],
+                        "retryAfter": failure["retryAfter"], "message": str(error),
+                        "retryable": policy["retryable"],
+                    }
                     errors.append(input_error)
                     input_errors.append(input_error)
                     item_status = "failed"

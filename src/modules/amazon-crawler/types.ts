@@ -192,6 +192,9 @@ export interface ProductPipelineTimings {
 export interface AmazonCrawlerError {
   source: string;
   code: string;
+  status?: "not_found" | "temporarily_blocked" | "network_error" | "invalid_asin" | "parser_error" | "partial";
+  reason?: string;
+  retryAfter?: string;
   message: string;
   retryable: boolean;
 }

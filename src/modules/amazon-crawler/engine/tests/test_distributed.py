@@ -30,6 +30,7 @@ from engine.distributed.instance_lock import AgentAlreadyRunningError, AgentInst
 from engine.distributed.client_tray import format_status, should_notify_captcha
 from engine.distributed.coordinator_models import (
     Base,
+    ClientRecord,
     CrawlJob,
     CrawlProductItem,
     CrawlTask,
@@ -1562,6 +1563,73 @@ class CoordinatorStoreTests(unittest.TestCase):
 
         self.assertEqual(statuses, ["queued", "queued", "failed"])
         self.assertEqual(self.store.get_job(str(job["id"]))["status"], "partial")
+
+    def test_retry_after_delays_reassignment_to_any_client(self) -> None:
+        job = self.store.create_job({"urls": ["B0FR4MSS2H"]})
+        self.store.register_client(client_hello(slots=1))
+        lease = self.store.lease_tasks("client-a", 1)[0]
+        self.store.fail_task("client-a", {
+            "taskId": lease["taskId"], "leaseId": lease["leaseId"],
+            "error": {"status": "temporarily_blocked", "reason": "captcha", "retryable": True,
+                      "retryAfter": (utc_now() + timedelta(minutes=2)).isoformat()},
+        })
+        self.assertEqual(self.store.lease_tasks("client-a", 1), [])
+        with patch("engine.distributed.coordinator_store.utc_now", return_value=utc_now() + timedelta(minutes=3)):
+            self.assertEqual(len(self.store.lease_tasks("client-a", 1)), 1)
+
+    def test_not_found_negative_cache_prevents_new_job_fetch(self) -> None:
+        first = self.store.create_job({"urls": ["B0FR4MSS2H"]})
+        self.store.register_client(client_hello(slots=1))
+        lease = self.store.lease_tasks("client-a", 1)[0]
+        self.store.fail_task("client-a", {
+            "taskId": lease["taskId"], "leaseId": lease["leaseId"],
+            "error": {"status": "not_found", "reason": "not_found", "retryable": False,
+                      "retryAfter": (utc_now() + timedelta(days=1)).isoformat()},
+        })
+        self.assertEqual(self.store.get_job(str(first["id"]))["status"], "partial")
+        errors = self.store.job_results(str(first["id"]))["errors"]
+        self.assertEqual(errors[0]["status"], "not_found")
+        self.assertFalse(errors[0]["retryable"])
+        second = self.store.create_job({"urls": ["B0FR4MSS2H"]})
+        self.assertEqual(second["taskCounts"], {"failed": 1})
+        self.assertEqual(self.store.lease_tasks("client-a", 1), [])
+        self.store.clear_negative_cache()
+        third = self.store.create_job({"urls": ["B0FR4MSS2H"]})
+        self.assertEqual(third["taskCounts"], {"queued": 1})
+
+    def test_captcha_cooldown_stops_other_asins_from_being_leased(self) -> None:
+        self.store.create_job({"urls": ["B0FR4MSS2H", "B012345678"]})
+        self.store.register_client(client_hello(slots=1))
+        lease = self.store.lease_tasks("client-a", 1)[0]
+        self.store.fail_task("client-a", {
+            "taskId": lease["taskId"], "leaseId": lease["leaseId"],
+            "error": {"status": "temporarily_blocked", "reason": "captcha", "retryable": True,
+                      "retryAfter": (utc_now() + timedelta(minutes=2)).isoformat()},
+        })
+        self.assertEqual(self.store.lease_tasks("client-a", 1), [])
+
+    def test_partial_retry_prefers_agent_with_saved_variants_and_falls_back_when_offline(self) -> None:
+        self.store.create_job({"urls": ["B0FR4MSS2H"]})
+        self.store.register_client(client_hello("client-a", slots=1))
+        self.store.register_client(client_hello("client-b", slots=1))
+        first = self.store.lease_tasks("client-a", 1)[0]
+        partial_error = {
+            "status": "partial", "reason": "incomplete", "retryable": True,
+            "retryAfter": (utc_now() + timedelta(seconds=1)).isoformat(),
+        }
+        self.store.fail_task("client-a", {
+            "taskId": first["taskId"], "leaseId": first["leaseId"], "error": partial_error,
+        })
+        with patch("engine.distributed.coordinator_store.utc_now", return_value=utc_now() + timedelta(seconds=2)):
+            self.assertEqual(self.store.lease_tasks("client-b", 1), [])
+            second = self.store.lease_tasks("client-a", 1)[0]
+        self.store.fail_task("client-a", {
+            "taskId": second["taskId"], "leaseId": second["leaseId"], "error": partial_error,
+        })
+        with self.sessions.begin() as session:
+            session.get(ClientRecord, "client-a").status = "offline"
+        with patch("engine.distributed.coordinator_store.utc_now", return_value=utc_now() + timedelta(seconds=2)):
+            self.assertEqual(len(self.store.lease_tasks("client-b", 1)), 1)
 
     def test_expired_lease_requeues_without_counting_as_crawl_failure(self) -> None:
         self._create_four_task_job()
