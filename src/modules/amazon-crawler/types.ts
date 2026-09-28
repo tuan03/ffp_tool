@@ -445,6 +445,8 @@ export interface AmazonCrawlerJobController {
   list(limit?: number): Promise<readonly AmazonCrawlerJobSnapshot[]>;
   get(jobId: string): Promise<AmazonCrawlerJobSnapshot>;
   cancel(jobId: string, options?: { force?: boolean }): Promise<AmazonCrawlerJobSnapshot>;
+  invalidateProductCache(asin: string, amazonZip: string): Promise<AmazonCrawlerCacheClearResult>;
+  clearTemporaryData(): Promise<AmazonCrawlerCacheClearResult>;
   replace(jobId: string, input: AmazonCrawlerInput): Promise<AmazonCrawlerJobSnapshot>;
   delete(jobId: string): Promise<void>;
 }
@@ -505,6 +507,10 @@ export interface AmazonCrawlerReviewClient {
 export interface AmazonCrawlerCacheClearResult {
   removedFiles: number;
   removedBytes: number;
+  requestedClients?: number;
+  respondedClients?: number;
+  failedClients?: number;
+  discardedJobs?: number;
 }
 
 export interface AmazonCrawlerCacheClearer {

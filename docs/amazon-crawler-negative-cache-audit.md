@@ -2,6 +2,8 @@
 
 Phạm vi: thay đổi trong commit `68c42bb` trên nhánh `fix-bug-audit`. Tài liệu này mô tả hành vi trước và sau khi sửa; các con số thời gian là cấu hình trong code, không phải số đo hiệu năng thực tế.
 
+Lưu ý: hàng "Xóa cache" bên dưới ghi lại hành vi tại thời điểm audit 1. Audit 2 đã tách Stop khỏi thao tác xóa cache; xem [báo cáo audit 2](amazon-crawler-stop-cache-audit.md) để biết hành vi hiện tại.
+
 ## Trước và sau khi sửa
 
 | Vấn đề | Trước khi sửa | Sau khi sửa | Tác dụng |

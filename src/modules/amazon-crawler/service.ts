@@ -3,6 +3,7 @@ import type {
   AmazonAsinPreflightResult,
   AmazonCrawlerInput,
   AmazonCrawlerCacheClearer,
+  AmazonCrawlerCacheClearResult,
   AmazonCrawlerClientSummary,
   AmazonCrawlerClientsLoader,
   AmazonCrawlerHydratedJob,
@@ -30,11 +31,18 @@ import { DEFAULT_AMAZON_CRAWLER_SETTINGS } from "./types";
 interface JobCreatedResponse {
   jobId: string;
 }
-function readCacheClearResult(value: unknown): { removedFiles: number; removedBytes: number } {
+function readCacheClearResult(value: unknown): AmazonCrawlerCacheClearResult {
   if (!isRecord(value) || typeof value.removedFiles !== "number" || typeof value.removedBytes !== "number") {
     throw new AmazonCrawlerServiceError("Engine returned an invalid cache response.", "INVALID_ENGINE_RESPONSE");
   }
-  return { removedFiles: value.removedFiles, removedBytes: value.removedBytes };
+  return {
+    removedFiles: value.removedFiles,
+    removedBytes: value.removedBytes,
+    ...(typeof value.requestedClients === "number" ? { requestedClients: value.requestedClients } : {}),
+    ...(typeof value.respondedClients === "number" ? { respondedClients: value.respondedClients } : {}),
+    ...(typeof value.failedClients === "number" ? { failedClients: value.failedClients } : {}),
+    ...(typeof value.discardedJobs === "number" ? { discardedJobs: value.discardedJobs } : {}),
+  };
 }
 
 interface AmazonCrawlerClientOptions {
@@ -392,6 +400,15 @@ export function createAmazonCrawlerJobController({
       const query = options?.force ? "?force=true" : "";
       const response = await fetchImplementation(`${jobUrl(jobId)}/cancel${query}`, { method: "POST" });
       return readJobSnapshot(await readJson(response));
+    },
+    async invalidateProductCache(asin, amazonZip) {
+      const path = `${baseUrl}/api/v1/clients/cache/products/${encodeURIComponent(asin)}`;
+      const response = await fetchImplementation(`${path}?amazonZip=${encodeURIComponent(amazonZip)}`, { method: "DELETE" });
+      return readCacheClearResult(await readJson(response));
+    },
+    async clearTemporaryData() {
+      const response = await fetchImplementation(`${baseUrl}/api/v1/clients/temporary-data`, { method: "DELETE" });
+      return readCacheClearResult(await readJson(response));
     },
     async replace(jobId, input) {
       const response = await fetchImplementation(`${jobUrl(jobId)}/replace`, {

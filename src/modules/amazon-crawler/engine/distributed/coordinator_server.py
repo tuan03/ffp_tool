@@ -8,12 +8,13 @@ import gzip
 import io
 import json
 import os
+import re
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, Header, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Header, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
@@ -136,7 +137,10 @@ class ConnectionManager:
             if pending["expected"].issubset(pending["responses"]):
                 pending["event"].set()
 
-    async def clear_client_caches(self, *, timeout_seconds: float = 10.0) -> dict[str, Any]:
+    async def request_client_cache_operation(
+        self, message_type: str, *, payload: dict[str, Any] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> dict[str, Any]:
         request_id = uuid.uuid4().hex
         async with self.lock:
             connections = dict(self.connections)
@@ -149,9 +153,10 @@ class ConnectionManager:
         if not connections:
             async with self.lock:
                 self.cache_requests.pop(request_id, None)
-            return {"requestedClients": 0, "respondedClients": 0, "removedFiles": 0, "removedBytes": 0, "clients": []}
+            return {"requestedClients": 0, "respondedClients": 0, "failedClients": 0,
+                    "removedFiles": 0, "removedBytes": 0, "discardedJobs": 0, "clients": []}
         send_results = await asyncio.gather(*(
-            connection.send_json({"type": "clear_cache", "requestId": request_id})
+            connection.send_json({"type": message_type, "requestId": request_id, **(payload or {})})
             for connection in connections.values()
         ), return_exceptions=True)
         failed_clients = {client_id for client_id, result in zip(connections, send_results) if isinstance(result, Exception)}
@@ -170,10 +175,15 @@ class ConnectionManager:
         return {
             "requestedClients": len(connections),
             "respondedClients": len(responses),
+            "failedClients": sum(1 for response in responses.values() if response.get("error")),
             "removedFiles": sum(int(response.get("removedFiles") or 0) for response in responses.values()),
             "removedBytes": sum(int(response.get("removedBytes") or 0) for response in responses.values()),
+            "discardedJobs": sum(int(response.get("discardedJobs") or 0) for response in responses.values()),
             "clients": client_results,
         }
+
+    async def clear_client_caches(self, *, timeout_seconds: float = 10.0) -> dict[str, Any]:
+        return await self.request_client_cache_operation("clear_cache", timeout_seconds=timeout_seconds)
 
 
 def create_coordinator_app(*, database_url: str | None = None, create_schema: bool = True) -> FastAPI:
@@ -181,6 +191,7 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
     sessions = create_session_factory(engine)
     store = CoordinatorStore(sessions)
     manager = ConnectionManager()
+    cache_maintenance_lock = asyncio.Lock()
     project_root = Path(__file__).resolve().parents[5]
     image_processing_root = Path(
         os.environ.get("IMAGE_PROCESSING_CACHE_DIR", str(project_root / ".runtime" / "image-processing"))
@@ -261,13 +272,14 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
         }
 
     @app.post("/api/v1/crawl-jobs", status_code=202)
-    def create_job(payload: dict[str, Any]) -> dict[str, Any]:
+    async def create_job(payload: dict[str, Any]) -> dict[str, Any]:
         try:
             enriched_payload = dict(payload)
             image_profile = image_service.profiles.load(str(payload.get("imageProfileSlug") or "default"))
             enriched_payload["imageProfileSlug"] = image_profile["slug"]
             enriched_payload["imageProfileRevision"] = image_profile["revision"]
-            return store.create_job(enriched_payload)
+            async with cache_maintenance_lock:
+                return await asyncio.to_thread(store.create_job, enriched_payload)
         except KeyError as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
         except ActiveJobExistsError as error:
@@ -335,9 +347,6 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
             "discard": True,
             "cacheGeneration": cache_generation,
         })
-        await asyncio.to_thread(store.clear_negative_cache)
-        protected_tokens = await asyncio.to_thread(store.review_image_tokens)
-        await asyncio.to_thread(image_service.clear_cache, protected_tokens)
         await asyncio.to_thread(store.purge_stopped_jobs)
         return snapshot
 
@@ -355,7 +364,8 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
             enriched_payload["imageProfileRevision"] = image_profile["revision"]
             enriched_payload["replacementOfJobId"] = job_id
             enriched_payload["schedulerPriority"] = 100
-            replacement = store.create_job(enriched_payload)
+            async with cache_maintenance_lock:
+                replacement = await asyncio.to_thread(store.create_job, enriched_payload)
         except KeyError as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
         except ActiveJobExistsError as error:
@@ -382,8 +392,9 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
         return Response(status_code=204)
 
     @app.post("/api/v1/crawl-jobs/{job_id}/retry-failed")
-    def retry_failed(job_id: str) -> dict[str, Any]:
-        snapshot = store.retry_failed(job_id)
+    async def retry_failed(job_id: str) -> dict[str, Any]:
+        async with cache_maintenance_lock:
+            snapshot = await asyncio.to_thread(store.retry_failed, job_id)
         if snapshot is None:
             raise HTTPException(status_code=404, detail="Crawl job was not found.")
         return snapshot
@@ -413,14 +424,50 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
 
     @app.delete("/api/v1/clients/cache")
     async def clear_client_caches() -> dict[str, Any]:
-        await asyncio.to_thread(store.clear_negative_cache)
-        result = await manager.clear_client_caches()
-        protected_tokens = await asyncio.to_thread(store.review_image_tokens)
-        image_cache = await asyncio.to_thread(image_service.clear_cache, protected_tokens)
-        result["removedFiles"] += image_cache["removedFiles"]
-        result["removedBytes"] += image_cache["removedBytes"]
-        result["imageProcessing"] = image_cache
-        return result
+        async with cache_maintenance_lock:
+            active_job_id = await asyncio.to_thread(store.active_job_id)
+            if active_job_id:
+                raise HTTPException(status_code=409, detail=f"Job {active_job_id} is active. Stop it before clearing cache.")
+            generation = await asyncio.to_thread(store.advance_cache_generation)
+            await asyncio.to_thread(store.clear_negative_cache)
+            result = await manager.request_client_cache_operation(
+                "clear_cache", payload={"cacheGeneration": generation},
+            )
+            protected_tokens = await asyncio.to_thread(store.review_image_tokens)
+            image_cache = await asyncio.to_thread(image_service.clear_cache, protected_tokens)
+            result["removedFiles"] += image_cache["removedFiles"]
+            result["removedBytes"] += image_cache["removedBytes"]
+            result["imageProcessing"] = image_cache
+            return result
+
+    @app.delete("/api/v1/clients/cache/products/{asin}")
+    async def invalidate_product_cache(
+        asin: str, amazon_zip: str = Query("10001", alias="amazonZip"),
+    ) -> dict[str, Any]:
+        asin = asin.strip().upper()
+        if not re.fullmatch(r"[A-Z0-9]{10}", asin) or not re.fullmatch(r"\d{5}(?:-\d{4})?", amazon_zip):
+            raise HTTPException(status_code=422, detail="Invalid ASIN or Amazon ZIP.")
+        async with cache_maintenance_lock:
+            active_job_id = await asyncio.to_thread(store.active_job_id)
+            if active_job_id:
+                raise HTTPException(status_code=409, detail=f"Job {active_job_id} is active. Stop it before invalidating cache.")
+            generation = await asyncio.to_thread(store.invalidate_product_cache, asin, amazon_zip)
+            result = await manager.request_client_cache_operation("invalidate_product_cache", payload={
+                "asin": asin, "amazonZip": amazon_zip, "generation": generation,
+            })
+            return {"asin": asin, "amazonZip": amazon_zip, **result}
+
+    @app.delete("/api/v1/clients/temporary-data")
+    async def clear_temporary_data() -> dict[str, Any]:
+        async with cache_maintenance_lock:
+            active_job_id = await asyncio.to_thread(store.active_job_id)
+            if active_job_id:
+                raise HTTPException(status_code=409, detail=f"Job {active_job_id} is active. Stop it before clearing temporary data.")
+            valid_job_ids = await asyncio.to_thread(store.retained_job_ids)
+            generation = await asyncio.to_thread(store.advance_temporary_cleanup_generation)
+            return await manager.request_client_cache_operation("clear_temporary_data", payload={
+                "validJobIds": sorted(valid_job_ids), "generation": generation,
+            })
 
     @app.get("/api/v1/crawl-jobs/{job_id}/events")
     async def job_events(job_id: str, request: Request, after: int = 0) -> StreamingResponse:
@@ -1027,6 +1074,14 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
             maximum_slots = int(client.get("maxConcurrentInputs") or 0)
             required_cache_generation = await asyncio.to_thread(store.current_cache_generation)
             client_cache_generation = max(0, int(hello.get("cacheGeneration") or 0))
+            client_product_invalidation_generation = max(0, int(hello.get("productInvalidationGeneration") or 0))
+            product_invalidations = await asyncio.to_thread(
+                store.product_invalidations_since, client_product_invalidation_generation,
+            )
+            required_temporary_cleanup_generation = await asyncio.to_thread(store.temporary_cleanup_generation)
+            valid_job_ids = await asyncio.to_thread(store.retained_job_ids) if (
+                max(0, int(hello.get("temporaryCleanupGeneration") or 0)) < required_temporary_cleanup_generation
+            ) else set()
             is_cache_ready = client_cache_generation >= required_cache_generation
             available_slots = max(0, int(hello.get("availableSlots") or 0)) if is_cache_ready else 0
             await manager.update_runtime(
@@ -1040,22 +1095,10 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
                 **reconciliation,
                 "acknowledgedCancelIntents": acknowledged_intents,
                 "requiredCacheGeneration": required_cache_generation,
+                "productInvalidations": product_invalidations,
+                "requiredTemporaryCleanupGeneration": required_temporary_cleanup_generation,
+                "validJobIds": sorted(valid_job_ids),
             })
-            if is_cache_ready:
-                recovered_jobs = await asyncio.to_thread(
-                    store.acknowledge_client_cache_generation,
-                    client_id,
-                    client_cache_generation,
-                )
-                if recovered_jobs:
-                    purged = await asyncio.to_thread(store.purge_stopped_jobs)
-                    debug_event(
-                        "stop_cleanup_recovered_on_connect",
-                        clientId=client_id,
-                        cacheGeneration=client_cache_generation,
-                        jobIds=recovered_jobs,
-                        purgedJobs=purged,
-                    )
             for cancelled_job_id in acknowledged_intents:
                 await manager.broadcast({
                     "type": "cancel",
@@ -1116,26 +1159,12 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
                 elif message_type == "cancel_received":
                     response = await asyncio.to_thread(store.acknowledge_task_cancel_received, client_id, message)
                     await websocket.send_json({"type": "cancel_received_ack", "taskId": message.get("taskId"), **response})
-                elif message_type == "cache_cleared":
+                elif message_type in {"cache_cleared", "product_cache_invalidated", "temporary_data_cleared"}:
                     await manager.record_cache_response(client_id, message)
                 elif message_type == "cache_generation_ack":
                     acknowledged_generation = max(0, int(message.get("cacheGeneration") or 0))
                     if acknowledged_generation >= required_cache_generation:
                         is_cache_ready = True
-                        recovered_jobs = await asyncio.to_thread(
-                            store.acknowledge_client_cache_generation,
-                            client_id,
-                            acknowledged_generation,
-                        )
-                        if recovered_jobs:
-                            purged = await asyncio.to_thread(store.purge_stopped_jobs)
-                            debug_event(
-                                "stop_cleanup_recovered_from_generation_ack",
-                                clientId=client_id,
-                                cacheGeneration=acknowledged_generation,
-                                jobIds=recovered_jobs,
-                                purgedJobs=purged,
-                            )
                         acknowledged_slots = max(0, int(message.get("availableSlots") or 0))
                         await manager.update_available_slots(client_id, acknowledged_slots)
                         await assign(acknowledged_slots)

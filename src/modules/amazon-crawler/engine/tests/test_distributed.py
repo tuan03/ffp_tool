@@ -31,6 +31,7 @@ from engine.distributed.client_tray import format_status, should_notify_captcha
 from engine.distributed.coordinator_models import (
     Base,
     ClientRecord,
+    CoordinatorState,
     CrawlJob,
     CrawlProductItem,
     CrawlTask,
@@ -282,6 +283,239 @@ class DistributedCacheControlTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(response["requestId"], "request-1")
             self.assertEqual(response["removedFiles"], 1)
             self.assertIsNone(cache.load("B012345678"))
+
+    async def test_explicit_clear_removes_cache_even_if_agent_generation_is_ahead(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            cache = RawFamilyCache(root / ".runtime" / "cache")
+            cache.save("B012345678", {"variantMatrix": {"complete": True}})
+            agent = DistributedCrawlerAgent(
+                project_root=root,
+                config=AgentConfig(
+                    server_url="http://127.0.0.1:8766", display_name="test",
+                    max_concurrent_inputs=1, limits=AgentLimits(), data_directory=root / "agent-data",
+                ),
+            )
+            agent.store.set_cache_generation(5)
+
+            response = await agent.clear_local_cache("request-1", generation=1)
+
+            self.assertEqual(response["removedFiles"], 1)
+            self.assertIsNone(cache.load("B012345678"))
+            self.assertEqual(agent.store.cache_generation(), 5)
+
+    async def test_stop_cleanup_keeps_successful_and_partial_product_cache(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            cache = RawFamilyCache(root / ".runtime" / "cache")
+            cache.save("B012345678", {"variantMatrix": {"complete": True}})
+            cache.save_partial("B012345679", {"parent": {"asin": "B012345679"}})
+            agent = DistributedCrawlerAgent(
+                project_root=root,
+                config=AgentConfig(
+                    server_url="http://127.0.0.1:8766", display_name="test",
+                    max_concurrent_inputs=1, limits=AgentLimits(), data_directory=root / "agent-data",
+                ),
+            )
+            agent._pending_stop_cleanups["other-job"] = 0
+
+            await agent._complete_stop_cleanup("other-job", 0)
+
+            self.assertIsNotNone(cache.load("B012345678"))
+            self.assertIsNotNone(cache.load_partial("B012345679"))
+            acknowledgement = await agent.outbound_queue.get()
+            self.assertEqual(acknowledgement["type"], "stop_cleanup_ack")
+            self.assertEqual(acknowledgement["removedFiles"], 0)
+
+    async def test_product_invalidation_removes_only_selected_asin_and_zip(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            cache = RawFamilyCache(root / ".runtime" / "cache")
+            selected_key = "B012345678:10001:us-v1"
+            other_zip_key = "B012345678:90001:us-v1"
+            other_asin_key = "B012345679:10001:us-v1"
+            for key in (selected_key, other_zip_key, other_asin_key):
+                cache.save(key, {"variantMatrix": {"complete": True}})
+            cache.save_partial(selected_key, {"parent": {"asin": "B012345678"}})
+            agent = DistributedCrawlerAgent(
+                project_root=root,
+                config=AgentConfig(
+                    server_url="http://127.0.0.1:8766", display_name="test",
+                    max_concurrent_inputs=1, limits=AgentLimits(), data_directory=root / "agent-data",
+                ),
+            )
+
+            response = await agent.invalidate_product_cache("request-1", "B012345678", "10001", 1)
+
+            self.assertEqual(response["removedFiles"], 2)
+            self.assertIsNone(cache.load(selected_key))
+            self.assertIsNone(cache.load_partial(selected_key))
+            self.assertIsNotNone(cache.load(other_zip_key))
+            self.assertIsNotNone(cache.load(other_asin_key))
+            self.assertEqual(agent.store.product_invalidation_generation(), 1)
+
+    async def test_reconnecting_agent_applies_saved_product_invalidation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            cache = RawFamilyCache(root / ".runtime" / "cache")
+            key = "B012345678:10001:us-v1"
+            cache.save(key, {"variantMatrix": {"complete": True}})
+            agent = DistributedCrawlerAgent(
+                project_root=root,
+                config=AgentConfig(
+                    server_url="http://127.0.0.1:8766", display_name="test",
+                    max_concurrent_inputs=1, limits=AgentLimits(), data_directory=root / "agent-data",
+                ),
+            )
+
+            await agent._apply_reconciliation({
+                "productInvalidations": [{"asin": "B012345678", "amazonZip": "10001", "generation": 3}],
+            })
+
+            self.assertIsNone(cache.load(key))
+            self.assertEqual(agent.store.product_invalidation_generation(), 3)
+
+    async def test_failed_product_invalidation_reconnects_before_accepting_later_jobs(self) -> None:
+        class FakeWebSocket:
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self) -> str:
+                if getattr(self, "sent", False):
+                    raise StopAsyncIteration
+                self.sent = True
+                return json.dumps({
+                    "type": "invalidate_product_cache", "requestId": "request-1",
+                    "asin": "B012345678", "amazonZip": "10001", "generation": 1,
+                })
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            cache = RawFamilyCache(root / ".runtime" / "cache")
+            key = "B012345678:10001:us-v1"
+            cache.save(key, {"variantMatrix": {"complete": True}})
+            agent = DistributedCrawlerAgent(
+                project_root=root,
+                config=AgentConfig(
+                    server_url="http://127.0.0.1:8766", display_name="test",
+                    max_concurrent_inputs=1, limits=AgentLimits(), data_directory=root / "agent-data",
+                ),
+            )
+
+            with patch.object(RawFamilyCache, "invalidate", side_effect=OSError("disk error")):
+                with self.assertRaises(OSError):
+                    await agent._receiver(FakeWebSocket())
+            self.assertEqual(agent.store.product_invalidation_generation(), 0)
+            self.assertIsNotNone(cache.load(key))
+
+            await agent._apply_reconciliation({
+                "productInvalidations": [{"asin": "B012345678", "amazonZip": "10001", "generation": 1}],
+            })
+            self.assertIsNone(cache.load(key))
+
+    async def test_reconnecting_agent_applies_explicit_clear_all_generation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            cache = RawFamilyCache(root / ".runtime" / "cache")
+            key = "B012345678:10001:us-v1"
+            cache.save(key, {"variantMatrix": {"complete": True}})
+            agent = DistributedCrawlerAgent(
+                project_root=root,
+                config=AgentConfig(
+                    server_url="http://127.0.0.1:8766", display_name="test",
+                    max_concurrent_inputs=1, limits=AgentLimits(), data_directory=root / "agent-data",
+                ),
+            )
+
+            await agent._apply_reconciliation({"requiredCacheGeneration": 1})
+
+            self.assertIsNone(cache.load(key))
+            self.assertEqual(agent.store.cache_generation(), 1)
+            self.assertEqual((await agent.outbound_queue.get())["type"], "cache_generation_ack")
+
+    async def test_temporary_cleanup_preserves_product_cache(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            cache = RawFamilyCache(root / ".runtime" / "cache")
+            cache.save("B012345678:10001:us-v1", {"variantMatrix": {"complete": True}})
+            temporary_file = cache.directory / ".amazon-cache-abandoned.tmp"
+            temporary_file.write_text("partial write", encoding="utf-8")
+            agent = DistributedCrawlerAgent(
+                project_root=root,
+                config=AgentConfig(
+                    server_url="http://127.0.0.1:8766", display_name="test",
+                    max_concurrent_inputs=1, limits=AgentLimits(), data_directory=root / "agent-data",
+                ),
+            )
+            agent.store.save_assignment({
+                "taskId": "orphan-task", "jobId": "deleted-job", "leaseId": "lease-1",
+                "settingsFingerprint": "fingerprint", "source": "B012345678",
+            })
+            agent.store.save_assignment({
+                "taskId": "valid-task", "jobId": "retained-job", "leaseId": "lease-2",
+                "settingsFingerprint": "fingerprint", "source": "B012345679",
+            })
+            agent.store.spool_result(
+                task_id="orphan-task", lease_id="lease-1", checksum="checksum-1", payload={"status": "completed"},
+            )
+            agent.store.spool_result(
+                task_id="valid-task", lease_id="lease-2", checksum="checksum-2", payload={"status": "completed"},
+            )
+            agent.store.spool_result(
+                task_id="valid-unleased", lease_id="lease-3", checksum="checksum-3",
+                payload={"jobId": "retained-job", "status": "completed"},
+            )
+            agent.store.spool_result(
+                task_id="orphan-unleased", lease_id="lease-4", checksum="checksum-4",
+                payload={"jobId": "deleted-spool-job", "status": "completed"},
+            )
+            agent.store.spool_product(
+                task_id="valid-product-unleased", product_key="product-1", lease_id="lease-5",
+                checksum="checksum-5", payload={"jobId": "retained-job", "product": {}},
+            )
+
+            response = await agent.clear_temporary_data("request-1", {"retained-job"})
+
+            self.assertEqual(response["discardedJobs"], 2)
+            self.assertEqual(response["removedFiles"], 1)
+            self.assertEqual([task["taskId"] for task in agent.store.local_tasks()], ["valid-task"])
+            self.assertEqual(
+                {row["taskId"] for row in agent.store.pending_results()},
+                {"valid-task", "valid-unleased"},
+            )
+            self.assertEqual(
+                {row["taskId"] for row in agent.store.pending_products()},
+                {"valid-product-unleased"},
+            )
+            self.assertIsNotNone(cache.load("B012345678:10001:us-v1"))
+
+    async def test_reconnecting_agent_applies_saved_temporary_cleanup(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            cache = RawFamilyCache(root / ".runtime" / "cache")
+            cache.save("B012345678:10001:us-v1", {"variantMatrix": {"complete": True}})
+            temporary_file = cache.directory / ".amazon-cache-abandoned.tmp"
+            temporary_file.write_text("partial write", encoding="utf-8")
+            agent = DistributedCrawlerAgent(
+                project_root=root,
+                config=AgentConfig(
+                    server_url="http://127.0.0.1:8766", display_name="test",
+                    max_concurrent_inputs=1, limits=AgentLimits(), data_directory=root / "agent-data",
+                ),
+            )
+            agent.store.save_assignment({
+                "taskId": "orphan-task", "jobId": "deleted-job", "leaseId": "lease-1",
+                "settingsFingerprint": "fingerprint", "source": "B012345678",
+            })
+
+            await agent._apply_reconciliation({
+                "requiredTemporaryCleanupGeneration": 2, "validJobIds": [],
+            })
+
+            self.assertEqual(agent.store.local_tasks(), [])
+            self.assertFalse(temporary_file.exists())
+            self.assertIsNotNone(cache.load("B012345678:10001:us-v1"))
+            self.assertEqual(agent.store.temporary_cleanup_generation(), 2)
 
 
 class ClientStoreTests(unittest.TestCase):
@@ -573,6 +807,8 @@ class ClientAgentTests(unittest.IsolatedAsyncioTestCase):
                 "taskId": "task-1",
                 "leaseId": "lease-1",
             })
+            self.assertEqual((await asyncio.wait_for(agent.outbound_queue.get(), 1))["type"], "cancel_ack")
+            self.assertEqual((await asyncio.wait_for(agent.outbound_queue.get(), 1))["type"], "stop_cleanup_ack")
 
     async def test_cancelled_batch_discards_late_products_and_results(self) -> None:
         class FakeBrowserPool:
@@ -1196,7 +1432,24 @@ class CoordinatorStoreTests(unittest.TestCase):
             "leaseId": lease["leaseId"],
         }])["discardTaskIds"], [lease["taskId"]])
 
-    def test_cache_generation_ack_recovers_stop_cleanup_after_agent_reconnect(self) -> None:
+    def test_stopping_one_job_does_not_invalidate_product_cache(self) -> None:
+        job = self.store.create_job({"urls": ["B0FR4MSS2H"]})
+        generation_before = self.store.current_cache_generation()
+
+        stopped = self.store.cancel_job(str(job["id"]), {"client-a"})
+
+        self.assertEqual(stopped["status"], "cancelling")
+        self.assertEqual(self.store.current_cache_generation(), generation_before)
+
+    def test_product_invalidation_is_persisted_for_reconnecting_agents(self) -> None:
+        generation = self.store.invalidate_product_cache("B012345678", "10001")
+
+        self.assertEqual(self.store.product_invalidations_since(0), [{
+            "asin": "B012345678", "amazonZip": "10001", "generation": generation,
+        }])
+        self.assertEqual(self.store.product_invalidations_since(generation), [])
+
+    def test_stop_cleanup_requires_explicit_agent_acknowledgement(self) -> None:
         job = self.store.create_job({"urls": ["B0FR4MSS2H"]})
         self.store.register_client(client_hello(slots=1))
         lease = self.store.lease_tasks("client-a", 1)[0]
@@ -1207,9 +1460,10 @@ class CoordinatorStoreTests(unittest.TestCase):
             "leaseId": lease["leaseId"],
         })
 
-        recovered_jobs = self.store.acknowledge_client_cache_generation("client-a", generation)
-
-        self.assertEqual(recovered_jobs, [str(job["id"])])
+        self.assertEqual(self.store.get_job(str(job["id"]))["status"], "cancelling")
+        self.assertTrue(self.store.acknowledge_stop_cleanup(
+            "client-a", job_id=str(job["id"]), cache_generation=generation,
+        ))
         snapshot = self.store.get_job(str(job["id"]))
         self.assertEqual(snapshot["status"], "cancelled")
         self.assertEqual(snapshot["cancellation"]["pendingCleanupAgents"], [])
@@ -2327,6 +2581,87 @@ class CoordinatorApiTests(unittest.TestCase):
         cache_override = patch.dict(os.environ, {"IMAGE_PROCESSING_CACHE_DIR": image_cache.name})
         cache_override.start()
         self.addCleanup(cache_override.stop)
+
+    def test_cancel_keeps_negative_and_image_cache_until_explicit_clear(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = Path(directory) / "coordinator.sqlite3"
+            app = create_coordinator_app(database_url=f"sqlite:///{database_path.as_posix()}")
+            store = app.state.store
+            image_file = app.state.image_processing_service.cache_root / "cached-image.jpg"
+            image_file.write_bytes(b"cached")
+            with TestClient(app) as client:
+                job = store.create_job({"urls": ["B012345678"]})
+                cache_key = store._negative_key("B012345678", "90001")
+                with store.sessions.begin() as session:
+                    store._store_negative(session, cache_key, {
+                        "status": "not_found", "reason": "product not found", "retryable": False,
+                        "retryAfter": utc_iso(utc_now() + timedelta(hours=1)),
+                    })
+                generation = store.current_cache_generation()
+
+                response = client.post(f"/api/v1/crawl-jobs/{job['id']}/cancel")
+
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(store.current_cache_generation(), generation)
+                with store.sessions() as session:
+                    self.assertIsNotNone(session.get(CoordinatorState, cache_key))
+                self.assertTrue(image_file.exists())
+
+                cleared = client.delete("/api/v1/clients/cache")
+                self.assertEqual(cleared.status_code, 200)
+                self.assertGreater(store.current_cache_generation(), generation)
+                self.assertFalse(image_file.exists())
+
+    def test_selected_invalidation_reaches_agent_after_reconnect(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = Path(directory) / "coordinator.sqlite3"
+            app = create_coordinator_app(database_url=f"sqlite:///{database_path.as_posix()}")
+            with TestClient(app) as client:
+                invalidated = client.delete("/api/v1/clients/cache/products/B012345678?amazonZip=10001")
+                self.assertEqual(invalidated.status_code, 200)
+                self.assertEqual(invalidated.json()["requestedClients"], 0)
+                with client.websocket_connect("/api/v1/worker/connect") as agent:
+                    agent.send_json(client_hello())
+                    acknowledgement = agent.receive_json()
+                    self.assertEqual(acknowledgement["productInvalidations"][0]["asin"], "B012345678")
+                    self.assertEqual(acknowledgement["productInvalidations"][0]["amazonZip"], "10001")
+
+    def test_temporary_cleanup_reaches_agent_after_reconnect(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = Path(directory) / "coordinator.sqlite3"
+            app = create_coordinator_app(database_url=f"sqlite:///{database_path.as_posix()}")
+            with TestClient(app) as client:
+                cleared = client.delete("/api/v1/clients/temporary-data")
+                self.assertEqual(cleared.status_code, 200)
+                with client.websocket_connect("/api/v1/worker/connect") as agent:
+                    agent.send_json(client_hello())
+                    acknowledgement = agent.receive_json()
+                    self.assertEqual(acknowledgement["requiredTemporaryCleanupGeneration"], 1)
+                    self.assertEqual(acknowledgement["validJobIds"], [])
+
+    def test_selected_invalidation_rejects_invalid_asin_and_zip(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = Path(directory) / "coordinator.sqlite3"
+            app = create_coordinator_app(database_url=f"sqlite:///{database_path.as_posix()}")
+            with TestClient(app) as client:
+                self.assertEqual(client.delete("/api/v1/clients/cache/products/invalid").status_code, 422)
+                self.assertEqual(client.delete(
+                    "/api/v1/clients/cache/products/B012345678?amazonZip=wrong"
+                ).status_code, 422)
+                self.assertEqual(app.state.store.product_invalidations_since(0), [])
+
+    def test_cache_maintenance_rejects_active_job(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = Path(directory) / "coordinator.sqlite3"
+            app = create_coordinator_app(database_url=f"sqlite:///{database_path.as_posix()}")
+            with TestClient(app) as client:
+                app.state.store.create_job({"urls": ["B012345678"]})
+                generation = app.state.store.current_cache_generation()
+
+                self.assertEqual(client.delete("/api/v1/clients/cache").status_code, 409)
+                self.assertEqual(client.delete("/api/v1/clients/cache/products/B012345678").status_code, 409)
+                self.assertEqual(client.delete("/api/v1/clients/temporary-data").status_code, 409)
+                self.assertEqual(app.state.store.current_cache_generation(), generation)
 
     def test_duplicate_agent_socket_does_not_disconnect_the_active_agent(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

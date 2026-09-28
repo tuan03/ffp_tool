@@ -71,10 +71,12 @@ Proxy configuration can be placed at `%PROGRAMDATA%\FFP Amazon Crawler\config\am
 - `GET /api/v1/crawl-jobs/{jobId}/results`
 - `GET /api/v1/crawl-jobs/{jobId}/export`
 - `GET /api/v1/crawl-jobs/{jobId}/events`: server-sent progress events
-- `POST /api/v1/crawl-jobs/{jobId}/cancel`
+- `POST /api/v1/crawl-jobs/{jobId}/cancel`: cancels the job and discards its lease/spool data; product caches remain valid
 - `POST /api/v1/crawl-jobs/{jobId}/retry-failed`
 - `GET /api/v1/clients`
-- `DELETE /api/v1/clients/cache`: clears Amazon family cache on every connected client and aggregates acknowledgements
+- `DELETE /api/v1/clients/cache`: clears all Amazon family, negative, and partial cache, plus coordinator negative and unprotected image cache; offline agents clear on reconnect
+- `DELETE /api/v1/clients/cache/products/{asin}?amazonZip=10001`: invalidates one ASIN in one ZIP context, including offline agents on reconnect
+- `DELETE /api/v1/clients/temporary-data`: removes abandoned write files and orphaned lease/spool rows while retaining product cache; offline agents apply this on reconnect
 - `WebSocket /api/v1/worker/connect`: worker lease and heartbeat protocol
 
 Heartbeat is sent every 10 seconds. A client becomes offline after 30 seconds and an unrenewed task lease is requeued after 60 seconds. Disconnects do not consume a crawl retry; crawler failures become terminal after three attempts. If stale and current clients both finish a requeued task, the first valid result wins and later uploads are acknowledged as duplicates.

@@ -176,6 +176,42 @@ class ClientStore:
             connection.execute("DELETE FROM leases WHERE job_id=?", (job_id,))
             connection.commit()
 
+    def clear_orphaned_jobs(self, valid_job_ids: set[str]) -> int:
+        """Discard local lease and upload spool rows for jobs absent on the coordinator."""
+        with self._connection() as connection:
+            leases = {
+                str(row["task_id"]): str(row["job_id"])
+                for row in connection.execute("SELECT task_id, job_id FROM leases").fetchall()
+            }
+            orphaned_job_ids = set(leases.values()) - valid_job_ids
+            for job_id in orphaned_job_ids:
+                connection.execute("DELETE FROM leases WHERE job_id=?", (job_id,))
+            for table_name in ("pending_products", "pending_results"):
+                rows = connection.execute(f"SELECT task_id, payload_json FROM {table_name}").fetchall()
+                for row in rows:
+                    task_id = str(row["task_id"])
+                    job_id = leases.get(task_id)
+                    if job_id is None:
+                        try:
+                            payload = json.loads(row["payload_json"])
+                            job_id = str(payload.get("jobId") or "") if isinstance(payload, dict) else ""
+                        except (TypeError, ValueError):
+                            job_id = ""
+                    if job_id in valid_job_ids:
+                        continue
+                    connection.execute(f"DELETE FROM {table_name} WHERE task_id=?", (task_id,))
+                    if job_id:
+                        orphaned_job_ids.add(job_id)
+            cancel_intent_job_ids = {
+                str(row["job_id"])
+                for row in connection.execute("SELECT job_id FROM cancel_intents").fetchall()
+            }
+            for job_id in cancel_intent_job_ids - valid_job_ids:
+                connection.execute("DELETE FROM cancel_intents WHERE job_id=?", (job_id,))
+                orphaned_job_ids.add(job_id)
+            connection.commit()
+        return len(orphaned_job_ids)
+
     def add_cancel_intent(self, job_id: str) -> None:
         if not job_id:
             return
@@ -232,6 +268,50 @@ class ClientStore:
             connection.execute(
                 "INSERT OR REPLACE INTO agent_state(key, value) VALUES ('cache_generation', ?)",
                 (str(max(0, int(generation))),),
+            )
+            connection.commit()
+
+    def product_invalidation_generation(self) -> int:
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT value FROM agent_state WHERE key='product_invalidation_generation'"
+            ).fetchone()
+        try:
+            return max(0, int(row["value"])) if row else 0
+        except (TypeError, ValueError):
+            return 0
+
+    def temporary_cleanup_generation(self) -> int:
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT value FROM agent_state WHERE key='temporary_cleanup_generation'"
+            ).fetchone()
+        try:
+            return max(0, int(row["value"])) if row else 0
+        except (TypeError, ValueError):
+            return 0
+
+    def set_temporary_cleanup_generation(self, generation: int) -> None:
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT value FROM agent_state WHERE key='temporary_cleanup_generation'"
+            ).fetchone()
+            current_generation = max(0, int(row["value"])) if row else 0
+            connection.execute(
+                "INSERT OR REPLACE INTO agent_state(key, value) VALUES ('temporary_cleanup_generation', ?)",
+                (str(max(current_generation, generation)),),
+            )
+            connection.commit()
+
+    def set_product_invalidation_generation(self, generation: int) -> None:
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT value FROM agent_state WHERE key='product_invalidation_generation'"
+            ).fetchone()
+            current_generation = max(0, int(row["value"])) if row else 0
+            connection.execute(
+                "INSERT OR REPLACE INTO agent_state(key, value) VALUES ('product_invalidation_generation', ?)",
+                (str(max(current_generation, generation)),),
             )
             connection.commit()
 

@@ -250,6 +250,19 @@ class DistributedCrawlerAgent:
                 "cacheGeneration": required_generation,
                 "availableSlots": self._available_slots(),
             })
+        for invalidation in acknowledgement.get("productInvalidations") or []:
+            await self._invalidate_product_cache(
+                str(invalidation["asin"]), str(invalidation["amazonZip"]),
+                int(invalidation["generation"]),
+            )
+        temporary_generation = max(0, int(acknowledgement.get("requiredTemporaryCleanupGeneration") or 0))
+        if temporary_generation > self.store.temporary_cleanup_generation():
+            cleanup = await self.clear_temporary_data(
+                "reconnect", {str(value) for value in acknowledgement.get("validJobIds") or []},
+                generation=temporary_generation,
+            )
+            if cleanup.get("error"):
+                raise RuntimeError(f"Could not clear temporary crawler data: {cleanup['error']}")
         await self.outbound_queue.put({"type": "ready", "availableSlots": self._available_slots()})
         self._publish_status()
 
@@ -275,6 +288,8 @@ class DistributedCrawlerAgent:
                         local_tasks=self.store.local_tasks(),
                         cancel_intents=self.store.cancel_intents(),
                         cache_generation=self.store.cache_generation(),
+                        product_invalidation_generation=self.store.product_invalidation_generation(),
+                        temporary_cleanup_generation=self.store.temporary_cleanup_generation(),
                     )))
                     acknowledgement = json.loads(await asyncio.wait_for(websocket.recv(), timeout=15))
                     if acknowledgement.get("type") != "hello_ack":
@@ -353,24 +368,87 @@ class DistributedCrawlerAgent:
                         "leaseId": assignment["leaseId"],
                     })
                 current_generation = self._pending_stop_cleanups.get(job_id, 0)
-                if job_id and generation > current_generation:
+                if job_id and (job_id not in self._pending_stop_cleanups or generation > current_generation):
                     self._pending_stop_cleanups[job_id] = generation
                     asyncio.create_task(self._complete_stop_cleanup(job_id, generation))
             elif message_type == "pause":
                 self.set_paused(bool(payload.get("paused", True)))
             elif message_type == "clear_cache":
-                response = await self.clear_local_cache(str(payload.get("requestId") or ""))
+                response = await self.clear_local_cache(
+                    str(payload.get("requestId") or ""),
+                    generation=max(0, int(payload.get("cacheGeneration") or 0)),
+                )
                 await self.outbound_queue.put(response)
+                if response.get("error"):
+                    raise OSError(str(response["error"]))
+            elif message_type == "invalidate_product_cache":
+                response = await self.invalidate_product_cache(
+                    str(payload.get("requestId") or ""),
+                    str(payload.get("asin") or ""),
+                    str(payload.get("amazonZip") or ""),
+                    max(0, int(payload.get("generation") or 0)),
+                )
+                await self.outbound_queue.put(response)
+                if response.get("error"):
+                    raise OSError(str(response["error"]))
+            elif message_type == "clear_temporary_data":
+                response = await self.clear_temporary_data(
+                    str(payload.get("requestId") or ""),
+                    {str(value) for value in payload.get("validJobIds") or []},
+                    generation=max(0, int(payload.get("generation") or 0)),
+                )
+                await self.outbound_queue.put(response)
+                if response.get("error"):
+                    raise OSError(str(response["error"]))
 
-    async def clear_local_cache(self, request_id: str) -> dict[str, Any]:
+    async def clear_local_cache(self, request_id: str, *, generation: int = 0) -> dict[str, Any]:
         try:
-            result = await asyncio.to_thread(RawFamilyCache(self.project_root / ".runtime" / "cache").clear)
+            if generation:
+                async with self._cache_cleanup_lock:
+                    result = await asyncio.to_thread(RawFamilyCache(self.project_root / ".runtime" / "cache").clear)
+                    self.store.set_cache_generation(max(self.store.cache_generation(), generation))
+            else:
+                result = await asyncio.to_thread(RawFamilyCache(self.project_root / ".runtime" / "cache").clear)
             return {"type": "cache_cleared", "requestId": request_id, **result, "error": None}
         except OSError as error:
             return {
                 "type": "cache_cleared", "requestId": request_id,
                 "removedFiles": 0, "removedBytes": 0, "error": str(error),
             }
+
+    async def _invalidate_product_cache(self, asin: str, amazon_zip: str, generation: int) -> dict[str, int]:
+        cache_key = f"{asin}:{amazon_zip}:us-v1"
+        result = await asyncio.to_thread(
+            RawFamilyCache(self.project_root / ".runtime" / "cache").invalidate, cache_key,
+        )
+        self.store.set_product_invalidation_generation(generation)
+        return result
+
+    async def invalidate_product_cache(
+        self, request_id: str, asin: str, amazon_zip: str, generation: int,
+    ) -> dict[str, Any]:
+        try:
+            result = await self._invalidate_product_cache(asin, amazon_zip, generation)
+            return {"type": "product_cache_invalidated", "requestId": request_id, **result, "error": None}
+        except OSError as error:
+            return {"type": "product_cache_invalidated", "requestId": request_id,
+                    "removedFiles": 0, "removedBytes": 0, "error": str(error)}
+
+    async def clear_temporary_data(
+        self, request_id: str, valid_job_ids: set[str], *, generation: int = 0,
+    ) -> dict[str, Any]:
+        try:
+            discarded_jobs = await asyncio.to_thread(self.store.clear_orphaned_jobs, valid_job_ids)
+            result = await asyncio.to_thread(
+                RawFamilyCache(self.project_root / ".runtime" / "cache").clear_temporary_files,
+            )
+            if generation:
+                self.store.set_temporary_cleanup_generation(generation)
+            return {"type": "temporary_data_cleared", "requestId": request_id,
+                    "discardedJobs": discarded_jobs, **result, "error": None}
+        except OSError as error:
+            return {"type": "temporary_data_cleared", "requestId": request_id,
+                    "discardedJobs": 0, "removedFiles": 0, "removedBytes": 0, "error": str(error)}
 
     async def _ensure_cache_generation(self, generation: int) -> dict[str, Any]:
         async with self._cache_cleanup_lock:
@@ -429,7 +507,7 @@ class DistributedCrawlerAgent:
         self.store.discard_job(job_id)
         while self._pending_stop_cleanups.get(job_id) == generation:
             try:
-                cache_result = await self._ensure_cache_generation(generation)
+                cache_result = {"removedFiles": 0, "removedBytes": 0}
                 self._debug_event(
                     "stop_cleanup_completed",
                     jobId=job_id,

@@ -103,6 +103,22 @@ class RawFamilyCache:
     def clear_failure(self, asin: str) -> None:
         self._remove(asin, "failure")
 
+    def invalidate(self, cache_key: str) -> dict[str, int]:
+        """Remove one product context without touching another product's cache."""
+        removed_files = 0
+        removed_bytes = 0
+        with CACHE_IO_LOCK:
+            for kind in ("family", "failure", "partial"):
+                path = self._path(cache_key, kind)
+                try:
+                    size = path.stat().st_size
+                    path.unlink()
+                except FileNotFoundError:
+                    continue
+                removed_files += 1
+                removed_bytes += size
+        return {"removedFiles": removed_files, "removedBytes": removed_bytes}
+
     def load_partial(self, asin: str) -> dict[str, Any] | None:
         with CACHE_IO_LOCK:
             payload = self._read(asin, "partial")
@@ -134,6 +150,23 @@ class RawFamilyCache:
                 *self.directory.glob("partial-*.json"), *self.directory.glob(".amazon-cache-*.tmp"),
             ]
             for path in paths:
+                if not path.is_file():
+                    continue
+                try:
+                    size = path.stat().st_size
+                    path.unlink()
+                except FileNotFoundError:
+                    continue
+                removed_files += 1
+                removed_bytes += size
+        return {"removedFiles": removed_files, "removedBytes": removed_bytes}
+
+    def clear_temporary_files(self) -> dict[str, int]:
+        """Remove abandoned atomic-write files while preserving cache entries."""
+        removed_files = 0
+        removed_bytes = 0
+        with CACHE_IO_LOCK:
+            for path in self.directory.glob(".amazon-cache-*.tmp"):
                 if not path.is_file():
                     continue
                 try:

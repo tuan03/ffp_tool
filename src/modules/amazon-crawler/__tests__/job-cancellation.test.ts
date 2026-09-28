@@ -83,7 +83,7 @@ test("cancellation message identifies received agent and pipeline acknowledgemen
   assert.match(message, /pipeline đã nhận lệnh, đang kết thúc bước tạo nội dung SEO/);
 });
 
-test("cancellation message reports agent cache cleanup", () => {
+test("cancellation message reports temporary data cleanup", () => {
   const job = createJob({
     cancellation: {
       ...createJob().cancellation,
@@ -97,7 +97,7 @@ test("cancellation message reports agent cache cleanup", () => {
     },
   });
 
-  assert.match(describeJobCancellation(job) ?? "", /May Sang đang đóng crawler và dọn cache/);
+  assert.match(describeJobCancellation(job) ?? "", /May Sang đang đóng crawler và dọn dữ liệu tạm/);
 });
 
 test("cancellation message treats timezone-less coordinator timestamps as UTC", () => {

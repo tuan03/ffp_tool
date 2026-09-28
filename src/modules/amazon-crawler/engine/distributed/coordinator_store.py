@@ -58,6 +58,9 @@ CANCELLATION_PENDING_ATTEMPT_STATUSES = {
 TOMBSTONE_RETENTION_DAYS = 30
 ACTIVE_JOB_STATUSES = {"queued", "running", "cancelling"}
 CACHE_GENERATION_KEY = "agent_cache_generation"
+PRODUCT_INVALIDATION_GENERATION_KEY = "product_cache_invalidation_generation"
+PRODUCT_INVALIDATION_PREFIX = "product_cache_invalidation:"
+TEMPORARY_CLEANUP_GENERATION_KEY = "agent_temporary_cleanup_generation"
 NEGATIVE_CACHE_PREFIX = "amazon-negative:"
 CAPTCHA_COOLDOWN_KEY = "amazon-captcha-cooldown"
 
@@ -327,6 +330,74 @@ class CoordinatorStore:
     def current_cache_generation(self) -> int:
         with self.sessions() as session:
             return self._cache_generation(session)
+
+    def advance_cache_generation(self) -> int:
+        with self.sessions.begin() as session:
+            return self._next_cache_generation(session)
+
+    def active_job_id(self) -> str | None:
+        with self.sessions() as session:
+            return session.scalar(select(CrawlJob.id).where(CrawlJob.status.in_(ACTIVE_JOB_STATUSES)).limit(1))
+
+    def retained_job_ids(self) -> set[str]:
+        with self.sessions() as session:
+            return set(session.scalars(select(CrawlJob.id)).all())
+
+    def temporary_cleanup_generation(self) -> int:
+        with self.sessions() as session:
+            state = session.get(CoordinatorState, TEMPORARY_CLEANUP_GENERATION_KEY)
+            try:
+                return max(0, int(state.value)) if state else 0
+            except ValueError:
+                return 0
+
+    def advance_temporary_cleanup_generation(self) -> int:
+        with self.sessions.begin() as session:
+            state = session.get(CoordinatorState, TEMPORARY_CLEANUP_GENERATION_KEY)
+            try:
+                generation = max(0, int(state.value)) + 1 if state else 1
+            except ValueError:
+                generation = 1
+            if state is None:
+                session.add(CoordinatorState(key=TEMPORARY_CLEANUP_GENERATION_KEY, value=str(generation)))
+            else:
+                state.value = str(generation)
+            return generation
+
+    def invalidate_product_cache(self, asin: str, amazon_zip: str) -> int:
+        """Persist a targeted invalidation for agents that reconnect later."""
+        with self.sessions.begin() as session:
+            counter = session.get(CoordinatorState, PRODUCT_INVALIDATION_GENERATION_KEY)
+            try:
+                generation = max(0, int(counter.value)) + 1 if counter else 1
+            except ValueError:
+                generation = 1
+            if counter is None:
+                session.add(CoordinatorState(key=PRODUCT_INVALIDATION_GENERATION_KEY, value=str(generation)))
+            else:
+                counter.value = str(generation)
+            key = f"{PRODUCT_INVALIDATION_PREFIX}{asin}:{amazon_zip}"
+            record = session.get(CoordinatorState, key)
+            payload = json.dumps({"asin": asin, "amazonZip": amazon_zip, "generation": generation})
+            if record is None:
+                session.add(CoordinatorState(key=key, value=payload))
+            else:
+                record.value = payload
+            negative = session.get(CoordinatorState, self._negative_key(asin, amazon_zip))
+            if negative is not None:
+                session.delete(negative)
+            return generation
+
+    def product_invalidations_since(self, generation: int) -> list[dict[str, Any]]:
+        with self.sessions() as session:
+            records = session.scalars(select(CoordinatorState).where(
+                CoordinatorState.key.like(f"{PRODUCT_INVALIDATION_PREFIX}%")
+            )).all()
+            invalidations = [json.loads(record.value) for record in records]
+            return sorted(
+                (value for value in invalidations if int(value["generation"]) > generation),
+                key=lambda value: int(value["generation"]),
+            )
 
     def clear_negative_cache(self) -> None:
         with self.sessions.begin() as session:
@@ -1854,7 +1925,9 @@ class CoordinatorStore:
             control.state = "cancelling"
             job.status = "cancelling"
             job.completed_at = None
-            cache_generation = self._next_cache_generation(session)
+            # A job cancellation only discards that job's work. Cache generations
+            # are reserved for explicit cache invalidation.
+            cache_generation = self._cache_generation(session)
             session.merge(DeletedCrawlJob(
                 job_id=job_id,
                 cancellation_id=control.cancellation_id,
@@ -1962,22 +2035,6 @@ class CoordinatorStore:
             if not error:
                 self._refresh_job(session, job_id)
             return not error
-
-    def acknowledge_client_cache_generation(self, client_id: str, cache_generation: int) -> list[str]:
-        """Complete pending Stop cleanups proven by a reconnect generation ACK."""
-        with self.sessions.begin() as session:
-            cleanups = session.scalars(select(JobStopClientCleanup).where(
-                JobStopClientCleanup.client_id == client_id,
-                JobStopClientCleanup.status == "pending",
-                JobStopClientCleanup.cache_generation <= cache_generation,
-            )).all()
-            job_ids = sorted({cleanup.job_id for cleanup in cleanups})
-            for cleanup in cleanups:
-                cleanup.status = "completed"
-                cleanup.error = None
-            for job_id in job_ids:
-                self._refresh_job(session, job_id)
-            return job_ids
 
     def acknowledge_task_cancel(self, client_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         task_id = str(payload.get("taskId") or "")

@@ -371,6 +371,29 @@ test("job controller lists, cancels, replaces and deletes coordinator jobs", asy
   assert.equal(requests.at(-1)?.method, "DELETE");
 });
 
+test("cache maintenance targets one ASIN or temporary data through separate endpoints", async () => {
+  const requests: string[] = [];
+  const jobs = createAmazonCrawlerJobController({
+    engineUrl: "http://coordinator.test",
+    fetchImplementation: async (request, init) => {
+      assert.equal(init?.method, "DELETE");
+      requests.push(String(request));
+      return jsonResponse({ removedFiles: 2, removedBytes: 100, requestedClients: 1, respondedClients: 1, failedClients: 0, discardedJobs: 1 });
+    },
+  });
+
+  assert.deepEqual(await jobs.invalidateProductCache("B012345678", "10001"), {
+    removedFiles: 2, removedBytes: 100, requestedClients: 1, respondedClients: 1, failedClients: 0, discardedJobs: 1,
+  });
+  assert.deepEqual(await jobs.clearTemporaryData(), {
+    removedFiles: 2, removedBytes: 100, requestedClients: 1, respondedClients: 1, failedClients: 0, discardedJobs: 1,
+  });
+  assert.deepEqual(requests, [
+    "http://coordinator.test/api/v1/clients/cache/products/B012345678?amazonZip=10001",
+    "http://coordinator.test/api/v1/clients/temporary-data",
+  ]);
+});
+
 test("Shopify sync retry resumes polling and returns the refreshed job output", async () => {
   const productsSeen: string[][] = [];
   let snapshotCount = 0;

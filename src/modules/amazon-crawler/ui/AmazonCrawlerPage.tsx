@@ -208,6 +208,9 @@ export function AmazonCrawlerPage({
   const [asinPreflightMatches, setAsinPreflightMatches] = useState<readonly AmazonAsinPreflightMatch[]>([]);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
   const [isClearingCache, setIsClearingCache] = useState(false);
+  const [isInvalidatingCache, setIsInvalidatingCache] = useState(false);
+  const [isClearingTemporaryData, setIsClearingTemporaryData] = useState(false);
+  const [cacheAsin, setCacheAsin] = useState("");
   const [cacheMessage, setCacheMessage] = useState<string | null>(null);
   const [isHandingOver, setIsHandingOver] = useState(false);
   const [handoverError, setHandoverError] = useState<string | null>(null);
@@ -320,6 +323,7 @@ export function AmazonCrawlerPage({
   const coordinatorActiveJob = jobs.find((job) =>
     ["queued", "running", "waiting_captcha", "cancelling"].includes(job.status)
   );
+  const isMaintainingCache = isClearingCache || isInvalidatingCache || isClearingTemporaryData;
   const isCancellationPending = activeManagedJob?.status === "cancelling";
   const isActiveStopPending = isActiveJobStopping({
     activeJobId,
@@ -916,7 +920,7 @@ export function AmazonCrawlerPage({
         setJobControlMessage(
           isForce
             ? "Đã buộc dừng job. Coordinator đang dọn dẹp tiến trình."
-            : "Đã nhận Stop. Đang đóng crawler và dọn dữ liệu; job sẽ tự biến mất khi hoàn tất."
+            : "Đã nhận yêu cầu hủy job. Đang dọn dữ liệu tạm của job; cache sản phẩm được giữ nguyên."
         );
       } catch (caught: unknown) {
         setCancellationJobId(null);
@@ -972,7 +976,7 @@ export function AmazonCrawlerPage({
       setJobControlMessage(
         isForce
           ? "Đã buộc dừng job. Coordinator đang dọn dẹp tiến trình."
-          : "Đã nhận Stop. Đang đóng crawler và dọn dữ liệu; job sẽ tự biến mất khi hoàn tất."
+          : "Đã nhận yêu cầu hủy job. Đang dọn dữ liệu tạm của job; cache sản phẩm được giữ nguyên."
       );
     } catch (caught: unknown) {
       setCancellationJobId(null);
@@ -1054,17 +1058,54 @@ export function AmazonCrawlerPage({
   }
 
   async function handleClearCache(): Promise<void> {
-    if (isRunning || isClearingCache || !window.confirm("Xóa toàn bộ Amazon family cache? Các lần crawl sau sẽ tải lại dữ liệu từ Amazon.")) return;
+    if (isRunning || coordinatorActiveJob || isMaintainingCache || !window.confirm("Xóa toàn bộ cache Amazon trên mọi agent, gồm family, negative, partial và ảnh đã xử lý? Các lần crawl sau sẽ tải lại dữ liệu.")) return;
     setIsClearingCache(true);
     setCacheMessage(null);
     try {
       const result = await clearCrawlerCacheAndOutput(clearAmazonCrawlerCache);
       const megabytes = result.removedBytes / (1024 * 1024);
-      setCacheMessage(`Đã xóa ${result.removedFiles} cache file (${megabytes.toFixed(2)} MB).`);
+      const acknowledgements = result.requestedClients === undefined
+        ? ""
+        : ` ${result.respondedClients ?? 0}/${result.requestedClients} agent đang kết nối đã phản hồi (${result.failedClients ?? 0} lỗi); agent chưa phản hồi sẽ xóa khi kết nối lại.`;
+      setCacheMessage(`Đã xử lý yêu cầu xóa cache: ${result.removedFiles} file (${megabytes.toFixed(2)} MB).${acknowledgements}`);
     } catch (caught: unknown) {
       setCacheMessage(caught instanceof Error ? `Không thể xóa cache: ${caught.message}` : "Không thể xóa cache.");
     } finally {
       setIsClearingCache(false);
+    }
+  }
+
+  async function handleInvalidateProductCache(): Promise<void> {
+    if (!amazonCrawlerJobs || isRunning || coordinatorActiveJob || isMaintainingCache) return;
+    const asin = cacheAsin.trim().toUpperCase();
+    if (!/^[A-Z0-9]{10}$/.test(asin)) {
+      setCacheMessage("ASIN phải gồm đúng 10 chữ hoặc số.");
+      return;
+    }
+    setIsInvalidatingCache(true);
+    setCacheMessage(null);
+    try {
+      const result = await amazonCrawlerJobs.invalidateProductCache(asin, settings.amazonZip);
+      setCacheMessage(`Đã gửi lệnh xóa cache ${asin} tại ZIP ${settings.amazonZip}: ${result.respondedClients ?? 0}/${result.requestedClients ?? 0} agent phản hồi (${result.failedClients ?? 0} lỗi). Agent chưa phản hồi sẽ cập nhật khi kết nối lại.`);
+      setCacheAsin("");
+    } catch (caught: unknown) {
+      setCacheMessage(caught instanceof Error ? `Không thể vô hiệu hóa cache: ${caught.message}` : "Không thể vô hiệu hóa cache.");
+    } finally {
+      setIsInvalidatingCache(false);
+    }
+  }
+
+  async function handleClearTemporaryData(): Promise<void> {
+    if (!amazonCrawlerJobs || isRunning || coordinatorActiveJob || isMaintainingCache) return;
+    setIsClearingTemporaryData(true);
+    setCacheMessage(null);
+    try {
+      const result = await amazonCrawlerJobs.clearTemporaryData();
+      setCacheMessage(`Đã dọn ${result.discardedJobs ?? 0} job mồ côi và ${result.removedFiles} file tạm; ${result.respondedClients ?? 0}/${result.requestedClients ?? 0} agent phản hồi (${result.failedClients ?? 0} lỗi). Agent offline sẽ dọn khi kết nối lại; cache sản phẩm được giữ nguyên.`);
+    } catch (caught: unknown) {
+      setCacheMessage(caught instanceof Error ? `Không thể dọn dữ liệu tạm: ${caught.message}` : "Không thể dọn dữ liệu tạm.");
+    } finally {
+      setIsClearingTemporaryData(false);
     }
   }
 
@@ -1784,7 +1825,7 @@ export function AmazonCrawlerPage({
           <div className="flex items-center justify-between gap-3">
             <div>
               <h2 className="font-semibold text-slate-100">Job đang chạy và gần đây</h2>
-              <p className="text-xs text-slate-400">Stop sẽ đóng agent con, xóa dữ liệu trung gian và cache; sản phẩm đã ghi lên Shopify vẫn được giữ.</p>
+              <p className="text-xs text-slate-400">Hủy job sẽ dừng crawler và dọn dữ liệu tạm của job. Cache sản phẩm hợp lệ và sản phẩm đã ghi lên Shopify được giữ nguyên.</p>
             </div>
             <span className="text-xs text-slate-500">Tự làm mới mỗi 3 giây</span>
           </div>
@@ -1826,7 +1867,7 @@ export function AmazonCrawlerPage({
                     </div>
                     <div className="flex flex-wrap gap-2">
                       {isActiveJob && job.status !== "cancelling" ? (
-                        <button className="rounded border border-rose-500 px-3 py-1 text-xs font-semibold text-rose-300 disabled:opacity-50" disabled={controlledJobId !== null} type="button" onClick={() => void handleStopJob(job.jobId)}>Stop</button>
+                        <button className="rounded border border-rose-500 px-3 py-1 text-xs font-semibold text-rose-300 disabled:opacity-50" disabled={controlledJobId !== null} type="button" onClick={() => void handleStopJob(job.jobId)}>Hủy job</button>
                       ) : job.status === "cancelling" ? (
                         <button
                           className="rounded border border-amber-600 bg-amber-950/40 px-3 py-1 text-xs font-semibold text-amber-300 hover:border-rose-500 hover:bg-rose-950/60 hover:text-rose-200 transition-colors"
@@ -1889,7 +1930,7 @@ export function AmazonCrawlerPage({
           onClick={() => void handleStop()}
           title={isCancellationPending ? "Bấm lại để buộc dừng ngay lập tức (Force Stop)" : undefined}
         >
-          {isCancellationPending ? "Buộc dừng ngay" : isActiveStopPending ? "Đang dừng..." : "Stop"}
+          {isCancellationPending ? "Buộc dừng ngay" : isActiveStopPending ? "Đang dừng..." : "Hủy job"}
         </button>
         <button
           className="rounded-lg border border-emerald-500 px-5 py-2 font-semibold text-emerald-300 hover:bg-emerald-950/40"
@@ -1930,7 +1971,16 @@ export function AmazonCrawlerPage({
             <button className="rounded-lg border border-slate-600 px-5 py-2 font-semibold text-slate-300 hover:border-rose-500 hover:text-rose-300 disabled:opacity-50" disabled={isRunning || isHandingOver} type="button" onClick={resetCrawlerOutput}>Xóa kết quả</button>
           </>
         )}
-        <button className="rounded-lg border border-amber-500 px-5 py-2 font-semibold text-amber-300 disabled:opacity-50" disabled={isRunning || isClearingCache} type="button" onClick={() => void handleClearCache()}>{isClearingCache ? "Đang xóa cache..." : "Xóa cache"}</button>
+        {amazonCrawlerJobs ? (
+          <>
+            <label className="flex items-center gap-2 text-sm text-slate-300">ASIN (ZIP hiện tại)
+              <input className="w-32 rounded border border-slate-700 bg-slate-950 px-2 py-2 font-mono text-slate-100" maxLength={10} value={cacheAsin} onChange={(event) => setCacheAsin(event.target.value.toUpperCase())} />
+            </label>
+            <button className="rounded-lg border border-amber-500 px-4 py-2 font-semibold text-amber-300 disabled:opacity-50" disabled={isRunning || coordinatorActiveJob !== undefined || isMaintainingCache || cacheAsin.trim().length !== 10} type="button" onClick={() => void handleInvalidateProductCache()}>{isInvalidatingCache ? "Đang làm mới..." : "Xóa cache ASIN"}</button>
+            <button className="rounded-lg border border-slate-600 px-4 py-2 font-semibold text-slate-300 disabled:opacity-50" disabled={isRunning || coordinatorActiveJob !== undefined || isMaintainingCache} type="button" onClick={() => void handleClearTemporaryData()}>{isClearingTemporaryData ? "Đang dọn..." : "Dọn dữ liệu tạm"}</button>
+          </>
+        ) : null}
+        <button className="rounded-lg border border-rose-500 px-5 py-2 font-semibold text-rose-300 disabled:opacity-50" disabled={isRunning || coordinatorActiveJob !== undefined || isMaintainingCache} type="button" onClick={() => void handleClearCache()}>{isClearingCache ? "Đang xóa cache..." : "Xóa toàn bộ cache"}</button>
 
         {recentJobs.length > 0 && (
           <div className="flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-1.5 ml-auto">
