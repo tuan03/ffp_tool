@@ -48,6 +48,22 @@ test("production deployment preserves a VPS action-key map when the environment 
   assert.match(workflow, /GPT_SEO_ACTION_KEYS_JSON=%s/);
 });
 
+test("production deployment removes the legacy single-store action key when a key map exists", async () => {
+  const workflow = await readFile(".github/workflows/deploy.yml", "utf8");
+
+  assert.match(
+    workflow,
+    /if \[ -n "\$INCOMING_GPT_SEO_ACTION_KEYS_JSON" \]; then[\s\S]*?sed -i '\/\^\[\[:space:\]\]\*GPT_SEO_ACTION_KEY=\/d' \.env[\s\S]*?fi/,
+  );
+});
+
+test("new-store guide uses only the multi-store action-key map", async () => {
+  const guide = await readFile("docs/custom-gpt-seo/add-store.md", "utf8");
+
+  assert.match(guide, /GPT_SEO_ACTION_KEYS_JSON=/);
+  assert.doesNotMatch(guide, /`GPT_SEO_ACTION_KEY`/);
+});
+
 test("production deployment exports the GPT SEO restart script from the container", async () => {
   const workflow = await readFile(".github/workflows/deploy.yml", "utf8");
 

@@ -123,6 +123,12 @@ jobs:
             if [ -z "$INCOMING_GPT_SEO_ACTION_KEYS_JSON" ] && [ -n "$EXISTING_GPT_SEO_ACTION_KEYS_JSON" ]; then
               sed -i '/^[[:space:]]*GPT_SEO_ACTION_KEYS_JSON=/d' .env
               printf '\nGPT_SEO_ACTION_KEYS_JSON=%s\n' "$EXISTING_GPT_SEO_ACTION_KEYS_JSON" >> .env
+              INCOMING_GPT_SEO_ACTION_KEYS_JSON="$EXISTING_GPT_SEO_ACTION_KEYS_JSON"
+            fi
+
+            # A multi-store map replaces the legacy single-store Action key.
+            if [ -n "$INCOMING_GPT_SEO_ACTION_KEYS_JSON" ]; then
+              sed -i '/^[[:space:]]*GPT_SEO_ACTION_KEY=/d' .env
             fi
 
             # Ensure correct APP_PORT is recorded in .env
