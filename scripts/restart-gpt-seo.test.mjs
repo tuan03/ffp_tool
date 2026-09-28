@@ -19,3 +19,16 @@ test("new-store guide restarts GPT SEO with one command", async () => {
   assert.match(guide, /bash \/opt\/ffp-tool\/scripts\/restart-gpt-seo\.sh/);
   assert.doesNotMatch(guide, /CURRENT_IMAGE=/);
 });
+
+test("new-store guide documents VPS login and the private key is ignored", async () => {
+  const [guide, gitignore] = await Promise.all([
+    readFile("docs/custom-gpt-seo/add-store.md", "utf8"),
+    readFile(".gitignore", "utf8"),
+  ]);
+
+  assert.match(
+    guide,
+    /ssh -i "D:\\all_about_shopify\\tools\\ffp_tool\\wrydeco-vps_key\.pem" azureuser@20\.222\.21\.81/,
+  );
+  assert.match(gitignore, /^\/wrydeco-vps_key\.pem$/m);
+});

@@ -10,6 +10,14 @@ Bước này xác định GPT mới sẽ làm việc cho store nào và bảo đ
 - **Quyền SSH vào VPS**: cần để thêm Action Key vào cấu hình server.
 - **Quyền chỉnh sửa GPT**: cần để gắn key mới vào GPT của store.
 
+Mở PowerShell trên Windows và đăng nhập VPS bằng lệnh:
+
+```powershell
+ssh -i "D:\all_about_shopify\tools\ffp_tool\wrydeco-vps_key.pem" azureuser@20.222.21.81
+```
+
+Nếu được hỏi xác nhận máy chủ trong lần đầu kết nối, nhập `yes`. Đăng nhập thành công khi dòng lệnh bắt đầu bằng `azureuser@wrydeco-vps`.
+
 Lưu ý: store xuất hiện trong dropdown FFP Tool có thể chỉ là dữ liệu mẫu. Muốn đồng bộ Shopify, store còn phải được đăng ký trong Shopify Gateway.
 
 ## 2. Sao lưu và tạo key
