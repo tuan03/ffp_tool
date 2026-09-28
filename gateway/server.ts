@@ -1,5 +1,8 @@
+import fs from "node:fs";
 import http from "node:http";
+import path from "node:path";
 import { getCustomGptRuntime } from "./custom-gpt-seo/runtime";
+import { serveStaticFile } from "./static-server";
 
 import { GatewayDispatcher } from "./dispatcher";
 import { handleAutoSeoHttpRequest } from "./auto-seo-handler";
@@ -236,6 +239,13 @@ export function startGatewayServer(
 
     if (url === "/api/proxy/check" || url.startsWith("/api/proxy/check?")) {
       await handleProxyCheckHttpRequest(req, res, { authToken, maxBodyBytes });
+      return;
+    }
+
+    const staticDir = process.env.STATIC_DIR
+      ? path.resolve(process.env.STATIC_DIR)
+      : path.resolve(process.cwd(), "dist");
+    if (fs.existsSync(staticDir) && serveStaticFile(req, res, staticDir)) {
       return;
     }
 

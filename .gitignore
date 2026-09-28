@@ -6,6 +6,9 @@ Tool_crawer_New_update/
 .vite/
 .env
 .env.*
+!.env.example
+!.env.mock
+!.env.production.example
 .env.shopify
 *.tsbuildinfo
 .DS_Store

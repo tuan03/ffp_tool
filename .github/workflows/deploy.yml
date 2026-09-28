@@ -1,0 +1,212 @@
+name: Build and Deploy to Production
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-push:
+    name: Build & Push Docker Image
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.meta.outputs.tags }}
+      primary_image: ${{ fromJSON(steps.meta.outputs.json).tags[0] }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=raw,value=latest
+            type=sha,format=short
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    name: Deploy to VPS
+    needs: build-and-push
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Encode Environment Secrets
+        id: prep
+        env:
+          RAW_ENV: ${{ secrets.ENV_FILE }}
+        run: |
+          if [ -n "$RAW_ENV" ]; then
+            echo "env_b64=$(printf '%s' "$RAW_ENV" | base64 -w 0)" >> "$GITHUB_OUTPUT"
+          else
+            echo "env_b64=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: SSH to VPS and Deploy
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          DOCKER_IMAGE: ${{ needs.build-and-push.outputs.primary_image }}
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TARGET_DOMAIN: ${{ secrets.DOMAIN || 'ffp.b6-team.site' }}
+          ENV_B64: ${{ steps.prep.outputs.env_b64 }}
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          envs: DOCKER_IMAGE,GHCR_USER,GHCR_TOKEN,TARGET_DOMAIN,ENV_B64
+          script_stop: true
+          script: |
+            set -e
+
+            DEPLOY_DIR="/opt/ffp-tool"
+            echo "=== [1/6] Preparing deployment directory at $DEPLOY_DIR ==="
+            sudo mkdir -p "$DEPLOY_DIR"
+            sudo chown -R $USER:$USER "$DEPLOY_DIR"
+            cd "$DEPLOY_DIR"
+
+            echo "=== [2/6] Detecting application port ==="
+            if [ -f .env ] && grep -q "^APP_PORT=" .env; then
+              APP_PORT=$(grep "^APP_PORT=" .env | cut -d '=' -f2 | tr -d ' "')
+              echo "Using existing configured APP_PORT: $APP_PORT"
+            else
+              APP_PORT=3010
+              for p in $(seq 3010 3999); do
+                if ! sudo ss -tlpn | grep -q ":$p "; then
+                  APP_PORT=$p
+                  break
+                fi
+              done
+              echo "Auto-detected available port: $APP_PORT"
+            fi
+
+            echo "=== [3/6] Handling .env configuration ==="
+            if [ ! -f .env ]; then
+              echo "First-time deployment: Writing initial .env file..."
+              if [ -n "$ENV_B64" ]; then
+                printf '%s' "$ENV_B64" | base64 -d > .env
+              else
+                cat <<'EOF' > .env
+            NODE_ENV=production
+            GATEWAY_HOST=0.0.0.0
+            GATEWAY_PORT=3001
+            STATIC_DIR=/app/dist
+            EOF
+              fi
+              if ! grep -q "^APP_PORT=" .env; then
+                echo "APP_PORT=$APP_PORT" >> .env
+              fi
+              chmod 600 .env
+              echo "File .env initialized and protected (chmod 600)."
+            else
+              echo "Existing .env found. Preserving all existing secrets (no overwrite)."
+              if ! grep -q "^APP_PORT=" .env; then
+                echo "APP_PORT=$APP_PORT" >> .env
+              fi
+            fi
+
+            echo "=== [4/6] Setting up compose.prod.yaml ==="
+            cat <<'EOF' > compose.prod.yaml
+            services:
+              app:
+                image: ${DOCKER_IMAGE}
+                container_name: ffp-tool-app
+                restart: unless-stopped
+                ports:
+                  - "127.0.0.1:${APP_PORT:-3010}:3001"
+                env_file:
+                  - .env
+                volumes:
+                  - ./data:/app/.local-data
+                  - ./runtime:/app/.runtime
+                healthcheck:
+                  test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/health').then(r => r.ok ? process.exit(0) : process.exit(1)).catch(() => process.exit(1))"]
+                  interval: 15s
+                  timeout: 5s
+                  retries: 3
+                  start_period: 10s
+            EOF
+
+            echo "=== [5/6] Pulling and restarting Docker container ==="
+            echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+            export DOCKER_IMAGE
+            export APP_PORT
+            docker compose -f compose.prod.yaml pull
+            docker compose -f compose.prod.yaml up -d --remove-orphans
+
+            echo "=== [6/6] Verifying Nginx and SSL ==="
+            DOMAIN="${TARGET_DOMAIN:-ffp.b6-team.site}"
+            NGINX_CONF="/etc/nginx/sites-available/$DOMAIN.conf"
+            NGINX_ENABLED="/etc/nginx/sites-enabled/$DOMAIN.conf"
+
+            if [ ! -f "$NGINX_CONF" ]; then
+              echo "Setting up new Nginx site configuration for $DOMAIN..."
+              sudo bash -c "cat <<'NGINX_EOF' > '$NGINX_CONF'
+            server {
+                listen 80;
+                listen [::]:80;
+                server_name $DOMAIN;
+
+                client_max_body_size 30M;
+
+                location / {
+                    proxy_pass http://127.0.0.1:$APP_PORT;
+                    proxy_http_version 1.1;
+
+                    proxy_set_header Upgrade \$http_upgrade;
+                    proxy_set_header Connection \"upgrade\";
+
+                    proxy_set_header Host \$host;
+                    proxy_set_header X-Real-IP \$remote_addr;
+                    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+                    proxy_set_header X-Forwarded-Proto \$scheme;
+
+                    proxy_pass_request_headers on;
+
+                    proxy_connect_timeout 60s;
+                    proxy_send_timeout 60s;
+                    proxy_read_timeout 60s;
+                }
+            }
+            NGINX_EOF"
+              sudo ln -sf "$NGINX_CONF" "$NGINX_ENABLED"
+              sudo nginx -t
+              sudo systemctl reload nginx
+            fi
+
+            # Check if SSL is already configured; if not, invoke certbot
+            if ! sudo grep -q "ssl_certificate" "$NGINX_CONF"; then
+              echo "Requesting Let's Encrypt SSL certificate for $DOMAIN..."
+              sudo certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos --register-unsafely-without-email --redirect || {
+                echo "Notice: Certbot request finished with warnings. Ensure DNS for $DOMAIN is pointed to this server."
+              }
+            fi
+
+            echo "Deployment to $DOMAIN completed successfully!"
+            docker compose -f compose.prod.yaml ps
