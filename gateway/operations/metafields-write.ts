@@ -287,13 +287,13 @@ export async function executeMetafieldsGet(
   const p = payload as Record<string, unknown> | null;
   const ownerId = typeof p?.ownerId === "string" ? p.ownerId.trim() : "";
   if (!ownerId) {
-    throw new GatewayError("ownerId is required", "SHOPIFY_USER_ERROR", 400);
+    throw new GatewayError("ownerId is required", "SHOPIFY_INVALID_INPUT", 400);
   }
 
   const namespace = typeof p?.namespace === "string" ? p.namespace.trim() : "";
   const key = typeof p?.key === "string" ? p.key.trim() : "";
   if (!namespace || !key) {
-    throw new GatewayError("namespace and key are required", "SHOPIFY_USER_ERROR", 400);
+    throw new GatewayError("namespace and key are required", "SHOPIFY_INVALID_INPUT", 400);
   }
 
   if (executionMode === "preview") {

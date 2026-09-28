@@ -15,7 +15,7 @@ interface SeoHandoffModalProps {
   readonly onPreviewImage?: (item: LightboxImageItem) => void;
   readonly handoffResult?: SeoHandoverResponse | null;
   readonly onHandoffSuccess?: (res: SeoHandoverResponse, filteredPayload: PinterestPodDeliverables) => void;
-  readonly onHandoverToSeo?: (payload: PinterestPodDeliverables) => Promise<void>;
+  readonly onHandoverToSeo?: (payload: PinterestPodDeliverables, serverViewModels?: readonly unknown[]) => Promise<void>;
   readonly onClose: () => void;
 }
 
@@ -181,17 +181,23 @@ export function SeoHandoffModal({
     try {
       const res = await handoverToSeo(filteredPayload);
       if (onHandoverToSeo) {
-        await onHandoverToSeo(filteredPayload);
+        await onHandoverToSeo(filteredPayload, res.viewModels);
       }
       setCurrentResult(res);
       setViewMode("result");
       onHandoffSuccess?.(res, filteredPayload);
+      const targetStore = filteredPayload.storeId || "capozen";
+      try {
+        window.localStorage.setItem("ffp_seo_review_selected_store", targetStore);
+      } catch {
+        // ignore
+      }
       notifyUser({
         title: "✨ Pinterest POD: Bàn giao SEO thành công!",
-        message: `Đã bàn giao ${filteredPayload.items.length} thiết kế POD sang SEO Review.`,
+        message: `Đã bàn giao ${filteredPayload.items.length} thiết kế POD sang SEO Review cho Store ${targetStore.toUpperCase()}.`,
         type: "success",
         sound: "chime",
-        url: "/seo-review",
+        url: `/seo-review?storeId=${encodeURIComponent(targetStore)}`,
       });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -210,20 +216,29 @@ export function SeoHandoffModal({
       const fallbackResult: SeoHandoverResponse = {
         success: true,
         message: `Bàn giao sang SEO thành công: ${printCount} file in xưởng (CMYK 300 DPI) và ${approvedCount} mockup AI đã duyệt.`,
+        workflowId: filteredPayload.workflowId,
+        count: filteredPayload.items.length,
         receivedAt: Date.now(),
         printMasterCount: printCount,
         approvedMockupCount: approvedCount,
         savedPath: `data/pinterest_pod/output/${filteredPayload.workflowId}/seo_handoff_payload.json`,
+        items: filteredPayload.items,
       };
       setCurrentResult(fallbackResult);
       setViewMode("result");
       onHandoffSuccess?.(fallbackResult, filteredPayload);
+      const targetStore = filteredPayload.storeId || "capozen";
+      try {
+        window.localStorage.setItem("ffp_seo_review_selected_store", targetStore);
+      } catch {
+        // ignore
+      }
       notifyUser({
         title: "✨ Pinterest POD: Bàn giao SEO thành công!",
-        message: `Đã bàn giao ${filteredPayload.items.length} thiết kế POD sang SEO Review.`,
+        message: `Đã bàn giao ${filteredPayload.items.length} thiết kế POD sang SEO Review cho Store ${targetStore.toUpperCase()}.`,
         type: "success",
         sound: "chime",
-        url: "/seo-review",
+        url: `/seo-review?storeId=${encodeURIComponent(targetStore)}`,
       });
     } finally {
       setIsSubmitting(false);
@@ -688,7 +703,14 @@ export function SeoHandoffModal({
                   {copied ? "✓ Đã sao chép" : "Sao chép JSON"}
                 </button>
                 <a
-                  href="/seo-review"
+                  href={`/seo-review?storeId=${encodeURIComponent(filteredPayload.storeId || "capozen")}`}
+                  onClick={() => {
+                    try {
+                      window.localStorage.setItem("ffp_seo_review_selected_store", filteredPayload.storeId || "capozen");
+                    } catch {
+                      // ignore
+                    }
+                  }}
                   className="flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-emerald-500 to-teal-600 px-4 py-2 text-xs font-bold text-slate-950 shadow-md transition hover:from-emerald-400 hover:to-teal-500"
                 >
                   <span>📝 Đi tới SEO Review</span>

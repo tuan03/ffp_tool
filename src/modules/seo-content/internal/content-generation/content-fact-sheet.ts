@@ -6,6 +6,20 @@ import { resolveStoreProfile } from "../store-profiles";
 const PERSONALIZATION_PATTERN =
   /\b(personalized|personalised|personalization|personalisation|custom\s+name|your\s+name|custom\s+text|custom\s+photo|upload\s+photo|custom\s+image|monogram|initials|customizable|customisable|engraved|engraving|custom\s+song|custom\s+spotify)\b/i;
 
+const PLACEHOLDER_PATTERN =
+  /^(unknown|none|n\/a|not applicable|unspecified|sample|test|sku.*)[\s.]*$/i;
+
+/**
+ * Sanitizes text fields by eliminating empty strings, whitespace, and placeholder strings
+ * such as 'unknown', 'none', 'n/a', etc.
+ */
+export function sanitizeFactText(text?: string): string | undefined {
+  if (!text) return undefined;
+  const clean = text.trim();
+  if (clean.length === 0 || PLACEHOLDER_PATTERN.test(clean)) return undefined;
+  return clean;
+}
+
 /**
  * Deterministically detects whether the product explicitly supports customization/personalization
  * based on verified source text, OCR text, and niche.
@@ -37,37 +51,51 @@ export function buildContentFactSheet(
 ): ContentFactSheet {
   const { source, productUnderstanding, shoppingContext } = context;
 
-  const storeProfile =
+  let storeProfile =
     context.storeProfile ??
     resolveStoreProfile({
       storeId: source.storeId,
       siteDomain: source.siteDomain ?? source.url,
     });
 
+  const combinedEvidence = `${source.title} ${source.niche || ""} ${source.description || ""}`.toLowerCase();
+  const isBedding = /\b(bedding|quilt|comforter|duvet|blanket|pillow|bedspread|coverlet)\b/i.test(combinedEvidence);
+
+  if (storeProfile?.bedding && !isBedding) {
+    // Strip bedding-specific rules when the crawled product is not a bedding product (e.g. Handbag, Rug, Doormat)
+    const { bedding, descriptionGuidelines, seoDescriptionGuidelines, ...generalProfile } = storeProfile;
+    storeProfile = generalProfile;
+  }
+
   const personalizationSupported = detectPersonalizationEvidence(
     source,
     productUnderstanding,
   );
 
-  const effectiveNiche = context.effectiveNiche ?? storeProfile?.niche ?? source.niche;
+  const effectiveNiche = context.effectiveNiche ?? (isBedding ? storeProfile?.niche : undefined) ?? source.niche;
+  const sanitizedNiche = sanitizeFactText(effectiveNiche);
+  const sanitizedProductIdentity =
+    sanitizeFactText(productUnderstanding?.physicalProductIdentity) ||
+    sanitizedNiche ||
+    "product";
 
   return {
     originalTitle: source.title.trim(),
     originalDescription: source.description.trim(),
     existingHandle: source.handle,
-    niche: effectiveNiche?.trim() || undefined,
-    physicalProductIdentity:
-      productUnderstanding?.physicalProductIdentity?.trim() ||
-      effectiveNiche?.trim() ||
-      "product",
-    typographyVisibleTexts: productUnderstanding?.typography.visibleTexts ?? [],
-    typographyStyleSummary: productUnderstanding?.typography.styleSummary?.trim() || undefined,
-    visualEntities: productUnderstanding?.visualEntities?.trim() || undefined,
+    niche: sanitizedNiche,
+    physicalProductIdentity: sanitizedProductIdentity,
+    typographyVisibleTexts: (productUnderstanding?.typography.visibleTexts ?? [])
+      .map((t) => sanitizeFactText(t))
+      .filter((t): t is string => Boolean(t)),
+    typographyStyleSummary: sanitizeFactText(productUnderstanding?.typography.styleSummary),
+    visualEntities: sanitizeFactText(productUnderstanding?.visualEntities),
     targetAudience: shoppingContext?.targetAudience ?? [],
     occasions: shoppingContext?.suitableOccasions ?? [],
     useCases: shoppingContext?.useCases ?? [],
     personalizationSupported,
-    variantLabel: source.variantLabel?.trim() || undefined,
+    variantLabel: sanitizeFactText(source.variantLabel),
     storeProfile,
   };
 }
+

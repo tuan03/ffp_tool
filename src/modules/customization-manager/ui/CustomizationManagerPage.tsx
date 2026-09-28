@@ -1,7 +1,10 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 
-import type { ProductCustomization } from "../../customization-normalizer";
+import type {
+  CustomizationTextInput,
+  ProductCustomization,
+} from "../../customization-normalizer";
 import {
   deleteCustomization,
   readCustomization,
@@ -16,13 +19,19 @@ import { mockCustomizationConfig } from "../mocks/data";
 import { createCustomizationGatewayAdapter } from "../../module-api/gateway-adapter";
 import type {
   ModuleApiRunner,
+  ShopifyCollection,
   ShopifyProduct,
   ShopifyStoreSummary,
 } from "../../module-api";
 import { shopifyMockProducts } from "../../module-api/mocks/data";
 import { SurfaceManager } from "./components/SurfaceManager";
 import { OptionGroupEditor } from "./components/OptionGroupEditor";
-import { ProductCatalogTable } from "./components/ProductCatalogTable";
+import { TextInputEditor } from "./components/TextInputEditor";
+import {
+  ProductCatalogTable,
+  filterCatalogProducts,
+  buildShopifyAdminUrl,
+} from "./components/ProductCatalogTable";
 
 export interface CustomizationManagerPageProps {
   readonly moduleApiRunner?: ModuleApiRunner;
@@ -51,10 +60,20 @@ export function CustomizationManagerPage({
 
   // Products Catalog State
   const [products, setProducts] = useState<readonly ShopifyProduct[]>([]);
+  const [collections, setCollections] = useState<readonly ShopifyCollection[]>([]);
   const [isLoadingProducts, setIsLoadingProducts] = useState(false);
   const [configuredProductIds, setConfiguredProductIds] = useState<Set<string>>(
     new Set(["gid://shopify/Product/1001", "1001"]),
   );
+
+  // Catalog Filter State (scoped navigation in editor)
+  const [filterMode, setFilterMode] = useState<"all" | "collection" | "asin">("all");
+  const [selectedCollectionId, setSelectedCollectionId] = useState<string>("");
+  const [searchQuery, setSearchQuery] = useState("");
+
+  const filteredProducts = useMemo(() => {
+    return filterCatalogProducts(products, collections, filterMode, selectedCollectionId, searchQuery);
+  }, [products, collections, filterMode, selectedCollectionId, searchQuery]);
 
   // Active View Mode: 'catalog' or 'editor'
   const [viewMode, setViewMode] = useState<"catalog" | "editor">(
@@ -76,11 +95,8 @@ export function CustomizationManagerPage({
   const [isDeleting, setIsDeleting] = useState(false);
   const [statusMessage, setStatusMessage] = useState<{ type: "success" | "error" | "info"; text: string } | null>(null);
 
-  // Live Customer Preview Interactive State
+  // Live Customer Preview Surface State
   const [activeSurfaceIndex, setActiveSurfaceIndex] = useState(0);
-  const [previewTestText, setPreviewTestText] = useState("Tên Của Bạn");
-  const [previewTestFont, setPreviewTestFont] = useState("sans-serif");
-  const [previewTestColor, setPreviewTestColor] = useState("#ffffff");
 
   // Gateway Adapter for Customization API
   const gateway: CustomizationGateway = useMemo(() => {
@@ -132,22 +148,49 @@ export function CustomizationManagerPage({
     async function loadStoreProducts() {
       setIsLoadingProducts(true);
       try {
-        let loadedProducts: readonly ShopifyProduct[] = [];
+        let loadedProducts: ShopifyProduct[] = [];
         if (moduleApiRunner) {
           try {
-            const res = await moduleApiRunner({
-              storeId: selectedStoreId,
-              operation: "products.list",
-              payload: { limit: 100 },
-            });
-            if (Array.isArray(res?.data?.products) && res.data.products.length > 0) {
-              loadedProducts = res.data.products;
+            let cursor: string | undefined = undefined;
+            let hasNextPage = true;
+            const seenIds = new Set<string>();
+
+            while (hasNextPage) {
+              const res: any = await moduleApiRunner({
+                storeId: selectedStoreId,
+                operation: "products.list",
+                payload: {
+                  limit: 250,
+                  ...(cursor ? { cursor } : {}),
+                },
+              });
+
+              const pageProducts = res?.data?.products;
+              if (Array.isArray(pageProducts) && pageProducts.length > 0) {
+                for (const p of pageProducts) {
+                  if (p?.id && !seenIds.has(p.id)) {
+                    seenIds.add(p.id);
+                    loadedProducts.push(p);
+                  }
+                }
+              }
+
+              const pageInfo = res?.data?.pageInfo;
+              if (pageInfo?.hasNextPage && pageInfo.endCursor && !seenIds.has(pageInfo.endCursor)) {
+                cursor = pageInfo.endCursor;
+              } else {
+                hasNextPage = false;
+              }
+            }
+
+            if (loadedProducts.length === 0) {
+              loadedProducts = [...shopifyMockProducts];
             }
           } catch {
-            loadedProducts = shopifyMockProducts;
+            loadedProducts = [...shopifyMockProducts];
           }
         } else {
-          loadedProducts = shopifyMockProducts;
+          loadedProducts = [...shopifyMockProducts];
         }
 
         if (isMounted) {
@@ -170,6 +213,50 @@ export function CustomizationManagerPage({
             if (match) {
               setActiveProduct(match);
             }
+          }
+        }
+
+        // Also fetch all collections for Collection Filter
+        if (moduleApiRunner) {
+          try {
+            const allCollections: ShopifyCollection[] = [];
+            let colCursor: string | undefined = undefined;
+            let colHasNextPage = true;
+            const seenColIds = new Set<string>();
+
+            while (colHasNextPage) {
+              const colRes: any = await moduleApiRunner({
+                storeId: selectedStoreId,
+                operation: "collections.list",
+                payload: {
+                  limit: 250,
+                  ...(colCursor ? { cursor: colCursor } : {}),
+                },
+              });
+
+              const pageCollections = colRes?.data?.collections;
+              if (Array.isArray(pageCollections) && pageCollections.length > 0) {
+                for (const col of pageCollections) {
+                  if (col?.id && !seenColIds.has(col.id)) {
+                    seenColIds.add(col.id);
+                    allCollections.push(col);
+                  }
+                }
+              }
+
+              const colPageInfo = colRes?.data?.pageInfo;
+              if (colPageInfo?.hasNextPage && colPageInfo.endCursor) {
+                colCursor = colPageInfo.endCursor;
+              } else {
+                colHasNextPage = false;
+              }
+            }
+
+            if (isMounted) {
+              setCollections(allCollections);
+            }
+          } catch {
+            if (isMounted) setCollections([]);
           }
         }
       } catch {
@@ -379,9 +466,69 @@ export function CustomizationManagerPage({
     }
   };
 
-  // Active Surface for Preview Mockup
+  // Active Surface & Options for Preview Mockup
   const surfaces = (customization?.surfaces as any[]) || [];
   const activeSurface = surfaces[activeSurfaceIndex] || surfaces[0] || null;
+  const textInputs = (customization?.textInputs as CustomizationTextInput[]) || [];
+  const optionGroups = customization?.optionGroups || [];
+  const totalOptionsCount = textInputs.length + optionGroups.length;
+
+  // Product Navigation (Next / Previous scoped to filtered products if active, fallback to all products)
+  const isProductInFiltered = useMemo(() => {
+    if (!activeProduct) return false;
+    return filteredProducts.some((p) => {
+      if (p.id === activeProduct.id) return true;
+      const cleanPId = p.id.replace("gid://shopify/Product/", "");
+      const cleanActiveId = activeProduct.id.replace("gid://shopify/Product/", "");
+      if (cleanPId === cleanActiveId) return true;
+      return Boolean(p.handle && p.handle === activeProduct.handle);
+    });
+  }, [filteredProducts, activeProduct]);
+
+  const navProducts = isProductInFiltered ? filteredProducts : products;
+
+  const currentProductIndex = navProducts.findIndex((p) => {
+    if (!activeProduct) return false;
+    if (p.id === activeProduct.id) return true;
+    const cleanPId = p.id.replace("gid://shopify/Product/", "");
+    const cleanActiveId = activeProduct.id.replace("gid://shopify/Product/", "");
+    if (cleanPId === cleanActiveId) return true;
+    return Boolean(p.handle && p.handle === activeProduct.handle);
+  });
+  const hasPrevProduct = currentProductIndex > 0;
+  const hasNextProduct = currentProductIndex >= 0 && currentProductIndex < navProducts.length - 1;
+
+  const handleNavigateProduct = (direction: "prev" | "next") => {
+    if (isLoadingConfig) return;
+    if (direction === "prev" && hasPrevProduct) {
+      const target = navProducts[currentProductIndex - 1];
+      if (target) {
+        void loadProductConfig(target);
+      }
+    } else if (direction === "next" && hasNextProduct) {
+      const target = navProducts[currentProductIndex + 1];
+      if (target) {
+        void loadProductConfig(target);
+      }
+    }
+  };
+
+  // Active Shopify Store Admin Handle & Product Admin URL
+  const currentStore = stores.find((s) => s.storeId === selectedStoreId);
+  const shopAdminHandle = (
+    currentStore?.shopDomain ||
+    selectedStoreId ||
+    defaultStoreId ||
+    "capozen"
+  )
+    .trim()
+    .replace(/^https?:\/\//i, "")
+    .replace(/\/.*$/, "")
+    .replace(/\.myshopify\.com$/i, "");
+
+  const activeProductAdminUrl = activeProduct
+    ? buildShopifyAdminUrl(shopAdminHandle, activeProduct.id)
+    : undefined;
 
   // Active Mockup Image
   const previewMockupUrl =
@@ -393,7 +540,7 @@ export function CustomizationManagerPage({
 
   return (
     <div className="min-h-screen bg-slate-950 p-4 md:p-8 text-slate-100 font-sans">
-      <div className="mx-auto max-w-7xl space-y-6">
+      <div className="mx-auto max-w-[1536px] space-y-6">
         {/* VIEW MODE 1: CATALOG VIEW */}
         {viewMode === "catalog" && (
           <div className="space-y-6">
@@ -424,6 +571,9 @@ export function CustomizationManagerPage({
                   value={selectedStoreId}
                   onChange={(e) => {
                     setSelectedStoreId(e.target.value);
+                    setFilterMode("all");
+                    setSelectedCollectionId("");
+                    setSearchQuery("");
                     setSearchParams({ storeId: e.target.value });
                   }}
                   disabled={isLoadingStores}
@@ -463,10 +613,19 @@ export function CustomizationManagerPage({
             {/* Product Catalog Table */}
             <ProductCatalogTable
               products={products}
+              collections={collections}
               isLoading={isLoadingProducts}
               configuredProductIds={configuredProductIds}
               onSelectProductForEdit={loadProductConfig}
               onDeleteCustomizer={handleDeleteConfig}
+              shopAdminHandle={shopAdminHandle}
+              filterMode={filterMode}
+              onFilterModeChange={setFilterMode}
+              selectedCollectionId={selectedCollectionId}
+              onSelectedCollectionIdChange={setSelectedCollectionId}
+              searchQuery={searchQuery}
+              onSearchQueryChange={setSearchQuery}
+              filteredProducts={filteredProducts}
             />
           </div>
         )}
@@ -475,23 +634,62 @@ export function CustomizationManagerPage({
         {viewMode === "editor" && activeProduct && (
           <div className="space-y-6">
             {/* Studio Navigation & Action Bar */}
-            <div className="flex flex-wrap items-center justify-between gap-4 rounded-3xl border border-slate-800 bg-slate-900/90 p-5 shadow-xl backdrop-blur-md">
-              <div className="flex items-center gap-4">
+            <div className="flex items-center justify-between gap-4 rounded-3xl border border-slate-800 bg-slate-900/90 p-5 shadow-xl backdrop-blur-md min-w-0">
+              <div className="flex items-center gap-3 sm:gap-4 min-w-0 flex-1">
                 <button
                   type="button"
                   onClick={() => {
                     setViewMode("catalog");
                     setSearchParams({ storeId: selectedStoreId });
                   }}
-                  className="inline-flex items-center gap-2 rounded-xl border border-slate-700 bg-slate-800 px-3.5 py-2 text-xs font-bold text-slate-200 hover:bg-slate-700 hover:text-white transition cursor-pointer shadow-sm"
+                  className="inline-flex items-center gap-2 rounded-xl border border-slate-700 bg-slate-800 px-3.5 py-2 text-xs font-bold text-slate-200 hover:bg-slate-700 hover:text-white transition cursor-pointer shadow-sm flex-shrink-0"
                 >
                   <span>←</span>
                   <span>Danh Sách Sản Phẩm</span>
                 </button>
 
-                <div className="h-6 w-px bg-slate-800 hidden sm:block" />
+                {/* Quick Next/Prev Product Navigation */}
+                <div className="flex items-center gap-1 bg-slate-950/70 p-1 rounded-xl border border-slate-800 shadow-inner flex-shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => handleNavigateProduct("prev")}
+                    disabled={!hasPrevProduct || isLoadingConfig}
+                    className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-300 hover:bg-slate-800 hover:text-white disabled:opacity-25 disabled:hover:bg-transparent transition cursor-pointer disabled:cursor-not-allowed"
+                    title={
+                      hasPrevProduct
+                        ? `Sản phẩm trước: ${navProducts[currentProductIndex - 1]?.title}`
+                        : "Đang ở sản phẩm đầu tiên"
+                    }
+                  >
+                    <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="18 15 12 9 6 15" />
+                    </svg>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleNavigateProduct("next")}
+                    disabled={!hasNextProduct || isLoadingConfig}
+                    className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-300 hover:bg-slate-800 hover:text-white disabled:opacity-25 disabled:hover:bg-transparent transition cursor-pointer disabled:cursor-not-allowed"
+                    title={
+                      hasNextProduct
+                        ? `Sản phẩm tiếp theo: ${navProducts[currentProductIndex + 1]?.title}`
+                        : "Đang ở sản phẩm cuối cùng"
+                    }
+                  >
+                    <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="6 9 12 15 18 9" />
+                    </svg>
+                  </button>
+                  {navProducts.length > 0 && currentProductIndex >= 0 && (
+                    <span className="px-2 text-[11px] font-mono font-medium text-slate-400 select-none">
+                      {currentProductIndex + 1}/{navProducts.length}
+                    </span>
+                  )}
+                </div>
 
-                <div className="flex items-center gap-3">
+                <div className="h-6 w-px bg-slate-800 hidden sm:block flex-shrink-0" />
+
+                <div className="flex items-center gap-3 min-w-0 flex-1">
                   <div className="h-10 w-10 flex-shrink-0 rounded-lg overflow-hidden border border-slate-700 bg-slate-950">
                     <img
                       src={
@@ -503,19 +701,77 @@ export function CustomizationManagerPage({
                       className="h-full w-full object-cover"
                     />
                   </div>
-                  <div>
-                    <h2 className="text-sm font-bold text-slate-100 max-w-md truncate">
-                      {activeProduct.title}
-                    </h2>
-                    <span className="text-[11px] text-slate-400">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <h2
+                        className="text-sm font-bold text-slate-100 truncate"
+                        title={activeProduct.title}
+                      >
+                        {activeProduct.title}
+                      </h2>
+                      {activeProductAdminUrl && (
+                        <a
+                          href={activeProductAdminUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-slate-400 hover:text-emerald-400 transition flex-shrink-0 inline-flex items-center"
+                          title="Mở sản phẩm này trong Shopify Admin"
+                        >
+                          <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                            <polyline points="15 3 21 3 21 9" />
+                            <line x1="10" y1="14" x2="21" y2="3" />
+                          </svg>
+                        </a>
+                      )}
+                    </div>
+                    <span className="text-[11px] text-slate-400 block truncate">
                       {activeProduct.handle ? `/${activeProduct.handle}` : activeProduct.id}
                     </span>
                   </div>
                 </div>
               </div>
 
-              {/* Action Buttons: Delete & Save */}
-              <div className="flex items-center gap-2.5">
+              {/* Action Buttons: Shopify Admin, Delete & Save */}
+              <div className="flex items-center gap-2.5 flex-shrink-0 ml-auto">
+                {activeProductAdminUrl && (
+                  <a
+                    href={activeProductAdminUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-700/60 bg-emerald-950/40 px-3.5 py-2.5 text-xs font-bold text-emerald-300 hover:bg-emerald-900/50 hover:border-emerald-500 hover:text-white transition cursor-pointer shadow-md group"
+                    title="Mở sản phẩm này trong Shopify Admin (tab mới)"
+                  >
+                    <svg
+                      className="w-4 h-4 text-emerald-400 group-hover:scale-110 transition-transform flex-shrink-0"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z" />
+                      <line x1="3" y1="6" x2="21" y2="6" />
+                      <path d="M16 10a4 4 0 0 1-8 0" />
+                    </svg>
+                    <span>Shopify Admin</span>
+                    <svg
+                      className="w-3.5 h-3.5 text-emerald-400/80 group-hover:text-white group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform flex-shrink-0"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                      <polyline points="15 3 21 3 21 9" />
+                      <line x1="10" y1="14" x2="21" y2="3" />
+                    </svg>
+                  </a>
+                )}
+
                 {customization && (
                   <button
                     type="button"
@@ -569,69 +825,40 @@ export function CustomizationManagerPage({
                 <p className="text-xs text-slate-400">Đang nạp cấu hình tùy biến của sản phẩm...</p>
               </div>
             ) : !customization ? (
-              <div className="rounded-3xl border border-dashed border-slate-800 bg-slate-900/40 p-16 text-center space-y-4">
+              <div className="rounded-3xl border border-dashed border-slate-800 bg-slate-900/40 p-16 text-center space-y-3">
                 <span className="text-4xl block">🎨</span>
                 <h3 className="text-base font-bold text-slate-200">
                   Sản phẩm này chưa có cấu hình tùy biến
                 </h3>
                 <p className="text-xs text-slate-400 max-w-md mx-auto">
-                  Bạn có thể khởi tạo cấu hình in ấn ngay bây giờ từ hình ảnh hiện tại của sản phẩm để bắt đầu tùy chỉnh.
+                  Sản phẩm này hiện chưa có Metafield Amazon Customizer trên Shopify.
                 </p>
-                <div className="flex items-center justify-center gap-3 pt-2">
-                  <button
-                    type="button"
-                    onClick={handleInitializeFromProduct}
-                    className="inline-flex items-center gap-2 rounded-xl bg-cyan-600 px-5 py-2.5 text-xs font-bold text-white shadow-lg shadow-cyan-950/50 hover:bg-cyan-500 transition cursor-pointer"
-                  >
-                    <span>✨</span>
-                    <span>Khởi Tạo Cấu Hình Ngay</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setCustomization(mockCustomizationConfig);
-                      setStatusMessage({
-                        type: "info",
-                        text: "Đã nạp mẫu cấu hình chăn ga demo. Bạn có thể sửa đổi và bấm Lưu.",
-                      });
-                    }}
-                    className="inline-flex items-center gap-2 rounded-xl border border-slate-700 bg-slate-800 px-4 py-2.5 text-xs font-semibold text-slate-300 hover:bg-slate-700 transition cursor-pointer"
-                  >
-                    <span>Nạp Bản Mẫu Demo</span>
-                  </button>
-                </div>
               </div>
             ) : (
               /* UNIFIED 2-COLUMN STUDIO: Live Customer Preview on Left, Direct Controls on Right */
-              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-                {/* LEFT COLUMN: Customer Mockup Canvas & Live Preview (7/12) */}
-                <div className="lg:col-span-7 space-y-4">
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+                {/* LEFT COLUMN: Customer Mockup Canvas & Live Preview (6/12) */}
+                <div className="lg:col-span-6 space-y-4">
                   <div className="rounded-3xl border border-slate-800 bg-slate-900/70 p-6 shadow-xl backdrop-blur-md space-y-5">
                     {/* Surface Switcher Pills */}
-                    <div className="flex items-center justify-between gap-3 border-b border-slate-800 pb-4">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-xs font-bold text-slate-300 uppercase tracking-wider mr-1">
-                          Mặt in:
-                        </span>
-                        {surfaces.map((s, idx) => (
-                          <button
-                            key={s.surfaceId || idx}
-                            type="button"
-                            onClick={() => setActiveSurfaceIndex(idx)}
-                            className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer ${
-                              activeSurfaceIndex === idx
-                                ? "bg-cyan-600 text-white shadow-md shadow-cyan-950/40"
-                                : "border border-slate-800 bg-slate-950 text-slate-400 hover:text-slate-200"
-                            }`}
-                          >
-                            {s.name || `Mặt in ${idx + 1}`}
-                          </button>
-                        ))}
-                      </div>
-
-                      <span className="rounded-full bg-emerald-950/80 border border-emerald-800 px-2.5 py-0.5 text-[10px] font-semibold text-emerald-300 uppercase tracking-wider">
-                        Góc Nhìn Khách Hàng
+                    <div className="flex items-center gap-2 flex-wrap border-b border-slate-800 pb-4">
+                      <span className="text-xs font-bold text-slate-300 uppercase tracking-wider mr-1">
+                        Mặt in:
                       </span>
+                      {surfaces.map((s, idx) => (
+                        <button
+                          key={s.surfaceId || idx}
+                          type="button"
+                          onClick={() => setActiveSurfaceIndex(idx)}
+                          className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer ${
+                            activeSurfaceIndex === idx
+                              ? "bg-cyan-600 text-white shadow-md shadow-cyan-950/40"
+                              : "border border-slate-800 bg-slate-950 text-slate-400 hover:text-slate-200"
+                          }`}
+                        >
+                          {s.name || `Mặt in ${idx + 1}`}
+                        </button>
+                      ))}
                     </div>
 
                     {/* Interactive Mockup Container */}
@@ -645,95 +872,44 @@ export function CustomizationManagerPage({
                             "https://images.unsplash.com/photo-1521572267360-ee0c2909d518?w=800&auto=format&fit=crop&q=80";
                         }}
                       />
-
-                      {/* Real-time Placement Area Overlay with Live Text */}
-                      <div className="absolute inset-x-1/4 top-1/4 bottom-1/3 border-2 border-dashed border-cyan-400/60 rounded-xl flex items-center justify-center p-3 pointer-events-none group-hover:border-cyan-400 transition">
-                        <div
-                          className="text-center font-bold break-words max-w-full drop-shadow-md select-none transition-all duration-200"
-                          style={{
-                            fontFamily: previewTestFont,
-                            color: previewTestColor,
-                            fontSize:
-                              previewTestText.length > 20
-                                ? "14px"
-                                : previewTestText.length > 10
-                                  ? "18px"
-                                  : "24px",
-                          }}
-                        >
-                          {previewTestText || "Nhập tên của bạn"}
-                        </div>
-                        <span className="absolute top-1 left-1.5 text-[9px] font-mono text-cyan-300/80 bg-slate-950/80 px-1.5 py-0.5 rounded">
-                          Vùng in (Print Area)
-                        </span>
-                      </div>
                     </div>
 
-                    {/* Customer Interactive Test Controls */}
-                    <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4 space-y-3">
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="font-semibold text-slate-300">
-                          ✍️ Thử nghiệm góc nhìn khách hàng (Live Sandbox):
-                        </span>
-                        <span className="text-[11px] text-slate-500">
-                          Thay đổi bên dưới sẽ phản chiếu ngay lên mockup
-                        </span>
-                      </div>
-
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                        <div className="sm:col-span-1">
-                          <label className="block text-[11px] text-slate-400 mb-1">
-                            Nội dung chữ in:
-                          </label>
-                          <input
-                            type="text"
-                            value={previewTestText}
-                            onChange={(e) => setPreviewTestText(e.target.value)}
-                            placeholder="Nhập tên..."
-                            maxLength={30}
-                            className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-1.5 text-xs text-slate-200 focus:border-cyan-500 focus:outline-none"
-                          />
-                        </div>
-
-                        <div>
-                          <label className="block text-[11px] text-slate-400 mb-1">
-                            Kiểu font:
-                          </label>
-                          <select
-                            value={previewTestFont}
-                            onChange={(e) => setPreviewTestFont(e.target.value)}
-                            className="w-full rounded-xl border border-slate-800 bg-slate-900 px-2.5 py-1.5 text-xs text-slate-200 focus:border-cyan-500 focus:outline-none cursor-pointer"
+                    {/* Customer Text Inputs Live Preview */}
+                    {textInputs.length > 0 && (
+                      <div className="space-y-2.5 pt-2">
+                        {textInputs.map((ti) => (
+                          <div
+                            key={ti.id}
+                            className="rounded-2xl border border-slate-800 bg-slate-950 p-3.5 space-y-2 shadow-inner"
                           >
-                            <option value="sans-serif">Mặc định (Sans-serif)</option>
-                            <option value="'Playfair Display', serif">Playfair Serif</option>
-                            <option value="'Pacifico', cursive">Viết tay Pacifico</option>
-                            <option value="'Impact', fantasy">Đậm nét Impact</option>
-                          </select>
-                        </div>
-
-                        <div>
-                          <label className="block text-[11px] text-slate-400 mb-1">
-                            Màu chữ:
-                          </label>
-                          <div className="flex items-center gap-2">
+                            <div className="flex items-center justify-between text-xs">
+                              <span className="font-bold text-slate-200">
+                                {ti.label || "Customize Text"}{" "}
+                                <span className="text-[11px] font-normal text-slate-400">
+                                  {ti.required ? "(bắt buộc)" : "(optional)"}
+                                </span>
+                              </span>
+                              {ti.maxLength && (
+                                <span className="text-[11px] font-mono text-slate-500">
+                                  0/{ti.maxLength}
+                                </span>
+                              )}
+                            </div>
                             <input
-                              type="color"
-                              value={previewTestColor}
-                              onChange={(e) => setPreviewTestColor(e.target.value)}
-                              className="h-8 w-10 cursor-pointer rounded-lg border border-slate-800 bg-slate-900 p-0.5"
+                              type="text"
+                              placeholder={ti.placeholder || "The Smiths Family"}
+                              disabled
+                              className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-300 placeholder-slate-500 cursor-not-allowed select-none"
                             />
-                            <span className="text-xs font-mono text-slate-400 uppercase">
-                              {previewTestColor}
-                            </span>
                           </div>
-                        </div>
+                        ))}
                       </div>
-                    </div>
+                    )}
                   </div>
                 </div>
 
-                {/* RIGHT COLUMN: Direct Customizer Configuration (5/12) */}
-                <div className="lg:col-span-5 space-y-4">
+                {/* RIGHT COLUMN: Direct Customizer Configuration (6/12) */}
+                <div className="lg:col-span-6 space-y-4">
                   <div className="rounded-3xl border border-slate-800 bg-slate-900/70 p-6 shadow-xl backdrop-blur-md space-y-5">
                     {/* Studio Sub-tabs */}
                     <div className="flex items-center gap-1.5 bg-slate-950 p-1.5 rounded-2xl border border-slate-800">
@@ -746,7 +922,7 @@ export function CustomizationManagerPage({
                             : "text-slate-400 hover:text-slate-200"
                         }`}
                       >
-                        🖼️ Mặt In & Phôi ({surfaces.length})
+                        🖼️ Mặt In ({surfaces.length})
                       </button>
 
                       <button
@@ -758,7 +934,7 @@ export function CustomizationManagerPage({
                             : "text-slate-400 hover:text-slate-200"
                         }`}
                       >
-                        🎨 Lựa Chọn & Màu ({(customization.optionGroups || []).length})
+                        🎨 Tùy Chọn ({totalOptionsCount})
                       </button>
 
                       <button
@@ -787,15 +963,29 @@ export function CustomizationManagerPage({
                       </div>
                     )}
 
-                    {/* Sub-tab 2: Option Groups & Choices Editor */}
+                    {/* Sub-tab 2: Text Inputs & Option Groups Editor */}
                     {studioTab === "options" && (
-                      <div className="space-y-4">
-                        <OptionGroupEditor
-                          groups={customization.optionGroups || []}
-                          onChange={(updated) =>
-                            setCustomization({ ...customization, optionGroups: updated })
-                          }
-                        />
+                      <div className="space-y-3">
+                        {totalOptionsCount === 0 ? (
+                          <div className="rounded-2xl border border-dashed border-slate-800 bg-slate-900/30 p-8 text-center text-xs text-slate-400">
+                            Sản phẩm này chưa có trường tùy biến nào.
+                          </div>
+                        ) : (
+                          <>
+                            <TextInputEditor
+                              textInputs={textInputs}
+                              onChange={(updated) =>
+                                setCustomization({ ...customization, textInputs: updated })
+                              }
+                            />
+                            <OptionGroupEditor
+                              groups={optionGroups}
+                              onChange={(updated) =>
+                                setCustomization({ ...customization, optionGroups: updated })
+                              }
+                            />
+                          </>
+                        )}
                       </div>
                     )}
 

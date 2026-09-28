@@ -33,7 +33,8 @@ export type GatewayErrorCode =
   | "SHOPIFY_INVALID_INPUT"
   | "NOT_IMPLEMENTED"
   | "SHOPIFY_UNKNOWN_WRITE_STATE"
-  | "SHOPIFY_PARTIAL_WRITE";
+  | "SHOPIFY_PARTIAL_WRITE"
+  | "SHOPIFY_SECURITY_ERROR";
 
 export interface GatewayRequest<TPayload = unknown> {
   readonly storeId?: string;

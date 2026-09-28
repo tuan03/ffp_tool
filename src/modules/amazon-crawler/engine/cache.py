@@ -10,7 +10,7 @@ import threading
 from pathlib import Path
 from typing import Any
 
-CACHE_SCHEMA_VERSION = 7
+CACHE_SCHEMA_VERSION = 8
 CACHE_IO_LOCK = threading.RLock()
 
 

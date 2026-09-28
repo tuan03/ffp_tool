@@ -124,6 +124,7 @@ export interface ProductPipelineMetadata {
     assetsNormalized: number;
   };
   seo: {
+    performance?: SeoPipelinePerformance;
     status: "pending" | "running" | "completed" | "failed";
     engine?: "gemini" | "heuristic" | "mixed";
     fieldsApplied?: string[];
@@ -150,6 +151,19 @@ export interface ProductPipelineMetadata {
     noOp?: boolean;
     timings?: ProductPipelineTimings;
   };
+}
+
+export interface SeoPipelinePerformance {
+  readonly stageDurationsMs: Readonly<Record<string, number>>;
+  readonly providerQueueMs?: number;
+  readonly providerRequestMs?: number;
+  readonly retryWaitMs?: number;
+  readonly requestCount?: number;
+  readonly retryCount?: number;
+  readonly cacheHits?: number;
+  readonly revisionRetries?: number;
+  readonly commitQueueMs?: number;
+  readonly commitMs?: number;
 }
 
 export interface ProductPipelineTimings {
@@ -427,7 +441,7 @@ export interface AmazonCrawlerCancellationSummary {
 export interface AmazonCrawlerJobController {
   list(limit?: number): Promise<readonly AmazonCrawlerJobSnapshot[]>;
   get(jobId: string): Promise<AmazonCrawlerJobSnapshot>;
-  cancel(jobId: string): Promise<AmazonCrawlerJobSnapshot>;
+  cancel(jobId: string, options?: { force?: boolean }): Promise<AmazonCrawlerJobSnapshot>;
   replace(jobId: string, input: AmazonCrawlerInput): Promise<AmazonCrawlerJobSnapshot>;
   delete(jobId: string): Promise<void>;
 }
@@ -479,6 +493,8 @@ export interface AmazonCrawlerReviewClient {
   decide(itemId: string, expectedVersion: number, decision: AmazonCrawlerReviewDecision, reason?: string): Promise<AmazonCrawlerReviewItem>;
   sync(itemId: string): Promise<AmazonCrawlerReviewItem>;
   syncAllApproved(): Promise<{ readonly queued: number; readonly itemIds: readonly string[] }>;
+  markSynced(itemId: string, info?: { productId?: string; productHandle?: string; adminUrl?: string }): Promise<AmazonCrawlerReviewItem>;
+  markFailed(itemId: string, error?: string): Promise<AmazonCrawlerReviewItem>;
   deleteAll(): Promise<{ readonly deleted: number; readonly skipped: number }>;
   imageUrl(fileToken: string): string;
 }
@@ -586,7 +602,7 @@ export const DEFAULT_AMAZON_CRAWLER_SETTINGS: AmazonCrawlerSettings = {
   browserProfiles: 4,
   browserTabs: 2,
   headless: false,
-  amazonZip: "10001",
+  amazonZip: "90001",
   captchaTimeoutSeconds: 180,
   maxMatrixVariants: 500,
   storeId: "capozen",

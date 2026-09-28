@@ -302,30 +302,252 @@ def _paid_groups(customization: dict[str, Any] | None) -> list[dict[str, Any]]:
     return legacy if isinstance(legacy, list) else []
 
 
-def expand_paid_variants(base_variants: list[dict[str, Any]], customization: dict[str, Any] | None) -> list[dict[str, Any]]:
+MAX_EXPANDED_VARIANTS = 100
+
+
+def _evaluate_rule_match(rule: dict[str, Any], context_options: dict[str, str], context_ids: set[str]) -> bool:
+    """Check if a conditional rule is satisfied given the selected options and option/component IDs."""
+    dependent_id = str(rule.get("dependentId") or "").strip()
+    if not dependent_id:
+        return True
+
+    lowered_context_ids = {i.lower() for i in context_ids}
+    if dependent_id.lower() in lowered_context_ids:
+        return True
+
+    matcher = rule.get("matcher")
+    if not matcher or not isinstance(matcher, dict):
+        return any(dependent_id.lower() == str(v).lower() for v in context_options.values())
+
+    expected_ids: set[str] = set()
+    if matcher.get("optionId"):
+        expected_ids.add(str(matcher["optionId"]).lower())
+    if matcher.get("optionIdentifier"):
+        expected_ids.add(str(matcher["optionIdentifier"]).lower())
+    if matcher.get("value"):
+        expected_ids.add(str(matcher["value"]).lower())
+    if isinstance(matcher.get("values"), list):
+        for v in matcher["values"]:
+            expected_ids.add(str(v).lower())
+    if matcher.get("equals"):
+        expected_ids.add(str(matcher["equals"]).lower())
+
+    match_type = str(matcher.get("type") or "").upper()
+
+    active_val = None
+    for k, v in context_options.items():
+        if k.lower() == dependent_id.lower():
+            active_val = str(v).lower()
+            break
+
+    lowered_context_vals = {str(v).lower() for v in context_options.values()}
+
+    if expected_ids:
+        matched = bool(
+            expected_ids & lowered_context_ids
+            or expected_ids & lowered_context_vals
+            or (active_val and active_val in expected_ids)
+            or any(any(exp in val for exp in expected_ids) for val in lowered_context_vals)
+        )
+        if match_type == "NOT_EQUALS":
+            return not matched
+        return matched
+
+    return True
+
+
+def _extract_dimension_keywords(text: str) -> set[str]:
+    """Extract standard dimension keywords (sizes, types) from a label or ID."""
+    tokens = set(re.findall(r"[a-zA-Z0-9]+", text.lower()))
+    size_keywords = {
+        "throw", "twin", "full", "queen", "king", "single", "double",
+        "baby", "pet", "lap", "small", "medium", "large", "xl",
+    }
+    type_keywords = {"quilt", "fleece", "sherpa", "comforter", "duvet", "blanket"}
+    return (tokens & size_keywords) | (tokens & type_keywords)
+
+
+def _is_group_applicable_to_base(
+    group: dict[str, Any],
+    base_options: dict[str, Any],
+    conditional_rules: list[dict[str, Any]],
+    component_parent: dict[str, str],
+) -> bool:
+    """Determine if a paid option group is applicable to a specific base variant."""
+    group_id = str(group.get("id") or "")
+    group_label = str(group.get("label") or "")
+    group_opt_text = " ".join(str(o.get("label") or "") for o in group.get("options", []))
+    group_text = f"{group_id} {group_label} {group.get('instructions', '')} {group_opt_text}".lower()
+
+    # 1. Check explicit conditional rules for this group
+    group_rules = [r for r in conditional_rules if r.get("ownerComponentId") == group_id]
+    context_options = {str(k): str(v) for k, v in base_options.items()}
+    context_ids = {str(k) for k in base_options.keys()} | {str(v) for v in base_options.values()}
+
+    for rule in group_rules:
+        if not _evaluate_rule_match(rule, context_options, context_ids):
+            return False
+
+    # 2. Check parent hierarchy: if component has a parent that is conditioned
+    parent_id = component_parent.get(group_id)
+    if parent_id:
+        parent_rules = [r for r in conditional_rules if r.get("ownerComponentId") == parent_id]
+        for rule in parent_rules:
+            if not _evaluate_rule_match(rule, context_options, context_ids):
+                return False
+
+    # 3. Check semantic mutual exclusion with base variant dimensions
+    base_text = " ".join(f"{k} {v}" for k, v in base_options.items()).lower()
+    base_kw = _extract_dimension_keywords(base_text)
+    group_kw = _extract_dimension_keywords(group_text)
+
+    sizes = {"throw", "twin", "full", "queen", "king", "single", "double"}
+    base_sizes = base_kw & sizes
+    group_sizes = group_kw & sizes
+
+    if base_sizes and group_sizes and not (base_sizes & group_sizes):
+        return False
+
+    types = {"quilt", "fleece", "sherpa", "comforter", "duvet"}
+    base_types = base_kw & types
+    group_types = group_kw & types
+
+    if base_types and group_types and not (base_types & group_types):
+        return False
+
+    return True
+
+
+def _deduplicate_paid_groups(
+    groups: list[dict[str, Any]],
+    base_options: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """
+    If multiple groups share the exact same label (e.g. 5 groups named 'Thicker Quilt Upgrade'),
+    they represent mutually exclusive groups for different tiers/sizes.
+    Keep only the one most specifically matching the current base options, or at most one.
+    """
+    by_label: dict[str, list[dict[str, Any]]] = {}
+    for g in groups:
+        label = str(g.get("label") or "Option").strip()
+        by_label.setdefault(label, []).append(g)
+
+    result: list[dict[str, Any]] = []
+    base_text = " ".join(f"{k} {v}" for k, v in base_options.items()).lower()
+    base_kw = _extract_dimension_keywords(base_text)
+
+    for group_list in by_label.values():
+        if len(group_list) == 1:
+            result.append(group_list[0])
+            continue
+
+        best_group = group_list[0]
+        best_score = -1
+        for g in group_list:
+            g_opt_text = " ".join(str(o.get("label") or "") for o in g.get("options", []))
+            g_text = f"{g.get('id', '')} {g.get('label', '')} {g.get('instructions', '')} {g_opt_text}".lower()
+            g_kw = _extract_dimension_keywords(g_text)
+            overlap = len(g_kw & base_kw)
+            if overlap > best_score:
+                best_score = overlap
+                best_group = g
+
+        result.append(best_group)
+
+    return result
+
+
+def expand_paid_variants(
+    base_variants: list[dict[str, Any]],
+    customization: dict[str, Any] | None,
+    max_variants: int = MAX_EXPANDED_VARIANTS,
+    warnings: list[str] | None = None,
+) -> list[dict[str, Any]]:
     groups = _paid_groups(customization)
-    if not groups:
+    if not groups or not base_variants:
         return deepcopy(base_variants)
-    option_sets = [group.get("options", []) for group in groups]
-    if any(not options for options in option_sets):
-        return deepcopy(base_variants)
-    expanded: list[dict[str, Any]] = []
+
+    conditional_rules: list[dict[str, Any]] = (
+        customization.get("conditionalRules", []) if isinstance(customization, dict) else []
+    )
+    component_parent: dict[str, str] = (
+        customization.get("componentParent", {}) if isinstance(customization, dict) else {}
+    )
+
+    # 1. Pre-calculate applicable groups and estimated variants for each base variant
+    applicable_per_base: list[list[dict[str, Any]]] = []
+    total_estimated = 0
     for base in base_variants:
+        base_options = base.get("options", {})
+        applicable = [
+            g for g in groups
+            if _is_group_applicable_to_base(g, base_options, conditional_rules, component_parent)
+        ]
+        applicable = _deduplicate_paid_groups(applicable, base_options)
+        applicable_per_base.append(applicable)
+
+        branch_count = 1
+        for g in applicable:
+            opts = g.get("options", [])
+            branch_count *= max(1, len(opts))
+        total_estimated += branch_count
+
+    # 2. Circuit breaker check against safety limit (Shopify limit: 100 variants)
+    if total_estimated > max_variants:
+        warning_msg = (
+            f"Customization variant explosion prevented: estimated {total_estimated} variants "
+            f"exceeds maximum limit of {max_variants}. Preserved {len(base_variants)} base variants without paid options expansion."
+        )
+        if warnings is not None:
+            warnings.append(warning_msg)
+        if isinstance(customization, dict):
+            custom_warnings = customization.setdefault("warnings", [])
+            if isinstance(custom_warnings, list) and warning_msg not in custom_warnings:
+                custom_warnings.append(warning_msg)
+        return deepcopy(base_variants)
+
+    # 3. Generate expanded variants per base variant
+    expanded: list[dict[str, Any]] = []
+    for base, applicable_groups in zip(base_variants, applicable_per_base):
+        if not applicable_groups:
+            expanded.append(deepcopy(base))
+            continue
+
+        option_sets = [group.get("options", []) for group in applicable_groups]
+        if any(not options for options in option_sets):
+            expanded.append(deepcopy(base))
+            continue
+
         for selected_tuple in itertools.product(*option_sets):
+            if len(expanded) >= max_variants:
+                if warnings is not None:
+                    warnings.append(f"Variants capped at safety limit of {max_variants}.")
+                break
             selected = list(selected_tuple)
             surcharge = sum((Decimal(str(option["price"]["amount"])) for option in selected), Decimal("0"))
-            suffix_source = "|".join(f"{group.get('id')}:{option.get('id')}" for group, option in zip(groups, selected))
+            suffix_source = "|".join(f"{group.get('id')}:{option.get('id')}" for group, option in zip(applicable_groups, selected))
             suffix = hashlib.sha1(suffix_source.encode("utf-8")).hexdigest()[:10].upper()
             options = deepcopy(base.get("options", {}))
             paid_options = []
-            for group, option in zip(groups, selected):
+            for group, option in zip(applicable_groups, selected):
                 options[str(group["label"])] = str(option["label"])
-                paid_options.append({"groupId": str(group.get("id") or ""), "groupLabel": str(group.get("label") or "Option"), "optionId": str(option.get("id") or ""), "label": str(option.get("label") or "Option"), "price": deepcopy(option.get("price"))})
+                paid_options.append({
+                    "groupId": str(group.get("id") or ""),
+                    "groupLabel": str(group.get("label") or "Option"),
+                    "optionId": str(option.get("id") or ""),
+                    "label": str(option.get("label") or "Option"),
+                    "price": deepcopy(option.get("price")),
+                })
             expanded.append({
-                **deepcopy(base), "id": f"{base['id']}-{suffix}", "sku": f"{base['sku']}-{suffix}", "options": options,
+                **deepcopy(base),
+                "id": f"{base['id']}-{suffix}",
+                "sku": f"{base['sku']}-{suffix}",
+                "options": options,
                 "price": _add_money(base.get("price"), surcharge),
-                "surcharge": money(surcharge), "metadata": {**deepcopy(base.get("metadata", {})), "customization": True, "paidOptions": paid_options},
+                "surcharge": money(surcharge),
+                "metadata": {**deepcopy(base.get("metadata", {})), "customization": True, "paidOptions": paid_options},
             })
+
     return expanded
 
 

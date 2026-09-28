@@ -16,6 +16,8 @@ export interface SeoCorpusCommitResult<TExecution> {
 
 export interface SeoCorpusCommitInput<TExecution> {
   readonly runSeo: () => Promise<TExecution>;
+  readonly rebaseSeo?: (previous: TExecution) => Promise<TExecution>;
+  readonly corpusKey?: string;
   readonly register: (execution: TExecution) => Promise<unknown>;
   readonly maxRevisionRetries?: number;
   readonly signal?: AbortSignal;
@@ -31,80 +33,64 @@ function throwIfAborted(signal: AbortSignal | undefined): void {
   if (signal?.aborted) throw createAbortError();
 }
 
-async function awaitQueueWithAbort<T>(promise: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
-  if (!signal) return promise;
-  throwIfAborted(signal);
-  return new Promise<T>((resolve, reject) => {
-    const handleAbort = () => reject(createAbortError());
-    signal.addEventListener("abort", handleAbort, { once: true });
-    void promise.then(resolve, reject).finally(() => signal.removeEventListener("abort", handleAbort));
-  });
-}
-
 export class SeoCorpusCommitCoordinator {
-  private queue: Promise<void> = Promise.resolve();
+  private readonly queues = new Map<string, Promise<void>>();
 
-  async prepare<TExecution>(
-    input: SeoCorpusCommitInput<TExecution>,
-  ): Promise<SeoCorpusCommitResult<TExecution>> {
+  async prepare<TExecution>(input: SeoCorpusCommitInput<TExecution>): Promise<SeoCorpusCommitResult<TExecution>> {
     const startedAt = Date.now();
     throwIfAborted(input.signal);
     let execution = await input.runSeo();
     throwIfAborted(input.signal);
     const initialSeoMs = Date.now() - startedAt;
-    const queuedAt = Date.now();
-
-    return this.enqueue(async () => {
+    let queueWaitMs = 0;
+    let rebaseSeoMs = 0;
+    let registrationMs = 0;
+    // A cohort of 16 workers can require 15 fresh snapshots; allow a second cohort
+    // while retaining a hard bound against continuously changing external writers.
+    let revisionRetries = 0;
+    for (;;) {
       throwIfAborted(input.signal);
-      const queueWaitMs = Date.now() - queuedAt;
-      const maxRevisionRetries = input.maxRevisionRetries ?? 8;
-      let revisionRetries = 0;
-      let rebaseSeoMs = 0;
-      let registrationMs = 0;
-
-      for (;;) {
+      const queuedAt = Date.now();
+      try {
+        await this.enqueue(input.corpusKey ?? "default", async () => {
+          throwIfAborted(input.signal);
+          queueWaitMs += Date.now() - queuedAt;
+          const registrationStartedAt = Date.now();
+          try { await input.register(execution); }
+          finally { registrationMs += Date.now() - registrationStartedAt; }
+        }, input.signal);
+        // Return a successful reservation even if cancellation arrived during the write:
+        // the caller must receive its identity to release it in cancellation cleanup.
+        return { execution, revisionRetries, timings: {
+          initialSeoMs, queueWaitMs, rebaseSeoMs, registrationMs, totalMs: Date.now() - startedAt,
+        } };
+      } catch (error: unknown) {
         throwIfAborted(input.signal);
-        const registrationStartedAt = Date.now();
-        try {
-          await input.register(execution);
-          throwIfAborted(input.signal);
-          registrationMs += Date.now() - registrationStartedAt;
-          return {
-            execution,
-            revisionRetries,
-            timings: {
-              initialSeoMs,
-              queueWaitMs,
-              rebaseSeoMs,
-              registrationMs,
-              totalMs: Date.now() - startedAt,
-            },
-          };
-        } catch (error: unknown) {
-          registrationMs += Date.now() - registrationStartedAt;
-          if (
-            !(error instanceof CorpusRevisionConflictError)
-            || revisionRetries >= maxRevisionRetries
-          ) {
-            throw error;
-          }
-          revisionRetries += 1;
-          const rebaseStartedAt = Date.now();
-          throwIfAborted(input.signal);
-          execution = await input.runSeo();
-          throwIfAborted(input.signal);
-          rebaseSeoMs += Date.now() - rebaseStartedAt;
-        }
+        if (!(error instanceof CorpusRevisionConflictError) || revisionRetries >= (input.maxRevisionRetries ?? 32)) throw error;
+        revisionRetries++;
+        const rebaseStartedAt = Date.now();
+        execution = input.rebaseSeo ? await input.rebaseSeo(execution) : await input.runSeo();
+        rebaseSeoMs += Date.now() - rebaseStartedAt;
       }
-    }, input.signal);
+    }
   }
 
-  private async enqueue<T>(operation: () => Promise<T>, signal: AbortSignal | undefined): Promise<T> {
-    const result = this.queue.then(operation, operation);
-    this.queue = result.then(
-      () => undefined,
-      () => undefined,
-    );
-    return awaitQueueWithAbort(result, signal);
+  private async enqueue<T>(key: string, operation: () => Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+    let started = false;
+    const queued = (this.queues.get(key) ?? Promise.resolve()).then(async () => {
+      throwIfAborted(signal);
+      started = true;
+      return operation();
+    });
+    const tail = queued.then(() => undefined, () => undefined);
+    this.queues.set(key, tail);
+    void tail.then(() => { if (this.queues.get(key) === tail) this.queues.delete(key); });
+    // Cancel pending work promptly, but let an atomic write finish and return its reservation.
+    return new Promise<T>((resolve, reject) => {
+      const abort = () => { if (!started) reject(createAbortError()); };
+      signal?.addEventListener("abort", abort, { once: true });
+      if (signal?.aborted) abort();
+      void queued.then(resolve, reject).finally(() => signal?.removeEventListener("abort", abort));
+    });
   }
 }

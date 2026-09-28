@@ -24,6 +24,9 @@ data/
 src/modules/pinterest-pod/server/.env
 .pinterest_oauth_tokens.json
 **/.*oauth*.json
+**/*oauth*.json
+*.token.json
+**/*token*.json
 pinterest_oauth_tokens.json
 
 # Amazon Distributed Crawler & Local Data Artifacts

@@ -49,9 +49,23 @@ export interface SeoContentOutput {
   readonly aeo_json_ld?: string;
 }
 
-export type SeoContentEngine = "gemini" | "heuristic" | "mixed";
+export type SeoContentEngine = "gemini" | "heuristic" | "mixed" | "custom_gpt";
+
+export interface SeoPerformanceMetrics {
+  readonly revisionRetries?: number;
+  readonly commitQueueMs?: number;
+  readonly commitMs?: number;
+  readonly stageDurationsMs: Readonly<Record<string, number>>;
+  readonly providerQueueMs?: number;
+  readonly providerRequestMs?: number;
+  readonly retryWaitMs?: number;
+  readonly requestCount?: number;
+  readonly retryCount?: number;
+  readonly cacheHits?: number;
+}
 
 export interface SeoContentRunMetadata {
+  readonly performance?: SeoPerformanceMetrics;
   readonly engine: SeoContentEngine;
   readonly fieldsApplied: readonly string[];
   readonly fallbackStages: readonly string[];
@@ -100,6 +114,7 @@ export type SeoContentDetailedResult = SeoContentDetailedOutput | SeoContentAltO
 
 export interface SeoContentPipelineSummary {
   readonly status: "completed";
+  readonly performance?: SeoPerformanceMetrics;
   readonly engine: SeoContentEngine;
   readonly fieldsApplied: readonly string[];
   readonly fallbackStages: readonly string[];

@@ -1,8 +1,9 @@
+import type { ProviderRequestOptions } from "../provider-runtime";
 import { evolveContext } from "../pipeline-context";
 import { FallbackSearchSuggestionsCollector } from "../search-suggestions/fallback-search-suggestions-collector";
 import { GeminiSearchQueryVariantGenerator } from "../search-suggestions/gemini-search-query-variant-generator";
 import { GoogleSearchSuggestionsCollector } from "../search-suggestions/google-search-suggestions-collector";
-import { UnofficialGoogleSuggestClient } from "../search-suggestions/google-suggest-client";
+import { getSharedGoogleSuggestClient } from "../search-suggestions/google-suggest-client";
 import { NoopSearchQueryVariantGenerator } from "../search-suggestions/search-query-variant-generator";
 import { GoogleGenAIVertexContentGenerator } from "../product-understanding/gemini-content-generator";
 
@@ -34,7 +35,7 @@ export interface B3SearchSuggestionsDependencies {
  * defaults safely to FallbackSearchSuggestionsCollector to preserve the zero-network
  * determinism invariant unless SEO_SEARCH_PROVIDER="google" is explicitly configured.
  */
-export function createDefaultSearchSuggestionsCollector(options?: {
+export function createDefaultSearchSuggestionsCollector(options?: ProviderRequestOptions & {
   readonly client?: GoogleSuggestClient;
   readonly onPartialFailure?: (failedCount: number, totalCount: number) => void;
 }): SearchSuggestionsCollector {
@@ -68,15 +69,18 @@ export function createDefaultSearchSuggestionsCollector(options?: {
     return new FallbackSearchSuggestionsCollector();
   }
 
-  const client = options?.client ?? new UnofficialGoogleSuggestClient();
+  const client = options?.client ?? getSharedGoogleSuggestClient();
   return new GoogleSearchSuggestionsCollector({
+    ...options,
+    concurrency: 3,
+    interRequestDelayMs: 0,
     client,
     onPartialFailure: options?.onPartialFailure,
-    variantGenerator: createDefaultSearchQueryVariantGenerator(),
+    variantGenerator: createDefaultSearchQueryVariantGenerator(options),
   });
 }
 
-function createDefaultSearchQueryVariantGenerator(): SearchQueryVariantGenerator {
+function createDefaultSearchQueryVariantGenerator(options?: ProviderRequestOptions): SearchQueryVariantGenerator {
   const env = typeof process !== "undefined" && process.env ? process.env : undefined;
   const projectId = env?.GOOGLE_CLOUD_PROJECT;
   if (!projectId) {
@@ -88,6 +92,7 @@ function createDefaultSearchQueryVariantGenerator(): SearchQueryVariantGenerator
     env?.GEMINI_MODEL ||
     "gemini-2.5-flash";
   const generator = new GoogleGenAIVertexContentGenerator({
+    ...options,
     projectId,
     location: env?.GOOGLE_CLOUD_LOCATION || "global",
     defaultModel: model,

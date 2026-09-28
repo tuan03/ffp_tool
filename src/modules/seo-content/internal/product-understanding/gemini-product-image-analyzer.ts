@@ -11,7 +11,6 @@ import type { GeminiContentGenerator } from "./gemini-content-generator";
 import { GeminiGeneratorError } from "./gemini-content-generator";
 import {
   type AsyncSemaphore,
-  getSharedGeminiVisionSemaphore,
 } from "./async-semaphore";
 import {
   executeWithExponentialBackoff,
@@ -47,6 +46,7 @@ They are never evidence for OCR.
 Do not fabricate details that are not visible.`;
 
 export interface GeminiProductImageAnalyzerOptions {
+  readonly signal?: AbortSignal;
   readonly generator: GeminiContentGenerator;
   readonly model?: string;
   readonly systemInstruction?: string;
@@ -58,6 +58,25 @@ export interface GeminiProductImageAnalyzerOptions {
   readonly retryOptions?: GeminiRetryOptions;
 }
 
+function describeImageReadFailure(error: unknown): string {
+  let cause: unknown = error;
+  for (let depth = 0; depth < 3; depth++) {
+    if (!cause || typeof cause !== "object") break;
+    if ("code" in cause && typeof cause.code === "string" && /^[A-Z][A-Z0-9_]{1,39}$/.test(cause.code)) {
+      return cause.code;
+    }
+    cause = "cause" in cause ? cause.cause : undefined;
+  }
+  const message = error instanceof Error ? error.message : "";
+  const httpStatus = message.match(/HTTP error (\d{3})/);
+  if (httpStatus) return `HTTP ${httpStatus[1]}`;
+  if (/timed out|AbortError/i.test(message)) return "timeout";
+  if (/exceeds maximum|too large/i.test(message)) return "image too large";
+  if (/content-type|mime type/i.test(message)) return "unsupported image format";
+  if (/Unsupported image target|neither localFilePath nor url/i.test(message)) return "invalid image URL";
+  return "image read failed";
+}
+
 export class GeminiProductImageAnalyzer implements ProductImageAnalyzer {
   private readonly generator: GeminiContentGenerator;
   private readonly model?: string;
@@ -66,7 +85,8 @@ export class GeminiProductImageAnalyzer implements ProductImageAnalyzer {
   private readonly timeoutMs?: number;
   private readonly maxRetries?: number;
   private readonly maxImages?: number;
-  private readonly semaphore: AsyncSemaphore;
+  private readonly signal?: AbortSignal;
+  private readonly semaphore?: AsyncSemaphore;
   private readonly retryOptions?: GeminiRetryOptions;
 
   constructor(options: GeminiProductImageAnalyzerOptions) {
@@ -77,23 +97,43 @@ export class GeminiProductImageAnalyzer implements ProductImageAnalyzer {
     this.timeoutMs = options.timeoutMs;
     this.maxRetries = options.maxRetries;
     this.maxImages = options.maxImages;
-    this.semaphore = options.semaphore ?? getSharedGeminiVisionSemaphore();
+    this.semaphore = options.semaphore;
+    this.signal = options.signal;
     this.retryOptions = options.retryOptions;
   }
 
   async analyze(input: ProductImageAnalyzerInput): Promise<ProductImageAnalysis> {
+    this.signal?.throwIfAborted();
     const limit = input.maxImages ?? this.maxImages;
-    const imagesToProcess =
-      typeof limit === "number" && limit > 0
-        ? input.images.slice(0, limit)
-        : input.images;
-
-    const prepared = await Promise.allSettled(imagesToProcess.map((image) => prepareProductImagePayload(image, {
-      fetchTimeoutMs: this.timeoutMs,
-    })));
-    const imagePayloads = prepared.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
+    const maxPayloads = typeof limit === "number" && Number.isFinite(limit) && limit > 0
+      ? Math.floor(limit)
+      : input.images.length;
+    const imagePayloads: Awaited<ReturnType<typeof prepareProductImagePayload>>[] = [];
+    const failures: string[] = [];
+    let nextImageIndex = 0;
+    while (nextImageIndex < input.images.length && imagePayloads.length < maxPayloads) {
+      // A small second candidate lets alt-only SEO recover from a broken cover image.
+      const batchSize = Math.max(2, maxPayloads - imagePayloads.length);
+      const candidates = input.images.slice(nextImageIndex, nextImageIndex + batchSize);
+      const prepared = await Promise.allSettled(candidates.map((image) => prepareProductImagePayload(image, {
+        fetchTimeoutMs: this.timeoutMs,
+        signal: this.signal,
+      })));
+      this.signal?.throwIfAborted();
+      for (const result of prepared) {
+        if (result.status === "fulfilled") {
+          if (imagePayloads.length < maxPayloads) imagePayloads.push(result.value);
+        } else {
+          failures.push(describeImageReadFailure(result.reason));
+        }
+      }
+      nextImageIndex += candidates.length;
+    }
     if (imagePayloads.length === 0) {
-      throw new GeminiGeneratorError("No readable product images were available for B1 analysis");
+      const reasons = [...new Set(failures)].slice(0, 3).join(", ") || "no images provided";
+      throw new GeminiGeneratorError(
+        `No readable product images were available for B1 analysis (tried ${failures.length} images; reasons: ${reasons}).`,
+      );
     }
 
     const prompt = `Analyze this ecommerce product image batch (${imagePayloads.length} readable image${imagePayloads.length === 1 ? "" : "s"} in supplied order).
@@ -114,22 +154,18 @@ Visual evidence has priority over metadata.`;
 
     const effectiveRetryOptions: GeminiRetryOptions = {
       ...(this.retryOptions ?? {}),
+      signal: this.signal,
       ...(this.maxRetries !== undefined ? { maxRetries: this.maxRetries } : {}),
     };
 
-    const response = await this.semaphore.runExclusive(async () => {
-      return executeWithExponentialBackoff(async () => {
-        return this.generator.generateProductImageAnalysis({
-          prompt,
-          imagePayloads,
-          systemInstruction: this.systemInstruction,
-          model: this.model,
-          maxOutputTokens: this.maxOutputTokens,
-          timeoutMs: this.timeoutMs,
-          retryOptions: effectiveRetryOptions,
-        });
-      }, effectiveRetryOptions);
+    const generate = () => this.generator.generateProductImageAnalysis({
+      prompt, imagePayloads, systemInstruction: this.systemInstruction,
+      model: this.model, maxOutputTokens: this.maxOutputTokens,
+      timeoutMs: this.timeoutMs, retryOptions: effectiveRetryOptions,
     });
+    const attempt = () => this.semaphore ? this.semaphore.runExclusive(generate, this.signal) : generate();
+    const response = this.generator.handlesRetries ? await attempt()
+      : await executeWithExponentialBackoff(attempt, effectiveRetryOptions);
 
     return parseGeminiProductImageAnalysis(response.rawText);
   }

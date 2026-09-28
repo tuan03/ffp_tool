@@ -388,8 +388,9 @@ export function createAmazonCrawlerJobController({
       }
       return snapshot;
     },
-    async cancel(jobId) {
-      const response = await fetchImplementation(`${jobUrl(jobId)}/cancel`, { method: "POST" });
+    async cancel(jobId, options) {
+      const query = options?.force ? "?force=true" : "";
+      const response = await fetchImplementation(`${jobUrl(jobId)}/cancel${query}`, { method: "POST" });
       return readJobSnapshot(await readJson(response));
     },
     async replace(jobId, input) {
@@ -680,6 +681,12 @@ export function createAmazonCrawlerReviewClient({
         throw new AmazonCrawlerServiceError("Coordinator returned an invalid batch sync response.", "INVALID_ENGINE_RESPONSE");
       }
       return { queued: value.queued, itemIds: value.itemIds.map(String) };
+    },
+    async markSynced(itemId: string, info?: { productId?: string; productHandle?: string; adminUrl?: string }) {
+      return readReviewItem(await sendJson(`${reviewUrl}/${encodeURIComponent(itemId)}/synced`, "POST", info ?? {}));
+    },
+    async markFailed(itemId: string, error?: string) {
+      return readReviewItem(await sendJson(`${reviewUrl}/${encodeURIComponent(itemId)}/failed`, "POST", { error }));
     },
     async deleteAll() {
       const value = await sendJson(reviewUrl, "DELETE");

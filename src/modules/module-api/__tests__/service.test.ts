@@ -2,11 +2,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  canonicalJsonStringify,
   createCustomizationGatewayAdapter,
   createModuleApiRunner,
   createShopifyGatewayAdapter,
   DEFAULT_GATEWAY_URL,
   getModuleApiRunner,
+  isInfrastructureError,
   resolveShopifyProductForSync,
   runMockModuleApi,
   runModuleApi,
@@ -3971,5 +3973,140 @@ test("createCustomizationGatewayAdapter with options.requestId namespaces child 
   assert.ok(mfReq.requestId?.startsWith("root-import-job-123:metafields-set:"));
   assert.ok(fileReq.requestId?.startsWith("root-import-job-123:files-delete:"));
   assert.notEqual(mfReq.requestId, fileReq.requestId);
+});
+
+test("canonicalJsonStringify generates deterministic, key-order independent JSON", () => {
+  const obj1 = { title: "T-Shirt", vendor: "Brand A", tags: ["a", "b"], nested: { z: 1, a: 2 } };
+  const obj2 = { vendor: "Brand A", nested: { a: 2, z: 1 }, tags: ["a", "b"], title: "T-Shirt" };
+
+  const json1 = canonicalJsonStringify(obj1);
+  const json2 = canonicalJsonStringify(obj2);
+
+  assert.equal(json1, json2);
+  assert.equal(json1, '{"nested":{"a":2,"z":1},"tags":["a","b"],"title":"T-Shirt","vendor":"Brand A"}');
+
+  // Primitives and arrays
+  assert.equal(canonicalJsonStringify(null), "null");
+  assert.equal(canonicalJsonStringify("hello"), '"hello"');
+  assert.equal(canonicalJsonStringify(123), "123");
+  assert.equal(canonicalJsonStringify([3, 2, 1]), "[3,2,1]");
+});
+
+test("createCustomizationGatewayAdapter getProduct maps only SHOPIFY_NOT_FOUND to null and rethrows infrastructure errors", async () => {
+  // 1. SHOPIFY_NOT_FOUND maps to { product: null }
+  const notFoundRunner: ModuleApiRunner = (async () => {
+    throw new ShopifyApiError("Product not found", "SHOPIFY_NOT_FOUND");
+  }) as unknown as ModuleApiRunner;
+  const adapterNotFound = createCustomizationGatewayAdapter("store-test", { runner: notFoundRunner });
+  assert.ok(adapterNotFound.getProduct);
+  const notFoundResult = await adapterNotFound.getProduct({ id: "gid://shopify/Product/missing" });
+  assert.deepEqual(notFoundResult, { product: null });
+
+  // 2. Data payload with product: null maps to { product: null }
+  const nullDataRunner: ModuleApiRunner = (async () => {
+    return {
+      storeId: "store-test",
+      operation: "products.get",
+      success: true,
+      data: { product: null },
+    } as unknown as ShopifyApiResponse;
+  }) as unknown as ModuleApiRunner;
+  const adapterNull = createCustomizationGatewayAdapter("store-test", { runner: nullDataRunner });
+  assert.ok(adapterNull.getProduct);
+  const nullResult = await adapterNull.getProduct({ id: "gid://shopify/Product/999" });
+  assert.deepEqual(nullResult, { product: null });
+
+  // 3. Infrastructure errors are rethrown
+  const infraErrorCodes = [
+    "SHOPIFY_AUTH_FAILED",
+    "SHOPIFY_NETWORK_ERROR",
+    "SHOPIFY_THROTTLED",
+    "SHOPIFY_PERMISSION_DENIED",
+    "SHOPIFY_UNKNOWN_WRITE_STATE",
+    "SHOPIFY_SECURITY_ERROR",
+  ] as const;
+
+  for (const code of infraErrorCodes) {
+    const errorRunner: ModuleApiRunner = (async () => {
+      throw new ShopifyApiError(`Simulated ${code}`, code);
+    }) as unknown as ModuleApiRunner;
+    const adapter = createCustomizationGatewayAdapter("store-test", { runner: errorRunner });
+
+    await assert.rejects(
+      async () => {
+        assert.ok(adapter.getProduct);
+        await adapter.getProduct({ id: "gid://shopify/Product/123" });
+      },
+      (err: unknown) => {
+        assert.ok(err instanceof ShopifyApiError);
+        assert.equal(err.code, code);
+        return true;
+      },
+    );
+  }
+});
+
+test("resolveShopifyProductForSync rethrows infrastructure errors instead of swallowing them", async () => {
+  // Error thrown on mappedProductId lookup
+  const authFailedRunner: ModuleApiRunner = async () => {
+    throw new ShopifyApiError("Token expired", "SHOPIFY_AUTH_FAILED");
+  };
+
+  await assert.rejects(
+    async () => {
+      await resolveShopifyProductForSync({
+        runner: authFailedRunner,
+        storeId: "store-test",
+        sourceKey: "src-1",
+        mappedProductId: "gid://shopify/Product/100",
+      });
+    },
+    (err: unknown) => {
+      assert.ok(err instanceof ShopifyApiError);
+      assert.equal(err.code, "SHOPIFY_AUTH_FAILED");
+      return true;
+    },
+  );
+
+  // Network error thrown on handle lookup
+  const networkErrorRunner: ModuleApiRunner = async () => {
+    throw new ShopifyApiError("Gateway timeout", "SHOPIFY_NETWORK_ERROR");
+  };
+
+  await assert.rejects(
+    async () => {
+      await resolveShopifyProductForSync({
+        runner: networkErrorRunner,
+        storeId: "store-test",
+        sourceKey: "",
+        handle: "some-handle",
+      });
+    },
+    (err: unknown) => {
+      assert.ok(err instanceof ShopifyApiError);
+      assert.equal(err.code, "SHOPIFY_NETWORK_ERROR");
+      return true;
+    },
+  );
+
+  // Throttle error thrown on source tag lookup
+  const throttledRunner: ModuleApiRunner = async () => {
+    throw new ShopifyApiError("Rate limit exceeded", "SHOPIFY_THROTTLED");
+  };
+
+  await assert.rejects(
+    async () => {
+      await resolveShopifyProductForSync({
+        runner: throttledRunner,
+        storeId: "store-test",
+        sourceKey: "my-key",
+      });
+    },
+    (err: unknown) => {
+      assert.ok(err instanceof ShopifyApiError);
+      assert.equal(err.code, "SHOPIFY_THROTTLED");
+      return true;
+    },
+  );
 });
 

@@ -22,6 +22,7 @@ export interface ProductSplitViewProps {
   readonly onRollbackProduct?: (id: string) => void;
   readonly onApproveAndNext: (id: string) => void;
   readonly onRejectAndNext: (id: string) => void;
+  readonly onDeleteProduct?: (id: string) => void;
   readonly onRetrySync?: (id: string) => void;
   readonly onViewSyncError?: (product: SeoProductUiViewModel) => void;
   readonly onZoomImage?: (images: readonly ZoomImageItem[], initialIndex?: number) => void;
@@ -41,6 +42,7 @@ export function ProductSplitView({
   onRollbackProduct,
   onApproveAndNext,
   onRejectAndNext,
+  onDeleteProduct,
   onRetrySync,
   onViewSyncError,
   onZoomImage,
@@ -794,6 +796,23 @@ export function ProductSplitView({
                 >
                   ✕ Từ chối & Tiếp ➔
                 </button>
+
+                {onDeleteProduct && (
+                  <button
+                    type="button"
+                    onClick={() => onDeleteProduct(activeProduct.id)}
+                    disabled={activeProduct.isSyncing || activeProduct.isReverting}
+                    className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold transition flex items-center gap-1 ${
+                      activeProduct.isSyncing || activeProduct.isReverting
+                        ? "bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed"
+                        : "text-rose-400 hover:text-rose-200 bg-rose-950/50 hover:bg-rose-900/70 border border-rose-800/60 cursor-pointer shadow-sm shadow-rose-950/40"
+                    }`}
+                    title="Xóa sản phẩm này khỏi danh sách SEO Review"
+                  >
+                    <span>🗑️</span>
+                    <span>Xóa</span>
+                  </button>
+                )}
 
                 {activeProduct.shopifySyncStatus === "failed" && onRetrySync ? (
                   <button

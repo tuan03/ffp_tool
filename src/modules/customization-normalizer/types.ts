@@ -49,6 +49,19 @@ export interface CustomizationAsset {
   friendlyFileName?: string;
 }
 
+export interface CustomizationTextInput {
+  id: string;
+  type?: string;
+  label?: string;
+  required?: boolean;
+  placeholder?: string;
+  minLength?: number;
+  maxLength?: number;
+  maxLines?: number;
+  instructions?: string;
+  [key: string]: unknown;
+}
+
 export interface CustomizationPricing {
   readonly currencyCode?: string;
   readonly mode?: string;
@@ -61,7 +74,7 @@ export interface ProductCustomization {
   readonly formUrl?: string | null;
   readonly source?: Readonly<Record<string, string>>;
   optionGroups?: CustomizationOptionGroup[];
-  textInputs?: readonly unknown[];
+  textInputs?: CustomizationTextInput[];
   imageInputs?: readonly unknown[];
   fontGroups?: readonly unknown[];
   colorGroups?: readonly unknown[];

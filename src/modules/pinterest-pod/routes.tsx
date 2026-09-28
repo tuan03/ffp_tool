@@ -4,7 +4,7 @@ import { PinterestPodStudio } from "./ui/PinterestPodStudio";
 
 export function createPinterestPodRoutes(
   client?: PinterestPodClient,
-  onHandoverToSeo?: (payload: PinterestPodDeliverables) => Promise<void>,
+  onHandoverToSeo?: (payload: PinterestPodDeliverables, serverViewModels?: readonly unknown[]) => Promise<void>,
 ): readonly RouteObject[] {
   return [
     {

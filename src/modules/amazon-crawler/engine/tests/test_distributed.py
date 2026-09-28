@@ -26,6 +26,7 @@ from engine.distributed.client_store import ClientStore
 from engine.distributed.client_agent import DistributedCrawlerAgent, progress_for_assignment, progress_targets
 from engine.distributed.client_config import AgentConfig
 from engine.distributed.client_main import _configure_packaged_browser, _resolve_config_path
+from engine.distributed.instance_lock import AgentAlreadyRunningError, AgentInstanceLock
 from engine.distributed.client_tray import format_status, should_notify_captcha
 from engine.distributed.coordinator_models import (
     Base,
@@ -128,6 +129,17 @@ class ClientTrayTests(unittest.TestCase):
 
 
 class PackagedClientTests(unittest.TestCase):
+    def test_agent_data_directory_allows_only_one_running_instance(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            first = AgentInstanceLock(Path(directory))
+            second = AgentInstanceLock(Path(directory))
+            with first:
+                with self.assertRaises(AgentAlreadyRunningError):
+                    with second:
+                        pass
+            with second:
+                self.assertTrue((Path(directory) / "agent.lock").exists())
+
     def test_playwright_browser_path_uses_pyinstaller_bundle_directory(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             bundle_root = Path(directory)
@@ -196,6 +208,21 @@ class PackagedClientTests(unittest.TestCase):
 
 
 class DistributedCacheControlTests(unittest.IsolatedAsyncioTestCase):
+    async def test_connection_manager_keeps_existing_socket_when_client_id_reconnects(self) -> None:
+        manager = ConnectionManager()
+
+        class FakeSocket:
+            pass
+
+        first = FakeSocket()
+        duplicate = FakeSocket()
+        self.assertTrue(await manager.add("client-a", first))
+        self.assertFalse(await manager.add("client-a", duplicate))
+        self.assertEqual(await manager.connected_client_ids(), {"client-a"})
+        self.assertFalse(await manager.remove("client-a", duplicate))
+        self.assertTrue(await manager.remove("client-a", first))
+        self.assertEqual(await manager.connected_client_ids(), set())
+
     async def test_connection_manager_reports_live_tasks_separately_from_database_leases(self) -> None:
         manager = ConnectionManager()
 
@@ -1791,13 +1818,15 @@ class CoordinatorStoreTests(unittest.TestCase):
         ))
         self.assertTrue(self.store.mark_product_review_ready(
             claim["id"], worker_id="worker-1", normalized_payload=seo_product,
-            seo_summary={"status": "completed", "engine": "heuristic"},
+            seo_summary={"status": "completed", "engine": "heuristic", "performance": {"stageDurationsMs": {"b1": 1200}, "cacheHits": 2}},
             image_summary={"status": "completed", "profileSlug": "default", "profileRevision": "rev-1", "processedImages": 0},
             review_summary={"storeId": "store-1", "assetsNormalized": 0},
         ))
 
         reviews = self.store.list_product_reviews()
         self.assertEqual(len(reviews), 1)
+        snapshot = self.store.job_products(str(job["id"]))
+        self.assertEqual(snapshot["products"][0]["pipeline"]["seo"]["performance"]["cacheHits"], 2)
         self.assertEqual(reviews[0]["decision"], "pending")
         self.assertEqual(reviews[0]["syncStatus"], "idle")
         self.assertEqual(self.store.get_job(str(job["id"]))["status"], "review_pending")
@@ -1927,6 +1956,46 @@ class CoordinatorStoreTests(unittest.TestCase):
             ),
             {"locked": True},
         )
+
+    def test_mark_product_review_sync_failed_persists_status_and_error(self) -> None:
+        job = self.store.create_job({"urls": ["B0TESTFAIL"]})
+        self.store.register_client(client_hello(slots=1))
+        lease = self.store.lease_tasks("client-a", 1)[0]
+        source_key = "amazon:B0TESTFAIL:design:red"
+        product = {"id": "prod-fail", "sourceKey": source_key, "parentAsin": "B0TESTFAIL", "title": "Test Fail Item"}
+        self.store.accept_product(
+            lease["taskId"], "client-a", lease["leaseId"], source_key, "cs-1",
+            {"jobId": job["id"], "product": product, "productChecksum": "cs-1"},
+        )
+        self.store.accept_result(
+            lease["taskId"], "client-a", lease["leaseId"], "rcs-1",
+            {"jobId": job["id"], "products": [product], "errors": [], "warnings": []},
+        )
+        claim = self.store.claim_product_items(worker_id="worker-1", store_id="store-1", limit=1)[0]
+        self.store.mark_product_image_processing(
+            claim["id"], worker_id="worker-1", normalized_payload=product,
+            image_summary={"status": "completed", "profileSlug": "default", "profileRevision": "rev-1", "processedImages": 0},
+        )
+        self.store.mark_product_review_ready(
+            claim["id"], worker_id="worker-1", normalized_payload=product,
+            seo_summary={"status": "completed"},
+            image_summary={"status": "completed"},
+            review_summary={"storeId": "store-1"},
+        )
+        self.store.decide_product_review(claim["id"], expected_version=1, decision="approved", reason=None)
+
+        failed_snapshot = self.store.mark_product_review_sync_failed(
+            claim["id"],
+            error="Shopify API rate limit exceeded (HTTP 429)",
+        )
+        self.assertIsNotNone(failed_snapshot)
+        self.assertEqual(failed_snapshot["syncStatus"], "failed")
+        self.assertEqual(failed_snapshot["syncError"], "Shopify API rate limit exceeded (HTTP 429)")
+
+        reviews = self.store.list_product_reviews()
+        self.assertEqual(len(reviews), 1)
+        self.assertEqual(reviews[0]["syncStatus"], "failed")
+        self.assertEqual(reviews[0]["syncError"], "Shopify API rate limit exceeded (HTTP 429)")
 
     def test_completed_product_discards_raw_payload_but_keeps_temporary_normalized_result(self) -> None:
         job = self.store.create_job({"urls": ["B0FR4MSS2H"]})
@@ -2190,6 +2259,23 @@ class CoordinatorApiTests(unittest.TestCase):
         cache_override = patch.dict(os.environ, {"IMAGE_PROCESSING_CACHE_DIR": image_cache.name})
         cache_override.start()
         self.addCleanup(cache_override.stop)
+
+    def test_duplicate_agent_socket_does_not_disconnect_the_active_agent(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = Path(directory) / "coordinator.sqlite3"
+            app = create_coordinator_app(database_url=f"sqlite:///{database_path.as_posix()}")
+            with TestClient(app) as client:
+                with client.websocket_connect("/api/v1/worker/connect") as primary:
+                    primary.send_json(client_hello())
+                    self.assertEqual(primary.receive_json()["type"], "hello_ack")
+                    with client.websocket_connect("/api/v1/worker/connect") as duplicate:
+                        duplicate.send_json(client_hello())
+                        close = duplicate.receive()
+                        self.assertEqual(close["type"], "websocket.close")
+                        self.assertEqual(close["code"], 4001)
+                    current = next(record for record in client.get("/api/v1/clients").json() if record["id"] == "client-a")
+                    self.assertTrue(current["isConnected"])
+                    self.assertEqual(current["status"], "online")
 
     def test_sync_all_queues_only_approved_reviews_as_each_product_becomes_ready(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

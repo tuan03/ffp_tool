@@ -8166,12 +8166,12 @@ describe("Gateway: Architectural & Operational Hardening (P1)", () => {
             },
           });
         }
-        if (body.query.includes("ProductMediaDelete(")) {
-          deletedBatches.push(body.variables.mediaIds);
+        if (body.query.includes("FileUpdate(") && body.variables.files?.[0]?.referencesToRemove) {
+          deletedBatches.push(body.variables.files.map((f: { id: string }) => f.id));
           return createMockResponse({
             data: {
-              productDeleteMedia: {
-                deletedMediaIds: body.variables.mediaIds,
+              fileUpdate: {
+                files: body.variables.files,
                 userErrors: [],
               },
             },
@@ -9287,6 +9287,139 @@ describe("Gateway: Architectural & Operational Hardening (P1)", () => {
         },
       );
       assert.equal(callCount, 2);
+    });
+
+    it("products.create: 300 variants where chunk 0 succeeds and chunk 1 fails throws SHOPIFY_PARTIAL_WRITE with createdProductId and all 250 createdVariantIds", async () => {
+      let productCreateCalls = 0;
+      let variantBulkCreateCalls = 0;
+      const idempotencyStore = new InMemoryIdempotencyStore();
+
+      const dispatcher = setupTestGatewayWithIdempotency(async (_url: string, init?: RequestInit) => {
+        const body = JSON.parse(init?.body as string);
+        if (body.query.includes("productCreate(")) {
+          productCreateCalls++;
+          return createMockResponse({
+            data: {
+              productCreate: {
+                product: {
+                  id: "gid://shopify/Product/multi-chunk-prod-123",
+                  title: "Multi-Chunk Product",
+                  handle: "multi-chunk-product",
+                  status: "DRAFT",
+                  variants: { edges: [] },
+                  createdAt: "2026-09-01",
+                  updatedAt: "2026-09-20",
+                },
+                userErrors: [],
+              },
+            },
+          });
+        }
+        if (body.query.includes("productVariantsBulkCreate")) {
+          variantBulkCreateCalls++;
+          if (variantBulkCreateCalls === 1) {
+            // Chunk 0: 250 variants success
+            assert.equal(body.variables.variants.length, 250);
+            return createMockResponse({
+              data: {
+                productVariantsBulkCreate: {
+                  productVariants: body.variables.variants.map((_: unknown, i: number) => ({
+                    id: `gid://shopify/ProductVariant/prod-v-c0-${i}`,
+                    title: `Option ${i}`,
+                    price: "25.00",
+                  })),
+                  userErrors: [],
+                },
+              },
+            });
+          }
+          if (variantBulkCreateCalls === 2) {
+            // Chunk 1: 50 variants fails
+            assert.equal(body.variables.variants.length, 50);
+            return createMockResponse({
+              data: {
+                productVariantsBulkCreate: {
+                  productVariants: null,
+                  userErrors: [{ field: ["variants", "price"], message: "Invalid variant price on chunk 1" }],
+                },
+              },
+            });
+          }
+        }
+        return createMockResponse({});
+      }, idempotencyStore);
+
+      const variants300 = Array.from({ length: 300 }, (_, i) => ({
+        price: "25.00",
+        optionValues: [{ optionName: "Title", name: `Variant ${i}` }],
+      }));
+
+      // Call 1: partial write throws SHOPIFY_PARTIAL_WRITE with complete details
+      await assert.rejects(
+        async () => {
+          await dispatcher.dispatch({
+            storeId: "store-test",
+            operation: "products.create",
+            mode: "apply",
+            requestId: "req-prod-create-300-variants",
+            payload: {
+              product: {
+                title: "Multi-Chunk Product",
+                variants: variants300,
+              },
+            },
+          });
+        },
+        (err: unknown) => {
+          assert.ok(err instanceof GatewayError);
+          assert.equal(err.code, "SHOPIFY_PARTIAL_WRITE");
+          assert.equal(err.httpStatus, 409);
+          assert.equal(err.reconciliationRequired, true);
+          const details = err.details as Record<string, unknown>;
+          assert.equal(details.createdProductId, "gid://shopify/Product/multi-chunk-prod-123");
+          assert.equal(details.completedChunks, 1);
+          assert.equal(details.failedChunkIndex, 1);
+          assert.equal(details.totalChunks, 2);
+          assert.equal(details.causeCode, "SHOPIFY_USER_ERROR");
+          const ids = details.createdVariantIds as string[];
+          assert.equal(Array.isArray(ids), true);
+          assert.equal(ids.length, 250);
+          assert.equal(ids[0], "gid://shopify/ProductVariant/prod-v-c0-0");
+          assert.equal(ids[249], "gid://shopify/ProductVariant/prod-v-c0-249");
+          return true;
+        },
+      );
+      assert.equal(productCreateCalls, 1);
+      assert.equal(variantBulkCreateCalls, 2);
+
+      // Call 2: retry with identical requestId replays SHOPIFY_PARTIAL_WRITE with 0 new calls
+      await assert.rejects(
+        async () => {
+          await dispatcher.dispatch({
+            storeId: "store-test",
+            operation: "products.create",
+            mode: "apply",
+            requestId: "req-prod-create-300-variants",
+            payload: {
+              product: {
+                title: "Multi-Chunk Product",
+                variants: variants300,
+              },
+            },
+          });
+        },
+        (err: unknown) => {
+          assert.ok(err instanceof GatewayError);
+          assert.equal(err.code, "SHOPIFY_PARTIAL_WRITE");
+          assert.equal(err.httpStatus, 409);
+          assert.equal(err.reconciliationRequired, true);
+          assert.equal(err.details?.isReplay, true);
+          assert.equal(err.details?.createdProductId, "gid://shopify/Product/multi-chunk-prod-123");
+          return true;
+        },
+      );
+      assert.equal(productCreateCalls, 1);
+      assert.equal(variantBulkCreateCalls, 2);
     });
   });
 });

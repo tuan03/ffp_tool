@@ -16,6 +16,7 @@ export interface ProductDetailDrawerProps {
   readonly onEdit: (product: SeoProductUiViewModel) => void;
   readonly onApprove: (id: string) => void;
   readonly onReject: (id: string) => void;
+  readonly onDelete?: (id: string) => void;
   readonly onRetrySync?: (id: string) => void;
   readonly onRollback?: (id: string) => void;
   readonly onZoomImage?: (images: readonly ZoomImageItem[], initialIndex?: number) => void;
@@ -43,6 +44,7 @@ export function ProductDetailDrawer({
   onEdit,
   onApprove,
   onReject,
+  onDelete,
   onRetrySync,
   onRollback,
   onZoomImage,
@@ -493,6 +495,7 @@ export function ProductDetailDrawer({
                 <h3 className="text-sm font-bold text-slate-200">Thông tin Shopify sẽ đồng bộ</h3>
                 <dl className="mt-3 grid gap-3 text-xs sm:grid-cols-2">
                   <div><dt className="text-slate-500">Store</dt><dd className="mt-1 font-mono text-cyan-300">{product.storeId || "—"}</dd></div>
+                  <div><dt className="text-slate-500">Nhà cung cấp (Vendor)</dt><dd className="mt-1 font-medium text-slate-200">{(product.storeId ? (product.storeId.split("--")[0] || product.storeId).trim().toUpperCase() : "—")}</dd></div>
                   <div><dt className="text-slate-500">Job</dt><dd className="mt-1 font-mono text-slate-300">{product.coordinatorReview.jobId}</dd></div>
                   <div><dt className="text-slate-500">Product type</dt><dd className="mt-1 text-slate-200">{reviewTarget.productType || "Theo Amazon"}</dd></div>
                   <div><dt className="text-slate-500">Collections</dt><dd className="mt-1 break-all text-slate-200">{reviewTarget.collectionIds.join(", ") || "Không chọn"}</dd></div>
@@ -1036,6 +1039,19 @@ export function ProductDetailDrawer({
                     )}
                   </button>
                 )}
+
+              {onDelete && (
+                <button
+                  type="button"
+                  onClick={() => onDelete(product.id)}
+                  disabled={product.isSyncing || product.isReverting}
+                  className="px-3.5 py-2 rounded-lg text-sm font-semibold transition bg-rose-950/40 text-rose-300 hover:bg-rose-900/70 border border-rose-800/60 cursor-pointer flex items-center gap-1.5 shadow-sm shadow-rose-950/40"
+                  title="Xóa sản phẩm này khỏi danh sách SEO Review"
+                >
+                  <span>🗑️</span>
+                  <span>Xóa khỏi Review</span>
+                </button>
+              )}
 
               <button
                 type="button"

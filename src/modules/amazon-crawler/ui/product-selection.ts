@@ -8,5 +8,6 @@ export function resolveSelectedProduct(
 }
 
 export function firstProductMediaUrl(product: AmazonCrawlerProduct | null): string | null {
+  if (product?.sourceVariants.some((variant) => variant.diagnostics?.fetchMode === "failed")) return null;
   return product?.media[0]?.url ?? null;
 }

@@ -1,3 +1,4 @@
+import type { ProviderRequestOptions } from "../provider-runtime";
 import { evolveContext } from "../pipeline-context";
 import { buildProductUnderstanding } from "../product-understanding/product-understanding-builder";
 import { heuristicProductImageAnalyzer } from "../product-understanding/heuristic-product-image-analyzer";
@@ -5,7 +6,6 @@ import { extractTextProductSignals } from "../product-understanding/text-product
 import { GeminiProductImageAnalyzer } from "../product-understanding/gemini-product-image-analyzer";
 import { GoogleGenAIVertexContentGenerator } from "../product-understanding/gemini-content-generator";
 import { FallbackProductImageAnalyzer } from "../product-understanding/fallback-product-image-analyzer";
-import { getSharedGeminiVisionSemaphore } from "../product-understanding/async-semaphore";
 
 import type {
   SeoPipelineContext,
@@ -29,7 +29,7 @@ export interface B1ProductUnderstandingDependencies {
  * falling back to HeuristicProductImageAnalyzer with an observability warning log.
  * If not configured, uses HeuristicProductImageAnalyzer directly.
  */
-export function createDefaultProductImageAnalyzer(options?: {
+export function createDefaultProductImageAnalyzer(options?: ProviderRequestOptions & {
   readonly onFallback?: (error: unknown) => void;
   readonly maxImages?: number;
 }): ProductImageAnalyzer {
@@ -46,26 +46,18 @@ export function createDefaultProductImageAnalyzer(options?: {
     env?.GEMINI_MODEL ||
     "gemini-2.5-flash";
 
-  const rawConcurrency = env?.GEMINI_VISION_CONCURRENCY
-    ? Number(env.GEMINI_VISION_CONCURRENCY)
-    : undefined;
-  const concurrency =
-    Number.isInteger(rawConcurrency) && rawConcurrency! > 0
-      ? rawConcurrency!
-      : 1;
-  const semaphore = getSharedGeminiVisionSemaphore(concurrency);
-
   const generator = new GoogleGenAIVertexContentGenerator({
+    ...options,
     projectId,
     location,
     defaultModel: model,
   });
 
   const geminiAnalyzer = new GeminiProductImageAnalyzer({
+    signal: options?.signal,
     generator,
     model,
     maxImages: options?.maxImages,
-    semaphore,
   });
 
   return new FallbackProductImageAnalyzer({
@@ -122,7 +114,8 @@ export function createB1ProductUnderstandingStage(
             niche,
             maxImages: dependencies?.maxImages,
           });
-        } catch {
+        } catch (error) {
+          if (error instanceof Error && error.name === "AbortError") throw error;
           // Do not promote source metadata into visual evidence when all image reads fail.
         }
       }
@@ -140,8 +133,10 @@ export function createB1ProductUnderstandingStage(
   };
 }
 
-export const b1ProductUnderstandingStage: SeoPipelineStage =
-  createB1ProductUnderstandingStage();
+export const b1ProductUnderstandingStage: SeoPipelineStage = {
+  name: "b1",
+  execute: context => createB1ProductUnderstandingStage().execute(context),
+};
 
 export async function executeB1ProductUnderstanding(
   context: SeoPipelineContext,

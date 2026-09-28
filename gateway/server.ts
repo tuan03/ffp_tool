@@ -1,7 +1,9 @@
 import http from "node:http";
+import { getCustomGptRuntime } from "./custom-gpt-seo/runtime";
 
 import { GatewayDispatcher } from "./dispatcher";
 import { handleAutoSeoHttpRequest } from "./auto-seo-handler";
+import { handlePinterestPodSeoHttpRequest } from "./pinterest-pod-handler";
 import { assertHostSecurity, createGatewayHttpHandler, isGatewayAuthorized, MAX_BODY_BYTES } from "./http-server";
 import { InMemoryIdempotencyStore } from "./idempotency";
 import { ShopifyGraphqlClient } from "./shopify-graphql-client";
@@ -43,6 +45,7 @@ export function startGatewayServer(
   assertHostSecurity(host, authToken, "gateway server");
 
   const stores = loadBootstrappedStores({ env });
+  if (env.GPT_SEO_ACTION_KEY || process.env.GPT_SEO_ACTION_KEY) getCustomGptRuntime();
 
   const storeRegistry = new InMemoryStoreRegistry(stores);
   const tokenProvider = new CompositeTokenProvider();
@@ -60,6 +63,10 @@ export function startGatewayServer(
 
   const server = http.createServer(async (req, res) => {
     const url = req.url || "/";
+    if (url.startsWith("/api/v1/gpt-seo/")) {
+      await getCustomGptRuntime().handler(req, res);
+      return;
+    }
     if (url === "/health") {
       res.statusCode = 200;
       res.setHeader("Content-Type", "application/json");
@@ -69,6 +76,7 @@ export function startGatewayServer(
 
     const isShopify = url === "/api/shopify" || url.startsWith("/api/shopify?");
     const isAutoSeo = url === "/api/auto-seo/run" || url.startsWith("/api/auto-seo/run?");
+    const isPinterestPodHandover = url === "/api/pinterest-pod/handover-seo" || url.startsWith("/api/pinterest-pod/handover-seo?");
     const isStoreRegister = url === "/api/stores/register" || url.startsWith("/api/stores/register?");
     const isStoreUpdate = url === "/api/stores/update" || url.startsWith("/api/stores/update?");
     const isStoreDelete = url === "/api/stores/delete" || url.startsWith("/api/stores/delete?");
@@ -198,6 +206,11 @@ export function startGatewayServer(
 
     if (url === "/api/auto-seo/run" || url.startsWith("/api/auto-seo/run?")) {
       await handleAutoSeoHttpRequest(req, res, { authToken, maxBodyBytes });
+      return;
+    }
+
+    if (isPinterestPodHandover) {
+      await handlePinterestPodSeoHttpRequest(req, res, { authToken, maxBodyBytes });
       return;
     }
 

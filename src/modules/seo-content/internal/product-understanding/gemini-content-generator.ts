@@ -1,3 +1,4 @@
+import { runProviderRequest, type ProviderRequestOptions } from "../provider-runtime";
 import { GoogleGenAI } from "@google/genai";
 import type { GeminiImagePart } from "./product-image-payload";
 import { GEMINI_PRODUCT_IMAGE_ANALYSIS_SCHEMA } from "./gemini-analysis-schema";
@@ -35,6 +36,7 @@ export interface GeminiAnalysisResponse {
 }
 
 export interface GeminiContentGenerator {
+  readonly handlesRetries?: boolean;
   generateProductImageAnalysis(
     request: GeminiAnalysisRequest,
   ): Promise<GeminiAnalysisResponse>;
@@ -123,7 +125,7 @@ export class FakeGeminiContentGenerator implements GeminiContentGenerator {
   }
 }
 
-export interface GoogleGenAIVertexGeneratorConfig {
+export interface GoogleGenAIVertexGeneratorConfig extends ProviderRequestOptions {
   readonly projectId: string;
   readonly location?: string;
   readonly defaultModel?: string;
@@ -151,6 +153,8 @@ export interface GoogleGenAIVertexGeneratorConfig {
  * Authenticates seamlessly via Application Default Credentials (ADC) in Google Cloud/Vertex environment.
  */
 export class GoogleGenAIVertexContentGenerator implements GeminiContentGenerator {
+  readonly handlesRetries = true;
+  private readonly requestOptions: ProviderRequestOptions;
   private readonly projectId: string;
   private readonly location: string;
   private readonly defaultModel: string;
@@ -173,6 +177,7 @@ export class GoogleGenAIVertexContentGenerator implements GeminiContentGenerator
     if (!config.projectId) {
       throw new GeminiGeneratorError("Vertex AI requires a valid projectId");
     }
+    this.requestOptions = config;
     this.projectId = config.projectId;
     this.location = config.location || "global";
     this.defaultModel = config.defaultModel || "gemini-2.5-flash";
@@ -209,22 +214,8 @@ export class GoogleGenAIVertexContentGenerator implements GeminiContentGenerator
     const retryOptions = request.retryOptions ?? this.retryOptions;
 
     return executeWithExponentialBackoff(async () => {
-      let timer: NodeJS.Timeout | undefined;
-
       try {
-        const timeoutPromise = new Promise<never>((_, reject) => {
-          timer = setTimeout(() => {
-            reject(
-              new GeminiGeneratorError(
-                `Gemini request timed out after ${timeoutMs}ms`,
-                408,
-                true,
-              ),
-            );
-          }, timeoutMs);
-        });
-
-        const responsePromise = this.client.models.generateContent({
+        const response = await runProviderRequest("gemini", (abortSignal) => this.client.models.generateContent({
           model,
           contents: [
             {
@@ -233,6 +224,8 @@ export class GoogleGenAIVertexContentGenerator implements GeminiContentGenerator
             },
           ],
           config: {
+            abortSignal,
+            httpOptions: { retryOptions: { attempts: 1 } },
             systemInstruction: request.systemInstruction,
             responseMimeType: "application/json",
             responseSchema: GEMINI_PRODUCT_IMAGE_ANALYSIS_SCHEMA,
@@ -240,9 +233,7 @@ export class GoogleGenAIVertexContentGenerator implements GeminiContentGenerator
             candidateCount: 1,
             maxOutputTokens: request.maxOutputTokens || 2048,
           },
-        });
-
-        const response = await Promise.race([responsePromise, timeoutPromise]);
+        }), { ...this.requestOptions, timeoutMs });
         const rawText = response.text;
 
         if (!rawText) {
@@ -253,6 +244,7 @@ export class GoogleGenAIVertexContentGenerator implements GeminiContentGenerator
 
         return { rawText };
       } catch (err) {
+        if (err instanceof Error && err.name === "AbortError") throw err;
         if (err instanceof GeminiGeneratorError) {
           throw err;
         }
@@ -279,12 +271,13 @@ export class GoogleGenAIVertexContentGenerator implements GeminiContentGenerator
           isRetryable,
           err,
         );
-      } finally {
-        if (timer) {
-          clearTimeout(timer);
-        }
       }
-    }, retryOptions);
+    }, { ...retryOptions, signal: this.requestOptions.signal,
+      onRetry: (error, attempt, delayMs) => {
+        this.requestOptions.onMetric?.({ retryWaitMs: delayMs });
+        retryOptions?.onRetry?.(error, attempt, delayMs);
+      },
+    });
   }
 
   async generateStructuredText(
@@ -295,22 +288,8 @@ export class GoogleGenAIVertexContentGenerator implements GeminiContentGenerator
     const retryOptions = request.retryOptions ?? this.retryOptions;
 
     return executeWithExponentialBackoff(async () => {
-      let timer: NodeJS.Timeout | undefined;
-
       try {
-        const timeoutPromise = new Promise<never>((_, reject) => {
-          timer = setTimeout(() => {
-            reject(
-              new GeminiGeneratorError(
-                `Gemini request timed out after ${timeoutMs}ms`,
-                408,
-                true,
-              ),
-            );
-          }, timeoutMs);
-        });
-
-        const responsePromise = this.client.models.generateContent({
+        const response = await runProviderRequest("gemini", (abortSignal) => this.client.models.generateContent({
           model,
           contents: [
             {
@@ -319,6 +298,8 @@ export class GoogleGenAIVertexContentGenerator implements GeminiContentGenerator
             },
           ],
           config: {
+            abortSignal,
+            httpOptions: { retryOptions: { attempts: 1 } },
             systemInstruction: request.systemInstruction,
             responseMimeType: "application/json",
             responseJsonSchema: request.responseJsonSchema,
@@ -329,9 +310,7 @@ export class GoogleGenAIVertexContentGenerator implements GeminiContentGenerator
               ? {}
               : { thinkingConfig: { thinkingBudget: request.thinkingBudget } }),
           },
-        });
-
-        const response = await Promise.race([responsePromise, timeoutPromise]);
+        }), { ...this.requestOptions, timeoutMs });
         const rawText = response.text;
 
         if (!rawText) {
@@ -342,6 +321,7 @@ export class GoogleGenAIVertexContentGenerator implements GeminiContentGenerator
 
         return { rawText };
       } catch (err) {
+        if (err instanceof Error && err.name === "AbortError") throw err;
         if (err instanceof GeminiGeneratorError) {
           throw err;
         }
@@ -368,12 +348,13 @@ export class GoogleGenAIVertexContentGenerator implements GeminiContentGenerator
           isRetryable,
           err,
         );
-      } finally {
-        if (timer) {
-          clearTimeout(timer);
-        }
       }
-    }, retryOptions);
+    }, { ...retryOptions, signal: this.requestOptions.signal,
+      onRetry: (error, attempt, delayMs) => {
+        this.requestOptions.onMetric?.({ retryWaitMs: delayMs });
+        retryOptions?.onRetry?.(error, attempt, delayMs);
+      },
+    });
   }
 }
 

@@ -118,11 +118,56 @@ export function normalizeAmazonCustomizerPayload(raw: Record<string, unknown>): 
     }
   }
 
+  // Adapt pricing.paidOptionGroups into optionGroups if not already present
+  const pricingObj = raw.pricing as Record<string, unknown> | undefined;
+  if (pricingObj && Array.isArray(pricingObj.paidOptionGroups)) {
+    for (const pg of pricingObj.paidOptionGroups) {
+      if (pg && typeof pg === "object") {
+        const groupObj = pg as Record<string, unknown>;
+        const groupId = String(groupObj.id || "group_paid");
+        if (!optionGroups.some((g: any) => g.id === groupId)) {
+          optionGroups.push({
+            id: groupId,
+            label: String(groupObj.label || "Lựa chọn kích cỡ/biến thể"),
+            type: "select",
+            required: Boolean(groupObj.required),
+            defaultOptionId: String(groupObj.defaultOptionId || ""),
+            options: Array.isArray(groupObj.options)
+              ? groupObj.options.map((opt: any) => ({
+                  id: String(opt.id || opt.label),
+                  label: String(opt.label || opt.id),
+                  price: opt.price,
+                  isAvailable: opt.isAvailable !== false,
+                }))
+              : [],
+          });
+        }
+      }
+    }
+  }
+
+  // Normalize textInputs
+  const textInputs = Array.isArray(raw.textInputs)
+    ? raw.textInputs.map((t: any) => ({
+        id: String(t.id || `text_${Date.now()}`),
+        type: String(t.type || "TextInputComponent"),
+        label: String(t.label || "Customize Text"),
+        placeholder: typeof t.placeholder === "string" ? t.placeholder : "",
+        required: Boolean(t.required),
+        maxLength: typeof t.maxLength === "number" ? t.maxLength : 50,
+        minLength: typeof t.minLength === "number" ? t.minLength : 0,
+        maxLines: typeof t.maxLines === "number" ? t.maxLines : 1,
+        instructions: typeof t.instructions === "string" ? t.instructions : "",
+        ...t,
+      }))
+    : [];
+
   return {
     ...raw,
     hasCustomization: true,
     surfaces,
     optionGroups,
+    textInputs,
   };
 }
 

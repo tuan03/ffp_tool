@@ -78,6 +78,50 @@ export function normalizeShopifyProductGid(id?: string | null): string | undefin
   return undefined;
 }
 
+export function canonicalJsonStringify(value: unknown): string {
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value) ?? "";
+  }
+  if (typeof (value as { toJSON?: unknown }).toJSON === "function") {
+    return canonicalJsonStringify((value as { toJSON: () => unknown }).toJSON());
+  }
+  if (Array.isArray(value)) {
+    return "[" + value.map((item) => canonicalJsonStringify(item) || "null").join(",") + "]";
+  }
+  const obj = value as Record<string, unknown>;
+  const keys = Object.keys(obj).sort();
+  const entries: string[] = [];
+  for (const key of keys) {
+    const v = obj[key];
+    if (v !== undefined && typeof v !== "function" && typeof v !== "symbol") {
+      entries.push(`${JSON.stringify(key)}:${canonicalJsonStringify(v)}`);
+    }
+  }
+  return "{" + entries.join(",") + "}";
+}
+
+export function isInfrastructureError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const code = (error as { code?: unknown }).code;
+  if (typeof code === "string") {
+    const upper = code.trim().toUpperCase();
+    return (
+      upper === "SHOPIFY_AUTH_FAILED" ||
+      upper === "SHOPIFY_NETWORK_ERROR" ||
+      upper === "SHOPIFY_THROTTLED" ||
+      upper === "SHOPIFY_PERMISSION_DENIED" ||
+      upper === "SHOPIFY_UNKNOWN_WRITE_STATE" ||
+      upper === "SHOPIFY_SECURITY_ERROR" ||
+      upper === "AUTH_FAILED" ||
+      upper === "NETWORK_ERROR" ||
+      upper === "THROTTLED" ||
+      upper === "PERMISSION_DENIED" ||
+      upper === "UNKNOWN_WRITE_STATE"
+    );
+  }
+  return false;
+}
+
 export async function resolveShopifyProductForSync(
   input: ResolveShopifyProductForSyncInput,
 ): Promise<ResolvedShopifyProductForSync> {
@@ -102,7 +146,10 @@ export async function resolveShopifyProductForSync(
         if (mappedResponse.data.product) {
           return { product: mappedResponse.data.product, match: "mapping" };
         }
-      } catch {
+      } catch (error) {
+        if (isInfrastructureError(error)) {
+          throw error;
+        }
         // Fall back to handle / source tag lookup if products.get fails for mappedProductId
       }
     }
@@ -134,7 +181,10 @@ export async function resolveShopifyProductForSync(
             match: "handle",
             ...(mappedProductId ? { staleMappedProductId: mappedProductId } : {}),
           };
-        } catch {
+        } catch (error) {
+          if (isInfrastructureError(error)) {
+            throw error;
+          }
           return {
             product: candidateByHandle,
             match: "handle",
@@ -142,7 +192,10 @@ export async function resolveShopifyProductForSync(
           };
         }
       }
-    } catch {
+    } catch (error) {
+      if (isInfrastructureError(error)) {
+        throw error;
+      }
       // Fall back to source tag lookup
     }
   }
@@ -150,37 +203,46 @@ export async function resolveShopifyProductForSync(
   // 3. Try source tag lookup
   if (sourceKey) {
     const sourceTag = `ffp-source:${sourceKey}`;
-    const listed = await input.runner({
-      storeId,
-      operation: "products.list",
-      payload: {
-        limit: 10,
-        query: `tag:"${escapeShopifySearch(sourceTag)}"`,
-      },
-    }) as ShopifyProductsListResponse;
-    const candidate = listed.data?.products?.find((product) =>
-      product.tags.includes(sourceTag) ||
-      product.tags.some((t) => t.toLowerCase() === sourceTag.toLowerCase()) ||
-      product.tags.some((t) => t.toLowerCase().includes(sourceKey.toLowerCase())),
-    );
-    if (candidate) {
-      try {
-        const detail = await input.runner({
-          storeId,
-          operation: "products.get",
-          payload: { id: candidate.id },
-        }) as ShopifyProductsGetResponse;
-        return {
-          product: detail.data?.product ?? candidate,
-          match: "source_tag",
-          ...(mappedProductId ? { staleMappedProductId: mappedProductId } : {}),
-        };
-      } catch {
-        return {
-          product: candidate,
-          match: "source_tag",
-          ...(mappedProductId ? { staleMappedProductId: mappedProductId } : {}),
-        };
+    try {
+      const listed = await input.runner({
+        storeId,
+        operation: "products.list",
+        payload: {
+          limit: 10,
+          query: `tag:"${escapeShopifySearch(sourceTag)}"`,
+        },
+      }) as ShopifyProductsListResponse;
+      const candidate = listed.data?.products?.find((product) =>
+        product.tags.includes(sourceTag) ||
+        product.tags.some((t) => t.toLowerCase() === sourceTag.toLowerCase()) ||
+        product.tags.some((t) => t.toLowerCase().includes(sourceKey.toLowerCase())),
+      );
+      if (candidate) {
+        try {
+          const detail = await input.runner({
+            storeId,
+            operation: "products.get",
+            payload: { id: candidate.id },
+          }) as ShopifyProductsGetResponse;
+          return {
+            product: detail.data?.product ?? candidate,
+            match: "source_tag",
+            ...(mappedProductId ? { staleMappedProductId: mappedProductId } : {}),
+          };
+        } catch (error) {
+          if (isInfrastructureError(error)) {
+            throw error;
+          }
+          return {
+            product: candidate,
+            match: "source_tag",
+            ...(mappedProductId ? { staleMappedProductId: mappedProductId } : {}),
+          };
+        }
+      }
+    } catch (error) {
+      if (isInfrastructureError(error)) {
+        throw error;
       }
     }
   }
@@ -253,7 +315,11 @@ export function createShopifyGatewayAdapter(
     if (options.requestId && options.requestId.trim() !== "") {
       return `${options.requestId.trim()}-${baseOp}`;
     }
-    const suffix = stableKey ? stableRequestSuffix(stableKey) : undefined;
+    const suffix = stableKey
+      ? stableRequestSuffix(stableKey)
+      : payload !== undefined
+      ? stableRequestSuffix(canonicalJsonStringify(payload))
+      : undefined;
     if (!suffix) {
       if (mode === "apply") {
         throw new Error(
@@ -267,7 +333,7 @@ export function createShopifyGatewayAdapter(
 
   return {
     async createProduct(input: CreateProductInput): Promise<CreateProductOutput> {
-      const requestId = resolveRequestId("product-create", input, JSON.stringify(input));
+      const requestId = resolveRequestId("product-create", input, canonicalJsonStringify(input));
       const inputWithCat = input as unknown as { categoryId?: unknown; category?: unknown };
       const categoryId =
         typeof inputWithCat.categoryId === "string" && inputWithCat.categoryId.trim() !== ""
@@ -351,7 +417,7 @@ export function createShopifyGatewayAdapter(
       const requestId = resolveRequestId(
         "product-update",
         input,
-        JSON.stringify({
+        canonicalJsonStringify({
           ...input,
           tags: nextTags,
         }),
@@ -426,7 +492,7 @@ export function createShopifyGatewayAdapter(
       const requestId = resolveRequestId(
         "variants-bulk-create",
         { productId, variants },
-        JSON.stringify({ productId, variants }),
+        canonicalJsonStringify({ productId, variants }),
       );
       const response = (await runner({
         storeId: cleanStoreId,
@@ -517,7 +583,7 @@ export function createShopifyGatewayAdapter(
       const opKey = input.key
         ? `metafields-set-${input.namespace ? `${input.namespace}-` : ""}${input.key}`
         : "metafields-set";
-      const requestId = resolveRequestId(opKey, input, JSON.stringify(input));
+      const requestId = resolveRequestId(opKey, input, canonicalJsonStringify(input));
       const response = (await runner({
         storeId: cleanStoreId,
         operation: "metafields.set",
@@ -563,14 +629,19 @@ export function createCustomizationGatewayAdapter(
 
   return {
     async getMetafield(input) {
+      const namespace = typeof input.namespace === "string" ? input.namespace.trim() : "";
+      const key = typeof input.key === "string" ? input.key.trim() : "";
+      if (!namespace || !key) {
+        throw new Error("namespace and key are required to get metafield.");
+      }
       const response = (await runner({
         storeId: cleanStoreId,
         operation: "metafields.get",
         mode,
         payload: {
           ownerId: input.ownerId,
-          namespace: input.namespace,
-          key: input.key,
+          namespace,
+          key,
         },
       })) as ShopifyMetafieldsGetResponse;
 
@@ -585,7 +656,7 @@ export function createCustomizationGatewayAdapter(
 
     async setMetafield(input) {
       const requestId = getRequestId(
-        `metafields-set:${stableRequestSuffix(JSON.stringify(input))}`,
+        `metafields-set:${stableRequestSuffix(canonicalJsonStringify(input))}`,
         input,
       );
       const response = (await runner({
@@ -616,7 +687,7 @@ export function createCustomizationGatewayAdapter(
         throw new Error("ownerId, namespace, and key are required to delete metafields.");
       }
       const requestId = getRequestId(
-        `metafields-delete:${stableRequestSuffix(JSON.stringify({ ownerId, namespace, key }))}`,
+        `metafields-delete:${stableRequestSuffix(canonicalJsonStringify({ ownerId, namespace, key }))}`,
         input,
       );
       const response = (await runner({
@@ -639,7 +710,7 @@ export function createCustomizationGatewayAdapter(
     async deleteFiles(input) {
       const normalizedFileIds = [...input.fileIds].sort();
       const requestId = getRequestId(
-        `files-delete:${stableRequestSuffix(JSON.stringify(normalizedFileIds))}`,
+        `files-delete:${stableRequestSuffix(canonicalJsonStringify(normalizedFileIds))}`,
         input,
       );
       const response = (await runner({
@@ -700,8 +771,22 @@ export function createCustomizationGatewayAdapter(
             status: response.data.product.status,
           },
         };
-      } catch {
-        return { product: null };
+      } catch (error: unknown) {
+        if (isInfrastructureError(error)) {
+          throw error;
+        }
+        const code = (error as { code?: unknown })?.code;
+        if (typeof code === "string") {
+          const upper = code.trim().toUpperCase();
+          if (upper === "SHOPIFY_NOT_FOUND" || upper === "NOT_FOUND") {
+            return { product: null };
+          }
+        }
+        const message = (error as { message?: unknown })?.message;
+        if (typeof message === "string" && /not found/i.test(message)) {
+          return { product: null };
+        }
+        throw error;
       }
     },
   };

@@ -1,3 +1,4 @@
+import type { ProviderRequestOptions } from "../provider-runtime";
 import { evolveContext } from "../pipeline-context";
 import {
   DefaultKeywordConflictAnalyzer,
@@ -26,6 +27,7 @@ import type {
 import type { SeoContentInput } from "../../types";
 
 export interface B4ConflictControlDependencies {
+  readonly requestOptions?: ProviderRequestOptions;
   readonly analyzer?: KeywordConflictAnalyzer;
   readonly conflictAnalyzer?: KeywordConflictAnalyzer;
   readonly conflictCorpus?: SeoConflictCorpus;
@@ -99,6 +101,7 @@ export function createDefaultKeywordConflictAnalyzer(
     const model = env?.SEO_EMBEDDING_MODEL || "text-embedding-004";
 
     const vertexProvider = new VertexTextEmbeddingProvider({
+      ...dependencies?.requestOptions,
       projectId,
       location,
       defaultModel: model,

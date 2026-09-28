@@ -496,6 +496,7 @@ export function adaptAutoSeoItemToViewModel(
  */
 export function adaptPinterestPodItemToViewModel(
   item: PinterestPodSeoItemResult,
+  fallbackStoreId?: string,
 ): SeoProductUiViewModel {
   const podItem = (item.sourceItem ?? item.deliverableItem) as unknown as PodDeliverableItem;
   const niche = podItem?.trendKeywords && podItem.trendKeywords.length > 0
@@ -505,7 +506,7 @@ export function adaptPinterestPodItemToViewModel(
   const options: AdaptSeoOutputOptions = {
     id: item.designId || `pod-${Date.now()}`,
     productId: item.designId,
-    storeId: podItem?.storeId,
+    storeId: podItem?.storeId || fallbackStoreId,
     niche,
     defaultStatus: item.success ? "completed" : "failed",
     isStatusReal: true,

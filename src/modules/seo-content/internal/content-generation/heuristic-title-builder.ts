@@ -2,7 +2,7 @@ import type { ContentFactSheet, KeywordAllocation } from "./content-generation-t
 import { fitProductTitle, toTitleCase } from "./content-fitters";
 
 const UNUSABLE_TITLE_PATTERN =
-  /^(sku[\b\s\-_].*|copy\s+final.*|product\s+\d+|untitled.*|test\s+.*|sample\s+.*|[a-z0-9_-]{3,10})$/i;
+  /^(sku[\b\s\-_].*|copy\s+final.*|product\s+\d+|untitled.*|test\s+.*|sample\s+.*|design\s*(#|\d+).*|[a-z0-9_-]{3,10})$/i;
 
 const HIGH_RISK_CLAIM_MODIFIERS: readonly string[] = [
   "distressed",

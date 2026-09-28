@@ -21,6 +21,7 @@ export class FallbackProductImageAnalyzer implements ProductImageAnalyzer {
     try {
       return await this.options.primary.analyze(input);
     } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") throw error;
       if (this.options.onFallback) {
         this.options.onFallback(error, input);
       }

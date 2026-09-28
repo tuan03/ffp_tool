@@ -1,6 +1,8 @@
 export {
+  canonicalJsonStringify,
   createCustomizationGatewayAdapter,
   createShopifyGatewayAdapter,
+  isInfrastructureError,
   isShopifyProductGid,
   normalizeShopifyProductGid,
   resolveShopifyProductForSync,

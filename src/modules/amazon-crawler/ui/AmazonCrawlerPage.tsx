@@ -312,8 +312,9 @@ export function AmazonCrawlerPage({
     () => resolveSelectedProduct(resultProducts, selectedProductId),
     [resultProducts, selectedProductId],
   );
-  const activeMediaUrl = selectedMediaUrl ?? firstProductMediaUrl(selectedProduct);
-  const selectedPipelineTimings = formatPipelineTimings(selectedProduct?.pipeline?.shopify.timings);
+  const firstMediaUrl = firstProductMediaUrl(selectedProduct);
+  const activeMediaUrl = firstMediaUrl ? selectedMediaUrl ?? firstMediaUrl : null;
+  const selectedPipelineTimings = formatPipelineTimings(selectedProduct?.pipeline?.shopify.timings, selectedProduct?.pipeline?.seo.performance);
   const connectedClients = clients.filter((client) => client.isConnected && client.status !== "offline");
   const activeManagedJob = activeJobId ? jobs.find((job) => job.jobId === activeJobId) : undefined;
   const coordinatorActiveJob = jobs.find((job) =>
@@ -901,17 +902,22 @@ export function AmazonCrawlerPage({
 
   async function handleStop(): Promise<void> {
     if (activeJobId && amazonCrawlerJobs) {
+      const isForce = isCancellationPending;
       setControlledJobId(activeJobId);
       setCancellationJobId(activeJobId);
       setJobControlMessage(null);
       try {
-        const stopped = await amazonCrawlerJobs.cancel(activeJobId);
+        const stopped = await amazonCrawlerJobs.cancel(activeJobId, { force: isForce });
         setJobs((current) => current.map((job) => job.jobId === stopped.jobId ? stopped : job));
         abortCrawlerJob();
         resetCrawlerOutput();
         updateCrawlerSession({ activeJobId: null, isRunning: false, error: null });
         setJobControlTone("info");
-        setJobControlMessage("Đã nhận Stop. Đang đóng crawler và dọn dữ liệu; job sẽ tự biến mất khi hoàn tất.");
+        setJobControlMessage(
+          isForce
+            ? "Đã buộc dừng job. Coordinator đang dọn dẹp tiến trình."
+            : "Đã nhận Stop. Đang đóng crawler và dọn dữ liệu; job sẽ tự biến mất khi hoàn tất."
+        );
       } catch (caught: unknown) {
         setCancellationJobId(null);
         setJobControlTone("error");
@@ -951,17 +957,23 @@ export function AmazonCrawlerPage({
       await handleStop();
       return;
     }
+    const targetJob = jobs.find((job) => job.jobId === jobId);
+    const isForce = targetJob?.status === "cancelling";
     setControlledJobId(jobId);
     setCancellationJobId(jobId);
     setJobControlMessage(null);
     try {
-      const stopped = await amazonCrawlerJobs.cancel(jobId);
+      const stopped = await amazonCrawlerJobs.cancel(jobId, { force: isForce });
       setJobs((current) => current.map((job) => job.jobId === stopped.jobId ? stopped : job));
       abortCrawlerJob();
       resetCrawlerOutput();
       updateCrawlerSession({ activeJobId: null, isRunning: false, error: null });
       setJobControlTone("info");
-      setJobControlMessage("Đã nhận Stop. Đang đóng crawler và dọn dữ liệu; job sẽ tự biến mất khi hoàn tất.");
+      setJobControlMessage(
+        isForce
+          ? "Đã buộc dừng job. Coordinator đang dọn dẹp tiến trình."
+          : "Đã nhận Stop. Đang đóng crawler và dọn dữ liệu; job sẽ tự biến mất khi hoàn tất."
+      );
     } catch (caught: unknown) {
       setCancellationJobId(null);
       setJobControlTone("error");
@@ -1062,14 +1074,19 @@ export function AmazonCrawlerPage({
     setHandoverError(null);
     try {
       await onHandoverToSeo(resultProducts);
+      try {
+        window.localStorage.setItem("ffp_seo_review_selected_store", activeStoreId);
+      } catch {
+        // ignore
+      }
       notifyUser({
         title: "📦 Bàn giao sang SEO Review",
-        message: `Đã bàn giao ${resultProducts.length} sản phẩm sang bộ phận SEO Review thành công!`,
+        message: `Đã bàn giao ${resultProducts.length} sản phẩm sang bộ phận SEO Review cho Store ${activeStoreId.toUpperCase()} thành công!`,
         type: "success",
         sound: "chime",
-        url: "/seo-review",
+        url: `/seo-review?storeId=${encodeURIComponent(activeStoreId)}`,
       });
-      navigate("/seo-review");
+      navigate(`/seo-review?storeId=${encodeURIComponent(activeStoreId)}`);
     } catch (caught: unknown) {
       const msg = caught instanceof Error ? caught.message : String(caught);
       setHandoverError(`Lỗi khi bàn giao sang SEO Review: ${msg}`);
@@ -1811,15 +1828,39 @@ export function AmazonCrawlerPage({
                       {isActiveJob && job.status !== "cancelling" ? (
                         <button className="rounded border border-rose-500 px-3 py-1 text-xs font-semibold text-rose-300 disabled:opacity-50" disabled={controlledJobId !== null} type="button" onClick={() => void handleStopJob(job.jobId)}>Stop</button>
                       ) : job.status === "cancelling" ? (
-                        <span className="rounded border border-amber-600 px-3 py-1 text-xs font-semibold text-amber-300">Đang dừng…</span>
+                        <button
+                          className="rounded border border-amber-600 bg-amber-950/40 px-3 py-1 text-xs font-semibold text-amber-300 hover:border-rose-500 hover:bg-rose-950/60 hover:text-rose-200 transition-colors"
+                          type="button"
+                          title="Bấm để buộc dừng ngay lập tức (Force Stop)"
+                          disabled={controlledJobId === job.jobId}
+                          onClick={() => void handleStopJob(job.jobId)}
+                        >
+                          {controlledJobId === job.jobId ? "Đang dừng..." : "Buộc dừng ngay ✕"}
+                        </button>
                       ) : null}
                       {job.status === "review_pending" ? (
-                        <button className="rounded border border-emerald-600 px-3 py-1 text-xs font-semibold text-emerald-300" type="button" onClick={() => navigate("/seo-review")}>Kiểm duyệt SEO</button>
-                      ) : ["completed", "partial"].includes(job.status) ? (
+                        <button
+                          className="rounded border border-emerald-600 px-3 py-1 text-xs font-semibold text-emerald-300"
+                          type="button"
+                          onClick={() => {
+                            const targetStore = (job.settings?.storeId as string | undefined) || activeStoreId;
+                            try {
+                              window.localStorage.setItem("ffp_seo_review_selected_store", targetStore);
+                            } catch {
+                              // ignore
+                            }
+                            navigate(`/seo-review?storeId=${encodeURIComponent(targetStore)}`);
+                          }}
+                        >
+                          Kiểm duyệt SEO
+                        </button>
+                      ) : ["completed", "partial", "cancelled"].includes(job.status) ? (
                         <>
                           <button className="rounded border border-cyan-600 px-3 py-1 text-xs font-semibold text-cyan-300 disabled:opacity-50" disabled={controlledJobId !== null || coordinatorActiveJob !== undefined || isCheckingAsins} type="button" onClick={() => void handleRunAgain(job)}>Run again</button>
                           <button className="rounded border border-slate-600 px-3 py-1 text-xs font-semibold text-slate-300 disabled:opacity-50" disabled={controlledJobId !== null} type="button" onClick={() => void handleDeleteJob(job.jobId)}>Delete</button>
                         </>
+                      ) : job.status === "cancelling" ? (
+                        <button className="rounded border border-slate-600 px-3 py-1 text-xs font-semibold text-slate-300 hover:border-rose-500 hover:text-rose-300 disabled:opacity-50" disabled={controlledJobId !== null} type="button" onClick={() => void handleDeleteJob(job.jobId)} title="Hủy bỏ và xóa job">Delete</button>
                       ) : null}
                     </div>
                   </div>
@@ -1837,8 +1878,33 @@ export function AmazonCrawlerPage({
 
       <div className="flex flex-wrap items-center gap-3">
         <button className="rounded-lg bg-cyan-400 px-5 py-2 font-semibold text-slate-950 disabled:opacity-50" disabled={urls.length === 0 || isRunning || isCheckingAsins || coordinatorActiveJob !== undefined} type="button" onClick={() => void handleStart()}>{isCheckingAsins ? "Đang kiểm tra ASIN..." : `Start (${urls.length})`}</button>
-        <button className="rounded-lg border border-rose-400 px-5 py-2 font-semibold text-rose-300 disabled:opacity-50" disabled={!isRunning || controlledJobId !== null || isCancellationPending} type="button" onClick={() => void handleStop()}>{isActiveStopPending ? "Đang dừng..." : "Stop"}</button>
-        <button className="rounded-lg border border-emerald-500 px-5 py-2 font-semibold text-emerald-300 hover:bg-emerald-950/40" type="button" onClick={() => navigate("/seo-review")}>Mở SEO Review</button>
+        <button
+          className={`rounded-lg border px-5 py-2 font-semibold transition-colors ${
+            isCancellationPending
+              ? "border-amber-500 text-amber-300 hover:border-rose-500 hover:text-rose-200 hover:bg-rose-950/40"
+              : "border-rose-400 text-rose-300"
+          } disabled:opacity-50`}
+          disabled={!isRunning || controlledJobId !== null}
+          type="button"
+          onClick={() => void handleStop()}
+          title={isCancellationPending ? "Bấm lại để buộc dừng ngay lập tức (Force Stop)" : undefined}
+        >
+          {isCancellationPending ? "Buộc dừng ngay" : isActiveStopPending ? "Đang dừng..." : "Stop"}
+        </button>
+        <button
+          className="rounded-lg border border-emerald-500 px-5 py-2 font-semibold text-emerald-300 hover:bg-emerald-950/40"
+          type="button"
+          onClick={() => {
+            try {
+              window.localStorage.setItem("ffp_seo_review_selected_store", activeStoreId);
+            } catch {
+              // ignore
+            }
+            navigate(`/seo-review?storeId=${encodeURIComponent(activeStoreId)}`);
+          }}
+        >
+          Mở SEO Review
+        </button>
         {output === null && resultProducts.length === 0 ? null : (
           <>
             {onHandoverToSeo ? (
@@ -2026,6 +2092,7 @@ export function AmazonCrawlerPage({
                 </div>
                 {resultProducts.map((product) => {
                   const isSelected = product.id === selectedProduct?.id;
+                  const mediaUrl = firstProductMediaUrl(product);
                   return (
                     <button
                       key={product.id}
@@ -2033,7 +2100,7 @@ export function AmazonCrawlerPage({
                       type="button"
                       onClick={() => handleSelectProduct(product.id)}
                     >
-                      {product.media[0]?.url ? <img alt="" className="h-14 w-14 rounded-md bg-white object-contain" src={product.media[0].url} /> : <span className="flex h-14 w-14 items-center justify-center rounded-md bg-slate-800 text-xs text-slate-500">No image</span>}
+                      {mediaUrl ? <img alt="" className="h-14 w-14 rounded-md bg-white object-contain" src={mediaUrl} /> : <span className="flex h-14 w-14 items-center justify-center rounded-md bg-slate-800 text-xs text-slate-500">No image</span>}
                       <span className="min-w-0">
                         <span className="block truncate text-sm font-semibold text-slate-100">{product.title}</span>
                         <span className="mt-1 block text-xs text-slate-400">{product.splitContext.attribute && product.splitContext.value ? `${product.splitContext.attribute}: ${product.splitContext.value}` : product.parentAsin}</span>
@@ -2061,7 +2128,7 @@ export function AmazonCrawlerPage({
                       ) : (
                         <div className="flex aspect-square items-center justify-center rounded-xl bg-slate-900 text-sm text-slate-500">Không có ảnh</div>
                       )}
-                      {selectedProduct.media.length > 1 ? (
+                      {firstMediaUrl && selectedProduct.media.length > 1 ? (
                         <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
                           {selectedProduct.media.map((media) => (
                             <button key={media.url} className={`shrink-0 rounded-md border p-1 ${activeMediaUrl === media.url ? "border-cyan-400" : "border-slate-700"}`} type="button" onClick={() => setCrawlerSelectedMediaUrl(media.url)}>
@@ -2093,7 +2160,11 @@ export function AmazonCrawlerPage({
                           </div>
                         </div>
                       ) : null}
-                      {selectedProduct.pipeline?.shopify.error ? <p className="mt-3 rounded-lg border border-rose-800 bg-rose-950/30 p-3 text-sm text-rose-200">Shopify: {selectedProduct.pipeline.shopify.error}</p> : null}
+                      {selectedProduct.sourceVariants.some((variant) => variant.diagnostics?.fetchMode === "failed") ? (
+                        <p className="mt-3 rounded-lg border border-rose-800 bg-rose-950/30 p-3 text-sm text-rose-200">
+                          Amazon: Không tải được trang ASIN con {selectedProduct.sourceVariants.filter((variant) => variant.diagnostics?.fetchMode === "failed").map((variant) => variant.asin).join(", ")}. Kiểm tra CAPTCHA hoặc kết nối proxy rồi cào lại.
+                        </p>
+                      ) : selectedProduct.pipeline?.shopify.error ? <p className="mt-3 rounded-lg border border-rose-800 bg-rose-950/30 p-3 text-sm text-rose-200">Shopify: {selectedProduct.pipeline.shopify.error}</p> : null}
                       {selectedProduct.pipeline?.seo.fallbackStages?.length ? <p className="mt-3 rounded-lg border border-amber-800 bg-amber-950/30 p-3 text-sm text-amber-200">SEO fallback: {selectedProduct.pipeline.seo.fallbackStages.join(", ")}</p> : null}
                       {selectedProduct.pipeline?.seo.warnings?.map((warning) => <p key={warning} className="mt-3 rounded-lg border border-amber-800 bg-amber-950/30 p-3 text-sm text-amber-200">SEO: {warning}</p>)}
                       {selectedProduct.pipeline?.seo.error ? <p className="mt-3 rounded-lg border border-rose-800 bg-rose-950/30 p-3 text-sm text-rose-200">SEO: {selectedProduct.pipeline.seo.error}</p> : null}

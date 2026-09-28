@@ -1,6 +1,8 @@
+import { abortableDelay } from "../provider-runtime";
 export const GEMINI_RETRIES_EXHAUSTED = Symbol.for("gemini.retries_exhausted");
 
 export interface GeminiRetryOptions {
+  readonly signal?: AbortSignal;
   readonly maxRetries?: number;
   readonly initialDelayMs?: number;
   readonly backoffMultiplier?: number;
@@ -16,6 +18,8 @@ export interface GeminiRetryOptions {
  * or transient error that should be retried with exponential backoff.
  */
 export function isGeminiRateLimitOrTransientError(error: unknown): boolean {
+  if (error instanceof Error && error.name === "AbortError") return false;
+  if (error instanceof Error && error.name === "TimeoutError") return true;
   if (!error) {
     return false;
   }
@@ -155,11 +159,12 @@ export async function executeWithExponentialBackoff<T>(
   const jitterMs = options?.jitterMs ?? 500;
   const sleepFn =
     options?.sleepFn ??
-    ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+    ((ms: number) => abortableDelay(ms, options?.signal));
   const randomFn = options?.randomFn ?? Math.random;
 
   let attempt = 1;
   while (true) {
+    options?.signal?.throwIfAborted();
     try {
       return await action();
     } catch (error: unknown) {

@@ -52,9 +52,11 @@ test("SEO detailed runner supports alt-only processing without image binaries or
     "engine",
     "fallbackStages",
     "fieldsApplied",
+    "performance",
     "status",
     "warnings",
   ]);
+  assert.deepEqual(Object.keys(publicSummary.performance?.stageDurationsMs ?? {}), ["b1", "b2", "b3", "b4", "b5", "b6"]);
   assert.equal(JSON.stringify(publicSummary).includes("approvedEmbeddings"), false);
   assert.equal(JSON.stringify(publicSummary).includes("approvedKeywords"), false);
   assert.equal(JSON.stringify(publicSummary).includes("corpusRevision"), false);

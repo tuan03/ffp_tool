@@ -10,6 +10,25 @@ import {
   parseNicheResponse,
 } from "../internal/site-niche/site-niche-runtime";
 
+test("cancelled niche inference does not start an AI request after homepage rendering", async () => {
+  let finish: (() => void) | undefined;
+  let analyses = 0;
+  const resolver = new SiteNicheResolver({
+    cache: new InMemorySiteNicheCache(),
+    renderer: { async render() { await new Promise<void>(resolve => { finish = resolve; }); return "homepage"; } },
+    analyzer: { async analyze() { analyses++; return "custom rugs"; } },
+  });
+  const controller = new AbortController();
+  const request = resolver.resolve({ siteDomain: "example.com", fallbackNiche: "rugs", signal: controller.signal });
+  const rejected = assert.rejects(request, { name: "AbortError" });
+  await new Promise(resolve => setImmediate(resolve));
+  controller.abort();
+  finish?.();
+  await rejected;
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(analyses, 0);
+});
+
 test("SiteNicheResolver shares one rendered homepage inference across concurrent requests", async () => {
   let renderCount = 0;
   let analyzeCount = 0;

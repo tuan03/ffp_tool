@@ -1,37 +1,217 @@
-import React, { useState, useMemo } from "react";
-import type { ShopifyProduct } from "../../../module-api";
+import React, { useState, useMemo, useRef, useEffect } from "react";
+import type { ShopifyProduct, ShopifyCollection } from "../../../module-api";
 
 export interface ProductCatalogTableProps {
   readonly products: readonly ShopifyProduct[];
+  readonly collections?: readonly ShopifyCollection[];
   readonly isLoading: boolean;
   readonly configuredProductIds: ReadonlySet<string>;
   readonly onSelectProductForEdit: (product: ShopifyProduct) => void;
   readonly onPreviewCustomerView?: (product: ShopifyProduct) => void;
   readonly onCloneProduct?: (product: ShopifyProduct) => void;
   readonly onDeleteCustomizer: (product: ShopifyProduct) => void;
+  readonly shopAdminHandle?: string;
+
+  // Optional Controlled Filter Props
+  readonly filterMode?: "all" | "collection" | "asin";
+  readonly onFilterModeChange?: (mode: "all" | "collection" | "asin") => void;
+  readonly selectedCollectionId?: string;
+  readonly onSelectedCollectionIdChange?: (id: string) => void;
+  readonly searchQuery?: string;
+  readonly onSearchQueryChange?: (query: string) => void;
+  readonly filteredProducts?: readonly ShopifyProduct[];
+}
+
+export function buildShopifyAdminUrl(
+  shopAdminHandle?: string,
+  productId?: string,
+): string | undefined {
+  if (!productId || typeof productId !== "string") return undefined;
+  const cleanId = productId.trim();
+  const numericId = cleanId.replace(/^gid:\/\/shopify\/Product\//, "");
+  if (!numericId) return undefined;
+  if (!shopAdminHandle || typeof shopAdminHandle !== "string") return undefined;
+  const cleanHandle = shopAdminHandle
+    .trim()
+    .replace(/^https?:\/\//i, "")
+    .replace(/\/.*$/, "")
+    .replace(/\.myshopify\.com$/i, "");
+  if (!cleanHandle) return undefined;
+  return `https://admin.shopify.com/store/${cleanHandle}/products/${numericId}`;
+}
+
+export function extractProductAsin(product: ShopifyProduct): string | null {
+  for (const tag of product.tags || []) {
+    const cleanTag = tag.trim();
+    if (/^B0[A-Z0-9]{8}$/i.test(cleanTag)) {
+      return cleanTag.toUpperCase();
+    }
+    const match = cleanTag.match(/^(?:ASIN_|asin:)(B0[A-Z0-9]{8})/i);
+    if (match?.[1]) {
+      return match[1].toUpperCase();
+    }
+  }
+
+  for (const v of product.variants || []) {
+    if (v.sku) {
+      const match = v.sku.match(/\b(B0[A-Z0-9]{8})\b/i);
+      if (match?.[1]) {
+        return match[1].toUpperCase();
+      }
+    }
+  }
+
+  if (product.handle) {
+    const match = product.handle.match(/(?:-|^)(b0[a-z0-9]{8})(?:-|$)/i);
+    if (match?.[1]) {
+      return match[1].toUpperCase();
+    }
+  }
+
+  if (product.title) {
+    const match = product.title.match(/\b(B0[A-Z0-9]{8})\b/i);
+    if (match?.[1]) {
+      return match[1].toUpperCase();
+    }
+  }
+
+  return null;
+}
+
+export function filterCatalogProducts(
+  products: readonly ShopifyProduct[],
+  collections: readonly ShopifyCollection[],
+  filterMode: "all" | "collection" | "asin",
+  selectedCollectionId: string,
+  searchQuery: string,
+): readonly ShopifyProduct[] {
+  let result = products;
+
+  if (filterMode === "collection") {
+    if (selectedCollectionId) {
+      const col = collections.find((c) => c.id === selectedCollectionId);
+      if (col) {
+        const colTitleLower = col.title.toLowerCase().trim();
+        const colHandleLower = (col.handle || "").toLowerCase().trim();
+        result = result.filter((p) => {
+          const hasTag = (p.tags || []).some(
+            (t) =>
+              t.toLowerCase() === colTitleLower ||
+              t.toLowerCase() === colHandleLower ||
+              t.toLowerCase().includes(colHandleLower),
+          );
+          const inType = (p.productType || "").toLowerCase().includes(colTitleLower);
+          const inTitle = (p.title || "").toLowerCase().includes(colTitleLower);
+          const inHandle = (p.handle || "").toLowerCase().includes(colHandleLower);
+          return hasTag || inType || inTitle || inHandle;
+        });
+      }
+    }
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase().trim();
+      result = result.filter((p) => {
+        const titleMatch = (p.title || "").toLowerCase().includes(q);
+        const handleMatch = (p.handle || "").toLowerCase().includes(q);
+        const tagMatch = (p.tags || []).some((t) => t.toLowerCase().includes(q));
+        return titleMatch || handleMatch || tagMatch;
+      });
+    }
+  } else if (filterMode === "asin") {
+    const q = searchQuery.trim().toUpperCase();
+    if (q) {
+      result = result.filter((p) => {
+        const asin = extractProductAsin(p);
+        if (asin && asin.includes(q)) return true;
+        const tagMatch = (p.tags || []).some((t) => t.toUpperCase().includes(q));
+        const skuMatch = (p.variants || []).some((v) => (v.sku || "").toUpperCase().includes(q));
+        const titleMatch = (p.title || "").toUpperCase().includes(q);
+        const handleMatch = (p.handle || "").toUpperCase().includes(q);
+        return tagMatch || skuMatch || titleMatch || handleMatch;
+      });
+    } else {
+      // Prioritize showing products with detected ASIN
+      const asinProducts = result.filter((p) => extractProductAsin(p) !== null);
+      if (asinProducts.length > 0) {
+        result = asinProducts;
+      }
+    }
+  } else {
+    // filterMode === "all"
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase().trim();
+      const qUpper = searchQuery.trim().toUpperCase();
+      result = result.filter((p) => {
+        const titleMatch = (p.title || "").toLowerCase().includes(q);
+        const handleMatch = (p.handle || "").toLowerCase().includes(q);
+        const tagMatch = (p.tags || []).some((t) => t.toLowerCase().includes(q));
+        const skuMatch = (p.variants || []).some((v) => (v.sku || "").toUpperCase().includes(qUpper));
+        const asin = extractProductAsin(p);
+        const asinMatch = asin ? asin.includes(qUpper) : false;
+        return titleMatch || handleMatch || tagMatch || skuMatch || asinMatch;
+      });
+    }
+  }
+
+  return result;
 }
 
 export function ProductCatalogTable({
   products,
+  collections = [],
   isLoading,
   configuredProductIds,
   onSelectProductForEdit,
   onDeleteCustomizer,
+  shopAdminHandle,
+  filterMode: propFilterMode,
+  onFilterModeChange: propOnFilterModeChange,
+  selectedCollectionId: propSelectedCollectionId,
+  onSelectedCollectionIdChange: propOnSelectedCollectionIdChange,
+  searchQuery: propSearchQuery,
+  onSearchQueryChange: propOnSearchQueryChange,
+  filteredProducts: propFilteredProducts,
 }: ProductCatalogTableProps): React.JSX.Element {
-  const [searchQuery, setSearchQuery] = useState("");
+  const [internalFilterMode, setInternalFilterMode] = useState<"all" | "collection" | "asin">("all");
+  const [internalCollectionId, setInternalCollectionId] = useState<string>("");
+  const [internalSearchQuery, setInternalSearchQuery] = useState("");
+  const [isFilterDropdownOpen, setIsFilterDropdownOpen] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 10;
+  const filterDropdownRef = useRef<HTMLDivElement>(null);
 
-  // Filtered products list by search query
+  const filterMode = propFilterMode !== undefined ? propFilterMode : internalFilterMode;
+  const setFilterMode = propOnFilterModeChange ?? setInternalFilterMode;
+
+  const selectedCollectionId =
+    propSelectedCollectionId !== undefined ? propSelectedCollectionId : internalCollectionId;
+  const setSelectedCollectionId = propOnSelectedCollectionIdChange ?? setInternalCollectionId;
+
+  const searchQuery = propSearchQuery !== undefined ? propSearchQuery : internalSearchQuery;
+  const setSearchQuery = propOnSearchQueryChange ?? setInternalSearchQuery;
+
+  // Close filter dropdown when clicking outside
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (
+        filterDropdownRef.current &&
+        !filterDropdownRef.current.contains(event.target as Node)
+      ) {
+        setIsFilterDropdownOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, []);
+
+  // Filtered products list
   const filteredProducts = useMemo(() => {
-    if (!searchQuery.trim()) return products;
-    const q = searchQuery.toLowerCase().trim();
-    return products.filter((p) => {
-      const titleMatch = (p.title || "").toLowerCase().includes(q);
-      const handleMatch = (p.handle || "").toLowerCase().includes(q);
-      return titleMatch || handleMatch;
-    });
-  }, [products, searchQuery]);
+    if (propFilteredProducts !== undefined) {
+      return propFilteredProducts;
+    }
+    return filterCatalogProducts(products, collections, filterMode, selectedCollectionId, searchQuery);
+  }, [propFilteredProducts, products, collections, filterMode, selectedCollectionId, searchQuery]);
 
   // Pagination calculation
   const totalPages = Math.max(1, Math.ceil(filteredProducts.length / pageSize));
@@ -44,11 +224,116 @@ export function ProductCatalogTable({
   return (
     <div className="space-y-4">
       {/* Search & Header Summary Bar */}
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-800 bg-slate-900/80 p-4 shadow-sm backdrop-blur-sm">
-        {/* Search Input */}
-        <div className="flex-1 min-w-[280px]">
-          <div className="relative">
-            <span className="absolute left-3.5 top-2.5 text-slate-400 text-sm">🔍</span>
+      <div className="relative z-30 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-800 bg-slate-900/80 p-3.5 shadow-sm backdrop-blur-sm">
+        {/* Search Input with Shopify-style filter dropdown */}
+        <div className="flex-1 min-w-[320px] flex items-center rounded-xl border border-slate-800 bg-slate-950 px-2 py-1 shadow-inner focus-within:border-cyan-500 transition">
+          {/* Filter selector popup */}
+          <div className="relative" ref={filterDropdownRef}>
+            <button
+              type="button"
+              onClick={() => setIsFilterDropdownOpen((prev) => !prev)}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-200 hover:text-cyan-400 transition cursor-pointer select-none rounded-lg hover:bg-slate-900"
+            >
+              <span>
+                {filterMode === "all" && "All"}
+                {filterMode === "collection" && "Collection"}
+                {filterMode === "asin" && "Amazon ASIN"}
+              </span>
+              <span className="text-[10px] text-slate-400">▼</span>
+            </button>
+
+            {/* Dropdown Menu */}
+            {isFilterDropdownOpen && (
+              <div className="absolute left-0 top-full mt-2 w-56 rounded-2xl border border-slate-800 bg-slate-900/98 p-1.5 shadow-2xl backdrop-blur-md z-50 space-y-0.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFilterMode("all");
+                    setIsFilterDropdownOpen(false);
+                    setCurrentPage(1);
+                  }}
+                  className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-medium transition cursor-pointer ${
+                    filterMode === "all"
+                      ? "bg-cyan-600 text-white font-bold"
+                      : "text-slate-300 hover:bg-slate-800"
+                  }`}
+                >
+                  <span>Tất cả (All)</span>
+                  {filterMode === "all" && <span>✓</span>}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFilterMode("collection");
+                    setIsFilterDropdownOpen(false);
+                    setCurrentPage(1);
+                  }}
+                  className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-medium transition cursor-pointer ${
+                    filterMode === "collection"
+                      ? "bg-cyan-600 text-white font-bold"
+                      : "text-slate-300 hover:bg-slate-800"
+                  }`}
+                >
+                  <span className="flex items-center gap-2">
+                    <span>📁</span>
+                    <span>Collection (Bộ sưu tập)</span>
+                  </span>
+                  {filterMode === "collection" && <span>✓</span>}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFilterMode("asin");
+                    setIsFilterDropdownOpen(false);
+                    setCurrentPage(1);
+                  }}
+                  className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-medium transition cursor-pointer ${
+                    filterMode === "asin"
+                      ? "bg-cyan-600 text-white font-bold"
+                      : "text-slate-300 hover:bg-slate-800"
+                  }`}
+                >
+                  <span className="flex items-center gap-2">
+                    <span>📦</span>
+                    <span>Amazon ASIN</span>
+                  </span>
+                  {filterMode === "asin" && <span>✓</span>}
+                </button>
+              </div>
+            )}
+          </div>
+
+          <div className="h-5 w-px bg-slate-800 mx-1 flex-shrink-0" />
+
+          {/* If Collection mode and collections are available, show Collection Picker */}
+          {filterMode === "collection" && collections.length > 0 && (
+            <>
+              <select
+                value={selectedCollectionId}
+                onChange={(e) => {
+                  setSelectedCollectionId(e.target.value);
+                  setCurrentPage(1);
+                }}
+                className="bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-cyan-300 font-semibold focus:outline-none focus:border-cyan-500 cursor-pointer max-w-[200px] truncate mr-2"
+              >
+                <option value="" className="bg-slate-950 text-slate-200">
+                  -- Tất cả bộ sưu tập ({collections.length}) --
+                </option>
+                {collections.map((col) => (
+                  <option key={col.id} value={col.id} className="bg-slate-950 text-slate-200">
+                    {col.title} {col.productsCount ? `(${col.productsCount})` : ""}
+                  </option>
+                ))}
+              </select>
+              <div className="h-5 w-px bg-slate-800 mx-1 flex-shrink-0" />
+            </>
+          )}
+
+          {/* Search input field */}
+          <div className="relative flex-1 flex items-center">
+            <span className="text-slate-500 text-xs mr-2">🔍</span>
             <input
               type="text"
               value={searchQuery}
@@ -56,20 +341,55 @@ export function ProductCatalogTable({
                 setSearchQuery(e.target.value);
                 setCurrentPage(1);
               }}
-              placeholder="Tìm kiếm sản phẩm theo tên..."
-              className="w-full rounded-xl border border-slate-800 bg-slate-950 pl-10 pr-4 py-2.5 text-xs text-slate-200 placeholder-slate-500 focus:border-cyan-500 focus:outline-none transition shadow-inner"
+              placeholder={
+                filterMode === "asin"
+                  ? "Nhập mã Amazon ASIN (ví dụ: B0GQGGXN47)..."
+                  : filterMode === "collection"
+                    ? "Tìm kiếm trong bộ sưu tập hoặc nhập tên..."
+                    : "Tìm kiếm sản phẩm theo tên, handle, tag..."
+              }
+              className="w-full bg-transparent py-1 text-xs text-slate-200 placeholder-slate-500 focus:outline-none"
             />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSearchQuery("");
+                  setCurrentPage(1);
+                }}
+                className="text-slate-500 hover:text-slate-300 text-xs cursor-pointer px-1.5"
+                title="Xóa tìm kiếm"
+              >
+                ✕
+              </button>
+            )}
           </div>
         </div>
 
-        {/* Counter Badge */}
-        <div className="text-xs text-slate-400 font-medium">
-          Hiển thị <span className="text-cyan-400 font-bold">{filteredProducts.length}</span> sản phẩm
+        {/* Counter Badge & Reset Filter button */}
+        <div className="flex items-center gap-3 text-xs text-slate-400 font-medium">
+          {(filterMode !== "all" || searchQuery || selectedCollectionId) && (
+            <button
+              type="button"
+              onClick={() => {
+                setFilterMode("all");
+                setSearchQuery("");
+                setSelectedCollectionId("");
+                setCurrentPage(1);
+              }}
+              className="text-xs text-cyan-400 hover:text-cyan-300 underline cursor-pointer"
+            >
+              Xóa bộ lọc
+            </button>
+          )}
+          <div>
+            Hiển thị <span className="text-cyan-400 font-bold">{filteredProducts.length}</span> / {products.length} sản phẩm
+          </div>
         </div>
       </div>
 
       {/* Products Table Card */}
-      <div className="rounded-2xl border border-slate-800 bg-slate-900/60 shadow-xl overflow-hidden backdrop-blur-md">
+      <div className="relative z-10 rounded-2xl border border-slate-800 bg-slate-900/60 shadow-xl overflow-hidden backdrop-blur-md">
         {isLoading ? (
           <div className="p-16 text-center space-y-3">
             <span className="inline-block animate-spin text-2xl">⏳</span>
@@ -80,7 +400,7 @@ export function ProductCatalogTable({
             <span className="text-3xl block">📦</span>
             <h4 className="text-sm font-bold text-slate-200">Không tìm thấy sản phẩm nào</h4>
             <p className="text-xs text-slate-400 max-w-sm mx-auto">
-              Không có sản phẩm nào khớp với từ khóa tìm kiếm.
+              Không có sản phẩm nào khớp với bộ lọc hoặc từ khóa tìm kiếm.
             </p>
           </div>
         ) : (
@@ -102,6 +422,8 @@ export function ProductCatalogTable({
                     product.featuredImage?.url ||
                     product.images?.[0]?.url ||
                     "https://images.unsplash.com/photo-1521572267360-ee0c2909d518?w=300&auto=format&fit=crop&q=80";
+                  const asin = extractProductAsin(product);
+                  const adminUrl = buildShopifyAdminUrl(shopAdminHandle, product.id);
 
                   return (
                     <tr
@@ -109,7 +431,7 @@ export function ProductCatalogTable({
                       onClick={() => onSelectProductForEdit(product)}
                       className="hover:bg-slate-800/40 transition group cursor-pointer"
                     >
-                      {/* Product Thumbnail & Clean Title */}
+                      {/* Product Thumbnail, Title & ASIN Badge */}
                       <td className="py-4 pl-6 pr-4">
                         <div className="flex items-center gap-3.5">
                           <div className="h-14 w-14 flex-shrink-0 rounded-xl overflow-hidden border border-slate-800 bg-slate-950 flex items-center justify-center shadow-sm group-hover:border-cyan-500/50 transition">
@@ -130,11 +452,39 @@ export function ProductCatalogTable({
                             >
                               {product.title}
                             </h4>
-                            {product.handle && (
-                              <p className="text-[11px] text-slate-500 mt-0.5 truncate">
-                                /{product.handle}
-                              </p>
-                            )}
+                            <div className="flex items-center gap-2 mt-1 flex-wrap">
+                              {product.handle && (
+                                <span className="text-[11px] text-slate-500 truncate">
+                                  /{product.handle}
+                                </span>
+                              )}
+                              {adminUrl && (
+                                <a
+                                  href={adminUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="text-slate-500 hover:text-emerald-400 transition inline-flex items-center gap-0.5 text-[11px] font-medium"
+                                  title="Mở sản phẩm trong Shopify Admin"
+                                >
+                                  <span>Shopify</span>
+                                  <svg className="w-2.5 h-2.5 text-slate-500 hover:text-emerald-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                                    <polyline points="15 3 21 3 21 9" />
+                                    <line x1="10" y1="14" x2="21" y2="3" />
+                                  </svg>
+                                </a>
+                              )}
+                              {asin && (
+                                <span
+                                  className="inline-flex items-center gap-1 rounded bg-amber-500/10 border border-amber-500/30 px-1.5 py-0.5 text-[10px] font-mono font-bold text-amber-300 shadow-sm"
+                                  title={`Amazon ASIN: ${asin}`}
+                                >
+                                  <span>🏷️</span>
+                                  <span>{asin}</span>
+                                </span>
+                              )}
+                            </div>
                           </div>
                         </div>
                       </td>
@@ -153,7 +503,7 @@ export function ProductCatalogTable({
                         )}
                       </td>
 
-                      {/* Direct Actions: Open Studio & Delete */}
+                      {/* Direct Actions: Open Studio & Delete & Shopify Link */}
                       <td className="py-4 pr-6 pl-4 text-right">
                         <div
                           className="flex items-center justify-end gap-2"
@@ -172,6 +522,22 @@ export function ProductCatalogTable({
                             <span>{hasCustomizer ? "🎨" : "✨"}</span>
                             <span>{hasCustomizer ? "Mở Tùy Biến" : "Tạo Mới Tùy Biến"}</span>
                           </button>
+
+                          {adminUrl && (
+                            <a
+                              href={adminUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="rounded-xl border border-slate-800 bg-slate-950/80 p-2 text-slate-400 hover:border-emerald-600/60 hover:bg-emerald-950/40 hover:text-emerald-300 transition cursor-pointer"
+                              title="Mở sản phẩm này trong Shopify Admin"
+                            >
+                              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                                <polyline points="15 3 21 3 21 9" />
+                                <line x1="10" y1="14" x2="21" y2="3" />
+                              </svg>
+                            </a>
+                          )}
 
                           {hasCustomizer && (
                             <button

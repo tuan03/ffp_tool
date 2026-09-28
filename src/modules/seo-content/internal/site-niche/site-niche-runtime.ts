@@ -174,7 +174,8 @@ class SqliteSiteNicheCache implements SiteNicheCache {
 }
 
 class PlaywrightHomepageRenderer implements RenderedHomepageRenderer {
-  public async render(url: string): Promise<string> {
+  public async render(url: string, signal?: AbortSignal): Promise<string> {
+    signal?.throwIfAborted();
     validateSafeUrl(url);
     const dynamicImport = new Function("specifier", "return import(specifier)") as (
       specifier: string,
@@ -201,7 +202,10 @@ class PlaywrightHomepageRenderer implements RenderedHomepageRenderer {
       close(): Promise<void>;
     }> } }).chromium;
     const browser = await chromium.launch();
+    const cancel = () => { void browser.close().catch(() => undefined); };
+    signal?.addEventListener("abort", cancel, { once: true });
     try {
+      signal?.throwIfAborted();
       const page = await browser.newPage({ userAgent: "FFP SEO Niche Resolver/1.0" });
       await page.route("**/*", async (route) => {
         const requestUrl = route.request().url();
@@ -221,17 +225,18 @@ class PlaywrightHomepageRenderer implements RenderedHomepageRenderer {
       validateSafeUrl(page.url());
       return await page.content();
     } finally {
+      signal?.removeEventListener("abort", cancel);
       await browser.close();
     }
   }
 }
 
 class GeminiHomepageNicheAnalyzer implements HomepageNicheAnalyzer {
-  public async analyze(renderedHtml: string, homepageUrl: string): Promise<string> {
+  public async analyze(renderedHtml: string, homepageUrl: string, signal?: AbortSignal): Promise<string> {
     const projectId = process.env.GOOGLE_CLOUD_PROJECT;
     if (!projectId) throw new Error("GOOGLE_CLOUD_PROJECT is required for dynamic niche inference");
     const evidence = extractHomepageEvidence(renderedHtml, homepageUrl);
-    const generator = new GoogleGenAIVertexContentGenerator({ projectId });
+    const generator = new GoogleGenAIVertexContentGenerator({ projectId, signal });
     const response = await generator.generateStructuredText?.({
       systemInstruction: "Infer the storefront's concise ecommerce niche from rendered homepage evidence. The niche must be 2 to 8 words. Return JSON only.",
       prompt: `Homepage evidence:\n${evidence}`,

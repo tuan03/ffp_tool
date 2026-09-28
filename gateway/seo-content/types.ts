@@ -28,14 +28,19 @@ export interface SeoContentInput {
 }
 
 export interface SeoContentResult {
+  readonly provider?: "gemini" | "custom_gpt";
   readonly success: boolean;
   readonly processedCount: number;
   readonly message?: string;
   readonly seoOutputs?: readonly unknown[];
 }
 
+import type { SeoContentInput as CoreSeoContentInput, SeoContentOutput } from "../../src/modules/seo-content";
+import type { GptSeoSettings } from "../../src/modules/custom-gpt-seo";
+
 export interface GatewaySeoContentOptions {
-  readonly runner?: (input: any) => Promise<any>;
+  readonly providerSettings?: GptSeoSettings;
+  readonly runner?: (input: CoreSeoContentInput) => Promise<SeoContentOutput>;
 }
 
 export type SeoContentRunner = (

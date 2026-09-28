@@ -666,7 +666,7 @@ class CoordinatorStore:
                         & (CrawlProductItem.claim_expires_at < now)
                     )
                 )
-                .order_by(CrawlProductItem.created_at)
+                .order_by(CrawlProductItem.next_attempt_at.asc().nulls_first(), CrawlProductItem.created_at)
                 .limit(min(100, count * 10))
                 .with_for_update(skip_locked=True)
             ).all()
@@ -725,7 +725,8 @@ class CoordinatorStore:
                 item.status = "syncing" if is_sync_claim else "normalizing"
                 item.claimed_by = worker_id
                 item.claim_expires_at = claim_until
-                item.attempt_count += 1
+                if not pipeline_result.get("externalSeo"):
+                    item.attempt_count += 1
                 link = session.scalar(select(ShopifyProductLink).where(
                     ShopifyProductLink.store_id == effective_store,
                     ShopifyProductLink.source_key == item.source_key,
@@ -742,6 +743,7 @@ class CoordinatorStore:
                     "checksum": item.checksum,
                     "attempt": item.attempt_count,
                     "stage": "sync" if is_sync_claim else "prepare",
+                    "externalSeo": pipeline_result.get("externalSeo"),
                     "inputAsin": task.asin,
                     "product": item.normalized_payload if is_sync_claim else item.raw_payload,
                     "settings": job_settings,
@@ -760,6 +762,20 @@ class CoordinatorStore:
                 })
                 self._refresh_job(session, item.job_id)
         return claimed
+
+    def defer_external_seo(self, item_id: str, *, worker_id: str, external_job_id: str) -> bool:
+        """Park the item without occupying a worker while a human-driven GPT processes it."""
+        with self.sessions.begin() as session:
+            item = session.get(CrawlProductItem, item_id)
+            if item is None or item.claimed_by != worker_id or item.status != "seo":
+                return False
+            item.shopify_result = {**dict(item.shopify_result or {}), "externalSeo": {"jobId": external_job_id}, "seo": {"status": "pending", "engine": "custom_gpt"}}
+            item.status = "retry_wait"
+            item.next_attempt_at = utc_now() + timedelta(seconds=60)
+            item.claimed_by = None
+            item.claim_expires_at = None
+            self._refresh_job(session, item.job_id)
+            return True
 
     def mark_product_review_ready(
         self,
@@ -918,7 +934,7 @@ class CoordinatorStore:
             review = dict(pipeline_result.get("review") or {})
             if not review or int(review.get("version") or 1) != expected_version:
                 return {"conflict": True}
-            if item.status == "reconciliation_required" or str(review.get("syncStatus") or "idle") in {"queued", "syncing"}:
+            if str(review.get("syncStatus") or "idle") in {"queued", "syncing"}:
                 return {"locked": True}
             product = dict(item.normalized_payload or {})
             field_map = {
@@ -989,7 +1005,7 @@ class CoordinatorStore:
             review = dict(pipeline_result.get("review") or {})
             if not review or int(review.get("version") or 1) != expected_version:
                 return {"conflict": True}
-            if item.status == "reconciliation_required" or str(review.get("syncStatus") or "idle") in {"queued", "syncing"}:
+            if str(review.get("syncStatus") or "idle") in {"queued", "syncing"}:
                 return {"locked": True}
             review.update({
                 "decision": decision,
@@ -1042,7 +1058,7 @@ class CoordinatorStore:
         with self.sessions.begin() as session:
             items = session.scalars(
                 select(CrawlProductItem)
-                .where(CrawlProductItem.status.in_(["waiting_review", "rejected", "failed"]))
+                .where(CrawlProductItem.status.in_(["waiting_review", "rejected", "failed", "reconciliation_required"]))
                 .with_for_update(skip_locked=True)
             ).all()
             job_ids: set[str] = set()
@@ -1065,6 +1081,81 @@ class CoordinatorStore:
                 self._refresh_job(session, job_id)
         return queued
 
+    def mark_product_review_synced(
+        self,
+        item_id: str,
+        *,
+        product_id: str | None = None,
+        product_handle: str | None = None,
+        admin_url: str | None = None,
+    ) -> dict[str, Any] | None:
+        with self.sessions.begin() as session:
+            item = session.scalar(select(CrawlProductItem).where(CrawlProductItem.id == item_id).with_for_update())
+            if item is None:
+                return None
+            if item.status == "deleted":
+                return {"deleted": True}
+            pipeline_result = dict(item.shopify_result or {})
+            review = dict(pipeline_result.get("review") or {})
+            now_iso = utc_iso(utc_now())
+            review.update({
+                "decision": "approved",
+                "syncStatus": "synced",
+                "syncError": None,
+                "syncedAt": now_iso,
+                "updatedAt": now_iso,
+            })
+            if product_id:
+                pipeline_result["productId"] = product_id
+            if product_handle:
+                pipeline_result["productHandle"] = product_handle
+            if admin_url:
+                pipeline_result["adminUrl"] = admin_url
+            pipeline_result["review"] = review
+            item.shopify_result = pipeline_result
+            item.status = "completed"
+            item.last_error = None
+            item.next_attempt_at = None
+            item.claim_expires_at = None
+            item.completed_at = utc_now()
+            self._event(session, item.job_id, "product_review_synced", {
+                "productItemId": item.id,
+                "productId": product_id,
+            })
+            self._refresh_job(session, item.job_id)
+            return self._review_snapshot(item, session.get(CrawlJob, item.job_id))
+
+    def mark_product_review_sync_failed(
+        self,
+        item_id: str,
+        *,
+        error: str | None = None,
+    ) -> dict[str, Any] | None:
+        with self.sessions.begin() as session:
+            item = session.scalar(select(CrawlProductItem).where(CrawlProductItem.id == item_id).with_for_update())
+            if item is None:
+                return None
+            if item.status == "deleted":
+                return {"deleted": True}
+            pipeline_result = dict(item.shopify_result or {})
+            review = dict(pipeline_result.get("review") or {})
+            now_iso = utc_iso(utc_now())
+            review.update({
+                "syncStatus": "failed",
+                "syncError": error or "Lỗi khi đẩy sản phẩm lên Shopify.",
+                "updatedAt": now_iso,
+            })
+            pipeline_result["review"] = review
+            item.shopify_result = pipeline_result
+            item.status = "waiting_review"
+            item.last_error = {"message": error or "Lỗi khi đẩy sản phẩm lên Shopify.", "code": "SYNC_FAILED"}
+            self._event(session, item.job_id, "product_review_sync_failed", {
+                "productItemId": item.id,
+                "error": error,
+            })
+            self._refresh_job(session, item.job_id)
+            return self._review_snapshot(item, session.get(CrawlJob, item.job_id))
+
     def mark_product_seo(
         self,
         item_id: str,
@@ -1078,7 +1169,7 @@ class CoordinatorStore:
             if item is None or item.claimed_by != worker_id or item.status != "normalizing":
                 return False
             item.normalized_payload = normalized_payload
-            item.shopify_result = {"seo": seo_summary}
+            item.shopify_result = {**dict(item.shopify_result or {}), "seo": seo_summary}
             item.status = "seo"
             item.claim_expires_at = utc_now() + timedelta(seconds=180)
             self._event(session, item.job_id, "product_seo", {
@@ -1584,6 +1675,7 @@ class CoordinatorStore:
                 job_ids.add(item.job_id)
                 self._event(session, item.job_id, "product_cancel_claim_expired", {
                     "productItemId": item.id,
+                    "sourceKey": item.source_key,
                 })
             for job_id in job_ids:
                 self._refresh_job(session, job_id)
@@ -1593,6 +1685,7 @@ class CoordinatorStore:
         self,
         job_id: str,
         connected_client_ids: set[str] | None = None,
+        force: bool = False,
     ) -> dict[str, Any] | None:
         with self.sessions.begin() as session:
             job = session.get(CrawlJob, job_id)
@@ -1606,6 +1699,43 @@ class CoordinatorStore:
                 control = CrawlJobControl(job_id=job_id, state="active")
                 session.add(control)
             if control.state == "cancelling" and control.cancellation_id:
+                elapsed_seconds = (now - _as_utc(control.cancel_requested_at)).total_seconds() if control.cancel_requested_at else 999
+                if not force and elapsed_seconds < 15:
+                    return self._job_snapshot(session, job)
+                # Stalled cancellation (>15s or re-requested by user with force): force-finalize remaining items and tasks
+                for item in session.scalars(select(CrawlProductItem).where(
+                    CrawlProductItem.job_id == job_id,
+                    CrawlProductItem.status.in_(["cancelling", "stopping_after_write"]),
+                )):
+                    was_stopping = item.status == "stopping_after_write"
+                    item.status = "cancelled"
+                    item.claimed_by = None
+                    item.claim_expires_at = None
+                    item.completed_at = now
+                    if was_stopping:
+                        for operation in session.scalars(select(ShopifyOperationIdempotency).where(
+                            ShopifyOperationIdempotency.request_id == _shopify_sync_request_id(item.source_key),
+                            ShopifyOperationIdempotency.state == "pending",
+                        )):
+                            operation.state = "reconciliation_required"
+                            operation.response_payload = {
+                                "itemId": item.id,
+                                "sourceKey": item.source_key,
+                                "reason": "Job force-stopped after Shopify write started without a confirmed checkpoint.",
+                            }
+                for task in session.scalars(select(CrawlTask).where(
+                    CrawlTask.job_id == job_id,
+                    CrawlTask.status.in_(["cancelling", "leased", "running"]),
+                )):
+                    task.status = "cancelled"
+                    task.lease_expires_at = None
+                    task.completed_at = now
+                    if task.lease_id:
+                        attempt = session.scalar(select(TaskAttempt).where(TaskAttempt.lease_id == task.lease_id))
+                        if attempt is not None:
+                            attempt.status = "cancelled"
+                            attempt.finished_at = now
+                self._refresh_job(session, job_id)
                 return self._job_snapshot(session, job)
             should_track_client_cleanup = connected_client_ids is not None
             if connected_client_ids is None:
@@ -2023,7 +2153,7 @@ class CoordinatorStore:
         public_seo = (
             {
                 key: seo[key]
-                for key in ("status", "engine", "fieldsApplied", "fallbackStages", "warnings", "error")
+                for key in ("status", "engine", "fieldsApplied", "fallbackStages", "warnings", "error", "performance")
                 if key in seo
             }
             if isinstance(seo, dict)

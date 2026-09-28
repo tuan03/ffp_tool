@@ -203,6 +203,7 @@ def export_hot_images_csv(path: Path, images: list[RankedImage]) -> None:
             "rank",
             "image_score",
             "trend",
+            "title",
             "query",
             "product_role",
             "product_confidence",

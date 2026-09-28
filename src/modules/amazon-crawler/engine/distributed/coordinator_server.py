@@ -70,18 +70,20 @@ class ConnectionManager:
         self.lock = asyncio.Lock()
         self.cache_requests: dict[str, dict[str, Any]] = {}
 
-    async def add(self, client_id: str, websocket: WebSocket) -> None:
+    async def add(self, client_id: str, websocket: WebSocket) -> bool:
         async with self.lock:
-            previous = self.connections.get(client_id)
+            if client_id in self.connections:
+                return False
             self.connections[client_id] = websocket
-        if previous is not None and previous is not websocket:
-            await previous.close(code=4001, reason="Replaced by a newer client connection.")
+            return True
 
-    async def remove(self, client_id: str, websocket: WebSocket) -> None:
+    async def remove(self, client_id: str, websocket: WebSocket) -> bool:
         async with self.lock:
             if self.connections.get(client_id) is websocket:
                 self.connections.pop(client_id, None)
                 self.runtime.pop(client_id, None)
+                return True
+            return False
 
     async def update_runtime(self, client_id: str, *, active_tasks: int, available_slots: int) -> None:
         async with self.lock:
@@ -309,9 +311,9 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
         return JSONResponse(result, headers={"Content-Disposition": f'attachment; filename="amazon-crawl-{job_id}.json"'})
 
     @app.post("/api/v1/crawl-jobs/{job_id}/cancel")
-    async def cancel_job(job_id: str) -> dict[str, Any]:
+    async def cancel_job(job_id: str, force: bool = False) -> dict[str, Any]:
         connected_client_ids = await manager.connected_client_ids()
-        snapshot = store.cancel_job(job_id, connected_client_ids)
+        snapshot = store.cancel_job(job_id, connected_client_ids, force=force)
         if snapshot is None:
             raise HTTPException(status_code=404, detail="Crawl job was not found.")
         cache_generation = store.current_cache_generation()
@@ -616,6 +618,32 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
         item_ids = store.queue_all_approved_reviews()
         return {"queued": len(item_ids), "itemIds": item_ids}
 
+    @app.post("/api/v1/product-reviews/{item_id}/synced")
+    def mark_product_review_synced(item_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        result = store.mark_product_review_synced(
+            item_id,
+            product_id=str(payload.get("productId") or "").strip() or None,
+            product_handle=str(payload.get("productHandle") or "").strip() or None,
+            admin_url=str(payload.get("adminUrl") or "").strip() or None,
+        )
+        if result is None:
+            raise HTTPException(status_code=404, detail="Review item was not found.")
+        if result.get("deleted"):
+            raise HTTPException(status_code=409, detail="Review item was deleted.")
+        return result
+
+    @app.post("/api/v1/product-reviews/{item_id}/failed")
+    def mark_product_review_failed(item_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        result = store.mark_product_review_sync_failed(
+            item_id,
+            error=str(payload.get("error") or "").strip() or None,
+        )
+        if result is None:
+            raise HTTPException(status_code=404, detail="Review item was not found.")
+        if result.get("deleted"):
+            raise HTTPException(status_code=409, detail="Review item was deleted.")
+        return result
+
     @app.get("/api/v1/image-profiles")
     def list_image_profiles() -> dict[str, Any]:
         return {"profiles": image_service.profiles.list()}
@@ -815,6 +843,20 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
             raise HTTPException(status_code=409, detail="Pipeline item claim is stale.")
         return {"status": "syncing"}
 
+    @app.post("/api/v1/internal/product-pipeline/{item_id}/external-seo")
+    def defer_external_seo(
+        item_id: str,
+        payload: dict[str, Any],
+        x_pipeline_key: str | None = Header(default=None, alias="X-Pipeline-Key"),
+    ) -> dict[str, Any]:
+        require_pipeline_key(x_pipeline_key)
+        external_job_id = str(payload.get("externalJobId") or "")
+        if not external_job_id or len(external_job_id) > 100:
+            raise HTTPException(status_code=422, detail="externalJobId is required.")
+        if not store.defer_external_seo(item_id, worker_id=str(payload.get("workerId") or ""), external_job_id=external_job_id):
+            raise HTTPException(status_code=409, detail="Pipeline item claim is stale.")
+        return {"status": "pending", "engine": "custom_gpt"}
+
     @app.post("/api/v1/internal/product-pipeline/{item_id}/seo")
     def mark_product_seo(
         item_id: str,
@@ -961,8 +1003,15 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
             if capabilities.get("mediaGalleryV2") is not True:
                 await websocket.close(code=4003, reason="Agent must support complete Amazon media galleries.")
                 return
+            client_id = str(hello.get("clientId") or "").strip()
+            if not client_id:
+                await websocket.close(code=4000, reason="clientId is required.")
+                return
+            if not await manager.add(client_id, websocket):
+                client_id = ""
+                await websocket.close(code=4001, reason="This agent is already connected.")
+                return
             client = await asyncio.to_thread(store.register_client, hello)
-            client_id = client["id"]
             cancel_intents = [str(value) for value in list(hello.get("cancelIntents") or []) if str(value)]
             acknowledged_intents: list[str] = []
             stop_clients = await manager.connected_client_ids()
@@ -973,7 +1022,6 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
                     acknowledged_intents.append(job_id)
             local_tasks = [value for value in list(hello.get("localTasks") or []) if isinstance(value, dict)]
             reconciliation = await asyncio.to_thread(store.reconcile_tasks, client_id, local_tasks)
-            await manager.add(client_id, websocket)
             maximum_slots = int(client.get("maxConcurrentInputs") or 0)
             required_cache_generation = await asyncio.to_thread(store.current_cache_generation)
             client_cache_generation = max(0, int(hello.get("cacheGeneration") or 0))
@@ -1120,9 +1168,9 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
             await websocket.close(code=4000, reason=str(error)[:120])
         finally:
             if client_id:
-                await manager.remove(client_id, websocket)
-                await asyncio.to_thread(store.mark_client_disconnected, client_id)
-                await asyncio.to_thread(store.purge_stopped_jobs)
+                if await manager.remove(client_id, websocket):
+                    await asyncio.to_thread(store.mark_client_disconnected, client_id)
+                    await asyncio.to_thread(store.purge_stopped_jobs)
 
     return app
 

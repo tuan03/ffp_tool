@@ -36,6 +36,17 @@ test("crawler session tracks urlText and setting updates", () => {
   toggleCrawlerAdvancedOpen();
   assert.equal(getCrawlerSessionState().isAdvancedOpen, false);
 });
+
+test("new crawl migrates the old default ZIP to 90001", async () => {
+  clearCrawlerSession();
+  updateCrawlerSetting("amazonZip", "10001");
+  const fakeRunner: AmazonCrawlerRunner = async ({ input }) => {
+    assert.equal(input.amazonZip, "90001");
+    return amazonCrawlerMockOutput;
+  };
+  await startCrawlerJob({ runAmazonCrawler: fakeRunner, urls: ["B012345678"] });
+  assert.equal(getCrawlerSessionState().settings.amazonZip, "90001");
+});
 test("crawler session subscription notifies listeners on state changes", () => {
   clearCrawlerSession();
   let notificationCount = 0;

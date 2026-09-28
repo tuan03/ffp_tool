@@ -119,7 +119,7 @@ export class GeminiShoppingContextAnalyzer implements ShoppingContextAnalyzer {
         const isRetryable =
           error instanceof GeminiGeneratorError ? error.isRetryable : false;
 
-        if (isRetryable && attempts <= this.maxRetries) {
+        if (!this.generator.handlesRetries && isRetryable && attempts <= this.maxRetries) {
           await new Promise((resolve) => setTimeout(resolve, 500));
           continue;
         }

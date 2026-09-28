@@ -10,6 +10,8 @@ import time
 from pathlib import Path
 from typing import Any, Awaitable, Callable, TypeVar
 
+from bs4 import BeautifulSoup
+
 from .amazon_locale import USER_AGENT, force_us_profile_url, html_is_location_blocked, playwright_us_cookies
 from .proxy_profiles import ProxyAssignment
 
@@ -30,6 +32,18 @@ def html_is_captcha(html: str) -> bool:
         "sorry, we just need to make sure you're not a robot", "robot check",
     )
     return bool(html) and any(marker in lowered for marker in markers)
+
+
+def _has_button_only_continue_challenge(html: str) -> bool:
+    form = BeautifulSoup(html, "html.parser").select_one('form[action="/errors_page/validateCaptcha"]')
+    if form is None:
+        return False
+    button = form.select_one('button[type="submit"]')
+    return bool(
+        button is not None
+        and button.get_text(" ", strip=True).casefold() == "continue shopping"
+        and not form.select("input:not([type='hidden']), textarea, select, img")
+    )
 
 
 def start_with_playwright_event_loop(start: Callable[[], Any]) -> Any:
@@ -577,6 +591,23 @@ class PlaywrightPool:
         html = await page.content()
         if not html_is_captcha(html):
             return html
+        if _has_button_only_continue_challenge(html):
+            if cancel_event and cancel_event.is_set():
+                raise InterruptedError("Crawler job cancelled while waiting for CAPTCHA.")
+            try:
+                await page.click('form[action="/errors_page/validateCaptcha"] button[type="submit"]', timeout=5_000)
+                html = await page.content()
+                for _ in range(6):
+                    if not html_is_captcha(html):
+                        return html
+                    if cancel_event and cancel_event.is_set():
+                        raise InterruptedError("Crawler job cancelled while waiting for CAPTCHA.")
+                    await page.wait_for_timeout(500)
+                    html = await page.content()
+            except InterruptedError:
+                raise
+            except Exception:
+                html = await page.content()
         if self.headless or not allow_manual:
             raise CaptchaTimeout("CAPTCHA requires a headed browser profile or another proxy.")
         await page.bring_to_front()
@@ -693,7 +724,11 @@ class PlaywrightPool:
             if route == "direct" and skip_remaining_direct:
                 continue
             is_last_route = attempt == len(routes)
-            allow_manual_captcha = not self.headless and is_last_route
+            # Let the first direct session solve a CAPTCHA before rotating
+            # routes; this also lets Amazon apply the requested delivery ZIP.
+            allow_manual_captcha = not self.headless and (
+                is_last_route or (route == "direct" and attempt == 1)
+            )
             try:
                 fetch_options: dict[str, Any] = {
                     "route": route,
@@ -708,6 +743,8 @@ class PlaywrightPool:
                     "profile": assignment.name,
                     "proxyEnabled": assignment.is_enabled,
                     "networkRoute": route,
+                    "amazonZip": self.zip_code,
+                    "usProfileApplied": self._us_profile_applied.get(profile_index) is True,
                     "outcome": "success",
                     "htmlBytes": len(html),
                 })
@@ -718,7 +755,7 @@ class PlaywrightPool:
                 if isinstance(profile_index, int):
                     self._block_profile(profile_index, error)
                 diagnostics.append(self._browser_error_trace(attempt, profile_index, error, "captcha"))
-                if allow_manual_captcha:
+                if allow_manual_captcha and is_last_route:
                     setattr(error, "diagnostics", diagnostics)
                     raise
             except Exception as error:
@@ -760,6 +797,7 @@ class PlaywrightPool:
     ) -> dict[str, Any]:
         trace: dict[str, Any] = {
             "attempt": attempt,
+            "amazonZip": self.zip_code,
             "outcome": outcome,
             "error": str(error),
         }
@@ -769,6 +807,7 @@ class PlaywrightPool:
                 "profile": assignment.name,
                 "proxyEnabled": assignment.is_enabled,
                 "networkRoute": self._route_kind(profile_index),
+                "usProfileApplied": self._us_profile_applied.get(profile_index) is True,
             })
         return trace
 

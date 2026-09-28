@@ -22,6 +22,7 @@ export type {
   CustomizationOptionGroup,
   CustomizationOptionPrice,
   CustomizationPricing,
+  CustomizationTextInput,
   ImageDimension,
   ImageResource,
   NormalizationSummary,

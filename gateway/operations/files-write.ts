@@ -125,17 +125,17 @@ export async function executeFilesStageBinary(
     throw new GatewayError("contentBase64 is invalid", "SHOPIFY_USER_ERROR", 400);
   }
 
-  const isGenericFile = rawResource === "FILE" || content.length > 20 * 1024 * 1024 || (Boolean(mimeType) && !/^image\/(?:jpeg|png|webp)$/i.test(mimeType));
-  const resource = isGenericFile ? "FILE" : "IMAGE";
-  const maxBytes = isGenericFile ? 1024 * 1024 * 1024 : 20 * 1024 * 1024;
-
+  const maxBytes = 3 * 1024 * 1024;
   if (content.length === 0 || content.length > maxBytes) {
     throw new GatewayError(
-      `Staged ${isGenericFile ? "file" : "image"} must be between 1 byte and ${isGenericFile ? "1 GB" : "20 MB"}`,
-      "SHOPIFY_USER_ERROR",
+      "Staged file binary must be between 1 byte and 3 MB",
+      "SHOPIFY_INVALID_INPUT",
       400,
     );
   }
+
+  const isGenericFile = rawResource === "FILE" || (Boolean(mimeType) && !/^image\/(?:jpeg|png|webp)$/i.test(mimeType));
+  const resource = isGenericFile ? "FILE" : "IMAGE";
 
   if (!isGenericFile && (!mimeType || !/^image\/(?:jpeg|png|webp)$/i.test(mimeType))) {
     throw new GatewayError("filename, supported image mimeType and contentBase64 are required", "SHOPIFY_USER_ERROR", 400);

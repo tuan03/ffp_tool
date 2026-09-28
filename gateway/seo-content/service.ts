@@ -1,4 +1,5 @@
-import { runAutoSeoPipeline, runMockSeoContent } from "../../src/modules/seo-content";
+import { fromAutoSeoProduct, runAutoSeoPipeline, runMockSeoContent } from "../../src/modules/seo-content";
+import { getCustomGptRuntime } from "../custom-gpt-seo/runtime";
 import type { GatewaySeoContentOptions, SeoContentInput, SeoContentResult } from "./types";
 
 /**
@@ -11,6 +12,18 @@ export async function runSeoContent(
   const isTestOrMock = process.env.NODE_ENV === "test" || process.env.APP_ENV === "mock";
   const defaultRunner = isTestOrMock ? runMockSeoContent : undefined;
   const runner = options?.runner ?? defaultRunner;
+
+  if (!runner) {
+    const queue = getCustomGptRuntime().queue;
+    const settings = options?.providerSettings ?? queue.settings(input.storeId);
+    if (settings.provider === "custom_gpt") {
+      for (const product of input.products) {
+        const seoInput = fromAutoSeoProduct(product);
+        queue.enqueue({ storeId: input.storeId, source: "auto_seo", sourceIdentity: String(seoInput.productId || seoInput.handle), input: { ...seoInput, siteDomain: input.shopDomain }, original: product, settings });
+      }
+      return { success: true, provider: "custom_gpt", processedCount: 0, message: `Queued ${input.products.length} products for Custom GPT`, seoOutputs: [] };
+    }
+  }
 
   const result = await runAutoSeoPipeline(input.products, {
     ...(runner ? { runner } : {}),

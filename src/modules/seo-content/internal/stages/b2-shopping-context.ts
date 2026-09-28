@@ -1,3 +1,4 @@
+import type { ProviderRequestOptions } from "../provider-runtime";
 import { evolveContext } from "../pipeline-context";
 import { GoogleGenAIVertexContentGenerator } from "../product-understanding/gemini-content-generator";
 import { FallbackShoppingContextAnalyzer } from "../shopping-context/fallback-shopping-context-analyzer";
@@ -31,7 +32,7 @@ export interface B2ShoppingContextDependencies {
  * falling back to HeuristicShoppingContextAnalyzer with an observability warning log.
  * If not configured, uses HeuristicShoppingContextAnalyzer directly.
  */
-export function createDefaultShoppingContextAnalyzer(options?: {
+export function createDefaultShoppingContextAnalyzer(options?: ProviderRequestOptions & {
   readonly onFallback?: (error: unknown) => void;
 }): ShoppingContextAnalyzer {
   const env = typeof process !== "undefined" && process.env ? process.env : undefined;
@@ -52,6 +53,7 @@ export function createDefaultShoppingContextAnalyzer(options?: {
     : 2048;
 
   const generator = new GoogleGenAIVertexContentGenerator({
+    ...options,
     projectId,
     location,
     defaultModel: model,
@@ -114,8 +116,10 @@ export function createB2ShoppingContextStage(
   };
 }
 
-export const b2ShoppingContextStage: SeoPipelineStage =
-  createB2ShoppingContextStage();
+export const b2ShoppingContextStage: SeoPipelineStage = {
+  name: "b2",
+  execute: context => createB2ShoppingContextStage().execute(context),
+};
 
 export async function executeB2ShoppingContext(
   context: SeoPipelineContext,

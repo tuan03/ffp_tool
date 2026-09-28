@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 
+import { GatewayError } from "../errors";
 import {
   InMemoryThrottleManager,
   ShopifyGraphqlClient,
@@ -9,10 +13,15 @@ import {
 import type { HttpTransport, StoreConfig } from "../index";
 import { executeProductsCreate } from "../operations/products-write";
 import {
+  assertPathInAllowedRoots,
   ensureMediaPubliclyAccessible,
+  fetchSafePublicUrl,
+  getAllowedUploadRoots,
   isLocalOrPrivateUrl,
+  isPrivateIp,
   resolveLocalImageBytes,
   stageLocalMedia,
+  validateSafeFetchUrl,
 } from "../operations/staged-uploads";
 
 const testStore: StoreConfig = {
@@ -260,5 +269,307 @@ test("executeProductsCreate automatically stages local media before sending prod
     assert.equal(mediaParam[0]?.alt, "Design #2 Mockup");
   } finally {
     globalThis.fetch = originalFetch;
+  }
+});
+
+test("isPrivateIp correctly flags private, loopback, metadata, and reserved IP ranges", () => {
+  // IPv4 Private & Loopback & Cloud metadata
+  assert.equal(isPrivateIp("127.0.0.1"), true);
+  assert.equal(isPrivateIp("127.255.255.255"), true);
+  assert.equal(isPrivateIp("10.0.0.1"), true);
+  assert.equal(isPrivateIp("10.255.255.255"), true);
+  assert.equal(isPrivateIp("192.168.1.1"), true);
+  assert.equal(isPrivateIp("169.254.169.254"), true); // AWS/GCP/Azure instance metadata
+  assert.equal(isPrivateIp("172.16.0.1"), true);
+  assert.equal(isPrivateIp("172.31.255.255"), true);
+  assert.equal(isPrivateIp("0.0.0.0"), true);
+  assert.equal(isPrivateIp("100.64.0.1"), true); // CGNAT
+  assert.equal(isPrivateIp("224.0.0.1"), true); // Multicast
+  assert.equal(isPrivateIp("240.0.0.1"), true); // Reserved
+
+  // IPv6
+  assert.equal(isPrivateIp("::1"), true);
+  assert.equal(isPrivateIp("0:0:0:0:0:0:0:1"), true);
+  assert.equal(isPrivateIp("0000:0000:0000:0000:0000:0000:0000:0001"), true);
+  assert.equal(isPrivateIp("::0001"), true);
+  assert.equal(isPrivateIp("::"), true);
+  assert.equal(isPrivateIp("::0"), true);
+  assert.equal(isPrivateIp("fe80::1"), true);
+  assert.equal(isPrivateIp("fc00::1"), true);
+  assert.equal(isPrivateIp("fd12:3456::1"), true);
+  assert.equal(isPrivateIp("fd00:ec2::254"), true); // AWS EC2 IMDSv2 metadata
+  assert.equal(isPrivateIp("::ffff:127.0.0.1"), true); // IPv4-mapped IPv6 loopback
+  assert.equal(isPrivateIp("::ffff:169.254.169.254"), true);
+  assert.equal(isPrivateIp("0:0:0:0:0:ffff:127.0.0.1"), true);
+  assert.equal(isPrivateIp("::127.0.0.1"), true); // IPv4-compatible IPv6 loopback
+  assert.equal(isPrivateIp("::7f00:1"), true);
+  assert.equal(isPrivateIp("::169.254.169.254"), true); // IPv4-compatible IPv6 metadata
+  assert.equal(isPrivateIp("::a9fe:a9fe"), true);
+  assert.equal(isPrivateIp("::10.0.0.1"), true);
+  assert.equal(isPrivateIp("::192.168.1.1"), true);
+  assert.equal(isPrivateIp("2002:7f00:0001::"), true); // 6to4 private IPv4
+  assert.equal(isPrivateIp("64:ff9b::127.0.0.1"), true); // NAT64 private IPv4
+
+  // Public IPs
+  assert.equal(isPrivateIp("8.8.8.8"), false);
+  assert.equal(isPrivateIp("1.1.1.1"), false);
+  assert.equal(isPrivateIp("172.32.0.1"), false);
+  assert.equal(isPrivateIp("192.169.0.1"), false);
+  assert.equal(isPrivateIp("2001:4860:4860::8888"), false);
+  assert.equal(isPrivateIp("2607:f8b0:4005:805::200e"), false);
+});
+
+test("validateSafeFetchUrl blocks SSRF against private IPs, localhost, and metadata hostnames", async () => {
+  const blockedUrls = [
+    "http://127.0.0.1/secret",
+    "http://127.0.0.2:8080/test",
+    "http://localhost:3000/api",
+    "http://10.0.0.1/internal",
+    "http://192.168.1.1/admin",
+    "http://169.254.169.254/latest/meta-data",
+    "http://[::1]:8080/flag",
+    "http://[0000:0000:0000:0000:0000:0000:0000:0001]:8080/flag",
+    "http://[::127.0.0.1]/test",
+    "http://[::169.254.169.254]/latest/meta-data",
+    "http://[::10.0.0.1]/test",
+    "http://[::192.168.1.1]/test",
+    "http://[fd00:ec2::254]/latest/meta-data",
+    "http://app.local/test",
+    "http://service.internal/secret",
+    "http://metadata/computeMetadata/v1",
+    "http://metadata.google.internal/computeMetadata/v1",
+    "file:///etc/passwd",
+    "ftp://example.com/file",
+  ];
+
+  for (const urlStr of blockedUrls) {
+    await assert.rejects(
+      async () => {
+        await validateSafeFetchUrl(urlStr);
+      },
+      (err: unknown) => {
+        assert.ok(err instanceof GatewayError, `Expected GatewayError for '${urlStr}'`);
+        assert.equal(err.code, "SHOPIFY_SECURITY_ERROR", `Expected SHOPIFY_SECURITY_ERROR for '${urlStr}'`);
+        assert.equal(err.httpStatus, 403, `Expected status 403 for '${urlStr}'`);
+        return true;
+      },
+    );
+  }
+});
+
+test("assertPathInAllowedRoots blocks arbitrary file reads, traversal, and symlink escapes", () => {
+  // 1. Files outside allowed roots
+  const forbiddenPaths = [
+    "/etc/passwd",
+    "/etc/hosts",
+    "stores.local.json",
+    ".env",
+    "../../stores.local.json",
+    "../../../etc/passwd",
+    path.resolve(process.cwd(), ".env"),
+    path.resolve(process.cwd(), "stores.local.json"),
+    path.resolve(process.cwd(), "gateway/stores.local.json"),
+    path.resolve(process.cwd(), "package.json"),
+  ];
+
+  for (const filePath of forbiddenPaths) {
+    assert.throws(
+      () => {
+        assertPathInAllowedRoots(filePath);
+      },
+      (err: unknown) => {
+        assert.ok(err instanceof GatewayError, `Expected GatewayError for '${filePath}'`);
+        assert.equal(err.code, "SHOPIFY_SECURITY_ERROR");
+        assert.equal(err.httpStatus, 403);
+        return true;
+      },
+    );
+  }
+
+  // 2. Path traversal escaping the root
+  const traversalPaths = [
+    path.resolve(process.cwd(), "src/modules/pinterest-pod/server/data/pinterest_pod/output/../../../../etc/passwd"),
+    path.resolve(process.cwd(), ".local-data/../../../../.env"),
+  ];
+
+  for (const filePath of traversalPaths) {
+    assert.throws(
+      () => {
+        assertPathInAllowedRoots(filePath);
+      },
+      (err: unknown) => {
+        assert.ok(err instanceof GatewayError);
+        assert.equal(err.code, "SHOPIFY_SECURITY_ERROR");
+        assert.equal(err.httpStatus, 403);
+        return true;
+      },
+    );
+  }
+
+  // 3. Symlink escape check: Create a symlink inside allowed root pointing outside
+  const allowedRoots = getAllowedUploadRoots();
+  const testRoot = allowedRoots[0] ?? path.resolve(process.cwd(), ".local-data");
+  if (!fs.existsSync(testRoot)) {
+    fs.mkdirSync(testRoot, { recursive: true });
+  }
+
+  const symlinkPath = path.join(testRoot, `symlink-test-${Date.now()}.png`);
+  try {
+    fs.symlinkSync("/etc/hosts", symlinkPath);
+    assert.throws(
+      () => {
+        assertPathInAllowedRoots(symlinkPath);
+      },
+      (err: unknown) => {
+        assert.ok(err instanceof GatewayError);
+        assert.equal(err.code, "SHOPIFY_SECURITY_ERROR");
+        assert.equal(err.httpStatus, 403);
+        return true;
+      },
+    );
+  } finally {
+    if (fs.existsSync(symlinkPath)) {
+      fs.unlinkSync(symlinkPath);
+    }
+  }
+
+  // 4. Valid file inside allowed root succeeds
+  const validFilePath = path.join(testRoot, `valid-test-${Date.now()}.png`);
+  try {
+    fs.writeFileSync(validFilePath, Buffer.from("dummy-png-content"));
+    const resolvedPath = assertPathInAllowedRoots(validFilePath);
+    assert.ok(resolvedPath);
+    assert.equal(fs.realpathSync(validFilePath), resolvedPath);
+  } finally {
+    if (fs.existsSync(validFilePath)) {
+      fs.unlinkSync(validFilePath);
+    }
+  }
+});
+
+test("fetchSafePublicUrl blocks redirects targeting private addresses (SSRF)", async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    // Mock fetch to simulate an external server 302 redirecting to internal metadata
+    globalThis.fetch = async (input: RequestInfo | URL) => {
+      const urlStr = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      if (urlStr.includes("public-site.com/image.jpg")) {
+        return new Response("", {
+          status: 302,
+          headers: { Location: "http://169.254.169.254/latest/meta-data" },
+        });
+      }
+      return originalFetch(input);
+    };
+
+    await assert.rejects(
+      async () => {
+        await fetchSafePublicUrl("https://public-site.com/image.jpg");
+      },
+      (err: unknown) => {
+        assert.ok(err instanceof GatewayError);
+        assert.equal(err.code, "SHOPIFY_SECURITY_ERROR");
+        assert.equal(err.httpStatus, 403);
+        return true;
+      },
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("resolveLocalImageBytes resolves Pinterest POD asset from disk and rejects traversal and private network URLs", async () => {
+  const allowedRoots = getAllowedUploadRoots();
+  const testRoot = allowedRoots[0] ?? path.resolve(process.cwd(), ".local-data");
+  if (!fs.existsSync(testRoot)) {
+    fs.mkdirSync(testRoot, { recursive: true });
+  }
+
+  const jobDir = path.join(testRoot, "job-regression-test");
+  if (!fs.existsSync(jobDir)) {
+    fs.mkdirSync(jobDir, { recursive: true });
+  }
+
+  const assetFile = path.join(jobDir, "mockup.png");
+  try {
+    fs.writeFileSync(assetFile, Buffer.from("fake-png-binary-data"));
+
+    // 1. Valid Pinterest POD URL resolves directly from disk without HTTP calls
+    const resolved = await resolveLocalImageBytes("/api/pinterest-pod/assets/job-regression-test/mockup.png");
+    assert.equal(resolved.filename, "mockup.png");
+    assert.equal(resolved.contentType, "image/png");
+    assert.equal(resolved.buffer.toString(), "fake-png-binary-data");
+
+    // 2. Traversal in Pinterest POD URL is rejected with SHOPIFY_SECURITY_ERROR (403)
+    await assert.rejects(
+      async () => {
+        await resolveLocalImageBytes("/api/pinterest-pod/assets/job-regression-test/../../../../etc/passwd");
+      },
+      (err: unknown) => {
+        assert.ok(err instanceof GatewayError);
+        assert.equal(err.code, "SHOPIFY_SECURITY_ERROR");
+        assert.equal(err.httpStatus, 403);
+        return true;
+      },
+    );
+
+    // 2b. URL-encoded path traversal in Pinterest POD URL is rejected with SHOPIFY_SECURITY_ERROR (403)
+    await assert.rejects(
+      async () => {
+        await resolveLocalImageBytes("/api/pinterest-pod/assets/%2e%2e/passwd");
+      },
+      (err: unknown) => {
+        assert.ok(err instanceof GatewayError);
+        assert.equal(err.code, "SHOPIFY_SECURITY_ERROR");
+        assert.equal(err.httpStatus, 403);
+        return true;
+      },
+    );
+
+    // 3. Local file path outside allowed roots is rejected with SHOPIFY_SECURITY_ERROR (403)
+    await assert.rejects(
+      async () => {
+        await resolveLocalImageBytes("/etc/passwd");
+      },
+      (err: unknown) => {
+        assert.ok(err instanceof GatewayError);
+        assert.equal(err.code, "SHOPIFY_SECURITY_ERROR");
+        assert.equal(err.httpStatus, 403);
+        return true;
+      },
+    );
+
+    // 4. Private network HTTP URL is rejected with SHOPIFY_SECURITY_ERROR (403)
+    await assert.rejects(
+      async () => {
+        await resolveLocalImageBytes("http://127.0.0.1:8768/secret-endpoint");
+      },
+      (err: unknown) => {
+        assert.ok(err instanceof GatewayError);
+        assert.equal(err.code, "SHOPIFY_SECURITY_ERROR");
+        assert.equal(err.httpStatus, 403);
+        return true;
+      },
+    );
+
+    // 4b. Private network IPv6 / IPv4-compatible URL is rejected with SHOPIFY_SECURITY_ERROR (403)
+    await assert.rejects(
+      async () => {
+        await resolveLocalImageBytes("http://[::127.0.0.1]:8768/secret-endpoint");
+      },
+      (err: unknown) => {
+        assert.ok(err instanceof GatewayError);
+        assert.equal(err.code, "SHOPIFY_SECURITY_ERROR");
+        assert.equal(err.httpStatus, 403);
+        return true;
+      },
+    );
+  } finally {
+    if (fs.existsSync(assetFile)) {
+      fs.unlinkSync(assetFile);
+    }
+    if (fs.existsSync(jobDir)) {
+      fs.rmdirSync(jobDir);
+    }
   }
 });

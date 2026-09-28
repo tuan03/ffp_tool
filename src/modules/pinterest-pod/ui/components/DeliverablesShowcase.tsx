@@ -15,7 +15,7 @@ interface DeliverablesShowcaseProps {
   readonly summaryMetrics?: SummaryMetrics;
   readonly seoPayload?: PinterestPodDeliverables;
   readonly onPreviewImage?: (item: LightboxImageItem) => void;
-  readonly onHandoverToSeo?: (payload: PinterestPodDeliverables) => Promise<void>;
+  readonly onHandoverToSeo?: (payload: PinterestPodDeliverables, serverViewModels?: readonly unknown[]) => Promise<void>;
 }
 
 type TabKey = "cmyk" | "mockups" | "cutouts" | "comparison";

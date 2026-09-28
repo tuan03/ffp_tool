@@ -17,3 +17,23 @@ test("product gallery chooses the first image and supports products without medi
   assert.equal(firstProductMediaUrl(productWithMedia), productWithMedia?.media[0]?.url ?? null);
   assert.equal(firstProductMediaUrl(productWithoutMedia), null);
 });
+
+test("failed child crawl does not show a cached parent image", () => {
+  const product = amazonCrawlerMockOutput.products.find((candidate) => candidate.media.length > 0);
+  assert.ok(product);
+  const failedProduct = {
+    ...product,
+    sourceVariants: product.sourceVariants.map((variant) => ({
+      ...variant,
+      diagnostics: {
+        fetchMode: "failed" as const,
+        attempts: 1,
+        captchaEncountered: true,
+        locationFallbackUsed: false,
+        matrixSwept: false,
+        cacheHit: false,
+      },
+    })),
+  };
+  assert.equal(firstProductMediaUrl(failedProduct), null);
+});

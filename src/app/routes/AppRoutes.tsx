@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { createBrowserRouter, Navigate, RouterProvider } from "react-router-dom";
 
 import { environment } from "../../config/environment";
+import { createCustomGptClient, createCustomGptSeoRoutes, getCustomGptClient } from "../../modules/custom-gpt-seo";
 import { AppLayout } from "../../layouts/AppLayout";
 import { amazonCrawlerRoutes } from "../../modules/amazon-crawler";
 import type {
@@ -81,20 +82,30 @@ export function AppRoutes({
 
     const handlePinterestHandover = async (
       payload: PinterestPodDeliverables,
+      serverViewModels?: readonly unknown[],
     ): Promise<void> => {
-      const result = await handoverPinterestToSeo(
-        {
-          deliverables: payload,
-          defaultNiche: payload.items[0]?.trendKeywords?.[0] || payload.productType || "home decor",
-        },
-        {
-          seoRunner,
-        },
-      );
+      let newViewModels: readonly SeoProductUiViewModel[];
 
-      const newViewModels = result.items.map((item) =>
-        adaptPinterestPodItemToViewModel(item),
-      );
+      if (serverViewModels && Array.isArray(serverViewModels) && serverViewModels.length > 0) {
+        newViewModels = (serverViewModels as readonly SeoProductUiViewModel[]).map((vm) => ({
+          ...vm,
+          storeId: vm.storeId || payload.storeId,
+        }));
+      } else {
+        const result = await handoverPinterestToSeo(
+          {
+            deliverables: payload,
+            defaultNiche: payload.items[0]?.trendKeywords?.[0] || payload.productType || "home decor",
+          },
+          {
+            seoRunner,
+          },
+        );
+
+        newViewModels = result.items.map((item) =>
+          adaptPinterestPodItemToViewModel(item, payload.storeId),
+        );
+      }
 
       if (typeof window !== "undefined" && window.sessionStorage) {
         try {
@@ -145,6 +156,12 @@ export function AppRoutes({
       const effectiveStoreId =
         storeId ||
         shopifyProducts.find((p) => p.storeId)?.storeId;
+
+      if (environment !== "mock" && effectiveStoreId) {
+        const settings = await createCustomGptClient().settings(effectiveStoreId);
+        // The backup endpoint already enqueued this snapshot on the server.
+        if (settings.provider === "custom_gpt") return;
+      }
 
       const result = await handoverAutoSeoToSeo(
         {
@@ -505,6 +522,7 @@ export function AppRoutes({
           ...distributedCrawlerRoutes,
           ...podRoutes,
           ...autoSeoRoutes,
+          ...createCustomGptSeoRoutes(getCustomGptClient(environment)),
           ...customizationRoutes,
           {
             path: "seo-review",
@@ -512,7 +530,6 @@ export function AppRoutes({
               <SeoReviewPage
                 amazonCrawlerReviews={amazonCrawlerReviews}
                 moduleApiRunner={moduleApiRunner}
-                onSyncApprovedProducts={handleSyncApprovedProducts}
                 onRollbackApprovedProducts={handleRollbackApprovedProducts}
               />
             ),
