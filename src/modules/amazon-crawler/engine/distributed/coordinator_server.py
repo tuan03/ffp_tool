@@ -178,12 +178,22 @@ class ConnectionManager:
         }
 
 
+def find_project_root() -> Path:
+    current = Path(__file__).resolve()
+    for parent in current.parents:
+        if (parent / "package.json").is_file() or (parent / "src").is_dir():
+            return parent
+    if len(current.parents) >= 4:
+        return current.parents[3]
+    return current.parent
+
+
 def create_coordinator_app(*, database_url: str | None = None, create_schema: bool = True) -> FastAPI:
     engine = create_database_engine(database_url)
     sessions = create_session_factory(engine)
     store = CoordinatorStore(sessions)
     manager = ConnectionManager()
-    project_root = Path(__file__).resolve().parents[5]
+    project_root = find_project_root()
     image_processing_root = Path(
         os.environ.get("IMAGE_PROCESSING_CACHE_DIR", str(project_root / ".runtime" / "image-processing"))
     ).resolve()
@@ -443,7 +453,13 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
     # --------------------------------------------------------------------------
     # Pinterest POD Studio Distributed Endpoints
     # --------------------------------------------------------------------------
-    PINTEREST_ASSET_ROOT = Path(__file__).resolve().parents[5] / "src" / "modules" / "pinterest-pod" / "server" / "temp" / "pinterest_pod"
+    env_pinterest_root = os.environ.get("PINTEREST_ASSET_ROOT")
+    if env_pinterest_root:
+        PINTEREST_ASSET_ROOT = Path(env_pinterest_root).resolve()
+    elif (project_root / "src" / "modules" / "pinterest-pod").is_dir():
+        PINTEREST_ASSET_ROOT = (project_root / "src" / "modules" / "pinterest-pod" / "server" / "temp" / "pinterest_pod").resolve()
+    else:
+        PINTEREST_ASSET_ROOT = (project_root / ".runtime" / "pinterest_pod").resolve()
 
     @app.post("/api/pinterest-pod/jobs", status_code=201)
     def create_pinterest_pod_job(payload: dict[str, Any]) -> dict[str, Any]:
