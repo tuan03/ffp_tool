@@ -76,6 +76,7 @@ class DistributedCrawlerAgent:
         crawler_factory: Callable[..., Any] = AmazonCrawler,
     ) -> None:
         self.project_root = project_root
+        self.cache = RawFamilyCache(project_root / ".runtime" / "cache")
         self.config = config
         self.on_status = on_status or (lambda _status: None)
         self.crawler_factory = crawler_factory
@@ -119,6 +120,7 @@ class DistributedCrawlerAgent:
             "waitingCaptcha": self._captcha_waiting,
             "pendingUploads": len(self.store.pending_results()) + len(self.store.pending_products()),
             "isPaused": self._paused,
+            "cache": self.cache.metrics_snapshot(),
         }
 
     def _publish_status(self) -> None:
@@ -406,10 +408,10 @@ class DistributedCrawlerAgent:
         try:
             if generation:
                 async with self._cache_cleanup_lock:
-                    result = await asyncio.to_thread(RawFamilyCache(self.project_root / ".runtime" / "cache").clear)
+                    result = await asyncio.to_thread(self.cache.clear)
                     self.store.set_cache_generation(max(self.store.cache_generation(), generation))
             else:
-                result = await asyncio.to_thread(RawFamilyCache(self.project_root / ".runtime" / "cache").clear)
+                result = await asyncio.to_thread(self.cache.clear)
             return {"type": "cache_cleared", "requestId": request_id, **result, "error": None}
         except OSError as error:
             return {
@@ -420,7 +422,7 @@ class DistributedCrawlerAgent:
     async def _invalidate_product_cache(self, asin: str, amazon_zip: str, generation: int) -> dict[str, int]:
         cache_key = f"{asin}:{amazon_zip}:us-v1"
         result = await asyncio.to_thread(
-            RawFamilyCache(self.project_root / ".runtime" / "cache").invalidate, cache_key,
+            self.cache.invalidate, cache_key,
         )
         self.store.set_product_invalidation_generation(generation)
         return result
@@ -441,7 +443,7 @@ class DistributedCrawlerAgent:
         try:
             discarded_jobs = await asyncio.to_thread(self.store.clear_orphaned_jobs, valid_job_ids)
             result = await asyncio.to_thread(
-                RawFamilyCache(self.project_root / ".runtime" / "cache").clear_temporary_files,
+                self.cache.clear_temporary_files,
             )
             if generation:
                 self.store.set_temporary_cleanup_generation(generation)
@@ -455,7 +457,7 @@ class DistributedCrawlerAgent:
         async with self._cache_cleanup_lock:
             if self.store.cache_generation() >= generation:
                 return {"removedFiles": 0, "removedBytes": 0}
-            result = await asyncio.to_thread(RawFamilyCache(self.project_root / ".runtime" / "cache").clear)
+            result = await asyncio.to_thread(self.cache.clear)
             self.store.set_cache_generation(generation)
             return result
 
@@ -544,6 +546,7 @@ class DistributedCrawlerAgent:
 
     async def _heartbeat_loop(self) -> None:
         while True:
+            await asyncio.to_thread(self.cache.maintain)
             running = [
                 {"taskId": task_id, "leaseId": assignment["leaseId"]}
                 for task_id, assignment in self.active.items()

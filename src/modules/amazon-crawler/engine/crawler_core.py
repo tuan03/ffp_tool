@@ -1468,6 +1468,11 @@ class AmazonCrawler:
         on_product_complete: ProductCompletionCallback | None = None,
     ) -> dict[str, Any]:
         cache_key = f"{normalized.asin}:{self.settings.amazon_zip}:us-v1"
+        with self.cache.crawl_guard(cache_key):
+            return self._crawl_family_locked(normalized, on_product_complete)
+
+    def _crawl_family_locked(self, normalized: NormalizedInput, on_product_complete: ProductCompletionCallback | None) -> dict[str, Any]:
+        cache_key = f"{normalized.asin}:{self.settings.amazon_zip}:us-v1"
         cached = self.cache.load(cache_key, require_customization=True)
         if cached is not None:
             family = deepcopy(cached)

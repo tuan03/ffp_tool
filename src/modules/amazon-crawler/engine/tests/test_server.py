@@ -12,6 +12,11 @@ from engine import server
 
 class ServerTests(unittest.TestCase):
     def setUp(self) -> None:
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        root_patch = patch.object(server, "PROJECT_ROOT", Path(directory.name))
+        root_patch.start()
+        self.addCleanup(root_patch.stop)
         self.client = TestClient(server.app)
 
     def test_health_and_job_lifecycle(self) -> None:
@@ -26,6 +31,15 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(snapshot.json()["status"], "queued")
         cancelled = self.client.delete(f"/api/amazon-crawler/jobs/{job_id}")
         self.assertEqual(cancelled.json()["status"], "cancelled")
+
+    def test_health_exposes_persistent_cache_counters_without_product_data(self) -> None:
+        with tempfile.TemporaryDirectory() as directory, patch.object(server, "PROJECT_ROOT", Path(directory)):
+            cache = server.RawFamilyCache(Path(directory) / ".runtime" / "cache")
+            cache.load("missing")
+            snapshot = self.client.get("/api/amazon-crawler/health").json()
+            self.assertEqual(snapshot["cache"]["miss"], 1)
+            self.assertEqual(snapshot["cache"]["bytes"], 0)
+            self.assertNotIn("products", snapshot)
 
     def test_invalid_input_isolated_by_engine_not_request_validation(self) -> None:
         with patch("engine.server.threading.Thread"):

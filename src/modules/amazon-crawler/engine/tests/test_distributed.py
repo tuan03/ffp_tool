@@ -337,7 +337,7 @@ class DistributedCacheControlTests(unittest.IsolatedAsyncioTestCase):
             other_asin_key = "B012345679:10001:us-v1"
             for key in (selected_key, other_zip_key, other_asin_key):
                 cache.save(key, cache_family())
-            cache.save_partial(selected_key, {"parent": {"asin": "B012345678"}})
+            cache.save_failure(selected_key, status="network_error", reason="network_error", retry_after_seconds=30)
             agent = DistributedCrawlerAgent(
                 project_root=root,
                 config=AgentConfig(
@@ -478,7 +478,9 @@ class DistributedCacheControlTests(unittest.IsolatedAsyncioTestCase):
             response = await agent.clear_temporary_data("request-1", {"retained-job"})
 
             self.assertEqual(response["discardedJobs"], 2)
-            self.assertEqual(response["removedFiles"], 1)
+            self.assertEqual(response["removedFiles"], 0)
+            self.assertFalse(temporary_file.exists())
+            self.assertGreaterEqual(agent.status_snapshot()["cache"]["temporaryRemoved"], 1)
             self.assertEqual([task["taskId"] for task in agent.store.local_tasks()], ["valid-task"])
             self.assertEqual(
                 {row["taskId"] for row in agent.store.pending_results()},

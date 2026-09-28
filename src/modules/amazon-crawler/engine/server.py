@@ -6,6 +6,7 @@ import os
 import threading
 import uuid
 from copy import deepcopy
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -102,8 +103,15 @@ def _run_job(job: Job) -> None:
 
 
 @app.get("/api/amazon-crawler/health")
-def health() -> dict[str, str]:
-    return {"status": "ok", "version": "1.0.0"}
+def health() -> dict[str, Any]:
+    cache = _local_cache(PROJECT_ROOT)
+    cache.maintain()
+    return {"status": "ok", "version": "1.0.0", "cache": cache.metrics_snapshot()}
+
+
+@lru_cache(maxsize=8)
+def _local_cache(root: Path) -> RawFamilyCache:
+    return RawFamilyCache(root / ".runtime" / "cache")
 
 
 @app.post("/api/amazon-crawler/jobs", status_code=202)
