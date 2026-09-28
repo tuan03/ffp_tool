@@ -3,6 +3,7 @@ import { getCustomGptRuntime } from "./custom-gpt-seo/runtime";
 
 import { GatewayDispatcher } from "./dispatcher";
 import { handleAutoSeoHttpRequest } from "./auto-seo-handler";
+import { handleSeoReviewHttpRequest } from "./seo-review-handler";
 import { handlePinterestPodSeoHttpRequest } from "./pinterest-pod-handler";
 import { assertHostSecurity, createGatewayHttpHandler, isGatewayAuthorized, MAX_BODY_BYTES } from "./http-server";
 import { InMemoryIdempotencyStore } from "./idempotency";
@@ -236,6 +237,11 @@ export function startGatewayServer(
 
     if (url === "/api/proxy/check" || url.startsWith("/api/proxy/check?")) {
       await handleProxyCheckHttpRequest(req, res, { authToken, maxBodyBytes });
+      return;
+    }
+
+    if (url.startsWith("/api/seo-review/")) {
+      await handleSeoReviewHttpRequest(req, res, { authToken, maxBodyBytes });
       return;
     }
 

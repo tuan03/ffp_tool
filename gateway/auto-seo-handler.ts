@@ -11,6 +11,7 @@ import {
 import { calculateSha256, canonicalizeJson } from "./canonical-json";
 import { isGatewayAuthorized, MAX_BODY_BYTES } from "./http-server";
 import { runSeoContent } from "./seo-content";
+import { executeSeoReviewSaveLifecycle } from "./seo-review-lifecycle";
 import type {
   AutoSeoProductPayload,
   SeoContentInput,
@@ -258,6 +259,51 @@ export async function handleAutoSeoRun(
 
     seoProvider = seoResult.provider;
     if (seoResult && seoResult.success === true) {
+      if (Array.isArray(seoResult.seoOutputs) && seoResult.seoOutputs.length > 0) {
+        for (let i = 0; i < seoResult.seoOutputs.length; i++) {
+          const output = seoResult.seoOutputs[i];
+          if (!output) continue;
+          const outRecord =
+            typeof output === "object" && output !== null
+              ? (output as Record<string, unknown>)
+              : undefined;
+          const outHandle =
+            typeof outRecord?.productHandle === "string"
+              ? outRecord.productHandle
+              : typeof outRecord?.handle === "string"
+                ? outRecord.handle
+                : undefined;
+          const outId =
+            typeof outRecord?.productId === "string"
+              ? outRecord.productId
+              : typeof outRecord?.id === "string"
+                ? outRecord.id
+                : undefined;
+
+          let matchedProduct = request.products.find(
+            (p) => (outId && p.id === outId) || (outHandle && p.handle === outHandle),
+          );
+          if (!matchedProduct && i < request.products.length) {
+            matchedProduct = request.products[i];
+          }
+
+          if (matchedProduct) {
+            await executeSeoReviewSaveLifecycle(
+              {
+                storeId: request.storeId,
+                productId: matchedProduct.id,
+                handle: matchedProduct.handle,
+                title: matchedProduct.title,
+                shopifyUpdatedAt: matchedProduct.updatedAt ?? null,
+                generatedOutput: output,
+              },
+              {
+                db,
+              },
+            );
+          }
+        }
+      }
       downstreamStatus = "SENT";
     } else {
       downstreamStatus = "FAILED";
