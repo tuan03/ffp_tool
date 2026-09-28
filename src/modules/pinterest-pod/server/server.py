@@ -536,4 +536,26 @@ def run_server() -> None:
 
 
 if __name__ == "__main__":
-    run_server()
+    if "--reload" in sys.argv:
+        try:
+            import subprocess
+            import watchfiles
+
+            child_args = [arg for arg in sys.argv if arg != "--reload"]
+            cmd = subprocess.list2cmdline([sys.executable, str(Path(__file__).resolve())] + child_args[1:])
+            logger.info("Pinterest POD Studio Backend auto-reload enabled (watchfiles). Watching %s", SERVER_ROOT)
+            ignore_dirs = [SERVER_ROOT / "temp", SERVER_ROOT / "data", SERVER_ROOT / "output"]
+            watch_filter = watchfiles.PythonFilter(ignore_paths=ignore_dirs)
+            sys.exit(
+                watchfiles.run_process(
+                    SERVER_ROOT,
+                    target=cmd,
+                    target_type="command",
+                    watch_filter=watch_filter,
+                )
+            )
+        except ImportError:
+            logger.warning("watchfiles is not installed. Running without auto-reload.")
+            run_server()
+    else:
+        run_server()

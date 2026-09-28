@@ -66,7 +66,7 @@ function pinterestPodBackendPlugin(): Plugin {
 
       try {
         const pythonCmd = resolvePythonCommand();
-        pyProcess = spawn(pythonCmd, [serverScript], {
+        pyProcess = spawn(pythonCmd, [serverScript, "--reload"], {
           stdio: "inherit",
           detached: false,
         });
