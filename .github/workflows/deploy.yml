@@ -84,7 +84,7 @@ jobs:
           script: |
             DEPLOY_DIR="/opt/ffp-tool"
             echo "=== [1/6] Preparing deployment directory at $DEPLOY_DIR ==="
-            sudo mkdir -p "$DEPLOY_DIR"
+            sudo mkdir -p "$DEPLOY_DIR/data" "$DEPLOY_DIR/runtime"
             sudo chown -R $USER:$USER "$DEPLOY_DIR"
             cd "$DEPLOY_DIR"
 
@@ -102,24 +102,25 @@ jobs:
             fi
 
             echo "=== [3/6] Handling .env configuration ==="
-            if [ ! -f .env ]; then
-              echo "First-time deployment: Writing initial .env file..."
-              if [ -n "$ENV_B64" ]; then
-                printf '%s' "$ENV_B64" | base64 -d > .env
-              else
-                printf '%s\n' "NODE_ENV=production" "GATEWAY_HOST=0.0.0.0" "GATEWAY_PORT=3001" "STATIC_DIR=/app/dist" > .env
-              fi
-              if ! grep -q "^APP_PORT=" .env 2>/dev/null; then
-                echo "APP_PORT=$APP_PORT" >> .env
-              fi
-              chmod 600 .env
-              echo "File .env initialized and protected (chmod 600)."
+            if [ -n "$ENV_B64" ]; then
+              echo "Applying .env configuration from GitHub Secrets..."
+              [ -f .env ] && cp .env .env.bak
+              printf '%s' "$ENV_B64" | base64 -d > .env
+            elif [ ! -f .env ]; then
+              echo "First-time deployment without secret: Initializing minimal default .env..."
+              printf '%s\n' "NODE_ENV=production" "GATEWAY_HOST=0.0.0.0" "GATEWAY_PORT=3001" "STATIC_DIR=/app/dist" > .env
             else
-              echo "Existing .env found. Preserving all existing secrets (no overwrite)."
-              if ! grep -q "^APP_PORT=" .env 2>/dev/null; then
-                echo "APP_PORT=$APP_PORT" >> .env
-              fi
+              echo "Existing .env found on VPS. Preserving secrets..."
             fi
+
+            # Ensure correct APP_PORT is recorded in .env
+            sed -i '/^APP_PORT=/d' .env 2>/dev/null || true
+            echo "APP_PORT=$APP_PORT" >> .env
+
+            # Sanitize .env to fix any lines that violate KEY=VALUE or comment syntax (e.g. wrapped lines with parentheses)
+            python3 -c "import re; p=re.compile(r'^\s*(#|$|(export\s+)?[a-zA-Z_][a-zA-Z0-9_]*\s*=)'); lines=open('.env','r',encoding='utf-8',errors='replace').readlines(); open('.env','w',encoding='utf-8').writelines([l if p.match(l) else ('# [sanitized] ' + l) for l in lines])" 2>/dev/null || true
+            chmod 600 .env
+            echo "File .env sanitized and protected (chmod 600)."
 
             echo "=== [4/6] Setting up compose.prod.yaml ==="
             printf '%s\n' \
@@ -146,7 +147,11 @@ jobs:
             echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
             export DOCKER_IMAGE
             export APP_PORT
+            echo "Validating Docker Compose configuration..."
+            docker compose -f compose.prod.yaml config -q
+            echo "Pulling Docker image: $DOCKER_IMAGE..."
             docker compose -f compose.prod.yaml pull
+            echo "Starting container..."
             docker compose -f compose.prod.yaml up -d --remove-orphans
 
             echo "=== [6/6] Verifying Nginx and SSL ==="
@@ -190,5 +195,23 @@ jobs:
               }
             fi
 
-            echo "Deployment to $DOMAIN completed successfully!"
+            echo "Verifying application health..."
+            HEALTHY=false
+            for i in $(seq 1 15); do
+              if curl -s -f "http://127.0.0.1:$APP_PORT/health" > /dev/null 2>&1; then
+                HEALTHY=true
+                echo "Application is healthy and responding on port $APP_PORT!"
+                break
+              fi
+              echo "Waiting for app container to start (attempt $i/15)..."
+              sleep 2
+            done
+
+            if [ "$HEALTHY" = "false" ]; then
+              echo "Warning: Health endpoint did not respond within 30s. Checking container logs:"
+              docker compose -f compose.prod.yaml logs --tail=50
+            fi
+
+            echo "=== Deployment Status ==="
             docker compose -f compose.prod.yaml ps
+            echo "FFP Tool deployment to https://$DOMAIN completed successfully!"
