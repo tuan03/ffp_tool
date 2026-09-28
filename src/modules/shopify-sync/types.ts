@@ -19,6 +19,27 @@ export interface ShopifySyncOptions {
   readonly throttleBaseDelayMs?: number;
   readonly existingProductId?: string;
   readonly existingManagedResources?: ShopifyManagedResources;
+  readonly sourceShopifyUpdatedAt?: string;
+  readonly expectedUpdatedAt?: string;
+  readonly force?: boolean;
+}
+
+export interface ShopifyVersionConflictDetails {
+  readonly code: "SHOPIFY_VERSION_CONFLICT";
+  readonly productId: string;
+  readonly sourceShopifyUpdatedAt: string;
+  readonly currentShopifyUpdatedAt: string;
+  readonly currentProduct?: {
+    readonly id?: string;
+    readonly title: string;
+    readonly handle: string;
+    readonly descriptionHtml?: string;
+    readonly seo?: {
+      readonly title?: string;
+      readonly description?: string;
+    };
+  };
+  readonly message?: string;
 }
 
 export interface ShopifyManagedResources {
@@ -113,6 +134,8 @@ export interface ShopifySyncProductResult {
   readonly dryRun: boolean;
   readonly warnings: readonly string[];
   readonly error?: string;
+  readonly details?: ShopifyVersionConflictDetails | Record<string, unknown>;
+  readonly conflictDetails?: ShopifyVersionConflictDetails;
   readonly reconciliationRequired?: boolean;
   readonly managedResources?: ShopifyManagedResources;
   readonly timings?: ShopifySyncTimings;
@@ -168,6 +191,8 @@ export interface CreateProductOutput {
 export interface UpdateProductInput extends CreateProductInput {
   readonly productId: string;
   readonly previousManagedResources?: ShopifyManagedResources;
+  readonly expectedUpdatedAt?: string;
+  readonly force?: boolean;
 }
 
 export interface UpdateProductOutput extends CreateProductOutput {}

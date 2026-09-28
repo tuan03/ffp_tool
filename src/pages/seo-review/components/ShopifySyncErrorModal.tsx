@@ -8,6 +8,7 @@ export interface ShopifySyncErrorModalProps {
   readonly onClose: () => void;
   readonly onRetry?: (id: string) => void;
   readonly onDelete?: (id: string) => void;
+  readonly onOpenVersionConflict?: (product: SeoProductUiViewModel) => void;
 }
 
 export function ShopifySyncErrorModal({
@@ -16,6 +17,7 @@ export function ShopifySyncErrorModal({
   onClose,
   onRetry,
   onDelete,
+  onOpenVersionConflict,
 }: ShopifySyncErrorModalProps): React.JSX.Element | null {
   const [copied, setCopied] = useState(false);
 
@@ -36,6 +38,11 @@ export function ShopifySyncErrorModal({
   const errorMessage =
     product.shopifySyncError?.trim() ||
     "Không thể đồng bộ sản phẩm lên Shopify. Vui lòng kiểm tra lại kết nối Store.";
+
+  const isVersionConflict =
+    errorMessage.includes("SHOPIFY_VERSION_CONFLICT") ||
+    errorMessage.toLowerCase().includes("version conflict") ||
+    errorMessage.toLowerCase().includes("xung đột phiên bản");
 
   function handleCopy() {
     if (typeof navigator !== "undefined" && navigator.clipboard) {
@@ -165,19 +172,35 @@ export function ShopifySyncErrorModal({
             )}
           </div>
 
-          {onRetry && (
-            <button
-              type="button"
-              onClick={() => {
-                onRetry(product.id);
-                onClose();
-              }}
-              className="px-4 py-2 rounded-xl bg-gradient-to-r from-rose-600 to-rose-700 hover:from-rose-500 hover:to-rose-600 text-white text-xs font-bold shadow-lg shadow-rose-900/30 transition flex items-center gap-1.5 cursor-pointer"
-            >
-              <span>🔄</span>
-              <span>Thử lại đẩy Store ngay</span>
-            </button>
-          )}
+          <div className="flex items-center gap-2">
+            {isVersionConflict && onOpenVersionConflict && (
+              <button
+                type="button"
+                onClick={() => {
+                  onOpenVersionConflict(product);
+                  onClose();
+                }}
+                className="px-4 py-2 rounded-xl bg-gradient-to-r from-amber-600 to-rose-600 hover:from-amber-500 hover:to-rose-500 text-white text-xs font-bold shadow-lg shadow-amber-900/30 transition flex items-center gap-1.5 cursor-pointer"
+              >
+                <span>⚠️</span>
+                <span>Xem Diff & Xử lý xung đột</span>
+              </button>
+            )}
+
+            {onRetry && (
+              <button
+                type="button"
+                onClick={() => {
+                  onRetry(product.id);
+                  onClose();
+                }}
+                className="px-4 py-2 rounded-xl bg-gradient-to-r from-rose-600 to-rose-700 hover:from-rose-500 hover:to-rose-600 text-white text-xs font-bold shadow-lg shadow-rose-900/30 transition flex items-center gap-1.5 cursor-pointer"
+              >
+                <span>🔄</span>
+                <span>Thử lại đẩy Store ngay</span>
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </div>

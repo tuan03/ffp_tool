@@ -18,6 +18,12 @@ export {
   syncSingleProduct,
 } from "./service";
 
+export {
+  ensureUrlRedirect,
+  safeEnsureUrlRedirect,
+} from "./redirects";
+export type { UrlRedirectResult } from "./redirects";
+
 export type {
   CreateProductInput,
   CreateProductOutput,
@@ -45,4 +51,5 @@ export type {
   UploadFileOutput,
   UpdateProductInput,
   UpdateProductOutput,
+  ShopifyVersionConflictDetails,
 } from "./types";

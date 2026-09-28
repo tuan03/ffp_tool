@@ -376,6 +376,8 @@ export interface ShopifyProductsCreateResponse {
 export interface ShopifyProductsUpdatePayload {
   readonly id: string;
   readonly product: ShopifyProductUpdateInput;
+  readonly expectedUpdatedAt?: string;
+  readonly force?: boolean;
 }
 
 export interface ShopifyProductsUpdateData {

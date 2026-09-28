@@ -405,6 +405,42 @@ export function createShopifyGatewayAdapter(
       if (!current.data.product) {
         throw new Error(`Shopify product ${input.productId} was not found before update.`);
       }
+
+      if (
+        !input.force &&
+        input.expectedUpdatedAt &&
+        current.data.product.updatedAt &&
+        current.data.product.updatedAt !== input.expectedUpdatedAt
+      ) {
+        const conflictDetails = {
+          code: "SHOPIFY_VERSION_CONFLICT" as const,
+          productId: input.productId,
+          sourceShopifyUpdatedAt: input.expectedUpdatedAt,
+          currentShopifyUpdatedAt: current.data.product.updatedAt,
+          currentProduct: {
+            title: current.data.product.title,
+            handle: current.data.product.handle,
+            descriptionHtml: current.data.product.descriptionHtml,
+            seo: current.data.product.seo
+              ? {
+                  title: current.data.product.seo.title,
+                  description: current.data.product.seo.description,
+                }
+              : undefined,
+          },
+        };
+        const conflictError = Object.assign(
+          new Error(
+            `Shopify product version conflict: product was modified at ${current.data.product.updatedAt}, but SEO was generated from version at ${input.expectedUpdatedAt}.`,
+          ),
+          {
+            code: "SHOPIFY_VERSION_CONFLICT",
+            details: conflictDetails,
+          },
+        );
+        throw conflictError;
+      }
+
       const previousManagedTags = new Set(input.previousManagedResources?.tags ?? []);
       const preservedTags = current.data.product.tags.filter((tag) => !previousManagedTags.has(tag));
       const nextTags = [...new Set([...preservedTags, ...(input.tags ?? [])])];
@@ -429,6 +465,8 @@ export function createShopifyGatewayAdapter(
         requestId,
         payload: {
           id: input.productId,
+          expectedUpdatedAt: input.expectedUpdatedAt,
+          force: input.force,
           product: {
             title: input.title,
             handle: input.handle,

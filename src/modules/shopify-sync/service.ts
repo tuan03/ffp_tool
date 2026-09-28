@@ -16,6 +16,7 @@ import type {
   UploadFileOutput,
   UpdateProductInput,
   UpdateProductOutput,
+  ShopifyVersionConflictDetails,
 } from "./types";
 
 const AMAZON_ASIN_PATTERN = /^[A-Z0-9]{10}$/;
@@ -296,10 +297,12 @@ export async function syncSingleProduct(
         if (!gateway.updateProduct) {
           throw new Error("ShopifyGateway does not support updating an existing product.");
         }
-        throwIfCancelled();
+        const expectedUpdatedAt = options.sourceShopifyUpdatedAt ?? options.expectedUpdatedAt;
         writtenProduct = await gateway.updateProduct({
           productId: options.existingProductId,
           previousManagedResources: options.existingManagedResources,
+          expectedUpdatedAt,
+          force: options.force,
           ...productWriteInput,
         });
       } else {
@@ -588,6 +591,12 @@ export async function syncSingleProduct(
         return match ? match[1] : undefined;
       })();
 
+    const errCode = typeof errObj?.code === "string" ? errObj.code : undefined;
+    const isConflict = errCode === "SHOPIFY_VERSION_CONFLICT";
+    const conflictDetails = isConflict
+      ? ((details ?? errObj?.details ?? errObj) as ShopifyVersionConflictDetails)
+      : undefined;
+
     const isPartialWrite =
       errObj?.code === "SHOPIFY_PARTIAL_WRITE" ||
       errObj?.code === "SHOPIFY_UNKNOWN_WRITE_STATE" ||
@@ -612,6 +621,8 @@ export async function syncSingleProduct(
       dryRun,
       warnings,
       error: msg,
+      details: details ?? (isConflict ? conflictDetails : undefined),
+      conflictDetails,
       reconciliationRequired,
       managedResources: writtenProduct?.managedResources ?? (details?.managedResources as ShopifyManagedResources | undefined),
       timings: getTimings(),

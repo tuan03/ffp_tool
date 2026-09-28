@@ -414,8 +414,9 @@ test("assertPathInAllowedRoots blocks arbitrary file reads, traversal, and symli
   }
 
   const symlinkPath = path.join(testRoot, `symlink-test-${Date.now()}.png`);
+  const targetOutside = process.platform === "win32" ? process.execPath : "/etc/hosts";
   try {
-    fs.symlinkSync("/etc/hosts", symlinkPath);
+    fs.symlinkSync(targetOutside, symlinkPath);
     assert.throws(
       () => {
         assertPathInAllowedRoots(symlinkPath);
