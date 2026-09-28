@@ -1,11 +1,11 @@
 # ==========================================
-# Stage 1: Build Frontend SPA
+# Stage 1: Build Frontend SPA & Install Dependencies
 # ==========================================
 FROM node:22-bookworm-slim AS builder
 
 WORKDIR /app
 
-# Install native compilation dependencies for build-time native modules
+# Install native build tools for compiling native addons (better-sqlite3)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 make g++ ca-certificates \
     && rm -rf /var/lib/apt/lists/*
@@ -28,19 +28,17 @@ ENV NODE_ENV=production \
     GATEWAY_PORT=3001 \
     STATIC_DIR=/app/dist
 
-# Install runtime dependencies for SSL and SQLite
+# Install runtime ca-certificates for outbound HTTPS (Shopify / Google Suggest)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Install production dependencies and tsx for executing backend typescript modules
-COPY package.json package-lock.json ./
-RUN npm ci --omit=dev && npm install --no-save tsx
-
-# Copy built frontend assets
+# Copy pre-compiled node_modules (including native better-sqlite3 and tsx) and built frontend from builder
+COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
 
 # Copy backend application files
+COPY package.json ./
 COPY gateway ./gateway
 COPY src ./src
 COPY scripts ./scripts
