@@ -10,6 +10,7 @@ Tool_crawer_New_update/
 !.env.mock
 !.env.production.example
 .env.shopify
+/wrydeco-vps_key.pem
 *.tsbuildinfo
 .DS_Store
 stores.local.json
