@@ -81,8 +81,8 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           envs: DOCKER_IMAGE,GHCR_USER,GHCR_TOKEN,TARGET_DOMAIN,ENV_B64
-          script_stop: true
           script: |
+            bash -e << 'DEPLOYSCRIPT'
             set -e
 
             DEPLOY_DIR="/opt/ffp-tool"
@@ -92,17 +92,22 @@ jobs:
             cd "$DEPLOY_DIR"
 
             echo "=== [2/6] Detecting application port ==="
-            if [ -f .env ] && grep -q "^APP_PORT=" .env; then
-              APP_PORT=$(grep "^APP_PORT=" .env | cut -d '=' -f2 | tr -d ' "')
+            APP_PORT=""
+            if [ -f .env ]; then
+              APP_PORT=$(grep -E "^APP_PORT=" .env 2>/dev/null | cut -d '=' -f2 | tr -d ' "' || true)
+            fi
+
+            if [ -n "$APP_PORT" ]; then
               echo "Using existing configured APP_PORT: $APP_PORT"
             else
-              APP_PORT=3010
-              for p in $(seq 3010 3999); do
-                if ! sudo ss -tlpn | grep -q ":$p "; then
-                  APP_PORT=$p
-                  break
-                fi
-              done
+              APP_PORT=$(python3 -c "
+import socket
+for p in range(3010, 4000):
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        if s.connect_ex(('127.0.0.1', p)) != 0:
+            print(p)
+            break
+" 2>/dev/null || echo "3010")
               echo "Auto-detected available port: $APP_PORT"
             fi
 
@@ -112,27 +117,27 @@ jobs:
               if [ -n "$ENV_B64" ]; then
                 printf '%s' "$ENV_B64" | base64 -d > .env
               else
-                cat <<'EOF' > .env
+                cat <<'ENV_EOF' > .env
             NODE_ENV=production
             GATEWAY_HOST=0.0.0.0
             GATEWAY_PORT=3001
             STATIC_DIR=/app/dist
-            EOF
+            ENV_EOF
               fi
-              if ! grep -q "^APP_PORT=" .env; then
+              if ! grep -q "^APP_PORT=" .env 2>/dev/null; then
                 echo "APP_PORT=$APP_PORT" >> .env
               fi
               chmod 600 .env
               echo "File .env initialized and protected (chmod 600)."
             else
               echo "Existing .env found. Preserving all existing secrets (no overwrite)."
-              if ! grep -q "^APP_PORT=" .env; then
+              if ! grep -q "^APP_PORT=" .env 2>/dev/null; then
                 echo "APP_PORT=$APP_PORT" >> .env
               fi
             fi
 
             echo "=== [4/6] Setting up compose.prod.yaml ==="
-            cat <<'EOF' > compose.prod.yaml
+            cat <<'COMPOSE_EOF' > compose.prod.yaml
             services:
               app:
                 image: ${DOCKER_IMAGE}
@@ -151,7 +156,7 @@ jobs:
                   timeout: 5s
                   retries: 3
                   start_period: 10s
-            EOF
+            COMPOSE_EOF
 
             echo "=== [5/6] Pulling and restarting Docker container ==="
             echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
@@ -201,7 +206,7 @@ jobs:
             fi
 
             # Check if SSL is already configured; if not, invoke certbot
-            if ! sudo grep -q "ssl_certificate" "$NGINX_CONF"; then
+            if ! sudo grep -q "ssl_certificate" "$NGINX_CONF" 2>/dev/null; then
               echo "Requesting Let's Encrypt SSL certificate for $DOMAIN..."
               sudo certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos --register-unsafely-without-email --redirect || {
                 echo "Notice: Certbot request finished with warnings. Ensure DNS for $DOMAIN is pointed to this server."
@@ -210,3 +215,4 @@ jobs:
 
             echo "Deployment to $DOMAIN completed successfully!"
             docker compose -f compose.prod.yaml ps
+            DEPLOYSCRIPT
