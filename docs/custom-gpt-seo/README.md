@@ -13,18 +13,17 @@ For commands and expected results, follow the [step-by-step setup guide](setup.m
 GATEWAY_HOST=127.0.0.1
 GATEWAY_PORT=3001
 GATEWAY_AUTH_TOKEN=<dedicated-internal-admin-secret>
-GPT_SEO_ACTION_KEY=<different-random-action-secret>
-GPT_SEO_STORE_ID=capozen
+GPT_SEO_ACTION_KEYS_JSON={"capozen":"<capozen-random-action-secret>","wrydeco":"<wrydeco-random-action-secret>"}
 GPT_SEO_DB_PATH=.local-data/custom-gpt-seo.sqlite3
 GPT_SEO_PUBLIC_URL=https://seo.example.com
 SHOPIFY_GATEWAY_URL=http://127.0.0.1:3001/api/shopify
 ```
 
-Generate independent random secrets using your password manager. Never commit them. Set GPT_SEO_PUBLIC_URL after selecting your domain; omit it for local mock work. When set, image Actions return short-lived signed URLs. The Action key grants draft processing only for GPT_SEO_STORE_ID. Internal administration uses the gateway key. Changing providers does not convert existing GPT jobs.
+Generate an independent random Action secret for every store using your password manager. Never commit them. The Bearer key determines the store; a GPT cannot select another store through request input. Legacy single-store deployments may continue using `GPT_SEO_ACTION_KEY` with `GPT_SEO_STORE_ID`, but `GPT_SEO_ACTION_KEYS_JSON` takes precedence when set. Set `GPT_SEO_PUBLIC_URL` after selecting your domain; omit it for local mock work. When set, image Actions return short-lived store-scoped signed URLs. Internal administration uses the gateway key. Changing providers does not convert existing GPT jobs.
 
 3. Serve HTTPS using the supplied Caddy example. Merge it with the existing deployment routes and environment configuration for image processing, Shopify and the Amazon coordinator; it is not a replacement for the complete application deployment. Protect browser/admin routes with authentication. Never expose the gateway or coordinator ports directly to the internet.
 4. In GPT Builder create a private Custom GPT. Enable available image-understanding capabilities. Paste `gpt-instructions.md` into Instructions.
-5. Import `openapi.json` into Actions, replacing `https://seo.example.com` with the HTTPS domain. Set Authentication → API Key → Bearer to GPT_SEO_ACTION_KEY. Do not add this secret to schema or instructions.
+5. Import `openapi.json` into Actions, replacing `https://seo.example.com` with the HTTPS domain. Set Authentication → API Key → Bearer to that GPT's store-specific key from `GPT_SEO_ACTION_KEYS_JSON`. Reuse the schema for other stores, but never reuse a store's key. Do not add secrets to schema or instructions.
 6. Add `seo-knowledge.md` as Knowledge. Test capabilities and queue access in Builder before using products.
 7. Run the vision acceptance below. Configure provider and batch size at `/gpt-seo`, then send products from Amazon or Auto SEO.
 
