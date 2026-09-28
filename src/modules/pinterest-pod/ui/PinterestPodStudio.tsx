@@ -309,6 +309,17 @@ export function PinterestPodStudio({
       }
     } catch (err) {
       if (!isMountedRef.current) return;
+      const isNotFound = err instanceof Error && (err.message.includes("404") || err.message.includes("Not Found"));
+      if (isNotFound) {
+        try {
+          localStorage.removeItem("pinterest_pod_active_job_id");
+        } catch {
+          // Ignore
+        }
+        setJobId(null);
+        setJobStatus("idle");
+        return;
+      }
       setErrorMessage(err instanceof Error ? err.message : `Không thể tải dữ liệu job ${targetJobId}`);
     }
   }

@@ -484,21 +484,66 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
     @app.get("/api/pinterest-pod/jobs/{job_id}")
     def get_pinterest_pod_job(job_id: str) -> dict[str, Any]:
         snapshot = store.get_job(job_id)
-        if snapshot is None:
-            raise HTTPException(status_code=404, detail="Pinterest POD job was not found.")
-        return snapshot
+        if snapshot is not None:
+            return snapshot
+
+        safe_job_id = "".join(c for c in job_id if c.isalnum() or c in ("-", "_"))
+        manifest_file = (PINTEREST_ASSET_ROOT / safe_job_id / "manifest.json").resolve()
+        if manifest_file.is_file() and manifest_file.is_relative_to(PINTEREST_ASSET_ROOT.resolve()):
+            try:
+                data = json.loads(manifest_file.read_text(encoding="utf-8"))
+                if isinstance(data, dict):
+                    return data
+            except Exception:
+                pass
+
+        try:
+            import urllib.request
+            req = urllib.request.Request(f"http://127.0.0.1:8768/api/pinterest-pod/jobs/{safe_job_id}")
+            with urllib.request.urlopen(req, timeout=1.5) as resp:
+                if resp.status == 200:
+                    return json.loads(resp.read().decode("utf-8"))
+        except Exception:
+            pass
+
+        raise HTTPException(status_code=404, detail="Pinterest POD job was not found.")
 
     @app.get("/api/pinterest-pod/jobs/{job_id}/logs")
     def get_pinterest_pod_job_logs(job_id: str) -> dict[str, Any]:
         snapshot = store.get_job(job_id)
-        if snapshot is None:
-            raise HTTPException(status_code=404, detail="Pinterest POD job was not found.")
-        return {
-            "ok": True,
-            "jobId": job_id,
-            "status": snapshot.get("status", "unknown"),
-            "logs": snapshot.get("logs", []),
-        }
+        if snapshot is not None:
+            return {
+                "ok": True,
+                "jobId": job_id,
+                "status": snapshot.get("status", "unknown"),
+                "logs": snapshot.get("logs", []),
+            }
+
+        safe_job_id = "".join(c for c in job_id if c.isalnum() or c in ("-", "_"))
+        try:
+            import urllib.request
+            req = urllib.request.Request(f"http://127.0.0.1:8768/api/pinterest-pod/jobs/{safe_job_id}/logs")
+            with urllib.request.urlopen(req, timeout=1.5) as resp:
+                if resp.status == 200:
+                    return json.loads(resp.read().decode("utf-8"))
+        except Exception:
+            pass
+
+        manifest_file = (PINTEREST_ASSET_ROOT / safe_job_id / "manifest.json").resolve()
+        if manifest_file.is_file() and manifest_file.is_relative_to(PINTEREST_ASSET_ROOT.resolve()):
+            try:
+                data = json.loads(manifest_file.read_text(encoding="utf-8"))
+                if isinstance(data, dict):
+                    return {
+                        "ok": True,
+                        "jobId": job_id,
+                        "status": data.get("status", "unknown"),
+                        "logs": data.get("logs", []),
+                    }
+            except Exception:
+                pass
+
+        raise HTTPException(status_code=404, detail="Pinterest POD job was not found.")
 
     @app.post("/api/pinterest-pod/jobs/{job_id}/cancel")
     async def cancel_pinterest_pod_job(job_id: str) -> dict[str, Any]:
