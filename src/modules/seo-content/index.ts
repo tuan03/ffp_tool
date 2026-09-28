@@ -141,4 +141,21 @@ export type {
   SeoStageRetryLog,
   SeoStageStatus,
 } from "./internal/checkpoint";
+export {
+  KeywordQualityComparator,
+  evaluateKeywordQuality,
+  compareKeywordQuality,
+  calculateEntityAlignment,
+  calculateCommercialIntent,
+  calculateSearchValidation,
+  calculateCannibalizationSafety,
+} from "./internal/keyword-comparator";
+export type {
+  KeywordComparatorOptions,
+  KeywordComparisonDecision,
+  KeywordComparisonResult,
+  KeywordEvaluationContext,
+  KeywordScoreBreakdown,
+  CannibalizationEvaluation,
+} from "./internal/keyword-comparator";
 

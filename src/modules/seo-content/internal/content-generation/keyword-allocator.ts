@@ -1,5 +1,10 @@
 import type { KeywordCluster } from "../domain-types";
 import type { KeywordAllocation } from "./content-generation-types";
+import {
+  KeywordQualityComparator,
+  type KeywordComparisonResult,
+  type KeywordEvaluationContext,
+} from "../keyword-comparator";
 
 export interface KeywordAllocatorInput {
   readonly approvedKeywords: readonly string[];
@@ -12,6 +17,10 @@ export interface KeywordAllocatorInput {
     readonly suitableOccasions?: readonly string[];
     readonly useCases?: readonly string[];
   };
+  readonly existingPrimaryKeyword?: string;
+  readonly existingKeywords?: readonly string[];
+  readonly comparatorContext?: KeywordEvaluationContext;
+  readonly comparator?: KeywordQualityComparator;
 }
 
 /**
@@ -125,6 +134,32 @@ export function allocateKeywords(input: KeywordAllocatorInput): KeywordAllocatio
     }
   }
 
+  // Compare candidate primary keyword against existing primary keyword if one exists
+  const existingPrimary = input.existingPrimaryKeyword ?? input.existingKeywords?.[0];
+  let comparisonResult: KeywordComparisonResult | undefined;
+
+  if (existingPrimary && primary && !areCanonicalEquivalent(primary, existingPrimary)) {
+    const comparator = input.comparator ?? new KeywordQualityComparator();
+    const evalContext: KeywordEvaluationContext = input.comparatorContext ?? {
+      physicalProductIdentity: productCategory,
+      targetAudience: framingSources?.targetAudience,
+      occasions: framingSources?.suitableOccasions,
+      useCases: framingSources?.useCases,
+      knownConflicts: discardedKeywords,
+      suggestions: approvedKeywords,
+    };
+
+    comparisonResult = comparator.compare(primary, existingPrimary, evalContext);
+
+    // Objective Superiority Rule: Candidate replaces existing primary keyword ONLY if delta >= 0.08 and safety is acceptable
+    // When candidate is not objectively superior, retain the existing primary keyword.
+    if (comparisonResult.decision !== "REPLACE") {
+      primary = existingPrimary;
+    }
+  } else if (existingPrimary && !primary) {
+    primary = existingPrimary;
+  }
+
   // Map cluster representatives to avoid picking multiple keywords from the same cluster
   const clusterByKeyword = new Map<string, string>();
   for (const cluster of keywordClusters) {
@@ -222,5 +257,6 @@ export function allocateKeywords(input: KeywordAllocatorInput): KeywordAllocatio
     supportingKeywords,
     framingConcepts,
     targetedKeywords,
+    comparisonResult,
   };
 }

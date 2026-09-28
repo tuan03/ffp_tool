@@ -34,6 +34,8 @@ export interface SeoContentInput {
   readonly variantLabel?: string;
   readonly variants?: readonly unknown[];
   readonly variantSummary?: VariantSummary;
+  readonly existingPrimaryKeyword?: string;
+  readonly existingKeywords?: readonly string[];
 }
 
 export interface SeoContentWebpAsset {
