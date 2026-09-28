@@ -60,7 +60,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         config.data_directory.mkdir(parents=True, exist_ok=True)
         project_root.mkdir(parents=True, exist_ok=True)
         with AgentInstanceLock(config.data_directory):
-            if arguments.no_tray or sys.platform != "win32":
+            use_tray = not arguments.no_tray and sys.platform == "win32"
+            if use_tray:
+                try:
+                    import pystray  # noqa: F401
+                except ImportError:
+                    print("Note: 'pystray' is not installed; running agent in console mode.", flush=True)
+                    use_tray = False
+
+            if not use_tray:
                 agent = DistributedCrawlerAgent(
                     project_root=project_root,
                     config=config,

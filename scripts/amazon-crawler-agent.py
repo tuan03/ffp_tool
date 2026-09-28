@@ -14,6 +14,11 @@ PINTEREST_POD_ROOT = REPOSITORY_ROOT / "src" / "modules" / "pinterest-pod" / "se
 if PINTEREST_POD_ROOT.is_dir():
     sys.path.insert(0, str(PINTEREST_POD_ROOT))
 
+# In local development via `npm run dev:agent`, default coordinator to 127.0.0.1:8766 if not configured
+config_file = REPOSITORY_ROOT / "config" / "amazon-crawler-agent.json"
+if not config_file.is_file() and not os.environ.get("AMAZON_COORDINATOR_URL"):
+    os.environ["AMAZON_COORDINATOR_URL"] = "http://127.0.0.1:8766"
+
 from engine.distributed.client_main import main
 
 
