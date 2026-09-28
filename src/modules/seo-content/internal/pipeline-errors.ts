@@ -14,6 +14,33 @@ export class SeoStageError extends AppError {
   }
 }
 
+export class SeoTimeoutError extends AppError {
+  public constructor(
+    public readonly stageName: string,
+    public readonly timeoutMs: number,
+    message?: string,
+    public readonly isRecoverable: boolean = false,
+  ) {
+    const descriptiveMessage =
+      message ??
+      (stageName.toLowerCase() === "overall"
+        ? `Overall SEO pipeline timed out after ${timeoutMs}ms`
+        : `Stage ${stageName.toUpperCase()} timed out after ${timeoutMs}ms`);
+    super(descriptiveMessage, "SEO_TIMEOUT");
+    this.name = "SeoTimeoutError";
+  }
+}
+
+export function isSeoTimeoutError(error: unknown): error is SeoTimeoutError {
+  return (
+    error instanceof SeoTimeoutError ||
+    (typeof error === "object" &&
+      error !== null &&
+      "name" in error &&
+      (error as { name?: unknown }).name === "SeoTimeoutError")
+  );
+}
+
 export function wrapStageError(
   stageName: SeoStageName,
   error: unknown,
@@ -31,3 +58,4 @@ export function wrapStageError(
   const message = error instanceof Error ? error.message : String(error);
   return new SeoStageError(stageName, message, isRec, error);
 }
+

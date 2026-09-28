@@ -146,4 +146,7 @@ export interface SeoContentRunOptions {
   readonly imageMode?: "full" | "alt_only";
   readonly signal?: AbortSignal;
   readonly dependencies?: SeoContentDependencies;
+  readonly stageTimeouts?: Partial<Record<string, number>>;
+  readonly overallTimeoutMs?: number;
 }
+

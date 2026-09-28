@@ -1,7 +1,7 @@
 import type { SeoContentInput, SeoContentOutput } from "../types";
 import type { SeoPipelineContext, SeoPipelineStage } from "./domain-types";
 import { createInitialContext, finalizePipelineOutput } from "./pipeline-context";
-import { SeoStageError, wrapStageError } from "./pipeline-errors";
+import { SeoStageError, SeoTimeoutError, wrapStageError } from "./pipeline-errors";
 import { b1ProductUnderstandingStage } from "./stages/b1-product-understanding";
 import { b2ShoppingContextStage } from "./stages/b2-shopping-context";
 import { b3SearchSuggestionsStage } from "./stages/b3-search-suggestions";
@@ -13,10 +13,41 @@ import { resolveStoreProfile } from "./store-profiles";
 
 export type { SeoPipelineStage };
 
+export const DEFAULT_STAGE_TIMEOUTS_MS: Readonly<Record<string, number>> = Object.freeze({
+  b1: 60_000,
+  b2: 90_000,
+  b3: 45_000,
+  b4: 45_000,
+  b5: 120_000,
+  b6: 45_000,
+});
+
+export const DEFAULT_OVERALL_TIMEOUT_MS = 420_000;
+
+export function getStageTimeoutMs(
+  stageName: string,
+  stageTimeouts?: Partial<Record<string, number>>,
+): number {
+  const normalized = stageName.toLowerCase();
+  if (stageTimeouts) {
+    if (typeof stageTimeouts[stageName] === "number") return stageTimeouts[stageName]!;
+    if (typeof stageTimeouts[normalized] === "number") return stageTimeouts[normalized]!;
+    for (const [key, val] of Object.entries(stageTimeouts)) {
+      if (key.toLowerCase() === normalized && typeof val === "number") {
+        return val;
+      }
+    }
+  }
+  return DEFAULT_STAGE_TIMEOUTS_MS[normalized] ?? 60_000;
+}
+
+
 export interface SeoPipelineExecutionOptions {
   readonly signal?: AbortSignal;
   readonly resume?: SeoPipelineResume;
   readonly onStage?: (stage: string, durationMs: number) => void;
+  readonly stageTimeouts?: Partial<Record<string, number>>;
+  readonly overallTimeoutMs?: number;
 }
 
 export interface SeoPipelineResume {
@@ -51,23 +82,33 @@ export interface SeoPipeline {
   }>;
 }
 
-function createAbortError(): Error {
+function createAbortError(reason?: unknown): Error {
+  if (reason instanceof Error) return reason;
   const error = new Error("SEO pipeline execution was cancelled.");
   error.name = "AbortError";
   return error;
 }
 
 function throwIfAborted(signal: AbortSignal | undefined): void {
-  if (signal?.aborted) throw createAbortError();
+  if (signal?.aborted) throw createAbortError(signal.reason);
 }
 
 async function awaitWithAbort<T>(promise: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
   if (!signal) return promise;
   throwIfAborted(signal);
   return new Promise<T>((resolve, reject) => {
-    const handleAbort = () => reject(createAbortError());
+    const handleAbort = () => reject(createAbortError(signal.reason));
     signal.addEventListener("abort", handleAbort, { once: true });
-    void promise.then(resolve, reject).finally(() => signal.removeEventListener("abort", handleAbort));
+    void promise.then(
+      (val) => {
+        signal.removeEventListener("abort", handleAbort);
+        resolve(val);
+      },
+      (err) => {
+        signal.removeEventListener("abort", handleAbort);
+        reject(err);
+      },
+    );
   });
 }
 
@@ -75,6 +116,8 @@ export interface SeoPipelineOptions {
   readonly stages?: readonly SeoPipelineStage[];
   /** Structural dependency keeps pipeline tests and alternate server runtimes network-free. */
   readonly siteNicheResolver?: Pick<SiteNicheResolver, "resolve">;
+  readonly stageTimeouts?: Partial<Record<string, number>>;
+  readonly overallTimeoutMs?: number;
 }
 
 function isPipelineOptions(
@@ -99,27 +142,64 @@ export function createSeoPipeline(
     const { signal, resume } = executionOptions;
     if (resume && resume.inputKey !== JSON.stringify(input)) throw new Error("SEO checkpoint belongs to different product input.");
     throwIfAborted(signal);
-    const storeProfile = resolveStoreProfile({
-      storeId: input.storeId,
-      siteDomain: input.siteDomain ?? input.url,
-    });
-    const resolution = !resume && siteNicheResolver
-      ? await awaitWithAbort(siteNicheResolver.resolve({
-          signal,
-          siteDomain: input.siteDomain ?? "",
-          fallbackNiche: input.niche ?? storeProfile?.niche,
-        }), signal)
-      : undefined;
-    let currentContext = resume?.research ?? createInitialContext(input, resolution?.niche ?? storeProfile?.niche ?? input.niche);
-    const fallbackStages: string[] = [...(resume?.researchFallbacks ?? [])];
-    const warnings: string[] = [...(resume?.researchWarnings ?? [])];
-    let research = resume?.research;
-    let researchFallbacks = [...fallbackStages];
-    let researchWarnings = [...warnings];
-    let contentKey = "";
-    let contentWarningStart = 0;
-    let contentFallbackStart = 0;
-    let reuseContent = false;
+
+    const overallTimeoutMs = executionOptions.overallTimeoutMs
+      ?? pipelineOptions?.overallTimeoutMs
+      ?? DEFAULT_OVERALL_TIMEOUT_MS;
+
+    const overallController = new AbortController();
+    let overallTimer: NodeJS.Timeout | number | undefined;
+
+    const onParentAbort = () => {
+      overallController.abort(signal?.reason ?? createAbortError());
+    };
+
+    if (signal) {
+      if (signal.aborted) {
+        overallController.abort(signal.reason ?? createAbortError());
+      } else {
+        signal.addEventListener("abort", onParentAbort, { once: true });
+      }
+    }
+
+    if (overallTimeoutMs > 0 && Number.isFinite(overallTimeoutMs)) {
+      overallTimer = setTimeout(() => {
+        overallController.abort(
+          new SeoTimeoutError(
+            "overall",
+            overallTimeoutMs,
+            `Overall SEO pipeline timed out after ${overallTimeoutMs}ms`,
+          ),
+        );
+      }, overallTimeoutMs);
+      if (typeof (overallTimer as { unref?: () => void })?.unref === "function") {
+        (overallTimer as { unref: () => void }).unref();
+      }
+    }
+
+    try {
+      throwIfAborted(overallController.signal);
+      const storeProfile = resolveStoreProfile({
+        storeId: input.storeId,
+        siteDomain: input.siteDomain ?? input.url,
+      });
+      const resolution = !resume && siteNicheResolver
+        ? await awaitWithAbort(siteNicheResolver.resolve({
+            signal: overallController.signal,
+            siteDomain: input.siteDomain ?? "",
+            fallbackNiche: input.niche ?? storeProfile?.niche,
+          }), overallController.signal)
+        : undefined;
+      let currentContext = resume?.research ?? createInitialContext(input, resolution?.niche ?? storeProfile?.niche ?? input.niche);
+      const fallbackStages: string[] = [...(resume?.researchFallbacks ?? [])];
+      const warnings: string[] = [...(resume?.researchWarnings ?? [])];
+      let research = resume?.research;
+      let researchFallbacks = [...fallbackStages];
+      let researchWarnings = [...warnings];
+      let contentKey = "";
+      let contentWarningStart = 0;
+      let contentFallbackStart = 0;
+      let reuseContent = false;
 
       for (const stage of stages) {
         if (resume && ["b1", "b2", "b3"].includes(stage.name)) continue;
@@ -141,11 +221,47 @@ export function createSeoPipeline(
           }
         }
         if (reuseContent && ["b5", "b6"].includes(stage.name)) continue;
+
+        throwIfAborted(overallController.signal);
+
         const stageStartedAt = Date.now();
+        const stageTimeoutMs = getStageTimeoutMs(
+          stage.name,
+          executionOptions.stageTimeouts ?? pipelineOptions?.stageTimeouts,
+        );
+
+        const stageController = new AbortController();
+        let stageTimer: NodeJS.Timeout | number | undefined;
+
+        const onOverallAbort = () => {
+          stageController.abort(overallController.signal.reason);
+        };
+
+        if (overallController.signal.aborted) {
+          stageController.abort(overallController.signal.reason);
+        } else {
+          overallController.signal.addEventListener("abort", onOverallAbort, { once: true });
+        }
+
+        if (stageTimeoutMs > 0 && Number.isFinite(stageTimeoutMs)) {
+          stageTimer = setTimeout(() => {
+            stageController.abort(
+              new SeoTimeoutError(
+                stage.name,
+                stageTimeoutMs,
+                `Stage ${stage.name.toUpperCase()} timed out after ${stageTimeoutMs}ms`,
+              ),
+            );
+          }, stageTimeoutMs);
+          if (typeof (stageTimer as { unref?: () => void })?.unref === "function") {
+            (stageTimer as { unref: () => void }).unref();
+          }
+        }
+
         try {
-          throwIfAborted(signal);
-          const nextContext = await awaitWithAbort<SeoPipelineContext>(stage.execute(currentContext), signal);
-          throwIfAborted(signal);
+          throwIfAborted(stageController.signal);
+          const nextContext = await awaitWithAbort<SeoPipelineContext>(stage.execute(currentContext), stageController.signal);
+          throwIfAborted(stageController.signal);
 
           if (!nextContext || typeof nextContext !== "object") {
             throw new SeoStageError(stage.name, "Stage returned an invalid context");
@@ -157,7 +273,23 @@ export function createSeoPipeline(
 
           currentContext = nextContext;
         } catch (error: unknown) {
+          if (overallController.signal.aborted) {
+            throw overallController.signal.reason instanceof Error
+              ? overallController.signal.reason
+              : createAbortError(overallController.signal.reason);
+          }
           if (error instanceof Error && error.name === "AbortError") throw error;
+          if (error instanceof SeoTimeoutError) {
+            if (error.isRecoverable) {
+              fallbackStages.push(stage.name);
+              warnings.push(error.message);
+              console.warn(
+                `[SEO Pipeline] Non-fatal timeout warning in stage ${stage.name}: ${error.message}`,
+              );
+              continue;
+            }
+            throw error;
+          }
           const stageError = wrapStageError(stage.name, error);
           if (stageError.isRecoverable) {
             fallbackStages.push(stage.name);
@@ -169,6 +301,10 @@ export function createSeoPipeline(
             throw stageError;
           }
         } finally {
+          if (stageTimer !== undefined) {
+            clearTimeout(stageTimer);
+          }
+          overallController.signal.removeEventListener("abort", onOverallAbort);
           executionOptions.onStage?.(stage.name, Date.now() - stageStartedAt);
         }
         if (stage.name === "b3") {
@@ -190,6 +326,14 @@ export function createSeoPipeline(
           contentWarnings: warnings.slice(contentWarningStart),
         } : undefined,
       };
+    } finally {
+      if (overallTimer !== undefined) {
+        clearTimeout(overallTimer);
+      }
+      if (signal) {
+        signal.removeEventListener("abort", onParentAbort);
+      }
+    }
   }
 
   return {
@@ -200,3 +344,4 @@ export function createSeoPipeline(
     executeDetailed,
   };
 }
+

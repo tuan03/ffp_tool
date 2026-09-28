@@ -98,3 +98,14 @@ export type {
   ClassifiedErrorResolution,
 } from "./internal/error-classifier";
 export { validateExternalSeoAnalysis, researchExternalSeo, checkExternalSeoKeywords, finalizeExternalSeo, bindExternalSeoProduct } from "./external-seo";
+export {
+  DEFAULT_STAGE_TIMEOUTS_MS,
+  DEFAULT_OVERALL_TIMEOUT_MS,
+  getStageTimeoutMs,
+} from "./internal/pipeline";
+export {
+  SeoStageError,
+  SeoTimeoutError,
+  isSeoTimeoutError,
+} from "./internal/pipeline-errors";
+

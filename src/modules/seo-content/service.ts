@@ -53,9 +53,13 @@ function getDefaultPipeline(): ReturnType<typeof createSeoPipeline> {
  * Runs sequential multi-stage processing:
  * B1 (Understanding) -> B2 (Context) -> B3 (Search) -> B4 (Conflict) -> B5 (Content) -> B6 (Images).
  */
-export async function runSeoContent(input: SeoContentInput): Promise<SeoContentOutput> {
-  return getDefaultPipeline().execute(input);
+export async function runSeoContent(
+  input: SeoContentInput,
+  options?: SeoContentRunOptions | { readonly signal?: AbortSignal },
+): Promise<SeoContentOutput> {
+  return getDefaultPipeline().execute(input, options);
 }
+
 
 export function runSeoContentDetailed(
   input: SeoContentInput,
@@ -156,9 +160,13 @@ export function createSeoContentSession(input: SeoContentInput, options: SeoCont
     running = true;
     try {
       const execution = await pipeline.executeDetailed(input, {
-        signal: options.signal, resume,
+        signal: options.signal,
+        resume,
+        stageTimeouts: options.stageTimeouts,
+        overallTimeoutMs: options.overallTimeoutMs,
         onStage: (stage, duration) => { stageDurationsMs[stage] = (stageDurationsMs[stage] ?? 0) + duration; },
       });
+
       resume = execution.resume;
       const observedFallbackStages = [...observedFallbacks.keys()];
       const observedWarnings = [...observedFallbacks.values()].flat();

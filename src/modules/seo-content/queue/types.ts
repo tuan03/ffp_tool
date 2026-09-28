@@ -7,6 +7,7 @@ export interface SeoQueueItem<TSource = unknown> {
   readonly index: number;
   readonly seoInput: SeoContentInput;
   readonly source?: TSource;
+  readonly abortController?: AbortController;
   status: SeoQueueItemStatus;
   output?: SeoContentOutput;
   error?: string;
@@ -33,6 +34,7 @@ export interface SeoQueueEvents<TSource = unknown> {
   onItemStarted?: (item: SeoQueueItem<TSource>) => void;
   onItemCompleted?: (item: SeoQueueItem<TSource>, output: SeoContentOutput) => void;
   onItemFailed?: (item: SeoQueueItem<TSource>, error: string) => void;
+  onItemCancelled?: (item: SeoQueueItem<TSource>) => void;
   onProgress?: (stats: SeoQueueProgressStats) => void;
   onDrained?: (stats: SeoQueueProgressStats) => void;
   onPaused?: () => void;
@@ -42,9 +44,15 @@ export interface SeoQueueEvents<TSource = unknown> {
 
 export interface SeoQueueOptions<TSource = unknown> extends SeoQueueEvents<TSource> {
   /** Runner thực thi SEO (mặc định: runSeoContent) */
-  readonly runner?: (input: SeoContentInput) => Promise<SeoContentOutput>;
+  readonly runner?: (
+    input: SeoContentInput,
+    options?: { readonly signal?: AbortSignal },
+  ) => Promise<SeoContentOutput>;
   /** Số tác vụ chạy đồng thời (mặc định: 1, tối đa 3) */
   readonly concurrency?: number;
   /** Tự động bắt đầu chạy ngay khi enqueue (mặc định: true) */
   readonly autoStart?: boolean;
+  /** Timeout tối đa cho mỗi item trong queue (ms). Khi hết thời gian, item sẽ bị abort */
+  readonly itemTimeoutMs?: number;
 }
+
