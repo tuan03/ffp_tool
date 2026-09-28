@@ -27,7 +27,7 @@ import urllib.parse
 import urllib.request
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 logger = logging.getLogger("pinterest_pod_bridge")
 
@@ -1546,7 +1546,13 @@ def _poll_job_worker(job_id: str, base_url: str, api_url: str) -> None:
 # Local Direct Pipeline Worker Fallback
 # ---------------------------------------------------------------------------
 
-def _run_local_pipeline_worker(job_id: str, req_body: dict[str, Any], base_url: str, cancel_event: threading.Event | None = None) -> None:
+def _run_local_pipeline_worker(
+    job_id: str,
+    req_body: dict[str, Any],
+    base_url: str,
+    cancel_event: threading.Event | None = None,
+    progress_callback: Callable[[str], None] | None = None,
+) -> None:
     # Ensure ROOT (tool_shopify) is strictly the primary sys.path entry
     root_str = str(ROOT.resolve())
     while root_str in sys.path:
@@ -1604,7 +1610,7 @@ def _run_local_pipeline_worker(job_id: str, req_body: dict[str, Any], base_url: 
     artwork_size = str(req_body.get("artwork_image_size") or req_body.get("artwork_size") or DEFAULT_ARTWORK_IMAGE_SIZE).strip() or DEFAULT_ARTWORK_IMAGE_SIZE
     ai_background_variants = int(req_body.get("ai_background_variants") or req_body.get("room_angles") or 5)
     remove_white_background = bool(req_body.get("remove_white_background", False))
-    stage = str(req_body.get("workflow_stage") or "auto")
+    stage = str(req_body.get("workflow_stage") or req_body.get("stage") or req_body.get("action") or "auto").lower()
 
     output_root = LOCAL_OUTPUT_DIR if LOCAL_OUTPUT_DIR.exists() else (TEMP_DIR / job_id / "output")
     output_root.mkdir(parents=True, exist_ok=True)
@@ -1723,6 +1729,11 @@ def _run_local_pipeline_worker(job_id: str, req_body: dict[str, Any], base_url: 
                 logs = job.setdefault("logs", [])
                 logs.append(msg)
                 del logs[:-500]
+        if progress_callback is not None:
+            try:
+                progress_callback(msg)
+            except Exception:
+                pass
 
     vision_status_note = "ĐÃ TẮT AI LỌC - hiển thị 100% ảnh thô cào về" if is_vision_disabled else "Bật AI lọc"
     log_progress(f"Bắt đầu pipeline trực tiếp (Stage: {stage}, Product: {product}, Niche: '{niche}', Vision: {vision_status_note})...")
@@ -1775,7 +1786,7 @@ def _run_local_pipeline_worker(job_id: str, req_body: dict[str, Any], base_url: 
                 )
         elif stage == "production":
             selected = req_body.get("selected_candidates") or []
-            src_run_id = req_body.get("source_run_id")
+            src_run_id = req_body.get("source_run_id") or req_body.get("jobId") or req_body.get("job_id")
             src_dir = resolve_run_dir(src_run_id) if src_run_id else None
 
             # Resolve candidate dictionaries from source run's candidate_review.json if strings/IDs were passed

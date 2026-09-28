@@ -309,7 +309,7 @@ class DistributedCrawlerAgent:
                 self.on_status({**self.status_snapshot(), "lastError": str(error)})
                 try:
                     await asyncio.wait_for(self.stop_event.wait(), timeout=delay + random.random())
-                except TimeoutError:
+                except (TimeoutError, asyncio.TimeoutError):
                     pass
                 delay = min(30.0, delay * 2)
 
@@ -487,8 +487,15 @@ class DistributedCrawlerAgent:
     async def _execution_loop(self) -> None:
         backlog: deque[dict[str, Any]] = deque()
         loop = asyncio.get_running_loop()
-        while True:
-            first = backlog.popleft() if backlog else await self.assignment_queue.get()
+        while not self.stop_event.is_set():
+            try:
+                first = backlog.popleft() if backlog else await self.assignment_queue.get()
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                await asyncio.sleep(0.1)
+                continue
+
             batch = [first]
             batch_key = (first["jobId"], first["settingsFingerprint"])
             deadline = loop.time() + 0.4
@@ -498,7 +505,7 @@ class DistributedCrawlerAgent:
                     break
                 try:
                     candidate = await asyncio.wait_for(self.assignment_queue.get(), timeout=remaining)
-                except TimeoutError:
+                except (TimeoutError, asyncio.TimeoutError):
                     break
                 candidate_key = (candidate["jobId"], candidate["settingsFingerprint"])
                 if candidate_key == batch_key:
@@ -524,13 +531,17 @@ class DistributedCrawlerAgent:
                 self._publish_status()
                 continue
             task_ids = [str(assignment["taskId"]) for assignment in batch]
-            self.store.mark_running(task_ids)
             self.executing_task_ids.update(task_ids)
+            self.store.mark_running(task_ids)
             cancel_event = threading.Event()
             job_id = str(first["jobId"])
             self._register_cancel_event(job_id, cancel_event)
+            channel = str(first.get("channel", "amazon")).lower()
             try:
-                await asyncio.to_thread(self._run_batch, batch, cancel_event, loop)
+                if channel == "pinterest":
+                    await asyncio.to_thread(self._run_pinterest_batch, batch, cancel_event, loop)
+                else:
+                    await asyncio.to_thread(self._run_batch, batch, cancel_event, loop)
             except Exception as error:
                 for assignment in batch:
                     await self.completion_queue.put({
@@ -693,6 +704,177 @@ class DistributedCrawlerAgent:
                     self._running_crawlers.pop(str(first["jobId"]), None)
             self._captcha_waiting = False
             loop.call_soon_threadsafe(self._publish_status)
+
+    def _upload_asset(self, job_id: str, filename: str, data: bytes) -> None:
+        safe_job_id = "".join(c for c in job_id if c.isalnum() or c in ("-", "_"))
+        safe_filename = Path(filename).name
+        request = urllib.request.Request(
+            f"{self.config.server_url}/api/pinterest-pod/assets/{safe_job_id}/{safe_filename}",
+            data=data,
+            method="POST",
+            headers={"Content-Type": "application/octet-stream"},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=60):
+                pass
+        except Exception:
+            pass
+
+    def _run_pinterest_batch(self, batch: list[dict[str, Any]], cancel_event: threading.Event, loop: asyncio.AbstractEventLoop) -> None:
+        import sys
+        pod_server_dir = self.project_root / "src" / "modules" / "pinterest-pod" / "server"
+        if pod_server_dir.is_dir() and str(pod_server_dir) not in sys.path:
+            sys.path.insert(0, str(pod_server_dir))
+        import pinterest_pod_bridge as pod_bridge
+
+        first = batch[0]
+        settings = dict(first.get("settings") or {})
+        job_id = str(first.get("jobId") or "")
+        task_id = str(first.get("taskId") or "")
+        lease_id = str(first.get("leaseId") or "")
+
+        def enqueue_cancelled() -> None:
+            asyncio.run_coroutine_threadsafe(self.completion_queue.put({
+                "type": "cancelled",
+                "taskId": task_id,
+                "leaseId": lease_id,
+            }), loop)
+
+        def enqueue_progress(msg: str, percent: int = 50) -> None:
+            if cancel_event.is_set():
+                return
+            progress_payload = {
+                "phase": "pinterest",
+                "message": msg,
+                "percent": percent,
+            }
+            asyncio.run_coroutine_threadsafe(self.outbound_queue.put({
+                "type": "progress",
+                "taskId": task_id,
+                "leaseId": lease_id,
+                "progress": progress_payload,
+            }), loop)
+            loop.call_soon_threadsafe(self._publish_status)
+
+        def enqueue_completed(payload: dict[str, Any]) -> None:
+            core_result = {
+                "status": "completed",
+                "products": [],
+                "errors": [],
+                "warnings": [],
+                "durationMs": 0,
+                **payload,
+            }
+            envelope = {
+                "version": "distributed-pinterest-1",
+                "agentVersion": AGENT_VERSION,
+                "taskId": task_id,
+                "jobId": job_id,
+                "leaseId": lease_id,
+                "clientId": self.client_id,
+                "source": first.get("source", ""),
+                "asin": first.get("asin", ""),
+                "completedAt": utc_iso(),
+                "resultChecksum": payload_checksum(core_result),
+                **core_result,
+            }
+            checksum = payload_checksum(envelope)
+            self.store.spool_result(
+                task_id=task_id,
+                lease_id=lease_id,
+                checksum=checksum,
+                payload=envelope,
+            )
+            asyncio.run_coroutine_threadsafe(self.completion_queue.put({
+                "type": "completed",
+                "taskId": task_id,
+            }), loop)
+
+        def enqueue_failed(error_msg: str) -> None:
+            asyncio.run_coroutine_threadsafe(self.completion_queue.put({
+                "type": "failed",
+                "taskId": task_id,
+                "leaseId": lease_id,
+                "error": {"message": error_msg, "retryable": False},
+            }), loop)
+
+        if cancel_event.is_set():
+            enqueue_cancelled()
+            return
+
+        enqueue_progress("Khởi tạo Pinterest POD pipeline cục bộ...", 10)
+        req_body = dict(settings)
+        if "source_run_id" not in req_body:
+            resolved_source = req_body.get("jobId") or req_body.get("job_id") or first.get("source")
+            if resolved_source:
+                req_body["source_run_id"] = str(resolved_source)
+        if "workflow_stage" not in req_body:
+            req_body["workflow_stage"] = req_body.get("stage") or req_body.get("action") or "crawl_and_review"
+
+        def on_pod_progress(msg: str) -> None:
+            enqueue_progress(msg, 50)
+
+        try:
+            pod_bridge._run_local_pipeline_worker(
+                job_id, req_body, self.config.server_url, cancel_event, progress_callback=on_pod_progress
+            )
+        except Exception as exc:
+            if cancel_event.is_set():
+                enqueue_cancelled()
+                return
+            enqueue_failed(f"Pinterest POD execution error: {exc}")
+            return
+
+        if cancel_event.is_set():
+            enqueue_cancelled()
+            return
+
+        job_data = pod_bridge.ACTIVE_JOBS.get(job_id) or pod_bridge.load_job_manifest(job_id) or {}
+        if str(job_data.get("status") or "").lower() == "failed":
+            err_msg = job_data.get("error") or job_data.get("message") or "Pinterest POD local pipeline execution failed."
+            enqueue_failed(str(err_msg))
+            return
+
+        stage = str(settings.get("stage") or settings.get("action") or "crawl").lower()
+
+        if stage in {"crawl", "crawl_and_review"}:
+            raw_cands = job_data.get("candidates") or []
+            candidates = []
+            for c in raw_cands:
+                item = c.to_dict() if hasattr(c, "to_dict") else dict(c)
+                candidates.append(item)
+            rejected = job_data.get("rejected_candidates") or []
+            logs = job_data.get("logs") or []
+            enqueue_completed({
+                "candidates": candidates,
+                "rejected_candidates": rejected,
+                "total_candidates": len(candidates),
+                "logs": logs,
+            })
+        else:
+            deliverables = job_data.get("deliverables") or {}
+            metrics = job_data.get("summaryMetrics") or job_data.get("summary_metrics") or {}
+            logs = job_data.get("logs") or []
+
+            run_id = job_data.get("run_id") or job_data.get("runId") or req_body.get("source_run_id") or job_id
+            run_dir = pod_bridge.resolve_run_dir(run_id)
+            if run_dir and run_dir.is_dir():
+                for subfolder in ("lifestyle_mockups", "product_cutouts_white", "final_png_images"):
+                    sub_dir = run_dir / subfolder
+                    if sub_dir.is_dir():
+                        for img_file in sub_dir.glob("*.*"):
+                            if img_file.is_file() and img_file.stat().st_size <= 10 * 1024 * 1024:
+                                try:
+                                    self._upload_asset(job_id, img_file.name, img_file.read_bytes())
+                                except Exception:
+                                    pass
+
+            enqueue_completed({
+                "deliverables": deliverables,
+                "summaryMetrics": metrics,
+                "summary_metrics": metrics,
+                "logs": logs,
+            })
 
     async def _completion_loop(self) -> None:
         while True:

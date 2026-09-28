@@ -1,8 +1,10 @@
 import { AppError } from "../../shared/errors";
 import type {
   CancelJobOutput,
+  CrawlerClientSummary,
   CreateJobInput,
   CreateJobOutput,
+  DirectShopifySyncOutput,
   JobDetailResponse,
   JobStatus,
   PinterestAuthStatus,
@@ -1007,6 +1009,42 @@ export class RealPinterestPodClient implements PinterestPodClient {
 
   public async handoverToSeo(payload: PinterestPodDeliverables): Promise<SeoHandoverResponse> {
     return handoverToSeo(payload);
+  }
+
+  public async syncDirectToShopify(payload: PinterestPodDeliverables): Promise<DirectShopifySyncOutput> {
+    return syncPinterestPodToShopify(payload);
+  }
+
+  public async getCrawlerClients(): Promise<readonly CrawlerClientSummary[]> {
+    return getCrawlerClients();
+  }
+}
+
+/** Directly synchronize deliverables to Shopify store without SEO review redirect */
+export async function syncPinterestPodToShopify(
+  payload: PinterestPodDeliverables,
+): Promise<DirectShopifySyncOutput> {
+  return fetchJson<DirectShopifySyncOutput>(
+    "/api/pinterest-pod/sync-shopify",
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+    "PINTEREST_POD_SHOPIFY_SYNC_FAILED",
+  );
+}
+
+/** Fetch list of connected distributed crawler client agents */
+export async function getCrawlerClients(): Promise<readonly CrawlerClientSummary[]> {
+  try {
+    const clients = await fetchJson<readonly CrawlerClientSummary[]>(
+      "/api/v1/clients",
+      undefined,
+      "CRAWLER_CLIENTS_FETCH_FAILED",
+    );
+    return clients ?? [];
+  } catch {
+    return [];
   }
 }
 

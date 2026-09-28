@@ -14,6 +14,7 @@ interface DeliverablesShowcaseProps {
   readonly deliverables: DeliverablesData;
   readonly summaryMetrics?: SummaryMetrics;
   readonly seoPayload?: PinterestPodDeliverables;
+  readonly jobId?: string | null;
   readonly onPreviewImage?: (item: LightboxImageItem) => void;
   readonly onHandoverToSeo?: (payload: PinterestPodDeliverables, serverViewModels?: readonly unknown[]) => Promise<void>;
 }
@@ -24,6 +25,7 @@ export function DeliverablesShowcase({
   deliverables,
   summaryMetrics,
   seoPayload,
+  jobId: _jobId,
   onPreviewImage,
   onHandoverToSeo,
 }: DeliverablesShowcaseProps): React.JSX.Element {

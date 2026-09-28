@@ -414,8 +414,19 @@ test("assertPathInAllowedRoots blocks arbitrary file reads, traversal, and symli
   }
 
   const symlinkPath = path.join(testRoot, `symlink-test-${Date.now()}.png`);
+  let symlinkCreated = false;
   try {
-    fs.symlinkSync("/etc/hosts", symlinkPath);
+    try {
+      fs.symlinkSync("/etc/hosts", symlinkPath);
+      symlinkCreated = true;
+    } catch (symlinkErr: unknown) {
+      const code = (symlinkErr as { code?: string })?.code;
+      if (code === "EPERM" || code === "EINVAL") {
+        // Windows unprivileged user cannot create symlinks without Developer Mode
+        return;
+      }
+      throw symlinkErr;
+    }
     assert.throws(
       () => {
         assertPathInAllowedRoots(symlinkPath);
@@ -428,7 +439,7 @@ test("assertPathInAllowedRoots blocks arbitrary file reads, traversal, and symli
       },
     );
   } finally {
-    if (fs.existsSync(symlinkPath)) {
+    if (symlinkCreated && fs.existsSync(symlinkPath)) {
       fs.unlinkSync(symlinkPath);
     }
   }

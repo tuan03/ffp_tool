@@ -2,9 +2,11 @@ import { AppError } from "../../../shared/errors";
 import type {
   CandidateItem,
   CancelJobOutput,
+  CrawlerClientSummary,
   CreateJobInput,
   CreateJobOutput,
   DeliverablesData,
+  DirectShopifySyncOutput,
   JobDetailResponse,
   PinterestAuthStatus,
   PinterestDiscoveryInput,
@@ -617,6 +619,43 @@ export class MockPinterestPodClient implements PinterestPodClient {
       savedPath: `temp/pinterest_pod/${payload.workflowId}/seo_handoff_payload.json`,
       items: payload.items,
     };
+  }
+
+  public async syncDirectToShopify(payload: PinterestPodDeliverables): Promise<DirectShopifySyncOutput> {
+    const products = payload.items.map((it, idx) => ({
+      designId: it.designId,
+      title: it.originalPinTitle || `POD Product ${idx + 1}`,
+      shopifyProductId: `gid://shopify/Product/mock_${Date.now()}_${idx + 1}`,
+      variantsCount: it.variants?.length ?? 3,
+      mediaCount: (it.composedMockups?.length ?? 0) + 1,
+      status: "ACTIVE",
+      url: `https://example-store.myshopify.com/products/mock-pod-${idx + 1}`,
+    }));
+    return {
+      success: true,
+      message: `[MOCK] Đồng bộ trực tiếp thành công ${products.length} sản phẩm lên Shopify store.`,
+      storeId: payload.storeId ?? "default",
+      syncedAt: Date.now(),
+      count: products.length,
+      products,
+    };
+  }
+
+  public async getCrawlerClients(): Promise<readonly CrawlerClientSummary[]> {
+    return [
+      {
+        id: "client_mock_agent_1",
+        displayName: "Mock Local Agent (Windows)",
+        isConnected: true,
+        status: "idle",
+        activeTasks: 0,
+        availableSlots: 2,
+        capabilities: {
+          pinterest: true,
+          amazon: true,
+        },
+      },
+    ];
   }
 }
 

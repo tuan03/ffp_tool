@@ -45,6 +45,7 @@ export {
   getAuthStatus,
   getJobStatus,
   getOAuthAuthorizeUrl,
+  getCrawlerClients,
   handoverToSeo,
   launchLogin,
   packageDeliverablesForSeo,
@@ -58,6 +59,7 @@ export {
   saveOAuthToken,
   startDiscoveryJob,
   startProductionJob,
+  syncPinterestPodToShopify,
 } from "./service";
 
 export {
@@ -73,9 +75,12 @@ export type {
   CandidateItem,
   CancelJobOutput,
   ComparisonRow,
+  CrawlerClientSummary,
   CreateJobInput,
   CreateJobOutput,
   DeliverableCutout,
+  DirectShopifySyncInput,
+  DirectShopifySyncOutput,
   DeliverableLifestyleMockup,
   DeliverablePrintImage,
   DeliverablesData,
