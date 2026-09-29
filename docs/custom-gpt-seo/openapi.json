@@ -543,7 +543,7 @@
       "get": {
         "operationId": "getSeoJobImages",
         "summary": "Read five original public image URLs.",
-        "description": "Returns stored source image URLs without FFP authentication, signatures or proxying. Inspect visually or request manual attachments.",
+        "description": "Returns original public image URLs without FFP authentication, signatures or proxying. Inspect visually or request manual attachments.",
         "security": [
           {
             "actionKey": []
@@ -592,80 +592,6 @@
             "schema": {
               "type": "integer",
               "minimum": 0
-            }
-          }
-        ]
-      }
-    },
-    "/api/v1/gpt-seo/image-content": {
-      "get": {
-        "operationId": "getSeoJobImageContent",
-        "summary": "Return the original public URL for one product image.",
-        "description": "Use jobId and imageId from getSeoJobImages. Open the returned original imageUrl directly; it is not an FFP proxy or signed URL. imageId is only an identifier and is not a URL.",
-        "security": [
-          {
-            "actionKey": []
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Public product image URL",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "required": [
-                    "imageId",
-                    "imageUrl",
-                    "instructions"
-                  ],
-                  "properties": {
-                    "imageId": {
-                      "type": "string",
-                      "description": "Stable image identifier. Do not open this value as a URL."
-                    },
-                    "imageUrl": {
-                      "type": "string",
-                      "format": "uri",
-                      "description": "Original public image URL stored for this job; no FFP authentication or signature is added."
-                    },
-                    "instructions": {
-                      "type": "string"
-                    }
-                  },
-                  "additionalProperties": false
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid jobId or imageId"
-          },
-          "401": {
-            "description": "Invalid API key"
-          },
-          "404": {
-            "description": "Job or image not found"
-          },
-          "429": {
-            "description": "Image download busy; respect Retry-After"
-          }
-        },
-        "parameters": [
-          {
-            "name": "jobId",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "imageId",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string"
             }
           }
         ]
