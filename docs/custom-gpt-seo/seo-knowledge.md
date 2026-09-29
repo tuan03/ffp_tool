@@ -2,7 +2,7 @@
 
 The source snapshot is authoritative for specifications. Image observations can establish visible color, layout, typography and motifs, but cannot establish hidden material composition or certification. Shopping context describes possible audiences and use cases; it is not a factual claim about product performance.
 
-When `getSeoJobImageContent` returns an `imageUrl`, use that FFP-hosted public HTTPS URL to open the image without authentication. The FFP server resolves the stored job image and proxies its bytes, so do not replace it with a Shopify CDN URL. The `imageId` is only an identifier and must never be treated as a URL. The URL itself is not visual evidence; record image observations only after the image was actually rendered and inspected.
+When `getSeoJobImages` returns `url` or `getSeoJobImageContent` returns `imageUrl`, it is the original source URL stored for the job, such as a Shopify or Amazon CDN URL. Open it directly. FFP does not add authentication, a signature, cookies or a proxy URL to these Action responses. The `imageId` is only an identifier and must never be treated as a URL. The URL itself is not visual evidence; record image observations only after the image was actually rendered and inspected.
 
 `getSeoQueueStatus` reports counts, not identifiable products. When the operator asks about products in `WAITING_INPUT`, use `listSeoWaitingJobs` to obtain their store-scoped jobIds, titles, image counts and recorded issues. This lookup is read-only. It does not claim a batch, grant a lease, retry a job or authorize SEO mutations.
 

@@ -39,7 +39,7 @@ test("Custom GPT schema exposes an authenticated public image URL lookup", () =>
   const responseSchema = operation?.responses?.["200"]?.content?.["application/json"]?.schema;
   assert.deepEqual(responseSchema?.required, ["imageId", "imageUrl", "instructions"]);
   assert.equal(responseSchema?.properties?.imageUrl?.format, "uri");
-  assert.match(responseSchema?.properties?.imageUrl?.description, /FFP-hosted/);
+  assert.match(responseSchema?.properties?.imageUrl?.description, /original public image URL/i);
   assert.equal(operation?.responses?.["200"]?.content?.["image/jpeg"], undefined);
   assert.deepEqual(operation?.parameters?.map(parameter => parameter.name), ["jobId", "imageId"]);
 });
