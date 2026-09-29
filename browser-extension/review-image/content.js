@@ -89,7 +89,7 @@ async function executeJob(job) {
 
   await sleep(150);
 
-  const sendButton = await waitForEnabledXPath(xpaths.send_button, 10_000);
+  const sendButton = await waitForEnabledXPath(xpaths.send_button, 10_000, input.closest('form'));
   sendButton.click();
 
   if (cancelledJobs.has(job.job_id)) throw new Error("ChatGPT job cancelled.");
@@ -355,18 +355,19 @@ async function waitForXPath(xpath, timeoutMs) {
   throw new Error(`XPath not found within ${timeoutMs} ms: ${xpath}`);
 }
 
-async function waitForEnabledXPath(xpath, timeoutMs) {
+async function waitForEnabledXPath(xpath, timeoutMs, composerForm = null) {
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
-    const element = xpathFirst(xpath);
-    if (
-      element &&
+    const candidates = [
+      ...(composerForm?.querySelectorAll('button[type="submit"]') || []),
+      ...xpathAll(xpath)
+    ];
+    const enabledButton = candidates.find(element =>
       isVisible(element) &&
       !element.disabled &&
       element.getAttribute("aria-disabled") !== "true"
-    ) {
-      return element;
-    }
+    );
+    if (enabledButton) return enabledButton;
     await sleep(200);
   }
   throw new Error(`Send button was not enabled: ${xpath}`);

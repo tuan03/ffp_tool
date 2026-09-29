@@ -112,6 +112,15 @@ context.sleep = () => new Promise(resolve => setTimeout(resolve, 5));
   await assert.rejects(() => context.openNewChat({ new_chat_button: "//a[@href='/']", assistant_messages: "//assistant" }), /Could not confirm a new ChatGPT conversation/);
   context.xpathAll = () => [];
   await context.openNewChat({ new_chat_button: "//a[@href='/']", assistant_messages: "//assistant" });
+  const localizedSendButton = new FakeElement();
+  localizedSendButton.disabled = false;
+  localizedSendButton.getAttribute = name => name === 'aria-label' ? 'Gửi' : null;
+  localizedSendButton.getBoundingClientRect = () => ({ width: 20, height: 20 });
+  const promptForm = {
+    querySelectorAll(selector) { return selector === 'button[type="submit"]' ? [localizedSendButton] : []; }
+  };
+  context.xpathFirst = () => null;
+  assert.equal(await context.waitForEnabledXPath('//button[@data-testid="send-button"]', 50, promptForm), localizedSendButton);
   const userTurn = new FakeElement();
   userTurn.style = { display: "" };
   userTurn.isConnected = true;
