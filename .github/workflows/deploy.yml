@@ -136,9 +136,9 @@ jobs:
               done < "$EXISTING_STORE_ENV_FILE"
             fi
 
-            # Keep the VPS multi-store Action keys unless ENV_FILE explicitly supplies a replacement map.
+            # Keep the VPS multi-store Action keys authoritative so deployments cannot restore stale secrets.
             INCOMING_GPT_SEO_ACTION_KEYS_JSON=$(sed -nE 's/^[[:space:]]*GPT_SEO_ACTION_KEYS_JSON=(.*)$/\1/p' .env | head -n 1 || true)
-            if [ -z "$INCOMING_GPT_SEO_ACTION_KEYS_JSON" ] && [ -n "$EXISTING_GPT_SEO_ACTION_KEYS_JSON" ]; then
+            if [ -n "$EXISTING_GPT_SEO_ACTION_KEYS_JSON" ]; then
               sed -i '/^[[:space:]]*GPT_SEO_ACTION_KEYS_JSON=/d' .env
               printf '\nGPT_SEO_ACTION_KEYS_JSON=%s\n' "$EXISTING_GPT_SEO_ACTION_KEYS_JSON" >> .env
               INCOMING_GPT_SEO_ACTION_KEYS_JSON="$EXISTING_GPT_SEO_ACTION_KEYS_JSON"
