@@ -1,12 +1,14 @@
 export { amazonCrawlerRoutes } from "./routes";
-export { getAmazonCrawlerCacheClearer, getAmazonCrawlerClientsLoader, getAmazonCrawlerJobController, getAmazonCrawlerJobLoader, getAmazonCrawlerReviewClient, getAmazonCrawlerRunner, getAmazonCrawlerSyncRetrier, getImageProcessingProfileManager } from "./runtime";
-export { AmazonCrawlerServiceError, createAmazonCrawlerCacheClearer, createAmazonCrawlerClientsLoader, createAmazonCrawlerJobController, createAmazonCrawlerJobLoader, createAmazonCrawlerReviewClient, createAmazonCrawlerRunner, createAmazonCrawlerSyncRetrier, createImageProcessingProfileManager, serializeAmazonCrawlerInput } from "./service";
+export { getAmazonCrawlerAgentReleaseLoader, getAmazonCrawlerCacheClearer, getAmazonCrawlerClientsLoader, getAmazonCrawlerJobController, getAmazonCrawlerJobLoader, getAmazonCrawlerReviewClient, getAmazonCrawlerRunner, getAmazonCrawlerSyncRetrier, getImageProcessingProfileManager } from "./runtime";
+export { AmazonCrawlerServiceError, createAmazonCrawlerAgentReleaseLoader, createAmazonCrawlerCacheClearer, createAmazonCrawlerClientsLoader, createAmazonCrawlerJobController, createAmazonCrawlerJobLoader, createAmazonCrawlerReviewClient, createAmazonCrawlerRunner, createAmazonCrawlerSyncRetrier, createImageProcessingProfileManager, serializeAmazonCrawlerInput } from "./service";
 export { DEFAULT_AMAZON_CRAWLER_SETTINGS } from "./types";
 export type {
   AmazonCrawlerMetrics,
   AmazonCrawlerTraceEvent,
   AmazonCrawlerTracePage,
   AmazonCrawlerAgentObservability,
+  AmazonCrawlerAgentRelease,
+  AmazonCrawlerAgentReleaseLoader,
   AmazonCrawlerError,
   AmazonCrawlerCacheClearer,
   AmazonCrawlerCacheClearResult,

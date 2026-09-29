@@ -1,5 +1,5 @@
 import type { PinterestPodDeliverables, PodDeliverableItem } from "../pinterest-pod";
-import { runPinterestPodSeoPipeline } from "../seo-content";
+import { runPinterestPodSeoPipeline } from "../seo-content/browser";
 import type {
   PinterestPodSeoBatchResult,
   PinterestPodSeoItemResult,

@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   amazonCrawlerRoutes,
+  createAmazonCrawlerAgentReleaseLoader,
   createAmazonCrawlerCacheClearer,
   createAmazonCrawlerClientsLoader,
   createAmazonCrawlerJobController,
@@ -274,12 +275,13 @@ test("client loader returns coordinator client capacity and status", async () =>
   const loadClients = createAmazonCrawlerClientsLoader({
     engineUrl: "http://coordinator.test/",
     fetchImplementation: async () => jsonResponse([
-      { id: "client-a", displayName: "Máy Lợi", status: "busy", isConnected: true, maxConcurrentInputs: 4, activeTasks: 2, lastSeenAt: "2026-09-22T10:00:00Z" },
+      { id: "client-a", displayName: "Máy Lợi", agentVersion: "5.0.0", status: "busy", isConnected: true, maxConcurrentInputs: 4, activeTasks: 2, lastSeenAt: "2026-09-22T10:00:00Z" },
       { id: "client-b", displayName: "Máy cũ", status: "offline", isConnected: false, maxConcurrentInputs: 4, activeTasks: 0, lastSeenAt: "2026-09-21T10:00:00Z" },
     ]),
   });
   const clients = await loadClients();
   assert.equal(clients.length, 1);
+  assert.equal(clients[0]?.agentVersion, "5.0.0");
   assert.equal(clients[0]?.displayName, "Máy Lợi");
   assert.equal(clients[0]?.activeTasks, 2);
 });
@@ -313,8 +315,89 @@ test("mock runtime returns fresh contract data", async () => {
 });
 
 test("module exports route and stable input serialization", () => {
-  assert.equal(amazonCrawlerRoutes(async () => amazonCrawlerMockOutput, async () => ({ removedFiles: 0, removedBytes: 0 }), async () => [])[0]?.path, "amazon-crawler");
+  assert.equal(amazonCrawlerRoutes(
+    async () => amazonCrawlerMockOutput,
+    async () => ({ removedFiles: 0, removedBytes: 0 }),
+    async () => [],
+    async () => ({
+      version: "5.1.0",
+      downloadUrl: "https://github.com/tuan03/ffp_tool/releases/download/agent-v5.1.0/FFP-Amazon-Crawler-Setup.exe",
+      checksumUrl: "https://github.com/tuan03/ffp_tool/releases/download/agent-v5.1.0/FFP-Amazon-Crawler-Setup.exe.sha256",
+      releasePageUrl: "https://github.com/tuan03/ffp_tool/releases/tag/agent-v5.1.0",
+      fileName: "FFP-Amazon-Crawler-Setup.exe",
+      sizeBytes: 1,
+      publishedAt: "2026-09-29T00:00:00Z",
+    }),
+  )[0]?.path, "amazon-crawler");
   assert.deepEqual(JSON.parse(serializeAmazonCrawlerInput(input)), input);
+});
+
+test("agent release loader returns the stable Windows installer and checksum", async () => {
+  const loadRelease = createAmazonCrawlerAgentReleaseLoader({
+    releaseApiUrl: "https://api.github.com/repos/tuan03/ffp_tool/releases/latest",
+    fetchImplementation: async () => jsonResponse({
+      tag_name: "agent-v5.1.0",
+      html_url: "https://github.com/tuan03/ffp_tool/releases/tag/agent-v5.1.0",
+      published_at: "2026-09-29T00:00:00Z",
+      assets: [
+        {
+          name: "FFP-Amazon-Crawler-Setup.exe",
+          browser_download_url: "https://github.com/tuan03/ffp_tool/releases/download/agent-v5.1.0/FFP-Amazon-Crawler-Setup.exe",
+          size: 125_000_000,
+        },
+        {
+          name: "FFP-Amazon-Crawler-Setup.exe.sha256",
+          browser_download_url: "https://github.com/tuan03/ffp_tool/releases/download/agent-v5.1.0/FFP-Amazon-Crawler-Setup.exe.sha256",
+          size: 100,
+        },
+      ],
+    }),
+  });
+
+  const release = await loadRelease();
+  assert.equal(release.version, "5.1.0");
+  assert.equal(release.fileName, "FFP-Amazon-Crawler-Setup.exe");
+  assert.equal(release.sizeBytes, 125_000_000);
+});
+
+test("agent release loader rejects missing or unsafe installer assets", async () => {
+  const releaseApiUrl = "https://api.github.com/repos/tuan03/ffp_tool/releases/latest";
+  const missingInstaller = createAmazonCrawlerAgentReleaseLoader({
+    releaseApiUrl,
+    fetchImplementation: async () => jsonResponse({
+      tag_name: "agent-v5.1.0",
+      html_url: "https://github.com/tuan03/ffp_tool/releases/tag/agent-v5.1.0",
+      published_at: "2026-09-29T00:00:00Z",
+      assets: [],
+    }),
+  });
+  await assert.rejects(missingInstaller(), { code: "AGENT_INSTALLER_NOT_FOUND" });
+
+  const unsafeInstaller = createAmazonCrawlerAgentReleaseLoader({
+    releaseApiUrl,
+    fetchImplementation: async () => jsonResponse({
+      tag_name: "agent-v5.1.0",
+      html_url: "https://github.com/tuan03/ffp_tool/releases/tag/agent-v5.1.0",
+      published_at: "2026-09-29T00:00:00Z",
+      assets: [
+        { name: "FFP-Amazon-Crawler-Setup.exe", browser_download_url: "https://example.com/agent.exe", size: 10 },
+        { name: "FFP-Amazon-Crawler-Setup.exe.sha256", browser_download_url: "https://example.com/agent.sha256", size: 10 },
+      ],
+    }),
+  });
+  await assert.rejects(unsafeInstaller(), { code: "UNSAFE_AGENT_RELEASE_URL" });
+});
+
+test("agent release loader reports GitHub request failures without engine errors", async () => {
+  const loadRelease = createAmazonCrawlerAgentReleaseLoader({
+    releaseApiUrl: "https://api.github.com/repos/tuan03/ffp_tool/releases/latest",
+    fetchImplementation: async () => jsonResponse({ message: "rate limited" }, 403),
+  });
+
+  await assert.rejects(loadRelease(), {
+    code: "AGENT_RELEASE_REQUEST_FAILED",
+    status: 403,
+  });
 });
 
 test("cache clearer sends DELETE and validates the engine response", async () => {

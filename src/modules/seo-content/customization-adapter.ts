@@ -1,7 +1,7 @@
 import type { CrawlProduct, CustomizationNormalizerOutput } from "../customization-normalizer";
 import { createSeoContentQueue } from "./queue";
 import type { SeoQueueProgressStats } from "./queue";
-import { runSeoContent } from "./service";
+import { runDefaultSeoContent } from "./default-runner";
 import type {
   SeoContentAltOnlyOutput,
   SeoContentImageInput,
@@ -655,7 +655,7 @@ export async function runCustomizationSeoPipeline(
     };
   }
 
-  const baseRunner = options.runner || runSeoContent;
+  const baseRunner = options.runner || runDefaultSeoContent;
   const rawConcurrency = typeof options.concurrency === "number" && !Number.isNaN(options.concurrency)
     ? options.concurrency
     : 1;

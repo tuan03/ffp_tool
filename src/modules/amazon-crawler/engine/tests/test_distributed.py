@@ -2830,6 +2830,7 @@ class CoordinatorApiTests(unittest.TestCase):
                     current = next(record for record in client.get("/api/v1/clients").json() if record["id"] == "client-a")
                     self.assertTrue(current["isConnected"])
                     self.assertEqual(current["status"], "online")
+                    self.assertEqual(current["agentVersion"], "5.0.0")
 
     def test_sync_all_queues_only_approved_reviews_as_each_product_becomes_ready(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

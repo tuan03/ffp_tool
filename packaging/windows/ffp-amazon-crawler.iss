@@ -1,11 +1,15 @@
 #define AppName "FFP Amazon Crawler"
-#define AppVersion "1.0.0"
+#define AppVersion GetEnv("FFP_AGENT_VERSION") != "" ? GetEnv("FFP_AGENT_VERSION") : "0.0.0-dev"
 #define AppExeName "FFPAmazonCrawlerAgent.exe"
 
 [Setup]
 AppId={{BE595833-76C8-42EC-A20B-2147367422E9}
 AppName={#AppName}
 AppVersion={#AppVersion}
+VersionInfoVersion={#AppVersion}
+AppPublisher=FFP Tool
+AppPublisherURL=https://github.com/tuan03/ffp_tool
+AppUpdatesURL=https://github.com/tuan03/ffp_tool/releases/latest
 DefaultDirName={autopf}\FFP Amazon Crawler
 DefaultGroupName={#AppName}
 OutputDir=..\..\installer-output
@@ -24,7 +28,7 @@ Source: "..\..\artifacts\windows\FFPAmazonCrawlerAgent\*"; DestDir: "{app}"; Fla
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Parameters: "--config ""{commonappdata}\FFP Amazon Crawler\agent.json"""
 
 [Registry]
-Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "FFPAmazonCrawler"; ValueData: """{app}\{#AppExeName}"" --config ""{commonappdata}\FFP Amazon Crawler\agent.json"""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "FFPAmazonCrawler"; ValueData: """{app}\{#AppExeName}"" --start-minimized --config ""{commonappdata}\FFP Amazon Crawler\agent.json"""; Flags: uninsdeletevalue
 
 [Run]
 Filename: "{app}\{#AppExeName}"; Parameters: "--config ""{commonappdata}\FFP Amazon Crawler\agent.json"""; Description: "Start {#AppName}"; Flags: nowait postinstall skipifsilent
@@ -47,7 +51,7 @@ begin
     'Enter the HTTPS address of the crawler coordinator.',
     'The client connects outbound to this address. No inbound Windows port is required.');
   ServerPage.Add('Server URL:', False);
-  ServerPage.Values[0] := 'https://crawler.example.com';
+  ServerPage.Values[0] := 'https://ffp.b6-team.site';
 end;
 
 function NextButtonClick(CurPageID: Integer): Boolean;

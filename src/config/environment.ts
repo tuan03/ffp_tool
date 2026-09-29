@@ -1,6 +1,7 @@
 import type { AppEnvironment } from "../shared/types";
 
 import { resolveAmazonCoordinatorUrl } from "./amazon-crawler-url";
+import { resolveAmazonCrawlerReleaseApiUrl } from "./amazon-crawler-release-url";
 
 export type { AppEnvironment } from "../shared/types";
 
@@ -37,3 +38,7 @@ function getAmazonCrawlerCoordinatorUrl(): string {
 }
 
 export const amazonCrawlerCoordinatorUrl = getAmazonCrawlerCoordinatorUrl();
+
+export const amazonCrawlerReleaseApiUrl = resolveAmazonCrawlerReleaseApiUrl(
+  import.meta.env.VITE_AMAZON_CRAWLER_RELEASE_API_URL,
+);

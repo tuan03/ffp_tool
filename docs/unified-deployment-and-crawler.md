@@ -102,14 +102,18 @@ Hệ thống sẽ tự động:
 Để máy người cào (máy nhân viên / máy cá nhân) có thể kết nối vào hệ thống và nhận việc cào Amazon & Pinterest:
 
 ### Cách 1: Chạy file cài đặt nhanh (Khuyên dùng cho Windows)
-Người cào chỉ cần tải thư mục tool về máy và **click đúp vào file**:
+Mở trang **Amazon Crawler** trên FFP Tool, bấm **Tải Agent cho Windows**, sau đó chạy:
 ```text
-cai-agent.bat
+FFP-Amazon-Crawler-Setup.exe
 ```
-Hoặc mở terminal gõ:
-```cmd
-cai-agent.bat
-```
+
+Bộ cài dùng cùng một `AppId` cho mọi phiên bản, vì vậy có thể cài đè bản cũ và vẫn giữ
+cấu hình coordinator trong `C:\ProgramData\FFP Amazon Crawler\agent.json`. Hãy đóng agent
+đang chạy trước khi nâng cấp. Sau khi hoàn tất, installer sẽ chạy lại agent.
+
+Repository hiện chưa ký Authenticode cho installer nên Windows SmartScreen có thể hiện cảnh
+báo. Chỉ tải asset từ GitHub Release chính thức và đối chiếu file
+`FFP-Amazon-Crawler-Setup.exe.sha256` nếu cần xác minh.
 
 ### Cách 2: Chạy trực tiếp qua 1 dòng lệnh PowerShell (Remote 1-Liner)
 Người cào mở PowerShell trên Windows và dán 1 dòng lệnh duy nhất:
@@ -129,6 +133,25 @@ curl -sSL https://ffp.b6-team.site/install-agent.sh | bash
 4. **Cài đặt Chromium:** Tự động tải trình duyệt Chromium chuẩn của Playwright để cào không bị lộ bot.
 5. **Khởi tạo cấu hình:** Tự sinh file `config/amazon-crawler-agent.json` trỏ về server.
 6. **Tạo launcher tiện lợi:** Tạo sẵn file `chay-agent.bat` để những lần sau chỉ cần click 1 cái là Agent chạy ngay, hiển thị trạng thái lên icon khay hệ thống (System Tray).
+
+### Phát hành phiên bản Agent mới
+
+1. Cập nhật `AGENT_VERSION` trong `src/modules/amazon-crawler/engine/distributed/__init__.py` theo định dạng `X.Y.Z`.
+2. Merge thay đổi lên `main`, sau đó tạo tag khớp chính xác: `agent-vX.Y.Z`.
+3. Push tag lên GitHub. Workflow **Release Windows Crawler Agent** sẽ kiểm tra phiên bản,
+   build installer trên Windows, tạo SHA-256 và xuất bản GitHub Release.
+4. UI tự đọc release mới nhất. Client online có phiên bản thấp hơn sẽ hiện **Cần cập nhật**;
+   không cần deploy lại web chỉ để đổi metadata release.
+
+Ví dụ:
+
+```bash
+git tag agent-v5.1.0
+git push origin agent-v5.1.0
+```
+
+Không tạo release thủ công nếu workflow build thất bại. Tag và `AGENT_VERSION` không khớp
+sẽ bị workflow từ chối.
 
 ---
 
