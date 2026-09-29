@@ -1,5 +1,7 @@
+import type { VariantSummary } from "../../types";
 import type { ContentGenerationMetadata, ContentResult } from "../domain-types";
 import type { StoreContentProfile } from "../store-profiles/types";
+import type { KeywordComparisonResult } from "../keyword-comparator";
 
 export type { ContentGenerationMetadata, ContentResult };
 
@@ -17,6 +19,7 @@ export interface ContentFactSheet {
   readonly useCases: readonly string[];
   readonly personalizationSupported: boolean;
   readonly variantLabel?: string;
+  readonly variantSummary?: VariantSummary;
   readonly storeProfile?: StoreContentProfile;
 }
 
@@ -26,6 +29,7 @@ export interface KeywordAllocation {
   readonly supportingKeywords: readonly string[];
   readonly framingConcepts: readonly string[];
   readonly targetedKeywords: readonly string[];
+  readonly comparisonResult?: KeywordComparisonResult;
 }
 
 export interface GeneratedBullet {

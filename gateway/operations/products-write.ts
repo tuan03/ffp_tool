@@ -2,8 +2,9 @@ import { executeChunkedWrite } from "../chunked-write";
 import { GatewayError, mapUserErrorsToGatewayError, type MutationUserErrorItem } from "../errors";
 import type { ShopifyGraphqlClient } from "../shopify-graphql-client";
 import type { GatewayErrorCode, ProductImageSummary, ProductSummary, ProductVariantSummary, StoreConfig } from "../types";
-import { mapProductNode, type RawProductNode } from "./products";
+import { executeProductsGet, mapProductNode, type RawProductNode } from "./products";
 import { ensureMediaPubliclyAccessible } from "./staged-uploads";
+import { ensureUrlRedirect } from "./url-redirects";
 
 const PRODUCT_CREATE_MUTATION = `
   mutation ProductCreate($product: ProductCreateInput!, $media: [CreateMediaInput!]) {
@@ -937,6 +938,61 @@ export async function executeProductsUpdate(
     throw new GatewayError("Product patch object is required", "SHOPIFY_USER_ERROR", 400);
   }
 
+  const force = p.force === true || productPatch.force === true;
+  const expectedUpdatedAt =
+    typeof p.expectedUpdatedAt === "string" && p.expectedUpdatedAt.trim() !== ""
+      ? p.expectedUpdatedAt.trim()
+      : typeof productPatch.expectedUpdatedAt === "string" && productPatch.expectedUpdatedAt.trim() !== ""
+      ? productPatch.expectedUpdatedAt.trim()
+      : undefined;
+
+  let currentProductSummary: ProductSummary | null = null;
+  if (mode === "apply") {
+    const shouldFetchCurrent =
+      (!force && expectedUpdatedAt !== undefined) ||
+      (typeof productPatch.handle === "string" && productPatch.handle.trim() !== "");
+    if (shouldFetchCurrent) {
+      try {
+        const currentRes = await executeProductsGet(store, client, { id });
+        currentProductSummary = currentRes.product;
+      } catch (getErr: unknown) {
+        if (getErr instanceof GatewayError && getErr.code === "SHOPIFY_NOT_FOUND") {
+          throw getErr;
+        }
+      }
+
+      if (
+        !force &&
+        expectedUpdatedAt &&
+        currentProductSummary &&
+        currentProductSummary.updatedAt &&
+        currentProductSummary.updatedAt !== expectedUpdatedAt
+      ) {
+        throw new GatewayError(
+          `Shopify product version conflict: product was modified at ${currentProductSummary.updatedAt}, but update was requested for version at ${expectedUpdatedAt}.`,
+          "SHOPIFY_VERSION_CONFLICT",
+          409,
+          undefined,
+          undefined,
+          undefined,
+          false,
+          {
+            code: "SHOPIFY_VERSION_CONFLICT",
+            productId: id,
+            sourceShopifyUpdatedAt: expectedUpdatedAt,
+            currentShopifyUpdatedAt: currentProductSummary.updatedAt,
+            currentProduct: {
+              title: currentProductSummary.title,
+              handle: currentProductSummary.handle,
+              descriptionHtml: currentProductSummary.descriptionHtml,
+              seo: currentProductSummary.seo,
+            },
+          },
+        );
+      }
+    }
+  }
+
   if (mode === "preview") {
     const now = new Date().toISOString();
     const previewProduct: ProductSummary = {
@@ -1233,6 +1289,17 @@ export async function executeProductsUpdate(
 
   if (!raw.productUpdate.product) {
     throw new GatewayError(`Failed to update product ${id}`, "SHOPIFY_USER_ERROR", 400);
+  }
+
+  const oldHandle = currentProductSummary?.handle;
+  const newHandle = raw.productUpdate.product.handle;
+  if (oldHandle && newHandle && oldHandle !== newHandle) {
+    try {
+      await ensureUrlRedirect(client, store, oldHandle, newHandle);
+    } catch (redirectError: unknown) {
+      const msg = redirectError instanceof Error ? redirectError.message : String(redirectError);
+      console.warn(`[URL Redirect] Non-fatal redirect failure from ${oldHandle} to ${newHandle}: ${msg}`);
+    }
   }
 
   if (shouldReplaceMedia && existingMediaIds.length > 0) {

@@ -2,6 +2,7 @@ import type { Plugin } from "vite";
 
 import { GatewayDispatcher } from "./dispatcher";
 import { handleAutoSeoHttpRequest } from "./auto-seo-handler";
+import { handleSeoReviewHttpRequest } from "./seo-review-handler";
 import {
   handlePinterestPodDirectShopifySyncHttpRequest,
   handlePinterestPodSeoHttpRequest,
@@ -244,6 +245,11 @@ export function shopifyGatewayDevPlugin(options?: ShopifyGatewayDevPluginOptions
           await handlePinterestPodSeoHttpRequest(req, res, { authToken, maxBodyBytes });
         } else if (isPinterestPodDirectSync) {
           await handlePinterestPodDirectShopifySyncHttpRequest(req, res, { authToken, maxBodyBytes, dispatcher });
+        } else if (req.url && (req.url === "/api/seo-review/items" || req.url.startsWith("/api/seo-review/"))) {
+          if (authToken && isSameOriginRequest(req.headers) && !req.headers["x-gateway-key"] && !req.headers["authorization"]) {
+            req.headers["x-gateway-key"] = authToken;
+          }
+          await handleSeoReviewHttpRequest(req, res, { authToken, maxBodyBytes });
         } else {
           next();
         }

@@ -353,6 +353,7 @@ export function fromCustomizationProduct(
     ...((product as Record<string, unknown>).storeId
       ? { storeId: String((product as Record<string, unknown>).storeId) }
       : {}),
+    ...(Array.isArray(product.variants) ? { variants: product.variants } : {}),
   };
 }
 

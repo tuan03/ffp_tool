@@ -22,6 +22,7 @@ import { ProductListTable } from "./components/ProductListTable";
 import { ProductSplitView } from "./components/ProductSplitView";
 import { SeoBatchToolbar } from "./components/SeoBatchToolbar";
 import { ShopifySyncErrorModal } from "./components/ShopifySyncErrorModal";
+import { VersionConflictModal } from "./components/VersionConflictModal";
 import { filterSeoProducts, findNextProductInList } from "./review-navigation";
 import { buildProductRawJson } from "./product-raw-json-helper";
 import { adaptAmazonCrawlerReviewToViewModel, getProductSourceOrigin } from "./seo-content-ui-adapter";
@@ -111,6 +112,7 @@ function toPushProductItem(vm: SeoProductUiViewModel): SeoReviewPushProductItem 
     discountPercent,
     metafields,
     variants: vm.sourcePinterestItem?.variants,
+    sourceShopifyUpdatedAt: vm.sourceShopifyUpdatedAt,
   };
 }
 
@@ -238,6 +240,7 @@ export function SeoReviewPage({
   const [editingProduct, setEditingProduct] = useState<SeoProductUiViewModel | null>(null);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [errorModalProduct, setErrorModalProduct] = useState<SeoProductUiViewModel | null>(null);
+  const [conflictModalProduct, setConflictModalProduct] = useState<SeoProductUiViewModel | null>(null);
   const setSyncFeedback = useCallback((fb: { type: "success" | "error" | "warning"; message: string } | null) => {
     if (!fb) return;
     notifyUser({
@@ -651,7 +654,7 @@ export function SeoReviewPage({
     filteredProducts.every((p) => expandedTableIds.has(p.id));
 
   // Push to Shopify Store handlers
-  async function triggerPushToShopify(targetProduct: SeoProductUiViewModel) {
+  async function triggerPushToShopify(targetProduct: SeoProductUiViewModel, options?: { force?: boolean }) {
     const targetStore = effectiveStoreId;
     let gptSyncToken: string | undefined;
     try {
@@ -660,11 +663,16 @@ export function SeoReviewPage({
         await gptSaveChain.current;
         gptSyncToken = (await gptClient.beginSync(targetStore, targetProduct.gptJobId)).token;
       }
+      const pushItem = {
+        ...toPushProductItem(targetProduct),
+        force: options?.force,
+      };
       const result = await pushSeoReviewProductToShopify(
-        toPushProductItem(targetProduct),
+        pushItem,
         {
           moduleApiRunner: runner,
           storeId: targetStore,
+          force: options?.force,
         },
       );
 
@@ -685,20 +693,30 @@ export function SeoReviewPage({
           url: `/seo-review?storeId=${encodeURIComponent(targetStore)}`,
         });
       } else {
+        const errorMsg = result.conflictDetails
+          ? JSON.stringify(result.conflictDetails)
+          : result.error || "Lỗi khi đẩy sản phẩm lên Shopify";
+
         if (targetProduct.coordinatorReview && amazonCrawlerReviews) {
           void amazonCrawlerReviews.markFailed(
             targetProduct.coordinatorReview.itemId,
-            result.error || "Lỗi khi đẩy sản phẩm lên Shopify",
+            errorMsg,
           ).catch(() => {});
         }
         notifyUser({
-          title: "❌ Shopify Sync thất bại",
-          message: result.error || "Lỗi khi đẩy sản phẩm lên Shopify",
-          type: "error",
+          title: result.conflictDetails ? "⚠️ Xung đột phiên bản Shopify" : "❌ Shopify Sync thất bại",
+          message: result.conflictDetails
+            ? `Sản phẩm "${targetProduct.productTitle.value}" đã bị thay đổi trên Shopify kể từ khi tạo SEO.`
+            : result.error || "Lỗi khi đẩy sản phẩm lên Shopify",
+          type: result.conflictDetails ? "warning" : "error",
           sound: "alert",
           url: `/seo-review?storeId=${encodeURIComponent(targetStore)}`,
         });
       }
+
+      const finalErrorMsg = result.conflictDetails
+        ? JSON.stringify(result.conflictDetails)
+        : result.error || "Lỗi khi đẩy sản phẩm lên Shopify";
 
       setProducts((prev) =>
         prev.map((p) => {
@@ -724,8 +742,8 @@ export function SeoReviewPage({
               ...p,
               shopifySyncStatus: "failed",
               isSyncing: false,
-              shopifySyncError: result.error || "Lỗi khi đẩy sản phẩm lên Shopify",
-              syncError: result.error || "Lỗi khi đẩy sản phẩm lên Shopify",
+              shopifySyncError: finalErrorMsg,
+              syncError: finalErrorMsg,
               updatedAt: Date.now(),
             };
           }
@@ -922,6 +940,49 @@ export function SeoReviewPage({
 
   function handleViewSyncError(product: SeoProductUiViewModel) {
     setErrorModalProduct(product);
+  }
+
+  function handleForceOverwrite(id: string) {
+    const target = products.find((p) => p.id === id || p.productId === id);
+    if (!target) return;
+
+    const syncingTarget: SeoProductUiViewModel = {
+      ...target,
+      shopifySyncStatus: "syncing",
+      isSyncing: true,
+      shopifySyncError: undefined,
+      updatedAt: Date.now(),
+    };
+
+    setProducts((prev) =>
+      prev.map((p) => (p.id === target.id ? syncingTarget : p)),
+    );
+
+    void triggerPushToShopify(syncingTarget, { force: true });
+  }
+
+  function handleReRunSeo(id: string) {
+    const target = products.find((p) => p.id === id || p.productId === id);
+    if (!target) return;
+
+    setProducts((prev) =>
+      prev.map((p) =>
+        p.id === target.id
+          ? {
+              ...p,
+              seoStatus: { value: "processing", source: "real" },
+              shopifySyncStatus: "idle",
+              shopifySyncError: undefined,
+              updatedAt: Date.now(),
+            }
+          : p,
+      ),
+    );
+
+    setSyncFeedback({
+      type: "success",
+      message: `🔄 Đã lên lịch tạo lại SEO cho "${target.productTitle.value}" từ dữ liệu Shopify mới nhất.`,
+    });
   }
 
   async function handleApproveProduct(id: string): Promise<void> {
@@ -2113,6 +2174,16 @@ export function SeoReviewPage({
         onClose={() => setErrorModalProduct(null)}
         onRetry={handleRetrySync}
         onDelete={handleDeleteProduct}
+        onOpenVersionConflict={(p) => setConflictModalProduct(p)}
+      />
+
+      {/* Shopify Optimistic Concurrency Conflict Diff Modal */}
+      <VersionConflictModal
+        isOpen={Boolean(conflictModalProduct)}
+        product={conflictModalProduct}
+        onClose={() => setConflictModalProduct(null)}
+        onForceOverwrite={handleForceOverwrite}
+        onReRunSeo={handleReRunSeo}
       />
 
       {/* High-Resolution Image Zoom Lightbox */}

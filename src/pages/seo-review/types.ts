@@ -96,6 +96,7 @@ export interface SeoProductUiViewModel {
   readonly shopifyAdminUrl?: string;
   readonly shopifySyncError?: string;
   readonly shopifySyncedAt?: number;
+  readonly sourceShopifyUpdatedAt?: string;
 
   // Syncing State (Cách 1: Sync ngay khi duyệt)
   readonly isSyncing?: boolean;

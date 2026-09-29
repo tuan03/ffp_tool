@@ -3,6 +3,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import { loadLocalEnv } from "./store-config-loader";
+import { initSeoReviewDbSchema } from "./seo-review-db";
 
 export interface AutoSeoDbOptions {
   readonly dbPath?: string;
@@ -60,6 +61,7 @@ export function initAutoSeoDbSchema(db: DatabaseSync): void {
   if (!db.prepare("PRAGMA table_info(auto_seo_product_backups)").all().some(column => column.name === "gpt_settings_json")) {
     db.exec("ALTER TABLE auto_seo_product_backups ADD COLUMN gpt_settings_json TEXT");
   }
+  initSeoReviewDbSchema(db);
 }
 
 export const INSERT_AUTO_SEO_BACKUP_SQL = `

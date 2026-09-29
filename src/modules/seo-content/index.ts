@@ -77,6 +77,8 @@ export type {
   SeoContentDetailedResult,
   SeoContentEngine,
   SeoContentInput,
+  VariantSample,
+  VariantSummary,
   SeoContentOutput,
   SeoContentPipelineSummary,
   SeoContentRunMetadata,
@@ -84,4 +86,76 @@ export type {
   SeoContentRunOptions,
   SeoContentWebpAsset,
 } from "./types";
+export { summarizeVariants } from "./internal/variant-summarizer";
+export {
+  classifyError,
+  getJitterBackoffDelayMs,
+  CLASSIFIED_ERROR_ACTIONS,
+  DEFAULT_JITTER_SCHEDULE,
+} from "./internal/error-classifier";
+export type {
+  ClassifiedErrorAction,
+  ClassifiedErrorResolution,
+} from "./internal/error-classifier";
 export { validateExternalSeoAnalysis, researchExternalSeo, checkExternalSeoKeywords, finalizeExternalSeo, bindExternalSeoProduct } from "./external-seo";
+export {
+  DEFAULT_STAGE_TIMEOUTS_MS,
+  DEFAULT_OVERALL_TIMEOUT_MS,
+  getStageTimeoutMs,
+} from "./internal/pipeline";
+export {
+  SeoStageError,
+  SeoTimeoutError,
+  isSeoTimeoutError,
+} from "./internal/pipeline-errors";
+export {
+  extractContextUpdates,
+  createSeoPipeline,
+} from "./internal/pipeline";
+export type {
+  SeoPipeline,
+  SeoPipelineExecutionOptions,
+  SeoPipelineOptions,
+  SeoPipelineResume,
+} from "./internal/pipeline";
+export {
+  computeProductInputHash,
+  computeStageHash,
+  FileSeoCheckpointStore,
+  InMemorySeoCheckpointStore,
+  SeoCheckpointManager,
+  SEO_CHECKPOINT_TTL_MS,
+  DEFAULT_STAGE_MODELS,
+  DEFAULT_STAGE_PROMPT_VERSIONS,
+} from "./internal/checkpoint";
+export type {
+  CanonicalProductIdentity,
+  FileSeoCheckpointStoreOptions,
+  RecordStageFailureParams,
+  RecordStageSuccessParams,
+  SeoCheckpoint,
+  SeoCheckpointManagerOptions,
+  SeoCheckpointStore,
+  SeoStageCheckpoint,
+  SeoStageErrorDetails,
+  SeoStageRetryLog,
+  SeoStageStatus,
+} from "./internal/checkpoint";
+export {
+  KeywordQualityComparator,
+  evaluateKeywordQuality,
+  compareKeywordQuality,
+  calculateEntityAlignment,
+  calculateCommercialIntent,
+  calculateSearchValidation,
+  calculateCannibalizationSafety,
+} from "./internal/keyword-comparator";
+export type {
+  KeywordComparatorOptions,
+  KeywordComparisonDecision,
+  KeywordComparisonResult,
+  KeywordEvaluationContext,
+  KeywordScoreBreakdown,
+  CannibalizationEvaluation,
+} from "./internal/keyword-comparator";
+

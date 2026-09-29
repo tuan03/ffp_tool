@@ -17,6 +17,7 @@ import {
   type ShopifyManagedResources,
   type ShopifyMetafieldInput,
   type ShopifySyncProductInput,
+  type ShopifyVersionConflictDetails,
 } from "../shopify-sync";
 
 export interface SeoReviewPushImageItem {
@@ -59,6 +60,8 @@ export interface SeoReviewPushProductItem {
       readonly value?: string;
     }[];
   }[];
+  readonly sourceShopifyUpdatedAt?: string;
+  readonly force?: boolean;
 }
 
 export interface PushSeoReviewProductResult {
@@ -68,12 +71,16 @@ export interface PushSeoReviewProductResult {
   readonly productHandle?: string;
   readonly adminUrl?: string;
   readonly error?: string;
+  readonly details?: unknown;
+  readonly conflictDetails?: ShopifyVersionConflictDetails;
 }
 
 export interface PushSeoReviewProductsOptions {
   readonly moduleApiRunner: ModuleApiRunner;
   readonly storeId?: string;
   readonly mode?: "apply" | "preview";
+  readonly sourceShopifyUpdatedAt?: string;
+  readonly force?: boolean;
 }
 
 export interface ResolvedShopifyStoreInfo {
@@ -325,6 +332,8 @@ export async function pushSeoReviewProductToShopify(
         gateway,
         existingProductId: validExistingProductId,
         existingManagedResources,
+        sourceShopifyUpdatedAt: product.sourceShopifyUpdatedAt ?? options.sourceShopifyUpdatedAt,
+        force: product.force ?? options.force,
       });
 
       if (!syncResult.success) {
@@ -332,6 +341,8 @@ export async function pushSeoReviewProductToShopify(
           id: product.id,
           success: false,
           error: syncResult.error || "Failed to push product to Shopify via shopify-sync adapter.",
+          details: syncResult.details,
+          conflictDetails: syncResult.conflictDetails,
         };
       }
 
@@ -399,6 +410,8 @@ export async function pushSeoReviewProductToShopify(
         operation: "products.update",
         payload: {
           id: normalizedProductId,
+          expectedUpdatedAt: product.sourceShopifyUpdatedAt ?? options.sourceShopifyUpdatedAt,
+          force: product.force ?? options.force,
           product: {
             title: product.productTitle,
             descriptionHtml: product.productDescription,
@@ -546,10 +559,18 @@ export async function pushSeoReviewProductToShopify(
     };
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
+    const errObj = (err && typeof err === "object") ? (err as Record<string, unknown>) : undefined;
+    const details = errObj?.details;
+    const conflictDetails = (errObj?.code === "SHOPIFY_VERSION_CONFLICT" || (details && typeof details === "object" && (details as Record<string, unknown>).code === "SHOPIFY_VERSION_CONFLICT"))
+      ? ((details ?? errObj) as ShopifyVersionConflictDetails)
+      : undefined;
+
     return {
       id: product.id,
       success: false,
       error: message,
+      details,
+      conflictDetails,
     };
   }
 }

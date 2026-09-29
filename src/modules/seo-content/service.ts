@@ -2,6 +2,8 @@ import { loadServerEnvironment } from "../../config/server-environment";
 
 import { AltOnlyImageProcessor } from "./internal/image-processing/image-processor";
 import { FileSeoConflictCorpus } from "./internal/conflict-control/file-seo-conflict-corpus";
+import type { SeoCheckpointManager, SeoCheckpointStore } from "./internal/checkpoint";
+import { FileSeoCheckpointStore, SeoCheckpointManager as DefaultSeoCheckpointManager } from "./internal/checkpoint";
 import type { SeoPipelineResume } from "./internal/pipeline";
 import { createSeoPipeline, DEFAULT_SEO_PIPELINE_STAGES } from "./internal/pipeline";
 import { registerProductKeywords } from "./internal/stages/b4-conflict-control";
@@ -53,9 +55,13 @@ function getDefaultPipeline(): ReturnType<typeof createSeoPipeline> {
  * Runs sequential multi-stage processing:
  * B1 (Understanding) -> B2 (Context) -> B3 (Search) -> B4 (Conflict) -> B5 (Content) -> B6 (Images).
  */
-export async function runSeoContent(input: SeoContentInput): Promise<SeoContentOutput> {
-  return getDefaultPipeline().execute(input);
+export async function runSeoContent(
+  input: SeoContentInput,
+  options?: SeoContentRunOptions | { readonly signal?: AbortSignal },
+): Promise<SeoContentOutput> {
+  return getDefaultPipeline().execute(input, options);
 }
+
 
 export function runSeoContentDetailed(
   input: SeoContentInput,
@@ -144,21 +150,30 @@ export function createSeoContentSession(input: SeoContentInput, options: SeoCont
       ? createB6ImageProcessingStage({ imageProcessor: new AltOnlyImageProcessor() })
       : DEFAULT_SEO_PIPELINE_STAGES[DEFAULT_SEO_PIPELINE_STAGES.length - 1],
   ];
+  const checkpointStore = (options.dependencies?.checkpointStore as SeoCheckpointStore | undefined)
+    ?? new FileSeoCheckpointStore();
+  const checkpointManager = (options.dependencies?.checkpointManager as SeoCheckpointManager | undefined)
+    ?? new DefaultSeoCheckpointManager({ store: checkpointStore });
   const pipeline = createSeoPipeline({
     stages: runtimeStages.map(stage => ({
       name: stage.name,
       execute(context) { observedFallbacks.delete(stage.name); return stage.execute(context); },
     })),
     siteNicheResolver: getDefaultSiteNicheResolver(),
+    checkpointManager,
   });
   async function run(): Promise<SeoContentDetailedResult> {
     if (running) throw new Error("A SEO session cannot run concurrently with itself.");
     running = true;
     try {
       const execution = await pipeline.executeDetailed(input, {
-        signal: options.signal, resume,
+        signal: options.signal,
+        resume,
+        stageTimeouts: options.stageTimeouts,
+        overallTimeoutMs: options.overallTimeoutMs,
         onStage: (stage, duration) => { stageDurationsMs[stage] = (stageDurationsMs[stage] ?? 0) + duration; },
       });
+
       resume = execution.resume;
       const observedFallbackStages = [...observedFallbacks.keys()];
       const observedWarnings = [...observedFallbacks.values()].flat();

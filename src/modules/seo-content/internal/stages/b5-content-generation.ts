@@ -84,6 +84,26 @@ export function buildB5ContentInput(context: SeoPipelineContext, options: B5Cont
   // 1. Build verified fact sheet from context
   const facts = buildContentFactSheet(context);
 
+  const existingPrimaryKeyword =
+    context.source.existingPrimaryKeyword ??
+    context.source.existingKeywords?.[0];
+
+  const comparatorContext = {
+    physicalProductIdentity: facts.physicalProductIdentity,
+    visualEntities: facts.visualEntities,
+    visibleTexts: facts.typographyVisibleTexts,
+    targetAudience: facts.targetAudience,
+    occasions: facts.occasions,
+    useCases: facts.useCases,
+    buyerIntentKeywords: context.shoppingContext?.buyerIntentKeywords,
+    suggestions: context.searchResearch?.suggestedQueries,
+    knownConflicts: context.conflictResult?.discardedKeywords,
+    conflictDetails: context.conflictResult?.conflictDetails,
+    storeId: context.source.storeId,
+    productId: context.source.productId,
+    handle: context.source.handle,
+  };
+
   // 2. Allocate keywords into primary, secondary, and supporting tiers
   const keywords = allocateKeywords({
     approvedKeywords: context.conflictResult?.approvedKeywords ?? [],
@@ -96,6 +116,9 @@ export function buildB5ContentInput(context: SeoPipelineContext, options: B5Cont
       suitableOccasions: facts.occasions,
       useCases: facts.useCases,
     },
+    existingPrimaryKeyword,
+    existingKeywords: context.source.existingKeywords,
+    comparatorContext,
   });
 
   return { facts, keywords, constraints };
@@ -206,6 +229,7 @@ export async function executeB5ContentGeneration(
     targetedKeywords: keywords.targetedKeywords,
     generator: generatorOrigin,
     corpusRevision: context.conflictResult?.corpusRevision,
+    keywordComparison: keywords.comparisonResult,
   };
 
   return evolveContext(context, {

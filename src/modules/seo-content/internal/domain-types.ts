@@ -1,6 +1,7 @@
 import type { GeneratedFaqItem, SeoContentImageOutput, SeoContentInput } from "../types";
 import type { StoredEmbedding } from "./conflict-control/seo-conflict-corpus";
 import type { StoreContentProfile } from "./store-profiles/types";
+import type { KeywordComparisonResult } from "./keyword-comparator";
 
 export type SeoStageName = "b1" | "b2" | "b3" | "b4" | "b5" | "b6";
 
@@ -89,6 +90,7 @@ export interface ContentGenerationMetadata {
   readonly targetedKeywords: readonly string[];
   readonly generator: "gemini" | "heuristic";
   readonly corpusRevision?: number;
+  readonly keywordComparison?: KeywordComparisonResult;
 }
 
 import type { ImageProcessingMetadata } from "./image-processing/image-processing-types";
