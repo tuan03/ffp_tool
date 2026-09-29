@@ -1,0 +1,93 @@
+# ==============================================================================
+# FFP Tool - 3-Container Unified Architecture
+# Run entire application with 1 single command:
+#   docker compose up -d --build
+#
+# Containers:
+#   1. database: PostgreSQL 17 (Unified database for all modules)
+#   2. server:   Unified Backend (Gateway, Crawler Coordinator, Pipeline Worker)
+#   3. client:   Frontend Web Client (React SPA UI + Nginx Reverse Proxy)
+# ==============================================================================
+
+name: ffp-tool
+
+services:
+  # ----------------------------------------------------------------------------
+  # 1. DATABASE CONTAINER
+  # ----------------------------------------------------------------------------
+  database:
+    image: postgres:17-alpine
+    container_name: ffp-database
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-ffp_tool}
+      POSTGRES_USER: ${POSTGRES_USER:-ffp_tool}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - ffp_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ffp_tool} -d ${POSTGRES_DB:-ffp_tool}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+
+  # ----------------------------------------------------------------------------
+  # 2. SERVER CONTAINER (Unified Backend for All Modules)
+  # ----------------------------------------------------------------------------
+  server:
+    build:
+      context: .
+      dockerfile: deploy/server/Dockerfile
+    container_name: ffp-server
+    restart: unless-stopped
+    depends_on:
+      database:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-ffp_tool}:${POSTGRES_PASSWORD}@database:5432/${POSTGRES_DB:-ffp_tool}
+      AMAZON_COORDINATOR_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-ffp_tool}:${POSTGRES_PASSWORD}@database:5432/${POSTGRES_DB:-ffp_tool}
+      GATEWAY_HOST: 0.0.0.0
+      GATEWAY_PORT: 3001
+      COORDINATOR_PORT: 8766
+    volumes:
+      - ffp_data:/app/.local-data
+      - ffp_runtime:/app/.runtime
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:3001/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    ports:
+      - "127.0.0.1:${GATEWAY_PORT:-3001}:3001"
+      - "127.0.0.1:${COORDINATOR_PORT:-8766}:8766"
+
+  # ----------------------------------------------------------------------------
+  # 3. CLIENT CONTAINER (Frontend Web Client & Nginx Proxy)
+  # ----------------------------------------------------------------------------
+  client:
+    build:
+      context: .
+      dockerfile: deploy/client/Dockerfile
+    container_name: ffp-client
+    restart: unless-stopped
+    depends_on:
+      server:
+        condition: service_healthy
+    ports:
+      - "${CLIENT_PORT:-3010}:80"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  ffp_postgres_data:
+  ffp_data:
+  ffp_runtime:
