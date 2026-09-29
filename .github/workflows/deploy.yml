@@ -102,6 +102,11 @@ jobs:
             fi
 
             echo "=== [3/6] Handling .env configuration ==="
+            EXISTING_GPT_SEO_ACTION_KEYS_JSON=""
+            if [ -f .env ]; then
+              EXISTING_GPT_SEO_ACTION_KEYS_JSON=$(sed -nE 's/^[[:space:]]*GPT_SEO_ACTION_KEYS_JSON=(.*)$/\1/p' .env | head -n 1 || true)
+            fi
+
             if [ -n "$ENV_B64" ]; then
               echo "Applying .env configuration from GitHub Secrets..."
               [ -f .env ] && cp .env .env.bak
@@ -113,9 +118,22 @@ jobs:
               echo "Existing .env found on VPS. Preserving secrets..."
             fi
 
+            # Keep the VPS multi-store Action keys unless ENV_FILE explicitly supplies a replacement map.
+            INCOMING_GPT_SEO_ACTION_KEYS_JSON=$(sed -nE 's/^[[:space:]]*GPT_SEO_ACTION_KEYS_JSON=(.*)$/\1/p' .env | head -n 1 || true)
+            if [ -z "$INCOMING_GPT_SEO_ACTION_KEYS_JSON" ] && [ -n "$EXISTING_GPT_SEO_ACTION_KEYS_JSON" ]; then
+              sed -i '/^[[:space:]]*GPT_SEO_ACTION_KEYS_JSON=/d' .env
+              printf '\nGPT_SEO_ACTION_KEYS_JSON=%s\n' "$EXISTING_GPT_SEO_ACTION_KEYS_JSON" >> .env
+              INCOMING_GPT_SEO_ACTION_KEYS_JSON="$EXISTING_GPT_SEO_ACTION_KEYS_JSON"
+            fi
+
+            # A multi-store map replaces the legacy single-store Action key.
+            if [ -n "$INCOMING_GPT_SEO_ACTION_KEYS_JSON" ]; then
+              sed -i '/^[[:space:]]*GPT_SEO_ACTION_KEY=/d' .env
+            fi
+
             # Ensure correct APP_PORT is recorded in .env
-            sed -i '/^APP_PORT=/d' .env 2>/dev/null || true
-            echo "APP_PORT=$APP_PORT" >> .env
+            sed -i '/^[[:space:]]*APP_PORT=/d' .env 2>/dev/null || true
+            printf '\nAPP_PORT=%s\n' "$APP_PORT" >> .env
 
             # Sanitize .env to fix any lines that violate KEY=VALUE or comment syntax (e.g. wrapped lines with parentheses)
             python3 -c "import re; p=re.compile(r'^\s*(#|$|(export\s+)?[a-zA-Z_][a-zA-Z0-9_]*\s*=)'); lines=open('.env','r',encoding='utf-8',errors='replace').readlines(); open('.env','w',encoding='utf-8').writelines([l if p.match(l) else ('# [sanitized] ' + l) for l in lines])" 2>/dev/null || true
@@ -153,6 +171,11 @@ jobs:
             docker compose -f compose.prod.yaml pull
             echo "Starting container..."
             docker compose -f compose.prod.yaml up -d --remove-orphans
+
+            # Export the operator helper from the deployed image so VPS instructions remain executable.
+            mkdir -p scripts
+            docker cp ffp-tool-app:/app/scripts/restart-gpt-seo.sh scripts/restart-gpt-seo.sh
+            chmod 755 scripts/restart-gpt-seo.sh
 
             echo "=== [6/6] Verifying Nginx and SSL ==="
             DOMAIN="${TARGET_DOMAIN:-ffp.b6-team.site}"
@@ -208,8 +231,9 @@ jobs:
             done
 
             if [ "$HEALTHY" = "false" ]; then
-              echo "Warning: Health endpoint did not respond within 30s. Checking container logs:"
+              echo "Health endpoint did not respond within 30s. Checking container logs:"
               docker compose -f compose.prod.yaml logs --tail=50
+              exit 1
             fi
 
             echo "=== Deployment Status ==="
