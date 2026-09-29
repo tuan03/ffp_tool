@@ -93,6 +93,13 @@ test("new-store guide uses only the multi-store action-key map", async () => {
   assert.doesNotMatch(guide, /`GPT_SEO_ACTION_KEY`/);
 });
 
+test("Custom GPT instructions require binary image Actions before manual attachments", async () => {
+  const instructions = await readFile("docs/custom-gpt-seo/gpt-instructions.md", "utf8");
+
+  assert.match(instructions, /getSeoJobImageContent/);
+  assert.match(instructions, /imageId/);
+});
+
 test("production deployment exports the GPT SEO restart script from the container", async () => {
   const workflow = await readFile(".github/workflows/deploy.yml", "utf8");
 

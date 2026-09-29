@@ -105,7 +105,7 @@ export function createCustomGptHandler(options: CustomGptHandlerOptions) {
       const leaseToken = String(body.leaseToken || "");
       const requestId = String(body.requestId || "");
       const offset = Math.max(0, Math.trunc(Number(url.searchParams.get("offset")) || 0));
-      const readRoutes = ["capabilities", "context", "queue", "batch", "job", "images", "media", "result", "admin/settings", "admin/jobs", "admin/job", "admin/image", "admin/review-state", "admin/sync-state"];
+      const readRoutes = ["capabilities", "context", "queue", "batch", "job", "images", "image-content", "media", "result", "admin/settings", "admin/jobs", "admin/job", "admin/image", "admin/review-state", "admin/sync-state"];
       if (req.method === "GET" && !readRoutes.includes(route)) { send(res, 405, { error: { code: "METHOD_NOT_ALLOWED" } }); return; }
       if (req.method === "POST" && readRoutes.includes(route) && !["admin/settings", "admin/review-state"].includes(route)) { send(res, 405, { error: { code: "METHOD_NOT_ALLOWED" } }); return; }
       if (["analysis", "research", "keywords", "submit"].includes(route)) {
@@ -119,7 +119,7 @@ export function createCustomGptHandler(options: CustomGptHandlerOptions) {
       }
       let result: unknown;
       switch (route) {
-        case "capabilities": result = { version: 1, batchSize: queue.settings(storeId).batchSize, maxBatchSize: 10, leaseMinutes: 30, imageMode: "url_or_manual_attachment", stages: ["analysis", "research", "keywords", "submission"], nextAction: "getSeoQueueStatus" }; break;
+        case "capabilities": result = { version: 1, batchSize: queue.settings(storeId).batchSize, maxBatchSize: 10, leaseMinutes: 30, imageMode: "action_binary_or_manual_attachment", stages: ["analysis", "research", "keywords", "submission"], nextAction: "getSeoQueueStatus" }; break;
         case "context": result = { storeId, ...queue.settings(storeId), nextAction: "claimSeoBatch" }; break;
         case "queue": result = { counts: queue.counts(storeId), activeBatch: queue.activeBatch(storeId), nextAction: queue.activeBatch(storeId) ? "getSeoBatch" : "claimSeoBatch" }; break;
         case "claim": result = queue.claim(storeId, required(requestId, "requestId")); break;
@@ -140,8 +140,9 @@ export function createCustomGptHandler(options: CustomGptHandlerOptions) {
             const media = new URL("/api/v1/gpt-seo/media", options.publicUrl);
             media.search = new URLSearchParams({ storeId, jobId, imageId: id, expires: String(expires), signature: signImage(actionKey, jobId, id, expires) }).toString();
             return { id, url: media.href, alt: image.alt };
-          }), nextOffset: offset + 5 < job.input.images.length ? offset + 5 : null, instructions: "Inspect each image visually. If URLs cannot be viewed, ask the operator to attach these images. Do not infer evidence from filenames." }; break;
+          }), nextOffset: offset + 5 < job.input.images.length ? offset + 5 : null, instructions: "Call getSeoJobImageContent with jobId and each imageId. Inspect the returned image content visually. If image content cannot be viewed, ask the operator to attach the images. Do not infer evidence from URLs or filenames." }; break;
         }
+        case "image-content":
         case "media":
         case "admin/image": {
           if (route === "media" && !signedImage) { send(res, 401, { error: { code: "INVALID_IMAGE_SIGNATURE" } }); return; }

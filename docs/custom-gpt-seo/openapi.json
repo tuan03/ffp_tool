@@ -489,6 +489,73 @@
         ]
       }
     },
+    "/api/v1/gpt-seo/image-content": {
+      "get": {
+        "operationId": "getSeoJobImageContent",
+        "summary": "Return one authenticated product image as binary image content.",
+        "description": "Use jobId and imageId from getSeoJobImages. Inspect the returned image content visually; do not infer details from identifiers.",
+        "security": [
+          {
+            "actionKey": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Product image content",
+            "content": {
+              "image/jpeg": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/png": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/webp": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid jobId or imageId"
+          },
+          "401": {
+            "description": "Invalid API key"
+          },
+          "404": {
+            "description": "Job or image not found"
+          },
+          "429": {
+            "description": "Image download busy; respect Retry-After"
+          }
+        },
+        "parameters": [
+          {
+            "name": "jobId",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "imageId",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
     "/api/v1/gpt-seo/analysis": {
       "post": {
         "operationId": "saveSeoAnalysis",
