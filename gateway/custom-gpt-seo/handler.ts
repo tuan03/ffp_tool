@@ -114,7 +114,7 @@ export function createCustomGptHandler(options: CustomGptHandlerOptions) {
       const leaseToken = String(body.leaseToken || "");
       const requestId = String(body.requestId || "");
       const offset = Math.max(0, Math.trunc(Number(url.searchParams.get("offset")) || 0));
-      const readRoutes = ["capabilities", "context", "queue", "waiting-jobs", "batch", "job", "images", "image-content", "public-image", "media", "result", "admin/settings", "admin/jobs", "admin/job", "admin/image", "admin/review-state", "admin/sync-state"];
+      const readRoutes = ["capabilities", "context", "queue", "waiting-jobs", "batch", "job", "images", "public-image", "media", "result", "admin/settings", "admin/jobs", "admin/job", "admin/image", "admin/review-state", "admin/sync-state"];
       if (req.method === "GET" && !readRoutes.includes(route)) { send(res, 405, { error: { code: "METHOD_NOT_ALLOWED" } }); return; }
       if (req.method === "POST" && readRoutes.includes(route) && !["admin/settings", "admin/review-state"].includes(route)) { send(res, 405, { error: { code: "METHOD_NOT_ALLOWED" } }); return; }
       if (["analysis", "research", "keywords", "submit"].includes(route)) {
@@ -174,19 +174,7 @@ export function createCustomGptHandler(options: CustomGptHandlerOptions) {
           result = { jobId, images: job.input.images.slice(offset, offset + 5).map((image, index) => {
             const id = image.id || `image-${offset + index + 1}`;
             return { id, url: image.url, alt: image.alt };
-          }), nextOffset: offset + 5 < job.input.images.length ? offset + 5 : null, instructions: "Call getSeoJobImageContent with jobId and each imageId. Use the returned imageUrl, never imageId, as the public image URL. If the image cannot be viewed, ask the operator to attach it. Do not infer evidence from URLs or filenames." }; break;
-        }
-        case "image-content": {
-          const job = queue.get(storeId, jobId);
-          const imageId = url.searchParams.get("imageId");
-          const image = job.input.images.find((entry, index) => (entry.id || `image-${index + 1}`) === imageId);
-          if (!image) throw new Error("Image not found");
-          result = {
-            imageId,
-            imageUrl: image.url,
-            instructions: "Open imageUrl to inspect the image. Do not use imageId as a URL.",
-          };
-          break;
+          }), nextOffset: offset + 5 < job.input.images.length ? offset + 5 : null, instructions: "Open each image url directly; never use imageId as a URL. If an image cannot be viewed, ask the operator to attach it. Do not infer evidence from URLs or filenames." }; break;
         }
         case "public-image":
         case "media":

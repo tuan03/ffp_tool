@@ -200,7 +200,7 @@ test("image listings return the original public image URL without signing it", a
   } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); db.close(); }
 });
 
-test("image-content returns the original public image URL without proxying or signing it", async () => {
+test("image-content is no longer exposed after image listings return original URLs", async () => {
   const db = new DatabaseSync(":memory:");
   const queue = new CustomGptQueue(db);
   const handler = createCustomGptHandler({
@@ -210,7 +210,6 @@ test("image-content returns the original public image URL without proxying or si
     adminKey: "admin-key",
     publicUrl: "https://ffp.example.test",
   });
-  const sourceImageUrl = "https://cdn.shopify.com/s/files/1/2/files/product.jpg?v=1784524386";
   const job = queue.enqueue({
     storeId: "capozen",
     source: "auto_seo",
@@ -220,7 +219,7 @@ test("image-content returns the original public image URL without proxying or si
       description: "Description",
       handle: "product",
       niche: "home",
-      images: [{ id: "front", url: sourceImageUrl }],
+      images: [{ id: "front", url: "https://cdn.shopify.com/s/files/1/2/files/product.jpg?v=1784524386" }],
     },
     original: {},
   });
@@ -230,56 +229,8 @@ test("image-content returns the original public image URL without proxying or si
   assert.ok(address && typeof address !== "string");
   const endpoint = `http://127.0.0.1:${address.port}/api/v1/gpt-seo/image-content?jobId=${job.id}&imageId=front`;
   try {
-    assert.equal((await fetch(endpoint)).status, 401);
-    assert.equal((await fetch(endpoint, { headers: { Authorization: "Bearer wrydeco-key" } })).status, 404);
     const response = await fetch(endpoint, { headers: { Authorization: "Bearer capozen-key" } });
-    assert.equal(response.status, 200);
-    assert.match(response.headers.get("content-type") || "", /^application\/json/);
-    const payload = await response.json() as { imageId: string; imageUrl: string; instructions: string };
-    assert.equal(payload.imageId, "front");
-    assert.equal(payload.imageUrl, sourceImageUrl);
-    assert.equal(payload.instructions, "Open imageUrl to inspect the image. Do not use imageId as a URL.");
-  } finally {
-    server.closeAllConnections();
-    await new Promise<void>(resolve => server.close(() => resolve()));
-    db.close();
-  }
-});
-
-test("image-content Action preserves the stored source URL without applying URL policy", async () => {
-  const db = new DatabaseSync(":memory:");
-  const queue = new CustomGptQueue(db);
-  const handler = createCustomGptHandler({
-    queue,
-    actionKeys: { capozen: "capozen-key" },
-    storeId: "capozen",
-    adminKey: "admin-key",
-  });
-  const job = queue.enqueue({
-    storeId: "capozen",
-    source: "auto_seo",
-    sourceIdentity: "product-http-image",
-    input: {
-      title: "Product",
-      description: "Description",
-      handle: "product",
-      niche: "home",
-      images: [{ id: "front", url: "http://cdn.example.org/front.jpg" }],
-    },
-    original: {},
-  });
-  const server = http.createServer((req, res) => { void handler(req, res); });
-  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
-  const address = server.address();
-  assert.ok(address && typeof address !== "string");
-
-  try {
-    const response = await fetch(`http://127.0.0.1:${address.port}/api/v1/gpt-seo/image-content?jobId=${job.id}&imageId=front`, {
-      headers: { Authorization: "Bearer capozen-key" },
-    });
-    assert.equal(response.status, 200);
-    const payload = await response.json() as { imageUrl: string };
-    assert.equal(payload.imageUrl, "http://cdn.example.org/front.jpg");
+    assert.equal(response.status, 405);
   } finally {
     server.closeAllConnections();
     await new Promise<void>(resolve => server.close(() => resolve()));
