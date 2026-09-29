@@ -103,8 +103,12 @@ jobs:
 
             echo "=== [3/6] Handling .env configuration ==="
             EXISTING_GPT_SEO_ACTION_KEYS_JSON=""
+            EXISTING_FFP_OPERATOR_USERNAME=""
+            EXISTING_FFP_OPERATOR_PASSWORD=""
             if [ -f .env ]; then
               EXISTING_GPT_SEO_ACTION_KEYS_JSON=$(sed -nE 's/^[[:space:]]*GPT_SEO_ACTION_KEYS_JSON=(.*)$/\1/p' .env | head -n 1 || true)
+              EXISTING_FFP_OPERATOR_USERNAME=$(sed -nE 's/^[[:space:]]*FFP_OPERATOR_USERNAME=(.*)$/\1/p' .env | head -n 1 || true)
+              EXISTING_FFP_OPERATOR_PASSWORD=$(sed -nE 's/^[[:space:]]*FFP_OPERATOR_PASSWORD=(.*)$/\1/p' .env | head -n 1 || true)
             fi
 
             if [ -n "$ENV_B64" ]; then
@@ -129,6 +133,22 @@ jobs:
             # A multi-store map replaces the legacy single-store Action key.
             if [ -n "$INCOMING_GPT_SEO_ACTION_KEYS_JSON" ]; then
               sed -i '/^[[:space:]]*GPT_SEO_ACTION_KEY=/d' .env
+            fi
+
+            # Keep the VPS operator login unless ENV_FILE explicitly replaces it.
+            INCOMING_FFP_OPERATOR_USERNAME=$(sed -nE 's/^[[:space:]]*FFP_OPERATOR_USERNAME=(.*)$/\1/p' .env | head -n 1 || true)
+            INCOMING_FFP_OPERATOR_PASSWORD=$(sed -nE 's/^[[:space:]]*FFP_OPERATOR_PASSWORD=(.*)$/\1/p' .env | head -n 1 || true)
+            if [ -z "$INCOMING_FFP_OPERATOR_USERNAME" ] && [ -n "$EXISTING_FFP_OPERATOR_USERNAME" ]; then
+              printf '\nFFP_OPERATOR_USERNAME=%s\n' "$EXISTING_FFP_OPERATOR_USERNAME" >> .env
+              INCOMING_FFP_OPERATOR_USERNAME="$EXISTING_FFP_OPERATOR_USERNAME"
+            fi
+            if [ -z "$INCOMING_FFP_OPERATOR_PASSWORD" ] && [ -n "$EXISTING_FFP_OPERATOR_PASSWORD" ]; then
+              printf '\nFFP_OPERATOR_PASSWORD=%s\n' "$EXISTING_FFP_OPERATOR_PASSWORD" >> .env
+              INCOMING_FFP_OPERATOR_PASSWORD="$EXISTING_FFP_OPERATOR_PASSWORD"
+            fi
+            if { [ -n "$INCOMING_FFP_OPERATOR_USERNAME" ] && [ -z "$INCOMING_FFP_OPERATOR_PASSWORD" ]; } || { [ -z "$INCOMING_FFP_OPERATOR_USERNAME" ] && [ -n "$INCOMING_FFP_OPERATOR_PASSWORD" ]; }; then
+              echo "FFP operator username and password must be configured together."
+              exit 1
             fi
 
             # Ensure correct APP_PORT is recorded in .env

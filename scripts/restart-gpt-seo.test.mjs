@@ -57,6 +57,15 @@ test("production deployment removes the legacy single-store action key when a ke
   );
 });
 
+test("production deployment preserves operator login credentials from the VPS", async () => {
+  const workflow = await readFile(".github/workflows/deploy.yml", "utf8");
+
+  assert.match(workflow, /EXISTING_FFP_OPERATOR_USERNAME=/);
+  assert.match(workflow, /EXISTING_FFP_OPERATOR_PASSWORD=/);
+  assert.match(workflow, /FFP_OPERATOR_USERNAME=%s/);
+  assert.match(workflow, /FFP_OPERATOR_PASSWORD=%s/);
+});
+
 test("new-store guide uses only the multi-store action-key map", async () => {
   const guide = await readFile("docs/custom-gpt-seo/add-store.md", "utf8");
 
