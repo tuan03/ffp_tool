@@ -66,7 +66,7 @@ export function buildReviewPlan(input: GenerateReviewInput): ReviewPlanItem[] {
   const openings = ["feature", "appearance", "restrained_reaction"] as const;
   return Array.from({ length: input.count }, (_, index) => ({
     index,
-    rating: index % 7 === 5 ? 4 : 5,
+    rating: 5 - ((Math.max(1, input.startIndex ?? 1) - 1 + index) % 3),
     sentences: lengths[(index + shift) % lengths.length] ?? 1,
     focusFacts: productFacts.length ? [productFacts[(index + shift) % productFacts.length] ?? productFacts[0] ?? ""] : [],
     openingStyle: openings[(index + shift) % openings.length] ?? "feature",

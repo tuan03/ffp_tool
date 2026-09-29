@@ -19,7 +19,7 @@ export function createMockReviewClient(): ReviewClient {
     generate: async (input) => ({
       samples: Array.from({ length: input.count }, (_, index): AmazonReview => ({
         reviewId: `SYNTH-${input.asin}-${String(input.startIndex + index).padStart(3, "0")}`,
-        author: `Taylor ${String.fromCharCode(65 + index)}.`, rating: 5,
+        author: `Taylor ${String.fromCharCode(65 + index)}.`, rating: 5 - ((Math.max(1, input.startIndex) - 1 + index) % 3),
         body: index % 2 ? "The autumn colors look balanced across the print." : "The deer artwork reads clearly on the rug.",
         variantText: "", verifiedPurchase: false, synthetic: true, source: "ai_sample", promptVersion: "review_sample_v3", qualityStatus: "accepted", qualityWarnings: [],
       })), rejected: 0, warnings: [],

@@ -40,3 +40,14 @@ test("mock context jobs return fresh data and reset generated samples", async ()
   await client.create("B012345678");
   assert.deepEqual((await client.get(job.jobId)).samples, []);
 });
+
+test("mock AI reviews include three, four and five stars across batches", async () => {
+  const client = getReviewClient("mock", "http://127.0.0.1:8766");
+  const created = await client.create("B012345678");
+  const job = await client.get(created.jobId);
+  assert.ok(job.reviewData.context);
+  const input = { asin: job.asin, product: job.reviewData.context, sourceReviews: [], priorSamples: [] };
+  const first = await client.generate({ ...input, count: 2, startIndex: 1 });
+  const second = await client.generate({ ...input, count: 1, startIndex: 3 });
+  assert.deepEqual([...first.samples, ...second.samples].map((review) => review.rating), [5, 4, 3]);
+});

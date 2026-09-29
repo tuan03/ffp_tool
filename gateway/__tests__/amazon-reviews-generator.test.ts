@@ -1,7 +1,20 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { generateReviewSamples } from "../amazon-reviews-generator";
+import { buildReviewPlan, generateReviewSamples } from "../amazon-reviews-generator";
+
+test("review plans include three, four and five stars and continue across batches", () => {
+  const input = { asin: "B012345678", count: 3, product: { title: "Floral rug" }, sourceReviews: [], priorSamples: [] };
+  assert.deepEqual(new Set(buildReviewPlan(input).map((plan) => plan.rating)), new Set([3, 4, 5]));
+  const first = buildReviewPlan({ ...input, count: 2, startIndex: 1 });
+  const second = buildReviewPlan({ ...input, count: 1, startIndex: 3 });
+  assert.deepEqual([...first, ...second].map((plan) => plan.rating), [5, 4, 3]);
+  for (const count of [10, 50]) {
+    const ratings = buildReviewPlan({ ...input, count }).map((plan) => plan.rating);
+    assert.deepEqual(new Set(ratings), new Set([3, 4, 5]));
+    assert.ok(ratings.every((rating) => rating >= 3 && rating <= 5));
+  }
+});
 
 test("review batches vary sentence counts and limit I openings", async () => {
   const output = await generateReviewSamples({
