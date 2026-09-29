@@ -84,7 +84,7 @@ $ReqPath = Join-Path $AgentRoot "src\modules\amazon-crawler\engine\requirements.
 if (Test-Path $ReqPath) {
     & $VenvPython -m pip install -r $ReqPath
 } else {
-    & $VenvPython -m pip install "playwright>=1.50,<2" "fastapi==0.116.1" "uvicorn[standard]==0.35.0" "beautifulsoup4>=4.12,<5" "python-dotenv>=1,<2" "websockets>=15,<16" "pillow>=11,<12" "pystray>=0.19,<1" "httpx>=0.27.0"
+    & $VenvPython -m pip install "playwright>=1.50,<2" "fastapi==0.116.1" "uvicorn[standard]==0.35.0" "beautifulsoup4>=4.12,<5" "python-dotenv>=1,<2" "websockets>=15,<16" "pillow>=11,<12" "pystray>=0.19,<1" "httpx>=0.27.0" "numpy>=1.26,<3" "requests>=2.31,<3"
 }
 
 # 4. Cai dat Playwright Browser (Chromium)

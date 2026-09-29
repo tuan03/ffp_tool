@@ -50,7 +50,7 @@ echo "[2/4] Cai dat thu vien..."
 if [ -f "$AGENT_ROOT/src/modules/amazon-crawler/engine/requirements.txt" ]; then
     "$VENV_DIR/bin/pip" install -r "$AGENT_ROOT/src/modules/amazon-crawler/engine/requirements.txt"
 else
-    "$VENV_DIR/bin/pip" install "playwright>=1.50,<2" "fastapi==0.116.1" "uvicorn[standard]==0.35.0" "beautifulsoup4>=4.12,<5" "python-dotenv>=1,<2" "websockets>=15,<16" "pillow>=11,<12" "httpx>=0.27.0"
+    "$VENV_DIR/bin/pip" install "playwright>=1.50,<2" "fastapi==0.116.1" "uvicorn[standard]==0.35.0" "beautifulsoup4>=4.12,<5" "python-dotenv>=1,<2" "websockets>=15,<16" "pillow>=11,<12" "httpx>=0.27.0" "numpy>=1.26,<3" "requests>=2.31,<3"
 fi
 
 # 4. Cai dat Chromium

@@ -22,6 +22,8 @@ __pycache__/
 *.py[cod]
 *$py.class
 .pinterest_browser_profile/
+.venv/
+venv/
 temp/
 output/
 data/

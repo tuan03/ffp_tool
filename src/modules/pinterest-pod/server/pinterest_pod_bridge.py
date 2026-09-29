@@ -1590,12 +1590,12 @@ def _run_local_pipeline_worker(
         with JOB_CACHE_LOCK:
             JOB_CANCEL_EVENTS.pop(job_id, None)
             LOCAL_WORKER_THREADS.pop(job_id, None)
-            if job_id in ACTIVE_JOBS:
-                ACTIVE_JOBS[job_id]["status"] = "failed"
-                ACTIVE_JOBS[job_id]["error"] = f"Không thể nạp trend_tool module: {exc}"
-                ACTIVE_JOBS[job_id].setdefault("logs", []).append(f"LỖI: Không thể nạp trend_tool module: {exc}")
-                save_job_manifest(job_id, ACTIVE_JOBS[job_id])
-        return
+            job = ACTIVE_JOBS.setdefault(job_id, {})
+            job["status"] = "failed"
+            job["error"] = f"Không thể nạp trend_tool module: {exc}"
+            job.setdefault("logs", []).append(f"LỖI: Không thể nạp trend_tool module: {exc}")
+            save_job_manifest(job_id, job)
+        raise RuntimeError(f"Không thể nạp trend_tool module: {exc}") from exc
 
     niche = str(req_body.get("niche") or "").strip()
     raw_product = str(req_body.get("product") or "").lower().strip()
