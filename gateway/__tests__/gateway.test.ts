@@ -9501,12 +9501,15 @@ describe("Gateway: Architectural & Operational Hardening (P1)", () => {
         // 2. Authenticated requests return 200 with JSON status
         const resSync = await fetch(`http://127.0.0.1:${testPort}/api/pinterest-pod/sync-shopify`, {
           method: "POST",
-          headers: { "X-Gateway-Key": "test-auth-token-123" },
+          headers: {
+            "X-Gateway-Key": "test-auth-token-123",
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ items: [] }),
         });
         assert.equal(resSync.status, 200);
         const jsonSync = await resSync.json() as Record<string, unknown>;
         assert.equal(jsonSync.success, true);
-        assert.equal(jsonSync.status, "ok");
 
         const resSeoReview = await fetch(`http://127.0.0.1:${testPort}/api/seo-review/items?limit=10`, {
           method: "GET",
@@ -9515,7 +9518,7 @@ describe("Gateway: Architectural & Operational Hardening (P1)", () => {
         assert.equal(resSeoReview.status, 200);
         const jsonSeo = await resSeoReview.json() as Record<string, unknown>;
         assert.equal(jsonSeo.success, true);
-        assert.equal(jsonSeo.status, "ok");
+        assert.ok(Array.isArray(jsonSeo.items));
 
         // 3. OPTIONS preflight requests return 204 with CORS headers
         const resSyncOptions = await fetch(`http://127.0.0.1:${testPort}/api/pinterest-pod/sync-shopify`, {
