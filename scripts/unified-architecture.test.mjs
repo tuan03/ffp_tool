@@ -78,11 +78,22 @@ test("pinterest login launcher scripts are available for worker machines", async
 });
 
 test("server and client deployment assets are properly configured", async () => {
-  const [serverDocker, clientNginx, compose, supervisor, coordinator, pinterestServer] = await Promise.all([
+  const [
+    serverDocker,
+    clientNginx,
+    compose,
+    supervisor,
+    pipelineWorker,
+    dockerIgnore,
+    coordinator,
+    pinterestServer,
+  ] = await Promise.all([
     readFile("deploy/server/Dockerfile", "utf8"),
     readFile("deploy/client/nginx.conf", "utf8"),
     readFile("docker-compose.yml", "utf8"),
     readFile("deploy/server/supervisord.conf", "utf8"),
+    readFile("deploy/server/run-pipeline-worker.sh", "utf8"),
+    readFile(".dockerignore", "utf8"),
     readFile("src/modules/amazon-crawler/engine/distributed/coordinator_server.py", "utf8"),
     readFile("src/modules/pinterest-pod/server/server.py", "utf8"),
   ]);
@@ -96,6 +107,12 @@ test("server and client deployment assets are properly configured", async () => 
   assert.match(supervisor, /\[program:pinterest-pod\]/);
   assert.match(supervisor, /server\/server\.py/);
   assert.match(supervisor, /\[program:pipeline-worker\]/);
+  assert.match(pipelineWorker, /exec sleep infinity/);
+
+  assert.match(dockerIgnore, /^\*\*\/\.env$/m);
+  assert.match(dockerIgnore, /^\*\*\/\.pinterest_oauth_tokens\.json$/m);
+  assert.match(dockerIgnore, /^src\/modules\/pinterest-pod\/server\/data$/m);
+  assert.match(dockerIgnore, /^src\/modules\/pinterest-pod\/server\/pinterest\/\.pinterest_browser_profile$/m);
 
   assert.match(clientNginx, /proxy_pass http:\/\/server:3001/);
   assert.match(clientNginx, /proxy_pass http:\/\/server:8766/);
@@ -108,6 +125,10 @@ test("server and client deployment assets are properly configured", async () => 
 
   assert.match(compose, /PINTEREST_POD_PORT:\s*8768/);
   assert.match(compose, /PINTEREST_RUNTIME_ROOT:\s*\/app\/\.runtime\/pinterest-pod/);
+  assert.match(compose, /PINTEREST_APP_ID:\s*\$\{PINTEREST_APP_ID:-\}/);
+  assert.match(compose, /PINTEREST_APP_SECRET:\s*\$\{PINTEREST_APP_SECRET:-\}/);
+  assert.match(compose, /PINTEREST_REDIRECT_URI:\s*\$\{PINTEREST_REDIRECT_URI:-\}/);
+  assert.match(compose, /PINTEREST_OAUTH_STATE_SECRET:\s*\$\{PINTEREST_OAUTH_STATE_SECRET:-\}/);
   assert.doesNotMatch(compose, /^\s*-\s*["'][^"'\r\n]*:8768["']\s*$/m);
   assert.doesNotMatch(coordinator, /@app\.(?:get|post|put|delete)\("\/api\/pinterest-pod/);
   assert.doesNotMatch(pinterestServer, /path in \{[^\n]*\/api\/pinterest-pod\/handover-seo/);

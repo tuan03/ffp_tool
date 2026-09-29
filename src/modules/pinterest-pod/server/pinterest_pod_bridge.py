@@ -883,11 +883,9 @@ def is_browser_login_process_running() -> bool:
 def get_pinterest_auth_status() -> dict[str, Any]:
     """Inspect browser profile and OAuth token status for Pinterest POD Studio."""
     profile_dir = resolve_browser_profile_dir()
-    token_file = (ROOT / "pinterest" / ".pinterest_oauth_tokens.json").resolve()
-    root_token_file = (ROOT / ".pinterest_oauth_tokens.json").resolve()
 
     browser_logged_in = check_browser_profile_logged_in(profile_dir)
-    oauth_valid, token_data = check_oauth_token_valid(token_file)
+    oauth_valid, token_data = check_oauth_token_valid()
     is_fully_logged_in = bool(browser_logged_in and oauth_valid)
 
     if is_fully_logged_in:
@@ -910,7 +908,7 @@ def get_pinterest_auth_status() -> dict[str, Any]:
         "status_text": status_text,
         "profile_dir": str(profile_dir),
         "profile_exists": profile_dir.exists(),
-        "oauth_file_exists": token_file.exists() or root_token_file.exists() or bool(os.getenv("PINTEREST_ACCESS_TOKEN")),
+        "oauth_file_exists": PRIMARY_TOKEN_FILE.exists() or bool(os.getenv("PINTEREST_ACCESS_TOKEN")),
         "auth_url": oauth_info.get("auth_url"),
         "redirect_uri": oauth_info.get("redirect_uri"),
         "app_id_configured": bool(os.getenv("PINTEREST_APP_ID")),

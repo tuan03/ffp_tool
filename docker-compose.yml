@@ -59,6 +59,11 @@ services:
       PINTEREST_RUNTIME_ROOT: /app/.runtime/pinterest-pod
       TREND_PRODUCT_OUTPUT: /app/.runtime/pinterest-pod/output
       PINTEREST_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-ffp_tool}:${POSTGRES_PASSWORD}@database:5432/${POSTGRES_DB:-ffp_tool}
+      PINTEREST_APP_ID: ${PINTEREST_APP_ID:-}
+      PINTEREST_APP_SECRET: ${PINTEREST_APP_SECRET:-}
+      PINTEREST_REDIRECT_URI: ${PINTEREST_REDIRECT_URI:-}
+      PINTEREST_OAUTH_STATE_SECRET: ${PINTEREST_OAUTH_STATE_SECRET:-}
+      PINTEREST_SCOPES: ${PINTEREST_SCOPES:-user_accounts:read,boards:read,pins:read,ads:read}
     volumes:
       - ffp_data:/app/.local-data
       - ffp_runtime:/app/.runtime

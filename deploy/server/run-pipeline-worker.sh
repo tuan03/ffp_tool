@@ -6,4 +6,4 @@ if [ "${START_PIPELINE_WORKER:-false}" = "true" ]; then
 fi
 
 echo "[FFP Server] Shopify Pipeline Worker is disabled."
-exit 0
+exec sleep infinity
