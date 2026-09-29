@@ -40,12 +40,19 @@ test("production deployment writes APP_PORT on a new line", async () => {
   assert.doesNotMatch(workflow, /echo "APP_PORT=\$APP_PORT" >> \.env/);
 });
 
-test("production deployment preserves a VPS action-key map when the environment secret omits it", async () => {
+test("production deployment keeps the VPS action-key map authoritative over environment secrets", async () => {
   const workflow = await readFile(".github/workflows/deploy.yml", "utf8");
 
   assert.match(workflow, /EXISTING_GPT_SEO_ACTION_KEYS_JSON=/);
   assert.match(workflow, /INCOMING_GPT_SEO_ACTION_KEYS_JSON=/);
-  assert.match(workflow, /GPT_SEO_ACTION_KEYS_JSON=%s/);
+  assert.match(
+    workflow,
+    /if \[ -n "\$EXISTING_GPT_SEO_ACTION_KEYS_JSON" \]; then[\s\S]*?GPT_SEO_ACTION_KEYS_JSON=%s/,
+  );
+  assert.doesNotMatch(
+    workflow,
+    /\[ -z "\$INCOMING_GPT_SEO_ACTION_KEYS_JSON" \] && \[ -n "\$EXISTING_GPT_SEO_ACTION_KEYS_JSON" \]/,
+  );
 });
 
 test("production deployment removes the legacy single-store action key when a key map exists", async () => {
