@@ -58,6 +58,11 @@ class CreateReviewImageRequest(BaseModel):
     excludeTemplate: str | None = None
 
 
+class UploadReviewTemplateRequest(BaseModel):
+    fileName: str = Field(min_length=1, max_length=255)
+    imageDataUrl: str = Field(min_length=1, max_length=7_100_000)
+
+
 def authorize(value: str | None) -> None:
     require_token(value)
 
@@ -74,6 +79,22 @@ def image_response(path: Path, *, download: bool = False, job_id: str = "") -> R
 def review_image_health(x_bridge_token: str | None = Header(default=None)):
     authorize(x_bridge_token)
     return {"ok": True, "templates": len(review_image_service._templates())}
+
+
+@app.get("/api/review-images/templates")
+def list_templates(x_bridge_token: str | None = Header(default=None)):
+    authorize(x_bridge_token)
+    return {"ok": True, "templates": review_image_service.list_templates()}
+
+
+@app.post("/api/review-images/templates", status_code=201)
+def upload_template(body: UploadReviewTemplateRequest, x_bridge_token: str | None = Header(default=None)):
+    authorize(x_bridge_token)
+    try:
+        name = review_image_service.save_template(body.fileName, body.imageDataUrl)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"ok": True, "template": {"name": name}}
 
 
 @app.get("/api/review-images/templates/{name}")

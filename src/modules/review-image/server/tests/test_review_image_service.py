@@ -74,6 +74,21 @@ class ReviewImageServiceTests(unittest.TestCase):
             self.service.template_path("../room.png")
         self.assertEqual(self.calls, [])
 
+    def test_uploaded_templates_are_listed_without_overwriting_existing_files(self) -> None:
+        uploaded = self.service.save_template("room.png", image_data_url("green"))
+        self.assertNotEqual(uploaded, "room.png")
+        self.assertEqual({item["name"] for item in self.service.list_templates()}, {"room.png", uploaded})
+        self.assertEqual(self.service.template_path("room.png").read_bytes(), self.template_bytes)
+        self.assertEqual(self.service.template_path(uploaded).read_bytes(), base64.b64decode(image_data_url("green").split(",", 1)[1]))
+
+    def test_template_upload_rejects_invalid_image_and_unsafe_name(self) -> None:
+        with self.assertRaisesRegex(ValueError, "hợp lệ"):
+            self.service.save_template("broken.png", "data:image/png;base64,Zm9v")
+        uploaded = self.service.save_template("../other\\scene.png", image_data_url())
+        self.assertNotIn("/", uploaded)
+        self.assertNotIn("\\", uploaded)
+        self.assertEqual(len(self.service.list_templates()), 2)
+
     def test_rejects_prompt_that_exceeds_bridge_limit_after_scope_instruction(self) -> None:
         with self.assertRaisesRegex(ValueError, "quá dài"):
             self.service.submit(image_data_url(), "x" * 9_950, "main")

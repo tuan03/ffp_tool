@@ -3,6 +3,7 @@
 import base64
 import binascii
 import io
+import re
 import secrets
 import threading
 import time
@@ -91,6 +92,24 @@ class ReviewImageService:
         if match is None:
             raise ValueError("Ảnh template không tồn tại hoặc không hợp lệ.")
         return match
+
+    def list_templates(self) -> list[dict[str, str]]:
+        return [{"name": path.name} for path in self._templates()]
+
+    def save_template(self, file_name: str, image_data_url: str) -> str:
+        mime, image_bytes = decode_image_data_url(image_data_url)
+        original_name = re.split(r"[/\\]", file_name.strip())[-1]
+        stem = re.sub(r"[^A-Za-z0-9_-]+", "-", Path(original_name).stem).strip("-_")[:60] or "template"
+        extension = next(extension for format_mime, extension in IMAGE_FORMATS.values() if format_mime == mime)
+        unique_id = uuid.uuid4().hex
+        saved_name = f"{stem}-{unique_id}{extension}"
+        temporary_path = self.template_dir / f".{unique_id}.part"
+        try:
+            temporary_path.write_bytes(image_bytes)
+            temporary_path.replace(self.template_dir / saved_name)
+        finally:
+            temporary_path.unlink(missing_ok=True)
+        return saved_name
 
     def submit(
         self,

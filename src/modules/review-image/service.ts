@@ -1,4 +1,4 @@
-import type { CreateReviewImageInput, ReviewImageClient, ReviewImageJob } from "./types";
+import type { CreateReviewImageInput, ReviewImageClient, ReviewImageJob, ReviewImageTemplate } from "./types";
 
 const API_BASE = "/api/review-images";
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
@@ -32,6 +32,13 @@ function parseJob(payload: Record<string, unknown>): ReviewImageJob {
   return job as ReviewImageJob;
 }
 
+function parseTemplate(value: unknown): ReviewImageTemplate {
+  if (!value || typeof value !== "object" || Array.isArray(value) || typeof (value as Record<string, unknown>).name !== "string") {
+    throw new Error("Bridge không trả về ảnh template hợp lệ.");
+  }
+  return { name: (value as Record<string, string>).name };
+}
+
 export function createReviewImageClient(fetcher: Fetcher = fetch): ReviewImageClient {
   let gatewayToken = "";
   const headers = (extra?: HeadersInit): Headers => {
@@ -52,6 +59,19 @@ export function createReviewImageClient(fetcher: Fetcher = fetch): ReviewImageCl
     async health() {
       const payload = await parseResponse(await fetcher(`${API_BASE}/health`, { headers: headers() }));
       return { templates: typeof payload.templates === "number" ? payload.templates : 0 };
+    },
+    async listTemplates() {
+      const payload = await parseResponse(await fetcher(`${API_BASE}/templates`, { headers: headers() }));
+      if (!Array.isArray(payload.templates)) throw new Error("Bridge không trả về danh sách template hợp lệ.");
+      return payload.templates.map(parseTemplate);
+    },
+    async uploadTemplate(input) {
+      const payload = await parseResponse(await fetcher(`${API_BASE}/templates`, {
+        method: "POST",
+        headers: headers({ "Content-Type": "application/json" }),
+        body: JSON.stringify(input),
+      }));
+      return parseTemplate(payload.template);
     },
     async create(input) {
       const payload = await parseResponse(await fetcher(`${API_BASE}/jobs`, {
@@ -75,12 +95,12 @@ export function createReviewImageClient(fetcher: Fetcher = fetch): ReviewImageCl
   };
 }
 
-export async function encodeProductFile(file: File): Promise<string> {
+export async function encodeImageFile(file: File): Promise<string> {
   if (!SUPPORTED_MIME_TYPES.has(file.type)) {
-    throw new Error("Ảnh sản phẩm phải là PNG, JPEG hoặc WebP.");
+    throw new Error("Ảnh phải là PNG, JPEG hoặc WebP.");
   }
   if (file.size === 0 || file.size > MAX_IMAGE_BYTES) {
-    throw new Error("Ảnh sản phẩm phải khác rỗng và không quá 5 MB.");
+    throw new Error("Ảnh phải khác rỗng và không quá 5 MB.");
   }
   const bytes = new Uint8Array(await file.arrayBuffer());
   let binary = "";
@@ -89,3 +109,5 @@ export async function encodeProductFile(file: File): Promise<string> {
   }
   return `data:${file.type};base64,${btoa(binary)}`;
 }
+
+export const encodeProductFile = encodeImageFile;

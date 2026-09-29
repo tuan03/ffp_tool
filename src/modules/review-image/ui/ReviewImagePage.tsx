@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 
-import { encodeProductFile } from "../service";
-import type { ReviewImageClient, ReviewImageJob, ReviewImageScope } from "../types";
+import { encodeImageFile } from "../service";
+import type { ReviewImageClient, ReviewImageJob, ReviewImageScope, ReviewImageTemplate } from "../types";
 
 const DEFAULT_PROMPT = `Create one photorealistic customer review photo by editing the two attached images.
 
@@ -17,7 +17,10 @@ export function ReviewImagePage({ client }: { readonly client: ReviewImageClient
   const [scope, setScope] = useState<ReviewImageScope>("main");
   const [prompt, setPrompt] = useState(DEFAULT_PROMPT);
   const [job, setJob] = useState<ReviewImageJob | null>(null);
-  const [templateCount, setTemplateCount] = useState<number | null>(null);
+  const [templates, setTemplates] = useState<readonly ReviewImageTemplate[] | null>(null);
+  const [selectedTemplateName, setSelectedTemplateName] = useState("");
+  const [selectedTemplatePreview, setSelectedTemplatePreview] = useState("");
+  const [isUploadingTemplate, setIsUploadingTemplate] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isApproving, setIsApproving] = useState(false);
   const [error, setError] = useState("");
@@ -28,13 +31,33 @@ export function ReviewImagePage({ client }: { readonly client: ReviewImageClient
 
   useEffect(() => {
     let active = true;
-    void client.health().then((health) => {
-      if (active) setTemplateCount(health.templates);
+    void client.listTemplates().then((nextTemplates) => {
+      if (!active) return;
+      setTemplates(nextTemplates);
+      setSelectedTemplateName((current) => nextTemplates.some((template) => template.name === current) ? current : nextTemplates[0]?.name ?? "");
     }).catch((cause: unknown) => {
       if (active) setError(cause instanceof Error ? cause.message : "Không kết nối được Review Image Bridge.");
     });
     return () => { active = false; };
-  }, [client]);
+  }, [client, authRevision]);
+
+  useEffect(() => {
+    if (!selectedTemplateName) {
+      setSelectedTemplatePreview("");
+      return;
+    }
+    let active = true;
+    let objectUrl = "";
+    setSelectedTemplatePreview("");
+    void client.template(selectedTemplateName).then((blob) => {
+      if (!active) return;
+      objectUrl = URL.createObjectURL(blob);
+      setSelectedTemplatePreview(objectUrl);
+    }).catch((cause: unknown) => {
+      if (active) setError(cause instanceof Error ? cause.message : "Không tải được ảnh template.");
+    });
+    return () => { active = false; if (objectUrl) URL.revokeObjectURL(objectUrl); };
+  }, [client, selectedTemplateName, authRevision]);
 
   useEffect(() => {
     if (!job || (job.status !== "queued" && job.status !== "running")) return;
@@ -90,8 +113,7 @@ export function ReviewImagePage({ client }: { readonly client: ReviewImageClient
     client.setGatewayToken(gatewayToken);
     setError("");
     try {
-      const health = await client.health();
-      setTemplateCount(health.templates);
+      await client.health();
       setAuthRevision((value) => value + 1);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Gateway token không hợp lệ.");
@@ -115,16 +137,42 @@ export function ReviewImagePage({ client }: { readonly client: ReviewImageClient
   }
 
   async function handleProductChange(file: File | undefined): Promise<void> {
-    setProductDataUrl("");
-    setProductName("");
     setError("");
     if (!file) return;
     try {
-      const dataUrl = await encodeProductFile(file);
+      const dataUrl = await encodeImageFile(file);
       setProductDataUrl(dataUrl);
-      setProductName(file.name);
+      setProductName(file.name || "Ảnh đã dán");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Ảnh sản phẩm không hợp lệ.");
+    }
+  }
+
+  function handleProductPaste(event: React.ClipboardEvent<HTMLDivElement>): void {
+    const imageItem = Array.from(event.clipboardData.items).find((item) => item.kind === "file" && item.type.startsWith("image/"));
+    if (!imageItem) {
+      setError("Clipboard chưa có ảnh PNG, JPEG hoặc WebP.");
+      return;
+    }
+    event.preventDefault();
+    const file = imageItem.getAsFile();
+    if (file) void handleProductChange(file);
+    else setError("Không đọc được ảnh từ clipboard. Hãy sao chép lại ảnh và thử tiếp.");
+  }
+
+  async function handleTemplateUpload(file: File | undefined): Promise<void> {
+    if (!file) return;
+    setError("");
+    setIsUploadingTemplate(true);
+    try {
+      const imageDataUrl = await encodeImageFile(file);
+      const uploaded = await client.uploadTemplate({ fileName: file.name, imageDataUrl });
+      setTemplates((current) => [...(current ?? []), uploaded].sort((left, right) => left.name.localeCompare(right.name)));
+      setSelectedTemplateName(uploaded.name);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Không tải được ảnh template lên.");
+    } finally {
+      setIsUploadingTemplate(false);
     }
   }
 
@@ -182,7 +230,7 @@ export function ReviewImagePage({ client }: { readonly client: ReviewImageClient
         <section className="space-y-5 rounded-2xl border border-slate-800 bg-slate-900/70 p-5">
           <div>
             <h2 className="text-lg font-semibold">1. Chuẩn bị ảnh</h2>
-            <p className="mt-1 text-sm text-slate-400">Template được chọn ngẫu nhiên từ thư mục của tool. {templateCount === null ? "Đang kiểm tra thư mục…" : `Có ${templateCount} template hợp lệ.`}</p>
+            <p className="mt-1 text-sm text-slate-400">Template được chọn ngẫu nhiên từ thư mục của tool. {templates === null ? "Đang kiểm tra thư mục…" : `Có ${templates.length} template hợp lệ.`}</p>
           </div>
 
           <details className="rounded-xl border border-slate-700 p-3 text-sm">
@@ -193,10 +241,47 @@ export function ReviewImagePage({ client }: { readonly client: ReviewImageClient
             </div>
           </details>
 
-          <label className="block text-sm font-medium">
-            Ảnh sản phẩm cần đưa vào bối cảnh
-            <input className={fieldClass} type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => { void handleProductChange(event.target.files?.[0]); }} />
-          </label>
+          <details className="rounded-xl border border-slate-700 p-3 text-sm">
+            <summary className="cursor-pointer font-medium text-slate-200">Xem thư mục template</summary>
+            <div className="mt-3 space-y-3">
+              <label className="block font-medium text-slate-300">
+                Tải ảnh template lên
+                <input className={fieldClass} type="file" accept="image/png,image/jpeg,image/webp" disabled={isUploadingTemplate} onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  event.target.value = "";
+                  void handleTemplateUpload(file);
+                }} />
+              </label>
+              {isUploadingTemplate && <p role="status" className="text-slate-400">Đang tải ảnh template lên…</p>}
+              {templates?.length === 0 && <p className="text-slate-400">Thư mục chưa có ảnh template. Hãy tải ảnh lên để bắt đầu.</p>}
+              {templates && templates.length > 0 && <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+                <ul className="max-h-60 space-y-1 overflow-y-auto rounded-lg border border-slate-700 p-2" aria-label="Danh sách ảnh template">
+                  {templates.map((template) => <li key={template.name}>
+                    <button type="button" className={`w-full rounded-lg px-2 py-1.5 text-left text-xs break-all ${selectedTemplateName === template.name ? "bg-cyan-900/70 text-cyan-100" : "text-slate-300 hover:bg-slate-800"}`} aria-pressed={selectedTemplateName === template.name} onClick={() => setSelectedTemplateName(template.name)}>{template.name}</button>
+                  </li>)}
+                </ul>
+                <figure className="flex min-h-40 items-center justify-center overflow-hidden rounded-lg border border-slate-700 bg-slate-950 p-2">
+                  {selectedTemplatePreview ? <img className="max-h-56 w-full object-contain" src={selectedTemplatePreview} alt={`Ảnh template ${selectedTemplateName}`} /> : <figcaption className="text-xs text-slate-500">Chọn template để xem ảnh.</figcaption>}
+                </figure>
+              </div>}
+            </div>
+          </details>
+
+          <div className="space-y-2 text-sm">
+            <p className="font-medium">Ảnh sản phẩm cần đưa vào bối cảnh</p>
+            <label className="block font-medium text-slate-300">
+              Chọn ảnh trong thư mục
+              <input className={fieldClass} type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => {
+                const file = event.target.files?.[0];
+                event.target.value = "";
+                void handleProductChange(file);
+              }} />
+            </label>
+            <div className="cursor-text rounded-xl border border-dashed border-slate-600 bg-slate-950/60 p-4 text-center text-slate-300 outline-none focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/40" tabIndex={0} role="group" aria-label="Vùng dán ảnh sản phẩm" onClick={(event) => event.currentTarget.focus()} onPaste={handleProductPaste}>
+              <p className="font-medium">Ctrl+V để dán ảnh sản phẩm</p>
+              <p className="mt-1 text-xs text-slate-400">Nhấp vào vùng này rồi dán ảnh đã sao chép.</p>
+            </div>
+          </div>
           {productDataUrl && <figure className="rounded-xl border border-slate-700 bg-slate-950 p-3">
             <img className="mx-auto max-h-56 object-contain" src={productDataUrl} alt="Ảnh sản phẩm đã chọn" />
             <figcaption className="mt-2 truncate text-xs text-slate-400">{productName}</figcaption>

@@ -19,9 +19,20 @@ export interface CreateReviewImageInput {
   readonly excludeTemplate?: string;
 }
 
+export interface ReviewImageTemplate {
+  readonly name: string;
+}
+
+export interface UploadReviewTemplateInput {
+  readonly fileName: string;
+  readonly imageDataUrl: string;
+}
+
 export interface ReviewImageClient {
   setGatewayToken(token: string): void;
   health(): Promise<{ readonly templates: number }>;
+  listTemplates(): Promise<readonly ReviewImageTemplate[]>;
+  uploadTemplate(input: UploadReviewTemplateInput): Promise<ReviewImageTemplate>;
   create(input: CreateReviewImageInput): Promise<ReviewImageJob>;
   job(jobId: string): Promise<ReviewImageJob>;
   approve(jobId: string): Promise<ReviewImageJob>;

@@ -83,3 +83,29 @@ def test_http_rejects_job_when_bridge_queue_is_full():
                 time.sleep(0.01)
             assert api.review_image_service.snapshot(job_id)["status"] == "completed"
             api.review_image_service = original_service
+
+
+def test_template_gallery_lists_and_uploads_authenticated_images():
+    with tempfile.TemporaryDirectory() as workspace:
+        root = Path(workspace)
+        original_service = api.review_image_service
+        api.review_image_service = ReviewImageService(root / "templates", root / "outputs", lambda _prompt, _images: {})
+        headers = {"X-Bridge-Token": api.BRIDGE_TOKEN}
+        try:
+            with TestClient(api.app) as client:
+                assert client.get("/api/review-images/templates").status_code == 401
+                assert client.get("/api/review-images/templates", headers=headers).json()["templates"] == []
+                created = client.post("/api/review-images/templates", headers=headers, json={
+                    "fileName": "scene.png", "imageDataUrl": image_data_url("green")
+                })
+                assert created.status_code == 201
+                name = created.json()["template"]["name"]
+                assert client.get("/api/review-images/templates", headers=headers).json()["templates"] == [{"name": name}]
+                assert client.get(f"/api/review-images/templates/{name}", headers=headers).status_code == 200
+                invalid = client.post("/api/review-images/templates", headers=headers, json={
+                    "fileName": "bad.png", "imageDataUrl": "data:image/png;base64,Zm9v"
+                })
+                assert invalid.status_code == 400
+                assert len(api.review_image_service.list_templates()) == 1
+        finally:
+            api.review_image_service = original_service
