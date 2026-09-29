@@ -8,13 +8,18 @@ from pathlib import Path
 
 from fastapi import Header, HTTPException, Response
 from pydantic import BaseModel, Field
+from dotenv import load_dotenv
 
 from review_image_generator import ReviewImageService
+
+PROJECT_ROOT = Path(__file__).resolve().parents[4]
+load_dotenv(PROJECT_ROOT / ".env.local")
+os.environ["BRIDGE_TOKEN"] = os.getenv("REVIEW_IMAGE_BRIDGE_TOKEN", "change-this-token")
+
 from server import BRIDGE_TOKEN, app, require_token
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[4]
-BRIDGE_PORT = int(os.getenv("REVIEW_IMAGE_BRIDGE_PORT", "8770"))
+BRIDGE_PORT = 8770
 
 
 def call_image_bridge(prompt: str, images: list[dict[str, str]]) -> dict[str, str]:

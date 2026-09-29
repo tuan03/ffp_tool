@@ -3,6 +3,7 @@ import type { Plugin } from "vite";
 import { GatewayDispatcher } from "./dispatcher";
 import { handleAutoSeoHttpRequest } from "./auto-seo-handler";
 import { handleSeoReviewHttpRequest } from "./seo-review-handler";
+import { handleReviewImageHttpRequest } from "./review-image-handler";
 import {
   handlePinterestPodDirectShopifySyncHttpRequest,
   handlePinterestPodSeoHttpRequest,
@@ -90,6 +91,16 @@ export function shopifyGatewayDevPlugin(options?: ShopifyGatewayDevPluginOptions
       });
 
       server.middlewares.use(async (req, res, next) => {
+        if (req.url?.startsWith("/api/review-images/")) {
+          if (authToken && isSameOriginRequest(req.headers) && !req.headers["x-gateway-key"] && !req.headers["authorization"]) {
+            req.headers["x-gateway-key"] = authToken;
+          }
+          await handleReviewImageHttpRequest(req, res, {
+            authToken,
+            bridgeToken: env.REVIEW_IMAGE_BRIDGE_TOKEN || process.env.REVIEW_IMAGE_BRIDGE_TOKEN || "change-this-token",
+          });
+          return;
+        }
         if (req.url?.startsWith("/api/v1/gpt-seo/")) {
           if (req.url.startsWith("/api/v1/gpt-seo/admin/") && authToken && isSameOriginRequest(req.headers)) {
             req.headers["x-gateway-key"] = authToken;
