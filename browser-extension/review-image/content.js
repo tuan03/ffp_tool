@@ -78,7 +78,7 @@ async function executeJob(job) {
   const previousMessages = xpathAll(xpaths.assistant_messages);
   const previousCount = previousMessages.length;
   const previousLastText = previousMessages.at(-1)?.innerText?.trim() || "";
-  const previousImageSources = new Set(previousMessages.flatMap(node => [...node.querySelectorAll('img')].map(img => img.currentSrc || img.src)));
+  const previousImageSources = new Set([...document.querySelectorAll('img')].map(img => img.currentSrc || img.src));
 
   const input = await waitForXPath(xpaths.prompt_input, 20_000);
   if (job.kind === "image_edit") {
@@ -202,6 +202,14 @@ async function waitForGeneratedImage({ assistantMessagesXPath, stopButtonXPath, 
 }
 
 function findGeneratedImage(messages, previousCount, previousImageSources) {
+  const previews = [...document.querySelectorAll('[data-testid="generated-image-preview"] img, img[data-testid="generated-image-preview"]')];
+  const newPreview = previews.filter(node => {
+    const source = node.currentSrc || node.src || '';
+    return node.complete && node.naturalWidth >= 256 && node.naturalHeight >= 256 &&
+      isVisible(node) && Boolean(source) && !previousImageSources.has(source);
+  }).at(-1);
+  if (newPreview) return newPreview;
+
   const latest = messages.at(-1);
   const turn = conversationTurnFor(latest);
   if (!turn || messages.length < previousCount) return null;

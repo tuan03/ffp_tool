@@ -102,6 +102,17 @@ context.sleep = () => new Promise(resolve => setTimeout(resolve, 5));
   assert.equal(context.findGeneratedImage([assistant], 0, new Set()), generated);
   generated.complete = false;
   assert.equal(context.findGeneratedImage([assistant], 0, new Set()), null);
+  const preview = new FakeElement();
+  preview.complete = true;
+  preview.naturalWidth = 1312;
+  preview.naturalHeight = 1199;
+  preview.currentSrc = 'blob:new-review-image';
+  preview.getBoundingClientRect = () => ({ width: 500, height: 450 });
+  context.document.querySelectorAll = selector =>
+    selector === '[data-testid="generated-image-preview"] img, img[data-testid="generated-image-preview"]'
+      ? [preview]
+      : [];
+  assert.equal(context.findGeneratedImage([], 0, new Set()), preview);
   let clicked = false;
   context.xpathFirst = () => ({ click() { clicked = true; } });
   context.xpathAll = () => [];
