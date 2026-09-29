@@ -61,7 +61,7 @@ export interface ReviewShopifyAccess {
 }
 
 export interface ReviewClient {
-  create(source: string, maxPages: number): Promise<{ readonly jobId: string }>;
+  create(source: string, maxPages?: number): Promise<{ readonly jobId: string }>;
   get(jobId: string): Promise<AmazonReviewJob>;
   generate(input: { readonly asin: string; readonly count: number; readonly startIndex: number; readonly product: AmazonReviewContext; readonly sourceReviews: readonly AmazonReview[]; readonly priorSamples: readonly AmazonReview[] }): Promise<{ readonly samples: readonly AmazonReview[]; readonly rejected: number; readonly warnings: readonly string[] }>;
   saveSamples(jobId: string, samples: readonly AmazonReview[]): Promise<void>;

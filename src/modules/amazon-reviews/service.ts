@@ -34,8 +34,8 @@ export function createReviewClient(options: ServiceOptions): ReviewClient {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(value),
   }));
   return {
-    async create(source, maxPages) {
-      const response = await send(`${baseUrl}/api/v1/review-jobs`, { source, maxPages });
+    async create(source, maxPages = 1) {
+      const response = await send(`${baseUrl}/api/v1/review-jobs`, { source, maxPages, contextOnly: true });
       if (!isRecord(response) || typeof response.id !== "string") throw new Error("Coordinator did not return a review job ID.");
       return { jobId: response.id };
     },

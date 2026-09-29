@@ -342,12 +342,13 @@ class CoordinatorStore(CoordinatorObservability):
         source = str(payload.get("source") or "").strip()
         asin, canonical_url = normalize_review_source(source)
         try:
-            max_pages = int(payload.get("maxPages", 10))
+            max_pages = int(payload.get("maxPages", 1))
         except (TypeError, ValueError) as error:
             raise ValueError("maxPages must be an integer.") from error
         if not 1 <= max_pages <= 1000:
             raise ValueError("maxPages must be between 1 and 1000.")
-        settings = {**CrawlSettings.from_api(payload).api_dict(), "channel": "amazon_reviews", "maxPages": max_pages}
+        settings = {**CrawlSettings.from_api(payload).api_dict(), "channel": "amazon_reviews", "maxPages": max_pages,
+                    "contextOnly": True}
         with self._job_creation_lock, self.sessions.begin() as session:
             active_job_id = session.scalar(select(CrawlJob.id).where(CrawlJob.status.in_(ACTIVE_JOB_STATUSES)).limit(1))
             if active_job_id:

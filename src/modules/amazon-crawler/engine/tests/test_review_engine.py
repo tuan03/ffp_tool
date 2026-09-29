@@ -2,12 +2,92 @@
 
 import unittest
 import random
+import threading
+from pathlib import Path
+from unittest.mock import Mock, patch
 
-from engine.review_engine import normalize_review_source, parse_review_page, crawl_review_pages
+from engine.review_engine import normalize_review_source, parse_review_page, crawl_review_pages, crawl_reviews_with_agent
 from engine.review_export import build_review_workbook, JUDGEME_FIELDS, QA_FIELDS
 
 
 class ReviewEngineTests(unittest.TestCase):
+    def test_agent_fetches_product_context_without_visiting_review_pages(self):
+        pool = Mock()
+        pool.fetch.return_value = '''<h1 id="productTitle">Pattern Rug</h1>
+        <div id="productDescription">Autumn deer print for a living room.</div>
+        <div id="feature-bullets"><li><span class="a-list-item">Printed deer artwork</span></li></div>
+        <div id="customer_review-R1"><span data-hook="review-star-rating">5 stars</span>
+        <span data-hook="review-body">This review must not be collected.</span></div>'''
+        updates = []
+        cancel_event = threading.Event()
+        with patch("engine.review_engine.PlaywrightPool", return_value=pool), \
+             patch("engine.review_engine.resolve_proxy_assignments", return_value=([], [])):
+            output = crawl_reviews_with_agent("B012345678", root=Path("unused"),
+                settings={"maxPages": 10, "contextOnly": True}, proxy_config_path=None,
+                progress=updates.append, cancel_event=cancel_event)
+        pool.fetch.assert_called_once_with("https://www.amazon.com/dp/B012345678", cancel_event=cancel_event)
+        pool.close.assert_called_once()
+        self.assertEqual(output["context"]["title"], "Pattern Rug")
+        self.assertEqual(output["context"]["description"], "Autumn deer print for a living room.")
+        self.assertEqual(output["context"]["bullets"], ["Printed deer artwork"])
+        self.assertEqual(output["reviews"], [])
+        self.assertEqual(output["pagesFetched"], 0)
+        self.assertEqual(output["stopReason"], "context_ready")
+        self.assertEqual(updates[-1]["phase"], "context")
+        self.assertEqual(updates[-1]["completed"], 1)
+
+    def test_context_only_agent_reports_challenges_and_missing_product_facts(self):
+        for html, expected_reason in [
+            ('<form id="ap_signin_form"></form>', "signin"),
+            ('<form action="/validateCaptcha"></form>', "captcha"),
+            ("<html><body>No product facts</body></html>", "context_unavailable"),
+        ]:
+            with self.subTest(reason=expected_reason):
+                pool = Mock()
+                pool.fetch.return_value = html
+                with patch("engine.review_engine.PlaywrightPool", return_value=pool), \
+                     patch("engine.review_engine.resolve_proxy_assignments", return_value=([], [])):
+                    output = crawl_reviews_with_agent("B012345678", root=Path("unused"), settings={},
+                        proxy_config_path=None, progress=lambda _update: None, cancel_event=threading.Event())
+                pool.fetch.assert_called_once()
+                pool.close.assert_called_once()
+                self.assertEqual(output["stopReason"], expected_reason)
+                self.assertEqual(output["reviews"], [])
+                self.assertTrue(output["warnings"])
+
+    def test_context_only_agent_does_not_fetch_when_cancelled(self):
+        pool = Mock()
+        cancel_event = threading.Event()
+        cancel_event.set()
+        with patch("engine.review_engine.PlaywrightPool", return_value=pool), \
+             patch("engine.review_engine.resolve_proxy_assignments", return_value=([], [])):
+            output = crawl_reviews_with_agent("B012345678", root=Path("unused"), settings={},
+                proxy_config_path=None, progress=lambda _update: None, cancel_event=cancel_event)
+        pool.fetch.assert_not_called()
+        pool.close.assert_called_once()
+        self.assertEqual(output["stopReason"], "cancelled")
+
+    def test_context_only_agent_rejects_wrong_asin_and_closes_browser_after_fetch_failure(self):
+        for response, expected_reason in [
+            ('<input id="ASIN" value="B098765432"><h1 id="productTitle">Different Rug</h1>', "context_unavailable"),
+            (RuntimeError("Browser could not load the product page"), "fetch_failed"),
+        ]:
+            with self.subTest(reason=expected_reason):
+                pool = Mock()
+                if isinstance(response, Exception):
+                    pool.fetch.side_effect = response
+                else:
+                    pool.fetch.return_value = response
+                with patch("engine.review_engine.PlaywrightPool", return_value=pool), \
+                     patch("engine.review_engine.resolve_proxy_assignments", return_value=([], [])):
+                    output = crawl_reviews_with_agent("B012345678", root=Path("unused"), settings={},
+                        proxy_config_path=None, progress=lambda _update: None, cancel_event=threading.Event())
+                pool.fetch.assert_called_once()
+                pool.close.assert_called_once()
+                self.assertEqual(output["stopReason"], expected_reason)
+                self.assertEqual(output["context"]["title"], "")
+                self.assertTrue(output["warnings"])
+
     def test_normalizes_asin_and_product_url(self):
         self.assertEqual(normalize_review_source("B012345678")[0], "B012345678")
         self.assertEqual(normalize_review_source("https://www.amazon.com/dp/B012345678")[0], "B012345678")

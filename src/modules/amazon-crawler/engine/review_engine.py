@@ -1,4 +1,4 @@
-"""Review-only Amazon crawl using the distributed agent's persistent browser profiles."""
+"""Amazon product context and legacy review parsing using persistent browser profiles."""
 
 from __future__ import annotations
 
@@ -89,15 +89,27 @@ def crawl_review_pages(
     max_pages: int,
     progress: Callable[[dict[str, Any]], None] | None = None,
     cancel_event: threading.Event | None = None,
+    context_only: bool = False,
 ) -> dict[str, Any]:
     asin, product_url = normalize_review_source(source)
     if max_pages < 1 or max_pages > 1000:
         raise ValueError("maxPages must be between 1 and 1000.")
     context: dict[str, Any] = {"asin": asin, "url": product_url, "title": "", "description": "", "bullets": [], "details": {}}
     warnings: list[str] = []
+    context_result = {
+        "asin": asin, "sourceUrl": source, "context": context, "reviews": [],
+        "reviewCount": 0, "pagesFetched": 0, "pages": [], "stopReason": "cancelled", "warnings": warnings,
+    }
+    if context_only and cancel_event and cancel_event.is_set():
+        return context_result
+    context_stop_reason = "context_unavailable"
+    if context_only and progress:
+        progress({"phase": "context", "message": "Đang lấy ngữ cảnh sản phẩm Amazon.", "completed": 0, "total": 1})
     try:
         product_html = fetch_page(product_url)
-        if _challenge(product_html):
+        challenge = _challenge(product_html)
+        if challenge:
+            context_stop_reason = challenge
             warnings.append("Product page requires sign-in or CAPTCHA.")
         else:
             product = parse_product_html(product_html, asin, product_url)
@@ -109,8 +121,26 @@ def crawl_review_pages(
                 "bullets": product.get("bulletPoints") or [],
                 "details": product.get("productDetails") or {},
             })
-    except Exception as error:
+            facts = [context["title"], context["description"], *context["bullets"], *context["details"].values()]
+            if any(isinstance(fact, str) and len(fact.strip()) >= 4 for fact in facts):
+                context_stop_reason = "context_ready"
+            else:
+                warnings.append("Product page did not contain enough product context.")
+    except ValueError as error:
+        context_stop_reason = "context_unavailable"
         warnings.append(f"Product context unavailable: {error}")
+    except Exception as error:
+        message = str(error).casefold()
+        context_stop_reason = "captcha" if "captcha" in message else "signin" if "sign-in" in message or "signin" in message else "fetch_failed"
+        warnings.append(f"Product context unavailable: {error}")
+
+    if context_only:
+        context_result["stopReason"] = "cancelled" if cancel_event and cancel_event.is_set() else context_stop_reason
+        if progress and context_result["stopReason"] != "cancelled":
+            is_ready = context_stop_reason == "context_ready"
+            progress({"phase": "context", "message": "Đã lấy ngữ cảnh sản phẩm." if is_ready else "Chưa lấy được ngữ cảnh sản phẩm. Hãy kiểm tra browser của agent rồi thử lại.",
+                      "completed": 1 if is_ready else 0, "total": 1})
+        return context_result
 
     review_url = f"https://www.amazon.com/portal/customer-reviews/{asin}/"
     next_url: str | None = review_url
@@ -199,6 +229,7 @@ def crawl_reviews_with_agent(
             max_pages=int(settings.get("maxPages", 10)),
             progress=progress,
             cancel_event=cancel_event,
+            context_only=True,
         )
     finally:
         pool.close()

@@ -29,6 +29,7 @@ class ReviewJobTests(unittest.TestCase):
     def test_review_job_requires_capable_agent_and_retains_result_and_samples(self):
         job = self.store.create_review_job({"source": "B012345678", "maxPages": 3})
         self.assertEqual(job["settings"]["channel"], "amazon_reviews")
+        self.assertTrue(job["settings"]["contextOnly"])
         legacy = hello_message(client_id="legacy", display_name="Legacy", available_slots=1,
                                max_concurrent_inputs=1, limits=AgentLimits())
         legacy["capabilities"]["amazonReviews"] = False
@@ -38,6 +39,7 @@ class ReviewJobTests(unittest.TestCase):
                                 max_concurrent_inputs=1, limits=AgentLimits())
         self.store.register_client(capable)
         lease = self.store.lease_tasks("review-agent", 1)[0]
+        self.assertTrue(lease["settings"]["contextOnly"])
         review = {"reviewId": "R1", "body": "Clear design.", "rating": 5, "synthetic": False, "source": "amazon"}
         payload = {"jobId": job["id"], "taskId": lease["taskId"], "leaseId": lease["leaseId"],
                    "clientId": "review-agent", "products": [], "reviewData": {
