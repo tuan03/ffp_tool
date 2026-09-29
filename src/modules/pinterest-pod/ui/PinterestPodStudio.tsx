@@ -21,6 +21,7 @@ import type {
   TrendDiscoveryResult,
   TrendingKeywordItem,
 } from "../types";
+import { AgentInstallModal } from "./components/AgentInstallModal";
 import { CandidateReviewGrid } from "./components/CandidateReviewGrid";
 import { HeaderBar } from "./components/HeaderBar";
 import { ImageLightboxModal, type LightboxImageItem } from "./components/ImageLightboxModal";
@@ -97,6 +98,7 @@ export function PinterestPodStudio({
   const [previewImage, setPreviewImage] = useState<LightboxImageItem | null>(null);
   const [isRoomManagerOpen, setIsRoomManagerOpen] = useState(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [isAgentInstallModalOpen, setIsAgentInstallModalOpen] = useState(false);
 
   // Shopify & Pricing settings (persisted across sessions)
   const [shopifySettings, setShopifySettings] = useState<PinterestPodShopifySettings>(() => {
@@ -1010,6 +1012,7 @@ export function PinterestPodStudio({
         onNewJob={handleNewJob}
         isAgentConnected={isAgentConnected}
         agentName={agentName}
+        onOpenAgentInstall={() => setIsAgentInstallModalOpen(true)}
       />
 
       {/* TAB 1: Quét Trend & Khởi tạo Job */}
@@ -1023,11 +1026,17 @@ export function PinterestPodStudio({
                 <div>
                   <span className="font-semibold text-slate-200">Local Agent Ngoại Tuyến: </span>
                   <span className="text-slate-400">
-                    Để thực thi cào Playwright và render CMYK 300DPI mà không gây tải/OOM cho VPS, hãy chạy lệnh{" "}
-                    <code className="rounded bg-slate-900 px-1.5 py-0.5 font-mono text-cyan-300">npm run dev:agent</code> trên máy cá nhân của bạn.
+                    Cài agent trên một máy cá nhân để cào Playwright và render CMYK 300DPI thay cho VPS.
                   </span>
                 </div>
               </div>
+              <button
+                type="button"
+                onClick={() => setIsAgentInstallModalOpen(true)}
+                className="shrink-0 rounded-lg border border-cyan-700/80 bg-cyan-950/60 px-3 py-2 font-semibold text-cyan-300 transition hover:bg-cyan-900/60"
+              >
+                Cài đặt máy cào
+              </button>
             </div>
           )}
           {/* Active Job Alert Banner with Stop & Unlock */}
@@ -1272,6 +1281,11 @@ export function PinterestPodStudio({
         client={client}
         isLoggingIn={isLoggingIn}
         onLaunchBrowserLogin={() => void handleLaunchLogin()}
+      />
+
+      <AgentInstallModal
+        isOpen={isAgentInstallModalOpen}
+        onClose={() => setIsAgentInstallModalOpen(false)}
       />
     </div>
   );
