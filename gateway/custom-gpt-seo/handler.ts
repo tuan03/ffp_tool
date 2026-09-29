@@ -77,7 +77,8 @@ export function createCustomGptHandler(options: CustomGptHandlerOptions) {
     for (const [storeId, actionKey] of actionKeyEntries) if (authorized(bearer, actionKey)) matchedStoreId = storeId;
     return matchedStoreId;
   };
-  let windowStart = 0; let requestCount = 0;
+  let actionWindowStart = 0; let actionRequestCount = 0;
+  let publicImageWindowStart = 0; let publicImageRequestCount = 0;
   let isDownloadingImage = false;
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const url = new URL(req.url || "/", "http://localhost");
@@ -88,16 +89,24 @@ export function createCustomGptHandler(options: CustomGptHandlerOptions) {
     const signedImageStoreId = url.searchParams.get("storeId") || "";
     const signedImageKey = actionKeys[signedImageStoreId];
     const signedImage = Boolean(route === "media" && req.method === "GET" && signedImageKey && verifyImageSignature(signedImageKey, url.searchParams.get("jobId") || "", url.searchParams.get("imageId") || "", Number(url.searchParams.get("expires")), url.searchParams.get("signature") || ""));
+    const publicImage = route === "public-image" && req.method === "GET";
     const actionStoreId = isAdmin ? undefined : resolveActionStoreId(bearer);
-    if (!signedImage && !(isAdmin ? authorized(gatewayKey || bearer, options.adminKey) : actionStoreId)) { send(res, 401, { error: { code: "UNAUTHORIZED", message: "Invalid credentials" } }); return; }
+    if (!signedImage && !publicImage && !(isAdmin ? authorized(gatewayKey || bearer, options.adminKey) : actionStoreId)) { send(res, 401, { error: { code: "UNAUTHORIZED", message: "Invalid credentials" } }); return; }
     if (!isAdmin) {
-      if (Date.now() - windowStart > 60_000) { windowStart = Date.now(); requestCount = 0; }
-      if (++requestCount > 120) { res.setHeader("Retry-After", "60"); send(res, 429, { error: { code: "RATE_LIMITED", message: "Retry after 60 seconds" } }); return; }
+      const now = Date.now();
+      if (publicImage) {
+        if (now - publicImageWindowStart > 60_000) { publicImageWindowStart = now; publicImageRequestCount = 0; }
+        publicImageRequestCount += 1;
+      } else {
+        if (now - actionWindowStart > 60_000) { actionWindowStart = now; actionRequestCount = 0; }
+        actionRequestCount += 1;
+      }
+      if ((publicImage ? publicImageRequestCount : actionRequestCount) > 120) { res.setHeader("Retry-After", "60"); send(res, 429, { error: { code: "RATE_LIMITED", message: "Retry after 60 seconds" } }); return; }
     }
     try {
       if (!["GET", "POST"].includes(req.method || "")) { send(res, 405, { error: { code: "METHOD_NOT_ALLOWED" } }); return; }
       const body = req.method === "POST" ? await readBody(req, isAdmin ? 8_000_000 : 90_000) : {};
-      const authenticatedStoreId = signedImage ? signedImageStoreId : actionStoreId;
+      const authenticatedStoreId = signedImage || publicImage ? signedImageStoreId : actionStoreId;
       const storeId = String(body.storeId || url.searchParams.get("storeId") || authenticatedStoreId || options.storeId);
       if (!/^[a-zA-Z0-9_-]{1,100}$/.test(storeId) || (!isAdmin && storeId !== authenticatedStoreId)) { send(res, 403, { error: { code: "STORE_FORBIDDEN" } }); return; }
       const jobId = String(body.jobId || url.searchParams.get("jobId") || "");
@@ -105,7 +114,7 @@ export function createCustomGptHandler(options: CustomGptHandlerOptions) {
       const leaseToken = String(body.leaseToken || "");
       const requestId = String(body.requestId || "");
       const offset = Math.max(0, Math.trunc(Number(url.searchParams.get("offset")) || 0));
-      const readRoutes = ["capabilities", "context", "queue", "batch", "job", "images", "image-content", "media", "result", "admin/settings", "admin/jobs", "admin/job", "admin/image", "admin/review-state", "admin/sync-state"];
+      const readRoutes = ["capabilities", "context", "queue", "batch", "job", "images", "image-content", "public-image", "media", "result", "admin/settings", "admin/jobs", "admin/job", "admin/image", "admin/review-state", "admin/sync-state"];
       if (req.method === "GET" && !readRoutes.includes(route)) { send(res, 405, { error: { code: "METHOD_NOT_ALLOWED" } }); return; }
       if (req.method === "POST" && readRoutes.includes(route) && !["admin/settings", "admin/review-state"].includes(route)) { send(res, 405, { error: { code: "METHOD_NOT_ALLOWED" } }); return; }
       if (["analysis", "research", "keywords", "submit"].includes(route)) {
@@ -147,15 +156,19 @@ export function createCustomGptHandler(options: CustomGptHandlerOptions) {
           const imageId = url.searchParams.get("imageId");
           const image = job.input.images.find((entry, index) => (entry.id || `image-${index + 1}`) === imageId);
           if (!image) throw new Error("Image not found");
-          const imageUrl = new URL(image.url);
-          if (imageUrl.protocol !== "https:") throw new Error("Image URL is not public HTTPS");
+          const sourceImageUrl = new URL(image.url);
+          if (sourceImageUrl.protocol !== "https:") throw new Error("Image URL is not public HTTPS");
+          if (!options.publicUrl) throw new Error("Public image URL is not configured");
+          const imageUrl = new URL("/api/v1/gpt-seo/public-image", options.publicUrl);
+          imageUrl.search = new URLSearchParams({ storeId, jobId, imageId: required(imageId, "imageId") }).toString();
           result = {
             imageId,
             imageUrl: imageUrl.href,
-            instructions: "Use imageUrl as the public image URL. Do not use imageId as a URL.",
+            instructions: "Open imageUrl to inspect the image. Do not use imageId as a URL.",
           };
           break;
         }
+        case "public-image":
         case "media":
         case "admin/image": {
           if (route === "media" && !signedImage) { send(res, 401, { error: { code: "INVALID_IMAGE_SIGNATURE" } }); return; }
@@ -169,7 +182,7 @@ export function createCustomGptHandler(options: CustomGptHandlerOptions) {
             const downloaded = await downloadProductImage(image.url);
             res.setHeader("Content-Type", downloaded.contentType);
             res.setHeader("Content-Disposition", `${isAdmin ? "attachment" : "inline"}; filename="${job.id}-${String(imageId).replace(/[^a-zA-Z0-9_-]/g, "_")}.${downloaded.extension}"`);
-            res.setHeader("Cache-Control", "private, no-store");
+            res.setHeader("Cache-Control", route === "public-image" ? "public, max-age=300" : "private, no-store");
             res.setHeader("X-Content-Type-Options", "nosniff");
             res.end(downloaded.bytes); return;
           } finally { isDownloadingImage = false; }

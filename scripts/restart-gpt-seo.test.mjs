@@ -102,9 +102,11 @@ test("Custom GPT instructions use the public imageUrl returned by the image Acti
   assert.match(instructions, /getSeoJobImageContent/);
   assert.match(instructions, /imageId/);
   assert.match(instructions, /imageUrl/);
-  assert.match(instructions, /public HTTPS image URL/);
+  assert.match(instructions, /FFP-hosted public HTTPS image URL/);
+  assert.match(instructions, /needs no Bearer token/);
   assert.doesNotMatch(instructions, /returned image content visually/);
   assert.match(knowledge, /imageUrl/);
+  assert.match(knowledge, /FFP server resolves the stored job image and proxies its bytes/);
   assert.match(knowledge, /actually rendered and inspected/);
 });
 
