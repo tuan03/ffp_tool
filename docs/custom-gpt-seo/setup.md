@@ -123,7 +123,7 @@ The export changes the server URL, embeds no secrets and leaves the tracked sche
 3. Upload [seo-knowledge.md](seo-knowledge.md) as Knowledge.
 4. Add an Action and paste/import the exported OpenAPI JSON.
 5. Set authentication to **API Key**, select **Bearer**, and enter the store-specific key from `GPT_SEO_ACTION_KEYS_JSON`.
-6. Verify 16 operations appear. The schema must not include admin settings, reconciliation or Shopify publishing.
+6. Verify 18 operations appear, including `listSeoWaitingJobs`. The schema must not include admin settings, reconciliation or Shopify publishing.
 7. Test `getSeoCapabilities`, `getStoreSeoContext` and `getSeoQueueStatus`. Confirm store `capozen` and the batch size configured in the app.
 8. Save the GPT. If a managed workspace restricts Actions domains, have its administrator allow the selected domain.
 
@@ -150,7 +150,7 @@ Ask GPT to resume the active batch and continue subsequent batches when desired.
 | `404` or HTML response | Route `/api/v1/gpt-seo/*` to the gateway instead of the SPA. |
 | `409` lease/active batch | Resume or release the existing batch; reclaim expired work with a new request ID. |
 | `429` | Respect Retry-After and process sequentially. |
-| `WAITING_INPUT` | Supply facts/images, retry through the UI and resume in GPT. |
+| `WAITING_INPUT` | Use `listSeoWaitingJobs` for read-only job discovery or supply facts/images, retry through the UI and resume processing. |
 | `NEEDS_CHANGES` | Revise the indicated stage and submit with a new mutation request ID. |
 | Still pending after selecting Gemini | Existing jobs retain provider snapshots. Release the batch and explicitly transfer the job; Gemini incurs API usage. |
 | Amazon ready in GPT but absent in Review | Check worker/coordinator health, image-processing configuration and job errors. |

@@ -7,10 +7,25 @@ test("Custom GPT schema uses a configurable HTTPS origin and exposes no administ
   assert.equal(result.status, 0, result.stderr);
   const schema = JSON.parse(result.stdout);
   assert.equal(schema.servers[0].url, "https://seo.example.org");
-  assert.equal(Object.keys(schema.paths).length, 17);
+  assert.equal(Object.keys(schema.paths).length, 18);
   assert.ok(Object.keys(schema.paths).every(route => !route.includes("admin")));
   const operationIds = Object.values(schema.paths).flatMap(path => Object.values(path).map(operation => operation.operationId));
   assert.equal(new Set(operationIds).size, operationIds.length);
+});
+
+test("Custom GPT schema exposes read-only WAITING_INPUT job discovery", () => {
+  const result = spawnSync(process.execPath, ["scripts/export-custom-gpt-schema.mjs", "https://seo.example.org"], { encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr);
+  const schema = JSON.parse(result.stdout);
+  const operation = schema.paths["/api/v1/gpt-seo/waiting-jobs"]?.get;
+
+  assert.equal(operation?.operationId, "listSeoWaitingJobs");
+  assert.deepEqual(operation?.security, [{ actionKey: [] }]);
+  assert.equal(operation?.parameters?.[0]?.name, "offset");
+  const responseSchema = operation?.responses?.["200"]?.content?.["application/json"]?.schema;
+  assert.deepEqual(responseSchema?.required, ["jobs", "nextOffset", "instructions"]);
+  assert.deepEqual(responseSchema?.properties?.jobs?.items?.required, ["jobId", "source", "title", "handle", "status", "imageCount"]);
+  assert.equal(responseSchema?.properties?.jobs?.items?.properties?.status?.const, "WAITING_INPUT");
 });
 
 test("Custom GPT schema exposes an authenticated public image URL lookup", () => {

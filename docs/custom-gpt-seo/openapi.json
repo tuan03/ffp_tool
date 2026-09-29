@@ -142,6 +142,114 @@
         "parameters": []
       }
     },
+    "/api/v1/gpt-seo/waiting-jobs": {
+      "get": {
+        "operationId": "listSeoWaitingJobs",
+        "summary": "List WAITING_INPUT jobs without claiming or changing them.",
+        "description": "Use this read-only action when the operator asks to inspect jobs awaiting input and no active batch provides their jobIds.",
+        "security": [
+          {
+            "actionKey": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Store-scoped WAITING_INPUT job summaries",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "jobs",
+                    "nextOffset",
+                    "instructions"
+                  ],
+                  "properties": {
+                    "jobs": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "jobId",
+                          "source",
+                          "title",
+                          "handle",
+                          "status",
+                          "imageCount"
+                        ],
+                        "properties": {
+                          "jobId": {
+                            "type": "string"
+                          },
+                          "source": {
+                            "type": "string",
+                            "enum": [
+                              "amazon",
+                              "auto_seo"
+                            ]
+                          },
+                          "productId": {
+                            "type": "string"
+                          },
+                          "title": {
+                            "type": "string"
+                          },
+                          "handle": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "type": "string",
+                            "const": "WAITING_INPUT"
+                          },
+                          "imageCount": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "issue": {
+                            "type": "string"
+                          }
+                        },
+                        "additionalProperties": false
+                      }
+                    },
+                    "nextOffset": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ],
+                      "minimum": 0
+                    },
+                    "instructions": {
+                      "type": "string"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid offset"
+          },
+          "401": {
+            "description": "Invalid API key"
+          },
+          "429": {
+            "description": "Respect Retry-After"
+          }
+        },
+        "parameters": [
+          {
+            "name": "offset",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ]
+      }
+    },
     "/api/v1/gpt-seo/claim": {
       "post": {
         "operationId": "claimSeoBatch",
