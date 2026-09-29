@@ -6,6 +6,7 @@ import os
 import threading
 import uuid
 from copy import deepcopy
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -15,7 +16,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
 from .cache import RawFamilyCache
-from .crawler_core import AmazonCrawler, CrawlSettings
+from .crawler_core import CrawlSettings
+from .process_crawler import ProcessCrawler
 
 MODULE_ROOT = Path(__file__).resolve().parents[1]
 PROJECT_ROOT = Path(__file__).resolve().parents[4]
@@ -80,7 +82,7 @@ def _run_job(job: Job) -> None:
     with job.lock:
         job.status = "running"
         job.progress = {"phase": "product", "completed": 0, "total": len(job.sources), "message": "Đang khởi động crawler..."}
-    crawler = AmazonCrawler(root=PROJECT_ROOT, settings=job.settings, progress=job.update_progress, cancel_event=job.cancel_event)
+    crawler = ProcessCrawler(root=PROJECT_ROOT, settings=job.settings, progress=job.update_progress, cancel_event=job.cancel_event)
     try:
         output = crawler.run(job_id=job.job_id, sources=job.sources)
         with job.lock:
@@ -101,8 +103,15 @@ def _run_job(job: Job) -> None:
 
 
 @app.get("/api/amazon-crawler/health")
-def health() -> dict[str, str]:
-    return {"status": "ok", "version": "1.0.0"}
+def health() -> dict[str, Any]:
+    cache = _local_cache(PROJECT_ROOT)
+    cache.maintain()
+    return {"status": "ok", "version": "1.0.0", "cache": cache.metrics_snapshot()}
+
+
+@lru_cache(maxsize=8)
+def _local_cache(root: Path) -> RawFamilyCache:
+    return RawFamilyCache(root / ".runtime" / "cache")
 
 
 @app.post("/api/amazon-crawler/jobs", status_code=202)

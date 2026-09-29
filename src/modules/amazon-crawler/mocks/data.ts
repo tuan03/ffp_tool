@@ -201,6 +201,10 @@ export const amazonCrawlerMockOutput: AmazonCrawlerOutput = {
     jeminiseMockProduct,
   ],
   errors: [],
+  completedAsins: ["B0MOCK1001", "B0MOCK0002", "B0MOCK2002", "B0MOCK2003", "B0MOCK3001"],
+  failedAsins: [],
+  retryableAsins: [],
+  nonRetryableAsins: [],
   warnings: [],
   statistics: {
     requestedInputs: 1,

@@ -4,16 +4,21 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 import uuid
 from collections import Counter
-from datetime import timedelta
+from datetime import datetime, timedelta
 from threading import Lock
 from typing import Any
 
 from sqlalchemy import delete, func, select, text
+from sqlalchemy.dialects.postgresql import insert as postgres_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import selectinload
 
 from ..crawler_core import CrawlSettings, normalize_amazon_input
+from ..timeouts import CrawlTimeout, TIMEOUT_FIELDS
+from ..retry_policy import RETRY_FIELDS, retry_delay
 from .coordinator_models import (
     ClientRecord,
     CoordinatorState,
@@ -29,8 +34,11 @@ from .coordinator_models import (
     ShopifyProductLink,
     TaskAttempt,
     TaskResult,
+    CrawlTelemetryEvent,
 )
 from .protocol import CLIENT_OFFLINE_SECONDS, LEASE_SECONDS, MAX_CRAWL_FAILURES, settings_fingerprint, utc_iso, utc_now
+from .coordinator_observability import CoordinatorObservability, bounded_agent_telemetry
+from ..observability import ERROR_LOG_FIELDS, redact, safe_fields
 
 
 TERMINAL_TASK_STATUSES = {"completed", "failed", "cancelled"}
@@ -56,6 +64,68 @@ CANCELLATION_PENDING_ATTEMPT_STATUSES = {
 TOMBSTONE_RETENTION_DAYS = 30
 ACTIVE_JOB_STATUSES = {"queued", "running", "cancelling"}
 CACHE_GENERATION_KEY = "agent_cache_generation"
+PRODUCT_INVALIDATION_GENERATION_KEY = "product_cache_invalidation_generation"
+PRODUCT_INVALIDATION_PREFIX = "product_cache_invalidation:"
+TEMPORARY_CLEANUP_GENERATION_KEY = "agent_temporary_cleanup_generation"
+NEGATIVE_CACHE_PREFIX = "amazon-negative:"
+CLIENT_RATE_COOLDOWN_PREFIX = f"{NEGATIVE_CACHE_PREFIX}client-rate:"
+CAPTCHA_COOLDOWN_KEY = "amazon-captcha-cooldown"
+
+
+def _bounded_progress(payload: Any) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        return {}
+    progress = {
+        key: redact(payload[key], limit=240)
+        for key in ("phase", "message", "source", "status")
+        if isinstance(payload.get(key), str)
+    }
+    for key in ("completed", "total"):
+        if isinstance(payload.get(key), int):
+            progress[key] = max(0, payload[key])
+    items = payload.get("items")
+    if isinstance(items, list):
+        progress["items"] = []
+        for raw_item in items[:20]:
+            if not isinstance(raw_item, dict):
+                continue
+            item = {
+                key: redact(raw_item[key], limit=240)
+                for key in ("source", "asin", "phase", "status", "message", "currentAsin", "networkRoute", "browserProfile")
+                if isinstance(raw_item.get(key), str)
+            }
+            for key in ("variantCompleted", "variantTotal"):
+                if isinstance(raw_item.get(key), int):
+                    item[key] = max(0, raw_item[key])
+            options = raw_item.get("currentOptions")
+            if isinstance(options, dict):
+                item["currentOptions"] = {
+                    str(key)[:80]: str(value)[:80]
+                    for key, value in list(options.items())[:8]
+                }
+            variants = raw_item.get("activeVariants")
+            if isinstance(variants, list):
+                item["activeVariants"] = [
+                    {"asin": str(variant.get("asin") or "")[:10], "options": {
+                        str(key)[:80]: str(value)[:80]
+                        for key, value in list((variant.get("options") or {}).items())[:8]
+                    }}
+                    for variant in variants[:16]
+                    if isinstance(variant, dict) and isinstance(variant.get("options") or {}, dict)
+                ]
+            progress["items"].append(item)
+    pool = payload.get("browserPool")
+    if isinstance(pool, dict):
+        bounded_pool = {}
+        for key in (
+            "directProfiles", "proxyProfiles", "tabsPerProfile", "directActive", "proxyActive",
+            "directQueued", "proxyQueued",
+        ):
+            value = pool.get(key)
+            if isinstance(value, int):
+                bounded_pool[key] = max(0, value)
+        progress["browserPool"] = bounded_pool
+    return progress
 
 
 class ActiveJobExistsError(RuntimeError):
@@ -95,7 +165,7 @@ def _shopify_sync_lock_key(store_id: str, source_key: str) -> int:
     return int.from_bytes(digest[:8], byteorder="big", signed=True)
 
 
-class CoordinatorStore:
+class CoordinatorStore(CoordinatorObservability):
     def __init__(self, session_factory) -> None:
         self.sessions = session_factory
         self._product_claim_lock = Lock()
@@ -103,6 +173,13 @@ class CoordinatorStore:
 
     @staticmethod
     def _event(session, job_id: str, event_type: str, payload: dict[str, Any]) -> None:
+        payload = dict(payload)
+        if "error" in payload:
+            error = payload["error"]
+            payload["error"] = safe_fields(error, ERROR_LOG_FIELDS) if isinstance(error, dict) else redact(error)
+        for key in ("message", "reason"):
+            if isinstance(payload.get(key), str):
+                payload[key] = redact(payload[key])
         session.add(JobEvent(job_id=job_id, event_type=event_type, payload=payload))
 
     @staticmethod
@@ -171,12 +248,21 @@ class CoordinatorStore:
                 job.started_at = job.started_at or utc_now()
                 job.completed_at = None
             else:
-                product_failed = any(
-                    product_statuses.get(status, 0)
-                    for status in {"failed", "reconciliation_required", "cancelled", "rejected"}
-                )
-                job.status = "partial" if statuses.get("failed", 0) or job.rejected_inputs or product_failed else "completed"
-                job.completed_at = utc_now()
+                if (job.settings or {}).get("channel") == "pinterest":
+                    if statuses.get("failed", 0) == total:
+                        job.status = "failed"
+                    elif (job.settings or {}).get("stage") in {"crawl", "crawl_and_review"}:
+                        job.status = "ready_for_review"
+                    else:
+                        job.status = "completed"
+                    job.completed_at = utc_now()
+                else:
+                    product_failed = any(
+                        product_statuses.get(status, 0)
+                        for status in {"failed", "reconciliation_required", "cancelled", "rejected"}
+                    )
+                    job.status = "partial" if statuses.get("failed", 0) or job.rejected_inputs or product_failed else "completed"
+                    job.completed_at = utc_now()
         elif statuses.get("leased", 0) or statuses.get("running", 0) or statuses.get("completed", 0):
             job.status = "running"
             job.started_at = job.started_at or utc_now()
@@ -210,6 +296,7 @@ class CoordinatorStore:
                 status="queued",
                 settings=settings,
                 requested_inputs=len(raw_urls),
+                created_at=utc_now(),
             )
             session.add(job)
             session.add(CrawlJobControl(
@@ -227,9 +314,16 @@ class CoordinatorStore:
                     if normalized.asin in seen_asins:
                         continue
                     seen_asins.add(normalized.asin)
+                    negative = self._active_negative(
+                        session, self._negative_key(normalized.asin, str(settings["amazonZip"])), utc_now()
+                    )
+                    is_terminal = negative is not None and negative.get("retryable") is False
                     session.add(CrawlTask(
                         id=_id(), job_id=job.id, ordinal=ordinal, source=source,
-                        asin=normalized.asin, canonical_url=normalized.canonical_url, status="queued",
+                        asin=normalized.asin, canonical_url=normalized.canonical_url,
+                        status="failed" if is_terminal else "queued",
+                        last_error=negative,
+                        completed_at=utc_now() if is_terminal else None,
                     ))
                     accepted += 1
                 except ValueError as error:
@@ -242,6 +336,101 @@ class CoordinatorStore:
             self._event(session, job.id, "job_created", {"accepted": accepted, "rejected": rejected})
             self._refresh_job(session, job.id)
             return self._job_snapshot(session, job)
+
+    def create_pinterest_job(self, payload: dict[str, Any]) -> dict[str, Any]:
+        niche = str(payload.get("niche") or payload.get("source") or "").strip()
+        stage = str(payload.get("workflow_stage") or payload.get("stage") or "crawl").lower().strip()
+        workflow_stage = "production" if stage in {"produce", "production"} else "crawl_and_review"
+        settings = dict(payload)
+        settings["channel"] = "pinterest"
+        settings["stage"] = stage
+        settings["action"] = stage
+        settings["workflow_stage"] = workflow_stage
+        external_request_id = str(payload.get("externalRequestId") or "").strip() or None
+        with self._job_creation_lock, self.sessions.begin() as session:
+            job = CrawlJob(
+                id=_id(),
+                external_request_id=external_request_id,
+                status="queued",
+                settings=settings,
+                requested_inputs=1,
+                accepted_inputs=1,
+                rejected_inputs=0,
+            )
+            session.add(job)
+            session.add(CrawlJobControl(
+                job_id=job.id,
+                state="active",
+                priority=max(0, min(100, int(payload.get("schedulerPriority") or 10))),
+            ))
+            task = CrawlTask(
+                id=_id(),
+                job_id=job.id,
+                ordinal=0,
+                source=niche or f"pinterest-{stage}",
+                asin=f"PIN_{stage[:6].upper()}",
+                canonical_url=f"pinterest://{stage}/{niche}",
+                status="queued",
+            )
+            session.add(task)
+            self._event(session, job.id, "job_created", {"channel": "pinterest", "stage": stage})
+            self._refresh_job(session, job.id)
+            return self._job_snapshot(session, job)
+
+
+    @staticmethod
+    def _negative_key(asin: str, amazon_zip: str) -> str:
+        return f"{NEGATIVE_CACHE_PREFIX}{asin}:{amazon_zip}"
+
+    @staticmethod
+    def _active_negative(session, key: str, now: datetime) -> dict[str, Any] | None:
+        state = session.get(CoordinatorState, key)
+        if state is None:
+            return None
+        try:
+            failure = json.loads(state.value)
+            retry_after = datetime.fromisoformat(str(failure["retryAfter"]).replace("Z", "+00:00"))
+            is_expired = retry_after <= now
+        except (ValueError, TypeError, KeyError):
+            session.delete(state)
+            return None
+        if is_expired or (failure.get("status") == "not_found" and failure.get("notFoundConfirmed") is not True):
+            session.delete(state)
+            return None
+        return failure if isinstance(failure, dict) else None
+
+    @staticmethod
+    def _store_negative(session, key: str, error: dict[str, Any]) -> None:
+        if error.get("status") not in {"not_found", "temporarily_blocked", "network_error", "parser_error", "partial"}:
+            return
+        try:
+            retry_after = datetime.fromisoformat(str(error["retryAfter"]).replace("Z", "+00:00"))
+            is_expired = retry_after <= utc_now()
+        except (ValueError, TypeError, KeyError):
+            return
+        if is_expired:
+            return
+        failure = {
+            **{field: error[field] for field in (*TIMEOUT_FIELDS, *RETRY_FIELDS) if field in error},
+            "status": error["status"], "reason": str(error.get("reason") or error["status"]),
+            "retryable": bool(error.get("retryable")), "retryAfter": error["retryAfter"],
+            "code": str(error.get("code") or error["status"]).upper(),
+            "message": str(error.get("message") or "Amazon crawl failed."),
+            **{key: error[key] for key in (
+                "completedAsins", "failedAsins", "retryableAsins", "nonRetryableAsins",
+            ) if isinstance(error.get(key), list)},
+        }
+        if error.get("status") == "partial" and error.get("resumeClientId"):
+            failure["resumeClientId"] = str(error["resumeClientId"])
+        dialect = session.get_bind().dialect.name
+        if dialect == "postgresql":
+            statement = postgres_insert(CoordinatorState).values(key=key, value=json.dumps(failure))
+        else:
+            statement = sqlite_insert(CoordinatorState).values(key=key, value=json.dumps(failure))
+        session.execute(statement.on_conflict_do_update(
+            index_elements=[CoordinatorState.key],
+            set_={"value": json.dumps(failure), "updated_at": utc_now()},
+        ))
 
     @staticmethod
     def _cache_generation(session) -> int:
@@ -267,6 +456,79 @@ class CoordinatorStore:
         with self.sessions() as session:
             return self._cache_generation(session)
 
+    def advance_cache_generation(self) -> int:
+        with self.sessions.begin() as session:
+            return self._next_cache_generation(session)
+
+    def active_job_id(self) -> str | None:
+        with self.sessions() as session:
+            return session.scalar(select(CrawlJob.id).where(CrawlJob.status.in_(ACTIVE_JOB_STATUSES)).limit(1))
+
+    def retained_job_ids(self) -> set[str]:
+        with self.sessions() as session:
+            return set(session.scalars(select(CrawlJob.id)).all())
+
+    def temporary_cleanup_generation(self) -> int:
+        with self.sessions() as session:
+            state = session.get(CoordinatorState, TEMPORARY_CLEANUP_GENERATION_KEY)
+            try:
+                return max(0, int(state.value)) if state else 0
+            except ValueError:
+                return 0
+
+    def advance_temporary_cleanup_generation(self) -> int:
+        with self.sessions.begin() as session:
+            state = session.get(CoordinatorState, TEMPORARY_CLEANUP_GENERATION_KEY)
+            try:
+                generation = max(0, int(state.value)) + 1 if state else 1
+            except ValueError:
+                generation = 1
+            if state is None:
+                session.add(CoordinatorState(key=TEMPORARY_CLEANUP_GENERATION_KEY, value=str(generation)))
+            else:
+                state.value = str(generation)
+            return generation
+
+    def invalidate_product_cache(self, asin: str, amazon_zip: str) -> int:
+        """Persist a targeted invalidation for agents that reconnect later."""
+        with self.sessions.begin() as session:
+            counter = session.get(CoordinatorState, PRODUCT_INVALIDATION_GENERATION_KEY)
+            try:
+                generation = max(0, int(counter.value)) + 1 if counter else 1
+            except ValueError:
+                generation = 1
+            if counter is None:
+                session.add(CoordinatorState(key=PRODUCT_INVALIDATION_GENERATION_KEY, value=str(generation)))
+            else:
+                counter.value = str(generation)
+            key = f"{PRODUCT_INVALIDATION_PREFIX}{asin}:{amazon_zip}"
+            record = session.get(CoordinatorState, key)
+            payload = json.dumps({"asin": asin, "amazonZip": amazon_zip, "generation": generation})
+            if record is None:
+                session.add(CoordinatorState(key=key, value=payload))
+            else:
+                record.value = payload
+            negative = session.get(CoordinatorState, self._negative_key(asin, amazon_zip))
+            if negative is not None:
+                session.delete(negative)
+            return generation
+
+    def product_invalidations_since(self, generation: int) -> list[dict[str, Any]]:
+        with self.sessions() as session:
+            records = session.scalars(select(CoordinatorState).where(
+                CoordinatorState.key.like(f"{PRODUCT_INVALIDATION_PREFIX}%")
+            )).all()
+            invalidations = [json.loads(record.value) for record in records]
+            return sorted(
+                (value for value in invalidations if int(value["generation"]) > generation),
+                key=lambda value: int(value["generation"]),
+            )
+
+    def clear_negative_cache(self) -> None:
+        with self.sessions.begin() as session:
+            session.execute(delete(CoordinatorState).where(CoordinatorState.key.like(f"{NEGATIVE_CACHE_PREFIX}%")))
+            session.execute(delete(CoordinatorState).where(CoordinatorState.key == CAPTCHA_COOLDOWN_KEY))
+
     def register_client(self, hello: dict[str, Any]) -> dict[str, Any]:
         client_id = str(hello.get("clientId") or "").strip()
         if not client_id:
@@ -291,9 +553,23 @@ class CoordinatorStore:
             client.last_seen_at = now
             return self._client_snapshot(client)
 
-    def heartbeat(self, client_id: str, running: list[dict[str, Any]], status: str = "online") -> list[str]:
+    def _task_deadline(self, session, task: CrawlTask) -> datetime | None:
+        attempt_started = session.scalar(select(TaskAttempt.leased_at).where(TaskAttempt.lease_id == task.lease_id))
+        job = session.get(CrawlJob, task.job_id)
+        if attempt_started is None or job is None:
+            return None
+        return min(
+            _as_utc(attempt_started) + timedelta(seconds=float(job.settings.get("asinTimeoutSeconds", 1800))),
+            _as_utc(job.created_at) + timedelta(seconds=float(job.settings.get("jobTimeoutSeconds", 21600))),
+        )
+
+    def _renew_lease(self, session, task: CrawlTask, now: datetime) -> datetime:
+        deadline = self._task_deadline(session, task)
+        renewed = now + timedelta(seconds=LEASE_SECONDS)
+        return min(renewed, deadline) if deadline else renewed
+
+    def heartbeat(self, client_id: str, running: list[dict[str, Any]], status: str = "online", telemetry: Any = None) -> list[str]:
         now = utc_now()
-        lease_until = now + timedelta(seconds=LEASE_SECONDS)
         cancelled_job_ids: set[str] = set()
         active_leases = {
             (str(active.get("taskId") or ""), str(active.get("leaseId") or ""))
@@ -306,13 +582,15 @@ class CoordinatorStore:
                 return []
             client.status = status if status in {"online", "busy", "waiting_captcha", "paused"} else "online"
             client.last_seen_at = now
+            if telemetry is not None:
+                client.capabilities = {**client.capabilities, "observability": bounded_agent_telemetry(telemetry)}
             for active in running:
                 task_id = str(active.get("taskId") or "")
                 lease_id = str(active.get("leaseId") or "")
                 task = session.get(CrawlTask, task_id)
                 if task and task.lease_id == lease_id and task.assigned_client_id == client_id and task.status in {"leased", "running"}:
                     task.status = "running"
-                    task.lease_expires_at = lease_until
+                    task.lease_expires_at = self._renew_lease(session, task, now)
                 elif (
                     task
                     and task.status in {"cancelling", "cancelled"}
@@ -397,29 +675,70 @@ class CoordinatorStore:
             count = min(count, max(0, client.max_concurrent_inputs - int(active_count)))
             if count == 0:
                 return []
+            amazon_blocked = (
+                self._active_negative(session, CAPTCHA_COOLDOWN_KEY, now) is not None
+                or self._active_negative(session, f"{CLIENT_RATE_COOLDOWN_PREFIX}{client_id}", now) is not None
+            )
+            client_caps = client.capabilities if isinstance(client.capabilities, dict) else {}
+            can_pinterest = bool(client_caps.get("pinterest", False))
+            can_amazon = bool(client_caps.get("amazon", True))
             tasks = session.scalars(
                 select(CrawlTask)
                 .join(CrawlJob, CrawlTask.job_id == CrawlJob.id)
                 .outerjoin(CrawlJobControl, CrawlJobControl.job_id == CrawlJob.id)
                 .where(CrawlTask.status == "queued", CrawlJob.status.in_(["queued", "running"]))
                 .order_by(func.coalesce(CrawlJobControl.priority, 0).desc(), CrawlJob.created_at, CrawlTask.ordinal)
-                .limit(count)
                 .with_for_update(skip_locked=True)
             ).all()
             for task in tasks:
+                job = session.get(CrawlJob, task.job_id)
+                job_settings = dict(job.settings if job else {})
+                channel = str(job_settings.get("channel", "amazon")).lower()
+                if channel == "pinterest" and not can_pinterest:
+                    continue
+                if channel == "amazon" and (not can_amazon or amazon_blocked):
+                    continue
+                amazon_zip = str(job_settings.get("amazonZip") or "90001")
+                negative = self._active_negative(session, self._negative_key(task.asin, amazon_zip), now) if channel == "amazon" else None
+                if negative is not None:
+                    task.last_error = negative
+                    if negative.get("retryable") is False:
+                        task.status = "failed"
+                        task.completed_at = now
+                        self._refresh_job(session, task.job_id)
+                        continue
+                retry_after = (task.last_error or {}).get("retryAfter")
+                if retry_after:
+                    try:
+                        if datetime.fromisoformat(str(retry_after).replace("Z", "+00:00")) > now:
+                            continue
+                    except (TypeError, ValueError):
+                        pass
+                resume_client_id = str((task.last_error or {}).get("resumeClientId") or "")
+                if resume_client_id and resume_client_id != client_id:
+                    resume_client = session.get(ClientRecord, resume_client_id)
+                    if (
+                        resume_client is not None
+                        and resume_client.status in {"online", "busy", "waiting_captcha"}
+                        and _as_utc(resume_client.last_seen_at) >= now - timedelta(seconds=CLIENT_OFFLINE_SECONDS)
+                    ):
+                        continue
                 lease_id = _id()
                 task.status = "leased"
                 task.assigned_client_id = client_id
                 task.lease_id = lease_id
-                task.lease_expires_at = now + timedelta(seconds=LEASE_SECONDS)
+                job_deadline = _as_utc(job.created_at) + timedelta(seconds=float(job.settings.get("jobTimeoutSeconds", 21600)))
+                asin_deadline = now + timedelta(seconds=float(job.settings.get("asinTimeoutSeconds", 1800)))
+                task.lease_expires_at = min(now + timedelta(seconds=LEASE_SECONDS), job_deadline, asin_deadline)
                 task.started_at = task.started_at or now
+                ordinal = int(session.scalar(select(func.count(TaskAttempt.id)).where(TaskAttempt.task_id == task.id)) or 0) + 1
                 attempt = TaskAttempt(
                     id=_id(), task_id=task.id, client_id=client_id,
                     lease_id=lease_id, status="leased", leased_at=now,
                 )
                 session.add(attempt)
+                self.record_task_trace(session, task, attempt, "task_retry" if ordinal > 1 else "task_leased", ordinal=ordinal)
                 self._refresh_job(session, task.job_id)
-                job = session.get(CrawlJob, task.job_id)
                 leases.append({
                     "type": "assignment",
                     "taskId": task.id,
@@ -427,12 +746,20 @@ class CoordinatorStore:
                     "leaseId": lease_id,
                     "source": task.source,
                     "asin": task.asin,
+                    "requestId": task.id,
+                    "taskAttempt": ordinal,
                     "url": task.canonical_url,
-                    "settings": dict(job.settings if job else {}),
-                    "settingsFingerprint": settings_fingerprint(dict(job.settings if job else {})),
+                    "channel": channel,
+                    "action": str(job_settings.get("action") or job_settings.get("stage", "crawl")),
+                    "settings": job_settings,
+                    "settingsFingerprint": settings_fingerprint(job_settings),
                     "leaseExpiresAt": utc_iso(task.lease_expires_at),
+                    "jobDeadlineAt": utc_iso(job_deadline),
+                    "asinDeadlineAt": utc_iso(asin_deadline),
                 })
                 self._event(session, task.job_id, "task_leased", {"taskId": task.id, "clientId": client_id})
+                if len(leases) >= count:
+                    break
             if leases:
                 client.status = "busy"
                 client.last_seen_at = now
@@ -460,15 +787,20 @@ class CoordinatorStore:
             if task.assigned_client_id != client_id or task.lease_id != lease_id:
                 return
             task.status = "running"
-            task.lease_expires_at = utc_now() + timedelta(seconds=LEASE_SECONDS)
+            task.lease_expires_at = self._renew_lease(session, task, utc_now())
             self._event(session, task.job_id, "task_progress", {
-                "taskId": task.id, "clientId": client_id, "progress": payload.get("progress") or {},
+                "taskId": task.id, "clientId": client_id, "progress": _bounded_progress(payload.get("progress")),
             })
 
     def fail_task(self, client_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         task_id = str(payload.get("taskId") or "")
         lease_id = str(payload.get("leaseId") or "")
-        error = payload.get("error") if isinstance(payload.get("error"), dict) else {"message": str(payload.get("error") or "Unknown crawler error")}
+        error = dict(payload["error"]) if isinstance(payload.get("error"), dict) else {"message": str(payload.get("error") or "Unknown crawler error")}
+        if error.get("status") == "not_found" and error.get("notFoundConfirmed") is not True:
+            error.update({"status": "network_error", "reason": "not_found_unverified", "code": "NETWORK_ERROR", "retryable": True, "isRetryable": True,
+                          "retryAfter": utc_iso(utc_now() + timedelta(seconds=retry_delay(1, base=30)))})
+        if error.get("status") == "partial":
+            error["resumeClientId"] = client_id
         retryable = bool(error.get("retryable", True))
         with self.sessions.begin() as session:
             task = session.get(CrawlTask, task_id)
@@ -481,7 +813,24 @@ class CoordinatorStore:
             if task.assigned_client_id != client_id or task.lease_id != lease_id:
                 return {"status": "stale"}
             task.failure_count += 1
+            if retryable:
+                now = utc_now()
+                try:
+                    minimum_delay = max(0, (datetime.fromisoformat(str(error.get("retryAfter")).replace("Z", "+00:00")) - now).total_seconds())
+                except (ValueError, TypeError):
+                    minimum_delay = 0
+                seconds = retry_delay(task.failure_count, base=120 if error.get("reason") == "captcha" else 30, retry_after=minimum_delay)
+                error["retryAfter"] = utc_iso(now + timedelta(seconds=seconds))
             task.last_error = error
+            job = session.get(CrawlJob, task.job_id)
+            job_settings = job.settings if job else {}
+            if str(job_settings.get("channel", "amazon")).lower() == "amazon":
+                amazon_zip = str(job_settings.get("amazonZip") or "90001")
+                self._store_negative(session, self._negative_key(task.asin, amazon_zip), error)
+                if error.get("reason") == "captcha":
+                    self._store_negative(session, CAPTCHA_COOLDOWN_KEY, error)
+                if error.get("reason") in {"http_429", "http_503"}:
+                    self._store_negative(session, f"{CLIENT_RATE_COOLDOWN_PREFIX}{client_id}", error)
             task.status = "queued" if retryable and task.failure_count < MAX_CRAWL_FAILURES else "failed"
             if task.status == "failed":
                 task.completed_at = utc_now()
@@ -540,6 +889,11 @@ class CoordinatorStore:
                 checksum=checksum, payload=stored_payload,
             ))
             task.status = "completed"
+            job = session.get(CrawlJob, task.job_id)
+            amazon_zip = str((job.settings if job else {}).get("amazonZip") or "90001")
+            negative = session.get(CoordinatorState, self._negative_key(task.asin, amazon_zip))
+            if negative is not None:
+                session.delete(negative)
             task.completed_at = utc_now()
             task.assigned_client_id = client_id
             task.lease_id = lease_id
@@ -1480,6 +1834,7 @@ class CoordinatorStore:
                     CrawlTask.job_id.in_(job_ids),
                 )).all())
                 session.execute(delete(JobEvent).where(JobEvent.job_id.in_(job_ids)))
+                session.execute(delete(CrawlTelemetryEvent).where(CrawlTelemetryEvent.job_id.in_(job_ids)))
                 session.execute(delete(InvalidJobInput).where(InvalidJobInput.job_id.in_(job_ids)))
                 session.execute(delete(CrawlProductItem).where(CrawlProductItem.job_id.in_(job_ids)))
                 if task_ids:
@@ -1598,8 +1953,28 @@ class CoordinatorStore:
             self._refresh_job(session, item.job_id)
             return next_status
 
+    def _expire_jobs(self, now: datetime) -> None:
+        with self.sessions() as session:
+            expired = [job.id for job in session.scalars(select(CrawlJob).where(CrawlJob.status.in_(["queued", "running"])))
+                       if now >= _as_utc(job.created_at) + timedelta(seconds=float(job.settings.get("jobTimeoutSeconds", 21600)))]
+        for job_id in expired:
+            with self.sessions.begin() as session:
+                job = session.get(CrawlJob, job_id)
+                if job is None or job.status not in {"queued", "running"}:
+                    continue
+                elapsed = (now - _as_utc(job.created_at)).total_seconds()
+                error = CrawlTimeout("job", started=time.monotonic() - elapsed).as_error("")
+                tasks = session.scalars(select(CrawlTask).where(CrawlTask.job_id == job_id)).all()
+                unfinished = [task for task in tasks if task.status not in TERMINAL_TASK_STATUSES]
+                for task in unfinished or tasks[:1]:
+                    task.last_error = {**error, "source": task.source}
+                self._event(session, job_id, "job_timed_out", error)
+            # Reuse Stop's handling of in-flight Shopify writes and agent acknowledgements; it preserves product caches.
+            self.cancel_job(job_id)
+
     def reap_expired(self) -> dict[str, int]:
         now = utc_now()
+        self._expire_jobs(now)
         offline_before = now - timedelta(seconds=CLIENT_OFFLINE_SECONDS)
         offline = 0
         requeued = 0
@@ -1650,7 +2025,21 @@ class CoordinatorStore:
                             attempt.status = "abandoned"
                             attempt.finished_at = now
                     continue
-                task.status = "queued"
+                deadline = self._task_deadline(session, task)
+                if deadline is not None and now >= deadline:
+                    attempt_started = session.scalar(select(TaskAttempt.leased_at).where(TaskAttempt.lease_id == old_lease))
+                    elapsed = (now - _as_utc(attempt_started)).total_seconds() if attempt_started else 0
+                    error = CrawlTimeout("asin", started=time.monotonic() - elapsed).as_error(task.source)
+                    error.update({"elapsedMs": round(elapsed * 1000), "retryAfter": utc_iso(now + timedelta(seconds=retry_delay(task.failure_count + 1, base=30))),
+                                  "attempt": task.failure_count + 1, "resumeClientId": task.assigned_client_id})
+                    task.failure_count += 1
+                    task.last_error = error
+                    job = session.get(CrawlJob, task.job_id)
+                    self._store_negative(session, self._negative_key(task.asin, str(job.settings.get("amazonZip", "90001"))), error)
+                    self._event(session, task.job_id, "task_timed_out", {"taskId": task.id, "error": error})
+                task.status = "failed" if task.failure_count >= MAX_CRAWL_FAILURES else "queued"
+                if task.status == "failed":
+                    task.completed_at = now
                 task.assigned_client_id = None
                 task.lease_id = None
                 task.lease_expires_at = None
@@ -1659,7 +2048,8 @@ class CoordinatorStore:
                 if old_lease:
                     attempt = session.scalar(select(TaskAttempt).where(TaskAttempt.lease_id == old_lease))
                     if attempt:
-                        attempt.status = "abandoned"
+                        attempt.status = "failed" if deadline is not None and now >= deadline else "abandoned"
+                        attempt.error = task.last_error if attempt.status == "failed" else attempt.error
                         attempt.finished_at = now
                 self._event(session, task.job_id, "task_requeued", {"taskId": task.id, "reason": "lease_expired"})
             stopped_items = session.scalars(select(CrawlProductItem).where(
@@ -1748,7 +2138,9 @@ class CoordinatorStore:
             control.state = "cancelling"
             job.status = "cancelling"
             job.completed_at = None
-            cache_generation = self._next_cache_generation(session)
+            # A job cancellation only discards that job's work. Cache generations
+            # are reserved for explicit cache invalidation.
+            cache_generation = self._cache_generation(session)
             session.merge(DeletedCrawlJob(
                 job_id=job_id,
                 cancellation_id=control.cancellation_id,
@@ -1856,22 +2248,6 @@ class CoordinatorStore:
             if not error:
                 self._refresh_job(session, job_id)
             return not error
-
-    def acknowledge_client_cache_generation(self, client_id: str, cache_generation: int) -> list[str]:
-        """Complete pending Stop cleanups proven by a reconnect generation ACK."""
-        with self.sessions.begin() as session:
-            cleanups = session.scalars(select(JobStopClientCleanup).where(
-                JobStopClientCleanup.client_id == client_id,
-                JobStopClientCleanup.status == "pending",
-                JobStopClientCleanup.cache_generation <= cache_generation,
-            )).all()
-            job_ids = sorted({cleanup.job_id for cleanup in cleanups})
-            for cleanup in cleanups:
-                cleanup.status = "completed"
-                cleanup.error = None
-            for job_id in job_ids:
-                self._refresh_job(session, job_id)
-            return job_ids
 
     def acknowledge_task_cancel(self, client_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         task_id = str(payload.get("taskId") or "")
@@ -2055,6 +2431,7 @@ class CoordinatorStore:
     def _purge_job_rows(session, job_id: str) -> None:
         task_ids = session.scalars(select(CrawlTask.id).where(CrawlTask.job_id == job_id)).all()
         session.execute(delete(JobEvent).where(JobEvent.job_id == job_id))
+        session.execute(delete(CrawlTelemetryEvent).where(CrawlTelemetryEvent.job_id == job_id))
         session.execute(delete(InvalidJobInput).where(InvalidJobInput.job_id == job_id))
         session.execute(delete(CrawlProductItem).where(CrawlProductItem.job_id == job_id))
         if task_ids:
@@ -2130,10 +2507,109 @@ class CoordinatorStore:
             job = session.get(CrawlJob, job_id)
             return self._job_snapshot(session, job) if job else None
 
+    def job_summary(self, job_id: str) -> dict[str, Any] | None:
+        with self.sessions() as session:
+            job = session.get(CrawlJob, job_id)
+            return self._job_summary(session, job) if job else None
+
+    def job_metadata(self, job_id: str) -> dict[str, Any] | None:
+        with self.sessions() as session:
+            job = session.get(CrawlJob, job_id)
+            if job is None:
+                return None
+            return {"id": job.id, "settings": job.settings}
+
+    @staticmethod
+    def _job_summary(session, job: CrawlJob) -> dict[str, Any]:
+        task_counts = dict(session.execute(
+            select(CrawlTask.status, func.count(CrawlTask.id))
+            .where(CrawlTask.job_id == job.id).group_by(CrawlTask.status)
+        ).all())
+        product_counts = dict(session.execute(
+            select(CrawlProductItem.status, func.count(CrawlProductItem.id))
+            .where(CrawlProductItem.job_id == job.id).group_by(CrawlProductItem.status)
+        ).all())
+        completed = sum(int(task_counts.get(status, 0)) for status in TERMINAL_TASK_STATUSES)
+        event_payload = session.scalar(
+            select(JobEvent.payload).where(JobEvent.job_id == job.id, JobEvent.event_type == "task_progress")
+            .order_by(JobEvent.id.desc()).limit(1)
+        )
+        latest = event_payload.get("progress", {}) if isinstance(event_payload, dict) else {}
+        latest = latest if isinstance(latest, dict) else {}
+        current_asin = None
+        active = session.execute(
+            select(CrawlTask.id, CrawlTask.asin).where(
+                CrawlTask.job_id == job.id, CrawlTask.status.in_(["leased", "running"]),
+            ).order_by(CrawlTask.ordinal).limit(1)
+        ).first()
+        if active:
+            current_asin = active.asin
+            if isinstance(event_payload, dict) and event_payload.get("taskId") == active.id:
+                items = latest.get("items")
+                if isinstance(items, list) and items and isinstance(items[0], dict):
+                    current_asin = str(items[0].get("currentAsin") or active.asin)
+        retry_error = None
+        if product_counts.get("retry_wait"):
+            retry_error = session.scalar(
+                select(CrawlProductItem.last_error).where(
+                    CrawlProductItem.job_id == job.id, CrawlProductItem.status == "retry_wait",
+                ).limit(1)
+            )
+        retry_phase = str(retry_error.get("phase") or "shopify") if isinstance(retry_error, dict) else None
+        phase = str(latest.get("phase") or "product")
+        if job.status in {"completed", "partial", "cancelled", "review_pending"}:
+            phase = "export" if job.status != "review_pending" else "review"
+        elif product_counts.get("syncing") or product_counts.get("shopify_writing") or retry_phase == "shopify":
+            phase = "shopify"
+        elif retry_phase == "image_processing":
+            phase = "image_processing"
+        elif retry_phase == "seo":
+            phase = "seo"
+        elif product_counts.get("seo"):
+            phase = "seo"
+        elif product_counts.get("image_processing"):
+            phase = "image_processing"
+        elif product_counts.get("normalizing") or product_counts.get("received"):
+            phase = "normalization"
+        errors = int(job.rejected_inputs) + int(task_counts.get("failed", 0)) + int(product_counts.get("failed", 0))
+        if job.status in {"cancelling", "cancelled"}:
+            errors += int(session.scalar(select(func.count(CrawlTask.id)).where(
+                CrawlTask.job_id == job.id, CrawlTask.status != "failed", CrawlTask.last_error["stage"].as_string() == "job",
+            )) or 0)
+        message = str(latest.get("message") or f"Đã xử lý {completed}/{job.accepted_inputs} link.")
+        if phase in {"seo", "image_processing", "shopify"}:
+            message = f"Đang xử lý {phase}: {completed}/{job.accepted_inputs} link đã crawl."
+        elif job.status in {"completed", "partial", "cancelled", "review_pending"}:
+            message = f"Đã xử lý {completed}/{job.accepted_inputs} link."
+        return {
+            "id": job.id, "status": job.status,
+            "completed": completed, "total": job.accepted_inputs,
+            "currentAsin": current_asin, "errors": errors,
+            "progress": {
+                "phase": phase, "completed": completed, "total": job.accepted_inputs,
+                "message": message[:240],
+            },
+            "taskCounts": task_counts, "productCounts": product_counts,
+            "createdAt": utc_iso(job.created_at),
+            "startedAt": utc_iso(job.started_at) if job.started_at else None,
+            "completedAt": utc_iso(job.completed_at) if job.completed_at else None,
+        }
+
     def list_jobs(self, limit: int = 100) -> list[dict[str, Any]]:
         with self.sessions() as session:
             jobs = session.scalars(select(CrawlJob).order_by(CrawlJob.created_at.desc()).limit(max(1, min(limit, 500)))).all()
-            return [self._job_snapshot(session, job) for job in jobs]
+            snapshots = []
+            for job in jobs:
+                if job.status == "cancelling":
+                    snapshots.append(self._job_snapshot(session, job, include_task_details=False))
+                    continue
+                snapshot = self._job_summary(session, job)
+                snapshot["settings"] = job.settings
+                snapshot["inputs"] = session.scalars(
+                    select(CrawlTask.source).where(CrawlTask.job_id == job.id).order_by(CrawlTask.ordinal)
+                ).all()
+                snapshots.append(snapshot)
+            return snapshots
 
     def list_clients(self) -> list[dict[str, Any]]:
         with self.sessions() as session:
@@ -2198,19 +2674,55 @@ class CoordinatorStore:
         }
         return product
 
-    def job_products(self, job_id: str) -> dict[str, Any] | None:
+    def job_products(self, job_id: str, *, cursor: str | None = None, limit: int = 50) -> dict[str, Any] | None:
         with self.sessions() as session:
             if session.get(CrawlJob, job_id) is None:
                 return None
-            items = session.scalars(
-                select(CrawlProductItem)
-                .where(CrawlProductItem.job_id == job_id)
-                .order_by(CrawlProductItem.created_at)
-            ).all()
+            page_size = max(1, min(limit, 100))
+            query = select(
+                CrawlProductItem.id, CrawlProductItem.product_id,
+                CrawlProductItem.source_key, CrawlProductItem.status,
+            ).where(CrawlProductItem.job_id == job_id)
+            if cursor:
+                query = query.where(CrawlProductItem.id > cursor)
+            rows = session.execute(query.order_by(CrawlProductItem.id).limit(page_size + 1)).all()
             return {
                 "jobId": job_id,
-                "products": [self._product_pipeline_snapshot(item) for item in items],
+                "products": [
+                    {"id": row.id, "productId": row.product_id, "sourceKey": row.source_key, "status": row.status}
+                    for row in rows[:page_size]
+                ],
+                "nextCursor": rows[page_size - 1].id if len(rows) > page_size else None,
             }
+
+    def job_product(self, job_id: str, item_id: str) -> dict[str, Any] | None:
+        with self.sessions() as session:
+            item = session.scalar(select(CrawlProductItem).where(
+                CrawlProductItem.job_id == job_id, CrawlProductItem.id == item_id,
+            ))
+            if item is None:
+                return None
+            product = self._product_pipeline_snapshot(item)
+            variants = product.pop("variants", [])
+            product["variantCount"] = len(variants) if isinstance(variants, list) else 0
+            return product
+
+    def job_product_variants(
+        self, job_id: str, item_id: str, *, cursor: int = 0, limit: int = 50,
+    ) -> dict[str, Any] | None:
+        with self.sessions() as session:
+            item = session.scalar(select(CrawlProductItem).where(
+                CrawlProductItem.job_id == job_id, CrawlProductItem.id == item_id,
+            ))
+            if item is None:
+                return None
+            payload = item.normalized_payload or item.raw_payload
+            variants = payload.get("variants", [])
+            variants = variants if isinstance(variants, list) else []
+            page_size = max(1, min(limit, 100))
+            offset = max(0, cursor)
+            next_cursor = offset + page_size if offset + page_size < len(variants) else None
+            return {"variants": variants[offset:offset + page_size], "nextCursor": next_cursor}
 
     def retry_failed_syncs(self, job_id: str) -> dict[str, Any] | None:
         with self.sessions.begin() as session:
@@ -2249,8 +2761,22 @@ class CoordinatorStore:
             invalid = session.scalars(select(InvalidJobInput).where(InvalidJobInput.job_id == job_id).order_by(InvalidJobInput.ordinal)).all()
             products: dict[str, dict[str, Any]] = {}
             warnings: list[str] = []
+            asin_lists: dict[str, list[str]] = {
+                "completedAsins": [], "failedAsins": [],
+                "retryableAsins": [], "nonRetryableAsins": [],
+            }
+
+            def collect_asins(payload: dict[str, Any]) -> None:
+                for key, values in asin_lists.items():
+                    candidates = payload.get(key)
+                    if isinstance(candidates, list):
+                        values.extend(asin for asin in candidates if isinstance(asin, str))
+
             errors: list[dict[str, Any]] = [
-                {"source": entry.source, "code": "INVALID_INPUT", "message": entry.message, "retryable": False}
+                {
+                    "source": entry.source, "code": "INVALID_INPUT", "status": "invalid_asin",
+                    "reason": "invalid_format", "message": entry.message, "retryable": False,
+                }
                 for entry in invalid
             ]
             pipeline_items = session.scalars(
@@ -2276,16 +2802,26 @@ class CoordinatorStore:
             for task in tasks:
                 if task.result:
                     result = dict(task.result.payload)
+                    collect_asins(result)
                     if not pipeline_items:
                         for product in result.get("products", []):
                             if isinstance(product, dict) and product.get("id"):
                                 products[str(product["id"])] = product
                     errors.extend(error for error in result.get("errors", []) if isinstance(error, dict))
                     warnings.extend(str(warning) for warning in result.get("warnings", []) if isinstance(warning, str))
-                elif task.status == "failed":
+                if (task.status == "failed" and not task.result) or (task.last_error or {}).get("stage") == "job":
+                    last_error = task.last_error or {}
+                    collect_asins(last_error)
                     errors.append({
-                        "source": task.source, "code": "CRAWL_FAILED",
-                        "message": str((task.last_error or {}).get("message") or "Crawler failed."), "retryable": True,
+                        "source": task.source,
+                        "code": str(last_error.get("code") or "CRAWL_FAILED"),
+                        "message": str(last_error.get("message") or "Crawler failed."),
+                        "retryable": bool(last_error.get("retryable", True)),
+                        **{key: last_error[key] for key in (
+                            "status", "reason", "retryAfter", "completedAsins", "failedAsins",
+                            "retryableAsins", "nonRetryableAsins",
+                            *TIMEOUT_FIELDS, *RETRY_FIELDS,
+                        ) if key in last_error},
                     })
             product_values = list(products.values())
             started_at = _as_utc(job.started_at or job.created_at)
@@ -2300,6 +2836,7 @@ class CoordinatorStore:
                 "settings": job.settings,
                 "products": product_values,
                 "errors": errors,
+                **{key: sorted(set(values)) for key, values in asin_lists.items()},
                 "warnings": list(dict.fromkeys(warnings)),
                 "statistics": {
                     "requestedInputs": job.requested_inputs,
@@ -2332,10 +2869,11 @@ class CoordinatorStore:
             "activeTasks": active_tasks,
             "limits": client.limits, "connectedAt": utc_iso(client.connected_at) if client.connected_at else None,
             "lastSeenAt": utc_iso(client.last_seen_at),
+            "observability": client.capabilities.get("observability"),
         }
 
     @staticmethod
-    def _job_snapshot(session, job: CrawlJob) -> dict[str, Any]:
+    def _job_snapshot(session, job: CrawlJob, *, include_task_details: bool = True) -> dict[str, Any]:
         counts = dict(session.execute(
             select(CrawlTask.status, func.count(CrawlTask.id)).where(CrawlTask.job_id == job.id).group_by(CrawlTask.status)
         ).all())
@@ -2347,12 +2885,12 @@ class CoordinatorStore:
             .options(selectinload(CrawlTask.result))
             .where(CrawlTask.job_id == job.id)
             .order_by(CrawlTask.ordinal)
-        ).all()
+        ).all() if include_task_details else []
         progress_events = session.scalars(
             select(JobEvent)
             .where(JobEvent.job_id == job.id, JobEvent.event_type == "task_progress")
             .order_by(JobEvent.id)
-        ).all()
+        ).all() if include_task_details else []
         latest_progress: dict[str, dict[str, Any]] = {}
         latest_batch_progress: dict[str, Any] = {}
         for event in progress_events:
@@ -2486,7 +3024,10 @@ class CoordinatorStore:
                 "hasReceived": received_task_count == task_count,
             })
         pending_pipeline = []
-        for item in session.scalars(select(CrawlProductItem).where(
+        for item in session.execute(select(
+            CrawlProductItem.id, CrawlProductItem.source_key,
+            CrawlProductItem.claimed_by, CrawlProductItem.shopify_result,
+        ).where(
             CrawlProductItem.job_id == job.id,
             CrawlProductItem.status.in_(["cancelling", "stopping_after_write"]),
         ).order_by(CrawlProductItem.created_at)):
@@ -2513,7 +3054,7 @@ class CoordinatorStore:
                 "status": cleanup.status,
                 "error": cleanup.error,
             })
-        return {
+        snapshot = {
             "id": job.id, "externalRequestId": job.external_request_id, "status": job.status,
             "settings": job.settings, "settingsFingerprint": settings_fingerprint(job.settings),
             "inputs": [task.source for task in tasks],
@@ -2535,3 +3076,68 @@ class CoordinatorStore:
             "createdAt": utc_iso(job.created_at), "startedAt": utc_iso(job.started_at) if job.started_at else None,
             "completedAt": utc_iso(job.completed_at) if job.completed_at else None,
         }
+        if not include_task_details:
+            summary = CoordinatorStore._job_summary(session, job)
+            snapshot.update({key: summary[key] for key in ("completed", "total", "currentAsin", "errors", "progress")})
+            snapshot["inputs"] = session.scalars(
+                select(CrawlTask.source).where(CrawlTask.job_id == job.id).order_by(CrawlTask.ordinal)
+            ).all()
+        if (job.settings or {}).get("channel") == "pinterest":
+            candidates: list[Any] = []
+            rejected_candidates: list[Any] = []
+            deliverables: dict[str, Any] = {}
+            summary_metrics: dict[str, Any] = {}
+            logs: list[str] = []
+            for task in tasks:
+                if task.result and isinstance(task.result.payload, dict):
+                    res_cands = task.result.payload.get("candidates")
+                    if isinstance(res_cands, list) and not candidates:
+                        candidates = res_cands
+                    res_rejected = task.result.payload.get("rejected_candidates")
+                    if isinstance(res_rejected, list) and not rejected_candidates:
+                        rejected_candidates = res_rejected
+                    res_deliv = task.result.payload.get("deliverables")
+                    if isinstance(res_deliv, dict) and not deliverables:
+                        deliverables = res_deliv
+                    res_metrics = task.result.payload.get("summaryMetrics") or task.result.payload.get("summary_metrics")
+                    if isinstance(res_metrics, dict) and not summary_metrics:
+                        summary_metrics = res_metrics
+                    res_logs = task.result.payload.get("logs")
+                    if isinstance(res_logs, list):
+                        logs.extend(res_logs)
+            events = session.scalars(
+                select(JobEvent).where(JobEvent.job_id == job.id).order_by(JobEvent.id)
+            ).all()
+            for ev in events:
+                if isinstance(ev.payload, dict):
+                    msg = ev.payload.get("message")
+                    if not msg and isinstance(ev.payload.get("progress"), dict):
+                        msg = ev.payload["progress"].get("message")
+                    if msg:
+                        logs.append(str(msg))
+            snapshot.update({
+                "ok": True,
+                "jobId": job.id,
+                "job_id": job.id,
+                "niche": (job.settings or {}).get("niche"),
+                "product": (job.settings or {}).get("product"),
+                "candidates": candidates,
+                "rejected_candidates": rejected_candidates,
+                "total_candidates": len(candidates),
+                "deliverables": deliverables,
+                "summaryMetrics": summary_metrics,
+                "summary_metrics": summary_metrics,
+                "logs": logs,
+            })
+            if job.status == "queued":
+                snapshot["stepper"] = {"current_step": 1, "percent": 10, "current_message": "Đang xếp hàng chờ Agent kết nối..."}
+            elif job.status == "running":
+                latest_msg = logs[-1] if logs else "Agent đang thực thi..."
+                snapshot["stepper"] = {"current_step": 2, "percent": 50, "current_message": latest_msg}
+            elif job.status == "ready_for_review":
+                snapshot["stepper"] = {"current_step": 2, "percent": 100, "current_message": "Đã quét xong ứng viên! Sẵn sàng duyệt mẫu."}
+            elif job.status == "completed":
+                snapshot["stepper"] = {"current_step": 4, "percent": 100, "current_message": "Hoàn thành! Đã tạo đầy đủ mockup AI & file in CMYK xưởng."}
+            elif job.status == "failed":
+                snapshot["stepper"] = {"current_step": 1, "percent": 0, "current_message": "Tác vụ thất bại."}
+        return snapshot

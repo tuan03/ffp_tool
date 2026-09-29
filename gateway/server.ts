@@ -1,12 +1,18 @@
+import crypto from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { getCustomGptRuntime } from "./custom-gpt-seo/runtime";
+import { serveStaticFile } from "./static-server";
 
 import { GatewayDispatcher } from "./dispatcher";
 import { handleAutoSeoHttpRequest } from "./auto-seo-handler";
-import { handlePinterestPodSeoHttpRequest } from "./pinterest-pod-handler";
+import { handleSeoReviewHttpRequest } from "./seo-review-handler";
+import {
+  handlePinterestPodDirectShopifySyncHttpRequest,
+  handlePinterestPodSeoHttpRequest,
+} from "./pinterest-pod-handler";
 import { assertHostSecurity, createGatewayHttpHandler, isGatewayAuthorized, MAX_BODY_BYTES } from "./http-server";
 import { InMemoryIdempotencyStore } from "./idempotency";
 import { ShopifyGraphqlClient } from "./shopify-graphql-client";
@@ -43,7 +49,38 @@ export interface GatewayServerOptions {
   readonly port?: number;
   readonly host?: string;
   readonly authToken?: string;
+  readonly operatorUsername?: string;
+  readonly operatorPassword?: string;
   readonly maxBodyBytes?: number;
+}
+
+function isOperatorAuthorized(
+  authorization: string | undefined,
+  username: string,
+  password: string,
+): boolean {
+  if (!authorization?.startsWith("Basic ")) return false;
+  let credentials: string;
+  try {
+    credentials = Buffer.from(authorization.slice(6), "base64").toString("utf8");
+  } catch {
+    return false;
+  }
+  const separatorIndex = credentials.indexOf(":");
+  if (separatorIndex < 0) return false;
+  const actualUsername = credentials.slice(0, separatorIndex);
+  const actualPassword = credentials.slice(separatorIndex + 1);
+  const actual = Buffer.from(`${actualUsername}\0${actualPassword}`);
+  const expected = Buffer.from(`${username}\0${password}`);
+  return actual.length === expected.length && crypto.timingSafeEqual(actual, expected);
+}
+
+function requestOperatorAuthentication(res: http.ServerResponse): void {
+  res.statusCode = 401;
+  res.setHeader("WWW-Authenticate", 'Basic realm="FFP Tool", charset="UTF-8"');
+  res.setHeader("Content-Type", "text/plain; charset=utf-8");
+  res.setHeader("Cache-Control", "no-store");
+  res.end("Authentication required");
 }
 
 export function startGatewayServer(
@@ -60,6 +97,8 @@ export function startGatewayServer(
   const port = typeof rawPort === "number" ? rawPort : (Number(String(rawPort || "").trim()) || 3001);
   const rawAuthToken = options.authToken ?? env.GATEWAY_AUTH_TOKEN ?? process.env.GATEWAY_AUTH_TOKEN;
   const authToken = typeof rawAuthToken === "string" && rawAuthToken.trim().length > 0 ? rawAuthToken.trim() : undefined;
+  const operatorUsername = options.operatorUsername ?? env.FFP_OPERATOR_USERNAME ?? process.env.FFP_OPERATOR_USERNAME;
+  const operatorPassword = options.operatorPassword ?? env.FFP_OPERATOR_PASSWORD ?? process.env.FFP_OPERATOR_PASSWORD;
   const isContainer = isContainerEnvironment();
   const defaultHost = (isContainer && Boolean(authToken)) ? "0.0.0.0" : "127.0.0.1";
   const rawHost = options.host ?? env.GATEWAY_HOST ?? process.env.GATEWAY_HOST;
@@ -67,9 +106,15 @@ export function startGatewayServer(
   const maxBodyBytes = options.maxBodyBytes && options.maxBodyBytes > 0 ? options.maxBodyBytes : MAX_BODY_BYTES;
 
   assertHostSecurity(host, authToken, "gateway server");
+  if (Boolean(operatorUsername) !== Boolean(operatorPassword)) {
+    throw new Error("FFP_OPERATOR_USERNAME and FFP_OPERATOR_PASSWORD must be configured together");
+  }
+  if (operatorUsername && !authToken) {
+    throw new Error("Operator authentication requires GATEWAY_AUTH_TOKEN");
+  }
 
   const stores = loadBootstrappedStores({ env });
-  if (env.GPT_SEO_ACTION_KEY || process.env.GPT_SEO_ACTION_KEY) getCustomGptRuntime();
+  if (env.GPT_SEO_ACTION_KEYS_JSON || process.env.GPT_SEO_ACTION_KEYS_JSON || env.GPT_SEO_ACTION_KEY || process.env.GPT_SEO_ACTION_KEY) getCustomGptRuntime();
 
   const storeRegistry = new InMemoryStoreRegistry(stores);
   const tokenProvider = new CompositeTokenProvider();
@@ -87,21 +132,33 @@ export function startGatewayServer(
 
   const server = http.createServer(async (req, res) => {
     const url = req.url || "/";
-    if (url.startsWith("/api/v1/gpt-seo/")) {
-      await getCustomGptRuntime().handler(req, res);
-      return;
-    }
+    const hasOperatorAuthentication = Boolean(operatorUsername && operatorPassword);
+    const isAuthenticatedOperator = Boolean(
+      operatorUsername &&
+      operatorPassword &&
+      isOperatorAuthorized(req.headers.authorization, operatorUsername, operatorPassword),
+    );
+    if (isAuthenticatedOperator && authToken) req.headers["x-gateway-key"] = authToken;
+
     if (url === "/health") {
       res.statusCode = 200;
       res.setHeader("Content-Type", "application/json");
       res.end(JSON.stringify({ status: "ok", timestamp: new Date().toISOString() }));
       return;
     }
+    if (hasOperatorAuthentication && !url.startsWith("/api/") && !isAuthenticatedOperator) {
+      requestOperatorAuthentication(res);
+      return;
+    }
+    if (url.startsWith("/api/v1/gpt-seo/")) {
+      await getCustomGptRuntime().handler(req, res);
+      return;
+    }
 
     const isShopify = url === "/api/shopify" || url.startsWith("/api/shopify?");
     const isAutoSeo = url === "/api/auto-seo/run" || url.startsWith("/api/auto-seo/run?");
     const isPinterestPodHandover = url === "/api/pinterest-pod/handover-seo" || url.startsWith("/api/pinterest-pod/handover-seo?");
-    const isPinterestPodSync = url === "/api/pinterest-pod/sync-shopify" || url.startsWith("/api/pinterest-pod/sync-shopify?");
+    const isPinterestPodDirectSync = url === "/api/pinterest-pod/sync-shopify" || url.startsWith("/api/pinterest-pod/sync-shopify?");
     const isSeoReview = url === "/api/seo-review" || url.startsWith("/api/seo-review/") || url.startsWith("/api/seo-review?");
     const isStoreRegister = url === "/api/stores/register" || url.startsWith("/api/stores/register?");
     const isStoreUpdate = url === "/api/stores/update" || url.startsWith("/api/stores/update?");
@@ -240,6 +297,19 @@ export function startGatewayServer(
       return;
     }
 
+    if (isPinterestPodDirectSync) {
+      if (req.method === "OPTIONS") {
+        res.statusCode = 204;
+        res.setHeader("Access-Control-Allow-Origin", "*");
+        res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+        res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Gateway-Key");
+        res.end();
+        return;
+      }
+      await handlePinterestPodDirectShopifySyncHttpRequest(req, res, { authToken, maxBodyBytes, dispatcher });
+      return;
+    }
+
     if (url === "/api/stores/register" || url.startsWith("/api/stores/register?")) {
       await handleStoreRegistrationHttpRequest(req, res, storeControlPlane, { authToken, maxBodyBytes });
       return;
@@ -265,42 +335,7 @@ export function startGatewayServer(
       return;
     }
 
-    if (isPinterestPodSync) {
-      if (req.method === "OPTIONS") {
-        res.statusCode = 204;
-        res.setHeader("Access-Control-Allow-Origin", "*");
-        res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-        res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Gateway-Key");
-        res.end();
-        return;
-      }
-      if (authToken && !isGatewayAuthorized(req.headers, authToken)) {
-        res.statusCode = 401;
-        res.setHeader("Content-Type", "application/json");
-        res.end(
-          JSON.stringify({
-            success: false,
-            error: {
-              code: "GATEWAY_AUTH_FAILED",
-              message: "Unauthorized: Invalid or missing Gateway authentication token",
-            },
-          }),
-        );
-        return;
-      }
-      res.statusCode = 200;
-      res.setHeader("Content-Type", "application/json");
-      res.end(
-        JSON.stringify({
-          success: true,
-          status: "ok",
-          message: "Pinterest POD Shopify sync endpoint ready",
-        }),
-      );
-      return;
-    }
-
-    if (isSeoReview) {
+    if (url.startsWith("/api/seo-review/") || url === "/api/seo-review") {
       if (req.method === "OPTIONS") {
         res.statusCode = 204;
         res.setHeader("Access-Control-Allow-Origin", "*");
@@ -309,29 +344,14 @@ export function startGatewayServer(
         res.end();
         return;
       }
-      if (authToken && !isGatewayAuthorized(req.headers, authToken)) {
-        res.statusCode = 401;
-        res.setHeader("Content-Type", "application/json");
-        res.end(
-          JSON.stringify({
-            success: false,
-            error: {
-              code: "GATEWAY_AUTH_FAILED",
-              message: "Unauthorized: Invalid or missing Gateway authentication token",
-            },
-          }),
-        );
-        return;
-      }
-      res.statusCode = 200;
-      res.setHeader("Content-Type", "application/json");
-      res.end(
-        JSON.stringify({
-          success: true,
-          status: "ok",
-          message: "SEO review endpoint ready",
-        }),
-      );
+      await handleSeoReviewHttpRequest(req, res, { authToken, maxBodyBytes });
+      return;
+    }
+
+    const staticDir = process.env.STATIC_DIR
+      ? path.resolve(process.env.STATIC_DIR)
+      : path.resolve(process.cwd(), "dist");
+    if (fs.existsSync(staticDir) && serveStaticFile(req, res, staticDir)) {
       return;
     }
 

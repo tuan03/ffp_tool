@@ -2,7 +2,11 @@ import type { Plugin } from "vite";
 
 import { GatewayDispatcher } from "./dispatcher";
 import { handleAutoSeoHttpRequest } from "./auto-seo-handler";
-import { handlePinterestPodSeoHttpRequest } from "./pinterest-pod-handler";
+import { handleSeoReviewHttpRequest } from "./seo-review-handler";
+import {
+  handlePinterestPodDirectShopifySyncHttpRequest,
+  handlePinterestPodSeoHttpRequest,
+} from "./pinterest-pod-handler";
 import { assertHostSecurity, createGatewayHttpHandler, isGatewayAuthorized, MAX_BODY_BYTES } from "./http-server";
 import { InMemoryIdempotencyStore } from "./idempotency";
 import { ShopifyGraphqlClient } from "./shopify-graphql-client";
@@ -64,6 +68,10 @@ export function shopifyGatewayDevPlugin(options?: ShopifyGatewayDevPluginOptions
       const host = server?.config?.server?.host;
       assertHostSecurity(host, authToken, "vite dev server");
       const maxBodyBytes = options?.maxBodyBytes && options.maxBodyBytes > 0 ? options.maxBodyBytes : MAX_BODY_BYTES;
+      const isMockMode =
+        server?.config?.mode === "mock" ||
+        process.env.VITE_APP_ENV === "mock" ||
+        process.env.APP_ENV === "mock";
 
       const stores = loadBootstrappedStores({ env });
 
@@ -92,13 +100,14 @@ export function shopifyGatewayDevPlugin(options?: ShopifyGatewayDevPluginOptions
         const isShopify = req.url && (req.url === "/api/shopify" || req.url.startsWith("/api/shopify?"));
         const isAutoSeo = req.url && (req.url === "/api/auto-seo/run" || req.url.startsWith("/api/auto-seo/run?"));
         const isPinterestPodHandover = req.url && (req.url === "/api/pinterest-pod/handover-seo" || req.url.startsWith("/api/pinterest-pod/handover-seo?"));
+        const isPinterestPodDirectSync = req.url && (req.url === "/api/pinterest-pod/sync-shopify" || req.url.startsWith("/api/pinterest-pod/sync-shopify?"));
         const isStoreRegister = req.url && (req.url === "/api/stores/register" || req.url.startsWith("/api/stores/register?"));
         const isStoreUpdate = req.url && (req.url === "/api/stores/update" || req.url.startsWith("/api/stores/update?"));
         const isStoreDelete = req.url && (req.url === "/api/stores/delete" || req.url.startsWith("/api/stores/delete?"));
         const isStoreGet = req.url && (req.url === "/api/stores/get" || req.url.startsWith("/api/stores/get?"));
         const isProxyCheck = req.url && (req.url === "/api/proxy/check" || req.url.startsWith("/api/proxy/check?"));
 
-        const isKnownApi = isShopify || isAutoSeo || isPinterestPodHandover || isStoreRegister || isStoreUpdate || isStoreDelete || isStoreGet || isProxyCheck;
+        const isKnownApi = isShopify || isAutoSeo || isPinterestPodHandover || isPinterestPodDirectSync || isStoreRegister || isStoreUpdate || isStoreDelete || isStoreGet || isProxyCheck;
 
         if (authToken && isKnownApi && isSameOriginRequest(req.headers)) {
           if (!req.headers["x-gateway-key"]) {
@@ -234,10 +243,31 @@ export function shopifyGatewayDevPlugin(options?: ShopifyGatewayDevPluginOptions
           await handleStoreGetHttpRequest(req, res, storeControlPlane, { authToken, maxBodyBytes });
         } else if (isProxyCheck) {
           await handleProxyCheckHttpRequest(req, res, { authToken, maxBodyBytes });
-        } else if (req.url && (req.url === "/api/auto-seo/run" || req.url.startsWith("/api/auto-seo/run?"))) {
+        } else if (isAutoSeo) {
+          if (isMockMode) {
+            res.statusCode = 403;
+            res.setHeader("Content-Type", "application/json");
+            res.end(
+              JSON.stringify({
+                success: false,
+                error: {
+                  code: "AUTO_SEO_MOCK_MODE_RESTRICTION",
+                  message: "Auto SEO real backend pipeline is disabled in mock mode.",
+                },
+              }),
+            );
+            return;
+          }
           await handleAutoSeoHttpRequest(req, res, { authToken, maxBodyBytes });
         } else if (isPinterestPodHandover) {
           await handlePinterestPodSeoHttpRequest(req, res, { authToken, maxBodyBytes });
+        } else if (isPinterestPodDirectSync) {
+          await handlePinterestPodDirectShopifySyncHttpRequest(req, res, { authToken, maxBodyBytes, dispatcher });
+        } else if (req.url && (req.url === "/api/seo-review/items" || req.url.startsWith("/api/seo-review/"))) {
+          if (authToken && isSameOriginRequest(req.headers) && !req.headers["x-gateway-key"] && !req.headers["authorization"]) {
+            req.headers["x-gateway-key"] = authToken;
+          }
+          await handleSeoReviewHttpRequest(req, res, { authToken, maxBodyBytes });
         } else {
           next();
         }

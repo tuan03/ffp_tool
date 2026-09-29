@@ -6,7 +6,11 @@ Tool_crawer_New_update/
 .vite/
 .env
 .env.*
+!.env.example
+!.env.mock
+!.env.production.example
 .env.shopify
+/wrydeco-vps_key.pem
 *.tsbuildinfo
 .DS_Store
 stores.local.json
@@ -18,6 +22,8 @@ __pycache__/
 *.py[cod]
 *$py.class
 .pinterest_browser_profile/
+.venv/
+venv/
 temp/
 output/
 data/
@@ -58,6 +64,7 @@ stash-drop-git.cmd
 test-e2e-b1-b6.cmd
 test-pin-seo-content.cmd
 agent-dev.cmd
+todo
 #=== [end] - module SEO Content - Lth Loi ===
 
 # Manual SEO Content smoke-test artifacts and developer-specific inputs.

@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from ..observability import redact
+
 import argparse
 import asyncio
 import json
+import multiprocessing
 import os
 import sys
 from pathlib import Path
@@ -39,6 +42,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    multiprocessing.freeze_support()
     _configure_packaged_browser()
     from .client_agent import DistributedCrawlerAgent
     from .client_config import AgentConfig
@@ -60,7 +64,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         config.data_directory.mkdir(parents=True, exist_ok=True)
         project_root.mkdir(parents=True, exist_ok=True)
         with AgentInstanceLock(config.data_directory):
-            if arguments.no_tray or sys.platform != "win32":
+            use_tray = not arguments.no_tray and sys.platform == "win32"
+            if use_tray:
+                try:
+                    import pystray  # noqa: F401
+                except ImportError:
+                    print("Note: 'pystray' is not installed; running agent in console mode.", flush=True)
+                    use_tray = False
+
+            if not use_tray:
                 agent = DistributedCrawlerAgent(
                     project_root=project_root,
                     config=config,
@@ -77,10 +89,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     except KeyboardInterrupt:
         return 130
     except AgentAlreadyRunningError as error:
-        print(str(error), file=sys.stderr)
+        print(redact(error), file=sys.stderr)
         return 2
     except Exception as error:
-        print(f"FFP Amazon Crawler could not start: {error}", file=sys.stderr)
+        print(f"FFP Amazon Crawler could not start: {redact(error)}", file=sys.stderr)
         return 1
 
 

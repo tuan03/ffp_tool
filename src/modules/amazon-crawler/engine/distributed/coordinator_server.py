@@ -8,12 +8,15 @@ import gzip
 import io
 import json
 import os
+import re
+import shutil
 import uuid
+import zipfile
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, Header, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Header, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
@@ -22,6 +25,7 @@ from . import PROTOCOL_VERSION, SUPPORTED_PROTOCOL_VERSIONS
 from .coordinator_models import Base, create_database_engine, create_session_factory
 from .coordinator_store import ActiveJobExistsError, CoordinatorStore
 from .protocol import HEARTBEAT_INTERVAL_SECONDS, LEASE_SECONDS, payload_checksum, require_message, utc_iso
+from ..observability import safe_fields, write_log
 
 
 class ResultPayloadTooLarge(ValueError):
@@ -29,12 +33,14 @@ class ResultPayloadTooLarge(ValueError):
 
 
 def debug_event(event: str, **details: Any) -> None:
-    print(json.dumps({
+    payload = safe_fields({
         "timestamp": utc_iso(),
         "component": "crawler-coordinator",
         "event": event,
         **details,
-    }, ensure_ascii=False), flush=True)
+    })
+    write_log(Path(".runtime/logs/coordinator-debug.jsonl"), payload)
+    print(json.dumps(payload, ensure_ascii=False), flush=True)
 
 
 def positive_environment_integer(name: str, default: int) -> int:
@@ -136,7 +142,10 @@ class ConnectionManager:
             if pending["expected"].issubset(pending["responses"]):
                 pending["event"].set()
 
-    async def clear_client_caches(self, *, timeout_seconds: float = 10.0) -> dict[str, Any]:
+    async def request_client_cache_operation(
+        self, message_type: str, *, payload: dict[str, Any] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> dict[str, Any]:
         request_id = uuid.uuid4().hex
         async with self.lock:
             connections = dict(self.connections)
@@ -149,9 +158,10 @@ class ConnectionManager:
         if not connections:
             async with self.lock:
                 self.cache_requests.pop(request_id, None)
-            return {"requestedClients": 0, "respondedClients": 0, "removedFiles": 0, "removedBytes": 0, "clients": []}
+            return {"requestedClients": 0, "respondedClients": 0, "failedClients": 0,
+                    "removedFiles": 0, "removedBytes": 0, "discardedJobs": 0, "clients": []}
         send_results = await asyncio.gather(*(
-            connection.send_json({"type": "clear_cache", "requestId": request_id})
+            connection.send_json({"type": message_type, "requestId": request_id, **(payload or {})})
             for connection in connections.values()
         ), return_exceptions=True)
         failed_clients = {client_id for client_id, result in zip(connections, send_results) if isinstance(result, Exception)}
@@ -161,7 +171,7 @@ class ConnectionManager:
                 pending["event"].set()
         try:
             await asyncio.wait_for(pending["event"].wait(), timeout=timeout_seconds)
-        except TimeoutError:
+        except (TimeoutError, asyncio.TimeoutError):
             pass
         async with self.lock:
             self.cache_requests.pop(request_id, None)
@@ -170,10 +180,25 @@ class ConnectionManager:
         return {
             "requestedClients": len(connections),
             "respondedClients": len(responses),
+            "failedClients": sum(1 for response in responses.values() if response.get("error")),
             "removedFiles": sum(int(response.get("removedFiles") or 0) for response in responses.values()),
             "removedBytes": sum(int(response.get("removedBytes") or 0) for response in responses.values()),
+            "discardedJobs": sum(int(response.get("discardedJobs") or 0) for response in responses.values()),
             "clients": client_results,
         }
+
+    async def clear_client_caches(self, *, timeout_seconds: float = 10.0) -> dict[str, Any]:
+        return await self.request_client_cache_operation("clear_cache", timeout_seconds=timeout_seconds)
+
+
+def find_project_root() -> Path:
+    current = Path(__file__).resolve()
+    for parent in current.parents:
+        if (parent / "package.json").is_file() or (parent / "src").is_dir():
+            return parent
+    if len(current.parents) >= 4:
+        return current.parents[3]
+    return current.parent
 
 
 def create_coordinator_app(*, database_url: str | None = None, create_schema: bool = True) -> FastAPI:
@@ -181,7 +206,8 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
     sessions = create_session_factory(engine)
     store = CoordinatorStore(sessions)
     manager = ConnectionManager()
-    project_root = Path(__file__).resolve().parents[5]
+    cache_maintenance_lock = asyncio.Lock()
+    project_root = find_project_root()
     image_processing_root = Path(
         os.environ.get("IMAGE_PROCESSING_CACHE_DIR", str(project_root / ".runtime" / "image-processing"))
     ).resolve()
@@ -209,6 +235,7 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
                 await asyncio.to_thread(store.purge_stopped_jobs)
                 loop_time = asyncio.get_running_loop().time()
                 if loop_time >= next_cleanup_at:
+                    await asyncio.to_thread(store.cleanup_telemetry)
                     await asyncio.to_thread(
                         store.cleanup_history,
                         retention_minutes=history_retention_minutes,
@@ -218,7 +245,7 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
                     next_cleanup_at = loop_time + 60
                 try:
                     await asyncio.wait_for(stop.wait(), timeout=5)
-                except TimeoutError:
+                except (TimeoutError, asyncio.TimeoutError):
                     pass
 
         task = asyncio.create_task(reap_loop())
@@ -260,14 +287,30 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
             "workerProtocolVersion": PROTOCOL_VERSION,
         }
 
+    @app.get("/api/v1/crawler-metrics")
+    def get_crawler_metrics(job_id: str | None = Query(default=None, alias="jobId", max_length=40)) -> dict[str, Any]:
+        return store.crawler_metrics(job_id=job_id)
+
+    @app.get("/api/v1/crawl-jobs/{job_id}/traces/{request_id}")
+    def get_crawl_trace(job_id: str, request_id: str, cursor: str | None = Query(default=None, max_length=64),
+                        limit: int = Query(default=50, ge=1, le=100)) -> dict[str, Any]:
+        try:
+            trace = store.crawl_trace(job_id, request_id, cursor=cursor, limit=limit)
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        if trace is None:
+            raise HTTPException(status_code=404, detail="Crawl job was not found.")
+        return trace
+
     @app.post("/api/v1/crawl-jobs", status_code=202)
-    def create_job(payload: dict[str, Any]) -> dict[str, Any]:
+    async def create_job(payload: dict[str, Any]) -> dict[str, Any]:
         try:
             enriched_payload = dict(payload)
             image_profile = image_service.profiles.load(str(payload.get("imageProfileSlug") or "default"))
             enriched_payload["imageProfileSlug"] = image_profile["slug"]
             enriched_payload["imageProfileRevision"] = image_profile["revision"]
-            return store.create_job(enriched_payload)
+            async with cache_maintenance_lock:
+                return await asyncio.to_thread(store.create_job, enriched_payload)
         except KeyError as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
         except ActiveJobExistsError as error:
@@ -289,6 +332,20 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
             raise HTTPException(status_code=404, detail="Crawl job was not found.")
         return snapshot
 
+    @app.get("/api/v1/crawl-jobs/{job_id}/summary")
+    def get_job_summary(job_id: str) -> dict[str, Any]:
+        summary = store.job_summary(job_id)
+        if summary is None:
+            raise HTTPException(status_code=404, detail="Crawl job was not found.")
+        return summary
+
+    @app.get("/api/v1/crawl-jobs/{job_id}/metadata")
+    def get_job_metadata(job_id: str) -> dict[str, Any]:
+        metadata = store.job_metadata(job_id)
+        if metadata is None:
+            raise HTTPException(status_code=404, detail="Crawl job was not found.")
+        return metadata
+
     @app.get("/api/v1/crawl-jobs/{job_id}/results")
     def get_results(job_id: str) -> dict[str, Any]:
         result = store.job_results(job_id)
@@ -297,10 +354,28 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
         return result
 
     @app.get("/api/v1/crawl-jobs/{job_id}/products")
-    def get_job_products(job_id: str) -> dict[str, Any]:
-        result = store.job_products(job_id)
+    def get_job_products(
+        job_id: str, cursor: str | None = None, limit: int = Query(50, ge=1, le=100),
+    ) -> dict[str, Any]:
+        result = store.job_products(job_id, cursor=cursor, limit=limit)
         if result is None:
             raise HTTPException(status_code=404, detail="Crawl job was not found.")
+        return result
+
+    @app.get("/api/v1/crawl-jobs/{job_id}/products/{item_id}")
+    def get_job_product(job_id: str, item_id: str) -> dict[str, Any]:
+        result = store.job_product(job_id, item_id)
+        if result is None:
+            raise HTTPException(status_code=404, detail="Product was not found in crawl job.")
+        return result
+
+    @app.get("/api/v1/crawl-jobs/{job_id}/products/{item_id}/variants")
+    def get_job_product_variants(
+        job_id: str, item_id: str, cursor: int = Query(0, ge=0), limit: int = Query(50, ge=1, le=100),
+    ) -> dict[str, Any]:
+        result = store.job_product_variants(job_id, item_id, cursor=cursor, limit=limit)
+        if result is None:
+            raise HTTPException(status_code=404, detail="Product was not found in crawl job.")
         return result
 
     @app.get("/api/v1/crawl-jobs/{job_id}/export")
@@ -335,8 +410,6 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
             "discard": True,
             "cacheGeneration": cache_generation,
         })
-        protected_tokens = await asyncio.to_thread(store.review_image_tokens)
-        await asyncio.to_thread(image_service.clear_cache, protected_tokens)
         await asyncio.to_thread(store.purge_stopped_jobs)
         return snapshot
 
@@ -354,7 +427,8 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
             enriched_payload["imageProfileRevision"] = image_profile["revision"]
             enriched_payload["replacementOfJobId"] = job_id
             enriched_payload["schedulerPriority"] = 100
-            replacement = store.create_job(enriched_payload)
+            async with cache_maintenance_lock:
+                replacement = await asyncio.to_thread(store.create_job, enriched_payload)
         except KeyError as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
         except ActiveJobExistsError as error:
@@ -381,8 +455,9 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
         return Response(status_code=204)
 
     @app.post("/api/v1/crawl-jobs/{job_id}/retry-failed")
-    def retry_failed(job_id: str) -> dict[str, Any]:
-        snapshot = store.retry_failed(job_id)
+    async def retry_failed(job_id: str) -> dict[str, Any]:
+        async with cache_maintenance_lock:
+            snapshot = await asyncio.to_thread(store.retry_failed, job_id)
         if snapshot is None:
             raise HTTPException(status_code=404, detail="Crawl job was not found.")
         return snapshot
@@ -412,13 +487,50 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
 
     @app.delete("/api/v1/clients/cache")
     async def clear_client_caches() -> dict[str, Any]:
-        result = await manager.clear_client_caches()
-        protected_tokens = await asyncio.to_thread(store.review_image_tokens)
-        image_cache = await asyncio.to_thread(image_service.clear_cache, protected_tokens)
-        result["removedFiles"] += image_cache["removedFiles"]
-        result["removedBytes"] += image_cache["removedBytes"]
-        result["imageProcessing"] = image_cache
-        return result
+        async with cache_maintenance_lock:
+            active_job_id = await asyncio.to_thread(store.active_job_id)
+            if active_job_id:
+                raise HTTPException(status_code=409, detail=f"Job {active_job_id} is active. Stop it before clearing cache.")
+            generation = await asyncio.to_thread(store.advance_cache_generation)
+            await asyncio.to_thread(store.clear_negative_cache)
+            result = await manager.request_client_cache_operation(
+                "clear_cache", payload={"cacheGeneration": generation},
+            )
+            protected_tokens = await asyncio.to_thread(store.review_image_tokens)
+            image_cache = await asyncio.to_thread(image_service.clear_cache, protected_tokens)
+            result["removedFiles"] += image_cache["removedFiles"]
+            result["removedBytes"] += image_cache["removedBytes"]
+            result["imageProcessing"] = image_cache
+            return result
+
+    @app.delete("/api/v1/clients/cache/products/{asin}")
+    async def invalidate_product_cache(
+        asin: str, amazon_zip: str = Query("10001", alias="amazonZip"),
+    ) -> dict[str, Any]:
+        asin = asin.strip().upper()
+        if not re.fullmatch(r"[A-Z0-9]{10}", asin) or not re.fullmatch(r"\d{5}(?:-\d{4})?", amazon_zip):
+            raise HTTPException(status_code=422, detail="Invalid ASIN or Amazon ZIP.")
+        async with cache_maintenance_lock:
+            active_job_id = await asyncio.to_thread(store.active_job_id)
+            if active_job_id:
+                raise HTTPException(status_code=409, detail=f"Job {active_job_id} is active. Stop it before invalidating cache.")
+            generation = await asyncio.to_thread(store.invalidate_product_cache, asin, amazon_zip)
+            result = await manager.request_client_cache_operation("invalidate_product_cache", payload={
+                "asin": asin, "amazonZip": amazon_zip, "generation": generation,
+            })
+            return {"asin": asin, "amazonZip": amazon_zip, **result}
+
+    @app.delete("/api/v1/clients/temporary-data")
+    async def clear_temporary_data() -> dict[str, Any]:
+        async with cache_maintenance_lock:
+            active_job_id = await asyncio.to_thread(store.active_job_id)
+            if active_job_id:
+                raise HTTPException(status_code=409, detail=f"Job {active_job_id} is active. Stop it before clearing temporary data.")
+            valid_job_ids = await asyncio.to_thread(store.retained_job_ids)
+            generation = await asyncio.to_thread(store.advance_temporary_cleanup_generation)
+            return await manager.request_client_cache_operation("clear_temporary_data", payload={
+                "validJobIds": sorted(valid_job_ids), "generation": generation,
+            })
 
     @app.get("/api/v1/crawl-jobs/{job_id}/events")
     async def job_events(job_id: str, request: Request, after: int = 0) -> StreamingResponse:
@@ -437,6 +549,207 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
                 await asyncio.sleep(1)
 
         return StreamingResponse(stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"})
+
+    # --------------------------------------------------------------------------
+    # Pinterest POD Studio Distributed Endpoints
+    # --------------------------------------------------------------------------
+    env_pinterest_root = os.environ.get("PINTEREST_ASSET_ROOT")
+    if env_pinterest_root:
+        PINTEREST_ASSET_ROOT = Path(env_pinterest_root).resolve()
+    elif (project_root / "src" / "modules" / "pinterest-pod").is_dir():
+        PINTEREST_ASSET_ROOT = (project_root / "src" / "modules" / "pinterest-pod" / "server" / "temp" / "pinterest_pod").resolve()
+    else:
+        PINTEREST_ASSET_ROOT = (project_root / ".runtime" / "pinterest_pod").resolve()
+
+    @app.post("/api/pinterest-pod/jobs", status_code=201)
+    def create_pinterest_pod_job(payload: dict[str, Any]) -> dict[str, Any]:
+        try:
+            job = store.create_pinterest_job(payload)
+            return {
+                "ok": True,
+                "jobId": job["id"],
+                "job_id": job["id"],
+                "status": job["status"],
+                "logs": job.get("logs") or ["Job cào Pinterest đã được khởi tạo trong hàng đợi phân tán."],
+            }
+        except ValueError as err:
+            raise HTTPException(status_code=400, detail=str(err)) from err
+
+    @app.post("/api/pinterest-pod/produce", status_code=201)
+    @app.post("/api/pinterest-pod/jobs/produce", status_code=201)
+    def produce_pinterest_pod_job(payload: dict[str, Any]) -> dict[str, Any]:
+        try:
+            prod_payload = dict(payload)
+            prod_payload["stage"] = "produce"
+            prod_payload["action"] = "produce"
+            if "source_run_id" not in prod_payload:
+                resolved_src = payload.get("jobId") or payload.get("job_id")
+                if resolved_src:
+                    prod_payload["source_run_id"] = str(resolved_src)
+            job = store.create_pinterest_job(prod_payload)
+            return {
+                "ok": True,
+                "jobId": job["id"],
+                "job_id": job["id"],
+                "status": job["status"],
+                "logs": job.get("logs") or ["Job sản xuất POD đã được khởi tạo trong hàng đợi phân tán."],
+            }
+        except ValueError as err:
+            raise HTTPException(status_code=400, detail=str(err)) from err
+
+    @app.get("/api/pinterest-pod/jobs/{job_id}")
+    def get_pinterest_pod_job(job_id: str) -> dict[str, Any]:
+        snapshot = store.get_job(job_id)
+        if snapshot is not None:
+            return snapshot
+
+        safe_job_id = "".join(c for c in job_id if c.isalnum() or c in ("-", "_"))
+        manifest_file = (PINTEREST_ASSET_ROOT / safe_job_id / "manifest.json").resolve()
+        if manifest_file.is_file() and manifest_file.is_relative_to(PINTEREST_ASSET_ROOT.resolve()):
+            try:
+                data = json.loads(manifest_file.read_text(encoding="utf-8"))
+                if isinstance(data, dict):
+                    return data
+            except Exception:
+                pass
+
+        try:
+            import urllib.request
+            req = urllib.request.Request(f"http://127.0.0.1:8768/api/pinterest-pod/jobs/{safe_job_id}")
+            with urllib.request.urlopen(req, timeout=1.5) as resp:
+                if resp.status == 200:
+                    return json.loads(resp.read().decode("utf-8"))
+        except Exception:
+            pass
+
+        raise HTTPException(status_code=404, detail="Pinterest POD job was not found.")
+
+    @app.get("/api/pinterest-pod/jobs/{job_id}/logs")
+    def get_pinterest_pod_job_logs(job_id: str) -> dict[str, Any]:
+        snapshot = store.get_job(job_id)
+        if snapshot is not None:
+            return {
+                "ok": True,
+                "jobId": job_id,
+                "status": snapshot.get("status", "unknown"),
+                "logs": snapshot.get("logs", []),
+            }
+
+        safe_job_id = "".join(c for c in job_id if c.isalnum() or c in ("-", "_"))
+        try:
+            import urllib.request
+            req = urllib.request.Request(f"http://127.0.0.1:8768/api/pinterest-pod/jobs/{safe_job_id}/logs")
+            with urllib.request.urlopen(req, timeout=1.5) as resp:
+                if resp.status == 200:
+                    return json.loads(resp.read().decode("utf-8"))
+        except Exception:
+            pass
+
+        manifest_file = (PINTEREST_ASSET_ROOT / safe_job_id / "manifest.json").resolve()
+        if manifest_file.is_file() and manifest_file.is_relative_to(PINTEREST_ASSET_ROOT.resolve()):
+            try:
+                data = json.loads(manifest_file.read_text(encoding="utf-8"))
+                if isinstance(data, dict):
+                    return {
+                        "ok": True,
+                        "jobId": job_id,
+                        "status": data.get("status", "unknown"),
+                        "logs": data.get("logs", []),
+                    }
+            except Exception:
+                pass
+
+        raise HTTPException(status_code=404, detail="Pinterest POD job was not found.")
+
+    @app.post("/api/pinterest-pod/jobs/{job_id}/cancel")
+    async def cancel_pinterest_pod_job(job_id: str) -> dict[str, Any]:
+        snapshot = store.cancel_job(job_id)
+        return {"ok": True, "jobId": job_id, "status": "cancelled", "snapshot": snapshot}
+
+    @app.post("/api/pinterest-pod/jobs/{job_id}/delete")
+    def delete_pinterest_pod_job(job_id: str) -> dict[str, Any]:
+        safe_job_id = "".join(c for c in job_id if c.isalnum() or c in ("-", "_"))
+        job_dir = (PINTEREST_ASSET_ROOT / safe_job_id).resolve()
+        if job_dir.is_dir() and job_dir.is_relative_to(PINTEREST_ASSET_ROOT.resolve()):
+            shutil.rmtree(job_dir, ignore_errors=True)
+        ok = store.delete_job(job_id)
+        return {"ok": ok, "jobId": job_id, "message": "Deleted" if ok else "Job not found"}
+
+    @app.post("/api/pinterest-pod/jobs/{job_id}/cleanup")
+    def cleanup_pinterest_pod_job(job_id: str) -> dict[str, Any]:
+        safe_job_id = "".join(c for c in job_id if c.isalnum() or c in ("-", "_"))
+        job_dir = (PINTEREST_ASSET_ROOT / safe_job_id).resolve()
+        removed = False
+        if job_dir.is_dir() and job_dir.is_relative_to(PINTEREST_ASSET_ROOT.resolve()):
+            shutil.rmtree(job_dir, ignore_errors=True)
+            removed = True
+        return {"ok": True, "jobId": job_id, "cleaned": removed}
+
+    @app.post("/api/pinterest-pod/assets/{job_id}/{filename}")
+    @app.put("/api/pinterest-pod/assets/{job_id}/{filename}")
+    async def upload_pinterest_pod_asset(job_id: str, filename: str, request: Request) -> dict[str, Any]:
+        body = await request.body()
+        safe_job_id = "".join(c for c in job_id if c.isalnum() or c in ("-", "_"))
+        safe_filename = Path(filename).name
+        job_dir = (PINTEREST_ASSET_ROOT / safe_job_id).resolve()
+        if not job_dir.is_relative_to(PINTEREST_ASSET_ROOT.resolve()):
+            raise HTTPException(status_code=400, detail="Invalid job id")
+        job_dir.mkdir(parents=True, exist_ok=True)
+        target_path = (job_dir / safe_filename).resolve()
+        if not target_path.is_relative_to(job_dir):
+            raise HTTPException(status_code=400, detail="Invalid filename")
+        target_path.write_bytes(body)
+        return {"ok": True, "url": f"/api/pinterest-pod/assets/{safe_job_id}/{safe_filename}"}
+
+    @app.get("/api/pinterest-pod/assets/{job_id}/{filename}")
+    def get_pinterest_pod_asset(job_id: str, filename: str) -> FileResponse:
+        safe_job_id = "".join(c for c in job_id if c.isalnum() or c in ("-", "_"))
+        safe_filename = Path(filename).name
+        job_dir = (PINTEREST_ASSET_ROOT / safe_job_id).resolve()
+        if not job_dir.is_relative_to(PINTEREST_ASSET_ROOT.resolve()):
+            raise HTTPException(status_code=400, detail="Invalid job id")
+        target_path = (job_dir / safe_filename).resolve()
+        if not target_path.is_relative_to(job_dir):
+            raise HTTPException(status_code=400, detail="Invalid filename")
+        if not target_path.exists() or not target_path.is_file():
+            for sub in ("lifestyle_mockups", "product_cutouts_white", "final_print", "mockups"):
+                sub_path = (job_dir / sub / safe_filename).resolve()
+                if sub_path.is_relative_to(job_dir) and sub_path.exists() and sub_path.is_file():
+                    target_path = sub_path
+                    break
+        if not target_path.exists() or not target_path.is_file():
+            raise HTTPException(status_code=404, detail="Asset not found")
+        return FileResponse(target_path)
+
+    @app.get("/api/pinterest-pod/jobs/{job_id}/download-zip")
+    def download_pinterest_pod_zip(job_id: str) -> Response:
+        safe_job_id = "".join(c for c in job_id if c.isalnum() or c in ("-", "_"))
+        job_dir = (PINTEREST_ASSET_ROOT / safe_job_id).resolve()
+        if not job_dir.is_relative_to(PINTEREST_ASSET_ROOT.resolve()):
+            raise HTTPException(status_code=400, detail="Invalid job id")
+        snapshot = store.get_job(safe_job_id) or {}
+        zip_buf = io.BytesIO()
+        with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            if job_dir.is_dir():
+                for file_path in job_dir.rglob("*"):
+                    if file_path.is_file():
+                        arcname = file_path.relative_to(job_dir)
+                        zf.write(file_path, arcname)
+            manifest = {
+                "package": "pinterest_pod_deliverables",
+                "jobId": safe_job_id,
+                "status": snapshot.get("status", "unknown"),
+                "candidates": snapshot.get("candidates", []),
+                "deliverables": snapshot.get("deliverables", {}),
+                "summaryMetrics": snapshot.get("summaryMetrics", {}),
+            }
+            zf.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
+        zip_buf.seek(0)
+        return StreamingResponse(
+            zip_buf,
+            media_type="application/zip",
+            headers={"Content-Disposition": f'attachment; filename="pod_deliverables_{safe_job_id}.zip"'},
+        )
 
     @app.put("/api/v1/worker/tasks/{task_id}/result")
     async def upload_result(
@@ -1025,6 +1338,14 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
             maximum_slots = int(client.get("maxConcurrentInputs") or 0)
             required_cache_generation = await asyncio.to_thread(store.current_cache_generation)
             client_cache_generation = max(0, int(hello.get("cacheGeneration") or 0))
+            client_product_invalidation_generation = max(0, int(hello.get("productInvalidationGeneration") or 0))
+            product_invalidations = await asyncio.to_thread(
+                store.product_invalidations_since, client_product_invalidation_generation,
+            )
+            required_temporary_cleanup_generation = await asyncio.to_thread(store.temporary_cleanup_generation)
+            valid_job_ids = await asyncio.to_thread(store.retained_job_ids) if (
+                max(0, int(hello.get("temporaryCleanupGeneration") or 0)) < required_temporary_cleanup_generation
+            ) else set()
             is_cache_ready = client_cache_generation >= required_cache_generation
             available_slots = max(0, int(hello.get("availableSlots") or 0)) if is_cache_ready else 0
             await manager.update_runtime(
@@ -1038,22 +1359,10 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
                 **reconciliation,
                 "acknowledgedCancelIntents": acknowledged_intents,
                 "requiredCacheGeneration": required_cache_generation,
+                "productInvalidations": product_invalidations,
+                "requiredTemporaryCleanupGeneration": required_temporary_cleanup_generation,
+                "validJobIds": sorted(valid_job_ids),
             })
-            if is_cache_ready:
-                recovered_jobs = await asyncio.to_thread(
-                    store.acknowledge_client_cache_generation,
-                    client_id,
-                    client_cache_generation,
-                )
-                if recovered_jobs:
-                    purged = await asyncio.to_thread(store.purge_stopped_jobs)
-                    debug_event(
-                        "stop_cleanup_recovered_on_connect",
-                        clientId=client_id,
-                        cacheGeneration=client_cache_generation,
-                        jobIds=recovered_jobs,
-                        purgedJobs=purged,
-                    )
             for cancelled_job_id in acknowledged_intents:
                 await manager.broadcast({
                     "type": "cancel",
@@ -1087,6 +1396,7 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
                         client_id,
                         running,
                         str(message.get("status") or "online"),
+                        message.get("observability"),
                     )
                     for cancelled_job_id in cancelled_job_ids:
                         await websocket.send_json({
@@ -1103,6 +1413,9 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
                         await assign(int(message.get("availableSlots") or 0))
                 elif message_type == "progress":
                     await asyncio.to_thread(store.update_progress, client_id, message)
+                elif message_type == "telemetry":
+                    event_ids = await asyncio.to_thread(store.accept_telemetry, client_id, message.get("events"))
+                    await websocket.send_json({"type": "telemetry_ack", "eventIds": event_ids})
                 elif message_type == "task_failed":
                     response = await asyncio.to_thread(store.fail_task, client_id, message)
                     await websocket.send_json({"type": "task_failed_ack", "taskId": message.get("taskId"), **response})
@@ -1114,26 +1427,12 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
                 elif message_type == "cancel_received":
                     response = await asyncio.to_thread(store.acknowledge_task_cancel_received, client_id, message)
                     await websocket.send_json({"type": "cancel_received_ack", "taskId": message.get("taskId"), **response})
-                elif message_type == "cache_cleared":
+                elif message_type in {"cache_cleared", "product_cache_invalidated", "temporary_data_cleared"}:
                     await manager.record_cache_response(client_id, message)
                 elif message_type == "cache_generation_ack":
                     acknowledged_generation = max(0, int(message.get("cacheGeneration") or 0))
                     if acknowledged_generation >= required_cache_generation:
                         is_cache_ready = True
-                        recovered_jobs = await asyncio.to_thread(
-                            store.acknowledge_client_cache_generation,
-                            client_id,
-                            acknowledged_generation,
-                        )
-                        if recovered_jobs:
-                            purged = await asyncio.to_thread(store.purge_stopped_jobs)
-                            debug_event(
-                                "stop_cleanup_recovered_from_generation_ack",
-                                clientId=client_id,
-                                cacheGeneration=acknowledged_generation,
-                                jobIds=recovered_jobs,
-                                purgedJobs=purged,
-                            )
                         acknowledged_slots = max(0, int(message.get("availableSlots") or 0))
                         await manager.update_available_slots(client_id, acknowledged_slots)
                         await assign(acknowledged_slots)

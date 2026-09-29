@@ -77,6 +77,7 @@ export class GeminiSeoContentGenerator implements ContentGenerator {
         useCases: facts.useCases,
         personalizationSupported: facts.personalizationSupported,
         variantLabel: facts.variantLabel,
+        variantSummary: facts.variantSummary,
       },
       null,
       2,

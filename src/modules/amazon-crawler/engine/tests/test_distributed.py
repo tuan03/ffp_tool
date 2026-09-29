@@ -30,6 +30,8 @@ from engine.distributed.instance_lock import AgentAlreadyRunningError, AgentInst
 from engine.distributed.client_tray import format_status, should_notify_captcha
 from engine.distributed.coordinator_models import (
     Base,
+    ClientRecord,
+    CoordinatorState,
     CrawlJob,
     CrawlProductItem,
     CrawlTask,
@@ -44,6 +46,7 @@ from engine.distributed.coordinator_server import ConnectionManager, create_coor
 from engine.distributed.coordinator_store import ActiveJobExistsError, CoordinatorStore
 from engine.distributed.protocol import AgentLimits, hello_message, payload_checksum, settings_fingerprint, utc_iso, utc_now
 from engine.proxy_profiles import resolve_proxy_assignments
+from engine.tests.test_core import cache_family, cache_partial
 
 
 def client_hello(client_id: str = "client-a", slots: int = 2) -> dict[str, object]:
@@ -268,7 +271,7 @@ class DistributedCacheControlTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             cache = RawFamilyCache(root / ".runtime" / "cache")
-            cache.save("B012345678", {"variantMatrix": {"complete": True}})
+            cache.save("B012345678", cache_family())
             config = AgentConfig(
                 server_url="http://127.0.0.1:8766", display_name="test", max_concurrent_inputs=1,
                 limits=AgentLimits(), data_directory=root / "agent-data",
@@ -281,6 +284,241 @@ class DistributedCacheControlTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(response["requestId"], "request-1")
             self.assertEqual(response["removedFiles"], 1)
             self.assertIsNone(cache.load("B012345678"))
+
+    async def test_explicit_clear_removes_cache_even_if_agent_generation_is_ahead(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            cache = RawFamilyCache(root / ".runtime" / "cache")
+            cache.save("B012345678", cache_family())
+            agent = DistributedCrawlerAgent(
+                project_root=root,
+                config=AgentConfig(
+                    server_url="http://127.0.0.1:8766", display_name="test",
+                    max_concurrent_inputs=1, limits=AgentLimits(), data_directory=root / "agent-data",
+                ),
+            )
+            agent.store.set_cache_generation(5)
+
+            response = await agent.clear_local_cache("request-1", generation=1)
+
+            self.assertEqual(response["removedFiles"], 1)
+            self.assertIsNone(cache.load("B012345678"))
+            self.assertEqual(agent.store.cache_generation(), 5)
+
+    async def test_stop_cleanup_keeps_successful_and_partial_product_cache(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            cache = RawFamilyCache(root / ".runtime" / "cache")
+            cache.save("B012345678", cache_family())
+            cache.save_partial("B012345679", cache_partial())
+            agent = DistributedCrawlerAgent(
+                project_root=root,
+                config=AgentConfig(
+                    server_url="http://127.0.0.1:8766", display_name="test",
+                    max_concurrent_inputs=1, limits=AgentLimits(), data_directory=root / "agent-data",
+                ),
+            )
+            agent._pending_stop_cleanups["other-job"] = 0
+
+            await agent._complete_stop_cleanup("other-job", 0)
+
+            self.assertIsNotNone(cache.load("B012345678"))
+            self.assertIsNotNone(cache.load_partial("B012345679"))
+            acknowledgement = await agent.outbound_queue.get()
+            self.assertEqual(acknowledgement["type"], "stop_cleanup_ack")
+            self.assertEqual(acknowledgement["removedFiles"], 0)
+
+    async def test_product_invalidation_removes_only_selected_asin_and_zip(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            cache = RawFamilyCache(root / ".runtime" / "cache")
+            selected_key = "B012345678:10001:us-v1"
+            other_zip_key = "B012345678:90001:us-v1"
+            other_asin_key = "B012345679:10001:us-v1"
+            for key in (selected_key, other_zip_key, other_asin_key):
+                cache.save(key, cache_family())
+            cache.save_failure(selected_key, status="network_error", reason="network_error", retry_after_seconds=30)
+            agent = DistributedCrawlerAgent(
+                project_root=root,
+                config=AgentConfig(
+                    server_url="http://127.0.0.1:8766", display_name="test",
+                    max_concurrent_inputs=1, limits=AgentLimits(), data_directory=root / "agent-data",
+                ),
+            )
+
+            response = await agent.invalidate_product_cache("request-1", "B012345678", "10001", 1)
+
+            self.assertEqual(response["removedFiles"], 2)
+            self.assertIsNone(cache.load(selected_key))
+            self.assertIsNone(cache.load_partial(selected_key))
+            self.assertIsNotNone(cache.load(other_zip_key))
+            self.assertIsNotNone(cache.load(other_asin_key))
+            self.assertEqual(agent.store.product_invalidation_generation(), 1)
+
+    async def test_reconnecting_agent_applies_saved_product_invalidation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            cache = RawFamilyCache(root / ".runtime" / "cache")
+            key = "B012345678:10001:us-v1"
+            cache.save(key, cache_family())
+            agent = DistributedCrawlerAgent(
+                project_root=root,
+                config=AgentConfig(
+                    server_url="http://127.0.0.1:8766", display_name="test",
+                    max_concurrent_inputs=1, limits=AgentLimits(), data_directory=root / "agent-data",
+                ),
+            )
+
+            await agent._apply_reconciliation({
+                "productInvalidations": [{"asin": "B012345678", "amazonZip": "10001", "generation": 3}],
+            })
+
+            self.assertIsNone(cache.load(key))
+            self.assertEqual(agent.store.product_invalidation_generation(), 3)
+
+    async def test_failed_product_invalidation_reconnects_before_accepting_later_jobs(self) -> None:
+        class FakeWebSocket:
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self) -> str:
+                if getattr(self, "sent", False):
+                    raise StopAsyncIteration
+                self.sent = True
+                return json.dumps({
+                    "type": "invalidate_product_cache", "requestId": "request-1",
+                    "asin": "B012345678", "amazonZip": "10001", "generation": 1,
+                })
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            cache = RawFamilyCache(root / ".runtime" / "cache")
+            key = "B012345678:10001:us-v1"
+            cache.save(key, cache_family())
+            agent = DistributedCrawlerAgent(
+                project_root=root,
+                config=AgentConfig(
+                    server_url="http://127.0.0.1:8766", display_name="test",
+                    max_concurrent_inputs=1, limits=AgentLimits(), data_directory=root / "agent-data",
+                ),
+            )
+
+            with patch.object(RawFamilyCache, "invalidate", side_effect=OSError("disk error")):
+                with self.assertRaises(OSError):
+                    await agent._receiver(FakeWebSocket())
+            self.assertEqual(agent.store.product_invalidation_generation(), 0)
+            self.assertIsNotNone(cache.load(key))
+
+            await agent._apply_reconciliation({
+                "productInvalidations": [{"asin": "B012345678", "amazonZip": "10001", "generation": 1}],
+            })
+            self.assertIsNone(cache.load(key))
+
+    async def test_reconnecting_agent_applies_explicit_clear_all_generation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            cache = RawFamilyCache(root / ".runtime" / "cache")
+            key = "B012345678:10001:us-v1"
+            cache.save(key, cache_family())
+            agent = DistributedCrawlerAgent(
+                project_root=root,
+                config=AgentConfig(
+                    server_url="http://127.0.0.1:8766", display_name="test",
+                    max_concurrent_inputs=1, limits=AgentLimits(), data_directory=root / "agent-data",
+                ),
+            )
+
+            await agent._apply_reconciliation({"requiredCacheGeneration": 1})
+
+            self.assertIsNone(cache.load(key))
+            self.assertEqual(agent.store.cache_generation(), 1)
+            self.assertEqual((await agent.outbound_queue.get())["type"], "cache_generation_ack")
+
+    async def test_temporary_cleanup_preserves_product_cache(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            cache = RawFamilyCache(root / ".runtime" / "cache")
+            cache.save("B012345678:10001:us-v1", cache_family())
+            temporary_file = cache.directory / ".amazon-cache-abandoned.tmp"
+            temporary_file.write_text("partial write", encoding="utf-8")
+            agent = DistributedCrawlerAgent(
+                project_root=root,
+                config=AgentConfig(
+                    server_url="http://127.0.0.1:8766", display_name="test",
+                    max_concurrent_inputs=1, limits=AgentLimits(), data_directory=root / "agent-data",
+                ),
+            )
+            agent.store.save_assignment({
+                "taskId": "orphan-task", "jobId": "deleted-job", "leaseId": "lease-1",
+                "settingsFingerprint": "fingerprint", "source": "B012345678",
+            })
+            agent.store.save_assignment({
+                "taskId": "valid-task", "jobId": "retained-job", "leaseId": "lease-2",
+                "settingsFingerprint": "fingerprint", "source": "B012345679",
+            })
+            agent.store.spool_result(
+                task_id="orphan-task", lease_id="lease-1", checksum="checksum-1", payload={"status": "completed"},
+            )
+            agent.store.spool_result(
+                task_id="valid-task", lease_id="lease-2", checksum="checksum-2", payload={"status": "completed"},
+            )
+            agent.store.spool_result(
+                task_id="valid-unleased", lease_id="lease-3", checksum="checksum-3",
+                payload={"jobId": "retained-job", "status": "completed"},
+            )
+            agent.store.spool_result(
+                task_id="orphan-unleased", lease_id="lease-4", checksum="checksum-4",
+                payload={"jobId": "deleted-spool-job", "status": "completed"},
+            )
+            agent.store.spool_product(
+                task_id="valid-product-unleased", product_key="product-1", lease_id="lease-5",
+                checksum="checksum-5", payload={"jobId": "retained-job", "product": {}},
+            )
+
+            response = await agent.clear_temporary_data("request-1", {"retained-job"})
+
+            self.assertEqual(response["discardedJobs"], 2)
+            self.assertEqual(response["removedFiles"], 0)
+            self.assertFalse(temporary_file.exists())
+            self.assertGreaterEqual(agent.status_snapshot()["cache"]["temporaryRemoved"], 1)
+            self.assertEqual([task["taskId"] for task in agent.store.local_tasks()], ["valid-task"])
+            self.assertEqual(
+                {row["taskId"] for row in agent.store.pending_results()},
+                {"valid-task", "valid-unleased"},
+            )
+            self.assertEqual(
+                {row["taskId"] for row in agent.store.pending_products()},
+                {"valid-product-unleased"},
+            )
+            self.assertIsNotNone(cache.load("B012345678:10001:us-v1"))
+
+    async def test_reconnecting_agent_applies_saved_temporary_cleanup(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            cache = RawFamilyCache(root / ".runtime" / "cache")
+            cache.save("B012345678:10001:us-v1", cache_family())
+            temporary_file = cache.directory / ".amazon-cache-abandoned.tmp"
+            temporary_file.write_text("partial write", encoding="utf-8")
+            agent = DistributedCrawlerAgent(
+                project_root=root,
+                config=AgentConfig(
+                    server_url="http://127.0.0.1:8766", display_name="test",
+                    max_concurrent_inputs=1, limits=AgentLimits(), data_directory=root / "agent-data",
+                ),
+            )
+            agent.store.save_assignment({
+                "taskId": "orphan-task", "jobId": "deleted-job", "leaseId": "lease-1",
+                "settingsFingerprint": "fingerprint", "source": "B012345678",
+            })
+
+            await agent._apply_reconciliation({
+                "requiredTemporaryCleanupGeneration": 2, "validJobIds": [],
+            })
+
+            self.assertEqual(agent.store.local_tasks(), [])
+            self.assertFalse(temporary_file.exists())
+            self.assertIsNotNone(cache.load("B012345678:10001:us-v1"))
+            self.assertEqual(agent.store.temporary_cleanup_generation(), 2)
 
 
 class ClientStoreTests(unittest.TestCase):
@@ -572,6 +810,8 @@ class ClientAgentTests(unittest.IsolatedAsyncioTestCase):
                 "taskId": "task-1",
                 "leaseId": "lease-1",
             })
+            self.assertEqual((await asyncio.wait_for(agent.outbound_queue.get(), 1))["type"], "cancel_ack")
+            self.assertEqual((await asyncio.wait_for(agent.outbound_queue.get(), 1))["type"], "stop_cleanup_ack")
 
     async def test_cancelled_batch_discards_late_products_and_results(self) -> None:
         class FakeBrowserPool:
@@ -722,6 +962,10 @@ class ClientAgentTests(unittest.IsolatedAsyncioTestCase):
                     "status": "completed",
                     "products": [product],
                     "errors": [],
+                    "completedAsins": ["B0FR4MSS2H"],
+                    "failedAsins": [],
+                    "retryableAsins": [],
+                    "nonRetryableAsins": [],
                     "warnings": [],
                     "completedAt": "2026-09-22T00:00:01Z",
                     "durationMs": 1000,
@@ -767,6 +1011,7 @@ class ClientAgentTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(pending_products[0]["productKey"], "amazon:B0FR4MSS2H:design:ocean")
             self.assertEqual(pending_products[0]["payload"]["jobId"], "job-1")
             self.assertEqual(len(pending_results), 1)
+            self.assertEqual(pending_results[0]["payload"]["completedAsins"], ["B0FR4MSS2H"])
 
     def test_paused_agent_advertises_no_available_slots(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -1195,7 +1440,24 @@ class CoordinatorStoreTests(unittest.TestCase):
             "leaseId": lease["leaseId"],
         }])["discardTaskIds"], [lease["taskId"]])
 
-    def test_cache_generation_ack_recovers_stop_cleanup_after_agent_reconnect(self) -> None:
+    def test_stopping_one_job_does_not_invalidate_product_cache(self) -> None:
+        job = self.store.create_job({"urls": ["B0FR4MSS2H"]})
+        generation_before = self.store.current_cache_generation()
+
+        stopped = self.store.cancel_job(str(job["id"]), {"client-a"})
+
+        self.assertEqual(stopped["status"], "cancelling")
+        self.assertEqual(self.store.current_cache_generation(), generation_before)
+
+    def test_product_invalidation_is_persisted_for_reconnecting_agents(self) -> None:
+        generation = self.store.invalidate_product_cache("B012345678", "10001")
+
+        self.assertEqual(self.store.product_invalidations_since(0), [{
+            "asin": "B012345678", "amazonZip": "10001", "generation": generation,
+        }])
+        self.assertEqual(self.store.product_invalidations_since(generation), [])
+
+    def test_stop_cleanup_requires_explicit_agent_acknowledgement(self) -> None:
         job = self.store.create_job({"urls": ["B0FR4MSS2H"]})
         self.store.register_client(client_hello(slots=1))
         lease = self.store.lease_tasks("client-a", 1)[0]
@@ -1206,9 +1468,10 @@ class CoordinatorStoreTests(unittest.TestCase):
             "leaseId": lease["leaseId"],
         })
 
-        recovered_jobs = self.store.acknowledge_client_cache_generation("client-a", generation)
-
-        self.assertEqual(recovered_jobs, [str(job["id"])])
+        self.assertEqual(self.store.get_job(str(job["id"]))["status"], "cancelling")
+        self.assertTrue(self.store.acknowledge_stop_cleanup(
+            "client-a", job_id=str(job["id"]), cache_generation=generation,
+        ))
         snapshot = self.store.get_job(str(job["id"]))
         self.assertEqual(snapshot["status"], "cancelled")
         self.assertEqual(snapshot["cancellation"]["pendingCleanupAgents"], [])
@@ -1452,12 +1715,12 @@ class CoordinatorStoreTests(unittest.TestCase):
         self.store.update_progress("client-a", {
             "taskId": lease["taskId"], "leaseId": lease["leaseId"],
             "progress": {
-                "phase": "variant_matrix", "message": "Đang cào variant 3/14",
+                "phase": "variant_matrix", "message": "Đang cào variant 3/14", "html": "X" * 100_000,
                 "items": [{
                     "source": "B0FR4MSS2H", "asin": "B0FR4MSS2H", "status": "running",
                     "phase": "variant_matrix", "message": "Đang cào variant 3/14",
                     "variantCompleted": 3, "variantTotal": 14, "currentAsin": "B0CHILD003",
-                    "currentOptions": {"Size": "Large"},
+                    "currentOptions": {"Size": "Large"}, "customizationRaw": "Y" * 100_000,
                 }],
             },
         })
@@ -1469,6 +1732,77 @@ class CoordinatorStoreTests(unittest.TestCase):
         self.assertEqual(progress_item["variantCompleted"], 3)
         self.assertEqual(progress_item["variantTotal"], 14)
         self.assertEqual(progress_item["currentOptions"], {"Size": "Large"})
+        self.assertNotIn("customizationRaw", progress_item)
+        self.assertNotIn("html", snapshot["progress"])
+        self.assertEqual(self.store.job_summary(str(job["id"]))["currentAsin"], "B0CHILD003")
+
+    def test_summary_and_product_pages_keep_large_payloads_out_of_polling(self) -> None:
+        from sqlalchemy import event
+
+        job = self.store.create_job({"urls": ["B0FR4MSS2H"]})
+        with self.sessions.begin() as session:
+            task = session.scalar(select(CrawlTask).where(CrawlTask.job_id == job["id"]))
+            for index in range(3):
+                session.add(CrawlProductItem(
+                    id=f"item-{index}", job_id=job["id"], task_id=task.id,
+                    source_key=f"source-{index}", product_id=f"product-{index}",
+                    client_id="client-a", lease_id="lease-a", checksum=f"checksum-{index}",
+                    raw_payload={
+                        "id": f"product-{index}", "title": "Large product",
+                        "descriptionHtml": "X" * 100_000,
+                        "sourceVariants": [{"asin": "B0FR4MSS2H", "media": [{"url": "image"}]}],
+                        "variants": [{"id": f"variant-{number}"} for number in range(3)],
+                    },
+                    status="received",
+                ))
+        queries: list[str] = []
+
+        def record_query(connection, cursor, statement, parameters, context, executemany) -> None:
+            queries.append(statement.lower())
+
+        event.listen(self.engine, "before_cursor_execute", record_query)
+        try:
+            summary = self.store.job_summary(str(job["id"]))
+            first_page = self.store.job_products(str(job["id"]), limit=2)
+        finally:
+            event.remove(self.engine, "before_cursor_execute", record_query)
+        self.assertFalse(any("task_results" in query or "raw_payload" in query or "normalized_payload" in query for query in queries))
+        self.assertEqual(summary["total"], 1)
+        self.assertNotIn("products", summary)
+        self.assertNotIn("X" * 100, str(summary))
+        self.assertEqual([product["id"] for product in first_page["products"]], ["item-0", "item-1"])
+        self.assertNotIn("descriptionHtml", str(first_page))
+        second_page = self.store.job_products(str(job["id"]), cursor=first_page["nextCursor"], limit=2)
+        self.assertEqual([product["id"] for product in second_page["products"]], ["item-2"])
+        self.assertIsNone(second_page["nextCursor"])
+        detail = self.store.job_product(str(job["id"]), "item-0")
+        self.assertEqual(detail["variantCount"], 3)
+        self.assertNotIn("variants", detail)
+        self.assertEqual(detail["descriptionHtml"], "X" * 100_000)
+        variants = self.store.job_product_variants(str(job["id"]), "item-0", limit=2)
+        self.assertEqual([variant["id"] for variant in variants["variants"]], ["variant-0", "variant-1"])
+        self.assertEqual(variants["nextCursor"], 2)
+
+    def test_cancelling_job_list_does_not_load_result_or_product_payloads(self) -> None:
+        from sqlalchemy import event
+
+        job = self.store.create_job({"urls": ["B0FR4MSS2H"]})
+        self.store.register_client(client_hello(slots=1))
+        self.store.lease_tasks("client-a", 1)
+        self.store.cancel_job(str(job["id"]))
+        queries: list[str] = []
+
+        def record_query(connection, cursor, statement, parameters, context, executemany) -> None:
+            queries.append(statement.lower())
+
+        event.listen(self.engine, "before_cursor_execute", record_query)
+        try:
+            listing = self.store.list_jobs()
+        finally:
+            event.remove(self.engine, "before_cursor_execute", record_query)
+        self.assertEqual(listing[0]["status"], "cancelling")
+        self.assertEqual(listing[0]["cancellation"]["pendingAgents"][0]["clientId"], "client-a")
+        self.assertFalse(any("task_results" in query or "raw_payload" in query or "normalized_payload" in query for query in queries))
 
     def test_completed_task_progress_uses_durable_result_counts_instead_of_stale_events(self) -> None:
         job = self.store.create_job({"urls": ["B0FR4MSS2H"]})
@@ -1546,7 +1880,8 @@ class CoordinatorStoreTests(unittest.TestCase):
         self.assertEqual(reaped["requeuedTasks"], 0)
         self.assertEqual(self.store.get_job(str(job["id"]))["taskCounts"], {"completed": 1})
 
-    def test_third_crawl_failure_makes_task_terminal(self) -> None:
+    @patch("engine.distributed.coordinator_store.retry_delay", return_value=0)
+    def test_third_crawl_failure_makes_task_terminal(self, _retry_delay) -> None:
         job = self.store.create_job({"urls": ["B0FR4MSS2H"]})
         self.store.register_client(client_hello(slots=1))
 
@@ -1562,6 +1897,110 @@ class CoordinatorStoreTests(unittest.TestCase):
 
         self.assertEqual(statuses, ["queued", "queued", "failed"])
         self.assertEqual(self.store.get_job(str(job["id"]))["status"], "partial")
+
+    def test_retry_after_delays_reassignment_to_any_client(self) -> None:
+        job = self.store.create_job({"urls": ["B0FR4MSS2H"]})
+        self.store.register_client(client_hello(slots=1))
+        lease = self.store.lease_tasks("client-a", 1)[0]
+        self.store.fail_task("client-a", {
+            "taskId": lease["taskId"], "leaseId": lease["leaseId"],
+            "error": {"status": "temporarily_blocked", "reason": "captcha", "retryable": True,
+                      "retryAfter": (utc_now() + timedelta(minutes=2)).isoformat()},
+        })
+        self.assertEqual(self.store.lease_tasks("client-a", 1), [])
+        with patch("engine.distributed.coordinator_store.utc_now", return_value=utc_now() + timedelta(minutes=3)):
+            self.assertEqual(len(self.store.lease_tasks("client-a", 1)), 1)
+
+    def test_not_found_negative_cache_prevents_new_job_fetch(self) -> None:
+        first = self.store.create_job({"urls": ["B0FR4MSS2H"]})
+        self.store.register_client(client_hello(slots=1))
+        lease = self.store.lease_tasks("client-a", 1)[0]
+        self.store.fail_task("client-a", {
+            "taskId": lease["taskId"], "leaseId": lease["leaseId"],
+            "error": {"status": "not_found", "reason": "not_found", "retryable": False, "notFoundConfirmed": True,
+                      "retryAfter": (utc_now() + timedelta(days=1)).isoformat()},
+        })
+        self.assertEqual(self.store.get_job(str(first["id"]))["status"], "partial")
+        errors = self.store.job_results(str(first["id"]))["errors"]
+        self.assertEqual(errors[0]["status"], "not_found")
+        self.assertFalse(errors[0]["retryable"])
+        second = self.store.create_job({"urls": ["B0FR4MSS2H"]})
+        self.assertEqual(second["taskCounts"], {"failed": 1})
+        self.assertEqual(self.store.lease_tasks("client-a", 1), [])
+        self.store.clear_negative_cache()
+        third = self.store.create_job({"urls": ["B0FR4MSS2H"]})
+        self.assertEqual(third["taskCounts"], {"queued": 1})
+
+    def test_captcha_cooldown_stops_other_asins_from_being_leased(self) -> None:
+        self.store.create_job({"urls": ["B0FR4MSS2H", "B012345678"]})
+        self.store.register_client(client_hello(slots=1))
+        lease = self.store.lease_tasks("client-a", 1)[0]
+        self.store.fail_task("client-a", {
+            "taskId": lease["taskId"], "leaseId": lease["leaseId"],
+            "error": {"status": "temporarily_blocked", "reason": "captcha", "retryable": True,
+                      "retryAfter": (utc_now() + timedelta(minutes=2)).isoformat()},
+        })
+        self.assertEqual(self.store.lease_tasks("client-a", 1), [])
+
+    @patch("engine.distributed.coordinator_store.retry_delay", return_value=1)
+    def test_partial_retry_prefers_agent_with_saved_variants_and_falls_back_when_offline(self, _retry_delay) -> None:
+        self.store.create_job({"urls": ["B0FR4MSS2H"]})
+        self.store.register_client(client_hello("client-a", slots=1))
+        self.store.register_client(client_hello("client-b", slots=1))
+        first = self.store.lease_tasks("client-a", 1)[0]
+        partial_error = {
+            "status": "partial", "reason": "incomplete", "retryable": True,
+            "retryAfter": (utc_now() + timedelta(seconds=1)).isoformat(),
+        }
+        self.store.fail_task("client-a", {
+            "taskId": first["taskId"], "leaseId": first["leaseId"], "error": partial_error,
+        })
+        with patch("engine.distributed.coordinator_store.utc_now", return_value=utc_now() + timedelta(seconds=2)):
+            self.assertEqual(self.store.lease_tasks("client-b", 1), [])
+            second = self.store.lease_tasks("client-a", 1)[0]
+        self.store.fail_task("client-a", {
+            "taskId": second["taskId"], "leaseId": second["leaseId"], "error": partial_error,
+        })
+        with self.sessions.begin() as session:
+            session.get(ClientRecord, "client-a").status = "offline"
+        with patch("engine.distributed.coordinator_store.utc_now", return_value=utc_now() + timedelta(seconds=2)):
+            self.assertEqual(len(self.store.lease_tasks("client-b", 1)), 1)
+
+    @patch("engine.distributed.coordinator_store.retry_delay", return_value=1)
+    def test_mixed_partial_failure_retries_remaining_child_and_preserves_asin_lists(self, _retry_delay) -> None:
+        job = self.store.create_job({"urls": ["B012345678"]})
+        self.store.register_client(client_hello(slots=1))
+        first = self.store.lease_tasks("client-a", 1)[0]
+        initial_error = {
+            "status": "partial", "reason": "mixed_failures", "code": "PARTIAL_CRAWL",
+            "message": "Family has incomplete children.", "retryable": True,
+            "retryAfter": (utc_now() + timedelta(seconds=1)).isoformat(),
+            "completedAsins": ["B012345678"],
+            "failedAsins": ["B012345679", "B012345680"],
+            "retryableAsins": ["B012345680"],
+            "nonRetryableAsins": ["B012345679"],
+        }
+        self.assertEqual(self.store.fail_task("client-a", {
+            "taskId": first["taskId"], "leaseId": first["leaseId"], "error": initial_error,
+        })["status"], "queued")
+        with patch("engine.distributed.coordinator_store.utc_now", return_value=utc_now() + timedelta(seconds=2)):
+            second = self.store.lease_tasks("client-a", 1)[0]
+        final_error = {
+            **initial_error,
+            "retryable": False,
+            "completedAsins": ["B012345678", "B012345680"],
+            "failedAsins": ["B012345679"],
+            "retryableAsins": [],
+        }
+        self.store.fail_task("client-a", {
+            "taskId": second["taskId"], "leaseId": second["leaseId"], "error": final_error,
+        })
+        output = self.store.job_results(str(job["id"]))
+        self.assertEqual(output["completedAsins"], ["B012345678", "B012345680"])
+        self.assertEqual(output["failedAsins"], ["B012345679"])
+        self.assertEqual(output["retryableAsins"], [])
+        self.assertEqual(output["nonRetryableAsins"], ["B012345679"])
+        self.assertEqual(output["errors"][0]["completedAsins"], ["B012345678", "B012345680"])
 
     def test_expired_lease_requeues_without_counting_as_crawl_failure(self) -> None:
         self._create_four_task_job()
@@ -1825,8 +2264,8 @@ class CoordinatorStoreTests(unittest.TestCase):
 
         reviews = self.store.list_product_reviews()
         self.assertEqual(len(reviews), 1)
-        snapshot = self.store.job_products(str(job["id"]))
-        self.assertEqual(snapshot["products"][0]["pipeline"]["seo"]["performance"]["cacheHits"], 2)
+        snapshot = self.store.job_product(str(job["id"]), claim["id"])
+        self.assertEqual(snapshot["pipeline"]["seo"]["performance"]["cacheHits"], 2)
         self.assertEqual(reviews[0]["decision"], "pending")
         self.assertEqual(reviews[0]["syncStatus"], "idle")
         self.assertEqual(self.store.get_job(str(job["id"]))["status"], "review_pending")
@@ -2200,7 +2639,7 @@ class CoordinatorStoreTests(unittest.TestCase):
             retryable=True,
             reconciliation_required=False,
         )
-        public_product = self.store.job_products(str(job["id"]))["products"][0]
+        public_product = self.store.job_product(str(job["id"]), claim["id"])
 
         self.assertEqual(status, "retry_wait")
         self.assertEqual(public_product["pipeline"]["status"], "retry_wait")
@@ -2233,7 +2672,7 @@ class CoordinatorStoreTests(unittest.TestCase):
             retryable=False,
             reconciliation_required=False,
         )
-        public_product = self.store.job_products(str(job["id"]))["products"][0]
+        public_product = self.store.job_product(str(job["id"]), claim["id"])
 
         self.assertEqual(public_product["pipeline"]["shopify"]["timings"], {"pipeline": timings})
 
@@ -2259,6 +2698,121 @@ class CoordinatorApiTests(unittest.TestCase):
         cache_override = patch.dict(os.environ, {"IMAGE_PROCESSING_CACHE_DIR": image_cache.name})
         cache_override.start()
         self.addCleanup(cache_override.stop)
+
+    def test_summary_and_paged_product_routes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = Path(directory) / "coordinator.sqlite3"
+            app = create_coordinator_app(database_url=f"sqlite:///{database_path.as_posix()}")
+            with TestClient(app) as client:
+                job = client.post("/api/v1/crawl-jobs", json={"urls": ["B0FR4MSS2H"]}).json()
+                store = app.state.store
+                with store.sessions.begin() as session:
+                    task = session.scalar(select(CrawlTask).where(CrawlTask.job_id == job["id"]))
+                    session.add(CrawlProductItem(
+                        id="item-1", job_id=job["id"], task_id=task.id,
+                        source_key="source-1", product_id="product-1", client_id="client-a",
+                        lease_id="lease-a", checksum="checksum-1", status="received",
+                        raw_payload={"id": "product-1", "descriptionHtml": "X" * 100_000,
+                                     "variants": [{"id": "v1"}, {"id": "v2"}]},
+                    ))
+                base = f"/api/v1/crawl-jobs/{job['id']}"
+                self.assertEqual(client.get(f"{base}/metadata").json()["settings"]["amazonZip"], "90001")
+                summary = client.get(f"{base}/summary")
+                self.assertEqual(summary.status_code, 200)
+                self.assertNotIn("X" * 100, summary.text)
+                listing = client.get(f"{base}/products?limit=1")
+                self.assertEqual(listing.json()["products"][0]["id"], "item-1")
+                self.assertNotIn("descriptionHtml", listing.text)
+                detail = client.get(f"{base}/products/item-1")
+                self.assertEqual(detail.json()["variantCount"], 2)
+                self.assertNotIn("variants", detail.json())
+                self.assertEqual(client.get(f"{base}/products/item-1/variants?limit=1").json()["nextCursor"], 1)
+                self.assertEqual(client.get(f"{base}/products/item-1/variants?cursor=1").json()["variants"][0]["id"], "v2")
+                self.assertEqual(client.get(f"{base}/products?limit=101").status_code, 422)
+                self.assertEqual(client.get(f"{base}/products/unknown").status_code, 404)
+                self.assertEqual(client.get("/api/v1/crawl-jobs/unknown/summary").status_code, 404)
+                self.assertEqual(client.get(f"{base}/products/item-1/variants?cursor=-1").status_code, 422)
+
+    def test_cancel_keeps_negative_and_image_cache_until_explicit_clear(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = Path(directory) / "coordinator.sqlite3"
+            app = create_coordinator_app(database_url=f"sqlite:///{database_path.as_posix()}")
+            store = app.state.store
+            image_file = app.state.image_processing_service.cache_root / "cached-image.jpg"
+            image_file.write_bytes(b"cached")
+            with TestClient(app) as client:
+                job = store.create_job({"urls": ["B012345678"]})
+                cache_key = store._negative_key("B012345678", "90001")
+                with store.sessions.begin() as session:
+                    store._store_negative(session, cache_key, {
+                        "status": "not_found", "reason": "product not found", "retryable": False, "notFoundConfirmed": True,
+                        "retryAfter": utc_iso(utc_now() + timedelta(hours=1)),
+                    })
+                generation = store.current_cache_generation()
+
+                response = client.post(f"/api/v1/crawl-jobs/{job['id']}/cancel")
+
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(store.current_cache_generation(), generation)
+                with store.sessions() as session:
+                    self.assertIsNotNone(session.get(CoordinatorState, cache_key))
+                self.assertTrue(image_file.exists())
+
+                cleared = client.delete("/api/v1/clients/cache")
+                self.assertEqual(cleared.status_code, 200)
+                self.assertGreater(store.current_cache_generation(), generation)
+                self.assertFalse(image_file.exists())
+
+    def test_selected_invalidation_reaches_agent_after_reconnect(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = Path(directory) / "coordinator.sqlite3"
+            app = create_coordinator_app(database_url=f"sqlite:///{database_path.as_posix()}")
+            with TestClient(app) as client:
+                invalidated = client.delete("/api/v1/clients/cache/products/B012345678?amazonZip=10001")
+                self.assertEqual(invalidated.status_code, 200)
+                self.assertEqual(invalidated.json()["requestedClients"], 0)
+                with client.websocket_connect("/api/v1/worker/connect") as agent:
+                    agent.send_json(client_hello())
+                    acknowledgement = agent.receive_json()
+                    self.assertEqual(acknowledgement["productInvalidations"][0]["asin"], "B012345678")
+                    self.assertEqual(acknowledgement["productInvalidations"][0]["amazonZip"], "10001")
+
+    def test_temporary_cleanup_reaches_agent_after_reconnect(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = Path(directory) / "coordinator.sqlite3"
+            app = create_coordinator_app(database_url=f"sqlite:///{database_path.as_posix()}")
+            with TestClient(app) as client:
+                cleared = client.delete("/api/v1/clients/temporary-data")
+                self.assertEqual(cleared.status_code, 200)
+                with client.websocket_connect("/api/v1/worker/connect") as agent:
+                    agent.send_json(client_hello())
+                    acknowledgement = agent.receive_json()
+                    self.assertEqual(acknowledgement["requiredTemporaryCleanupGeneration"], 1)
+                    self.assertEqual(acknowledgement["validJobIds"], [])
+
+    def test_selected_invalidation_rejects_invalid_asin_and_zip(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = Path(directory) / "coordinator.sqlite3"
+            app = create_coordinator_app(database_url=f"sqlite:///{database_path.as_posix()}")
+            with TestClient(app) as client:
+                self.assertEqual(client.delete("/api/v1/clients/cache/products/invalid").status_code, 422)
+                self.assertEqual(client.delete(
+                    "/api/v1/clients/cache/products/B012345678?amazonZip=wrong"
+                ).status_code, 422)
+                self.assertEqual(app.state.store.product_invalidations_since(0), [])
+
+    def test_cache_maintenance_rejects_active_job(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = Path(directory) / "coordinator.sqlite3"
+            app = create_coordinator_app(database_url=f"sqlite:///{database_path.as_posix()}")
+            with TestClient(app) as client:
+                app.state.store.create_job({"urls": ["B012345678"]})
+                generation = app.state.store.current_cache_generation()
+
+                self.assertEqual(client.delete("/api/v1/clients/cache").status_code, 409)
+                self.assertEqual(client.delete("/api/v1/clients/cache/products/B012345678").status_code, 409)
+                self.assertEqual(client.delete("/api/v1/clients/temporary-data").status_code, 409)
+                self.assertEqual(app.state.store.current_cache_generation(), generation)
 
     def test_duplicate_agent_socket_does_not_disconnect_the_active_agent(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -2720,5 +3274,165 @@ class CoordinatorUploadLimitTests(unittest.IsolatedAsyncioTestCase):
             await read_request_body_limited(FakeRequest(), maximum_bytes=6)
 
 
+class CoordinatorPinterestDistributedTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.db_path = Path(self.temp_dir.name) / "test_coordinator.sqlite"
+        engine = create_database_engine(f"sqlite:///{self.db_path.as_posix()}")
+        Base.metadata.create_all(engine)
+        self.sessions = create_session_factory(engine)
+        self.store = CoordinatorStore(self.sessions)
+
+    def tearDown(self) -> None:
+        self.temp_dir.cleanup()
+
+    def test_amazon_captcha_cooldown_does_not_block_pinterest_tasks(self) -> None:
+        amazon = self.store.create_job({"urls": ["B012345678"]})
+        self.store.register_client({**client_hello(slots=1), "capabilities": {"amazon": True, "pinterest": True}})
+        lease = self.store.lease_tasks("client-a", 1)[0]
+        self.assertEqual(lease["jobId"], amazon["id"])
+        self.store.fail_task("client-a", {"taskId": lease["taskId"], "leaseId": lease["leaseId"],
+            "error": {"status": "temporarily_blocked", "reason": "captcha", "retryable": True}})
+        pinterest = self.store.create_pinterest_job({"niche": "fixture", "stage": "crawl"})
+        leases = self.store.lease_tasks("client-a", 1)
+        self.assertEqual([task["jobId"] for task in leases], [pinterest["id"]])
+        self.assertEqual(leases[0]["channel"], "pinterest")
+        self.assertEqual(self.store.lease_tasks("client-a", 1), [])
+
+    def test_amazon_worker_skips_multiple_incompatible_pinterest_tasks(self) -> None:
+        amazon = self.store.create_job({"urls": ["B012345678"]})
+        for index in range(5):
+            self.store.create_pinterest_job({"niche": f"fixture-{index}", "schedulerPriority": 100})
+        self.store.register_client(client_hello(slots=1))
+        leases = self.store.lease_tasks("client-a", 1)
+        self.assertEqual([task["jobId"] for task in leases], [amazon["id"]])
+        self.assertEqual(leases[0]["requestId"], leases[0]["taskId"])
+        self.assertIn("asinDeadlineAt", leases[0])
+
+    def test_pinterest_captcha_failure_does_not_set_amazon_cooldown(self) -> None:
+        amazon = self.store.create_job({"urls": ["B012345678"]})
+        pinterest = self.store.create_pinterest_job({"niche": "fixture", "schedulerPriority": 100})
+        self.store.register_client({**client_hello(slots=1), "capabilities": {"amazon": True, "pinterest": True}})
+        lease = self.store.lease_tasks("client-a", 1)[0]
+        self.assertEqual(lease["jobId"], pinterest["id"])
+        self.store.fail_task("client-a", {"taskId": lease["taskId"], "leaseId": lease["leaseId"],
+            "error": {"status": "temporarily_blocked", "reason": "captcha", "retryable": True}})
+        leases = self.store.lease_tasks("client-a", 1)
+        self.assertEqual([task["jobId"] for task in leases], [amazon["id"]])
+
+    def test_pinterest_job_creation_and_capability_filtering(self) -> None:
+        # 1. Create a Pinterest crawl job
+        job = self.store.create_pinterest_job({
+            "niche": "Gothic skull rugs",
+            "product": "rug",
+            "workflow_stage": "crawl_and_review",
+            "candidatePoolSize": 20,
+        })
+        self.assertEqual(job["status"], "queued")
+        self.assertEqual(job["settings"]["channel"], "pinterest")
+        self.assertEqual(job["settings"]["stage"], "crawl_and_review")
+
+        # 2. Register Client-Amazon (can_pinterest = False)
+        self.store.register_client({
+            **client_hello("client-amazon"),
+            "capabilities": {"amazon": True, "pinterest": False},
+        })
+
+        # Amazon worker should NOT receive the Pinterest task
+        leases_amazon = self.store.lease_tasks("client-amazon", 2)
+        self.assertEqual(len(leases_amazon), 0)
+
+        # 3. Register Client-Pinterest (can_pinterest = True)
+        self.store.register_client({
+            **client_hello("client-pinterest"),
+            "capabilities": {"amazon": True, "pinterest": True},
+        })
+
+        # Pinterest worker SHOULD receive the Pinterest task
+        leases_pin = self.store.lease_tasks("client-pinterest", 2)
+        self.assertEqual(len(leases_pin), 1)
+        lease = leases_pin[0]
+        self.assertEqual(lease["channel"], "pinterest")
+        self.assertEqual(lease["action"], "crawl_and_review")
+        self.assertEqual(lease["settings"]["channel"], "pinterest")
+
+        # 4. Spool & complete the result
+        candidates = [
+            {"image_id": "pin_1", "title": "Skull Rug 1", "image_url": "https://i.pinimg.com/1.jpg"},
+            {"image_id": "pin_2", "title": "Skull Rug 2", "image_url": "https://i.pinimg.com/2.jpg"},
+        ]
+        envelope = {
+            "version": "distributed-pinterest-1",
+            "taskId": lease["taskId"],
+            "jobId": job["id"],
+            "leaseId": lease["leaseId"],
+            "status": "completed",
+            "candidates": candidates,
+            "rejected_candidates": [],
+            "total_candidates": 2,
+            "logs": ["Cào xong 2 mẫu từ Pinterest."],
+        }
+        self.store.accept_result(
+            task_id=lease["taskId"],
+            client_id="client-pinterest",
+            lease_id=lease["leaseId"],
+            checksum=payload_checksum(envelope),
+            payload=envelope,
+        )
+
+        # 5. Verify snapshot reflects ready_for_review and candidate data
+        snapshot = self.store.get_job(job["id"])
+        self.assertIsNotNone(snapshot)
+        self.assertEqual(snapshot["status"], "ready_for_review")
+        self.assertEqual(len(snapshot["candidates"]), 2)
+        self.assertEqual(snapshot["candidates"][0]["image_id"], "pin_1")
+        self.assertEqual(snapshot["stepper"]["current_step"], 2)
+        self.assertIn("Sẵn sàng duyệt mẫu", snapshot["stepper"]["current_message"])
+
+    def test_pinterest_production_job_completion(self) -> None:
+        # Create a production stage job
+        prod_job = self.store.create_pinterest_job({
+            "stage": "produce",
+            "product": "rug",
+            "selected_candidates": [{"image_id": "pin_1", "title": "Skull Rug 1"}],
+        })
+        self.assertEqual(prod_job["status"], "queued")
+
+        self.store.register_client({
+            **client_hello("client-pod"),
+            "capabilities": {"pinterest": True},
+        })
+
+        leases = self.store.lease_tasks("client-pod", 1)
+        self.assertEqual(len(leases), 1)
+
+        deliverables = {
+            "print_cmyk_images": [{"filename": "design_1_cmyk_300dpi.jpg", "url": "/api/pinterest-pod/assets/job1/cmyk.jpg"}],
+            "lifestyle_mockups": [{"filename": "mockup_1.jpg", "url": "/api/pinterest-pod/assets/job1/mockup_1.jpg"}],
+        }
+        envelope = {
+            "version": "distributed-pinterest-1",
+            "taskId": leases[0]["taskId"],
+            "jobId": prod_job["id"],
+            "leaseId": leases[0]["leaseId"],
+            "status": "completed",
+            "deliverables": deliverables,
+            "summaryMetrics": {"cmyk_count": 1, "mockups_count": 1},
+        }
+        self.store.accept_result(
+            task_id=leases[0]["taskId"],
+            client_id="client-pod",
+            lease_id=leases[0]["leaseId"],
+            checksum=payload_checksum(envelope),
+            payload=envelope,
+        )
+
+        snapshot = self.store.get_job(prod_job["id"])
+        self.assertEqual(snapshot["status"], "completed")
+        self.assertEqual(len(snapshot["deliverables"]["print_cmyk_images"]), 1)
+        self.assertEqual(snapshot["stepper"]["current_step"], 4)
+
+
 if __name__ == "__main__":
     unittest.main()
+

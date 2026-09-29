@@ -1,4 +1,5 @@
 import { clearMockAmazonCrawlerCache, createMockAmazonCrawlerJobLoader, runMockAmazonCrawler } from "./mocks/runner";
+import { crawlerMockMetrics } from "./mocks/observability";
 import { createAmazonCrawlerCacheClearer, createAmazonCrawlerClientsLoader, createAmazonCrawlerJobController, createAmazonCrawlerJobLoader, createAmazonCrawlerReviewClient, createAmazonCrawlerRunner, createAmazonCrawlerSyncRetrier, createImageProcessingProfileManager } from "./service";
 
 import type { AppEnvironment } from "../../shared/types";
@@ -17,9 +18,13 @@ export function getAmazonCrawlerClientsLoader(environment: AppEnvironment, engin
 export function getAmazonCrawlerJobController(environment: AppEnvironment, engineUrl: string): AmazonCrawlerJobController {
   if (environment !== "mock") return createAmazonCrawlerJobController({ engineUrl });
   return {
+    metrics: async (jobId) => ({ ...structuredClone(crawlerMockMetrics), jobId: jobId ?? null }),
+    trace: async () => ({ events: [], nextCursor: null }),
     list: async () => [],
     get: async () => { throw new Error("Mock job was not found."); },
     cancel: async () => { throw new Error("Mock job was not found."); },
+    invalidateProductCache: async () => ({ removedFiles: 0, removedBytes: 0 }),
+    clearTemporaryData: async () => ({ removedFiles: 0, removedBytes: 0, discardedJobs: 0 }),
     replace: async () => { throw new Error("Mock job was not found."); },
     delete: async () => undefined,
   };

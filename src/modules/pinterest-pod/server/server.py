@@ -281,8 +281,29 @@ class PinterestPodHandler(BaseHTTPRequestHandler):
                 self.send_json({"ok": False, "message": str(exc)}, 500)
             return
 
-        # Job status: /api/pinterest-pod/jobs/:jobId
-        pod_job_match = re.fullmatch(r"/api/pinterest-pod/jobs/([a-zA-Z0-9_-]+)", path)
+        # Job logs: /api/pinterest-pod/jobs/:jobId/logs or /api/jobs/:jobId/logs
+        pod_job_logs_match = re.fullmatch(r"/api/(?:pinterest-pod/)?jobs/([a-zA-Z0-9_-]+)/logs", path)
+        if pod_job_logs_match:
+            try:
+                job_id = pod_job_logs_match.group(1)
+                host = self.headers.get("Host") or f"{HOST}:{PORT}"
+                base_url = f"http://{host}"
+                status_res = get_pod_job_status(job_id, base_url)
+                self.send_json({
+                    "ok": True,
+                    "jobId": job_id,
+                    "status": status_res.get("status", "unknown"),
+                    "logs": status_res.get("logs") or [],
+                })
+            except LookupError as exc:
+                self.send_json({"ok": False, "message": str(exc)}, 404)
+            except Exception as exc:
+                logger.exception("Error getting job logs for %s", job_id)
+                self.send_json({"ok": False, "message": str(exc)}, 500)
+            return
+
+        # Job status: /api/pinterest-pod/jobs/:jobId or /api/jobs/:jobId
+        pod_job_match = re.fullmatch(r"/api/(?:pinterest-pod/)?jobs/([a-zA-Z0-9_-]+)", path)
         if pod_job_match:
             try:
                 job_id = pod_job_match.group(1)
@@ -386,8 +407,8 @@ class PinterestPodHandler(BaseHTTPRequestHandler):
                 self.send_json({"ok": False, "message": str(exc)}, 500)
             return
 
-        # Cancel Job: POST /api/pinterest-pod/jobs/:jobId/cancel
-        cancel_match = re.fullmatch(r"/api/pinterest-pod/jobs/([a-zA-Z0-9_-]+)/cancel", path)
+        # Cancel Job: POST /api/pinterest-pod/jobs/:jobId/cancel or /api/jobs/:jobId/cancel
+        cancel_match = re.fullmatch(r"/api/(?:pinterest-pod/)?jobs/([a-zA-Z0-9_-]+)/cancel", path)
         if cancel_match:
             try:
                 result = cancel_pod_job(cancel_match.group(1))
@@ -396,8 +417,8 @@ class PinterestPodHandler(BaseHTTPRequestHandler):
                 self.send_json({"ok": False, "message": str(exc)}, 500)
             return
 
-        # Delete Job: POST /api/pinterest-pod/jobs/:jobId/delete
-        delete_match = re.fullmatch(r"/api/pinterest-pod/jobs/([a-zA-Z0-9_-]+)/delete", path)
+        # Delete Job: POST /api/pinterest-pod/jobs/:jobId/delete or /api/jobs/:jobId/delete
+        delete_match = re.fullmatch(r"/api/(?:pinterest-pod/)?jobs/([a-zA-Z0-9_-]+)/delete", path)
         if delete_match:
             try:
                 result = delete_pod_job(delete_match.group(1))
@@ -515,4 +536,26 @@ def run_server() -> None:
 
 
 if __name__ == "__main__":
-    run_server()
+    if "--reload" in sys.argv:
+        try:
+            import subprocess
+            import watchfiles
+
+            child_args = [arg for arg in sys.argv if arg != "--reload"]
+            cmd = subprocess.list2cmdline([sys.executable, str(Path(__file__).resolve())] + child_args[1:])
+            logger.info("Pinterest POD Studio Backend auto-reload enabled (watchfiles). Watching %s", SERVER_ROOT)
+            ignore_dirs = [SERVER_ROOT / "temp", SERVER_ROOT / "data", SERVER_ROOT / "output"]
+            watch_filter = watchfiles.PythonFilter(ignore_paths=ignore_dirs)
+            sys.exit(
+                watchfiles.run_process(
+                    SERVER_ROOT,
+                    target=cmd,
+                    target_type="command",
+                    watch_filter=watch_filter,
+                )
+            )
+        except ImportError:
+            logger.warning("watchfiles is not installed. Running without auto-reload.")
+            run_server()
+    else:
+        run_server()

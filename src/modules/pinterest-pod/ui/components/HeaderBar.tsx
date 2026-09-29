@@ -17,6 +17,8 @@ interface HeaderBarProps {
   readonly recentRuns?: readonly PodRecentRunItem[];
   readonly onLoadJob?: (jobId: string) => void;
   readonly onNewJob?: () => void;
+  readonly isAgentConnected?: boolean;
+  readonly agentName?: string;
 }
 
 export function HeaderBar({
@@ -34,6 +36,8 @@ export function HeaderBar({
   recentRuns = [],
   onLoadJob,
   onNewJob,
+  isAgentConnected = false,
+  agentName,
 }: HeaderBarProps): React.JSX.Element {
   const isLoggedIn = authStatus?.logged_in ?? false;
   const [isJobDropdownOpen, setIsJobDropdownOpen] = useState(false);
@@ -277,6 +281,23 @@ export function HeaderBar({
 
       {/* Auth Status & Login Buttons */}
       <div className="flex items-center gap-2">
+        {/* Distributed Local Agent Status Indicator */}
+        <div
+          title={
+            isAgentConnected
+              ? `Local Client Agent: Đang trực tuyến (${agentName || "Agent online"}) - Sẵn sàng thực thi cào Playwright & Render 300DPI`
+              : "Local Client Agent: Ngoại tuyến - Khởi chạy 'npm run dev:agent' trên máy cá nhân để thực thi nhiệm vụ phân tán"
+          }
+          className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition ${
+            isAgentConnected
+              ? "border-emerald-700/50 bg-emerald-950/60 text-emerald-300"
+              : "border-slate-700/60 bg-slate-800/60 text-slate-400"
+          }`}
+        >
+          <span className={`h-2 w-2 rounded-full ${isAgentConnected ? "bg-emerald-400 animate-pulse" : "bg-slate-500"}`} />
+          <span className="font-semibold">{isAgentConnected ? "Agent Online" : "Agent Offline"}</span>
+        </div>
+
         {/* OAuth API Status Indicator */}
         <button
           type="button"

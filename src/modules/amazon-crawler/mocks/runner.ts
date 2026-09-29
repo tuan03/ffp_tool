@@ -51,6 +51,15 @@ export async function runMockAmazonCrawler({
     headless: input.headless,
     amazonZip: input.amazonZip,
     captchaTimeoutSeconds: input.captchaTimeoutSeconds,
+    dnsTimeoutSeconds: input.dnsTimeoutSeconds ?? 10,
+    connectTimeoutSeconds: input.connectTimeoutSeconds ?? 15,
+    httpResponseTimeoutSeconds: input.httpResponseTimeoutSeconds ?? 90,
+    navigationTimeoutSeconds: input.navigationTimeoutSeconds ?? 60,
+    selectorTimeoutSeconds: input.selectorTimeoutSeconds ?? 15,
+    customizationTimeoutSeconds: input.customizationTimeoutSeconds ?? 120,
+    childTimeoutSeconds: input.childTimeoutSeconds ?? 300,
+    asinTimeoutSeconds: input.asinTimeoutSeconds ?? 1800,
+    jobTimeoutSeconds: input.jobTimeoutSeconds ?? 21600,
     maxMatrixVariants: input.maxMatrixVariants,
   };
   const output = structuredClone(amazonCrawlerMockOutput);

@@ -77,12 +77,12 @@ export function describeJobCancellation(job: AmazonCrawlerJobSnapshot, now = Dat
   }
   for (const cleanup of job.cancellation.pendingCleanupAgents) {
     details.push(cleanup.error
-      ? `${cleanup.displayName} đang thử lại việc dọn cache (${cleanup.error})`
-      : `${cleanup.displayName} đang đóng crawler và dọn cache`);
+      ? `${cleanup.displayName} đang thử lại việc dọn dữ liệu tạm (${cleanup.error})`
+      : `${cleanup.displayName} đang đóng crawler và dọn dữ liệu tạm`);
   }
 
   const elapsed = formatElapsedTime(job.cancellation.requestedAt, now);
   return details.length > 0
-    ? `Đã gửi Stop ${elapsed}; ${details.join("; ")}.`
-    : `Đã gửi Stop ${elapsed}; coordinator đang hoàn tất xác nhận dừng.`;
+    ? `Đã gửi yêu cầu hủy job ${elapsed}; ${details.join("; ")}.`
+    : `Đã gửi yêu cầu hủy job ${elapsed}; coordinator đang hoàn tất xác nhận dừng.`;
 }

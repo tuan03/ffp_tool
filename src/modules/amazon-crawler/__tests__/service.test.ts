@@ -127,8 +127,8 @@ test("real runner serializes input, polls progress, and returns partial output",
   assert.deepEqual(requests, [
     { url: "http://127.0.0.1:8766/api/v1/clients", method: "GET" },
     { url: "http://127.0.0.1:8766/api/v1/crawl-jobs", method: "POST" },
-    { url: "http://127.0.0.1:8766/api/v1/crawl-jobs/job-1", method: "GET" },
-    { url: "http://127.0.0.1:8766/api/v1/crawl-jobs/job-1", method: "GET" },
+    { url: "http://127.0.0.1:8766/api/v1/crawl-jobs/job-1/summary", method: "GET" },
+    { url: "http://127.0.0.1:8766/api/v1/crawl-jobs/job-1/summary", method: "GET" },
     { url: "http://127.0.0.1:8766/api/v1/crawl-jobs/job-1/results", method: "GET" },
   ]);
 });
@@ -307,6 +307,9 @@ test("mock runtime returns fresh contract data", async () => {
   firstProduct.variants.push(firstVariant);
   assert.equal(second.products[0]?.variants.length, originalVariantCount);
   assert.notEqual(firstProduct.variants.length, second.products[0]?.variants.length);
+  assert.equal(first.completedAsins?.length, 5);
+  first.completedAsins?.push("B0NEW00001");
+  assert.equal(second.completedAsins?.includes("B0NEW00001"), false);
 });
 
 test("module exports route and stable input serialization", () => {
@@ -371,9 +374,35 @@ test("job controller lists, cancels, replaces and deletes coordinator jobs", asy
   assert.equal(requests.at(-1)?.method, "DELETE");
 });
 
-test("Shopify sync retry resumes polling and returns the refreshed job output", async () => {
+test("cache maintenance targets one ASIN or temporary data through separate endpoints", async () => {
+  const requests: string[] = [];
+  const jobs = createAmazonCrawlerJobController({
+    engineUrl: "http://coordinator.test",
+    fetchImplementation: async (request, init) => {
+      assert.equal(init?.method, "DELETE");
+      requests.push(String(request));
+      return jsonResponse({ removedFiles: 2, removedBytes: 100, requestedClients: 1, respondedClients: 1, failedClients: 0, discardedJobs: 1 });
+    },
+  });
+
+  assert.deepEqual(await jobs.invalidateProductCache("B012345678", "10001"), {
+    removedFiles: 2, removedBytes: 100, requestedClients: 1, respondedClients: 1, failedClients: 0, discardedJobs: 1,
+  });
+  assert.deepEqual(await jobs.clearTemporaryData(), {
+    removedFiles: 2, removedBytes: 100, requestedClients: 1, respondedClients: 1, failedClients: 0, discardedJobs: 1,
+  });
+  assert.deepEqual(requests, [
+    "http://coordinator.test/api/v1/clients/cache/products/B012345678?amazonZip=10001",
+    "http://coordinator.test/api/v1/clients/temporary-data",
+  ]);
+});
+
+test("Shopify sync retry polls summary and loads each product detail once", async () => {
   const productsSeen: string[][] = [];
   let snapshotCount = 0;
+  let detailRequests = 0;
+  const product = amazonCrawlerMockOutput.products[0];
+  assert.ok(product);
   const retrySyncs = createAmazonCrawlerSyncRetrier({
     engineUrl: "http://coordinator.test",
     pollIntervalMs: 0,
@@ -381,12 +410,14 @@ test("Shopify sync retry resumes polling and returns the refreshed job output", 
       const url = String(request);
       if (init?.method === "POST") return jsonResponse({ retried: 1 });
       if (url.endsWith("/products")) {
-        return jsonResponse({ products: [{ ...amazonCrawlerMockOutput.products[0], pipeline: {
-          status: snapshotCount > 1 ? "completed" : "syncing",
-          normalization: { status: "completed", assetsNormalized: 0 },
-          seo: { status: "completed", engine: "heuristic" },
-          shopify: { attempts: 2 },
-        } }] });
+        return jsonResponse({ products: [{ id: "item-1", productId: product.id }], nextCursor: null });
+      }
+      if (url.endsWith("/products/item-1")) {
+        detailRequests += 1;
+        return jsonResponse({ ...product, variants: undefined });
+      }
+      if (url.includes("/products/item-1/variants?cursor=")) {
+        return jsonResponse({ variants: product.variants, nextCursor: null });
       }
       if (url.endsWith("/results")) {
         return jsonResponse({ ...amazonCrawlerMockOutput, jobId: "job-retry", status: "completed" });
@@ -406,7 +437,8 @@ test("Shopify sync retry resumes polling and returns the refreshed job output", 
 
   assert.equal(retried.retried, 1);
   assert.equal(retried.output?.status, "completed");
-  assert.equal(productsSeen.length, 2);
+  assert.equal(productsSeen.length, 1);
+  assert.equal(detailRequests, 1);
 });
 
 test("review client keeps approval separate from explicit Shopify sync", async () => {
@@ -473,6 +505,7 @@ test("mock Customize contract omits raw and duplicate fields while exposing pric
 });
 
 test("job loader loads job snapshot, products and results from coordinator", async () => {
+  let detailRequests = 0;
   const loader = createAmazonCrawlerJobLoader({
     engineUrl: "http://engine.test",
     fetchImplementation: async (_request) => {
@@ -480,7 +513,7 @@ test("job loader loads job snapshot, products and results from coordinator", asy
       if (url.endsWith("/api/v1/crawl-jobs?limit=5")) {
         return jsonResponse([{ id: "job-abc", status: "completed", settings: DEFAULT_AMAZON_CRAWLER_SETTINGS }]);
       }
-      if (url.endsWith("/api/v1/crawl-jobs/job-abc")) {
+      if (url.endsWith("/api/v1/crawl-jobs/job-abc/summary")) {
         return jsonResponse({
           id: "job-abc",
           status: "completed",
@@ -489,7 +522,22 @@ test("job loader loads job snapshot, products and results from coordinator", asy
         });
       }
       if (url.endsWith("/api/v1/crawl-jobs/job-abc/products")) {
-        return jsonResponse({ jobId: "job-abc", products: amazonCrawlerMockOutput.products });
+        return jsonResponse({
+          jobId: "job-abc", nextCursor: null,
+          products: amazonCrawlerMockOutput.products.map((product, index) => ({ id: `item-${index}`, productId: product.id })),
+        });
+      }
+      if (url.endsWith("/api/v1/crawl-jobs/job-abc/metadata")) {
+        return jsonResponse({ settings: DEFAULT_AMAZON_CRAWLER_SETTINGS });
+      }
+      const variantMatch = url.match(/\/products\/item-(\d+)\/variants\?cursor=0$/);
+      if (variantMatch) {
+        return jsonResponse({ variants: amazonCrawlerMockOutput.products[Number(variantMatch[1])]?.variants ?? [], nextCursor: null });
+      }
+      const detailMatch = url.match(/\/products\/item-(\d+)$/);
+      if (detailMatch) {
+        detailRequests += 1;
+        return jsonResponse({ ...amazonCrawlerMockOutput.products[Number(detailMatch[1])], variants: undefined });
       }
       if (url.endsWith("/api/v1/crawl-jobs/job-abc/results")) {
         return jsonResponse({ ...amazonCrawlerMockOutput, jobId: "job-abc" });
@@ -504,8 +552,75 @@ test("job loader loads job snapshot, products and results from coordinator", asy
   assert.equal(hydrated.status, "completed");
   assert.equal(hydrated.products.length, amazonCrawlerMockOutput.products.length);
   assert.equal(hydrated.output?.jobId, "job-abc");
+  await loader.loadJob("job-abc");
+  assert.equal(detailRequests, 0);
 
   const recent = await loader.listRecentJobs(5);
   assert.equal(recent.length, 1);
   assert.equal(recent[0]?.id, "job-abc");
+});
+
+test("mock runner and request serialization preserve configurable timeout budgets", async () => {
+  const timeoutInput = { ...input, dnsTimeoutSeconds: 3, connectTimeoutSeconds: 5, childTimeoutSeconds: 60, asinTimeoutSeconds: 120, jobTimeoutSeconds: 360 };
+  const output = await getAmazonCrawlerRunner("mock", "http://unused.test")({ input: timeoutInput });
+  assert.equal(output.settings.dnsTimeoutSeconds, 3);
+  assert.equal(output.settings.connectTimeoutSeconds, 5);
+  assert.equal(output.settings.childTimeoutSeconds, 60);
+  assert.equal(output.settings.asinTimeoutSeconds, 120);
+  assert.equal(output.settings.jobTimeoutSeconds, 360);
+  assert.equal(JSON.parse(serializeAmazonCrawlerInput(timeoutInput)).jobTimeoutSeconds, 360);
+});
+
+test("running job loader pages product summaries and reuses loaded details", async () => {
+  const products = amazonCrawlerMockOutput.products.slice(0, 2);
+  assert.equal(products.length, 2);
+  let detailRequests = 0;
+  let metadataRequests = 0;
+  let productStatus = "received";
+  const loader = createAmazonCrawlerJobLoader({
+    engineUrl: "http://engine.test",
+    fetchImplementation: async (request) => {
+      const url = String(request);
+      if (url.endsWith("/job-paged/summary")) {
+        return jsonResponse({ id: "job-paged", status: "running", progress: { completed: 0, total: 1 } });
+      }
+      if (url.endsWith("/job-paged/metadata")) {
+        metadataRequests += 1;
+        return jsonResponse({ settings: { ...DEFAULT_AMAZON_CRAWLER_SETTINGS, amazonZip: "90210", priceAddition: 7 } });
+      }
+      if (url.endsWith("/job-paged/products")) {
+        return jsonResponse({ products: [{ id: "item-1", status: productStatus }], nextCursor: "item-1" });
+      }
+      if (url.endsWith("/job-paged/products?cursor=item-1")) {
+        return jsonResponse({ products: [{ id: "item-2", status: productStatus }], nextCursor: null });
+      }
+      const variantMatch = url.match(/\/products\/item-(\d+)\/variants\?cursor=(\d+)$/);
+      if (variantMatch) {
+        const variants = products[Number(variantMatch[1]) - 1]?.variants ?? [];
+        const cursor = Number(variantMatch[2]);
+        return jsonResponse({
+          variants: variants.slice(cursor, cursor + 2), nextCursor: cursor + 2 < variants.length ? cursor + 2 : null,
+        });
+      }
+      const detailMatch = url.match(/\/products\/item-(\d+)$/);
+      if (detailMatch) {
+        detailRequests += 1;
+        return jsonResponse({ ...products[Number(detailMatch[1]) - 1], title: productStatus, variants: undefined });
+      }
+      return jsonResponse({}, 404);
+    },
+  });
+  const first = await loader.loadJob("job-paged");
+  const second = await loader.loadJob("job-paged");
+  assert.equal(first?.products.length, 2);
+  assert.equal(second?.products.length, 2);
+  assert.equal(detailRequests, 2);
+  assert.equal(metadataRequests, 1);
+  assert.equal(second?.settings?.amazonZip, "90210");
+  assert.equal(second?.settings?.priceAddition, 7);
+  assert.deepEqual(second?.products[0]?.variants, products[0]?.variants);
+  productStatus = "seo";
+  const updated = await loader.loadJob("job-paged");
+  assert.equal(detailRequests, 4);
+  assert.equal(updated?.products[0]?.title, "seo");
 });

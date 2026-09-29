@@ -10,7 +10,7 @@ from copy import deepcopy
 from pathlib import Path
 
 from engine.cache import CACHE_SCHEMA_VERSION, RawFamilyCache
-from engine.crawler_core import AmazonCrawler, CrawlFetchError, CrawlSettings, HttpFetcher, NormalizedInput, effective_product_threads, normalize_amazon_input, parse_product_html
+from engine.crawler_core import AmazonCrawler, CrawlFetchError, CrawlSettings, HttpFetcher, NormalizedInput, classify_crawl_failure, effective_product_threads, normalize_amazon_input, parse_product_html
 from engine.customization_converter import expand_paid_variants, money, normalize_customization, remove_option_choosers
 from engine.proxy_profiles import ProxyAssignment
 from engine.variant_presets import PRESET_ID, build_jeminise_variants
@@ -254,6 +254,18 @@ def source_variant(asin: str, design: str, size: str, customization: dict | None
         "customization": customization, "customizationFingerprint": customization.get("fingerprint") if customization else None,
         "priceInference": {"isInferred": False, "sourceAsins": []}, "warnings": [],
     }
+
+
+def cache_family() -> dict:
+    return {
+        "parentAsin": "B012345678", "sourceTitle": "Cached product", "canonicalUrl": "https://www.amazon.com/dp/B012345678",
+        "variantMatrix": {"complete": True}, "customizationChecked": True, "diagnostics": {},
+        "sourceVariants": [source_variant("B012345678", "Ocean", "Twin")],
+    }
+
+
+def cache_partial() -> dict:
+    return {"parent": parse_product_html(PRODUCT_HTML, "B012345678", "https://www.amazon.com/dp/B012345678"), "family": cache_family()}
 
 
 class CoreTests(unittest.TestCase):
@@ -1144,13 +1156,315 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(len({variant["sku"] for variant in variants}), 47)
 
     def test_versioned_cache_invalidates_incomplete_matrix(self) -> None:
-        family = {"variantMatrix": {"complete": False}, "customizationChecked": True}
+        family = cache_family()
+        family["variantMatrix"]["complete"] = False
         with tempfile.TemporaryDirectory() as directory:
             cache = RawFamilyCache(Path(directory))
             cache.save("B012345678", family)
             self.assertIsNone(cache.load("B012345678"))
             raw = json.loads(next(Path(directory).glob("*.json")).read_text(encoding="utf-8"))
             self.assertEqual(raw["schemaVersion"], CACHE_SCHEMA_VERSION)
+
+    def test_negative_cache_expires_and_stays_separate_from_product_data(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            cache = RawFamilyCache(Path(directory))
+            cache.save_failure("B012345678:90001:us-v1", status="temporarily_blocked", reason="captcha", retry_after_seconds=60)
+            failure = cache.load_failure("B012345678:90001:us-v1")
+            self.assertEqual(failure["status"], "temporarily_blocked")
+            self.assertEqual(failure["reason"], "captcha")
+            self.assertIsNone(cache.load("B012345678:90001:us-v1"))
+            cache.save_failure("B012345679:90001:us-v1", status="network_error", reason="network_error", retry_after_seconds=-1)
+            self.assertIsNone(cache.load_failure("B012345679:90001:us-v1"))
+            cache.save("B012345678:90001:us-v1", {"variantMatrix": {"complete": True}, "customizationChecked": True})
+            self.assertIsNone(cache.load_failure("B012345678:90001:us-v1"))
+
+    def test_crawl_failure_reasons_have_distinct_retry_policies(self) -> None:
+        self.assertEqual(classify_crawl_failure(RuntimeError("HTTP Error 404"))["status"], "network_error")
+        self.assertTrue(classify_crawl_failure(RuntimeError("HTTP Error 404"))["retryable"])
+        self.assertEqual(classify_crawl_failure(RuntimeError("Amazon CAPTCHA detected"))["reason"], "captcha")
+        self.assertEqual(classify_crawl_failure(TimeoutError("timed out"))["status"], "network_error")
+        self.assertEqual(classify_crawl_failure(ValueError("Amazon HTML does not contain a product title."))["status"], "parser_error")
+        self.assertFalse(classify_crawl_failure(ValueError("Amazon HTML does not contain a product title."))["retryable"])
+        self.assertEqual(classify_crawl_failure(RuntimeError("unexpected parser shape"))["status"], "parser_error")
+
+    def test_partial_cache_keeps_successful_variants_for_resume(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            cache = RawFamilyCache(Path(directory))
+            partial = cache_partial()
+            cache.save_partial("B012345678:90001:us-v1", partial)
+            self.assertEqual(cache.load_partial("B012345678:90001:us-v1"), partial)
+            self.assertIsNone(cache.load("B012345678:90001:us-v1"))
+            cache.save_partial("B012345679:90001:us-v1", partial, ttl_seconds=-1)
+            self.assertIsNone(cache.load_partial("B012345679:90001:us-v1"))
+
+    def test_partial_family_resumes_only_missing_child(self) -> None:
+        class RecoveringCrawler(ParentFamilyCrawler):
+            def __init__(self, **kwargs: object) -> None:
+                super().__init__(**kwargs)
+                self.fetches: list[str] = []
+                self.should_fail = True
+
+            def _fetch_parsed(self, normalized: NormalizedInput, *, require_price: bool = True) -> tuple[dict, dict]:
+                self.fetches.append(normalized.asin)
+                if normalized.asin == "B012345679" and self.should_fail:
+                    raise TimeoutError("network timed out")
+                return super()._fetch_parsed(normalized, require_price=require_price)
+
+        with tempfile.TemporaryDirectory() as directory:
+            crawler = RecoveringCrawler(root=Path(directory), settings=CrawlSettings(variant_threads=1), browser_pool=FakeBrowser(PRODUCT_HTML))
+            normalized = normalize_amazon_input("B012345678")
+            first = crawler._crawl_family(normalized)
+            self.assertEqual(first["sourceVariants"][1]["diagnostics"]["fetchMode"], "failed")
+            self.assertIsNotNone(crawler.cache.load_partial("B012345678:90001:us-v1"))
+            crawler.should_fail = False
+            crawler.cache.clear_failure("B012345679:90001:us-v1")
+            second = crawler._crawl_family(normalized)
+            self.assertEqual(crawler.fetches, ["B012345678", "B012345679", "B012345679"])
+            self.assertTrue(all(variant["price"] is not None for variant in second["sourceVariants"]))
+            self.assertIsNotNone(crawler.cache.load("B012345678:90001:us-v1", require_customization=True))
+
+    def test_restart_after_child_crash_keeps_completed_family_work(self) -> None:
+        class CrashingCrawler(ParentFamilyCrawler):
+            def __init__(self, **kwargs: object) -> None:
+                super().__init__(**kwargs)
+                self.fetches: list[str] = []
+                self.should_crash = True
+
+            def _fetch_parsed(self, normalized: NormalizedInput, *, require_price: bool = True) -> tuple[dict, dict]:
+                self.fetches.append(normalized.asin)
+                if normalized.asin == "B012345679" and self.should_crash:
+                    raise KeyboardInterrupt("agent terminated during child crawl")
+                return super()._fetch_parsed(normalized, require_price=require_price)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            normalized = normalize_amazon_input("B012345678")
+            first = CrashingCrawler(root=root, settings=CrawlSettings(variant_threads=1), browser_pool=FakeBrowser(PRODUCT_HTML))
+            with self.assertRaises(KeyboardInterrupt):
+                first._crawl_family(normalized)
+
+            restarted = CrashingCrawler(root=root, settings=CrawlSettings(variant_threads=1), browser_pool=FakeBrowser(PRODUCT_HTML))
+            restarted.should_crash = False
+            family = restarted._crawl_family(normalized)
+
+            self.assertEqual(restarted.fetches, ["B012345679"])
+            self.assertTrue(all(variant["price"] is not None for variant in family["sourceVariants"]))
+            self.assertIsNotNone(restarted.cache.load("B012345678:90001:us-v1", require_customization=True))
+
+    def test_restart_after_last_child_skips_all_amazon_fetches(self) -> None:
+        class RecordingCrawler(ParentFamilyCrawler):
+            def __init__(self, **kwargs: object) -> None:
+                super().__init__(**kwargs)
+                self.fetches: list[str] = []
+
+            def _fetch_parsed(self, normalized: NormalizedInput, *, require_price: bool = True) -> tuple[dict, dict]:
+                self.fetches.append(normalized.asin)
+                return super()._fetch_parsed(normalized, require_price=require_price)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            normalized = normalize_amazon_input("B012345678")
+            first = RecordingCrawler(root=root, settings=CrawlSettings(variant_threads=1), browser_pool=FakeBrowser(PRODUCT_HTML))
+
+            def crash_before_family_save(_cache_key: str, _family: dict) -> None:
+                raise KeyboardInterrupt("agent terminated after last child")
+
+            first.cache.save = crash_before_family_save
+            with self.assertRaises(KeyboardInterrupt):
+                first._crawl_family(normalized)
+
+            restarted = RecordingCrawler(root=root, settings=CrawlSettings(variant_threads=1), browser_pool=FakeBrowser(PRODUCT_HTML))
+            family = restarted._crawl_family(normalized)
+            self.assertEqual(restarted.fetches, [])
+            self.assertTrue(all(variant["price"] is not None for variant in family["sourceVariants"]))
+            self.assertIsNone(restarted.cache.load_checkpoint("B012345678:90001:us-v1"))
+
+    def test_checkpoint_recovers_after_torn_write_and_invalidation_removes_it(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            cache = RawFamilyCache(Path(directory))
+            key = "B012345678:90001:us-v1"
+            cache.append_checkpoint(key, "parent_complete", {"parent": {"asin": "B012345678"}, "diagnostics": {}})
+            checkpoint_path = next(Path(directory).glob("checkpoint-*.jsonl"))
+            with checkpoint_path.open("ab") as handle:
+                handle.write(b'{"schemaVersion":\xc3')
+            cache.append_checkpoint(key, "matrix_complete", {"asinOptions": {"B012345678": {}}, "dimensions": {}})
+
+            restarted = RawFamilyCache(Path(directory))
+            self.assertEqual(restarted.load_checkpoint(key)["matrix"]["asinOptions"], {"B012345678": {}})
+            restarted.invalidate(key)
+            self.assertIsNone(restarted.load_checkpoint(key))
+
+    def test_incomplete_matrix_is_swept_again_after_restart(self) -> None:
+        class IncompleteMatrixCrawler(ParentFamilyCrawler):
+            def _fetch_parsed(self, normalized: NormalizedInput, *, require_price: bool = True) -> tuple[dict, dict]:
+                parsed, diagnostics = super()._fetch_parsed(normalized, require_price=require_price)
+                parsed["dimensions"]["Design"].append("Desert")
+                return parsed, diagnostics
+
+        class MatrixBrowser(FakeBrowser):
+            def __init__(self) -> None:
+                super().__init__(PRODUCT_HTML)
+                self.sweeps = 0
+
+            def sweep_variant_matrix(self, *_args: object, **_kwargs: object) -> list[str]:
+                self.sweeps += 1
+                return []
+
+        with tempfile.TemporaryDirectory() as directory:
+            browser = MatrixBrowser()
+            root = Path(directory)
+            settings = CrawlSettings(variant_threads=1)
+            normalized = normalize_amazon_input("B012345678")
+            IncompleteMatrixCrawler(root=root, settings=settings, browser_pool=browser)._crawl_family(normalized)
+            IncompleteMatrixCrawler(root=root, settings=settings, browser_pool=browser)._crawl_family(normalized)
+            self.assertEqual(browser.sweeps, 2)
+
+    def test_restart_after_media_checkpoint_skips_completed_gallery(self) -> None:
+        class GalleryBrowser(FakeBrowser):
+            def __init__(self) -> None:
+                super().__init__(PRODUCT_HTML)
+                self.gallery_calls: list[str] = []
+
+            def fetch_gallery(self, url: str, *, cancel_event: threading.Event | None = None) -> str:
+                self.gallery_calls.append(url)
+                return PRODUCT_HTML
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            settings = CrawlSettings(variant_threads=1)
+            normalized = normalize_amazon_input("B012345678")
+            first = ParentFamilyCrawler(root=root, settings=settings, browser_pool=GalleryBrowser())
+            append_checkpoint = first.cache.append_checkpoint
+
+            def crash_before_customization(cache_key: str, stage: str, payload: dict) -> None:
+                if stage == "customization_complete" and payload.get("asin") == "B012345678":
+                    raise KeyboardInterrupt("agent terminated after media")
+                append_checkpoint(cache_key, stage, payload)
+
+            first.cache.append_checkpoint = crash_before_customization
+            with self.assertRaises(KeyboardInterrupt):
+                first._crawl_family(normalized)
+
+            browser = GalleryBrowser()
+            restarted = ParentFamilyCrawler(root=root, settings=settings, browser_pool=browser)
+            restarted._crawl_family(normalized)
+            self.assertNotIn("https://www.amazon.com/dp/B012345678", browser.gallery_calls)
+
+    def test_restart_after_customization_checkpoint_skips_completed_child(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            settings = CrawlSettings(variant_threads=1)
+            normalized = normalize_amazon_input("B012345678")
+            first = ParentFamilyCrawler(root=root, settings=settings, browser_pool=FakeBrowser(PRODUCT_HTML))
+            append_checkpoint = first.cache.append_checkpoint
+
+            def crash_before_child_complete(cache_key: str, stage: str, payload: dict) -> None:
+                if stage == "child_complete" and payload.get("asin") == "B012345678":
+                    raise KeyboardInterrupt("agent terminated after customization")
+                append_checkpoint(cache_key, stage, payload)
+
+            first.cache.append_checkpoint = crash_before_child_complete
+            with self.assertRaises(KeyboardInterrupt):
+                first._crawl_family(normalized)
+
+            restarted = ParentFamilyCrawler(root=root, settings=settings, browser_pool=FakeBrowser(PRODUCT_HTML))
+            resumed_stages: list[tuple[str, str]] = []
+            restarted_append = restarted.cache.append_checkpoint
+
+            def record_checkpoint(cache_key: str, stage: str, payload: dict) -> None:
+                resumed_stages.append((stage, str(payload.get("asin") or "")))
+                restarted_append(cache_key, stage, payload)
+
+            restarted.cache.append_checkpoint = record_checkpoint
+            restarted._crawl_family(normalized)
+            self.assertIn(("child_complete", "B012345678"), resumed_stages)
+            self.assertNotIn(("customization_complete", "B012345678"), resumed_stages)
+
+    def test_failed_parent_uses_negative_cache_on_next_job(self) -> None:
+        class BlockedCrawler(ParentFamilyCrawler):
+            def __init__(self, **kwargs: object) -> None:
+                super().__init__(**kwargs)
+                self.fetch_count = 0
+
+            def _fetch_parsed(self, normalized: NormalizedInput, *, require_price: bool = True) -> tuple[dict, dict]:
+                self.fetch_count += 1
+                raise RuntimeError("Amazon CAPTCHA detected")
+
+        with tempfile.TemporaryDirectory() as directory:
+            crawler = BlockedCrawler(root=Path(directory), settings=CrawlSettings(), browser_pool=FakeBrowser(PRODUCT_HTML))
+            first = crawler.run(job_id="first", sources=["B012345678"], write_export=False)
+            second = crawler.run(job_id="second", sources=["B012345678"], write_export=False)
+            self.assertEqual(crawler.fetch_count, 1)
+            self.assertEqual(first["errors"][0]["status"], "temporarily_blocked")
+            self.assertEqual(second["errors"][0]["reason"], "captcha")
+            self.assertIn("retryAfter", second["errors"][0])
+
+    def test_partial_parser_failure_keeps_products_and_is_not_retried(self) -> None:
+        class BrokenChildCrawler(ParentFamilyCrawler):
+            def _fetch_parsed(self, normalized: NormalizedInput, *, require_price: bool = True) -> tuple[dict, dict]:
+                if normalized.asin == "B012345679":
+                    raise ValueError("Amazon HTML does not contain a product title.")
+                return super()._fetch_parsed(normalized, require_price=require_price)
+
+        with tempfile.TemporaryDirectory() as directory:
+            crawler = BrokenChildCrawler(root=Path(directory), settings=CrawlSettings(variant_threads=1), browser_pool=FakeBrowser(PRODUCT_HTML))
+            output = crawler.run(job_id="partial-parser", sources=["B012345678"], write_export=False)
+            self.assertEqual(output["status"], "partial")
+            self.assertTrue(output["products"])
+            self.assertEqual(output["errors"][0]["code"], "PARSER_ERROR")
+            self.assertFalse(output["errors"][0]["retryable"])
+
+    def test_mixed_child_failures_report_asins_and_retry_recoverable_child(self) -> None:
+        class MixedFailureCrawler(ParentFamilyCrawler):
+            def __init__(self, **kwargs: object) -> None:
+                super().__init__(**kwargs)
+                self.fetches: list[str] = []
+                self.should_fail_network = True
+
+            def _fetch_parsed(self, normalized: NormalizedInput, *, require_price: bool = True) -> tuple[dict, dict]:
+                self.fetches.append(normalized.asin)
+                if normalized.asin == "B012345679":
+                    raise ValueError("Amazon HTML does not contain a product title.")
+                if normalized.asin == "B012345680" and self.should_fail_network:
+                    raise TimeoutError("network timed out")
+                parsed, diagnostics = super()._fetch_parsed(normalized, require_price=require_price)
+                parsed["dimensions"]["Design"].append("Desert")
+                parsed["asinOptions"]["B012345680"] = {"Design": "Desert"}
+                return parsed, diagnostics
+
+        with tempfile.TemporaryDirectory() as directory:
+            crawler = MixedFailureCrawler(root=Path(directory), settings=CrawlSettings(variant_threads=1), browser_pool=FakeBrowser(PRODUCT_HTML))
+            first = crawler.run(job_id="mixed-first", sources=["B012345678"], write_export=False)
+            self.assertEqual(first["status"], "partial")
+            self.assertEqual(first["completedAsins"], ["B012345678"])
+            self.assertEqual(first["failedAsins"], ["B012345679", "B012345680"])
+            self.assertEqual(first["retryableAsins"], ["B012345680"])
+            self.assertEqual(first["nonRetryableAsins"], ["B012345679"])
+            self.assertTrue(first["errors"][0]["retryable"])
+            self.assertEqual(first["errors"][0]["retryableAsins"], ["B012345680"])
+            partial = crawler.cache.load_partial("B012345678:90001:us-v1")
+            self.assertEqual(partial["completedAsins"], ["B012345678"])
+            self.assertEqual(partial["failedAsins"], ["B012345679", "B012345680"])
+            self.assertEqual(partial["completedAsins"], first["completedAsins"])
+            self.assertEqual(partial["failedAsins"], first["failedAsins"])
+
+            crawler.should_fail_network = False
+            crawler.cache.clear_failure("B012345680:90001:us-v1")
+            second = crawler.run(job_id="mixed-second", sources=["B012345678"], write_export=False)
+            self.assertEqual(second["completedAsins"], ["B012345678", "B012345680"])
+            self.assertEqual(second["failedAsins"], ["B012345679"])
+            self.assertEqual(second["retryableAsins"], [])
+            self.assertEqual(second["nonRetryableAsins"], ["B012345679"])
+            self.assertFalse(second["errors"][0]["retryable"])
+            self.assertEqual(crawler.cache.load_partial("B012345678:90001:us-v1")["completedAsins"], ["B012345678", "B012345680"])
+            self.assertEqual(crawler.fetches, ["B012345678", "B012345679", "B012345680", "B012345680"])
+
+    def test_gallery_failure_blocks_publishing_incomplete_product(self) -> None:
+        product = {
+            "variantMatrix": {"complete": True},
+            "sourceVariants": [{"price": {"amount": 20}, "warnings": ["Full gallery browser fallback failed"]}],
+        }
+        self.assertIn("media_incomplete", AmazonCrawler._product_publish_blockers(product))
 
     def test_cache_invalidates_media_from_pre_hires_schema(self) -> None:
         family = {
@@ -1168,15 +1482,27 @@ class CoreTests(unittest.TestCase):
 
             self.assertIsNone(cache.load("B012345678", require_customization=True))
 
-    def test_cache_clear_removes_only_family_cache_files(self) -> None:
+    def test_complete_matrix_does_not_make_failed_child_a_valid_product_cache(self) -> None:
+        family = {
+            "variantMatrix": {"complete": True}, "customizationChecked": True,
+            "sourceVariants": [{"asin": "B012345679", "price": None, "diagnostics": {"fetchMode": "failed"}}],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            cache = RawFamilyCache(Path(directory))
+            cache.save("B012345678", family)
+            self.assertIsNone(cache.load("B012345678", require_customization=True))
+
+    def test_cache_clear_removes_only_amazon_cache_files(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             cache_directory = Path(directory)
             cache = RawFamilyCache(cache_directory)
             cache.save("B012345678", {"variantMatrix": {"complete": True}})
+            cache.save_failure("B012345679", status="temporarily_blocked", reason="captcha", retry_after_seconds=60)
+            cache.save_partial("B012345680", {"parent": {}, "family": {}})
             unrelated = cache_directory / "keep.txt"
             unrelated.write_text("keep", encoding="utf-8")
             result = cache.clear()
-            self.assertEqual(result["removedFiles"], 1)
+            self.assertEqual(result["removedFiles"], 3)
             self.assertGreater(result["removedBytes"], 0)
             self.assertTrue(unrelated.is_file())
             self.assertEqual(list(cache_directory.glob("family-*.json")), [])
@@ -1217,6 +1543,8 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(exported["jobId"], "test-job")
             self.assertEqual(list((root / "exports").glob("*.tmp")), [])
         self.assertEqual(output["status"], "partial")
+        self.assertEqual(output["errors"][0]["status"], "invalid_asin")
+        self.assertFalse(output["errors"][0]["retryable"])
         self.assertEqual(output["statistics"]["rejectedInputs"], 1)
         self.assertEqual(len(output["products"]), 2)
 

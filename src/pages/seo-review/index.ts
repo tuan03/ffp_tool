@@ -17,6 +17,8 @@ export { sanitizeHtmlDescription } from "./sanitize-html";
 export { filterSeoProducts, findNextProductInList } from "./review-navigation";
 export { buildProductZoomImages } from "./zoom-image-helper";
 export { ImageZoomModal } from "./components/ImageZoomModal";
+export { VersionConflictModal } from "./components/VersionConflictModal";
+export type { VersionConflictModalProps } from "./components/VersionConflictModal";
 export type {
   DisplayField,
   FieldSource,

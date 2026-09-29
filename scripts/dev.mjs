@@ -3,7 +3,7 @@ import { createServer } from "node:net";
 import { networkInterfaces } from "node:os";
 
 import { getLanIpv4Addresses } from "./dev-network.mjs";
-import { getDevelopmentProcessSpecs } from "./dev-processes.mjs";
+import { getDevelopmentProcessSpecs, getWebHost } from "./dev-processes.mjs";
 
 process.env.VITE_CONFIG_NATIVE_IGNORE_WARNING = "true";
 
@@ -26,12 +26,15 @@ try {
   process.exit(1);
 }
 
+const isPublicHost = getWebHost() === "0.0.0.0";
 const lanAddresses = getLanIpv4Addresses(networkInterfaces());
 console.log("Development services are available at:");
 console.log("  Local UI:          http://127.0.0.1:5173/");
 console.log("  Local coordinator: http://127.0.0.1:8766/api/v1/health");
 for (const address of lanAddresses) {
-  console.log(`  LAN UI:            http://${address}:5173/`);
+  if (isPublicHost) {
+    console.log(`  LAN UI:            http://${address}:5173/`);
+  }
   console.log(`  LAN coordinator:   http://${address}:8766/api/v1/health`);
   console.log(`  Client serverUrl:  http://${address}:8766`);
 }

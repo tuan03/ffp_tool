@@ -5,11 +5,13 @@ from __future__ import annotations
 import json
 import sqlite3
 import uuid
+import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
 from .protocol import utc_iso
+from ..observability import safe_fields
 
 
 SCHEMA = """
@@ -58,6 +60,12 @@ CREATE TABLE IF NOT EXISTS agent_state (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS telemetry_spool (
+    event_id TEXT PRIMARY KEY,
+    payload_json TEXT NOT NULL,
+    created_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS telemetry_spool_created ON telemetry_spool(created_at);
 """
 
 
@@ -91,6 +99,42 @@ class ClientStore:
             connection.execute("INSERT INTO agent_identity(singleton, client_id) VALUES (1, ?)", (client_id,))
             connection.commit()
             return client_id
+
+    def spool_telemetry(self, event: dict[str, Any], *, maximum: int = 10000) -> None:
+        payload = json.dumps(safe_fields(event), ensure_ascii=False, separators=(",", ":"))
+        if len(payload.encode("utf-8")) > 4096:
+            self.count_telemetry_dropped()
+            return
+        with self._connection() as connection:
+            connection.execute("INSERT OR IGNORE INTO telemetry_spool VALUES (?,?,?)", (event["eventId"], payload, time.time()))
+            count = connection.execute("SELECT COUNT(*) FROM telemetry_spool").fetchone()[0]
+            excess = max(0, count - maximum)
+            if excess:
+                connection.execute("DELETE FROM telemetry_spool WHERE event_id IN (SELECT event_id FROM telemetry_spool ORDER BY created_at LIMIT ?)", (excess,))
+                self._count_dropped(connection, excess)
+
+    @staticmethod
+    def _count_dropped(connection, amount: int) -> None:
+        connection.execute("INSERT INTO agent_state VALUES ('telemetry_dropped',?) ON CONFLICT(key) DO UPDATE SET value=CAST(value AS INTEGER)+CAST(excluded.value AS INTEGER)", (str(amount),))
+
+    def count_telemetry_dropped(self) -> None:
+        with self._connection() as connection:
+            self._count_dropped(connection, 1)
+
+    def pending_telemetry(self, limit: int = 64) -> list[dict[str, Any]]:
+        with self._connection() as connection:
+            rows = connection.execute("SELECT payload_json FROM telemetry_spool ORDER BY created_at LIMIT ?", (max(1, min(limit, 64)),)).fetchall()
+        return [json.loads(row[0]) for row in rows]
+
+    def telemetry_status(self) -> dict[str, int]:
+        with self._connection() as connection:
+            backlog = connection.execute("SELECT COUNT(*) FROM telemetry_spool").fetchone()[0]
+            dropped = connection.execute("SELECT value FROM agent_state WHERE key='telemetry_dropped'").fetchone()
+        return {"backlog": backlog, "dropped": int(dropped[0]) if dropped else 0}
+
+    def acknowledge_telemetry(self, event_ids: list[str]) -> None:
+        with self._connection() as connection:
+            connection.executemany("DELETE FROM telemetry_spool WHERE event_id=?", [(event_id,) for event_id in event_ids[:64]])
 
     def save_assignment(self, assignment: dict[str, Any]) -> None:
         now = utc_iso()
@@ -176,6 +220,42 @@ class ClientStore:
             connection.execute("DELETE FROM leases WHERE job_id=?", (job_id,))
             connection.commit()
 
+    def clear_orphaned_jobs(self, valid_job_ids: set[str]) -> int:
+        """Discard local lease and upload spool rows for jobs absent on the coordinator."""
+        with self._connection() as connection:
+            leases = {
+                str(row["task_id"]): str(row["job_id"])
+                for row in connection.execute("SELECT task_id, job_id FROM leases").fetchall()
+            }
+            orphaned_job_ids = set(leases.values()) - valid_job_ids
+            for job_id in orphaned_job_ids:
+                connection.execute("DELETE FROM leases WHERE job_id=?", (job_id,))
+            for table_name in ("pending_products", "pending_results"):
+                rows = connection.execute(f"SELECT task_id, payload_json FROM {table_name}").fetchall()
+                for row in rows:
+                    task_id = str(row["task_id"])
+                    job_id = leases.get(task_id)
+                    if job_id is None:
+                        try:
+                            payload = json.loads(row["payload_json"])
+                            job_id = str(payload.get("jobId") or "") if isinstance(payload, dict) else ""
+                        except (TypeError, ValueError):
+                            job_id = ""
+                    if job_id in valid_job_ids:
+                        continue
+                    connection.execute(f"DELETE FROM {table_name} WHERE task_id=?", (task_id,))
+                    if job_id:
+                        orphaned_job_ids.add(job_id)
+            cancel_intent_job_ids = {
+                str(row["job_id"])
+                for row in connection.execute("SELECT job_id FROM cancel_intents").fetchall()
+            }
+            for job_id in cancel_intent_job_ids - valid_job_ids:
+                connection.execute("DELETE FROM cancel_intents WHERE job_id=?", (job_id,))
+                orphaned_job_ids.add(job_id)
+            connection.commit()
+        return len(orphaned_job_ids)
+
     def add_cancel_intent(self, job_id: str) -> None:
         if not job_id:
             return
@@ -232,6 +312,50 @@ class ClientStore:
             connection.execute(
                 "INSERT OR REPLACE INTO agent_state(key, value) VALUES ('cache_generation', ?)",
                 (str(max(0, int(generation))),),
+            )
+            connection.commit()
+
+    def product_invalidation_generation(self) -> int:
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT value FROM agent_state WHERE key='product_invalidation_generation'"
+            ).fetchone()
+        try:
+            return max(0, int(row["value"])) if row else 0
+        except (TypeError, ValueError):
+            return 0
+
+    def temporary_cleanup_generation(self) -> int:
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT value FROM agent_state WHERE key='temporary_cleanup_generation'"
+            ).fetchone()
+        try:
+            return max(0, int(row["value"])) if row else 0
+        except (TypeError, ValueError):
+            return 0
+
+    def set_temporary_cleanup_generation(self, generation: int) -> None:
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT value FROM agent_state WHERE key='temporary_cleanup_generation'"
+            ).fetchone()
+            current_generation = max(0, int(row["value"])) if row else 0
+            connection.execute(
+                "INSERT OR REPLACE INTO agent_state(key, value) VALUES ('temporary_cleanup_generation', ?)",
+                (str(max(current_generation, generation)),),
+            )
+            connection.commit()
+
+    def set_product_invalidation_generation(self, generation: int) -> None:
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT value FROM agent_state WHERE key='product_invalidation_generation'"
+            ).fetchone()
+            current_generation = max(0, int(row["value"])) if row else 0
+            connection.execute(
+                "INSERT OR REPLACE INTO agent_state(key, value) VALUES ('product_invalidation_generation', ?)",
+                (str(max(current_generation, generation)),),
             )
             connection.commit()
 

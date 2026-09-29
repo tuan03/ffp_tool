@@ -1,3 +1,4 @@
+import { SeoTimeoutError } from "../internal/pipeline-errors";
 import { runSeoContent } from "../service";
 import type { SeoContentInput, SeoContentOutput } from "../types";
 import type {
@@ -15,6 +16,32 @@ function generateQueueItemId(index: number): string {
   return `seo-queue-${timePart}-${randomPart}-${index}-${globalCounter}`;
 }
 
+function createAbortError(reason?: unknown): Error {
+  if (reason instanceof Error) return reason;
+  const error = new Error("Queue item execution was cancelled.");
+  error.name = "AbortError";
+  return error;
+}
+
+async function awaitWithAbort<T>(promise: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+  if (!signal) return promise;
+  if (signal.aborted) throw createAbortError(signal.reason);
+  return new Promise<T>((resolve, reject) => {
+    const handleAbort = () => reject(createAbortError(signal.reason));
+    signal.addEventListener("abort", handleAbort, { once: true });
+    void promise.then(
+      (val) => {
+        signal.removeEventListener("abort", handleAbort);
+        resolve(val);
+      },
+      (err) => {
+        signal.removeEventListener("abort", handleAbort);
+        reject(err);
+      },
+    );
+  });
+}
+
 /**
  * Universal FIFO Queue Engine cho module SEO Content.
  * Chạy độc lập, không phụ thuộc DOM hay Node runtime nội bộ.
@@ -23,9 +50,13 @@ function generateQueueItemId(index: number): string {
 export class SeoContentQueue<TSource = unknown> {
   private items: SeoQueueItem<TSource>[] = [];
   private readonly options: SeoQueueOptions<TSource>;
-  private readonly runner: (input: SeoContentInput) => Promise<SeoContentOutput>;
+  private readonly runner: (
+    input: SeoContentInput,
+    options?: { readonly signal?: AbortSignal },
+  ) => Promise<SeoContentOutput>;
   private readonly concurrency: number;
   private readonly autoStart: boolean;
+  private readonly itemTimeoutMs?: number;
 
   private isPaused = false;
   private runningCount = 0;
@@ -41,7 +72,9 @@ export class SeoContentQueue<TSource = unknown> {
       : 1;
     this.concurrency = Math.max(1, Math.min(Math.floor(rawConcurrency), 3));
     this.autoStart = options.autoStart ?? true;
+    this.itemTimeoutMs = options.itemTimeoutMs;
   }
+
 
   /**
    * Bắn sự kiện an toàn, cô lập lỗi callback của người gọi để không ảnh hưởng đến vòng lặp queue.
@@ -72,11 +105,13 @@ export class SeoContentQueue<TSource = unknown> {
     for (let index = 0; index < inputs.length; index += 1) {
       const currentInput = inputs[index];
       const currentSource = isBatch && Array.isArray(source) ? source[index] : source;
+      const abortController = new AbortController();
 
       const item: SeoQueueItem<TSource> = {
         id: generateQueueItemId(this.nextItemIndex),
         index: this.nextItemIndex,
         seoInput: currentInput,
+        abortController,
         ...(currentSource !== undefined ? { source: currentSource as TSource } : {}),
         status: "pending",
         enqueuedAt: Date.now(),
@@ -97,6 +132,34 @@ export class SeoContentQueue<TSource = unknown> {
     }
 
     return newItems;
+  }
+
+  /**
+   * Hủy bỏ / abort một item cụ thể bằng id (cho dù đang pending hay processing).
+   * Khi gọi với item đang processing, worker slot sẽ được giải phóng ngay lập tức.
+   */
+  public abortItem(id: string, reason?: unknown): boolean {
+    const item = this.items.find((i) => i.id === id);
+    if (!item) return false;
+
+    if (item.status === "pending") {
+      item.status = "cancelled";
+      item.completedAt = Date.now();
+      item.durationMs = 0;
+      item.abortController?.abort(reason);
+      this.safeEmit(this.options.onItemCancelled, item);
+      this.safeEmit(this.options.onProgress, this.getStats());
+      this.pump();
+      this.checkDrain();
+      return true;
+    }
+
+    if (item.status === "processing") {
+      item.abortController?.abort(reason);
+      return true;
+    }
+
+    return false;
   }
 
   /**
@@ -135,9 +198,9 @@ export class SeoContentQueue<TSource = unknown> {
   }
 
   /**
-   * Hủy bỏ toàn bộ các item đang pending.
+   * Hủy bỏ toàn bộ các item đang pending (hoặc cả processing nếu abortProcessing = true).
    */
-  public cancel(): void {
+  public cancel(options?: { readonly abortProcessing?: boolean }): void {
     let hasCancelled = false;
     const now = Date.now();
 
@@ -146,6 +209,10 @@ export class SeoContentQueue<TSource = unknown> {
         item.status = "cancelled";
         item.completedAt = now;
         item.durationMs = 0;
+        item.abortController?.abort();
+        hasCancelled = true;
+      } else if (options?.abortProcessing && item.status === "processing") {
+        item.abortController?.abort();
         hasCancelled = true;
       }
     }
@@ -162,15 +229,19 @@ export class SeoContentQueue<TSource = unknown> {
    * Xóa sạch các item đang pending khỏi hàng đợi.
    */
   public clear(): void {
-    const prevPending = this.items.filter((item) => item.status === "pending").length;
+    const pendingItems = this.items.filter((item) => item.status === "pending");
+    for (const item of pendingItems) {
+      item.abortController?.abort();
+    }
     this.items = this.items.filter((item) => item.status !== "pending");
 
-    if (prevPending > 0) {
+    if (pendingItems.length > 0) {
       this.safeEmit(this.options.onProgress, this.getStats());
     }
 
     this.checkDrain();
   }
+
 
   /**
    * Trả về thống kê tiến độ tức thời của hàng đợi.
@@ -259,32 +330,85 @@ export class SeoContentQueue<TSource = unknown> {
       this.safeEmit(this.options.onItemStarted, currentItem);
       this.safeEmit(this.options.onProgress, this.getStats());
 
-      (async () => {
-        try {
-          const output = await this.runner(currentItem.seoInput);
-          currentItem.status = "completed";
-          currentItem.output = output;
-          currentItem.completedAt = Date.now();
-          currentItem.durationMs = currentItem.completedAt - (currentItem.startedAt ?? currentItem.completedAt);
-          this.safeEmit(this.options.onItemCompleted, currentItem, output);
-        } catch (err: unknown) {
-          currentItem.status = "failed";
-          const errorMessage = err instanceof Error ? err.message : String(err);
-          currentItem.error = errorMessage;
-          currentItem.completedAt = Date.now();
-          currentItem.durationMs = currentItem.completedAt - (currentItem.startedAt ?? currentItem.completedAt);
-          this.safeEmit(this.options.onItemFailed, currentItem, errorMessage);
-        } finally {
-          this.runningCount -= 1;
-          this.safeEmit(this.options.onProgress, this.getStats());
-          this.pump();
-          this.checkDrain();
-        }
-      })();
+      void this.processItem(currentItem);
     }
 
     this.checkDrain();
   }
+
+  /**
+   * Xử lý một queue item riêng lẻ với quản lý timeout, abort, và giải phóng worker slot an toàn.
+   */
+  private async processItem(currentItem: SeoQueueItem<TSource>): Promise<void> {
+    let itemTimer: NodeJS.Timeout | number | undefined;
+
+    if (this.itemTimeoutMs && this.itemTimeoutMs > 0 && Number.isFinite(this.itemTimeoutMs)) {
+      itemTimer = setTimeout(() => {
+        currentItem.abortController?.abort(
+          new SeoTimeoutError(
+            "overall",
+            this.itemTimeoutMs!,
+            `Queue item timed out after ${this.itemTimeoutMs}ms`,
+          ),
+        );
+      }, this.itemTimeoutMs);
+      if (typeof (itemTimer as { unref?: () => void })?.unref === "function") {
+        (itemTimer as { unref: () => void }).unref();
+      }
+    }
+
+    try {
+      if (currentItem.abortController?.signal.aborted) {
+        throw createAbortError(currentItem.abortController.signal.reason);
+      }
+
+      const runnerPromise = this.runner(currentItem.seoInput, {
+        signal: currentItem.abortController?.signal,
+      });
+      const output = await awaitWithAbort(runnerPromise, currentItem.abortController?.signal);
+
+      currentItem.status = "completed";
+      currentItem.output = output;
+      currentItem.completedAt = Date.now();
+      currentItem.durationMs = currentItem.completedAt - (currentItem.startedAt ?? currentItem.completedAt);
+      this.safeEmit(this.options.onItemCompleted, currentItem, output);
+    } catch (err: unknown) {
+      const isTimeout =
+        err instanceof SeoTimeoutError ||
+        (err instanceof Error &&
+          (err.name === "SeoTimeoutError" || (err as { code?: string }).code === "SEO_TIMEOUT"));
+
+      const isAborted =
+        !isTimeout &&
+        (Boolean(currentItem.abortController?.signal.aborted) ||
+          (err instanceof Error && err.name === "AbortError"));
+
+      if (isAborted) {
+        currentItem.status = "cancelled";
+      } else {
+        currentItem.status = "failed";
+      }
+
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      currentItem.error = errorMessage;
+      currentItem.completedAt = Date.now();
+      currentItem.durationMs = currentItem.completedAt - (currentItem.startedAt ?? currentItem.completedAt);
+
+      if (isAborted) {
+        this.safeEmit(this.options.onItemCancelled, currentItem);
+      }
+      this.safeEmit(this.options.onItemFailed, currentItem, errorMessage);
+    } finally {
+      if (itemTimer !== undefined) {
+        clearTimeout(itemTimer);
+      }
+      this.runningCount -= 1;
+      this.safeEmit(this.options.onProgress, this.getStats());
+      this.pump();
+      this.checkDrain();
+    }
+  }
+
 
   /**
    * Kiểm tra điều kiện cạn hàng đợi (drain) và kích hoạt callbacks/resolvers tương ứng.

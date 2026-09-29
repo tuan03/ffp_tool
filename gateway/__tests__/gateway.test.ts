@@ -4696,6 +4696,59 @@ describe("Gateway: Level 2 Hardening (Auth, Timeouts, Auto-Recovery, Idempotency
     await new Promise<void>((resolve) => server.close(() => resolve()));
   });
 
+  it("operator Basic authentication guards the UI and authorizes its GPT SEO admin calls", async () => {
+    const previousEnvironment = {
+      GATEWAY_AUTH_TOKEN: process.env.GATEWAY_AUTH_TOKEN,
+      GPT_SEO_ACTION_KEYS_JSON: process.env.GPT_SEO_ACTION_KEYS_JSON,
+      GPT_SEO_DB_PATH: process.env.GPT_SEO_DB_PATH,
+    };
+    process.env.GATEWAY_AUTH_TOKEN = "test-gateway-admin-key";
+    process.env.GPT_SEO_ACTION_KEYS_JSON = JSON.stringify({ capozen: "test-capozen-action-key" });
+    process.env.GPT_SEO_DB_PATH = ":memory:";
+
+    const { startGatewayServer } = await import("../server");
+    const server = startGatewayServer({
+      port: 0,
+      operatorUsername: "test-operator",
+      operatorPassword: "test-operator-password",
+    });
+    await new Promise<void>((resolve) => server.once("listening", resolve));
+    const address = server.address() as import("node:net").AddressInfo;
+    const baseUrl = `http://127.0.0.1:${address.port}`;
+    const validBasicAuthorization = `Basic ${Buffer.from("test-operator:test-operator-password").toString("base64")}`;
+    const invalidBasicAuthorization = `Basic ${Buffer.from("test-operator:wrong-password").toString("base64")}`;
+
+    try {
+      const healthResponse = await fetch(`${baseUrl}/health`);
+      assert.equal(healthResponse.status, 200);
+
+      const unauthenticatedUiResponse = await fetch(`${baseUrl}/gpt-seo`);
+      assert.equal(unauthenticatedUiResponse.status, 401);
+      assert.equal(unauthenticatedUiResponse.headers.get("www-authenticate"), 'Basic realm="FFP Tool", charset="UTF-8"');
+
+      const invalidUiResponse = await fetch(`${baseUrl}/gpt-seo`, {
+        headers: { Authorization: invalidBasicAuthorization },
+      });
+      assert.equal(invalidUiResponse.status, 401);
+
+      const adminResponse = await fetch(`${baseUrl}/api/v1/gpt-seo/admin/settings?storeId=capozen`, {
+        headers: { Authorization: validBasicAuthorization },
+      });
+      assert.equal(adminResponse.status, 200);
+
+      const actionResponse = await fetch(`${baseUrl}/api/v1/gpt-seo/context`, {
+        headers: { Authorization: "Bearer test-capozen-action-key" },
+      });
+      assert.equal(actionResponse.status, 200);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      for (const [name, value] of Object.entries(previousEnvironment)) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+    }
+  });
+
   it("rejects unauthenticated requests with 401 before body buffering even when payload exceeds maxBodyBytes", async () => {
     const { startGatewayServer } = await import("../server");
     const server = startGatewayServer({

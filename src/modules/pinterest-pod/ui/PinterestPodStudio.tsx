@@ -22,15 +22,14 @@ import type {
   TrendingKeywordItem,
 } from "../types";
 import { CandidateReviewGrid } from "./components/CandidateReviewGrid";
-import { DeliverablesShowcase } from "./components/DeliverablesShowcase";
 import { HeaderBar } from "./components/HeaderBar";
 import { ImageLightboxModal, type LightboxImageItem } from "./components/ImageLightboxModal";
 import { InitForm } from "./components/InitForm";
 import { PinterestAuthModal } from "./components/PinterestAuthModal";
+import { ProductionStep } from "./components/ProductionStep";
 import { ProgressAndLogs } from "./components/ProgressAndLogs";
 import { RecentRunsAccordion } from "./components/RecentRunsAccordion";
 import { RoomTemplateManagerModal } from "./components/RoomTemplateManagerModal";
-import { ShopifyPricingConfigSection } from "./components/ShopifyPricingConfigSection";
 import { TrendClusterDiscovery } from "./components/TrendClusterDiscovery";
 
 interface PinterestPodStudioProps {
@@ -47,6 +46,10 @@ export function PinterestPodStudio({
   // Auth State
   const [authStatus, setAuthStatus] = useState<PinterestAuthStatus | null>(null);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
+
+  // Distributed Agent State
+  const [isAgentConnected, setIsAgentConnected] = useState(false);
+  const [agentName, setAgentName] = useState<string | undefined>(undefined);
 
   // Form State
   const [niche, setNiche] = useState("Halloween spooky cute");
@@ -81,6 +84,7 @@ export function PinterestPodStudio({
   const [summaryMetrics, setSummaryMetrics] = useState<SummaryMetrics | undefined>(undefined);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isProducing, setIsProducing] = useState(false);
+  const [isCancelling, setIsCancelling] = useState(false);
 
   // Recent Runs State
   const [recentRuns, setRecentRuns] = useState<readonly PodRecentRunItem[]>([]);
@@ -218,7 +222,10 @@ export function PinterestPodStudio({
           id: c.id || c.candidate_id || c.image_id || `cand_${idx + 1}`,
         }));
         setCandidates(normalized);
-        setSelectedCandidateIds(normalized.filter((c) => c.recommended).map((c) => c.id));
+        const savedSelected = detail.selected_candidates && detail.selected_candidates.length > 0
+          ? detail.selected_candidates
+          : normalized.filter((c) => c.recommended).map((c) => c.id);
+        setSelectedCandidateIds(savedSelected.length > 0 ? savedSelected : normalized.map((c) => c.id));
       } else {
         setCandidates([]);
         setSelectedCandidateIds([]);
@@ -278,6 +285,7 @@ export function PinterestPodStudio({
           setCurrentStage(1);
         }
       } else if (
+        targetJobId.startsWith("job_prod_") ||
         detail.status === "completed" ||
         (detail.deliverables && (detail.deliverables.print_cmyk_images?.length ?? 0) > 0)
       ) {
@@ -301,6 +309,17 @@ export function PinterestPodStudio({
       }
     } catch (err) {
       if (!isMountedRef.current) return;
+      const isNotFound = err instanceof Error && (err.message.includes("404") || err.message.includes("Not Found"));
+      if (isNotFound) {
+        try {
+          localStorage.removeItem("pinterest_pod_active_job_id");
+        } catch {
+          // Ignore
+        }
+        setJobId(null);
+        setJobStatus("idle");
+        return;
+      }
       setErrorMessage(err instanceof Error ? err.message : `Không thể tải dữ liệu job ${targetJobId}`);
     }
   }
@@ -401,6 +420,45 @@ export function PinterestPodStudio({
     return () => {
       isMountedRef.current = false;
       stopPolling();
+    };
+  }, [client]);
+
+  // Poll connected crawler agents periodically
+  useEffect(() => {
+    let timer: ReturnType<typeof setInterval> | null = null;
+
+    async function checkAgentStatus(): Promise<void> {
+      try {
+        if (!client.getCrawlerClients) return;
+        const clients = await client.getCrawlerClients();
+        if (!isMountedRef.current) return;
+        const activeAgent = clients.find(
+          (c) => c.isConnected && (!c.capabilities || c.capabilities.pinterest !== false),
+        );
+        if (activeAgent) {
+          setIsAgentConnected(true);
+          setAgentName(activeAgent.displayName || activeAgent.id);
+        } else {
+          setIsAgentConnected(false);
+          setAgentName(undefined);
+        }
+      } catch {
+        if (isMountedRef.current) {
+          setIsAgentConnected(false);
+          setAgentName(undefined);
+        }
+      }
+    }
+
+    void checkAgentStatus();
+    timer = setInterval(() => {
+      void checkAgentStatus();
+    }, 5000);
+
+    return () => {
+      if (timer !== null) {
+        clearInterval(timer);
+      }
     };
   }, [client]);
 
@@ -546,10 +604,12 @@ export function PinterestPodStudio({
             sound: "alert",
             url: "/pinterest-pod",
           });
-        }
-        if (detail.error) {
-          setErrorMessage(detail.error);
-          window.scrollTo({ top: 0, behavior: "smooth" });
+          if (detail.error) {
+            setErrorMessage(detail.error);
+            window.scrollTo({ top: 0, behavior: "smooth" });
+          }
+        } else {
+          setErrorMessage(null);
         }
       }
     } catch (err) {
@@ -735,16 +795,27 @@ export function PinterestPodStudio({
   // Stop Job and unlock form
   async function handleStopJob(): Promise<void> {
     const currentId = jobId;
+    if (!currentId) return;
+    setIsCancelling(true);
     try {
-      if (currentId) {
-        await client.cancelJob(currentId);
+      const cancelRes = await client.cancelJob(currentId);
+      if (isMountedRef.current) {
+        setJobStatus("cancelled");
+        if (cancelRes.logs && cancelRes.logs.length > 0) {
+          setLogs(cancelRes.logs);
+        } else {
+          setLogs((prev) => [...prev, "Tiến trình đã được dừng an toàn theo yêu cầu của người dùng."]);
+        }
       }
     } catch (err) {
       console.warn("Cancel job warning:", err);
+      if (isMountedRef.current) {
+        setJobStatus("cancelled");
+      }
     } finally {
       if (isMountedRef.current) {
-        setJobStatus("idle");
         setIsProducing(false);
+        setIsCancelling(false);
         stopPolling();
         setErrorMessage(null);
         void loadRecentRuns();
@@ -798,7 +869,11 @@ export function PinterestPodStudio({
 
   // Produce Action (Stage 2 -> Stage 3)
   async function handleProduce(): Promise<void> {
-    if (!jobId || selectedCandidateIds.length === 0) return;
+    const candidatesToProduce =
+      selectedCandidateIds.length > 0
+        ? selectedCandidateIds
+        : candidates.map((c) => c.id || c.candidate_id || c.image_id || "").filter(Boolean);
+    if (!jobId || candidatesToProduce.length === 0) return;
 
     setIsProducing(true);
     setErrorMessage(null);
@@ -809,7 +884,7 @@ export function PinterestPodStudio({
     setStepper({
       current_step: 3,
       percent: 60,
-      current_message: `Đang chuẩn bị file in CMYK 300DPI và render mockup AI cho ${selectedCandidateIds.length} mẫu đã chọn...`,
+      current_message: `Đang chuẩn bị file in CMYK 300DPI và render mockup AI cho ${candidatesToProduce.length} mẫu đã chọn...`,
     });
     setTimeout(() => {
       if (isMountedRef.current) {
@@ -821,7 +896,7 @@ export function PinterestPodStudio({
     try {
       const produceRes = await client.produce({
         jobId,
-        selected_candidates: selectedCandidateIds,
+        selected_candidates: candidatesToProduce,
         product,
         niche,
         design_mode: "direct_print",
@@ -858,7 +933,7 @@ export function PinterestPodStudio({
 
   // Packaged SEO payload when deliverables available
   const seoPayload = useMemo(() => {
-    if (!deliverables || !jobId || jobStatus !== "completed") return undefined;
+    if (!deliverables || !jobId) return undefined;
     return packageDeliverablesForSeo(
       {
         ok: true,
@@ -883,7 +958,7 @@ export function PinterestPodStudio({
         variants: shopifySettings.variants,
       },
     );
-  }, [deliverables, jobId, jobStatus, candidates, product, selectedCandidateIds, shopifySettings]);
+  }, [deliverables, jobId, candidates, product, selectedCandidateIds, shopifySettings]);
 
   const hasStage2 = candidates.length > 0 || jobStatus === "ready_for_review";
   const hasDeliverables =
@@ -892,7 +967,11 @@ export function PinterestPodStudio({
       (deliverables.lifestyle_mockups?.length ?? 0) > 0 ||
       (deliverables.final_png_images?.length ?? 0) > 0);
   const isProductionActive = isProducing || jobStatus === "producing";
-  const hasStage3 = hasDeliverables || isProductionActive;
+  const hasStage3 =
+    hasDeliverables ||
+    isProductionActive ||
+    jobStatus === "cancelled" ||
+    (jobStatus === "failed" && Boolean(jobId?.startsWith("job_prod_") || currentStage === 3));
 
   return (
     <div className="flex w-full flex-col gap-6 py-2">
@@ -929,11 +1008,28 @@ export function PinterestPodStudio({
         recentRuns={recentRuns}
         onLoadJob={(targetId) => void handleLoadJob(targetId)}
         onNewJob={handleNewJob}
+        isAgentConnected={isAgentConnected}
+        agentName={agentName}
       />
 
       {/* TAB 1: Quét Trend & Khởi tạo Job */}
       {currentStage === 1 && (
         <div className="flex flex-col gap-5 animate-in fade-in duration-200">
+          {/* Agent Offline Notice Banner */}
+          {!isAgentConnected && (
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 rounded-xl border border-slate-700/80 bg-slate-800/40 p-3 text-xs text-slate-300">
+              <div className="flex items-center gap-2.5">
+                <span className="text-base">💻</span>
+                <div>
+                  <span className="font-semibold text-slate-200">Local Agent Ngoại Tuyến: </span>
+                  <span className="text-slate-400">
+                    Để thực thi cào Playwright và render CMYK 300DPI mà không gây tải/OOM cho VPS, hãy chạy lệnh{" "}
+                    <code className="rounded bg-slate-900 px-1.5 py-0.5 font-mono text-cyan-300">npm run dev:agent</code> trên máy cá nhân của bạn.
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
           {/* Active Job Alert Banner with Stop & Unlock */}
           {(jobStatus === "running" || jobStatus === "producing") && (
             <div className="flex flex-col sm:flex-row items-center justify-between gap-3 rounded-xl border border-cyan-500/60 bg-gradient-to-r from-slate-900 via-cyan-950/40 to-slate-900 p-4 text-xs shadow-lg">
@@ -1129,113 +1225,28 @@ export function PinterestPodStudio({
 
       {/* TAB 3: Thành phẩm & Bàn giao */}
       {currentStage === 3 && (
-        <div ref={stage3Ref} className="flex flex-col gap-4 animate-in fade-in duration-200">
-          {/* Breadcrumb Context Bar */}
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-800 bg-slate-950/70 px-4 py-3 text-xs">
-            <div className="flex flex-wrap items-center gap-2 text-slate-400">
-              {hasStage2 && (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => handleSelectStage(2)}
-                    className="flex items-center gap-1 font-semibold text-amber-400 hover:text-amber-300 hover:underline cursor-pointer"
-                  >
-                    <span>←</span>
-                    <span>Xem lại Mẫu ứng viên ({candidates.length})</span>
-                  </button>
-                  <span>•</span>
-                </>
-              )}
-              <button
-                type="button"
-                onClick={() => handleSelectStage(1)}
-                className="flex items-center gap-1 font-semibold text-slate-400 hover:text-slate-200 hover:underline cursor-pointer"
-              >
-                <span>Bước 1: Quét Trend</span>
-              </button>
-              {jobId && (
-                <>
-                  <span>•</span>
-                  <code className="text-[10px] text-slate-400 font-mono">{jobId}</code>
-                </>
-              )}
-            </div>
-
-            <button
-              type="button"
-              onClick={() => handleSelectStage(1)}
-              className="flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 font-semibold text-slate-200 hover:bg-slate-700 hover:text-white transition shadow-xs cursor-pointer"
-            >
-              <span>🚀</span>
-              <span>Làm đợt mới</span>
-            </button>
-          </div>
-
-          {/* In-Progress producing banner */}
-          {isProductionActive && !hasDeliverables && (
-            <div className="flex flex-col gap-4 rounded-xl border border-amber-800/60 bg-amber-950/30 p-6 shadow-xl">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-500/20 text-amber-300 animate-pulse text-xl">
-                    🏭
-                  </div>
-                  <div>
-                    <h2 className="text-base font-bold text-amber-200">
-                      Đang sản xuất thành phẩm xưởng &amp; Mockup AI...
-                    </h2>
-                    <p className="text-xs text-amber-300/80">
-                      {stepper?.current_message || "Hệ thống đang chuẩn bị file in CMYK 300 DPI và tạo bối cảnh lifestyle..."}
-                    </p>
-                  </div>
-                </div>
-                <span className="rounded-full border border-amber-600/50 bg-amber-900/50 px-3 py-1 text-xs font-semibold text-amber-300">
-                  {stepper?.percent ?? 0}% hoàn tất
-                </span>
-              </div>
-
-              <div className="h-2 w-full overflow-hidden rounded-full bg-slate-800">
-                <div
-                  className="h-full bg-gradient-to-r from-amber-500 to-orange-500 transition-all duration-500"
-                  style={{ width: `${Math.max(5, stepper?.percent ?? 0)}%` }}
-                />
-              </div>
-
-              <p className="text-[11px] text-slate-400">
-                ⚡ Hệ thống đang xử lý độc lập ở chế độ chuẩn mẫu tham chiếu (Direct Print). Sau khi hoàn thành toàn bộ {selectedCandidateIds.length || candidates.length} sản phẩm, thông báo Windows sẽ tự động kích hoạt.
-              </p>
-            </div>
-          )}
-
-          {/* Failed banner */}
-          {jobStatus === "failed" && !hasDeliverables && (
-            <div className="flex flex-col gap-3 rounded-xl border border-rose-800 bg-rose-950/70 p-6 shadow-xl text-xs text-rose-200">
-              <div className="flex items-center gap-3">
-                <span className="text-2xl">❌</span>
-                <div>
-                  <h3 className="text-sm font-bold text-rose-100">Sản xuất thất bại</h3>
-                  <p className="text-rose-300/90 mt-0.5">{errorMessage || "Đã xảy ra lỗi trong quá trình xử lý pipeline."}</p>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Completed Deliverables Showcase */}
-          {hasDeliverables && (
-            <DeliverablesShowcase
-              deliverables={deliverables}
-              summaryMetrics={summaryMetrics}
-              seoPayload={seoPayload}
-              onPreviewImage={setPreviewImage}
-              onHandoverToSeo={onHandoverToSeo}
-            />
-          )}
-
-          {/* Cấu hình Shopify & Định giá trước khi bàn giao SEO (Đặt ở dưới cùng) */}
-          <ShopifyPricingConfigSection
-            settings={shopifySettings}
-            onChange={handleShopifySettingsChange}
-            onReset={() => handleShopifySettingsChange(DEFAULT_PINTEREST_POD_SHOPIFY_SETTINGS)}
-            disabled={isProductionActive}
+        <div ref={stage3Ref}>
+          <ProductionStep
+            jobId={jobId}
+            jobStatus={jobStatus}
+            isProductionActive={isProductionActive}
+            isCancelling={isCancelling}
+            stepper={stepper}
+            logs={logs}
+            deliverables={deliverables}
+            summaryMetrics={summaryMetrics}
+            seoPayload={seoPayload}
+            shopifySettings={shopifySettings}
+            errorMessage={errorMessage}
+            candidateCount={selectedCandidateIds.length || candidates.length}
+            hasStage2={hasStage2}
+            onSelectStage={handleSelectStage}
+            onCancelJob={handleStopJob}
+            onRerun={() => void handleProduce()}
+            onPreviewImage={setPreviewImage}
+            onHandoverToSeo={onHandoverToSeo}
+            onShopifySettingsChange={handleShopifySettingsChange}
+            onResetShopifySettings={() => handleShopifySettingsChange(DEFAULT_PINTEREST_POD_SHOPIFY_SETTINGS)}
           />
         </div>
       )}

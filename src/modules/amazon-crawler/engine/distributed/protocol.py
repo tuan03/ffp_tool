@@ -112,6 +112,8 @@ def hello_message(
     local_tasks: list[dict[str, Any]] | None = None,
     cancel_intents: list[str] | None = None,
     cache_generation: int = 0,
+    product_invalidation_generation: int = 0,
+    temporary_cleanup_generation: int = 0,
 ) -> dict[str, Any]:
     return {
         "type": "hello",
@@ -123,6 +125,7 @@ def hello_message(
         "maxConcurrentInputs": max(1, max_concurrent_inputs),
         "capabilities": {
             "amazon": True,
+            "pinterest": True,
             "captcha": not limits.headless,
             "offlineSpool": True,
             "mediaGalleryV2": True,
@@ -138,4 +141,6 @@ def hello_message(
         "localTasks": list(local_tasks or []),
         "cancelIntents": list(cancel_intents or []),
         "cacheGeneration": max(0, int(cache_generation)),
+        "productInvalidationGeneration": max(0, int(product_invalidation_generation)),
+        "temporaryCleanupGeneration": max(0, int(temporary_cleanup_generation)),
     }

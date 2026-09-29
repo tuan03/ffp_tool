@@ -38,8 +38,7 @@ Edit the existing root `.env.local`; do not overwrite an existing file. Node ser
 ```dotenv
 GATEWAY_STORE_ID=capozen
 GATEWAY_AUTH_TOKEN=<internal-admin-secret>
-GPT_SEO_ACTION_KEY=<different-random-action-secret>
-GPT_SEO_STORE_ID=capozen
+GPT_SEO_ACTION_KEYS_JSON={"capozen":"<capozen-random-action-secret>","wrydeco":"<wrydeco-random-action-secret>"}
 GPT_SEO_DB_PATH=.local-data/custom-gpt-seo.sqlite3
 GATEWAY_PORT=3001
 SHOPIFY_PIPELINE_COORDINATOR_URL=http://127.0.0.1:8766
@@ -48,7 +47,7 @@ SHOPIFY_PIPELINE_WORKERS=1
 # GPT_SEO_PUBLIC_URL=https://seo.your-domain.example
 ```
 
-Generate the two secrets independently using your password manager. Preserve existing `GATEWAY_SHOP_DOMAIN`, `GATEWAY_CLIENT_ID`, `GATEWAY_CLIENT_SECRET` and `STORE_CAPOZEN_*` settings. Do not place real keys in GPT instructions, Knowledge, screenshots or committed examples.
+Generate the internal admin secret and every store Action secret independently using your password manager. Each store must have a unique Action key. The Bearer key selects the store and request input cannot override it. Legacy single-store deployments may continue using `GPT_SEO_ACTION_KEY` with `GPT_SEO_STORE_ID`; remove those variables after verifying the JSON map. Preserve existing Shopify store settings. Do not place real keys in GPT instructions, Knowledge, screenshots or committed examples.
 
 The environment file does not select the SEO provider. Provider and batch size are stored per store through the GPT SEO page. Gemini is the default; existing jobs retain their settings snapshot when you change provider.
 
@@ -123,8 +122,8 @@ The export changes the server URL, embeds no secrets and leaves the tracked sche
 2. Paste [gpt-instructions.md](gpt-instructions.md) into Instructions.
 3. Upload [seo-knowledge.md](seo-knowledge.md) as Knowledge.
 4. Add an Action and paste/import the exported OpenAPI JSON.
-5. Set authentication to **API Key**, select **Bearer**, and enter `GPT_SEO_ACTION_KEY`.
-6. Verify 16 operations appear. The schema must not include admin settings, reconciliation or Shopify publishing.
+5. Set authentication to **API Key**, select **Bearer**, and enter the store-specific key from `GPT_SEO_ACTION_KEYS_JSON`.
+6. Verify 18 operations appear, including `listSeoWaitingJobs`. The schema must not include admin settings, reconciliation or Shopify publishing.
 7. Test `getSeoCapabilities`, `getStoreSeoContext` and `getSeoQueueStatus`. Confirm store `capozen` and the batch size configured in the app.
 8. Save the GPT. If a managed workspace restricts Actions domains, have its administrator allow the selected domain.
 
@@ -147,11 +146,11 @@ Ask GPT to resume the active batch and continue subsequent batches when desired.
 | Symptom | Check / next action |
 | --- | --- |
 | `401` | Correct Action Bearer key, saved Builder authentication and gateway environment. |
-| `403 STORE_FORBIDDEN` | GPT can process only `GPT_SEO_STORE_ID`. |
+| `403 STORE_FORBIDDEN` | The Bearer key is scoped to one store; use the GPT configured with that store's key. |
 | `404` or HTML response | Route `/api/v1/gpt-seo/*` to the gateway instead of the SPA. |
 | `409` lease/active batch | Resume or release the existing batch; reclaim expired work with a new request ID. |
 | `429` | Respect Retry-After and process sequentially. |
-| `WAITING_INPUT` | Supply facts/images, retry through the UI and resume in GPT. |
+| `WAITING_INPUT` | Use `listSeoWaitingJobs` for read-only job discovery or supply facts/images, retry through the UI and resume processing. |
 | `NEEDS_CHANGES` | Revise the indicated stage and submit with a new mutation request ID. |
 | Still pending after selecting Gemini | Existing jobs retain provider snapshots. Release the batch and explicitly transfer the job; Gemini incurs API usage. |
 | Amazon ready in GPT but absent in Review | Check worker/coordinator health, image-processing configuration and job errors. |

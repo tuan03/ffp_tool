@@ -246,7 +246,8 @@ class PlaywrightPoolTests(unittest.IsolatedAsyncioTestCase):
             "<html><body><div>Customize is still loading</div></body></html>",
         ])
 
-        with self.assertRaisesRegex(RuntimeError, "Customize markers"):
+        from engine.timeouts import CrawlTimeout
+        with self.assertRaisesRegex(CrawlTimeout, "customization deadline"):
             await PlaywrightPool._load_customization_page(
                 page,
                 "https://www.amazon.com/customize/B012345678",

@@ -1,0 +1,16 @@
+node_modules
+dist
+.git
+.github
+.runtime
+.local-data
+.env
+.env.local
+.env.*.local
+artifacts
+temp
+*.log
+.venv
+venv
+__pycache__
+*.pyc
