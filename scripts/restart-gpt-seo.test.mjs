@@ -71,6 +71,10 @@ test("production deployment preserves store credentials from the VPS", async () 
 
   assert.match(workflow, /EXISTING_STORE_ENV_FILE=/);
   assert.match(workflow, /grep -E '\^STORE_\[A-Z0-9_\]\+=' \.env/);
+  assert.match(
+    workflow,
+    /if \[ -s "\$EXISTING_STORE_ENV_FILE" \]; then[\s\S]*?printf '\\n' >> \.env[\s\S]*?while IFS= read -r store_line/,
+  );
   assert.match(workflow, /while IFS= read -r store_line/);
   assert.match(workflow, /store_key="\$\{store_line%%=\*\}"/);
 });

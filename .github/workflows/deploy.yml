@@ -126,12 +126,15 @@ jobs:
             fi
 
             # Keep store credentials already registered on the VPS unless ENV_FILE replaces a specific key.
-            while IFS= read -r store_line; do
-              store_key="${store_line%%=*}"
-              if ! grep -q "^${store_key}=" .env; then
-                printf '%s\n' "$store_line" >> .env
-              fi
-            done < "$EXISTING_STORE_ENV_FILE"
+            if [ -s "$EXISTING_STORE_ENV_FILE" ]; then
+              printf '\n' >> .env
+              while IFS= read -r store_line; do
+                store_key="${store_line%%=*}"
+                if ! grep -q "^${store_key}=" .env; then
+                  printf '%s\n' "$store_line" >> .env
+                fi
+              done < "$EXISTING_STORE_ENV_FILE"
+            fi
 
             # Keep the VPS multi-store Action keys unless ENV_FILE explicitly supplies a replacement map.
             INCOMING_GPT_SEO_ACTION_KEYS_JSON=$(sed -nE 's/^[[:space:]]*GPT_SEO_ACTION_KEYS_JSON=(.*)$/\1/p' .env | head -n 1 || true)
