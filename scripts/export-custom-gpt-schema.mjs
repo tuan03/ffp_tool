@@ -9,6 +9,19 @@ if (!domain) {
     const url = new URL(domain);
     if (url.protocol !== "https:" || url.username || url.password || url.pathname !== "/" || url.search || url.hash || (url.port && url.port !== "443")) throw new Error("Use an HTTPS origin on port 443 without credentials, path or query");
     const schema = JSON.parse(readFileSync(new URL("../docs/custom-gpt-seo/openapi.json", import.meta.url), "utf8"));
+    schema.components.schemas ??= {};
+
+    const addRequiredObjectProperties = value => {
+      if (Array.isArray(value)) {
+        value.forEach(addRequiredObjectProperties);
+        return;
+      }
+      if (!value || typeof value !== "object") return;
+      if (value.type === "object" && (!value.properties || typeof value.properties !== "object" || Array.isArray(value.properties))) value.properties = {};
+      Object.values(value).forEach(addRequiredObjectProperties);
+    };
+
+    addRequiredObjectProperties(schema);
     schema.servers = [{ url: url.origin }];
     process.stdout.write(`${JSON.stringify(schema, null, 2)}\n`);
   } catch (error) {

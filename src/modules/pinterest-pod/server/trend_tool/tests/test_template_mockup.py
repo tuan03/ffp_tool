@@ -411,6 +411,48 @@ class TestTemplateMockupRefactoring(unittest.TestCase):
         # Pixel at x=450, y=825 (expanded area beyond 375) should be white (tpl)
         self.assertEqual(result.getpixel((450, 825)), (255, 255, 255))
 
+    def test_direct_ai_lifestyle_prompt_transparent_artwork(self) -> None:
+        """Transparent typography artwork generates solid cream base and zero-prior-print mandate."""
+        # Create a transparent RGBA artwork (e.g. typography with transparent background)
+        trans_art = Image.new("RGBA", (500, 500), (0, 0, 0, 0))
+        ref_analysis = {
+            "scene_title": "Model Lifestyle",
+            "is_infographic": False,
+            "product_form": "Structured handbag",
+            "product_instances": [
+                {"instance_id": 1, "box_2d": [200, 200, 800, 800]}
+            ],
+        }
+        prompt = direct_ai_lifestyle_prompt(
+            self.target,
+            self.pose,
+            "",
+            has_room_template=True,
+            has_product_render=True,
+            reference_analysis=ref_analysis,
+            artwork=trans_art,
+        )
+        self.assertIn("CRITICAL TRANSPARENT / TYPOGRAPHY ARTWORK APPLICATION MANDATE", prompt)
+        self.assertIn("solid neutral base", prompt.lower())
+        self.assertIn("ABSOLUTELY ZERO PRIOR PRINTS", prompt)
+
+    def test_composite_header_banner_full_width_snap(self) -> None:
+        """Infographic top header banner snaps to full width [0, 1000] and ymin=0."""
+        tpl = Image.new("RGB", (1000, 1000), color=(255, 255, 255))
+        gen = Image.new("RGB", (1000, 1000), color=(0, 0, 0))
+        # Top banner at y: 20..70, x: 250..750 (width 500 >= 300)
+        header_box = [20, 250, 70, 750]
+        prod_box = [200, 100, 800, 900]
+        result = composite_infographic_hybrid(
+            tpl,
+            gen,
+            chrome_boxes=[header_box],
+            product_boxes=[prod_box],
+        )
+        # Snapped to x=0..1000, y=0..70: pixel at (50, 10) and (950, 10) must be white (tpl)
+        self.assertEqual(result.getpixel((50, 10)), (255, 255, 255))
+        self.assertEqual(result.getpixel((950, 10)), (255, 255, 255))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -3274,5 +3274,165 @@ class CoordinatorUploadLimitTests(unittest.IsolatedAsyncioTestCase):
             await read_request_body_limited(FakeRequest(), maximum_bytes=6)
 
 
+class CoordinatorPinterestDistributedTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.db_path = Path(self.temp_dir.name) / "test_coordinator.sqlite"
+        engine = create_database_engine(f"sqlite:///{self.db_path.as_posix()}")
+        Base.metadata.create_all(engine)
+        self.sessions = create_session_factory(engine)
+        self.store = CoordinatorStore(self.sessions)
+
+    def tearDown(self) -> None:
+        self.temp_dir.cleanup()
+
+    def test_amazon_captcha_cooldown_does_not_block_pinterest_tasks(self) -> None:
+        amazon = self.store.create_job({"urls": ["B012345678"]})
+        self.store.register_client({**client_hello(slots=1), "capabilities": {"amazon": True, "pinterest": True}})
+        lease = self.store.lease_tasks("client-a", 1)[0]
+        self.assertEqual(lease["jobId"], amazon["id"])
+        self.store.fail_task("client-a", {"taskId": lease["taskId"], "leaseId": lease["leaseId"],
+            "error": {"status": "temporarily_blocked", "reason": "captcha", "retryable": True}})
+        pinterest = self.store.create_pinterest_job({"niche": "fixture", "stage": "crawl"})
+        leases = self.store.lease_tasks("client-a", 1)
+        self.assertEqual([task["jobId"] for task in leases], [pinterest["id"]])
+        self.assertEqual(leases[0]["channel"], "pinterest")
+        self.assertEqual(self.store.lease_tasks("client-a", 1), [])
+
+    def test_amazon_worker_skips_multiple_incompatible_pinterest_tasks(self) -> None:
+        amazon = self.store.create_job({"urls": ["B012345678"]})
+        for index in range(5):
+            self.store.create_pinterest_job({"niche": f"fixture-{index}", "schedulerPriority": 100})
+        self.store.register_client(client_hello(slots=1))
+        leases = self.store.lease_tasks("client-a", 1)
+        self.assertEqual([task["jobId"] for task in leases], [amazon["id"]])
+        self.assertEqual(leases[0]["requestId"], leases[0]["taskId"])
+        self.assertIn("asinDeadlineAt", leases[0])
+
+    def test_pinterest_captcha_failure_does_not_set_amazon_cooldown(self) -> None:
+        amazon = self.store.create_job({"urls": ["B012345678"]})
+        pinterest = self.store.create_pinterest_job({"niche": "fixture", "schedulerPriority": 100})
+        self.store.register_client({**client_hello(slots=1), "capabilities": {"amazon": True, "pinterest": True}})
+        lease = self.store.lease_tasks("client-a", 1)[0]
+        self.assertEqual(lease["jobId"], pinterest["id"])
+        self.store.fail_task("client-a", {"taskId": lease["taskId"], "leaseId": lease["leaseId"],
+            "error": {"status": "temporarily_blocked", "reason": "captcha", "retryable": True}})
+        leases = self.store.lease_tasks("client-a", 1)
+        self.assertEqual([task["jobId"] for task in leases], [amazon["id"]])
+
+    def test_pinterest_job_creation_and_capability_filtering(self) -> None:
+        # 1. Create a Pinterest crawl job
+        job = self.store.create_pinterest_job({
+            "niche": "Gothic skull rugs",
+            "product": "rug",
+            "workflow_stage": "crawl_and_review",
+            "candidatePoolSize": 20,
+        })
+        self.assertEqual(job["status"], "queued")
+        self.assertEqual(job["settings"]["channel"], "pinterest")
+        self.assertEqual(job["settings"]["stage"], "crawl_and_review")
+
+        # 2. Register Client-Amazon (can_pinterest = False)
+        self.store.register_client({
+            **client_hello("client-amazon"),
+            "capabilities": {"amazon": True, "pinterest": False},
+        })
+
+        # Amazon worker should NOT receive the Pinterest task
+        leases_amazon = self.store.lease_tasks("client-amazon", 2)
+        self.assertEqual(len(leases_amazon), 0)
+
+        # 3. Register Client-Pinterest (can_pinterest = True)
+        self.store.register_client({
+            **client_hello("client-pinterest"),
+            "capabilities": {"amazon": True, "pinterest": True},
+        })
+
+        # Pinterest worker SHOULD receive the Pinterest task
+        leases_pin = self.store.lease_tasks("client-pinterest", 2)
+        self.assertEqual(len(leases_pin), 1)
+        lease = leases_pin[0]
+        self.assertEqual(lease["channel"], "pinterest")
+        self.assertEqual(lease["action"], "crawl_and_review")
+        self.assertEqual(lease["settings"]["channel"], "pinterest")
+
+        # 4. Spool & complete the result
+        candidates = [
+            {"image_id": "pin_1", "title": "Skull Rug 1", "image_url": "https://i.pinimg.com/1.jpg"},
+            {"image_id": "pin_2", "title": "Skull Rug 2", "image_url": "https://i.pinimg.com/2.jpg"},
+        ]
+        envelope = {
+            "version": "distributed-pinterest-1",
+            "taskId": lease["taskId"],
+            "jobId": job["id"],
+            "leaseId": lease["leaseId"],
+            "status": "completed",
+            "candidates": candidates,
+            "rejected_candidates": [],
+            "total_candidates": 2,
+            "logs": ["Cào xong 2 mẫu từ Pinterest."],
+        }
+        self.store.accept_result(
+            task_id=lease["taskId"],
+            client_id="client-pinterest",
+            lease_id=lease["leaseId"],
+            checksum=payload_checksum(envelope),
+            payload=envelope,
+        )
+
+        # 5. Verify snapshot reflects ready_for_review and candidate data
+        snapshot = self.store.get_job(job["id"])
+        self.assertIsNotNone(snapshot)
+        self.assertEqual(snapshot["status"], "ready_for_review")
+        self.assertEqual(len(snapshot["candidates"]), 2)
+        self.assertEqual(snapshot["candidates"][0]["image_id"], "pin_1")
+        self.assertEqual(snapshot["stepper"]["current_step"], 2)
+        self.assertIn("Sẵn sàng duyệt mẫu", snapshot["stepper"]["current_message"])
+
+    def test_pinterest_production_job_completion(self) -> None:
+        # Create a production stage job
+        prod_job = self.store.create_pinterest_job({
+            "stage": "produce",
+            "product": "rug",
+            "selected_candidates": [{"image_id": "pin_1", "title": "Skull Rug 1"}],
+        })
+        self.assertEqual(prod_job["status"], "queued")
+
+        self.store.register_client({
+            **client_hello("client-pod"),
+            "capabilities": {"pinterest": True},
+        })
+
+        leases = self.store.lease_tasks("client-pod", 1)
+        self.assertEqual(len(leases), 1)
+
+        deliverables = {
+            "print_cmyk_images": [{"filename": "design_1_cmyk_300dpi.jpg", "url": "/api/pinterest-pod/assets/job1/cmyk.jpg"}],
+            "lifestyle_mockups": [{"filename": "mockup_1.jpg", "url": "/api/pinterest-pod/assets/job1/mockup_1.jpg"}],
+        }
+        envelope = {
+            "version": "distributed-pinterest-1",
+            "taskId": leases[0]["taskId"],
+            "jobId": prod_job["id"],
+            "leaseId": leases[0]["leaseId"],
+            "status": "completed",
+            "deliverables": deliverables,
+            "summaryMetrics": {"cmyk_count": 1, "mockups_count": 1},
+        }
+        self.store.accept_result(
+            task_id=leases[0]["taskId"],
+            client_id="client-pod",
+            lease_id=leases[0]["leaseId"],
+            checksum=payload_checksum(envelope),
+            payload=envelope,
+        )
+
+        snapshot = self.store.get_job(prod_job["id"])
+        self.assertEqual(snapshot["status"], "completed")
+        self.assertEqual(len(snapshot["deliverables"]["print_cmyk_images"]), 1)
+        self.assertEqual(snapshot["stepper"]["current_step"], 4)
+
+
 if __name__ == "__main__":
     unittest.main()
+

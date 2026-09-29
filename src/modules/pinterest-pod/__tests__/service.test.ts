@@ -39,6 +39,8 @@ import {
   getOAuthAuthorizeUrl,
   saveOAuthToken,
   STOREFRONT_DISPLAY_STANDARD,
+  syncPinterestPodToShopify,
+  getCrawlerClients,
 } from "..";
 import type { JobDetailResponse, PodJobStatusResponse } from "../types";
 
@@ -124,6 +126,9 @@ test("Mock client handles cancelJob", async () => {
   const cancelRes = await mockPinterestPodClient.cancelJob(created.jobId);
   assert.equal(cancelRes.ok, true);
   assert.equal(cancelRes.status, "cancelled");
+  assert.equal(cancelRes.jobId, created.jobId);
+  assert.ok(Array.isArray(cancelRes.logs));
+  assert.ok((cancelRes.logs?.length ?? 0) > 0);
 
   const detail = await mockPinterestPodClient.getJobDetail(created.jobId);
   assert.equal(detail.status, "cancelled");
@@ -1376,5 +1381,154 @@ test("MockPinterestPodClient.createJob preserves selected_clusters in getJobDeta
   assert.ok(detail.clusters && detail.clusters.length > 0);
   assert.equal(detail.clusters[0].cluster_id, "cluster_test_custom");
   assert.equal(detail.clusters[0].theme_name, "Custom Ghost Aesthetic");
+});
+
+test("Mock client syncDirectToShopify returns success and product list", async () => {
+  const mockPayload = {
+    workflowId: "pod_test_wf_1",
+    success: true as const,
+    productType: "bag",
+    totalProduced: 1,
+    storeId: "store_alpha",
+    items: [
+      {
+        designId: "design_1",
+        sourceCandidateId: "cand_1",
+        productType: "bag",
+        originalPinTitle: "Spooky Cute Ghost Tote",
+        trendKeywords: ["halloween"],
+        printMaster: {
+          widthPx: 4500,
+          heightPx: 5400,
+          dpi: 300 as const,
+          colorMode: "CMYK" as const,
+          cmykUrl: "https://example.com/cmyk.tiff",
+          rgbUrl: "https://example.com/rgb.png",
+          localFilePath: "cmyk.tiff",
+        },
+        cutoutProduct: {
+          whiteBgUrl: "https://example.com/white.png",
+          transparentUrl: "https://example.com/trans.png",
+        },
+        composedMockups: [
+          {
+            referenceImageId: "ref_1",
+            mockupUrl: "https://example.com/mockup1.jpg",
+            detectedSceneType: "living_room",
+            detectedSceneDescription: "Cozy sofa",
+          },
+        ],
+      },
+    ],
+  };
+
+  const result = await mockPinterestPodClient.syncDirectToShopify!(mockPayload);
+  assert.equal(result.success, true);
+  assert.equal(result.storeId, "store_alpha");
+  assert.equal(result.count, 1);
+  assert.equal(result.products.length, 1);
+  assert.equal(result.products[0].designId, "design_1");
+  assert.equal(result.products[0].title, "Spooky Cute Ghost Tote");
+});
+
+test("Real client syncDirectToShopify and syncPinterestPodToShopify post to /api/pinterest-pod/sync-shopify", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: { url: string; method?: string; body?: string }[] = [];
+
+  globalThis.fetch = async (url, init) => {
+    calls.push({
+      url: String(url),
+      method: init?.method,
+      body: typeof init?.body === "string" ? init.body : undefined,
+    });
+    return new Response(
+      JSON.stringify({
+        success: true,
+        message: "Successfully synchronized 1 products directly to Shopify store.",
+        storeId: "default",
+        syncedAt: Date.now(),
+        count: 1,
+        products: [
+          {
+            designId: "d1",
+            title: "Test Bag",
+            shopifyProductId: "gid://shopify/Product/123",
+            variantsCount: 3,
+            mediaCount: 2,
+            status: "ACTIVE",
+          },
+        ],
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  };
+
+  const mockPayload = {
+    workflowId: "pod_test_wf_2",
+    success: true as const,
+    productType: "bag",
+    totalProduced: 1,
+    items: [],
+  };
+
+  try {
+    const res1 = await realPinterestPodClient.syncDirectToShopify(mockPayload);
+    assert.equal(res1.success, true);
+    assert.equal(res1.count, 1);
+
+    const res2 = await syncPinterestPodToShopify(mockPayload);
+    assert.equal(res2.success, true);
+
+    assert.equal(calls.length, 2);
+    assert.ok(calls[0].url.includes("/api/pinterest-pod/sync-shopify"));
+    assert.equal(calls[0].method, "POST");
+    assert.ok(calls[1].url.includes("/api/pinterest-pod/sync-shopify"));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Mock client getCrawlerClients returns connected crawler agents", async () => {
+  const clients = await mockPinterestPodClient.getCrawlerClients!();
+  assert.ok(Array.isArray(clients));
+  assert.ok(clients.length > 0);
+  assert.equal(clients[0].isConnected, true);
+  assert.equal(clients[0].capabilities?.pinterest, true);
+});
+
+test("Real client getCrawlerClients fetches from /api/v1/clients and handles errors gracefully", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: { url: string }[] = [];
+
+  globalThis.fetch = async (url) => {
+    calls.push({ url: String(url) });
+    return new Response(
+      JSON.stringify([
+        {
+          id: "client_node_1",
+          displayName: "Worker 1",
+          isConnected: true,
+          capabilities: { pinterest: true },
+        },
+      ]),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  };
+
+  try {
+    const clients = await realPinterestPodClient.getCrawlerClients();
+    assert.equal(clients.length, 1);
+    assert.equal(clients[0].id, "client_node_1");
+    assert.ok(calls[0].url.includes("/api/v1/clients"));
+
+    // Test error fallback
+    globalThis.fetch = async () => {
+      throw new Error("Network unreachable");
+    };
+    const emptyClients = await getCrawlerClients();
+    assert.deepEqual(emptyClients, []);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 

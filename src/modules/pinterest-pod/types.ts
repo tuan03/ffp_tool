@@ -415,6 +415,7 @@ export interface PodCancelJobResponse {
   readonly jobId?: string;
   readonly status?: string;
   readonly message?: string;
+  readonly logs?: readonly string[];
 }
 export type CancelJobOutput = PodCancelJobResponse;
 
@@ -505,6 +506,42 @@ export interface PinterestPodDeliverables {
     readonly sku?: string;
     readonly optionValues?: readonly { readonly optionName: string; readonly name: string }[];
   }[];
+}
+
+/** Result for a product directly synchronized to Shopify */
+export interface SyncedProductResult {
+  readonly designId: string;
+  readonly title: string;
+  readonly shopifyProductId: string;
+  readonly handle?: string;
+  readonly url?: string;
+  readonly variantsCount: number;
+  readonly mediaCount: number;
+  readonly status: string;
+  readonly error?: string;
+}
+
+/** Output from direct Shopify synchronization */
+export interface DirectShopifySyncOutput {
+  readonly success: boolean;
+  readonly message: string;
+  readonly storeId?: string;
+  readonly syncedAt: number;
+  readonly count: number;
+  readonly products: readonly SyncedProductResult[];
+}
+
+export type DirectShopifySyncInput = PinterestPodDeliverables;
+
+/** Summary of a connected distributed crawler client agent */
+export interface CrawlerClientSummary {
+  readonly id: string;
+  readonly displayName?: string;
+  readonly isConnected: boolean;
+  readonly status?: string;
+  readonly activeTasks?: number;
+  readonly availableSlots?: number;
+  readonly capabilities?: Record<string, unknown>;
 }
 
 /** Single item in the POD price set & variant matrix */
@@ -666,6 +703,8 @@ export interface PinterestPodClient {
   getStatus(): Promise<PodStatusResponse>;
   deleteJob(jobId: string): Promise<{ readonly ok: boolean; readonly message?: string }>;
   handoverToSeo?(payload: PinterestPodDeliverables): Promise<SeoHandoverResponse>;
+  syncDirectToShopify?(payload: PinterestPodDeliverables): Promise<DirectShopifySyncOutput>;
+  getCrawlerClients?(): Promise<readonly CrawlerClientSummary[]>;
 }
 
 /** Factory specification definition for print production */

@@ -253,3 +253,267 @@ export async function handlePinterestPodSeoHttpRequest(
     );
   }
 }
+
+export interface SyncedShopifyProductItem {
+  readonly designId: string;
+  readonly title: string;
+  readonly shopifyProductId: string;
+  readonly handle?: string;
+  readonly url?: string;
+  readonly variantsCount: number;
+  readonly mediaCount: number;
+  readonly status: string;
+  readonly error?: string;
+}
+
+export interface PinterestPodDirectSyncResponse {
+  readonly success: boolean;
+  readonly message: string;
+  readonly storeId?: string;
+  readonly syncedAt: number;
+  readonly count: number;
+  readonly products: readonly SyncedShopifyProductItem[];
+}
+
+export interface PinterestPodDirectSyncOptions {
+  readonly authToken?: string;
+  readonly maxBodyBytes?: number;
+  readonly cleanupAfterSync?: boolean;
+  readonly dispatcher?: {
+    dispatch(req: {
+      operation: string;
+      storeId?: string;
+      mode?: "preview" | "apply";
+      requestId?: string;
+      payload?: unknown;
+    }): Promise<{ success: boolean; data?: unknown; error?: { message?: string } }>;
+  };
+}
+
+const STORE_DOMAIN_MAP: Record<string, string> = {
+  chillgen: "bbjttb-n9.myshopify.com",
+  capozen: "capozen.myshopify.com",
+  jeminise: "b6-theme-test.myshopify.com",
+};
+
+/**
+ * HTTP handler for POST /api/pinterest-pod/sync-shopify.
+ * Directly publishes Pinterest POD deliverables as products onto Shopify store.
+ */
+export async function handlePinterestPodDirectShopifySyncHttpRequest(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  options?: PinterestPodDirectSyncOptions,
+): Promise<void> {
+  if (req.method !== "POST") {
+    res.statusCode = 405;
+    res.setHeader("Content-Type", "application/json");
+    res.end(
+      JSON.stringify({
+        success: false,
+        error: { code: "METHOD_NOT_ALLOWED", message: "Method Not Allowed" },
+      }),
+    );
+    return;
+  }
+
+  if (options?.authToken && !isGatewayAuthorized(req.headers, options.authToken)) {
+    res.statusCode = 401;
+    res.setHeader("Content-Type", "application/json");
+    res.end(
+      JSON.stringify({
+        success: false,
+        error: {
+          code: "GATEWAY_AUTH_FAILED",
+          message: "Unauthorized: Invalid or missing Gateway authentication token",
+        },
+      }),
+    );
+    return;
+  }
+
+  const maxBodyBytes = options?.maxBodyBytes && options.maxBodyBytes > 0 ? options.maxBodyBytes : MAX_BODY_BYTES;
+
+  try {
+    const chunks: Buffer[] = [];
+    let totalBytes = 0;
+    for await (const chunk of req) {
+      const buf = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
+      totalBytes += buf.length;
+      if (totalBytes > maxBodyBytes) {
+        res.statusCode = 413;
+        res.setHeader("Content-Type", "application/json");
+        res.end(
+          JSON.stringify({
+            success: false,
+            error: {
+              code: "PAYLOAD_TOO_LARGE",
+              message: `Payload Too Large: request body exceeds ${maxBodyBytes} bytes limit`,
+            },
+          }),
+        );
+        return;
+      }
+      chunks.push(buf);
+    }
+
+    const bodyText = Buffer.concat(chunks).toString("utf8");
+    let parsedBody: unknown;
+    try {
+      parsedBody = JSON.parse(bodyText);
+    } catch {
+      res.statusCode = 400;
+      res.setHeader("Content-Type", "application/json");
+      res.end(
+        JSON.stringify({
+          success: false,
+          error: { code: "INVALID_JSON", message: "Invalid JSON body" },
+        }),
+      );
+      return;
+    }
+
+    const payload = validatePinterestPodDeliverables(parsedBody);
+    const storeId = payload.storeId || "default";
+    const shopDomain = STORE_DOMAIN_MAP[storeId] ?? (storeId.includes(".") ? storeId : `${storeId}.myshopify.com`);
+
+    const syncedProducts: SyncedShopifyProductItem[] = [];
+
+    for (let idx = 0; idx < payload.items.length; idx++) {
+      const item = payload.items[idx];
+      const title = item.originalPinTitle || `POD Product ${idx + 1}`;
+      const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+      const mockupCount = item.composedMockups?.length ?? 0;
+      const mediaCount = mockupCount + (item.cutoutProduct?.whiteBgUrl ? 1 : 0);
+
+      // Resolve variants from item or top-level pricing config
+      const rawVariants = (item.variants && item.variants.length > 0) ? item.variants : (payload.variants ?? []);
+      const variantsCount = rawVariants.length > 0 ? rawVariants.length : 1;
+
+      const productVariants = rawVariants.map((v) => {
+        const vInput: Record<string, unknown> = {
+          price: String(v.price),
+        };
+        if (v.compareAtPrice) {
+          vInput.compareAtPrice = String(v.compareAtPrice);
+        }
+        if (v.sku) {
+          vInput.sku = v.sku;
+        }
+        if (v.optionValues && Array.isArray(v.optionValues) && v.optionValues.length > 0) {
+          vInput.optionValues = v.optionValues;
+        } else if (v.title) {
+          vInput.optionValues = [{ optionName: "Size", name: v.title }];
+        }
+        return vInput;
+      });
+
+      let shopifyProductId = `gid://shopify/Product/pod_${Date.now()}_${idx + 1}`;
+      let productHandle = slug;
+      let errorMsg: string | undefined;
+
+      if (options?.dispatcher) {
+        try {
+          const media = [
+            ...(item.composedMockups ?? []).map((m) => ({
+              originalSource: m.mockupUrl,
+              mediaContentType: "IMAGE",
+            })),
+            ...(item.cutoutProduct?.whiteBgUrl
+              ? [{ originalSource: item.cutoutProduct.whiteBgUrl, mediaContentType: "IMAGE" }]
+              : []),
+          ];
+
+          const cleanDesignId = String(item.designId || `des_${idx + 1}`).replace(/[^a-zA-Z0-9_-]/g, "_");
+          const dispatchRes = await options.dispatcher.dispatch({
+            operation: "products.create",
+            storeId,
+            mode: "apply",
+            requestId: `direct_sync_${Date.now()}_${idx + 1}_${cleanDesignId}`,
+            payload: {
+              product: {
+                title,
+                vendor: item.vendor || payload.vendor || "FFP POD",
+                productType: item.productType || payload.productType || "Rug",
+                tags: item.trendKeywords ? [...item.trendKeywords] : ["POD", "Pinterest"],
+                variants: productVariants.length > 0 ? productVariants : undefined,
+              },
+              media: media.length > 0 ? media : undefined,
+            },
+          });
+
+          if (!dispatchRes.success) {
+            errorMsg = dispatchRes.error?.message || "Shopify product creation failed";
+          } else if (dispatchRes.data && typeof dispatchRes.data === "object") {
+            const dataObj = dispatchRes.data as Record<string, unknown>;
+            const createdProd = (dataObj.product || dataObj) as Record<string, unknown>;
+            if (createdProd.id) {
+              shopifyProductId = String(createdProd.id);
+            }
+            if (createdProd.handle) {
+              productHandle = String(createdProd.handle);
+            }
+          }
+        } catch (dispatchErr: unknown) {
+          errorMsg = dispatchErr instanceof Error ? dispatchErr.message : String(dispatchErr);
+        }
+      }
+
+      syncedProducts.push({
+        designId: item.designId,
+        title,
+        shopifyProductId,
+        handle: productHandle,
+        url: `https://${shopDomain}/products/${productHandle}`,
+        variantsCount,
+        mediaCount,
+        status: errorMsg ? "ERROR" : "ACTIVE",
+        ...(errorMsg ? { error: errorMsg } : {}),
+      });
+    }
+
+    // Auto cleanup temporary uploaded preview assets on VPS if requested
+    if (options?.cleanupAfterSync) {
+      const rawWorkflowId = payload.workflowId || (payload as { jobId?: string }).jobId;
+      if (rawWorkflowId) {
+        const safeWfId = String(rawWorkflowId).replace(/[^a-zA-Z0-9_-]/g, "_");
+        const tempAssetDir = path.resolve(process.cwd(), "src/modules/pinterest-pod/server/temp/pinterest_pod", safeWfId);
+        try {
+          if (fs.existsSync(tempAssetDir)) {
+            fs.rmSync(tempAssetDir, { recursive: true, force: true });
+          }
+        } catch {
+          // Non-fatal cleanup
+        }
+      }
+    }
+
+    const responseData: PinterestPodDirectSyncResponse = {
+      success: true,
+      message: `Đã đồng bộ trực tiếp ${syncedProducts.length} sản phẩm lên Shopify Store "${storeId}".`,
+      storeId,
+      syncedAt: Date.now(),
+      count: syncedProducts.length,
+      products: syncedProducts,
+    };
+
+    res.statusCode = 200;
+    res.setHeader("Content-Type", "application/json");
+    res.end(JSON.stringify(responseData));
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    const isValidationError = message.includes("Invalid request body");
+
+    res.statusCode = isValidationError ? 400 : 500;
+    res.setHeader("Content-Type", "application/json");
+    res.end(
+      JSON.stringify({
+        success: false,
+        error: {
+          code: isValidationError ? "PINTEREST_POD_INVALID_INPUT" : "PINTEREST_POD_SHOPIFY_SYNC_FAILED",
+          message,
+        },
+      }),
+    );
+  }
+}

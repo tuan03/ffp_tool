@@ -1,9 +1,15 @@
+import fs from "node:fs";
 import http from "node:http";
+import path from "node:path";
 import { getCustomGptRuntime } from "./custom-gpt-seo/runtime";
+import { serveStaticFile } from "./static-server";
 
 import { GatewayDispatcher } from "./dispatcher";
 import { handleAutoSeoHttpRequest } from "./auto-seo-handler";
-import { handlePinterestPodSeoHttpRequest } from "./pinterest-pod-handler";
+import {
+  handlePinterestPodDirectShopifySyncHttpRequest,
+  handlePinterestPodSeoHttpRequest,
+} from "./pinterest-pod-handler";
 import { assertHostSecurity, createGatewayHttpHandler, isGatewayAuthorized, MAX_BODY_BYTES } from "./http-server";
 import { InMemoryIdempotencyStore } from "./idempotency";
 import { ShopifyGraphqlClient } from "./shopify-graphql-client";
@@ -45,7 +51,7 @@ export function startGatewayServer(
   assertHostSecurity(host, authToken, "gateway server");
 
   const stores = loadBootstrappedStores({ env });
-  if (env.GPT_SEO_ACTION_KEY || process.env.GPT_SEO_ACTION_KEY) getCustomGptRuntime();
+  if (env.GPT_SEO_ACTION_KEYS_JSON || process.env.GPT_SEO_ACTION_KEYS_JSON || env.GPT_SEO_ACTION_KEY || process.env.GPT_SEO_ACTION_KEY) getCustomGptRuntime();
 
   const storeRegistry = new InMemoryStoreRegistry(stores);
   const tokenProvider = new CompositeTokenProvider();
@@ -77,6 +83,7 @@ export function startGatewayServer(
     const isShopify = url === "/api/shopify" || url.startsWith("/api/shopify?");
     const isAutoSeo = url === "/api/auto-seo/run" || url.startsWith("/api/auto-seo/run?");
     const isPinterestPodHandover = url === "/api/pinterest-pod/handover-seo" || url.startsWith("/api/pinterest-pod/handover-seo?");
+    const isPinterestPodDirectSync = url === "/api/pinterest-pod/sync-shopify" || url.startsWith("/api/pinterest-pod/sync-shopify?");
     const isStoreRegister = url === "/api/stores/register" || url.startsWith("/api/stores/register?");
     const isStoreUpdate = url === "/api/stores/update" || url.startsWith("/api/stores/update?");
     const isStoreDelete = url === "/api/stores/delete" || url.startsWith("/api/stores/delete?");
@@ -214,6 +221,11 @@ export function startGatewayServer(
       return;
     }
 
+    if (isPinterestPodDirectSync) {
+      await handlePinterestPodDirectShopifySyncHttpRequest(req, res, { authToken, maxBodyBytes, dispatcher });
+      return;
+    }
+
     if (url === "/api/stores/register" || url.startsWith("/api/stores/register?")) {
       await handleStoreRegistrationHttpRequest(req, res, storeControlPlane, { authToken, maxBodyBytes });
       return;
@@ -236,6 +248,13 @@ export function startGatewayServer(
 
     if (url === "/api/proxy/check" || url.startsWith("/api/proxy/check?")) {
       await handleProxyCheckHttpRequest(req, res, { authToken, maxBodyBytes });
+      return;
+    }
+
+    const staticDir = process.env.STATIC_DIR
+      ? path.resolve(process.env.STATIC_DIR)
+      : path.resolve(process.cwd(), "dist");
+    if (fs.existsSync(staticDir) && serveStaticFile(req, res, staticDir)) {
       return;
     }
 

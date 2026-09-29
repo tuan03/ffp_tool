@@ -27,7 +27,7 @@ import urllib.parse
 import urllib.request
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 logger = logging.getLogger("pinterest_pod_bridge")
 
@@ -131,7 +131,7 @@ def save_room_template_images(items: list[Any], target_dir: Path) -> list[Path]:
                 mime = header.split(";")[0].split(":")[1]
                 ext = ".png" if "png" in mime else ".jpg"
                 img_bytes = base64.b64decode(data)
-                dest_filename = f"room_template_{idx}{ext}"
+                dest_filename = f"user_template_{idx}{ext}"
                 dest = target_dir / dest_filename
                 dest.write_bytes(img_bytes)
                 saved_paths.append(dest)
@@ -142,7 +142,7 @@ def save_room_template_images(items: list[Any], target_dir: Path) -> list[Path]:
         # 3. Check if it's an HTTP/HTTPS URL
         if url.startswith(("http://", "https://")):
             try:
-                dest = target_dir / f"room_template_{idx}.jpg"
+                dest = target_dir / f"user_template_{idx}.jpg"
                 req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
                 with urllib.request.urlopen(req, timeout=15) as resp:
                     dest.write_bytes(resp.read())
@@ -1546,7 +1546,13 @@ def _poll_job_worker(job_id: str, base_url: str, api_url: str) -> None:
 # Local Direct Pipeline Worker Fallback
 # ---------------------------------------------------------------------------
 
-def _run_local_pipeline_worker(job_id: str, req_body: dict[str, Any], base_url: str, cancel_event: threading.Event | None = None) -> None:
+def _run_local_pipeline_worker(
+    job_id: str,
+    req_body: dict[str, Any],
+    base_url: str,
+    cancel_event: threading.Event | None = None,
+    progress_callback: Callable[[str], None] | None = None,
+) -> None:
     # Ensure ROOT (tool_shopify) is strictly the primary sys.path entry
     root_str = str(ROOT.resolve())
     while root_str in sys.path:
@@ -1584,12 +1590,12 @@ def _run_local_pipeline_worker(job_id: str, req_body: dict[str, Any], base_url: 
         with JOB_CACHE_LOCK:
             JOB_CANCEL_EVENTS.pop(job_id, None)
             LOCAL_WORKER_THREADS.pop(job_id, None)
-            if job_id in ACTIVE_JOBS:
-                ACTIVE_JOBS[job_id]["status"] = "failed"
-                ACTIVE_JOBS[job_id]["error"] = f"Không thể nạp trend_tool module: {exc}"
-                ACTIVE_JOBS[job_id].setdefault("logs", []).append(f"LỖI: Không thể nạp trend_tool module: {exc}")
-                save_job_manifest(job_id, ACTIVE_JOBS[job_id])
-        return
+            job = ACTIVE_JOBS.setdefault(job_id, {})
+            job["status"] = "failed"
+            job["error"] = f"Không thể nạp trend_tool module: {exc}"
+            job.setdefault("logs", []).append(f"LỖI: Không thể nạp trend_tool module: {exc}")
+            save_job_manifest(job_id, job)
+        raise RuntimeError(f"Không thể nạp trend_tool module: {exc}") from exc
 
     niche = str(req_body.get("niche") or "").strip()
     raw_product = str(req_body.get("product") or "").lower().strip()
@@ -1604,7 +1610,7 @@ def _run_local_pipeline_worker(job_id: str, req_body: dict[str, Any], base_url: 
     artwork_size = str(req_body.get("artwork_image_size") or req_body.get("artwork_size") or DEFAULT_ARTWORK_IMAGE_SIZE).strip() or DEFAULT_ARTWORK_IMAGE_SIZE
     ai_background_variants = int(req_body.get("ai_background_variants") or req_body.get("room_angles") or 5)
     remove_white_background = bool(req_body.get("remove_white_background", False))
-    stage = str(req_body.get("workflow_stage") or "auto")
+    stage = str(req_body.get("workflow_stage") or req_body.get("stage") or req_body.get("action") or "auto").lower()
 
     output_root = LOCAL_OUTPUT_DIR if LOCAL_OUTPUT_DIR.exists() else (TEMP_DIR / job_id / "output")
     output_root.mkdir(parents=True, exist_ok=True)
@@ -1723,6 +1729,11 @@ def _run_local_pipeline_worker(job_id: str, req_body: dict[str, Any], base_url: 
                 logs = job.setdefault("logs", [])
                 logs.append(msg)
                 del logs[:-500]
+        if progress_callback is not None:
+            try:
+                progress_callback(msg)
+            except Exception:
+                pass
 
     vision_status_note = "ĐÃ TẮT AI LỌC - hiển thị 100% ảnh thô cào về" if is_vision_disabled else "Bật AI lọc"
     log_progress(f"Bắt đầu pipeline trực tiếp (Stage: {stage}, Product: {product}, Niche: '{niche}', Vision: {vision_status_note})...")
@@ -1775,7 +1786,7 @@ def _run_local_pipeline_worker(job_id: str, req_body: dict[str, Any], base_url: 
                 )
         elif stage == "production":
             selected = req_body.get("selected_candidates") or []
-            src_run_id = req_body.get("source_run_id")
+            src_run_id = req_body.get("source_run_id") or req_body.get("jobId") or req_body.get("job_id")
             src_dir = resolve_run_dir(src_run_id) if src_run_id else None
 
             # Resolve candidate dictionaries from source run's candidate_review.json if strings/IDs were passed
@@ -3203,11 +3214,13 @@ def cancel_pod_job(job_id: str, api_url: str = DEFAULT_API_URL) -> dict[str, Any
         if cancel_evt:
             cancel_evt.set()
 
+        logs_to_return: list[str] = []
         if safe_id in ACTIVE_JOBS:
             ACTIVE_JOBS[safe_id]["status"] = "cancelled"
             ACTIVE_JOBS[safe_id]["error"] = "Tiến trình đã được dừng bởi người dùng."
             ACTIVE_JOBS[safe_id].setdefault("logs", []).append("Nhận được lệnh dừng job từ người dùng. Đang hủy tiến trình...")
             save_job_manifest(safe_id, ACTIVE_JOBS[safe_id])
+            logs_to_return = list(ACTIVE_JOBS[safe_id].get("logs") or [])
         else:
             manifest = load_job_manifest(safe_id)
             if manifest:
@@ -3217,8 +3230,9 @@ def cancel_pod_job(job_id: str, api_url: str = DEFAULT_API_URL) -> dict[str, Any
                 m_data.setdefault("logs", []).append("Nhận được lệnh dừng job từ người dùng. Đang hủy tiến trình...")
                 ACTIVE_JOBS[safe_id] = m_data
                 save_job_manifest(safe_id, m_data)
+                logs_to_return = list(m_data.get("logs") or [])
 
-    return {"ok": True, "jobId": safe_id, "status": "cancelled"}
+    return {"ok": True, "jobId": safe_id, "status": "cancelled", "logs": logs_to_return}
 
 
 def delete_pod_job(job_id: str) -> dict[str, Any]:

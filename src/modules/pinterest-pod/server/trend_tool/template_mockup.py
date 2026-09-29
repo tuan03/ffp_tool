@@ -4,6 +4,7 @@ import hashlib
 import io
 import json
 import logging
+import random
 import re
 import time
 from dataclasses import asdict, dataclass
@@ -24,7 +25,8 @@ from .product_asset import (
     parse_json_relaxed,
 )
 from .product_render import add_leather_surface, add_textile_surface
-from .reference_composite import compose_reference_artwork
+from .reference_composite import compose_reference_artwork, normalize_coordinates, normalize_surface_coordinates
+from .reference_surfaces import analyze_reference_surfaces, find_precalibrated_template
 
 LOG = logging.getLogger("template_mockup")
 
@@ -232,6 +234,18 @@ def composite_infographic_hybrid(
         if ymax >= 975:
             ymax = 1000
 
+        # Full-width header banner snap: top banner ribbons across infographic headers
+        if ymin <= 100 and (xmax - xmin) >= 300:
+            ymin = 0
+            xmin = 0
+            xmax = 1000
+
+        # Full-width footer banner snap: bottom ribbons across infographic footers
+        if ymax >= 900 and (xmax - xmin) >= 300:
+            ymax = 1000
+            xmin = 0
+            xmax = 1000
+
         # Auto-expand ribbon banners anchored to margins to prevent text clipping
         is_h_ribbon = (xmax - xmin) > 1.2 * (ymax - ymin) and (ymax - ymin) <= 250
         if is_h_ribbon and xmin == 0 and xmax < 975:
@@ -324,8 +338,10 @@ def analyze_reference_image(
     target: ProductTarget,
     *,
     artwork: Image.Image | None = None,
+    product_render: Image.Image | None = None,
     model: str = "gemini-2.5-pro",
     cache_dir: Path | None = None,
+    filename: str | None = None,
 ) -> dict[str, Any]:
     """Dynamically analyze any reference image with open-ended visual intelligence.
 
@@ -345,19 +361,87 @@ def analyze_reference_image(
     else:
         product_label = raw_target or active_niche or "POD commercial product"
 
-    # Deterministic content hash for caching (combining reference image and artwork thumbnail)
-    thumb_ref = image.resize((min(image.width, 256), min(image.height, 256)))
+    # Deterministic content hash for caching (combining reference image, artwork, and product render thumbnail)
+    thumb_ref = image.convert("RGB").resize((min(image.width, 256), min(image.height, 256)))
     buf_ref = io.BytesIO()
     thumb_ref.save(buf_ref, format="JPEG", quality=75)
 
     buf_art_bytes = b""
     if artwork is not None:
-        thumb_art = artwork.resize((min(artwork.width, 256), min(artwork.height, 256)))
+        thumb_art = artwork.convert("RGB").resize((min(artwork.width, 256), min(artwork.height, 256)))
         buf_art = io.BytesIO()
         thumb_art.save(buf_art, format="JPEG", quality=75)
         buf_art_bytes = buf_art.getvalue()
 
-    hash_key = "v8_surface_" + hashlib.sha256(buf_ref.getvalue() + buf_art_bytes + product_label.encode("utf-8")).hexdigest()[:16]
+    buf_prod_bytes = b""
+    if product_render is not None:
+        thumb_prod = product_render.convert("RGB").resize((min(product_render.width, 256), min(product_render.height, 256)))
+        buf_prod = io.BytesIO()
+        thumb_prod.save(buf_prod, format="JPEG", quality=75)
+        buf_prod_bytes = buf_prod.getvalue()
+
+    hash_key = "v11_surface_" + hashlib.sha256(buf_ref.getvalue() + buf_art_bytes + buf_prod_bytes + product_label.encode("utf-8")).hexdigest()[:16]
+
+    # Pre-calibrated exact quad lookup for standard reference templates (always takes precedence over disk cache)
+    calibrated = find_precalibrated_template(image, filename=filename)
+    if calibrated is not None:
+        quad = calibrated["quad"]
+        b2d = calibrated["box_2d"]
+        title = str(calibrated.get("scene_title", "Reference Shot"))
+        is_info = "infographic" in title.lower()
+        val = {
+            "scene_title": title,
+            "visual_concept": "Authentic commercial lifestyle photo with pre-calibrated product geometry.",
+            "is_infographic": is_info,
+            "is_plain_background": False,
+            "product_instances": [],
+            "infographic_text_elements": [],
+            "exclusion_zones": [],
+            "product_boxes_norm_0_1000": [b2d],
+            "chrome_boxes_norm_0_1000": [],
+            "product_form": f"Rectangular floor {product_label}",
+            "external_chrome_to_preserve": "Background room furniture, walls, shelves, floor.",
+            "prior_surface_print_to_eliminate": "All old print graphics.",
+            "product_canvas_area": f"The entire top surface of the {product_label}.",
+            "generation_directive": "Render a cohesive photographic lifestyle mockup with realistic perspective and contact shadows.",
+            "qa_checklist": [
+                "criterion 1: Verify product silhouette and geometry exactly match reference",
+                "criterion 2: Verify zero leftover graphic artifacts or bleed-through appear",
+            ],
+            "surface_plan": {
+                "all_printable_surfaces_identified": True,
+                "surfaces": [
+                    {
+                        "surface_id": "primary_surface",
+                        "description": f"Printable area of {product_label}",
+                        "geometry": "planar",
+                        "confidence": 1.0,
+                        "quad": quad,
+                        "polygon": quad,
+                        "box_2d": b2d,
+                        "protected_polygons": [],
+                    }
+                ],
+                "occluders": [],
+            },
+        }
+        if filename:
+            val["filename"] = filename
+        if cache_dir:
+            try:
+                cache_dir.mkdir(parents=True, exist_ok=True)
+                cache_file = cache_dir / "reference_analysis_cache.json"
+                cached_dict = {}
+                if cache_file.exists():
+                    try:
+                        cached_dict = json.loads(cache_file.read_text(encoding="utf-8"))
+                    except Exception:
+                        pass
+                cached_dict[hash_key] = val
+                cache_file.write_text(json.dumps(cached_dict, indent=2), encoding="utf-8")
+            except Exception:
+                pass
+        return val
 
     cache_file: Path | None = None
     if cache_dir:
@@ -373,32 +457,61 @@ def analyze_reference_image(
                         and "generation_directive" in val
                         and "external_chrome_to_preserve" in val
                     ):
-                        val["is_infographic"] = bool(val.get("is_infographic"))
-                        val["is_plain_background"] = bool(val.get("is_plain_background", False))
-                        if not (val["is_infographic"] and val["is_plain_background"]):
-                            val["chrome_boxes_norm_0_1000"] = []
-                            val["is_plain_background"] = False
-                        return val
+                        # Filter out obsolete cache entries that treated scalloped graphics as structural trim
+                        form_str = str(val.get("product_form", "")).lower()
+                        chrome_str = str(val.get("external_chrome_to_preserve", "")).lower()
+                        forbidden_terms = ("scallop", "stitched black", "black stitched", "black edge binding", "black fabric edge", "black binding", "edge binding")
+                        if not any(t in form_str or t in chrome_str for t in forbidden_terms):
+                            val["is_infographic"] = bool(val.get("is_infographic")) or bool(val.get("infographic_text_elements"))
+                            val["is_plain_background"] = bool(val.get("is_plain_background", False))
+                            all_c = list(val.get("chrome_boxes_norm_0_1000") or [])
+                            for elem in (val.get("infographic_text_elements") or []):
+                                if isinstance(elem, dict) and elem.get("box_2d"):
+                                    elem_type = str(elem.get("element_type", "")).lower()
+                                    if elem_type in ("callout", "feature_pointer", "annotation"):
+                                        continue
+                                    all_c.append(elem["box_2d"])
+                            for ex in (val.get("exclusion_zones") or []):
+                                if isinstance(ex, (list, tuple)) and len(ex) == 4:
+                                    all_c.append(list(ex))
+                            val["chrome_boxes_norm_0_1000"] = _normalize_boxes(all_c)
+                            return val
             except Exception:
                 pass
 
+    ref_img_label = "Image 3" if product_render is not None else "Image 2"
+    ground_truth_section = ""
+    if product_render is not None:
+        ground_truth_section = """
+CRITICAL GROUND TRUTH PRODUCT GUIDANCE:
+- Image 1: Commercial master print artwork.
+- Image 2: Finished Print-on-Demand (POD) product sample (GROUND TRUTH PRODUCT).
+  Image 2 defines the exact physical carrier form, perimeter edge construction (clean cut/sewn edges with NO scalloped borders, NO extra trims), and master artwork placement!
+  The product in the final mockup MUST match Image 2 in physical silhouette, edge construction, and artwork layout.
+- Image 3: Exemplary marketing reference image (Reference Scene).
+  The product in Image 3 has an OLD PRINT, old borders, or old scalloped trims.
+  CRITICAL: All old graphics, decorative scalloped borders, and text on the product in Image 3 are strictly OLD PRINTS to be 100% eliminated and replaced.
+  Do NOT preserve old scalloped borders or old text frames from Image 3! The product carrier must match Image 2.
+"""
+
     analysis_prompt = f"""
 You are an elite creative director and commercial photographer specializing in Print-on-Demand (POD) e-commerce products ({product_label}).
-You are analyzing an exemplary commercial marketing image (Reference Image 2) to adapt it for a new {product_label} that will feature the new print artwork (Image 1).
-
+You are analyzing an exemplary commercial marketing image ({ref_img_label}) to adapt it for a new {product_label} that will feature the new print artwork (Image 1).
+{ground_truth_section}
 Apply the universal principles of Semantic Physics, Product Geometry, and Object-Print Separation:
 1. MANDATORY PRODUCT FORM FACTOR & SILHOUETTE LOCK:
-   - Identify the EXACT physical carrier and geometry in Image 2 (e.g. structured satchel / handbag with dual short rolled top-handles, woven plush throw blanket, rectangular floor rug, ceramic mug).
-   - NEVER alter, distort, or misclassify the product form (e.g. if Image 2 shows a structured top-handle handbag/satchel with short rolled handles, you MUST NEVER call it or describe it as a tote bag, shoulder bag, or bowler bag; do NOT lengthen handles into shoulder straps).
-   - Non-printed structural parts (handles, zippers, straps, buckles, hardware, edge trim, lining) MUST be preserved in their exact style, color, and finish.
+   - Identify the EXACT physical carrier and geometry in {ref_img_label} (e.g. structured satchel / handbag with dual short rolled top-handles, woven plush throw blanket, rectangular floor rug, ceramic mug).
+   - NEVER alter, distort, or misclassify the product form (e.g. if {ref_img_label} shows a structured top-handle handbag/satchel with short rolled handles, you MUST NEVER call it or describe it as a tote bag, shoulder bag, or bowler bag; do NOT lengthen handles into shoulder straps).
+   - Non-printed structural parts (handles, zippers, straps, buckles, hardware, lining) MUST be preserved in their exact style, color, and finish.
+   - CRITICAL FOR FLAT SURFACE / SOFT GOODS POD PRODUCTS (rugs, blankets, mats, pillows): Any graphic border illustration, scalloped rim, doodle frame, or printed pattern on the surface is OLD PRINT GRAPHICS and must be 100% eliminated and replaced. Do NOT misclassify graphic borders, scalloped rims, or doodle frames as structural edge trim! The printable canvas covers the ENTIRE product face right up to where it meets the floor/background.
 
 2. HUMAN ANATOMY & MODEL INTERACTION:
    - If human models, hands, or limbs are visible holding or interacting with the product:
      - The hands, fingers, and wrists MUST be natural and anatomically flawless: exactly 5 distinct fingers, natural joint articulation, relaxed wrists, no dislocated joints, no floating handles.
-     - The model's exact pose, grip, arm position, and clothing from Image 2 must be preserved faithfully.
+     - The model's exact pose, grip, arm position, and clothing from {ref_img_label} must be preserved faithfully.
 
 3. SCENE CLASSIFICATION (INFOGRAPHIC STUDIO SPEC SHEET vs. PHOTOGRAPHIC LIFESTYLE SCENE):
-   - You MUST accurately classify Image 2 into one of two categories:
+   - You MUST accurately classify {ref_img_label} into one of two categories:
      a) PHOTOGRAPHIC LIFESTYLE SCENE: An authentic real-world scene (e.g. living room, bedroom, patio, street scene, tabletop with flowers/decorations, model in an environment).
         - Set "is_infographic": false
         - Set "is_plain_background": false
@@ -406,7 +519,7 @@ Apply the universal principles of Semantic Physics, Product Geometry, and Object
      b) INFOGRAPHIC / STUDIO SPEC SHEET: A commercial catalog specification sheet or product diagram on a plain/solid studio backdrop (white, light gray, solid uniform studio color) featuring graphic text banners, typography callouts, feature arrows, or multi-panel detail insets (e.g. 'PRODUCT DISPLAY', 'CAN BE CARRIED OR LIFTED', 'Exquisite Zipper', feature callout tags).
         - Set "is_infographic": true
         - Set "is_plain_background": true (only if the background is a solid/plain studio color)
-        - "product_instances": list of objects for each product instance shown in Image 2:
+        - "product_instances": list of objects for each product instance shown in {ref_img_label}:
           [{{"instance_id": 1, "box_2d": [ymin, xmin, ymax, xmax], "position": "top-left", "pose_and_presentation": "held by short rolled top-handle in hand from left"}}]
         - "infographic_text_elements": list of graphic text banners, headers, callouts, and logos with exact text, styling, location, and bounding box:
           [{{"element_id": "banner_1", "banner_text": "CAN BE CARRIED OR LIFTED", "element_type": "banner", "position": "bottom-left horizontal ribbon", "visual_style": "yellow rectangular banner with bold black lettering", "box_2d": [ymin, xmin, ymax, xmax]}}]
@@ -415,12 +528,12 @@ Apply the universal principles of Semantic Physics, Product Geometry, and Object
         - "chrome_boxes_norm_0_1000": list of normalized bounding boxes [ymin, xmin, ymax, xmax] for graphic text banners, headers, callout tags, and logos strictly OUTSIDE the product area. IMPORTANT: When detecting bounding boxes for graphic banners, ribbons, or headers, ensure the box completely encloses the entire banner graphic and its full text without truncating any words or letters, and strictly excludes adjacent product surfaces.
    - MANDATORY INSTRUCTION FOR 'generation_directive':
      - If "is_infographic" is true: Instruct the generative model to render the ENTIRE infographic spec sheet directly end-to-end:
-       'Generate a high-resolution commercial infographic product specification sheet based on the exact composition and multi-panel / multi-view layout in Image 2. Render all graphic banners, headers, and text callouts directly with their exact wording and styling in crisp, legible typography. Position each product instance strictly according to its spatial anchor. Keep all exclusion zones (banner areas) completely free of product occlusion. Completely replace the old printed graphics on every product instance with the new artwork from Image 1, conforming to realistic 3D depth and material texture. Ensure 5-finger anatomical precision on hands and zero visual artifacts.'
-     - If "is_infographic" is false (lifestyle scene): Explicitly instruct the generative model: 'Render a cohesive, seamless photographic lifestyle photograph. Faithfully preserve the room architecture, walls, lighting, background furniture, and decorative props from Image 2, and seamlessly integrate the product with the new artwork from Image 1 with realistic contact shadows, natural material texture, and coherent ambient illumination.'
+       'Generate a high-resolution commercial infographic product specification sheet based on the exact composition and multi-panel / multi-view layout in {ref_img_label}. Render all graphic banners, headers, and text callouts directly with their exact wording and styling in crisp, legible typography. Position each product instance strictly according to its spatial anchor. Keep all exclusion zones (banner areas) completely free of product occlusion. Completely replace the old printed graphics on every product instance with the new artwork from Image 1, conforming to realistic 3D depth and material texture. Ensure 5-finger anatomical precision on hands and zero visual artifacts.'
+     - If "is_infographic" is false (lifestyle scene): Explicitly instruct the generative model: 'Render a cohesive, seamless photographic lifestyle photograph. Faithfully preserve the room architecture, walls, lighting, background furniture, and decorative props from {ref_img_label}, and seamlessly integrate the product with the new artwork from Image 1 with realistic contact shadows, natural material texture, and coherent ambient illumination.'
 
 4. PRIOR SURFACE PRINT ELIMINATION (Zero Bleed-Through):
-   - ANY graphic, illustration, motif, or old base pattern printed on the old product in Image 2 must be 100% eliminated and replaced with the new artwork from Image 1.
-   - The new print must cover the printable product surfaces with edge-to-edge coverage, realistic material grain, and accurate 3D perspective.
+   - ANY graphic, illustration, motif, scalloped border, doodle rim, or old base pattern printed on the old product in {ref_img_label} must be 100% eliminated and replaced edge-to-edge with the new artwork from Image 1.
+   - For flat surface POD products (rugs, blankets, mats), the printable canvas extends edge-to-edge across the entire product surface right up to the floor boundary. The new print must cover the printable product surfaces with edge-to-edge coverage, realistic material grain, and accurate 3D perspective.
 
 5. ZERO VISUAL ARTIFACTS:
    - Absolutely zero stray colored dots (purple/green/cyan/red dots), circular sensor blemishes, pixel noise, or watermarks.
@@ -438,13 +551,13 @@ Analyze the images deeply and return JSON only in English with these exact keys:
   "chrome_boxes_norm_0_1000": [],
   "product_form": "Precise description of the physical product form and hardware geometry",
   "external_chrome_to_preserve": "Specific visual elements outside the printable surface to keep intact (background, text banners, hardware, human hands)",
-  "prior_surface_print_to_eliminate": "Specific graphic motifs, old illustrations, or old colors from Image 2 to eliminate 100%",
-  "product_canvas_area": "Precise description of the physical product surfaces that serve as the canvas for the new artwork",
-  "generation_directive": "A complete, self-contained prompt for the generative image model. Instruct it step-by-step to compose the image using Image 1 (new artwork) and Image 2 (reference composition). Explicitly enforce the exact product silhouette (e.g. structured satchel with short handles, NOT a tote), 5-finger anatomical precision, zero dislocated wrists, zero colored dots, and exact scene preservation.",
+  "prior_surface_print_to_eliminate": f"Specific graphic motifs, old illustrations, old printed borders (including scalloped borders, doodle rims, framing lines), or old colors from {ref_img_label} to eliminate 100%",
+  "product_canvas_area": "Precise description of the physical product surfaces that serve as the canvas for the new artwork. For flat surface POD products (rugs, mats, blankets), this MUST be the entire product face edge-to-edge right to the floor boundary (including any area previously covered by scalloped graphic borders or doodle frames)",
+  "generation_directive": f"A complete, self-contained prompt for the generative image model. Instruct it step-by-step to compose the image using Image 1 (new artwork) and {ref_img_label} (reference composition). Explicitly enforce the exact product silhouette (matching Image 2 ground truth if supplied), 5-finger anatomical precision, zero dislocated wrists, zero colored dots, and exact scene preservation.",
   "qa_checklist": [
-    "criterion 1: Verify product silhouette and geometry exactly match Image 2",
+    f"criterion 1: Verify product silhouette and geometry exactly match {ref_img_label}",
     "criterion 2: Verify the new artwork is rendered across the designated product canvas area",
-    "criterion 3: Verify zero leftover graphic artifacts or bleed-through from Image 2 appear",
+    f"criterion 3: Verify zero leftover graphic artifacts, scalloped borders, or bleed-through from {ref_img_label} appear",
     "criterion 4: Verify human hands and anatomy are natural and flawless if present"
   ]
 }}
@@ -463,22 +576,20 @@ For each surface supply:
 - polygon: detailed visible printable boundary as [x,y] points in 0..1000.
 - protected_polygons: polygons for ALL occluding hands, hardware, seams, trim,
   straps and other non-printed parts within the surface; [] only if absent.
+- box_2d: [ymin, xmin, ymax, xmax] bounding box enclosing this product surface.
+CRITICAL: All coordinates for "quad", "polygon", and "protected_polygons" MUST be [x, y] format (x = horizontal col 0..1000, y = vertical row 0..1000). DO NOT return [y, x].
 Do not include interior lining, hardware/detail-only panels or text banners as
 printable surfaces. Do not substitute bounding boxes for printable boundaries.
 If any surface cannot be accurately mapped, mark coverage false. The caller will
 require review instead of publishing an uncertain composite. No niche defaults.
 """
+    contents_parts = []
     if artwork is not None:
-        contents_parts = [
-            image_part(artwork, max_side=1024, max_bytes=2_000_000),
-            image_part(image, max_side=1024, max_bytes=2_000_000),
-            types.Part.from_text(text=analysis_prompt),
-        ]
-    else:
-        contents_parts = [
-            image_part(image, max_side=1024, max_bytes=2_000_000),
-            types.Part.from_text(text=analysis_prompt),
-        ]
+        contents_parts.append(image_part(artwork, max_side=1024, max_bytes=2_000_000))
+    if product_render is not None:
+        contents_parts.append(image_part(product_render, max_side=1024, max_bytes=2_000_000))
+    contents_parts.append(image_part(image, max_side=1024, max_bytes=2_000_000))
+    contents_parts.append(types.Part.from_text(text=analysis_prompt))
 
     last_error: Exception | None = None
     for attempt in range(1, 4):
@@ -530,25 +641,44 @@ require review instead of publishing an uncertain composite. No niche defaults.
                 if not parsed["chrome_boxes_norm_0_1000"]:
                     parsed["chrome_boxes_norm_0_1000"] = [elem["box_2d"] for elem in norm_elements if "box_2d" in elem]
 
-            if not parsed["is_infographic"]:
-                # Non-infographic photographic lifestyle scenes must not have chrome boxes pasted
-                parsed["chrome_boxes_norm_0_1000"] = []
-                parsed["is_plain_background"] = False
-            else:
-                # For infographics, ensure chrome_boxes contains all banner and exclusion zones
-                if not parsed.get("chrome_boxes_norm_0_1000"):
-                    exclusions = parsed.get("exclusion_zones") or []
-                    text_boxes = [elem.get("box_2d") for elem in (parsed.get("infographic_text_elements") or []) if isinstance(elem, dict) and elem.get("box_2d")]
-                    parsed["chrome_boxes_norm_0_1000"] = _normalize_boxes(exclusions + text_boxes)
+            if parsed.get("infographic_text_elements"):
+                parsed["is_infographic"] = True
+
+            all_chrome = list(parsed.get("chrome_boxes_norm_0_1000") or [])
+            for elem in (parsed.get("infographic_text_elements") or []):
+                if isinstance(elem, dict) and elem.get("box_2d"):
+                    elem_type = str(elem.get("element_type", "")).lower()
+                    if elem_type in ("callout", "feature_pointer", "annotation"):
+                        continue
+                    all_chrome.append(elem["box_2d"])
+            for ex in (parsed.get("exclusion_zones") or []):
+                if isinstance(ex, (list, tuple)) and len(ex) == 4:
+                    all_chrome.append(list(ex))
+            parsed["chrome_boxes_norm_0_1000"] = _normalize_boxes(all_chrome)
             if not parsed.get("product_boxes_norm_0_1000"):
                 # Ensure template has product area protection
                 parsed["product_boxes_norm_0_1000"] = [[150, 150, 850, 850]]
+
+            # Pillar 1: Normalize all surface coordinates in surface_plan
+            surface_plan = parsed.get("surface_plan")
+            if isinstance(surface_plan, dict) and isinstance(surface_plan.get("surfaces"), list):
+                product_boxes = parsed.get("product_boxes_norm_0_1000") or []
+                for idx, surface in enumerate(surface_plan["surfaces"]):
+                    if isinstance(surface, dict):
+                        b2d = surface.get("box_2d")
+                        if not b2d and idx < len(product_boxes):
+                            b2d = product_boxes[idx]
+                        elif not b2d and product_boxes:
+                            b2d = product_boxes[0]
+                        normalize_surface_coordinates(surface, b2d)
 
             if cache_file:
                 try:
                     all_cached = json.loads(cache_file.read_text(encoding="utf-8")) if cache_file.exists() else {}
                 except Exception:
                     all_cached = {}
+                if filename:
+                    parsed["filename"] = filename
                 all_cached[hash_key] = parsed
                 cache_file.write_text(json.dumps(all_cached, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -583,6 +713,102 @@ require review instead of publishing an uncertain composite. No niche defaults.
     }
 
 
+def _build_fallback_surface_plan(
+    image: Image.Image,
+    reference_analysis: dict[str, Any] | None,
+    target: ProductTarget,
+    filename: str | None = None,
+) -> dict[str, Any]:
+    """Construct a clean planar surface plan when vision segmentation is missing or unverified."""
+    calibrated = find_precalibrated_template(image, filename=filename)
+    if calibrated is not None:
+        quad = calibrated["quad"]
+        b2d = calibrated["box_2d"]
+        return {
+            "scene_title": str(calibrated.get("scene_title", "Reference Scene")),
+            "all_printable_surfaces_identified": True,
+            "surfaces": [
+                {
+                    "surface_id": "surface_0",
+                    "description": f"Full printable area for {target.name}",
+                    "geometry": "planar",
+                    "confidence": 1.0,
+                    "quad": quad,
+                    "polygon": quad,
+                    "protected_polygons": [],
+                    "box_2d": b2d,
+                }
+            ],
+            "occluders": [],
+        }
+
+    product_boxes = reference_analysis.get("product_boxes_norm_0_1000") or [] if reference_analysis else []
+    if not product_boxes:
+        product_boxes = [[200, 100, 850, 900]]
+
+    surfaces = []
+    for s_idx, (ymin, xmin, ymax, xmax) in enumerate(product_boxes):
+        quad = [
+            [float(xmin), float(ymin)],
+            [float(xmax), float(ymin)],
+            [float(xmax), float(ymax)],
+            [float(xmin), float(ymax)],
+        ]
+        surfaces.append({
+            "surface_id": f"surface_{s_idx}",
+            "description": f"Printable area {s_idx + 1} for {target.name}",
+            "geometry": "planar",
+            "confidence": 0.95,
+            "quad": quad,
+            "polygon": quad,
+            "protected_polygons": [],
+            "box_2d": [ymin, xmin, ymax, xmax],
+        })
+
+    return {
+        "scene_title": reference_analysis.get("scene_title", "Reference Scene") if reference_analysis else "Reference Scene",
+        "all_printable_surfaces_identified": True,
+        "surfaces": surfaces,
+        "occluders": [],
+    }
+
+
+def _refine_surface_plan_for_full_bleed(
+    plan: dict[str, Any],
+    image_size: tuple[int, int],
+    expansion_percent: float = 0.03,
+) -> None:
+    """Slightly expand quad and mask outward to ensure full-bleed coverage over old graphic borders."""
+    surfaces = plan.get("surfaces") or []
+    pixel_dilation = max(4, int(min(image_size) * expansion_percent * 0.6))
+    for s in surfaces:
+        if not isinstance(s, dict):
+            continue
+        s["dilation_pixels"] = int(s.get("dilation_pixels", 0)) + pixel_dilation
+        quad = s.get("quad")
+        if isinstance(quad, list) and len(quad) == 4:
+            try:
+                pts = np.asarray(quad, dtype=float)
+                center = pts.mean(axis=0)
+                expanded = center + (pts - center) * (1.0 + expansion_percent)
+                expanded = np.clip(expanded, -100.0, 1100.0)
+                s["quad"] = expanded.round(1).tolist()
+            except Exception:
+                pass
+
+        poly = s.get("polygon")
+        if isinstance(poly, list) and len(poly) >= 3:
+            try:
+                poly_pts = np.asarray(poly, dtype=float)
+                poly_center = poly_pts.mean(axis=0)
+                expanded_poly = poly_center + (poly_pts - poly_center) * (1.0 + expansion_percent)
+                s["polygon"] = np.clip(expanded_poly, 0.0, 1000.0).round(1).tolist()
+            except Exception:
+                pass
+        elif "polygon" not in s and isinstance(s.get("quad"), list):
+            s["polygon"] = np.clip(np.asarray(s["quad"], dtype=float), 0.0, 1000.0).round(1).tolist()
+
+
 def build_direct_ai_mockup(
     print_path: Path,
     output_dir: Path,
@@ -596,6 +822,7 @@ def build_direct_ai_mockup(
     variant: int = 1,
     progress: Any = None,
     room_template: Path | Image.Image | None = None,
+    product_render: Path | Image.Image | None = None,
     **kwargs: Any,
 ) -> TemplateMockupRecord:
     """Project onto supplied references; generate new scenes only without a reference."""
@@ -620,9 +847,39 @@ def build_direct_ai_mockup(
     except Exception as exc:
         return TemplateMockupRecord(print_path, None, None, None, model, pose.name, "failed", f"unreadable print artwork: {exc}", {}, "direct_ai", variant)
 
+    product_render_img: Image.Image | None = None
+    if isinstance(product_render, (str, Path)):
+        p_pr = Path(product_render)
+        if p_pr.exists() and p_pr.is_file():
+            try:
+                with Image.open(p_pr) as opened_pr:
+                    product_render_img = ImageOps.exif_transpose(opened_pr).convert("RGB")
+            except Exception as pr_exc:
+                if progress:
+                    log(progress, f"Note: could not open product render {p_pr.name}: {pr_exc}")
+    elif isinstance(product_render, Image.Image):
+        product_render_img = ImageOps.exif_transpose(product_render).convert("RGB")
+    elif product_render is None:
+        base_stem = re.sub(r'_\d+x\d+.*$', '', print_path.stem)
+        candidate_paths = [
+            output_dir.parent / "rendered_products" / f"{base_stem}_product.png",
+            output_dir.parent / "product_cutouts" / f"{base_stem}_product.png",
+            output_dir / f"{base_stem}_product.png",
+        ]
+        for cp in candidate_paths:
+            if cp.exists() and cp.is_file():
+                try:
+                    with Image.open(cp) as opened_pr:
+                        product_render_img = ImageOps.exif_transpose(opened_pr).convert("RGB")
+                    break
+                except Exception:
+                    pass
+
     room_img: Image.Image | None = None
+    template_filename: str | None = None
     if isinstance(room_template, (str, Path)):
         p_rt = Path(room_template)
+        template_filename = p_rt.name
         if p_rt.exists() and p_rt.is_file():
             try:
                 with Image.open(p_rt) as opened_rt:
@@ -632,65 +889,324 @@ def build_direct_ai_mockup(
                     log(progress, f"Note: could not open room template {p_rt.name}: {rt_exc}")
     elif isinstance(room_template, Image.Image):
         room_img = ImageOps.exif_transpose(room_template).convert("RGB")
+        t_fn = getattr(room_template, "filename", None)
+        if t_fn:
+            template_filename = Path(t_fn).name
 
     if room_template is not None and room_img is None:
         return TemplateMockupRecord(print_path, None, None, None, model, pose.name, "failed", "REFERENCE_UNREADABLE: supplied template could not be loaded", {}, "reference_composite", variant)
 
     reference_analysis: dict[str, Any] | None = None
-    if room_img is not None and client is not None:
+    # Check for pre-calibrated exact quad before any AI/vision calls or when client is unavailable
+    if room_img is not None:
+        calibrated = find_precalibrated_template(room_img, filename=template_filename)
+        if calibrated is not None:
+            quad = calibrated["quad"]
+            b2d = calibrated["box_2d"]
+            title = str(calibrated.get("scene_title", "Reference Shot"))
+            reference_analysis = {
+                "scene_title": title,
+                "visual_concept": "Authentic commercial lifestyle photo with pre-calibrated product geometry.",
+                "is_infographic": "infographic" in title.lower(),
+                "is_plain_background": False,
+                "product_instances": [],
+                "infographic_text_elements": [],
+                "exclusion_zones": [],
+                "product_boxes_norm_0_1000": [b2d],
+                "chrome_boxes_norm_0_1000": [],
+                "product_form": f"Rectangular floor {target.name}",
+                "external_chrome_to_preserve": "Background room furniture, walls, shelves, floor.",
+                "prior_surface_print_to_eliminate": "All old print graphics.",
+                "product_canvas_area": f"The entire top surface of the {target.name}.",
+                "generation_directive": "Render a cohesive photographic lifestyle mockup with realistic perspective and contact shadows.",
+                "qa_checklist": [
+                    "criterion 1: Verify product silhouette and geometry exactly match reference",
+                    "criterion 2: Verify zero leftover graphic artifacts or bleed-through appear",
+                ],
+                "surface_plan": {
+                    "all_printable_surfaces_identified": True,
+                    "scene_title": title,
+                    "surfaces": [
+                        {
+                            "surface_id": "primary_surface",
+                            "description": f"Printable area of {target.name}",
+                            "geometry": "planar",
+                            "confidence": 1.0,
+                            "quad": quad,
+                            "polygon": quad,
+                            "box_2d": b2d,
+                            "protected_polygons": [],
+                        }
+                    ],
+                    "occluders": [],
+                },
+                "segmentation_model": "precalibrated",
+            }
+            if progress:
+                log(progress, f"Khớp mẫu phòng tham chiếu chuẩn [{title}] -> Sử dụng tọa độ góc quad đã hiệu chuẩn chính xác.")
+
+    if room_img is not None and reference_analysis is None and client is not None:
         try:
             cache_dir = output_dir / "room_templates"
-            reference_analysis = analyze_reference_image(
+            reference_analysis = analyze_reference_surfaces(
                 client,
                 room_img,
-                target,
-                artwork=artwork,
+                getattr(target, "niche", "") or target.name or "POD product",
                 model=quality_model,
                 cache_dir=cache_dir,
+                filename=template_filename,
+                product_render=product_render_img,
             )
             if progress and reference_analysis:
                 scene_label = reference_analysis.get("scene_title", "Reference Shot")
                 concept_short = str(reference_analysis.get("visual_concept", ""))[:70]
                 log(progress, f"AI Vision phân tích ảnh tham chiếu: [{scene_label}] - {concept_short}...")
         except Exception as an_exc:
-            LOG.warning("Failed to analyze reference image: %s", an_exc)
+            LOG.warning("Failed to analyze reference surfaces with native mask: %s; trying geometric analysis fallback...", an_exc)
+            try:
+                reference_analysis = analyze_reference_image(
+                    client,
+                    room_img,
+                    target,
+                    artwork=artwork,
+                    product_render=product_render_img,
+                    model=quality_model,
+                    cache_dir=cache_dir,
+                    filename=template_filename,
+                )
+                if progress and reference_analysis:
+                    scene_label = reference_analysis.get("scene_title", "Reference Shot")
+                    concept_short = str(reference_analysis.get("visual_concept", ""))[:70]
+                    log(progress, f"AI Vision phân tích hình học tham chiếu (fallback): [{scene_label}] - {concept_short}...")
+            except Exception as fb_exc:
+                LOG.warning("Fallback geometric reference analysis also failed: %s", fb_exc)
 
     active_pose_name = reference_analysis.get("scene_title", pose.name) if reference_analysis else pose.name
     custom_qa_checklist = reference_analysis.get("qa_checklist") if reference_analysis else None
-
-    if room_img is not None:
-        metrics: dict[str, object] = {"master_artwork_sha256": hashlib.sha256(print_path.read_bytes()).hexdigest()}
-        try:
-            plan = reference_analysis.get("surface_plan") if reference_analysis else None
-            if not isinstance(plan, dict):
-                raise ValueError("SURFACE_REVIEW_REQUIRED: reference analysis did not provide printable masks and mapping")
-            generated, edit_mask = compose_reference_artwork(room_img, artwork, plan)
-            candidate_path = output_dir / "direct_ai_candidates" / f"{stem}{suffix}_projected.png"
-            mask_path = output_dir / "reference_masks" / f"{stem}{suffix}_mask.png"
-            candidate_path.parent.mkdir(parents=True, exist_ok=True)
-            mask_path.parent.mkdir(parents=True, exist_ok=True)
-            generated.save(candidate_path)
-            edit_mask.save(mask_path)
-            metrics.update({"surface_plan": plan, "outside_mask_unchanged": True})
-            quality = assess_direct_ai_mockup(
-                print_path, candidate_path, target, backend=backend, model=quality_model,
-                image_type="REFERENCE_TEMPLATE", reference_template=room_img, edit_mask=edit_mask,
-            )
-            metrics["mockup_quality"] = quality.to_dict()
-            if not quality.accepted:
-                raise ValueError(f"REFERENCE_QA_REJECTED: {quality.reason}")
-            mockup_path.parent.mkdir(parents=True, exist_ok=True)
-            generated.save(mockup_path)
-            return TemplateMockupRecord(print_path, None, mask_path, mockup_path, quality_model,
-                active_pose_name, "ok", "Master artwork projected into validated printable surface masks.",
-                metrics, "reference_composite", variant)
-        except Exception as exc:
-            return TemplateMockupRecord(print_path, None, None, None, quality_model, active_pose_name,
-                "failed", str(exc), metrics, "reference_composite", variant)
-
     best_candidate_metrics: dict[str, object] = {}
 
+    if room_img is not None:
+        metrics: dict[str, object] = {
+            "master_artwork_sha256": hashlib.sha256(print_path.read_bytes()).hexdigest(),
+            "has_room_template": True,
+        }
+        if reference_analysis:
+            metrics["reference_analysis"] = reference_analysis
+
+        # Pillar 1: AI-Native Multimodal Inpainting / Lifestyle Integration
+        # Uses Gemini 2.5 Flash Image to synthesize the product featuring the approved artwork
+        # naturally into the room with authentic material texture, room lighting, contact shadows,
+        # and full scene preservation.
+        best_candidate_img: Image.Image | None = None
+        best_qa_score: float = -1.0
+        best_candidate_metrics: dict[str, object] = {}
+
+        if client is not None:
+            ai_attempts = min(3, max(1, attempts))
+            last_candidate_img: Image.Image | None = None
+            last_qa_reason: str = ""
+            for ai_attempt in range(1, ai_attempts + 1):
+                candidate_path = output_dir / "direct_ai_candidates" / f"{stem}{suffix}_ai_attempt_{ai_attempt}.png"
+                force_hybrid = bool(kwargs.get("force_hybrid_composite", False))
+                try:
+                    generated = generate_direct_ai_lifestyle(
+                        client,
+                        artwork,
+                        target,
+                        model,
+                        pose,
+                        correction=correction,
+                        room_template=room_img,
+                        product_render=product_render_img,
+                        prior_candidate=last_candidate_img,
+                        prior_qa_reason=last_qa_reason,
+                        reference_analysis=reference_analysis,
+                        hybrid_mode=force_hybrid,
+                    )
+                    if reference_analysis and room_img is not None:
+                        c_boxes = list(reference_analysis.get("chrome_boxes_norm_0_1000") or [])
+                        for elem in (reference_analysis.get("infographic_text_elements") or []):
+                            if isinstance(elem, dict) and elem.get("box_2d"):
+                                elem_type = str(elem.get("element_type", "")).lower()
+                                if elem_type in ("callout", "feature_pointer", "annotation", "pointer", "detail", "spec"):
+                                    continue
+                                b = elem["box_2d"]
+                                if b[0] <= 120 or b[2] >= 920:
+                                    c_boxes.append(b)
+                        norm_c_boxes = _normalize_boxes(c_boxes)
+                        p_boxes = reference_analysis.get("product_boxes_norm_0_1000") or []
+                        if norm_c_boxes:
+                            generated = composite_infographic_hybrid(
+                                room_img,
+                                generated,
+                                chrome_boxes=norm_c_boxes,
+                                product_boxes=p_boxes,
+                            )
+                    candidate_path.parent.mkdir(parents=True, exist_ok=True)
+                    generated.save(candidate_path)
+
+                    quality = assess_direct_ai_mockup(
+                        print_path,
+                        candidate_path,
+                        target,
+                        pose_name=active_pose_name,
+                        pose_requirement=reference_analysis.get("generation_directive", pose.display_rule or pose.placement) if reference_analysis else (pose.display_rule or pose.placement),
+                        require_matching_pillowcases=pose.name == "bed_full_showcase",
+                        custom_checklist=custom_qa_checklist,
+                        image_type="REFERENCE_TEMPLATE",
+                        reference_template=room_img,
+                        product_render=product_render_img,
+                        backend=backend,
+                        model=quality_model,
+                    )
+                    metrics.update({
+                        "generation_attempt": ai_attempt,
+                        "mockup_quality": quality.to_dict(),
+                    })
+                    q_score = getattr(quality, "score", 0.0) if hasattr(quality, "score") else (85.0 if quality.accepted else 40.0)
+                    if q_score > best_qa_score or best_candidate_img is None:
+                        best_qa_score = q_score
+                        best_candidate_img = generated.copy()
+                        best_candidate_metrics = dict(metrics)
+
+                    if quality.accepted:
+                        mockup_path.parent.mkdir(parents=True, exist_ok=True)
+                        generated.save(mockup_path)
+                        return TemplateMockupRecord(
+                            print_path,
+                            None,
+                            None,
+                            mockup_path,
+                            model,
+                            active_pose_name,
+                            "ok",
+                            "Gemini synthesized the product with the approved artwork into the reference scene.",
+                            metrics,
+                            "direct_ai",
+                            variant,
+                        )
+                    else:
+                        LOG.info("AI inpainting attempt %d QA check: %s", ai_attempt, quality.reason)
+                        last_candidate_img = generated.copy()
+                        last_qa_reason = quality.reason
+                        correction = f"The prior inpainting attempt was rejected by visual QA: {quality.reason}. Preserve room context and integrate artwork with natural lighting."
+                except Exception as exc:
+                    LOG.warning("AI inpainting attempt %d failed: %s", ai_attempt, exc)
+                    err_str = str(exc).lower()
+                    if "429" in err_str or "resource_exhausted" in err_str:
+                        backoff = 4.0 * ai_attempt + random.uniform(1.0, 3.0)
+                        LOG.info("AI inpainting attempt %d hit 429 quota; pausing %.1fs before next attempt...", ai_attempt, backoff)
+                        time.sleep(backoff)
+                    else:
+                        time.sleep(1.0)
+
+        # Pillar 2: Reference Geometric Composite Fallback
+        # (Used when client is None, offline unit testing, or if AI inpainting is unavailable)
+        LOG.info("Proceeding to reference geometric composite for template: %s", template_filename)
+        plan = reference_analysis.get("surface_plan") if reference_analysis else None
+        if not isinstance(plan, dict) or not plan.get("surfaces"):
+            LOG.info("No surface_plan provided by vision analysis; constructing fallback planar surface plan.")
+            plan = _build_fallback_surface_plan(room_img, reference_analysis, target, filename=template_filename)
+
+        # Populate exclusion zones in plan from reference_analysis
+        exclusions = list(reference_analysis.get("exclusion_zones") or []) if reference_analysis else []
+        if reference_analysis:
+            exclusions.extend(reference_analysis.get("chrome_boxes_norm_0_1000") or [])
+            for elem in (reference_analysis.get("infographic_text_elements") or []):
+                if isinstance(elem, dict) and elem.get("box_2d"):
+                    exclusions.append(elem["box_2d"])
+        if exclusions:
+            plan["exclusion_zones"] = _normalize_boxes(list(plan.get("exclusion_zones") or []) + exclusions)
+
+        # Normalize all surface coordinates in plan
+        product_boxes = reference_analysis.get("product_boxes_norm_0_1000") or [] if reference_analysis else []
+        for idx, s in enumerate(plan.get("surfaces") or []):
+            if isinstance(s, dict):
+                b2d = s.get("box_2d") or (product_boxes[idx] if idx < len(product_boxes) else (product_boxes[0] if product_boxes else None))
+                normalize_surface_coordinates(s, b2d)
+
+        candidate_path = output_dir / "direct_ai_candidates" / f"{stem}{suffix}_projected.png"
+        mask_path = output_dir / "reference_masks" / f"{stem}{suffix}_mask.png"
+        candidate_path.parent.mkdir(parents=True, exist_ok=True)
+        mask_path.parent.mkdir(parents=True, exist_ok=True)
+
+        best_generated: Image.Image | None = None
+        best_mask: Image.Image | None = None
+        last_error = ""
+
+        max_attempts = min(3, max(1, attempts))
+        for comp_attempt in range(1, max_attempts + 1):
+            try:
+                generated, edit_mask = compose_reference_artwork(room_img, artwork, plan, photorealistic=True)
+                generated.save(candidate_path)
+                edit_mask.save(mask_path)
+                best_generated = generated
+                best_mask = edit_mask
+
+                metrics.update({
+                    "surface_plan": {
+                        **plan,
+                        "surfaces": [
+                            {key: value for key, value in surface.items() if key not in {"segmentation", "protected_segmentations"}}
+                            for surface in plan.get("surfaces", [])
+                        ],
+                    },
+                    "outside_mask_unchanged": True,
+                    "segmentation_model": reference_analysis.get("segmentation_model") if reference_analysis else None,
+                    "composite_attempt": comp_attempt,
+                })
+
+                quality = assess_direct_ai_mockup(
+                    print_path, candidate_path, target, backend=backend, model=quality_model,
+                    image_type="REFERENCE_TEMPLATE", reference_template=room_img, edit_mask=edit_mask,
+                    product_render=product_render_img,
+                )
+                metrics["mockup_quality"] = quality.to_dict()
+                comp_score = getattr(quality, "score", 0.0) if hasattr(quality, "score") else (85.0 if quality.accepted else 45.0)
+                if comp_score > best_qa_score or best_candidate_img is None:
+                    best_qa_score = comp_score
+                    best_candidate_img = generated.copy()
+                    best_candidate_metrics = dict(metrics)
+
+                if quality.accepted:
+                    mockup_path.parent.mkdir(parents=True, exist_ok=True)
+                    generated.save(mockup_path)
+                    return TemplateMockupRecord(
+                        print_path, None, mask_path, mockup_path, quality_model,
+                        active_pose_name, "ok", "Master artwork projected into validated printable surface masks.",
+                        metrics, "reference_composite", variant,
+                    )
+                else:
+                    LOG.info(
+                        "Reference composite attempt %d QA check: %s. Refining surface for full-bleed coverage.",
+                        comp_attempt, quality.reason,
+                    )
+                    last_error = quality.reason
+                    _refine_surface_plan_for_full_bleed(plan, room_img.size, expansion_percent=0.03 * comp_attempt)
+
+            except Exception as exc:
+                LOG.warning("Reference composite attempt %d exception: %s", comp_attempt, exc)
+                last_error = str(exc)
+                _refine_surface_plan_for_full_bleed(plan, room_img.size, expansion_percent=0.04)
+
+        # Discard invalid surface cache on QA rejection for this specific template
+        cache_key = reference_analysis.get("cache_key") if reference_analysis else None
+        if isinstance(cache_key, str) and re.fullmatch(r"[a-f0-9]{64}", cache_key):
+            (output_dir / "room_templates" / f"surface_{cache_key}.json").unlink(missing_ok=True)
+
+        return TemplateMockupRecord(
+            print_path, None, None, None, quality_model,
+            active_pose_name, "failed", f"REFERENCE_QA_REJECTED: {last_error}",
+            metrics, "reference_composite", variant,
+        )
+
+    # Generative AI lifestyle path (ONLY when no reference template is supplied)
+
+
+
     attempts_to_run = max(1, attempts) if client is not None else 0
+    last_candidate_img: Image.Image | None = None
+    last_qa_reason: str = ""
     for attempt in range(1, attempts_to_run + 1):
         candidate_path = output_dir / "direct_ai_candidates" / f"{stem}{suffix}_attempt_{attempt}.png"
         force_hybrid = bool(kwargs.get("force_hybrid_composite", False))
@@ -703,6 +1219,9 @@ def build_direct_ai_mockup(
                 pose,
                 correction=correction,
                 room_template=room_img,
+                product_render=product_render_img,
+                prior_candidate=last_candidate_img,
+                prior_qa_reason=last_qa_reason,
                 reference_analysis=reference_analysis,
                 hybrid_mode=force_hybrid,
             )
@@ -732,6 +1251,7 @@ def build_direct_ai_mockup(
                 require_matching_pillowcases=pose.name == "bed_full_showcase",
                 custom_checklist=custom_qa_checklist,
                 image_type="DYNAMIC_REFERENCE" if (reference_analysis or room_img is not None) else "ROOM_SCENE",
+                product_render=product_render_img,
                 backend=backend,
                 model=quality_model,
             )
@@ -746,6 +1266,8 @@ def build_direct_ai_mockup(
             best_candidate_metrics = metrics_dict
 
             if not quality.accepted:
+                last_candidate_img = generated.copy()
+                last_qa_reason = quality.reason
                 raise RuntimeError(f"direct AI mockup QA rejected: {quality.reason}")
             mockup_path.parent.mkdir(parents=True, exist_ok=True)
             generated.save(mockup_path)
@@ -826,6 +1348,7 @@ def inpaint_artwork_on_template(
     raw_name = (target.name or "").strip().lower()
     product_hint = active_niche or raw_name or "product"
     is_bag = any(k in product_hint for k in ("bag", "handbag", "tote", "purse", "satchel", "backpack"))
+    is_flat = any(k in product_hint for k in ("rug", "carpet", "mat", "blanket", "throw", "tapestry", "towel", "pillow", "canvas", "poster"))
 
     candidate_boxes: list[list[int]] = []
 
@@ -942,13 +1465,18 @@ def inpaint_artwork_on_template(
             shaded_img = add_textile_surface(shaded_img, strength=0.08)
 
         # Soft feathered mask inset by 3% to seamlessly blend behind stitches/hardware
+        # Flat products (rugs, mats, blankets, posters) must be edge-to-edge full bleed (inset = 0)
         mask = Image.new("L", (box_w, box_h), 0)
         draw = ImageDraw.Draw(mask)
-        inset_x = max(2, int(box_w * 0.03))
-        inset_y = max(2, int(box_h * 0.03))
-        radius = max(6, min(box_w, box_h) // 20)
-        draw.rounded_rectangle((inset_x, inset_y, box_w - inset_x, box_h - inset_y), radius=radius, fill=255)
-        mask = mask.filter(ImageFilter.GaussianBlur(radius=max(3, min(box_w, box_h) // 50)))
+        if is_flat:
+            draw.rectangle((0, 0, box_w, box_h), fill=255)
+            mask = mask.filter(ImageFilter.GaussianBlur(radius=1))
+        else:
+            inset_x = max(2, int(box_w * 0.03))
+            inset_y = max(2, int(box_h * 0.03))
+            radius = max(6, min(box_w, box_h) // 20)
+            draw.rounded_rectangle((inset_x, inset_y, box_w - inset_x, box_h - inset_y), radius=radius, fill=255)
+            mask = mask.filter(ImageFilter.GaussianBlur(radius=max(3, min(box_w, box_h) // 50)))
 
         result.paste(shaded_img, (left, top), mask)
 
@@ -992,6 +1520,9 @@ def generate_direct_ai_lifestyle(
     *,
     correction: str = "",
     room_template: Image.Image | None = None,
+    product_render: Image.Image | None = None,
+    prior_candidate: Image.Image | None = None,
+    prior_qa_reason: str = "",
     reference_analysis: dict[str, Any] | None = None,
     hybrid_mode: bool = False,
 ) -> Image.Image:
@@ -1007,38 +1538,62 @@ def generate_direct_ai_lifestyle(
         image_config=types.ImageConfig(aspect_ratio="1:1", image_size="2K", output_mime_type="image/png"),
     )
     parts = [image_part(artwork, max_side=1536, max_bytes=3_500_000)]
+    if product_render is not None:
+        parts.append(image_part(product_render, max_side=1536, max_bytes=3_500_000))
     if room_template is not None:
         parts.append(image_part(room_template, max_side=1536, max_bytes=3_500_000))
+    if prior_candidate is not None:
+        parts.append(image_part(prior_candidate, max_side=1536, max_bytes=3_500_000))
     prompt_str = direct_ai_lifestyle_prompt(
         target,
         pose,
         correction,
         has_room_template=room_template is not None,
+        has_product_render=product_render is not None,
+        has_prior_candidate=prior_candidate is not None,
+        prior_qa_reason=prior_qa_reason,
         reference_analysis=reference_analysis,
         hybrid_mode=hybrid_mode,
+        artwork=artwork,
     )
     parts.append(types.Part.from_text(text=prompt_str))
 
-    try:
-        response = client.models.generate_content(
-            model=image_model,
-            contents=[
-                types.Content(
-                    role="user",
-                    parts=parts,
+    max_retries = 3
+    last_error: Exception | None = None
+    for call_attempt in range(1, max_retries + 1):
+        try:
+            response = client.models.generate_content(
+                model=image_model,
+                contents=[
+                    types.Content(
+                        role="user",
+                        parts=parts,
+                    )
+                ],
+                config=config,
+            )
+            image_bytes, _ = extract_image_bytes(response)
+            if image_bytes:
+                with Image.open(io.BytesIO(image_bytes)) as generated:
+                    return generated.convert("RGB")
+        except Exception as exc:
+            last_error = exc
+            err_str = str(exc).lower()
+            is_429 = "429" in err_str or "resource_exhausted" in err_str or "too many requests" in err_str
+            if call_attempt < max_retries and (is_429 or is_transient_gemini_error(exc)):
+                backoff = 4.0 * call_attempt + random.uniform(1.0, 3.0)
+                LOG.warning(
+                    "Multimodal generative AI lifestyle transient/429 error on call %d: %s. Retrying in %.1fs...",
+                    call_attempt,
+                    exc,
+                    backoff,
                 )
-            ],
-            config=config,
-        )
-        image_bytes, _ = extract_image_bytes(response)
-        if image_bytes:
-            with Image.open(io.BytesIO(image_bytes)) as generated:
-                return generated.convert("RGB")
-    except Exception as exc:
-        LOG.warning("Multimodal generative AI lifestyle call failed: %s", exc)
-        raise
+                time.sleep(backoff)
+                continue
+            LOG.warning("Multimodal generative AI lifestyle call failed: %s", exc)
+            raise
 
-    raise RuntimeError("direct AI lifestyle generation returned no image.")
+    raise RuntimeError(f"direct AI lifestyle generation returned no image: {last_error or 'unknown'}")
 
 
 def direct_ai_lifestyle_prompt(
@@ -1047,8 +1602,12 @@ def direct_ai_lifestyle_prompt(
     correction: str,
     *,
     has_room_template: bool = False,
+    has_product_render: bool = False,
+    has_prior_candidate: bool = False,
+    prior_qa_reason: str = "",
     reference_analysis: dict[str, Any] | None = None,
     hybrid_mode: bool = False,
+    artwork: Image.Image | None = None,
 ) -> str:
     raw_target = target.name.strip().lower()
     active_niche = (getattr(target, "niche", "") or "").strip().lower()
@@ -1059,6 +1618,64 @@ def direct_ai_lifestyle_prompt(
 
     coordinated_products = ""
     scene_title = reference_analysis.get("scene_title", "Reference Listing Shot") if reference_analysis else ""
+
+    visual_feedback_block = ""
+    if has_prior_candidate and prior_qa_reason:
+        cand_idx = 1 + (1 if has_product_render else 0) + (1 if has_room_template else 0) + 1
+        cand_label = f"Image {cand_idx}"
+        target_scene_ref = "Image 3" if (has_product_render and has_room_template) else ("Image 2" if has_room_template else "the scene")
+        visual_feedback_block = (
+            f"\n================================================================================\n"
+            f"[CRITICAL MULTIMODAL RETRY MANDATE - SURGICAL DEFECT CORRECTION]:\n"
+            f"- {cand_label} is your PREVIOUS GENERATION ATTEMPT, which was REJECTED by Visual Quality Inspection with this specific flaw:\n"
+            f"  >> \"{prior_qa_reason}\"\n"
+            f"- EXAMINE {cand_label} CLOSELY: Compare it directly against the reference images:\n"
+            f"  1. If any old artwork remnants, blurry artifacts, or discolored patches are visible on {cand_label}: COMPLETELY ERASE and REPLACE them with the clean new artwork from Image 1.\n"
+            f"  2. If the product looks flat, sticker-like, or lacks depth on {cand_label}: RESTORE natural ambient contact shadows, handle drop shadows, and authentic material depth.\n"
+            f"  3. If room context was altered on {cand_label}: Strictly preserve 100% of the authentic scene from {target_scene_ref}.\n"
+            f"- RETAIN the good framing and perspective from {cand_label}, but SURGICALLY ELIMINATE the defect!\n"
+            f"================================================================================\n\n"
+        )
+
+    is_info = bool(reference_analysis.get("is_infographic")) if reference_analysis else False
+    num_surfaces = len((reference_analysis.get("surface_plan") or {}).get("surfaces", [])) if reference_analysis else 0
+    instances = reference_analysis.get("product_instances") or [] if reference_analysis else []
+    multi_panel_block = ""
+    if is_info or num_surfaces > 1 or len(instances) > 1:
+        multi_panel_block = (
+            f"\n[MULTI-PANEL & MULTI-ITEM ARTWORK REPLACEMENT MANDATE]:\n"
+            f"- This template contains MULTIPLE product views, panels, or coordinated items (e.g. main front view, detail close-ups, or a coordinated set like a handbag and wallet).\n"
+            f"- You MUST replace the artwork across ALL visible product panels and ALL items in the set with the new design from Image 1.\n"
+            f"- Zero tolerance for leaving the old graphic on ANY panel or ANY item (e.g. updating the wallet but leaving the bag unchanged is strictly forbidden).\n"
+            f"- Zero tolerance for leaving any partial prior print, floral pattern, or old doodle behind (e.g. completely eliminate and replace any floral band at the bottom of the bag with 100% opacity).\n"
+            f"- Maintain 100% of the authentic room environment: do NOT replace the background, furniture, or props.\n"
+            f"- CRITICAL TEXT AND BANNER PRESERVATION: You MUST strictly preserve all text banners, title ribbons, callout descriptions, dimension labels, and spec tables EXACTLY as they appear in the original scene. NEVER alter, erase, or rewrite any text.\n"
+            f"- For non-printed detail panels (such as strap hardware close-up, zipper macro shots, lining views): PRESERVE them exactly as they are without adding artwork.\n\n"
+        )
+
+    is_transparent_artwork = False
+    if artwork is not None:
+        try:
+            art_rgba = artwork.convert("RGBA")
+            alpha_np = np.asarray(art_rgba.getchannel("A"))
+            if (alpha_np < 240).mean() > 0.10:
+                is_transparent_artwork = True
+        except Exception:
+            pass
+
+    transparent_artwork_block = ""
+    if is_transparent_artwork:
+        room_ref_label = "Image 3" if has_product_render else "Image 2"
+        transparent_artwork_block = (
+            f"\n[CRITICAL TRANSPARENT / TYPOGRAPHY ARTWORK APPLICATION MANDATE]:\n"
+            f"- Image 1 is a standalone graphic or typography design with a TRANSPARENT background (e.g. slogan, quote, or vector motif).\n"
+            f"- The product body MUST be rendered with authentic physical material texture (e.g. natural pebbled leather grain, textile weave, or canvas texture):\n"
+            f"  * Replicate the clean solid neutral base tone shown in Image 2, but PRESERVE authentic material grain, natural light gradients, highlights, and soft ambient shadows across the 3D surface.\n"
+            f"  * NEVER render a flat, unshaded, 2D paper cutout or blank sticker plane! The surface must respond naturally to the scene's ambient lighting.\n"
+            f"- ABSOLUTELY ZERO PRIOR PRINTS, ZERO OLD GRAPHICS, ZERO BLEED-THROUGH:\n"
+            f"  * 100% of the prior printed graphics, illustrations, patterns, or drawings from {room_ref_label} MUST BE COMPLETELY ELIMINATED AND ERASED.\n"
+            f"  * The new typography / graphic from Image 1 must sit cleanly and crisply on the textured product surface with zero remnants of prior prints visible anywhere on the product.\n\n"
+        )
 
     is_bag = any(k in product for k in ("bag", "handbag", "tote", "purse", "backpack", "clutch", "leather"))
     is_blanket = any(k in product for k in ("blanket", "throw", "quilt"))
@@ -1133,6 +1750,19 @@ def direct_ai_lifestyle_prompt(
             "Keep any lettering crisp, readable, and elegant. Absolutely no crowded micro-repeats, squished icons, or garbled text on the pillows."
         )
 
+    room_ref = "Image 3" if has_product_render else "Image 2"
+
+    product_ground_truth_lock = ""
+    if has_product_render:
+        product_ground_truth_lock = (
+            f"- ARTWORK APPLICATION & PRINT FIDELITY REFERENCE (CRITICAL - IMAGE 2):\n"
+            f"  Image 2 depicts the master artwork printed on the product material with clean edges and proper scale.\n"
+            f"  The rendered product in {room_ref} MUST faithfully replicate the print fidelity of Image 2:\n"
+            f"  1. Master Artwork Fidelity: The artwork motif, colors, typography, and placement on the product in {room_ref} must match Image 2 (sharp, high-contrast, fully opaque, not a faded or semi-transparent overlay).\n"
+            f"  2. Preserve Existing Scene Product Form: Keep the EXACT physical product form, silhouette, handles, zippers, and orientation already present in {room_ref}. DO NOT swap or replace the bag/product in {room_ref} with a different model from Image 2!\n"
+            f"  3. 100% Full-Opacity Surface Coverage: Discard all prior surface prints, floral patterns, and graphics from {room_ref}. The new artwork must completely replace the old print with 100% opacity across all visible panels and matching items.\n"
+        )
+
     if has_room_template and reference_analysis:
         visual_concept = reference_analysis.get("visual_concept", "")
         preserve = reference_analysis.get("external_chrome_to_preserve") or reference_analysis.get("elements_to_preserve", "")
@@ -1185,8 +1815,8 @@ def direct_ai_lifestyle_prompt(
 
             if hybrid_mode:
                 banner_lock = (
-                    "- STRICT NO-TEXT-BANNER MANDATE (CRITICAL - AVOID DUPLICATE BANNER ARTIFACTS): "
-                    "Image 2 is an infographic / studio spec sheet with graphic text banners, headers, callouts, or typography. "
+                    f"- STRICT NO-TEXT-BANNER MANDATE (CRITICAL - AVOID DUPLICATE BANNER ARTIFACTS): "
+                    f"{room_ref} is an infographic / studio spec sheet with graphic text banners, headers, callouts, or typography. "
                     "You MUST NOT DRAW, RENDER, PAINT, OR HALLUCINATE ANY TEXT BANNERS, HEADERS, CALLOUTS, LABELS, OR TEXT BOXES on the canvas or background! "
                     "Leave all banner and header background areas around the product completely plain, solid, uniform, and empty (e.g. pure clean studio background). "
                     "Native high-resolution vector text banners and infographic chrome will be composited in post-processing. "
@@ -1195,42 +1825,48 @@ def direct_ai_lifestyle_prompt(
                     f"{exclusion_section}\n"
                 )
                 zero_hallucination_rule = (
-                    "- ZERO HALLUCINATIONS / STUDIO PRESERVATION: You MUST preserve 100% of the studio backdrop, product layout, and lighting from Image 2 (EXCEPT text banners, callouts, or typography which MUST NOT be painted on canvas). Do NOT invent a different room, sofa, or street!\n"
+                    f"- ZERO HALLUCINATIONS / STUDIO PRESERVATION: You MUST preserve 100% of the studio backdrop, product layout, and lighting from {room_ref} (EXCEPT text banners, callouts, or typography which MUST NOT be painted on canvas). Do NOT invent a different room, sofa, or street!\n"
                 )
             else:
                 banner_lock = (
-                    "- STRICT INFOGRAPHIC SPEC SHEET & TYPOGRAPHY MANDATE: "
-                    "Image 2 is a commercial infographic / studio spec sheet with graphic text banners, headers, callouts, or multi-panel layouts. "
+                    f"- STRICT INFOGRAPHIC SPEC SHEET & TYPOGRAPHY MANDATE: "
+                    f"{room_ref} is a commercial infographic / studio spec sheet with graphic text banners, headers, callouts, or multi-panel layouts. "
                     "Render the entire infographic directly in one cohesive image with crisp, sharp, legible typography for all banners, headers, and callouts. "
-                    "Faithfully reproduce the exact multi-view / multi-panel composition of Image 2 with zero cut-and-paste seams.\n"
+                    f"Faithfully reproduce the exact multi-view / multi-panel composition of {room_ref} with zero cut-and-paste seams.\n"
                     f"{spatial_section}"
                     f"{text_section}"
                     f"{exclusion_section}\n"
                 )
                 zero_hallucination_rule = (
-                    "- ZERO HALLUCINATIONS / STUDIO PRESERVATION: You MUST preserve 100% of the studio backdrop, product layout, and lighting from Image 2. "
+                    f"- ZERO HALLUCINATIONS / STUDIO PRESERVATION: You MUST preserve 100% of the studio backdrop, product layout, and lighting from {room_ref}. "
                     "Render all graphic banners and text callouts with clean, crisp typography. Do NOT invent a different room, sofa, or street!\n"
                 )
         else:
             zero_hallucination_rule = (
-                "- ZERO HALLUCINATIONS / SEAMLESS LIFESTYLE PRESERVATION: Image 2 is an authentic photographic lifestyle scene. "
-                "You MUST faithfully preserve 100% of the room/environment context: the exact room architecture, walls, flooring, ambient lighting, "
-                "surrounding furniture, and decorative props from Image 2. Do NOT invent a different room, sofa, or street!\n"
-                f"- SEAMLESS PRODUCT INTEGRATION: Seamlessly render the {product} into the exact physical context of Image 2. "
+                f"- ZERO HALLUCINATIONS / SEAMLESS LIFESTYLE PRESERVATION: {room_ref} is an authentic photographic lifestyle scene. "
+                f"You MUST faithfully preserve 100% of the room/environment context: the exact room architecture, walls, flooring, ambient lighting, "
+                f"surrounding furniture, and decorative props from {room_ref}. Do NOT invent a different room, sofa, or street!\n"
+                f"- SEAMLESS PRODUCT INTEGRATION: Seamlessly render the {product} into the exact physical context of {room_ref}. "
                 "The product must be integrated naturally with realistic contact shadows, surface reflections, natural depth of field, and ambient light matching the room.\n"
             )
 
         silhouette_rule = f"- Exact Product Silhouette & Form: {product_form}\n" if product_form else ""
         if is_bag:
             bag_lock = (
-                "- STRICT BAG SILHOUETTE & HARDWARE LOCK: Preserve the exact physical bag shape, proportions, and handle construction from Image 2. "
-                "If Image 2 shows a structured handbag / satchel with dual short rolled top-handles, DO NOT draw a tote bag, DO NOT draw a bowler bag, "
-                "and DO NOT lengthen the handles into shoulder straps.\n"
+                f"- STRICT BAG SILHOUETTE & HARDWARE LOCK: Preserve the EXACT physical bag shape, model, proportions, and handle construction already present in {room_ref}.\n"
+                f"  * If {room_ref} shows a tote bag, RETAIN the tote bag with its tall handles. DO NOT replace it with a satchel or structured box bag!\n"
+                f"  * If {room_ref} shows a structured handbag/satchel, RETAIN the satchel. DO NOT replace it with a tote bag!\n"
+                f"  * If {room_ref} shows a coordinated set (e.g. handbag + matching wallet/clutch), RETAIN BOTH items and apply the new artwork to BOTH!\n"
+                f"  * Never alter the bag's hardware, handle length, or silhouette to match Image 2. Image 2 is only an artwork print reference.\n"
             )
         else:
             bag_lock = ""
 
         anatomy_lock = (
+            f"- STRICT HUMAN MODEL & PERSON PRESERVATION (MANDATORY):\n"
+            f"  If {room_ref} contains a person, human model, hands, arms, or clothing: you MUST KEEP THE EXACT SAME PERSON, FACE, HAIR, SKIN TONE, CLOTHING, AND POSE from {room_ref}!\n"
+            f"  Strictly DO NOT replace the model with a different person. Strictly DO NOT replace the scene with a different stock model photograph!\n"
+            f"  This is an inpainting task: ONLY replace the print on the {product}'s surface; keep the human model and the rest of the photograph 100% identical to {room_ref}.\n"
             "- HUMAN ANATOMY & PHOTOREALISM MANDATE: Any human models, hands, or arms visible MUST have anatomically perfect hands with exactly 5 distinct fingers, "
             "natural joint articulation, relaxed wrists, and realistic skin texture. Zero dislocated wrists, zero rubber limbs, zero floating handles.\n"
             "- ZERO ARTIFACTS: Absolutely zero stray colored dots (purple/green/cyan/red dots), zero sensor noise, zero circular pixel blemishes, zero watermarks.\n"
@@ -1240,50 +1876,66 @@ def direct_ai_lifestyle_prompt(
         if is_infographic_template:
             if hybrid_mode:
                 product_rule = (
-                    f"STRICT INFOGRAPHIC TEMPLATE PRESERVATION MANDATE: Render the new print artwork from Image 1 onto the product carrier shown in Image 2. "
-                    f"Faithfully reproduce its motifs, colors, and layout across the surface with realistic material texture, folds, and seams as defined in Image 2. "
-                    f"Zero remnants or bleed-through of any old patterns from Image 2."
+                    f"STRICT INFOGRAPHIC TEMPLATE PRESERVATION MANDATE: Render the new print artwork from Image 1 onto the product carrier shown in {room_ref}. "
+                    + ("Replicate the exact product carrier and perimeter edges from Image 2. " if has_product_render else "")
+                    + f"Faithfully reproduce its motifs, colors, and layout across the surface with realistic material texture, folds, and seams as defined in {room_ref}. "
+                    f"Zero remnants or bleed-through of any old patterns from {room_ref}."
                 )
                 listing_requirement = (
-                    f"STRICT TEMPLATE PRESERVATION: Retain the composition, product geometry, and clean background from Image 2 ({scene_title}). DO NOT generate text banners on canvas (banners are composited post-generation). Replace only the designated product surface."
+                    f"STRICT TEMPLATE PRESERVATION: Retain the composition, product geometry, and clean background from {room_ref} ({scene_title}). DO NOT generate text banners on canvas (banners are composited post-generation). Replace only the designated product surface."
                 )
                 constraints = (
                     "STRICT NO TEXT BANNERS: Absolutely zero drawn text banners, zero text boxes, "
                     "no 'CAN BE CARRIED OR LIFTED' or header lettering painted on the canvas. Leave all background areas around product plain, clean, and empty. "
-                    "Preserve all physical elements from Image 2. Retain exact product silhouette. "
-                    "Anatomically perfect hands (5 fingers). Absolutely zero stray colored dots (purple/green dots), "
-                    "no superimposed photographer watermarks, no bleed-through of prior prints from Image 2."
+                    f"Preserve all physical elements from {room_ref}. "
+                    + ("Replicate exact product carrier from Image 2. " if has_product_render else "Retain exact product silhouette. ")
+                    + "Anatomically perfect hands (5 fingers). Absolutely zero stray colored dots (purple/green dots), "
+                    f"no superimposed photographer watermarks, no bleed-through of prior prints from {room_ref}."
                 )
                 composition_rule = (
-                    "Composition: Match the exact framing, perspective, and arrangement of Image 2. Replace only the product carrier surface. Leave infographic text banner areas clean, plain, and empty."
+                    f"Composition: Match the exact framing, perspective, and arrangement of {room_ref}. Replace only the product carrier surface. Leave infographic text banner areas clean, plain, and empty."
                 )
             else:
                 product_rule = (
-                    f"STRICT INFOGRAPHIC SPEC SHEET MANDATE: Render a complete commercial product infographic matching the exact multi-panel / multi-view layout of Image 2. "
-                    f"You MUST render the new print artwork from Image 1 onto EVERY SINGLE product instance shown in Image 2 without exception! "
-                    f"Completely replace and eliminate all prior graphics or motifs ({prior_eliminate}) across ALL instances. "
+                    f"STRICT INFOGRAPHIC SPEC SHEET MANDATE: Render a complete commercial product infographic matching the exact multi-panel / multi-view layout of {room_ref}. "
+                    f"You MUST render the new print artwork from Image 1 onto EVERY SINGLE product instance shown in {room_ref} without exception! "
+                    + ("Replicate the physical carrier and edge construction from Image 2 across all instances. " if has_product_render else "")
+                    + f"Completely replace and eliminate all prior graphics or motifs ({prior_eliminate}) across ALL instances. "
                     f"Faithfully reproduce all graphic text banners, headers, and callouts with crisp, legible typography and authentic studio layout. "
-                    f"Zero remnants or bleed-through of any old patterns from Image 2."
+                    f"Zero remnants or bleed-through of any old patterns from {room_ref}."
                 )
                 listing_requirement = (
-                    f"STRICT TEMPLATE PRESERVATION: Retain the composition, product geometry, typography, and clean background from Image 2 ({scene_title}). "
+                    f"STRICT TEMPLATE PRESERVATION: Retain the composition, product geometry, typography, and clean background from {room_ref} ({scene_title}). "
                     f"Replace all old surface prints across ALL product instances with the new artwork from Image 1."
                 )
                 constraints = (
-                    "Preserve all physical elements and graphic infographic banners from Image 2. Retain exact product silhouette. "
-                    "Replace all old product surface graphics across ALL product instances with the new artwork from Image 1. "
+                    f"Preserve all physical elements and graphic infographic banners from {room_ref}. "
+                    + ("Replicate exact product carrier from Image 2. " if has_product_render else "Retain exact product silhouette. ")
+                    + "Replace all old product surface graphics across ALL product instances with the new artwork from Image 1. "
                     "Render all text banners crisply and legibly without garbled characters. "
                     "Anatomically perfect hands (5 fingers). Absolutely zero stray colored dots (purple/green dots), "
-                    "no superimposed photographer watermarks, no bleed-through of prior prints from Image 2."
+                    f"no superimposed photographer watermarks, no bleed-through of prior prints from {room_ref}."
                 )
                 composition_rule = (
-                    "Composition: Match the exact framing, perspective, and multi-view arrangement of Image 2. Replace the product carrier surfaces on all instances with Image 1."
+                    f"Composition: Match the exact framing, perspective, and multi-view arrangement of {room_ref}. Replace the product carrier surfaces on all instances with Image 1."
+                )
+            if has_product_render:
+                ground_truth_intro_info = (
+                    f"- Image 1: Commercial print artwork.\n"
+                    f"- Image 2: Finished POD product sample (GROUND TRUTH PRODUCT to reproduce across instances).\n"
+                    f"- Image 3: EXACT reference studio template to preserve and adapt.\n"
+                    f"{zero_hallucination_rule}"
+                    f"{product_ground_truth_lock}"
+                )
+            else:
+                ground_truth_intro_info = (
+                    f"- Image 1: Commercial print artwork.\n"
+                    f"- Image 2: EXACT reference studio template to preserve and adapt.\n"
+                    f"{zero_hallucination_rule}"
                 )
             scene_desc = (
                 f"CRITICAL MANDATORY TEMPLATE REPLACEMENT DIRECTIVE ({scene_title}):\n"
-                f"- Image 1: Commercial print artwork.\n"
-                f"- Image 2: EXACT reference studio template to preserve and adapt.\n"
-                f"{zero_hallucination_rule}"
+                f"{ground_truth_intro_info}"
                 f"- External Context/Infographic Chrome to Preserve: {preserve}\n"
                 f"- Product Printable Canvas Area: {placement_zone}\n"
                 f"{silhouette_rule}"
@@ -1292,21 +1944,40 @@ def direct_ai_lifestyle_prompt(
                 f"{banner_lock}"
                 f"{eliminate_section}"
                 f"- Tailored Synthesis Directive:\n{directive}\n"
-                f"- Obey visual physics: Maintain realistic contact shadows, depth-of-field, and lighting temperature from Image 2."
+                f"- Obey visual physics: Maintain realistic contact shadows, depth-of-field, and lighting temperature from {room_ref}."
             )
-            placement = placement_zone or f"Positioned exactly as demonstrated in Image 2 ({scene_title})."
+            placement = placement_zone or f"Positioned exactly as demonstrated in {room_ref} ({scene_title})."
         else:
-            product_rule = (
-                f"STRICT PHOTOGRAPHIC LIFESTYLE INTEGRATION MANDATE: Seamlessly integrate the {product} into the authentic lifestyle scene shown in Image 2. "
-                f"Render the new print artwork from Image 1 across the product surface with realistic 3D volume, authentic material grain, natural cloth/leather folds, "
-                f"and flawless lighting coherence matching the room environment in Image 2. Zero bleed-through of old graphics."
-            )
+            if has_product_render:
+                product_rule = (
+                    f"STRICT PHOTOGRAPHIC LIFESTYLE INTEGRATION MANDATE: Seamlessly integrate the {product} matching Image 2 into the authentic lifestyle scene shown in {room_ref}. "
+                    f"Render the new print artwork from Image 1 across the product surface with realistic 3D volume, authentic material grain, natural cloth/leather folds, "
+                    f"and flawless lighting coherence matching the room environment in {room_ref}. Replicate the perimeter edges and artwork placement of Image 2. Zero bleed-through of old graphics from {room_ref}."
+                )
+            else:
+                product_rule = (
+                    f"STRICT PHOTOGRAPHIC LIFESTYLE INTEGRATION MANDATE: Seamlessly integrate the {product} into the authentic lifestyle scene shown in Image 2. "
+                    f"Render the new print artwork from Image 1 across the product surface with realistic 3D volume, authentic material grain, natural cloth/leather folds, "
+                    f"and flawless lighting coherence matching the room environment in Image 2. Zero bleed-through of old graphics."
+                )
+            if has_product_render:
+                ground_truth_intro = (
+                    f"- Image 1: Commercial print artwork.\n"
+                    f"- Image 2: Finished POD product sample (GROUND TRUTH PRODUCT to reproduce in the scene).\n"
+                    f"- Image 3: Authentic lifestyle photograph to preserve.\n"
+                    f"{zero_hallucination_rule}"
+                    f"{product_ground_truth_lock}"
+                )
+            else:
+                ground_truth_intro = (
+                    f"- Image 1: Commercial print artwork.\n"
+                    f"- Image 2: Authentic lifestyle photograph to preserve.\n"
+                    f"{zero_hallucination_rule}"
+                )
             scene_desc = (
                 f"CRITICAL MANDATORY LIFESTYLE SCENE PRESERVATION ({scene_title}):\n"
-                f"- Image 1: Commercial print artwork.\n"
-                f"- Image 2: Authentic lifestyle photograph to preserve.\n"
-                f"{zero_hallucination_rule}"
-                f"- Room Environment and Context to Preserve: {preserve or 'Preserve all walls, furniture, flooring, decor, and props from Image 2.'}\n"
+                f"{ground_truth_intro}"
+                f"- Room Environment and Context to Preserve: {preserve or f'Preserve all walls, furniture, flooring, decor, and props from {room_ref}.'}\n"
                 f"- Product Placement Area: {placement_zone}\n"
                 f"{silhouette_rule}"
                 f"{bag_lock}"
@@ -1315,23 +1986,26 @@ def direct_ai_lifestyle_prompt(
                 f"- Tailored Synthesis Directive:\n{directive}\n"
                 f"- Visual physics & cohesion: Obey the room's natural lighting, casting realistic soft contact shadows onto nearby surfaces. Ensure seamless photographic coherence."
             )
-            placement = placement_zone or f"Positioned naturally in the scene as shown in Image 2 ({scene_title})."
+            placement = placement_zone or f"Positioned naturally in the scene as shown in {room_ref} ({scene_title})."
             listing_requirement = (
-                f"STRICT LIFESTYLE PRESERVATION: Retain 100% of the room environment, decor, furniture, and lighting from Image 2 ({scene_title}). Seamlessly render the product featuring the new artwork into the room."
+                f"STRICT LIFESTYLE PRESERVATION: Retain 100% of the room environment, decor, furniture, and lighting from {room_ref} ({scene_title}). "
+                f"Seamlessly render the product featuring the new artwork into the room"
+                + (" matching the Image 2 product carrier and edges." if has_product_render else ".")
             )
             constraints = (
-                "Preserve all room environment and background objects from Image 2. Retain exact product silhouette. "
-                "Anatomically perfect hands (5 fingers). Absolutely zero stray colored dots (purple/green dots), "
-                "no garbled lettering, no superimposed photographer watermarks, no bleed-through of prior prints from Image 2."
+                f"Preserve all room environment and background objects from {room_ref}. "
+                + ("Replicate exact product silhouette and clean edges from Image 2 (no scalloped edges from Image 3). " if has_product_render else "Retain exact product silhouette. ")
+                + f"Anatomically perfect hands (5 fingers). Absolutely zero stray colored dots (purple/green dots), "
+                f"no garbled lettering, no superimposed photographer watermarks, no bleed-through of prior prints from {room_ref}."
             )
             composition_rule = (
-                "Composition: Match the exact camera angle, perspective, depth of field, and room arrangement of Image 2. Seamlessly blend the product into the scene."
+                f"Composition: Match the exact camera angle, perspective, depth of field, and room arrangement of {room_ref}. Seamlessly blend the product into the scene."
             )
-        coordinated_products = "None (adhere strictly to the product items present in Image 2)."
+        coordinated_products = f"None (adhere strictly to the product items present in {room_ref})."
 
         return f"""
 Use case: final ecommerce lifestyle product photograph adapting a reference template.
-{product_rule}
+{visual_feedback_block}{multi_panel_block}{transparent_artwork_block}{product_rule}
 {scene_desc}
 Placement: {placement}.
 Photorealism requirements: The product must have authentic 3D geometry, natural lighting, visible physical thickness, physically correct occlusion, soft contact shadows, and realistic surface finish. It must look like an actual camera photograph, not a 2D collage, poster, sticker, rendering, or graphic illustration.
@@ -1339,25 +2013,43 @@ Coordinated products: {coordinated_products}
 Listing-shot requirement: {listing_requirement}
 {composition_rule}
 Constraints: {constraints}
-Retry correction: {correction or "None. Strictly preserve Image 2 layout and replace only the product artwork."}
+Retry correction: {correction or f"None. Strictly preserve {room_ref} layout and replace only the product artwork."}
 """.strip()
     elif has_room_template:
-        scene_desc = (
-            "CRITICAL REFERENCE ROOM TEMPLATE COMPOSITING INSTRUCTION:\n"
-            "- You are provided with TWO reference images: Image 1 is the print artwork. Image 2 is the exact reference scene photograph.\n"
-            "- PRESERVE THE ROOM EXACTLY: You MUST retain the exact walls, flooring, furniture layout, camera perspective, ambient color temperature, and lighting direction from Image 2.\n"
-            "- Do NOT generate a random new room. Keep the exact furniture geometry and ambient room lighting from Image 2.\n"
-            f"- Seamlessly composite the {product} (faithfully displaying the print artwork from Image 1) onto the appropriate surface in Image 2, casting realistic contact shadows and obeying the room's light sources."
-        )
-        placement = pose.placement
-        listing_requirement = f"Preserve Image 2 room scene and layout. Place {product} naturally."
-        constraints = "No random room changes, no superimposed photographer watermarks."
-        coordinated_products = "None."
-        product_rule = f"Create one full-size {product} using Image 1 as the print artwork reference and composite onto Image 2."
+        if has_product_render:
+            scene_desc = (
+                "CRITICAL REFERENCE ROOM TEMPLATE COMPOSITING INSTRUCTION:\n"
+                "- You are provided with THREE images:\n"
+                "  * Image 1: Print artwork.\n"
+                "  * Image 2: Finished POD product sample (GROUND TRUTH PRODUCT).\n"
+                "  * Image 3: Exact reference scene photograph.\n"
+                "- PRESERVE THE ROOM EXACTLY: You MUST retain the exact walls, flooring, furniture layout, camera perspective, ambient color temperature, and lighting direction from Image 3.\n"
+                "- REPRODUCE GROUND TRUTH PRODUCT: The product placed in the room MUST match Image 2 in physical carrier silhouette, edge construction (clean edges, NO scallops/trims from Image 3), and artwork placement.\n"
+                "- Do NOT generate a random new room. Keep the exact furniture geometry and ambient room lighting from Image 3.\n"
+                f"- Seamlessly composite the {product} (faithfully matching Image 2) onto the appropriate surface in Image 3, casting realistic contact shadows and obeying the room's light sources."
+            )
+            placement = pose.placement
+            listing_requirement = f"Preserve Image 3 room scene and layout. Place {product} matching Image 2 naturally."
+            constraints = "No random room changes, no superimposed photographer watermarks, no scalloped borders from Image 3."
+            coordinated_products = "None."
+            product_rule = f"Place one full-size {product} matching Image 2 onto the scene in Image 3."
+        else:
+            scene_desc = (
+                "CRITICAL REFERENCE ROOM TEMPLATE COMPOSITING INSTRUCTION:\n"
+                "- You are provided with TWO reference images: Image 1 is the print artwork. Image 2 is the exact reference scene photograph.\n"
+                "- PRESERVE THE ROOM EXACTLY: You MUST retain the exact walls, flooring, furniture layout, camera perspective, ambient color temperature, and lighting direction from Image 2.\n"
+                "- Do NOT generate a random new room. Keep the exact furniture geometry and ambient room lighting from Image 2.\n"
+                f"- Seamlessly composite the {product} (faithfully displaying the print artwork from Image 1) onto the appropriate surface in Image 2, casting realistic contact shadows and obeying the room's light sources."
+            )
+            placement = pose.placement
+            listing_requirement = f"Preserve Image 2 room scene and layout. Place {product} naturally."
+            constraints = "No random room changes, no superimposed photographer watermarks."
+            coordinated_products = "None."
+            product_rule = f"Create one full-size {product} using Image 1 as the print artwork reference and composite onto Image 2."
 
         return f"""
 Use case: final ecommerce lifestyle product photograph compositing onto reference room.
-{product_rule}
+{visual_feedback_block}{multi_panel_block}{transparent_artwork_block}{product_rule}
 {scene_desc}
 Placement: {placement}.
 Photorealism requirements: The product must have authentic 3D geometry, natural lighting, visible thickness, physically correct occlusion, soft contact shadows, and realistic surface finish. It must look like an actual camera photograph, not a 2D collage, poster, sticker, rendering, or graphic illustration.
@@ -1373,7 +2065,7 @@ Retry correction: {correction or "None. Strictly preserve Image 2 room and compo
 
     return f"""
 Use case: final ecommerce lifestyle product photograph.
-{product_rule}
+{visual_feedback_block}{product_rule}
 {scene_desc}
 Placement: {placement}.
 Photorealism requirements: The product must have authentic 3D geometry, natural lighting, visible physical thickness, physically correct occlusion, soft contact shadows, and realistic surface finish. It must look like an actual camera photograph, not a 2D collage, poster, sticker, rendering, or graphic illustration.

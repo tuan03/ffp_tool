@@ -150,7 +150,11 @@ class MockupPublicationTests(unittest.TestCase):
                 ({"listing_realism_score": 100, "artwork_identity_preserved": True,
                   "all_print_surfaces_replaced": True, "mask_respects_printable_boundaries": True,
                   "protected_parts_preserved": True, "reference_geometry_preserved": True,
-                  "no_original_print_remaining": True}, True),
+                  "no_original_print_remaining": True}, False),
+                ({"listing_realism_score": 100, "artwork_identity_preserved": True,
+                  "all_print_surfaces_replaced": True, "mask_respects_printable_boundaries": True,
+                  "protected_parts_preserved": True, "reference_geometry_preserved": True,
+                  "no_original_print_remaining": True, "surface_lighting_preserved": True}, True),
             ]:
                 with self.subTest(expected=expected), patch("trend_tool.printability._vision_pair_assessment", return_value=assessment):
                     decision = assess_direct_ai_mockup(
@@ -174,7 +178,7 @@ class MockupPublicationTests(unittest.TestCase):
                 "protected_polygons": [],
             }]}
             with patch("trend_tool.template_mockup.create_gemini_client", return_value=object()), patch(
-                "trend_tool.template_mockup.analyze_reference_image", return_value={"surface_plan": plan}
+                "trend_tool.template_mockup.analyze_reference_surfaces", return_value={"surface_plan": plan}
             ), patch("trend_tool.template_mockup.generate_direct_ai_lifestyle", side_effect=AssertionError("must not redraw reference")), patch(
                 "trend_tool.template_mockup.assess_direct_ai_mockup", return_value=approved
             ):
@@ -239,6 +243,148 @@ class MockupPublicationTests(unittest.TestCase):
             )
             self.assertEqual(record.status, "failed")
             self.assertIsNone(record.mockup_path)
+
+    def test_three_zone_integrity_check(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            mockup_path = root / "mockup.png"
+            ref_path = root / "ref.png"
+            # 64x64 images
+            ref_img = Image.new("RGB", (64, 64), (100, 100, 100))
+            # Center printable mask 20..44 (24x24)
+            mask_img = Image.new("L", (64, 64), 0)
+            from PIL import ImageDraw
+            ImageDraw.Draw(mask_img).rectangle((20, 20, 44, 44), fill=255)
+
+            # Case A: Mockup has changes in inner artwork zone (25, 25) AND 1px transition seam (19, 25)
+            # but STRICT background (e.g. 10, 10) is untouched.
+            mock_a = ref_img.copy()
+            mock_a.putpixel((25, 25), (255, 0, 0))  # inside printable mask
+            mock_a.putpixel((19, 25), (105, 100, 100))  # 1px transition seam
+            mock_a.save(mockup_path)
+            ref_img.save(ref_path)
+
+            mock_assessment = {
+                "listing_realism_score": 90,
+                "artwork_identity_preserved": True,
+                "all_print_surfaces_replaced": True,
+                "mask_respects_printable_boundaries": True,
+                "protected_parts_preserved": True,
+                "reference_geometry_preserved": True,
+                "no_original_print_remaining": True,
+                "surface_lighting_preserved": True,
+            }
+            with patch("trend_tool.printability._vision_pair_assessment", return_value=mock_assessment):
+                decision = assess_direct_ai_mockup(
+                    ref_path, mockup_path, ProductTarget(name="custom", width_px=32, height_px=32),
+                    backend="auto", model="vision", image_type="REFERENCE_TEMPLATE",
+                    reference_template=ref_img, edit_mask=mask_img,
+                )
+                self.assertTrue(decision.accepted)
+                self.assertTrue(decision.metrics["zone_integrity"]["strict_background_preserved"])
+                self.assertGreater(decision.metrics["zone_integrity"]["transition_seam_modified"], 0)
+
+            # Case B: Mockup changes a pixel in the strict protected background (e.g. 5, 5, which is >2px outside mask)
+            mock_b = ref_img.copy()
+            mock_b.putpixel((5, 5), (0, 255, 0))
+            mock_b.save(mockup_path)
+            decision_b = assess_direct_ai_mockup(
+                ref_path, mockup_path, ProductTarget(name="custom", width_px=32, height_px=32),
+                backend="auto", model="vision", image_type="REFERENCE_TEMPLATE",
+                reference_template=ref_img, edit_mask=mask_img,
+            )
+            self.assertFalse(decision_b.accepted)
+            self.assertIn("pixels outside printable mask changed", decision_b.reason)
+            self.assertFalse(decision_b.metrics["zone_integrity"]["strict_background_preserved"])
+
+    def test_reference_composite_inner_feathering_preserves_background(self):
+        from trend_tool.reference_composite import compose_reference_artwork
+        ref = Image.new("RGB", (512, 512), (120, 130, 140))
+        art = Image.new("RGB", (256, 256), (200, 50, 50))
+        plan = {
+            "all_printable_surfaces_identified": True,
+            "photorealistic": True,
+            "surfaces": [{
+                "confidence": 0.98,
+                "geometry": "planar",
+                "quad": [[200, 200], [800, 200], [800, 800], [200, 800]],
+                "polygon": [[200, 200], [800, 200], [800, 800], [200, 800]],
+                "protected_polygons": [],
+            }],
+        }
+        output, edit_mask = compose_reference_artwork(ref, art, plan, photorealistic=True)
+        out_arr = np.asarray(output)
+        ref_arr = np.asarray(ref)
+        mask_arr = np.asarray(edit_mask) > 0
+
+        # Background pixels outside mask must be bit-for-bit identical
+        outside = ~mask_arr
+        np.testing.assert_array_equal(out_arr[outside], ref_arr[outside])
+        # Artwork pixels inside mask must have been modified
+        self.assertFalse(np.array_equal(out_arr[mask_arr], ref_arr[mask_arr]))
+
+    def test_three_zone_integrity_edge_cases_full_and_empty_mask(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            ref_path = root / "ref.png"
+            mock_path = root / "mock.png"
+            ref_img = Image.new("RGB", (32, 32), (50, 50, 50))
+            mock_img = Image.new("RGB", (32, 32), (50, 50, 50))
+            ref_img.save(ref_path)
+            mock_img.save(mock_path)
+
+            # Edge case 1: 100% filled mask (strict background is empty)
+            full_mask = Image.new("L", (32, 32), 255)
+            mock_assessment = {
+                "listing_realism_score": 95,
+                "artwork_identity_preserved": True,
+                "all_print_surfaces_replaced": True,
+                "mask_respects_printable_boundaries": True,
+                "protected_parts_preserved": True,
+                "reference_geometry_preserved": True,
+                "no_original_print_remaining": True,
+                "surface_lighting_preserved": True,
+            }
+            with patch("trend_tool.printability._vision_pair_assessment", return_value=mock_assessment):
+                decision = assess_direct_ai_mockup(
+                    ref_path, mock_path, ProductTarget(name="custom", width_px=32, height_px=32),
+                    backend="auto", model="vision", image_type="REFERENCE_TEMPLATE",
+                    reference_template=ref_img, edit_mask=full_mask,
+                )
+                self.assertTrue(decision.accepted)
+                self.assertEqual(decision.metrics["zone_integrity"]["strict_background_pixels"], 0)
+                self.assertEqual(decision.metrics["zone_integrity"]["strict_background_diff"], 0)
+                self.assertTrue(decision.metrics["zone_integrity"]["strict_background_preserved"])
+
+    def test_cancel_pod_job_sets_event_and_updates_status(self):
+        import threading
+        test_job_id = "test_cancel_flow_job"
+        cancel_evt = threading.Event()
+        with bridge.JOB_CACHE_LOCK:
+            bridge.JOB_CANCEL_EVENTS[test_job_id] = cancel_evt
+            bridge.ACTIVE_JOBS[test_job_id] = {
+                "status": "producing",
+                "logs": ["Bắt đầu sản xuất..."],
+            }
+        try:
+            res = bridge.cancel_pod_job(test_job_id)
+            self.assertTrue(res["ok"])
+            self.assertEqual(res["status"], "cancelled")
+            self.assertEqual(res["jobId"], test_job_id)
+            self.assertTrue(cancel_evt.is_set())
+            self.assertIn("logs", res)
+            self.assertTrue(any("dừng job" in line for line in res["logs"]))
+            with bridge.JOB_CACHE_LOCK:
+                self.assertEqual(bridge.ACTIVE_JOBS[test_job_id]["status"], "cancelled")
+        finally:
+            with bridge.JOB_CACHE_LOCK:
+                bridge.JOB_CANCEL_EVENTS.pop(test_job_id, None)
+                bridge.ACTIVE_JOBS.pop(test_job_id, None)
+
+        # Invalid job ID handling
+        bad_res = bridge.cancel_pod_job("")
+        self.assertFalse(bad_res["ok"])
+        self.assertIn("Invalid job ID", bad_res["message"])
 
 
 if __name__ == "__main__":

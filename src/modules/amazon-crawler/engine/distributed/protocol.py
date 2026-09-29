@@ -125,6 +125,7 @@ def hello_message(
         "maxConcurrentInputs": max(1, max_concurrent_inputs),
         "capabilities": {
             "amazon": True,
+            "pinterest": True,
             "captcha": not limits.headless,
             "offlineSpool": True,
             "mediaGalleryV2": True,

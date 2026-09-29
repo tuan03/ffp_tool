@@ -66,7 +66,7 @@ function pinterestPodBackendPlugin(): Plugin {
 
       try {
         const pythonCmd = resolvePythonCommand();
-        pyProcess = spawn(pythonCmd, [serverScript], {
+        pyProcess = spawn(pythonCmd, [serverScript, "--reload"], {
           stdio: "inherit",
           detached: false,
         });
@@ -104,6 +104,18 @@ export default defineConfig({
   plugins: [react(), tailwindcss(), pinterestPodBackendPlugin(), shopifyGatewayDevPlugin()],
   server: {
     proxy: {
+      "/api/pinterest-pod/jobs": {
+        target: process.env.VITE_API_URL || process.env.VITE_AMAZON_COORDINATOR_URL || "http://127.0.0.1:8766",
+        changeOrigin: true,
+      },
+      "/api/pinterest-pod/produce": {
+        target: process.env.VITE_API_URL || process.env.VITE_AMAZON_COORDINATOR_URL || "http://127.0.0.1:8766",
+        changeOrigin: true,
+      },
+      "/api/pinterest-pod/assets": {
+        target: process.env.VITE_API_URL || process.env.VITE_AMAZON_COORDINATOR_URL || "http://127.0.0.1:8766",
+        changeOrigin: true,
+      },
       "/api/pinterest-pod": {
         target: process.env.VITE_PINTEREST_POD_API_URL || "http://127.0.0.1:8768",
         changeOrigin: true,

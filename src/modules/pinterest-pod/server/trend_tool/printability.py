@@ -277,6 +277,7 @@ def assess_direct_ai_mockup(
     custom_checklist: list[str] | None = None,
     reference_template: Image.Image | None = None,
     edit_mask: Image.Image | None = None,
+    product_render: Path | Image.Image | None = None,
     backend: str,
     model: str,
 ) -> PrintabilityDecision:
@@ -288,6 +289,19 @@ def assess_direct_ai_mockup(
             mockup = opened.convert("RGB")
     except Exception as exc:
         return PrintabilityDecision("direct_ai_mockup", mockup_path, False, f"unreadable direct AI mockup: {exc}", {}, {})
+
+    product_render_img: Image.Image | None = None
+    if isinstance(product_render, (str, Path)):
+        p_pr = Path(product_render)
+        if p_pr.exists() and p_pr.is_file():
+            try:
+                with Image.open(p_pr) as opened_pr:
+                    product_render_img = opened_pr.convert("RGB")
+            except Exception:
+                pass
+    elif isinstance(product_render, Image.Image):
+        product_render_img = product_render.convert("RGB")
+
     metrics = {
         "reference_width": reference.width,
         "reference_height": reference.height,
@@ -295,40 +309,117 @@ def assess_direct_ai_mockup(
         "mockup_height": mockup.height,
         "image_type": image_type,
         "has_custom_checklist": bool(custom_checklist),
+        "has_product_render": product_render_img is not None,
     }
-    reference_requirements = ""
+    assessment_prompt = direct_ai_mockup_prompt(
+        target, pose_name=pose_name, pose_requirement=pose_requirement,
+        require_matching_pillowcases=require_matching_pillowcases,
+        custom_checklist=custom_checklist, image_type=image_type,
+    ) if reference_template is None else ""
     if reference_template is not None:
-        if edit_mask is None or reference_template.size != mockup.size or edit_mask.size != mockup.size:
-            return PrintabilityDecision("direct_ai_mockup", mockup_path, False, "reference/mask dimensions mismatch", metrics, {})
-        outside = np.asarray(edit_mask.convert("L")) == 0
-        if not np.array_equal(np.asarray(reference_template.convert("RGB"))[outside], np.asarray(mockup)[outside]):
-            return PrintabilityDecision("direct_ai_mockup", mockup_path, False, "pixels outside printable mask changed", metrics, {})
-        reference_requirements = """
-The first image is MASTER ARTWORK, not the original product photo. Compare the
-output against ORIGINAL SCENE and EDIT MASK as well. Return explicit booleans:
-artwork_identity_preserved (same motifs, text, colors and relative arrangement),
-all_print_surfaces_replaced (including every inset/view),
-mask_respects_printable_boundaries (no background/hardware/lining painted),
-protected_parts_preserved (hands, seams, straps, hardware unchanged),
-reference_geometry_preserved (same silhouette, perspective and natural surface),
-no_original_print_remaining. Missing/uncertain evidence must be false.
-Reject flat overlays on curved or folded products and misplaced artwork.
+        if edit_mask is not None:
+            if reference_template.size != mockup.size or edit_mask.size != mockup.size:
+                return PrintabilityDecision("direct_ai_mockup", mockup_path, False, "reference/mask dimensions mismatch", metrics, {})
+            ref_rgb = np.asarray(reference_template.convert("RGB"))
+            mock_rgb = np.asarray(mockup)
+            mask_bin = np.asarray(edit_mask.convert("L")) > 0
+            mask_u8 = mask_bin.astype(np.uint8) * 255
+
+            # 3-Zone Integrity Check (for geometric composites with binary edit mask):
+            # Zone 1: Inner artwork zone (inside mask) where master artwork is placed
+            # Zone 2: 1-2px transition seam (allows sub-pixel anti-aliasing blending)
+            # Zone 3: Strict protected background (outside 2px dilated margin) where bit-for-bit identity is enforced
+            try:
+                import cv2
+                kernel = np.ones((3, 3), np.uint8)
+                dilated_mask = cv2.dilate(mask_u8, kernel, iterations=2) > 0
+            except Exception:
+                from PIL import ImageFilter
+                dilated_img = Image.fromarray(mask_u8).filter(ImageFilter.MaxFilter(size=5))
+                dilated_mask = np.asarray(dilated_img) > 0
+
+            transition_seam = dilated_mask & ~mask_bin
+            strict_background = ~dilated_mask
+
+            strict_diff_count = int(np.count_nonzero(np.any(ref_rgb[strict_background] != mock_rgb[strict_background], axis=-1))) if np.any(strict_background) else 0
+            seam_diff_count = int(np.count_nonzero(np.any(ref_rgb[transition_seam] != mock_rgb[transition_seam], axis=-1))) if np.any(transition_seam) else 0
+
+            metrics["zone_integrity"] = {
+                "inner_artwork_pixels": int(np.count_nonzero(mask_bin)),
+                "transition_seam_pixels": int(np.count_nonzero(transition_seam)),
+                "transition_seam_modified": seam_diff_count,
+                "strict_background_pixels": int(np.count_nonzero(strict_background)),
+                "strict_background_diff": strict_diff_count,
+                "strict_background_preserved": strict_diff_count == 0,
+            }
+
+            if strict_diff_count > 0:
+                return PrintabilityDecision("direct_ai_mockup", mockup_path, False, "pixels outside printable mask changed", metrics, {})
+        assessment_prompt = """
+You are conducting a strict, unbiased quality assurance (QA) inspection of a commercial Print-on-Demand (POD) mockup.
+Directly compare ORIGINAL SCENE against BACKGROUND_MOCKUP and MASTER ARTWORK.
+The BACKGROUND_MOCKUP must replace the old product print from ORIGINAL SCENE with MASTER ARTWORK while preserving the authentic photograph.
+
+Inspect these mandatory pillars:
+1. Product Shape & Orientation:
+   - Does the new product in BACKGROUND_MOCKUP match the EXACT physical footprint, perspective, shape, and orientation of the original product in ORIGINAL SCENE?
+   - For example, if ORIGINAL SCENE shows a horizontal rectangular rug on the floor, the product in BACKGROUND_MOCKUP MUST be a horizontal rectangular rug in the exact same orientation. It must NOT be rotated 90 degrees, turned into a vertical column, distorted, or cropped to a wrong aspect ratio.
+2. Background Furniture & Architecture Alignment (No Overlap/Clipping):
+   - Does the product conform strictly to its natural floor area without overlapping, cutting into, or clipping through background shelves, bookcases, furniture legs, baseboards, or walls?
+   - Any overlap or clipping of the product into background shelves, bookcases, or walls is an immediate FATAL failure.
+3. Background Architecture & Infographic Preservation:
+   - Are background room architecture (walls, floors, windows), furniture (shelves, bookcases, desks, tables), and infographic elements (size chart tables, dimension arrows, spec text banners) preserved 100%?
+   - Any covering, cutting through, or distortion of background shelves, bookcases, or infographic tables is an immediate FATAL failure.
+   - Foreground Occluders (People / Toys on the product): If foreground models or toys can be preserved naturally, that is great. HOWEVER, if foreground toys, doodles, or old human models that were sitting on the old product surface have been cleanly replaced or removed to display the new product surface, that is COMPLETELY ACCEPTABLE and expected for a clean e-commerce listing display! Do NOT penalize or reject for removing or covering foreground toys/models.
+4. Natural Realism, Shading & Depth (No Flat Paper Sticker Look):
+   - Does the product look like a real physical 3D object integrated into the room? It must have subtle ambient room shading, soft ivory room tone (not raw blinding #FFFFFF computer screen white), realistic micro-texture/pile grain, and subtle contact shadows where it touches the floor.
+   - It must NOT look like a flat, unshaded white paper sticker, cardboard cutout, or raw digital plane pasted in MS Paint!
+   - Is the product free of artificial bright white circular spotlights, dark grey vignettes, or dingy grey color casts? Master artwork colors and motifs must be preserved faithfully.
+5. Master Artwork Fidelity & Edge Construction (versus GROUND_TRUTH_PRODUCT if provided):
+   - Does the artwork in BACKGROUND_MOCKUP faithfully reflect the design, colors, and layout shown in GROUND_TRUTH_PRODUCT / MASTER ARTWORK?
+   - Perimeter Construction: If GROUND_TRUTH_PRODUCT shows clean finished edges without old scalloped borders, BACKGROUND_MOCKUP MUST NOT inherit old decorative scalloped borders, doodle trims, or old graphic frames from ORIGINAL SCENE.
+   - Natural Product Variety: If ORIGINAL SCENE shows a specific style of the product (e.g. a tote bag, satchel, or shoulder bag) that belongs to the target product category, preserving that authentic original scene product silhouette is EXPECTED and DESIRED! Do NOT fail 'product_carrier_matched' merely because the product in ORIGINAL SCENE has a slightly different handle length or silhouette than GROUND_TRUTH_PRODUCT, as long as it belongs to the target niche and the artwork is applied cleanly.
+   - Any inclusion of old scalloped borders from the previous template is an immediate failure: 'product_carrier_matched' MUST be false.
+
+Return ONLY this JSON schema:
+{
+  "product_shape_and_orientation_matched": boolean,
+  "no_furniture_overlap_or_misalignment": boolean,
+  "critical_content_preserved": boolean,
+  "realistic_shading_and_depth": boolean,
+  "no_artificial_lighting_artifacts": boolean,
+  "artwork_identity_preserved": boolean,
+  "all_print_surfaces_replaced": boolean,
+  "no_original_print_remaining": boolean,
+  "product_carrier_matched": boolean,
+  "reference_geometry_preserved": boolean,
+  "protected_parts_preserved": boolean,
+  "surface_lighting_preserved": boolean,
+  "mask_respects_printable_boundaries": boolean,
+  "listing_realism_score": number from 0 to 100,
+  "reason": "specific visible evidence for acceptance or rejection"
+}
+
+SCORING RULES:
+- If the product overlaps, clips into, or cuts through background shelves, bookcases, furniture, or walls: listing_realism_score MUST be below 50, no_furniture_overlap_or_misalignment MUST be false.
+- If the product looks like a flat unshaded white paper sticker, cardboard cutout, or lacks realistic ambient shading and depth: listing_realism_score MUST be below 50, realistic_shading_and_depth MUST be false.
+- If ANY critical background element or infographic element (size chart table, dimension arrows, text banners, background shelves, bookcases, walls) is covered, cut through, or obscured: listing_realism_score MUST be below 50, critical_content_preserved MUST be false.
+- If product shape or orientation is wrong (e.g. horizontal rug turned into vertical column): listing_realism_score MUST be below 50, product_shape_and_orientation_matched MUST be false.
+- If old scalloped borders or doodle frames from old template are inherited, or if the product is an entirely wrong category (e.g. a rug when bag is required): listing_realism_score MUST be below 50, product_carrier_matched MUST be false.
+- If there is an artificial spotlight or fake vignette: no_artificial_lighting_artifacts MUST be false.
+- Do NOT penalize or reject for covering up or removing foreground toys or models that were sitting on the old product surface.
+- Only assign score >= 70 if all criteria are fully satisfied and the mockup is a commercial listing photo.
 """
     try:
         assessment = _vision_pair_assessment(
             reference,
             mockup,
-            direct_ai_mockup_prompt(
-                target,
-                pose_name=pose_name,
-                pose_requirement=pose_requirement,
-                require_matching_pillowcases=require_matching_pillowcases,
-                custom_checklist=custom_checklist,
-                image_type=image_type,
-            ) + reference_requirements,
+            assessment_prompt,
             backend=backend,
             model=model,
-            **({"reference_template": reference_template, "edit_mask": edit_mask} if reference_template is not None else {}),
+            reference_template=reference_template,
+            edit_mask=edit_mask,
+            product_render=product_render_img,
         )
     except Exception as exc:
         return PrintabilityDecision("direct_ai_mockup", mockup_path, False, f"direct AI mockup quality assessment failed: {exc}", metrics, {})
@@ -342,11 +433,53 @@ Reject flat overlays on curved or folded products and misplaced artwork.
     is_rug = target.name == "rug"
 
     if reference_template is not None:
-        accepted = score >= 85 and all(assessment.get(field) is True for field in (
-            "artwork_identity_preserved", "all_print_surfaces_replaced",
-            "mask_respects_printable_boundaries", "protected_parts_preserved",
-            "reference_geometry_preserved", "no_original_print_remaining",
-        ))
+        val_shape = assessment.get("product_shape_and_orientation_matched")
+        shape_orientation_ok = (
+            _bool(val_shape)
+            if val_shape is not None
+            else _bool(assessment.get("reference_geometry_preserved"))
+        )
+        val_furniture = assessment.get("no_furniture_overlap_or_misalignment")
+        no_furniture_ok = (
+            _bool(val_furniture)
+            if val_furniture is not None
+            else _bool(assessment.get("mask_respects_printable_boundaries", True))
+        )
+        val_critical = assessment.get("critical_content_preserved")
+        critical_content_ok = (
+            _bool(val_critical)
+            if val_critical is not None
+            else (_bool(assessment.get("protected_parts_preserved")) and _bool(assessment.get("mask_respects_printable_boundaries", True)))
+        )
+        val_shading = assessment.get("realistic_shading_and_depth")
+        realistic_shading_ok = (
+            _bool(val_shading)
+            if val_shading is not None
+            else _bool(assessment.get("surface_lighting_preserved", True))
+        )
+        val_artifacts = assessment.get("no_artificial_lighting_artifacts")
+        no_artifacts_ok = (
+            _bool(val_artifacts)
+            if val_artifacts is not None
+            else _bool(assessment.get("surface_lighting_preserved"))
+        )
+        artwork_identity_ok = _bool(assessment.get("artwork_identity_preserved"))
+        all_replaced_ok = _bool(assessment.get("all_print_surfaces_replaced"))
+        no_orig_print_ok = _bool(assessment.get("no_original_print_remaining"))
+        carrier_matched = _bool(assessment.get("product_carrier_matched", True))
+
+        accepted = (
+            score >= 70
+            and shape_orientation_ok
+            and no_furniture_ok
+            and critical_content_ok
+            and realistic_shading_ok
+            and no_artifacts_ok
+            and artwork_identity_ok
+            and all_replaced_ok
+            and no_orig_print_ok
+            and carrier_matched
+        )
     elif custom_checklist:
         # Fully dynamic evaluation based on the reference image's custom checklist
         accepted = (
@@ -609,7 +742,8 @@ Evaluation criteria:
 3. Quality & Plausibility:
    - For SIZE_CHART: Check that the infographic layout is clean, professional, and visually represents different product size tiers accurately.
    - For MATERIAL_DETAIL: Check that the close-up fabric texture, fiber pile, and edge stitching look tactile, authentic, and high quality.
-   - For ROOM_SCENE: Check that the product integrates believably into the room with correct perspective, realistic contact shadows, and coherent lighting.
+   - For ROOM_SCENE: Check that the product integrates believably into the room with correct perspective, realistic contact shadows, and coherent lighting. Reject mockups where the product looks like a flat unshaded paper sticker, cardboard cutout, or raw digital plane. Reject mockups where the product overlaps, clips into, or cuts through background shelves, bookcases, furniture legs, baseboards, or walls.
+   - 'looks_like_flat_overlay': must be true if the product appears as an unshaded flat 2D sticker or raw pasted overlay lacking room depth, realistic texture, or contact shadow.
    - 'looks_like_wrong_product': must be FALSE unless the product depicted is completely unrelated.
 
 Return JSON only:
@@ -667,23 +801,32 @@ def _vision_pair_assessment(
     model: str,
     reference_template: Image.Image | None = None,
     edit_mask: Image.Image | None = None,
+    product_render: Image.Image | None = None,
 ) -> dict[str, object]:
     from google.genai import types
 
     client = create_gemini_client(backend)
     reference_parts = []
-    if reference_template is not None and edit_mask is not None:
-        reference_parts = [
-            types.Part.from_text(text="ORIGINAL SCENE"), image_part(reference_template),
-            types.Part.from_text(text="EDIT MASK: white = replaced print, black = protected"), image_part(edit_mask.convert("RGB")),
-        ]
+    if reference_template is not None:
+        reference_parts.append(types.Part.from_text(text="ORIGINAL SCENE"))
+        reference_parts.append(image_part(reference_template))
+        if edit_mask is not None:
+            reference_parts.append(types.Part.from_text(text="PROJECTION MASK (for reference only: does NOT override original scene content or product orientation)"))
+            reference_parts.append(image_part(edit_mask.convert("RGB")))
+        if product_render is not None:
+            reference_parts.append(types.Part.from_text(text="GROUND_TRUTH_PRODUCT (canonical POD product carrier, perimeter edge, and artwork placement)"))
+            reference_parts.append(image_part(product_render))
+    else:
+        if product_render is not None:
+            reference_parts.append(types.Part.from_text(text="GROUND_TRUTH_PRODUCT (canonical POD product carrier, perimeter edge, and artwork placement)"))
+            reference_parts.append(image_part(product_render))
     last_error: Exception | None = None
     for attempt in range(1, 4):
         try:
             response = client.models.generate_content(
                 model=model,
                 contents=[types.Content(role="user", parts=[
-                    types.Part.from_text(text="ORIGINAL_PRODUCT_REFERENCE"),
+                    types.Part.from_text(text="MASTER ARTWORK" if reference_template is not None else "ORIGINAL_PRODUCT_REFERENCE"),
                     image_part(first),
                     types.Part.from_text(text="BACKGROUND_MOCKUP"),
                     image_part(second),

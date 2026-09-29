@@ -14,10 +14,33 @@ function getDefaultPythonExecutable() {
   return "python";
 }
 
+export function getWebHost() {
+  if (process.env.VITE_HOST?.trim()) {
+    return process.env.VITE_HOST.trim();
+  }
+  if (process.env.GATEWAY_AUTH_TOKEN?.trim()) {
+    return "0.0.0.0";
+  }
+  const envLocalPath = path.resolve(process.cwd(), ".env.local");
+  if (fs.existsSync(envLocalPath)) {
+    try {
+      const content = fs.readFileSync(envLocalPath, "utf8");
+      const match = content.match(/^\s*GATEWAY_AUTH_TOKEN\s*=\s*['"]?([^'"\r\n]+)['"]?/m);
+      if (match && match[1]?.trim()) {
+        return "0.0.0.0";
+      }
+    } catch {
+      // Ignore filesystem errors and default to local
+    }
+  }
+  return "127.0.0.1";
+}
+
 export function getDevelopmentProcessSpecs({
   nodeExecutable = process.execPath,
   pythonExecutable = getDefaultPythonExecutable(),
 } = {}) {
+  const webHost = getWebHost();
   return [
     {
       name: "web",
@@ -28,7 +51,7 @@ export function getDevelopmentProcessSpecs({
         "--configLoader",
         "runner",
         "--host",
-        "0.0.0.0",
+        webHost,
       ],
     },
     {

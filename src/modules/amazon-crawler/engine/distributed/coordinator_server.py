@@ -9,7 +9,9 @@ import io
 import json
 import os
 import re
+import shutil
 import uuid
+import zipfile
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -169,7 +171,7 @@ class ConnectionManager:
                 pending["event"].set()
         try:
             await asyncio.wait_for(pending["event"].wait(), timeout=timeout_seconds)
-        except TimeoutError:
+        except (TimeoutError, asyncio.TimeoutError):
             pass
         async with self.lock:
             self.cache_requests.pop(request_id, None)
@@ -189,13 +191,23 @@ class ConnectionManager:
         return await self.request_client_cache_operation("clear_cache", timeout_seconds=timeout_seconds)
 
 
+def find_project_root() -> Path:
+    current = Path(__file__).resolve()
+    for parent in current.parents:
+        if (parent / "package.json").is_file() or (parent / "src").is_dir():
+            return parent
+    if len(current.parents) >= 4:
+        return current.parents[3]
+    return current.parent
+
+
 def create_coordinator_app(*, database_url: str | None = None, create_schema: bool = True) -> FastAPI:
     engine = create_database_engine(database_url)
     sessions = create_session_factory(engine)
     store = CoordinatorStore(sessions)
     manager = ConnectionManager()
     cache_maintenance_lock = asyncio.Lock()
-    project_root = Path(__file__).resolve().parents[5]
+    project_root = find_project_root()
     image_processing_root = Path(
         os.environ.get("IMAGE_PROCESSING_CACHE_DIR", str(project_root / ".runtime" / "image-processing"))
     ).resolve()
@@ -233,7 +245,7 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
                     next_cleanup_at = loop_time + 60
                 try:
                     await asyncio.wait_for(stop.wait(), timeout=5)
-                except TimeoutError:
+                except (TimeoutError, asyncio.TimeoutError):
                     pass
 
         task = asyncio.create_task(reap_loop())
@@ -537,6 +549,207 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
                 await asyncio.sleep(1)
 
         return StreamingResponse(stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"})
+
+    # --------------------------------------------------------------------------
+    # Pinterest POD Studio Distributed Endpoints
+    # --------------------------------------------------------------------------
+    env_pinterest_root = os.environ.get("PINTEREST_ASSET_ROOT")
+    if env_pinterest_root:
+        PINTEREST_ASSET_ROOT = Path(env_pinterest_root).resolve()
+    elif (project_root / "src" / "modules" / "pinterest-pod").is_dir():
+        PINTEREST_ASSET_ROOT = (project_root / "src" / "modules" / "pinterest-pod" / "server" / "temp" / "pinterest_pod").resolve()
+    else:
+        PINTEREST_ASSET_ROOT = (project_root / ".runtime" / "pinterest_pod").resolve()
+
+    @app.post("/api/pinterest-pod/jobs", status_code=201)
+    def create_pinterest_pod_job(payload: dict[str, Any]) -> dict[str, Any]:
+        try:
+            job = store.create_pinterest_job(payload)
+            return {
+                "ok": True,
+                "jobId": job["id"],
+                "job_id": job["id"],
+                "status": job["status"],
+                "logs": job.get("logs") or ["Job cào Pinterest đã được khởi tạo trong hàng đợi phân tán."],
+            }
+        except ValueError as err:
+            raise HTTPException(status_code=400, detail=str(err)) from err
+
+    @app.post("/api/pinterest-pod/produce", status_code=201)
+    @app.post("/api/pinterest-pod/jobs/produce", status_code=201)
+    def produce_pinterest_pod_job(payload: dict[str, Any]) -> dict[str, Any]:
+        try:
+            prod_payload = dict(payload)
+            prod_payload["stage"] = "produce"
+            prod_payload["action"] = "produce"
+            if "source_run_id" not in prod_payload:
+                resolved_src = payload.get("jobId") or payload.get("job_id")
+                if resolved_src:
+                    prod_payload["source_run_id"] = str(resolved_src)
+            job = store.create_pinterest_job(prod_payload)
+            return {
+                "ok": True,
+                "jobId": job["id"],
+                "job_id": job["id"],
+                "status": job["status"],
+                "logs": job.get("logs") or ["Job sản xuất POD đã được khởi tạo trong hàng đợi phân tán."],
+            }
+        except ValueError as err:
+            raise HTTPException(status_code=400, detail=str(err)) from err
+
+    @app.get("/api/pinterest-pod/jobs/{job_id}")
+    def get_pinterest_pod_job(job_id: str) -> dict[str, Any]:
+        snapshot = store.get_job(job_id)
+        if snapshot is not None:
+            return snapshot
+
+        safe_job_id = "".join(c for c in job_id if c.isalnum() or c in ("-", "_"))
+        manifest_file = (PINTEREST_ASSET_ROOT / safe_job_id / "manifest.json").resolve()
+        if manifest_file.is_file() and manifest_file.is_relative_to(PINTEREST_ASSET_ROOT.resolve()):
+            try:
+                data = json.loads(manifest_file.read_text(encoding="utf-8"))
+                if isinstance(data, dict):
+                    return data
+            except Exception:
+                pass
+
+        try:
+            import urllib.request
+            req = urllib.request.Request(f"http://127.0.0.1:8768/api/pinterest-pod/jobs/{safe_job_id}")
+            with urllib.request.urlopen(req, timeout=1.5) as resp:
+                if resp.status == 200:
+                    return json.loads(resp.read().decode("utf-8"))
+        except Exception:
+            pass
+
+        raise HTTPException(status_code=404, detail="Pinterest POD job was not found.")
+
+    @app.get("/api/pinterest-pod/jobs/{job_id}/logs")
+    def get_pinterest_pod_job_logs(job_id: str) -> dict[str, Any]:
+        snapshot = store.get_job(job_id)
+        if snapshot is not None:
+            return {
+                "ok": True,
+                "jobId": job_id,
+                "status": snapshot.get("status", "unknown"),
+                "logs": snapshot.get("logs", []),
+            }
+
+        safe_job_id = "".join(c for c in job_id if c.isalnum() or c in ("-", "_"))
+        try:
+            import urllib.request
+            req = urllib.request.Request(f"http://127.0.0.1:8768/api/pinterest-pod/jobs/{safe_job_id}/logs")
+            with urllib.request.urlopen(req, timeout=1.5) as resp:
+                if resp.status == 200:
+                    return json.loads(resp.read().decode("utf-8"))
+        except Exception:
+            pass
+
+        manifest_file = (PINTEREST_ASSET_ROOT / safe_job_id / "manifest.json").resolve()
+        if manifest_file.is_file() and manifest_file.is_relative_to(PINTEREST_ASSET_ROOT.resolve()):
+            try:
+                data = json.loads(manifest_file.read_text(encoding="utf-8"))
+                if isinstance(data, dict):
+                    return {
+                        "ok": True,
+                        "jobId": job_id,
+                        "status": data.get("status", "unknown"),
+                        "logs": data.get("logs", []),
+                    }
+            except Exception:
+                pass
+
+        raise HTTPException(status_code=404, detail="Pinterest POD job was not found.")
+
+    @app.post("/api/pinterest-pod/jobs/{job_id}/cancel")
+    async def cancel_pinterest_pod_job(job_id: str) -> dict[str, Any]:
+        snapshot = store.cancel_job(job_id)
+        return {"ok": True, "jobId": job_id, "status": "cancelled", "snapshot": snapshot}
+
+    @app.post("/api/pinterest-pod/jobs/{job_id}/delete")
+    def delete_pinterest_pod_job(job_id: str) -> dict[str, Any]:
+        safe_job_id = "".join(c for c in job_id if c.isalnum() or c in ("-", "_"))
+        job_dir = (PINTEREST_ASSET_ROOT / safe_job_id).resolve()
+        if job_dir.is_dir() and job_dir.is_relative_to(PINTEREST_ASSET_ROOT.resolve()):
+            shutil.rmtree(job_dir, ignore_errors=True)
+        ok = store.delete_job(job_id)
+        return {"ok": ok, "jobId": job_id, "message": "Deleted" if ok else "Job not found"}
+
+    @app.post("/api/pinterest-pod/jobs/{job_id}/cleanup")
+    def cleanup_pinterest_pod_job(job_id: str) -> dict[str, Any]:
+        safe_job_id = "".join(c for c in job_id if c.isalnum() or c in ("-", "_"))
+        job_dir = (PINTEREST_ASSET_ROOT / safe_job_id).resolve()
+        removed = False
+        if job_dir.is_dir() and job_dir.is_relative_to(PINTEREST_ASSET_ROOT.resolve()):
+            shutil.rmtree(job_dir, ignore_errors=True)
+            removed = True
+        return {"ok": True, "jobId": job_id, "cleaned": removed}
+
+    @app.post("/api/pinterest-pod/assets/{job_id}/{filename}")
+    @app.put("/api/pinterest-pod/assets/{job_id}/{filename}")
+    async def upload_pinterest_pod_asset(job_id: str, filename: str, request: Request) -> dict[str, Any]:
+        body = await request.body()
+        safe_job_id = "".join(c for c in job_id if c.isalnum() or c in ("-", "_"))
+        safe_filename = Path(filename).name
+        job_dir = (PINTEREST_ASSET_ROOT / safe_job_id).resolve()
+        if not job_dir.is_relative_to(PINTEREST_ASSET_ROOT.resolve()):
+            raise HTTPException(status_code=400, detail="Invalid job id")
+        job_dir.mkdir(parents=True, exist_ok=True)
+        target_path = (job_dir / safe_filename).resolve()
+        if not target_path.is_relative_to(job_dir):
+            raise HTTPException(status_code=400, detail="Invalid filename")
+        target_path.write_bytes(body)
+        return {"ok": True, "url": f"/api/pinterest-pod/assets/{safe_job_id}/{safe_filename}"}
+
+    @app.get("/api/pinterest-pod/assets/{job_id}/{filename}")
+    def get_pinterest_pod_asset(job_id: str, filename: str) -> FileResponse:
+        safe_job_id = "".join(c for c in job_id if c.isalnum() or c in ("-", "_"))
+        safe_filename = Path(filename).name
+        job_dir = (PINTEREST_ASSET_ROOT / safe_job_id).resolve()
+        if not job_dir.is_relative_to(PINTEREST_ASSET_ROOT.resolve()):
+            raise HTTPException(status_code=400, detail="Invalid job id")
+        target_path = (job_dir / safe_filename).resolve()
+        if not target_path.is_relative_to(job_dir):
+            raise HTTPException(status_code=400, detail="Invalid filename")
+        if not target_path.exists() or not target_path.is_file():
+            for sub in ("lifestyle_mockups", "product_cutouts_white", "final_print", "mockups"):
+                sub_path = (job_dir / sub / safe_filename).resolve()
+                if sub_path.is_relative_to(job_dir) and sub_path.exists() and sub_path.is_file():
+                    target_path = sub_path
+                    break
+        if not target_path.exists() or not target_path.is_file():
+            raise HTTPException(status_code=404, detail="Asset not found")
+        return FileResponse(target_path)
+
+    @app.get("/api/pinterest-pod/jobs/{job_id}/download-zip")
+    def download_pinterest_pod_zip(job_id: str) -> Response:
+        safe_job_id = "".join(c for c in job_id if c.isalnum() or c in ("-", "_"))
+        job_dir = (PINTEREST_ASSET_ROOT / safe_job_id).resolve()
+        if not job_dir.is_relative_to(PINTEREST_ASSET_ROOT.resolve()):
+            raise HTTPException(status_code=400, detail="Invalid job id")
+        snapshot = store.get_job(safe_job_id) or {}
+        zip_buf = io.BytesIO()
+        with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            if job_dir.is_dir():
+                for file_path in job_dir.rglob("*"):
+                    if file_path.is_file():
+                        arcname = file_path.relative_to(job_dir)
+                        zf.write(file_path, arcname)
+            manifest = {
+                "package": "pinterest_pod_deliverables",
+                "jobId": safe_job_id,
+                "status": snapshot.get("status", "unknown"),
+                "candidates": snapshot.get("candidates", []),
+                "deliverables": snapshot.get("deliverables", {}),
+                "summaryMetrics": snapshot.get("summaryMetrics", {}),
+            }
+            zf.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
+        zip_buf.seek(0)
+        return StreamingResponse(
+            zip_buf,
+            media_type="application/zip",
+            headers={"Content-Disposition": f'attachment; filename="pod_deliverables_{safe_job_id}.zip"'},
+        )
 
     @app.put("/api/v1/worker/tasks/{task_id}/result")
     async def upload_result(
