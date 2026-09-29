@@ -2,6 +2,8 @@ import type {
   AmazonAsinChecker,
   AmazonAsinPreflightResult,
   AmazonCrawlerInput,
+  AmazonCrawlerAgentRelease,
+  AmazonCrawlerAgentReleaseLoader,
   AmazonCrawlerCacheClearer,
   AmazonCrawlerCacheClearResult,
   AmazonCrawlerClientSummary,
@@ -51,6 +53,14 @@ interface AmazonCrawlerClientOptions {
   fetchImplementation?: typeof fetch;
   pollIntervalMs?: number;
 }
+
+interface AmazonCrawlerAgentReleaseOptions {
+  releaseApiUrl: string;
+  fetchImplementation?: typeof fetch;
+}
+
+const AGENT_INSTALLER_FILE_NAME = "FFP-Amazon-Crawler-Setup.exe";
+const AGENT_INSTALLER_CHECKSUM_FILE_NAME = `${AGENT_INSTALLER_FILE_NAME}.sha256`;
 
 export class AmazonCrawlerServiceError extends Error {
   public readonly code: string;
@@ -291,6 +301,7 @@ function readClients(value: unknown): AmazonCrawlerClientSummary[] {
     return {
       id: client.id,
       displayName: client.displayName,
+      agentVersion: typeof client.agentVersion === "string" ? client.agentVersion : "unknown",
       status: client.status as AmazonCrawlerClientSummary["status"],
       isConnected: client.isConnected === true,
       maxConcurrentInputs: typeof client.maxConcurrentInputs === "number" ? client.maxConcurrentInputs : 0,
@@ -300,6 +311,55 @@ function readClients(value: unknown): AmazonCrawlerClientSummary[] {
       lastSeenAt: typeof client.lastSeenAt === "string" ? client.lastSeenAt : null,
     };
   });
+}
+
+function readAgentRelease(value: unknown): AmazonCrawlerAgentRelease {
+  if (!isRecord(value) || typeof value.tag_name !== "string" ||
+    typeof value.html_url !== "string" || typeof value.published_at !== "string" ||
+    !Array.isArray(value.assets)) {
+    throw new AmazonCrawlerServiceError(
+      "GitHub returned invalid agent release metadata.",
+      "INVALID_AGENT_RELEASE_RESPONSE",
+    );
+  }
+
+  const versionMatch = /^agent-v(\d+\.\d+\.\d+)$/.exec(value.tag_name.trim());
+  const installer = value.assets.find((asset) =>
+    isRecord(asset) && asset.name === AGENT_INSTALLER_FILE_NAME
+  );
+  const checksum = value.assets.find((asset) =>
+    isRecord(asset) && asset.name === AGENT_INSTALLER_CHECKSUM_FILE_NAME
+  );
+  if (!versionMatch || !isRecord(installer) || !isRecord(checksum) ||
+    typeof installer.browser_download_url !== "string" ||
+    typeof checksum.browser_download_url !== "string" ||
+    typeof installer.size !== "number") {
+    throw new AmazonCrawlerServiceError(
+      "The latest GitHub release does not contain a valid Windows agent installer.",
+      "AGENT_INSTALLER_NOT_FOUND",
+    );
+  }
+
+  const downloadUrl = new URL(installer.browser_download_url);
+  const checksumUrl = new URL(checksum.browser_download_url);
+  const releasePageUrl = new URL(value.html_url);
+  const urls = [downloadUrl, checksumUrl, releasePageUrl];
+  if (urls.some((url) => url.protocol !== "https:" || url.hostname !== "github.com")) {
+    throw new AmazonCrawlerServiceError(
+      "The agent release contains an unsafe download URL.",
+      "UNSAFE_AGENT_RELEASE_URL",
+    );
+  }
+
+  return {
+    version: versionMatch[1] ?? "",
+    downloadUrl: downloadUrl.toString(),
+    checksumUrl: checksumUrl.toString(),
+    releasePageUrl: releasePageUrl.toString(),
+    fileName: AGENT_INSTALLER_FILE_NAME,
+    sizeBytes: installer.size,
+    publishedAt: value.published_at,
+  };
 }
 
 async function readJson(response: Response): Promise<unknown> {
@@ -597,6 +657,37 @@ export function createAmazonCrawlerClientsLoader({
       if (error instanceof AmazonCrawlerServiceError) throw error;
       throw new AmazonCrawlerServiceError("Không kết nối được coordinator. Hãy chạy npm run dev.", "COORDINATOR_OFFLINE");
     }
+  };
+}
+
+export function createAmazonCrawlerAgentReleaseLoader({
+  releaseApiUrl,
+  fetchImplementation = fetch,
+}: AmazonCrawlerAgentReleaseOptions): AmazonCrawlerAgentReleaseLoader {
+  return async () => {
+    let response: Response;
+    try {
+      response = await fetchImplementation(releaseApiUrl, {
+        headers: { Accept: "application/vnd.github+json" },
+      });
+    } catch (error: unknown) {
+      throw new AmazonCrawlerServiceError(
+        "Không kết nối được kênh phát hành Crawler Agent.",
+        "AGENT_RELEASE_OFFLINE",
+        null,
+        { cause: error },
+      );
+    }
+
+    const body: unknown = await response.json().catch(() => null);
+    if (!response.ok) {
+      throw new AmazonCrawlerServiceError(
+        "Không tải được thông tin phiên bản Crawler Agent mới nhất.",
+        "AGENT_RELEASE_REQUEST_FAILED",
+        response.status,
+      );
+    }
+    return readAgentRelease(body);
   };
 }
 

@@ -7,6 +7,7 @@ import { AppLayout } from "../../layouts/AppLayout";
 import { amazonCrawlerRoutes } from "../../modules/amazon-crawler";
 import type {
   AmazonCrawlerCacheClearer,
+  AmazonCrawlerAgentReleaseLoader,
   AmazonCrawlerClientsLoader,
   AmazonCrawlerJobController,
   AmazonCrawlerJobLoader,
@@ -54,6 +55,7 @@ interface AppRoutesProps {
   amazonCrawlerReviews: AmazonCrawlerReviewClient;
   clearAmazonCrawlerCache: AmazonCrawlerCacheClearer;
   loadAmazonCrawlerClients: AmazonCrawlerClientsLoader;
+  loadAmazonCrawlerAgentRelease: AmazonCrawlerAgentReleaseLoader;
   runAmazonCrawler: AmazonCrawlerRunner;
   retryAmazonCrawlerSyncs: AmazonCrawlerSyncRetrier;
   imageProcessingProfiles: ImageProcessingProfileManager;
@@ -66,6 +68,7 @@ export function AppRoutes({
   amazonCrawlerReviews,
   clearAmazonCrawlerCache,
   imageProcessingProfiles,
+  loadAmazonCrawlerAgentRelease,
   loadAmazonCrawlerClients,
   loadAmazonCrawlerJob,
   retryAmazonCrawlerSyncs,
@@ -506,6 +509,7 @@ export function AppRoutes({
       runAmazonCrawler,
       clearAmazonCrawlerCache,
       loadAmazonCrawlerClients,
+      loadAmazonCrawlerAgentRelease,
       undefined,
       retryAmazonCrawlerSyncs,
       imageProcessingProfiles,
@@ -548,7 +552,7 @@ export function AppRoutes({
         ],
       },
     ]);
-  }, [amazonCrawlerJobs, amazonCrawlerReviews, clearAmazonCrawlerCache, imageProcessingProfiles, loadAmazonCrawlerClients, loadAmazonCrawlerJob, retryAmazonCrawlerSyncs, runAmazonCrawler, runWorkflow]);
+  }, [amazonCrawlerJobs, amazonCrawlerReviews, clearAmazonCrawlerCache, imageProcessingProfiles, loadAmazonCrawlerAgentRelease, loadAmazonCrawlerClients, loadAmazonCrawlerJob, retryAmazonCrawlerSyncs, runAmazonCrawler, runWorkflow]);
 
   return <RouterProvider router={router} />;
 }

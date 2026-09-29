@@ -7,6 +7,12 @@ $ErrorActionPreference = "Stop"
 $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $amazonRoot = Join-Path $repositoryRoot "src/modules/amazon-crawler"
 $exampleConfig = Join-Path $repositoryRoot "config/amazon-crawler-agent.example.json"
+$versionModule = Join-Path $amazonRoot "engine/distributed/__init__.py"
+$versionMatch = Select-String -LiteralPath $versionModule -Pattern '^AGENT_VERSION = "(\d+\.\d+\.\d+)"$'
+if ($null -eq $versionMatch -or $versionMatch.Matches.Count -ne 1) {
+    throw "Could not read a stable AGENT_VERSION from $versionModule."
+}
+$agentVersion = $versionMatch.Matches[0].Groups[1].Value
 
 if ($SmokeTest) {
     Push-Location $amazonRoot
@@ -57,5 +63,6 @@ if (-not $SkipInstaller) {
     if ($null -eq $compiler) {
         throw "Inno Setup 6 (ISCC.exe) is required to build the installer. Re-run with -SkipInstaller for the portable build."
     }
+    $env:FFP_AGENT_VERSION = $agentVersion
     & $compiler.Source (Join-Path $repositoryRoot "packaging/windows/ffp-amazon-crawler.iss")
 }

@@ -1,4 +1,14 @@
-import type { AmazonCrawlerOutput, AmazonCrawlerProduct, AmazonCrawlerSettings, AmazonFinalVariant } from "../types";
+import type { AmazonCrawlerAgentRelease, AmazonCrawlerOutput, AmazonCrawlerProduct, AmazonCrawlerSettings, AmazonFinalVariant } from "../types";
+
+export const amazonCrawlerMockAgentRelease: AmazonCrawlerAgentRelease = {
+  version: "5.1.0",
+  downloadUrl: "https://github.com/tuan03/ffp_tool/releases/download/agent-v5.1.0/FFP-Amazon-Crawler-Setup.exe",
+  checksumUrl: "https://github.com/tuan03/ffp_tool/releases/download/agent-v5.1.0/FFP-Amazon-Crawler-Setup.exe.sha256",
+  releasePageUrl: "https://github.com/tuan03/ffp_tool/releases/tag/agent-v5.1.0",
+  fileName: "FFP-Amazon-Crawler-Setup.exe",
+  sizeBytes: 125_000_000,
+  publishedAt: "2026-09-29T00:00:00Z",
+};
 
 const MOCK_SETTINGS: AmazonCrawlerSettings = {
   profileSlug: "default",

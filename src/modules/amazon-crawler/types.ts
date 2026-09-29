@@ -627,6 +627,7 @@ export type AmazonCrawlerClientStatus = "online" | "offline" | "busy" | "waiting
 export interface AmazonCrawlerClientSummary {
   id: string;
   displayName: string;
+  agentVersion: string;
   status: AmazonCrawlerClientStatus;
   isConnected: boolean;
   maxConcurrentInputs: number;
@@ -638,6 +639,20 @@ export interface AmazonCrawlerClientSummary {
 
 export interface AmazonCrawlerClientsLoader {
   (): Promise<AmazonCrawlerClientSummary[]>;
+}
+
+export interface AmazonCrawlerAgentRelease {
+  version: string;
+  downloadUrl: string;
+  checksumUrl: string;
+  releasePageUrl: string;
+  fileName: string;
+  sizeBytes: number;
+  publishedAt: string;
+}
+
+export interface AmazonCrawlerAgentReleaseLoader {
+  (): Promise<AmazonCrawlerAgentRelease>;
 }
 
 export interface AmazonCrawlerJobSummary {

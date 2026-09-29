@@ -4,7 +4,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { MemoryRouter } from "react-router-dom";
 
-import { amazonCrawlerMockOutput } from "../mocks/data";
+import { amazonCrawlerMockAgentRelease, amazonCrawlerMockOutput } from "../mocks/data";
 import { AmazonCrawlerPage } from "../ui/AmazonCrawlerPage";
 import { clearCrawlerSession, hydrateCrawlerSessionFromJob } from "../ui/crawler-session";
 
@@ -32,6 +32,7 @@ test("crawler page shows SEO complete after restoring a job awaiting review", ()
   const markup = renderToStaticMarkup(createElement(MemoryRouter, null,
     createElement(AmazonCrawlerPage, {
       clearAmazonCrawlerCache: async () => ({ removedFiles: 0, removedBytes: 0 }),
+      loadAmazonCrawlerAgentRelease: async () => amazonCrawlerMockAgentRelease,
       loadAmazonCrawlerClients: async () => [],
       runAmazonCrawler: async () => amazonCrawlerMockOutput,
     }),
@@ -39,5 +40,7 @@ test("crawler page shows SEO complete after restoring a job awaiting review", ()
 
   assert.match(markup, /Pipeline: SEO complete/);
   assert.doesNotMatch(markup, /Pipeline: waiting_review/);
+  assert.match(markup, />Tải Agent cho Windows</);
+  assert.match(markup, /https:\/\/github\.com\/tuan03\/ffp_tool\/releases\/latest/);
   clearCrawlerSession();
 });
