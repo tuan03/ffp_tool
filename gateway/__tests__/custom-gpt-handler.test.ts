@@ -105,7 +105,7 @@ test("signed image URLs remain scoped to the authenticated store", async () => {
   } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); db.close(); }
 });
 
-test("image-content Action returns the public HTTPS product image URL for the owning store", async () => {
+test("image-content returns an FFP-hosted URL that serves only the stored image without authentication", async () => {
   const db = new DatabaseSync(":memory:");
   const queue = new CustomGptQueue(db);
   const handler = createCustomGptHandler({
@@ -113,8 +113,9 @@ test("image-content Action returns the public HTTPS product image URL for the ow
     actionKeys: { capozen: "capozen-key", wrydeco: "wrydeco-key" },
     storeId: "capozen",
     adminKey: "admin-key",
+    publicUrl: "https://ffp.example.test",
   });
-  const imageUrl = "https://chillgen.com/cdn/shop/files/product.jpg?v=1784524386&width=480";
+  const sourceImageUrl = "https://cdn.shopify.com/s/files/1/2/files/product.jpg?v=1784524386";
   const job = queue.enqueue({
     storeId: "capozen",
     source: "auto_seo",
@@ -124,7 +125,7 @@ test("image-content Action returns the public HTTPS product image URL for the ow
       description: "Description",
       handle: "product",
       niche: "home",
-      images: [{ id: "front", url: imageUrl }],
+      images: [{ id: "front", url: sourceImageUrl }],
     },
     original: {},
   });
@@ -133,19 +134,51 @@ test("image-content Action returns the public HTTPS product image URL for the ow
   const address = server.address();
   assert.ok(address && typeof address !== "string");
   const endpoint = `http://127.0.0.1:${address.port}/api/v1/gpt-seo/image-content?jobId=${job.id}&imageId=front`;
+  const originalFetch = globalThis.fetch;
 
   try {
-    assert.equal((await fetch(endpoint)).status, 401);
-    assert.equal((await fetch(endpoint, { headers: { Authorization: "Bearer wrydeco-key" } })).status, 404);
-    const response = await fetch(endpoint, { headers: { Authorization: "Bearer capozen-key" } });
+    assert.equal((await originalFetch(endpoint)).status, 401);
+    assert.equal((await originalFetch(endpoint, { headers: { Authorization: "Bearer wrydeco-key" } })).status, 404);
+    const response = await originalFetch(endpoint, { headers: { Authorization: "Bearer capozen-key" } });
     assert.equal(response.status, 200);
     assert.match(response.headers.get("content-type") || "", /^application\/json/);
-    assert.deepEqual(await response.json(), {
+    const payload = await response.json() as { imageId: string; imageUrl: string; instructions: string };
+    const publicImageUrl = new URL(payload.imageUrl);
+    assert.equal(payload.imageId, "front");
+    assert.equal(publicImageUrl.origin, "https://ffp.example.test");
+    assert.equal(publicImageUrl.pathname, "/api/v1/gpt-seo/public-image");
+    assert.deepEqual(Object.fromEntries(publicImageUrl.searchParams), {
+      storeId: "capozen",
+      jobId: job.id,
       imageId: "front",
-      imageUrl,
-      instructions: "Use imageUrl as the public image URL. Do not use imageId as a URL.",
     });
+    assert.equal(payload.instructions, "Open imageUrl to inspect the image. Do not use imageId as a URL.");
+
+    let downloadCount = 0;
+    globalThis.fetch = async (input, init) => {
+      const requestedUrl = input instanceof Request ? input.url : String(input);
+      assert.equal(requestedUrl, sourceImageUrl);
+      assert.equal(init?.redirect, "manual");
+      downloadCount += 1;
+      return new Response(Buffer.from("stored-image"), {
+        status: 200,
+        headers: { "Content-Type": "image/jpeg", "Content-Length": "12" },
+      });
+    };
+    publicImageUrl.protocol = "http:";
+    publicImageUrl.host = `127.0.0.1:${address.port}`;
+    const imageResponse = await originalFetch(publicImageUrl);
+    assert.equal(imageResponse.status, 200);
+    assert.equal(imageResponse.headers.get("content-type"), "image/jpeg");
+    assert.equal(imageResponse.headers.get("cache-control"), "public, max-age=300");
+    assert.equal(await imageResponse.text(), "stored-image");
+    assert.equal(downloadCount, 1);
+
+    publicImageUrl.searchParams.set("imageId", "not-in-job");
+    assert.equal((await originalFetch(publicImageUrl)).status, 404);
+    assert.equal(downloadCount, 1);
   } finally {
+    globalThis.fetch = originalFetch;
     server.closeAllConnections();
     await new Promise<void>(resolve => server.close(() => resolve()));
     db.close();
