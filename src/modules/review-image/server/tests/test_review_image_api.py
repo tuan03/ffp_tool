@@ -106,6 +106,11 @@ def test_template_gallery_lists_and_uploads_authenticated_images():
                     "fileName": "bad.png", "imageDataUrl": "data:image/png;base64,Zm9v"
                 })
                 assert invalid.status_code == 400
+                corrupt_png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL/nwAAAABJRU5ErkJggg=="
+                corrupt = client.post("/api/review-images/templates", headers=headers, json={
+                    "fileName": "corrupt.png", "imageDataUrl": f"data:image/png;base64,{corrupt_png}"
+                })
+                assert corrupt.status_code == 400
                 assert len(api.review_image_service.list_templates()) == 1
         finally:
             api.review_image_service = original_service

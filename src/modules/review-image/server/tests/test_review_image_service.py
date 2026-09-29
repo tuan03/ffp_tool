@@ -84,6 +84,11 @@ class ReviewImageServiceTests(unittest.TestCase):
     def test_template_upload_rejects_invalid_image_and_unsafe_name(self) -> None:
         with self.assertRaisesRegex(ValueError, "hợp lệ"):
             self.service.save_template("broken.png", "data:image/png;base64,Zm9v")
+        corrupt_png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL/nwAAAABJRU5ErkJggg=="
+        with self.assertRaisesRegex(ValueError, "hợp lệ"):
+            self.service.save_template("corrupt.png", f"data:image/png;base64,{corrupt_png}")
+        (self.templates / "corrupt.png").write_bytes(base64.b64decode(corrupt_png))
+        self.assertEqual([item["name"] for item in self.service.list_templates()], ["room.png"])
         uploaded = self.service.save_template("../other\\scene.png", image_data_url())
         self.assertNotIn("/", uploaded)
         self.assertNotIn("\\", uploaded)

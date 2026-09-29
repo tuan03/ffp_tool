@@ -44,7 +44,7 @@ def decode_image_data_url(value: str) -> tuple[str, bytes]:
         image_bytes = base64.b64decode(encoded, validate=True)
         _validate_image_bytes(image_bytes, declared_mime)
         return declared_mime, image_bytes
-    except (ValueError, KeyError, binascii.Error, UnidentifiedImageError, OSError) as exc:
+    except (ValueError, KeyError, SyntaxError, binascii.Error, UnidentifiedImageError, OSError) as exc:
         raise ValueError("File ảnh phải là PNG, JPEG hoặc WebP hợp lệ, tối đa 5 MB.") from exc
 
 
@@ -82,7 +82,7 @@ class ReviewImageService:
             try:
                 mime = IMAGE_FORMATS[{'.png': 'PNG', '.jpg': 'JPEG', '.jpeg': 'JPEG', '.webp': 'WEBP'}[path.suffix.lower()]][0]
                 _validate_image_bytes(path.read_bytes(), mime)
-            except (ValueError, KeyError, OSError, UnidentifiedImageError):
+            except (ValueError, KeyError, SyntaxError, OSError, UnidentifiedImageError):
                 continue
             candidates.append(path)
         return candidates
