@@ -1,5 +1,5 @@
 import { SeoTimeoutError } from "../internal/pipeline-errors";
-import { runSeoContent } from "../service";
+import { runDefaultSeoContent } from "../default-runner";
 import type { SeoContentInput, SeoContentOutput } from "../types";
 import type {
   SeoQueueItem,
@@ -66,7 +66,7 @@ export class SeoContentQueue<TSource = unknown> {
 
   constructor(options: SeoQueueOptions<TSource> = {}) {
     this.options = options;
-    this.runner = options.runner || runSeoContent;
+    this.runner = options.runner || runDefaultSeoContent;
     const rawConcurrency = typeof options.concurrency === "number" && !Number.isNaN(options.concurrency)
       ? options.concurrency
       : 1;
