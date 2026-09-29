@@ -114,7 +114,7 @@ export function createCustomGptHandler(options: CustomGptHandlerOptions) {
       const leaseToken = String(body.leaseToken || "");
       const requestId = String(body.requestId || "");
       const offset = Math.max(0, Math.trunc(Number(url.searchParams.get("offset")) || 0));
-      const readRoutes = ["capabilities", "context", "queue", "batch", "job", "images", "image-content", "public-image", "media", "result", "admin/settings", "admin/jobs", "admin/job", "admin/image", "admin/review-state", "admin/sync-state"];
+      const readRoutes = ["capabilities", "context", "queue", "waiting-jobs", "batch", "job", "images", "image-content", "public-image", "media", "result", "admin/settings", "admin/jobs", "admin/job", "admin/image", "admin/review-state", "admin/sync-state"];
       if (req.method === "GET" && !readRoutes.includes(route)) { send(res, 405, { error: { code: "METHOD_NOT_ALLOWED" } }); return; }
       if (req.method === "POST" && readRoutes.includes(route) && !["admin/settings", "admin/review-state"].includes(route)) { send(res, 405, { error: { code: "METHOD_NOT_ALLOWED" } }); return; }
       if (["analysis", "research", "keywords", "submit"].includes(route)) {
@@ -130,7 +130,37 @@ export function createCustomGptHandler(options: CustomGptHandlerOptions) {
       switch (route) {
         case "capabilities": result = { version: 1, batchSize: queue.settings(storeId).batchSize, maxBatchSize: 10, leaseMinutes: 30, imageMode: "public_url_or_manual_attachment", stages: ["analysis", "research", "keywords", "submission"], nextAction: "getSeoQueueStatus" }; break;
         case "context": result = { storeId, ...queue.settings(storeId), nextAction: "claimSeoBatch" }; break;
-        case "queue": result = { counts: queue.counts(storeId), activeBatch: queue.activeBatch(storeId), nextAction: queue.activeBatch(storeId) ? "getSeoBatch" : "claimSeoBatch" }; break;
+        case "queue": {
+          const counts = queue.counts(storeId);
+          const activeBatch = queue.activeBatch(storeId);
+          const nextAction = activeBatch
+            ? "getSeoBatch"
+            : Number(counts.PENDING || 0) > 0
+              ? "claimSeoBatch"
+              : Number(counts.WAITING_INPUT || 0) > 0
+                ? "listSeoWaitingJobs"
+                : "claimSeoBatch";
+          result = { counts, activeBatch, nextAction };
+          break;
+        }
+        case "waiting-jobs": {
+          const jobs = queue.list(storeId, "WAITING_INPUT", offset);
+          result = {
+            jobs: jobs.map(job => ({
+              jobId: job.id,
+              source: job.source,
+              productId: job.input.productId,
+              title: job.input.title,
+              handle: job.input.handle,
+              status: job.status,
+              imageCount: job.input.images.length,
+              issue: job.error,
+            })),
+            nextOffset: jobs.length === 50 ? offset + 50 : null,
+            instructions: "Use jobId with getSeoJob and getSeoJobImages. This read-only action does not claim jobs or change their status.",
+          };
+          break;
+        }
         case "claim": result = queue.claim(storeId, required(requestId, "requestId")); break;
         case "batch": result = queue.batch(storeId, batchId); break;
         case "renew": result = queue.renew(storeId, batchId, leaseToken); break;

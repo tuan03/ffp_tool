@@ -4,6 +4,8 @@ The source snapshot is authoritative for specifications. Image observations can 
 
 When `getSeoJobImageContent` returns an `imageUrl`, use that FFP-hosted public HTTPS URL to open the image without authentication. The FFP server resolves the stored job image and proxies its bytes, so do not replace it with a Shopify CDN URL. The `imageId` is only an identifier and must never be treated as a URL. The URL itself is not visual evidence; record image observations only after the image was actually rendered and inspected.
 
+`getSeoQueueStatus` reports counts, not identifiable products. When the operator asks about products in `WAITING_INPUT`, use `listSeoWaitingJobs` to obtain their store-scoped jobIds, titles, image counts and recorded issues. This lookup is read-only. It does not claim a batch, grant a lease, retry a job or authorize SEO mutations.
+
 B1 records product and visual evidence. B2 records shopping context. B3 uses real Google Suggest responses; suggestions do not establish search volume. B4 checks existing store targets and explains primary keyword selection. B5 produces a structured draft, FAQ and grounded copy. B6 supplies accurate per-image alt text; backend code performs file handling.
 
 Example grounded statement: “A geometric pattern is visible on the rug.”
