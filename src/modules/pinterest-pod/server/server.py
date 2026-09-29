@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 """Standalone Pinterest POD Studio Backend Server.
 
-Dedicated lightweight HTTP service on port 8768 providing:
+Dedicated lightweight control-plane HTTP service on port 8768 providing:
 - Pinterest Trends discovery & AI scoring
-- CMYK 300 DPI high-resolution rendering
-- AI lifestyle mockup placement
+- Distributed crawl and production job coordination
 - Pinterest persistent profile OAuth/login
-- Asset serving & local disk caching
+- Asset serving from durable runtime storage
 """
 
 from __future__ import annotations
@@ -55,6 +54,7 @@ except ImportError:
 from pinterest_pod_bridge import (
     POD_SIZE_PRESETS,
     cancel_pod_job,
+    check_pinterest_coordinator_ready,
     check_service_health,
     create_pod_job,
     delete_pod_job,
@@ -136,6 +136,7 @@ class PinterestPodHandler(BaseHTTPRequestHandler):
 
         if path in {"/ready", "/api/pinterest-pod/ready"}:
             is_database_ready = get_job_repository().is_ready()
+            is_coordinator_ready = check_pinterest_coordinator_ready()
             try:
                 runtime_root = Path(os.getenv("PINTEREST_RUNTIME_ROOT") or SERVER_ROOT / "temp" / "pinterest_pod")
                 runtime_root.mkdir(parents=True, exist_ok=True)
@@ -145,9 +146,14 @@ class PinterestPodHandler(BaseHTTPRequestHandler):
                 is_runtime_ready = True
             except OSError:
                 is_runtime_ready = False
-            is_ready = is_database_ready and is_runtime_ready
+            is_ready = is_database_ready and is_runtime_ready and is_coordinator_ready
             self.send_json(
-                {"ok": is_ready, "database": is_database_ready, "runtime": is_runtime_ready},
+                {
+                    "ok": is_ready,
+                    "database": is_database_ready,
+                    "runtime": is_runtime_ready,
+                    "coordinator": is_coordinator_ready,
+                },
                 200 if is_ready else 503,
             )
             return

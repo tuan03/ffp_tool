@@ -841,7 +841,7 @@ class DistributedCrawlerAgent:
         safe_job_id = "".join(c for c in job_id if c.isalnum() or c in ("-", "_"))
         safe_filename = Path(filename).name
         request = urllib.request.Request(
-            f"{self.config.server_url}/api/pinterest-pod/assets/{safe_job_id}/{safe_filename}",
+            f"{self.config.server_url}/api/v1/pinterest-assets/{safe_job_id}/{safe_filename}",
             data=data,
             method="POST",
             headers={"Content-Type": "application/octet-stream"},

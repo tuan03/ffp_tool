@@ -101,7 +101,7 @@ test("server and client deployment assets are properly configured", async () => 
   assert.match(serverDocker, /node:22-bookworm-slim/);
   assert.match(serverDocker, /python3/);
   assert.match(serverDocker, /deploy\/server\/entrypoint\.sh/);
-  assert.match(serverDocker, /playwright install --with-deps chromium/);
+  assert.doesNotMatch(serverDocker, /playwright install --with-deps chromium/);
   assert.match(serverDocker, /EXPOSE 3001 8766 8768/);
 
   assert.match(supervisor, /\[program:pinterest-pod\]/);
@@ -117,6 +117,7 @@ test("server and client deployment assets are properly configured", async () => 
   assert.match(clientNginx, /proxy_pass http:\/\/server:3001/);
   assert.match(clientNginx, /proxy_pass http:\/\/server:8766/);
   assert.match(clientNginx, /location \^~ \/api\/pinterest-pod\//);
+  assert.match(clientNginx, /pinterest-assets/);
   assert.match(clientNginx, /proxy_pass http:\/\/server:8768/);
   assert.match(clientNginx, /location = \/api\/pinterest-pod\/handover-seo/);
   assert.match(clientNginx, /location = \/api\/pinterest-pod\/sync-shopify/);
@@ -124,12 +125,15 @@ test("server and client deployment assets are properly configured", async () => 
   assert.match(clientNginx, /install-agent\.ps1/);
 
   assert.match(compose, /PINTEREST_POD_PORT:\s*8768/);
+  assert.match(compose, /PINTEREST_COORDINATOR_URL:\s*http:\/\/127\.0\.0\.1:8766/);
   assert.match(compose, /PINTEREST_RUNTIME_ROOT:\s*\/app\/\.runtime\/pinterest-pod/);
   assert.match(compose, /PINTEREST_APP_ID:\s*\$\{PINTEREST_APP_ID:-\}/);
   assert.match(compose, /PINTEREST_APP_SECRET:\s*\$\{PINTEREST_APP_SECRET:-\}/);
   assert.match(compose, /PINTEREST_REDIRECT_URI:\s*\$\{PINTEREST_REDIRECT_URI:-\}/);
   assert.match(compose, /PINTEREST_OAUTH_STATE_SECRET:\s*\$\{PINTEREST_OAUTH_STATE_SECRET:-\}/);
   assert.doesNotMatch(compose, /^\s*-\s*["'][^"'\r\n]*:8768["']\s*$/m);
+  assert.match(coordinator, /@app\.post\("\/api\/v1\/pinterest-jobs"/);
+  assert.match(coordinator, /@app\.post\("\/api\/v1\/pinterest-assets\/\{job_id\}\/\{filename\}"/);
   assert.doesNotMatch(coordinator, /@app\.(?:get|post|put|delete)\("\/api\/pinterest-pod/);
   assert.doesNotMatch(pinterestServer, /path in \{[^\n]*\/api\/pinterest-pod\/handover-seo/);
 });

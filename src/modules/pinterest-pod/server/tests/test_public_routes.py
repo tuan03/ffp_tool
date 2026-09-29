@@ -51,13 +51,17 @@ class PinterestPublicRouteTests(unittest.TestCase):
         health_status, health = self.request_json("/api/pinterest-pod/health")
         repository = Mock()
         repository.is_ready.return_value = True
-        with patch.object(server, "get_job_repository", return_value=repository):
+        with (
+            patch.object(server, "get_job_repository", return_value=repository),
+            patch.object(server, "check_pinterest_coordinator_ready", return_value=True),
+        ):
             ready_status, ready = self.request_json("/api/pinterest-pod/ready")
 
         self.assertEqual(health_status, 200)
         self.assertTrue(health["ok"])
         self.assertEqual(ready_status, 200)
         self.assertTrue(ready["ok"])
+        self.assertTrue(ready["coordinator"])
 
     def test_discovery_create_production_status_and_cancel_routes(self) -> None:
         with (

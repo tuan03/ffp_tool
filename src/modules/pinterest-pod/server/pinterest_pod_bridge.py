@@ -1,6 +1,6 @@
 """Pinterest POD Studio - Bridge & Shopify Integration Module.
 
-Self-contained, in-process local pipeline for Pinterest POD creation,
+Provides the control-plane bridge and the local execution helpers used by distributed agents,
 tracks generation jobs, caches deliverables (lifestyle mockups & 300DPI CMYK print files),
 and transforms outputs into complete Shopify-ready products (Rug & Blanket)
 with size variants, pricing, and print CMYK metafields.
@@ -445,7 +445,7 @@ def save_job_manifest(job_id: str, data: dict[str, Any]) -> None:
 # Standalone Service HTTP Helpers
 # ---------------------------------------------------------------------------
 
-def http_get_json(url: str, timeout: float = 10.0) -> dict[str, Any]:
+def http_get_json(url: str, timeout: float = 10.0) -> Any:
     req = urllib.request.Request(url, headers={"Accept": "application/json", "User-Agent": "ShopifyToolBridge/1.0"})
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         body = resp.read().decode("utf-8")
@@ -463,7 +463,7 @@ def http_post_json(url: str, data: dict[str, Any], timeout: float = 30.0) -> tup
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             body = resp.read().decode("utf-8")
-            return resp.status, json.loads(body)
+            return resp.status, json.loads(body) if body else {}
     except urllib.error.HTTPError as exc:
         body = exc.read().decode("utf-8") if exc.fp else "{}"
         try:
@@ -482,7 +482,7 @@ def http_delete_json(url: str, timeout: float = 10.0) -> tuple[int, dict[str, An
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             body = resp.read().decode("utf-8")
-            return resp.status, json.loads(body)
+            return resp.status, json.loads(body) if body else {}
     except urllib.error.HTTPError as exc:
         body = exc.read().decode("utf-8") if exc.fp else "{}"
         try:
@@ -490,6 +490,51 @@ def http_delete_json(url: str, timeout: float = 10.0) -> tuple[int, dict[str, An
         except Exception:
             parsed = {"error": body}
         return exc.code, parsed
+
+
+def pinterest_coordinator_url() -> str:
+    return str(os.getenv("PINTEREST_COORDINATOR_URL") or "http://127.0.0.1:8766").rstrip("/")
+
+
+def check_pinterest_coordinator_ready() -> bool:
+    try:
+        response = http_get_json(f"{pinterest_coordinator_url()}/api/v1/health", timeout=2.0)
+    except Exception:
+        return False
+    return isinstance(response, dict) and response.get("status") == "ok"
+
+
+def submit_distributed_pinterest_job(payload: dict[str, Any]) -> dict[str, Any]:
+    status, response = http_post_json(
+        f"{pinterest_coordinator_url()}/api/v1/pinterest-jobs",
+        payload,
+        timeout=30.0,
+    )
+    if status not in {200, 201, 202}:
+        message = response.get("detail") or response.get("message") or response.get("error") or "Coordinator rejected Pinterest job."
+        raise RuntimeError(str(message))
+    return response
+
+
+def load_distributed_pinterest_job(job_id: str) -> dict[str, Any] | None:
+    safe_id = re.sub(r"[^a-zA-Z0-9_-]", "", str(job_id or "").strip())
+    if not safe_id:
+        return None
+    try:
+        response = http_get_json(
+            f"{pinterest_coordinator_url()}/api/v1/crawl-jobs/{safe_id}",
+            timeout=10.0,
+        )
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            return None
+        raise
+    if not isinstance(response, dict):
+        raise RuntimeError("Coordinator returned an invalid Pinterest job response.")
+    settings = response.get("settings")
+    if not isinstance(settings, dict) or settings.get("channel") != "pinterest":
+        return None
+    return response
 
 
 # ---------------------------------------------------------------------------
@@ -500,12 +545,12 @@ _LOGIN_PROCESS: Any = None
 
 
 def check_service_health(api_url: str = "") -> dict[str, Any]:
-    """Check POD Studio local engine status (self-contained in-process pipeline)."""
+    """Check the Pinterest POD control plane and distributed execution target."""
     return {
         "online": True,
-        "mode": "local",
-        "engine": "POD Studio: Sẵn sàng (Local Engine)",
-        "url": api_url or "local",
+        "mode": "distributed",
+        "engine": "POD Studio: Sẵn sàng phân phối tới Crawler Agent",
+        "url": api_url or pinterest_coordinator_url(),
         "error": None,
     }
 
@@ -1981,7 +2026,7 @@ def produce_pod_job(payload: dict[str, Any], base_url: str, api_url: str = DEFAU
     if not selected_candidates:
         raise ValueError("Vui lòng chọn ít nhất một ảnh ứng viên để sản xuất.")
 
-    status_info = ACTIVE_JOBS.get(source_job_id) or load_job_manifest(source_job_id) or {}
+    status_info = load_distributed_pinterest_job(source_job_id) or ACTIVE_JOBS.get(source_job_id) or load_job_manifest(source_job_id) or {}
     real_run_id = (
         payload.get("source_run_id")
         or status_info.get("run_id")
@@ -2110,43 +2155,9 @@ def produce_pod_job(payload: dict[str, Any], base_url: str, api_url: str = DEFAU
         req_body["width_px"] = print_spec["width_px"]
         req_body["height_px"] = print_spec["height_px"]
 
-    # Directly execute in-process local pipeline worker
-    target_job_id = str(payload.get("target_job_id") or payload.get("job_id") or "").strip()
-    local_job_id = target_job_id if target_job_id else f"job_prod_{uuid.uuid4().hex[:10]}"
-    cancel_event = threading.Event()
-    initial_state = {
-        "job_id": local_job_id,
-        "status": "running",
-        "created_at": time.time(),
-        "logs": [f"Bắt đầu sản xuất cho {len(selected_candidates)} mẫu ứng viên đã chọn..."],
-        "request": req_body,
-        "niche": niche or "Trend Design",
-        "product": product,
-    }
-    with JOB_CACHE_LOCK:
-        JOB_CANCEL_EVENTS[local_job_id] = cancel_event
-        ACTIVE_JOBS[local_job_id] = initial_state
-    save_job_manifest(local_job_id, initial_state)
-
-    worker = threading.Thread(
-        target=_run_local_pipeline_worker,
-        args=(local_job_id, req_body, base_url, cancel_event),
-        name=f"pod-local-prod-{local_job_id[:8]}",
-        daemon=True,
-    )
-    with JOB_CACHE_LOCK:
-        LOCAL_WORKER_THREADS[local_job_id] = worker
-    worker.start()
-
-    stepper = calculate_stepper_state(initial_state)
-    return {
-        "ok": True,
-        "jobId": local_job_id,
-        "job_id": local_job_id,
-        "status": "running",
-        "stepper": stepper,
-        "job": initial_state,
-    }
+    req_body["stage"] = "produce"
+    req_body["action"] = "produce"
+    return submit_distributed_pinterest_job(req_body)
 
 
 def create_pod_job(payload: dict[str, Any], base_url: str, api_url: str = DEFAULT_API_URL) -> dict[str, Any]:
@@ -2159,14 +2170,6 @@ def create_pod_job(payload: dict[str, Any], base_url: str, api_url: str = DEFAUL
     niche = str(payload.get("niche") or "").strip()
     if not niche:
         raise ValueError("Vui lòng nhập Pinterest niche hoặc từ khóa xu hướng.")
-
-    # Validate Pinterest API OAuth token before launching pipeline
-    oauth_valid, _ = check_oauth_token_valid()
-    if not oauth_valid and not os.getenv("MOCK_PINTEREST") and not os.getenv("CI"):
-        raise ValueError(
-            "Chưa kết nối tài khoản Pinterest API hoặc Access Token đã hết hạn. "
-            "Vui lòng bấm nút 'Kết nối Pinterest' trên thanh tiêu đề để xác thực hoặc dán token hợp lệ trước khi quét."
-        )
 
     raw_product = str(payload.get("product") or "").lower().strip()
     if raw_product in {"rug", "blanket", "bag", "custom"}:
@@ -2245,47 +2248,9 @@ def create_pod_job(payload: dict[str, Any], base_url: str, api_url: str = DEFAUL
         req_body["width_px"] = print_spec["width_px"]
         req_body["height_px"] = print_spec["height_px"]
 
-    # Directly execute in-process local pipeline worker
-    local_job_id = f"job_{uuid.uuid4().hex[:10]}"
-    cancel_event = threading.Event()
-    initial_logs = [f"Khởi tạo job POD ({workflow_stage}): {niche} ({product})..."]
-    ref_count = len(req_body["reference_images"])
-    if ref_count > 0:
-        initial_logs.append(f"Đã nhận {ref_count} ảnh phòng tham chiếu cho khâu mockup.")
-    initial_state = {
-        "job_id": local_job_id,
-        "status": "running",
-        "created_at": time.time(),
-        "logs": initial_logs,
-        "request": req_body,
-        "niche": niche,
-        "product": product,
-    }
-    with JOB_CACHE_LOCK:
-        JOB_CANCEL_EVENTS[local_job_id] = cancel_event
-        ACTIVE_JOBS[local_job_id] = initial_state
-    save_job_manifest(local_job_id, initial_state)
-
-    worker = threading.Thread(
-        target=_run_local_pipeline_worker,
-        args=(local_job_id, req_body, base_url, cancel_event),
-        name=f"pod-local-{local_job_id[:8]}",
-        daemon=True,
-    )
-    with JOB_CACHE_LOCK:
-        LOCAL_WORKER_THREADS[local_job_id] = worker
-    worker.start()
-
-    stepper = calculate_stepper_state(initial_state)
-    return {
-        "ok": True,
-        "jobId": local_job_id,
-        "job_id": local_job_id,
-        "status": "running",
-        "stepper": stepper,
-        "logs": initial_logs,
-        "job": initial_state,
-    }
+    req_body["stage"] = "crawl_and_review"
+    req_body["action"] = "crawl_and_review"
+    return submit_distributed_pinterest_job(req_body)
 
 
 def load_standalone_run(run_id: str, base_url: str) -> dict[str, Any] | None:
@@ -2757,6 +2722,10 @@ def load_standalone_run(run_id: str, base_url: str) -> dict[str, Any] | None:
 
 def get_pod_job_status(job_id: str, base_url: str, api_url: str = DEFAULT_API_URL) -> dict[str, Any]:
     api_url = (api_url or DEFAULT_API_URL).rstrip("/")
+    distributed_job = load_distributed_pinterest_job(job_id)
+    if distributed_job is not None:
+        return distributed_job
+
     manifest = None
     with JOB_CACHE_LOCK:
         cached_job = copy.deepcopy(ACTIVE_JOBS.get(job_id))
@@ -3240,6 +3209,17 @@ def cancel_pod_job(job_id: str, api_url: str = DEFAULT_API_URL) -> dict[str, Any
     if not safe_id:
         return {"ok": False, "message": "Invalid job ID"}
 
+    status, response = http_post_json(
+        f"{pinterest_coordinator_url()}/api/v1/crawl-jobs/{safe_id}/cancel",
+        {},
+        timeout=10.0,
+    )
+    if status in {200, 202}:
+        return response
+    if status != 404:
+        message = response.get("detail") or response.get("message") or response.get("error") or "Coordinator could not cancel Pinterest job."
+        raise RuntimeError(str(message))
+
     with JOB_CACHE_LOCK:
         cancel_evt = JOB_CANCEL_EVENTS.get(safe_id)
         if cancel_evt:
@@ -3271,6 +3251,17 @@ def delete_pod_job(job_id: str) -> dict[str, Any]:
     safe_id = re.sub(r"[^a-zA-Z0-9_-]", "", str(job_id or "").strip())
     if not safe_id:
         raise ValueError("Invalid job ID.")
+
+    coordinator_deleted = False
+    status, response = http_delete_json(
+        f"{pinterest_coordinator_url()}/api/v1/crawl-jobs/{safe_id}",
+        timeout=10.0,
+    )
+    if status == 204:
+        coordinator_deleted = True
+    elif status != 404:
+        message = response.get("detail") or response.get("message") or response.get("error") or "Coordinator could not delete Pinterest job."
+        raise RuntimeError(str(message))
 
     with JOB_CACHE_LOCK:
         cancel_evt = JOB_CANCEL_EVENTS.pop(safe_id, None)
@@ -3322,13 +3313,55 @@ def delete_pod_job(job_id: str) -> dict[str, Any]:
             except Exception as err:
                 print(f"[Pinterest POD Bridge] Error removing run dir {r_dir}: {err}")
 
-    return {"ok": True, "jobId": safe_id, "deleted": len(deleted_paths) > 0, "deletedPaths": deleted_paths}
+    return {
+        "ok": True,
+        "jobId": safe_id,
+        "deleted": coordinator_deleted or len(deleted_paths) > 0,
+        "deletedPaths": deleted_paths,
+    }
 
 
 def list_recent_jobs_and_runs() -> list[dict[str, Any]]:
     """Lists completed runs and cached jobs for UI quick import."""
     items = []
     seen_ids = set()
+
+    try:
+        distributed_jobs = http_get_json(f"{pinterest_coordinator_url()}/api/v1/crawl-jobs?limit=25", timeout=5.0)
+        if isinstance(distributed_jobs, list):
+            for job in distributed_jobs:
+                if not isinstance(job, dict):
+                    continue
+                settings = job.get("settings")
+                if not isinstance(settings, dict) or settings.get("channel") != "pinterest":
+                    continue
+                job_id = str(job.get("jobId") or job.get("id") or "").strip()
+                if not job_id:
+                    continue
+                seen_ids.add(job_id)
+                candidates = job.get("candidates") if isinstance(job.get("candidates"), list) else []
+                items.append({
+                    "type": "distributed_job",
+                    "id": job_id,
+                    "jobId": job_id,
+                    "job_id": job_id,
+                    "status": job.get("status") or "queued",
+                    "createdAt": job.get("createdAt"),
+                    "title": settings.get("niche") or job_id,
+                    "niche": settings.get("niche") or "",
+                    "product": settings.get("product") or "rug",
+                    "productType": settings.get("product") or "rug",
+                    "candidateCount": len(candidates),
+                    "cmykCount": 0,
+                    "mockupCount": 0,
+                    "thumbnails": [
+                        str(candidate.get("image_url"))
+                        for candidate in candidates[:4]
+                        if isinstance(candidate, dict) and candidate.get("image_url")
+                    ],
+                })
+    except Exception as exc:
+        logger.warning("Could not list distributed Pinterest jobs: %s", exc)
 
     # 1. Cached local jobs
     if TEMP_DIR.exists():

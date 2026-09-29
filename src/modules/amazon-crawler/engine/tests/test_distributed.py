@@ -3286,6 +3286,31 @@ class CoordinatorPinterestDistributedTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
 
+    def test_pinterest_control_plane_enqueues_job_and_accepts_agent_asset(self) -> None:
+        runtime_root = Path(self.temp_dir.name) / "pinterest-runtime"
+        with patch.dict(os.environ, {"PINTEREST_RUNTIME_ROOT": str(runtime_root)}):
+            app = create_coordinator_app(database_url=f"sqlite:///{self.db_path.as_posix()}")
+            with TestClient(app) as client:
+                response = client.post(
+                    "/api/v1/pinterest-jobs",
+                    json={"niche": "leather bag", "stage": "crawl_and_review"},
+                )
+                self.assertEqual(response.status_code, 202)
+                job = response.json()
+                self.assertEqual(job["status"], "queued")
+                self.assertEqual(job["settings"]["channel"], "pinterest")
+
+                asset_response = client.post(
+                    f"/api/v1/pinterest-assets/{job['id']}/preview.png",
+                    content=b"png-data",
+                    headers={"Content-Type": "image/png"},
+                )
+                self.assertEqual(asset_response.status_code, 200)
+                self.assertEqual(
+                    (runtime_root / "jobs" / job["id"] / "preview.png").read_bytes(),
+                    b"png-data",
+                )
+
     def test_amazon_captcha_cooldown_does_not_block_pinterest_tasks(self) -> None:
         amazon = self.store.create_job({"urls": ["B012345678"]})
         self.store.register_client({**client_hello(slots=1), "capabilities": {"amazon": True, "pinterest": True}})

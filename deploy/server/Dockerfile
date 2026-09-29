@@ -34,8 +34,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY deploy/server/requirements.txt /app/requirements.txt
 RUN python3 -m venv /opt/venv && \
     /opt/venv/bin/pip install --no-cache-dir --upgrade pip && \
-    /opt/venv/bin/pip install --no-cache-dir -r /app/requirements.txt && \
-    /opt/venv/bin/playwright install --with-deps chromium
+    /opt/venv/bin/pip install --no-cache-dir -r /app/requirements.txt
 
 # 2. Install Node.js dependencies
 COPY package.json package-lock.json ./

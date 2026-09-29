@@ -211,6 +211,10 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
     image_processing_root = Path(
         os.environ.get("IMAGE_PROCESSING_CACHE_DIR", str(project_root / ".runtime" / "image-processing"))
     ).resolve()
+    pinterest_runtime_root = Path(
+        os.environ.get("PINTEREST_RUNTIME_ROOT", str(project_root / ".runtime" / "pinterest-pod"))
+    ).resolve()
+    pinterest_job_root = pinterest_runtime_root / "jobs"
     image_service = ImageProcessingService(
         image_processing_root,
         workers=positive_environment_integer("IMAGE_PROCESSING_WORKERS", 4),
@@ -320,6 +324,39 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
             ) from error
         except ValueError as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
+
+    @app.post("/api/v1/pinterest-jobs", status_code=202)
+    async def create_pinterest_job(payload: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return await asyncio.to_thread(store.create_pinterest_job, payload)
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
+    @app.post("/api/v1/pinterest-assets/{job_id}/{filename}")
+    @app.put("/api/v1/pinterest-assets/{job_id}/{filename}")
+    async def upload_pinterest_asset(job_id: str, filename: str, request: Request) -> dict[str, Any]:
+        safe_job_id = "".join(character for character in job_id if character.isalnum() or character in ("-", "_"))
+        safe_filename = Path(filename).name
+        if not safe_job_id or not safe_filename:
+            raise HTTPException(status_code=400, detail="Invalid Pinterest asset identifier.")
+        try:
+            body = await read_request_body_limited(request, maximum_bytes=10 * 1024 * 1024)
+        except ResultPayloadTooLarge as error:
+            raise HTTPException(status_code=413, detail=str(error)) from error
+        job_dir = (pinterest_job_root / safe_job_id).resolve()
+        if not job_dir.is_relative_to(pinterest_job_root.resolve()):
+            raise HTTPException(status_code=400, detail="Invalid Pinterest job id.")
+        job_dir.mkdir(parents=True, exist_ok=True)
+        target_path = (job_dir / safe_filename).resolve()
+        if target_path.parent != job_dir:
+            raise HTTPException(status_code=400, detail="Invalid Pinterest asset filename.")
+        temporary_path = target_path.with_suffix(f"{target_path.suffix}.tmp")
+        temporary_path.write_bytes(body)
+        temporary_path.replace(target_path)
+        return {
+            "ok": True,
+            "url": f"/api/pinterest-pod/assets/{safe_job_id}/{safe_filename}",
+        }
 
     @app.get("/api/v1/crawl-jobs")
     def list_jobs(limit: int = 100) -> list[dict[str, Any]]:
