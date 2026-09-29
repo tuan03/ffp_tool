@@ -78,7 +78,7 @@ async function executeJob(job) {
   const previousMessages = xpathAll(xpaths.assistant_messages);
   const previousCount = previousMessages.length;
   const previousLastText = previousMessages.at(-1)?.innerText?.trim() || "";
-  const previousImageSources = new Set(previousMessages.flatMap(node => [...node.querySelectorAll('img')].map(img => img.currentSrc || img.src)));
+  const previousImageSources = new Set([...document.querySelectorAll('img')].map(img => img.currentSrc || img.src));
 
   const input = await waitForXPath(xpaths.prompt_input, 20_000);
   if (job.kind === "image_edit") {
@@ -89,7 +89,7 @@ async function executeJob(job) {
 
   await sleep(150);
 
-  const sendButton = await waitForEnabledXPath(xpaths.send_button, 10_000);
+  const sendButton = await waitForEnabledXPath(xpaths.send_button, 10_000, input.closest('form'));
   sendButton.click();
 
   if (cancelledJobs.has(job.job_id)) throw new Error("ChatGPT job cancelled.");
@@ -202,6 +202,14 @@ async function waitForGeneratedImage({ assistantMessagesXPath, stopButtonXPath, 
 }
 
 function findGeneratedImage(messages, previousCount, previousImageSources) {
+  const previews = [...document.querySelectorAll('[data-testid="generated-image-preview"] img, img[data-testid="generated-image-preview"]')];
+  const newPreview = previews.filter(node => {
+    const source = node.currentSrc || node.src || '';
+    return node.complete && node.naturalWidth >= 256 && node.naturalHeight >= 256 &&
+      isVisible(node) && Boolean(source) && !previousImageSources.has(source);
+  }).at(-1);
+  if (newPreview) return newPreview;
+
   const latest = messages.at(-1);
   const turn = conversationTurnFor(latest);
   if (!turn || messages.length < previousCount) return null;
@@ -355,18 +363,19 @@ async function waitForXPath(xpath, timeoutMs) {
   throw new Error(`XPath not found within ${timeoutMs} ms: ${xpath}`);
 }
 
-async function waitForEnabledXPath(xpath, timeoutMs) {
+async function waitForEnabledXPath(xpath, timeoutMs, composerForm = null) {
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
-    const element = xpathFirst(xpath);
-    if (
-      element &&
+    const candidates = [
+      ...(composerForm?.querySelectorAll('button[type="submit"]') || []),
+      ...xpathAll(xpath)
+    ];
+    const enabledButton = candidates.find(element =>
       isVisible(element) &&
       !element.disabled &&
       element.getAttribute("aria-disabled") !== "true"
-    ) {
-      return element;
-    }
+    );
+    if (enabledButton) return enabledButton;
     await sleep(200);
   }
   throw new Error(`Send button was not enabled: ${xpath}`);

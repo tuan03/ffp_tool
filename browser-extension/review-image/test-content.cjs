@@ -102,6 +102,17 @@ context.sleep = () => new Promise(resolve => setTimeout(resolve, 5));
   assert.equal(context.findGeneratedImage([assistant], 0, new Set()), generated);
   generated.complete = false;
   assert.equal(context.findGeneratedImage([assistant], 0, new Set()), null);
+  const preview = new FakeElement();
+  preview.complete = true;
+  preview.naturalWidth = 1312;
+  preview.naturalHeight = 1199;
+  preview.currentSrc = 'blob:new-review-image';
+  preview.getBoundingClientRect = () => ({ width: 500, height: 450 });
+  context.document.querySelectorAll = selector =>
+    selector === '[data-testid="generated-image-preview"] img, img[data-testid="generated-image-preview"]'
+      ? [preview]
+      : [];
+  assert.equal(context.findGeneratedImage([], 0, new Set()), preview);
   let clicked = false;
   context.xpathFirst = () => ({ click() { clicked = true; } });
   context.xpathAll = () => [];
@@ -112,6 +123,15 @@ context.sleep = () => new Promise(resolve => setTimeout(resolve, 5));
   await assert.rejects(() => context.openNewChat({ new_chat_button: "//a[@href='/']", assistant_messages: "//assistant" }), /Could not confirm a new ChatGPT conversation/);
   context.xpathAll = () => [];
   await context.openNewChat({ new_chat_button: "//a[@href='/']", assistant_messages: "//assistant" });
+  const localizedSendButton = new FakeElement();
+  localizedSendButton.disabled = false;
+  localizedSendButton.getAttribute = name => name === 'aria-label' ? 'Gửi' : null;
+  localizedSendButton.getBoundingClientRect = () => ({ width: 20, height: 20 });
+  const promptForm = {
+    querySelectorAll(selector) { return selector === 'button[type="submit"]' ? [localizedSendButton] : []; }
+  };
+  context.xpathFirst = () => null;
+  assert.equal(await context.waitForEnabledXPath('//button[@data-testid="send-button"]', 50, promptForm), localizedSendButton);
   const userTurn = new FakeElement();
   userTurn.style = { display: "" };
   userTurn.isConnected = true;
