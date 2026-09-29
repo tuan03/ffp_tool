@@ -47,6 +47,7 @@ export {
   getJobStatus,
   getOAuthAuthorizeUrl,
   getCrawlerClients,
+  forgetCrawlerClient,
   handoverToSeo,
   launchLogin,
   packageDeliverablesForSeo,

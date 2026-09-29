@@ -59,6 +59,29 @@ export function PinterestPodStudio({
   const [crawlerAgents, setCrawlerAgents] = useState<readonly CrawlerClientSummary[]>([]);
   const [isLoadingAgents, setIsLoadingAgents] = useState(true);
 
+  async function handleForgetAgent(agent: CrawlerClientSummary): Promise<void> {
+    if (!client.forgetCrawlerClient) return;
+    const shouldForget = window.confirm(
+      `Quên máy "${agent.displayName || agent.id}" khỏi danh sách? Dữ liệu lịch sử job vẫn được giữ.`,
+    );
+    if (!shouldForget) return;
+    try {
+      await client.forgetCrawlerClient(agent.id);
+      setCrawlerAgents((current) => current.filter((candidate) => candidate.id !== agent.id));
+      notifyUser({
+        title: "Crawler Agent",
+        message: "Đã quên máy Crawler Agent.",
+        type: "success",
+      });
+    } catch (error) {
+      notifyUser({
+        title: "Không thể quên máy",
+        message: error instanceof Error ? error.message : "Không thể quên máy Crawler Agent.",
+        type: "error",
+      });
+    }
+  }
+
   // Form State
   const [niche, setNiche] = useState("Halloween spooky cute");
   const [product, setProduct] = useState<PinterestProductType>("bag");
@@ -1045,6 +1068,7 @@ export function PinterestPodStudio({
         agents={crawlerAgents}
         isLoading={isLoadingAgents}
         onOpenInstall={() => setIsAgentInstallModalOpen(true)}
+        onForgetAgent={handleForgetAgent}
       />
 
       {/* TAB 1: Quét Trend & Khởi tạo Job */}

@@ -701,6 +701,10 @@ export class MockPinterestPodClient implements PinterestPodClient {
       },
     ];
   }
+
+  public async forgetCrawlerClient(_clientId: string): Promise<void> {
+    return Promise.resolve();
+  }
 }
 
 export const mockPinterestPodClient = new MockPinterestPodClient();

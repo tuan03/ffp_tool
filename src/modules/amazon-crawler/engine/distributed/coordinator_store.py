@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 from threading import Lock
 from typing import Any
 
-from sqlalchemy import delete, func, select, text
+from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.dialects.postgresql import insert as postgres_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import selectinload
@@ -2642,6 +2642,29 @@ class CoordinatorStore(CoordinatorObservability):
                 .group_by(CrawlTask.assigned_client_id)
             ).all())
             return [self._client_snapshot(client, active_tasks=int(active_counts.get(client.id, 0))) for client in clients]
+
+    def forget_client(self, client_id: str) -> str:
+        """Remove an offline Agent registration while preserving historical task records."""
+        with self.sessions() as session:
+            client = session.get(ClientRecord, client_id)
+            if client is None:
+                return "not_found"
+            active_task_count = session.scalar(
+                select(func.count(CrawlTask.id)).where(
+                    CrawlTask.assigned_client_id == client_id,
+                    CrawlTask.status.not_in(TERMINAL_TASK_STATUSES),
+                )
+            ) or 0
+            if active_task_count > 0:
+                return "active_tasks"
+            session.execute(
+                update(CrawlTask)
+                .where(CrawlTask.assigned_client_id == client_id)
+                .values(assigned_client_id=None)
+            )
+            session.delete(client)
+            session.commit()
+            return "forgotten"
 
     @staticmethod
     def _product_pipeline_snapshot(item: CrawlProductItem) -> dict[str, Any]:

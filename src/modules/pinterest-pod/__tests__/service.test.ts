@@ -41,6 +41,7 @@ import {
   STOREFRONT_DISPLAY_STANDARD,
   syncPinterestPodToShopify,
   getCrawlerClients,
+  forgetCrawlerClient,
 } from "..";
 import type { JobDetailResponse, PodJobStatusResponse } from "../types";
 
@@ -1567,6 +1568,25 @@ test("Real client getCrawlerClients fetches from /api/v1/clients and handles err
     };
     const emptyClients = await getCrawlerClients();
     assert.deepEqual(emptyClients, []);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("forgetCrawlerClient deletes the selected offline Agent registration", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: { url: string; method?: string }[] = [];
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url: String(url), method: init?.method });
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+
+  try {
+    await forgetCrawlerClient("client with spaces");
+    assert.deepEqual(calls, [{ url: "/api/v1/clients/client%20with%20spaces", method: "DELETE" }]);
   } finally {
     globalThis.fetch = originalFetch;
   }

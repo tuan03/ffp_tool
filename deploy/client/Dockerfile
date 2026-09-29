@@ -39,6 +39,8 @@ COPY deploy/client/nginx.conf /etc/nginx/conf.d/default.conf
 RUN mkdir -p /usr/share/nginx/html/scripts
 COPY scripts/install-agent.ps1 /usr/share/nginx/html/scripts/install-agent.ps1
 COPY scripts/install-agent.sh /usr/share/nginx/html/scripts/install-agent.sh
+COPY scripts/update-agent.ps1 /usr/share/nginx/html/scripts/update-agent.ps1
+COPY scripts/uninstall-agent.ps1 /usr/share/nginx/html/scripts/uninstall-agent.ps1
 COPY cai-agent.bat /usr/share/nginx/html/scripts/cai-agent.bat
 COPY --from=builder /tmp/ffp-crawler-agent.tar.gz /usr/share/nginx/html/downloads/ffp-crawler-agent.tar.gz
 COPY --from=builder /tmp/ffp-crawler-agent.tar.gz.sha256 /usr/share/nginx/html/downloads/ffp-crawler-agent.tar.gz.sha256

@@ -2983,6 +2983,56 @@ class CoordinatorApiTests(unittest.TestCase):
                     self.assertEqual(current["currentTasks"][0]["niche"], "leather bag")
                     self.assertNotIn("leaseId", current["currentTasks"][0])
 
+    def test_agent_release_and_forget_offline_client(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = Path(directory) / "coordinator.sqlite3"
+            app = create_coordinator_app(database_url=f"sqlite:///{database_path.as_posix()}")
+            with TestClient(app) as client:
+                release = client.get("/api/v1/agent-release")
+                self.assertEqual(release.status_code, 200)
+                self.assertRegex(release.json()["version"], r"^\d+\.\d+\.\d+$")
+
+                app.state.store.register_client(client_hello())
+                app.state.store.mark_client_disconnected("client-a")
+                forgotten = client.delete("/api/v1/clients/client-a")
+                self.assertEqual(forgotten.status_code, 200)
+                self.assertTrue(forgotten.json()["ok"])
+                self.assertEqual(client.delete("/api/v1/clients/client-a").status_code, 404)
+
+    def test_forget_client_rejects_connected_agent(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = Path(directory) / "coordinator.sqlite3"
+            app = create_coordinator_app(database_url=f"sqlite:///{database_path.as_posix()}")
+            with TestClient(app) as client:
+                with client.websocket_connect("/api/v1/worker/connect") as agent:
+                    agent.send_json(client_hello())
+                    self.assertEqual(agent.receive_json()["type"], "hello_ack")
+                    self.assertEqual(client.delete("/api/v1/clients/client-a").status_code, 409)
+
+    def test_forget_offline_client_preserves_history_and_rejects_active_tasks(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = Path(directory) / "coordinator.sqlite3"
+            app = create_coordinator_app(database_url=f"sqlite:///{database_path.as_posix()}")
+            store = app.state.store
+            with TestClient(app) as client:
+                store.register_client(client_hello())
+                job = store.create_job({"urls": ["B012345678"]})
+                leased = store.lease_tasks("client-a", 1)[0]
+                store.mark_client_disconnected("client-a")
+                self.assertEqual(client.delete("/api/v1/clients/client-a").status_code, 409)
+
+                with store.sessions.begin() as session:
+                    task = session.get(CrawlTask, leased["taskId"])
+                    task.status = "completed"
+                    task.lease_id = None
+                    task.lease_expires_at = None
+
+                self.assertEqual(client.delete("/api/v1/clients/client-a").status_code, 200)
+                self.assertIsNotNone(store.get_job(str(job["id"])))
+                with store.sessions() as session:
+                    task = session.get(CrawlTask, leased["taskId"])
+                    self.assertIsNone(task.assigned_client_id)
+
     def test_sync_all_queues_only_approved_reviews_as_each_product_becomes_ready(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             database_path = Path(directory) / "coordinator.sqlite3"

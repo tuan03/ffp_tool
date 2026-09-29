@@ -6,6 +6,24 @@ interface CrawlerAgentsPanelProps {
   readonly agents: readonly CrawlerClientSummary[];
   readonly isLoading?: boolean;
   readonly onOpenInstall: () => void;
+  readonly onForgetAgent?: (agent: CrawlerClientSummary) => Promise<void>;
+}
+
+function versionParts(value?: string): readonly number[] {
+  if (!value) return [];
+  const parts = value.split(".").map((part) => Number.parseInt(part, 10));
+  return parts.every(Number.isFinite) ? parts : [];
+}
+
+function hasNewerVersion(agent: CrawlerClientSummary): boolean {
+  const current = versionParts(agent.agentVersion);
+  const latest = versionParts(agent.latestAgentVersion);
+  const length = Math.max(current.length, latest.length);
+  for (let index = 0; index < length; index += 1) {
+    const difference = (latest[index] ?? 0) - (current[index] ?? 0);
+    if (difference !== 0) return difference > 0;
+  }
+  return false;
 }
 
 function formatLastSeen(value?: string): string {
@@ -27,8 +45,10 @@ export function CrawlerAgentsPanel({
   agents,
   isLoading = false,
   onOpenInstall,
+  onForgetAgent,
 }: CrawlerAgentsPanelProps): React.JSX.Element {
   const [isExpanded, setIsExpanded] = useState(true);
+  const [busyAgentId, setBusyAgentId] = useState<string | null>(null);
   const sortedAgents = useMemo(
     () => [...agents].sort((left, right) => Number(right.isConnected) - Number(left.isConnected)),
     [agents],
@@ -75,6 +95,7 @@ export function CrawlerAgentsPanel({
                 const isPinterestLoggedIn = pinterestLoginStatus === true;
                 const hasPinterestLoginStatus = typeof pinterestLoginStatus === "boolean";
                 const tasks = agent.currentTasks ?? [];
+                const hasUpdate = hasNewerVersion(agent);
                 return (
                   <article
                     key={agent.id}
@@ -92,6 +113,18 @@ export function CrawlerAgentsPanel({
                         <p className="mt-1 text-[10px] text-slate-500">
                           ID: {agent.id} · Phiên bản: {agent.agentVersion ?? "không rõ"}
                         </p>
+                        {hasUpdate && (
+                          <div className="mt-1 flex flex-wrap items-center gap-2 text-[10px] font-semibold text-amber-300">
+                            <span>Có bản {agent.latestAgentVersion}.</span>
+                            <button
+                              type="button"
+                              onClick={onOpenInstall}
+                              className="rounded border border-amber-800/80 px-1.5 py-0.5 hover:bg-amber-950/60"
+                            >
+                              Cập nhật Agent
+                            </button>
+                          </div>
+                        )}
                       </div>
                       <span className={`rounded-full px-2 py-1 text-[10px] font-bold ${isPinterestLoggedIn ? "bg-cyan-950 text-cyan-300" : "bg-amber-950 text-amber-300"}`}>
                         Pinterest: {isPinterestLoggedIn ? "Đã login" : hasPinterestLoginStatus ? "Chưa login" : "Chưa báo cáo"}
@@ -120,6 +153,21 @@ export function CrawlerAgentsPanel({
                       <p className="mt-3 text-[11px] text-slate-500">
                         {agent.isConnected ? "Không có job đang chạy." : `Lần cuối kết nối: ${formatLastSeen(agent.lastSeenAt)}`}
                       </p>
+                    )}
+                    {!agent.isConnected && onForgetAgent && (
+                      <div className="mt-3 border-t border-slate-800 pt-3 text-right">
+                        <button
+                          type="button"
+                          disabled={busyAgentId === agent.id}
+                          onClick={() => {
+                            setBusyAgentId(agent.id);
+                            void onForgetAgent(agent).finally(() => setBusyAgentId(null));
+                          }}
+                          className="rounded-lg border border-rose-900/70 px-2.5 py-1.5 text-[11px] font-semibold text-rose-300 hover:bg-rose-950/50 disabled:opacity-50"
+                        >
+                          {busyAgentId === agent.id ? "Đang quên..." : "Quên máy này"}
+                        </button>
+                      </div>
                     )}
                   </article>
                 );

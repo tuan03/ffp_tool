@@ -21,7 +21,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
 from ..image_processing import ImageProcessingService, normalize_profile, process_image_bytes
-from . import PROTOCOL_VERSION, SUPPORTED_PROTOCOL_VERSIONS
+from . import AGENT_VERSION, PROTOCOL_VERSION, SUPPORTED_PROTOCOL_VERSIONS
 from .coordinator_models import Base, create_database_engine, create_session_factory
 from .coordinator_store import ActiveJobExistsError, CoordinatorStore
 from .protocol import HEARTBEAT_INTERVAL_SECONDS, LEASE_SECONDS, payload_checksum, require_message, utc_iso
@@ -568,6 +568,7 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
             {
                 **client,
                 "isConnected": client["id"] in connected_ids,
+                "latestAgentVersion": AGENT_VERSION,
                 "leasedTasks": client["activeTasks"],
                 "activeTasks": runtime.get(client["id"], {}).get("activeTasks", 0),
                 "availableSlots": runtime.get(client["id"], {}).get("availableSlots", 0),
@@ -582,6 +583,15 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
             }
             for client in clients
         ]
+
+    @app.get("/api/v1/agent-release")
+    async def agent_release() -> dict[str, str]:
+        return {
+            "version": AGENT_VERSION,
+            "installerUrl": "/install-agent.ps1",
+            "packageUrl": "/ffp-crawler-agent.tar.gz",
+            "checksumUrl": "/ffp-crawler-agent.tar.gz.sha256",
+        }
 
     @app.delete("/api/v1/clients/cache")
     async def clear_client_caches() -> dict[str, Any]:
@@ -629,6 +639,17 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
             return await manager.request_client_cache_operation("clear_temporary_data", payload={
                 "validJobIds": sorted(valid_job_ids), "generation": generation,
             })
+
+    @app.delete("/api/v1/clients/{client_id}")
+    async def forget_client(client_id: str) -> dict[str, bool]:
+        if client_id in await manager.connected_client_ids():
+            raise HTTPException(status_code=409, detail="Agent is online. Exit or uninstall it before forgetting this machine.")
+        outcome = await asyncio.to_thread(store.forget_client, client_id)
+        if outcome == "not_found":
+            raise HTTPException(status_code=404, detail="Crawler Agent was not found.")
+        if outcome == "active_tasks":
+            raise HTTPException(status_code=409, detail="Agent still owns active tasks and cannot be forgotten.")
+        return {"ok": True}
 
     @app.get("/api/v1/crawl-jobs/{job_id}/events")
     async def job_events(job_id: str, request: Request, after: int = 0) -> StreamingResponse:

@@ -1,5 +1,5 @@
 {$SEO_DOMAIN} {
-    @agentInstaller path /install-agent.ps1 /install-agent.sh /cai-agent.bat /ffp-crawler-agent.tar.gz /ffp-crawler-agent.tar.gz.sha256
+    @agentInstaller path /install-agent.ps1 /install-agent.sh /update-agent.ps1 /uninstall-agent.ps1 /cai-agent.bat /ffp-crawler-agent.tar.gz /ffp-crawler-agent.tar.gz.sha256
     handle @agentInstaller {
         reverse_proxy 127.0.0.1:3010
     }

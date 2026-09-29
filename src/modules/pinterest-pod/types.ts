@@ -560,6 +560,7 @@ export interface CrawlerClientSummary {
   readonly isConnected: boolean;
   readonly status?: string;
   readonly agentVersion?: string;
+  readonly latestAgentVersion?: string;
   readonly lastSeenAt?: string;
   readonly activeTasks?: number;
   readonly availableSlots?: number;
@@ -729,6 +730,7 @@ export interface PinterestPodClient {
   handoverToSeo?(payload: PinterestPodDeliverables): Promise<SeoHandoverResponse>;
   syncDirectToShopify?(payload: PinterestPodDeliverables): Promise<DirectShopifySyncOutput>;
   getCrawlerClients?(): Promise<readonly CrawlerClientSummary[]>;
+  forgetCrawlerClient?(clientId: string): Promise<void>;
 }
 
 /** Factory specification definition for print production */

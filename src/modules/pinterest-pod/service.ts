@@ -89,9 +89,9 @@ async function requestJson<T>(
     if (!response.ok) {
       let errorMessage = `HTTP ${response.status} ${response.statusText}`;
       try {
-        const errorJson = (await response.json()) as { error?: string; message?: string };
-        if (errorJson.error || errorJson.message) {
-          errorMessage = errorJson.error ?? errorJson.message ?? errorMessage;
+        const errorJson = (await response.json()) as { detail?: string; error?: string; message?: string };
+        if (errorJson.detail || errorJson.error || errorJson.message) {
+          errorMessage = errorJson.detail ?? errorJson.error ?? errorJson.message ?? errorMessage;
         }
       } catch {
         const errorText = await response.text().catch(() => "");
@@ -871,9 +871,9 @@ async function fetchJson<T>(url: string, init?: RequestInit, errorCode = "PINTER
     if (!response.ok) {
       let errorMessage = `HTTP ${response.status} ${response.statusText}`;
       try {
-        const errorJson = (await response.json()) as { error?: string; message?: string };
-        if (errorJson.error || errorJson.message) {
-          errorMessage = errorJson.error ?? errorJson.message ?? errorMessage;
+        const errorJson = (await response.json()) as { detail?: string; error?: string; message?: string };
+        if (errorJson.detail || errorJson.error || errorJson.message) {
+          errorMessage = errorJson.detail ?? errorJson.error ?? errorJson.message ?? errorMessage;
         }
       } catch {
         // Fallback to HTTP status text
@@ -1048,6 +1048,10 @@ export class RealPinterestPodClient implements PinterestPodClient {
   public async getCrawlerClients(): Promise<readonly CrawlerClientSummary[]> {
     return getCrawlerClients();
   }
+
+  public async forgetCrawlerClient(clientId: string): Promise<void> {
+    return forgetCrawlerClient(clientId);
+  }
 }
 
 /** Directly synchronize deliverables to Shopify store without SEO review redirect */
@@ -1076,6 +1080,15 @@ export async function getCrawlerClients(): Promise<readonly CrawlerClientSummary
   } catch {
     return [];
   }
+}
+
+/** Remove a disconnected crawler Agent registration from the Coordinator. */
+export async function forgetCrawlerClient(clientId: string): Promise<void> {
+  await fetchJson<unknown>(
+    `/api/v1/clients/${encodeURIComponent(clientId)}`,
+    { method: "DELETE" },
+    "CRAWLER_CLIENT_FORGET_FAILED",
+  );
 }
 
 /** Hand over final deliverables to the SEO Module */

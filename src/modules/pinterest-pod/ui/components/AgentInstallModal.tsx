@@ -91,6 +91,7 @@ export function AgentInstallModal({
             </h2>
             <p className="mt-1 text-xs leading-5 text-slate-400">
               Sao chép link bên dưới và gửi cho người cài. Họ chỉ cần tải file BAT, mở file và chờ cài đặt hoàn tất.
+              Nếu máy đã có Agent, chạy lại file này sẽ cập nhật chương trình và giữ nguyên cấu hình, dữ liệu cùng phiên Pinterest.
             </p>
           </div>
           <button
