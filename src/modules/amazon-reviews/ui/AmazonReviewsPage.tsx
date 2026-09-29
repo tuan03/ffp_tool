@@ -17,6 +17,7 @@ export function AmazonReviewsPage({ client, shopify }: AmazonReviewsPageProps): 
   const [isBusy, setIsBusy] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isClearing, setIsClearing] = useState(false);
+  const [productSearchStatus, setProductSearchStatus] = useState<"idle" | "searching" | "loading-more">("idle");
   const jobRevisionRef = useRef(0);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -90,8 +91,11 @@ export function AmazonReviewsPage({ client, shopify }: AmazonReviewsPageProps): 
   }
 
   async function handleProductSearch(cursor?: string): Promise<void> {
+    if (isBusy) return;
     if (!storeId) { setError("Hãy chọn Shopify store."); return; }
     setIsBusy(true); setError("");
+    setProductSearchStatus(cursor ? "loading-more" : "searching");
+    setNotice(cursor ? "Đang tải thêm Shopify product. Vui lòng chờ…" : "Đang tìm Shopify product. Vui lòng chờ…");
     try {
       const page = await shopify.findProducts(storeId, productQuery.trim(), cursor);
       setProducts((current) => cursor ? [...current, ...page.products] : page.products);
@@ -99,8 +103,9 @@ export function AmazonReviewsPage({ client, shopify }: AmazonReviewsPageProps): 
         ...(cursor ? current : []), ...page.products.map((product) => product.id),
       ]));
       setNextCursor(page.nextCursor);
-    } catch { setError("Không tìm được Shopify product. Kiểm tra store và kết nối gateway."); }
-    finally { setIsBusy(false); }
+      setNotice(cursor ? `Đã tải thêm ${page.products.length} product.` : `Tìm thấy ${page.products.length} product.`);
+    } catch { setNotice(""); setError("Không tìm được Shopify product. Kiểm tra store và kết nối gateway."); }
+    finally { setIsBusy(false); setProductSearchStatus("idle"); }
   }
 
   async function handleClearResults(): Promise<void> {
@@ -198,13 +203,13 @@ export function AmazonReviewsPage({ client, shopify }: AmazonReviewsPageProps): 
           <button type="button" className="text-sm text-cyan-300" onClick={() => setSelectedReviews(new Set(visibleReviews.map((review) => review.reviewId)))}>Chọn review đang hiển thị</button>
           <div className="max-h-96 space-y-2 overflow-auto">{visibleReviews.length ? visibleReviews.map((review) => <label key={review.reviewId} className="flex gap-2 rounded border border-slate-800 p-2 text-sm"><input type="checkbox" checked={selectedReviews.has(review.reviewId)} onChange={() => toggleReview(review)} /><span><strong>{review.author || "Ẩn danh"}</strong> · {review.rating}★ · {review.synthetic ? "AI QA" : "Amazon"}<br />{review.body}</span></label>) : <p className="text-sm text-slate-400">Không có review phù hợp.</p>}</div>
         </section>
-        <section className="space-y-3 rounded-xl border border-slate-800 bg-slate-900 p-4">
+        <section aria-busy={productSearchStatus !== "idle"} className="space-y-3 rounded-xl border border-slate-800 bg-slate-900 p-4">
           <h2 className="font-semibold">Shopify product</h2>
           <label className="grid gap-1 text-sm">Store<select className="rounded bg-slate-950 p-2" value={storeId} onChange={(event) => setStoreId(event.target.value)}>{stores.map((store) => <option key={store} value={store}>{store}</option>)}</select></label>
           <label className="grid gap-1 text-sm">Tìm theo ASIN tag hoặc từ khóa<input className="rounded bg-slate-950 p-2" value={productQuery} onChange={(event) => setProductQuery(event.target.value)} /></label>
-          <button type="button" className="rounded bg-slate-700 px-3 py-2 text-sm" disabled={isBusy} onClick={() => void handleProductSearch()}>Tìm product</button>
+          <button type="button" className="flex items-center gap-2 rounded bg-slate-700 px-3 py-2 text-sm disabled:opacity-50" disabled={isBusy} onClick={() => void handleProductSearch()}>{productSearchStatus === "searching" ? <><span aria-hidden="true" className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white motion-reduce:animate-none" />Đang tìm product…</> : "Tìm product"}</button>
           <div className="max-h-64 space-y-2 overflow-auto">{products.map((product) => <label key={product.id} className="flex gap-2 rounded border border-slate-800 p-2 text-sm"><input type="checkbox" checked={selectedProducts.has(product.id)} onChange={() => setSelectedProducts((current) => { const next = new Set(current); if (next.has(product.id)) next.delete(product.id); else next.add(product.id); return next; })} /><span>{product.title}<br /><small className="text-slate-400">{product.handle} · {product.status}</small></span></label>)}</div>
-          {nextCursor ? <button type="button" className="text-sm text-cyan-300" disabled={isBusy} onClick={() => void handleProductSearch(nextCursor)}>Tải thêm product</button> : null}
+          {nextCursor ? <button type="button" className="text-sm text-cyan-300 disabled:opacity-50" disabled={isBusy} onClick={() => void handleProductSearch(nextCursor)}>{productSearchStatus === "loading-more" ? "Đang tải thêm product…" : "Tải thêm product"}</button> : null}
         </section>
       </div> : null}
       {job ? <section aria-busy={isGenerating} className="space-y-4 rounded-xl border border-slate-800 bg-slate-900 p-4">
