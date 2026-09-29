@@ -66,6 +66,15 @@ test("production deployment preserves operator login credentials from the VPS", 
   assert.match(workflow, /FFP_OPERATOR_PASSWORD=%s/);
 });
 
+test("production deployment preserves store credentials from the VPS", async () => {
+  const workflow = await readFile(".github/workflows/deploy.yml", "utf8");
+
+  assert.match(workflow, /EXISTING_STORE_ENV_FILE=/);
+  assert.match(workflow, /grep -E '\^STORE_\[A-Z0-9_\]\+=' \.env/);
+  assert.match(workflow, /while IFS= read -r store_line/);
+  assert.match(workflow, /store_key="\$\{store_line%%=\*\}"/);
+});
+
 test("new-store guide uses only the multi-store action-key map", async () => {
   const guide = await readFile("docs/custom-gpt-seo/add-store.md", "utf8");
 
