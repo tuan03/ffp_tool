@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { spawnSync } from "node:child_process";
 import { test } from "node:test";
 
 test("docker-compose.yml defines exactly the 3 unified containers: database, server, client", async () => {
@@ -57,14 +60,45 @@ test("agent crawler 1-command installer scripts configure dependencies and chrom
   ]);
 
   assert.match(batInstaller, /powershell -NoProfile -ExecutionPolicy Bypass/);
-  assert.match(batInstaller, /scripts\\install-agent\.ps1/);
+  assert.match(batInstaller, /FFP_SERVER_URL/);
+  assert.match(batInstaller, /install-agent\.ps1/);
 
+  assert.match(ps1Installer, /ffp-crawler-agent\.tar\.gz/);
+  assert.match(ps1Installer, /Get-FileHash/);
+  assert.match(ps1Installer, /amazon-crawler-agent\.py/);
   assert.match(ps1Installer, /playwright install chromium/);
   assert.match(ps1Installer, /amazon-crawler-agent\.json/);
   assert.match(ps1Installer, /chay-agent\.bat/);
 
+  assert.match(shInstaller, /ffp-crawler-agent\.tar\.gz/);
+  assert.match(shInstaller, /sha256/);
+  assert.match(shInstaller, /amazon-crawler-agent\.py/);
   assert.match(shInstaller, /playwright["\s]+install chromium/);
   assert.match(shInstaller, /amazon-crawler-agent\.json/);
+});
+
+test("remote agent package contains runtime source and excludes local Pinterest credentials", async () => {
+  const temporaryRoot = await mkdtemp(path.join(tmpdir(), "ffp-agent-package-test-"));
+  const outputRoot = path.join(temporaryRoot, "package");
+  try {
+    const packageResult = spawnSync(
+      process.execPath,
+      ["scripts/package-agent-source.mjs", outputRoot],
+      { encoding: "utf8" },
+    );
+    assert.equal(packageResult.status, 0, packageResult.stderr);
+    const manifest = JSON.parse(await readFile(path.join(outputRoot, "agent-package-manifest.json"), "utf8"));
+    const packagedPaths = manifest.files.map((file) => file.path);
+    assert.ok(packagedPaths.includes("scripts/amazon-crawler-agent.py"));
+    assert.ok(packagedPaths.includes("src/modules/amazon-crawler/engine/distributed/client_agent.py"));
+    assert.ok(packagedPaths.includes("src/modules/pinterest-pod/server/pinterest_pod_bridge.py"));
+    assert.ok(packagedPaths.includes("src/modules/pinterest-pod/server/pinterest/pinterest_browser_login.py"));
+    assert.ok(packagedPaths.every((filename) => !filename.includes(".pinterest_browser_profile")));
+    assert.ok(packagedPaths.every((filename) => !filename.endsWith(".pinterest_oauth_tokens.json")));
+    assert.ok(packagedPaths.every((filename) => !filename.includes("/__pycache__/")));
+  } finally {
+    await rm(temporaryRoot, { recursive: true, force: true });
+  }
 });
 
 test("pinterest login launcher scripts are available for worker machines", async () => {
@@ -80,6 +114,7 @@ test("pinterest login launcher scripts are available for worker machines", async
 test("server and client deployment assets are properly configured", async () => {
   const [
     serverDocker,
+    clientDocker,
     clientNginx,
     compose,
     supervisor,
@@ -89,6 +124,7 @@ test("server and client deployment assets are properly configured", async () => 
     pinterestServer,
   ] = await Promise.all([
     readFile("deploy/server/Dockerfile", "utf8"),
+    readFile("deploy/client/Dockerfile", "utf8"),
     readFile("deploy/client/nginx.conf", "utf8"),
     readFile("docker-compose.yml", "utf8"),
     readFile("deploy/server/supervisord.conf", "utf8"),
@@ -123,6 +159,8 @@ test("server and client deployment assets are properly configured", async () => 
   assert.match(clientNginx, /location = \/api\/pinterest-pod\/sync-shopify/);
   assert.match(clientNginx, /proxy_set_header Upgrade \$http_upgrade/);
   assert.match(clientNginx, /install-agent\.ps1/);
+  assert.match(clientNginx, /ffp-crawler-agent\.tar\.gz/);
+  assert.match(clientDocker, /package-agent-source\.mjs/);
 
   assert.match(compose, /PINTEREST_POD_PORT:\s*8768/);
   assert.match(compose, /PINTEREST_COORDINATOR_URL:\s*http:\/\/127\.0\.0\.1:8766/);

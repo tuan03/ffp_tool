@@ -688,7 +688,9 @@ class CoordinatorStore(CoordinatorObservability):
                 .outerjoin(CrawlJobControl, CrawlJobControl.job_id == CrawlJob.id)
                 .where(CrawlTask.status == "queued", CrawlJob.status.in_(["queued", "running"]))
                 .order_by(func.coalesce(CrawlJobControl.priority, 0).desc(), CrawlJob.created_at, CrawlTask.ordinal)
-                .with_for_update(skip_locked=True)
+                # PostgreSQL rejects FOR UPDATE across the nullable side of the
+                # priority LEFT JOIN. Only CrawlTask rows are lease-owned.
+                .with_for_update(of=CrawlTask, skip_locked=True)
             ).all()
             for task in tasks:
                 job = session.get(CrawlJob, task.job_id)

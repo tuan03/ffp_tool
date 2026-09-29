@@ -16,7 +16,10 @@ RUN npm install
 
 # Copy source and build
 COPY . .
-RUN npm run build
+RUN npm run build && \
+    node scripts/package-agent-source.mjs /tmp/ffp-agent-package && \
+    tar -czf /tmp/ffp-crawler-agent.tar.gz -C /tmp/ffp-agent-package . && \
+    sha256sum /tmp/ffp-crawler-agent.tar.gz > /tmp/ffp-crawler-agent.tar.gz.sha256
 
 # Stage 2: Lightweight Nginx Runtime
 FROM nginx:1.27-alpine AS runner
@@ -35,6 +38,8 @@ RUN mkdir -p /usr/share/nginx/html/scripts
 COPY scripts/install-agent.ps1 /usr/share/nginx/html/scripts/install-agent.ps1
 COPY scripts/install-agent.sh /usr/share/nginx/html/scripts/install-agent.sh
 COPY cai-agent.bat /usr/share/nginx/html/scripts/cai-agent.bat
+COPY --from=builder /tmp/ffp-crawler-agent.tar.gz /usr/share/nginx/html/downloads/ffp-crawler-agent.tar.gz
+COPY --from=builder /tmp/ffp-crawler-agent.tar.gz.sha256 /usr/share/nginx/html/downloads/ffp-crawler-agent.tar.gz.sha256
 
 EXPOSE 80
 

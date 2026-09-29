@@ -101,14 +101,18 @@ Hệ thống sẽ tự động:
 
 Để máy người cào (máy nhân viên / máy cá nhân) có thể kết nối vào hệ thống và nhận việc cào Amazon & Pinterest:
 
-### Cách 1: Chạy file cài đặt nhanh (Khuyên dùng cho Windows)
-Người cào chỉ cần tải thư mục tool về máy và **click đúp vào file**:
+### Cách 1: Chạy file cài đặt nhanh (Windows)
+Tải `cai-agent.bat` từ server rồi mở file. Có thể truyền địa chỉ server làm tham số:
 ```text
-cai-agent.bat
+https://ffp.b6-team.site/cai-agent.bat
 ```
-Hoặc mở terminal gõ:
 ```cmd
-cai-agent.bat
+cai-agent.bat https://ffp.b6-team.site
+```
+
+Trong cùng Wi-Fi, thay domain bằng IP LAN của máy chạy Docker:
+```cmd
+cai-agent.bat http://192.168.1.10:3010
 ```
 
 ### Cách 2: Chạy trực tiếp qua 1 dòng lệnh PowerShell (Remote 1-Liner)
@@ -117,6 +121,14 @@ Người cào mở PowerShell trên Windows và dán 1 dòng lệnh duy nhất:
 irm https://ffp.b6-team.site/install-agent.ps1 | iex
 ```
 
+Trong cùng Wi-Fi, người cài dùng địa chỉ LAN được in ra bởi `npm run dev` hoặc IP của máy chạy Docker:
+
+```powershell
+$env:FFP_SERVER_URL="http://192.168.1.10:3010"; irm "$env:FFP_SERVER_URL/install-agent.ps1" | iex
+```
+
+Máy chạy Docker phải cho phép kết nối TCP vào cổng `3010` trong Windows Firewall. Máy khác Wi-Fi dùng được khi domain HTTPS công khai trỏ tới VPS đang chạy FFP Tool; không cần mở port trên máy worker.
+
 ### Cách 3: Chạy trên Linux / macOS
 ```bash
 curl -sSL https://ffp.b6-team.site/install-agent.sh | bash
@@ -124,11 +136,12 @@ curl -sSL https://ffp.b6-team.site/install-agent.sh | bash
 
 ### Bộ cài đặt tự động làm những gì?
 1. **Kiểm tra Python:** Tự kiểm tra xem máy đã cài Python >= 3.10 chưa. Nếu chưa có, trên Windows sẽ tự động dùng `winget` để cài Python 3.11.
-2. **Khởi tạo môi trường ảo (.venv):** Độc lập hoàn toàn, không gây ảnh hưởng tới các phần mềm khác trên máy.
-3. **Cài đặt thư viện:** Tự động cài toàn bộ packages cần thiết (`playwright`, `websockets`, `httpx`, `pillow`, `pystray`, v.v.).
-4. **Cài đặt Chromium:** Tự động tải trình duyệt Chromium chuẩn của Playwright để cào không bị lộ bot.
-5. **Khởi tạo cấu hình:** Tự sinh file `config/amazon-crawler-agent.json` trỏ về server.
-6. **Tạo launcher tiện lợi:** Tạo sẵn file `chay-agent.bat` để những lần sau chỉ cần click 1 cái là Agent chạy ngay, hiển thị trạng thái lên icon khay hệ thống (System Tray).
+2. **Tải mã Agent:** Tải gói source tối thiểu từ chính FFP server và xác minh SHA-256 trước khi giải nén.
+3. **Khởi tạo môi trường ảo (.venv):** Độc lập hoàn toàn, không gây ảnh hưởng tới các phần mềm khác trên máy.
+4. **Cài đặt thư viện:** Tự động cài toàn bộ packages cần thiết (`playwright`, `websockets`, `pillow`, `pystray`, v.v.).
+5. **Cài đặt Chromium:** Tự động tải trình duyệt Chromium chuẩn của Playwright.
+6. **Khởi tạo cấu hình:** Tự sinh file `config/amazon-crawler-agent.json` trỏ về server đã cung cấp.
+7. **Tạo launcher tiện lợi:** Tạo sẵn `chay-agent.bat` trên Windows hoặc `chay-agent.sh` trên Linux/macOS.
 
 ---
 
