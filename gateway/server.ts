@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
@@ -31,7 +32,38 @@ export interface GatewayServerOptions {
   readonly port?: number;
   readonly host?: string;
   readonly authToken?: string;
+  readonly operatorUsername?: string;
+  readonly operatorPassword?: string;
   readonly maxBodyBytes?: number;
+}
+
+function isOperatorAuthorized(
+  authorization: string | undefined,
+  username: string,
+  password: string,
+): boolean {
+  if (!authorization?.startsWith("Basic ")) return false;
+  let credentials: string;
+  try {
+    credentials = Buffer.from(authorization.slice(6), "base64").toString("utf8");
+  } catch {
+    return false;
+  }
+  const separatorIndex = credentials.indexOf(":");
+  if (separatorIndex < 0) return false;
+  const actualUsername = credentials.slice(0, separatorIndex);
+  const actualPassword = credentials.slice(separatorIndex + 1);
+  const actual = Buffer.from(`${actualUsername}\0${actualPassword}`);
+  const expected = Buffer.from(`${username}\0${password}`);
+  return actual.length === expected.length && crypto.timingSafeEqual(actual, expected);
+}
+
+function requestOperatorAuthentication(res: http.ServerResponse): void {
+  res.statusCode = 401;
+  res.setHeader("WWW-Authenticate", 'Basic realm="FFP Tool", charset="UTF-8"');
+  res.setHeader("Content-Type", "text/plain; charset=utf-8");
+  res.setHeader("Cache-Control", "no-store");
+  res.end("Authentication required");
 }
 
 export function startGatewayServer(
@@ -47,9 +79,17 @@ export function startGatewayServer(
   const port = options.port ?? (Number(env.GATEWAY_PORT || process.env.GATEWAY_PORT) || 3001);
   const host = options.host ?? env.GATEWAY_HOST ?? process.env.GATEWAY_HOST ?? "127.0.0.1";
   const authToken = options.authToken ?? env.GATEWAY_AUTH_TOKEN ?? process.env.GATEWAY_AUTH_TOKEN;
+  const operatorUsername = options.operatorUsername ?? env.FFP_OPERATOR_USERNAME ?? process.env.FFP_OPERATOR_USERNAME;
+  const operatorPassword = options.operatorPassword ?? env.FFP_OPERATOR_PASSWORD ?? process.env.FFP_OPERATOR_PASSWORD;
   const maxBodyBytes = options.maxBodyBytes && options.maxBodyBytes > 0 ? options.maxBodyBytes : MAX_BODY_BYTES;
 
   assertHostSecurity(host, authToken, "gateway server");
+  if (Boolean(operatorUsername) !== Boolean(operatorPassword)) {
+    throw new Error("FFP_OPERATOR_USERNAME and FFP_OPERATOR_PASSWORD must be configured together");
+  }
+  if (operatorUsername && !authToken) {
+    throw new Error("Operator authentication requires GATEWAY_AUTH_TOKEN");
+  }
 
   const stores = loadBootstrappedStores({ env });
   if (env.GPT_SEO_ACTION_KEYS_JSON || process.env.GPT_SEO_ACTION_KEYS_JSON || env.GPT_SEO_ACTION_KEY || process.env.GPT_SEO_ACTION_KEY) getCustomGptRuntime();
@@ -70,14 +110,26 @@ export function startGatewayServer(
 
   const server = http.createServer(async (req, res) => {
     const url = req.url || "/";
-    if (url.startsWith("/api/v1/gpt-seo/")) {
-      await getCustomGptRuntime().handler(req, res);
-      return;
-    }
+    const hasOperatorAuthentication = Boolean(operatorUsername && operatorPassword);
+    const isAuthenticatedOperator = Boolean(
+      operatorUsername &&
+      operatorPassword &&
+      isOperatorAuthorized(req.headers.authorization, operatorUsername, operatorPassword),
+    );
+    if (isAuthenticatedOperator && authToken) req.headers["x-gateway-key"] = authToken;
+
     if (url === "/health") {
       res.statusCode = 200;
       res.setHeader("Content-Type", "application/json");
       res.end(JSON.stringify({ status: "ok", timestamp: new Date().toISOString() }));
+      return;
+    }
+    if (hasOperatorAuthentication && !url.startsWith("/api/") && !isAuthenticatedOperator) {
+      requestOperatorAuthentication(res);
+      return;
+    }
+    if (url.startsWith("/api/v1/gpt-seo/")) {
+      await getCustomGptRuntime().handler(req, res);
       return;
     }
 
