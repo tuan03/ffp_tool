@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { hasUsableReviewContext } from "../product-context";
 import type { AmazonReview, AmazonReviewJob, ReviewClient, ReviewProduct, ReviewShopifyAccess } from "../types";
@@ -16,6 +16,8 @@ export function AmazonReviewsPage({ client, shopify }: AmazonReviewsPageProps): 
   const [job, setJob] = useState<AmazonReviewJob | null>(null);
   const [isBusy, setIsBusy] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isClearing, setIsClearing] = useState(false);
+  const jobRevisionRef = useRef(0);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [stores, setStores] = useState<readonly string[]>([]);
@@ -34,6 +36,7 @@ export function AmazonReviewsPage({ client, shopify }: AmazonReviewsPageProps): 
 
   useEffect(() => {
     if (jobId) window.localStorage.setItem("ffp_amazon_reviews_job_v1", jobId);
+    else window.localStorage.removeItem("ffp_amazon_reviews_job_v1");
   }, [jobId]);
 
   useEffect(() => {
@@ -46,10 +49,11 @@ export function AmazonReviewsPage({ client, shopify }: AmazonReviewsPageProps): 
   useEffect(() => {
     if (!jobId) return;
     let isDisposed = false;
+    const jobRevision = jobRevisionRef.current;
     const load = async (): Promise<void> => {
       try {
         const loaded = await client.get(jobId);
-        if (isDisposed) return;
+        if (isDisposed || jobRevision !== jobRevisionRef.current) return;
         setJob(loaded);
         setSelectedReviews((current) => {
           if (current.size) return current;
@@ -57,7 +61,7 @@ export function AmazonReviewsPage({ client, shopify }: AmazonReviewsPageProps): 
         });
         if (!productQuery) setProductQuery(`tag:amazon-parent-${loaded.asin.toLowerCase()}`);
       } catch {
-        if (!isDisposed) setError("Không tải được ngữ cảnh sản phẩm. Kiểm tra kết nối coordinator.");
+        if (!isDisposed && jobRevision === jobRevisionRef.current) setError("Không tải được ngữ cảnh sản phẩm. Kiểm tra kết nối coordinator.");
       }
     };
     void load();
@@ -97,6 +101,23 @@ export function AmazonReviewsPage({ client, shopify }: AmazonReviewsPageProps): 
       setNextCursor(page.nextCursor);
     } catch { setError("Không tìm được Shopify product. Kiểm tra store và kết nối gateway."); }
     finally { setIsBusy(false); }
+  }
+
+  async function handleClearResults(): Promise<void> {
+    if (!jobId || isBusy) return;
+    setIsBusy(true); setIsClearing(true); setError(""); setNotice("");
+    try {
+      await client.clear(jobId);
+      // Ignore responses from polling that started before the saved job was deleted.
+      jobRevisionRef.current += 1;
+      if (!source.trim()) setSource(job?.sourceUrl || job?.asin || "");
+      setJobId(""); setJob(null); setSelectedReviews(new Set());
+      setProducts([]); setSelectedProducts(new Set()); setNextCursor(undefined);
+      setProductQuery(""); setReviewFilter("all");
+      setNotice("Đã xóa ngữ cảnh và toàn bộ review mẫu. Bạn có thể lấy ngữ cảnh và tạo lại.");
+    } catch {
+      setError("Không xóa được kết quả. Kiểm tra kết nối coordinator rồi thử lại.");
+    } finally { setIsBusy(false); setIsClearing(false); }
   }
 
   async function handleGenerateSamples(): Promise<void> {
@@ -151,9 +172,10 @@ export function AmazonReviewsPage({ client, shopify }: AmazonReviewsPageProps): 
   return (
     <section className="space-y-6 text-slate-100">
       <div><h1 className="text-2xl font-semibold">Amazon Reviews</h1><p className="mt-1 text-sm text-slate-400">Lấy ngữ cảnh sản phẩm Amazon và tạo mẫu AI để kiểm tra trong file QA.</p></div>
-      <form className="grid gap-3 rounded-xl border border-slate-800 bg-slate-900 p-4 md:grid-cols-[1fr_auto]" onSubmit={(event) => { event.preventDefault(); void handleFetchContext(); }}>
+      <form className="grid gap-3 rounded-xl border border-slate-800 bg-slate-900 p-4 md:grid-cols-[1fr_auto_auto]" onSubmit={(event) => { event.preventDefault(); void handleFetchContext(); }}>
         <label className="grid gap-1 text-sm">URL Amazon hoặc ASIN<input className="rounded border border-slate-700 bg-slate-950 px-3 py-2" value={source} onChange={(event) => setSource(event.target.value)} required /></label>
         <button className="self-end rounded bg-cyan-600 px-4 py-2 font-medium disabled:opacity-50" type="submit" disabled={isBusy}>Lấy ngữ cảnh</button>
+        <button className="self-end rounded border border-rose-800 px-4 py-2 font-medium text-rose-200 disabled:opacity-50" type="button" disabled={isBusy || !jobId} onClick={() => void handleClearResults()} title="Xóa ngữ cảnh và toàn bộ review mẫu của lần đang mở">{isClearing ? "Đang xóa…" : "Xóa kết quả"}</button>
       </form>
       {error ? <p role="alert" className="rounded border border-rose-800 bg-rose-950/40 p-3 text-rose-200">{error}</p> : null}
       {notice ? <p role="status" className="rounded border border-cyan-800 bg-cyan-950/40 p-3 text-cyan-200">{notice}</p> : null}

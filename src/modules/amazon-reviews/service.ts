@@ -42,6 +42,10 @@ export function createReviewClient(options: ServiceOptions): ReviewClient {
     async get(jobId) {
       return readJob(await readResponse(await fetchImplementation(`${baseUrl}/api/v1/review-jobs/${encodeURIComponent(jobId)}`)));
     },
+    async clear(jobId) {
+      const response = await fetchImplementation(`${baseUrl}/api/v1/crawl-jobs/${encodeURIComponent(jobId)}`, { method: "DELETE" });
+      if (!response.ok && response.status !== 404) await readResponse(response);
+    },
     async generate(input) {
       const response = await send("/api/amazon-reviews/samples", input);
       if (!isRecord(response) || !Array.isArray(response.samples) || typeof response.rejected !== "number" || !Array.isArray(response.warnings)) {

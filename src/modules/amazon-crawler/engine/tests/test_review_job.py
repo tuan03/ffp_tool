@@ -8,7 +8,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 from openpyxl import load_workbook
 
-from engine.distributed.coordinator_models import Base, create_database_engine, create_session_factory
+from engine.distributed.coordinator_models import Base, CoordinatorState, create_database_engine, create_session_factory
 from engine.distributed.coordinator_server import create_coordinator_app
 from engine.distributed.coordinator_store import CoordinatorStore
 from engine.distributed.protocol import AgentLimits, hello_message, payload_checksum
@@ -73,7 +73,7 @@ class ReviewJobTests(unittest.TestCase):
         self.assertEqual(loaded["status"], "partial")
         self.assertEqual(loaded["error"]["code"], "BROWSER_FAILED")
 
-    def test_http_export_separates_real_and_synthetic_rows(self):
+    def test_http_export_and_delete_isolate_review_job_results(self):
         database_path = Path(self.directory.name) / "review-api.sqlite3"
         app = create_coordinator_app(database_url=f"sqlite:///{database_path.as_posix()}")
         with TestClient(app) as client:
@@ -106,6 +106,22 @@ class ReviewJobTests(unittest.TestCase):
             self.assertEqual(preview_book.active.max_row, 3)
             self.assertEqual(real_book.active["D2"].value, "R1")
             self.assertEqual(preview_book.active["M3"].value, "TRUE")
+            unrelated_key = "review-samples:another-job"
+            with store.sessions.begin() as session:
+                session.add(CoordinatorState(key=unrelated_key, value="[]"))
+            deleted = client.delete(f"/api/v1/crawl-jobs/{job_id}")
+            self.assertEqual(deleted.status_code, 204)
+            self.assertEqual(client.get(f"/api/v1/review-jobs/{job_id}").status_code, 404)
+            self.assertEqual(client.post(f"/api/v1/review-jobs/{job_id}/samples", json={"samples": [sample]}).status_code, 404)
+            with store.sessions() as session:
+                self.assertIsNone(session.get(CoordinatorState, f"review-samples:{job_id}"))
+                self.assertIsNotNone(session.get(CoordinatorState, unrelated_key))
+            self.assertEqual(client.delete(f"/api/v1/crawl-jobs/{job_id}").status_code, 204)
+            recreated = client.post("/api/v1/review-jobs", json={"source": "B012345678"})
+            self.assertEqual(recreated.status_code, 202)
+            fresh = client.get(f"/api/v1/review-jobs/{recreated.json()['id']}").json()
+            self.assertEqual(fresh["reviewData"], {})
+            self.assertEqual(fresh["samples"], [])
 
 
 if __name__ == "__main__":

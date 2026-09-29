@@ -12,10 +12,14 @@ function mockJob(): AmazonReviewJob {
 }
 
 export function createMockReviewClient(): ReviewClient {
-  let currentJob = mockJob();
+  let currentJob: AmazonReviewJob | null = mockJob();
   return {
     create: async () => { currentJob = mockJob(); return { jobId: MOCK_JOB_ID }; },
-    get: async () => structuredClone(currentJob),
+    get: async (jobId) => {
+      if (!currentJob || currentJob.jobId !== jobId) throw new Error("Review job was not found.");
+      return structuredClone(currentJob);
+    },
+    clear: async (jobId) => { if (currentJob?.jobId === jobId) currentJob = null; },
     generate: async (input) => ({
       samples: Array.from({ length: input.count }, (_, index): AmazonReview => ({
         reviewId: `SYNTH-${input.asin}-${String(input.startIndex + index).padStart(3, "0")}`,
@@ -24,7 +28,10 @@ export function createMockReviewClient(): ReviewClient {
         variantText: "", verifiedPurchase: false, synthetic: true, source: "ai_sample", promptVersion: "review_sample_v3", qualityStatus: "accepted", qualityWarnings: [],
       })), rejected: 0, warnings: [],
     }),
-    saveSamples: async (_jobId, samples) => { currentJob = { ...currentJob, samples: [...currentJob.samples, ...structuredClone(samples)] }; },
+    saveSamples: async (jobId, samples) => {
+      if (!currentJob || currentJob.jobId !== jobId) throw new Error("Review job was not found.");
+      currentJob = { ...currentJob, samples: [...currentJob.samples, ...structuredClone(samples)] };
+    },
     export: async () => { throw new Error("Chế độ mock không tạo file XLSX; hãy dùng backend để xuất file."); },
   };
 }

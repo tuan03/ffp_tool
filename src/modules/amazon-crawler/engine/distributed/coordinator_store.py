@@ -2507,6 +2507,7 @@ class CoordinatorStore(CoordinatorObservability):
         session.execute(delete(CrawlTask).where(CrawlTask.job_id == job_id))
         session.execute(delete(JobStopClientCleanup).where(JobStopClientCleanup.job_id == job_id))
         session.execute(delete(CrawlJobControl).where(CrawlJobControl.job_id == job_id))
+        session.execute(delete(CoordinatorState).where(CoordinatorState.key == f"review-samples:{job_id}"))
         session.execute(delete(CrawlJob).where(CrawlJob.id == job_id))
 
     def purge_stopped_jobs(self) -> int:
