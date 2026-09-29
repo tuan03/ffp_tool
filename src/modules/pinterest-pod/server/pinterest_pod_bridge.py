@@ -67,6 +67,16 @@ TOKEN_DIR = RUNTIME_ROOT / "auth"
 PRIMARY_TOKEN_FILE = TOKEN_DIR / "pinterest_oauth_tokens.json"
 
 
+def _resolve_oauth_token_file() -> Path:
+    """Return the durable token file, with legacy source paths as read-only fallbacks."""
+    candidates = (
+        PRIMARY_TOKEN_FILE,
+        ROOT / "pinterest" / ".pinterest_oauth_tokens.json",
+        ROOT / ".pinterest_oauth_tokens.json",
+    )
+    return next((candidate for candidate in candidates if candidate.is_file()), PRIMARY_TOKEN_FILE).resolve()
+
+
 def resolve_run_dir(run_id: str) -> Path | None:
     """Find a run directory across local data, workspace output, or standalone tool output."""
     safe_id = re.sub(r"[^a-zA-Z0-9_-]", "", str(run_id or "")).strip()
@@ -676,12 +686,8 @@ def check_oauth_token_valid(token_file: Path | None = None) -> tuple[bool, dict[
     if token_file is not None:
         t_file = token_file if (token_file.exists() and token_file.is_file()) else None
     else:
-        candidates = [PRIMARY_TOKEN_FILE, ROOT / "pinterest" / ".pinterest_oauth_tokens.json", ROOT / ".pinterest_oauth_tokens.json"]
-        t_file = None
-        for cand in candidates:
-            if cand.exists() and cand.is_file():
-                t_file = cand
-                break
+        resolved_token_file = _resolve_oauth_token_file()
+        t_file = resolved_token_file if resolved_token_file.is_file() else None
 
     # If no file exists, check fallback environment variable
     env_token = str(os.getenv("PINTEREST_ACCESS_TOKEN") or "").strip()
@@ -4186,8 +4192,7 @@ def discover_pinterest_trends(payload: dict[str, Any]) -> dict[str, Any]:
     if not is_internal_suggestion and oauth_valid and token_data and not os.getenv("MOCK_PINTEREST"):
         try:
             from pinterest.trend_finder.pinterest_client import PinterestClient
-            token_file = (ROOT / "pinterest" / ".pinterest_oauth_tokens.json").resolve()
-            client = PinterestClient(token_path=token_file if token_file.exists() else None)
+            client = PinterestClient(token_path=_resolve_oauth_token_file())
 
             def fetch_single_matrix_cell(reg: str, t_type: str, it_filter: str) -> tuple[str, str, str, list[dict[str, Any]], bool, str, int | None]:
                 endpoint = f"/trends/keywords/{reg}/top/{t_type}"

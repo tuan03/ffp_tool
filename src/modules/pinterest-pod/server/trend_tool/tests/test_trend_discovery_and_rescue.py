@@ -3,6 +3,7 @@
 
 import os
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -16,6 +17,7 @@ if str(SERVER_ROOT) not in sys.path:
 os.environ["MOCK_PINTEREST"] = "1"
 os.environ["CI"] = "1"
 
+import pinterest_pod_bridge as bridge
 from pinterest_pod_bridge import (
     ACTIVE_JOBS,
     JOB_CACHE_LOCK,
@@ -162,6 +164,22 @@ class TestPinterestTrendDiscoveryAndRescue(unittest.TestCase):
         self.assertTrue(res["isOfficialTrendData"])
         self.assertEqual(res["accepted_keywords"][0]["pct_growth_mom"], 37)
         self.assertEqual(res["clusters"], [])
+
+    def test_official_trends_use_token_from_durable_runtime_path(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            token_file = Path(temporary_directory) / "pinterest_oauth_tokens.json"
+            token_file.write_text('{"access_token":"runtime-token"}', encoding="utf-8")
+            with (
+                patch.dict(os.environ, {"MOCK_PINTEREST": ""}, clear=False),
+                patch.object(bridge, "PRIMARY_TOKEN_FILE", token_file),
+                patch("pinterest.trend_finder.pinterest_client.PinterestClient") as client_class,
+            ):
+                client_class.return_value.get.return_value = {
+                    "trends": [{"keyword": "vintage floral vector", "pct_growth_mom": 25}],
+                }
+                discover_pinterest_trends({"niche": "leather bag", "region": "US"})
+
+            self.assertEqual(client_class.call_args.kwargs["token_path"], token_file.resolve())
 
     def test_discover_pinterest_trends_empty_niche(self):
         with self.assertRaises(ValueError):
