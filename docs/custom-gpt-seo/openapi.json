@@ -492,8 +492,8 @@
     "/api/v1/gpt-seo/image-content": {
       "get": {
         "operationId": "getSeoJobImageContent",
-        "summary": "Return one authenticated product image as binary image content.",
-        "description": "Use jobId and imageId from getSeoJobImages. Inspect the returned image content visually; do not infer details from identifiers.",
+        "summary": "Return the public HTTPS URL for one product image.",
+        "description": "Use jobId and imageId from getSeoJobImages. Open the returned imageUrl; imageId is only an identifier and is not a URL.",
         "security": [
           {
             "actionKey": []
@@ -501,30 +501,37 @@
         ],
         "responses": {
           "200": {
-            "description": "Product image content",
+            "description": "Public product image URL",
             "content": {
-              "image/jpeg": {
+              "application/json": {
                 "schema": {
-                  "type": "string",
-                  "format": "binary"
-                }
-              },
-              "image/png": {
-                "schema": {
-                  "type": "string",
-                  "format": "binary"
-                }
-              },
-              "image/webp": {
-                "schema": {
-                  "type": "string",
-                  "format": "binary"
+                  "type": "object",
+                  "required": [
+                    "imageId",
+                    "imageUrl",
+                    "instructions"
+                  ],
+                  "properties": {
+                    "imageId": {
+                      "type": "string",
+                      "description": "Stable image identifier. Do not open this value as a URL."
+                    },
+                    "imageUrl": {
+                      "type": "string",
+                      "format": "uri",
+                      "description": "Public HTTPS image URL to open and inspect."
+                    },
+                    "instructions": {
+                      "type": "string"
+                    }
+                  },
+                  "additionalProperties": false
                 }
               }
             }
           },
           "400": {
-            "description": "Invalid jobId or imageId"
+            "description": "Invalid jobId, imageId or non-public image URL"
           },
           "401": {
             "description": "Invalid API key"

@@ -119,7 +119,7 @@ export function createCustomGptHandler(options: CustomGptHandlerOptions) {
       }
       let result: unknown;
       switch (route) {
-        case "capabilities": result = { version: 1, batchSize: queue.settings(storeId).batchSize, maxBatchSize: 10, leaseMinutes: 30, imageMode: "action_binary_or_manual_attachment", stages: ["analysis", "research", "keywords", "submission"], nextAction: "getSeoQueueStatus" }; break;
+        case "capabilities": result = { version: 1, batchSize: queue.settings(storeId).batchSize, maxBatchSize: 10, leaseMinutes: 30, imageMode: "public_url_or_manual_attachment", stages: ["analysis", "research", "keywords", "submission"], nextAction: "getSeoQueueStatus" }; break;
         case "context": result = { storeId, ...queue.settings(storeId), nextAction: "claimSeoBatch" }; break;
         case "queue": result = { counts: queue.counts(storeId), activeBatch: queue.activeBatch(storeId), nextAction: queue.activeBatch(storeId) ? "getSeoBatch" : "claimSeoBatch" }; break;
         case "claim": result = queue.claim(storeId, required(requestId, "requestId")); break;
@@ -140,9 +140,22 @@ export function createCustomGptHandler(options: CustomGptHandlerOptions) {
             const media = new URL("/api/v1/gpt-seo/media", options.publicUrl);
             media.search = new URLSearchParams({ storeId, jobId, imageId: id, expires: String(expires), signature: signImage(actionKey, jobId, id, expires) }).toString();
             return { id, url: media.href, alt: image.alt };
-          }), nextOffset: offset + 5 < job.input.images.length ? offset + 5 : null, instructions: "Call getSeoJobImageContent with jobId and each imageId. Inspect the returned image content visually. If image content cannot be viewed, ask the operator to attach the images. Do not infer evidence from URLs or filenames." }; break;
+          }), nextOffset: offset + 5 < job.input.images.length ? offset + 5 : null, instructions: "Call getSeoJobImageContent with jobId and each imageId. Use the returned imageUrl, never imageId, as the public image URL. If the image cannot be viewed, ask the operator to attach it. Do not infer evidence from URLs or filenames." }; break;
         }
-        case "image-content":
+        case "image-content": {
+          const job = queue.get(storeId, jobId);
+          const imageId = url.searchParams.get("imageId");
+          const image = job.input.images.find((entry, index) => (entry.id || `image-${index + 1}`) === imageId);
+          if (!image) throw new Error("Image not found");
+          const imageUrl = new URL(image.url);
+          if (imageUrl.protocol !== "https:") throw new Error("Image URL is not public HTTPS");
+          result = {
+            imageId,
+            imageUrl: imageUrl.href,
+            instructions: "Use imageUrl as the public image URL. Do not use imageId as a URL.",
+          };
+          break;
+        }
         case "media":
         case "admin/image": {
           if (route === "media" && !signedImage) { send(res, 401, { error: { code: "INVALID_IMAGE_SIGNATURE" } }); return; }

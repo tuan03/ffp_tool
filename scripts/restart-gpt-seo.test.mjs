@@ -93,11 +93,19 @@ test("new-store guide uses only the multi-store action-key map", async () => {
   assert.doesNotMatch(guide, /`GPT_SEO_ACTION_KEY`/);
 });
 
-test("Custom GPT instructions require binary image Actions before manual attachments", async () => {
-  const instructions = await readFile("docs/custom-gpt-seo/gpt-instructions.md", "utf8");
+test("Custom GPT instructions use the public imageUrl returned by the image Action", async () => {
+  const [instructions, knowledge] = await Promise.all([
+    readFile("docs/custom-gpt-seo/gpt-instructions.md", "utf8"),
+    readFile("docs/custom-gpt-seo/seo-knowledge.md", "utf8"),
+  ]);
 
   assert.match(instructions, /getSeoJobImageContent/);
   assert.match(instructions, /imageId/);
+  assert.match(instructions, /imageUrl/);
+  assert.match(instructions, /public HTTPS image URL/);
+  assert.doesNotMatch(instructions, /returned image content visually/);
+  assert.match(knowledge, /imageUrl/);
+  assert.match(knowledge, /actually rendered and inspected/);
 });
 
 test("production deployment exports the GPT SEO restart script from the container", async () => {
