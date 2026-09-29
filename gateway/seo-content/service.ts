@@ -9,7 +9,10 @@ export async function runSeoContent(
   input: SeoContentInput,
   options?: GatewaySeoContentOptions,
 ): Promise<SeoContentResult> {
-  const isTestOrMock = process.env.NODE_ENV === "test" || process.env.APP_ENV === "mock";
+  const isTestOrMock =
+    process.env.NODE_ENV === "test" ||
+    process.env.APP_ENV === "mock" ||
+    process.env.VITE_APP_ENV === "mock";
   const defaultRunner = isTestOrMock ? runMockSeoContent : undefined;
   const runner = options?.runner ?? defaultRunner;
 

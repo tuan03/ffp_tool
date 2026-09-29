@@ -68,6 +68,10 @@ export function shopifyGatewayDevPlugin(options?: ShopifyGatewayDevPluginOptions
       const host = server?.config?.server?.host;
       assertHostSecurity(host, authToken, "vite dev server");
       const maxBodyBytes = options?.maxBodyBytes && options.maxBodyBytes > 0 ? options.maxBodyBytes : MAX_BODY_BYTES;
+      const isMockMode =
+        server?.config?.mode === "mock" ||
+        process.env.VITE_APP_ENV === "mock" ||
+        process.env.APP_ENV === "mock";
 
       const stores = loadBootstrappedStores({ env });
 
@@ -239,7 +243,21 @@ export function shopifyGatewayDevPlugin(options?: ShopifyGatewayDevPluginOptions
           await handleStoreGetHttpRequest(req, res, storeControlPlane, { authToken, maxBodyBytes });
         } else if (isProxyCheck) {
           await handleProxyCheckHttpRequest(req, res, { authToken, maxBodyBytes });
-        } else if (req.url && (req.url === "/api/auto-seo/run" || req.url.startsWith("/api/auto-seo/run?"))) {
+        } else if (isAutoSeo) {
+          if (isMockMode) {
+            res.statusCode = 403;
+            res.setHeader("Content-Type", "application/json");
+            res.end(
+              JSON.stringify({
+                success: false,
+                error: {
+                  code: "AUTO_SEO_MOCK_MODE_RESTRICTION",
+                  message: "Auto SEO real backend pipeline is disabled in mock mode.",
+                },
+              }),
+            );
+            return;
+          }
           await handleAutoSeoHttpRequest(req, res, { authToken, maxBodyBytes });
         } else if (isPinterestPodHandover) {
           await handlePinterestPodSeoHttpRequest(req, res, { authToken, maxBodyBytes });
