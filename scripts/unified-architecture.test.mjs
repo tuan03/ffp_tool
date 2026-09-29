@@ -67,6 +67,16 @@ test("agent crawler 1-command installer scripts configure dependencies and chrom
   assert.match(shInstaller, /amazon-crawler-agent\.json/);
 });
 
+test("pinterest login launcher scripts are available for worker machines", async () => {
+  const [batLogin, shLogin] = await Promise.all([
+    readFile("dang-nhap-pinterest.bat", "utf8"),
+    readFile("scripts/login-pinterest.sh", "utf8"),
+  ]);
+
+  assert.match(batLogin, /pinterest_browser_login\.py/);
+  assert.match(shLogin, /pinterest_browser_login\.py/);
+});
+
 test("server and client deployment assets are properly configured", async () => {
   const [serverDocker, clientNginx] = await Promise.all([
     readFile("deploy/server/Dockerfile", "utf8"),

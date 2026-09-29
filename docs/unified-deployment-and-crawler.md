@@ -129,3 +129,28 @@ curl -sSL https://ffp.b6-team.site/install-agent.sh | bash
 4. **Cài đặt Chromium:** Tự động tải trình duyệt Chromium chuẩn của Playwright để cào không bị lộ bot.
 5. **Khởi tạo cấu hình:** Tự sinh file `config/amazon-crawler-agent.json` trỏ về server.
 6. **Tạo launcher tiện lợi:** Tạo sẵn file `chay-agent.bat` để những lần sau chỉ cần click 1 cái là Agent chạy ngay, hiển thị trạng thái lên icon khay hệ thống (System Tray).
+
+---
+
+## PHẦN 3: Đăng nhập Pinterest cho Crawler Agent
+
+Pinterest yêu cầu phiên đăng nhập (session cookies) để cào ảnh chất lượng cao và cuộn vô tận mà không bị chặn bot hay bắt đăng nhập.
+
+### Cách 1: Đăng nhập 1-click từ máy Worker (Khuyên dùng)
+Trên máy đã cài Crawler Agent:
+1. Nhấp đúp vào file:
+   ```text
+   dang-nhap-pinterest.bat
+   ```
+   *(Trên Linux/macOS: chạy `bash scripts/login-pinterest.sh`)*
+2. Một cửa sổ trình duyệt Chromium sẽ tự động mở trang đăng nhập Pinterest.
+3. Bạn tiến hành đăng nhập tài khoản Pinterest (bằng Google, email/mật khẩu, v.v.).
+4. Ngay khi đăng nhập thành công, cửa sổ sẽ **tự động đóng lại** và lưu cookie phiên vào thư mục an toàn `.pinterest_browser_profile/`.
+5. Từ thời điểm này, Agent (`chay-agent.bat`) sẽ tự động sử dụng phiên đã đăng nhập để cào dữ liệu mượt mà mà không bao giờ bị hỏi lại.
+
+### Cách 2: Đăng nhập từ Giao diện Web Pinterest POD Studio
+Nếu bạn đang chạy ứng dụng trực tiếp trên máy local:
+1. Tại góc trên bên phải màn hình Studio, bấm vào nút **`🔑 Xác thực Pinterest`** (hoặc nút **`Crawler chưa login`**).
+2. Chuyển sang tab **`🌐 Trình duyệt Cào ảnh`**.
+3. Bấm **"Mở cửa sổ đăng nhập Pinterest"**.
+4. Trình duyệt sẽ mở ra để bạn đăng nhập và tự động lưu phiên tương tự Cách 1.
