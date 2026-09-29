@@ -3,6 +3,5 @@
   "send_button": "//button[@data-testid='send-button'] | //button[@aria-label='Send prompt']",
   "stop_button": "//button[@data-testid='stop-button'] | //button[contains(@aria-label, 'Stop')]",
   "assistant_messages": "//div[@data-message-author-role='assistant']",
-  "new_chat_button": "//a[contains(@href, '/')]"
+  "new_chat_button": "//a[@href='/' and (@data-testid='create-new-chat-button' or @aria-label='New chat' or .//span[normalize-space()='New chat'])] | //button[@data-testid='create-new-chat-button' or @aria-label='New chat']"
 }
-

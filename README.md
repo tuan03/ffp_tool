@@ -24,6 +24,20 @@ npm run dev
 
 Open the Vite URL shown in the terminal, usually `http://localhost:5173/`. The home route `/` displays the Hello World page and can run the sample workflow.
 
+## Review image generator (local)
+
+The **Tạo ảnh review** menu opens `/review-images`. The page uses a scene template as Image 1 and an uploaded handbag/wallet product photo as Image 2. The original product in the scene must be removed. Review the generated image carefully—especially printed artwork and text—before approving and downloading it. This workflow does not write to Shopify.
+
+1. Install the Bridge dependencies with `python -m pip install -r src/modules/review-image/server/requirements.txt`. Put PNG, JPEG or WebP scene templates (up to 5 MB each) in `data/review-image-templates/`. The folder is local and ignored by Git; the supplied bedroom sample is present in this workspace. Outputs are saved in `exports/review-images/`.
+2. Start the complete local app with `npm run dev`. It starts the UI on `http://127.0.0.1:5173`, crawler coordinator on `8766`, and the review-image Bridge on `127.0.0.1:8770`.
+3. In Chrome, open `chrome://extensions`, enable Developer mode, choose **Load unpacked**, and select this checkout's `browser-extension/review-image` directory. Reload an already signed-in `chatgpt.com` tab after loading the extension.
+4. In the extension popup, use `ws://127.0.0.1:8770/ws/extension`, enter the same token as `REVIEW_IMAGE_BRIDGE_TOKEN` in `.env.local`, and enable the connection. For local testing when that setting is absent, both sides use `change-this-token`; set a long random private token before regular use.
+5. Open `/review-images`, upload the product photo, choose **Chỉ túi chính** or **Cả túi và ví**, adjust the prompt, then generate. You can retry with the same template or choose another. Download appears only after **Duyệt ảnh**.
+
+The local Bridge is a separate process. If running the UI and gateway without `npm run dev`, also run `python src/modules/review-image/server/api.py`. Keep this service bound to loopback; its browser extension uses a private WebSocket token. A deployed instance needs this service started separately with the same `REVIEW_IMAGE_BRIDGE_TOKEN` as its gateway.
+
+If the production gateway uses `GATEWAY_AUTH_TOKEN` without operator Basic authentication, enter that token in the page's **Gateway token** field. The page keeps it in memory only and uses it for both API calls and image previews/downloads. When operator Basic authentication is enabled, use that login instead.
+
 ## Run with mock data
 
 Mock mode lets the main UI developer build independently of unfinished real module integrations.

@@ -37,13 +37,17 @@ const context = {
   Event: class { constructor(type) { this.type = type; } },
   Uint8Array,
   Element: FakeElement,
+  HTMLElement: FakeElement,
+  window: { location: { pathname: "/c/existing" }, dispatchEvent() {} },
+  history: { pushState() { context.window.location.pathname = "/"; } },
+  PopStateEvent: class {},
   getComputedStyle() { return { display: 'block', visibility: 'visible', opacity: '1' }; },
   atob,
   setTimeout,
   clearTimeout,
   console
 };
-vm.createContext(context);
+  vm.createContext(context);
 vm.runInContext(fs.readFileSync('browser-extension/review-image/content.js', 'utf8'), context);
 context.sleep = () => new Promise(resolve => setTimeout(resolve, 5));
 
@@ -98,6 +102,26 @@ context.sleep = () => new Promise(resolve => setTimeout(resolve, 5));
   assert.equal(context.findGeneratedImage([assistant], 0, new Set()), generated);
   generated.complete = false;
   assert.equal(context.findGeneratedImage([assistant], 0, new Set()), null);
+  let clicked = false;
+  context.xpathFirst = () => ({ click() { clicked = true; } });
+  context.xpathAll = () => [];
+  await assert.rejects(() => context.openNewChat({ new_chat_button: "//a[@href='/']", assistant_messages: "//assistant" }), /Could not confirm a new ChatGPT conversation/);
+  assert.equal(clicked, true);
+  context.window.location.pathname = "/";
+  context.xpathAll = () => [assistant];
+  await assert.rejects(() => context.openNewChat({ new_chat_button: "//a[@href='/']", assistant_messages: "//assistant" }), /Could not confirm a new ChatGPT conversation/);
+  context.xpathAll = () => [];
+  await context.openNewChat({ new_chat_button: "//a[@href='/']", assistant_messages: "//assistant" });
+  const userTurn = new FakeElement();
+  userTurn.style = { display: "" };
+  userTurn.isConnected = true;
+  userTurn.remove = () => { throw new Error("DOM turns must not be removed"); };
+  context.chatMessageTurns = () => [{ turn: userTurn, role: "user" }];
+  vm.runInContext("removeUserMessages = true", context);
+  context.applyVisibleMessageLimit();
+  assert.equal(userTurn.style.display, "none");
+  vm.runInContext("removeUserMessages = false", context);
+  context.applyVisibleMessageLimit();
+  assert.equal(userTurn.style.display, "");
   console.log('image attachment order passed');
 })().catch(error => { console.error(error); process.exitCode = 1; });
-

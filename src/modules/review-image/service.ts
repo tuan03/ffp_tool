@@ -33,30 +33,45 @@ function parseJob(payload: Record<string, unknown>): ReviewImageJob {
 }
 
 export function createReviewImageClient(fetcher: Fetcher = fetch): ReviewImageClient {
+  let gatewayToken = "";
+  const headers = (extra?: HeadersInit): Headers => {
+    const result = new Headers(extra);
+    if (gatewayToken) result.set("x-gateway-key", gatewayToken);
+    return result;
+  };
+  const binary = async (url: string): Promise<Blob> => {
+    const response = await fetcher(url, { headers: headers() });
+    if (!response.ok) {
+      try { await parseResponse(response); } catch (error) { throw error; }
+      throw new Error("Không tải được ảnh review.");
+    }
+    return response.blob();
+  };
   return {
+    setGatewayToken(token) { gatewayToken = token.trim(); },
     async health() {
-      const payload = await parseResponse(await fetcher(`${API_BASE}/health`));
+      const payload = await parseResponse(await fetcher(`${API_BASE}/health`, { headers: headers() }));
       return { templates: typeof payload.templates === "number" ? payload.templates : 0 };
     },
     async create(input) {
       const payload = await parseResponse(await fetcher(`${API_BASE}/jobs`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: headers({ "Content-Type": "application/json" }),
         body: JSON.stringify(input),
       }));
       return parseJob(payload);
     },
     async job(jobId) {
-      const payload = await parseResponse(await fetcher(`${API_BASE}/jobs/${encodeURIComponent(jobId)}`));
+      const payload = await parseResponse(await fetcher(`${API_BASE}/jobs/${encodeURIComponent(jobId)}`, { headers: headers() }));
       return parseJob(payload);
     },
     async approve(jobId) {
-      const payload = await parseResponse(await fetcher(`${API_BASE}/jobs/${encodeURIComponent(jobId)}/approve`, { method: "POST" }));
+      const payload = await parseResponse(await fetcher(`${API_BASE}/jobs/${encodeURIComponent(jobId)}/approve`, { method: "POST", headers: headers() }));
       return parseJob(payload);
     },
-    templateUrl(name) { return `${API_BASE}/templates/${encodeURIComponent(name)}`; },
-    imageUrl(jobId) { return `${API_BASE}/jobs/${encodeURIComponent(jobId)}/image`; },
-    downloadUrl(jobId) { return `${API_BASE}/jobs/${encodeURIComponent(jobId)}/download`; },
+    template(name) { return binary(`${API_BASE}/templates/${encodeURIComponent(name)}`); },
+    image(jobId) { return binary(`${API_BASE}/jobs/${encodeURIComponent(jobId)}/image`); },
+    download(jobId) { return binary(`${API_BASE}/jobs/${encodeURIComponent(jobId)}/download`); },
   };
 }
 

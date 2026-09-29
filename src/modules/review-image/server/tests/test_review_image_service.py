@@ -12,7 +12,7 @@ from PIL import Image
 SERVER_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SERVER_DIR))
 
-from review_image_generator import ReviewImageService  # noqa: E402
+from review_image_generator import ReviewImageBusyError, ReviewImageService  # noqa: E402
 
 
 def image_data_url(color: str = "blue") -> str:
@@ -74,6 +74,11 @@ class ReviewImageServiceTests(unittest.TestCase):
             self.service.template_path("../room.png")
         self.assertEqual(self.calls, [])
 
+    def test_rejects_prompt_that_exceeds_bridge_limit_after_scope_instruction(self) -> None:
+        with self.assertRaisesRegex(ValueError, "quá dài"):
+            self.service.submit(image_data_url(), "x" * 9_950, "main")
+        self.assertEqual(self.calls, [])
+
     def test_text_only_bridge_result_is_failure(self) -> None:
         service = ReviewImageService(self.templates, self.outputs, lambda _prompt, _images: {})
         created = service.submit(image_data_url(), "Prompt", "main")
@@ -84,6 +89,33 @@ class ReviewImageServiceTests(unittest.TestCase):
             time.sleep(0.01)
         self.assertEqual(job["status"], "failed")
         self.assertFalse(self.outputs.exists())
+
+    def test_limits_pending_jobs_and_releases_capacity(self) -> None:
+        gate = __import__("threading").Event()
+        service = ReviewImageService(
+            self.templates, self.outputs,
+            lambda _prompt, _images: (gate.wait(2), {"mime_type": "image/png", "data": image_data_url().split(",", 1)[1]})[1],
+            max_pending_jobs=2,
+        )
+        try:
+            first = service.submit(image_data_url(), "Prompt", "main")
+            second = service.submit(image_data_url(), "Prompt", "main")
+            with self.assertRaises(ReviewImageBusyError):
+                service.submit(image_data_url(), "Prompt", "main")
+        finally:
+            gate.set()
+        self.assertEqual(self.wait_for_service_job(service, first["job_id"])["status"], "completed")
+        self.assertEqual(self.wait_for_service_job(service, second["job_id"])["status"], "completed")
+        third = service.submit(image_data_url(), "Prompt", "main")
+        self.assertEqual(self.wait_for_service_job(service, third["job_id"])["status"], "completed")
+
+    def wait_for_service_job(self, service: ReviewImageService, job_id: str) -> dict:
+        for _ in range(200):
+            job = service.snapshot(job_id)
+            if job["status"] in {"completed", "failed"}:
+                return job
+            time.sleep(0.01)
+        self.fail("Review image job did not finish")
 
 
 if __name__ == "__main__":

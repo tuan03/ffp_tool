@@ -2,8 +2,8 @@ const DEFAULT_SETTINGS = {
   enabled: true,
   serverUrl: "ws://127.0.0.1:8770/ws/extension",
   token: "change-this-token",
-  visibleMessageLimit: 4,
-  removeUserMessages: true
+  visibleMessageLimit: 0,
+  removeUserMessages: false
 };
 
 const serverUrlInput = document.querySelector("#serverUrl");
@@ -147,7 +147,7 @@ async function loadSettings() {
     visibleMessageLimitInput.value = normalizeVisibleMessageLimit(
       settings.visibleMessageLimit
     );
-    removeUserMessagesInput.checked = settings.removeUserMessages !== false;
+    removeUserMessagesInput.checked = settings.removeUserMessages === true;
 
     await refreshStatus();
   } catch (error) {

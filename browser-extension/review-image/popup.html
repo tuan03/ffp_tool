@@ -209,28 +209,27 @@
     min="0"
     max="100"
     step="1"
-    value="4"
+    value="0"
     autocomplete="off"
   >
 
   <small>
-    Mặc định 4 = 2 tin của bạn và 2 tin ChatGPT gần nhất. Tin cũ bị gỡ khỏi DOM để giảm lag. Nhập 0 để giữ toàn bộ.
+    Mặc định 0 để giữ toàn bộ tin nhắn. Nếu nhập số khác, tin cũ chỉ được ẩn tạm thời và có thể hiện lại.
   </small>
 
   <div class="toggle-row">
     <input
       id="removeUserMessages"
       type="checkbox"
-      checked
     >
 
     <label for="removeUserMessages">
-      Gỡ toàn bộ tin nhắn của tôi khỏi DOM
+      Ẩn tạm tin nhắn của tôi trong tab này
     </label>
   </div>
 
   <small>
-    Nên bật vì prompt bridge chứa context dài. Tin nhắn chỉ bị gỡ khỏi DOM tab hiện tại, không xóa conversation thật.
+    Mặc định tắt. Việc ẩn chỉ ảnh hưởng hiển thị trong tab hiện tại, không xóa conversation.
   </small>
 
   <button

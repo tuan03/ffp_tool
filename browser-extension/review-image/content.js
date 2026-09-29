@@ -2,10 +2,11 @@ let busy = false;
 let activeJobId = null;
 let activeJobXpaths = null;
 let cancelledJobs = new Set();
-let visibleMessageLimit = 4;
-let removeUserMessages = true;
+let visibleMessageLimit = 0;
+let removeUserMessages = false;
 let messageLimitObserver = null;
 let messageLimitTimer = null;
+const hiddenTurns = new Map();
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === "cancel_job") {
@@ -240,14 +241,22 @@ async function openNewChat(xpaths) {
     const button = xpathFirst(xpaths.new_chat_button);
     if (button) {
       button.click();
-      await sleep(1_000);
+      await waitForNewChatReady(xpaths);
       return;
     }
   }
 
   history.pushState({}, "", "/");
   window.dispatchEvent(new PopStateEvent("popstate"));
-  await sleep(1_000);
+  await waitForNewChatReady(xpaths);
+}
+
+async function waitForNewChatReady(xpaths) {
+  for (let attempt = 0; attempt < 20; attempt++) {
+    if (window.location.pathname === "/" && xpathAll(xpaths.assistant_messages || "").length === 0) return;
+    await sleep(250);
+  }
+  throw new Error("Could not confirm a new ChatGPT conversation. Product images were not uploaded.");
 }
 
 function setPromptValue(element, text) {
@@ -449,27 +458,23 @@ function applyVisibleMessageLimit(options = {}) {
   if (busy && !options.force) {
     return;
   }
-  const entries = chatMessageTurns();
-  for (const entry of entries) {
-    if (removeUserMessages && entry.role === "user") {
-      entry.turn.remove();
-    }
+  for (const [turn, display] of hiddenTurns) {
+    if (turn.isConnected) turn.style.display = display;
   }
-  const turns = entries
-    .filter((entry) => !(removeUserMessages && entry.role === "user"))
-    .map((entry) => entry.turn)
-    .filter((turn) => turn.isConnected);
+  hiddenTurns.clear();
+  const entries = chatMessageTurns();
+  const turns = entries.filter((entry) => !(removeUserMessages && entry.role === "user"));
   const limit = normalizeVisibleMessageLimit(visibleMessageLimit);
   const keepFrom = limit > 0 ? Math.max(0, turns.length - limit) : 0;
-
-  turns.forEach((turn, index) => {
+  const hide = (turn) => {
     if (!(turn instanceof HTMLElement)) {
       return;
     }
-    if (limit > 0 && index < keepFrom) {
-      turn.remove();
-    }
-  });
+    hiddenTurns.set(turn, turn.style.display);
+    turn.style.display = "none";
+  };
+  if (removeUserMessages) entries.filter((entry) => entry.role === "user").forEach((entry) => hide(entry.turn));
+  turns.forEach((entry, index) => { if (limit > 0 && index < keepFrom) hide(entry.turn); });
 }
 
 function scheduleVisibleMessageLimit() {
@@ -503,7 +508,7 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-chrome.storage.local.get({ visibleMessageLimit: 4, removeUserMessages: true }, (settings) => {
+chrome.storage.local.get({ visibleMessageLimit: 0, removeUserMessages: false }, (settings) => {
   visibleMessageLimit = normalizeVisibleMessageLimit(settings.visibleMessageLimit);
   removeUserMessages = Boolean(settings.removeUserMessages);
   applyVisibleMessageLimit();
@@ -522,4 +527,3 @@ chrome.storage.onChanged.addListener((changes, area) => {
 });
 
 startMessageLimitObserver();
-

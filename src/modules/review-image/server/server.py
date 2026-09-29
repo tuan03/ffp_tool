@@ -10,7 +10,6 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, model_validator
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -21,13 +20,6 @@ PORT = int(os.getenv("BRIDGE_PORT", "8770"))
 BRIDGE_TOKEN = os.getenv("BRIDGE_TOKEN", "change-this-token")
 
 app = FastAPI(title="ChatGPT Session Bridge", version="1.0.0")
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 
 class PromptRequest(BaseModel):
@@ -322,6 +314,11 @@ async def get_job(
 @app.websocket("/ws/extension")
 async def extension_socket(websocket: WebSocket):
     token = websocket.query_params.get("token", "")
+    origin = websocket.headers.get("origin")
+
+    if origin and not origin.startswith("chrome-extension://"):
+        await websocket.close(code=4403, reason="Only a browser extension may connect")
+        return
 
     if not secrets.compare_digest(token, BRIDGE_TOKEN):
         await websocket.close(code=4401, reason="Invalid token")
@@ -459,6 +456,13 @@ async def extension_socket(websocket: WebSocket):
         )
     finally:
         extensions.discard(websocket)
+        if not extensions:
+            async with jobs_lock:
+                for job in jobs.values():
+                    if job["status"] in {"queued", "running"}:
+                        job["status"] = "failed"
+                        job["error"] = "ChatGPT extension disconnected"
+                        job["event"].set()
 
         print(
             f"Extension disconnected. "

@@ -4,12 +4,25 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 
 from fastapi.testclient import TestClient
+import pytest
+from starlette.websockets import WebSocketDisconnect
 
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import server
+
+
+def test_extension_websocket_rejects_web_page_origin():
+    with TestClient(server.app) as client:
+        with pytest.raises(WebSocketDisconnect) as rejected:
+            with client.websocket_connect(
+                f"/ws/extension?token={server.BRIDGE_TOKEN}",
+                headers={"origin": "https://untrusted.example"},
+            ):
+                pass
+    assert rejected.value.code == 4403
 
 
 def test_image_edit_sends_two_ordered_images_and_returns_image():
@@ -97,3 +110,24 @@ def test_image_edit_timeout_includes_time_waiting_for_tab():
     assert elapsed < 1.25
     assert len(server.jobs) == before
 
+
+def test_image_edit_fails_promptly_when_last_extension_disconnects():
+    data = base64.b64encode(b"image-bytes").decode()
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        with TestClient(server.app) as client:
+            with client.websocket_connect(f"/ws/extension?token={server.BRIDGE_TOKEN}") as socket:
+                socket.receive_json()
+                started = time.monotonic()
+                request = pool.submit(
+                    client.post,
+                    "/image-edit",
+                    json={"prompt": "replace", "timeout_seconds": 2, "images": [
+                        {"name": "template", "mime_type": "image/png", "data": data},
+                        {"name": "product", "mime_type": "image/png", "data": data},
+                    ]},
+                    headers={"X-Bridge-Token": server.BRIDGE_TOKEN},
+                )
+                socket.receive_json()
+            response = request.result(timeout=4)
+    assert response.status_code == 502
+    assert time.monotonic() - started < 1.7

@@ -36,6 +36,7 @@ export interface GatewayServerOptions {
   readonly operatorUsername?: string;
   readonly operatorPassword?: string;
   readonly maxBodyBytes?: number;
+  readonly reviewImageBridgeBaseUrl?: string;
 }
 
 function isOperatorAuthorized(
@@ -133,6 +134,7 @@ export function startGatewayServer(
       await handleReviewImageHttpRequest(req, res, {
         authToken,
         bridgeToken: env.REVIEW_IMAGE_BRIDGE_TOKEN || process.env.REVIEW_IMAGE_BRIDGE_TOKEN || "change-this-token",
+        bridgeBaseUrl: options.reviewImageBridgeBaseUrl,
       });
       return;
     }

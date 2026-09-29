@@ -1,4 +1,5 @@
 import base64
+import threading
 import sys
 import tempfile
 import time
@@ -50,4 +51,35 @@ def test_http_flow_requires_approval_before_download():
                 assert "attachment" in downloaded.headers["content-disposition"]
                 assert client.get(f"/api/review-images/jobs/{job_id}").status_code == 401
         finally:
+            api.review_image_service = original_service
+
+
+def test_http_rejects_job_when_bridge_queue_is_full():
+    with tempfile.TemporaryDirectory() as workspace:
+        root = Path(workspace)
+        templates = root / "templates"
+        templates.mkdir()
+        (templates / "room.png").write_bytes(base64.b64decode(image_data_url().split(",", 1)[1]))
+        gate = threading.Event()
+        original_service = api.review_image_service
+        api.review_image_service = ReviewImageService(
+            templates, root / "outputs",
+            lambda _prompt, _images: (gate.wait(2), {"mime_type": "image/png", "data": image_data_url().split(",", 1)[1]})[1],
+            max_pending_jobs=1,
+        )
+        headers = {"X-Bridge-Token": api.BRIDGE_TOKEN}
+        payload = {"productDataUrl": image_data_url(), "prompt": "Replace bag", "scope": "main"}
+        try:
+            with TestClient(api.app) as client:
+                created = client.post("/api/review-images/jobs", headers=headers, json=payload)
+                assert created.status_code == 202
+                assert client.post("/api/review-images/jobs", headers=headers, json=payload).status_code == 429
+        finally:
+            gate.set()
+            job_id = created.json()["job"]["job_id"]
+            for _ in range(100):
+                if api.review_image_service.snapshot(job_id)["status"] == "completed":
+                    break
+                time.sleep(0.01)
+            assert api.review_image_service.snapshot(job_id)["status"] == "completed"
             api.review_image_service = original_service

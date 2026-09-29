@@ -21,6 +21,10 @@ export function ReviewImagePage({ client }: { readonly client: ReviewImageClient
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isApproving, setIsApproving] = useState(false);
   const [error, setError] = useState("");
+  const [gatewayToken, setGatewayToken] = useState("");
+  const [templatePreview, setTemplatePreview] = useState("");
+  const [resultPreview, setResultPreview] = useState("");
+  const [authRevision, setAuthRevision] = useState(0);
 
   useEffect(() => {
     let active = true;
@@ -51,6 +55,64 @@ export function ReviewImagePage({ client }: { readonly client: ReviewImageClient
     timer = window.setTimeout(() => { void poll(); }, 1_500);
     return () => { active = false; if (timer !== undefined) window.clearTimeout(timer); };
   }, [client, job]);
+
+  useEffect(() => {
+    if (!job) return;
+    let active = true;
+    let objectUrl = "";
+    setTemplatePreview("");
+    void client.template(job.template_name).then((blob) => {
+      if (!active) return;
+      objectUrl = URL.createObjectURL(blob);
+      setTemplatePreview(objectUrl);
+    }).catch((cause: unknown) => {
+      if (active) setError(cause instanceof Error ? cause.message : "Không tải được ảnh template.");
+    });
+    return () => { active = false; if (objectUrl) URL.revokeObjectURL(objectUrl); };
+  }, [client, job?.template_name, authRevision]);
+
+  useEffect(() => {
+    if (!job || job.status !== "completed") return;
+    let active = true;
+    let objectUrl = "";
+    setResultPreview("");
+    void client.image(job.job_id).then((blob) => {
+      if (!active) return;
+      objectUrl = URL.createObjectURL(blob);
+      setResultPreview(objectUrl);
+    }).catch((cause: unknown) => {
+      if (active) setError(cause instanceof Error ? cause.message : "Không tải được ảnh review.");
+    });
+    return () => { active = false; if (objectUrl) URL.revokeObjectURL(objectUrl); };
+  }, [client, job?.job_id, job?.status, authRevision]);
+
+  async function applyGatewayToken(): Promise<void> {
+    client.setGatewayToken(gatewayToken);
+    setError("");
+    try {
+      const health = await client.health();
+      setTemplateCount(health.templates);
+      setAuthRevision((value) => value + 1);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Gateway token không hợp lệ.");
+    }
+  }
+
+  async function handleDownload(): Promise<void> {
+    if (!job?.approved) return;
+    try {
+      const blob = await client.download(job.job_id);
+      const extension = blob.type === "image/jpeg" ? ".jpg" : blob.type === "image/webp" ? ".webp" : ".png";
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `review-${job.job_id}${extension}`;
+      link.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Không tải được ảnh đã duyệt.");
+    }
+  }
 
   async function handleProductChange(file: File | undefined): Promise<void> {
     setProductDataUrl("");
@@ -123,6 +185,14 @@ export function ReviewImagePage({ client }: { readonly client: ReviewImageClient
             <p className="mt-1 text-sm text-slate-400">Template được chọn ngẫu nhiên từ thư mục của tool. {templateCount === null ? "Đang kiểm tra thư mục…" : `Có ${templateCount} template hợp lệ.`}</p>
           </div>
 
+          <details className="rounded-xl border border-slate-700 p-3 text-sm">
+            <summary className="cursor-pointer text-slate-300">Gateway token (chỉ cần khi server yêu cầu đăng nhập API)</summary>
+            <div className="mt-2 flex gap-2">
+              <input className={fieldClass} type="password" autoComplete="off" aria-label="Gateway token" value={gatewayToken} onChange={(event) => setGatewayToken(event.target.value)} />
+              <button type="button" className={`${buttonClass} bg-slate-700`} onClick={() => { void applyGatewayToken(); }}>Kết nối</button>
+            </div>
+          </details>
+
           <label className="block text-sm font-medium">
             Ảnh sản phẩm cần đưa vào bối cảnh
             <input className={fieldClass} type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => { void handleProductChange(event.target.files?.[0]); }} />
@@ -167,11 +237,11 @@ export function ReviewImagePage({ client }: { readonly client: ReviewImageClient
               {job.status === "failed" && `Tạo ảnh thất bại: ${job.error || "Không rõ nguyên nhân."}`}
             </p>
             <figure className="overflow-hidden rounded-xl border border-slate-700 bg-slate-950">
-              <img className="max-h-56 w-full object-contain" src={client.templateUrl(job.template_name)} alt="Template bối cảnh đã chọn" />
+              {templatePreview && <img className="max-h-56 w-full object-contain" src={templatePreview} alt="Template bối cảnh đã chọn" />}
               <figcaption className="p-3 text-xs text-slate-400">Template: {job.template_name} — chỉ lấy bối cảnh, không giữ sản phẩm cũ.</figcaption>
             </figure>
             {job.status === "completed" && <>
-              <img className="max-h-[36rem] w-full rounded-xl border border-slate-700 bg-slate-950 object-contain" src={client.imageUrl(job.job_id)} alt="Ảnh review đã tạo" />
+              {resultPreview && <img className="max-h-[36rem] w-full rounded-xl border border-slate-700 bg-slate-950 object-contain" src={resultPreview} alt="Ảnh review đã tạo" />}
               <ul className="list-inside list-disc space-y-1 text-sm text-slate-300">
                 <li>Đúng hình dáng, họa tiết và chữ trên túi/ví?</li>
                 <li>Sản phẩm cũ trong template đã biến mất?</li>
@@ -179,7 +249,7 @@ export function ReviewImagePage({ client }: { readonly client: ReviewImageClient
               </ul>
               <div className="flex flex-wrap gap-3">
                 <button type="button" className={`${buttonClass} bg-emerald-600 hover:bg-emerald-500`} disabled={job.approved || isApproving} onClick={() => { void handleApprove(); }}>Duyệt ảnh</button>
-                {job.approved && <a className={`${buttonClass} bg-cyan-500 text-slate-950 hover:bg-cyan-400`} href={client.downloadUrl(job.job_id)} download>Tải ảnh đã duyệt</a>}
+                {job.approved && <button type="button" className={`${buttonClass} bg-cyan-500 text-slate-950 hover:bg-cyan-400`} onClick={() => { void handleDownload(); }}>Tải ảnh đã duyệt</button>}
               </div>
             </>}
           </>}

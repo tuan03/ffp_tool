@@ -20,11 +20,12 @@ export interface CreateReviewImageInput {
 }
 
 export interface ReviewImageClient {
+  setGatewayToken(token: string): void;
   health(): Promise<{ readonly templates: number }>;
   create(input: CreateReviewImageInput): Promise<ReviewImageJob>;
   job(jobId: string): Promise<ReviewImageJob>;
   approve(jobId: string): Promise<ReviewImageJob>;
-  templateUrl(name: string): string;
-  imageUrl(jobId: string): string;
-  downloadUrl(jobId: string): string;
+  template(name: string): Promise<Blob>;
+  image(jobId: string): Promise<Blob>;
+  download(jobId: string): Promise<Blob>;
 }

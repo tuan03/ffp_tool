@@ -5,6 +5,7 @@ import binascii
 import io
 import secrets
 import threading
+import time
 import uuid
 from pathlib import Path
 from typing import Callable
@@ -14,6 +15,11 @@ from PIL import Image, UnidentifiedImageError
 
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
 IMAGE_FORMATS = {"PNG": ("image/png", ".png"), "JPEG": ("image/jpeg", ".jpg"), "WEBP": ("image/webp", ".webp")}
+JOB_RETENTION_SECONDS = 24 * 60 * 60
+
+
+class ReviewImageBusyError(Exception):
+    """The bounded bridge queue has no capacity for another image job."""
 
 
 def _validate_image_bytes(image_bytes: bytes, declared_mime: str) -> None:
@@ -47,6 +53,7 @@ class ReviewImageService:
         template_dir: Path,
         output_dir: Path,
         bridge_call: Callable[[str, list[dict[str, str]]], dict[str, str]],
+        max_pending_jobs: int = 3,
     ) -> None:
         self.template_dir = Path(template_dir)
         self.output_dir = Path(output_dir)
@@ -54,6 +61,14 @@ class ReviewImageService:
         self.bridge_call = bridge_call
         self.jobs: dict[str, dict] = {}
         self.lock = threading.RLock()
+        self.max_pending_jobs = max_pending_jobs
+        self.pending_jobs = 0
+
+    def _prune_finished_jobs(self) -> None:
+        cutoff = time.monotonic() - JOB_RETENTION_SECONDS
+        for job_id, job in list(self.jobs.items()):
+            if job.get("finished_at", float("inf")) < cutoff:
+                del self.jobs[job_id]
 
     def _templates(self) -> list[Path]:
         if not self.template_dir.is_dir():
@@ -98,6 +113,8 @@ class ReviewImageService:
             "Required product selection: the main handbag and matching wallet; place the wallet beside the bag."
         )
         prompt = scope_instruction + "\n\n" + prompt
+        if len(prompt) > 10_000:
+            raise ValueError("Prompt quá dài sau khi thêm hướng dẫn chọn sản phẩm; hãy rút ngắn prompt.")
         templates = self._templates()
         if not templates:
             raise ValueError("Thư mục template chưa có ảnh PNG, JPEG hoặc WebP hợp lệ.")
@@ -117,13 +134,23 @@ class ReviewImageService:
             "output_name": None,
         }
         with self.lock:
+            self._prune_finished_jobs()
+            if self.pending_jobs >= self.max_pending_jobs:
+                raise ReviewImageBusyError("Bridge đang bận. Hãy chờ job hiện tại xong rồi thử lại.")
+            self.pending_jobs += 1
             self.jobs[job_id] = job
         worker = threading.Thread(
             target=self._run,
             args=(job_id, prompt, template, product_mime, product_bytes),
             daemon=True,
         )
-        worker.start()
+        try:
+            worker.start()
+        except Exception:
+            with self.lock:
+                self.pending_jobs -= 1
+                del self.jobs[job_id]
+            raise
         return self.snapshot(job_id)
 
     def _run(self, job_id: str, prompt: str, template: Path, product_mime: str, product_bytes: bytes) -> None:
@@ -150,9 +177,14 @@ class ReviewImageService:
         except Exception as exc:
             with self.lock:
                 self.jobs[job_id].update(status="failed", error=str(exc))
+        finally:
+            with self.lock:
+                self.jobs[job_id]["finished_at"] = time.monotonic()
+                self.pending_jobs -= 1
 
     def snapshot(self, job_id: str) -> dict:
         with self.lock:
+            self._prune_finished_jobs()
             if job_id not in self.jobs:
                 raise ValueError("Job ảnh không tồn tại.")
             return dict(self.jobs[job_id])
@@ -170,4 +202,3 @@ class ReviewImageService:
         if job["status"] != "completed" or (approved_only and not job["approved"]):
             raise ValueError("Ảnh chưa sẵn sàng để tải.")
         return self.output_dir / job["output_name"]
-

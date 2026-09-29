@@ -15,12 +15,29 @@ test("review image client sends the product, prompt and selected scope to the sa
   assert.equal(requestedUrl, "/api/review-images/jobs");
   assert.deepEqual(submitted, { productDataUrl: "data:image/png;base64,AA==", prompt: "Replace bag", scope: "main" });
   assert.equal(job.template_name, "room.png");
-  assert.equal(client.templateUrl("room 1.png"), "/api/review-images/templates/room%201.png");
+  assert.equal(typeof client.template, "function");
 });
 
 test("review image client turns backend errors into a readable message", async () => {
   const client = createReviewImageClient(async () => new Response(JSON.stringify({ detail: "No extension is connected" }), { status: 503 }));
   await assert.rejects(() => client.approve("abc"), /No extension is connected/);
+});
+
+test("review image client authenticates binary previews and downloads with an entered gateway token", async () => {
+  const calls: Array<{ url: string; token: string | null }> = [];
+  const client = createReviewImageClient(async (input, init) => {
+    calls.push({ url: String(input), token: new Headers(init?.headers).get("x-gateway-key") });
+    return new Response(new Uint8Array([137, 80, 78, 71]), { headers: { "Content-Type": "image/png" } });
+  });
+  client.setGatewayToken("secret");
+  const preview = await client.image("abc");
+  const download = await client.download("abc");
+  assert.equal(preview.type, "image/png");
+  assert.equal(download.type, "image/png");
+  assert.deepEqual(calls, [
+    { url: "/api/review-images/jobs/abc/image", token: "secret" },
+    { url: "/api/review-images/jobs/abc/download", token: "secret" },
+  ]);
 });
 
 test("product upload rejects unsupported or oversized images before submission", async () => {

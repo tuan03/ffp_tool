@@ -3,8 +3,8 @@ const DEFAULT_SETTINGS = {
   serverUrl: "ws://127.0.0.1:8770/ws/extension",
   token: "change-this-token",
   chatgptTabId: null,
-  visibleMessageLimit: 4,
-  removeUserMessages: true
+  visibleMessageLimit: 0,
+  removeUserMessages: false
 };
 
 let socket = null;
@@ -13,13 +13,11 @@ let keepAliveTimer = null;
 let currentConfig = null;
 
 chrome.runtime.onInstalled.addListener(async () => {
-  await chrome.storage.local.set({
-    enabled: true,
-    serverUrl: "ws://127.0.0.1:8770/ws/extension",
-    token: "change-this-token",
-    visibleMessageLimit: 4,
-    removeUserMessages: true
-  });
+  const saved = await chrome.storage.local.get(null);
+  const missing = Object.fromEntries(
+    Object.entries(DEFAULT_SETTINGS).filter(([key]) => !Object.prototype.hasOwnProperty.call(saved, key))
+  );
+  if (Object.keys(missing).length) await chrome.storage.local.set(missing);
 
   connectIfEnabled();
 });

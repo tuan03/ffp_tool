@@ -10,7 +10,7 @@ from fastapi import Header, HTTPException, Response
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 
-from review_image_generator import ReviewImageService
+from review_image_generator import ReviewImageBusyError, ReviewImageService
 
 PROJECT_ROOT = Path(__file__).resolve().parents[4]
 load_dotenv(PROJECT_ROOT / ".env.local")
@@ -95,6 +95,8 @@ def create_job(body: CreateReviewImageRequest, x_bridge_token: str | None = Head
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
+    except ReviewImageBusyError as exc:
+        raise HTTPException(429, str(exc)) from exc
     return {"ok": True, "job": job}
 
 
