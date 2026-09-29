@@ -166,12 +166,19 @@ class CoordinatorTelemetryTests(unittest.TestCase):
         self.assertEqual(self.store.crawler_metrics()["counts"]["httpAttempts"], 0)
 
     def test_heartbeat_metrics_are_bounded_and_included_in_client_snapshot(self) -> None:
-        self.store.heartbeat("client-a", [], telemetry={"cache": {"hit": 10, "html": "PRIVATE_HTML"},
-                             "resources": {"rssBytes": 1024, "browserContexts": 2, "isComplete": True},
-                             "backlog": 3, "dropped": 1})
+        self.store.heartbeat(
+            "client-a",
+            [],
+            telemetry={"cache": {"hit": 10, "html": "PRIVATE_HTML"},
+                       "resources": {"rssBytes": 1024, "browserContexts": 2, "isComplete": True},
+                       "backlog": 3, "dropped": 1},
+            capabilities={"pinterestBrowserLoggedIn": True, "privateToken": "ignored"},
+        )
         snapshot = self.store.list_clients()[0]
         self.assertEqual(snapshot["observability"]["resources"]["rssBytes"], 1024)
         self.assertNotIn("html", snapshot["observability"]["cache"])
+        self.assertTrue(snapshot["capabilities"]["pinterestBrowserLoggedIn"])
+        self.assertNotIn("privateToken", snapshot["capabilities"])
         self.assertEqual(self.store.crawler_metrics()["agents"][0]["dropped"], 1)
 
     def test_telemetry_spool_survives_restart_and_acknowledgement(self) -> None:

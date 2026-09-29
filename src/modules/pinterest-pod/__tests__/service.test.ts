@@ -1529,6 +1529,8 @@ test("Mock client getCrawlerClients returns connected crawler agents", async () 
   assert.ok(clients.length > 0);
   assert.equal(clients[0].isConnected, true);
   assert.equal(clients[0].capabilities?.pinterest, true);
+  assert.equal(clients[0].capabilities?.pinterestBrowserLoggedIn, true);
+  assert.equal(clients[0].currentTasks?.[0]?.niche, "leather bag");
 });
 
 test("Real client getCrawlerClients fetches from /api/v1/clients and handles errors gracefully", async () => {
@@ -1543,7 +1545,9 @@ test("Real client getCrawlerClients fetches from /api/v1/clients and handles err
           id: "client_node_1",
           displayName: "Worker 1",
           isConnected: true,
-          capabilities: { pinterest: true },
+          activeTasks: 1,
+          capabilities: { pinterest: true, pinterestBrowserLoggedIn: true },
+          currentTasks: [{ taskId: "task_1", jobId: "job_1", niche: "leather bag", message: "Downloading", percent: 25 }],
         },
       ]),
       { status: 200, headers: { "Content-Type": "application/json" } },
@@ -1554,6 +1558,7 @@ test("Real client getCrawlerClients fetches from /api/v1/clients and handles err
     const clients = await realPinterestPodClient.getCrawlerClients();
     assert.equal(clients.length, 1);
     assert.equal(clients[0].id, "client_node_1");
+    assert.equal(clients[0].currentTasks?.[0]?.jobId, "job_1");
     assert.ok(calls[0].url.includes("/api/v1/clients"));
 
     // Test error fallback

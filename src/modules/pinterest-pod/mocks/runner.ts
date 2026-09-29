@@ -674,13 +674,30 @@ export class MockPinterestPodClient implements PinterestPodClient {
         id: "client_mock_agent_1",
         displayName: "Mock Local Agent (Windows)",
         isConnected: true,
-        status: "idle",
-        activeTasks: 0,
-        availableSlots: 2,
+        status: "busy",
+        agentVersion: "mock-1.0.0",
+        lastSeenAt: new Date().toISOString(),
+        activeTasks: 1,
+        availableSlots: 1,
         capabilities: {
           pinterest: true,
           amazon: true,
+          pinterestBrowserLoggedIn: true,
         },
+        currentTasks: [
+          {
+            taskId: "task_mock_pinterest_1",
+            jobId: "job_mock_agent_activity",
+            channel: "pinterest",
+            stage: "crawl_and_review",
+            niche: "leather bag",
+            product: "bag",
+            queryCount: 24,
+            message: "Search: [cluster_query_001] vintage floral vector print",
+            percent: 50,
+            updatedAt: new Date().toISOString(),
+          },
+        ],
       },
     ];
   }

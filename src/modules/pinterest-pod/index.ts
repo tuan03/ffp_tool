@@ -76,6 +76,7 @@ export type {
   CandidateItem,
   CancelJobOutput,
   ComparisonRow,
+  CrawlerAgentTaskSummary,
   CrawlerClientSummary,
   CreateJobInput,
   CreateJobOutput,

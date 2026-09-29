@@ -452,10 +452,10 @@ export function PinterestAuthModal({
             <div className="rounded-xl bg-slate-950/60 p-4 border border-slate-800/80">
               <h3 className="font-bold text-slate-200 text-sm">Phiên Pinterest trên máy Crawler Agent</h3>
               <p className="mt-1 text-slate-400 leading-relaxed">
-                Phiên trình duyệt phải được tạo trên chính máy đang chạy crawler agent. VPS không thể mở cửa sổ Chromium trên màn hình của máy agent.
+                Phiên trình duyệt phải được tạo trên chính máy đang chạy Crawler Agent. Nhấp chuột phải biểu tượng FFP cạnh đồng hồ Windows, sau đó chọn <strong>Đăng nhập Pinterest</strong>.
               </p>
               <div className="mt-3 rounded-lg border border-slate-700 bg-slate-950 p-3">
-                <p className="mb-2 font-semibold text-slate-300">Chạy lệnh này bằng PowerShell trên máy agent:</p>
+                <p className="mb-2 font-semibold text-slate-300">Lệnh dự phòng nếu máy chưa có menu khay hệ thống:</p>
                 <code className="block overflow-x-auto whitespace-nowrap text-[11px] text-cyan-300">{agentLoginCommand}</code>
                 <button
                   type="button"
@@ -464,7 +464,7 @@ export function PinterestAuthModal({
                 >
                   Sao chép lệnh đăng nhập Agent
                 </button>
-                <p className="mt-2 text-[10px] text-slate-500">Sau khi đăng nhập xong, khởi động lại agent để cập nhật trạng thái phiên lên Coordinator.</p>
+                <p className="mt-2 text-[10px] text-slate-500">Agent phiên bản mới tự cập nhật trạng thái lên Coordinator trong khoảng 10 giây, không cần restart.</p>
               </div>
 
               {(isBrowserActive || authStatus?.browser_process_active) && (

@@ -9,6 +9,7 @@ import unittest
 import asyncio
 import base64
 import os
+import time
 import urllib.error
 from datetime import datetime, timedelta
 from io import BytesIO
@@ -27,7 +28,7 @@ from engine.distributed.client_agent import DistributedCrawlerAgent, progress_fo
 from engine.distributed.client_config import AgentConfig
 from engine.distributed.client_main import _configure_packaged_browser, _resolve_config_path
 from engine.distributed.instance_lock import AgentAlreadyRunningError, AgentInstanceLock
-from engine.distributed.client_tray import format_status, should_notify_captcha
+from engine.distributed.client_tray import TrayApplication, format_status, should_notify_captcha
 from engine.distributed.coordinator_models import (
     Base,
     ClientRecord,
@@ -124,6 +125,42 @@ class AgentLimitsTests(unittest.TestCase):
         )
         self.assertTrue(logged_in_hello["capabilities"]["pinterestBrowserLoggedIn"])
 
+    def test_agent_reports_safe_live_pinterest_task_activity(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = AgentConfig(
+                server_url="http://127.0.0.1:8766",
+                display_name="Crawler A",
+                max_concurrent_inputs=2,
+                limits=AgentLimits(),
+                data_directory=root / "data",
+            )
+            agent = DistributedCrawlerAgent(project_root=root, config=config)
+            agent.active["task-pin-1"] = {
+                "taskId": "task-pin-1",
+                "jobId": "job-pin-1",
+                "leaseId": "lease-secret",
+                "channel": "pinterest",
+                "action": "crawl_and_review",
+                "source": "leather bag",
+                "settings": {
+                    "channel": "pinterest",
+                    "niche": "leather bag",
+                    "product": "bag",
+                    "custom_queries": ["vintage floral vector", "western leather pattern"],
+                    "access_token": "must-not-be-exposed",
+                },
+            }
+            agent._update_task_activity("task-pin-1", "Downloading image 12/40", 30)
+
+            task = agent._current_tasks_snapshot()[0]
+
+            self.assertEqual(task["jobId"], "job-pin-1")
+            self.assertEqual(task["niche"], "leather bag")
+            self.assertEqual(task["queryCount"], 2)
+            self.assertEqual(task["message"], "Downloading image 12/40")
+            self.assertNotIn("access_token", task)
+
 
 class ClientTrayTests(unittest.TestCase):
     def test_status_text_includes_connection_work_and_pending_uploads(self) -> None:
@@ -140,6 +177,34 @@ class ClientTrayTests(unittest.TestCase):
         self.assertTrue(should_notify_captcha(False, {"waitingCaptcha": True}))
         self.assertFalse(should_notify_captcha(True, {"waitingCaptcha": True}))
         self.assertFalse(should_notify_captcha(False, {"waitingCaptcha": False}))
+
+    def test_tray_login_reports_success_and_refreshes_agent_status(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            script = root / "src" / "modules" / "pinterest-pod" / "server" / "pinterest" / "pinterest_browser_login.py"
+            script.parent.mkdir(parents=True)
+            script.write_text("", encoding="utf-8")
+
+            class FakeAgent:
+                project_root = root
+
+                @staticmethod
+                def status_snapshot():
+                    return {"connection": "online", "activeTasks": 0, "pendingUploads": 0, "capabilities": {"pinterestBrowserLoggedIn": True}}
+
+                @staticmethod
+                def pinterest_browser_logged_in():
+                    return True
+
+            tray = TrayApplication(FakeAgent(), root)
+            notifications: list[str] = []
+            tray._notify = lambda message, title="FFP Crawler Agent": notifications.append(message)
+            with patch("engine.distributed.client_tray.subprocess.run") as run:
+                run.return_value.returncode = 0
+                tray._run_pinterest_action("login")
+
+            self.assertTrue(any("thành công" in message for message in notifications))
+            run.assert_called_once()
 
 
 class PackagedClientTests(unittest.TestCase):
@@ -246,11 +311,36 @@ class DistributedCacheControlTests(unittest.IsolatedAsyncioTestCase):
 
         socket = FakeSocket()
         await manager.add("client-a", socket)
-        await manager.update_runtime("client-a", active_tasks=2, available_slots=2)
+        await manager.update_runtime(
+            "client-a",
+            active_tasks=2,
+            available_slots=2,
+            current_tasks=[{
+                "taskId": "task-pin-1",
+                "jobId": "job-pin-1",
+                "channel": "pinterest",
+                "niche": "leather bag",
+                "message": "Downloading images",
+                "percent": 40,
+            }],
+            capabilities={"pinterest": True, "pinterestBrowserLoggedIn": True, "secret": "ignored"},
+        )
         await manager.reserve_tasks("client-a", 1)
 
         self.assertEqual(await manager.runtime_snapshot(), {
-            "client-a": {"activeTasks": 3, "availableSlots": 1},
+            "client-a": {
+                "activeTasks": 3,
+                "availableSlots": 1,
+                "currentTasks": [{
+                    "taskId": "task-pin-1",
+                    "jobId": "job-pin-1",
+                    "channel": "pinterest",
+                    "niche": "leather bag",
+                    "message": "Downloading images",
+                    "percent": 40,
+                }],
+                "capabilities": {"pinterest": True, "pinterestBrowserLoggedIn": True},
+            },
         })
         await manager.update_available_slots("client-a", 2)
         self.assertEqual((await manager.runtime_snapshot())["client-a"]["activeTasks"], 2)
@@ -2841,6 +2931,57 @@ class CoordinatorApiTests(unittest.TestCase):
                     current = next(record for record in client.get("/api/v1/clients").json() if record["id"] == "client-a")
                     self.assertTrue(current["isConnected"])
                     self.assertEqual(current["status"], "online")
+
+    def test_clients_endpoint_reports_live_agent_capability_and_task_activity(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = Path(directory) / "coordinator.sqlite3"
+            app = create_coordinator_app(database_url=f"sqlite:///{database_path.as_posix()}")
+            with TestClient(app) as client:
+                with client.websocket_connect("/api/v1/worker/connect") as websocket:
+                    hello = client_hello()
+                    hello["capabilities"] = {
+                        "amazon": True,
+                        "pinterest": True,
+                        "pinterestBrowserLoggedIn": False,
+                        "offlineSpool": True,
+                        "mediaGalleryV2": True,
+                    }
+                    websocket.send_json(hello)
+                    self.assertEqual(websocket.receive_json()["type"], "hello_ack")
+                    websocket.send_json({
+                        "type": "heartbeat",
+                        "status": "busy",
+                        "availableSlots": 1,
+                        "capabilities": {
+                            "amazon": True,
+                            "pinterest": True,
+                            "pinterestBrowserLoggedIn": True,
+                            "offlineSpool": True,
+                            "mediaGalleryV2": True,
+                        },
+                        "running": [{
+                            "taskId": "task-pin-1",
+                            "jobId": "job-pin-1",
+                            "leaseId": "private-lease-id",
+                            "channel": "pinterest",
+                            "stage": "crawl_and_review",
+                            "niche": "leather bag",
+                            "message": "Search: vintage floral vector print",
+                            "percent": 50,
+                        }],
+                    })
+
+                    current = {}
+                    for _attempt in range(20):
+                        current = next(record for record in client.get("/api/v1/clients").json() if record["id"] == "client-a")
+                        if current.get("capabilities", {}).get("pinterestBrowserLoggedIn"):
+                            break
+                        time.sleep(0.01)
+
+                    self.assertTrue(current["capabilities"]["pinterestBrowserLoggedIn"])
+                    self.assertEqual(current["currentTasks"][0]["jobId"], "job-pin-1")
+                    self.assertEqual(current["currentTasks"][0]["niche"], "leather bag")
+                    self.assertNotIn("leaseId", current["currentTasks"][0])
 
     def test_sync_all_queues_only_approved_reviews_as_each_product_becomes_ready(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

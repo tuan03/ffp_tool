@@ -12,12 +12,16 @@ interface ProgressAndLogsProps {
   readonly stepper?: StepperState;
   readonly logs?: readonly string[];
   readonly candidateCount?: number;
+  readonly agentName?: string;
+  readonly jobId?: string | null;
 }
 
 export function ProgressAndLogs({
   stepper,
   logs = [],
   candidateCount = 0,
+  agentName,
+  jobId,
 }: ProgressAndLogsProps): React.JSX.Element {
   const [isLogsExpanded, setIsLogsExpanded] = useState(true);
   const [copied, setCopied] = useState(false);
@@ -53,6 +57,19 @@ export function ProgressAndLogs({
             {percent}%
           </span>
         </div>
+
+        {(agentName || jobId) && (
+          <div className="flex flex-wrap gap-2 text-[10px]">
+            {agentName && (
+              <span className="rounded-full bg-emerald-950 px-2 py-1 font-semibold text-emerald-300">
+                Máy thực thi: {agentName}
+              </span>
+            )}
+            {jobId && (
+              <span className="rounded-full bg-slate-800 px-2 py-1 font-mono text-slate-400">Job: {jobId}</span>
+            )}
+          </div>
+        )}
 
         {/* Progress Track */}
         <div className="h-2.5 w-full overflow-hidden rounded-full bg-slate-800">

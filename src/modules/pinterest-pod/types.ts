@@ -539,14 +539,31 @@ export interface DirectShopifySyncOutput {
 export type DirectShopifySyncInput = PinterestPodDeliverables;
 
 /** Summary of a connected distributed crawler client agent */
+export interface CrawlerAgentTaskSummary {
+  readonly taskId: string;
+  readonly jobId?: string;
+  readonly channel?: string;
+  readonly stage?: string;
+  readonly source?: string;
+  readonly niche?: string;
+  readonly product?: string;
+  readonly queryCount?: number;
+  readonly message?: string;
+  readonly percent?: number;
+  readonly updatedAt?: string | null;
+}
+
 export interface CrawlerClientSummary {
   readonly id: string;
   readonly displayName?: string;
   readonly isConnected: boolean;
   readonly status?: string;
+  readonly agentVersion?: string;
+  readonly lastSeenAt?: string;
   readonly activeTasks?: number;
   readonly availableSlots?: number;
   readonly capabilities?: Record<string, unknown>;
+  readonly currentTasks?: readonly CrawlerAgentTaskSummary[];
 }
 
 /** Single item in the POD price set & variant matrix */

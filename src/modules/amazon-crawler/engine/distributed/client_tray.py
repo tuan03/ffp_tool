@@ -1,9 +1,12 @@
-"""Minimal Windows tray shell for the distributed crawler agent."""
+"""Windows tray shell for the distributed Amazon and Pinterest crawler agent."""
 
 from __future__ import annotations
 
 import asyncio
 import os
+import shutil
+import subprocess
+import sys
 import threading
 from pathlib import Path
 from typing import Any
@@ -36,6 +39,7 @@ class TrayApplication:
         self._thread: threading.Thread | None = None
         self._icon: Any = None
         self._lock = threading.Lock()
+        self._pinterest_action_running = False
 
     def handle_status(self, status: dict[str, Any]) -> None:
         notify = False
@@ -46,13 +50,98 @@ class TrayApplication:
             self.status_text = format_status(status)
             icon = self._icon
         if icon is not None:
-            icon.title = f"FFP Amazon Crawler — {self.status_text}"[:127]
+            icon.title = f"FFP Crawler Agent — {self.status_text}"[:127]
             icon.update_menu()
             if notify:
                 icon.notify(
                     "Amazon requires a manual CAPTCHA. Complete it in the browser window; the task lease remains active.",
-                    "FFP Amazon Crawler",
+                    "FFP Crawler Agent",
                 )
+
+    def _notify(self, message: str, title: str = "FFP Crawler Agent") -> None:
+        icon = self._icon
+        if icon is not None:
+            try:
+                icon.notify(message, title)
+            except Exception:
+                pass
+
+    def _pinterest_login_script(self) -> Path:
+        return self.agent.project_root / "src" / "modules" / "pinterest-pod" / "server" / "pinterest" / "pinterest_browser_login.py"
+
+    def _pinterest_profile_dir(self) -> Path:
+        return self.agent.project_root / "src" / "modules" / "pinterest-pod" / "server" / "pinterest" / ".pinterest_browser_profile"
+
+    def _has_active_tasks(self) -> bool:
+        return int(self.agent.status_snapshot().get("activeTasks") or 0) > 0
+
+    def _run_pinterest_action(self, action: str) -> None:
+        if self._pinterest_action_running:
+            self._notify("Một thao tác Pinterest khác đang chạy.")
+            return
+        if self._has_active_tasks():
+            self._notify("Hãy chờ Agent cào xong hoặc tạm dừng công việc trước khi thay đổi phiên Pinterest.")
+            return
+        self._pinterest_action_running = True
+        try:
+            if action == "login":
+                script = self._pinterest_login_script()
+                if not script.is_file():
+                    self._notify(f"Không tìm thấy script đăng nhập: {script}")
+                    return
+                completed = subprocess.run(
+                    [sys.executable, str(script)],
+                    cwd=str(self.agent.project_root),
+                    check=False,
+                )
+                if completed.returncode == 0 and self.agent.pinterest_browser_logged_in():
+                    self._notify("Đăng nhập Pinterest thành công. Trạng thái sẽ cập nhật lên FFP trong vài giây.")
+                else:
+                    self._notify("Chưa đăng nhập Pinterest thành công. Hãy mở lại menu Agent và thử lại.")
+            elif action == "logout":
+                profile_dir = self._pinterest_profile_dir().resolve()
+                expected_parent = (self.agent.project_root / "src" / "modules" / "pinterest-pod" / "server" / "pinterest").resolve()
+                if profile_dir.parent != expected_parent or profile_dir.name != ".pinterest_browser_profile":
+                    self._notify("Từ chối xóa profile Pinterest ngoài thư mục Agent.")
+                    return
+                if profile_dir.exists():
+                    shutil.rmtree(profile_dir)
+                self._notify("Đã đăng xuất Pinterest khỏi Agent này.")
+        except Exception as error:
+            self._notify(f"Thao tác Pinterest thất bại: {error}")
+        finally:
+            self._pinterest_action_running = False
+            self.handle_status(self.agent.status_snapshot())
+
+    def _start_pinterest_action(self, action: str) -> None:
+        threading.Thread(
+            target=self._run_pinterest_action,
+            args=(action,),
+            name=f"ffp-pinterest-{action}",
+            daemon=True,
+        ).start()
+
+    def _login_pinterest(self, _icon: Any, _item: Any) -> None:
+        self._start_pinterest_action("login")
+
+    def _pinterest_status_text(self, _item: Any) -> str:
+        capabilities = self.status.get("capabilities") if isinstance(self.status.get("capabilities"), dict) else {}
+        return "Pinterest: Đã đăng nhập" if capabilities.get("pinterestBrowserLoggedIn") else "Pinterest: Chưa đăng nhập"
+
+    def _logout_pinterest(self, _icon: Any, _item: Any) -> None:
+        should_logout = True
+        if os.name == "nt":
+            import ctypes
+
+            response = ctypes.windll.user32.MessageBoxW(
+                0,
+                "Đăng xuất Pinterest trên Agent này? Các job đang chạy phải hoàn tất trước.",
+                "FFP Crawler Agent",
+                0x00000004 | 0x00000030,
+            )
+            should_logout = response == 6
+        if should_logout:
+            self._start_pinterest_action("logout")
 
     def _run_agent(self) -> None:
         loop = asyncio.new_event_loop()
@@ -120,15 +209,20 @@ class TrayApplication:
 
         menu = pystray.Menu(
             pystray.MenuItem(lambda _item: self.status_text, None, enabled=False),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem(self._pinterest_status_text, None, enabled=False),
+            pystray.MenuItem("Đăng nhập Pinterest", self._login_pinterest),
+            pystray.MenuItem("Đăng xuất / đổi tài khoản Pinterest", self._logout_pinterest),
+            pystray.Menu.SEPARATOR,
             pystray.MenuItem("Pause / Resume", self._toggle_pause),
             pystray.MenuItem("Stop & discard local work", self._stop_local_work),
             pystray.MenuItem("Open data folder", self._open_data_directory),
             pystray.MenuItem("Exit", self._exit),
         )
         self._icon = pystray.Icon(
-            "ffp-amazon-crawler",
+            "ffp-crawler-agent",
             self._create_icon_image(),
-            f"FFP Amazon Crawler — {self.status_text}"[:127],
+            f"FFP Crawler Agent — {self.status_text}"[:127],
             menu,
         )
         self.agent.on_status = self.handle_status

@@ -105,6 +105,8 @@ class DistributedCrawlerAgent:
         self._debug_log_path = config.data_directory / "agent-debug.jsonl"
         self._resources: dict[str, Any] = {}
         self._telemetry_losses = 0
+        self._task_activity: dict[str, dict[str, Any]] = {}
+        self._task_activity_lock = threading.Lock()
 
     def _debug_event(self, event: str, **details: Any) -> None:
         payload = {"timestamp": utc_iso(), "event": event, "clientId": self.client_id, **details}
@@ -138,6 +140,8 @@ class DistributedCrawlerAgent:
             "waitingCaptcha": self._captcha_waiting,
             "pendingUploads": len(self.store.pending_results()) + len(self.store.pending_products()),
             "isPaused": self._paused,
+            "capabilities": self._agent_capabilities(),
+            "currentTasks": self._current_tasks_snapshot(),
             "cache": self.cache.metrics_snapshot(),
             "observability": self._telemetry_snapshot(),
         }
@@ -312,7 +316,7 @@ class DistributedCrawlerAgent:
                         cache_generation=self.store.cache_generation(),
                         product_invalidation_generation=self.store.product_invalidation_generation(),
                         temporary_cleanup_generation=self.store.temporary_cleanup_generation(),
-                        pinterest_browser_logged_in=self._pinterest_browser_logged_in(),
+                        pinterest_browser_logged_in=self.pinterest_browser_logged_in(),
                     )))
                     acknowledgement = json.loads(await asyncio.wait_for(websocket.recv(), timeout=15))
                     if acknowledgement.get("type") != "hello_ack":
@@ -573,10 +577,7 @@ class DistributedCrawlerAgent:
         while True:
             await asyncio.to_thread(self.cache.maintain)
             self._resources = await asyncio.to_thread(self._sample_resources)
-            running = [
-                {"taskId": task_id, "leaseId": assignment["leaseId"]}
-                for task_id, assignment in self.active.items()
-            ]
+            running = self._current_tasks_snapshot()
             await self.outbound_queue.put({
                 "type": "heartbeat",
                 "status": "paused" if self._paused else (
@@ -584,6 +585,7 @@ class DistributedCrawlerAgent:
                 ),
                 "availableSlots": self._available_slots(),
                 "running": running,
+                "capabilities": self._agent_capabilities(),
                 "observability": self._telemetry_snapshot(),
             })
             await asyncio.sleep(HEARTBEAT_INTERVAL_SECONDS)
@@ -854,17 +856,59 @@ class DistributedCrawlerAgent:
         except Exception:
             pass
 
-    def _pinterest_browser_logged_in(self) -> bool:
+    def pinterest_browser_logged_in(self) -> bool:
         pod_server_dir = self.project_root / "src" / "modules" / "pinterest-pod" / "server"
         if pod_server_dir.is_dir() and str(pod_server_dir) not in sys.path:
             sys.path.insert(0, str(pod_server_dir))
         try:
             import pinterest_pod_bridge as pod_bridge
 
-            profile_dir = pod_bridge.resolve_browser_profile_dir()
+            profile_dir = pod_server_dir / "pinterest" / ".pinterest_browser_profile"
             return bool(pod_bridge.check_browser_profile_logged_in(profile_dir))
         except Exception:
             return False
+
+    def _agent_capabilities(self) -> dict[str, Any]:
+        return {
+            "amazon": True,
+            "pinterest": True,
+            "pinterestBrowserLoggedIn": self.pinterest_browser_logged_in(),
+        }
+
+    def _current_tasks_snapshot(self) -> list[dict[str, Any]]:
+        active_task_ids = set(self.active)
+        with self._task_activity_lock:
+            for stale_task_id in set(self._task_activity) - active_task_ids:
+                self._task_activity.pop(stale_task_id, None)
+            activities = {task_id: dict(activity) for task_id, activity in self._task_activity.items()}
+        snapshots: list[dict[str, Any]] = []
+        for task_id, assignment in list(self.active.items()):
+            settings = assignment.get("settings") if isinstance(assignment.get("settings"), dict) else {}
+            activity = activities.get(task_id, {})
+            queries = settings.get("custom_queries") if isinstance(settings.get("custom_queries"), list) else []
+            snapshots.append({
+                "taskId": task_id,
+                "jobId": str(assignment.get("jobId") or ""),
+                "leaseId": str(assignment.get("leaseId") or ""),
+                "channel": str(assignment.get("channel") or settings.get("channel") or "amazon"),
+                "stage": str(assignment.get("action") or settings.get("stage") or "crawl"),
+                "source": str(assignment.get("source") or ""),
+                "niche": str(settings.get("niche") or assignment.get("source") or ""),
+                "product": str(settings.get("product") or ""),
+                "queryCount": len(queries),
+                "message": str(activity.get("message") or "Đang chuẩn bị tác vụ trên Agent."),
+                "percent": max(0, min(100, int(activity.get("percent") or 0))),
+                "updatedAt": activity.get("updatedAt"),
+            })
+        return snapshots
+
+    def _update_task_activity(self, task_id: str, message: str, percent: int) -> None:
+        with self._task_activity_lock:
+            self._task_activity[task_id] = {
+                "message": message[:500],
+                "percent": max(0, min(100, int(percent))),
+                "updatedAt": utc_iso(),
+            }
 
     def _run_pinterest_batch(self, batch: list[dict[str, Any]], cancel_event: threading.Event, loop: asyncio.AbstractEventLoop) -> None:
         pod_server_dir = self.project_root / "src" / "modules" / "pinterest-pod" / "server"
@@ -888,6 +932,7 @@ class DistributedCrawlerAgent:
         def enqueue_progress(msg: str, percent: int = 50) -> None:
             if cancel_event.is_set():
                 return
+            self._update_task_activity(task_id, msg, percent)
             progress_payload = {
                 "phase": "pinterest",
                 "message": msg,

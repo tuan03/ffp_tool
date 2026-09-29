@@ -130,6 +130,7 @@ with tarfile.open(archive, "r:gz") as package:
 
 $VenvDirectory = Join-Path $AgentRoot ".venv"
 $VenvPython = Join-Path $VenvDirectory "Scripts\python.exe"
+$VenvPythonWindow = Join-Path $VenvDirectory "Scripts\pythonw.exe"
 Write-Host "[3/6] Thiet lap virtual environment..." -ForegroundColor Green
 if (-not (Test-Path -LiteralPath $VenvPython)) {
     & $PythonCmd -m venv $VenvDirectory
@@ -162,10 +163,40 @@ $launcher = @'
 @echo off
 title FFP Crawler Agent
 cd /d "%~dp0"
-".venv\Scripts\python.exe" scripts\amazon-crawler-agent.py --project-root .
-pause
+start "FFP Crawler Agent" ".venv\Scripts\pythonw.exe" scripts\amazon-crawler-agent.py --project-root .
 '@
-Set-Content -LiteralPath (Join-Path $AgentRoot "chay-agent.bat") -Value $launcher -Encoding ASCII
+$agentLauncher = Join-Path $AgentRoot "chay-agent.bat"
+Set-Content -LiteralPath $agentLauncher -Value $launcher -Encoding ASCII
+
+$loginLauncher = Join-Path $AgentRoot "dang-nhap-pinterest.bat"
+$shortcutShell = New-Object -ComObject WScript.Shell
+if (Test-Path -LiteralPath $loginLauncher) {
+    $shortcutTargets = @(
+        (Join-Path ([Environment]::GetFolderPath("Desktop")) "Dang nhap Pinterest FFP.lnk"),
+        (Join-Path ([Environment]::GetFolderPath("Programs")) "Dang nhap Pinterest FFP.lnk")
+    )
+    foreach ($shortcutPath in $shortcutTargets) {
+        $shortcut = $shortcutShell.CreateShortcut($shortcutPath)
+        $shortcut.TargetPath = $loginLauncher
+        $shortcut.WorkingDirectory = $AgentRoot
+        $shortcut.Description = "Dang nhap Pinterest cho FFP Crawler Agent"
+        $shortcut.Save()
+    }
+}
+
+$agentShortcutTargets = @(
+    (Join-Path ([Environment]::GetFolderPath("Desktop")) "FFP Crawler Agent.lnk"),
+    (Join-Path ([Environment]::GetFolderPath("Startup")) "FFP Crawler Agent.lnk")
+)
+foreach ($shortcutPath in $agentShortcutTargets) {
+    $shortcut = $shortcutShell.CreateShortcut($shortcutPath)
+    $shortcut.TargetPath = $VenvPythonWindow
+    $shortcut.Arguments = 'scripts\amazon-crawler-agent.py --project-root .'
+    $shortcut.WorkingDirectory = $AgentRoot
+    $shortcut.Description = "Khoi dong FFP Crawler Agent"
+    $shortcut.WindowStyle = 7
+    $shortcut.Save()
+}
 
 Write-Host ""
 Write-Host "==========================================================" -ForegroundColor Green
@@ -176,6 +207,9 @@ Write-Host " Dang nhap Pinterest: $AgentRoot\dang-nhap-pinterest.bat" -Foregroun
 Write-Host "==========================================================" -ForegroundColor Green
 
 if (-not $NoStart) {
-    Set-Location $AgentRoot
-    & $VenvPython (Join-Path $AgentRoot "scripts\amazon-crawler-agent.py") --project-root $AgentRoot
+    Start-Process -FilePath $VenvPythonWindow -ArgumentList @(
+        ('"{0}"' -f (Join-Path $AgentRoot "scripts\amazon-crawler-agent.py")),
+        "--project-root",
+        ('"{0}"' -f $AgentRoot)
+    ) -WorkingDirectory $AgentRoot -WindowStyle Hidden
 }

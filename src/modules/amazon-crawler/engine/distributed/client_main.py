@@ -33,7 +33,7 @@ def _resolve_config_path(explicit_path: Path | None) -> Path | None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="FFP distributed Amazon crawler client")
+    parser = argparse.ArgumentParser(description="FFP distributed crawler agent")
     parser.add_argument("--config", type=Path, help="Path to the agent JSON configuration file.")
     parser.add_argument("--project-root", type=Path, help="Crawler cache/profile root; defaults to the agent data directory.")
     parser.add_argument("--no-tray", action="store_true", help="Run in the foreground without a tray icon.")

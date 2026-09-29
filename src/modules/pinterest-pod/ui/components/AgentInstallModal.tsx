@@ -160,6 +160,7 @@ export function AgentInstallModal({
               </a>
               <p className="mt-2 text-xs leading-5 text-slate-400">
                 Người nhận mở link, tải <code>cai-agent.bat</code>, sau đó nhấp đúp vào file để cài và kết nối agent.
+                Sau khi cài, dùng biểu tượng FFP cạnh đồng hồ hoặc shortcut ngoài Desktop để đăng nhập Pinterest.
               </p>
             </div>
 

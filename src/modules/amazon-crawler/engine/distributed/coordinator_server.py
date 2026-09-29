@@ -72,7 +72,7 @@ async def read_request_body_limited(request: Request, *, maximum_bytes: int) -> 
 class ConnectionManager:
     def __init__(self) -> None:
         self.connections: dict[str, WebSocket] = {}
-        self.runtime: dict[str, dict[str, int]] = {}
+        self.runtime: dict[str, dict[str, Any]] = {}
         self.lock = asyncio.Lock()
         self.cache_requests: dict[str, dict[str, Any]] = {}
 
@@ -91,18 +91,71 @@ class ConnectionManager:
                 return True
             return False
 
-    async def update_runtime(self, client_id: str, *, active_tasks: int, available_slots: int) -> None:
+    async def update_runtime(
+        self,
+        client_id: str,
+        *,
+        active_tasks: int,
+        available_slots: int,
+        current_tasks: Any = None,
+        capabilities: Any = None,
+    ) -> None:
         async with self.lock:
             if client_id not in self.connections:
                 return
-            self.runtime[client_id] = {
+            previous = self.runtime.get(client_id, {})
+            runtime = {
                 "activeTasks": max(0, int(active_tasks)),
                 "availableSlots": max(0, int(available_slots)),
+                "currentTasks": self._bounded_current_tasks(current_tasks) if current_tasks is not None else list(previous.get("currentTasks") or []),
+                "capabilities": self._bounded_capabilities(capabilities) if capabilities is not None else dict(previous.get("capabilities") or {}),
+            }
+            self.runtime[client_id] = runtime
+
+    async def runtime_snapshot(self) -> dict[str, dict[str, Any]]:
+        async with self.lock:
+            return {
+                client_id: {
+                    **status,
+                    "currentTasks": [dict(task) for task in status.get("currentTasks") or []],
+                    "capabilities": dict(status.get("capabilities") or {}),
+                }
+                for client_id, status in self.runtime.items()
             }
 
-    async def runtime_snapshot(self) -> dict[str, dict[str, int]]:
-        async with self.lock:
-            return {client_id: dict(status) for client_id, status in self.runtime.items()}
+    @staticmethod
+    def _bounded_capabilities(value: Any) -> dict[str, bool]:
+        source = value if isinstance(value, dict) else {}
+        return {
+            key: bool(source.get(key))
+            for key in ("amazon", "pinterest", "pinterestBrowserLoggedIn")
+            if key in source
+        }
+
+    @staticmethod
+    def _bounded_current_tasks(value: Any) -> list[dict[str, Any]]:
+        if not isinstance(value, list):
+            return []
+        allowed_fields = (
+            "taskId", "jobId", "leaseId", "channel", "stage", "source", "niche",
+            "product", "queryCount", "message", "percent", "updatedAt",
+        )
+        tasks: list[dict[str, Any]] = []
+        for raw_task in value[:32]:
+            if not isinstance(raw_task, dict):
+                continue
+            task = {key: raw_task.get(key) for key in allowed_fields if key in raw_task}
+            for key in ("taskId", "jobId", "leaseId", "channel", "stage", "source", "niche", "product", "message", "updatedAt"):
+                if key in task:
+                    task[key] = str(task[key] or "")[:500]
+            for key in ("queryCount", "percent"):
+                if key in task:
+                    try:
+                        task[key] = max(0, int(task[key] or 0))
+                    except (TypeError, ValueError):
+                        task[key] = 0
+            tasks.append(task)
+        return tasks
 
     async def reserve_tasks(self, client_id: str, count: int) -> None:
         async with self.lock:
@@ -518,6 +571,14 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
                 "leasedTasks": client["activeTasks"],
                 "activeTasks": runtime.get(client["id"], {}).get("activeTasks", 0),
                 "availableSlots": runtime.get(client["id"], {}).get("availableSlots", 0),
+                "currentTasks": [
+                    {key: value for key, value in task.items() if key != "leaseId"}
+                    for task in runtime.get(client["id"], {}).get("currentTasks", [])
+                ],
+                "capabilities": {
+                    **(client.get("capabilities") or {}),
+                    **runtime.get(client["id"], {}).get("capabilities", {}),
+                },
             }
             for client in clients
         ]
@@ -1188,6 +1249,7 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
                 client_id,
                 active_tasks=max(0, maximum_slots - available_slots),
                 available_slots=available_slots,
+                capabilities=hello.get("capabilities"),
             )
             await websocket.send_json({
                 "type": "hello_ack", "protocolVersion": PROTOCOL_VERSION,
@@ -1226,6 +1288,8 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
                         client_id,
                         active_tasks=len(running),
                         available_slots=int(message.get("availableSlots") or 0),
+                        current_tasks=running,
+                        capabilities=message.get("capabilities"),
                     )
                     cancelled_job_ids = await asyncio.to_thread(
                         store.heartbeat,
@@ -1233,6 +1297,7 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
                         running,
                         str(message.get("status") or "online"),
                         message.get("observability"),
+                        message.get("capabilities"),
                     )
                     for cancelled_job_id in cancelled_job_ids:
                         await websocket.send_json({

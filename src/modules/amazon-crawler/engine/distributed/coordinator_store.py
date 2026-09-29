@@ -568,7 +568,14 @@ class CoordinatorStore(CoordinatorObservability):
         renewed = now + timedelta(seconds=LEASE_SECONDS)
         return min(renewed, deadline) if deadline else renewed
 
-    def heartbeat(self, client_id: str, running: list[dict[str, Any]], status: str = "online", telemetry: Any = None) -> list[str]:
+    def heartbeat(
+        self,
+        client_id: str,
+        running: list[dict[str, Any]],
+        status: str = "online",
+        telemetry: Any = None,
+        capabilities: Any = None,
+    ) -> list[str]:
         now = utc_now()
         cancelled_job_ids: set[str] = set()
         active_leases = {
@@ -584,6 +591,13 @@ class CoordinatorStore(CoordinatorObservability):
             client.last_seen_at = now
             if telemetry is not None:
                 client.capabilities = {**client.capabilities, "observability": bounded_agent_telemetry(telemetry)}
+            if isinstance(capabilities, dict):
+                live_capabilities = {
+                    key: bool(capabilities.get(key))
+                    for key in ("amazon", "pinterest", "pinterestBrowserLoggedIn")
+                    if key in capabilities
+                }
+                client.capabilities = {**client.capabilities, **live_capabilities}
             for active in running:
                 task_id = str(active.get("taskId") or "")
                 lease_id = str(active.get("leaseId") or "")

@@ -5,6 +5,7 @@ import { inferProductTypeFromNiche, packageDeliverablesForSeo, realPinterestPodC
 import { DEFAULT_PINTEREST_POD_SHOPIFY_SETTINGS } from "../types";
 import type {
   CandidateItem,
+  CrawlerClientSummary,
   DeliverablesData,
   JobDetailResponse,
   JobStatus,
@@ -23,6 +24,7 @@ import type {
 } from "../types";
 import { AgentInstallModal } from "./components/AgentInstallModal";
 import { CandidateReviewGrid } from "./components/CandidateReviewGrid";
+import { CrawlerAgentsPanel } from "./components/CrawlerAgentsPanel";
 import { HeaderBar } from "./components/HeaderBar";
 import { ImageLightboxModal, type LightboxImageItem } from "./components/ImageLightboxModal";
 import { InitForm } from "./components/InitForm";
@@ -54,6 +56,8 @@ export function PinterestPodStudio({
   const [isAgentConnected, setIsAgentConnected] = useState(false);
   const [agentName, setAgentName] = useState<string | undefined>(undefined);
   const [isAgentBrowserLoggedIn, setIsAgentBrowserLoggedIn] = useState(false);
+  const [crawlerAgents, setCrawlerAgents] = useState<readonly CrawlerClientSummary[]>([]);
+  const [isLoadingAgents, setIsLoadingAgents] = useState(true);
 
   // Form State
   const [niche, setNiche] = useState("Halloween spooky cute");
@@ -434,12 +438,20 @@ export function PinterestPodStudio({
 
     async function checkAgentStatus(): Promise<void> {
       try {
-        if (!client.getCrawlerClients) return;
+        if (!client.getCrawlerClients) {
+          setIsLoadingAgents(false);
+          return;
+        }
         const clients = await client.getCrawlerClients();
         if (!isMountedRef.current) return;
-        const activeAgent = clients.find(
+        setCrawlerAgents(clients);
+        setIsLoadingAgents(false);
+        const compatibleAgents = clients.filter(
           (c) => c.isConnected && (!c.capabilities || c.capabilities.pinterest !== false),
         );
+        const activeAgent = compatibleAgents.find((candidate) =>
+          candidate.currentTasks?.some((task) => task.jobId === jobId),
+        ) ?? compatibleAgents.find((candidate) => (candidate.activeTasks ?? 0) > 0) ?? compatibleAgents[0];
         if (activeAgent) {
           setIsAgentConnected(true);
           setAgentName(activeAgent.displayName || activeAgent.id);
@@ -451,6 +463,7 @@ export function PinterestPodStudio({
         }
       } catch {
         if (isMountedRef.current) {
+          setIsLoadingAgents(false);
           setIsAgentConnected(false);
           setAgentName(undefined);
           setIsAgentBrowserLoggedIn(false);
@@ -468,7 +481,7 @@ export function PinterestPodStudio({
         clearInterval(timer);
       }
     };
-  }, [client]);
+  }, [client, jobId]);
 
   async function refreshAuthStatus(): Promise<void> {
     try {
@@ -1028,6 +1041,12 @@ export function PinterestPodStudio({
         onOpenAgentInstall={() => setIsAgentInstallModalOpen(true)}
       />
 
+      <CrawlerAgentsPanel
+        agents={crawlerAgents}
+        isLoading={isLoadingAgents}
+        onOpenInstall={() => setIsAgentInstallModalOpen(true)}
+      />
+
       {/* TAB 1: Quét Trend & Khởi tạo Job */}
       {currentStage === 1 && (
         <div className="flex flex-col gap-5 animate-in fade-in duration-200">
@@ -1175,6 +1194,8 @@ export function PinterestPodStudio({
                 stepper={stepper}
                 logs={logs}
                 candidateCount={candidates.length}
+                agentName={agentName}
+                jobId={jobId}
               />
             </div>
           </div>
