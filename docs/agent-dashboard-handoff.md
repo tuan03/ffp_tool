@@ -3,7 +3,7 @@
 Summary
 - Added a light native Windows dashboard for Amazon and Pinterest tasks, task details, local activity/history, upload state, resource samples, and existing agent controls.
 - Manual launch opens the window; Windows auto-start uses `--start-minimized`. X/Escape hide to tray. A second launch activates the existing window without starting a duplicate crawler.
-- Work was implemented in `D:/Shopify_Workspace/Tool/ffp_tool-agent-dashboard` on `feature/tooling-add-agent-dashboard`, based on `origin/main` commit `9225756`. The original workspace and its agent-release branch were preserved.
+- Work was initially isolated on `feature/tooling-add-agent-dashboard`, based on `origin/main` commit `9225756`. At the user's request, dashboard commit `54386df` was cherry-picked as `eff3c33` into `feature/main-add-agent-release` in the primary workspace `D:/Shopify_Workspace/Tool/ffp_tool`.
 
 Changed files
 - `src/modules/amazon-crawler/engine/distributed/client_dashboard_window.py`: Tkinter/ttk dashboard, task/history filters, task details, copy controls, safe Stop confirmation, compact layout, and DPI awareness.
@@ -41,10 +41,22 @@ Remaining TODOs or risks
 - Installer compilation was not performed: Inno Setup 6 / `ISCC.exe` is unavailable. The installer source was updated; portable EXE packaging and launch were verified.
 - No live Amazon/Pinterest crawl was performed for this UI task. Progress/lifecycle behavior is tested deterministically; packaged launch is tested offline.
 - A CAPTCHA without an input identity is shown as a detection notice until the affected batch finishes, rather than incorrectly marking all inputs as blocked.
-- Integration with the separate agent-release branch must retain both its release/version changes and this branch's additive auto-start flag/Tk checks. No merge into `main` or push was performed.
-- The portable build uses the repository's safe example configuration. Use the existing configured `agent.json` or pass `--config` explicitly when running against your coordinator, and exit an older agent first when it uses the same data directory.
+- Integration into the agent-release branch retained its version-aware build and installer settings alongside the additive auto-start flag/Tk checks. No merge into `main` or push was performed. The user's explicit instruction to integrate into the current primary workspace overrides the usual separate-task-branch workflow for this integration.
+- The portable build uses the existing local configuration when available, otherwise the repository's safe example configuration. Use the configured `agent.json` or pass `--config` explicitly when running against your coordinator, and exit an older agent first when it uses the same data directory.
 
 Artifacts (untracked)
 - `artifacts/windows/FFPAmazonCrawlerAgent/FFPAmazonCrawlerAgent.exe`: distribute the complete surrounding portable folder.
-- `artifacts/windows/dashboard-preview.png`: native window preview with demo task metadata.
-- `.runtime/dashboard-npm-test.log`, `.runtime/dashboard-typecheck.log`, `.runtime/dashboard-web-build.log`, `.runtime/dashboard-agent-build.log`, `.runtime/dashboard-packaged-smoke.log`: current verification output.
+- `artifacts/windows/dashboard-preview.png` in the original dashboard worktree: native window preview with demo task metadata.
+- `.runtime/dashboard-npm-test.log`, `.runtime/dashboard-typecheck.log`, `.runtime/dashboard-web-build.log`, `.runtime/dashboard-agent-build.log`, `.runtime/dashboard-packaged-smoke.log` in the original dashboard worktree: initial verification output.
+
+Primary workspace integration verification
+- Scope: the 13 dashboard task files listed above; existing release work was preserved. No unrelated source or root configuration changes.
+- `python -m unittest discover -s src/modules/amazon-crawler/engine/tests -t src/modules/amazon-crawler -p test_agent_dashboard.py`: PASS, 27 tests with seven parent-process skips; native cases execute in the subprocess wrapper.
+- `npm test`: PASS, including 331 engine tests with eight documented skips and 302 gateway tests.
+- `npm run typecheck`: PASS.
+- `npm run build`: PASS, with a bundle-size warning.
+- `npm run build:agent`: PASS, rebuilt in the primary workspace.
+- Offline packaged EXE smoke: PASS for background launch, second-launch activation without duplication, X hiding/reopening, and additive SQLite history.
+- `git diff --check`: PASS.
+- Logs: `.runtime/dashboard-integration-test.log`, `.runtime/dashboard-integration-typecheck.log`, `.runtime/dashboard-integration-build.log`, `.runtime/dashboard-integration-agent-build.log`, and `.runtime/dashboard-integration-packaged-smoke.log` in `D:/Shopify_Workspace/Tool/ffp_tool`.
+- Contract/environment/route changes and remaining installer/live-crawl limitations are unchanged from the notes above.
