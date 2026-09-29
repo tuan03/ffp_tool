@@ -435,7 +435,7 @@ async def extension_socket(websocket: WebSocket):
 
                 print(
                     f"Extension job error [{job_id}]: "
-                    f"{error_message}"
+                    f"{ascii(error_message)}"
                 )
 
                 if not job:

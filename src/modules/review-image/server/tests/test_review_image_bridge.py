@@ -60,6 +60,33 @@ def test_image_edit_sends_two_ordered_images_and_returns_image():
     assert server.jobs[message["job_id"]]["result"] is None
 
 
+def test_extension_error_keeps_unicode_message_on_windows_console(monkeypatch):
+    def print_to_windows_console(*values):
+        " ".join(str(value) for value in values).encode("cp1252")
+
+    monkeypatch.setattr(server, "print", print_to_windows_console, raising=False)
+    data = base64.b64encode(b"image-bytes").decode()
+    message_text = "Không tìm thấy nút gửi"
+    with TestClient(server.app) as client:
+        with client.websocket_connect(f"/ws/extension?token={server.BRIDGE_TOKEN}") as socket:
+            socket.receive_json()
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                request = pool.submit(
+                    client.post,
+                    "/image-edit",
+                    json={"prompt": "replace product", "images": [
+                        {"name": "template", "mime_type": "image/png", "data": data},
+                        {"name": "product", "mime_type": "image/png", "data": data},
+                    ]},
+                    headers={"X-Bridge-Token": server.BRIDGE_TOKEN},
+                )
+                job = socket.receive_json()
+                socket.send_json({"type": "job_error", "job_id": job["job_id"], "error": message_text})
+                response = request.result(timeout=3)
+    assert response.status_code == 502
+    assert response.json()["detail"] == message_text
+
+
 def test_image_edit_rejects_missing_or_unordered_images():
     with TestClient(server.app) as client:
         response = client.post(

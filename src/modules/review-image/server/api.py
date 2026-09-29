@@ -141,4 +141,4 @@ def download_job_image(job_id: str, x_bridge_token: str | None = Header(default=
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(app, host="127.0.0.1", port=BRIDGE_PORT)
+    uvicorn.run(app, host="127.0.0.1", port=BRIDGE_PORT, access_log=False, log_level="warning")
