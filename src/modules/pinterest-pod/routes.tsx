@@ -5,11 +5,18 @@ import { PinterestPodStudio } from "./ui/PinterestPodStudio";
 export function createPinterestPodRoutes(
   client?: PinterestPodClient,
   onHandoverToSeo?: (payload: PinterestPodDeliverables, serverViewModels?: readonly unknown[]) => Promise<void>,
+  agentInstallServerUrl?: string,
 ): readonly RouteObject[] {
   return [
     {
       path: "pinterest-pod",
-      element: <PinterestPodStudio client={client} onHandoverToSeo={onHandoverToSeo} />,
+      element: (
+        <PinterestPodStudio
+          client={client}
+          onHandoverToSeo={onHandoverToSeo}
+          agentInstallServerUrl={agentInstallServerUrl}
+        />
+      ),
     },
   ];
 }

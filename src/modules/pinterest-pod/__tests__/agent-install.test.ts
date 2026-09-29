@@ -8,11 +8,11 @@ test("buildAgentInstallDetails creates shareable Windows installer values", () =
 
   assert.equal(details.serverUrl, "http://192.168.1.209:3010");
   assert.equal(details.installerUrl, "http://192.168.1.209:3010/install-agent.ps1");
+  assert.equal(details.batchDownloadUrl, "http://192.168.1.209:3010/cai-agent.bat");
   assert.equal(
     details.powershellCommand,
     '$env:FFP_SERVER_URL="http://192.168.1.209:3010"; irm "$env:FFP_SERVER_URL/install-agent.ps1" | iex',
   );
-  assert.match(details.batchFileContent, /FFP_SERVER_URL=http:\/\/192\.168\.1\.209:3010/);
   assert.equal(details.isLoopback, false);
 });
 

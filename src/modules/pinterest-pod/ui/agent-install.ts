@@ -1,8 +1,8 @@
 export interface AgentInstallDetails {
   readonly serverUrl: string;
   readonly installerUrl: string;
+  readonly batchDownloadUrl: string;
   readonly powershellCommand: string;
-  readonly batchFileContent: string;
   readonly isLoopback: boolean;
 }
 
@@ -44,24 +44,14 @@ export function buildAgentInstallDetails(serverUrlInput: string): AgentInstallDe
 
   const serverUrl = parsedUrl.origin;
   const installerUrl = `${serverUrl}/install-agent.ps1`;
+  const batchDownloadUrl = `${serverUrl}/cai-agent.bat`;
   const powershellCommand = `$env:FFP_SERVER_URL="${serverUrl}"; irm "$env:FFP_SERVER_URL/install-agent.ps1" | iex`;
-  const batchFileContent = [
-    "@echo off",
-    "setlocal",
-    "title Cai Dat FFP Crawler Agent",
-    `set "FFP_SERVER_URL=${serverUrl}"`,
-    "echo Dang cai FFP Crawler Agent tu %FFP_SERVER_URL%...",
-    "powershell -NoProfile -ExecutionPolicy Bypass -Command \"irm ($env:FFP_SERVER_URL + '/install-agent.ps1') | iex\"",
-    "if errorlevel 1 echo Cai dat that bai. Vui long kiem tra ket noi va thu lai.",
-    "pause",
-    "",
-  ].join("\r\n");
 
   return {
     serverUrl,
     installerUrl,
+    batchDownloadUrl,
     powershellCommand,
-    batchFileContent,
     isLoopback: isLoopbackHostname(parsedUrl.hostname),
   };
 }

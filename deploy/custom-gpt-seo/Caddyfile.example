@@ -1,4 +1,9 @@
 {$SEO_DOMAIN} {
+    @agentInstaller path /install-agent.ps1 /install-agent.sh /cai-agent.bat /ffp-crawler-agent.tar.gz /ffp-crawler-agent.tar.gz.sha256
+    handle @agentInstaller {
+        reverse_proxy 127.0.0.1:3010
+    }
+
     @administration path /api/v1/gpt-seo/admin/* /api/shopify /api/auto-seo/* /api/stores/*
     handle @administration {
         basic_auth {

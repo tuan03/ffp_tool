@@ -36,11 +36,13 @@ import { TrendClusterDiscovery } from "./components/TrendClusterDiscovery";
 interface PinterestPodStudioProps {
   readonly client?: PinterestPodClient;
   readonly onHandoverToSeo?: (payload: PinterestPodDeliverables, serverViewModels?: readonly unknown[]) => Promise<void>;
+  readonly agentInstallServerUrl?: string;
 }
 
 export function PinterestPodStudio({
   client: injectedClient,
   onHandoverToSeo,
+  agentInstallServerUrl,
 }: PinterestPodStudioProps = {}): React.JSX.Element {
   const client = useMemo(() => injectedClient ?? realPinterestPodClient, [injectedClient]);
 
@@ -1286,6 +1288,7 @@ export function PinterestPodStudio({
       <AgentInstallModal
         isOpen={isAgentInstallModalOpen}
         onClose={() => setIsAgentInstallModalOpen(false)}
+        initialServerUrl={agentInstallServerUrl}
       />
     </div>
   );

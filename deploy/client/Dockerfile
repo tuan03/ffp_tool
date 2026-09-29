@@ -15,6 +15,8 @@ COPY package.json ./
 RUN npm install
 
 # Copy source and build
+ARG VITE_AGENT_INSTALL_URL=https://ffp.b6-team.site
+ENV VITE_AGENT_INSTALL_URL=${VITE_AGENT_INSTALL_URL}
 COPY . .
 RUN npm run build && \
     node scripts/package-agent-source.mjs /tmp/ffp-agent-package && \

@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { createBrowserRouter, Navigate, RouterProvider } from "react-router-dom";
 
+import { agentInstallServerUrl } from "../../config/agent-install-url";
 import { environment } from "../../config/environment";
 import { createCustomGptClient, createCustomGptSeoRoutes, getCustomGptClient } from "../../modules/custom-gpt-seo";
 import { AppLayout } from "../../layouts/AppLayout";
@@ -150,7 +151,7 @@ export function AppRoutes({
       }
     };
 
-    const podRoutes = createPinterestPodRoutes(podClient, handlePinterestHandover);
+    const podRoutes = createPinterestPodRoutes(podClient, handlePinterestHandover, agentInstallServerUrl);
 
     const handleAutoSeoHandover = async (
       shopifyProducts: readonly ShopifyProductForAutoSeoUi[],

@@ -5,9 +5,10 @@ import { buildAgentInstallDetails } from "../agent-install";
 export interface AgentInstallModalProps {
   readonly isOpen: boolean;
   readonly onClose: () => void;
+  readonly initialServerUrl?: string;
 }
 
-type CopiedValue = "command" | "link" | null;
+type CopiedValue = "command" | "download-link" | null;
 
 async function copyTextToClipboard(value: string): Promise<void> {
   if (navigator.clipboard) {
@@ -31,8 +32,12 @@ async function copyTextToClipboard(value: string): Promise<void> {
   if (!didCopy) throw new Error("Clipboard is unavailable.");
 }
 
-export function AgentInstallModal({ isOpen, onClose }: AgentInstallModalProps): React.JSX.Element | null {
-  const [serverUrl, setServerUrl] = useState(() => window.location.origin);
+export function AgentInstallModal({
+  isOpen,
+  onClose,
+  initialServerUrl,
+}: AgentInstallModalProps): React.JSX.Element | null {
+  const [serverUrl, setServerUrl] = useState(() => initialServerUrl ?? window.location.origin);
   const [copiedValue, setCopiedValue] = useState<CopiedValue>(null);
   const [hasCopyError, setHasCopyError] = useState(false);
   const installState = useMemo(() => {
@@ -71,21 +76,6 @@ export function AgentInstallModal({ isOpen, onClose }: AgentInstallModalProps): 
     }
   }
 
-  function handleDownloadBatch(): void {
-    if (!installState.details) return;
-
-    const objectUrl = URL.createObjectURL(new Blob([installState.details.batchFileContent], {
-      type: "application/x-bat",
-    }));
-    const downloadLink = document.createElement("a");
-    downloadLink.href = objectUrl;
-    downloadLink.download = "cai-ffp-agent.bat";
-    document.body.appendChild(downloadLink);
-    downloadLink.click();
-    downloadLink.remove();
-    URL.revokeObjectURL(objectUrl);
-  }
-
   return (
     <div
       role="dialog"
@@ -100,7 +90,7 @@ export function AgentInstallModal({ isOpen, onClose }: AgentInstallModalProps): 
               Kết nối máy cào Pinterest
             </h2>
             <p className="mt-1 text-xs leading-5 text-slate-400">
-              Gửi lệnh hoặc file BAT cho máy Windows sẽ chạy tác vụ cào. Máy đó không cần chứa source code FFP.
+              Sao chép link bên dưới và gửi cho người cài. Họ chỉ cần tải file BAT, mở file và chờ cài đặt hoàn tất.
             </p>
           </div>
           <button
@@ -159,34 +149,41 @@ export function AgentInstallModal({ isOpen, onClose }: AgentInstallModalProps): 
 
         {installState.details ? (
           <>
-            <div className="mt-4 rounded-xl border border-slate-700 bg-slate-950 p-3">
-              <p className="mb-2 text-xs font-semibold text-slate-300">Lệnh cài đặt Windows PowerShell</p>
-              <code className="block overflow-x-auto whitespace-pre text-xs leading-5 text-cyan-300">
-                {installState.details.powershellCommand}
-              </code>
+            <div className="mt-4 rounded-xl border border-emerald-700/70 bg-emerald-950/25 p-4">
+              <p className="text-sm font-bold text-emerald-300">Link gửi cho người cài</p>
+              <a
+                href={installState.details.batchDownloadUrl}
+                download="cai-agent.bat"
+                className="mt-2 block break-all rounded-lg bg-slate-950 px-3 py-2 font-mono text-sm text-cyan-300 underline decoration-cyan-700 underline-offset-4 hover:text-cyan-200"
+              >
+                {installState.details.batchDownloadUrl}
+              </a>
+              <p className="mt-2 text-xs leading-5 text-slate-400">
+                Người nhận mở link, tải <code>cai-agent.bat</code>, sau đó nhấp đúp vào file để cài và kết nối agent.
+              </p>
             </div>
 
             <div className="mt-4 flex flex-wrap gap-2">
               <button
                 type="button"
-                onClick={() => void handleCopy(installState.details.powershellCommand, "command")}
+                onClick={() => void handleCopy(installState.details.batchDownloadUrl, "download-link")}
                 className="rounded-lg bg-cyan-600 px-3 py-2 text-xs font-semibold text-white transition hover:bg-cyan-500"
               >
-                {copiedValue === "command" ? "✓ Đã sao chép" : "Sao chép lệnh cài"}
+                {copiedValue === "download-link" ? "✓ Đã sao chép" : "Sao chép link gửi"}
               </button>
-              <button
-                type="button"
-                onClick={handleDownloadBatch}
+              <a
+                href={installState.details.batchDownloadUrl}
+                download="cai-agent.bat"
                 className="rounded-lg border border-slate-600 bg-slate-800 px-3 py-2 text-xs font-semibold text-slate-200 transition hover:bg-slate-700"
               >
-                Tải file BAT để gửi
-              </button>
+                Tải thử file BAT
+              </a>
               <button
                 type="button"
-                onClick={() => void handleCopy(installState.details.installerUrl, "link")}
+                onClick={() => void handleCopy(installState.details.powershellCommand, "command")}
                 className="rounded-lg border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-300 transition hover:bg-slate-800"
               >
-                {copiedValue === "link" ? "✓ Đã sao chép" : "Sao chép link script"}
+                {copiedValue === "command" ? "✓ Đã sao chép" : "Sao chép lệnh PowerShell"}
               </button>
             </div>
             {hasCopyError ? (
@@ -194,6 +191,15 @@ export function AgentInstallModal({ isOpen, onClose }: AgentInstallModalProps): 
                 Trình duyệt không cho truy cập clipboard. Hãy bôi đen lệnh phía trên và sao chép thủ công.
               </p>
             ) : null}
+
+            <details className="mt-4 rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+              <summary className="cursor-pointer text-xs font-semibold text-slate-400">
+                Xem lệnh PowerShell thay thế
+              </summary>
+              <code className="mt-3 block overflow-x-auto whitespace-pre text-xs leading-5 text-cyan-300">
+                {installState.details.powershellCommand}
+              </code>
+            </details>
           </>
         ) : null}
 

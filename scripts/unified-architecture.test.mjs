@@ -122,6 +122,7 @@ test("server and client deployment assets are properly configured", async () => 
     dockerIgnore,
     coordinator,
     pinterestServer,
+    publicProxy,
   ] = await Promise.all([
     readFile("deploy/server/Dockerfile", "utf8"),
     readFile("deploy/client/Dockerfile", "utf8"),
@@ -132,6 +133,7 @@ test("server and client deployment assets are properly configured", async () => 
     readFile(".dockerignore", "utf8"),
     readFile("src/modules/amazon-crawler/engine/distributed/coordinator_server.py", "utf8"),
     readFile("src/modules/pinterest-pod/server/server.py", "utf8"),
+    readFile("deploy/custom-gpt-seo/Caddyfile.example", "utf8"),
   ]);
 
   assert.match(serverDocker, /node:22-bookworm-slim/);
@@ -160,7 +162,11 @@ test("server and client deployment assets are properly configured", async () => 
   assert.match(clientNginx, /proxy_set_header Upgrade \$http_upgrade/);
   assert.match(clientNginx, /install-agent\.ps1/);
   assert.match(clientNginx, /ffp-crawler-agent\.tar\.gz/);
+  assert.match(clientNginx, /Content-Disposition.*cai-agent\.bat/);
+  assert.match(clientNginx, /FFP_SERVER_URL=.*agent_server_scheme/);
   assert.match(clientDocker, /package-agent-source\.mjs/);
+  assert.match(publicProxy, /@agentInstaller path .*\/cai-agent\.bat/);
+  assert.match(publicProxy, /handle @agentInstaller \{\s*reverse_proxy 127\.0\.0\.1:3010/);
 
   assert.match(compose, /PINTEREST_POD_PORT:\s*8768/);
   assert.match(compose, /PINTEREST_COORDINATOR_URL:\s*http:\/\/127\.0\.0\.1:8766/);

@@ -102,18 +102,16 @@ Hệ thống sẽ tự động:
 Để máy người cào (máy nhân viên / máy cá nhân) có thể kết nối vào hệ thống và nhận việc cào Amazon & Pinterest:
 
 ### Cách 1: Chạy file cài đặt nhanh (Windows)
-Tải `cai-agent.bat` từ server rồi mở file. Có thể truyền địa chỉ server làm tham số:
+Mở link `cai-agent.bat` của server, tải file rồi nhấp đúp để cài. Server sinh file BAT với đúng domain/IP của link tải, nên không cần truyền tham số thủ công:
 ```text
 https://ffp.b6-team.site/cai-agent.bat
 ```
-```cmd
-cai-agent.bat https://ffp.b6-team.site
+Trong cùng Wi-Fi, gửi link dùng IP LAN của máy chạy Docker:
+```text
+http://192.168.1.10:3010/cai-agent.bat
 ```
 
-Trong cùng Wi-Fi, thay domain bằng IP LAN của máy chạy Docker:
-```cmd
-cai-agent.bat http://192.168.1.10:3010
-```
+Đặt `VITE_AGENT_INSTALL_URL=http://<IP-LAN>:3010` trong `.env` trước khi build local để UI Pinterest hiển thị sẵn link LAN. Trên VPS, đặt biến này thành domain HTTPS công khai. Reverse proxy công khai phải miễn Basic Auth cho năm endpoint installer được khai báo trong `deploy/custom-gpt-seo/Caddyfile.example`.
 
 ### Cách 2: Chạy trực tiếp qua 1 dòng lệnh PowerShell (Remote 1-Liner)
 Người cào mở PowerShell trên Windows và dán 1 dòng lệnh duy nhất:
