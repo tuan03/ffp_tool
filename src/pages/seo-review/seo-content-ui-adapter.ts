@@ -9,7 +9,7 @@ import type {
   SeoContentImageOutput,
   SeoContentOutput,
 } from "../../modules/seo-content";
-import { seoContentMockData } from "../../modules/seo-content";
+import { seoContentMockData } from "../../modules/seo-content/browser";
 import type {
   ApprovedProductPatch,
   ApprovedProductUpdate,
