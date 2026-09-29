@@ -1,0 +1,7 @@
+{
+  "prompt_input": "//div[@contenteditable='true' and @data-virtualkeyboard='true'] | //div[@contenteditable='true' and @role='textbox']",
+  "send_button": "//button[@data-testid='send-button'] | //button[@aria-label='Send prompt']",
+  "stop_button": "//button[@data-testid='stop-button'] | //button[contains(@aria-label, 'Stop')]",
+  "assistant_messages": "//div[@data-message-author-role='assistant']",
+  "new_chat_button": "//a[@href='/' and (@data-testid='create-new-chat-button' or @aria-label='New chat' or .//span[normalize-space()='New chat'])] | //button[@data-testid='create-new-chat-button' or @aria-label='New chat']"
+}

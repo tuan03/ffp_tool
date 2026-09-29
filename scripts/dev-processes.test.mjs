@@ -15,6 +15,7 @@ test("development services launch directly without nested npm or command shells"
       { name: "web", command: "node-test" },
       { name: "coordinator", command: "python-test" },
       { name: "pipeline", command: "node-test" },
+      { name: "review-image-bridge", command: "python-test" },
     ],
   );
   assert.equal(
@@ -38,4 +39,16 @@ test("development stack includes the Shopify pipeline worker", () => {
     "tsx",
     "scripts/shopify-pipeline-worker.ts",
   ]);
+});
+
+test("development stack starts the review image bridge on a separate local port", () => {
+  const specs = getDevelopmentProcessSpecs({
+    nodeExecutable: "node-test",
+    pythonExecutable: "python-test",
+  });
+  const bridge = specs.find(({ name }) => name === "review-image-bridge");
+
+  assert.ok(bridge);
+  assert.equal(bridge.command, "python-test");
+  assert.deepEqual(bridge.args, ["src/modules/review-image/server/api.py"]);
 });

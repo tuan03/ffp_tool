@@ -9,6 +9,7 @@ import { GatewayDispatcher } from "./dispatcher";
 import { handleAutoSeoHttpRequest } from "./auto-seo-handler";
 import { handleAmazonReviewsHttpRequest } from "./amazon-reviews-handler";
 import { handleSeoReviewHttpRequest } from "./seo-review-handler";
+import { handleReviewImageHttpRequest } from "./review-image-handler";
 import {
   handlePinterestPodDirectShopifySyncHttpRequest,
   handlePinterestPodSeoHttpRequest,
@@ -36,6 +37,7 @@ export interface GatewayServerOptions {
   readonly operatorUsername?: string;
   readonly operatorPassword?: string;
   readonly maxBodyBytes?: number;
+  readonly reviewImageBridgeBaseUrl?: string;
 }
 
 function isOperatorAuthorized(
@@ -127,6 +129,14 @@ export function startGatewayServer(
     }
     if (hasOperatorAuthentication && !url.startsWith("/api/") && !isAuthenticatedOperator) {
       requestOperatorAuthentication(res);
+      return;
+    }
+    if (url.startsWith("/api/review-images/")) {
+      await handleReviewImageHttpRequest(req, res, {
+        authToken,
+        bridgeToken: env.REVIEW_IMAGE_BRIDGE_TOKEN || process.env.REVIEW_IMAGE_BRIDGE_TOKEN || "change-this-token",
+        bridgeBaseUrl: options.reviewImageBridgeBaseUrl,
+      });
       return;
     }
     if (url.startsWith("/api/v1/gpt-seo/")) {
