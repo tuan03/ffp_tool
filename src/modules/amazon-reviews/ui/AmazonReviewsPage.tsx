@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 
+import { hasUsableReviewContext } from "../product-context";
 import type { AmazonReview, AmazonReviewJob, ReviewClient, ReviewProduct, ReviewShopifyAccess } from "../types";
 
 interface AmazonReviewsPageProps {
@@ -67,6 +68,7 @@ export function AmazonReviewsPage({ client, shopify }: AmazonReviewsPageProps): 
   }, [client, jobId, job?.status, productQuery]);
 
   const reviews = useMemo(() => [...(job?.reviewData.reviews ?? []), ...(job?.samples ?? [])], [job]);
+  const hasAiContext = hasUsableReviewContext(job?.reviewData.context);
   const visibleReviews = reviews.filter((review) =>
     review.rating >= minRating && (reviewFilter === "all" || (reviewFilter === "ai") === review.synthetic));
 
@@ -93,12 +95,13 @@ export function AmazonReviewsPage({ client, shopify }: AmazonReviewsPageProps): 
   }
 
   async function handleGenerateSamples(): Promise<void> {
-    if (!job?.reviewData.context) { setError("Cần ngữ cảnh sản phẩm trước khi tạo review AI."); return; }
+    const context = job?.reviewData.context;
+    if (!job || !hasUsableReviewContext(context)) { setError("Chưa có dữ kiện sản phẩm đủ dùng để tạo review AI. Hãy crawl lại sau khi xử lý đăng nhập hoặc CAPTCHA."); return; }
     setIsBusy(true); setError(""); setNotice("");
     try {
       const generated = await client.generate({
         asin: job.asin, count: sampleCount, startIndex: job.samples.length + 1,
-        product: job.reviewData.context, sourceReviews: job.reviewData.reviews ?? [], priorSamples: job.samples,
+        product: context, sourceReviews: job.reviewData.reviews ?? [], priorSamples: job.samples,
       });
       await client.saveSamples(job.jobId, generated.samples);
       setJob(await client.get(job.jobId));
@@ -150,7 +153,11 @@ export function AmazonReviewsPage({ client, shopify }: AmazonReviewsPageProps): 
         <p className="mt-1 text-slate-400">{job.progress?.message || job.reviewData.stopReason || "Đang chờ agent"}</p>
         {job.reviewData.stopReason === "captcha" || job.reviewData.stopReason === "signin" ? <p className="mt-2 text-amber-300">Mở browser của crawler agent để xử lý đăng nhập hoặc CAPTCHA, rồi chạy lại job.</p> : null}
         {job.error ? <p className="mt-2 text-rose-300">Agent gặp lỗi khi crawl. Kiểm tra trạng thái agent rồi chạy lại job.</p> : null}
-        {job.reviewData.context?.title ? <p className="mt-2">Sản phẩm: {job.reviewData.context.title}</p> : null}
+        {hasAiContext ? <details className="mt-2 rounded border border-slate-700 p-2"><summary className="cursor-pointer">Ngữ cảnh sản phẩm dùng cho AI: {job.reviewData.context?.title || job.asin}</summary>
+          {job.reviewData.context?.description ? <p className="mt-2">Mô tả: {job.reviewData.context.description}</p> : null}
+          {job.reviewData.context?.bullets?.length ? <p className="mt-2">Điểm nổi bật: {job.reviewData.context.bullets.join(" · ")}</p> : null}
+          {Object.keys(job.reviewData.context?.details ?? {}).length ? <p className="mt-2">Chi tiết: {Object.entries(job.reviewData.context?.details ?? {}).map(([name, value]) => `${name}: ${value}`).join(" · ")}</p> : null}
+        </details> : <p className="mt-2 text-amber-300">Chưa lấy được ngữ cảnh sản phẩm đủ dùng cho AI. Review thật vẫn có thể xem và xuất file.</p>}
       </div> : null}
       {job ? <div className="grid gap-4 lg:grid-cols-2">
         <section className="space-y-3 rounded-xl border border-slate-800 bg-slate-900 p-4">
@@ -170,7 +177,7 @@ export function AmazonReviewsPage({ client, shopify }: AmazonReviewsPageProps): 
       </div> : null}
       {job ? <section className="space-y-4 rounded-xl border border-slate-800 bg-slate-900 p-4">
         <h2 className="font-semibold">Tạo mẫu AI và xuất XLSX</h2>
-        <div className="flex flex-wrap items-end gap-3"><label className="grid gap-1 text-sm">Số mẫu AI<input className="w-28 rounded bg-slate-950 p-2" type="number" min="1" max="50" value={sampleCount} onChange={(event) => setSampleCount(Number(event.target.value))} /></label><button type="button" className="rounded bg-violet-700 px-4 py-2 disabled:opacity-50" disabled={isBusy || !job.reviewData.context} onClick={() => void handleGenerateSamples()}>Tạo review AI cho QA</button></div>
+        <div className="flex flex-wrap items-end gap-3"><label className="grid gap-1 text-sm">Số mẫu AI<input className="w-28 rounded bg-slate-950 p-2" type="number" min="1" max="50" value={sampleCount} onChange={(event) => setSampleCount(Number(event.target.value))} /></label><button type="button" className="rounded bg-violet-700 px-4 py-2 disabled:opacity-50" disabled={isBusy || !hasAiContext} onClick={() => void handleGenerateSamples()}>Tạo review AI cho QA</button></div>
         <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={randomizeReviewCount} onChange={(event) => setRandomizeReviewCount(event.target.checked)} />Số review ngẫu nhiên theo product</label>
         {randomizeReviewCount ? <label className="grid max-w-48 gap-1 text-sm">Tối thiểu mỗi product<input className="rounded bg-slate-950 p-2" type="number" min="1" value={minReviewsPerProduct} onChange={(event) => setMinReviewsPerProduct(Number(event.target.value))} /></label> : null}
         <label className="grid gap-1 text-sm">Link ảnh bổ sung (mỗi link một dòng)<textarea className="min-h-20 rounded bg-slate-950 p-2" value={extraPictureText} onChange={(event) => setExtraPictureText(event.target.value)} /></label>
