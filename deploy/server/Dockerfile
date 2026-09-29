@@ -12,6 +12,8 @@ ENV NODE_ENV=production \
     COORDINATOR_PORT=8766 \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
+    PYTHONUTF8=1 \
+    PYTHONIOENCODING=utf-8 \
     PATH="/opt/venv/bin:$PATH"
 
 # Install Python 3, build tools for native modules (better-sqlite3, psycopg), and curl for healthcheck

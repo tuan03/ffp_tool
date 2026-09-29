@@ -112,6 +112,17 @@ class AgentLimitsTests(unittest.TestCase):
 
         self.assertEqual(hello["availableSlots"], 2)
         self.assertEqual(hello["maxConcurrentInputs"], 4)
+        self.assertFalse(hello["capabilities"]["pinterestBrowserLoggedIn"])
+
+        logged_in_hello = hello_message(
+            client_id="client-b",
+            display_name="Crawler B",
+            available_slots=1,
+            max_concurrent_inputs=1,
+            limits=AgentLimits(),
+            pinterest_browser_logged_in=True,
+        )
+        self.assertTrue(logged_in_hello["capabilities"]["pinterestBrowserLoggedIn"])
 
 
 class ClientTrayTests(unittest.TestCase):

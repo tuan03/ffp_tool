@@ -111,6 +111,8 @@ export interface InitFormProps {
   readonly onSelectedInterestsChange?: (interests: readonly string[]) => void;
   /** Trend discovery trigger */
   readonly onDiscoverTrends?: () => void;
+  readonly onSuggestThemes?: () => void;
+  readonly canDiscoverOfficialTrends?: boolean;
   readonly isDiscoveringTrends?: boolean;
 }
 
@@ -139,6 +141,8 @@ export function InitForm({
   selectedInterests,
   onSelectedInterestsChange,
   onDiscoverTrends,
+  onSuggestThemes,
+  canDiscoverOfficialTrends = false,
   isDiscoveringTrends = false,
 }: InitFormProps): React.JSX.Element {
   const [isAdvancedOpen, setIsAdvancedOpen] = useState(false);
@@ -555,11 +559,11 @@ export function InitForm({
       </div>
 
       {/* Main Action Buttons */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
         <button
           type="button"
           onClick={onDiscoverTrends ?? onStartCrawl}
-          disabled={isBusy || !niche.trim()}
+          disabled={isBusy || !niche.trim() || !canDiscoverOfficialTrends}
           className="flex flex-col items-center justify-center gap-0.5 rounded-xl bg-gradient-to-r from-cyan-600 via-blue-600 to-indigo-600 p-3 text-white shadow-lg shadow-cyan-500/20 transition hover:from-cyan-500 hover:to-indigo-500 hover:shadow-cyan-500/35 disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
         >
           <div className="flex items-center gap-2 text-sm font-bold">
@@ -567,11 +571,28 @@ export function InitForm({
             <span>
               {isDiscoveringTrends
                 ? "Đang phân tích xu hướng..."
-                : `Khám phá Xu hướng (${totalCalculatedQueries} API calls)`}
+                : `Pinterest Trends chính thức (${totalCalculatedQueries} API calls)`}
             </span>
           </div>
           <span className="text-[10px] text-cyan-200/90 font-normal">
-            Quét song song {totalCalculatedQueries} cells, AI gộp dữ liệu & lọc chuẩn in ấn
+            {canDiscoverOfficialTrends
+              ? `Dùng OAuth và dữ liệu Pinterest API thật`
+              : "Cần kết nối Pinterest OAuth trước"}
+          </span>
+        </button>
+
+        <button
+          type="button"
+          onClick={onSuggestThemes}
+          disabled={isBusy || !niche.trim()}
+          className="flex flex-col items-center justify-center gap-0.5 rounded-xl border border-amber-500/50 bg-amber-950/30 p-3 text-amber-300 shadow transition hover:border-amber-400 hover:bg-amber-900/40 hover:text-white disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
+        >
+          <div className="flex items-center gap-2 text-sm font-bold">
+            <span>💡</span>
+            <span>Gợi ý chủ đề POD nội bộ</span>
+          </div>
+          <span className="text-[10px] text-amber-400/80 font-normal">
+            Không phải dữ liệu Pinterest Trends, không có chỉ số tăng trưởng
           </span>
         </button>
 

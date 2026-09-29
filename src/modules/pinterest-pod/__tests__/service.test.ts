@@ -555,6 +555,37 @@ test("Service polling handles timeout by throwing AppError with PINTEREST_POD_PO
   }
 });
 
+test("RealPinterestPodClient.suggestThemes uses the separate internal suggestions endpoint", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: string[] = [];
+
+  globalThis.fetch = async (input: RequestInfo | URL) => {
+    const url = typeof input === "string" ? input : input.toString();
+    calls.push(url);
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        source: "internal_suggestions",
+        isOfficialTrendData: false,
+        niche: "leather bag",
+        clusters: [],
+        rejected_keywords: [],
+        total_keywords: 0,
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  };
+
+  try {
+    const result = await realPinterestPodClient.suggestThemes({ niche: "leather bag" });
+    assert.equal(result.source, "internal_suggestions");
+    assert.equal(result.isOfficialTrendData, false);
+    assert.ok(calls[0].includes("/api/pinterest-pod/trends/suggestions"));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("getAssetUrl constructs relative asset URLs conforming to contract", () => {
   assert.equal(getAssetUrl("job_123", "cmyk.jpg"), "/api/pinterest-pod/assets/job_123/cmyk.jpg");
   assert.equal(getAssetUrl("job 456", "room 01.jpg"), "/api/pinterest-pod/assets/job%20456/room%2001.jpg");
@@ -1201,6 +1232,8 @@ test("MockPinterestPodClient.discoverTrends returns theme clusters and rejected 
   });
 
   assert.equal(result.ok, true);
+  assert.equal(result.source, "pinterest_api");
+  assert.equal(result.isOfficialTrendData, true);
   assert.equal(result.niche, "vintage distressed rug");
   assert.ok(result.clusters.length >= 3);
   assert.ok(result.rejected_keywords.length > 0);
@@ -1226,6 +1259,8 @@ test("RealPinterestPodClient.discoverTrends posts to backend and parses result",
     return new Response(
       JSON.stringify({
         ok: true,
+        source: "pinterest_api",
+        isOfficialTrendData: true,
         niche: "gothic celestial tarot",
         product: "bag",
         trend_type: "seasonal",

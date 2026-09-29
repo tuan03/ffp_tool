@@ -19,6 +19,7 @@ interface HeaderBarProps {
   readonly onNewJob?: () => void;
   readonly isAgentConnected?: boolean;
   readonly agentName?: string;
+  readonly isAgentBrowserLoggedIn?: boolean;
   readonly onOpenAgentInstall?: () => void;
 }
 
@@ -39,9 +40,9 @@ export function HeaderBar({
   onNewJob,
   isAgentConnected = false,
   agentName,
+  isAgentBrowserLoggedIn = false,
   onOpenAgentInstall,
 }: HeaderBarProps): React.JSX.Element {
-  const isLoggedIn = authStatus?.logged_in ?? false;
   const [isJobDropdownOpen, setIsJobDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement | null>(null);
 
@@ -308,7 +309,7 @@ export function HeaderBar({
           onClick={onOpenAuthModal}
           title={
             authStatus?.oauth_valid
-              ? `API Token: Đã kết nối${authStatus?.token_info?.username ? ` (@${authStatus.token_info.username})` : ""} - Bấm để quản lý`
+              ? `API Token: Đã lưu${authStatus?.token_info?.username ? ` (@${authStatus.token_info.username})` : ""}; quyền Trends sẽ được kiểm tra khi quét`
               : "API Token: Chưa kết nối (Bắt buộc để quét Trends) - Bấm để kết nối"
           }
           className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium cursor-pointer transition hover:opacity-90 ${
@@ -318,7 +319,7 @@ export function HeaderBar({
           }`}
         >
           <span className={`h-2 w-2 rounded-full ${authStatus?.oauth_valid ? "bg-emerald-400" : "bg-rose-400"}`} />
-          <span>{authStatus?.oauth_valid ? "API Token OK" : "Thiếu Token API"}</span>
+          <span>{authStatus?.oauth_valid ? "Đã lưu API Token" : "Thiếu Token API"}</span>
         </button>
 
         {/* Browser Profile Indicator */}
@@ -326,18 +327,18 @@ export function HeaderBar({
           type="button"
           onClick={onOpenAuthModal}
           title={
-            authStatus?.browser_logged_in
+            isAgentBrowserLoggedIn
               ? "Trình duyệt cào ảnh: Đã lưu session Playwright"
               : "Trình duyệt cào ảnh: Chưa đăng nhập - Bấm để đăng nhập"
           }
           className={`hidden sm:flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium cursor-pointer transition hover:opacity-90 ${
-            authStatus?.browser_logged_in
+            isAgentBrowserLoggedIn
               ? "border-cyan-700/50 bg-cyan-950/60 text-cyan-300"
               : "border-slate-700/60 bg-slate-800/60 text-slate-400"
           }`}
         >
-          <span className={`h-1.5 w-1.5 rounded-full ${authStatus?.browser_logged_in ? "bg-cyan-400" : "bg-slate-500"}`} />
-          <span>{authStatus?.browser_logged_in ? "Crawler OK" : "Crawler chưa login"}</span>
+          <span className={`h-1.5 w-1.5 rounded-full ${isAgentBrowserLoggedIn ? "bg-cyan-400" : "bg-slate-500"}`} />
+          <span>{isAgentBrowserLoggedIn ? "Agent đã login" : "Agent chưa login"}</span>
         </button>
 
         {/* Manage Auth Modal Trigger */}

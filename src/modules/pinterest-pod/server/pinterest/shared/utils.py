@@ -19,6 +19,10 @@ LOG = logging.getLogger("pinterest")
 
 
 def configure_logging(verbose: bool) -> None:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="backslashreplace")
     handler = logging.StreamHandler(sys.stdout)
     logging.basicConfig(
         level=logging.DEBUG if verbose else logging.INFO,

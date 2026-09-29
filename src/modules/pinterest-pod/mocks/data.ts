@@ -156,6 +156,8 @@ export const mockRejectedKeywords: readonly TrendingKeywordItem[] = [
 
 export const mockTrendDiscoveryResult: TrendDiscoveryResult = {
   ok: true,
+  source: "pinterest_api",
+  isOfficialTrendData: true,
   niche: "Halloween spooky cute",
   region: "ALL",
   trend_type: "ALL",

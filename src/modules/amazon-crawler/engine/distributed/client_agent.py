@@ -7,6 +7,7 @@ import gzip
 import json
 import random
 import sqlite3
+import sys
 import threading
 import time
 import urllib.error
@@ -311,6 +312,7 @@ class DistributedCrawlerAgent:
                         cache_generation=self.store.cache_generation(),
                         product_invalidation_generation=self.store.product_invalidation_generation(),
                         temporary_cleanup_generation=self.store.temporary_cleanup_generation(),
+                        pinterest_browser_logged_in=self._pinterest_browser_logged_in(),
                     )))
                     acknowledgement = json.loads(await asyncio.wait_for(websocket.recv(), timeout=15))
                     if acknowledgement.get("type") != "hello_ack":
@@ -852,8 +854,19 @@ class DistributedCrawlerAgent:
         except Exception:
             pass
 
+    def _pinterest_browser_logged_in(self) -> bool:
+        pod_server_dir = self.project_root / "src" / "modules" / "pinterest-pod" / "server"
+        if pod_server_dir.is_dir() and str(pod_server_dir) not in sys.path:
+            sys.path.insert(0, str(pod_server_dir))
+        try:
+            import pinterest_pod_bridge as pod_bridge
+
+            profile_dir = pod_bridge.resolve_browser_profile_dir()
+            return bool(pod_bridge.check_browser_profile_logged_in(profile_dir))
+        except Exception:
+            return False
+
     def _run_pinterest_batch(self, batch: list[dict[str, Any]], cancel_event: threading.Event, loop: asyncio.AbstractEventLoop) -> None:
-        import sys
         pod_server_dir = self.project_root / "src" / "modules" / "pinterest-pod" / "server"
         if pod_server_dir.is_dir() and str(pod_server_dir) not in sys.path:
             sys.path.insert(0, str(pod_server_dir))

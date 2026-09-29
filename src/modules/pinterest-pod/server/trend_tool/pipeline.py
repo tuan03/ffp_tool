@@ -1389,7 +1389,7 @@ def prepare_discovery(
     if not niche:
         raise RuntimeError("A Pinterest Trends niche is required.")
     if config.custom_queries:
-        log(progress, f"Sử dụng {len(config.custom_queries)} câu truy vấn hoa văn 2D mục tiêu đã chọn từ cụm xu hướng.")
+        log(progress, f"Sử dụng {len(config.custom_queries)} câu truy vấn hoa văn 2D được cung cấp cho job.")
         task5_trends_dir = run_dir / "task5_trends"
         task5_trends_dir.mkdir(parents=True, exist_ok=True)
         package_path = task5_trends_dir / "trend_package.json"
@@ -1443,7 +1443,7 @@ def prepare_discovery(
             raise RuntimeError(message) from exc
 
     discovered_queries = queries_from_trend_package(package_path, max_queries_per_trend=config.trend_max_queries_per_trend)
-    log(progress, f"Loaded {len(discovered_queries)} querie(s) from trend package.")
+    log(progress, f"Loaded {len(discovered_queries)} querie(s) from query package.")
     log(progress, f"Running Pinterest image crawler with provider '{config.task5_provider}'.")
     hot_images = run_task5_image_crawler(
         Task5CrawlerConfig(

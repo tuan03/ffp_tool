@@ -210,6 +210,23 @@ export async function discoverTrends(
   );
 }
 
+/** Build internal POD theme suggestions. This endpoint never returns official trend metrics. */
+export async function suggestThemes(
+  input: TrendDiscoveryInput,
+  options?: { readonly baseUrl?: string; readonly signal?: AbortSignal },
+): Promise<TrendDiscoveryResult> {
+  return requestJson<TrendDiscoveryResult>(
+    "/api/pinterest-pod/trends/suggestions",
+    {
+      method: "POST",
+      body: JSON.stringify(input),
+      signal: options?.signal,
+    },
+    "PINTEREST_POD_SUGGEST_THEMES_FAILED",
+    options?.baseUrl,
+  );
+}
+
 /** Rescue a candidate that was categorized as rejected */
 export async function rescueCandidate(
   jobId: string,
@@ -259,6 +276,7 @@ export async function startDiscoveryJob(
         ...(input.region ? { region: input.region } : {}),
         ...(input.selected_clusters ? { selected_clusters: input.selected_clusters } : {}),
         ...(input.custom_queries ? { custom_queries: input.custom_queries } : {}),
+        ...(input.query_source ? { query_source: input.query_source } : {}),
         candidatePoolSize: poolSize,
         task5_max_downloads: poolSize,
         top_images: poolSize,
@@ -911,6 +929,17 @@ export class RealPinterestPodClient implements PinterestPodClient {
     );
   }
 
+  public async suggestThemes(input: TrendDiscoveryInput): Promise<TrendDiscoveryResult> {
+    return fetchJson<TrendDiscoveryResult>(
+      "/api/pinterest-pod/trends/suggestions",
+      {
+        method: "POST",
+        body: JSON.stringify(input),
+      },
+      "PINTEREST_SUGGEST_THEMES_FAILED",
+    );
+  }
+
   public async rescueCandidate(jobId: string, candidateId: string): Promise<{ readonly ok: boolean; readonly candidate: PodCandidate }> {
     return fetchJson<{ readonly ok: boolean; readonly candidate: PodCandidate }>(
       `/api/pinterest-pod/jobs/${encodeURIComponent(jobId)}/rescue`,
@@ -939,6 +968,7 @@ export class RealPinterestPodClient implements PinterestPodClient {
           ...(input.region ? { region: input.region } : {}),
           ...(input.selected_clusters ? { selected_clusters: input.selected_clusters } : {}),
           ...(input.custom_queries ? { custom_queries: input.custom_queries } : {}),
+          ...(input.query_source ? { query_source: input.query_source } : {}),
           candidatePoolSize: poolSize,
           task5_max_downloads: poolSize,
           top_images: poolSize,

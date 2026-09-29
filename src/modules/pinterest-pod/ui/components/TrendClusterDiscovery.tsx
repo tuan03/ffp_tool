@@ -138,6 +138,7 @@ export function TrendClusterDiscovery({
   const rejectedCount = activeResult.rejected_count ?? activeResult.rejected_keywords.length;
   const productLabel = (activeResult.product ?? "custom").toUpperCase();
   const regionLabel = activeResult.region ?? "US";
+  const isOfficialTrendData = activeResult.isOfficialTrendData;
 
   return (
     <section className="flex flex-col gap-5 rounded-xl border border-cyan-800/60 bg-slate-900 p-5 shadow-2xl">
@@ -147,17 +148,17 @@ export function TrendClusterDiscovery({
           <div className="flex items-center gap-2">
             <span className="text-2xl">✨</span>
             <h2 className="text-lg font-bold text-slate-100">
-              Khám phá Xu hướng & Cụm Chủ đề AI (Tier 1 & 2)
+              {isOfficialTrendData ? "Pinterest Trends chính thức & Cụm Chủ đề" : "Gợi ý Chủ đề POD nội bộ"}
             </h2>
             <span className="rounded-full bg-cyan-500/20 px-2.5 py-0.5 text-xs font-bold text-cyan-300 border border-cyan-500/30">
               {activeResult.clusters.length} Cụm đề xuất
             </span>
             <span className="rounded-full bg-indigo-500/20 px-2.5 py-0.5 text-xs font-bold text-indigo-300 border border-indigo-500/30">
-              {allAcceptedKeywords.length} Từ khóa chuẩn
+              {allAcceptedKeywords.length} {isOfficialTrendData ? "Từ khóa Trends" : "Từ khóa gợi ý"}
             </span>
           </div>
           <p className="text-xs text-slate-400">
-            AI đã phân tích {activeResult.total_keywords} từ khóa Pinterest xung quanh niche &quot;
+            {isOfficialTrendData ? "Đã phân tích dữ liệu Pinterest Trends chính thức" : "Đây là gợi ý nội bộ, không phải dữ liệu Pinterest Trends"} cho niche &quot;
             <span className="text-cyan-300 font-semibold">{activeResult.niche}</span>
             &quot; và nhóm thành các phong cách in ấn thương mại cao. Bạn có thể chọn theo Cụm Chủ đề hoặc chọn trực tiếp từng Từ khóa lẻ.
           </p>
@@ -187,7 +188,7 @@ export function TrendClusterDiscovery({
       </div>
 
       {/* Multi-Query Matrix Global Stats Banner */}
-      {activeResult.query_matrix_stats && (
+      {isOfficialTrendData && activeResult.query_matrix_stats && (
         <div className="flex flex-col gap-2 rounded-xl border border-cyan-500/40 bg-gradient-to-r from-cyan-950/40 via-blue-950/30 to-indigo-950/40 p-3.5 text-xs shadow-inner">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex flex-wrap items-center gap-2">
@@ -284,14 +285,14 @@ export function TrendClusterDiscovery({
               onClick={handleSelectTop10Keywords}
               className="rounded-lg border border-indigo-500/40 bg-indigo-950/40 px-2.5 py-1 text-[11px] font-semibold text-indigo-300 hover:bg-indigo-900/60 transition cursor-pointer"
             >
-              ⚡ Chọn Top 10 Hot
+              ⚡ {isOfficialTrendData ? "Chọn Top 10 Hot" : "Chọn 10 gợi ý đầu"}
             </button>
             <button
               type="button"
               onClick={handleSelectTop25Keywords}
               className="rounded-lg border border-indigo-500/40 bg-indigo-950/40 px-2.5 py-1 text-[11px] font-semibold text-indigo-300 hover:bg-indigo-900/60 transition cursor-pointer"
             >
-              ⚡ Chọn Top 25 Hot
+              ⚡ {isOfficialTrendData ? "Chọn Top 25 Hot" : "Chọn 25 gợi ý đầu"}
             </button>
             {selectedKeywordNames.size > 0 && (
               <button
@@ -356,7 +357,7 @@ export function TrendClusterDiscovery({
                     </div>
                   </div>
 
-                  {growthMom !== undefined && (
+                  {isOfficialTrendData && growthMom !== undefined && (
                     <span className="rounded-lg bg-emerald-950/70 border border-emerald-600/40 px-2.5 py-1 text-xs font-bold text-emerald-300 shrink-0">
                       +{growthMom}% MoM
                     </span>
@@ -495,7 +496,7 @@ export function TrendClusterDiscovery({
               >
                 Tất cả ({allAcceptedKeywords.length})
               </button>
-              <button
+              {isOfficialTrendData && <button
                 type="button"
                 onClick={() => setKeywordFilter("global")}
                 className={`rounded-lg px-2.5 py-1 transition cursor-pointer ${
@@ -505,8 +506,8 @@ export function TrendClusterDiscovery({
                 }`}
               >
                 🌍 Đa quốc gia ({allAcceptedKeywords.filter((k) => (k.markets?.length ?? 0) > 1).length})
-              </button>
-              <button
+              </button>}
+              {isOfficialTrendData && <button
                 type="button"
                 onClick={() => setKeywordFilter("high_growth")}
                 className={`rounded-lg px-2.5 py-1 transition cursor-pointer ${
@@ -516,7 +517,7 @@ export function TrendClusterDiscovery({
                 }`}
               >
                 🔥 Tăng &gt; 50% ({allAcceptedKeywords.filter((k) => (k.pct_growth_mom ?? 0) >= 50).length})
-              </button>
+              </button>}
             </div>
           </div>
 

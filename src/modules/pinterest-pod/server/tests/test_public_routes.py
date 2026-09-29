@@ -66,12 +66,16 @@ class PinterestPublicRouteTests(unittest.TestCase):
     def test_discovery_create_production_status_and_cancel_routes(self) -> None:
         with (
             patch.object(server, "discover_pinterest_trends", return_value={"ok": True, "trends": []}),
+            patch.object(server, "suggest_pinterest_themes", return_value={"ok": True, "source": "internal_suggestions"}),
             patch.object(server, "create_pod_job", return_value={"ok": True, "jobId": "job_1"}),
             patch.object(server, "produce_pod_job", return_value={"ok": True, "jobId": "job_2"}),
             patch.object(server, "get_pod_job_status", return_value={"ok": True, "status": "completed"}),
             patch.object(server, "cancel_pod_job", return_value={"ok": True, "status": "cancelled"}),
         ):
             self.assertEqual(self.request_json("/api/pinterest-pod/trends/discover", {"niche": "rug"})[0], 200)
+            suggestion_status, suggestion = self.request_json("/api/pinterest-pod/trends/suggestions", {"niche": "rug"})
+            self.assertEqual(suggestion_status, 200)
+            self.assertEqual(suggestion["source"], "internal_suggestions")
             self.assertEqual(self.request_json("/api/pinterest-pod/jobs", {"niche": "rug"})[0], 201)
             self.assertEqual(self.request_json("/api/pinterest-pod/jobs/produce", {"jobId": "job_1"})[0], 201)
             self.assertEqual(self.request_json("/api/pinterest-pod/jobs/job_1")[0], 200)

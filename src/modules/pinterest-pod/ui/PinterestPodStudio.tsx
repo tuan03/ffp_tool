@@ -53,6 +53,7 @@ export function PinterestPodStudio({
   // Distributed Agent State
   const [isAgentConnected, setIsAgentConnected] = useState(false);
   const [agentName, setAgentName] = useState<string | undefined>(undefined);
+  const [isAgentBrowserLoggedIn, setIsAgentBrowserLoggedIn] = useState(false);
 
   // Form State
   const [niche, setNiche] = useState("Halloween spooky cute");
@@ -442,14 +443,17 @@ export function PinterestPodStudio({
         if (activeAgent) {
           setIsAgentConnected(true);
           setAgentName(activeAgent.displayName || activeAgent.id);
+          setIsAgentBrowserLoggedIn(activeAgent.capabilities?.pinterestBrowserLoggedIn === true);
         } else {
           setIsAgentConnected(false);
           setAgentName(undefined);
+          setIsAgentBrowserLoggedIn(false);
         }
       } catch {
         if (isMountedRef.current) {
           setIsAgentConnected(false);
           setAgentName(undefined);
+          setIsAgentBrowserLoggedIn(false);
         }
       }
     }
@@ -627,13 +631,13 @@ export function PinterestPodStudio({
   }
 
   // Trend Discovery Trigger (Tier 1 & 2)
-  async function handleDiscoverTrends(): Promise<void> {
+  async function handleDiscoverTrends(source: "pinterest_api" | "internal_suggestions" = "pinterest_api"): Promise<void> {
     if (!niche.trim()) return;
     setIsDiscoveringTrends(true);
     setErrorMessage(null);
     try {
       const effectiveProduct = product || (niche.trim() ? inferProductTypeFromNiche(niche) : "bag");
-      const result = await client.discoverTrends({
+      const discoveryInput = {
         niche: niche.trim(),
         product: effectiveProduct,
         trend_type: trendType,
@@ -642,7 +646,10 @@ export function PinterestPodStudio({
         regions: selectedRegions.length > 0 ? selectedRegions : undefined,
         trend_types: selectedTrendTypes.length > 0 ? selectedTrendTypes : undefined,
         interests: selectedInterests.length > 0 ? selectedInterests : (interest ? [interest] : undefined),
-      });
+      } as const;
+      const result = source === "pinterest_api"
+        ? await client.discoverTrends(discoveryInput)
+        : await client.suggestThemes(discoveryInput);
       if (!isMountedRef.current) return;
       setTrendDiscoveryResult(result);
       const recIds = new Set(result.clusters.filter((c) => c.recommended).map((c) => c.cluster_id || c.id || ""));
@@ -711,7 +718,7 @@ export function PinterestPodStudio({
       percent: 15,
       current_message:
         customQueries && customQueries.length > 0
-          ? `Đang cào dữ liệu cho ${customQueries.length} query mục tiêu theo cụm xu hướng...`
+          ? `Đang cào dữ liệu cho ${customQueries.length} query mục tiêu (${trendDiscoveryResult?.source === "pinterest_api" ? "Pinterest Trends chính thức" : "gợi ý nội bộ/thủ công"})...`
           : `Đang quét từ khóa và cào ảnh niche "${niche}"...`,
     });
 
@@ -738,6 +745,9 @@ export function PinterestPodStudio({
         region: region || undefined,
         selected_clusters: selectedClustersList,
         custom_queries: customQueries,
+        query_source: customQueries && customQueries.length > 0
+          ? (trendDiscoveryResult?.source ?? "manual")
+          : "manual",
       });
 
       setJobId(created.jobId);
@@ -1014,6 +1024,7 @@ export function PinterestPodStudio({
         onNewJob={handleNewJob}
         isAgentConnected={isAgentConnected}
         agentName={agentName}
+        isAgentBrowserLoggedIn={isAgentBrowserLoggedIn}
         onOpenAgentInstall={() => setIsAgentInstallModalOpen(true)}
       />
 
@@ -1140,7 +1151,9 @@ export function PinterestPodStudio({
                 onSelectedTrendTypesChange={setSelectedTrendTypes}
                 selectedInterests={selectedInterests}
                 onSelectedInterestsChange={setSelectedInterests}
-                onDiscoverTrends={() => void handleDiscoverTrends()}
+                onDiscoverTrends={() => void handleDiscoverTrends("pinterest_api")}
+                onSuggestThemes={() => void handleDiscoverTrends("internal_suggestions")}
+                canDiscoverOfficialTrends={authStatus?.oauth_valid === true}
                 isDiscoveringTrends={isDiscoveringTrends}
               />
 
@@ -1283,6 +1296,9 @@ export function PinterestPodStudio({
         client={client}
         isLoggingIn={isLoggingIn}
         onLaunchBrowserLogin={() => void handleLaunchLogin()}
+        isAgentConnected={isAgentConnected}
+        agentName={agentName}
+        isAgentBrowserLoggedIn={isAgentBrowserLoggedIn}
       />
 
       <AgentInstallModal

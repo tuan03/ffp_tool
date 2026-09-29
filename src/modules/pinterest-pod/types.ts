@@ -147,6 +147,8 @@ export interface TrendDiscoveryInput {
 /** Trend Discovery Result */
 export interface TrendDiscoveryResult {
   readonly ok: boolean;
+  readonly source: "pinterest_api" | "internal_suggestions";
+  readonly isOfficialTrendData: boolean;
   readonly niche: string;
   readonly product?: string;
   readonly region?: string;
@@ -265,6 +267,8 @@ export interface PinterestAuthStatus {
   readonly auth_url?: string;
   readonly redirect_uri?: string;
   readonly app_id_configured?: boolean;
+  readonly oauth_configured?: boolean;
+  readonly oauth_config_error?: string | null;
   readonly token_info?: PinterestTokenInfo | null;
 }
 
@@ -314,6 +318,7 @@ export interface PinterestDiscoveryInput {
   readonly region?: "US" | "GB" | "CA" | "DE" | string;
   readonly selected_clusters?: readonly string[] | readonly ThemeCluster[];
   readonly custom_queries?: readonly string[];
+  readonly query_source?: "pinterest_api" | "internal_suggestions" | "manual";
   readonly candidatePoolSize?: number;
   readonly task5_max_downloads?: number;
   readonly top_images?: number;
@@ -695,6 +700,7 @@ export interface PinterestPodClient {
   saveOAuthToken?(payload: SavePinterestTokenPayload): Promise<SavePinterestTokenResponse>;
   getOAuthAuthorizeUrl?(redirectUri?: string): Promise<{ readonly ok: boolean; readonly auth_url: string }>;
   discoverTrends(input: TrendDiscoveryInput): Promise<TrendDiscoveryResult>;
+  suggestThemes(input: TrendDiscoveryInput): Promise<TrendDiscoveryResult>;
   createJob(input: CreateJobInput): Promise<CreateJobOutput>;
   getJobDetail(jobId: string): Promise<JobDetailResponse>;
   rescueCandidate(jobId: string, candidateId: string): Promise<{ readonly ok: boolean; readonly candidate: PodCandidate }>;

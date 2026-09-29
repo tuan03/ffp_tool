@@ -62,7 +62,7 @@ services:
       PINTEREST_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-ffp_tool}:${POSTGRES_PASSWORD}@database:5432/${POSTGRES_DB:-ffp_tool}
       PINTEREST_APP_ID: ${PINTEREST_APP_ID:-}
       PINTEREST_APP_SECRET: ${PINTEREST_APP_SECRET:-}
-      PINTEREST_REDIRECT_URI: ${PINTEREST_REDIRECT_URI:-}
+      PINTEREST_REDIRECT_URI: ${PINTEREST_REDIRECT_URI:-http://localhost:3010/api/pinterest-pod/oauth/callback}
       PINTEREST_OAUTH_STATE_SECRET: ${PINTEREST_OAUTH_STATE_SECRET:-}
       PINTEREST_SCOPES: ${PINTEREST_SCOPES:-user_accounts:read,boards:read,pins:read,ads:read}
     volumes:

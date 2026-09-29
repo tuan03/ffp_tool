@@ -41,6 +41,7 @@ export {
   buildSeoDeliverables,
   cancelJob,
   discoverTrends,
+  suggestThemes,
   getAssetUrl,
   getAuthStatus,
   getJobStatus,

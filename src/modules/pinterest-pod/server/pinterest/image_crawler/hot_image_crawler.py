@@ -363,9 +363,13 @@ def main() -> int:
         product_policy=product_policy,
         crawl_purpose=args.crawl_purpose,
     )
-    LOG.info("Starting Gemini Vision AI analysis for %d unique candidate image(s)...", len(candidates))
+    if is_vision_disabled:
+        LOG.info("Vision AI disabled. Accepting %d raw crawled image(s) without calling Gemini.", len(candidates))
+    else:
+        LOG.info("Starting Gemini Vision AI analysis for %d unique candidate image(s)...", len(candidates))
     vision_results = vision.analyze(candidates)
-    LOG.info("Vision AI analysis finished. Successfully analyzed %d images.", len(vision_results))
+    if not is_vision_disabled:
+        LOG.info("Vision AI analysis finished. Successfully analyzed %d images.", len(vision_results))
     write_json(output_dir / "product_vision_analysis.json", vision_results)
     role_counts = collections.Counter(result.product_role for result in vision_results.values())
     subject_counts = collections.Counter(result.main_subject or "unknown" for result in vision_results.values())

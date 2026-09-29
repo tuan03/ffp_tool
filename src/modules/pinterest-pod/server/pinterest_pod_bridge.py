@@ -35,6 +35,15 @@ from job_repository import get_job_repository
 
 logger = logging.getLogger("pinterest_pod_bridge")
 
+
+class PinterestTrendDiscoveryError(RuntimeError):
+    """A safe, structured failure from official Pinterest Trends discovery."""
+
+    def __init__(self, message: str, code: str, status_code: int):
+        super().__init__(message)
+        self.code = code
+        self.status_code = status_code
+
 # Paths
 ROOT = Path(__file__).resolve().parent
 try:
@@ -934,15 +943,20 @@ def get_pinterest_auth_status() -> dict[str, Any]:
     is_fully_logged_in = bool(browser_logged_in and oauth_valid)
 
     if is_fully_logged_in:
-        status_text = "Pinterest: Đã kết nối đầy đủ (API & Crawler)"
+        status_text = "Pinterest: Đã lưu API token và phiên crawler"
     elif oauth_valid:
-        status_text = "Pinterest: API OK (Chưa đăng nhập trình duyệt cào)"
+        status_text = "Pinterest: Đã lưu API token (quyền Trends được kiểm tra khi quét)"
     elif browser_logged_in:
         status_text = "Pinterest: Cần kết nối API Token để quét Trend"
     else:
         status_text = "Pinterest: Chưa kết nối"
 
-    oauth_info = generate_pinterest_oauth_url()
+    oauth_info: dict[str, Any] = {}
+    oauth_config_error: str | None = None
+    try:
+        oauth_info = generate_pinterest_oauth_url()
+    except ValueError as exc:
+        oauth_config_error = str(exc)
 
     return {
         "ok": True,
@@ -957,6 +971,8 @@ def get_pinterest_auth_status() -> dict[str, Any]:
         "auth_url": oauth_info.get("auth_url"),
         "redirect_uri": oauth_info.get("redirect_uri"),
         "app_id_configured": bool(os.getenv("PINTEREST_APP_ID")),
+        "oauth_configured": oauth_config_error is None,
+        "oauth_config_error": oauth_config_error,
         "token_info": {
             "has_access_token": bool(token_data.get("access_token")),
             "has_refresh_token": bool(token_data.get("refresh_token")),
@@ -1752,6 +1768,9 @@ def _run_local_pipeline_worker(
     except (ValueError, TypeError):
         task5_max_images_per_query = max(20, task5_max_downloads // 6)
     custom_queries = tuple(str(q).strip() for q in (req_body.get("custom_queries") or []) if str(q).strip())
+    query_source = str(req_body.get("query_source") or "manual").strip().lower()
+    if query_source not in {"pinterest_api", "internal_suggestions", "manual"}:
+        query_source = "manual"
     default_max_trends = max(15, len(custom_queries)) if custom_queries else 15
     task5_max_crawl_trends = max(5, min(100, int(req_body.get("max_trends") or default_max_trends)))
 
@@ -1813,6 +1832,7 @@ def _run_local_pipeline_worker(
 
     vision_status_note = "ĐÃ TẮT AI LỌC - hiển thị 100% ảnh thô cào về" if is_vision_disabled else "Bật AI lọc"
     log_progress(f"Bắt đầu pipeline trực tiếp (Stage: {stage}, Product: {product}, Niche: '{niche}', Vision: {vision_status_note})...")
+    log_progress(f"Nguồn truy vấn: {query_source}.")
 
     try:
         if cancel_event is not None and cancel_event.is_set():
@@ -2242,6 +2262,7 @@ def create_pod_job(payload: dict[str, Any], base_url: str, api_url: str = DEFAUL
         "task5_max_images_per_query": max(12, crawl_count // 4),
         "selected_clusters": payload.get("selected_clusters") or payload.get("selectedClusters") or [],
         "custom_queries": payload.get("custom_queries") or payload.get("customQueries") or [],
+        "query_source": payload.get("query_source") or payload.get("querySource") or "manual",
         "interest": payload.get("interest") or payload.get("interests") or "",
     }
     if product == "custom":
@@ -4078,6 +4099,19 @@ def discover_pinterest_trends(payload: dict[str, Any]) -> dict[str, Any]:
     if not niche:
         raise ValueError("Vui lòng nhập Pinterest niche hoặc từ khóa xu hướng.")
 
+    source = str(payload.get("_source") or "pinterest_api").strip().lower()
+    is_internal_suggestion = source == "internal_suggestions"
+    if source not in {"pinterest_api", "internal_suggestions"}:
+        raise ValueError("Nguồn khám phá xu hướng không hợp lệ.")
+
+    oauth_valid, token_data = check_oauth_token_valid()
+    if not is_internal_suggestion and not oauth_valid:
+        raise PinterestTrendDiscoveryError(
+            "Cần kết nối Pinterest OAuth trước khi quét Trends chính thức.",
+            "PINTEREST_OAUTH_REQUIRED",
+            401,
+        )
+
     raw_trend_type = str(payload.get("trend_type") or "growing").strip().lower()
     raw_region = str(payload.get("region") or "US").strip().upper()
     interest = str(payload.get("interest") or "").strip()
@@ -4148,14 +4182,14 @@ def discover_pinterest_trends(payload: dict[str, Any]) -> dict[str, Any]:
 
     # 1. Try Pinterest API if authenticated (Dynamic Multi-Query Matrix via ThreadPoolExecutor)
     api_keywords_by_name: dict[str, dict[str, Any]] = {}
-    oauth_valid, token_data = check_oauth_token_valid()
-    if oauth_valid and token_data and not os.getenv("MOCK_PINTEREST"):
+    api_error_statuses: list[int] = []
+    if not is_internal_suggestion and oauth_valid and token_data and not os.getenv("MOCK_PINTEREST"):
         try:
             from pinterest.trend_finder.pinterest_client import PinterestClient
             token_file = (ROOT / "pinterest" / ".pinterest_oauth_tokens.json").resolve()
             client = PinterestClient(token_path=token_file if token_file.exists() else None)
 
-            def fetch_single_matrix_cell(reg: str, t_type: str, it_filter: str) -> tuple[str, str, str, list[dict[str, Any]], bool, str]:
+            def fetch_single_matrix_cell(reg: str, t_type: str, it_filter: str) -> tuple[str, str, str, list[dict[str, Any]], bool, str, int | None]:
                 endpoint = f"/trends/keywords/{reg}/top/{t_type}"
                 params: dict[str, Any] = {"limit": 50}
                 if it_filter:
@@ -4167,15 +4201,15 @@ def discover_pinterest_trends(payload: dict[str, Any]) -> dict[str, Any]:
                         raw_items = resp.get("trends") or resp.get("keywords") or resp.get("items") or []
                     elif isinstance(resp, list):
                         raw_items = resp
-                    return (reg, t_type, it_filter, raw_items, True, "")
+                    return (reg, t_type, it_filter, raw_items, True, "", None)
                 except Exception as exc:
-                    return (reg, t_type, it_filter, [], False, str(exc))
+                    return (reg, t_type, it_filter, [], False, str(exc), getattr(exc, "status_code", None))
 
             max_workers = min(max(total_planned_queries, 1), 10)
             with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
                 futures = [executor.submit(fetch_single_matrix_cell, r, t, it) for r, t, it in query_matrix_pairs]
                 for future in concurrent.futures.as_completed(futures):
-                    reg, t_type, it_filter, raw_items, is_ok, err_msg = future.result()
+                    reg, t_type, it_filter, raw_items, is_ok, err_msg, error_status = future.result()
                     if is_ok:
                         query_stats["successful_queries"] += 1
                         query_stats["raw_keywords_count"] += len(raw_items)
@@ -4220,9 +4254,15 @@ def discover_pinterest_trends(payload: dict[str, Any]) -> dict[str, Any]:
                                 entry["rank"] = min(entry["rank"], idx)
                     else:
                         query_stats["failed_queries"] += 1
+                        if error_status is not None:
+                            api_error_statuses.append(error_status)
                         logger.warning("Pinterest Trends API matrix query failed for (%s, %s, %s): %s", reg, t_type, it_filter, err_msg)
         except Exception as exc:
-            logger.warning("Pinterest Trends multi-query matrix warning: %s; using dynamic semantic generator.", exc)
+            error_status = getattr(exc, "status_code", None)
+            if error_status is not None:
+                api_error_statuses.append(error_status)
+            query_stats["failed_queries"] = total_planned_queries
+            logger.warning("Pinterest Trends multi-query matrix failed: %s", exc)
 
     if api_keywords_by_name:
         query_stats["unique_keywords_count"] = len(api_keywords_by_name)
@@ -4235,7 +4275,45 @@ def discover_pinterest_trends(payload: dict[str, Any]) -> dict[str, Any]:
     else:
         api_keywords = []
 
-    # 2. Dynamic generation if API returned empty or offline
+    if not is_internal_suggestion and not api_keywords:
+        if 403 in api_error_statuses:
+            raise PinterestTrendDiscoveryError(
+                "Pinterest đã từ chối quyền truy cập Trends API. Hãy kiểm tra quyền của app và token.",
+                "PINTEREST_TRENDS_FORBIDDEN",
+                403,
+            )
+        if 401 in api_error_statuses:
+            raise PinterestTrendDiscoveryError(
+                "Pinterest OAuth token không hợp lệ hoặc đã hết hạn.",
+                "PINTEREST_TOKEN_INVALID",
+                401,
+            )
+        if query_stats["failed_queries"]:
+            raise PinterestTrendDiscoveryError(
+                "Không thể lấy dữ liệu Pinterest Trends chính thức. Không sử dụng dữ liệu giả thay thế.",
+                "PINTEREST_TRENDS_UNAVAILABLE",
+                502,
+            )
+
+        return {
+            "ok": True,
+            "source": "pinterest_api",
+            "isOfficialTrendData": True,
+            "niche": niche,
+            "product": product,
+            "trend_type": raw_trend_type,
+            "region": raw_region,
+            "query_matrix_stats": query_stats,
+            "clusters": [],
+            "all_keywords": [],
+            "accepted_keywords": [],
+            "rejected_keywords": [],
+            "total_keywords": 0,
+            "accepted_count": 0,
+            "rejected_count": 0,
+        }
+
+    # 2. Internal POD suggestions. These are not official Pinterest trend data.
     clean_niche = niche.lower()
     product_label = product if product != "custom" else "product"
     base_pool: list[dict[str, Any]] = list(api_keywords)
@@ -4298,26 +4376,12 @@ def discover_pinterest_trends(payload: dict[str, Any]) -> dict[str, Any]:
                 ("patio backyard pergola deck porch staging", 18, 175.0, 80.0, 135.0),
                 ("daily positive workout fitness routines", 19, 60.0, 15.0, 35.0),
             ]
-        for idx, (kw, rk, mom, wow, yoy) in enumerate(dynamic_specs, start=1):
-            m_list = [target_regions[idx % len(target_regions)]]
-            if len(target_regions) > 1:
-                m_list.append(target_regions[(idx + 1) % len(target_regions)])
-            t_list = [target_trend_types[idx % len(target_trend_types)]]
-            if idx % 2 == 0 and len(target_trend_types) > 1:
-                t_list.append(target_trend_types[(idx + 1) % len(target_trend_types)])
+        for kw, rk, _mom, _wow, _yoy in dynamic_specs:
             base_pool.append({
                 "keyword": kw,
                 "rank": rk,
-                "pct_growth_mom": mom,
-                "pct_growth_wow": wow,
-                "pct_growth_yoy": yoy,
-                "monthly_searches": int(rk * 1200 + 4500),
-                "markets": m_list,
-                "trend_types": t_list,
-                "occurrences": len(m_list) * len(t_list),
             })
-        query_stats["successful_queries"] = total_planned_queries
-        query_stats["raw_keywords_count"] = len(base_pool) * (len(target_regions) if len(target_regions) > 1 else 1)
+        query_stats["raw_keywords_count"] = len(base_pool)
         query_stats["unique_keywords_count"] = len(base_pool)
 
     # 3. Filter through Graphic Printability Gate
@@ -4531,7 +4595,7 @@ def discover_pinterest_trends(payload: dict[str, Any]) -> dict[str, Any]:
     clusters.sort(key=lambda c: (c.get("keyword_count", 0), c.get("growth_mom_avg", 0.0)), reverse=True)
 
     # If fewer than 3 clusters had matches, add back top themes with synthesized keywords to guarantee choices
-    if len(clusters) < 3:
+    if is_internal_suggestion and len(clusters) < 3:
         for t_def in theme_definitions:
             if not any(c["cluster_id"] == t_def["cluster_id"] for c in clusters):
                 rep_core = art_theme_prefix or next(iter(t_def["match_words"]), "pattern")
@@ -4539,9 +4603,6 @@ def discover_pinterest_trends(payload: dict[str, Any]) -> dict[str, Any]:
                 fallback_kws = [{
                     "keyword": rep_kw,
                     "rank": len(clusters) + 1,
-                    "pct_growth_mom": 80.0,
-                    "pct_growth_wow": 28.0,
-                    "pct_growth_yoy": 60.0,
                     "is_accepted": True,
                     "suggested_fused_query": f"{rep_kw} seamless pattern vector",
                 }]
@@ -4555,7 +4616,7 @@ def discover_pinterest_trends(payload: dict[str, Any]) -> dict[str, Any]:
                     "sample_motifs": t_def["sample_motifs"],
                     "keywords": fallback_kws,
                     "fused_queries": t_def["fused_templates"],
-                    "growth_mom_avg": 80.0,
+                    "growth_mom_avg": 0.0,
                     "keyword_count": len(fallback_kws),
                 })
                 if len(clusters) >= 5:
@@ -4563,11 +4624,13 @@ def discover_pinterest_trends(payload: dict[str, Any]) -> dict[str, Any]:
 
     return {
         "ok": True,
+        "source": "internal_suggestions" if is_internal_suggestion else "pinterest_api",
+        "isOfficialTrendData": not is_internal_suggestion,
         "niche": niche,
         "product": product,
         "trend_type": raw_trend_type,
         "region": raw_region,
-        "query_matrix_stats": query_stats,
+        "query_matrix_stats": None if is_internal_suggestion else query_stats,
         "clusters": clusters,
         "all_keywords": all_keywords,
         "accepted_keywords": accepted_keywords,
@@ -4576,6 +4639,13 @@ def discover_pinterest_trends(payload: dict[str, Any]) -> dict[str, Any]:
         "accepted_count": len(accepted_keywords),
         "rejected_count": len(rejected_keywords),
     }
+
+
+def suggest_pinterest_themes(payload: dict[str, Any]) -> dict[str, Any]:
+    """Return clearly-labelled internal POD theme suggestions without fake trend metrics."""
+    suggestion_payload = dict(payload)
+    suggestion_payload["_source"] = "internal_suggestions"
+    return discover_pinterest_trends(suggestion_payload)
 
 
 def rescue_pod_candidate(job_id: str, candidate_id: str, base_url: str = "") -> dict[str, Any]:

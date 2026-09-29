@@ -262,10 +262,37 @@ export class MockPinterestPodClient implements PinterestPodClient {
   public async discoverTrends(input: TrendDiscoveryInput): Promise<TrendDiscoveryResult> {
     return {
       ok: true,
+      source: "pinterest_api",
+      isOfficialTrendData: true,
       niche: input.niche || mockTrendDiscoveryResult.niche,
       clusters: mockThemeClusters.map((c) => ({ ...c })),
       rejected_keywords: mockRejectedKeywords.map((k) => ({ ...k })),
       total_keywords: mockTrendDiscoveryResult.total_keywords,
+    };
+  }
+
+  public async suggestThemes(input: TrendDiscoveryInput): Promise<TrendDiscoveryResult> {
+    return {
+      ok: true,
+      source: "internal_suggestions",
+      isOfficialTrendData: false,
+      niche: input.niche || mockTrendDiscoveryResult.niche,
+      clusters: mockThemeClusters.map((cluster) => ({
+        ...cluster,
+        growth_mom_avg: undefined,
+        keywords: cluster.keywords?.map((keyword) => ({
+          ...keyword,
+          pct_growth_mom: undefined,
+          pct_growth_wow: undefined,
+          pct_growth_yoy: undefined,
+          monthly_searches: undefined,
+        })),
+      })),
+      accepted_keywords: [],
+      rejected_keywords: [],
+      total_keywords: 0,
+      accepted_count: 0,
+      rejected_count: 0,
     };
   }
 

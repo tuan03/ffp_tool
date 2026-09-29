@@ -53,6 +53,7 @@ except ImportError:
 
 from pinterest_pod_bridge import (
     POD_SIZE_PRESETS,
+    PinterestTrendDiscoveryError,
     cancel_pod_job,
     check_pinterest_coordinator_ready,
     check_service_health,
@@ -70,6 +71,7 @@ from pinterest_pod_bridge import (
     rescue_pod_candidate,
     save_manual_pinterest_token,
     send_windows_desktop_notification,
+    suggest_pinterest_themes,
     validate_pinterest_oauth_state,
 )
 from job_repository import get_job_repository
@@ -313,6 +315,8 @@ class PinterestPodHandler(BaseHTTPRequestHandler):
                     "product": product,
                 })
                 self.send_json(res)
+            except PinterestTrendDiscoveryError as exc:
+                self.send_json({"ok": False, "code": exc.code, "message": str(exc)}, exc.status_code)
             except ValueError as exc:
                 self.send_json({"ok": False, "message": str(exc)}, 400)
             except Exception as exc:
@@ -392,10 +396,23 @@ class PinterestPodHandler(BaseHTTPRequestHandler):
             try:
                 res = discover_pinterest_trends(payload)
                 self.send_json(res)
+            except PinterestTrendDiscoveryError as exc:
+                self.send_json({"ok": False, "code": exc.code, "message": str(exc)}, exc.status_code)
             except ValueError as exc:
                 self.send_json({"ok": False, "message": str(exc)}, 400)
             except Exception as exc:
                 logger.exception("Error discovering trends in POST")
+                self.send_json({"ok": False, "message": str(exc)}, 500)
+            return
+
+        # Internal POD theme suggestions. Never presented as official Pinterest Trends data.
+        if path == "/api/pinterest-pod/trends/suggestions":
+            try:
+                self.send_json(suggest_pinterest_themes(payload))
+            except ValueError as exc:
+                self.send_json({"ok": False, "message": str(exc)}, 400)
+            except Exception as exc:
+                logger.exception("Error generating internal Pinterest POD suggestions")
                 self.send_json({"ok": False, "message": str(exc)}, 500)
             return
 
