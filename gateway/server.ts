@@ -7,6 +7,7 @@ import { serveStaticFile } from "./static-server";
 
 import { GatewayDispatcher } from "./dispatcher";
 import { handleAutoSeoHttpRequest } from "./auto-seo-handler";
+import { handleAmazonReviewsHttpRequest } from "./amazon-reviews-handler";
 import { handleSeoReviewHttpRequest } from "./seo-review-handler";
 import {
   handlePinterestPodDirectShopifySyncHttpRequest,
@@ -266,6 +267,11 @@ export function startGatewayServer(
 
     if (url === "/api/auto-seo/run" || url.startsWith("/api/auto-seo/run?")) {
       await handleAutoSeoHttpRequest(req, res, { authToken, maxBodyBytes });
+      return;
+    }
+
+    if (url === "/api/amazon-reviews/samples") {
+      await handleAmazonReviewsHttpRequest(req, res, { authToken, maxBodyBytes });
       return;
     }
 

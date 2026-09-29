@@ -1,10 +1,12 @@
 import { useMemo } from "react";
 import { createBrowserRouter, Navigate, RouterProvider } from "react-router-dom";
 
-import { environment } from "../../config/environment";
+import { amazonCrawlerCoordinatorUrl, environment } from "../../config/environment";
 import { createCustomGptClient, createCustomGptSeoRoutes, getCustomGptClient } from "../../modules/custom-gpt-seo";
 import { AppLayout } from "../../layouts/AppLayout";
 import { amazonCrawlerRoutes } from "../../modules/amazon-crawler";
+import { createAmazonReviewsRoutes, getReviewClient } from "../../modules/amazon-reviews";
+import type { ReviewShopifyAccess } from "../../modules/amazon-reviews";
 import type {
   AmazonCrawlerCacheClearer,
   AmazonCrawlerClientsLoader,
@@ -77,6 +79,20 @@ export function AppRoutes({
     const crawlerClient = getProductCrawlerClient(environment);
     const crawlerRoutes = createProductCrawlerRoutes(crawlerClient);
     const moduleApiRunner = getModuleApiRunner(environment);
+    const reviewShopify: ReviewShopifyAccess = {
+      async listStores() {
+        const response = await moduleApiRunner({ operation: "stores.list", payload: {} });
+        return response.data.stores.map((store) => store.storeId);
+      },
+      async findProducts(storeId, query, cursor) {
+        const response = await moduleApiRunner({ storeId, operation: "products.list", payload: { query, cursor, limit: 50 } });
+        return {
+          products: response.data.products.map((product) => ({ id: product.id, title: product.title, handle: product.handle, status: product.status })),
+          nextCursor: response.data.pageInfo.hasNextPage ? response.data.pageInfo.endCursor : undefined,
+        };
+      },
+    };
+    const amazonReviewsRoutes = createAmazonReviewsRoutes(getReviewClient(environment, amazonCrawlerCoordinatorUrl), reviewShopify);
     const autoSeoClient =
       environment === "mock"
         ? getAutoSeoClient("mock")
@@ -523,6 +539,7 @@ export function AppRoutes({
           },
           ...crawlerRoutes,
           ...distributedCrawlerRoutes,
+          ...amazonReviewsRoutes,
           ...podRoutes,
           ...autoSeoRoutes,
           ...createCustomGptSeoRoutes(getCustomGptClient(environment)),

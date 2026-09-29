@@ -21,6 +21,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
 from ..image_processing import ImageProcessingService, normalize_profile, process_image_bytes
+from ..review_export import build_review_workbook
 from . import PROTOCOL_VERSION, SUPPORTED_PROTOCOL_VERSIONS
 from .coordinator_models import Base, create_database_engine, create_session_factory
 from .coordinator_store import ActiveJobExistsError, CoordinatorStore
@@ -352,6 +353,79 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
         if result is None:
             raise HTTPException(status_code=404, detail="Crawl job was not found.")
         return result
+
+    @app.post("/api/v1/review-jobs", status_code=202)
+    def create_review_job(payload: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return store.create_review_job(payload)
+        except ActiveJobExistsError as error:
+            raise HTTPException(status_code=409, detail=f"Job {error.job_id} is already active.") from error
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
+    @app.get("/api/v1/review-jobs/{job_id}")
+    def get_review_job(job_id: str) -> dict[str, Any]:
+        review_job = store.review_job(job_id)
+        if review_job is None:
+            raise HTTPException(status_code=404, detail="Review job was not found.")
+        return review_job
+
+    @app.post("/api/v1/review-jobs/{job_id}/samples")
+    def save_review_samples(job_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        samples = payload.get("samples")
+        if not isinstance(samples, list):
+            raise HTTPException(status_code=422, detail="samples must be an array.")
+        try:
+            saved = store.save_review_samples(job_id, samples)
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        if saved is None:
+            raise HTTPException(status_code=404, detail="Review job was not found.")
+        return saved
+
+    @app.post("/api/v1/review-jobs/{job_id}/export")
+    def export_review_job(job_id: str, payload: dict[str, Any]) -> Response:
+        review_job = store.review_job(job_id)
+        if review_job is None:
+            raise HTTPException(status_code=404, detail="Review job was not found.")
+        review_data = review_job["reviewData"]
+        reviews = list(review_data.get("reviews") or []) + list(review_job["samples"])
+        selected_ids = payload.get("reviewIds")
+        if isinstance(selected_ids, list):
+            ids = {str(value) for value in selected_ids if isinstance(value, str)}
+            reviews = [review for review in reviews if str(review.get("reviewId") or "") in ids]
+        raw_products = payload.get("products")
+        products = []
+        if isinstance(raw_products, list):
+            for product in raw_products[:100]:
+                if not isinstance(product, dict):
+                    continue
+                product_id = re.sub(r"\D", "", str(product.get("id") or ""))
+                if product_id and product_id not in {entry["id"] for entry in products}:
+                    products.append({"id": product_id, "handle": str(product.get("handle") or "")[:255]})
+        kind = str(payload.get("kind") or "")
+        try:
+            workbook, row_count = build_review_workbook(
+                kind, str(review_job["asin"]), reviews, products,
+                source_url=str(review_job["sourceUrl"]),
+                extra_picture_urls=payload.get("extraPictureUrls") if isinstance(payload.get("extraPictureUrls"), list) else [],
+                randomize_review_count=payload.get("randomizeReviewCount") is True,
+                min_reviews_per_product=int(payload.get("minReviewsPerProduct") or 1),
+            )
+        except (ValueError, TypeError) as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        if row_count == 0:
+            raise HTTPException(status_code=422, detail="No valid review rows were available.")
+        buffer = io.BytesIO()
+        workbook.save(buffer)
+        workbook.close()
+        suffix = {"real": "judgeme-import", "ai": "qa-ai-samples", "preview": "qa-review-preview"}[kind]
+        return Response(
+            content=buffer.getvalue(),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f'attachment; filename="{review_job["asin"]}.{suffix}.xlsx"',
+                     "X-Review-Row-Count": str(row_count)},
+        )
 
     @app.get("/api/v1/crawl-jobs/{job_id}/products")
     def get_job_products(
