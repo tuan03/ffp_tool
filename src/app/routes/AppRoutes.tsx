@@ -37,6 +37,7 @@ import type {
 import { createPinterestPodRoutes, getPinterestPodClient } from "../../modules/pinterest-pod";
 import type { PinterestPodDeliverables } from "../../modules/pinterest-pod";
 import { createProductCrawlerRoutes, getProductCrawlerClient } from "../../modules/product-crawler";
+import { createReviewImageClient, createReviewImageRoutes } from "../../modules/review-image";
 import { getSeoContentRunner } from "../../modules/seo-content";
 import { HomePage } from "../../pages/home/HomePage";
 import { NotFoundPage } from "../../pages/not-found/NotFoundPage";
@@ -526,6 +527,7 @@ export function AppRoutes({
           ...podRoutes,
           ...autoSeoRoutes,
           ...createCustomGptSeoRoutes(getCustomGptClient(environment)),
+          ...createReviewImageRoutes(createReviewImageClient()),
           ...customizationRoutes,
           {
             path: "seo-review",
