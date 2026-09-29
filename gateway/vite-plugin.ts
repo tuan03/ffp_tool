@@ -2,6 +2,7 @@ import type { Plugin } from "vite";
 
 import { GatewayDispatcher } from "./dispatcher";
 import { handleAutoSeoHttpRequest } from "./auto-seo-handler";
+import { handleAmazonReviewsHttpRequest } from "./amazon-reviews-handler";
 import { handleSeoReviewHttpRequest } from "./seo-review-handler";
 import {
   handlePinterestPodDirectShopifySyncHttpRequest,
@@ -99,6 +100,7 @@ export function shopifyGatewayDevPlugin(options?: ShopifyGatewayDevPluginOptions
         }
         const isShopify = req.url && (req.url === "/api/shopify" || req.url.startsWith("/api/shopify?"));
         const isAutoSeo = req.url && (req.url === "/api/auto-seo/run" || req.url.startsWith("/api/auto-seo/run?"));
+        const isAmazonReviews = req.url === "/api/amazon-reviews/samples";
         const isPinterestPodHandover = req.url && (req.url === "/api/pinterest-pod/handover-seo" || req.url.startsWith("/api/pinterest-pod/handover-seo?"));
         const isPinterestPodDirectSync = req.url && (req.url === "/api/pinterest-pod/sync-shopify" || req.url.startsWith("/api/pinterest-pod/sync-shopify?"));
         const isStoreRegister = req.url && (req.url === "/api/stores/register" || req.url.startsWith("/api/stores/register?"));
@@ -107,7 +109,7 @@ export function shopifyGatewayDevPlugin(options?: ShopifyGatewayDevPluginOptions
         const isStoreGet = req.url && (req.url === "/api/stores/get" || req.url.startsWith("/api/stores/get?"));
         const isProxyCheck = req.url && (req.url === "/api/proxy/check" || req.url.startsWith("/api/proxy/check?"));
 
-        const isKnownApi = isShopify || isAutoSeo || isPinterestPodHandover || isPinterestPodDirectSync || isStoreRegister || isStoreUpdate || isStoreDelete || isStoreGet || isProxyCheck;
+        const isKnownApi = isShopify || isAutoSeo || isAmazonReviews || isPinterestPodHandover || isPinterestPodDirectSync || isStoreRegister || isStoreUpdate || isStoreDelete || isStoreGet || isProxyCheck;
 
         if (authToken && isKnownApi && isSameOriginRequest(req.headers)) {
           if (!req.headers["x-gateway-key"]) {
@@ -134,6 +136,11 @@ export function shopifyGatewayDevPlugin(options?: ShopifyGatewayDevPluginOptions
           } catch {
             // non-fatal env sync in dev
           }
+        }
+
+        if (isAmazonReviews) {
+          await handleAmazonReviewsHttpRequest(req, res, { authToken, maxBodyBytes });
+          return;
         }
 
         if (isShopify) {

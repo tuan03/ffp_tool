@@ -17,6 +17,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import selectinload
 
 from ..crawler_core import CrawlSettings, normalize_amazon_input
+from ..review_engine import normalize_review_source
 from ..timeouts import CrawlTimeout, TIMEOUT_FIELDS
 from ..retry_policy import RETRY_FIELDS, retry_delay
 from .coordinator_models import (
@@ -336,6 +337,68 @@ class CoordinatorStore(CoordinatorObservability):
             self._event(session, job.id, "job_created", {"accepted": accepted, "rejected": rejected})
             self._refresh_job(session, job.id)
             return self._job_snapshot(session, job)
+
+    def create_review_job(self, payload: dict[str, Any]) -> dict[str, Any]:
+        source = str(payload.get("source") or "").strip()
+        asin, canonical_url = normalize_review_source(source)
+        try:
+            max_pages = int(payload.get("maxPages", 10))
+        except (TypeError, ValueError) as error:
+            raise ValueError("maxPages must be an integer.") from error
+        if not 1 <= max_pages <= 1000:
+            raise ValueError("maxPages must be between 1 and 1000.")
+        settings = {**CrawlSettings.from_api(payload).api_dict(), "channel": "amazon_reviews", "maxPages": max_pages}
+        with self._job_creation_lock, self.sessions.begin() as session:
+            active_job_id = session.scalar(select(CrawlJob.id).where(CrawlJob.status.in_(ACTIVE_JOB_STATUSES)).limit(1))
+            if active_job_id:
+                raise ActiveJobExistsError(str(active_job_id))
+            job = CrawlJob(id=_id(), status="queued", settings=settings, requested_inputs=1, accepted_inputs=1)
+            session.add(job)
+            session.add(CrawlJobControl(job_id=job.id, state="active", priority=0))
+            session.add(CrawlTask(id=_id(), job_id=job.id, ordinal=0, source=source, asin=asin,
+                                  canonical_url=canonical_url, status="queued"))
+            self._event(session, job.id, "job_created", {"channel": "amazon_reviews", "asin": asin})
+            self._refresh_job(session, job.id)
+            return self._job_snapshot(session, job)
+
+    def review_job(self, job_id: str) -> dict[str, Any] | None:
+        with self.sessions() as session:
+            job = session.get(CrawlJob, job_id)
+            if job is None or (job.settings or {}).get("channel") != "amazon_reviews":
+                return None
+            task = session.scalar(select(CrawlTask).where(CrawlTask.job_id == job_id).options(selectinload(CrawlTask.result)))
+            if task is None:
+                return None
+            review_data = dict((task.result.payload or {}).get("reviewData") or {}) if task.result else {}
+            state = session.get(CoordinatorState, f"review-samples:{job_id}")
+            samples = json.loads(state.value) if state else []
+            return {"jobId": job.id, "status": job.status, "asin": task.asin,
+                    "sourceUrl": task.source, "progress": self._job_summary(session, job)["progress"],
+                    "error": task.last_error, "reviewData": review_data, "samples": samples,
+                    "createdAt": utc_iso(job.created_at)}
+
+    def save_review_samples(self, job_id: str, samples: list[dict[str, Any]]) -> dict[str, Any] | None:
+        with self.sessions.begin() as session:
+            job = session.get(CrawlJob, job_id)
+            if job is None or (job.settings or {}).get("channel") != "amazon_reviews":
+                return None
+            if len(samples) > 50 or any(not isinstance(sample, dict) or sample.get("synthetic") is not True
+                                      or sample.get("verifiedPurchase") is not False or sample.get("source") != "ai_sample"
+                                      or not str(sample.get("reviewId") or "").startswith("SYNTH-") for sample in samples):
+                raise ValueError("Invalid synthetic review samples.")
+            key = f"review-samples:{job_id}"
+            state = session.get(CoordinatorState, key)
+            prior = json.loads(state.value) if state else []
+            by_id = {str(sample["reviewId"]): sample for sample in prior}
+            by_id.update({str(sample["reviewId"]): sample for sample in samples})
+            if len(by_id) > 500:
+                raise ValueError("Too many synthetic reviews for this job.")
+            encoded = json.dumps(list(by_id.values()), ensure_ascii=False)
+            if state:
+                state.value = encoded
+            else:
+                session.add(CoordinatorState(key=key, value=encoded))
+            return {"saved": len(samples), "total": len(by_id)}
 
     def create_pinterest_job(self, payload: dict[str, Any]) -> dict[str, Any]:
         niche = str(payload.get("niche") or payload.get("source") or "").strip()
@@ -682,6 +745,7 @@ class CoordinatorStore(CoordinatorObservability):
             client_caps = client.capabilities if isinstance(client.capabilities, dict) else {}
             can_pinterest = bool(client_caps.get("pinterest", False))
             can_amazon = bool(client_caps.get("amazon", True))
+            can_reviews = bool(client_caps.get("amazonReviews", False))
             tasks = session.scalars(
                 select(CrawlTask)
                 .join(CrawlJob, CrawlTask.job_id == CrawlJob.id)
@@ -697,6 +761,8 @@ class CoordinatorStore(CoordinatorObservability):
                 if channel == "pinterest" and not can_pinterest:
                     continue
                 if channel == "amazon" and (not can_amazon or amazon_blocked):
+                    continue
+                if channel == "amazon_reviews" and (not can_reviews or amazon_blocked):
                     continue
                 amazon_zip = str(job_settings.get("amazonZip") or "90001")
                 negative = self._active_negative(session, self._negative_key(task.asin, amazon_zip), now) if channel == "amazon" else None

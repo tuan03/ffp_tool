@@ -21,6 +21,7 @@ import websockets
 from ..crawler_core import AmazonCrawler, CrawlSettings
 from ..cache import RawFamilyCache
 from ..process_crawler import ProcessCrawler
+from ..review_engine import crawl_reviews_with_agent
 from ..observability import redact, safe_fields, write_log
 from ..runtime_resources import sample_resources
 from . import AGENT_VERSION
@@ -726,6 +727,8 @@ class DistributedCrawlerAgent:
             try:
                 if channel == "pinterest":
                     await asyncio.to_thread(self._run_pinterest_batch, batch, cancel_event, loop)
+                elif channel == "amazon_reviews":
+                    await asyncio.to_thread(self._run_review_batch, batch, cancel_event, loop)
                 else:
                     await asyncio.to_thread(self._run_batch, batch, cancel_event, loop)
             except Exception as error:
@@ -742,6 +745,53 @@ class DistributedCrawlerAgent:
             finally:
                 self._unregister_cancel_event(job_id, cancel_event)
                 self.executing_task_ids.difference_update(task_ids)
+
+    def _run_review_batch(self, batch: list[dict[str, Any]], cancel_event: threading.Event, loop: asyncio.AbstractEventLoop) -> None:
+        for assignment in batch:
+            if cancel_event.is_set():
+                asyncio.run_coroutine_threadsafe(self.completion_queue.put({
+                    "type": "cancelled", "taskId": assignment["taskId"], "leaseId": assignment["leaseId"],
+                }), loop)
+                continue
+
+            def progress(update: dict[str, Any]) -> None:
+                if cancel_event.is_set():
+                    return
+                self._captcha_waiting = update.get("phase") == "captcha"
+                asyncio.run_coroutine_threadsafe(self.outbound_queue.put({
+                    "type": "progress", "taskId": assignment["taskId"],
+                    "leaseId": assignment["leaseId"], "progress": update,
+                }), loop)
+                loop.call_soon_threadsafe(self._publish_status)
+
+            try:
+                review_data = crawl_reviews_with_agent(
+                    str(assignment["source"]), root=self.project_root,
+                    settings=self.config.limits.apply(dict(assignment.get("settings") or {})),
+                    proxy_config_path=self.config.proxy_config_path,
+                    progress=progress, cancel_event=cancel_event,
+                )
+                if cancel_event.is_set():
+                    asyncio.run_coroutine_threadsafe(self.completion_queue.put({
+                        "type": "cancelled", "taskId": assignment["taskId"], "leaseId": assignment["leaseId"],
+                    }), loop)
+                    continue
+                core_result = {"status": "completed", "products": [], "errors": [], "warnings": review_data["warnings"],
+                               "durationMs": 0, "reviewData": review_data}
+                envelope = {
+                    "version": "distributed-reviews-1", "agentVersion": AGENT_VERSION,
+                    "taskId": assignment["taskId"], "jobId": assignment["jobId"],
+                    "leaseId": assignment["leaseId"], "clientId": self.client_id,
+                    "source": assignment["source"], "asin": assignment["asin"],
+                    "completedAt": utc_iso(), "resultChecksum": payload_checksum(core_result), **core_result,
+                }
+                self.store.spool_result(task_id=str(assignment["taskId"]), lease_id=str(assignment["leaseId"]),
+                                        checksum=payload_checksum(envelope), payload=envelope)
+                asyncio.run_coroutine_threadsafe(self.completion_queue.put({
+                    "type": "completed", "taskId": assignment["taskId"],
+                }), loop)
+            finally:
+                self._captcha_waiting = False
 
     def _run_batch(self, batch: list[dict[str, Any]], cancel_event: threading.Event, loop: asyncio.AbstractEventLoop) -> None:
         first = batch[0]
