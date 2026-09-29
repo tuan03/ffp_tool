@@ -9,6 +9,7 @@ import {
   DEFAULT_GATEWAY_URL,
   getModuleApiRunner,
   isInfrastructureError,
+  resolveGatewayUrl,
   resolveShopifyProductForSync,
   runMockModuleApi,
   runModuleApi,
@@ -4108,5 +4109,60 @@ test("resolveShopifyProductForSync rethrows infrastructure errors instead of swa
       return true;
     },
   );
+});
+
+test("resolveGatewayUrl resolves relative paths to absolute loopback URL in Node.js", () => {
+  const originalPort = process.env.GATEWAY_PORT;
+  try {
+    delete process.env.GATEWAY_PORT;
+    assert.equal(resolveGatewayUrl("/api/shopify"), "http://127.0.0.1:3001/api/shopify");
+    assert.equal(resolveGatewayUrl("api/shopify"), "http://127.0.0.1:3001/api/shopify");
+    assert.equal(resolveGatewayUrl(), "http://127.0.0.1:3001/api/shopify");
+
+    process.env.GATEWAY_PORT = "3005";
+    assert.equal(resolveGatewayUrl("/api/shopify"), "http://127.0.0.1:3005/api/shopify");
+    assert.equal(resolveGatewayUrl("/api/custom"), "http://127.0.0.1:3005/api/custom");
+
+    // Edge cases: empty string and whitespace fallback to DEFAULT_GATEWAY_URL
+    assert.equal(resolveGatewayUrl(""), "http://127.0.0.1:3005/api/shopify");
+    assert.equal(resolveGatewayUrl("   "), "http://127.0.0.1:3005/api/shopify");
+    assert.equal(resolveGatewayUrl("  /api/shopify  "), "http://127.0.0.1:3005/api/shopify");
+
+    // Blank or whitespace GATEWAY_PORT falls back to 3001
+    process.env.GATEWAY_PORT = "   ";
+    assert.equal(resolveGatewayUrl("/api/shopify"), "http://127.0.0.1:3001/api/shopify");
+
+    // Preserves absolute URLs
+    assert.equal(resolveGatewayUrl("http://example.com/api"), "http://example.com/api");
+    assert.equal(resolveGatewayUrl("https://example.com/api"), "https://example.com/api");
+  } finally {
+    if (originalPort !== undefined) {
+      process.env.GATEWAY_PORT = originalPort;
+    } else {
+      delete process.env.GATEWAY_PORT;
+    }
+  }
+});
+
+test("createModuleApiRunner automatically resolves relative gatewayUrl to loopback in Node.js", async () => {
+  let capturedUrl: string | undefined;
+  const fakeFetch = async (url: string | URL | Request) => {
+    capturedUrl = url.toString();
+    return new Response(JSON.stringify({ success: true, storeId: "store-test", data: { isConnected: true } }));
+  };
+
+  const runner = createModuleApiRunner(
+    { gatewayUrl: "/api/shopify" },
+    { fetch: fakeFetch as unknown as typeof fetch },
+  );
+
+  await runner({
+    storeId: "store-test",
+    operation: "connection.test",
+    payload: {},
+  });
+
+  assert.ok(capturedUrl?.startsWith("http://127.0.0.1:"));
+  assert.ok(capturedUrl?.endsWith("/api/shopify"));
 });
 

@@ -18,6 +18,7 @@ export { getModuleApiRunner } from "./runtime";
 export {
   createModuleApiRunner,
   DEFAULT_GATEWAY_URL,
+  resolveGatewayUrl,
   runModuleApi,
   SUPPORTED_SHOPIFY_OPERATIONS,
 } from "./service";

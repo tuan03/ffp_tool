@@ -63,6 +63,28 @@ import { ShopifyApiError } from "./types";
 
 export const DEFAULT_GATEWAY_URL = "/api/shopify";
 
+/**
+ * Resolves a gateway URL for the current runtime environment.
+ * In Node.js (`typeof window === "undefined"` and `typeof process !== "undefined"`),
+ * relative paths (like `/api/shopify`) are resolved to `http://127.0.0.1:${gatewayPort}/api/shopify`.
+ * In Browser environments (`typeof window !== "undefined"`), relative URLs are preserved
+ * to allow Nginx same-origin reverse proxying.
+ */
+export function resolveGatewayUrl(rawUrl: string = DEFAULT_GATEWAY_URL): string {
+  const trimmed = rawUrl ? rawUrl.trim() : "";
+  const target = trimmed.length > 0 ? trimmed : DEFAULT_GATEWAY_URL;
+  const isNode = typeof window === "undefined" && typeof process !== "undefined";
+  if (isNode) {
+    if (target.startsWith("/") || !/^https?:\/\//i.test(target)) {
+      const rawPort = process.env && process.env.GATEWAY_PORT ? process.env.GATEWAY_PORT.trim() : "";
+      const port = rawPort.length > 0 ? rawPort : 3001;
+      const normalizedPath = target.startsWith("/") ? target : `/${target}`;
+      return `http://127.0.0.1:${port}${normalizedPath}`;
+    }
+  }
+  return target;
+}
+
 const READ_OPERATIONS: ReadonlySet<ShopifyOperation> = new Set([
   "connection.test",
   "products.list",
@@ -371,7 +393,7 @@ export function createModuleApiRunner(
   config?: ModuleApiConfig,
   dependencies?: ModuleApiDependencies,
 ): ModuleApiRunner {
-  const gatewayUrl = config?.gatewayUrl ?? DEFAULT_GATEWAY_URL;
+  const configuredGatewayUrl = config?.gatewayUrl ?? DEFAULT_GATEWAY_URL;
 
   const runner = async (input: ShopifyApiInput): Promise<ShopifyApiResponse> => {
     if (!input || typeof input !== "object") {
@@ -497,9 +519,10 @@ export function createModuleApiRunner(
       }, config.timeoutMs);
     }
 
+    const effectiveGatewayUrl = resolveGatewayUrl(configuredGatewayUrl);
     let response: Response;
     try {
-      response = await invokeFetch(gatewayUrl, {
+      response = await invokeFetch(effectiveGatewayUrl, {
         method: "POST",
         headers,
         body: JSON.stringify(requestBody),

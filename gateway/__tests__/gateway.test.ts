@@ -9422,7 +9422,67 @@ describe("Gateway: Architectural & Operational Hardening (P1)", () => {
       assert.equal(variantBulkCreateCalls, 2);
     });
   });
+
+  describe("Gateway: VPS Nginx Compatibility Routes", () => {
+    it("handles /api/pinterest-pod/sync-shopify and /api/seo-review/* with JSON status stub", async () => {
+      const { startGatewayServer } = await import("../server");
+      const testPort = 3288;
+      const server = startGatewayServer({
+        port: testPort,
+        authToken: "test-auth-token-123",
+      });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      try {
+        // 1. Unauthenticated requests are rejected with 401 when authToken is configured
+        const resSyncUnauth = await fetch(`http://127.0.0.1:${testPort}/api/pinterest-pod/sync-shopify`, {
+          method: "POST",
+        });
+        assert.equal(resSyncUnauth.status, 401);
+
+        const resSeoUnauth = await fetch(`http://127.0.0.1:${testPort}/api/seo-review/status`, {
+          method: "GET",
+        });
+        assert.equal(resSeoUnauth.status, 401);
+
+        // 2. Authenticated requests return 200 with JSON status
+        const resSync = await fetch(`http://127.0.0.1:${testPort}/api/pinterest-pod/sync-shopify`, {
+          method: "POST",
+          headers: { "X-Gateway-Key": "test-auth-token-123" },
+        });
+        assert.equal(resSync.status, 200);
+        const jsonSync = await resSync.json() as Record<string, unknown>;
+        assert.equal(jsonSync.success, true);
+        assert.equal(jsonSync.status, "ok");
+
+        const resSeoReview = await fetch(`http://127.0.0.1:${testPort}/api/seo-review/items?limit=10`, {
+          method: "GET",
+          headers: { "X-Gateway-Key": "test-auth-token-123" },
+        });
+        assert.equal(resSeoReview.status, 200);
+        const jsonSeo = await resSeoReview.json() as Record<string, unknown>;
+        assert.equal(jsonSeo.success, true);
+        assert.equal(jsonSeo.status, "ok");
+
+        // 3. OPTIONS preflight requests return 204 with CORS headers
+        const resSyncOptions = await fetch(`http://127.0.0.1:${testPort}/api/pinterest-pod/sync-shopify`, {
+          method: "OPTIONS",
+        });
+        assert.equal(resSyncOptions.status, 204);
+        assert.equal(resSyncOptions.headers.get("access-control-allow-origin"), "*");
+
+        const resSeoOptions = await fetch(`http://127.0.0.1:${testPort}/api/seo-review/items`, {
+          method: "OPTIONS",
+        });
+        assert.equal(resSeoOptions.status, 204);
+        assert.equal(resSeoOptions.headers.get("access-control-allow-origin"), "*");
+      } finally {
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+      }
+    });
+  });
 });
+
 
 
 

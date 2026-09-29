@@ -9,7 +9,6 @@ import { bindExternalSeoProduct } from "../src/modules/seo-content";
 import {
   loadBootstrappedStores,
   loadLocalEnv,
-  startGatewayServer,
 } from "../gateway/index";
 import {
   normalizeCustomizationProduct,
@@ -18,6 +17,7 @@ import {
 import {
   createShopifyGatewayAdapter,
   createModuleApiRunner,
+  resolveGatewayUrl,
   resolveShopifyProductForSync,
   type ShopifyFilesStageBinaryResponse,
 } from "../src/modules/module-api";
@@ -122,7 +122,8 @@ const coordinatorUrl = (env.SHOPIFY_PIPELINE_COORDINATOR_URL || "http://127.0.0.
 const pipelineToken = env.SHOPIFY_PIPELINE_TOKEN?.trim();
 const workerCount = Math.max(1, Math.min(16, Number(env.SHOPIFY_PIPELINE_WORKERS || 8)));
 const gatewayPort = Math.max(1, Number(env.GATEWAY_PORT || 3001));
-const gatewayUrl = (env.SHOPIFY_GATEWAY_URL || `http://127.0.0.1:${gatewayPort}/api/shopify`).replace(/\/+$/, "");
+const rawGatewayUrl = env.SHOPIFY_GATEWAY_URL || `http://127.0.0.1:${gatewayPort}/api/shopify`;
+const gatewayUrl = resolveGatewayUrl(rawGatewayUrl).replace(/\/+$/, "");
 const proxyCooldownUntil = new Map<string, number>();
 const seoCorpusCommitCoordinator = new SeoCorpusCommitCoordinator();
 const AMAZON_METAFIELD_SCHEMA_VERSION = 2;
@@ -154,14 +155,6 @@ let proxyStores = storeId
   : [];
 let effectiveStores = proxyStores.length > 0 ? proxyStores : (baseStore ? [baseStore] : []);
 
-let gatewayServer: ReturnType<typeof startGatewayServer> | undefined;
-if (!env.SHOPIFY_GATEWAY_URL) {
-  gatewayServer = startGatewayServer({
-    port: gatewayPort,
-    host: "127.0.0.1",
-    authToken: env.GATEWAY_AUTH_TOKEN,
-  });
-}
 
 function canonicalize(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value);
@@ -1064,19 +1057,37 @@ async function processClaim(
   }
 }
 
+let isShuttingDown = false;
+
+function sleepWithShutdown(ms: number): Promise<void> {
+  if (ms <= 0 || isShuttingDown) return Promise.resolve();
+  return new Promise((resolve) => {
+    const step = Math.min(200, ms);
+    let elapsed = 0;
+    const interval = setInterval(() => {
+      elapsed += step;
+      if (isShuttingDown || elapsed >= ms) {
+        clearInterval(interval);
+        resolve();
+      }
+    }, step);
+  });
+}
+
 async function workerLoop(workerIndex: number): Promise<void> {
   const proxyStore = effectiveStores[workerIndex % effectiveStores.length];
   const proxyProfile = storeId && proxyStore.storeId.startsWith(`${storeId}--`)
     ? proxyStore.storeId.slice(`${storeId}--`.length)
     : "direct";
   const workerId = `${hostname()}-${process.pid}-${workerIndex + 1}`;
-  for (;;) {
+  while (!isShuttingDown) {
     try {
       const cooldownRemaining = (proxyCooldownUntil.get(proxyStore.storeId) ?? 0) - Date.now();
       if (cooldownRemaining > 0) {
-        await new Promise((resolve) => setTimeout(resolve, Math.min(cooldownRemaining, 5_000)));
+        await sleepWithShutdown(Math.min(cooldownRemaining, 5_000));
         continue;
       }
+      if (isShuttingDown) break;
       const claimed = await postJson<ClaimResponse>("/api/v1/internal/product-pipeline/claim", {
         workerId,
         storeId,
@@ -1084,14 +1095,15 @@ async function workerLoop(workerIndex: number): Promise<void> {
       });
       const claim = claimed.items[0];
       if (!claim) {
-        await new Promise((resolve) => setTimeout(resolve, 1_000));
+        await sleepWithShutdown(1_000);
         continue;
       }
       await processClaim(claim, workerId, proxyStore.storeId, proxyProfile);
     } catch (error: unknown) {
+      if (isShuttingDown) break;
       const message = error instanceof Error ? error.message : String(error);
       console.error(`[Shopify pipeline ${workerIndex + 1}] ${message}`);
-      await new Promise((resolve) => setTimeout(resolve, 3_000));
+      await sleepWithShutdown(3_000);
     }
   }
 }
@@ -1099,6 +1111,7 @@ async function workerLoop(workerIndex: number): Promise<void> {
 async function waitForCoordinator(): Promise<void> {
   let lastError = "Coordinator is not ready.";
   for (let attempt = 0; attempt < 30; attempt += 1) {
+    if (isShuttingDown) return;
     try {
       const response = await fetch(`${coordinatorUrl}/api/v1/health`);
       const payload: unknown = await response.json().catch(() => null);
@@ -1123,18 +1136,28 @@ async function waitForCoordinator(): Promise<void> {
       if (/protocol .* is running/i.test(message)) throw error;
       lastError = message;
     }
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    await sleepWithShutdown(500);
   }
+  if (isShuttingDown) return;
   throw new Error(`Coordinator did not become ready at ${coordinatorUrl}: ${lastError}`);
 }
 
-function stop(): void {
-  gatewayServer?.close();
-  process.exit(0);
+function handleSignal(signal: string): void {
+  if (isShuttingDown) {
+    console.warn(`[Shopify pipeline] Received second ${signal}. Forcing immediate exit.`);
+    process.exit(1);
+  }
+  console.info(`[Shopify pipeline] Received ${signal}. Initiating graceful shutdown (finishing active claims)...`);
+  isShuttingDown = true;
+  const forceTimer = setTimeout(() => {
+    console.warn("[Shopify pipeline] Graceful shutdown timeout reached (30s). Forcing exit.");
+    process.exit(1);
+  }, 30_000);
+  forceTimer.unref();
 }
 
-process.on("SIGINT", stop);
-process.on("SIGTERM", stop);
+process.on("SIGINT", () => handleSignal("SIGINT"));
+process.on("SIGTERM", () => handleSignal("SIGTERM"));
 
 async function main(): Promise<void> {
   // Amazon image CDN IPv6 connections can reset on Windows while IPv4 succeeds.
@@ -1144,7 +1167,9 @@ async function main(): Promise<void> {
       `[Shopify pipeline] ${!storeId ? "GATEWAY_STORE_ID is not configured" : `Shopify store '${storeId}' was not found in server configuration`}. Waiting for store configuration...`,
     );
     while (!storeId || !baseStore) {
-      await new Promise((resolve) => setTimeout(resolve, 3000));
+      if (isShuttingDown) return;
+      await sleepWithShutdown(3000);
+      if (isShuttingDown) return;
       const freshEnv = loadLocalEnv();
       configuredStores = loadBootstrappedStores({ env: freshEnv });
       storeId = (freshEnv.GATEWAY_STORE_ID || process.env.GATEWAY_STORE_ID || (configuredStores.length > 0 ? configuredStores[0].storeId : ""))?.trim();
@@ -1159,7 +1184,9 @@ async function main(): Promise<void> {
       }
     }
   }
+  if (isShuttingDown) return;
   await waitForCoordinator();
+  if (isShuttingDown) return;
   console.log(
     proxyStores.length > 0
       ? `[Shopify pipeline] ${workerCount} workers, ${proxyStores.length} fail-closed proxy profiles, store ${storeId}.`
@@ -1167,11 +1194,14 @@ async function main(): Promise<void> {
   );
   const workers = Array.from({ length: workerCount }, (_, index) => workerLoop(index));
   await Promise.all(workers);
+  if (isShuttingDown) {
+    console.info("[Shopify pipeline] Graceful shutdown complete. Exiting.");
+    process.exit(0);
+  }
 }
 
 void main().catch((error: unknown) => {
   const message = error instanceof Error ? error.message : String(error);
   console.error(`[Shopify pipeline] ${message}`);
-  gatewayServer?.close();
   process.exitCode = 1;
 });

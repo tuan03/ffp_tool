@@ -1,4 +1,7 @@
+import fs from "node:fs";
 import http from "node:http";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { getCustomGptRuntime } from "./custom-gpt-seo/runtime";
 
 import { GatewayDispatcher } from "./dispatcher";
@@ -20,6 +23,22 @@ import {
   handleStoreGetHttpRequest,
 } from "./store-control-handler";
 
+function isContainerEnvironment(): boolean {
+  try {
+    return (
+      fs.existsSync("/.dockerenv") ||
+      fs.existsSync("/run/.containerenv") ||
+      Boolean(
+        process.env.CONTAINER ||
+        process.env.DOCKER_CONTAINER ||
+        process.env.KUBERNETES_SERVICE_HOST
+      )
+    );
+  } catch {
+    return false;
+  }
+}
+
 export interface GatewayServerOptions {
   readonly port?: number;
   readonly host?: string;
@@ -37,9 +56,14 @@ export function startGatewayServer(
       : { port: portOrOptions, host: hostParam };
 
   const env = loadLocalEnv();
-  const port = options.port ?? (Number(env.GATEWAY_PORT || process.env.GATEWAY_PORT) || 3001);
-  const host = options.host ?? env.GATEWAY_HOST ?? process.env.GATEWAY_HOST ?? "127.0.0.1";
-  const authToken = options.authToken ?? env.GATEWAY_AUTH_TOKEN ?? process.env.GATEWAY_AUTH_TOKEN;
+  const rawPort = options.port ?? env.GATEWAY_PORT ?? process.env.GATEWAY_PORT;
+  const port = typeof rawPort === "number" ? rawPort : (Number(String(rawPort || "").trim()) || 3001);
+  const rawAuthToken = options.authToken ?? env.GATEWAY_AUTH_TOKEN ?? process.env.GATEWAY_AUTH_TOKEN;
+  const authToken = typeof rawAuthToken === "string" && rawAuthToken.trim().length > 0 ? rawAuthToken.trim() : undefined;
+  const isContainer = isContainerEnvironment();
+  const defaultHost = (isContainer && Boolean(authToken)) ? "0.0.0.0" : "127.0.0.1";
+  const rawHost = options.host ?? env.GATEWAY_HOST ?? process.env.GATEWAY_HOST;
+  const host = typeof rawHost === "string" && rawHost.trim().length > 0 ? rawHost.trim() : defaultHost;
   const maxBodyBytes = options.maxBodyBytes && options.maxBodyBytes > 0 ? options.maxBodyBytes : MAX_BODY_BYTES;
 
   assertHostSecurity(host, authToken, "gateway server");
@@ -77,6 +101,8 @@ export function startGatewayServer(
     const isShopify = url === "/api/shopify" || url.startsWith("/api/shopify?");
     const isAutoSeo = url === "/api/auto-seo/run" || url.startsWith("/api/auto-seo/run?");
     const isPinterestPodHandover = url === "/api/pinterest-pod/handover-seo" || url.startsWith("/api/pinterest-pod/handover-seo?");
+    const isPinterestPodSync = url === "/api/pinterest-pod/sync-shopify" || url.startsWith("/api/pinterest-pod/sync-shopify?");
+    const isSeoReview = url === "/api/seo-review" || url.startsWith("/api/seo-review/") || url.startsWith("/api/seo-review?");
     const isStoreRegister = url === "/api/stores/register" || url.startsWith("/api/stores/register?");
     const isStoreUpdate = url === "/api/stores/update" || url.startsWith("/api/stores/update?");
     const isStoreDelete = url === "/api/stores/delete" || url.startsWith("/api/stores/delete?");
@@ -239,6 +265,76 @@ export function startGatewayServer(
       return;
     }
 
+    if (isPinterestPodSync) {
+      if (req.method === "OPTIONS") {
+        res.statusCode = 204;
+        res.setHeader("Access-Control-Allow-Origin", "*");
+        res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+        res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Gateway-Key");
+        res.end();
+        return;
+      }
+      if (authToken && !isGatewayAuthorized(req.headers, authToken)) {
+        res.statusCode = 401;
+        res.setHeader("Content-Type", "application/json");
+        res.end(
+          JSON.stringify({
+            success: false,
+            error: {
+              code: "GATEWAY_AUTH_FAILED",
+              message: "Unauthorized: Invalid or missing Gateway authentication token",
+            },
+          }),
+        );
+        return;
+      }
+      res.statusCode = 200;
+      res.setHeader("Content-Type", "application/json");
+      res.end(
+        JSON.stringify({
+          success: true,
+          status: "ok",
+          message: "Pinterest POD Shopify sync endpoint ready",
+        }),
+      );
+      return;
+    }
+
+    if (isSeoReview) {
+      if (req.method === "OPTIONS") {
+        res.statusCode = 204;
+        res.setHeader("Access-Control-Allow-Origin", "*");
+        res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+        res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Gateway-Key");
+        res.end();
+        return;
+      }
+      if (authToken && !isGatewayAuthorized(req.headers, authToken)) {
+        res.statusCode = 401;
+        res.setHeader("Content-Type", "application/json");
+        res.end(
+          JSON.stringify({
+            success: false,
+            error: {
+              code: "GATEWAY_AUTH_FAILED",
+              message: "Unauthorized: Invalid or missing Gateway authentication token",
+            },
+          }),
+        );
+        return;
+      }
+      res.statusCode = 200;
+      res.setHeader("Content-Type", "application/json");
+      res.end(
+        JSON.stringify({
+          success: true,
+          status: "ok",
+          message: "SEO review endpoint ready",
+        }),
+      );
+      return;
+    }
+
     res.statusCode = 404;
     res.setHeader("Content-Type", "application/json");
     res.end(JSON.stringify({ error: "Not Found" }));
@@ -248,11 +344,59 @@ export function startGatewayServer(
     console.log(`[Shopify Gateway] Standalone server running on http://${host}:${port}/api/shopify`);
   });
 
+  let isShuttingDown = false;
+  const shutdown = (signal: string) => {
+    if (isShuttingDown) return;
+    isShuttingDown = true;
+    console.log(`[Shopify Gateway] Received ${signal}, closing server gracefully...`);
+
+    if (typeof server.closeIdleConnections === "function") {
+      server.closeIdleConnections();
+    }
+
+    const forceTimer = setTimeout(() => {
+      console.warn("[Shopify Gateway] Forcing close of remaining connections after 10s timeout.");
+      if (typeof server.closeAllConnections === "function") {
+        server.closeAllConnections();
+      }
+    }, 10_000);
+    forceTimer.unref();
+
+    server.close((err) => {
+      clearTimeout(forceTimer);
+      if (err) {
+        console.error("[Shopify Gateway] Error while closing server:", err);
+        process.exit(1);
+      }
+      console.log("[Shopify Gateway] Server closed successfully.");
+      process.exit(0);
+    });
+  };
+
+  const onSigterm = () => shutdown("SIGTERM");
+  const onSigint = () => shutdown("SIGINT");
+  process.on("SIGTERM", onSigterm);
+  process.on("SIGINT", onSigint);
+
+  server.once("close", () => {
+    process.off("SIGTERM", onSigterm);
+    process.off("SIGINT", onSigint);
+  });
+
   return server;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
-  const port = Number(process.env.GATEWAY_PORT) || 3001;
-  const host = process.env.GATEWAY_HOST || "127.0.0.1";
-  startGatewayServer({ port, host });
+const isCliDirectExecution = Boolean(
+  process.argv[1] &&
+  (
+    import.meta.url === `file://${process.argv[1]}` ||
+    fileURLToPath(import.meta.url) === path.resolve(process.argv[1])
+  )
+);
+
+if (isCliDirectExecution) {
+  const port = process.env.GATEWAY_PORT ? Number(process.env.GATEWAY_PORT) : undefined;
+  const host = process.env.GATEWAY_HOST;
+  const authToken = process.env.GATEWAY_AUTH_TOKEN;
+  startGatewayServer({ port, host, authToken });
 }
