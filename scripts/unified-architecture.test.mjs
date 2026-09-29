@@ -78,17 +78,37 @@ test("pinterest login launcher scripts are available for worker machines", async
 });
 
 test("server and client deployment assets are properly configured", async () => {
-  const [serverDocker, clientNginx] = await Promise.all([
+  const [serverDocker, clientNginx, compose, supervisor, coordinator, pinterestServer] = await Promise.all([
     readFile("deploy/server/Dockerfile", "utf8"),
     readFile("deploy/client/nginx.conf", "utf8"),
+    readFile("docker-compose.yml", "utf8"),
+    readFile("deploy/server/supervisord.conf", "utf8"),
+    readFile("src/modules/amazon-crawler/engine/distributed/coordinator_server.py", "utf8"),
+    readFile("src/modules/pinterest-pod/server/server.py", "utf8"),
   ]);
 
   assert.match(serverDocker, /node:22-bookworm-slim/);
   assert.match(serverDocker, /python3/);
   assert.match(serverDocker, /deploy\/server\/entrypoint\.sh/);
+  assert.match(serverDocker, /playwright install --with-deps chromium/);
+  assert.match(serverDocker, /EXPOSE 3001 8766 8768/);
+
+  assert.match(supervisor, /\[program:pinterest-pod\]/);
+  assert.match(supervisor, /server\/server\.py/);
+  assert.match(supervisor, /\[program:pipeline-worker\]/);
 
   assert.match(clientNginx, /proxy_pass http:\/\/server:3001/);
   assert.match(clientNginx, /proxy_pass http:\/\/server:8766/);
+  assert.match(clientNginx, /location \^~ \/api\/pinterest-pod\//);
+  assert.match(clientNginx, /proxy_pass http:\/\/server:8768/);
+  assert.match(clientNginx, /location = \/api\/pinterest-pod\/handover-seo/);
+  assert.match(clientNginx, /location = \/api\/pinterest-pod\/sync-shopify/);
   assert.match(clientNginx, /proxy_set_header Upgrade \$http_upgrade/);
   assert.match(clientNginx, /install-agent\.ps1/);
+
+  assert.match(compose, /PINTEREST_POD_PORT:\s*8768/);
+  assert.match(compose, /PINTEREST_RUNTIME_ROOT:\s*\/app\/\.runtime\/pinterest-pod/);
+  assert.doesNotMatch(compose, /^\s*-\s*["'][^"'\r\n]*:8768["']\s*$/m);
+  assert.doesNotMatch(coordinator, /@app\.(?:get|post|put|delete)\("\/api\/pinterest-pod/);
+  assert.doesNotMatch(pinterestServer, /path in \{[^\n]*\/api\/pinterest-pod\/handover-seo/);
 });

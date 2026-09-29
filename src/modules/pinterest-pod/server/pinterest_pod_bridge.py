@@ -12,6 +12,8 @@ import base64
 import concurrent.futures
 import copy
 import dataclasses
+import hashlib
+import hmac
 import json
 import mimetypes
 import os
@@ -29,6 +31,8 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable
 
+from job_repository import get_job_repository
+
 logger = logging.getLogger("pinterest_pod_bridge")
 
 # Paths
@@ -39,15 +43,19 @@ try:
 except ImportError:
     pass
 
-TEMP_DIR = ROOT / "temp" / "pinterest_pod"
+_runtime_root_value = os.getenv("PINTEREST_RUNTIME_ROOT")
+RUNTIME_ROOT = Path(_runtime_root_value).resolve() if _runtime_root_value else (ROOT / "temp" / "pinterest_pod").resolve()
+TEMP_DIR = RUNTIME_ROOT / "jobs"
 _env_out = os.getenv("TREND_PRODUCT_OUTPUT")
 if _env_out:
     _p = Path(_env_out)
     LOCAL_OUTPUT_DIR = (_p if _p.is_absolute() else (ROOT / _p)).resolve()
 else:
-    LOCAL_OUTPUT_DIR = (ROOT / "data" / "pinterest_pod" / "output").resolve()
+    LOCAL_OUTPUT_DIR = (RUNTIME_ROOT / "output").resolve()
 LOCAL_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-STANDALONE_OUTPUT_DIR = (ROOT / "output").resolve()
+STANDALONE_OUTPUT_DIR = LOCAL_OUTPUT_DIR
+TOKEN_DIR = RUNTIME_ROOT / "auth"
+PRIMARY_TOKEN_FILE = TOKEN_DIR / "pinterest_oauth_tokens.json"
 
 
 def resolve_run_dir(run_id: str) -> Path | None:
@@ -410,11 +418,16 @@ def manifest_path_for_job(job_id: str) -> Path:
 
 
 def load_job_manifest(job_id: str) -> dict[str, Any] | None:
+    persisted = get_job_repository().load(job_id)
+    if persisted is not None:
+        return persisted
     path = manifest_path_for_job(job_id)
     if not path.exists():
         return None
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8"))
+        get_job_repository().save(job_id, data)
+        return data
     except Exception:
         return None
 
@@ -422,7 +435,10 @@ def load_job_manifest(job_id: str) -> dict[str, Any] | None:
 def save_job_manifest(job_id: str, data: dict[str, Any]) -> None:
     path = manifest_path_for_job(job_id)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    temporary_path = path.with_suffix(".tmp")
+    temporary_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    temporary_path.replace(path)
+    get_job_repository().save(job_id, data)
 
 
 # ---------------------------------------------------------------------------
@@ -606,10 +622,7 @@ def check_oauth_token_valid(token_file: Path | None = None) -> tuple[bool, dict[
     if token_file is not None:
         t_file = token_file if (token_file.exists() and token_file.is_file()) else None
     else:
-        candidates = [
-            ROOT / "pinterest" / ".pinterest_oauth_tokens.json",
-            ROOT / ".pinterest_oauth_tokens.json",
-        ]
+        candidates = [PRIMARY_TOKEN_FILE, ROOT / "pinterest" / ".pinterest_oauth_tokens.json", ROOT / ".pinterest_oauth_tokens.json"]
         t_file = None
         for cand in candidates:
             if cand.exists() and cand.is_file():
@@ -649,16 +662,26 @@ def check_oauth_token_valid(token_file: Path | None = None) -> tuple[bool, dict[
 
 def generate_pinterest_oauth_url(redirect_uri: str | None = None) -> dict[str, Any]:
     """Generate official Pinterest OAuth authorization URL."""
-    app_id = str(os.getenv("PINTEREST_APP_ID") or "1595071").strip()
+    app_id = str(os.getenv("PINTEREST_APP_ID") or "").strip()
     r_uri = str(redirect_uri or os.getenv("PINTEREST_REDIRECT_URI") or "http://localhost:8768/api/pinterest-pod/oauth/callback").strip()
     scopes = str(os.getenv("PINTEREST_SCOPES") or "user_accounts:read,boards:read,pins:read,ads:read").strip()
+
+    issued_at = int(time.time())
+    state_payload = f"ffp_pod_{issued_at}"
+    if not app_id:
+        raise ValueError("PINTEREST_APP_ID chưa được cấu hình.")
+    state_secret = str(os.getenv("PINTEREST_OAUTH_STATE_SECRET") or os.getenv("PINTEREST_APP_SECRET") or "").strip()
+    if not state_secret:
+        raise ValueError("PINTEREST_OAUTH_STATE_SECRET hoặc PINTEREST_APP_SECRET chưa được cấu hình.")
+    state_signature = hmac.new(state_secret.encode("utf-8"), state_payload.encode("utf-8"), hashlib.sha256).hexdigest()
+    state = f"{state_payload}.{state_signature}"
 
     query = urllib.parse.urlencode({
         "consumer_id": app_id,
         "redirect_uri": r_uri,
         "response_type": "code",
         "scope": scopes,
-        "state": f"ffp_pod_{int(time.time())}",
+        "state": state,
     })
     auth_url = f"https://www.pinterest.com/oauth/?{query}"
     return {
@@ -668,6 +691,27 @@ def generate_pinterest_oauth_url(redirect_uri: str | None = None) -> dict[str, A
         "redirect_uri": r_uri,
         "scopes": scopes,
     }
+
+
+def validate_pinterest_oauth_state(state: str, maximum_age_seconds: int = 600) -> bool:
+    """Validate the signed, short-lived OAuth state returned by Pinterest."""
+    try:
+        payload, supplied_signature = str(state or "").rsplit(".", 1)
+        prefix, timestamp_value = payload.rsplit("_", 1)
+        if prefix != "ffp_pod":
+            return False
+        issued_at = int(timestamp_value)
+        if issued_at > int(time.time()) + 30 or int(time.time()) - issued_at > maximum_age_seconds:
+            return False
+        state_secret = str(os.getenv("PINTEREST_OAUTH_STATE_SECRET") or os.getenv("PINTEREST_APP_SECRET") or "").strip()
+        if not state_secret:
+            return False
+        expected_signature = hmac.new(
+            state_secret.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256
+        ).hexdigest()
+        return hmac.compare_digest(supplied_signature, expected_signature)
+    except (TypeError, ValueError):
+        return False
 
 
 def extract_oauth_code_from_string(value: str) -> str:
@@ -694,7 +738,7 @@ def exchange_pinterest_oauth_code(code_or_url: str, redirect_uri: str | None = N
     if not code:
         raise ValueError("Mã code authorization không hợp lệ hoặc bị trống.")
 
-    app_id = str(os.getenv("PINTEREST_APP_ID") or "1595071").strip()
+    app_id = str(os.getenv("PINTEREST_APP_ID") or "").strip()
     app_secret = str(os.getenv("PINTEREST_APP_SECRET") or "").strip()
     r_uri = str(redirect_uri or os.getenv("PINTEREST_REDIRECT_URI") or "http://localhost:8768/api/pinterest-pod/oauth/callback").strip()
 
@@ -745,15 +789,9 @@ def exchange_pinterest_oauth_code(code_or_url: str, redirect_uri: str | None = N
         payload["refresh_token_expires_at"] = now + float(payload["refresh_token_expires_in"])
 
     # Save to primary token file
-    target_file = (ROOT / "pinterest" / ".pinterest_oauth_tokens.json").resolve()
+    target_file = PRIMARY_TOKEN_FILE
     target_file.parent.mkdir(parents=True, exist_ok=True)
     target_file.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-
-    # Also save to root token file for maximum compatibility
-    try:
-        (ROOT / ".pinterest_oauth_tokens.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    except Exception:
-        pass
 
     logger.info("Đã lưu Pinterest OAuth token vào: %s", target_file)
     return {
@@ -803,14 +841,9 @@ def save_manual_pinterest_token(access_token: str, refresh_token: str = "", scop
     if refresh_token.strip():
         payload["refresh_token"] = refresh_token.strip()
 
-    target_file = (ROOT / "pinterest" / ".pinterest_oauth_tokens.json").resolve()
+    target_file = PRIMARY_TOKEN_FILE
     target_file.parent.mkdir(parents=True, exist_ok=True)
     target_file.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-
-    try:
-        (ROOT / ".pinterest_oauth_tokens.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    except Exception:
-        pass
 
     logger.info("Đã lưu token thủ công cho tài khoản @%s", username)
     return {
@@ -3247,6 +3280,8 @@ def delete_pod_job(job_id: str) -> dict[str, Any]:
             cancel_evt.set()
         job_data = ACTIVE_JOBS.pop(safe_id, None) or {}
         LOCAL_WORKER_THREADS.pop(safe_id, None)
+
+    get_job_repository().delete(safe_id)
 
     deleted_paths: list[str] = []
 

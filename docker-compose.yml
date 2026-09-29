@@ -54,11 +54,16 @@ services:
       GATEWAY_HOST: 0.0.0.0
       GATEWAY_PORT: 3001
       COORDINATOR_PORT: 8766
+      PINTEREST_POD_HOST: 0.0.0.0
+      PINTEREST_POD_PORT: 8768
+      PINTEREST_RUNTIME_ROOT: /app/.runtime/pinterest-pod
+      TREND_PRODUCT_OUTPUT: /app/.runtime/pinterest-pod/output
+      PINTEREST_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-ffp_tool}:${POSTGRES_PASSWORD}@database:5432/${POSTGRES_DB:-ffp_tool}
     volumes:
       - ffp_data:/app/.local-data
       - ffp_runtime:/app/.runtime
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://127.0.0.1:3001/health"]
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:3001/health >/dev/null && curl -fsS http://127.0.0.1:8766/api/v1/health >/dev/null && curl -fsS http://127.0.0.1:8768/ready >/dev/null"]
       interval: 10s
       timeout: 5s
       retries: 5
