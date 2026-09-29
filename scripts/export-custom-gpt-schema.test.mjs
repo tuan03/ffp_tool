@@ -13,7 +13,7 @@ test("Custom GPT schema uses a configurable HTTPS origin and exposes no administ
   assert.equal(new Set(operationIds).size, operationIds.length);
 });
 
-test("Custom GPT schema exposes authenticated binary image content", () => {
+test("Custom GPT schema exposes an authenticated public image URL lookup", () => {
   const result = spawnSync(process.execPath, ["scripts/export-custom-gpt-schema.mjs", "https://seo.example.org"], { encoding: "utf8" });
   assert.equal(result.status, 0, result.stderr);
   const schema = JSON.parse(result.stdout);
@@ -21,9 +21,10 @@ test("Custom GPT schema exposes authenticated binary image content", () => {
 
   assert.equal(operation?.operationId, "getSeoJobImageContent");
   assert.deepEqual(operation?.security, [{ actionKey: [] }]);
-  assert.equal(operation?.responses?.["200"]?.content?.["image/jpeg"]?.schema?.format, "binary");
-  assert.equal(operation?.responses?.["200"]?.content?.["image/png"]?.schema?.format, "binary");
-  assert.equal(operation?.responses?.["200"]?.content?.["image/webp"]?.schema?.format, "binary");
+  const responseSchema = operation?.responses?.["200"]?.content?.["application/json"]?.schema;
+  assert.deepEqual(responseSchema?.required, ["imageId", "imageUrl", "instructions"]);
+  assert.equal(responseSchema?.properties?.imageUrl?.format, "uri");
+  assert.equal(operation?.responses?.["200"]?.content?.["image/jpeg"], undefined);
   assert.deepEqual(operation?.parameters?.map(parameter => parameter.name), ["jobId", "imageId"]);
 });
 

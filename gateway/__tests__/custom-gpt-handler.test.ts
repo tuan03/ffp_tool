@@ -105,7 +105,7 @@ test("signed image URLs remain scoped to the authenticated store", async () => {
   } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); db.close(); }
 });
 
-test("image-content Action returns authenticated product image bytes for the owning store", async () => {
+test("image-content Action returns the public HTTPS product image URL for the owning store", async () => {
   const db = new DatabaseSync(":memory:");
   const queue = new CustomGptQueue(db);
   const handler = createCustomGptHandler({
@@ -114,7 +114,7 @@ test("image-content Action returns authenticated product image bytes for the own
     storeId: "capozen",
     adminKey: "admin-key",
   });
-  const imageBytes = Buffer.from([0xff, 0xd8, 0xff, 0xd9]);
+  const imageUrl = "https://chillgen.com/cdn/shop/files/product.jpg?v=1784524386&width=480";
   const job = queue.enqueue({
     storeId: "capozen",
     source: "auto_seo",
@@ -124,17 +124,10 @@ test("image-content Action returns authenticated product image bytes for the own
       description: "Description",
       handle: "product",
       niche: "home",
-      images: [{ id: "front", url: "https://cdn.shopify.com/front.jpg" }],
+      images: [{ id: "front", url: imageUrl }],
     },
     original: {},
   });
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = async (input, init) => {
-    if (String(input) === "https://cdn.shopify.com/front.jpg") {
-      return new Response(imageBytes, { headers: { "Content-Type": "image/jpeg", "Content-Length": String(imageBytes.length) } });
-    }
-    return originalFetch(input, init);
-  };
   const server = http.createServer((req, res) => { void handler(req, res); });
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
@@ -142,15 +135,56 @@ test("image-content Action returns authenticated product image bytes for the own
   const endpoint = `http://127.0.0.1:${address.port}/api/v1/gpt-seo/image-content?jobId=${job.id}&imageId=front`;
 
   try {
-    assert.equal((await originalFetch(endpoint)).status, 401);
-    assert.equal((await originalFetch(endpoint, { headers: { Authorization: "Bearer wrydeco-key" } })).status, 404);
-    const response = await originalFetch(endpoint, { headers: { Authorization: "Bearer capozen-key" } });
+    assert.equal((await fetch(endpoint)).status, 401);
+    assert.equal((await fetch(endpoint, { headers: { Authorization: "Bearer wrydeco-key" } })).status, 404);
+    const response = await fetch(endpoint, { headers: { Authorization: "Bearer capozen-key" } });
     assert.equal(response.status, 200);
-    assert.equal(response.headers.get("content-type"), "image/jpeg");
-    assert.match(response.headers.get("content-disposition") || "", /^inline;/);
-    assert.deepEqual(Buffer.from(await response.arrayBuffer()), imageBytes);
+    assert.match(response.headers.get("content-type") || "", /^application\/json/);
+    assert.deepEqual(await response.json(), {
+      imageId: "front",
+      imageUrl,
+      instructions: "Use imageUrl as the public image URL. Do not use imageId as a URL.",
+    });
   } finally {
-    globalThis.fetch = originalFetch;
+    server.closeAllConnections();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    db.close();
+  }
+});
+
+test("image-content Action rejects a non-HTTPS source URL", async () => {
+  const db = new DatabaseSync(":memory:");
+  const queue = new CustomGptQueue(db);
+  const handler = createCustomGptHandler({
+    queue,
+    actionKeys: { capozen: "capozen-key" },
+    storeId: "capozen",
+    adminKey: "admin-key",
+  });
+  const job = queue.enqueue({
+    storeId: "capozen",
+    source: "auto_seo",
+    sourceIdentity: "product-http-image",
+    input: {
+      title: "Product",
+      description: "Description",
+      handle: "product",
+      niche: "home",
+      images: [{ id: "front", url: "http://cdn.example.org/front.jpg" }],
+    },
+    original: {},
+  });
+  const server = http.createServer((req, res) => { void handler(req, res); });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${address.port}/api/v1/gpt-seo/image-content?jobId=${job.id}&imageId=front`, {
+      headers: { Authorization: "Bearer capozen-key" },
+    });
+    assert.equal(response.status, 400);
+  } finally {
     server.closeAllConnections();
     await new Promise<void>(resolve => server.close(() => resolve()));
     db.close();
