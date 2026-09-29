@@ -20,7 +20,8 @@ export function ReviewImagePage({ client }: { readonly client: ReviewImageClient
   const [templates, setTemplates] = useState<readonly ReviewImageTemplate[] | null>(null);
   const [selectedTemplateName, setSelectedTemplateName] = useState("");
   const [selectedTemplatePreview, setSelectedTemplatePreview] = useState("");
-  const [isUploadingTemplate, setIsUploadingTemplate] = useState(false);
+  const [templateUploadProgress, setTemplateUploadProgress] = useState<{ readonly completed: number; readonly total: number } | null>(null);
+  const [templateUploadSummary, setTemplateUploadSummary] = useState<{ readonly message: string; readonly hasFailures: boolean } | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isApproving, setIsApproving] = useState(false);
   const [error, setError] = useState("");
@@ -160,19 +161,37 @@ export function ReviewImagePage({ client }: { readonly client: ReviewImageClient
     else setError("Không đọc được ảnh từ clipboard. Hãy sao chép lại ảnh và thử tiếp.");
   }
 
-  async function handleTemplateUpload(file: File | undefined): Promise<void> {
-    if (!file) return;
+  async function handleTemplateUpload(files: readonly File[]): Promise<void> {
+    if (files.length === 0) return;
     setError("");
-    setIsUploadingTemplate(true);
+    setTemplateUploadSummary(null);
+    setTemplateUploadProgress({ completed: 0, total: files.length });
+    let uploadedCount = 0;
+    let lastUploadedName = "";
+    const failures: string[] = [];
     try {
-      const imageDataUrl = await encodeImageFile(file);
-      const uploaded = await client.uploadTemplate({ fileName: file.name, imageDataUrl });
-      setTemplates((current) => [...(current ?? []), uploaded].sort((left, right) => left.name.localeCompare(right.name)));
-      setSelectedTemplateName(uploaded.name);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Không tải được ảnh template lên.");
+      for (const [index, file] of files.entries()) {
+        try {
+          const imageDataUrl = await encodeImageFile(file);
+          const uploaded = await client.uploadTemplate({ fileName: file.name, imageDataUrl });
+          setTemplates((current) => [...(current ?? []), uploaded].sort((left, right) => left.name.localeCompare(right.name)));
+          uploadedCount += 1;
+          lastUploadedName = uploaded.name;
+        } catch (cause) {
+          const message = cause instanceof Error ? cause.message : "Không tải được ảnh template lên.";
+          failures.push(`${file.name}: ${message}`);
+        }
+        setTemplateUploadProgress({ completed: index + 1, total: files.length });
+      }
+      if (lastUploadedName) setSelectedTemplateName(lastUploadedName);
+      setTemplateUploadSummary({
+        message: failures.length === 0
+          ? `Đã tải ${uploadedCount} ảnh template.`
+          : `Đã tải ${uploadedCount}/${files.length} ảnh. ${failures.slice(0, 3).join("; ")}${failures.length > 3 ? `; và ${failures.length - 3} ảnh lỗi khác.` : ""}`,
+        hasFailures: failures.length > 0,
+      });
     } finally {
-      setIsUploadingTemplate(false);
+      setTemplateUploadProgress(null);
     }
   }
 
@@ -246,13 +265,15 @@ export function ReviewImagePage({ client }: { readonly client: ReviewImageClient
             <div className="mt-3 space-y-3">
               <label className="block font-medium text-slate-300">
                 Tải ảnh template lên
-                <input className={fieldClass} type="file" accept="image/png,image/jpeg,image/webp" disabled={isUploadingTemplate} onChange={(event) => {
-                  const file = event.target.files?.[0];
+                <input className={fieldClass} type="file" accept="image/png,image/jpeg,image/webp" multiple disabled={templateUploadProgress !== null} onChange={(event) => {
+                  const files = Array.from(event.target.files ?? []);
                   event.target.value = "";
-                  void handleTemplateUpload(file);
+                  void handleTemplateUpload(files);
                 }} />
               </label>
-              {isUploadingTemplate && <p role="status" className="text-slate-400">Đang tải ảnh template lên…</p>}
+              <p className="text-xs text-slate-500">Có thể chọn nhiều ảnh PNG, JPEG hoặc WebP cùng lúc.</p>
+              {templateUploadProgress && <p role="status" className="text-slate-400">Đã xử lý {templateUploadProgress.completed}/{templateUploadProgress.total} ảnh template…</p>}
+              {templateUploadSummary && <p role={templateUploadSummary.hasFailures ? "alert" : "status"} className={templateUploadSummary.hasFailures ? "text-amber-300" : "text-emerald-300"}>{templateUploadSummary.message}</p>}
               {templates?.length === 0 && <p className="text-slate-400">Thư mục chưa có ảnh template. Hãy tải ảnh lên để bắt đầu.</p>}
               {templates && templates.length > 0 && <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
                 <ul className="max-h-60 space-y-1 overflow-y-auto rounded-lg border border-slate-700 p-2" aria-label="Danh sách ảnh template">

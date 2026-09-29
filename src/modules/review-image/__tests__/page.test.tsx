@@ -21,3 +21,11 @@ test("review image page exposes upload, scope, editable prompt and approval cont
   assert.match(html, /Đổi nền/);
   assert.match(html, /Chỉ duyệt khi sản phẩm và bối cảnh đều đúng/);
 });
+
+test("template upload accepts several image files in one selection", () => {
+  const client = createReviewImageClient(async () => { throw new Error("No network during render"); });
+  const html = renderToStaticMarkup(<ReviewImagePage client={client} />);
+  const templateInput = html.match(/Tải ảnh template lên<input[^>]+>/)?.[0];
+  assert.ok(templateInput);
+  assert.match(templateInput, /multiple=""/);
+});
