@@ -542,8 +542,8 @@
     "/api/v1/gpt-seo/images": {
       "get": {
         "operationId": "getSeoJobImages",
-        "summary": "Read five image URLs. Inspect visually or request manual attachments.",
-        "description": "Read five image URLs. Inspect visually or request manual attachments.",
+        "summary": "Read five original public image URLs.",
+        "description": "Returns stored source image URLs without FFP authentication, signatures or proxying. Inspect visually or request manual attachments.",
         "security": [
           {
             "actionKey": []
@@ -600,8 +600,8 @@
     "/api/v1/gpt-seo/image-content": {
       "get": {
         "operationId": "getSeoJobImageContent",
-        "summary": "Return an FFP-hosted public HTTPS URL for one product image.",
-        "description": "Use jobId and imageId from getSeoJobImages. Open the returned imageUrl on the FFP server; it proxies only the image registered for this job and needs no image authentication. imageId is only an identifier and is not a URL.",
+        "summary": "Return the original public URL for one product image.",
+        "description": "Use jobId and imageId from getSeoJobImages. Open the returned original imageUrl directly; it is not an FFP proxy or signed URL. imageId is only an identifier and is not a URL.",
         "security": [
           {
             "actionKey": []
@@ -627,7 +627,7 @@
                     "imageUrl": {
                       "type": "string",
                       "format": "uri",
-                      "description": "FFP-hosted public HTTPS image URL to open and inspect without authentication."
+                      "description": "Original public image URL stored for this job; no FFP authentication or signature is added."
                     },
                     "instructions": {
                       "type": "string"
@@ -639,7 +639,7 @@
             }
           },
           "400": {
-            "description": "Invalid jobId, imageId or non-public image URL"
+            "description": "Invalid jobId or imageId"
           },
           "401": {
             "description": "Invalid API key"

@@ -93,7 +93,7 @@ test("new-store guide uses only the multi-store action-key map", async () => {
   assert.doesNotMatch(guide, /`GPT_SEO_ACTION_KEY`/);
 });
 
-test("Custom GPT instructions use the public imageUrl returned by the image Action", async () => {
+test("Custom GPT instructions use the original public imageUrl returned by the image Action", async () => {
   const [instructions, knowledge] = await Promise.all([
     readFile("docs/custom-gpt-seo/gpt-instructions.md", "utf8"),
     readFile("docs/custom-gpt-seo/seo-knowledge.md", "utf8"),
@@ -102,11 +102,11 @@ test("Custom GPT instructions use the public imageUrl returned by the image Acti
   assert.match(instructions, /getSeoJobImageContent/);
   assert.match(instructions, /imageId/);
   assert.match(instructions, /imageUrl/);
-  assert.match(instructions, /FFP-hosted public HTTPS image URL/);
-  assert.match(instructions, /needs no Bearer token/);
+  assert.match(instructions, /original public image URL/);
+  assert.match(instructions, /does not require a Bearer token/);
   assert.doesNotMatch(instructions, /returned image content visually/);
   assert.match(knowledge, /imageUrl/);
-  assert.match(knowledge, /FFP server resolves the stored job image and proxies its bytes/);
+  assert.match(knowledge, /original source URL/);
   assert.match(knowledge, /actually rendered and inspected/);
 });
 
