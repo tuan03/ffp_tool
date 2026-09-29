@@ -10,6 +10,7 @@ import json
 import multiprocessing
 import os
 import sys
+import time
 from pathlib import Path
 from typing import Sequence
 
@@ -37,6 +38,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--config", type=Path, help="Path to the agent JSON configuration file.")
     parser.add_argument("--project-root", type=Path, help="Crawler cache/profile root; defaults to the agent data directory.")
     parser.add_argument("--no-tray", action="store_true", help="Run in the foreground without a tray icon.")
+    parser.add_argument("--start-minimized", action="store_true", help="Start in the tray without opening the dashboard.")
     parser.add_argument("--check-config", action="store_true", help="Validate configuration and exit.")
     return parser
 
@@ -76,7 +78,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 agent = DistributedCrawlerAgent(
                     project_root=project_root,
                     config=config,
-                    on_status=lambda status: print(json.dumps(status, ensure_ascii=False), flush=True),
+                    on_status=lambda status: print(json.dumps(
+                        {key: value for key, value in status.items() if key != "dashboard"},
+                        ensure_ascii=False,
+                    ), flush=True),
                 )
                 asyncio.run(agent.run())
                 return 0
@@ -84,11 +89,21 @@ def main(argv: Sequence[str] | None = None) -> int:
             from .client_tray import TrayApplication
 
             agent = DistributedCrawlerAgent(project_root=project_root, config=config)
-            TrayApplication(agent, config.data_directory).run()
+            TrayApplication(agent, config.data_directory, start_minimized=arguments.start_minimized).run()
         return 0
     except KeyboardInterrupt:
         return 130
     except AgentAlreadyRunningError as error:
+        if sys.platform == "win32" and not arguments.no_tray:
+            from .client_activation import request_activation
+
+            if arguments.start_minimized:
+                return 0
+            # The first instance may still be creating its Tk window and activation event.
+            for _attempt in range(20):
+                if request_activation(config.data_directory):
+                    return 0
+                time.sleep(0.1)
         print(redact(error), file=sys.stderr)
         return 2
     except Exception as error:

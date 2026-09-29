@@ -28,7 +28,7 @@ Source: "..\..\artifacts\windows\FFPAmazonCrawlerAgent\*"; DestDir: "{app}"; Fla
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Parameters: "--config ""{commonappdata}\FFP Amazon Crawler\agent.json"""
 
 [Registry]
-Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "FFPAmazonCrawler"; ValueData: """{app}\{#AppExeName}"" --config ""{commonappdata}\FFP Amazon Crawler\agent.json"""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "FFPAmazonCrawler"; ValueData: """{app}\{#AppExeName}"" --start-minimized --config ""{commonappdata}\FFP Amazon Crawler\agent.json"""; Flags: uninsdeletevalue
 
 [Run]
 Filename: "{app}\{#AppExeName}"; Parameters: "--config ""{commonappdata}\FFP Amazon Crawler\agent.json"""; Description: "Start {#AppName}"; Flags: nowait postinstall skipifsilent

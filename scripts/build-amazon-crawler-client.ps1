@@ -38,12 +38,19 @@ if (-not (Test-Path -LiteralPath $pythonExecutable)) {
 
 & $pythonExecutable -m pip install --disable-pip-version-check --upgrade pip
 & $pythonExecutable -m pip install -r (Join-Path $amazonRoot "engine/requirements.txt") "pyinstaller>=6.10,<7"
+& $pythonExecutable -c "import tkinter; print('Tk/Tcl runtime:', tkinter.TkVersion)"
+if ($LASTEXITCODE -ne 0) {
+    throw "Python Tk/Tcl is required to package the Windows agent dashboard. Install Python with Tcl/Tk support."
+}
 $env:PLAYWRIGHT_BROWSERS_PATH = $browserDirectory
 & $pythonExecutable -m playwright install chromium
 
 Push-Location $repositoryRoot
 try {
     & $pythonExecutable -m PyInstaller --noconfirm --clean --distpath $portableOutput (Join-Path $repositoryRoot "packaging/windows/ffp-amazon-crawler.spec")
+    if ($LASTEXITCODE -ne 0) {
+        throw "PyInstaller failed to package the Windows crawler agent."
+    }
 }
 finally {
     Pop-Location
