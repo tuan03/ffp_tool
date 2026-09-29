@@ -1836,7 +1836,11 @@ def _run_local_pipeline_worker(
             except Exception:
                 pass
 
-    vision_status_note = "ĐÃ TẮT AI LỌC - hiển thị 100% ảnh thô cào về" if is_vision_disabled else "Bật AI lọc"
+    vision_status_note = (
+        "ĐÃ TẮT AI LỌC - hiển thị toàn bộ ảnh đọc được, chỉ gắn cảnh báo kỹ thuật"
+        if is_vision_disabled
+        else "Bật AI lọc"
+    )
     log_progress(f"Bắt đầu pipeline trực tiếp (Stage: {stage}, Product: {product}, Niche: '{niche}', Vision: {vision_status_note})...")
     log_progress(f"Nguồn truy vấn: {query_source}.")
 

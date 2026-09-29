@@ -89,6 +89,7 @@ class CandidateReviewItem:
     is_rejected: bool = False
     reject_reason: str = ""
     reject_reason_code: str = ""
+    quality_warnings: list[str] = dataclasses.field(default_factory=list)
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -484,9 +485,26 @@ def run_crawl_and_review_stage(
         write_resilient_report(run_dir / "report.html", config, [], [], [], review_manifest)
         raise RuntimeError(review_manifest["message"])
 
-    filtered, filter_decisions = filter_candidates(task5_candidates)
-    kept, dedupe_decisions = dedupe_candidates(filtered, config.dedupe_threshold)
-    decisions = filter_decisions + dedupe_decisions
+    preserve_raw = str(config.task5_vision_mode or "").strip().lower() == "off"
+    kept, decisions = prepare_review_candidates(
+        task5_candidates,
+        dedupe_threshold=config.dedupe_threshold,
+        preserve_raw=preserve_raw,
+    )
+    warning_count = sum(
+        1 for candidate in kept
+        if "low_information" in (candidate.metadata or {}).get("quality_warnings", [])
+    )
+    unreadable_count = sum(
+        1 for decision in decisions
+        if not decision.kept and decision.reason.startswith("unreadable:")
+    )
+    if preserve_raw:
+        log(
+            progress,
+            f"Kiểm tra kỹ thuật: đã tải {len(task5_candidates)}, hiển thị {len(kept)}, "
+            f"cảnh báo ít chi tiết {warning_count}, loại file không đọc được {unreadable_count}.",
+        )
 
     kept_dir = run_dir / "dedupe" / "kept"
     rejected_dir = run_dir / "dedupe" / "rejected"
@@ -529,6 +547,7 @@ def run_crawl_and_review_stage(
                 reason=str(meta.get("reason") or ""),
                 motifs=list(meta.get("motifs") or []),
                 source_role=str(candidate.source_role or meta.get("source_role") or "unknown"),
+                quality_warnings=list(meta.get("quality_warnings") or []),
             )
         )
 
@@ -550,6 +569,7 @@ def run_crawl_and_review_stage(
         "niche": config.trend_niche,
         "total_candidates": len(final_review_candidates),
         "direct_printable_count": sum(1 for c in final_review_candidates if c.is_direct_printable),
+        "quality_warning_count": sum(1 for c in final_review_candidates if c.quality_warnings),
         "candidates": [c.to_dict() for c in final_review_candidates],
     }
     write_json(run_dir / "candidate_review.json", review_manifest)
@@ -1743,12 +1763,26 @@ def automatic_background_brief(config: PipelineConfig, profile=None) -> str:
     )
 
 
-def filter_candidates(candidates: list[CandidateImage]) -> tuple[list[CandidateImage], list[DedupeDecision]]:
+def filter_candidates(
+    candidates: list[CandidateImage],
+    *,
+    preserve_low_information: bool = False,
+) -> tuple[list[CandidateImage], list[DedupeDecision]]:
     accepted: list[CandidateImage] = []
     decisions: list[DedupeDecision] = []
     for candidate in candidates:
         try:
             if is_low_information(candidate.path):
+                if preserve_low_information:
+                    metadata = dict(candidate.metadata or {})
+                    warnings = list(metadata.get("quality_warnings") or [])
+                    if "low_information" not in warnings:
+                        warnings.append("low_information")
+                    metadata["quality_warnings"] = warnings
+                    warned_candidate = replace(candidate, metadata=metadata)
+                    accepted.append(warned_candidate)
+                    decisions.append(DedupeDecision(warned_candidate, True, "low_information_warning"))
+                    continue
                 decisions.append(DedupeDecision(candidate, False, "low_information"))
                 continue
         except Exception as exc:
@@ -1756,6 +1790,29 @@ def filter_candidates(candidates: list[CandidateImage]) -> tuple[list[CandidateI
             continue
         accepted.append(candidate)
     return accepted, decisions
+
+
+def prepare_review_candidates(
+    candidates: list[CandidateImage],
+    *,
+    dedupe_threshold: int,
+    preserve_raw: bool,
+) -> tuple[list[CandidateImage], list[DedupeDecision]]:
+    filtered, filter_decisions = filter_candidates(
+        candidates,
+        preserve_low_information=preserve_raw,
+    )
+    if not preserve_raw:
+        kept, dedupe_decisions = dedupe_candidates(filtered, dedupe_threshold)
+        return kept, filter_decisions + dedupe_decisions
+
+    decided_paths = {decision.candidate.path for decision in filter_decisions}
+    raw_keep_decisions = [
+        DedupeDecision(candidate, True, "kept_raw")
+        for candidate in filtered
+        if candidate.path not in decided_paths
+    ]
+    return filtered, filter_decisions + raw_keep_decisions
 
 
 def copy_decision_files(decisions: list[DedupeDecision], kept_dir: Path, rejected_dir: Path) -> None:

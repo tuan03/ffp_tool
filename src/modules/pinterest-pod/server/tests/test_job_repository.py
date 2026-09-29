@@ -33,6 +33,16 @@ class PinterestJobRepositoryTests(unittest.TestCase):
         finally:
             second_repository.engine.dispose()
 
+    def test_creates_missing_sqlite_parent_directory(self) -> None:
+        database_path = Path(self.temporary_directory.name) / "missing" / "nested" / "jobs.sqlite3"
+
+        repository = PinterestJobRepository(f"sqlite:///{database_path.as_posix()}")
+        try:
+            repository.save("job_nested", {"status": "completed"})
+            self.assertTrue(database_path.is_file())
+        finally:
+            repository.engine.dispose()
+
     def test_marks_interrupted_jobs_failed_after_restart(self) -> None:
         self.repository.save("job_running", {"status": "running", "logs": []})
 

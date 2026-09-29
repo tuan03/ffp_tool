@@ -916,7 +916,13 @@ class CoordinatorStore(CoordinatorObservability):
             task.lease_expires_at = None
             attempt.status = "completed"
             attempt.finished_at = utc_now()
-            self._event(session, task.job_id, "task_completed", {"taskId": task.id, "clientId": client_id})
+            completion_event: dict[str, Any] = {"taskId": task.id, "clientId": client_id}
+            if str((job.settings if job else {}).get("channel") or "").lower() == "pinterest":
+                candidate_count = len(payload.get("candidates")) if isinstance(payload.get("candidates"), list) else 0
+                completion_event["message"] = (
+                    f"Agent đã gửi thành công {candidate_count} candidate về server."
+                )
+            self._event(session, task.job_id, "task_completed", completion_event)
             self._refresh_job(session, task.job_id)
             return {"status": "accepted", "taskId": task.id}
 
@@ -3104,6 +3110,12 @@ class CoordinatorStore(CoordinatorObservability):
             deliverables: dict[str, Any] = {}
             summary_metrics: dict[str, Any] = {}
             logs: list[str] = []
+            task_error = next((
+                str(task.last_error.get("message") or "").strip()
+                for task in tasks
+                if task.status == "failed" and isinstance(task.last_error, dict)
+                and str(task.last_error.get("message") or "").strip()
+            ), "")
             for task in tasks:
                 if task.result and isinstance(task.result.payload, dict):
                     res_cands = task.result.payload.get("candidates")
@@ -3144,6 +3156,7 @@ class CoordinatorStore(CoordinatorObservability):
                 "summaryMetrics": summary_metrics,
                 "summary_metrics": summary_metrics,
                 "logs": logs,
+                "error": task_error or None,
             })
             if job.status == "queued":
                 snapshot["stepper"] = {"current_step": 1, "percent": 10, "current_message": "Đang xếp hàng chờ Agent kết nối..."}
@@ -3155,5 +3168,9 @@ class CoordinatorStore(CoordinatorObservability):
             elif job.status == "completed":
                 snapshot["stepper"] = {"current_step": 4, "percent": 100, "current_message": "Hoàn thành! Đã tạo đầy đủ mockup AI & file in CMYK xưởng."}
             elif job.status == "failed":
-                snapshot["stepper"] = {"current_step": 1, "percent": 0, "current_message": "Tác vụ thất bại."}
+                snapshot["stepper"] = {
+                    "current_step": 1,
+                    "percent": 0,
+                    "current_message": task_error or "Tác vụ thất bại.",
+                }
         return snapshot

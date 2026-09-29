@@ -3497,6 +3497,22 @@ class CoordinatorPinterestDistributedTests(unittest.TestCase):
         leases = self.store.lease_tasks("client-a", 1)
         self.assertEqual([task["jobId"] for task in leases], [amazon["id"]])
 
+    def test_failed_pinterest_job_exposes_agent_error_message(self) -> None:
+        job = self.store.create_pinterest_job({"niche": "fixture", "stage": "crawl_and_review"})
+        self.store.register_client({**client_hello(slots=1), "capabilities": {"amazon": True, "pinterest": True}})
+        lease = self.store.lease_tasks("client-a", 1)[0]
+
+        self.store.fail_task("client-a", {
+            "taskId": lease["taskId"],
+            "leaseId": lease["leaseId"],
+            "error": {"message": "Không thể lưu manifest trên Crawler Agent.", "retryable": False},
+        })
+
+        snapshot = self.store.get_job(str(job["id"]))
+        self.assertEqual(snapshot["status"], "failed")
+        self.assertEqual(snapshot["error"], "Không thể lưu manifest trên Crawler Agent.")
+        self.assertEqual(snapshot["stepper"]["current_message"], "Không thể lưu manifest trên Crawler Agent.")
+
     def test_pinterest_job_creation_and_capability_filtering(self) -> None:
         # 1. Create a Pinterest crawl job
         job = self.store.create_pinterest_job({
@@ -3565,6 +3581,7 @@ class CoordinatorPinterestDistributedTests(unittest.TestCase):
         self.assertEqual(snapshot["candidates"][0]["image_id"], "pin_1")
         self.assertEqual(snapshot["stepper"]["current_step"], 2)
         self.assertIn("Sẵn sàng duyệt mẫu", snapshot["stepper"]["current_message"])
+        self.assertIn("Agent đã gửi thành công 2 candidate về server.", snapshot["logs"])
 
     def test_pinterest_production_job_completion(self) -> None:
         # Create a production stage job

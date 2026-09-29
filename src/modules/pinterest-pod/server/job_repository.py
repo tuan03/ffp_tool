@@ -11,9 +11,11 @@ import copy
 import os
 import threading
 import time
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import Float, JSON, String, create_engine, delete, select
+from sqlalchemy.engine import make_url
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
 
@@ -43,6 +45,10 @@ class PinterestJobRepository:
     def __init__(self, url: str | None = None) -> None:
         resolved_url = url or database_url()
         connect_args = {"check_same_thread": False} if resolved_url.startswith("sqlite") else {}
+        if resolved_url.startswith("sqlite"):
+            sqlite_database = make_url(resolved_url).database
+            if sqlite_database and sqlite_database != ":memory:":
+                Path(sqlite_database).expanduser().resolve().parent.mkdir(parents=True, exist_ok=True)
         self.engine = create_engine(resolved_url, pool_pre_ping=True, connect_args=connect_args)
         self.sessions = sessionmaker(self.engine, expire_on_commit=False)
         Base.metadata.create_all(self.engine)

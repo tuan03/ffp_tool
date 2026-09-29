@@ -8,6 +8,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from PIL import Image
+
 # Ensure server root is in sys.path
 SERVER_ROOT = Path(__file__).resolve().parents[2]
 if str(SERVER_ROOT) not in sys.path:
@@ -30,6 +32,8 @@ from pinterest_pod_bridge import (
     suggest_pinterest_themes,
 )
 from trend_tool.config import PipelineConfig, ProductTarget
+from trend_tool.crawler import CandidateImage
+from trend_tool.pipeline import prepare_review_candidates
 
 
 class TestPinterestTrendDiscoveryAndRescue(unittest.TestCase):
@@ -127,6 +131,27 @@ class TestPinterestTrendDiscoveryAndRescue(unittest.TestCase):
             self.assertNotIn("markets", kw)
             self.assertNotIn("trend_types", kw)
             self.assertNotIn("occurrences", kw)
+
+    def test_raw_review_keeps_low_information_images_and_only_rejects_unreadable_files(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            first_flat = root / "flat-1.png"
+            second_flat = root / "flat-2.png"
+            unreadable = root / "broken.png"
+            Image.new("RGB", (64, 64), "white").save(first_flat)
+            Image.new("RGB", (64, 64), "white").save(second_flat)
+            unreadable.write_text("not an image", encoding="utf-8")
+            candidates = [
+                CandidateImage(first_flat, "pinterest", "flat one"),
+                CandidateImage(second_flat, "pinterest", "flat two"),
+                CandidateImage(unreadable, "pinterest", "broken"),
+            ]
+
+            kept, decisions = prepare_review_candidates(candidates, dedupe_threshold=5, preserve_raw=True)
+
+            self.assertEqual([candidate.path for candidate in kept], [first_flat, second_flat])
+            self.assertTrue(all("low_information" in (candidate.metadata or {}).get("quality_warnings", []) for candidate in kept))
+            self.assertTrue(any(not decision.kept and decision.reason.startswith("unreadable:") for decision in decisions))
 
     def test_official_trends_require_oauth_and_never_fall_back(self):
         with patch("pinterest_pod_bridge.check_oauth_token_valid", return_value=(False, {})):

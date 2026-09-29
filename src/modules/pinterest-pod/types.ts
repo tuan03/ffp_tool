@@ -79,6 +79,7 @@ export interface PodCandidate {
   readonly reject_reason_code?: string;
   readonly recommended: boolean;
   readonly reason: string;
+  readonly quality_warnings?: readonly string[];
 }
 export type CandidateItem = PodCandidate;
 
