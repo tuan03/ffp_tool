@@ -1150,24 +1150,11 @@ export function PinterestPodStudio({
             </div>
           )}
 
-          {/* Trend & Keyword Discovery (Tier 1 & 2) Showcase */}
-          {trendDiscoveryResult && (
-            <TrendClusterDiscovery
-              discoveryResult={trendDiscoveryResult}
-              selectedClusterIds={selectedClusterIds}
-              onToggleCluster={handleToggleCluster}
-              onSelectAllClusters={handleSelectAllClusters}
-              onDeselectAllClusters={handleDeselectAllClusters}
-              onStartCrawlWithClusters={(clusters, restoredKws, customKws) =>
-                void handleStartCrawlWithClusters(clusters, restoredKws, customKws)
-              }
-              isCrawling={jobStatus === "running"}
-              onClose={() => setTrendDiscoveryResult(null)}
-            />
-          )}
-
           {/* 2-Columns Layout: Form (Left) & Progress/Logs (Right) */}
-          <div className="grid grid-cols-1 gap-6 lg:grid-cols-12 items-start">
+          <div
+            data-testid="pinterest-query-layout"
+            className="grid grid-cols-1 gap-6 lg:grid-cols-12 items-start"
+          >
             {/* Left Column: Form Khởi Tạo & Lịch Sử Job */}
             <div className="lg:col-span-6 flex flex-col gap-6">
               <InitForm
@@ -1223,6 +1210,24 @@ export function PinterestPodStudio({
               />
             </div>
           </div>
+
+          {/* Results stay after the active form so their insertion does not shift the user's viewport. */}
+          {trendDiscoveryResult && (
+            <div data-testid="pinterest-trend-results" aria-live="polite">
+              <TrendClusterDiscovery
+                discoveryResult={trendDiscoveryResult}
+                selectedClusterIds={selectedClusterIds}
+                onToggleCluster={handleToggleCluster}
+                onSelectAllClusters={handleSelectAllClusters}
+                onDeselectAllClusters={handleDeselectAllClusters}
+                onStartCrawlWithClusters={(clusters, restoredKws, customKws) =>
+                  void handleStartCrawlWithClusters(clusters, restoredKws, customKws)
+                }
+                isCrawling={jobStatus === "running"}
+                onClose={() => setTrendDiscoveryResult(null)}
+              />
+            </div>
+          )}
         </div>
       )}
 
