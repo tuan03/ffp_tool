@@ -1153,7 +1153,7 @@ test("Real service maps HTTP non-2xx status codes predictably", async () => {
     },
   );
 
-  // 403 Forbidden -> SHOPIFY_AUTH_FAILED
+  // 403 Forbidden -> SHOPIFY_PERMISSION_DENIED
   const auth403Runner = createModuleApiRunner(
     { gatewayUrl: "https://gateway.example.com/api" },
     { fetch: createFakeFetch(async () => new Response("Forbidden", { status: 403 })).fetch },
@@ -1164,7 +1164,7 @@ test("Real service maps HTTP non-2xx status codes predictably", async () => {
     },
     (err: unknown) => {
       assert.ok(err instanceof ShopifyApiError);
-      assert.equal(err.code, "SHOPIFY_AUTH_FAILED");
+      assert.equal(err.code, "SHOPIFY_PERMISSION_DENIED");
       return true;
     },
   );
@@ -1201,7 +1201,7 @@ test("Real service maps HTTP non-2xx status codes predictably", async () => {
     },
   );
 
-  // 404 Not Found -> SHOPIFY_USER_ERROR
+  // 404 Not Found -> SHOPIFY_NOT_FOUND
   const userErr404Runner = createModuleApiRunner(
     { gatewayUrl: "https://gateway.example.com/api" },
     { fetch: createFakeFetch(async () => new Response("Not Found", { status: 404 })).fetch },
@@ -1212,12 +1212,12 @@ test("Real service maps HTTP non-2xx status codes predictably", async () => {
     },
     (err: unknown) => {
       assert.ok(err instanceof ShopifyApiError);
-      assert.equal(err.code, "SHOPIFY_USER_ERROR");
+      assert.equal(err.code, "SHOPIFY_NOT_FOUND");
       return true;
     },
   );
 
-  // 422 Unprocessable Entity -> SHOPIFY_USER_ERROR
+  // 422 Unprocessable Entity -> SHOPIFY_INVALID_INPUT
   const userErr422Runner = createModuleApiRunner(
     { gatewayUrl: "https://gateway.example.com/api" },
     { fetch: createFakeFetch(async () => new Response("Unprocessable Entity", { status: 422 })).fetch },
@@ -1230,7 +1230,7 @@ test("Real service maps HTTP non-2xx status codes predictably", async () => {
     },
     (err: unknown) => {
       assert.ok(err instanceof ShopifyApiError);
-      assert.equal(err.code, "SHOPIFY_USER_ERROR");
+      assert.equal(err.code, "SHOPIFY_INVALID_INPUT");
       return true;
     },
   );

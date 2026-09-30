@@ -365,8 +365,20 @@ function mapStatusToErrorCode(
     return bodyCode;
   }
 
-  if (status === 401 || status === 403) {
+  if (status === 401) {
     return "SHOPIFY_AUTH_FAILED";
+  }
+
+  if (status === 403) {
+    return "SHOPIFY_PERMISSION_DENIED";
+  }
+
+  if (status === 404) {
+    return "SHOPIFY_NOT_FOUND";
+  }
+
+  if (status === 422) {
+    return "SHOPIFY_INVALID_INPUT";
   }
 
   if (status === 429) {
