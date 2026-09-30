@@ -1,5 +1,5 @@
 {
-  "prompt_input": "//div[@contenteditable='true' and @data-virtualkeyboard='true'] | //div[@contenteditable='true' and @role='textbox']",
+  "prompt_input": "//*[@id='prompt-textarea'] | //*[@data-testid='composer-input'] | //textarea[not(@disabled)] | //*[@contenteditable='true' and (@role='textbox' or @data-virtualkeyboard='true' or @data-lexical-editor='true')]",
   "send_button": "//button[@data-testid='send-button'] | //button[@aria-label='Send prompt']",
   "stop_button": "//button[@data-testid='stop-button'] | //button[contains(@aria-label, 'Stop')]",
   "assistant_messages": "//div[@data-message-author-role='assistant']",

@@ -132,6 +132,14 @@ context.sleep = () => new Promise(resolve => setTimeout(resolve, 5));
   };
   context.xpathFirst = () => null;
   assert.equal(await context.waitForEnabledXPath('//button[@data-testid="send-button"]', 50, promptForm), localizedSendButton);
+  const currentComposerInput = new FakeElement();
+  currentComposerInput.isContentEditable = true;
+  currentComposerInput.getBoundingClientRect = () => ({ width: 500, height: 40 });
+  context.document.querySelector = selector => selector === '#prompt-textarea' ? currentComposerInput : null;
+  assert.equal(
+    await context.waitForPromptInput("//div[@data-obsolete-prompt-selector='true']", 50),
+    currentComposerInput
+  );
   const userTurn = new FakeElement();
   userTurn.style = { display: "" };
   userTurn.isConnected = true;

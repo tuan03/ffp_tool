@@ -80,7 +80,7 @@ async function executeJob(job) {
   const previousLastText = previousMessages.at(-1)?.innerText?.trim() || "";
   const previousImageSources = new Set([...document.querySelectorAll('img')].map(img => img.currentSrc || img.src));
 
-  const input = await waitForXPath(xpaths.prompt_input, 20_000);
+  const input = await waitForPromptInput(xpaths.prompt_input, 20_000);
   if (job.kind === "image_edit") {
     await attachImageReferences(job.images || [], input.closest('form') || document.querySelector('form') || document.body);
   }
@@ -361,6 +361,48 @@ async function waitForXPath(xpath, timeoutMs) {
     await sleep(250);
   }
   throw new Error(`XPath not found within ${timeoutMs} ms: ${xpath}`);
+}
+
+async function waitForPromptInput(xpath, timeoutMs) {
+  const fallbackSelectors = [
+    '#prompt-textarea',
+    '[data-testid="composer-input"]',
+    'textarea[placeholder]',
+    '[contenteditable="true"][role="textbox"]',
+    '[contenteditable="true"][data-lexical-editor="true"]',
+    '[contenteditable="true"].ProseMirror'
+  ];
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    let configuredInput = null;
+    try {
+      configuredInput = xpathFirst(xpath);
+    } catch {
+      // A stale or invalid configured XPath should not disable stable ChatGPT selectors.
+    }
+    if (isWritablePromptInput(configuredInput)) return configuredInput;
+
+    for (const selector of fallbackSelectors) {
+      const candidates = [
+        document.querySelector(selector),
+        ...document.querySelectorAll(selector)
+      ];
+      const input = candidates.find(isWritablePromptInput);
+      if (input) return input;
+    }
+    await sleep(250);
+  }
+  throw new Error(`ChatGPT prompt input was not found within ${timeoutMs} ms.`);
+}
+
+function isWritablePromptInput(element) {
+  if (!(element instanceof Element) || !isVisible(element)) return false;
+  const isTextArea = typeof HTMLTextAreaElement !== 'undefined' && element instanceof HTMLTextAreaElement;
+  const isTextInput = typeof HTMLInputElement !== 'undefined' && element instanceof HTMLInputElement;
+  if (isTextArea || isTextInput) {
+    return !element.disabled && !element.readOnly;
+  }
+  return element.isContentEditable || element.getAttribute?.('contenteditable') === 'true';
 }
 
 async function waitForEnabledXPath(xpath, timeoutMs, composerForm = null) {
