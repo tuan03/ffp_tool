@@ -4260,5 +4260,92 @@ test("createModuleApiRunner rejects gatewayAuthToken in browser environment with
   }
 });
 
+test("production same-origin path: browser environment preserves relative /api/shopify path and never leaks secrets", async () => {
+  (globalThis as unknown as { window: unknown }).window = {};
+  let requestedUrl: string | undefined;
+  let requestedHeaders: Record<string, string> | undefined;
+
+  const mockFetch = async (url: string | URL | Request, init?: RequestInit) => {
+    requestedUrl = url.toString();
+    requestedHeaders = init?.headers as Record<string, string>;
+    return new Response(
+      JSON.stringify({
+        success: true,
+        storeId: "store-browser",
+        operation: "products.list",
+        data: { products: [] },
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  };
+
+  try {
+    const runner = createModuleApiRunner(
+      { gatewayUrl: "/api/shopify" },
+      { fetch: mockFetch as unknown as typeof fetch },
+    );
+
+    const result = await runner({
+      storeId: "store-browser",
+      operation: "products.list",
+      payload: {},
+    });
+
+    assert.equal(result.success, true);
+    // 1. Path remains strictly relative for Nginx same-origin proxy
+    assert.equal(requestedUrl, "/api/shopify");
+    assert.ok(!requestedUrl?.includes("localhost"));
+    assert.ok(!requestedUrl?.includes("127.0.0.1"));
+    assert.ok(!requestedUrl?.includes("3001"));
+
+    // 2. Headers: no X-Gateway-Key leaked in browser runtime
+    assert.equal(requestedHeaders?.["X-Gateway-Key"], undefined);
+    assert.equal(requestedHeaders?.["Content-Type"], "application/json");
+  } finally {
+    delete (globalThis as unknown as { window?: unknown }).window;
+  }
+});
+
+test("production same-origin path: write operations through browser send requestId and mode", async () => {
+  (globalThis as unknown as { window: unknown }).window = {};
+  let requestedBody: Record<string, unknown> | undefined;
+
+  const mockFetch = async (_url: string | URL | Request, init?: RequestInit) => {
+    requestedBody = JSON.parse(init?.body as string);
+    return new Response(
+      JSON.stringify({
+        success: true,
+        storeId: "store-browser",
+        operation: "products.create",
+        data: { product: { id: "gid://shopify/Product/999", title: "Browser Created" } },
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  };
+
+  try {
+    const runner = createModuleApiRunner(
+      { gatewayUrl: "/api/shopify" },
+      { fetch: mockFetch as unknown as typeof fetch },
+    );
+
+    const result = await runner({
+      storeId: "store-browser",
+      operation: "products.create",
+      mode: "apply",
+      requestId: "browser-req-42",
+      payload: { product: { title: "Browser Created" } },
+    });
+
+    assert.equal(result.success, true);
+    assert.equal(requestedBody?.operation, "products.create");
+    assert.equal(requestedBody?.mode, "apply");
+    assert.equal(requestedBody?.requestId, "browser-req-42");
+  } finally {
+    delete (globalThis as unknown as { window?: unknown }).window;
+  }
+});
+
+
 
 
