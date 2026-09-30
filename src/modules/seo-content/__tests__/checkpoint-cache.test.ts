@@ -32,10 +32,10 @@ describe("R1: Stage Checkpoint & Multi-Stage Cache Engine", () => {
   };
 
   describe("Product Identity Hashing (computeProductInputHash)", () => {
-    test("generates identical hashes for identical products regardless of key order or image URL order", () => {
+    test("normalizes text fields but preserves hero/gallery image order", () => {
       const hash1 = computeProductInputHash(sampleInputA);
 
-      // Reordered images, whitespace variation, casing variation on store/handle/niche
+      // Whitespace/casing changes are normalized, but image order is semantic.
       const sampleInputB: SeoContentInput = {
         niche: " HOME-DECOR ",
         handle: " Halloween-Black-Cat-Area-Rug ",
@@ -44,13 +44,17 @@ describe("R1: Stage Checkpoint & Multi-Stage Cache Engine", () => {
         productId: "prod-101",
         storeId: "CAPOZEN",
         images: [
-          { url: "https://example.com/cat-detail.jpg" },
           { url: "https://example.com/cat-front.jpg" },
+          { url: "https://example.com/cat-detail.jpg" },
         ],
       };
       const hash2 = computeProductInputHash(sampleInputB);
 
       assert.equal(hash1, hash2, "Normalized product identities must produce identical SHA-256 hashes");
+      assert.notEqual(hash1, computeProductInputHash({
+        ...sampleInputB,
+        images: [...sampleInputB.images].reverse(),
+      }), "Changing the hero/gallery order must invalidate the SEO cache");
     });
 
     test("generates distinct hashes for different products", () => {

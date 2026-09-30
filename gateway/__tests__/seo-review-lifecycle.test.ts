@@ -276,6 +276,7 @@ test("6. handleAutoSeoRun persists review items into SQLite when seoOutputs are 
 
   const mockRunner: SeoContentRunner = async () => {
     return {
+      provider: "gemini",
       success: true,
       processedCount: 1,
       message: "Generated SEO content",
@@ -297,6 +298,12 @@ test("6. handleAutoSeoRun persists review items into SQLite when seoOutputs are 
   );
 
   assert.equal(runResult.downstreamStatus, "SENT");
+  assert.equal(runResult.reviewPersistedCount, 1);
+  assert.deepEqual(runResult.seoDispatch, {
+    provider: "gemini",
+    status: "review_ready",
+    reviewPersistedCount: 1,
+  });
 
   // Verify review item was persisted into SQLite seo_review_items
   const reviewItem = getSeoReviewItem(db, "store-jeans:gid://shopify/Product/999");
@@ -346,9 +353,52 @@ test("7. handleAutoSeoRun flags failure when generated seoOutput fails validatio
 
   // Validation failure halted downstream and marked as FAILED
   assert.equal(runResult.downstreamStatus, "FAILED");
+  assert.equal(runResult.reviewPersistedCount, 0);
   assert.match(runResult.downstreamError ?? "", /SEO validation failed/);
 
   // No review item stored
   const item = getSeoReviewItem(db, "store-bad:gid://shopify/Product/bad-output");
   assert.equal(item, null);
+});
+
+test("8. codex_mcp enqueue stays queued and does not persist a premature review", async () => {
+  const db = createTestDb();
+  const jobIds = ["codex-job-1"];
+  const mockRunner: SeoContentRunner = async () => ({
+    provider: "codex_mcp",
+    success: true,
+    processedCount: 0,
+    // Even if a faulty adapter includes output, queued providers must never bypass finalization.
+    seoOutputs: [makeValidSeoOutput()],
+    dispatchStatus: "queued",
+    jobIds,
+  });
+
+  const runResult = await handleAutoSeoRun(
+    {
+      workflowId: "wf-codex-queued",
+      storeId: "store-codex",
+      shopDomain: "codex.myshopify.com",
+      products: [
+        {
+          id: "gid://shopify/Product/codex-1",
+          title: "Codex Queue Product",
+          handle: "codex-queue-product",
+        },
+      ],
+    },
+    { db, seoContentRunner: mockRunner },
+  );
+
+  assert.equal(runResult.downstreamStatus, "SENT");
+  assert.equal(runResult.reviewPersistedCount, 0);
+  assert.deepEqual(runResult.seoDispatch, {
+    provider: "codex_mcp",
+    status: "queued",
+    jobIds,
+  });
+  assert.equal(
+    getSeoReviewItem(db, "store-codex:gid://shopify/Product/codex-1"),
+    null,
+  );
 });

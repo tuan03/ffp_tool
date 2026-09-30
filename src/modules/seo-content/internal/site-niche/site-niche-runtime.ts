@@ -284,3 +284,12 @@ export function getDefaultSiteNicheResolver(): SiteNicheResolver {
   });
   return defaultResolver;
 }
+
+/** Creates the server resolver with an explicitly owned durable cache. */
+export function createServerSiteNicheResolver(cache: SiteNicheCache): SiteNicheResolver {
+  return new SiteNicheResolver({
+    cache,
+    renderer: new PlaywrightHomepageRenderer(),
+    analyzer: new GeminiHomepageNicheAnalyzer(),
+  });
+}

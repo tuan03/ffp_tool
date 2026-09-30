@@ -40,13 +40,25 @@ export interface AutoSeoRunRequest {
 }
 
 export interface AutoSeoRunResult {
-  readonly seoProvider?: "gemini" | "custom_gpt";
+  readonly seoProvider?: "gemini" | "custom_gpt" | "codex_mcp";
   readonly workflowId: string;
   readonly backedUpCount: number;
   readonly backupIds: readonly string[];
   readonly downstreamStatus: "SENT" | "FAILED";
   readonly downstreamHttpStatus?: number | null;
   readonly downstreamError?: string | null;
+  readonly reviewPersistedCount: number;
+  readonly seoDispatch?:
+    | {
+        readonly provider: "gemini";
+        readonly status: "review_ready";
+        readonly reviewPersistedCount: number;
+      }
+    | {
+        readonly provider: "custom_gpt" | "codex_mcp";
+        readonly status: "queued";
+        readonly jobIds: readonly string[];
+      };
 }
 
 export interface AutoSeoHandlerOptions {
@@ -269,14 +281,16 @@ export async function handleAutoSeoRun(
   });
   await repository.insertBackupBatch(records, {
     onConflict: request.onConflict === "update" || options?.onConflict === "update" ? "update" : "error",
-    ...(selectedSettings?.provider === "custom_gpt" ? { gptSettingsJson: JSON.stringify(selectedSettings) } : {}),
+    ...(selectedSettings && selectedSettings.provider !== "gemini" ? { gptSettingsJson: JSON.stringify(selectedSettings) } : {}),
   });
   const backupIds = records.map(record => record.backupId);
 
   // Only after successful COMMIT may the system hand off the same products to SEO content runner
   let downstreamStatus: "SENT" | "FAILED" = "FAILED";
   let downstreamError: string | null = null;
-  let seoProvider: "gemini" | "custom_gpt" | undefined;
+  let seoProvider: "gemini" | "custom_gpt" | "codex_mcp" | undefined;
+  let reviewPersistedCount = 0;
+  let seoDispatch: AutoSeoRunResult["seoDispatch"];
 
   try {
     const seoResult = await runner({
@@ -288,7 +302,20 @@ export async function handleAutoSeoRun(
 
     seoProvider = seoResult.provider;
     if (seoResult && seoResult.success === true) {
-      if (Array.isArray(seoResult.seoOutputs) && seoResult.seoOutputs.length > 0) {
+      if (seoProvider === "custom_gpt" || seoProvider === "codex_mcp") {
+        seoDispatch = {
+          provider: seoProvider,
+          status: "queued",
+          jobIds: seoResult.jobIds ?? [],
+        };
+      }
+      const isExternalQueueProvider =
+        seoProvider === "custom_gpt" || seoProvider === "codex_mcp";
+      if (
+        !isExternalQueueProvider &&
+        Array.isArray(seoResult.seoOutputs) &&
+        seoResult.seoOutputs.length > 0
+      ) {
         for (let i = 0; i < seoResult.seoOutputs.length; i++) {
           const output = seoResult.seoOutputs[i];
           if (!output) continue;
@@ -319,17 +346,15 @@ export async function handleAutoSeoRun(
           if (matchedProduct) {
             if (options?.db) {
               await executeSeoReviewSaveLifecycle(
-              {
-                storeId: request.storeId,
-                productId: matchedProduct.id,
-                handle: matchedProduct.handle,
-                title: matchedProduct.title,
-                shopifyUpdatedAt: matchedProduct.updatedAt ?? null,
-                generatedOutput: output,
-              },
-              {
-                db: options.db,
-              },
+                {
+                  storeId: request.storeId,
+                  productId: matchedProduct.id,
+                  handle: matchedProduct.handle,
+                  title: matchedProduct.title,
+                  shopifyUpdatedAt: matchedProduct.updatedAt ?? null,
+                  generatedOutput: output,
+                },
+                { db: options.db },
               );
             } else {
               const validated = validateGeneratedSeoFields(output, matchedProduct.handle);
@@ -347,8 +372,17 @@ export async function handleAutoSeoRun(
                 backupId: backup.backupId,
               });
             }
+            reviewPersistedCount++;
           }
         }
+      }
+      if (reviewPersistedCount > 0 && (seoProvider === "gemini" || !seoProvider)) {
+        seoProvider = "gemini";
+        seoDispatch = {
+          provider: "gemini",
+          status: "review_ready",
+          reviewPersistedCount,
+        };
       }
       downstreamStatus = "SENT";
     } else {
@@ -398,6 +432,8 @@ export async function handleAutoSeoRun(
     downstreamStatus,
     downstreamHttpStatus: null,
     downstreamError,
+    reviewPersistedCount,
+    ...(seoDispatch ? { seoDispatch } : {}),
   };
 }
 

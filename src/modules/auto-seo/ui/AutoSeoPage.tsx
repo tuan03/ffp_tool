@@ -297,6 +297,11 @@ export function AutoSeoPage({
         navigate("/gpt-seo");
         return;
       }
+      if (backupResult.seoProvider === "codex_mcp") {
+        notifyUser({ title: "Đã xếp hàng Codex MCP", message: `${hydratedProducts.length} sản phẩm đang chờ Codex xử lý qua MCP.`, type: "success", url: "/gpt-seo" });
+        navigate("/gpt-seo");
+        return;
+      }
 
       if (backendRunsSeo) {
         const effectiveStoreId = selectedStoreId || storeInfo.storeId;
@@ -342,7 +347,9 @@ export function AutoSeoPage({
         url: effectiveStoreId ? `/seo-review?storeId=${encodeURIComponent(effectiveStoreId)}` : "/seo-review",
       });
 
-      if (onHandoverToSeo) {
+      if ((backupResult.reviewPersistedCount ?? 0) > 0) {
+        navigate(effectiveStoreId ? `/seo-review?storeId=${encodeURIComponent(effectiveStoreId)}` : "/seo-review");
+      } else if (onHandoverToSeo) {
         await onHandoverToSeo(productsWithStore, effectiveStoreId);
         navigate(effectiveStoreId ? `/seo-review?storeId=${encodeURIComponent(effectiveStoreId)}` : "/seo-review");
       }

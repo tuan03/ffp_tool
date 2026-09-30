@@ -11,6 +11,9 @@
     handle /api/v1/gpt-seo/* {
         reverse_proxy 127.0.0.1:3001
     }
+    handle /mcp/gpt-seo {
+        reverse_proxy 127.0.0.1:3001
+    }
     handle_path /coordinator/* {
         basic_auth {
             {$ADMIN_USER} {$ADMIN_PASSWORD_HASH}

@@ -142,6 +142,114 @@
         "parameters": []
       }
     },
+    "/api/v1/gpt-seo/waiting-jobs": {
+      "get": {
+        "operationId": "listSeoWaitingJobs",
+        "summary": "List WAITING_INPUT jobs without claiming or changing them.",
+        "description": "Use this read-only action when the operator asks to inspect jobs awaiting input and no active batch provides their jobIds.",
+        "security": [
+          {
+            "actionKey": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Store-scoped WAITING_INPUT job summaries",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "jobs",
+                    "nextOffset",
+                    "instructions"
+                  ],
+                  "properties": {
+                    "jobs": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "jobId",
+                          "source",
+                          "title",
+                          "handle",
+                          "status",
+                          "imageCount"
+                        ],
+                        "properties": {
+                          "jobId": {
+                            "type": "string"
+                          },
+                          "source": {
+                            "type": "string",
+                            "enum": [
+                              "amazon",
+                              "auto_seo"
+                            ]
+                          },
+                          "productId": {
+                            "type": "string"
+                          },
+                          "title": {
+                            "type": "string"
+                          },
+                          "handle": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "type": "string",
+                            "const": "WAITING_INPUT"
+                          },
+                          "imageCount": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "issue": {
+                            "type": "string"
+                          }
+                        },
+                        "additionalProperties": false
+                      }
+                    },
+                    "nextOffset": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ],
+                      "minimum": 0
+                    },
+                    "instructions": {
+                      "type": "string"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid offset"
+          },
+          "401": {
+            "description": "Invalid API key"
+          },
+          "429": {
+            "description": "Respect Retry-After"
+          }
+        },
+        "parameters": [
+          {
+            "name": "offset",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ]
+      }
+    },
     "/api/v1/gpt-seo/claim": {
       "post": {
         "operationId": "claimSeoBatch",
@@ -434,8 +542,8 @@
     "/api/v1/gpt-seo/images": {
       "get": {
         "operationId": "getSeoJobImages",
-        "summary": "Read five image URLs. Inspect visually or request manual attachments.",
-        "description": "Read five image URLs. Inspect visually or request manual attachments.",
+        "summary": "Read five original public image URLs.",
+        "description": "Returns original public image URLs without FFP authentication, signatures or proxying. Inspect visually or request manual attachments.",
         "security": [
           {
             "actionKey": []
@@ -484,80 +592,6 @@
             "schema": {
               "type": "integer",
               "minimum": 0
-            }
-          }
-        ]
-      }
-    },
-    "/api/v1/gpt-seo/image-content": {
-      "get": {
-        "operationId": "getSeoJobImageContent",
-        "summary": "Return an FFP-hosted public HTTPS URL for one product image.",
-        "description": "Use jobId and imageId from getSeoJobImages. Open the returned imageUrl on the FFP server; it proxies only the image registered for this job and needs no image authentication. imageId is only an identifier and is not a URL.",
-        "security": [
-          {
-            "actionKey": []
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Public product image URL",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "required": [
-                    "imageId",
-                    "imageUrl",
-                    "instructions"
-                  ],
-                  "properties": {
-                    "imageId": {
-                      "type": "string",
-                      "description": "Stable image identifier. Do not open this value as a URL."
-                    },
-                    "imageUrl": {
-                      "type": "string",
-                      "format": "uri",
-                      "description": "FFP-hosted public HTTPS image URL to open and inspect without authentication."
-                    },
-                    "instructions": {
-                      "type": "string"
-                    }
-                  },
-                  "additionalProperties": false
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid jobId, imageId or non-public image URL"
-          },
-          "401": {
-            "description": "Invalid API key"
-          },
-          "404": {
-            "description": "Job or image not found"
-          },
-          "429": {
-            "description": "Image download busy; respect Retry-After"
-          }
-        },
-        "parameters": [
-          {
-            "name": "jobId",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "imageId",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string"
             }
           }
         ]

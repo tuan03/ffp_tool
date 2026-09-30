@@ -1,10 +1,11 @@
 import { timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
-import { validateExternalSeoAnalysis, researchExternalSeo, checkExternalSeoKeywords, bindExternalSeoProduct } from "../../src/modules/seo-content";
+import { researchExternalSeo, checkExternalSeoKeywords, bindExternalSeoProduct } from "../../src/modules/seo-content";
 import type { GptSeoEnqueue, GptSeoInput } from "../../src/modules/custom-gpt-seo";
 import type { CustomGptQueue } from "./queue";
-import { signImage, verifyImageSignature, downloadProductImage } from "./images";
+import { verifyImageSignature, downloadProductImage } from "./images";
+import { createExternalSeoWorkflow } from "./workflow";
 
 export interface CustomGptHandlerOptions {
   readonly queue: CustomGptQueue;
@@ -65,6 +66,11 @@ function send(res: ServerResponse, status: number, payload: unknown, maxLength =
 
 export function createCustomGptHandler(options: CustomGptHandlerOptions) {
   const { queue } = options;
+  const workflow = createExternalSeoWorkflow({
+    queue,
+    research: options.research,
+    checkKeywords: options.checkKeywords,
+  });
   const actionKeys: Readonly<Record<string, string>> = {
     ...(options.actionKey ? { [options.storeId]: options.actionKey } : {}),
     ...options.actionKeys,
@@ -114,59 +120,46 @@ export function createCustomGptHandler(options: CustomGptHandlerOptions) {
       const leaseToken = String(body.leaseToken || "");
       const requestId = String(body.requestId || "");
       const offset = Math.max(0, Math.trunc(Number(url.searchParams.get("offset")) || 0));
-      const readRoutes = ["capabilities", "context", "queue", "batch", "job", "images", "image-content", "public-image", "media", "result", "admin/settings", "admin/jobs", "admin/job", "admin/image", "admin/review-state", "admin/sync-state"];
+      const readRoutes = ["capabilities", "context", "queue", "waiting-jobs", "batch", "job", "images", "public-image", "media", "result", "admin/settings", "admin/jobs", "admin/job", "admin/image", "admin/review-state", "admin/sync-state"];
       if (req.method === "GET" && !readRoutes.includes(route)) { send(res, 405, { error: { code: "METHOD_NOT_ALLOWED" } }); return; }
       if (req.method === "POST" && readRoutes.includes(route) && !["admin/settings", "admin/review-state"].includes(route)) { send(res, 405, { error: { code: "METHOD_NOT_ALLOWED" } }); return; }
-      if (["analysis", "research", "keywords", "submit"].includes(route)) {
-        required(requestId, "requestId");
-        queue.assertLease(storeId, batchId, leaseToken, jobId);
-        const replay = queue.replayMutation(jobId, requestId, { route, body });
-        if (replay) {
-          send(res, 200, { jobId, replayed: true, saved: true, checkpoint: replay.payload, status: queue.get(storeId, jobId).status });
-          return;
-        }
-      }
       let result: unknown;
       switch (route) {
         case "capabilities": result = { version: 1, batchSize: queue.settings(storeId).batchSize, maxBatchSize: 10, leaseMinutes: 30, imageMode: "public_url_or_manual_attachment", stages: ["analysis", "research", "keywords", "submission"], nextAction: "getSeoQueueStatus" }; break;
         case "context": result = { storeId, ...queue.settings(storeId), nextAction: "claimSeoBatch" }; break;
-        case "queue": result = { counts: queue.counts(storeId), activeBatch: queue.activeBatch(storeId), nextAction: queue.activeBatch(storeId) ? "getSeoBatch" : "claimSeoBatch" }; break;
-        case "claim": result = queue.claim(storeId, required(requestId, "requestId")); break;
-        case "batch": result = queue.batch(storeId, batchId); break;
-        case "renew": result = queue.renew(storeId, batchId, leaseToken); break;
-        case "release": queue.release(storeId, batchId, leaseToken); result = { released: true }; break;
-        case "job": {
-          const job = queue.get(storeId, jobId);
-          result = { ...job, original: undefined, input: { ...job.input, images: undefined }, imageCount: job.input.images.length, nextAction: "getSeoJobImages" }; break;
+        case "queue": {
+          const work = workflow.getWork(storeId, "custom_gpt");
+          const { counts, activeBatch } = work;
+          const nextAction = activeBatch
+            ? "getSeoBatch"
+            : work.blockedBy
+              ? "getSeoQueueStatus"
+            : Number(counts.PENDING || 0) > 0
+              ? "claimSeoBatch"
+              : Number(counts.WAITING_INPUT || 0) > 0
+                ? "listSeoWaitingJobs"
+                : "claimSeoBatch";
+          result = { counts, activeBatch, blockedBy: work.blockedBy, nextAction };
+          break;
         }
-        case "images": {
-          const job = queue.get(storeId, jobId);
-          result = { jobId, images: job.input.images.slice(offset, offset + 5).map((image, index) => {
-            const id = image.id || `image-${offset + index + 1}`;
-            const actionKey = actionKeys[storeId];
-            if (!options.publicUrl || !actionKey) return { ...image, id };
-            const expires = Date.now() + 10 * 60_000;
-            const media = new URL("/api/v1/gpt-seo/media", options.publicUrl);
-            media.search = new URLSearchParams({ storeId, jobId, imageId: id, expires: String(expires), signature: signImage(actionKey, jobId, id, expires) }).toString();
-            return { id, url: media.href, alt: image.alt };
-          }), nextOffset: offset + 5 < job.input.images.length ? offset + 5 : null, instructions: "Call getSeoJobImageContent with jobId and each imageId. Use the returned imageUrl, never imageId, as the public image URL. If the image cannot be viewed, ask the operator to attach it. Do not infer evidence from URLs or filenames." }; break;
-        }
-        case "image-content": {
-          const job = queue.get(storeId, jobId);
-          const imageId = url.searchParams.get("imageId");
-          const image = job.input.images.find((entry, index) => (entry.id || `image-${index + 1}`) === imageId);
-          if (!image) throw new Error("Image not found");
-          const sourceImageUrl = new URL(image.url);
-          if (sourceImageUrl.protocol !== "https:") throw new Error("Image URL is not public HTTPS");
-          if (!options.publicUrl) throw new Error("Public image URL is not configured");
-          const imageUrl = new URL("/api/v1/gpt-seo/public-image", options.publicUrl);
-          imageUrl.search = new URLSearchParams({ storeId, jobId, imageId: required(imageId, "imageId") }).toString();
+        case "waiting-jobs": {
+          const waiting = workflow.listWaiting(storeId, "custom_gpt", offset);
           result = {
-            imageId,
-            imageUrl: imageUrl.href,
-            instructions: "Open imageUrl to inspect the image. Do not use imageId as a URL.",
+            ...waiting,
+            instructions: "Use jobId with getSeoJob and getSeoJobImages. This read-only action does not claim jobs or change their status.",
           };
           break;
+        }
+        case "claim": result = workflow.claim(storeId, "custom_gpt", required(requestId, "requestId")); break;
+        case "batch": result = workflow.getBatch(storeId, "custom_gpt", batchId); break;
+        case "renew": result = workflow.renew(storeId, "custom_gpt", { batchId, leaseToken }); break;
+        case "release": result = workflow.release(storeId, "custom_gpt", { batchId, leaseToken }); break;
+        case "job": {
+          const job = workflow.getJob(storeId, "custom_gpt", jobId);
+          result = { ...job, imageCount: job.imageIds.length, nextAction: "getSeoJobImages" }; break;
+        }
+        case "images": {
+          result = { ...workflow.listImageReferences(storeId, "custom_gpt", jobId, offset), instructions: "Open each image url directly; never use imageId as a URL. If an image cannot be viewed, ask the operator to attach it. Do not infer evidence from URLs or filenames." }; break;
         }
         case "public-image":
         case "media":
@@ -174,6 +167,7 @@ export function createCustomGptHandler(options: CustomGptHandlerOptions) {
           if (route === "media" && !signedImage) { send(res, 401, { error: { code: "INVALID_IMAGE_SIGNATURE" } }); return; }
           if (isDownloadingImage) { res.setHeader("Retry-After", "2"); send(res, 429, { error: { code: "IMAGE_BUSY" } }); return; }
           const job = queue.get(storeId, jobId);
+          if (!isAdmin && job.settings.provider !== "custom_gpt") throw new Error("Image not found");
           const imageId = url.searchParams.get("imageId");
           const image = job.input.images.find((entry, index) => (entry.id || `image-${index + 1}`) === imageId);
           if (!image) throw new Error("Image not found");
@@ -188,46 +182,33 @@ export function createCustomGptHandler(options: CustomGptHandlerOptions) {
           } finally { isDownloadingImage = false; }
         }
         case "analysis": {
-          const job = queue.get(storeId, jobId);
-          validateExternalSeoAnalysis({ ...job.input, storeId }, body.payload);
-          result = queue.checkpoint(storeId, jobId, { batchId, leaseToken, requestId, stage: "analysis", payload: body.payload, requestPayload: { route, body } }); break;
+          const job = workflow.saveAnalysis(storeId, "custom_gpt", { jobId, batchId, leaseToken, requestId: required(requestId, "requestId"), analysis: body.payload });
+          result = { jobId, saved: true, status: job.status, checkpoint: job.checkpoints.analysis }; break;
         }
         case "research": {
-          queue.assertLease(storeId, batchId, leaseToken, jobId);
-          if (!queue.get(storeId, jobId).checkpoints.analysis) throw new Error("Save analysis first");
           if (!Array.isArray(body.seeds) || body.seeds.some(seed => typeof seed !== "string")) throw new Error("Invalid seeds");
-          const suggestions = await (options.research ?? researchExternalSeo)(body.seeds as string[], queue.get(storeId, jobId).settings.language);
-          queue.checkpoint(storeId, jobId, { batchId, leaseToken, requestId, stage: "research", payload: { suggestions, source: "google_suggest" }, requestPayload: { route, body } });
-          result = { suggestions, nextAction: "checkSeoKeywords" }; break;
+          const research = await workflow.research(storeId, "custom_gpt", { jobId, batchId, leaseToken, requestId: required(requestId, "requestId"), seeds: body.seeds as string[] });
+          result = { ...(research as Record<string, unknown>), nextAction: "checkSeoKeywords" }; break;
         }
         case "check-keywords": {
-          queue.assertLease(storeId, batchId, leaseToken, jobId);
-          const job = queue.get(storeId, jobId);
-          if (!job.checkpoints.research) throw new Error("Complete research first");
           if (!Array.isArray(body.keywords) || body.keywords.some(keyword => typeof keyword !== "string")) throw new Error("Invalid keywords");
-          result = await (options.checkKeywords ?? checkExternalSeoKeywords)({ ...job.input, storeId }, body.keywords as string[]); break;
+          result = await workflow.checkKeywordConflicts(storeId, "custom_gpt", { jobId, batchId, leaseToken, keywords: body.keywords as string[] }); break;
         }
         case "keywords": {
-          const job = queue.get(storeId, jobId);
-          if (!job.checkpoints.research) throw new Error("Complete research first");
           const payload = asObject(body.payload);
           if (!Array.isArray(payload.keywords) || payload.keywords.some(keyword => typeof keyword !== "string")) throw new Error("Invalid keywords");
-          required(payload.reason, "reason");
-          const check = await (options.checkKeywords ?? checkExternalSeoKeywords)({ ...job.input, storeId }, payload.keywords as string[]);
-          if (check.conflicts.some(conflict => conflict.matches.length)) throw new Error("Keyword conflict");
-          result = queue.checkpoint(storeId, jobId, { batchId, leaseToken, requestId, stage: "keywords", payload: { ...payload, check }, requestPayload: { route, body } }); break;
+          const keywordResult = await workflow.chooseKeywords(storeId, "custom_gpt", { jobId, batchId, leaseToken, requestId: required(requestId, "requestId"), keywords: payload.keywords as string[], reason: required(payload.reason, "reason") });
+          if (!keywordResult || typeof keywordResult !== "object" || !("saved" in keywordResult) || !keywordResult.saved) throw new Error("Keyword conflict");
+          result = keywordResult; break;
         }
         case "submit": {
-          const job = queue.get(storeId, jobId);
-          if (!job.checkpoints.analysis || !job.checkpoints.research || !job.checkpoints.keywords) throw new Error("Complete analysis, research and keywords first");
-          queue.checkpoint(storeId, jobId, { batchId, leaseToken, requestId, stage: "submission", payload: body.payload, requestPayload: { route, body } });
-          result = { jobId, status: "VALIDATING", nextAction: "getSeoJobResult" }; break;
+          result = { ...workflow.submit(storeId, "custom_gpt", { jobId, batchId, leaseToken, requestId: required(requestId, "requestId"), submission: body.payload }), nextAction: "getSeoJobResult" }; break;
         }
-        case "result": { const job = queue.get(storeId, jobId); result = { jobId, status: job.status, result: job.result, error: job.error }; break; }
-        case "issue": queue.issue(storeId, jobId, batchId, leaseToken, required(body.message, "message")); result = { status: "WAITING_INPUT" }; break;
+        case "result": result = workflow.getResult(storeId, "custom_gpt", jobId); break;
+        case "issue": result = workflow.reportIssue(storeId, "custom_gpt", { jobId, batchId, leaseToken, message: required(body.message, "message") }); break;
         case "admin/settings": {
           if (req.method === "POST") {
-            if (body.provider !== "gemini" && body.provider !== "custom_gpt") throw new Error("Invalid provider");
+            if (body.provider !== "gemini" && body.provider !== "custom_gpt" && body.provider !== "codex_mcp") throw new Error("Invalid provider");
             result = queue.configure(storeId, { provider: body.provider, batchSize: Number(body.batchSize), ...(typeof body.language === "string" ? { language: body.language } : {}), ...(typeof body.instructions === "string" ? { instructions: body.instructions.slice(0, 4000) } : {}) });
           } else result = queue.settings(storeId);
           break;
@@ -235,7 +216,8 @@ export function createCustomGptHandler(options: CustomGptHandlerOptions) {
         case "admin/jobs": result = { jobs: queue.list(storeId, url.searchParams.get("status") === "REVIEW_READY" ? "REVIEW_READY" : undefined, offset).map(job => ({ ...job, original: null, checkpoints: {}, result: undefined, settings: { ...job.settings, instructions: "" }, input: { title: job.input.title.slice(0, 300), description: "", handle: job.input.handle, niche: "", productId: job.input.productId, images: [] } })), counts: queue.counts(storeId), activeBatch: queue.activeBatch(storeId), nextOffset: offset + 50 }; break;
         case "admin/job": result = queue.get(storeId, jobId); break;
         case "admin/enqueue": {
-          if (queue.settings(storeId).provider !== "custom_gpt") throw new Error("Provider changed; retry the handoff using the current provider");
+          const provider = queue.settings(storeId).provider;
+          if (provider !== "custom_gpt" && provider !== "codex_mcp") throw new Error("Provider changed; retry the handoff using the current provider");
           const source = body.source;
           if (source !== "amazon" && source !== "auto_seo") throw new Error("Invalid source");
           const input: GptSeoEnqueue = { storeId, source, sourceIdentity: required(body.sourceIdentity, "sourceIdentity"), sourceRevision: typeof body.sourceRevision === "string" ? body.sourceRevision : undefined, input: parseGptInput(body.input), original: body.original };
@@ -247,7 +229,7 @@ export function createCustomGptHandler(options: CustomGptHandlerOptions) {
           result = { bound: true }; break;
         }
         case "admin/transfer": {
-          if (body.provider !== "gemini" && body.provider !== "custom_gpt") throw new Error("Invalid provider");
+          if (body.provider !== "gemini" && body.provider !== "custom_gpt" && body.provider !== "codex_mcp") throw new Error("Invalid provider");
           queue.transfer(storeId, jobId, body.provider); result = { transferred: true }; break;
         }
         case "admin/begin-sync": result = { token: queue.beginSync(storeId, jobId) }; break;

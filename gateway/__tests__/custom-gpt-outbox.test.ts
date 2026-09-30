@@ -60,3 +60,32 @@ test("failed handoff marks backup failed", async () => {
     assert.equal(queue.list("capozen").length, 0);
   } finally { queueDb.close(); }
 });
+
+test("backup outbox preserves a Codex MCP provider snapshot", async () => {
+  const queueDb = new DatabaseSync(":memory:");
+  try {
+    const queue = new CustomGptQueue(queueDb);
+    const settings = queue.configure("capozen", { provider: "codex_mcp", batchSize: 5, language: "en-US" });
+    const backup = {
+      ...pendingBackup(),
+      productId: "gid://shopify/Product/456",
+      snapshotJson: JSON.stringify({ id: "gid://shopify/Product/456", title: "Visual decor", handle: "visual-decor", images: [{ id: "front", url: "https://cdn.shopify.com/front.png" }] }),
+      gptSettingsJson: JSON.stringify(settings),
+    };
+    let acknowledgedId = "";
+    queue.configure("capozen", { provider: "gemini", batchSize: 5 });
+
+    await recoverAutoSeoHandoffs({
+      async findPendingBackups() { return [backup]; },
+      async acknowledgePendingHandoff(backupId) { acknowledgedId = backupId; },
+      async failPendingHandoff() { assert.fail("handoff should succeed"); },
+    }, queue);
+
+    const queuedJob = queue.list("capozen")[0];
+    assert.equal(acknowledgedId, backup.backupId);
+    assert.equal(queuedJob?.settings.provider, "codex_mcp");
+    assert.equal(queue.claim("capozen", "codex-auto-seo", "codex_mcp").jobs[0]?.id, queuedJob?.id);
+  } finally {
+    queueDb.close();
+  }
+});
