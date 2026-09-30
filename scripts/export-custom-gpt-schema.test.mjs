@@ -7,7 +7,7 @@ test("Custom GPT schema uses a configurable HTTPS origin and exposes no administ
   assert.equal(result.status, 0, result.stderr);
   const schema = JSON.parse(result.stdout);
   assert.equal(schema.servers[0].url, "https://seo.example.org");
-  assert.equal(Object.keys(schema.paths).length, 18);
+  assert.equal(Object.keys(schema.paths).length, 17);
   assert.ok(Object.keys(schema.paths).every(route => !route.includes("admin")));
   const operationIds = Object.values(schema.paths).flatMap(path => Object.values(path).map(operation => operation.operationId));
   assert.equal(new Set(operationIds).size, operationIds.length);
@@ -28,20 +28,16 @@ test("Custom GPT schema exposes read-only WAITING_INPUT job discovery", () => {
   assert.equal(responseSchema?.properties?.jobs?.items?.properties?.status?.const, "WAITING_INPUT");
 });
 
-test("Custom GPT schema exposes an authenticated public image URL lookup", () => {
+test("Custom GPT schema exposes original image URLs without a redundant lookup action", () => {
   const result = spawnSync(process.execPath, ["scripts/export-custom-gpt-schema.mjs", "https://seo.example.org"], { encoding: "utf8" });
   assert.equal(result.status, 0, result.stderr);
   const schema = JSON.parse(result.stdout);
-  const operation = schema.paths["/api/v1/gpt-seo/image-content"]?.get;
+  const operation = schema.paths["/api/v1/gpt-seo/images"]?.get;
 
-  assert.equal(operation?.operationId, "getSeoJobImageContent");
+  assert.equal(schema.paths["/api/v1/gpt-seo/image-content"], undefined);
+  assert.equal(operation?.operationId, "getSeoJobImages");
   assert.deepEqual(operation?.security, [{ actionKey: [] }]);
-  const responseSchema = operation?.responses?.["200"]?.content?.["application/json"]?.schema;
-  assert.deepEqual(responseSchema?.required, ["imageId", "imageUrl", "instructions"]);
-  assert.equal(responseSchema?.properties?.imageUrl?.format, "uri");
-  assert.match(responseSchema?.properties?.imageUrl?.description, /FFP-hosted/);
-  assert.equal(operation?.responses?.["200"]?.content?.["image/jpeg"], undefined);
-  assert.deepEqual(operation?.parameters?.map(parameter => parameter.name), ["jobId", "imageId"]);
+  assert.match(operation?.description, /original public image URLs/i);
 });
 
 test("Custom GPT schema satisfies Builder object schema requirements", () => {

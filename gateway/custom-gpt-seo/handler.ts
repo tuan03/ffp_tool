@@ -4,7 +4,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { validateExternalSeoAnalysis, researchExternalSeo, checkExternalSeoKeywords, bindExternalSeoProduct } from "../../src/modules/seo-content";
 import type { GptSeoEnqueue, GptSeoInput } from "../../src/modules/custom-gpt-seo";
 import type { CustomGptQueue } from "./queue";
-import { signImage, verifyImageSignature, downloadProductImage } from "./images";
+import { verifyImageSignature, downloadProductImage } from "./images";
 
 export interface CustomGptHandlerOptions {
   readonly queue: CustomGptQueue;
@@ -114,7 +114,7 @@ export function createCustomGptHandler(options: CustomGptHandlerOptions) {
       const leaseToken = String(body.leaseToken || "");
       const requestId = String(body.requestId || "");
       const offset = Math.max(0, Math.trunc(Number(url.searchParams.get("offset")) || 0));
-      const readRoutes = ["capabilities", "context", "queue", "waiting-jobs", "batch", "job", "images", "image-content", "public-image", "media", "result", "admin/settings", "admin/jobs", "admin/job", "admin/image", "admin/review-state", "admin/sync-state"];
+      const readRoutes = ["capabilities", "context", "queue", "waiting-jobs", "batch", "job", "images", "public-image", "media", "result", "admin/settings", "admin/jobs", "admin/job", "admin/image", "admin/review-state", "admin/sync-state"];
       if (req.method === "GET" && !readRoutes.includes(route)) { send(res, 405, { error: { code: "METHOD_NOT_ALLOWED" } }); return; }
       if (req.method === "POST" && readRoutes.includes(route) && !["admin/settings", "admin/review-state"].includes(route)) { send(res, 405, { error: { code: "METHOD_NOT_ALLOWED" } }); return; }
       if (["analysis", "research", "keywords", "submit"].includes(route)) {
@@ -173,30 +173,8 @@ export function createCustomGptHandler(options: CustomGptHandlerOptions) {
           const job = queue.get(storeId, jobId);
           result = { jobId, images: job.input.images.slice(offset, offset + 5).map((image, index) => {
             const id = image.id || `image-${offset + index + 1}`;
-            const actionKey = actionKeys[storeId];
-            if (!options.publicUrl || !actionKey) return { ...image, id };
-            const expires = Date.now() + 10 * 60_000;
-            const media = new URL("/api/v1/gpt-seo/media", options.publicUrl);
-            media.search = new URLSearchParams({ storeId, jobId, imageId: id, expires: String(expires), signature: signImage(actionKey, jobId, id, expires) }).toString();
-            return { id, url: media.href, alt: image.alt };
-          }), nextOffset: offset + 5 < job.input.images.length ? offset + 5 : null, instructions: "Call getSeoJobImageContent with jobId and each imageId. Use the returned imageUrl, never imageId, as the public image URL. If the image cannot be viewed, ask the operator to attach it. Do not infer evidence from URLs or filenames." }; break;
-        }
-        case "image-content": {
-          const job = queue.get(storeId, jobId);
-          const imageId = url.searchParams.get("imageId");
-          const image = job.input.images.find((entry, index) => (entry.id || `image-${index + 1}`) === imageId);
-          if (!image) throw new Error("Image not found");
-          const sourceImageUrl = new URL(image.url);
-          if (sourceImageUrl.protocol !== "https:") throw new Error("Image URL is not public HTTPS");
-          if (!options.publicUrl) throw new Error("Public image URL is not configured");
-          const imageUrl = new URL("/api/v1/gpt-seo/public-image", options.publicUrl);
-          imageUrl.search = new URLSearchParams({ storeId, jobId, imageId: required(imageId, "imageId") }).toString();
-          result = {
-            imageId,
-            imageUrl: imageUrl.href,
-            instructions: "Open imageUrl to inspect the image. Do not use imageId as a URL.",
-          };
-          break;
+            return { id, url: image.url, alt: image.alt };
+          }), nextOffset: offset + 5 < job.input.images.length ? offset + 5 : null, instructions: "Open each image url directly; never use imageId as a URL. If an image cannot be viewed, ask the operator to attach it. Do not infer evidence from URLs or filenames." }; break;
         }
         case "public-image":
         case "media":

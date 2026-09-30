@@ -93,21 +93,39 @@ test("new-store guide uses only the multi-store action-key map", async () => {
   assert.doesNotMatch(guide, /`GPT_SEO_ACTION_KEY`/);
 });
 
-test("Custom GPT instructions use the public imageUrl returned by the image Action", async () => {
+test("Custom GPT instructions open original image URLs returned by getSeoJobImages", async () => {
   const [instructions, knowledge] = await Promise.all([
     readFile("docs/custom-gpt-seo/gpt-instructions.md", "utf8"),
     readFile("docs/custom-gpt-seo/seo-knowledge.md", "utf8"),
   ]);
 
-  assert.match(instructions, /getSeoJobImageContent/);
+  assert.match(instructions, /getSeoJobImages/);
+  assert.match(instructions, /images\[\]\.url/);
   assert.match(instructions, /imageId/);
-  assert.match(instructions, /imageUrl/);
-  assert.match(instructions, /FFP-hosted public HTTPS image URL/);
-  assert.match(instructions, /needs no Bearer token/);
+  assert.match(instructions, /original public image URL/);
+  assert.match(instructions, /does not require a Bearer token/);
+  assert.doesNotMatch(instructions, /getSeoJobImageContent/);
   assert.doesNotMatch(instructions, /returned image content visually/);
-  assert.match(knowledge, /imageUrl/);
-  assert.match(knowledge, /FFP server resolves the stored job image and proxies its bytes/);
+  assert.match(knowledge, /images\[\]\.url/);
+  assert.match(knowledge, /original source URL/);
   assert.match(knowledge, /actually rendered and inspected/);
+});
+
+test("Custom GPT instructions and knowledge briefly explain every exposed Action", async () => {
+  const [instructions, knowledge, schemaText] = await Promise.all([
+    readFile("docs/custom-gpt-seo/gpt-instructions.md", "utf8"),
+    readFile("docs/custom-gpt-seo/seo-knowledge.md", "utf8"),
+    readFile("docs/custom-gpt-seo/openapi.json", "utf8"),
+  ]);
+  const schema = JSON.parse(schemaText);
+  const operationIds = Object.values(schema.paths)
+    .flatMap(path => Object.values(path).map(operation => operation.operationId));
+
+  assert.equal(operationIds.length, 17);
+  for (const operationId of operationIds) {
+    assert.match(instructions, new RegExp(`\\b${operationId}\\b`));
+    assert.match(knowledge, new RegExp(`\\b${operationId}\\b`));
+  }
 });
 
 test("production deployment exports the GPT SEO restart script from the container", async () => {
