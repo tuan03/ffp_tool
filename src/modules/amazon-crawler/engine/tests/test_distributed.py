@@ -218,6 +218,34 @@ class ClientTrayTests(unittest.TestCase):
         timer.start.assert_called_once_with()
         action.assert_not_called()
 
+    def test_update_does_not_reinstall_when_agent_is_current(self) -> None:
+        tray = object.__new__(TrayApplication)
+        tray._check_for_update = Mock(return_value="5.2.2")
+        tray._notify = Mock()
+        tray._confirm = Mock(return_value=True)
+        tray._launch_lifecycle_script = Mock()
+
+        tray._run_update_agent()
+
+        tray._notify.assert_called_once_with("Agent 5.2.2 hiện là phiên bản mới nhất. Không cần cập nhật.")
+        tray._confirm.assert_not_called()
+        tray._launch_lifecycle_script.assert_not_called()
+
+    def test_update_prompts_and_launches_only_for_newer_release(self) -> None:
+        tray = object.__new__(TrayApplication)
+        tray.agent = Mock()
+        tray.agent.config.server_url = "http://coordinator.test"
+        tray.agent.project_root = Path("C:/FFP/CrawlerAgent")
+        tray._check_for_update = Mock(return_value="5.3.0")
+        tray._lifecycle_is_safe = Mock(return_value=True)
+        tray._confirm = Mock(return_value=True)
+        tray._launch_lifecycle_script = Mock()
+
+        tray._run_update_agent()
+
+        tray._confirm.assert_called_once_with("Cập nhật Agent từ 5.2.2 lên 5.3.0 và tự khởi động lại?")
+        tray._launch_lifecycle_script.assert_called_once()
+
 
 class PackagedClientTests(unittest.TestCase):
     def test_agent_data_directory_allows_only_one_running_instance(self) -> None:

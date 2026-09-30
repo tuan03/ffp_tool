@@ -104,7 +104,7 @@ class TrayApplication:
             return f"Có bản cập nhật {latest} (đang dùng {AGENT_VERSION})"
         return f"Phiên bản {AGENT_VERSION} — mới nhất" if latest else f"Phiên bản {AGENT_VERSION}"
 
-    def _check_for_update(self, *, notify: bool) -> None:
+    def _check_for_update(self, *, notify: bool) -> str | None:
         try:
             request = urllib.request.Request(
                 f"{self.agent.config.server_url}/api/v1/agent-release",
@@ -125,9 +125,11 @@ class TrayApplication:
                     else f"Agent {AGENT_VERSION} hiện là phiên bản mới nhất."
                 )
                 self._notify(message)
+            return latest
         except Exception as error:
             if notify:
                 self._notify(f"Không thể kiểm tra cập nhật: {error}")
+            return None
 
     def _start_update_check(self, _icon: Any = None, _item: Any = None) -> None:
         threading.Thread(
@@ -191,7 +193,16 @@ class TrayApplication:
         timer.start()
 
     def _run_update_agent(self) -> None:
-        if not self._confirm("Cập nhật Agent và tự khởi động lại ngay bây giờ?"):
+        latest = self._check_for_update(notify=False)
+        if latest is None:
+            self._notify("Không thể xác định phiên bản Agent mới nhất. Hãy kiểm tra kết nối rồi thử lại.")
+            return
+        if self._version_parts(latest) <= self._version_parts(AGENT_VERSION):
+            self._notify(f"Agent {AGENT_VERSION} hiện là phiên bản mới nhất. Không cần cập nhật.")
+            return
+        if not self._lifecycle_is_safe():
+            return
+        if not self._confirm(f"Cập nhật Agent từ {AGENT_VERSION} lên {latest} và tự khởi động lại?"):
             return
         self._launch_lifecycle_script("update-agent.ps1", [
             "-ServerUrl", self.agent.config.server_url,
