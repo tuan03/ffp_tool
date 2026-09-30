@@ -11,9 +11,9 @@ test("review image client sends the product, prompt and selected scope to the sa
     submitted = JSON.parse(String(init?.body));
     return new Response(JSON.stringify({ ok: true, job: { job_id: "abc", status: "queued", template_name: "room.png", scope: "main", approved: false, error: null, output_name: null } }), { status: 202 });
   });
-  const job = await client.create({ productDataUrl: "data:image/png;base64,AA==", prompt: "Replace bag", scope: "main" });
+  const job = await client.create({ storeId: "preaureum", productDataUrl: "data:image/png;base64,AA==", prompt: "Replace bag", scope: "main" });
   assert.equal(requestedUrl, "/api/review-images/jobs");
-  assert.deepEqual(submitted, { productDataUrl: "data:image/png;base64,AA==", prompt: "Replace bag", scope: "main" });
+  assert.deepEqual(submitted, { storeId: "preaureum", productDataUrl: "data:image/png;base64,AA==", prompt: "Replace bag", scope: "main" });
   assert.equal(job.template_name, "room.png");
   assert.equal(typeof client.template, "function");
 });
@@ -47,24 +47,28 @@ test("product upload rejects unsupported or oversized images before submission",
   await assert.rejects(() => encodeProductFile(oversized), /5 MB/);
 });
 
-test("review image client lists, uploads and deletes templates with gateway authentication", async () => {
+test("review image client scopes templates, bulk deletes and uploads approved jobs to Shopify", async () => {
   const calls: Array<{ url: string; method: string; token: string | null; body: unknown }> = [];
   const client = createReviewImageClient(async (input, init) => {
     const url = String(input);
     calls.push({ url, method: init?.method ?? "GET", token: new Headers(init?.headers).get("x-gateway-key"), body: init?.body ? JSON.parse(String(init.body)) : null });
     return Response.json(url.endsWith("/templates") && init?.method === "POST"
       ? { ok: true, template: { name: "scene-123.png" } }
-      : init?.method === "DELETE"
-        ? { ok: true, template: { name: "room.png" } }
+      : url.endsWith("/templates/batch")
+        ? { ok: true, deleted: ["room.png"], failures: [{ name: "busy.png", message: "in use" }] }
+        : url.endsWith("/shopify")
+          ? { ok: true, fileId: "gid://shopify/MediaImage/1", shopifyCdnUrl: "https://cdn.shopify.com/review.png", fileStatus: "READY" }
       : { ok: true, templates: [{ name: "room.png" }] }, { status: init?.method === "POST" ? 201 : 200 });
   });
   client.setGatewayToken("secret");
-  assert.deepEqual(await client.listTemplates(), [{ name: "room.png" }]);
-  assert.deepEqual(await client.uploadTemplate({ fileName: "scene.png", imageDataUrl: "data:image/png;base64,AA==" }), { name: "scene-123.png" });
-  await client.deleteTemplate("room.png");
+  assert.deepEqual(await client.listTemplates("capozen"), [{ name: "room.png" }]);
+  assert.deepEqual(await client.uploadTemplate({ storeId: "capozen", fileName: "scene.png", imageDataUrl: "data:image/png;base64,AA==" }), { name: "scene-123.png" });
+  assert.deepEqual(await client.deleteTemplates("capozen", ["room.png", "busy.png"]), { deleted: ["room.png"], failures: [{ name: "busy.png", message: "in use" }] });
+  assert.equal((await client.uploadToShopify("job-1", "capozen")).shopifyCdnUrl, "https://cdn.shopify.com/review.png");
   assert.deepEqual(calls, [
-    { url: "/api/review-images/templates", method: "GET", token: "secret", body: null },
-    { url: "/api/review-images/templates", method: "POST", token: "secret", body: { fileName: "scene.png", imageDataUrl: "data:image/png;base64,AA==" } },
-    { url: "/api/review-images/templates/room.png", method: "DELETE", token: "secret", body: null },
+    { url: "/api/review-images/templates?storeId=capozen", method: "GET", token: "secret", body: null },
+    { url: "/api/review-images/templates", method: "POST", token: "secret", body: { storeId: "capozen", fileName: "scene.png", imageDataUrl: "data:image/png;base64,AA==" } },
+    { url: "/api/review-images/templates/batch", method: "DELETE", token: "secret", body: { storeId: "capozen", names: ["room.png", "busy.png"] } },
+    { url: "/api/review-images/jobs/job-1/shopify", method: "POST", token: "secret", body: { storeId: "capozen" } },
   ]);
 });

@@ -51,6 +51,7 @@ review_image_service = ReviewImageService(
 
 
 class CreateReviewImageRequest(BaseModel):
+    storeId: str = "preaureum"
     productDataUrl: str = Field(min_length=1, max_length=7_100_000)
     prompt: str = Field(min_length=1, max_length=10_000)
     scope: str
@@ -59,8 +60,14 @@ class CreateReviewImageRequest(BaseModel):
 
 
 class UploadReviewTemplateRequest(BaseModel):
+    storeId: str = "preaureum"
     fileName: str = Field(min_length=1, max_length=255)
     imageDataUrl: str = Field(min_length=1, max_length=7_100_000)
+
+
+class DeleteReviewTemplatesRequest(BaseModel):
+    storeId: str = "preaureum"
+    names: list[str] = Field(min_length=1, max_length=500)
 
 
 def authorize(value: str | None) -> None:
@@ -82,35 +89,49 @@ def review_image_health(x_bridge_token: str | None = Header(default=None)):
 
 
 @app.get("/api/review-images/templates")
-def list_templates(x_bridge_token: str | None = Header(default=None)):
+def list_templates(storeId: str = "preaureum", x_bridge_token: str | None = Header(default=None)):
     authorize(x_bridge_token)
-    return {"ok": True, "templates": review_image_service.list_templates()}
+    try:
+        templates = review_image_service.list_templates(storeId)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"ok": True, "templates": templates}
 
 
 @app.post("/api/review-images/templates", status_code=201)
 def upload_template(body: UploadReviewTemplateRequest, x_bridge_token: str | None = Header(default=None)):
     authorize(x_bridge_token)
     try:
-        name = review_image_service.save_template(body.fileName, body.imageDataUrl)
+        name = review_image_service.save_template(body.fileName, body.imageDataUrl, store_id=body.storeId)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     return {"ok": True, "template": {"name": name}}
 
 
-@app.get("/api/review-images/templates/{name}")
-def get_template(name: str, x_bridge_token: str | None = Header(default=None)):
+@app.delete("/api/review-images/templates/batch")
+def delete_templates(body: DeleteReviewTemplatesRequest, x_bridge_token: str | None = Header(default=None)):
     authorize(x_bridge_token)
     try:
-        return image_response(review_image_service.template_path(name))
+        outcome = review_image_service.delete_templates(body.storeId, body.names)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"ok": True, **outcome}
+
+
+@app.get("/api/review-images/templates/{name}")
+def get_template(name: str, storeId: str = "preaureum", x_bridge_token: str | None = Header(default=None)):
+    authorize(x_bridge_token)
+    try:
+        return image_response(review_image_service.template_path(name, storeId))
     except (ValueError, FileNotFoundError) as exc:
         raise HTTPException(404, str(exc)) from exc
 
 
 @app.delete("/api/review-images/templates/{name}")
-def delete_template(name: str, x_bridge_token: str | None = Header(default=None)):
+def delete_template(name: str, storeId: str = "preaureum", x_bridge_token: str | None = Header(default=None)):
     authorize(x_bridge_token)
     try:
-        deleted_name = review_image_service.delete_template(name)
+        deleted_name = review_image_service.delete_template(name, storeId)
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
     return {"ok": True, "template": {"name": deleted_name}}
@@ -122,6 +143,7 @@ def create_job(body: CreateReviewImageRequest, x_bridge_token: str | None = Head
     try:
         job = review_image_service.submit(
             body.productDataUrl, body.prompt, body.scope,
+            store_id=body.storeId,
             template_name=body.templateName, exclude_template=body.excludeTemplate,
         )
     except ValueError as exc:

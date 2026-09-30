@@ -45,6 +45,16 @@ function createStagedUploadClient(): ShopifyGraphqlClient {
 }
 
 describe("Gateway: staged binary image upload", () => {
+  it("accepts a raw Review Image payload up to 5 MB without widening the base64 transport limit", async () => {
+    const raw = await executeFilesStageBinary(STORE, createStagedUploadClient(), {
+      filename: "review.png", mimeType: "image/png", content: Buffer.alloc(4 * 1024 * 1024),
+    }, "preview");
+    assert.match(raw.resourceUrl, /review\.png/);
+    await assert.rejects(executeFilesStageBinary(STORE, createStagedUploadClient(), {
+      filename: "review.png", mimeType: "image/png", contentBase64: Buffer.alloc(4 * 1024 * 1024).toString("base64"),
+    }, "preview"), /3 MB/);
+  });
+
   it("uses undici FormData so proxy transport serializes a valid multipart body", async () => {
     let capturedBody: BodyInit | null | undefined;
     const uploadTransport: HttpTransport = async (_url, init) => {

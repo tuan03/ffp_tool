@@ -1,16 +1,22 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { hasUsableReviewContext } from "../product-context";
+import { mergeReviewPictureUrls } from "../picture-urls";
 import type { AmazonReview, AmazonReviewJob, ReviewClient, ReviewProduct, ReviewShopifyAccess } from "../types";
 
 interface AmazonReviewsPageProps {
   readonly client: ReviewClient;
   readonly shopify: ReviewShopifyAccess;
+  readonly selectedStoreId?: string;
+  readonly onSelectedStoreIdChange?: (storeId: string) => void;
+  readonly generatedPictureUrls?: readonly string[];
+  readonly embedded?: boolean;
+  readonly showStoreSelector?: boolean;
 }
 
 const TERMINAL_STATUSES = new Set(["completed", "partial", "failed", "cancelled"]);
 
-export function AmazonReviewsPage({ client, shopify }: AmazonReviewsPageProps): React.JSX.Element {
+export function AmazonReviewsPage({ client, shopify, selectedStoreId, onSelectedStoreIdChange, generatedPictureUrls = [], embedded = false, showStoreSelector = true }: AmazonReviewsPageProps): React.JSX.Element {
   const [source, setSource] = useState("");
   const [jobId, setJobId] = useState(() => typeof window === "undefined" ? "" : window.localStorage.getItem("ffp_amazon_reviews_job_v1") ?? "");
   const [job, setJob] = useState<AmazonReviewJob | null>(null);
@@ -22,7 +28,7 @@ export function AmazonReviewsPage({ client, shopify }: AmazonReviewsPageProps): 
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [stores, setStores] = useState<readonly string[]>([]);
-  const [storeId, setStoreId] = useState("");
+  const [internalStoreId, setInternalStoreId] = useState("");
   const [productQuery, setProductQuery] = useState("");
   const [products, setProducts] = useState<readonly ReviewProduct[]>([]);
   const [nextCursor, setNextCursor] = useState<string | undefined>();
@@ -34,6 +40,16 @@ export function AmazonReviewsPage({ client, shopify }: AmazonReviewsPageProps): 
   const [randomizeReviewCount, setRandomizeReviewCount] = useState(false);
   const [minReviewsPerProduct, setMinReviewsPerProduct] = useState(1);
   const [extraPictureText, setExtraPictureText] = useState("");
+  const [selectedGeneratedUrls, setSelectedGeneratedUrls] = useState<Set<string>>(new Set());
+  const storeId = selectedStoreId ?? internalStoreId;
+
+  function handleStoreChange(nextStoreId: string): void {
+    if (selectedStoreId === undefined) setInternalStoreId(nextStoreId);
+    onSelectedStoreIdChange?.(nextStoreId);
+    setProducts([]);
+    setSelectedProducts(new Set());
+    setNextCursor(undefined);
+  }
 
   useEffect(() => {
     if (jobId) window.localStorage.setItem("ffp_amazon_reviews_job_v1", jobId);
@@ -43,9 +59,16 @@ export function AmazonReviewsPage({ client, shopify }: AmazonReviewsPageProps): 
   useEffect(() => {
     void shopify.listStores().then((availableStores) => {
       setStores(availableStores);
-      setStoreId((current) => current || availableStores[0] || "");
+      if (selectedStoreId === undefined) setInternalStoreId((current) => current || availableStores[0] || "");
     }).catch(() => setStores([]));
-  }, [shopify]);
+  }, [shopify, selectedStoreId]);
+
+  useEffect(() => {
+    setSelectedGeneratedUrls((current) => new Set([
+      ...[...current].filter((url) => generatedPictureUrls.includes(url)),
+      ...generatedPictureUrls.filter((url) => !current.has(url)),
+    ]));
+  }, [generatedPictureUrls]);
 
   useEffect(() => {
     if (!jobId) return;
@@ -154,7 +177,7 @@ export function AmazonReviewsPage({ client, shopify }: AmazonReviewsPageProps): 
       const chosenProducts = products.filter((product) => selectedProducts.has(product.id));
       const blob = await client.export(job.jobId, {
         kind, reviewIds: [...selectedReviews], products: chosenProducts,
-        extraPictureUrls: extraPictureText.split(/[\s,;]+/).map((url) => url.trim()).filter(Boolean),
+        extraPictureUrls: mergeReviewPictureUrls([...selectedGeneratedUrls], extraPictureText),
         randomizeReviewCount, minReviewsPerProduct,
       });
       const url = URL.createObjectURL(blob);
@@ -176,7 +199,7 @@ export function AmazonReviewsPage({ client, shopify }: AmazonReviewsPageProps): 
 
   return (
     <section className="space-y-6 text-slate-100">
-      <div><h1 className="text-2xl font-semibold">Amazon Reviews</h1><p className="mt-1 text-sm text-slate-400">Lấy ngữ cảnh sản phẩm Amazon và tạo mẫu AI để kiểm tra trong file QA.</p></div>
+      {!embedded ? <div><h1 className="text-2xl font-semibold">Amazon Reviews</h1><p className="mt-1 text-sm text-slate-400">Lấy ngữ cảnh sản phẩm Amazon và tạo mẫu AI để kiểm tra trong file QA.</p></div> : null}
       <form className="grid gap-3 rounded-xl border border-slate-800 bg-slate-900 p-4 md:grid-cols-[1fr_auto_auto]" onSubmit={(event) => { event.preventDefault(); void handleFetchContext(); }}>
         <label className="grid gap-1 text-sm">URL Amazon hoặc ASIN<input className="rounded border border-slate-700 bg-slate-950 px-3 py-2" value={source} onChange={(event) => setSource(event.target.value)} required /></label>
         <button className="self-end rounded bg-cyan-600 px-4 py-2 font-medium disabled:opacity-50" type="submit" disabled={isBusy}>Lấy ngữ cảnh</button>
@@ -205,7 +228,7 @@ export function AmazonReviewsPage({ client, shopify }: AmazonReviewsPageProps): 
         </section>
         <section aria-busy={productSearchStatus !== "idle"} className="space-y-3 rounded-xl border border-slate-800 bg-slate-900 p-4">
           <h2 className="font-semibold">Shopify product</h2>
-          <label className="grid gap-1 text-sm">Store<select className="rounded bg-slate-950 p-2" value={storeId} onChange={(event) => setStoreId(event.target.value)}>{stores.map((store) => <option key={store} value={store}>{store}</option>)}</select></label>
+          {showStoreSelector ? <label className="grid gap-1 text-sm">Store<select className="rounded bg-slate-950 p-2" value={storeId} onChange={(event) => handleStoreChange(event.target.value)}>{stores.map((store) => <option key={store} value={store}>{store}</option>)}</select></label> : null}
           <label className="grid gap-1 text-sm">Tìm theo ASIN tag hoặc từ khóa<input className="rounded bg-slate-950 p-2" value={productQuery} onChange={(event) => setProductQuery(event.target.value)} /></label>
           <button type="button" className="flex items-center gap-2 rounded bg-slate-700 px-3 py-2 text-sm disabled:opacity-50" disabled={isBusy} onClick={() => void handleProductSearch()}>{productSearchStatus === "searching" ? <><span aria-hidden="true" className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white motion-reduce:animate-none" />Đang tìm product…</> : "Tìm product"}</button>
           <div className="max-h-64 space-y-2 overflow-auto">{products.map((product) => <label key={product.id} className="flex gap-2 rounded border border-slate-800 p-2 text-sm"><input type="checkbox" checked={selectedProducts.has(product.id)} onChange={() => setSelectedProducts((current) => { const next = new Set(current); if (next.has(product.id)) next.delete(product.id); else next.add(product.id); return next; })} /><span>{product.title}<br /><small className="text-slate-400">{product.handle} · {product.status}</small></span></label>)}</div>
@@ -217,7 +240,8 @@ export function AmazonReviewsPage({ client, shopify }: AmazonReviewsPageProps): 
         <div className="flex flex-wrap items-end gap-3"><label className="grid gap-1 text-sm">Số mẫu AI<input className="w-28 rounded bg-slate-950 p-2" type="number" min="1" max="50" disabled={isGenerating} value={sampleCount} onChange={(event) => setSampleCount(Number(event.target.value))} /></label><button type="button" className="flex items-center gap-2 rounded bg-violet-700 px-4 py-2 disabled:opacity-50" disabled={isBusy || !hasAiContext} onClick={() => void handleGenerateSamples()}>{isGenerating ? <><span aria-hidden="true" className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white motion-reduce:animate-none" />Đang tạo review AI…</> : "Tạo review AI cho QA"}</button></div>
         <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={randomizeReviewCount} onChange={(event) => setRandomizeReviewCount(event.target.checked)} />Số review ngẫu nhiên theo product</label>
         {randomizeReviewCount ? <label className="grid max-w-48 gap-1 text-sm">Tối thiểu mỗi product<input className="rounded bg-slate-950 p-2" type="number" min="1" value={minReviewsPerProduct} onChange={(event) => setMinReviewsPerProduct(Number(event.target.value))} /></label> : null}
-        <label className="grid gap-1 text-sm">Link ảnh bổ sung (mỗi link một dòng)<textarea className="min-h-20 rounded bg-slate-950 p-2" value={extraPictureText} onChange={(event) => setExtraPictureText(event.target.value)} /></label>
+        {generatedPictureUrls.length > 0 ? <fieldset className="space-y-2 rounded border border-slate-700 p-3 text-sm"><legend className="px-1 font-medium">Ảnh review đã upload lên Shopify</legend>{generatedPictureUrls.map((url) => <label key={url} className="flex items-start gap-2"><input type="checkbox" checked={selectedGeneratedUrls.has(url)} onChange={() => setSelectedGeneratedUrls((current) => { const next = new Set(current); if (next.has(url)) next.delete(url); else next.add(url); return next; })} /><span className="min-w-0 break-all text-cyan-300">{url}</span></label>)}</fieldset> : null}
+        <label className="grid gap-1 text-sm">Link ảnh bổ sung thủ công (mỗi link một dòng)<textarea className="min-h-20 rounded bg-slate-950 p-2" value={extraPictureText} onChange={(event) => setExtraPictureText(event.target.value)} /></label>
         <div className="flex flex-wrap gap-2">{hasAmazonReviews ? <button type="button" className="rounded bg-emerald-700 px-3 py-2 disabled:opacity-50" disabled={isBusy || !reviews.some((review) => selectedReviews.has(review.reviewId) && !review.synthetic)} onClick={() => void handleExport("real")}>XLSX review thật · Judge.me</button> : null}<button type="button" className="rounded bg-violet-700 px-3 py-2 disabled:opacity-50" disabled={isBusy || !reviews.some((review) => selectedReviews.has(review.reviewId) && review.synthetic)} onClick={() => void handleExport("ai")}>XLSX AI · QA</button><button type="button" className="rounded bg-slate-700 px-3 py-2 disabled:opacity-50" disabled={isBusy || selectedReviews.size === 0} onClick={() => void handleExport("preview")}>XLSX kết hợp · QA preview</button></div>
       </section> : null}
     </section>

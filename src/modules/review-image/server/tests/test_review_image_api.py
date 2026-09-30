@@ -118,3 +118,30 @@ def test_template_gallery_lists_and_uploads_authenticated_images():
                 assert len(api.review_image_service.list_templates()) == 0
         finally:
             api.review_image_service = original_service
+
+
+def test_template_gallery_is_store_scoped_and_bulk_delete_reports_partial_success():
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        original_service = api.review_image_service
+        api.review_image_service = ReviewImageService(root / "templates", root / "outputs", lambda _prompt, _images: {})
+        try:
+            with TestClient(api.app) as client:
+                headers = {"X-Bridge-Token": api.BRIDGE_TOKEN}
+                first = client.post("/api/review-images/templates", headers=headers, json={
+                    "storeId": "capozen", "fileName": "rug.png", "imageDataUrl": image_data_url()
+                }).json()["template"]["name"]
+                second = client.post("/api/review-images/templates", headers=headers, json={
+                    "storeId": "capozen", "fileName": "rug-2.png", "imageDataUrl": image_data_url()
+                }).json()["template"]["name"]
+                assert client.get("/api/review-images/templates?storeId=preaureum", headers=headers).json()["templates"] == []
+                listed = client.get("/api/review-images/templates?storeId=capozen", headers=headers).json()["templates"]
+                assert {item["name"] for item in listed} == {first, second}
+                deleted = client.request("DELETE", "/api/review-images/templates/batch", headers=headers, json={
+                    "storeId": "capozen", "names": [first, "missing.png"]
+                })
+                assert deleted.status_code == 200
+                assert deleted.json()["deleted"] == [first]
+                assert deleted.json()["failures"][0]["name"] == "missing.png"
+        finally:
+            api.review_image_service = original_service

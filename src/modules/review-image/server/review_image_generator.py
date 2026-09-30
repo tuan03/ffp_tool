@@ -17,6 +17,8 @@ from PIL import Image, UnidentifiedImageError
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
 IMAGE_FORMATS = {"PNG": ("image/png", ".png"), "JPEG": ("image/jpeg", ".jpg"), "WEBP": ("image/webp", ".webp")}
 JOB_RETENTION_SECONDS = 24 * 60 * 60
+DEFAULT_STORE_ID = "preaureum"
+STORE_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 
 
 class ReviewImageBusyError(Exception):
@@ -59,6 +61,7 @@ class ReviewImageService:
         self.template_dir = Path(template_dir)
         self.output_dir = Path(output_dir)
         self.template_dir.mkdir(parents=True, exist_ok=True)
+        self._migrate_legacy_templates()
         self.bridge_call = bridge_call
         self.jobs: dict[str, dict] = {}
         self.lock = threading.RLock()
@@ -71,12 +74,37 @@ class ReviewImageService:
             if job.get("finished_at", float("inf")) < cutoff:
                 del self.jobs[job_id]
 
-    def _templates(self) -> list[Path]:
-        if not self.template_dir.is_dir():
+    def _store_template_dir(self, store_id: str) -> Path:
+        clean_store_id = store_id.strip().lower()
+        if not STORE_ID_PATTERN.fullmatch(clean_store_id):
+            raise ValueError("Store ID không hợp lệ.")
+        store_dir = self.template_dir / clean_store_id
+        if not store_dir.resolve().is_relative_to(self.template_dir.resolve()):
+            raise ValueError("Store ID không hợp lệ.")
+        return store_dir
+
+    def _migrate_legacy_templates(self) -> None:
+        destination = self._store_template_dir(DEFAULT_STORE_ID)
+        legacy_files = [
+            path for path in self.template_dir.iterdir()
+            if path.is_file() and path.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}
+        ]
+        if not legacy_files:
+            return
+        destination.mkdir(parents=True, exist_ok=True)
+        for source in legacy_files:
+            target = destination / source.name
+            if target.exists():
+                target = destination / f"{source.stem}-{uuid.uuid4().hex}{source.suffix.lower()}"
+            source.replace(target)
+
+    def _templates(self, store_id: str = DEFAULT_STORE_ID) -> list[Path]:
+        store_dir = self._store_template_dir(store_id)
+        if not store_dir.is_dir():
             return []
         candidates = []
-        root = self.template_dir.resolve()
-        for path in sorted(self.template_dir.iterdir()):
+        root = store_dir.resolve()
+        for path in sorted(store_dir.iterdir()):
             if not path.is_file() or not path.resolve().is_relative_to(root) or path.suffix.lower() not in {".png", ".jpg", ".jpeg", ".webp"}:
                 continue
             try:
@@ -87,35 +115,38 @@ class ReviewImageService:
             candidates.append(path)
         return candidates
 
-    def template_path(self, name: str) -> Path:
-        match = next((path for path in self._templates() if path.name == name), None)
+    def template_path(self, name: str, store_id: str = DEFAULT_STORE_ID) -> Path:
+        match = next((path for path in self._templates(store_id) if path.name == name), None)
         if match is None:
             raise ValueError("Ảnh template không tồn tại hoặc không hợp lệ.")
         return match
 
-    def list_templates(self) -> list[dict[str, str]]:
-        return [{"name": path.name} for path in self._templates()]
+    def list_templates(self, store_id: str = DEFAULT_STORE_ID) -> list[dict[str, str]]:
+        return [{"name": path.name} for path in self._templates(store_id)]
 
-    def save_template(self, file_name: str, image_data_url: str) -> str:
+    def save_template(self, file_name: str, image_data_url: str, *, store_id: str = DEFAULT_STORE_ID) -> str:
         mime, image_bytes = decode_image_data_url(image_data_url)
         original_name = re.split(r"[/\\]", file_name.strip())[-1]
         stem = re.sub(r"[^A-Za-z0-9_-]+", "-", Path(original_name).stem).strip("-_")[:60] or "template"
         extension = next(extension for format_mime, extension in IMAGE_FORMATS.values() if format_mime == mime)
         unique_id = uuid.uuid4().hex
         saved_name = f"{stem}-{unique_id}{extension}"
-        temporary_path = self.template_dir / f".{unique_id}.part"
+        store_dir = self._store_template_dir(store_id)
+        store_dir.mkdir(parents=True, exist_ok=True)
+        temporary_path = store_dir / f".{unique_id}.part"
         try:
             temporary_path.write_bytes(image_bytes)
-            temporary_path.replace(self.template_dir / saved_name)
+            temporary_path.replace(store_dir / saved_name)
         finally:
             temporary_path.unlink(missing_ok=True)
         return saved_name
 
-    def delete_template(self, name: str) -> str:
+    def delete_template(self, name: str, store_id: str = DEFAULT_STORE_ID) -> str:
+        clean_store_id = store_id.strip().lower()
         with self.lock:
-            path = self.template_path(name)
+            path = self.template_path(name, clean_store_id)
             is_in_use = any(
-                job.get("template_name") == path.name and job.get("status") in {"queued", "running"}
+                job.get("store_id") == clean_store_id and job.get("template_name") == path.name and job.get("status") in {"queued", "running"}
                 for job in self.jobs.values()
             )
             if is_in_use:
@@ -126,12 +157,23 @@ class ReviewImageService:
                 raise ValueError("Không thể xóa ảnh template.") from exc
             return path.name
 
+    def delete_templates(self, store_id: str, names: list[str]) -> dict[str, list]:
+        deleted: list[str] = []
+        failures: list[dict[str, str]] = []
+        for name in dict.fromkeys(names):
+            try:
+                deleted.append(self.delete_template(name, store_id))
+            except ValueError as exc:
+                failures.append({"name": name, "message": str(exc)})
+        return {"deleted": deleted, "failures": failures}
+
     def submit(
         self,
         product_data_url: str,
         prompt: str,
         scope: str,
         *,
+        store_id: str = DEFAULT_STORE_ID,
         template_name: str | None = None,
         exclude_template: str | None = None,
     ) -> dict:
@@ -139,27 +181,29 @@ class ReviewImageService:
         prompt = prompt.strip()
         if not prompt or len(prompt) > 10_000:
             raise ValueError("Prompt phải có từ 1 đến 10.000 ký tự.")
-        if scope not in {"main", "set"}:
+        if scope not in {"main", "set", "single"}:
             raise ValueError("Chế độ sản phẩm không hợp lệ.")
-        scope_instruction = (
-            "Required product selection: the main handbag only; ignore any wallet or accessory in Image 2."
-            if scope == "main" else
-            "Required product selection: the main handbag and matching wallet; place the wallet beside the bag."
-        )
+        scope_instruction = {
+            "main": "Required product selection: the main handbag only; ignore any wallet or accessory in Image 2.",
+            "set": "Required product selection: the main handbag and matching wallet; place the wallet beside the bag.",
+            "single": "Required product selection: use the exact product shown in Image 2 without inventing matching accessories.",
+        }[scope]
         prompt = scope_instruction + "\n\n" + prompt
         if len(prompt) > 10_000:
             raise ValueError("Prompt quá dài sau khi thêm hướng dẫn chọn sản phẩm; hãy rút ngắn prompt.")
-        templates = self._templates()
+        clean_store_id = store_id.strip().lower()
+        templates = self._templates(clean_store_id)
         if not templates:
             raise ValueError("Thư mục template chưa có ảnh PNG, JPEG hoặc WebP hợp lệ.")
         if template_name:
-            template = self.template_path(template_name)
+            template = self.template_path(template_name, clean_store_id)
         else:
             choices = [path for path in templates if path.name != exclude_template] or templates
             template = secrets.choice(choices)
         job_id = uuid.uuid4().hex
         job = {
             "job_id": job_id,
+            "store_id": clean_store_id,
             "status": "queued",
             "template_name": template.name,
             "scope": scope,

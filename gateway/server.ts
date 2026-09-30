@@ -136,6 +136,7 @@ export function startGatewayServer(
         authToken,
         bridgeToken: env.REVIEW_IMAGE_BRIDGE_TOKEN || process.env.REVIEW_IMAGE_BRIDGE_TOKEN || "change-this-token",
         bridgeBaseUrl: options.reviewImageBridgeBaseUrl,
+        dispatcher,
       });
       return;
     }

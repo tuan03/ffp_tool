@@ -36,15 +36,6 @@ export function AppLayout(): React.JSX.Element {
               </NavLink>
 
               <NavLink
-                to="/amazon-reviews"
-                className={({ isActive }) =>
-                  `rounded-lg px-3 py-1.5 transition ${isActive ? "bg-slate-800 font-semibold text-cyan-300" : "text-slate-400 hover:bg-slate-800/60 hover:text-slate-200"}`
-                }
-              >
-                ⭐ Amazon Reviews
-              </NavLink>
-
-              <NavLink
                 to="/pinterest-pod"
                 className={({ isActive }) =>
                   `rounded-lg px-3 py-1.5 transition ${
@@ -84,7 +75,7 @@ export function AppLayout(): React.JSX.Element {
               </NavLink>
 
               <NavLink
-                to="/review-images"
+                to="/review-studio"
                 className={({ isActive }) =>
                   `rounded-lg px-3 py-1.5 transition ${
                     isActive
@@ -93,7 +84,7 @@ export function AppLayout(): React.JSX.Element {
                   }`
                 }
               >
-                📷 Tạo ảnh review
+                ⭐ Review Studio
               </NavLink>
 
               <NavLink

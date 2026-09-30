@@ -1,389 +1,360 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { encodeImageFile } from "../service";
-import type { ReviewImageClient, ReviewImageJob, ReviewImageScope, ReviewImageTemplate } from "../types";
+import { buildTemplateSequence, getReviewImageStorePreset } from "../store-presets";
+import type { ReviewImageClient, ReviewImageJob, ReviewImageScope, ReviewImageShopifyFile, ReviewImageTemplate } from "../types";
 
-const DEFAULT_PROMPT = `Create one photorealistic customer review photo by editing the two attached images.
+type BatchStatus = "ready" | "queued" | "running" | "completed" | "failed" | "uploading" | "uploaded";
 
-Image 1 is the SCENE TEMPLATE, not the product to keep. Preserve its room, furniture, bedding, camera angle, perspective and natural lighting. Completely remove the original bag or wallet from Image 1, then reconstruct any background it covered.
+interface ReviewProductImage {
+  readonly id: string;
+  readonly name: string;
+  readonly dataUrl: string;
+  readonly status: BatchStatus;
+  readonly job?: ReviewImageJob;
+  readonly resultDataUrl?: string;
+  readonly shopifyFile?: ReviewImageShopifyFile;
+  readonly error?: string;
+}
 
-Image 2 is the PRODUCT REFERENCE. Place the selected handbag (and matching wallet only when requested) into the cleared location in Image 1. Preserve the product's silhouette, handles, material, hardware, artwork, colors, printed pattern and readable branding as faithfully as possible. Match the scene's scale, perspective, contact shadows and lighting. Do not duplicate products, invent new graphics or add captions, watermarks or extra text. Return only the finished image.`;
+export interface ReviewImagePageProps {
+  readonly client: ReviewImageClient;
+  readonly storeId?: string;
+  readonly stores?: readonly string[];
+  readonly onStoreIdChange?: (storeId: string) => void;
+  readonly onShopifyFile?: (storeId: string, file: ReviewImageShopifyFile) => void;
+  readonly onBusyChange?: (isBusy: boolean) => void;
+  readonly embedded?: boolean;
+  readonly showStoreSelector?: boolean;
+}
 
-type GenerateMode = "new" | "same" | "different";
+const POLL_INTERVAL_MS = 1_500;
 
-export function ReviewImagePage({ client }: { readonly client: ReviewImageClient }): React.JSX.Element {
-  const [productDataUrl, setProductDataUrl] = useState("");
-  const [productName, setProductName] = useState("");
-  const [scope, setScope] = useState<ReviewImageScope>("main");
-  const [prompt, setPrompt] = useState(DEFAULT_PROMPT);
-  const [job, setJob] = useState<ReviewImageJob | null>(null);
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+}
+
+async function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result ?? ""));
+    reader.onerror = () => reject(new Error("Không đọc được ảnh kết quả."));
+    reader.readAsDataURL(blob);
+  });
+}
+
+function makeItemId(): string {
+  return typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
+}
+
+export function ReviewImagePage({
+  client,
+  storeId: controlledStoreId,
+  stores = ["preaureum", "capozen", "jeminise"],
+  onStoreIdChange,
+  onShopifyFile,
+  onBusyChange,
+  embedded = false,
+  showStoreSelector = true,
+}: ReviewImagePageProps): React.JSX.Element {
+  const [internalStoreId, setInternalStoreId] = useState(stores[0] ?? "preaureum");
+  const storeId = controlledStoreId ?? internalStoreId;
+  const preset = useMemo(() => getReviewImageStorePreset(storeId), [storeId]);
+  const [scope, setScope] = useState<ReviewImageScope>(preset.scope);
+  const [promptDrafts, setPromptDrafts] = useState<Record<string, string>>({});
+  const prompt = promptDrafts[storeId] ?? preset.prompt;
+  const [products, setProducts] = useState<readonly ReviewProductImage[]>([]);
   const [templates, setTemplates] = useState<readonly ReviewImageTemplate[] | null>(null);
-  const [selectedTemplateName, setSelectedTemplateName] = useState("");
-  const [selectedTemplatePreview, setSelectedTemplatePreview] = useState("");
-  const [templateUploadProgress, setTemplateUploadProgress] = useState<{ readonly completed: number; readonly total: number } | null>(null);
-  const [templateUploadSummary, setTemplateUploadSummary] = useState<{ readonly message: string; readonly hasFailures: boolean } | null>(null);
-  const [isDeletingTemplate, setIsDeletingTemplate] = useState(false);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isApproving, setIsApproving] = useState(false);
+  const [previewTemplateName, setPreviewTemplateName] = useState("");
+  const [previewTemplateUrl, setPreviewTemplateUrl] = useState("");
+  const [selectedTemplateNames, setSelectedTemplateNames] = useState<Set<string>>(new Set());
+  const [templateBusy, setTemplateBusy] = useState(false);
+  const [templateNotice, setTemplateNotice] = useState("");
+  const [isBatchRunning, setIsBatchRunning] = useState(false);
+  const [isBulkUploading, setIsBulkUploading] = useState(false);
   const [error, setError] = useState("");
   const [gatewayToken, setGatewayToken] = useState("");
-  const [templatePreview, setTemplatePreview] = useState("");
-  const [resultPreview, setResultPreview] = useState("");
-  const [authRevision, setAuthRevision] = useState(0);
+  const isBusy = isBatchRunning || isBulkUploading || templateBusy;
+
+  useEffect(() => { onBusyChange?.(isBusy); }, [isBusy, onBusyChange]);
+
+  const updateProduct = (id: string, patch: Partial<ReviewProductImage>): void => {
+    setProducts((current) => current.map((item) => item.id === id ? { ...item, ...patch } : item));
+  };
 
   useEffect(() => {
     let active = true;
-    void client.listTemplates().then((nextTemplates) => {
+    setTemplates(null);
+    setSelectedTemplateNames(new Set());
+    setPreviewTemplateName("");
+    setTemplateNotice("");
+    setProducts([]);
+    setScope(preset.scope);
+    void client.listTemplates(storeId).then((items) => {
       if (!active) return;
-      setTemplates(nextTemplates);
-      setSelectedTemplateName((current) => nextTemplates.some((template) => template.name === current) ? current : nextTemplates[0]?.name ?? "");
+      setTemplates(items);
+      setPreviewTemplateName(items[0]?.name ?? "");
     }).catch((cause: unknown) => {
-      if (active) setError(cause instanceof Error ? cause.message : "Không kết nối được Review Image Bridge.");
+      if (active) setError(cause instanceof Error ? cause.message : "Không tải được template.");
     });
     return () => { active = false; };
-  }, [client, authRevision]);
+  }, [client, preset.scope, storeId]);
 
   useEffect(() => {
-    if (!selectedTemplateName) {
-      setSelectedTemplatePreview("");
+    if (!previewTemplateName) {
+      setPreviewTemplateUrl("");
       return;
     }
     let active = true;
     let objectUrl = "";
-    setSelectedTemplatePreview("");
-    void client.template(selectedTemplateName).then((blob) => {
+    void client.template(storeId, previewTemplateName).then((blob) => {
       if (!active) return;
       objectUrl = URL.createObjectURL(blob);
-      setSelectedTemplatePreview(objectUrl);
+      setPreviewTemplateUrl(objectUrl);
     }).catch((cause: unknown) => {
       if (active) setError(cause instanceof Error ? cause.message : "Không tải được ảnh template.");
     });
     return () => { active = false; if (objectUrl) URL.revokeObjectURL(objectUrl); };
-  }, [client, selectedTemplateName, authRevision]);
+  }, [client, previewTemplateName, storeId]);
 
-  useEffect(() => {
-    if (!job || (job.status !== "queued" && job.status !== "running")) return;
-    let active = true;
-    let timer: number | undefined;
-    const poll = async (): Promise<void> => {
+  function handleStoreChange(nextStoreId: string): void {
+    if (isBusy) return;
+    if (controlledStoreId === undefined) setInternalStoreId(nextStoreId);
+    onStoreIdChange?.(nextStoreId);
+  }
+
+  async function addProductFiles(files: readonly File[]): Promise<void> {
+    setError("");
+    const additions: ReviewProductImage[] = [];
+    for (const file of files) {
       try {
-        const nextJob = await client.job(job.job_id);
-        if (!active) return;
-        setJob(nextJob);
-        if (nextJob.status === "queued" || nextJob.status === "running") {
-          timer = window.setTimeout(() => { void poll(); }, 2_000);
-        }
+        additions.push({ id: makeItemId(), name: file.name || "Ảnh đã dán", dataUrl: await encodeImageFile(file), status: "ready" });
       } catch (cause) {
-        if (active) setError(cause instanceof Error ? cause.message : "Không tải được trạng thái tạo ảnh.");
+        setError(cause instanceof Error ? `${file.name}: ${cause.message}` : "Ảnh sản phẩm không hợp lệ.");
       }
-    };
-    timer = window.setTimeout(() => { void poll(); }, 1_500);
-    return () => { active = false; if (timer !== undefined) window.clearTimeout(timer); };
-  }, [client, job]);
+    }
+    if (additions.length) setProducts((current) => [...current, ...additions]);
+  }
 
-  useEffect(() => {
-    if (!job) return;
-    let active = true;
-    let objectUrl = "";
-    setTemplatePreview("");
-    void client.template(job.template_name).then((blob) => {
-      if (!active) return;
-      objectUrl = URL.createObjectURL(blob);
-      setTemplatePreview(objectUrl);
-    }).catch((cause: unknown) => {
-      if (active) setError(cause instanceof Error ? cause.message : "Không tải được ảnh template.");
-    });
-    return () => { active = false; if (objectUrl) URL.revokeObjectURL(objectUrl); };
-  }, [client, job?.template_name, authRevision]);
+  function clipboardFiles(event: React.ClipboardEvent<HTMLDivElement>): readonly File[] {
+    return Array.from(event.clipboardData.items)
+      .filter((item) => item.kind === "file" && item.type.startsWith("image/"))
+      .flatMap((item) => { const file = item.getAsFile(); return file ? [file] : []; });
+  }
 
-  useEffect(() => {
-    if (!job || job.status !== "completed") return;
-    let active = true;
-    let objectUrl = "";
-    setResultPreview("");
-    void client.image(job.job_id).then((blob) => {
-      if (!active) return;
-      objectUrl = URL.createObjectURL(blob);
-      setResultPreview(objectUrl);
-    }).catch((cause: unknown) => {
-      if (active) setError(cause instanceof Error ? cause.message : "Không tải được ảnh review.");
-    });
-    return () => { active = false; if (objectUrl) URL.revokeObjectURL(objectUrl); };
-  }, [client, job?.job_id, job?.status, authRevision]);
+  function handleProductPaste(event: React.ClipboardEvent<HTMLDivElement>): void {
+    const files = clipboardFiles(event);
+    if (!files.length) {
+      setError("Clipboard chưa có ảnh PNG, JPEG hoặc WebP.");
+      return;
+    }
+    event.preventDefault();
+    void addProductFiles(files);
+  }
+
+  async function handleTemplateUpload(files: readonly File[]): Promise<void> {
+    if (!files.length) return;
+    setTemplateBusy(true);
+    setError("");
+    let uploaded = 0;
+    const failures: string[] = [];
+    const created: ReviewImageTemplate[] = [];
+    try {
+      for (const file of files) {
+        try {
+          created.push(await client.uploadTemplate({ storeId, fileName: file.name, imageDataUrl: await encodeImageFile(file) }));
+          uploaded += 1;
+        } catch (cause) {
+          failures.push(`${file.name}: ${cause instanceof Error ? cause.message : "upload thất bại"}`);
+        }
+      }
+      setTemplates((current) => [...(current ?? []), ...created].sort((left, right) => left.name.localeCompare(right.name)));
+      if (created.length) setPreviewTemplateName(created.at(-1)?.name ?? "");
+      setTemplateNotice(failures.length ? `Đã tải ${uploaded}/${files.length}. ${failures.join("; ")}` : `Đã tải ${uploaded} template.`);
+    } finally {
+      setTemplateBusy(false);
+    }
+  }
+
+  function handleTemplatePaste(event: React.ClipboardEvent<HTMLDivElement>): void {
+    const files = clipboardFiles(event);
+    if (!files.length) return;
+    event.preventDefault();
+    void handleTemplateUpload(files);
+  }
+
+  async function handleDeleteTemplates(): Promise<void> {
+    const names = [...selectedTemplateNames];
+    if (!names.length || !window.confirm(`Xóa ${names.length} template đã chọn?`)) return;
+    setTemplateBusy(true);
+    setError("");
+    try {
+      const outcome = await client.deleteTemplates(storeId, names);
+      const deleted = new Set(outcome.deleted);
+      const remaining = (templates ?? []).filter((template) => !deleted.has(template.name));
+      setTemplates(remaining);
+      setSelectedTemplateNames(new Set(outcome.failures.map((failure) => failure.name)));
+      if (deleted.has(previewTemplateName)) setPreviewTemplateName(remaining[0]?.name ?? "");
+      setTemplateNotice(`Đã xóa ${outcome.deleted.length}/${names.length} template.${outcome.failures.length ? ` ${outcome.failures.map((failure) => `${failure.name}: ${failure.message}`).join("; ")}` : ""}`);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Không xóa được template.");
+    } finally {
+      setTemplateBusy(false);
+    }
+  }
+
+  async function waitForJob(jobId: string, itemId: string): Promise<ReviewImageJob> {
+    while (true) {
+      await delay(POLL_INTERVAL_MS);
+      const job = await client.job(jobId);
+      updateProduct(itemId, { job, status: job.status });
+      if (job.status === "completed" || job.status === "failed") return job;
+    }
+  }
+
+  async function runProduct(item: ReviewProductImage, templateName: string): Promise<void> {
+    updateProduct(item.id, { status: "queued", error: undefined, resultDataUrl: undefined, shopifyFile: undefined });
+    try {
+      const created = await client.create({ storeId, productDataUrl: item.dataUrl, prompt: prompt.trim(), scope, templateName });
+      updateProduct(item.id, { job: created, status: created.status });
+      const completed = await waitForJob(created.job_id, item.id);
+      if (completed.status === "failed") {
+        updateProduct(item.id, { status: "failed", error: completed.error || "Tạo ảnh thất bại." });
+        return;
+      }
+      updateProduct(item.id, { status: "completed", resultDataUrl: await blobToDataUrl(await client.image(completed.job_id)) });
+    } catch (cause) {
+      updateProduct(item.id, { status: "failed", error: cause instanceof Error ? cause.message : "Tạo ảnh thất bại." });
+    }
+  }
+
+  async function handleGenerateBatch(): Promise<void> {
+    const pending = products.filter((item) => item.status === "ready" || item.status === "failed");
+    const templateNames = (templates ?? []).map((template) => template.name);
+    if (!pending.length || !prompt.trim() || !templateNames.length) {
+      setError("Hãy thêm ảnh sản phẩm, template và prompt trước khi tạo.");
+      return;
+    }
+    setError("");
+    setIsBatchRunning(true);
+    try {
+      const sequence = buildTemplateSequence(templateNames, pending.length);
+      for (const [index, item] of pending.entries()) {
+        const templateName = sequence[index] ?? templateNames[0];
+        if (!templateName) break;
+        await runProduct(item, templateName);
+      }
+    } finally {
+      setIsBatchRunning(false);
+    }
+  }
+
+  async function handleRetry(item: ReviewProductImage, useDifferentTemplate: boolean): Promise<void> {
+    const names = (templates ?? []).map((template) => template.name);
+    if (!item.job || !names.length) return;
+    const alternatives = names.filter((name) => name !== item.job?.template_name);
+    const alternative = alternatives[Math.floor(Math.random() * alternatives.length)];
+    const templateName = useDifferentTemplate && alternative ? alternative : item.job.template_name;
+    setIsBatchRunning(true);
+    try {
+      await runProduct(item, templateName);
+    } finally {
+      setIsBatchRunning(false);
+    }
+  }
+
+  async function approveAndUpload(item: ReviewProductImage): Promise<void> {
+    if (!item.job || item.job.status !== "completed") return;
+    updateProduct(item.id, { status: "uploading", error: undefined });
+    try {
+      const approved = item.job.approved ? item.job : await client.approve(item.job.job_id);
+      const shopifyFile = await client.uploadToShopify(approved.job_id, storeId);
+      updateProduct(item.id, { job: approved, shopifyFile, status: "uploaded" });
+      onShopifyFile?.(storeId, shopifyFile);
+    } catch (cause) {
+      updateProduct(item.id, { status: "completed", error: cause instanceof Error ? cause.message : "Không upload được ảnh lên Shopify." });
+    }
+  }
+
+  async function handleBulkApproveAndUpload(): Promise<void> {
+    const completed = products.filter((item) => item.status === "completed" && !item.shopifyFile);
+    setIsBulkUploading(true);
+    try {
+      for (const item of completed) await approveAndUpload(item);
+    } finally {
+      setIsBulkUploading(false);
+    }
+  }
+
+  async function handleDownload(item: ReviewProductImage): Promise<void> {
+    if (!item.job?.approved) return;
+    try {
+      const blob = await client.download(item.job.job_id);
+      const extension = blob.type === "image/jpeg" ? ".jpg" : blob.type === "image/webp" ? ".webp" : ".png";
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `review-${item.job.job_id}${extension}`;
+      link.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (cause) {
+      updateProduct(item.id, { error: cause instanceof Error ? cause.message : "Không tải được ảnh." });
+    }
+  }
 
   async function applyGatewayToken(): Promise<void> {
     client.setGatewayToken(gatewayToken);
     setError("");
     try {
       await client.health();
-      setAuthRevision((value) => value + 1);
+      setTemplates(await client.listTemplates(storeId));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Gateway token không hợp lệ.");
     }
   }
 
-  async function handleDownload(): Promise<void> {
-    if (!job?.approved) return;
-    try {
-      const blob = await client.download(job.job_id);
-      const extension = blob.type === "image/jpeg" ? ".jpg" : blob.type === "image/webp" ? ".webp" : ".png";
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = `review-${job.job_id}${extension}`;
-      link.click();
-      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Không tải được ảnh đã duyệt.");
-    }
-  }
-
-  async function handleProductChange(file: File | undefined): Promise<void> {
-    setError("");
-    if (!file) return;
-    try {
-      const dataUrl = await encodeImageFile(file);
-      setProductDataUrl(dataUrl);
-      setProductName(file.name || "Ảnh đã dán");
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Ảnh sản phẩm không hợp lệ.");
-    }
-  }
-
-  function handleProductPaste(event: React.ClipboardEvent<HTMLDivElement>): void {
-    const imageItem = Array.from(event.clipboardData.items).find((item) => item.kind === "file" && item.type.startsWith("image/"));
-    if (!imageItem) {
-      setError("Clipboard chưa có ảnh PNG, JPEG hoặc WebP.");
-      return;
-    }
-    event.preventDefault();
-    const file = imageItem.getAsFile();
-    if (file) void handleProductChange(file);
-    else setError("Không đọc được ảnh từ clipboard. Hãy sao chép lại ảnh và thử tiếp.");
-  }
-
-  async function handleTemplateUpload(files: readonly File[]): Promise<void> {
-    if (files.length === 0) return;
-    setError("");
-    setTemplateUploadSummary(null);
-    setTemplateUploadProgress({ completed: 0, total: files.length });
-    let uploadedCount = 0;
-    let lastUploadedName = "";
-    const failures: string[] = [];
-    try {
-      for (const [index, file] of files.entries()) {
-        try {
-          const imageDataUrl = await encodeImageFile(file);
-          const uploaded = await client.uploadTemplate({ fileName: file.name, imageDataUrl });
-          setTemplates((current) => [...(current ?? []), uploaded].sort((left, right) => left.name.localeCompare(right.name)));
-          uploadedCount += 1;
-          lastUploadedName = uploaded.name;
-        } catch (cause) {
-          const message = cause instanceof Error ? cause.message : "Không tải được ảnh template lên.";
-          failures.push(`${file.name}: ${message}`);
-        }
-        setTemplateUploadProgress({ completed: index + 1, total: files.length });
-      }
-      if (lastUploadedName) setSelectedTemplateName(lastUploadedName);
-      setTemplateUploadSummary({
-        message: failures.length === 0
-          ? `Đã tải ${uploadedCount} ảnh template.`
-          : `Đã tải ${uploadedCount}/${files.length} ảnh. ${failures.slice(0, 3).join("; ")}${failures.length > 3 ? `; và ${failures.length - 3} ảnh lỗi khác.` : ""}`,
-        hasFailures: failures.length > 0,
-      });
-    } finally {
-      setTemplateUploadProgress(null);
-    }
-  }
-
-  async function handleDeleteTemplate(): Promise<void> {
-    if (!selectedTemplateName || !window.confirm(`Xóa vĩnh viễn template "${selectedTemplateName}"?`)) return;
-    const deletedName = selectedTemplateName;
-    setError("");
-    setTemplateUploadSummary(null);
-    setIsDeletingTemplate(true);
-    try {
-      await client.deleteTemplate(deletedName);
-      const remainingTemplates = (templates ?? []).filter((template) => template.name !== deletedName);
-      setTemplates(remainingTemplates);
-      setSelectedTemplateName(remainingTemplates[0]?.name ?? "");
-      setTemplateUploadSummary({ message: `Đã xóa template ${deletedName}.`, hasFailures: false });
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Không thể xóa ảnh template.");
-    } finally {
-      setIsDeletingTemplate(false);
-    }
-  }
-
-  async function handleGenerate(mode: GenerateMode): Promise<void> {
-    if (!productDataUrl || !prompt.trim()) {
-      setError("Hãy chọn ảnh sản phẩm và nhập prompt trước khi tạo.");
-      return;
-    }
-    setError("");
-    setIsSubmitting(true);
-    try {
-      const nextJob = await client.create({
-        productDataUrl,
-        prompt: prompt.trim(),
-        scope,
-        ...(mode === "same" && job ? { templateName: job.template_name } : {}),
-        ...(mode === "different" && job ? { excludeTemplate: job.template_name } : {}),
-      });
-      setJob(nextJob);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Không thể bắt đầu tạo ảnh.");
-    } finally {
-      setIsSubmitting(false);
-    }
-  }
-
-  async function handleApprove(): Promise<void> {
-    if (!job || job.status !== "completed") return;
-    setIsApproving(true);
-    setError("");
-    try {
-      setJob(await client.approve(job.job_id));
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Không thể duyệt ảnh.");
-    } finally {
-      setIsApproving(false);
-    }
-  }
-
-  const isGenerating = isSubmitting || job?.status === "queued" || job?.status === "running";
-  const canGenerate = Boolean(productDataUrl && prompt.trim() && !isGenerating);
-  const canRetry = Boolean(job && !isGenerating);
-  const fieldClass = "mt-2 w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-slate-100 outline-none focus:border-cyan-500";
+  const completedCount = products.filter((item) => item.status === "completed" && !item.shopifyFile).length;
+  const fieldClass = "mt-2 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-slate-100 outline-none focus:border-cyan-500";
   const buttonClass = "rounded-xl px-4 py-2 font-medium transition disabled:cursor-not-allowed disabled:opacity-40";
 
-  return (
-    <main className="mx-auto max-w-6xl space-y-6">
-      <header className="space-y-2">
-        <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-400">FFP Tool / Review Images</p>
-        <h1 className="text-3xl font-bold tracking-tight">Tạo ảnh review</h1>
-        <p className="text-sm text-slate-300">Lấy bối cảnh từ ảnh template, thay sản phẩm cũ bằng túi hoặc bộ túi–ví của bạn, rồi kiểm tra ảnh trước khi tải.</p>
-      </header>
-
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-        <section className="space-y-5 rounded-2xl border border-slate-800 bg-slate-900/70 p-5">
-          <div>
-            <h2 className="text-lg font-semibold">1. Chuẩn bị ảnh</h2>
-            <p className="mt-1 text-sm text-slate-400">Template được chọn ngẫu nhiên từ thư mục của tool. {templates === null ? "Đang kiểm tra thư mục…" : `Có ${templates.length} template hợp lệ.`}</p>
+  return <section className="space-y-6 text-slate-100">
+    {!embedded ? <header><h1 className="text-3xl font-bold">Tạo ảnh review</h1><p className="mt-1 text-sm text-slate-400">Tạo ảnh theo template, duyệt và đưa vào Shopify Files.</p></header> : null}
+    <div className="grid gap-6 lg:grid-cols-2">
+      <section className="space-y-5 rounded-2xl border border-slate-800 bg-slate-900/70 p-5">
+        <h2 className="text-lg font-semibold">Chuẩn bị ảnh · {preset.productLabel}</h2>
+        {showStoreSelector ? <label className="block text-sm font-medium">Store<select className={fieldClass} disabled={isBusy} value={storeId} onChange={(event) => handleStoreChange(event.target.value)}>{stores.map((store) => <option key={store} value={store}>{store}</option>)}</select></label> : null}
+        <details className="rounded-xl border border-slate-700 p-3 text-sm"><summary className="cursor-pointer">Gateway token</summary><div className="mt-2 flex gap-2"><input className={fieldClass} type="password" value={gatewayToken} onChange={(event) => setGatewayToken(event.target.value)} /><button type="button" className={`${buttonClass} bg-slate-700`} onClick={() => void applyGatewayToken()}>Kết nối</button></div></details>
+        <details className="rounded-xl border border-slate-700 p-3 text-sm" open>
+          <summary className="cursor-pointer font-medium">Template của {storeId}</summary>
+          <div className="mt-3 space-y-3">
+            <label className="block">Chọn file template<input className={fieldClass} type="file" accept="image/png,image/jpeg,image/webp" multiple disabled={templateBusy} onChange={(event) => { const files = Array.from(event.target.files ?? []); event.target.value = ""; void handleTemplateUpload(files); }} /></label>
+            <div className="rounded-xl border border-dashed border-slate-600 p-3 text-center outline-none focus:border-cyan-400" tabIndex={0} role="group" aria-label="Vùng dán ảnh template" onPaste={handleTemplatePaste}>Ctrl+V để dán một hoặc nhiều template</div>
+            {templateNotice ? <p role="status" className="text-sm text-cyan-300">{templateNotice}</p> : null}
+            {templates === null ? <p className="text-slate-400">Đang tải template…</p> : templates.length === 0 ? <p className="text-slate-400">Store chưa có template.</p> : <div className="grid gap-3 sm:grid-cols-2">
+              <div><div className="mb-2 flex gap-3 text-xs"><button type="button" className="text-cyan-300" onClick={() => setSelectedTemplateNames(new Set(templates.map((template) => template.name)))}>Chọn tất cả</button><button type="button" className="text-slate-400" onClick={() => setSelectedTemplateNames(new Set())}>Bỏ chọn</button></div><ul className="max-h-64 space-y-1 overflow-auto">{templates.map((template) => <li key={template.name} className="flex items-center gap-2 rounded border border-slate-800 p-2"><input type="checkbox" checked={selectedTemplateNames.has(template.name)} onChange={() => setSelectedTemplateNames((current) => { const next = new Set(current); if (next.has(template.name)) next.delete(template.name); else next.add(template.name); return next; })} /><button type="button" className="min-w-0 flex-1 truncate text-left text-xs" onClick={() => setPreviewTemplateName(template.name)}>{template.name}</button></li>)}</ul></div>
+              <figure className="flex min-h-40 items-center justify-center rounded border border-slate-700 bg-slate-950 p-2">{previewTemplateUrl ? <img className="max-h-56 object-contain" src={previewTemplateUrl} alt={`Template ${previewTemplateName}`} /> : <figcaption>Chọn template để xem.</figcaption>}</figure>
+            </div>}
+            <button type="button" className={`${buttonClass} border border-rose-700 text-rose-200`} disabled={!selectedTemplateNames.size || templateBusy} onClick={() => void handleDeleteTemplates()}>{templateBusy ? "Đang xử lý…" : `Xóa đã chọn (${selectedTemplateNames.size})`}</button>
           </div>
-
-          <details className="rounded-xl border border-slate-700 p-3 text-sm">
-            <summary className="cursor-pointer text-slate-300">Gateway token (chỉ cần khi server yêu cầu đăng nhập API)</summary>
-            <div className="mt-2 flex gap-2">
-              <input className={fieldClass} type="password" autoComplete="off" aria-label="Gateway token" value={gatewayToken} onChange={(event) => setGatewayToken(event.target.value)} />
-              <button type="button" className={`${buttonClass} bg-slate-700`} onClick={() => { void applyGatewayToken(); }}>Kết nối</button>
-            </div>
-          </details>
-
-          <details className="rounded-xl border border-slate-700 p-3 text-sm">
-            <summary className="cursor-pointer font-medium text-slate-200">Xem thư mục template</summary>
-            <div className="mt-3 space-y-3">
-              <label className="block font-medium text-slate-300">
-                Tải ảnh template lên
-                <input className={fieldClass} type="file" accept="image/png,image/jpeg,image/webp" multiple disabled={templateUploadProgress !== null || isDeletingTemplate} onChange={(event) => {
-                  const files = Array.from(event.target.files ?? []);
-                  event.target.value = "";
-                  void handleTemplateUpload(files);
-                }} />
-              </label>
-              <p className="text-xs text-slate-500">Có thể chọn nhiều ảnh PNG, JPEG hoặc WebP cùng lúc.</p>
-              {templateUploadProgress && <p role="status" className="text-slate-400">Đã xử lý {templateUploadProgress.completed}/{templateUploadProgress.total} ảnh template…</p>}
-              {templateUploadSummary && <p role={templateUploadSummary.hasFailures ? "alert" : "status"} className={templateUploadSummary.hasFailures ? "text-amber-300" : "text-emerald-300"}>{templateUploadSummary.message}</p>}
-              {templates?.length === 0 && <p className="text-slate-400">Thư mục chưa có ảnh template. Hãy tải ảnh lên để bắt đầu.</p>}
-              {templates && templates.length > 0 && <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-                <ul className="max-h-60 space-y-1 overflow-y-auto rounded-lg border border-slate-700 p-2" aria-label="Danh sách ảnh template">
-                  {templates.map((template) => <li key={template.name}>
-                    <button type="button" className={`w-full rounded-lg px-2 py-1.5 text-left text-xs break-all ${selectedTemplateName === template.name ? "bg-cyan-900/70 text-cyan-100" : "text-slate-300 hover:bg-slate-800"}`} aria-pressed={selectedTemplateName === template.name} onClick={() => setSelectedTemplateName(template.name)}>{template.name}</button>
-                  </li>)}
-                </ul>
-                <figure className="flex min-h-40 items-center justify-center overflow-hidden rounded-lg border border-slate-700 bg-slate-950 p-2">
-                  {selectedTemplatePreview ? <img className="max-h-56 w-full object-contain" src={selectedTemplatePreview} alt={`Ảnh template ${selectedTemplateName}`} /> : <figcaption className="text-xs text-slate-500">Chọn template để xem ảnh.</figcaption>}
-                </figure>
-              </div>}
-              <button type="button" className={`${buttonClass} border border-rose-700 text-rose-200 hover:bg-rose-950/50`} disabled={!selectedTemplateName || templateUploadProgress !== null || isDeletingTemplate} onClick={() => { void handleDeleteTemplate(); }}>
-                {isDeletingTemplate ? "Đang xóa template…" : "Xóa template đang chọn"}
-              </button>
-            </div>
-          </details>
-
-          <div className="space-y-2 text-sm">
-            <p className="font-medium">Ảnh sản phẩm cần đưa vào bối cảnh</p>
-            <label className="block font-medium text-slate-300">
-              Chọn ảnh trong thư mục
-              <input className={fieldClass} type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => {
-                const file = event.target.files?.[0];
-                event.target.value = "";
-                void handleProductChange(file);
-              }} />
-            </label>
-            <div className="cursor-text rounded-xl border border-dashed border-slate-600 bg-slate-950/60 p-4 text-center text-slate-300 outline-none focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/40" tabIndex={0} role="group" aria-label="Vùng dán ảnh sản phẩm" onClick={(event) => event.currentTarget.focus()} onPaste={handleProductPaste}>
-              <p className="font-medium">Ctrl+V để dán ảnh sản phẩm</p>
-              <p className="mt-1 text-xs text-slate-400">Nhấp vào vùng này rồi dán ảnh đã sao chép.</p>
-            </div>
-          </div>
-          {productDataUrl && <figure className="rounded-xl border border-slate-700 bg-slate-950 p-3">
-            <img className="mx-auto max-h-56 object-contain" src={productDataUrl} alt="Ảnh sản phẩm đã chọn" />
-            <figcaption className="mt-2 truncate text-xs text-slate-400">{productName}</figcaption>
-          </figure>}
-
-          <label className="block text-sm font-medium">
-            Sản phẩm cần xuất hiện trong ảnh review
-            <select className={fieldClass} value={scope} onChange={(event) => setScope(event.target.value as ReviewImageScope)}>
-              <option value="main">Chỉ túi chính</option>
-              <option value="set">Cả túi và ví</option>
-            </select>
-          </label>
-
-          <label className="block text-sm font-medium">
-            Prompt gửi ChatGPT (có thể chỉnh)
-            <textarea className={`${fieldClass} min-h-64 resize-y text-sm leading-6`} maxLength={10_000} value={prompt} onChange={(event) => setPrompt(event.target.value)} />
-          </label>
-
-          <div className="flex flex-wrap gap-3">
-            <button type="button" className={`${buttonClass} bg-cyan-500 text-slate-950 hover:bg-cyan-400`} disabled={!canGenerate} onClick={() => { void handleGenerate("new"); }}>Tạo ảnh</button>
-            <button type="button" className={`${buttonClass} border border-slate-600 hover:border-cyan-500`} disabled={!canRetry} onClick={() => { void handleGenerate("same"); }}>Tạo lại cùng nền</button>
-            <button type="button" className={`${buttonClass} border border-slate-600 hover:border-cyan-500`} disabled={!canRetry} onClick={() => { void handleGenerate("different"); }}>Đổi nền</button>
-          </div>
-          {error && <p role="alert" className="rounded-xl border border-rose-700 bg-rose-950/40 p-3 text-sm text-rose-200">{error}</p>}
-        </section>
-
-        <section className="space-y-5 rounded-2xl border border-slate-800 bg-slate-900/70 p-5">
-          <div>
-            <h2 className="text-lg font-semibold">2. Kiểm tra kết quả</h2>
-            <p className="mt-1 text-sm text-slate-400">Ảnh AI có thể làm sai chữ hoặc hoa văn. Chỉ duyệt khi sản phẩm và bối cảnh đều đúng.</p>
-          </div>
-          {!job && <div className="flex min-h-64 items-center justify-center rounded-xl border border-dashed border-slate-700 text-center text-sm text-slate-500">Chọn ảnh sản phẩm và bấm Tạo ảnh để bắt đầu.</div>}
-          {job && <>
-            <p role="status" className="rounded-lg bg-slate-800 px-3 py-2 text-sm">
-              {job.status === "queued" && "Đang chờ tab ChatGPT…"}
-              {job.status === "running" && "Đang tải ảnh và tạo ảnh review…"}
-              {job.status === "completed" && (job.approved ? "Ảnh đã duyệt — sẵn sàng tải." : "Ảnh đã tạo xong — hãy kiểm tra trước khi duyệt.")}
-              {job.status === "failed" && `Tạo ảnh thất bại: ${job.error || "Không rõ nguyên nhân."}`}
-            </p>
-            <figure className="overflow-hidden rounded-xl border border-slate-700 bg-slate-950">
-              {templatePreview && <img className="max-h-56 w-full object-contain" src={templatePreview} alt="Template bối cảnh đã chọn" />}
-              <figcaption className="p-3 text-xs text-slate-400">Template: {job.template_name} — chỉ lấy bối cảnh, không giữ sản phẩm cũ.</figcaption>
-            </figure>
-            {job.status === "completed" && <>
-              {resultPreview && <img className="max-h-[36rem] w-full rounded-xl border border-slate-700 bg-slate-950 object-contain" src={resultPreview} alt="Ảnh review đã tạo" />}
-              <ul className="list-inside list-disc space-y-1 text-sm text-slate-300">
-                <li>Đúng hình dáng, họa tiết và chữ trên túi/ví?</li>
-                <li>Sản phẩm cũ trong template đã biến mất?</li>
-                <li>Tỉ lệ, ánh sáng và bóng đổ có tự nhiên?</li>
-              </ul>
-              <div className="flex flex-wrap gap-3">
-                <button type="button" className={`${buttonClass} bg-emerald-600 hover:bg-emerald-500`} disabled={job.approved || isApproving} onClick={() => { void handleApprove(); }}>Duyệt ảnh</button>
-                {job.approved && <button type="button" className={`${buttonClass} bg-cyan-500 text-slate-950 hover:bg-cyan-400`} onClick={() => { void handleDownload(); }}>Tải ảnh đã duyệt</button>}
-              </div>
-            </>}
-          </>}
-        </section>
-      </div>
-    </main>
-  );
+        </details>
+        <div className="space-y-2 text-sm"><label className="block">Chọn nhiều ảnh sản phẩm<input className={fieldClass} type="file" accept="image/png,image/jpeg,image/webp" multiple disabled={isBatchRunning} onChange={(event) => { const files = Array.from(event.target.files ?? []); event.target.value = ""; void addProductFiles(files); }} /></label><div className="rounded-xl border border-dashed border-slate-600 p-4 text-center outline-none focus:border-cyan-400" tabIndex={0} role="group" aria-label="Vùng dán ảnh sản phẩm" onPaste={handleProductPaste}>Ctrl+V để dán ảnh sản phẩm; có thể dán nhiều lần</div></div>
+        {products.length ? <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">{products.map((item) => <figure key={item.id} className="relative rounded border border-slate-700 bg-slate-950 p-2"><img className="h-28 w-full object-contain" src={item.dataUrl} alt={item.name} /><figcaption className="truncate text-xs text-slate-400">{item.name}</figcaption>{item.status === "ready" && !isBatchRunning ? <button type="button" className="absolute right-1 top-1 rounded bg-rose-950 px-2 text-rose-200" aria-label={`Xóa ${item.name}`} onClick={() => setProducts((current) => current.filter((candidate) => candidate.id !== item.id))}>×</button> : null}</figure>)}</div> : null}
+        {preset.supportsBagSet ? <label className="block text-sm">Sản phẩm cần xuất hiện<select className={fieldClass} value={scope} onChange={(event) => setScope(event.target.value as ReviewImageScope)}><option value="main">Chỉ túi chính</option><option value="set">Cả túi và ví</option></select></label> : null}
+        <label className="block text-sm">Prompt gửi ChatGPT<textarea className={`${fieldClass} min-h-64`} maxLength={10_000} value={prompt} onChange={(event) => setPromptDrafts((current) => ({ ...current, [storeId]: event.target.value }))} /></label>
+        <button type="button" className={`${buttonClass} bg-cyan-500 text-slate-950`} disabled={isBusy || !products.some((item) => item.status === "ready" || item.status === "failed") || !templates?.length} onClick={() => void handleGenerateBatch()}>{isBatchRunning ? "Đang tạo lần lượt…" : `Tạo ${products.filter((item) => item.status === "ready" || item.status === "failed").length} ảnh review`}</button>
+        {error ? <p role="alert" className="rounded border border-rose-700 bg-rose-950/40 p-3 text-rose-200">{error}</p> : null}
+      </section>
+      <section className="space-y-4 rounded-2xl border border-slate-800 bg-slate-900/70 p-5">
+        <div className="flex items-center justify-between gap-3"><div><h2 className="text-lg font-semibold">Kết quả ({products.length})</h2><p className="text-sm text-slate-400">Duyệt ảnh đạt yêu cầu trước khi đưa lên Shopify Files.</p></div><button type="button" className={`${buttonClass} bg-emerald-700`} disabled={!completedCount || isBusy} onClick={() => void handleBulkApproveAndUpload()}>{isBulkUploading ? "Đang upload…" : `Duyệt & upload tất cả (${completedCount})`}</button></div>
+        {!products.length ? <div className="flex min-h-64 items-center justify-center rounded border border-dashed border-slate-700 text-slate-500">Chưa có ảnh trong lô.</div> : products.map((item, index) => <article key={item.id} className="space-y-3 rounded-xl border border-slate-700 bg-slate-950/60 p-3">
+          <div className="flex justify-between gap-2 text-sm"><strong>Ảnh {index + 1}: {item.name}</strong><span className="text-cyan-300">{item.status}</span></div>
+          <div className="grid gap-3 sm:grid-cols-2"><img className="max-h-64 w-full object-contain" src={item.dataUrl} alt={`Sản phẩm ${item.name}`} />{item.resultDataUrl ? <img className="max-h-64 w-full object-contain" src={item.resultDataUrl} alt={`Kết quả ${item.name}`} /> : <div className="flex min-h-40 items-center justify-center rounded border border-dashed border-slate-700 text-sm text-slate-500">{item.status === "queued" || item.status === "running" ? "Đang tạo ảnh…" : "Chưa có kết quả"}</div>}</div>
+          {item.job ? <p className="text-xs text-slate-400">Template: {item.job.template_name}</p> : null}
+          {item.error ? <p className="text-sm text-rose-300">{item.error}</p> : null}
+          {item.shopifyFile ? <p className="break-all text-sm text-emerald-300">Shopify: <a className="underline" href={item.shopifyFile.shopifyCdnUrl} target="_blank" rel="noreferrer">{item.shopifyFile.shopifyCdnUrl}</a> <button type="button" className="ml-2 text-cyan-300" onClick={() => void navigator.clipboard.writeText(item.shopifyFile?.shopifyCdnUrl ?? "")}>Copy</button> <button type="button" className="ml-2 text-cyan-300" onClick={() => void handleDownload(item)}>Tải ảnh</button></p> : null}
+          {item.status === "completed" && item.job ? <div className="flex flex-wrap gap-2"><button type="button" className={`${buttonClass} bg-emerald-700`} disabled={isBusy} onClick={() => void approveAndUpload(item)}>Duyệt & upload Shopify</button><button type="button" className={`${buttonClass} border border-slate-600`} disabled={isBusy} onClick={() => void handleRetry(item, false)}>Tạo lại cùng nền</button><button type="button" className={`${buttonClass} border border-slate-600`} disabled={isBusy} onClick={() => void handleRetry(item, true)}>Đổi nền</button></div> : null}
+        </article>)}
+      </section>
+    </div>
+  </section>;
 }

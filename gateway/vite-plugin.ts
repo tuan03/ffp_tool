@@ -99,6 +99,7 @@ export function shopifyGatewayDevPlugin(options?: ShopifyGatewayDevPluginOptions
           await handleReviewImageHttpRequest(req, res, {
             authToken,
             bridgeToken: env.REVIEW_IMAGE_BRIDGE_TOKEN || process.env.REVIEW_IMAGE_BRIDGE_TOKEN || "change-this-token",
+            dispatcher,
           });
           return;
         }

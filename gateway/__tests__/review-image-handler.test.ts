@@ -77,11 +77,15 @@ test("review image gateway rejects a body above its configured limit", async () 
 test("review image gateway forwards template deletion", async () => {
   let forwardedMethod = "";
   let forwardedPath = "";
+  let forwardedBody = "";
   const upstream = createServer((request, response) => {
     forwardedMethod = request.method ?? "";
     forwardedPath = request.url ?? "";
-    response.setHeader("Content-Type", "application/json");
-    response.end(JSON.stringify({ ok: true, template: { name: "room.png" } }));
+    request.on("data", (chunk) => { forwardedBody += String(chunk); });
+    request.on("end", () => {
+      response.setHeader("Content-Type", "application/json");
+      response.end(JSON.stringify({ ok: true, deleted: ["room.png"], failures: [] }));
+    });
   });
   const upstreamUrl = await listen(upstream);
   const gateway = createServer((request, response) => {
@@ -91,10 +95,57 @@ test("review image gateway forwards template deletion", async () => {
   });
   const gatewayUrl = await listen(gateway);
   try {
-    const response = await fetch(`${gatewayUrl}/api/review-images/templates/room.png`, { method: "DELETE" });
+    const response = await fetch(`${gatewayUrl}/api/review-images/templates/batch`, {
+      method: "DELETE", headers: { "content-type": "application/json" }, body: JSON.stringify({ storeId: "capozen", names: ["room.png"] }),
+    });
     assert.equal(response.status, 200);
     assert.equal(forwardedMethod, "DELETE");
-    assert.equal(forwardedPath, "/api/review-images/templates/room.png");
+    assert.equal(forwardedPath, "/api/review-images/templates/batch");
+    assert.deepEqual(JSON.parse(forwardedBody), { storeId: "capozen", names: ["room.png"] });
+  } finally {
+    await close(gateway);
+    await close(upstream);
+  }
+});
+
+test("review image gateway uploads an approved output to Shopify Files", async () => {
+  const upstream = createServer((request, response) => {
+    assert.equal(request.headers["x-bridge-token"], "bridge-secret");
+    response.setHeader("Content-Type", "application/json");
+    response.end(JSON.stringify({ ok: true, job: {
+      job_id: "a".repeat(32), store_id: "capozen", status: "completed", approved: true,
+      output_name: `${"a".repeat(32)}.png`, template_name: "rug.png", scope: "single", error: null,
+    } }));
+  });
+  const upstreamUrl = await listen(upstream);
+  let dispatchInput: unknown;
+  const dispatcher = { dispatch: async (input: unknown) => {
+    dispatchInput = input;
+    return { storeId: "capozen", operation: "files.create", success: true as const, data: {
+      fileId: "gid://shopify/MediaImage/1", shopifyCdnUrl: "https://cdn.shopify.com/review.png", fileStatus: "READY",
+    } };
+  } };
+  const gateway = createServer((request, response) => {
+    void handleReviewImageHttpRequest(request, response, {
+      bridgeToken: "bridge-secret", bridgeBaseUrl: upstreamUrl, dispatcher,
+      reviewImageOutputDir: "D:/safe/review-images",
+    });
+  });
+  const gatewayUrl = await listen(gateway);
+  try {
+    const response = await fetch(`${gatewayUrl}/api/review-images/jobs/${"a".repeat(32)}/shopify`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ storeId: "capozen" }),
+    });
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).shopifyCdnUrl, "https://cdn.shopify.com/review.png");
+    assert.deepEqual(dispatchInput, {
+      storeId: "capozen", operation: "files.create", mode: "apply",
+      requestId: `review-image:capozen:${"a".repeat(32)}`,
+      payload: {
+        originalSource: `D:\\safe\\review-images\\${"a".repeat(32)}.png`,
+        filename: `review-${"a".repeat(32)}.png`, alt: "Customer review photo", contentType: "IMAGE",
+      },
+    });
   } finally {
     await close(gateway);
     await close(upstream);

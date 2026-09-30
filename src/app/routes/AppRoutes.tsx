@@ -5,7 +5,7 @@ import { amazonCrawlerCoordinatorUrl, environment } from "../../config/environme
 import { createCustomGptClient, createCustomGptSeoRoutes, getCustomGptClient } from "../../modules/custom-gpt-seo";
 import { AppLayout } from "../../layouts/AppLayout";
 import { amazonCrawlerRoutes } from "../../modules/amazon-crawler";
-import { createAmazonReviewsRoutes, getReviewClient } from "../../modules/amazon-reviews";
+import { getReviewClient } from "../../modules/amazon-reviews";
 import type { ReviewShopifyAccess } from "../../modules/amazon-reviews";
 import type {
   AmazonCrawlerCacheClearer,
@@ -40,10 +40,11 @@ import type {
 import { createPinterestPodRoutes, getPinterestPodClient } from "../../modules/pinterest-pod";
 import type { PinterestPodDeliverables } from "../../modules/pinterest-pod";
 import { createProductCrawlerRoutes, getProductCrawlerClient } from "../../modules/product-crawler";
-import { createReviewImageClient, createReviewImageRoutes } from "../../modules/review-image";
+import { createReviewImageClient } from "../../modules/review-image";
 import { getBrowserSeoContentRunner } from "../../modules/seo-content/browser";
 import { HomePage } from "../../pages/home/HomePage";
 import { NotFoundPage } from "../../pages/not-found/NotFoundPage";
+import { ReviewStudioPage } from "../../pages/review-studio/ReviewStudioPage";
 import {
   adaptAutoSeoItemToViewModel,
   adaptPinterestPodItemToViewModel,
@@ -96,7 +97,8 @@ export function AppRoutes({
         };
       },
     };
-    const amazonReviewsRoutes = createAmazonReviewsRoutes(getReviewClient(environment, amazonCrawlerCoordinatorUrl), reviewShopify);
+    const reviewClient = getReviewClient(environment, amazonCrawlerCoordinatorUrl);
+    const reviewImageClient = createReviewImageClient();
     const autoSeoClient =
       environment === "mock"
         ? getAutoSeoClient("mock")
@@ -544,11 +546,15 @@ export function AppRoutes({
           },
           ...crawlerRoutes,
           ...distributedCrawlerRoutes,
-          ...amazonReviewsRoutes,
           ...podRoutes,
           ...autoSeoRoutes,
           ...createCustomGptSeoRoutes(getCustomGptClient(environment)),
-          ...createReviewImageRoutes(createReviewImageClient()),
+          {
+            path: "review-studio",
+            element: <ReviewStudioPage reviewClient={reviewClient} reviewShopify={reviewShopify} imageClient={reviewImageClient} />,
+          },
+          { path: "amazon-reviews", element: <Navigate to="/review-studio" replace /> },
+          { path: "review-images", element: <Navigate to="/review-studio" replace /> },
           ...customizationRoutes,
           {
             path: "seo-review",

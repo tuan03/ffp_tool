@@ -125,10 +125,12 @@ export async function executeFilesStageBinary(
     throw new GatewayError("contentBase64 is invalid", "SHOPIFY_USER_ERROR", 400);
   }
 
-  const maxBytes = 3 * 1024 * 1024;
+  // JSON-RPC callers remain capped at 3 MB before base64 expansion. Internal
+  // local-file staging passes raw bytes and supports Review Image's 5 MB limit.
+  const maxBytes = rawContent ? 5 * 1024 * 1024 : 3 * 1024 * 1024;
   if (content.length === 0 || content.length > maxBytes) {
     throw new GatewayError(
-      "Staged file binary must be between 1 byte and 3 MB",
+      `Staged file binary must be between 1 byte and ${rawContent ? "5" : "3"} MB`,
       "SHOPIFY_INVALID_INPUT",
       400,
     );

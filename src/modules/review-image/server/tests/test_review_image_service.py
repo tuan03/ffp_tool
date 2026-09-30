@@ -61,7 +61,7 @@ class ReviewImageServiceTests(unittest.TestCase):
         self.assertTrue(self.service.image_path(job_id, approved_only=True).is_file())
 
     def test_retry_can_exclude_previous_template(self) -> None:
-        (self.templates / "other.png").write_bytes(self.template_bytes)
+        (self.templates / "preaureum" / "other.png").write_bytes(self.template_bytes)
         created = self.service.submit(image_data_url(), "Prompt", "set", exclude_template="room.png")
         self.assertEqual(created["template_name"], "other.png")
         self.assertEqual(self.wait_for_job(created["job_id"])["status"], "completed")
@@ -81,13 +81,22 @@ class ReviewImageServiceTests(unittest.TestCase):
         self.assertEqual(self.service.template_path("room.png").read_bytes(), self.template_bytes)
         self.assertEqual(self.service.template_path(uploaded).read_bytes(), base64.b64decode(image_data_url("green").split(",", 1)[1]))
 
+    def test_scopes_templates_by_store_and_migrates_legacy_templates_to_preaureum(self) -> None:
+        self.assertTrue((self.templates / "preaureum" / "room.png").is_file())
+        self.assertEqual(self.service.list_templates("preaureum"), [{"name": "room.png"}])
+        self.assertEqual(self.service.list_templates("capozen"), [])
+        uploaded = self.service.save_template("rug.png", image_data_url("green"), store_id="capozen")
+        self.assertEqual(self.service.list_templates("capozen"), [{"name": uploaded}])
+        with self.assertRaisesRegex(ValueError, "Store"):
+            self.service.list_templates("../capozen")
+
     def test_template_upload_rejects_invalid_image_and_unsafe_name(self) -> None:
         with self.assertRaisesRegex(ValueError, "hợp lệ"):
             self.service.save_template("broken.png", "data:image/png;base64,Zm9v")
         corrupt_png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL/nwAAAABJRU5ErkJggg=="
         with self.assertRaisesRegex(ValueError, "hợp lệ"):
             self.service.save_template("corrupt.png", f"data:image/png;base64,{corrupt_png}")
-        (self.templates / "corrupt.png").write_bytes(base64.b64decode(corrupt_png))
+        (self.templates / "preaureum" / "corrupt.png").write_bytes(base64.b64decode(corrupt_png))
         self.assertEqual([item["name"] for item in self.service.list_templates()], ["room.png"])
         uploaded = self.service.save_template("../other\\scene.png", image_data_url())
         self.assertNotIn("/", uploaded)
@@ -97,7 +106,7 @@ class ReviewImageServiceTests(unittest.TestCase):
     def test_deletes_a_template_without_allowing_path_escape(self) -> None:
         self.assertEqual(self.service.delete_template("room.png"), "room.png")
         self.assertEqual(self.service.list_templates(), [])
-        self.assertFalse((self.templates / "room.png").exists())
+        self.assertFalse((self.templates / "preaureum" / "room.png").exists())
         with self.assertRaisesRegex(ValueError, "không tồn tại"):
             self.service.delete_template("../room.png")
 
@@ -112,10 +121,23 @@ class ReviewImageServiceTests(unittest.TestCase):
         try:
             with self.assertRaisesRegex(ValueError, "đang được dùng"):
                 service.delete_template("room.png")
-            self.assertTrue((self.templates / "room.png").is_file())
+            self.assertTrue((self.templates / "preaureum" / "room.png").is_file())
         finally:
             gate.set()
         self.assertEqual(self.wait_for_service_job(service, created["job_id"])["status"], "completed")
+
+    def test_bulk_delete_removes_safe_templates_and_reports_active_templates(self) -> None:
+        other = self.service.save_template("other.png", image_data_url("green"))
+        gate = __import__("threading").Event()
+        self.service.bridge_call = lambda _prompt, _images: (gate.wait(2), {"mime_type": "image/png", "data": image_data_url().split(",", 1)[1]})[1]
+        created = self.service.submit(image_data_url(), "Prompt", "main", template_name="room.png")
+        try:
+            outcome = self.service.delete_templates("preaureum", ["room.png", other, "missing.png"])
+            self.assertEqual(outcome["deleted"], [other])
+            self.assertEqual({failure["name"] for failure in outcome["failures"]}, {"room.png", "missing.png"})
+        finally:
+            gate.set()
+        self.assertEqual(self.wait_for_job(created["job_id"])["status"], "completed")
 
     def test_rejects_prompt_that_exceeds_bridge_limit_after_scope_instruction(self) -> None:
         with self.assertRaisesRegex(ValueError, "quá dài"):

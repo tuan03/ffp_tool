@@ -1,4 +1,4 @@
-import type { CreateReviewImageInput, ReviewImageClient, ReviewImageJob, ReviewImageTemplate } from "./types";
+import type { CreateReviewImageInput, DeleteReviewTemplatesResult, ReviewImageClient, ReviewImageJob, ReviewImageShopifyFile, ReviewImageTemplate } from "./types";
 
 const API_BASE = "/api/review-images";
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
@@ -39,6 +39,10 @@ function parseTemplate(value: unknown): ReviewImageTemplate {
   return { name: (value as Record<string, string>).name };
 }
 
+function readStringArray(value: unknown): readonly string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === "string") ? value : [];
+}
+
 export function createReviewImageClient(fetcher: Fetcher = fetch): ReviewImageClient {
   let gatewayToken = "";
   const headers = (extra?: HeadersInit): Headers => {
@@ -60,8 +64,8 @@ export function createReviewImageClient(fetcher: Fetcher = fetch): ReviewImageCl
       const payload = await parseResponse(await fetcher(`${API_BASE}/health`, { headers: headers() }));
       return { templates: typeof payload.templates === "number" ? payload.templates : 0 };
     },
-    async listTemplates() {
-      const payload = await parseResponse(await fetcher(`${API_BASE}/templates`, { headers: headers() }));
+    async listTemplates(storeId) {
+      const payload = await parseResponse(await fetcher(`${API_BASE}/templates?storeId=${encodeURIComponent(storeId)}`, { headers: headers() }));
       if (!Array.isArray(payload.templates)) throw new Error("Bridge không trả về danh sách template hợp lệ.");
       return payload.templates.map(parseTemplate);
     },
@@ -73,11 +77,20 @@ export function createReviewImageClient(fetcher: Fetcher = fetch): ReviewImageCl
       }));
       return parseTemplate(payload.template);
     },
-    async deleteTemplate(name) {
-      await parseResponse(await fetcher(`${API_BASE}/templates/${encodeURIComponent(name)}`, {
+    async deleteTemplates(storeId, names) {
+      const payload = await parseResponse(await fetcher(`${API_BASE}/templates/batch`, {
         method: "DELETE",
-        headers: headers(),
+        headers: headers({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ storeId, names }),
       }));
+      const failures = Array.isArray(payload.failures) ? payload.failures.flatMap((failure) => {
+        if (!failure || typeof failure !== "object" || Array.isArray(failure)) return [];
+        const record = failure as Record<string, unknown>;
+        return typeof record.name === "string" && typeof record.message === "string"
+          ? [{ name: record.name, message: record.message }]
+          : [];
+      }) : [];
+      return { deleted: readStringArray(payload.deleted), failures } satisfies DeleteReviewTemplatesResult;
     },
     async create(input) {
       const payload = await parseResponse(await fetcher(`${API_BASE}/jobs`, {
@@ -95,9 +108,20 @@ export function createReviewImageClient(fetcher: Fetcher = fetch): ReviewImageCl
       const payload = await parseResponse(await fetcher(`${API_BASE}/jobs/${encodeURIComponent(jobId)}/approve`, { method: "POST", headers: headers() }));
       return parseJob(payload);
     },
-    template(name) { return binary(`${API_BASE}/templates/${encodeURIComponent(name)}`); },
+    template(storeId, name) { return binary(`${API_BASE}/templates/${encodeURIComponent(name)}?storeId=${encodeURIComponent(storeId)}`); },
     image(jobId) { return binary(`${API_BASE}/jobs/${encodeURIComponent(jobId)}/image`); },
     download(jobId) { return binary(`${API_BASE}/jobs/${encodeURIComponent(jobId)}/download`); },
+    async uploadToShopify(jobId, storeId) {
+      const payload = await parseResponse(await fetcher(`${API_BASE}/jobs/${encodeURIComponent(jobId)}/shopify`, {
+        method: "POST",
+        headers: headers({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ storeId }),
+      }));
+      if (typeof payload.fileId !== "string" || typeof payload.shopifyCdnUrl !== "string" || typeof payload.fileStatus !== "string") {
+        throw new Error("Gateway không trả về Shopify file hợp lệ.");
+      }
+      return payload as unknown as ReviewImageShopifyFile;
+    },
   };
 }
 
