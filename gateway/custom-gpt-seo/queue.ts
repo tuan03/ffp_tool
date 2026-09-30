@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 
-import type { GptCheckpointMutation, GptJobStatus, GptSeoBatch, GptSeoEnqueue, GptSeoJob, GptSeoSettings, SeoProvider } from "../../src/modules/custom-gpt-seo";
+import type { ExternalSeoProvider, GptCheckpointMutation, GptJobStatus, GptSeoBatch, GptSeoEnqueue, GptSeoJob, GptSeoSettings, SeoProvider } from "../../src/modules/custom-gpt-seo";
 import { canonicalizeJson } from "../canonical-json";
 
 const LEASE_MS = 30 * 60_000;
@@ -18,17 +18,21 @@ export class CustomGptQueue {
   constructor(private readonly db: DatabaseSync, private readonly now: () => number = Date.now) {
     db.exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;
       CREATE TABLE IF NOT EXISTS gpt_settings (store_id TEXT PRIMARY KEY, payload TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS gpt_jobs (id TEXT PRIMARY KEY, store_id TEXT NOT NULL, dedup TEXT NOT NULL, status TEXT NOT NULL, batch_id TEXT, payload TEXT NOT NULL, created_at INTEGER NOT NULL, UNIQUE(store_id,dedup));
+      CREATE TABLE IF NOT EXISTS gpt_jobs (id TEXT PRIMARY KEY, store_id TEXT NOT NULL, dedup TEXT NOT NULL, status TEXT NOT NULL, batch_id TEXT, payload TEXT NOT NULL, created_at INTEGER NOT NULL, provider TEXT NOT NULL DEFAULT 'custom_gpt', UNIQUE(store_id,dedup));
       CREATE INDEX IF NOT EXISTS gpt_queue_idx ON gpt_jobs(store_id,status,created_at);
-      CREATE TABLE IF NOT EXISTS gpt_batches (id TEXT PRIMARY KEY, store_id TEXT NOT NULL, request_id TEXT NOT NULL, token TEXT NOT NULL, expires_at INTEGER NOT NULL, active INTEGER NOT NULL, UNIQUE(store_id,request_id));
+      CREATE TABLE IF NOT EXISTS gpt_batches (id TEXT PRIMARY KEY, store_id TEXT NOT NULL, request_id TEXT NOT NULL, token TEXT NOT NULL, expires_at INTEGER NOT NULL, active INTEGER NOT NULL, provider TEXT NOT NULL DEFAULT 'custom_gpt', UNIQUE(store_id,request_id));
       CREATE TABLE IF NOT EXISTS gpt_mutations (scope TEXT NOT NULL, request_id TEXT NOT NULL, digest TEXT NOT NULL, response TEXT, PRIMARY KEY(scope,request_id));
       CREATE TABLE IF NOT EXISTS gpt_deliveries (job_id TEXT PRIMARY KEY, payload TEXT NOT NULL, delivered INTEGER NOT NULL DEFAULT 0);
       CREATE TABLE IF NOT EXISTS gpt_review_state (job_id TEXT PRIMARY KEY, payload TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS gpt_sync (job_id TEXT PRIMARY KEY, token TEXT NOT NULL, status TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS gpt_audit (id INTEGER PRIMARY KEY, store_id TEXT NOT NULL, job_id TEXT, event TEXT NOT NULL, created_at INTEGER NOT NULL);
     `);
+    if (!db.prepare("PRAGMA table_info(gpt_jobs)").all().some(column => column.name === "provider")) db.exec("ALTER TABLE gpt_jobs ADD COLUMN provider TEXT NOT NULL DEFAULT 'custom_gpt'");
+    if (!db.prepare("PRAGMA table_info(gpt_batches)").all().some(column => column.name === "provider")) db.exec("ALTER TABLE gpt_batches ADD COLUMN provider TEXT NOT NULL DEFAULT 'custom_gpt'");
+    db.exec(`UPDATE gpt_jobs SET provider=COALESCE(json_extract(payload,'$.settings.provider'),'custom_gpt');
+      CREATE INDEX IF NOT EXISTS gpt_provider_queue_idx ON gpt_jobs(store_id,provider,status,created_at);`);
     if (!db.prepare("PRAGMA table_info(gpt_mutations)").all().some(column => column.name === "response")) db.exec("ALTER TABLE gpt_mutations ADD COLUMN response TEXT");
-    db.exec("PRAGMA user_version=1");
+    db.exec("PRAGMA user_version=2");
   }
   private transaction<T>(operation: () => T): T {
     this.db.exec("BEGIN IMMEDIATE");
@@ -41,7 +45,7 @@ export class CustomGptQueue {
   }
   configure(storeId: string, settings: Pick<GptSeoSettings, "provider" | "batchSize"> & Partial<Pick<GptSeoSettings, "language" | "instructions">>): GptSeoSettings {
     if (!Number.isInteger(settings.batchSize) || settings.batchSize < 1 || settings.batchSize > 10) throw new Error("Batch size must be 1–10");
-    if (!["gemini", "custom_gpt"].includes(settings.provider)) throw new Error("Invalid provider");
+    if (!["gemini", "custom_gpt", "codex_mcp"].includes(settings.provider)) throw new Error("Invalid provider");
     return this.transaction(() => {
       const previous = this.settings(storeId);
       const next = { ...previous, ...settings, version: previous.version + 1 };
@@ -60,7 +64,7 @@ export class CustomGptQueue {
       const olderJobs = this.db.prepare("SELECT payload FROM gpt_jobs WHERE store_id=? AND json_extract(payload,'$.source')=? AND json_extract(payload,'$.sourceIdentity')=? AND status != 'CANCELLED' AND NOT EXISTS (SELECT 1 FROM gpt_sync WHERE gpt_sync.job_id=gpt_jobs.id AND gpt_sync.status != 'ROLLED_BACK')").all(input.storeId, input.source, input.sourceIdentity);
       for (const row of olderJobs) this.write({ ...json(row.payload) as GptSeoJob, status: "CANCELLED", error: "Superseded by a newer source revision" });
       const job: GptSeoJob = { ...input, id: randomUUID(), inputHash, settings: input.settings ?? this.settings(input.storeId), status: "PENDING", checkpoints: {}, createdAt: this.now(), updatedAt: this.now() };
-      this.db.prepare("INSERT INTO gpt_jobs(id,store_id,dedup,status,payload,created_at) VALUES (?,?,?,?,?,?)").run(job.id, job.storeId, dedup, job.status, JSON.stringify(job), job.createdAt);
+      this.db.prepare("INSERT INTO gpt_jobs(id,store_id,dedup,status,payload,created_at,provider) VALUES (?,?,?,?,?,?,?)").run(job.id, job.storeId, dedup, job.status, JSON.stringify(job), job.createdAt, job.settings.provider);
       this.audit(job.storeId, job.id, "ENQUEUED");
       return job;
     });
@@ -80,7 +84,7 @@ export class CustomGptQueue {
     return Object.fromEntries(this.db.prepare("SELECT status,COUNT(*) AS count FROM gpt_jobs WHERE store_id=? GROUP BY status").all(storeId).map(row => [String(row.status), Number(row.count)]));
   }
   private write(job: GptSeoJob): void {
-    this.db.prepare("UPDATE gpt_jobs SET status=?,payload=? WHERE id=? AND store_id=?").run(job.status, JSON.stringify({ ...job, updatedAt: this.now() }), job.id, job.storeId);
+    this.db.prepare("UPDATE gpt_jobs SET status=?,payload=?,provider=? WHERE id=? AND store_id=?").run(job.status, JSON.stringify({ ...job, updatedAt: this.now() }), job.settings.provider, job.id, job.storeId);
   }
   private audit(storeId: string, jobId: string, event: string): void {
     this.db.prepare("INSERT INTO gpt_audit(store_id,job_id,event,created_at) VALUES (?,?,?,?)").run(storeId, jobId, event, this.now());
@@ -99,25 +103,27 @@ export class CustomGptQueue {
   batch(storeId: string, batchId: string): GptSeoBatch {
     const row = this.db.prepare("SELECT * FROM gpt_batches WHERE store_id=? AND id=?").get(storeId, batchId);
     if (!row) throw new Error("Batch not found");
-    return { id: batchId, leaseToken: String(row.token), expiresAt: Number(row.expires_at), jobs: this.db.prepare("SELECT payload FROM gpt_jobs WHERE batch_id=? ORDER BY created_at,id").all(batchId).map(entry => { const job = json(entry.payload) as GptSeoJob; return { id: job.id, title: job.input.title, status: job.status }; }) };
+    return { id: batchId, provider: String(row.provider) as ExternalSeoProvider, leaseToken: String(row.token), expiresAt: Number(row.expires_at), jobs: this.db.prepare("SELECT payload FROM gpt_jobs WHERE batch_id=? ORDER BY created_at,id").all(batchId).map(entry => { const job = json(entry.payload) as GptSeoJob; return { id: job.id, title: job.input.title, status: job.status }; }) };
   }
   activeBatch(storeId: string): GptSeoBatch | null {
     const row = this.db.prepare("SELECT id FROM gpt_batches WHERE store_id=? AND active=1 AND expires_at>?").get(storeId, this.now());
     return row ? this.batch(storeId, String(row.id)) : null;
   }
-  claim(storeId: string, requestId: string): GptSeoBatch {
+  claim(storeId: string, requestId: string, provider: ExternalSeoProvider): GptSeoBatch {
     if (!requestId || requestId.length > 120) throw new Error("Invalid request id");
     return this.transaction(() => {
       this.expire(storeId);
       const duplicate = this.db.prepare("SELECT id,active FROM gpt_batches WHERE store_id=? AND request_id=?").get(storeId, requestId);
       if (duplicate) {
         if (!duplicate.active) throw new Error("Batch lease expired; use a new request id");
-        return this.batch(storeId, String(duplicate.id));
+        const batch = this.batch(storeId, String(duplicate.id));
+        if (batch.provider !== provider) throw new Error("Request id belongs to another provider");
+        return batch;
       }
       if (this.activeBatch(storeId)) throw new Error("An active batch must be resumed or released first");
-      const jobs = this.db.prepare("SELECT payload FROM gpt_jobs WHERE store_id=? AND status='PENDING' ORDER BY created_at,id LIMIT ?").all(storeId, this.settings(storeId).batchSize);
+      const jobs = this.db.prepare("SELECT payload FROM gpt_jobs WHERE store_id=? AND provider=? AND status='PENDING' ORDER BY created_at,id LIMIT ?").all(storeId, provider, this.settings(storeId).batchSize);
       const batchId = randomUUID();
-      this.db.prepare("INSERT INTO gpt_batches VALUES (?,?,?,?,?,?)").run(batchId, storeId, requestId, randomUUID(), this.now() + LEASE_MS, jobs.length ? 1 : 0);
+      this.db.prepare("INSERT INTO gpt_batches(id,store_id,request_id,token,expires_at,active,provider) VALUES (?,?,?,?,?,?,?)").run(batchId, storeId, requestId, randomUUID(), this.now() + LEASE_MS, jobs.length ? 1 : 0, provider);
       for (const row of jobs) {
         const job = json(row.payload) as GptSeoJob;
         this.write({ ...job, status: "IN_PROGRESS" });

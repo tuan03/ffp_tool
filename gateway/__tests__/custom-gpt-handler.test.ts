@@ -98,7 +98,7 @@ test("waiting-jobs lists read-only identifiers for the authenticated store witho
     },
     original: {},
   });
-  const batch = queue.claim("capozen", "claim-waiting-products");
+  const batch = queue.claim("capozen", "claim-waiting-products", "custom_gpt");
   queue.issue("capozen", firstJob.id, batch.id, batch.leaseToken, "Attach clearer product images");
   queue.issue("capozen", secondJob.id, batch.id, batch.leaseToken, "Confirm visible product text");
   queue.release("capozen", batch.id, batch.leaseToken);

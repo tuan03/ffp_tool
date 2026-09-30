@@ -28,25 +28,65 @@ test("Custom GPT queue deduplicates source revisions and isolates stores", () =>
 test("Custom GPT claims are idempotent and expired owners cannot checkpoint", () => {
   const { queue, db, advance } = setup();
   try {
+    queue.configure("capozen", { provider: "custom_gpt", batchSize: 5 });
     queue.enqueue({ storeId: "capozen", source: "amazon", sourceIdentity: "ASIN", input: source, original: {} });
-    const batch = queue.claim("capozen", "claim-1");
-    assert.equal(queue.claim("capozen", "claim-1").id, batch.id);
-    assert.throws(() => queue.claim("capozen", "claim-2"), /active batch/i);
+    const batch = queue.claim("capozen", "claim-1", "custom_gpt");
+    assert.equal(batch.provider, "custom_gpt");
+    assert.equal(queue.claim("capozen", "claim-1", "custom_gpt").id, batch.id);
+    assert.throws(() => queue.claim("capozen", "claim-2", "custom_gpt"), /active batch/i);
     const job = batch.jobs[0];
     assert.ok(job);
     queue.checkpoint("capozen", job.id, { batchId: batch.id, leaseToken: batch.leaseToken, requestId: "save-1", stage: "analysis", payload: { evidence: "cotton" } });
     advance();
-    const next = queue.claim("capozen", "claim-3");
+    const next = queue.claim("capozen", "claim-3", "custom_gpt");
     assert.notEqual(next.id, batch.id);
     assert.deepEqual(queue.get("capozen", job.id).checkpoints.analysis, { evidence: "cotton" });
     assert.throws(() => queue.checkpoint("capozen", job.id, { batchId: batch.id, leaseToken: batch.leaseToken, requestId: "save-2", stage: "analysis", payload: {} }), /lease/i);
   } finally { db.close(); }
 });
+
+test("provider-scoped claims never mix Custom GPT and Codex MCP jobs", () => {
+  const { queue, db } = setup();
+  try {
+    const customSettings = queue.configure("capozen", { provider: "custom_gpt", batchSize: 5 });
+    const customJob = queue.enqueue({ storeId: "capozen", source: "amazon", sourceIdentity: "CUSTOM", input: source, original: {}, settings: customSettings });
+    const codexSettings = queue.configure("capozen", { provider: "codex_mcp", batchSize: 5 });
+    const codexJob = queue.enqueue({ storeId: "capozen", source: "amazon", sourceIdentity: "CODEX", input: source, original: {}, settings: codexSettings });
+
+    const codexBatch = queue.claim("capozen", "codex-claim", "codex_mcp");
+    assert.equal(codexBatch.provider, "codex_mcp");
+    assert.deepEqual(codexBatch.jobs.map(job => job.id), [codexJob.id]);
+    assert.throws(() => queue.claim("capozen", "custom-claim", "custom_gpt"), /active batch/i);
+
+    queue.release("capozen", codexBatch.id, codexBatch.leaseToken);
+    const customBatch = queue.claim("capozen", "custom-claim", "custom_gpt");
+    assert.deepEqual(customBatch.jobs.map(job => job.id), [customJob.id]);
+  } finally { db.close(); }
+});
+
+test("queue migrates legacy jobs and batches to the Custom GPT provider", () => {
+  const db = new DatabaseSync(":memory:");
+  try {
+    db.exec(`
+      CREATE TABLE gpt_settings (store_id TEXT PRIMARY KEY, payload TEXT NOT NULL);
+      CREATE TABLE gpt_jobs (id TEXT PRIMARY KEY, store_id TEXT NOT NULL, dedup TEXT NOT NULL, status TEXT NOT NULL, batch_id TEXT, payload TEXT NOT NULL, created_at INTEGER NOT NULL, UNIQUE(store_id,dedup));
+      CREATE TABLE gpt_batches (id TEXT PRIMARY KEY, store_id TEXT NOT NULL, request_id TEXT NOT NULL, token TEXT NOT NULL, expires_at INTEGER NOT NULL, active INTEGER NOT NULL, UNIQUE(store_id,request_id));
+    `);
+    const legacyJob = { storeId: "capozen", source: "amazon", sourceIdentity: "LEGACY", inputHash: "hash", input: source, original: {}, settings: { provider: "custom_gpt", batchSize: 5, version: 1, language: "en-US", instructions: "facts" }, id: "legacy-job", status: "PENDING", checkpoints: {}, createdAt: 1, updatedAt: 1 };
+    db.prepare("INSERT INTO gpt_jobs VALUES (?,?,?,?,?,?,?)").run("legacy-job", "capozen", "legacy-dedup", "PENDING", null, JSON.stringify(legacyJob), 1);
+
+    const queue = new CustomGptQueue(db);
+
+    assert.equal(db.prepare("SELECT provider FROM gpt_jobs WHERE id=?").get("legacy-job")?.provider, "custom_gpt");
+    assert.equal(queue.claim("capozen", "legacy-claim", "custom_gpt").jobs[0]?.id, "legacy-job");
+  } finally { db.close(); }
+});
 test("Custom GPT mutation keys reject different payloads and release preserves completed jobs", () => {
   const { queue, db } = setup();
   try {
+    queue.configure("capozen", { provider: "custom_gpt", batchSize: 5 });
     const job = queue.enqueue({ storeId: "capozen", source: "auto_seo", sourceIdentity: "1", input: source, original: {} });
-    const batch = queue.claim("capozen", "claim");
+    const batch = queue.claim("capozen", "claim", "custom_gpt");
     const mutation = { batchId: batch.id, leaseToken: batch.leaseToken, requestId: "save", stage: "analysis" as const, payload: { ok: true } };
     queue.checkpoint("capozen", job.id, mutation);
     queue.checkpoint("capozen", job.id, mutation);
@@ -68,8 +108,9 @@ test("changing source revision cancels the older pending job", () => {
 test("updating analysis invalidates dependent keyword and research checkpoints", () => {
   const { queue, db } = setup();
   try {
+    queue.configure("capozen", { provider: "custom_gpt", batchSize: 5 });
     const job = queue.enqueue({ storeId: "capozen", source: "amazon", sourceIdentity: "ASIN", input: source, original: {} });
-    const batch = queue.claim("capozen", "claim");
+    const batch = queue.claim("capozen", "claim", "custom_gpt");
     const lease = { batchId: batch.id, leaseToken: batch.leaseToken };
     queue.checkpoint("capozen", job.id, { ...lease, requestId: "r", stage: "research", payload: { seeds: ["rug"] } });
     queue.checkpoint("capozen", job.id, { ...lease, requestId: "k", stage: "keywords", payload: { keywords: ["rug"] } });
@@ -90,7 +131,7 @@ test("1000 jobs drain in bounded batches and survive database reopen", () => {
     assert.equal(queue.counts("capozen").PENDING, 1000);
     const completed = new Set<string>();
     for (let index = 0; index < 100; index++) {
-      const batch = queue.claim("capozen", `claim-${index}`);
+      const batch = queue.claim("capozen", `claim-${index}`, "custom_gpt");
       assert.equal(batch.jobs.length, 10);
       for (const job of batch.jobs) {
         assert.equal(completed.has(job.id), false);
@@ -108,8 +149,9 @@ test("1000 jobs drain in bounded batches and survive database reopen", () => {
 test("human sync claims fence duplicate browser writes and retain uncertain outcomes", () => {
   const { queue, db } = setup();
   try {
+    queue.configure("capozen", { provider: "custom_gpt", batchSize: 5 });
     const job = queue.enqueue({ storeId: "capozen", source: "auto_seo", sourceIdentity: "1", input: source, original: {} });
-    const batch = queue.claim("capozen", "claim");
+    const batch = queue.claim("capozen", "claim", "custom_gpt");
     queue.checkpoint("capozen", job.id, { batchId: batch.id, leaseToken: batch.leaseToken, requestId: "submit", stage: "submission", payload: {} });
     queue.finish("capozen", job.id, {});
     queue.saveReviewState("capozen", job.id, { reviewDecision: "approved" });
@@ -130,8 +172,9 @@ test("human sync claims fence duplicate browser writes and retain uncertain outc
 test("a worker that has not started writes may release its sync claim and retry", () => {
   const { queue, db } = setup();
   try {
+    queue.configure("capozen", { provider: "custom_gpt", batchSize: 5 });
     const job = queue.enqueue({ storeId: "capozen", source: "amazon", sourceIdentity: "ASIN", input: source, original: {} });
-    const batch = queue.claim("capozen", "claim");
+    const batch = queue.claim("capozen", "claim", "custom_gpt");
     queue.checkpoint("capozen", job.id, { batchId: batch.id, leaseToken: batch.leaseToken, requestId: "submit", stage: "submission", payload: {} });
     queue.finish("capozen", job.id, {});
     queue.saveReviewState("capozen", job.id, { reviewDecision: "approved" });
@@ -147,8 +190,9 @@ test("a worker that has not started writes may release its sync claim and retry"
 test("late validation failures and issue reports cannot resurrect superseded jobs", () => {
   const { queue, db } = setup();
   try {
+    queue.configure("capozen", { provider: "custom_gpt", batchSize: 5 });
     const job = queue.enqueue({ storeId: "capozen", source: "amazon", sourceIdentity: "ASIN", input: source, original: {} });
-    const batch = queue.claim("capozen", "claim");
+    const batch = queue.claim("capozen", "claim", "custom_gpt");
     queue.checkpoint("capozen", job.id, { batchId: batch.id, leaseToken: batch.leaseToken, requestId: "submit", stage: "submission", payload: {} });
     queue.enqueue({ storeId: "capozen", source: "amazon", sourceIdentity: "ASIN", input: { ...source, title: "New rug" }, original: {} });
     queue.failValidation("capozen", job.id, "late failure");
@@ -160,8 +204,9 @@ test("late validation failures and issue reports cannot resurrect superseded job
 test("explicit provider transfer rejects leased work and resets stale reasoning", () => {
   const { queue, db } = setup();
   try {
+    queue.configure("capozen", { provider: "custom_gpt", batchSize: 5 });
     const job = queue.enqueue({ storeId: "capozen", source: "amazon", sourceIdentity: "ASIN", input: source, original: {} });
-    const batch = queue.claim("capozen", "claim");
+    const batch = queue.claim("capozen", "claim", "custom_gpt");
     assert.throws(() => queue.transfer("capozen", job.id, "gemini"), /lease|active/i);
     queue.release("capozen", batch.id, batch.leaseToken);
     queue.transfer("capozen", job.id, "gemini");
@@ -173,8 +218,9 @@ test("explicit provider transfer rejects leased work and resets stale reasoning"
 test("only one background finalizer can acquire a submitted job", () => {
   const { queue, db } = setup();
   try {
+    queue.configure("capozen", { provider: "custom_gpt", batchSize: 5 });
     const job = queue.enqueue({ storeId: "capozen", source: "auto_seo", sourceIdentity: "1", input: source, original: {} });
-    const batch = queue.claim("capozen", "claim");
+    const batch = queue.claim("capozen", "claim", "custom_gpt");
     queue.checkpoint("capozen", job.id, { batchId: batch.id, leaseToken: batch.leaseToken, requestId: "submit", stage: "submission", payload: {} });
     assert.equal(queue.pendingFinalization().length, 1);
     const secondWorker = new CustomGptQueue(db, () => 1000);
@@ -185,9 +231,10 @@ test("only one background finalizer can acquire a submitted job", () => {
 test("new source revisions invalidate unsynced ready drafts before a stale browser can publish", () => {
   const { queue, db } = setup();
   try {
+    queue.configure("capozen", { provider: "custom_gpt", batchSize: 5 });
     const original = { storeId: "capozen", source: "auto_seo" as const, sourceIdentity: "1", input: source, original: {} };
     const job = queue.enqueue(original);
-    const batch = queue.claim("capozen", "claim");
+    const batch = queue.claim("capozen", "claim", "custom_gpt");
     queue.checkpoint("capozen", job.id, { batchId: batch.id, leaseToken: batch.leaseToken, requestId: "submit", stage: "submission", payload: {} });
     queue.finish("capozen", job.id, {});
     queue.saveReviewState("capozen", job.id, { reviewDecision: "approved" });

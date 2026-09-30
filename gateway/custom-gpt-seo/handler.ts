@@ -161,7 +161,7 @@ export function createCustomGptHandler(options: CustomGptHandlerOptions) {
           };
           break;
         }
-        case "claim": result = queue.claim(storeId, required(requestId, "requestId")); break;
+        case "claim": result = queue.claim(storeId, required(requestId, "requestId"), "custom_gpt"); break;
         case "batch": result = queue.batch(storeId, batchId); break;
         case "renew": result = queue.renew(storeId, batchId, leaseToken); break;
         case "release": queue.release(storeId, batchId, leaseToken); result = { released: true }; break;
