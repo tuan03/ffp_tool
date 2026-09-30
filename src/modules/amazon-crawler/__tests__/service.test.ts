@@ -309,7 +309,7 @@ test("mock runtime returns fresh contract data", async () => {
   firstProduct.variants.push(firstVariant);
   assert.equal(second.products[0]?.variants.length, originalVariantCount);
   assert.notEqual(firstProduct.variants.length, second.products[0]?.variants.length);
-  assert.equal(first.completedAsins?.length, 5);
+  assert.equal(first.completedAsins?.length, 6);
   first.completedAsins?.push("B0NEW00001");
   assert.equal(second.completedAsins?.includes("B0NEW00001"), false);
 });
@@ -585,6 +585,23 @@ test("mock Customize contract omits raw and duplicate fields while exposing pric
   assert.equal(Object.hasOwn(product.customization, "rules"), false);
   assert.equal(product.customization.pricing.mode, "product_variants");
   assert.equal(product.customization.pricing.paidOptionGroups[0]?.options[1]?.price.amount, 5);
+});
+
+test("mock data includes Preaurem canonical sizes with preserved prices", () => {
+  const product = amazonCrawlerMockOutput.products.find((candidate) => candidate.id === "mock-preaurem");
+
+  assert.ok(product);
+  assert.deepEqual(
+    product.variants.map((variant) => variant.options.Size),
+    [
+      'Medium (11.4" W × 7.9" H × 4.7" D)',
+      'Large (13.8" W × 10.6" H × 5.5" D)',
+      'X-Large (16.1" W × 13.4" H × 7.5" D)',
+      '4X-Large (16.1" W × 13.4" H × 7.5" D)',
+    ],
+  );
+  assert.deepEqual(product.variants.map((variant) => variant.price?.amount), [23, 24, 25, 26]);
+  assert.equal(product.variants.some((variant) => /small/i.test(variant.options.Size ?? "")), false);
 });
 
 test("job loader loads job snapshot, products and results from coordinator", async () => {

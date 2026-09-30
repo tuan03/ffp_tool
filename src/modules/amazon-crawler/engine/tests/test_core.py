@@ -11,7 +11,7 @@ from pathlib import Path
 
 from engine.cache import CACHE_SCHEMA_VERSION, RawFamilyCache
 from engine.crawler_core import AmazonCrawler, CrawlFetchError, CrawlSettings, HttpFetcher, NormalizedInput, classify_crawl_failure, effective_product_threads, normalize_amazon_input, parse_product_html
-from engine.customization_converter import expand_paid_variants, money, normalize_customization, remove_option_choosers
+from engine.customization_converter import apply_preaurem_size_profile, expand_paid_variants, money, normalize_customization, remove_option_choosers
 from engine.proxy_profiles import ProxyAssignment
 from engine.variant_presets import PRESET_ID, build_jeminise_variants
 
@@ -269,6 +269,12 @@ def cache_partial() -> dict:
 
 
 class CoreTests(unittest.TestCase):
+    def test_accepts_preaurem_crawl_profile(self) -> None:
+        settings = CrawlSettings.from_api({"profileSlug": "preaurem"})
+
+        self.assertEqual(settings.profile_slug, "preaurem")
+        self.assertEqual(settings.api_dict()["profileSlug"], "preaurem")
+
     def test_default_crawl_uses_required_los_angeles_delivery_zip(self) -> None:
         self.assertEqual(CrawlSettings().amazon_zip, "90001")
         self.assertEqual(CrawlSettings.from_api({}).amazon_zip, "90001")
@@ -763,6 +769,91 @@ class CoreTests(unittest.TestCase):
         paid_group = normalized["pricing"]["paidOptionGroups"][0]
         self.assertEqual([option["label"] for option in paid_group["options"]], ["Small", "Large"])
         self.assertEqual(paid_group["defaultOptionId"], "small")
+
+    def test_preaurem_profile_removes_small_and_canonicalizes_supported_size_labels(self) -> None:
+        raw = {"components": [{
+            "componentType": "OptionChooserComponent", "id": "size", "label": "Size", "required": True,
+            "defaultOptionId": "small",
+            "options": [
+                {"id": "small", "label": "🔥 X-Small Best Seller", "price": 2},
+                {"id": "medium", "label": "⭐ Medium Best Seller", "price": 3},
+                {"id": "large", "label": "Large 🏆 Popular", "price": 4},
+                {"id": "xlarge", "label": "✨ XLarge Recommended", "price": 5},
+                {"id": "4xlarge", "label": "4X-Large 🔥", "price": 6},
+                {"id": "custom", "label": "Custom Size", "price": 7},
+            ],
+        }]}
+        customization, _ = normalize_customization(raw)
+
+        profiled, warnings = apply_preaurem_size_profile(customization)
+
+        assert profiled is not None
+        paid_group = profiled["pricing"]["paidOptionGroups"][0]
+        self.assertEqual(warnings, [])
+        self.assertEqual(paid_group["defaultOptionId"], "medium")
+        self.assertEqual(
+            [option["label"] for option in paid_group["options"]],
+            [
+                'Medium (11.4" W × 7.9" H × 4.7" D)',
+                'Large (13.8" W × 10.6" H × 5.5" D)',
+                'X-Large (16.1" W × 13.4" H × 7.5" D)',
+                '4X-Large (16.1" W × 13.4" H × 7.5" D)',
+                "Custom Size",
+            ],
+        )
+        variants = expand_paid_variants([
+            {
+                "id": "base", "sku": "BASE", "sourceAsin": "B012345678", "options": {},
+                "price": {"raw": "$20.00", "amount": 20.0, "currency": "USD"},
+                "surcharge": None, "metadata": {},
+            },
+        ], profiled)
+        self.assertEqual([variant["price"]["amount"] for variant in variants], [23.0, 24.0, 25.0, 26.0, 27.0])
+
+    def test_preaurem_profile_keeps_abbreviations_and_unknown_sizes_unchanged(self) -> None:
+        customization = {
+            "pricing": {
+                "paidOptionGroups": [{
+                    "id": "size", "label": "Size", "required": True, "defaultOptionId": "xl",
+                    "options": [
+                        {"id": "xl", "label": "XL", "price": money(5)},
+                        {"id": "4xl", "label": "4XL", "price": money(6)},
+                        {"id": "custom", "label": "Custom Size ⭐", "price": money(7)},
+                    ],
+                }],
+            },
+        }
+
+        profiled, warnings = apply_preaurem_size_profile(customization)
+
+        assert profiled is not None
+        self.assertEqual(warnings, [])
+        self.assertEqual(
+            [option["label"] for option in profiled["pricing"]["paidOptionGroups"][0]["options"]],
+            ["XL", "4XL", "Custom Size ⭐"],
+        )
+
+    def test_preaurem_profile_blocks_publish_when_small_is_the_only_size(self) -> None:
+        raw = {"components": [{
+            "componentType": "OptionChooserComponent", "id": "size", "label": "Size", "required": True,
+            "defaultOptionId": "small",
+            "options": [{"id": "small", "label": "🔥 Small Best Seller", "price": 3}],
+        }]}
+        customization, _ = normalize_customization(raw)
+        family = {
+            "parentAsin": "B012345678", "canonicalUrl": "https://www.amazon.com/dp/B012345678", "sourceTitle": "Custom Bag",
+            "description": None, "bulletPoints": [], "media": [],
+            "sourceVariants": [source_variant("B012345678", "Ocean", "One Size", customization)],
+            "variantMatrix": {"dimensions": {"Design": ["Ocean"], "Size": ["One Size"]}, "expectedCount": 1, "discoveredCount": 1, "complete": True, "safetyCap": 500},
+            "diagnostics": {"fetchMode": "http", "attempts": 1, "captchaEncountered": False, "locationFallbackUsed": False, "matrixSwept": False, "cacheHit": False},
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            crawler = AmazonCrawler(root=Path(directory), settings=CrawlSettings(profile_slug="preaurem"), browser_pool=FakeBrowser(PRODUCT_HTML))
+            product = crawler._products_from_family(family)[0]
+
+        self.assertEqual(product["customization"]["pricing"]["paidOptionGroups"][0]["options"], [])
+        self.assertTrue(any("Customization" in warning for warning in product["warnings"]))
+        self.assertIn("customization_incomplete", AmazonCrawler._product_publish_blockers(product))
 
     def test_customization_ports_amazon_identifiers_costs_hierarchy_and_assets(self) -> None:
         raw = {

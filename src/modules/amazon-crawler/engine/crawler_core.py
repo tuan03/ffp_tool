@@ -28,7 +28,7 @@ from bs4 import BeautifulSoup
 from .amazon_locale import AMAZON_ORIGIN, DEFAULT_HEADERS, force_us_profile_url, html_is_location_blocked
 from .cache import RawFamilyCache
 from .bounded_http import BoundedHTTPHandler, BoundedHTTPSHandler
-from .customization_converter import expand_paid_variants, normalize_customization, remove_option_choosers
+from .customization_converter import apply_preaurem_size_profile, expand_paid_variants, normalize_customization, remove_option_choosers
 from .playwright_pool import CaptchaTimeout, PlaywrightPool, html_is_captcha
 from .proxy_profiles import ProxyAssignment, resolve_proxy_assignments
 from .retry_policy import FetchFailure, RETRY_FIELDS, response_failure, retry_delay
@@ -82,8 +82,8 @@ class CrawlSettings:
         profile = str(payload.get("profileSlug") or "default").strip().casefold()
         aliases = {"jeminse": "jeminise", "chi_yeu_minh_em": "jeminise"}
         profile = aliases.get(profile, profile)
-        if profile not in {"default", "jeminise"}:
-            raise ValueError("profileSlug must be 'default' or 'jeminise'.")
+        if profile not in {"default", "jeminise", "preaurem"}:
+            raise ValueError("profileSlug must be 'default', 'jeminise', or 'preaurem'.")
 
         def bounded(key: str, default: int, minimum: int, maximum: int) -> int:
             value = int(payload.get(key, default))
@@ -2068,7 +2068,7 @@ class AmazonCrawler:
             isinstance(variant, dict)
             and any("customiz" in str(warning).casefold() for warning in variant.get("warnings", []))
             for variant in source_variants
-        ):
+        ) or any("customiz" in str(warning).casefold() for warning in product.get("warnings", [])):
             blockers.append("customization_incomplete")
         if any(
             isinstance(variant, dict)
@@ -2119,6 +2119,9 @@ class AmazonCrawler:
             categories = next((variant.get("categories") for variant in source_variants if variant.get("categories")), family.get("categories", []))
             product_details = next((variant.get("productDetails") for variant in source_variants if variant.get("productDetails")), family.get("productDetails", {}))
             warnings = [warning for variant in source_variants for warning in variant.get("warnings", [])]
+            if self.settings.profile_slug == "preaurem":
+                customization, profile_warnings = apply_preaurem_size_profile(customization)
+                warnings.extend(profile_warnings)
             if len(fingerprints) > 1:
                 warnings.append(f"Source variants have different customization configurations; representative {representative['asin']} was used. Fingerprints: {', '.join(fingerprints)}")
             base_variants: list[dict[str, Any]] = []

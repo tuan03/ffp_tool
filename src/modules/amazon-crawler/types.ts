@@ -1,4 +1,4 @@
-export type AmazonCrawlerProfile = "default" | "jeminise";
+export type AmazonCrawlerProfile = "default" | "jeminise" | "preaurem";
 
 export type AmazonCrawlerJobStatus =
   | "queued"

@@ -16,6 +16,7 @@ import {
   type AmazonCrawlerJobSnapshot,
   type AmazonCrawlerOutput,
   type AmazonCrawlerProgress,
+  type AmazonCrawlerProfile,
   type AmazonCrawlerRunner,
   type AmazonCrawlerSettings,
   type AmazonCrawlerJobLoader,
@@ -1819,7 +1820,11 @@ export function AmazonCrawlerPage({
             className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2"
             value={settings.profileSlug}
             onChange={(event) => {
-              const nextProfile = event.target.value === "jeminise" ? "jeminise" : "default";
+              const selectedProfile = event.target.value;
+              const nextProfile: AmazonCrawlerProfile =
+                selectedProfile === "jeminise" || selectedProfile === "preaurem"
+                  ? selectedProfile
+                  : "default";
               updateSetting("profileSlug", nextProfile);
               if (nextProfile === "jeminise") {
                 updateSetting("applyJeminisePreset", true);
@@ -1830,6 +1835,7 @@ export function AmazonCrawlerPage({
           >
             <option value="default">Default</option>
             <option value="jeminise">Jeminise</option>
+            <option value="preaurem">Preaurem</option>
           </select>
         </label>
         <label className="flex items-center gap-3 self-end rounded-lg border border-slate-700 p-2 text-sm text-slate-200">
