@@ -117,7 +117,13 @@ export function ProductCrawlerPage({ client }: ProductCrawlerPageProps): React.J
         // Schedule next poll in 1500ms
         pollTimerRef.current = window.setTimeout(poll, 1500);
       } catch (err) {
-        setErrorMessage((err as Error).message || "Lỗi khi lấy tiến trình crawl");
+        setErrorMessage(
+          err instanceof Error
+            ? `${err.message}. Đang thử kết nối lại...`
+            : "Lỗi kết nối khi lấy tiến trình crawl. Đang thử kết nối lại...",
+        );
+        // Continue polling with backoff to reconnect if sub-backend is temporarily down
+        pollTimerRef.current = window.setTimeout(poll, 3000);
       }
     };
 

@@ -111,8 +111,14 @@ export function AutoSeoPage({
             activeClient.setActiveStoreId?.(currentStoreId);
           }
         }
-      } catch {
-        // Fallback silently if stores cannot be listed
+      } catch (err) {
+        if (isMounted) {
+          setErrorMessage(
+            err instanceof Error
+              ? `Không thể kết nối đến Gateway để tải danh sách cửa hàng: ${err.message}`
+              : "Không thể kết nối đến Gateway để tải danh sách cửa hàng. Vui lòng kiểm tra lại dịch vụ.",
+          );
+        }
       } finally {
         if (isMounted) {
           setIsLoadingStores(false);

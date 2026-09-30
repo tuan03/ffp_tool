@@ -290,7 +290,7 @@ export function createAmazonCrawlerRunner({
       if (signal?.aborted) throw new DOMException("The crawler job was cancelled.", "AbortError");
       const clientsResponse = await fetchImplementation(`${baseUrl}/api/v1/clients`, { signal }).catch((error: unknown) => {
         if (error instanceof DOMException && error.name === "AbortError") throw error;
-        throw new AmazonCrawlerServiceError("Không kết nối được coordinator. Hãy chạy npm run dev.", "COORDINATOR_OFFLINE");
+        throw new AmazonCrawlerServiceError("Không kết nối được coordinator. Vui lòng kiểm tra lại dịch vụ coordinator.", "COORDINATOR_OFFLINE");
       });
       const clients = readClients(await readJson(clientsResponse));
       if (!clients.some((client) => client.isConnected && AVAILABLE_CLIENT_STATUSES.has(client.status))) {
@@ -306,7 +306,7 @@ export function createAmazonCrawlerRunner({
       } catch (error: unknown) {
         if (error instanceof DOMException && error.name === "AbortError") throw error;
         throw new AmazonCrawlerServiceError(
-          "Không kết nối được coordinator. Hãy chạy npm run dev.",
+          "Không kết nối được coordinator. Vui lòng kiểm tra lại dịch vụ coordinator.",
           "COORDINATOR_OFFLINE",
         );
       }
@@ -481,7 +481,7 @@ export function createAmazonCrawlerCacheClearer({
       response = await fetchImplementation(`${baseUrl}/api/v1/clients/cache`, { method: "DELETE" });
     } catch {
       throw new AmazonCrawlerServiceError(
-        "Không kết nối được coordinator. Hãy chạy npm run dev.",
+        "Không kết nối được coordinator. Vui lòng kiểm tra lại dịch vụ coordinator.",
         "COORDINATOR_OFFLINE",
       );
     }
@@ -502,7 +502,7 @@ export function createAmazonCrawlerClientsLoader({
       );
     } catch (error: unknown) {
       if (error instanceof AmazonCrawlerServiceError) throw error;
-      throw new AmazonCrawlerServiceError("Không kết nối được coordinator. Hãy chạy npm run dev.", "COORDINATOR_OFFLINE");
+      throw new AmazonCrawlerServiceError("Không kết nối được coordinator. Vui lòng kiểm tra lại dịch vụ coordinator.", "COORDINATOR_OFFLINE");
     }
   };
 }

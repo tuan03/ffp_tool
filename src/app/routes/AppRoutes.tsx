@@ -523,6 +523,10 @@ export function AppRoutes({
           ...podRoutes,
           ...autoSeoRoutes,
           ...createCustomGptSeoRoutes(getCustomGptClient(environment)),
+          {
+            path: "custom-gpt-seo",
+            element: <Navigate to="/gpt-seo" replace />,
+          },
           ...customizationRoutes,
           {
             path: "seo-review",
@@ -534,10 +538,19 @@ export function AppRoutes({
               />
             ),
           },
-          {
-            path: "workflow-demo",
-            element: <HomePage runWorkflow={runWorkflow} />,
-          },
+          ...(environment === "production"
+            ? [
+                {
+                  path: "workflow-demo",
+                  element: <Navigate to="/amazon-crawler" replace />,
+                },
+              ]
+            : [
+                {
+                  path: "workflow-demo",
+                  element: <HomePage runWorkflow={runWorkflow} />,
+                },
+              ]),
           {
             path: "*",
             element: <NotFoundPage />,

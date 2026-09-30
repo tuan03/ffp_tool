@@ -183,11 +183,15 @@ export function CustomizationManagerPage({
               }
             }
 
-            if (loadedProducts.length === 0) {
-              loadedProducts = [...shopifyMockProducts];
+          } catch (err) {
+            if (isMounted) {
+              setStatusMessage({
+                type: "error",
+                text: err instanceof Error
+                  ? `Lỗi khi tải sản phẩm từ Shopify Gateway: ${err.message}`
+                  : "Không thể kết nối đến Shopify Gateway để tải sản phẩm.",
+              });
             }
-          } catch {
-            loadedProducts = [...shopifyMockProducts];
           }
         } else {
           loadedProducts = [...shopifyMockProducts];

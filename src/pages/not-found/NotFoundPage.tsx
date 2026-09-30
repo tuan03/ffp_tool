@@ -9,10 +9,10 @@ export function NotFoundPage(): React.JSX.Element {
         Đường dẫn bạn yêu cầu không khả dụng hoặc đã được di chuyển.
       </p>
       <Link
-        to="/pinterest-pod"
+        to="/amazon-crawler"
         className="mt-6 rounded-lg bg-cyan-500 px-4 py-2 text-xs font-semibold text-slate-950 transition hover:bg-cyan-400"
       >
-        Về Pinterest POD Studio
+        Về Trang chủ
       </Link>
     </div>
   );

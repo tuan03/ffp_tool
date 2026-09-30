@@ -155,6 +155,7 @@ export function PinterestPodStudio({
   const pollingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const isMountedRef = useRef(true);
   const isPollingBusyRef = useRef(false);
+  const consecutivePollErrorsRef = useRef(0);
 
   // Stop polling helper
   function stopPolling(): void {
@@ -162,6 +163,7 @@ export function PinterestPodStudio({
       clearInterval(pollingTimerRef.current);
       pollingTimerRef.current = null;
     }
+    consecutivePollErrorsRef.current = 0;
   }
 
   // Load recent jobs and runs from server
@@ -448,6 +450,7 @@ export function PinterestPodStudio({
     try {
       const detail: JobDetailResponse = await client.getJobDetail(targetJobId);
       if (!isMountedRef.current) return;
+      consecutivePollErrorsRef.current = 0;
 
       setJobStatus(detail.status);
 
@@ -560,9 +563,23 @@ export function PinterestPodStudio({
       }
     } catch (err) {
       if (!isMountedRef.current) return;
-      setErrorMessage(err instanceof Error ? err.message : "Lỗi khi cập nhật trạng thái job");
-      stopPolling();
-      setIsProducing(false);
+      consecutivePollErrorsRef.current += 1;
+      const count = consecutivePollErrorsRef.current;
+      if (count < 5) {
+        setErrorMessage(
+          err instanceof Error
+            ? `Mất kết nối tạm thời đến Pinterest POD backend (${count}/5): ${err.message}. Đang thử kết nối lại...`
+            : `Mất kết nối tạm thời đến Pinterest POD backend (${count}/5). Đang thử kết nối lại...`,
+        );
+      } else {
+        setErrorMessage(
+          err instanceof Error
+            ? `${err.message}. Vui lòng kiểm tra lại dịch vụ Pinterest POD.`
+            : "Không thể kết nối đến Pinterest POD backend sau nhiều lần thử. Vui lòng kiểm tra lại dịch vụ.",
+        );
+        stopPolling();
+        setIsProducing(false);
+      }
     } finally {
       isPollingBusyRef.current = false;
     }

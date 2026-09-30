@@ -27,12 +27,17 @@ function getEnvironment(): AppEnvironment {
 export const environment = getEnvironment();
 
 function getAmazonCrawlerCoordinatorUrl(): string {
-  const configuredUrl = import.meta.env.VITE_AMAZON_COORDINATOR_URL ?? import.meta.env.VITE_AMAZON_CRAWLER_ENGINE_URL;
+  const configuredUrl =
+    import.meta.env?.VITE_AMAZON_COORDINATOR_URL ??
+    import.meta.env?.VITE_AMAZON_CRAWLER_ENGINE_URL ??
+    process.env?.VITE_AMAZON_COORDINATOR_URL ??
+    process.env?.VITE_AMAZON_CRAWLER_ENGINE_URL;
   const browserLocation = typeof window === "undefined" ? null : window.location;
   return resolveAmazonCoordinatorUrl({
     configuredUrl,
     browserHostname: browserLocation?.hostname || "127.0.0.1",
     browserProtocol: browserLocation?.protocol || "http:",
+    environment,
   });
 }
 

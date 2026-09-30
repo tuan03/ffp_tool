@@ -18,3 +18,21 @@ test("configured coordinator URL overrides the browser host", () => {
     browserProtocol: "http:",
   }), "https://crawler.example.com");
 });
+
+test("production environment defaults to relative same-origin URL when no URL is configured", () => {
+  assert.equal(resolveAmazonCoordinatorUrl({
+    configuredUrl: undefined,
+    browserHostname: "vps.example.com",
+    browserProtocol: "https:",
+    environment: "production",
+  }), "");
+});
+
+test("empty configured URL resolves to relative same-origin URL", () => {
+  assert.equal(resolveAmazonCoordinatorUrl({
+    configuredUrl: "",
+    browserHostname: "localhost",
+    browserProtocol: "http:",
+  }), "");
+});
+
