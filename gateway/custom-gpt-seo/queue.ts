@@ -20,7 +20,7 @@ export class CustomGptQueue {
       CREATE TABLE IF NOT EXISTS gpt_settings (store_id TEXT PRIMARY KEY, payload TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS gpt_jobs (id TEXT PRIMARY KEY, store_id TEXT NOT NULL, dedup TEXT NOT NULL, status TEXT NOT NULL, batch_id TEXT, payload TEXT NOT NULL, created_at INTEGER NOT NULL, provider TEXT NOT NULL DEFAULT 'custom_gpt', UNIQUE(store_id,dedup));
       CREATE INDEX IF NOT EXISTS gpt_queue_idx ON gpt_jobs(store_id,status,created_at);
-      CREATE TABLE IF NOT EXISTS gpt_batches (id TEXT PRIMARY KEY, store_id TEXT NOT NULL, request_id TEXT NOT NULL, token TEXT NOT NULL, expires_at INTEGER NOT NULL, active INTEGER NOT NULL, provider TEXT NOT NULL DEFAULT 'custom_gpt', UNIQUE(store_id,request_id));
+      CREATE TABLE IF NOT EXISTS gpt_batches (id TEXT PRIMARY KEY, store_id TEXT NOT NULL, request_id TEXT NOT NULL, token TEXT NOT NULL, expires_at INTEGER NOT NULL, active INTEGER NOT NULL, provider TEXT NOT NULL DEFAULT 'custom_gpt', owner_id TEXT NOT NULL DEFAULT 'custom_gpt', UNIQUE(store_id,request_id));
       CREATE TABLE IF NOT EXISTS gpt_mutations (scope TEXT NOT NULL, request_id TEXT NOT NULL, digest TEXT NOT NULL, response TEXT, PRIMARY KEY(scope,request_id));
       CREATE TABLE IF NOT EXISTS gpt_deliveries (job_id TEXT PRIMARY KEY, payload TEXT NOT NULL, delivered INTEGER NOT NULL DEFAULT 0);
       CREATE TABLE IF NOT EXISTS gpt_review_state (job_id TEXT PRIMARY KEY, payload TEXT NOT NULL);
@@ -29,10 +29,15 @@ export class CustomGptQueue {
     `);
     if (!db.prepare("PRAGMA table_info(gpt_jobs)").all().some(column => column.name === "provider")) db.exec("ALTER TABLE gpt_jobs ADD COLUMN provider TEXT NOT NULL DEFAULT 'custom_gpt'");
     if (!db.prepare("PRAGMA table_info(gpt_batches)").all().some(column => column.name === "provider")) db.exec("ALTER TABLE gpt_batches ADD COLUMN provider TEXT NOT NULL DEFAULT 'custom_gpt'");
+    const hasBatchOwner = db.prepare("PRAGMA table_info(gpt_batches)").all().some(column => column.name === "owner_id");
+    if (!hasBatchOwner) {
+      db.exec(`ALTER TABLE gpt_batches ADD COLUMN owner_id TEXT NOT NULL DEFAULT 'custom_gpt';
+        UPDATE gpt_batches SET owner_id=CASE WHEN provider='codex_mcp' THEN 'codex_mcp:default' ELSE 'custom_gpt' END;`);
+    }
     db.exec(`UPDATE gpt_jobs SET provider=COALESCE(json_extract(payload,'$.settings.provider'),'custom_gpt');
       CREATE INDEX IF NOT EXISTS gpt_provider_queue_idx ON gpt_jobs(store_id,provider,status,created_at);`);
     if (!db.prepare("PRAGMA table_info(gpt_mutations)").all().some(column => column.name === "response")) db.exec("ALTER TABLE gpt_mutations ADD COLUMN response TEXT");
-    db.exec("PRAGMA user_version=2");
+    db.exec("PRAGMA user_version=3");
   }
   private transaction<T>(operation: () => T): T {
     this.db.exec("BEGIN IMMEDIATE");
@@ -110,27 +115,32 @@ export class CustomGptQueue {
   batch(storeId: string, batchId: string): GptSeoBatch {
     const row = this.db.prepare("SELECT * FROM gpt_batches WHERE store_id=? AND id=?").get(storeId, batchId);
     if (!row) throw new Error("Batch not found");
-    return { id: batchId, provider: String(row.provider) as ExternalSeoProvider, leaseToken: String(row.token), expiresAt: Number(row.expires_at), jobs: this.db.prepare("SELECT payload FROM gpt_jobs WHERE batch_id=? ORDER BY created_at,id").all(batchId).map(entry => { const job = json(entry.payload) as GptSeoJob; return { id: job.id, title: job.input.title, status: job.status }; }) };
+    return { id: batchId, provider: String(row.provider) as ExternalSeoProvider, ownerId: String(row.owner_id), leaseToken: String(row.token), expiresAt: Number(row.expires_at), jobs: this.db.prepare("SELECT payload FROM gpt_jobs WHERE batch_id=? ORDER BY created_at,id").all(batchId).map(entry => { const job = json(entry.payload) as GptSeoJob; return { id: job.id, title: job.input.title, status: job.status }; }) };
   }
-  activeBatch(storeId: string): GptSeoBatch | null {
-    const row = this.db.prepare("SELECT id FROM gpt_batches WHERE store_id=? AND active=1 AND expires_at>?").get(storeId, this.now());
+  activeBatch(storeId: string, ownerId: string): GptSeoBatch | null {
+    const row = this.db.prepare("SELECT id FROM gpt_batches WHERE store_id=? AND owner_id=? AND active=1 AND expires_at>? ORDER BY rowid LIMIT 1").get(storeId, ownerId, this.now());
     return row ? this.batch(storeId, String(row.id)) : null;
   }
-  claim(storeId: string, requestId: string, provider: ExternalSeoProvider): GptSeoBatch {
+  activeBatches(storeId: string): readonly GptSeoBatch[] {
+    return this.db.prepare("SELECT id FROM gpt_batches WHERE store_id=? AND active=1 AND expires_at>? ORDER BY rowid").all(storeId, this.now()).map(row => this.batch(storeId, String(row.id)));
+  }
+  claim(storeId: string, requestId: string, provider: ExternalSeoProvider, ownerId: string): GptSeoBatch {
     if (!requestId || requestId.length > 120) throw new Error("Invalid request id");
+    if (!ownerId || ownerId.length > 200) throw new Error("Invalid batch owner");
     return this.transaction(() => {
       this.expire(storeId);
-      const duplicate = this.db.prepare("SELECT id,active FROM gpt_batches WHERE store_id=? AND request_id=?").get(storeId, requestId);
+      const duplicate = this.db.prepare("SELECT id,active,owner_id FROM gpt_batches WHERE store_id=? AND request_id=?").get(storeId, requestId);
       if (duplicate) {
         if (!duplicate.active) throw new Error("Batch lease expired; use a new request id");
+        if (duplicate.owner_id !== ownerId) throw new Error("Request id belongs to another owner");
         const batch = this.batch(storeId, String(duplicate.id));
         if (batch.provider !== provider) throw new Error("Request id belongs to another provider");
         return batch;
       }
-      if (this.activeBatch(storeId)) throw new Error("An active batch must be resumed or released first");
+      if (this.activeBatch(storeId, ownerId)) throw new Error("An active batch must be resumed or released first");
       const jobs = this.db.prepare("SELECT payload FROM gpt_jobs WHERE store_id=? AND provider=? AND status='PENDING' ORDER BY created_at,id LIMIT ?").all(storeId, provider, this.settings(storeId).batchSize);
       const batchId = randomUUID();
-      this.db.prepare("INSERT INTO gpt_batches(id,store_id,request_id,token,expires_at,active,provider) VALUES (?,?,?,?,?,?,?)").run(batchId, storeId, requestId, randomUUID(), this.now() + LEASE_MS, jobs.length ? 1 : 0, provider);
+      this.db.prepare("INSERT INTO gpt_batches(id,store_id,request_id,token,expires_at,active,provider,owner_id) VALUES (?,?,?,?,?,?,?,?)").run(batchId, storeId, requestId, randomUUID(), this.now() + LEASE_MS, jobs.length ? 1 : 0, provider, ownerId);
       for (const row of jobs) {
         const job = json(row.payload) as GptSeoJob;
         this.write({ ...job, status: "IN_PROGRESS" });

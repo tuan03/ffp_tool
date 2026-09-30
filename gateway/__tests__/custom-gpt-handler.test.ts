@@ -98,7 +98,7 @@ test("waiting-jobs lists read-only identifiers for the authenticated store witho
     },
     original: {},
   });
-  const batch = queue.claim("capozen", "claim-waiting-products", "custom_gpt");
+  const batch = queue.claim("capozen", "claim-waiting-products", "custom_gpt", "custom_gpt");
   queue.issue("capozen", firstJob.id, batch.id, batch.leaseToken, "Attach clearer product images");
   queue.issue("capozen", secondJob.id, batch.id, batch.leaseToken, "Confirm visible product text");
   queue.release("capozen", batch.id, batch.leaseToken);
@@ -146,7 +146,7 @@ test("waiting-jobs lists read-only identifiers for the authenticated store witho
       nextOffset: null,
       instructions: "Use jobId with getSeoJob and getSeoJobImages. This read-only action does not claim jobs or change their status.",
     });
-    assert.equal(queue.activeBatch("capozen"), null);
+    assert.equal(queue.activeBatch("capozen", "custom_gpt"), null);
     assert.equal(queue.get("capozen", firstJob.id).status, "WAITING_INPUT");
     assert.equal(queue.get("capozen", secondJob.id).status, "WAITING_INPUT");
     const otherStoreResponse = await fetch(endpoint, { headers: { Authorization: "Bearer wrydeco-key" } });
