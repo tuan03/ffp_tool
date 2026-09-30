@@ -3,6 +3,8 @@ export interface SeoContentImageInput {
   readonly url: string;
   readonly alt?: string;
   readonly localFilePath?: string;
+  /** Upstream checksum/ETag for bytes when a URL or path may be reused. */
+  readonly contentFingerprint?: string;
 }
 
 export interface VariantSample {
@@ -31,7 +33,19 @@ export interface SeoContentInput {
   readonly productId?: string;
   readonly url?: string;
   readonly storeId?: string;
+  /** Upstream product revision used to invalidate stale SEO checkpoints/results. */
+  readonly sourceVersion?: string;
+  /** Shopify product timestamp captured when this SEO run was requested. */
+  readonly shopifyUpdatedAt?: string;
+  /** Server-side AI provider selected for the common B1-B6 pipeline. */
+  readonly providerId?: string;
+  /** Version of the B1-B6 pipeline contract used to produce this result. */
+  readonly pipelineVersion?: string;
   readonly variantLabel?: string;
+  /**
+   * @deprecated Accepted at module boundaries for compatibility. The server
+   * converts this value to `variantSummary` and removes it before AI calls.
+   */
   readonly variants?: readonly unknown[];
   readonly variantSummary?: VariantSummary;
   readonly existingPrimaryKeyword?: string;
@@ -68,7 +82,7 @@ export interface SeoContentOutput {
   readonly aeo_json_ld?: string;
 }
 
-export type SeoContentEngine = "gemini" | "heuristic" | "mixed" | "custom_gpt";
+export type SeoContentEngine = "gemini" | "heuristic" | "mixed" | /** @deprecated */ "custom_gpt";
 
 export interface SeoPerformanceMetrics {
   readonly revisionRetries?: number;
@@ -100,6 +114,11 @@ export interface SeoContentRunMetadata {
     readonly reusableAcrossRuns?: boolean;
   }>>;
   readonly corpusRevision?: number;
+  readonly inputHash?: string;
+  readonly sourceVersion?: string;
+  readonly shopifyUpdatedAt?: string;
+  readonly providerId?: string;
+  readonly pipelineVersion?: string;
 }
 
 export interface SeoContentDetailedOutput {
@@ -144,6 +163,10 @@ export interface SeoContentDependencies {
   readonly conflictCorpus?: unknown;
   readonly checkpointManager?: unknown;
   readonly checkpointStore?: unknown;
+  readonly providerRegistry?: unknown;
+  readonly siteNicheResolver?: unknown;
+  readonly resultCache?: unknown;
+  readonly providerCircuitBreaker?: unknown;
 }
 
 export interface SeoContentRunOptions {
