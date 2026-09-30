@@ -9,12 +9,26 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+class ReviewRequestError extends Error {
+  readonly status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "ReviewRequestError";
+    this.status = status;
+  }
+}
+
+export function isMissingReviewJobError(error: unknown): boolean {
+  return error instanceof ReviewRequestError && error.status === 404;
+}
+
 async function readResponse(response: Response): Promise<unknown> {
   const body: unknown = await response.json().catch(() => null);
   if (!response.ok) {
     const message = isRecord(body) && typeof body.detail === "string" ? body.detail :
       isRecord(body) && typeof body.error === "string" ? body.error : "Amazon Reviews request failed.";
-    throw new Error(message);
+    throw new ReviewRequestError(message, response.status);
   }
   return body;
 }

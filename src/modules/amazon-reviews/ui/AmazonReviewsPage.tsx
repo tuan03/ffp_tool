@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { hasUsableReviewContext } from "../product-context";
 import { mergeReviewPictureUrls } from "../picture-urls";
+import { isMissingReviewJobError } from "../service";
 import type { AmazonReview, AmazonReviewJob, ReviewClient, ReviewProduct, ReviewShopifyAccess } from "../types";
 
 interface AmazonReviewsPageProps {
@@ -84,8 +85,19 @@ export function AmazonReviewsPage({ client, shopify, selectedStoreId, onSelected
           return new Set([...(loaded.reviewData.reviews ?? []), ...loaded.samples].map((review) => review.reviewId));
         });
         if (!productQuery) setProductQuery(`tag:amazon-parent-${loaded.asin.toLowerCase()}`);
-      } catch {
-        if (!isDisposed && jobRevision === jobRevisionRef.current) setError("Không tải được ngữ cảnh sản phẩm. Kiểm tra kết nối coordinator.");
+      } catch (cause) {
+        if (isDisposed || jobRevision !== jobRevisionRef.current) return;
+        if (isMissingReviewJobError(cause)) {
+          isDisposed = true;
+          jobRevisionRef.current += 1;
+          setJobId("");
+          setJob(null);
+          setSelectedReviews(new Set());
+          setNotice("Kết quả cũ không còn trên coordinator và đã được dọn. Hãy nhập URL hoặc ASIN để lấy ngữ cảnh mới.");
+          setError("");
+          return;
+        }
+        setError("Không tải được ngữ cảnh sản phẩm. Kiểm tra kết nối coordinator.");
       }
     };
     void load();

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createReviewClient } from "../index";
+import { createReviewClient, isMissingReviewJobError } from "../index";
 
 test("review client requests only product context from the coordinator", async () => {
   const client = createReviewClient({
@@ -36,4 +36,13 @@ test("review client reports a failed deletion instead of clearing local results"
     fetchImplementation: async () => Response.json({ detail: "Coordinator unavailable" }, { status: 503 }),
   });
   await assert.rejects(client.clear("saved-job"), /Coordinator unavailable/);
+});
+
+test("review client identifies a saved job that no longer exists", async () => {
+  const client = createReviewClient({
+    coordinatorUrl: "http://127.0.0.1:8766",
+    fetchImplementation: async () => Response.json({ detail: "Review job not found" }, { status: 404 }),
+  });
+  const error = await client.get("expired-job").catch((cause: unknown) => cause);
+  assert.equal(isMissingReviewJobError(error), true);
 });
