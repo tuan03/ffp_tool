@@ -83,54 +83,47 @@ export function AutoSeoPage({
   selectedStoreIdRef.current = selectedStoreId;
   const [isSendingToSeo, setIsSendingToSeo] = useState(false);
 
-  // Load available stores on mount
-  useEffect(() => {
-    let isMounted = true;
-    async function loadStores(): Promise<void> {
-      setIsLoadingStores(true);
-      try {
-        let storeOptions: readonly AutoSeoStoreOption[] = [];
-        if (activeClient.listStores) {
-          storeOptions = await activeClient.listStores();
-        }
-        if (storeOptions.length === 0) {
-          const info = await activeClient.getStoreInfo();
-          if (info && info.storeId) {
-            storeOptions = [{ storeId: info.storeId, shopDomain: info.shopDomain }];
-          }
-        }
-
-        if (isMounted && storeOptions.length > 0) {
-          setAvailableStores(storeOptions);
-          const currentStoreId = selectedStoreIdRef.current;
-          if (!currentStoreId || !storeOptions.some((s) => s.storeId === currentStoreId)) {
-            const firstStoreId = storeOptions[0].storeId;
-            setAutoSeoSelectedStoreId(firstStoreId);
-            activeClient.setActiveStoreId?.(firstStoreId);
-          } else {
-            activeClient.setActiveStoreId?.(currentStoreId);
-          }
-        }
-      } catch (err) {
-        if (isMounted) {
-          setErrorMessage(
-            err instanceof Error
-              ? `Không thể kết nối đến Gateway để tải danh sách cửa hàng: ${err.message}`
-              : "Không thể kết nối đến Gateway để tải danh sách cửa hàng. Vui lòng kiểm tra lại dịch vụ.",
-          );
-        }
-      } finally {
-        if (isMounted) {
-          setIsLoadingStores(false);
+  // Load available stores on mount or retry
+  const handleLoadStores = useCallback(async (): Promise<void> => {
+    setIsLoadingStores(true);
+    setErrorMessage(null);
+    try {
+      let storeOptions: readonly AutoSeoStoreOption[] = [];
+      if (activeClient.listStores) {
+        storeOptions = await activeClient.listStores();
+      }
+      if (storeOptions.length === 0) {
+        const info = await activeClient.getStoreInfo();
+        if (info && info.storeId) {
+          storeOptions = [{ storeId: info.storeId, shopDomain: info.shopDomain }];
         }
       }
-    }
 
-    void loadStores();
-    return () => {
-      isMounted = false;
-    };
+      if (storeOptions.length > 0) {
+        setAvailableStores(storeOptions);
+        const currentStoreId = selectedStoreIdRef.current;
+        if (!currentStoreId || !storeOptions.some((s) => s.storeId === currentStoreId)) {
+          const firstStoreId = storeOptions[0].storeId;
+          setAutoSeoSelectedStoreId(firstStoreId);
+          activeClient.setActiveStoreId?.(firstStoreId);
+        } else {
+          activeClient.setActiveStoreId?.(currentStoreId);
+        }
+      }
+    } catch (err) {
+      setErrorMessage(
+        err instanceof Error
+          ? `Không thể kết nối đến Gateway để tải danh sách cửa hàng: ${err.message}`
+          : "Không thể kết nối đến Gateway để tải danh sách cửa hàng. Vui lòng kiểm tra lại dịch vụ.",
+      );
+    } finally {
+      setIsLoadingStores(false);
+    }
   }, [activeClient]);
+
+  useEffect(() => {
+    void handleLoadStores();
+  }, [handleLoadStores]);
 
   const filteredProducts = useMemo(() => {
     return filterAutoSeoProducts(products, {
@@ -433,13 +426,25 @@ export function AutoSeoPage({
             <span className="text-base">⚠️</span>
             <span>{errorMessage}</span>
           </div>
-          <button
-            type="button"
-            onClick={() => setErrorMessage(null)}
-            className="text-rose-400 hover:text-white"
-          >
-            ✕
-          </button>
+          <div className="flex items-center gap-2">
+            {availableStores.length === 0 && (
+              <button
+                type="button"
+                onClick={() => void handleLoadStores()}
+                disabled={isLoadingStores}
+                className="rounded-lg bg-rose-800/80 hover:bg-rose-700 px-3 py-1 font-semibold text-rose-100 transition disabled:opacity-50 cursor-pointer"
+              >
+                {isLoadingStores ? "Đang kết nối lại..." : "Thử lại kết nối"}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => setErrorMessage(null)}
+              className="text-rose-400 hover:text-white"
+            >
+              ✕
+            </button>
+          </div>
         </div>
       )}
 

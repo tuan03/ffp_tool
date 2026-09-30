@@ -14,8 +14,7 @@ function getEnvironment(): AppEnvironment {
   const configuredEnvironment =
     import.meta.env?.VITE_APP_ENV ??
     import.meta.env?.MODE ??
-    process.env.VITE_APP_ENV ??
-    process.env.NODE_ENV;
+    (typeof process !== "undefined" ? process.env?.VITE_APP_ENV ?? process.env?.NODE_ENV : undefined);
 
   if (typeof configuredEnvironment === "string" && isAppEnvironment(configuredEnvironment)) {
     return configuredEnvironment;
@@ -30,8 +29,9 @@ function getAmazonCrawlerCoordinatorUrl(): string {
   const configuredUrl =
     import.meta.env?.VITE_AMAZON_COORDINATOR_URL ??
     import.meta.env?.VITE_AMAZON_CRAWLER_ENGINE_URL ??
-    process.env?.VITE_AMAZON_COORDINATOR_URL ??
-    process.env?.VITE_AMAZON_CRAWLER_ENGINE_URL;
+    (typeof process !== "undefined"
+      ? process.env?.VITE_AMAZON_COORDINATOR_URL ?? process.env?.VITE_AMAZON_CRAWLER_ENGINE_URL
+      : undefined);
   const browserLocation = typeof window === "undefined" ? null : window.location;
   return resolveAmazonCoordinatorUrl({
     configuredUrl,

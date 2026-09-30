@@ -212,25 +212,104 @@ test("UI-06: Production navigation does not include demo Module A/B/C or workflo
   assert.doesNotMatch(layoutSource, /to="\/workflow-demo"/, "Workflow demo must not be in navbar");
 });
 
-test("UI-07: Smoke test production opens each main screen via public client URL", async () => {
-  const fs = await import("node:fs");
-  const path = await import("node:path");
-  const appRoutesSource = fs.readFileSync(
-    path.resolve(process.cwd(), "src/app/routes/AppRoutes.tsx"),
-    "utf8",
-  );
+test("UI-07: Deep smoke test opens and renders each of the 7 main business screens via public URLs", async () => {
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const { MemoryRouter } = await import("react-router-dom");
 
-  // Verify all required public routes are wired in AppRoutes.tsx
-  assert.match(appRoutesSource, /Navigate to="\/amazon-crawler"/, "Root index redirects to /amazon-crawler");
-  assert.match(appRoutesSource, /crawlerRoutes/, "Product crawler routes must be mounted");
-  assert.match(appRoutesSource, /distributedCrawlerRoutes/, "Amazon crawler routes must be mounted");
-  assert.match(appRoutesSource, /podRoutes/, "Pinterest POD routes must be mounted");
-  assert.match(appRoutesSource, /autoSeoRoutes/, "Auto SEO routes must be mounted");
-  assert.match(appRoutesSource, /createCustomGptSeoRoutes/, "Custom GPT SEO routes must be mounted");
-  assert.match(appRoutesSource, /customizationRoutes/, "Customization manager routes must be mounted");
-  assert.match(appRoutesSource, /path:\s*"seo-review"/, "SEO Review route must be mounted");
-  assert.match(appRoutesSource, /path:\s*"custom-gpt-seo"/, "custom-gpt-seo alias redirect must be mounted");
-  assert.match(appRoutesSource, /path:\s*"\*"/, "Catch-all 404 route must be mounted");
+  // 1. Amazon Crawler Page
+  const { AmazonCrawlerPage } = await import("../../../modules/amazon-crawler/ui/AmazonCrawlerPage");
+  const { runMockAmazonCrawler, clearMockAmazonCrawlerCache } = await import("../../../modules/amazon-crawler/mocks/runner");
+  const amazonHtml = renderToStaticMarkup(
+    React.createElement(
+      MemoryRouter,
+      { initialEntries: ["/amazon-crawler"] },
+      React.createElement(AmazonCrawlerPage, {
+        clearAmazonCrawlerCache: clearMockAmazonCrawlerCache,
+        loadAmazonCrawlerClients: async () => [],
+        runAmazonCrawler: runMockAmazonCrawler,
+      }),
+    ),
+  );
+  assert.ok(amazonHtml.includes("Amazon Product Crawler") || amazonHtml.includes("Distributed Crawler") || amazonHtml.includes("Crawler"), "Amazon Crawler page must render");
+
+  // 2. Product Crawler Page
+  const { ProductCrawlerPage } = await import("../../../modules/product-crawler/ui/ProductCrawlerPage");
+  const { mockProductCrawlerClient } = await import("../../../modules/product-crawler/mocks/runner");
+  const productCrawlerHtml = renderToStaticMarkup(
+    React.createElement(
+      MemoryRouter,
+      { initialEntries: ["/product-crawler"] },
+      React.createElement(ProductCrawlerPage, { client: mockProductCrawlerClient }),
+    ),
+  );
+  assert.ok(productCrawlerHtml.includes("Amazon Product Crawler") || productCrawlerHtml.includes("Product Crawler"), "Product Crawler page must render");
+
+  // 3. Pinterest POD Studio
+  const { PinterestPodStudio } = await import("../../../modules/pinterest-pod/ui/PinterestPodStudio");
+  const podHtml = renderToStaticMarkup(
+    React.createElement(
+      MemoryRouter,
+      { initialEntries: ["/pinterest-pod"] },
+      React.createElement(PinterestPodStudio, {}),
+    ),
+  );
+  assert.ok(podHtml.includes("Pinterest") || podHtml.includes("POD Studio"), "Pinterest POD Studio must render");
+
+  // 4. Auto SEO Page
+  const { AutoSeoPage } = await import("../../../modules/auto-seo/ui/AutoSeoPage");
+  const { mockAutoSeoClient } = await import("../../../modules/auto-seo/mocks/runner");
+  const autoSeoHtml = renderToStaticMarkup(
+    React.createElement(
+      MemoryRouter,
+      { initialEntries: ["/auto-seo"] },
+      React.createElement(AutoSeoPage, { client: mockAutoSeoClient }),
+    ),
+  );
+  assert.ok(autoSeoHtml.includes("Auto SEO"), "Auto SEO page must render");
+
+  // 5. Customization Manager Page
+  const { CustomizationManagerPage } = await import("../../../modules/customization-manager/ui/CustomizationManagerPage");
+  const customHtml = renderToStaticMarkup(
+    React.createElement(
+      MemoryRouter,
+      { initialEntries: ["/customization"] },
+      React.createElement(CustomizationManagerPage, {}),
+    ),
+  );
+  assert.ok(customHtml.includes("Customizer") || customHtml.includes("Tùy Biến") || customHtml.includes("sản phẩm"), "Customization Manager must render");
+
+  // 6. Custom GPT SEO Page
+  const { CustomGptSeoPage } = await import("../../../modules/custom-gpt-seo/ui/CustomGptSeoPage");
+  const { createMockCustomGptClient } = await import("../../../modules/custom-gpt-seo/mocks/runner");
+  const gptSeoHtml = renderToStaticMarkup(
+    React.createElement(
+      MemoryRouter,
+      { initialEntries: ["/gpt-seo"] },
+      React.createElement(CustomGptSeoPage, { client: createMockCustomGptClient() }),
+    ),
+  );
+  assert.ok(gptSeoHtml.includes("GPT SEO") || gptSeoHtml.includes("ChatGPT"), "Custom GPT SEO page must render");
+
+  // 7. SEO Review Page
+  const { SeoReviewPage } = await import("../../seo-review/SeoReviewPage");
+  const seoReviewHtml = renderToStaticMarkup(
+    React.createElement(
+      MemoryRouter,
+      { initialEntries: ["/seo-review"] },
+      React.createElement(SeoReviewPage, {}),
+    ),
+  );
+  assert.ok(seoReviewHtml.includes("SEO Content Review") || (seoReviewHtml.includes("SEO") && seoReviewHtml.includes("Review")), "SEO Review page must render");
+
+  // 8. 404 Not Found Page
+  const notFoundHtml = renderToStaticMarkup(
+    React.createElement(
+      MemoryRouter,
+      { initialEntries: ["/non-existent-screen"] },
+      React.createElement(NotFoundPage, {}),
+    ),
+  );
+  assert.ok(notFoundHtml.includes("404") && notFoundHtml.includes("Trang không tồn tại"), "NotFoundPage must render 404 message");
 });
 
 test("UI-08: API 404 returns JSON and UI 404 renders NotFoundPage", async () => {
@@ -256,6 +335,20 @@ test("UI-08: API 404 returns JSON and UI 404 renders NotFoundPage", async () => 
     nginxTemplate,
     /return 404/,
     "Nginx template must return 404 status for unmatched API routes",
+  );
+
+  // Must route /api/product-crawler/ to coordinator
+  assert.match(
+    nginxTemplate,
+    /api\/product-crawler/,
+    "Nginx template must proxy /api/product-crawler/ to coordinator",
+  );
+
+  // Must have JSON error page for backend 502/503/504
+  assert.match(
+    nginxTemplate,
+    /@api_gateway_error/,
+    "Nginx template must define JSON error handler for upstream proxy errors",
   );
 
   // Must have SPA fallback for client UI

@@ -14,8 +14,20 @@ export function resolveAmazonCoordinatorUrl({
   if (configuredUrl !== undefined && configuredUrl.trim() === "") {
     return "";
   }
-  if (environment === "production" && !configuredUrl?.trim()) {
-    return "";
+  if (environment === "production") {
+    if (!configuredUrl?.trim()) {
+      return "";
+    }
+    const trimmed = configuredUrl.trim();
+    if (
+      trimmed.includes(":8766") ||
+      trimmed.includes(":3001") ||
+      trimmed.includes(":8768") ||
+      trimmed.includes("localhost") ||
+      trimmed.includes("127.0.0.1")
+    ) {
+      return "";
+    }
   }
   const protocol = browserProtocol === "https:" ? "https:" : "http:";
   const candidate = configuredUrl?.trim() || `${protocol}//${browserHostname}:8766`;

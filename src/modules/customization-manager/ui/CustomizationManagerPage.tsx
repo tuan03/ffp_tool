@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 
 import type {
@@ -111,170 +111,165 @@ export function CustomizationManagerPage({
     return validateCustomizationPayloadSize(customization);
   }, [customization]);
 
-  // 1. Load Stores on mount
-  useEffect(() => {
-    let isMounted = true;
-    async function loadStores() {
-      if (!moduleApiRunner) return;
-      setIsLoadingStores(true);
-      try {
-        const response = await moduleApiRunner({
-          storeId: selectedStoreId || "default",
-          operation: "stores.list",
-          payload: {},
-        });
-        const fetchedStores = response?.data?.stores;
-        if (isMounted && Array.isArray(fetchedStores) && fetchedStores.length > 0) {
-          setStores(fetchedStores);
-          if (!selectedStoreId || !fetchedStores.some((s) => s.storeId === selectedStoreId)) {
-            setSelectedStoreId(fetchedStores[0].storeId);
-          }
+  // 1. Load Stores on mount or retry
+  const handleLoadStores = useCallback(async (): Promise<void> => {
+    if (!moduleApiRunner) return;
+    setIsLoadingStores(true);
+    try {
+      const response = await moduleApiRunner({
+        storeId: selectedStoreId || "default",
+        operation: "stores.list",
+        payload: {},
+      });
+      const fetchedStores = response?.data?.stores;
+      if (Array.isArray(fetchedStores) && fetchedStores.length > 0) {
+        setStores(fetchedStores);
+        if (!selectedStoreId || !fetchedStores.some((s) => s.storeId === selectedStoreId)) {
+          setSelectedStoreId(fetchedStores[0].storeId);
         }
-      } catch {
-        // Fallback to FALLBACK_STORES
-      } finally {
-        if (isMounted) setIsLoadingStores(false);
       }
+    } catch (err) {
+      setStatusMessage({
+        type: "error",
+        text: err instanceof Error
+          ? `Không thể tải danh sách cửa hàng từ Shopify Gateway: ${err.message}`
+          : "Không thể kết nối đến Shopify Gateway để tải danh sách cửa hàng.",
+      });
+    } finally {
+      setIsLoadingStores(false);
     }
-    void loadStores();
-    return () => {
-      isMounted = false;
-    };
-  }, [moduleApiRunner]);
+  }, [moduleApiRunner, selectedStoreId]);
+
+  useEffect(() => {
+    void handleLoadStores();
+  }, [handleLoadStores]);
 
   // 2. Load Products whenever selectedStoreId changes
-  useEffect(() => {
-    let isMounted = true;
-    async function loadStoreProducts() {
-      setIsLoadingProducts(true);
-      try {
-        let loadedProducts: ShopifyProduct[] = [];
-        if (moduleApiRunner) {
-          try {
-            let cursor: string | undefined = undefined;
-            let hasNextPage = true;
-            const seenIds = new Set<string>();
+  const handleLoadStoreProducts = useCallback(async (): Promise<void> => {
+    setIsLoadingProducts(true);
+    try {
+      let loadedProducts: ShopifyProduct[] = [];
+      if (moduleApiRunner) {
+        try {
+          let cursor: string | undefined = undefined;
+          let hasNextPage = true;
+          const seenIds = new Set<string>();
 
-            while (hasNextPage) {
-              const res: any = await moduleApiRunner({
-                storeId: selectedStoreId,
-                operation: "products.list",
-                payload: {
-                  limit: 250,
-                  ...(cursor ? { cursor } : {}),
-                },
-              });
+          while (hasNextPage) {
+            const res: any = await moduleApiRunner({
+              storeId: selectedStoreId,
+              operation: "products.list",
+              payload: {
+                limit: 250,
+                ...(cursor ? { cursor } : {}),
+              },
+            });
 
-              const pageProducts = res?.data?.products;
-              if (Array.isArray(pageProducts) && pageProducts.length > 0) {
-                for (const p of pageProducts) {
-                  if (p?.id && !seenIds.has(p.id)) {
-                    seenIds.add(p.id);
-                    loadedProducts.push(p);
-                  }
+            const pageProducts = res?.data?.products;
+            if (Array.isArray(pageProducts) && pageProducts.length > 0) {
+              for (const p of pageProducts) {
+                if (p?.id && !seenIds.has(p.id)) {
+                  seenIds.add(p.id);
+                  loadedProducts.push(p);
                 }
               }
-
-              const pageInfo = res?.data?.pageInfo;
-              if (pageInfo?.hasNextPage && pageInfo.endCursor && !seenIds.has(pageInfo.endCursor)) {
-                cursor = pageInfo.endCursor;
-              } else {
-                hasNextPage = false;
-              }
             }
 
-          } catch (err) {
-            if (isMounted) {
-              setStatusMessage({
-                type: "error",
-                text: err instanceof Error
-                  ? `Lỗi khi tải sản phẩm từ Shopify Gateway: ${err.message}`
-                  : "Không thể kết nối đến Shopify Gateway để tải sản phẩm.",
-              });
+            const pageInfo = res?.data?.pageInfo;
+            if (pageInfo?.hasNextPage && pageInfo.endCursor && !seenIds.has(pageInfo.endCursor)) {
+              cursor = pageInfo.endCursor;
+            } else {
+              hasNextPage = false;
             }
           }
-        } else {
-          loadedProducts = [...shopifyMockProducts];
+        } catch (err) {
+          setStatusMessage({
+            type: "error",
+            text: err instanceof Error
+              ? `Lỗi khi tải sản phẩm từ Shopify Gateway: ${err.message}`
+              : "Không thể kết nối đến Shopify Gateway để tải sản phẩm.",
+          });
         }
-
-        if (isMounted) {
-          setProducts(loadedProducts);
-          // Mark only products that actually have customizer configured
-          const detected = new Set<string>();
-          for (const p of loadedProducts) {
-            if (p.hasCustomizer) {
-              detected.add(p.id);
-              detected.add(p.id.replace("gid://shopify/Product/", ""));
-            }
-          }
-          setConfiguredProductIds(detected);
-
-          // If navigated in with urlProductId, match active product
-          if (urlProductId && !activeProduct) {
-            const match = loadedProducts.find(
-              (p) => p.id === urlProductId || p.id.replace("gid://shopify/Product/", "") === urlProductId,
-            );
-            if (match) {
-              setActiveProduct(match);
-            }
-          }
-        }
-
-        // Also fetch all collections for Collection Filter
-        if (moduleApiRunner) {
-          try {
-            const allCollections: ShopifyCollection[] = [];
-            let colCursor: string | undefined = undefined;
-            let colHasNextPage = true;
-            const seenColIds = new Set<string>();
-
-            while (colHasNextPage) {
-              const colRes: any = await moduleApiRunner({
-                storeId: selectedStoreId,
-                operation: "collections.list",
-                payload: {
-                  limit: 250,
-                  ...(colCursor ? { cursor: colCursor } : {}),
-                },
-              });
-
-              const pageCollections = colRes?.data?.collections;
-              if (Array.isArray(pageCollections) && pageCollections.length > 0) {
-                for (const col of pageCollections) {
-                  if (col?.id && !seenColIds.has(col.id)) {
-                    seenColIds.add(col.id);
-                    allCollections.push(col);
-                  }
-                }
-              }
-
-              const colPageInfo = colRes?.data?.pageInfo;
-              if (colPageInfo?.hasNextPage && colPageInfo.endCursor) {
-                colCursor = colPageInfo.endCursor;
-              } else {
-                colHasNextPage = false;
-              }
-            }
-
-            if (isMounted) {
-              setCollections(allCollections);
-            }
-          } catch {
-            if (isMounted) setCollections([]);
-          }
-        }
-      } catch {
-        if (isMounted) setProducts(shopifyMockProducts);
-      } finally {
-        if (isMounted) setIsLoadingProducts(false);
       }
-    }
 
-    void loadStoreProducts();
-    return () => {
-      isMounted = false;
-    };
-  }, [selectedStoreId, moduleApiRunner, urlProductId]);
+      setProducts(loadedProducts);
+      // Mark only products that actually have customizer configured
+      const detected = new Set<string>();
+      for (const p of loadedProducts) {
+        if (p.hasCustomizer) {
+          detected.add(p.id);
+          detected.add(p.id.replace("gid://shopify/Product/", ""));
+        }
+      }
+      setConfiguredProductIds(detected);
+
+      // If navigated in with urlProductId, match active product
+      if (urlProductId && !activeProduct) {
+        const match = loadedProducts.find(
+          (p) => p.id === urlProductId || p.id.replace("gid://shopify/Product/", "") === urlProductId,
+        );
+        if (match) {
+          setActiveProduct(match);
+        }
+      }
+
+      // Also fetch all collections for Collection Filter
+      if (moduleApiRunner) {
+        try {
+          const allCollections: ShopifyCollection[] = [];
+          let colCursor: string | undefined = undefined;
+          let colHasNextPage = true;
+          const seenColIds = new Set<string>();
+
+          while (colHasNextPage) {
+            const colRes: any = await moduleApiRunner({
+              storeId: selectedStoreId,
+              operation: "collections.list",
+              payload: {
+                limit: 250,
+                ...(colCursor ? { cursor: colCursor } : {}),
+              },
+            });
+
+            const pageCollections = colRes?.data?.collections;
+            if (Array.isArray(pageCollections) && pageCollections.length > 0) {
+              for (const col of pageCollections) {
+                if (col?.id && !seenColIds.has(col.id)) {
+                  seenColIds.add(col.id);
+                  allCollections.push(col);
+                }
+              }
+            }
+
+            const colPageInfo = colRes?.data?.pageInfo;
+            if (colPageInfo?.hasNextPage && colPageInfo.endCursor) {
+              colCursor = colPageInfo.endCursor;
+            } else {
+              colHasNextPage = false;
+            }
+          }
+
+          setCollections(allCollections);
+        } catch {
+          setCollections([]);
+        }
+      }
+    } catch (err) {
+      setProducts([]);
+      setStatusMessage({
+        type: "error",
+        text: err instanceof Error
+          ? `Lỗi khi tải dữ liệu sản phẩm từ Shopify Gateway: ${err.message}`
+          : "Không thể kết nối đến Shopify Gateway.",
+      });
+    } finally {
+      setIsLoadingProducts(false);
+    }
+  }, [selectedStoreId, moduleApiRunner, urlProductId, activeProduct]);
+
+  useEffect(() => {
+    void handleLoadStoreProducts();
+  }, [handleLoadStoreProducts]);
 
   // 3. Load Customization Config for a specific product
   const loadProductConfig = async (prod: ShopifyProduct) => {
@@ -603,11 +598,23 @@ export function CustomizationManagerPage({
                       : "border-cyan-800/80 bg-cyan-950/50 text-cyan-300"
                 }`}
               >
-                <span className="font-medium">{statusMessage.text}</span>
+                <div className="flex items-center gap-3">
+                  <span className="font-medium">{statusMessage.text}</span>
+                  {statusMessage.type === "error" && (
+                    <button
+                      type="button"
+                      onClick={() => void handleLoadStoreProducts()}
+                      disabled={isLoadingProducts}
+                      className="rounded-lg bg-rose-800/80 hover:bg-rose-700 px-3 py-1 font-semibold text-rose-100 transition disabled:opacity-50 cursor-pointer"
+                    >
+                      {isLoadingProducts ? "Đang kết nối lại..." : "Thử lại kết nối"}
+                    </button>
+                  )}
+                </div>
                 <button
                   type="button"
                   onClick={() => setStatusMessage(null)}
-                  className="text-slate-400 hover:text-slate-200 ml-4 font-bold"
+                  className="text-slate-400 hover:text-slate-200 ml-4 font-bold cursor-pointer"
                 >
                   ✕
                 </button>

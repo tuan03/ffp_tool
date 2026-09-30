@@ -36,3 +36,36 @@ test("empty configured URL resolves to relative same-origin URL", () => {
   }), "");
 });
 
+test("production environment sanitizes internal ports (8766, 3001, 8768) and localhost to same-origin relative URL", () => {
+  assert.equal(resolveAmazonCoordinatorUrl({
+    configuredUrl: "http://127.0.0.1:8766",
+    browserHostname: "vps.example.com",
+    browserProtocol: "https:",
+    environment: "production",
+  }), "");
+
+  assert.equal(resolveAmazonCoordinatorUrl({
+    configuredUrl: "http://localhost:3001",
+    browserHostname: "vps.example.com",
+    browserProtocol: "https:",
+    environment: "production",
+  }), "");
+
+  assert.equal(resolveAmazonCoordinatorUrl({
+    configuredUrl: "http://vps-server:8768",
+    browserHostname: "vps.example.com",
+    browserProtocol: "https:",
+    environment: "production",
+  }), "");
+});
+
+test("production environment preserves public HTTPS domain when properly configured without internal ports", () => {
+  assert.equal(resolveAmazonCoordinatorUrl({
+    configuredUrl: "https://crawler.production.com",
+    browserHostname: "production.com",
+    browserProtocol: "https:",
+    environment: "production",
+  }), "https://crawler.production.com");
+});
+
+
