@@ -4,6 +4,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { environment } from "../../config/environment";
 import { getCustomGptClient } from "../../modules/custom-gpt-seo";
 import { adaptCustomGptReview } from "./custom-gpt-review";
+import { loadAutoSeoReviews, updateAutoSeoReviewPayload, updateAutoSeoReviewStatus } from "./auto-seo-review-client";
 import type { AmazonCrawlerReviewClient } from "../../modules/amazon-crawler";
 import { getModuleApiRunner, type ModuleApiRunner } from "../../modules/module-api";
 import {
@@ -158,6 +159,7 @@ export function SeoReviewPage({
                   if (!p || typeof p.id !== "string" || p.id.startsWith("sample-prod-")) {
                     return false;
                   }
+                  if (environment !== "mock" && (p as SeoProductUiViewModel).sourceOrigin === "auto_seo") return false;
                   if (!hasCleaned && p.shopifySyncStatus === "failed") {
                     return false;
                   }
@@ -414,6 +416,23 @@ export function SeoReviewPage({
     return "capozen";
   }, [urlStoreId, storeId, selectedStoreId, products]);
 
+  useEffect(() => {
+    if (environment === "mock") return;
+    let isCurrent = true;
+    void loadAutoSeoReviews(effectiveStoreId).then((loaded) => {
+      if (!isCurrent) return;
+      setProducts((current) => [
+        ...current.filter((product) => product.sourceOrigin !== "auto_seo" || product.storeId?.toLowerCase() !== effectiveStoreId),
+        ...loaded,
+      ]);
+    }).catch((error: unknown) => {
+      if (!isCurrent) return;
+      const message = error instanceof Error ? error.message : String(error);
+      setSyncFeedback({ type: "error", message: `Không thể tải Auto SEO review: ${message}` });
+    });
+    return () => { isCurrent = false; };
+  }, [effectiveStoreId]);
+
   // High-Resolution Image Zoom Modal State
   const [zoomState, setZoomState] = useState<{
     isOpen: boolean;
@@ -501,7 +520,7 @@ export function SeoReviewPage({
   useEffect(() => {
     if (typeof window !== "undefined" && window.sessionStorage) {
       try {
-        const legacyProducts = products.filter((product) => !product.coordinatorReview);
+        const legacyProducts = products.filter((product) => !product.coordinatorReview && (environment === "mock" || product.sourceOrigin !== "auto_seo"));
         window.sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(legacyProducts));
       } catch {
         // Storage limit or private mode warning
@@ -999,6 +1018,7 @@ export function SeoReviewPage({
         );
         nextVersion = reviewed.version;
       }
+      if (target.sourceOrigin === "auto_seo") await updateAutoSeoReviewStatus(target, "approved");
       setProducts((prev) => prev.map((product) =>
         product.id === id
           ? {
@@ -1039,6 +1059,7 @@ export function SeoReviewPage({
         );
         nextVersion = reviewed.version;
       }
+      if (target.sourceOrigin === "auto_seo") await updateAutoSeoReviewStatus(target, "rejected", reason);
       setProducts((prev) =>
         prev.map((p) =>
           p.id === id
@@ -1100,6 +1121,7 @@ export function SeoReviewPage({
           "approved",
         )];
       }));
+      await Promise.all(targets.filter((target) => target.sourceOrigin === "auto_seo").map((target) => updateAutoSeoReviewStatus(target, "approved")));
       const versions = new Map(updatedReviews.map((review) => [review.id, review.version]));
       const targetIds = new Set(targets.map((target) => target.id));
       setProducts((prev) => prev.map((product) =>
@@ -1224,6 +1246,7 @@ export function SeoReviewPage({
           reason,
         )];
       }));
+      await Promise.all(targets.filter((target) => target.sourceOrigin === "auto_seo").map((target) => updateAutoSeoReviewStatus(target, "rejected", reason)));
       const versions = new Map(updatedReviews.map((review) => [review.id, review.version]));
       setProducts((prev) =>
         prev.map((p) =>
@@ -1553,6 +1576,11 @@ export function SeoReviewPage({
           );
           nextVersion = approved.version;
         }
+      }
+      if (target.sourceOrigin === "auto_seo") {
+        await updateAutoSeoReviewPayload(target, updated);
+        if (autoApprove) await updateAutoSeoReviewStatus(target, "approved");
+        else if (target.reviewDecision !== "pending") await updateAutoSeoReviewStatus(target, "pending");
       }
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);

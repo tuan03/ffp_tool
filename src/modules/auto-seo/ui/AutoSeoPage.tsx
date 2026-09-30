@@ -35,6 +35,7 @@ export interface AutoSeoPageProps {
   initialProducts?: readonly ShopifyProductForAutoSeoUi[];
   initialSelectedProductIds?: readonly string[];
   onHandoverToSeo?: AutoSeoHandoverHandler;
+  readonly backendRunsSeo?: boolean;
   navigate?: (path: string) => void;
 }
 
@@ -43,6 +44,7 @@ export function AutoSeoPage({
   initialProducts,
   initialSelectedProductIds,
   onHandoverToSeo,
+  backendRunsSeo = false,
   navigate: customNavigate,
 }: AutoSeoPageProps): React.JSX.Element {
   const navigate = customNavigate ?? ((path: string) => {
@@ -296,6 +298,18 @@ export function AutoSeoPage({
         return;
       }
 
+      if (backendRunsSeo) {
+        const effectiveStoreId = selectedStoreId || storeInfo.storeId;
+        notifyUser({
+          title: "Auto SEO hoàn tất",
+          message: `${hydratedProducts.length} sản phẩm đã sẵn sàng để kiểm duyệt.`,
+          type: "success",
+          url: `/seo-review?storeId=${encodeURIComponent(effectiveStoreId)}`,
+        });
+        navigate(`/seo-review?storeId=${encodeURIComponent(effectiveStoreId)}`);
+        return;
+      }
+
       const autoSeoProducts = hydratedProducts.map(mapShopifyProductToAutoSeoCandidate);
       const result = await activeClient.runAutoSeo({
         workflowId,
@@ -348,7 +362,7 @@ export function AutoSeoPage({
   };
 
   const handleSendToSeo = async (): Promise<void> => {
-    if (!onHandoverToSeo || lastHydratedProducts.length === 0) {
+    if (backendRunsSeo || !onHandoverToSeo || lastHydratedProducts.length === 0) {
       return;
     }
 
@@ -447,7 +461,7 @@ export function AutoSeoPage({
         onLoadProducts={() => void handleLoadProducts()}
         onSelectAll={handleSelectAll}
         onClearSelection={handleClearSelection}
-        onRunAutoSeo={() => void handleRunAutoSeo()}
+        onRunAutoSeo={handleRunAutoSeo}
         stores={availableStores}
         selectedStoreId={selectedStoreId}
         onSelectStore={handleSelectStore}
@@ -486,7 +500,7 @@ export function AutoSeoPage({
       <AutoSeoOutputPanel
         output={output}
         onClearOutput={() => setAutoSeoOutput(null)}
-        onSendToSeoContent={onHandoverToSeo && lastHydratedProducts.length > 0 ? () => void handleSendToSeo() : undefined}
+        onSendToSeoContent={!backendRunsSeo && onHandoverToSeo && lastHydratedProducts.length > 0 ? () => void handleSendToSeo() : undefined}
         isSendingToSeo={isSendingToSeo}
       />
     </div>
