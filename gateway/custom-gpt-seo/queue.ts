@@ -74,14 +74,21 @@ export class CustomGptQueue {
     if (!row) throw new Error("Job not found");
     return json(row.payload) as GptSeoJob;
   }
-  list(storeId: string, status?: GptJobStatus, offset = 0): readonly GptSeoJob[] {
-    const rows = status
-      ? this.db.prepare("SELECT payload FROM gpt_jobs WHERE store_id=? AND status=? ORDER BY created_at,id LIMIT 50 OFFSET ?").all(storeId, status, offset)
-      : this.db.prepare("SELECT payload FROM gpt_jobs WHERE store_id=? ORDER BY created_at,id LIMIT 50 OFFSET ?").all(storeId, offset);
+  list(storeId: string, status?: GptJobStatus, offset = 0, provider?: ExternalSeoProvider): readonly GptSeoJob[] {
+    const rows = provider
+      ? status
+        ? this.db.prepare("SELECT payload FROM gpt_jobs WHERE store_id=? AND provider=? AND status=? ORDER BY created_at,id LIMIT 50 OFFSET ?").all(storeId, provider, status, offset)
+        : this.db.prepare("SELECT payload FROM gpt_jobs WHERE store_id=? AND provider=? ORDER BY created_at,id LIMIT 50 OFFSET ?").all(storeId, provider, offset)
+      : status
+        ? this.db.prepare("SELECT payload FROM gpt_jobs WHERE store_id=? AND status=? ORDER BY created_at,id LIMIT 50 OFFSET ?").all(storeId, status, offset)
+        : this.db.prepare("SELECT payload FROM gpt_jobs WHERE store_id=? ORDER BY created_at,id LIMIT 50 OFFSET ?").all(storeId, offset);
     return rows.map(row => json(row.payload) as GptSeoJob);
   }
-  counts(storeId: string): Readonly<Record<string, number>> {
-    return Object.fromEntries(this.db.prepare("SELECT status,COUNT(*) AS count FROM gpt_jobs WHERE store_id=? GROUP BY status").all(storeId).map(row => [String(row.status), Number(row.count)]));
+  counts(storeId: string, provider?: ExternalSeoProvider): Readonly<Record<string, number>> {
+    const rows = provider
+      ? this.db.prepare("SELECT status,COUNT(*) AS count FROM gpt_jobs WHERE store_id=? AND provider=? GROUP BY status").all(storeId, provider)
+      : this.db.prepare("SELECT status,COUNT(*) AS count FROM gpt_jobs WHERE store_id=? GROUP BY status").all(storeId);
+    return Object.fromEntries(rows.map(row => [String(row.status), Number(row.count)]));
   }
   private write(job: GptSeoJob): void {
     this.db.prepare("UPDATE gpt_jobs SET status=?,payload=?,provider=? WHERE id=? AND store_id=?").run(job.status, JSON.stringify({ ...job, updatedAt: this.now() }), job.settings.provider, job.id, job.storeId);
@@ -170,6 +177,17 @@ export class CustomGptQueue {
     if (!row) return undefined;
     if (row.digest !== hash(requestPayload)) throw new Error("Idempotency key reused with different request");
     return row.response ? json(row.response) as { payload: unknown } : { payload: null };
+  }
+  rememberMutation(jobId: string, requestId: string, requestPayload: unknown, payload: unknown): void {
+    this.transaction(() => {
+      const digest = hash(requestPayload);
+      const previous = this.db.prepare("SELECT digest FROM gpt_mutations WHERE scope=? AND request_id=?").get(jobId, requestId);
+      if (previous) {
+        if (previous.digest !== digest) throw new Error("Idempotency key reused with different request");
+        return;
+      }
+      this.db.prepare("INSERT INTO gpt_mutations(scope,request_id,digest,response) VALUES (?,?,?,?)").run(jobId, requestId, digest, JSON.stringify({ payload }));
+    });
   }
   issue(storeId: string, jobId: string, batchId: string, token: string, message: string): void {
     this.transaction(() => {

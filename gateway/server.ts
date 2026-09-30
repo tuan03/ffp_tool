@@ -92,7 +92,7 @@ export function startGatewayServer(
   }
 
   const stores = loadBootstrappedStores({ env });
-  if (env.GPT_SEO_ACTION_KEYS_JSON || process.env.GPT_SEO_ACTION_KEYS_JSON || env.GPT_SEO_ACTION_KEY || process.env.GPT_SEO_ACTION_KEY) getCustomGptRuntime();
+  if (env.GPT_SEO_ACTION_KEYS_JSON || process.env.GPT_SEO_ACTION_KEYS_JSON || env.GPT_SEO_ACTION_KEY || process.env.GPT_SEO_ACTION_KEY || env.GPT_SEO_MCP_KEYS_JSON || process.env.GPT_SEO_MCP_KEYS_JSON) getCustomGptRuntime();
 
   const storeRegistry = new InMemoryStoreRegistry(stores);
   const tokenProvider = new CompositeTokenProvider();
@@ -122,6 +122,10 @@ export function startGatewayServer(
       res.statusCode = 200;
       res.setHeader("Content-Type", "application/json");
       res.end(JSON.stringify({ status: "ok", timestamp: new Date().toISOString() }));
+      return;
+    }
+    if (url === "/mcp/gpt-seo" || url.startsWith("/mcp/gpt-seo?")) {
+      await getCustomGptRuntime().mcpHandler(req, res);
       return;
     }
     if (hasOperatorAuthentication && !url.startsWith("/api/") && !isAuthenticatedOperator) {

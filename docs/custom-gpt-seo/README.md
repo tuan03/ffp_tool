@@ -1,6 +1,6 @@
 # Custom GPT SEO
 
-This module supports Amazon → Customize → SEO and Auto SEO → backup → SEO. Gemini remains the default. Select Custom GPT at `/gpt-seo` to enqueue new products. Batch size is 1–10 (default 5). Results stay on the server until a human reviews them.
+This module supports Amazon → Customize → SEO and Auto SEO → backup → SEO. Gemini remains the default. Select Custom GPT or Codex MCP at `/gpt-seo` to enqueue new products for an external reasoning session. Batch size is 1–10 (default 5). Results stay on the server until a human reviews them. See [Codex MCP setup and operations](codex-mcp.md).
 
 ## Setup
 
@@ -14,6 +14,7 @@ GATEWAY_HOST=127.0.0.1
 GATEWAY_PORT=3001
 GATEWAY_AUTH_TOKEN=<dedicated-internal-admin-secret>
 GPT_SEO_ACTION_KEYS_JSON={"capozen":"<capozen-random-action-secret>","wrydeco":"<wrydeco-random-action-secret>"}
+GPT_SEO_MCP_KEYS_JSON={"capozen":"<capozen-random-mcp-secret>","wrydeco":"<wrydeco-random-mcp-secret>"}
 GPT_SEO_DB_PATH=.local-data/custom-gpt-seo.sqlite3
 GPT_SEO_PUBLIC_URL=https://seo.example.com
 SHOPIFY_GATEWAY_URL=http://127.0.0.1:3001/api/shopify

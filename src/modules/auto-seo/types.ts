@@ -104,7 +104,7 @@ export interface AutoSeoBackupRequest {
 }
 
 export interface AutoSeoBackupResponse {
-  readonly seoProvider?: "gemini" | "custom_gpt";
+  readonly seoProvider?: "gemini" | "custom_gpt" | "codex_mcp";
   readonly workflowId: string;
   readonly backedUpCount: number;
   readonly backupIds: readonly string[];

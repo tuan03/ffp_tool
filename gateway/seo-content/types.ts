@@ -28,7 +28,7 @@ export interface SeoContentInput {
 }
 
 export interface SeoContentResult {
-  readonly provider?: "gemini" | "custom_gpt";
+  readonly provider?: "gemini" | "custom_gpt" | "codex_mcp";
   readonly success: boolean;
   readonly processedCount: number;
   readonly message?: string;

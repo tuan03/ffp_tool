@@ -165,6 +165,7 @@ test("waiting-jobs lists read-only identifiers for the authenticated store witho
 test("image listings return the original public image URL without signing it", async () => {
   const db = new DatabaseSync(":memory:");
   const queue = new CustomGptQueue(db);
+  queue.configure("capozen", { provider: "custom_gpt", batchSize: 5 });
   const handler = createCustomGptHandler({
     queue,
     actionKeys: { capozen: "capozen-key", wrydeco: "wrydeco-key" },

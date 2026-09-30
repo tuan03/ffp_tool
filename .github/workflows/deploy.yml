@@ -103,12 +103,14 @@ jobs:
 
             echo "=== [3/6] Handling .env configuration ==="
             EXISTING_GPT_SEO_ACTION_KEYS_JSON=""
+            EXISTING_GPT_SEO_MCP_KEYS_JSON=""
             EXISTING_FFP_OPERATOR_USERNAME=""
             EXISTING_FFP_OPERATOR_PASSWORD=""
             EXISTING_STORE_ENV_FILE="$(mktemp)"
             trap 'rm -f "$EXISTING_STORE_ENV_FILE"' EXIT
             if [ -f .env ]; then
               EXISTING_GPT_SEO_ACTION_KEYS_JSON=$(sed -nE 's/^[[:space:]]*GPT_SEO_ACTION_KEYS_JSON=(.*)$/\1/p' .env | head -n 1 || true)
+              EXISTING_GPT_SEO_MCP_KEYS_JSON=$(sed -nE 's/^[[:space:]]*GPT_SEO_MCP_KEYS_JSON=(.*)$/\1/p' .env | head -n 1 || true)
               EXISTING_FFP_OPERATOR_USERNAME=$(sed -nE 's/^[[:space:]]*FFP_OPERATOR_USERNAME=(.*)$/\1/p' .env | head -n 1 || true)
               EXISTING_FFP_OPERATOR_PASSWORD=$(sed -nE 's/^[[:space:]]*FFP_OPERATOR_PASSWORD=(.*)$/\1/p' .env | head -n 1 || true)
               grep -E '^STORE_[A-Z0-9_]+=' .env > "$EXISTING_STORE_ENV_FILE" || true
@@ -142,6 +144,14 @@ jobs:
               sed -i '/^[[:space:]]*GPT_SEO_ACTION_KEYS_JSON=/d' .env
               printf '\nGPT_SEO_ACTION_KEYS_JSON=%s\n' "$EXISTING_GPT_SEO_ACTION_KEYS_JSON" >> .env
               INCOMING_GPT_SEO_ACTION_KEYS_JSON="$EXISTING_GPT_SEO_ACTION_KEYS_JSON"
+            fi
+
+            # Keep the VPS multi-store MCP keys authoritative for the same reason.
+            INCOMING_GPT_SEO_MCP_KEYS_JSON=$(sed -nE 's/^[[:space:]]*GPT_SEO_MCP_KEYS_JSON=(.*)$/\1/p' .env | head -n 1 || true)
+            if [ -n "$EXISTING_GPT_SEO_MCP_KEYS_JSON" ]; then
+              sed -i '/^[[:space:]]*GPT_SEO_MCP_KEYS_JSON=/d' .env
+              printf '\nGPT_SEO_MCP_KEYS_JSON=%s\n' "$EXISTING_GPT_SEO_MCP_KEYS_JSON" >> .env
+              INCOMING_GPT_SEO_MCP_KEYS_JSON="$EXISTING_GPT_SEO_MCP_KEYS_JSON"
             fi
 
             # A multi-store map replaces the legacy single-store Action key.

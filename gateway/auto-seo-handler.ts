@@ -35,7 +35,7 @@ export interface AutoSeoRunRequest {
 }
 
 export interface AutoSeoRunResult {
-  readonly seoProvider?: "gemini" | "custom_gpt";
+  readonly seoProvider?: "gemini" | "custom_gpt" | "codex_mcp";
   readonly workflowId: string;
   readonly backedUpCount: number;
   readonly backupIds: readonly string[];
@@ -234,7 +234,7 @@ export async function handleAutoSeoRun(
     const backupResult = executeAutoSeoBackup(db, request, {
       onConflict: options?.onConflict ?? request.onConflict,
     });
-    if (selectedSettings?.provider === "custom_gpt") {
+    if (selectedSettings && selectedSettings.provider !== "gemini") {
       db.prepare("UPDATE auto_seo_product_backups SET gpt_settings_json=? WHERE workflow_id=? AND store_id=?").run(JSON.stringify(selectedSettings), request.workflowId, request.storeId);
     }
     db.exec("COMMIT");
@@ -247,7 +247,7 @@ export async function handleAutoSeoRun(
   // Only after successful COMMIT may the system hand off the same products to SEO content runner
   let downstreamStatus: "SENT" | "FAILED" = "FAILED";
   let downstreamError: string | null = null;
-  let seoProvider: "gemini" | "custom_gpt" | undefined;
+  let seoProvider: "gemini" | "custom_gpt" | "codex_mcp" | undefined;
 
   try {
     const seoResult = await runner({
