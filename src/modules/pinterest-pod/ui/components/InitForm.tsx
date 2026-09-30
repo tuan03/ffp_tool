@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { JobStatus, PinterestProductType, ReferenceImage } from "../../types";
 import { inferProductTypeFromNiche } from "../../types";
 import { ReferenceDropzone } from "./ReferenceDropzone";
@@ -254,6 +254,12 @@ export function InitForm({
 
   const currentProductOption = PRODUCT_OPTIONS.find((p) => p.type === activeProduct) ?? PRODUCT_OPTIONS[0];
 
+  useEffect(() => {
+    if (!overrideProduct) {
+      onProductChange?.(inferredProduct);
+    }
+  }, [inferredProduct, onProductChange, overrideProduct]);
+
   const handleSelectProduct = (newProduct: PinterestProductType): void => {
     setOverrideProduct(true);
     onProductChange?.(newProduct);
@@ -264,31 +270,40 @@ export function InitForm({
     onProductChange?.(inferredProduct);
   };
 
+  const handleNicheChange = (nextNiche: string): void => {
+    onNicheChange(nextNiche);
+    if (!overrideProduct) {
+      onProductChange?.(nextNiche.trim() ? inferProductTypeFromNiche(nextNiche) : "bag");
+    }
+  };
+
   return (
-    <section className="flex flex-col gap-5 rounded-xl border border-slate-800 bg-slate-900/90 p-5 shadow-xl">
+    <section className="flex flex-col gap-5 rounded-2xl border border-slate-800 bg-slate-900/90 p-5 shadow-xl">
       {/* Header */}
-      <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-        <div className="flex items-center gap-2">
-          <span className="text-xl">✨</span>
+      <div className="flex flex-col gap-3 border-b border-slate-800 pb-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-start gap-3">
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-cyan-500/10 text-lg text-cyan-300">1</span>
           <div>
-            <h2 className="text-base font-bold text-slate-100 flex items-center gap-2">
-              Khởi tạo Khám phá & Sản xuất Pinterest POD
-            </h2>
-            <p className="text-xs text-slate-400">
-              Nhập từ khóa niche để khám phá cụm xu hướng AI và tự động tạo file in CMYK 300 DPI
+            <h2 className="text-base font-bold text-slate-100">Thiết lập lần chạy Pinterest POD</h2>
+            <p className="mt-1 text-xs leading-5 text-slate-400">
+              Nhập toàn bộ thông tin một lần. Hệ thống sẽ dùng chúng cho quét Trend, cào ảnh và tạo mockup ở các bước tiếp theo.
             </p>
           </div>
         </div>
-        <span className="rounded bg-cyan-950/80 border border-cyan-800/60 px-2.5 py-1 text-[11px] font-bold text-cyan-300">
-          Tier 1 & 2 Discovery
+        <span className="self-start rounded-full border border-emerald-800/70 bg-emerald-950/50 px-3 py-1 text-[11px] font-semibold text-emerald-300 sm:self-center">
+          Nhập một lần · Chạy xuyên suốt
         </span>
       </div>
 
       {/* 1. Primary Niche Input */}
-      <div className="flex flex-col gap-2">
+      <div data-testid="step-one-topic" className="order-1 flex flex-col gap-3 rounded-xl border border-slate-800 bg-slate-950/40 p-4">
+        <div>
+          <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-cyan-400">A · Chủ đề và sản phẩm</p>
+          <p className="mt-1 text-xs text-slate-400">Xác định nội dung cần nghiên cứu và phôi sản phẩm đích.</p>
+        </div>
         <div className="flex items-center justify-between">
           <label htmlFor="niche-input" className="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
-            <span>🎯 1. Từ khóa Pinterest Niche / Chủ đề xu hướng:</span>
+            <span>Từ khóa Pinterest niche / chủ đề xu hướng</span>
             <span className="text-rose-400">*</span>
           </label>
           <span className="text-[11px] text-slate-400">Nhập bất kỳ sản phẩm hoặc phong cách nghệ thuật</span>
@@ -299,7 +314,7 @@ export function InitForm({
             id="niche-input"
             type="text"
             value={niche}
-            onChange={(e) => onNicheChange(e.target.value)}
+            onChange={(e) => handleNicheChange(e.target.value)}
             placeholder="Ví dụ: leather bag, halloween, vintage distressed rug, cozy blanket, gothic celestial..."
             disabled={isBusy}
             className="w-full rounded-xl border border-slate-700 bg-slate-950 pl-3.5 pr-28 py-3 text-sm text-slate-100 placeholder-slate-500 focus:border-cyan-400 focus:outline-none focus:ring-1 focus:ring-cyan-400 disabled:opacity-50 font-medium"
@@ -344,7 +359,7 @@ export function InitForm({
               key={chip}
               type="button"
               disabled={isBusy}
-              onClick={() => onNicheChange(chip)}
+              onClick={() => handleNicheChange(chip)}
               className="rounded-full border border-slate-800 bg-slate-800/60 px-2.5 py-0.5 text-[11px] text-slate-300 transition hover:border-cyan-500 hover:bg-slate-700 hover:text-cyan-300 disabled:opacity-50"
             >
               {chip}
@@ -354,10 +369,14 @@ export function InitForm({
       </div>
 
       {/* 2. Số lượng ảnh cào từ Pinterest (Crawl Pool Size) */}
-      <div className="flex flex-col gap-2 rounded-xl border border-slate-800 bg-slate-950/70 p-4">
+      <div data-testid="step-one-crawl-settings" className="order-3 flex flex-col gap-3 rounded-xl border border-slate-800 bg-slate-950/40 p-4">
+        <div>
+          <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-cyan-400">C · Cấu hình cào ảnh</p>
+          <p className="mt-1 text-xs text-slate-400">Đặt khối lượng ảnh mà Crawler Agent sẽ thu thập sau khi bạn chọn Trend.</p>
+        </div>
         <div className="flex flex-wrap items-center justify-between gap-1">
           <label htmlFor="crawl-count-input" className="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
-            <span>📥 2. Số lượng ảnh cào về từ Pinterest:</span>
+            <span>Số lượng ảnh cào về từ Pinterest</span>
             <span className="text-cyan-400 font-bold text-sm">{crawlCount} ảnh</span>
           </label>
           <span className="text-[11px] text-slate-400">10 – 500+ ảnh (Tùy chỉnh linh hoạt)</span>
@@ -425,13 +444,17 @@ export function InitForm({
       </div>
 
       {/* 3. Ảnh phòng / Bối cảnh mẫu tham chiếu để ghép Mockup AI */}
-      <div className="flex flex-col gap-2.5 rounded-xl border border-purple-500/30 bg-purple-950/15 p-4">
+      <div data-testid="step-one-mockup-settings" className="order-4 flex flex-col gap-3 rounded-xl border border-slate-800 bg-slate-950/40 p-4">
+        <div>
+          <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-cyan-400">D · Dữ liệu cho mockup</p>
+          <p className="mt-1 text-xs text-slate-400">Có thể chuẩn bị bối cảnh ngay từ đầu hoặc để hệ thống tự tạo ở bước sản xuất.</p>
+        </div>
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <span className="text-base">🛋️</span>
             <div>
-              <h3 className="text-xs font-bold text-purple-200 flex items-center gap-1.5">
-                <span>3. Ảnh phòng / Bối cảnh mẫu để ghép Mockup AI</span>
+              <h3 className="text-xs font-bold text-slate-200 flex items-center gap-1.5">
+                <span>Ảnh phòng / Bối cảnh mẫu để ghép Mockup AI</span>
                 <span className="text-[10px] font-normal text-purple-400/80">(Tùy chọn)</span>
               </h3>
               <p className="text-[11px] text-slate-400 mt-0.5">
@@ -467,17 +490,19 @@ export function InitForm({
       </div>
 
       {/* Dynamic Multi-Market Matrix Preset & Formula Bar */}
-      <div className="flex flex-col gap-3 rounded-xl border border-cyan-800/60 bg-gradient-to-r from-slate-950/80 via-cyan-950/30 to-indigo-950/40 p-4 shadow-lg">
+      <div data-testid="step-one-trend-scope" className="order-2 flex flex-col gap-3 rounded-xl border border-slate-800 bg-slate-950/40 p-4">
+        <div>
+          <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-cyan-400">B · Phạm vi Pinterest Trends</p>
+          <p className="mt-1 text-xs text-slate-400">Chọn nhanh phạm vi phân tích. Thị trường và loại xu hướng chi tiết nằm trong phần nâng cao.</p>
+        </div>
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
           <div className="flex items-center gap-2.5">
             <span className="text-xl">🌐</span>
             <div>
               <div className="flex items-center gap-2">
-                <h3 className="text-xs font-bold text-slate-100">
-                  Ma trận Xu hướng Tự do (Dynamic Discovery Matrix)
-                </h3>
+                <h3 className="text-xs font-bold text-slate-100">Phạm vi phân tích hiện tại</h3>
                 <span className="rounded-full bg-cyan-500/20 border border-cyan-400/40 px-2 py-0.2 text-[9px] font-bold text-cyan-300">
-                  {totalCalculatedQueries} API CALLS ĐỒNG THỜI
+                  {currentRegions.length} thị trường · {currentTrendTypes.length} loại xu hướng
                 </span>
               </div>
               <p className="text-[11px] text-slate-400 mt-0.5">
@@ -543,77 +568,89 @@ export function InitForm({
         {/* Live Calculation Formula */}
         <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-cyan-900/40 bg-slate-900/80 px-3 py-1.5 text-xs text-slate-300">
           <div className="flex items-center gap-1.5">
-            <span className="text-cyan-400 font-bold">⚡ Công thức:</span>
+            <span className="text-cyan-400 font-bold">Phạm vi:</span>
             <span>
               <strong className="text-cyan-300">{currentRegions.length} thị trường</strong> ({currentRegions.join(", ")})
               {" × "}
               <strong className="text-indigo-300">{currentTrendTypes.length} loại xu hướng</strong>
               {" = "}
-              <strong className="text-emerald-300 font-bold">{totalCalculatedQueries} API calls đồng thời</strong>
+              <strong className="text-emerald-300 font-bold">{totalCalculatedQueries} lượt phân tích</strong>
             </span>
           </div>
           <span className="text-[11px] text-slate-400 font-mono">
-            ~{estimatedSeconds}s qua Multi-Threading
+            Dự kiến khoảng {estimatedSeconds} giây
           </span>
         </div>
       </div>
 
       {/* Main Action Buttons */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
+      <div data-testid="step-one-run-mode" className="order-6 flex flex-col gap-3 rounded-xl border border-slate-700 bg-slate-950/70 p-4">
+        <div>
+          <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-cyan-400">E · Chọn cách bắt đầu</p>
+          <p className="mt-1 text-xs text-slate-400">Pinterest Trends là luồng được đề xuất. Các phương án khác không dùng dữ liệu Trends chính thức.</p>
+        </div>
         <button
           type="button"
           onClick={onDiscoverTrends ?? onStartCrawl}
           disabled={isBusy || !niche.trim() || !canDiscoverOfficialTrends}
-          className="flex flex-col items-center justify-center gap-0.5 rounded-xl bg-gradient-to-r from-cyan-600 via-blue-600 to-indigo-600 p-3 text-white shadow-lg shadow-cyan-500/20 transition hover:from-cyan-500 hover:to-indigo-500 hover:shadow-cyan-500/35 disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
+          className="flex min-h-16 flex-col items-center justify-center gap-1 rounded-xl bg-gradient-to-r from-cyan-600 via-blue-600 to-indigo-600 p-4 text-white shadow-lg shadow-cyan-500/20 transition hover:from-cyan-500 hover:to-indigo-500 hover:shadow-cyan-500/35 disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
         >
           <div className="flex items-center gap-2 text-sm font-bold">
             <span>✨</span>
             <span>
               {isDiscoveringTrends
                 ? "Đang phân tích xu hướng..."
-                : `Pinterest Trends chính thức (${totalCalculatedQueries} API calls)`}
+                : "Phân tích Pinterest Trends"}
             </span>
           </div>
           <span className="text-[10px] text-cyan-200/90 font-normal">
             {canDiscoverOfficialTrends
-              ? `Dùng OAuth và dữ liệu Pinterest API thật`
+              ? `${currentRegions.length} thị trường · ${currentTrendTypes.length} loại xu hướng · dữ liệu Pinterest API chính thức`
               : "Cần kết nối Pinterest OAuth trước"}
           </span>
         </button>
 
-        <button
-          type="button"
-          onClick={onSuggestThemes}
-          disabled={isBusy || !niche.trim()}
-          className="flex flex-col items-center justify-center gap-0.5 rounded-xl border border-amber-500/50 bg-amber-950/30 p-3 text-amber-300 shadow transition hover:border-amber-400 hover:bg-amber-900/40 hover:text-white disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
-        >
-          <div className="flex items-center gap-2 text-sm font-bold">
-            <span>💡</span>
-            <span>Gợi ý chủ đề POD nội bộ</span>
-          </div>
-          <span className="text-[10px] text-amber-400/80 font-normal">
-            Không phải dữ liệu Pinterest Trends, không có chỉ số tăng trưởng
-          </span>
-        </button>
+        <div className="flex items-center gap-3 pt-1 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">
+          <span className="h-px flex-1 bg-slate-800" />
+          <span>Các phương án khác</span>
+          <span className="h-px flex-1 bg-slate-800" />
+        </div>
 
-        <button
-          type="button"
-          onClick={onStartCrawl}
-          disabled={isBusy || !niche.trim()}
-          className="flex flex-col items-center justify-center gap-0.5 rounded-xl border border-emerald-500/50 bg-emerald-950/30 p-3 text-emerald-300 shadow transition hover:border-emerald-400 hover:bg-emerald-900/40 hover:text-white disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
-        >
-          <div className="flex items-center gap-2 text-sm font-bold">
-            <span>⚡</span>
-            <span>{jobStatus === "running" ? "Đang cào dữ liệu..." : "Quick Auto Crawl (Cào nhanh)"}</span>
-          </div>
-          <span className="text-[10px] text-emerald-400/80 font-normal">
-            Cào trực tiếp {crawlCount} ảnh Pinterest & chấm điểm AI tức thì
-          </span>
-        </button>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <button
+            type="button"
+            onClick={onSuggestThemes}
+            disabled={isBusy || !niche.trim()}
+            className="flex flex-col items-center justify-center gap-0.5 rounded-xl border border-amber-500/50 bg-amber-950/30 p-3 text-amber-300 shadow transition hover:border-amber-400 hover:bg-amber-900/40 hover:text-white disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
+          >
+            <div className="flex items-center gap-2 text-sm font-bold">
+              <span>💡</span>
+              <span>Gợi ý chủ đề POD nội bộ</span>
+            </div>
+            <span className="text-[10px] text-amber-400/80 font-normal">
+              Không phải dữ liệu Pinterest Trends, không có chỉ số tăng trưởng
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={onStartCrawl}
+            disabled={isBusy || !niche.trim()}
+            className="flex flex-col items-center justify-center gap-0.5 rounded-xl border border-emerald-500/50 bg-emerald-950/30 p-3 text-emerald-300 shadow transition hover:border-emerald-400 hover:bg-emerald-900/40 hover:text-white disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
+          >
+            <div className="flex items-center gap-2 text-sm font-bold">
+              <span>⚡</span>
+              <span>{jobStatus === "running" ? "Đang cào dữ liệu..." : "Quick Auto Crawl (Cào nhanh)"}</span>
+            </div>
+            <span className="text-[10px] text-emerald-400/80 font-normal">
+              Cào trực tiếp {crawlCount} ảnh Pinterest & chấm điểm AI tức thì
+            </span>
+          </button>
+        </div>
       </div>
 
       {isBusy && (
-        <div className="flex items-center justify-between rounded-lg border border-slate-700 bg-slate-950/70 p-3">
+        <div className="order-7 flex items-center justify-between rounded-lg border border-slate-700 bg-slate-950/70 p-3">
           <div className="flex items-center gap-2 text-xs text-slate-300">
             <span className="h-2 w-2 rounded-full bg-cyan-400 animate-ping" />
             <span>Tiến trình đang chạy ngầm... Bạn có thể theo dõi thanh trạng thái bên dưới.</span>
@@ -630,7 +667,7 @@ export function InitForm({
       )}
 
       {/* Collapsible Advanced Pinterest Settings */}
-      <div className="flex flex-col rounded-xl border border-slate-800 bg-slate-950/60">
+      <div className="order-5 flex flex-col rounded-xl border border-slate-800 bg-slate-950/60">
         <button
           type="button"
           onClick={() => setIsAdvancedOpen((prev) => !prev)}
@@ -638,9 +675,9 @@ export function InitForm({
         >
           <div className="flex items-center gap-2">
             <span>⚙️</span>
-            <span>Cài đặt ma trận đa chiều Pinterest API ({currentRegions.length} thị trường • {currentTrendTypes.length} xu hướng)</span>
+            <span>Thiết lập phạm vi nâng cao ({currentRegions.length} thị trường • {currentTrendTypes.length} loại xu hướng)</span>
             <span className="rounded bg-slate-800 px-2 py-0.5 text-[10px] text-cyan-300 font-mono">
-              {totalCalculatedQueries} CALLS
+              {totalCalculatedQueries} lượt
             </span>
           </div>
           <span className="text-slate-400 text-sm font-bold">
@@ -828,15 +865,15 @@ export function InitForm({
               <div className="flex items-center gap-2">
                 <span className="text-base">🚀</span>
                 <span>
-                  Tổng số truy vấn song song:{" "}
+                  Tổng phạm vi phân tích:{" "}
                   <strong className="text-cyan-300 text-sm font-mono font-bold">
-                    {totalCalculatedQueries} calls
+                    {totalCalculatedQueries} lượt
                   </strong>{" "}
                   ({currentRegions.length} QG × {currentTrendTypes.length} loại xu hướng × {currentInterests.length || 1} ngành)
                 </span>
               </div>
               <span className="text-[11px] text-slate-400 font-mono">
-                ~{estimatedSeconds}s qua Multi-Threading
+                Dự kiến khoảng {estimatedSeconds} giây
               </span>
             </div>
           </div>

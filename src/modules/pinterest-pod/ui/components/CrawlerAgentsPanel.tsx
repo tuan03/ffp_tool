@@ -47,7 +47,7 @@ export function CrawlerAgentsPanel({
   onOpenInstall,
   onForgetAgent,
 }: CrawlerAgentsPanelProps): React.JSX.Element {
-  const [isExpanded, setIsExpanded] = useState(true);
+  const [isExpanded, setIsExpanded] = useState(false);
   const [busyAgentId, setBusyAgentId] = useState<string | null>(null);
   const sortedAgents = useMemo(
     () => [...agents].sort((left, right) => Number(right.isConnected) - Number(left.isConnected)),
@@ -68,7 +68,7 @@ export function CrawlerAgentsPanel({
           <span>
             <span className="block text-sm font-bold text-slate-100">Máy Crawler Agent</span>
             <span className="block text-[11px] text-slate-400">
-              {isLoading ? "Đang cập nhật..." : `${connectedCount} online · ${activeCount} đang cào · ${agents.length} máy đã đăng ký`}
+              {isLoading ? "Đang cập nhật..." : `${connectedCount} online · ${activeCount} đang cào · ${agents.length} máy đã đăng ký · chỉ cần khi cào ảnh`}
             </span>
           </span>
           <span className="text-xs text-slate-500">{isExpanded ? "▼" : "▶"}</span>

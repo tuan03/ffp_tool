@@ -33,6 +33,7 @@ import { ProductionStep } from "./components/ProductionStep";
 import { ProgressAndLogs } from "./components/ProgressAndLogs";
 import { RecentRunsAccordion } from "./components/RecentRunsAccordion";
 import { RoomTemplateManagerModal } from "./components/RoomTemplateManagerModal";
+import { StepOneRunSummary } from "./components/StepOneRunSummary";
 import { TrendClusterDiscovery } from "./components/TrendClusterDiscovery";
 
 interface PinterestPodStudioProps {
@@ -1085,27 +1086,6 @@ export function PinterestPodStudio({
       {/* TAB 1: Quét Trend & Khởi tạo Job */}
       {currentStage === 1 && (
         <div className="flex flex-col gap-5 animate-in fade-in duration-200">
-          {/* Agent Offline Notice Banner */}
-          {!isAgentConnected && (
-            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 rounded-xl border border-slate-700/80 bg-slate-800/40 p-3 text-xs text-slate-300">
-              <div className="flex items-center gap-2.5">
-                <span className="text-base">💻</span>
-                <div>
-                  <span className="font-semibold text-slate-200">Local Agent Ngoại Tuyến: </span>
-                  <span className="text-slate-400">
-                    Cài agent trên một máy cá nhân để cào Playwright và render CMYK 300DPI thay cho VPS.
-                  </span>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setIsAgentInstallModalOpen(true)}
-                className="shrink-0 rounded-lg border border-cyan-700/80 bg-cyan-950/60 px-3 py-2 font-semibold text-cyan-300 transition hover:bg-cyan-900/60"
-              >
-                Cài đặt máy cào
-              </button>
-            </div>
-          )}
           {/* Active Job Alert Banner with Stop & Unlock */}
           {(jobStatus === "running" || jobStatus === "producing") && (
             <div className="flex flex-col sm:flex-row items-center justify-between gap-3 rounded-xl border border-cyan-500/60 bg-gradient-to-r from-slate-900 via-cyan-950/40 to-slate-900 p-4 text-xs shadow-lg">
@@ -1166,8 +1146,8 @@ export function PinterestPodStudio({
             data-testid="pinterest-query-layout"
             className="grid grid-cols-1 gap-6 lg:grid-cols-12 items-start"
           >
-            {/* Left Column: Form Khởi Tạo & Lịch Sử Job */}
-            <div className="lg:col-span-6 flex flex-col gap-6">
+            {/* Left Column: one-time configuration */}
+            <div className="lg:col-span-7 flex flex-col gap-6">
               <InitForm
                 niche={niche}
                 onNicheChange={setNiche}
@@ -1198,20 +1178,21 @@ export function PinterestPodStudio({
                 isDiscoveringTrends={isDiscoveringTrends}
               />
 
-              <RecentRunsAccordion
-                recentRuns={recentRuns}
-                activeJobId={jobId}
-                onLoadJob={(targetId) => void handleLoadJob(targetId)}
-                onDeleteJob={(targetId) => void handleDeleteJob(targetId)}
-                isLoading={isLoadingRecent}
-                onRefresh={() => void loadRecentRuns()}
-                onPreviewThumbnail={handlePreviewThumbnail}
-                onReuseNiche={handleReuseNiche}
-              />
             </div>
 
-            {/* Right Column: Tiến Độ & Live Logs */}
-            <div className="lg:col-span-6 flex flex-col gap-6">
+            {/* Right Column: configuration summary, progress and logs */}
+            <div className="lg:col-span-5 flex flex-col gap-6 lg:sticky lg:top-24">
+              <StepOneRunSummary
+                niche={niche}
+                product={product}
+                crawlCount={crawlCount}
+                referenceImageCount={referenceImages.length}
+                regionCount={selectedRegions.length || 1}
+                trendTypeCount={selectedTrendTypes.length || 1}
+                canDiscoverOfficialTrends={authStatus?.oauth_valid === true}
+                isAgentConnected={isAgentConnected}
+                isAgentBrowserLoggedIn={isAgentBrowserLoggedIn}
+              />
               <ProgressAndLogs
                 stepper={stepper}
                 logs={logs}
@@ -1221,6 +1202,18 @@ export function PinterestPodStudio({
               />
             </div>
           </div>
+          <div data-testid="pinterest-query-layout-end" />
+
+          <RecentRunsAccordion
+            recentRuns={recentRuns}
+            activeJobId={jobId}
+            onLoadJob={(targetId) => void handleLoadJob(targetId)}
+            onDeleteJob={(targetId) => void handleDeleteJob(targetId)}
+            isLoading={isLoadingRecent}
+            onRefresh={() => void loadRecentRuns()}
+            onPreviewThumbnail={handlePreviewThumbnail}
+            onReuseNiche={handleReuseNiche}
+          />
 
           {/* Results stay after the active form so their insertion does not shift the user's viewport. */}
           {trendDiscoveryResult && (
