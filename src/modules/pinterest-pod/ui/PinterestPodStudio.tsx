@@ -186,11 +186,22 @@ export function PinterestPodStudio({
   }
 
   // Refs for scrolling to sections and lifecycle safety
+  const trendResultsRef = useRef<HTMLDivElement | null>(null);
   const stage2Ref = useRef<HTMLDivElement | null>(null);
   const stage3Ref = useRef<HTMLDivElement | null>(null);
   const pollingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const isMountedRef = useRef(true);
   const isPollingBusyRef = useRef(false);
+
+  useEffect(() => {
+    if (!trendDiscoveryResult) return undefined;
+
+    const animationFrame = window.requestAnimationFrame(() => {
+      trendResultsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+
+    return () => window.cancelAnimationFrame(animationFrame);
+  }, [trendDiscoveryResult]);
 
   // Stop polling helper
   function stopPolling(): void {
@@ -1213,7 +1224,12 @@ export function PinterestPodStudio({
 
           {/* Results stay after the active form so their insertion does not shift the user's viewport. */}
           {trendDiscoveryResult && (
-            <div data-testid="pinterest-trend-results" aria-live="polite">
+            <div
+              ref={trendResultsRef}
+              data-testid="pinterest-trend-results"
+              aria-live="polite"
+              className="scroll-mt-24"
+            >
               <TrendClusterDiscovery
                 discoveryResult={trendDiscoveryResult}
                 selectedClusterIds={selectedClusterIds}

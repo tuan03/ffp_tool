@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 
-test("trend results render after the query form so completed discovery does not shift the active viewport", async () => {
+test("completed trend discovery renders below the form and scrolls the result into view", async () => {
   const source = await readFile(
     new URL("../ui/PinterestPodStudio.tsx", import.meta.url),
     "utf8",
@@ -13,4 +13,10 @@ test("trend results render after the query form so completed discovery does not 
   assert.notEqual(queryLayoutPosition, -1);
   assert.notEqual(trendResultsPosition, -1);
   assert.ok(trendResultsPosition > queryLayoutPosition);
+  assert.match(source, /ref=\{trendResultsRef\}/);
+  assert.match(
+    source,
+    /trendResultsRef\.current\?\.scrollIntoView\(\{ behavior: "smooth", block: "start" \}\)/,
+  );
+  assert.match(source, /className="scroll-mt-24"/);
 });
