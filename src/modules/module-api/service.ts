@@ -405,6 +405,12 @@ export function createModuleApiRunner(
   config?: ModuleApiConfig,
   dependencies?: ModuleApiDependencies,
 ): ModuleApiRunner {
+  if (typeof window !== "undefined" && config?.gatewayAuthToken) {
+    throw new ShopifyApiError(
+      "gatewayAuthToken cannot be supplied from browser runtime",
+      "SHOPIFY_SECURITY_ERROR",
+    );
+  }
   const configuredGatewayUrl = config?.gatewayUrl ?? DEFAULT_GATEWAY_URL;
 
   const runner = async (input: ShopifyApiInput): Promise<ShopifyApiResponse> => {
@@ -510,12 +516,14 @@ export function createModuleApiRunner(
       headers["X-Request-Id"] = input.requestId;
     }
 
-    const authToken =
-      config?.gatewayAuthToken ??
-      (config as Record<string, unknown> | undefined)?.GATEWAY_AUTH_TOKEN as string | undefined ??
-      (dependencies as Record<string, unknown> | undefined)?.gatewayAuthToken as string | undefined ??
-      (dependencies as Record<string, unknown> | undefined)?.GATEWAY_AUTH_TOKEN as string | undefined ??
-      (typeof process !== "undefined" && process.env ? process.env.GATEWAY_AUTH_TOKEN : undefined);
+    const isBrowser = typeof window !== "undefined";
+    const authToken = isBrowser
+      ? undefined
+      : config?.gatewayAuthToken ??
+        (config as Record<string, unknown> | undefined)?.GATEWAY_AUTH_TOKEN as string | undefined ??
+        (dependencies as Record<string, unknown> | undefined)?.gatewayAuthToken as string | undefined ??
+        (dependencies as Record<string, unknown> | undefined)?.GATEWAY_AUTH_TOKEN as string | undefined ??
+        (typeof process !== "undefined" && process.env ? process.env.GATEWAY_AUTH_TOKEN : undefined);
 
     if (authToken && typeof authToken === "string" && authToken.trim() !== "") {
       headers["X-Gateway-Key"] = authToken.trim();

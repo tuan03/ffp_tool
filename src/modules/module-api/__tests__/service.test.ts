@@ -4241,4 +4241,24 @@ test("ShopifyWriteExecution enforces requestId at compile-time for apply mode an
   assert.ok(true);
 });
 
+test("createModuleApiRunner rejects gatewayAuthToken in browser environment with SHOPIFY_SECURITY_ERROR", () => {
+  (globalThis as unknown as { window: unknown }).window = {};
+  try {
+    assert.throws(
+      () => {
+        createModuleApiRunner({ gatewayAuthToken: "secret-token" });
+      },
+      (err: unknown) => {
+        assert.ok(err instanceof ShopifyApiError);
+        assert.equal(err.code, "SHOPIFY_SECURITY_ERROR");
+        assert.match(err.message, /gatewayAuthToken cannot be supplied from browser runtime/);
+        return true;
+      },
+    );
+  } finally {
+    delete (globalThis as unknown as { window?: unknown }).window;
+  }
+});
+
+
 

@@ -9,6 +9,7 @@ export const MAX_BODY_BYTES = 5 * 1024 * 1024; // 5MB
 export interface GatewayHttpHandlerOptions {
   readonly authToken?: string;
   readonly maxBodyBytes?: number;
+  readonly challengeBasicAuth?: boolean;
 }
 
 export function isGatewayAuthorized(
@@ -114,6 +115,10 @@ export function createGatewayHttpHandler(
     }
 
     if (configuredToken && !isGatewayAuthorized(request.headers, configuredToken)) {
+      const responseHeaders: Record<string, string> = { "Content-Type": "application/json" };
+      if (options?.challengeBasicAuth) {
+        responseHeaders["WWW-Authenticate"] = 'Basic realm="FFP Tool", charset="UTF-8"';
+      }
       return new Response(
         JSON.stringify({
           success: false,
@@ -122,7 +127,7 @@ export function createGatewayHttpHandler(
             message: "Unauthorized: Invalid or missing Gateway authentication token",
           },
         }),
-        { status: 401, headers: { "Content-Type": "application/json" } },
+        { status: 401, headers: responseHeaders },
       );
     }
 

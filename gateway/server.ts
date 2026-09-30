@@ -122,7 +122,11 @@ export function startGatewayServer(
   const graphqlClient = new ShopifyGraphqlClient({ tokenProvider, throttleManager });
   const idempotencyStore = new InMemoryIdempotencyStore();
   const dispatcher = new GatewayDispatcher({ storeRegistry, graphqlClient, idempotencyStore });
-  const httpHandler = createGatewayHttpHandler(dispatcher, { authToken, maxBodyBytes });
+  const httpHandler = createGatewayHttpHandler(dispatcher, {
+    authToken,
+    maxBodyBytes,
+    challengeBasicAuth: Boolean(operatorUsername && operatorPassword),
+  });
   const storeControlPlane = new StoreControlPlane({
     storeRegistry,
     tokenProvider,
