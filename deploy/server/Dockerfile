@@ -36,8 +36,8 @@ RUN python3 -m venv /opt/venv && \
     /opt/venv/bin/pip install --no-cache-dir -r /app/requirements.txt
 
 # 2. Install Node.js dependencies
-COPY package.json ./
-RUN npm install --omit=dev
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev
 
 # 3. Copy application backend source files
 COPY gateway ./gateway
