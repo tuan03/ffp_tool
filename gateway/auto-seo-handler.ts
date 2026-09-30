@@ -42,6 +42,7 @@ export interface AutoSeoRunResult {
   readonly downstreamStatus: "SENT" | "FAILED";
   readonly downstreamHttpStatus?: number | null;
   readonly downstreamError?: string | null;
+  readonly reviewPersistedCount: number;
 }
 
 export interface AutoSeoHandlerOptions {
@@ -248,6 +249,7 @@ export async function handleAutoSeoRun(
   let downstreamStatus: "SENT" | "FAILED" = "FAILED";
   let downstreamError: string | null = null;
   let seoProvider: "gemini" | "custom_gpt" | undefined;
+  let reviewPersistedCount = 0;
 
   try {
     const seoResult = await runner({
@@ -301,6 +303,7 @@ export async function handleAutoSeoRun(
                 db,
               },
             );
+            reviewPersistedCount++;
           }
         }
       }
@@ -353,6 +356,7 @@ export async function handleAutoSeoRun(
     downstreamStatus,
     downstreamHttpStatus: null,
     downstreamError,
+    reviewPersistedCount,
   };
 }
 

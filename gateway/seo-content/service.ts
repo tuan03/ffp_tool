@@ -1,4 +1,5 @@
 import { fromAutoSeoProduct, runAutoSeoPipeline, runMockSeoContent } from "../../src/modules/seo-content";
+import { runSeoContent as runServerSeoContent } from "../../src/modules/seo-content/server";
 import { getCustomGptRuntime } from "../custom-gpt-seo/runtime";
 import type { GatewaySeoContentOptions, SeoContentInput, SeoContentResult } from "./types";
 
@@ -29,16 +30,18 @@ export async function runSeoContent(
   }
 
   const result = await runAutoSeoPipeline(input.products, {
-    ...(runner ? { runner } : {}),
+    runner: runner ?? runServerSeoContent,
     siteDomain: input.shopDomain,
   });
 
   const isSuccess = result.successful > 0 || result.total === 0;
+  const firstFailure = result.items.find((item) => !item.success)?.error;
+  const failureDetail = !isSuccess && firstFailure ? `: ${firstFailure}` : "";
 
   return {
     success: isSuccess,
     processedCount: result.successful,
-    message: `Processed ${result.successful}/${result.total} products with SEO Content Pipeline B1-B6`,
+    message: `Processed ${result.successful}/${result.total} products with SEO Content Pipeline B1-B6${failureDetail}`,
     seoOutputs: result.seoOutputs,
   };
 }

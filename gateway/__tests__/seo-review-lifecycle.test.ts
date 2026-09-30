@@ -297,6 +297,7 @@ test("6. handleAutoSeoRun persists review items into SQLite when seoOutputs are 
   );
 
   assert.equal(runResult.downstreamStatus, "SENT");
+  assert.equal(runResult.reviewPersistedCount, 1);
 
   // Verify review item was persisted into SQLite seo_review_items
   const reviewItem = getSeoReviewItem(db, "store-jeans:gid://shopify/Product/999");
@@ -346,6 +347,7 @@ test("7. handleAutoSeoRun flags failure when generated seoOutput fails validatio
 
   // Validation failure halted downstream and marked as FAILED
   assert.equal(runResult.downstreamStatus, "FAILED");
+  assert.equal(runResult.reviewPersistedCount, 0);
   assert.match(runResult.downstreamError ?? "", /SEO validation failed/);
 
   // No review item stored

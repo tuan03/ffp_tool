@@ -111,6 +111,8 @@ export interface AutoSeoBackupResponse {
   readonly downstreamStatus: "SENT" | "FAILED";
   readonly downstreamHttpStatus?: number | null;
   readonly downstreamError?: string | null;
+  /** Number of generated SEO outputs durably handed off to SEO Review by the server. */
+  readonly reviewPersistedCount?: number;
 }
 
 export interface AutoSeoStoreOption {

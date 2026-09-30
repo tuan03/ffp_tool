@@ -16,6 +16,8 @@ import { PostgresSiteNicheCache } from "./internal/site-niche/postgres-site-nich
 import { createServerSiteNicheResolver } from "./internal/site-niche/site-niche-runtime";
 import { SeoProviderCircuitBreaker } from "./internal/providers/seo-provider-circuit-breaker";
 
+export { runSeoContent, runSeoContentDetailed } from "./service";
+
 export interface PostgresSeoContentRuntimeOptions {
   readonly databaseUrl: string;
   readonly legacyImport?: SeoLegacyImportOptions | false;
