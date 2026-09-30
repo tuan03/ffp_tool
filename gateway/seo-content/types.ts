@@ -33,6 +33,8 @@ export interface SeoContentResult {
   readonly processedCount: number;
   readonly message?: string;
   readonly seoOutputs?: readonly unknown[];
+  readonly dispatchStatus?: "queued" | "review_ready";
+  readonly jobIds?: readonly string[];
 }
 
 import type { SeoContentInput as CoreSeoContentInput, SeoContentOutput } from "../../src/modules/seo-content";

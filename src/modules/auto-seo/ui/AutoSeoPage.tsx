@@ -333,7 +333,9 @@ export function AutoSeoPage({
         url: effectiveStoreId ? `/seo-review?storeId=${encodeURIComponent(effectiveStoreId)}` : "/seo-review",
       });
 
-      if (onHandoverToSeo) {
+      if ((backupResult.reviewPersistedCount ?? 0) > 0) {
+        navigate(effectiveStoreId ? `/seo-review?storeId=${encodeURIComponent(effectiveStoreId)}` : "/seo-review");
+      } else if (onHandoverToSeo) {
         await onHandoverToSeo(productsWithStore, effectiveStoreId);
         navigate(effectiveStoreId ? `/seo-review?storeId=${encodeURIComponent(effectiveStoreId)}` : "/seo-review");
       }

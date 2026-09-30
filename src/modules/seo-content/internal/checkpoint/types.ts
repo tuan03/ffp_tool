@@ -45,6 +45,10 @@ export interface SeoCheckpoint {
   readonly storeId?: string;
   readonly productId?: string;
   readonly handle?: string;
+  readonly sourceVersion?: string;
+  readonly shopifyUpdatedAt?: string;
+  readonly providerId?: string;
+  readonly pipelineVersion?: string;
   readonly createdAt: number;
   readonly updatedAt: number;
   readonly expiresAt: number; // createdAt + SEO_CHECKPOINT_TTL_MS

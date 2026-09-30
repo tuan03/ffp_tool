@@ -4,7 +4,7 @@ import type {
   CustomizationNormalizerInput,
   CustomizationNormalizerOutput,
 } from "../customization-normalizer";
-import { runCustomizationSeoPipeline } from "../seo-content";
+import { runCustomizationSeoPipeline } from "../seo-content/browser";
 import type {
   CustomizationSeoBatchResult,
   CustomizationSeoItemResult,

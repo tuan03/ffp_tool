@@ -20,13 +20,19 @@ function strings(value: unknown, field: string): readonly string[] {
   if (!Array.isArray(value) || value.length > 20) throw new Error(`Invalid ${field}`);
   return value.map(entry => text(entry, field));
 }
-/** Called only by the trusted pipeline after Shopify resolves the product identity. */
-export async function bindExternalSeoProduct(binding: { readonly storeId: string; readonly sourceIdentity: string; readonly productId: string }, providedCorpus?: FileSeoConflictCorpus): Promise<void> {
+/**
+ * Called only by the trusted pipeline after Shopify resolves the product identity.
+ * @deprecated Legacy Custom GPT Actions compatibility only. New providers must
+ * use the server-side provider contract and the common B1-B6 pipeline.
+ */
+export async function bindExternalSeoProduct(binding: { readonly storeId: string; readonly sourceIdentity: string; readonly productId: string }, providedCorpus?: SeoConflictCorpus): Promise<void> {
   const productId = binding.productId.replace(/^gid:\/\/shopify\/Product\//, "");
   if (!/^[a-zA-Z0-9_-]+$/.test(binding.storeId) || !binding.sourceIdentity || !/^\d+$/.test(productId)) throw new Error("Invalid product identity binding");
   const corpus = providedCorpus ?? new FileSeoConflictCorpus({ storeId: binding.storeId, maxRegisteredKeywordsPerProduct: 1024 });
+  if (!corpus.reassignProduct) throw new Error("SEO conflict corpus does not support identity reassignment");
   await corpus.reassignProduct({ storeId: binding.storeId, productId: `amazon:${binding.sourceIdentity}` }, { storeId: binding.storeId, productId });
 }
+/** @deprecated Legacy Custom GPT Actions compatibility only. */
 export function validateExternalSeoAnalysis(input: SeoContentInput, payload: unknown): { understanding: ProductUnderstanding; shopping: ShoppingContext; evidence: readonly { imageId: string; observation: string }[] } {
   const analysis = object(payload);
   const evidence = Array.isArray(analysis.evidence) ? analysis.evidence.map(entry => {
@@ -53,6 +59,7 @@ export function validateExternalSeoAnalysis(input: SeoContentInput, payload: unk
     },
   };
 }
+/** @deprecated Legacy Custom GPT Actions compatibility only. */
 export async function researchExternalSeo(seeds: readonly string[], language = "en-US"): Promise<Readonly<Record<string, readonly string[]>>> {
   if (!seeds.length || seeds.length > 5 || seeds.some(seed => !seed.trim() || seed.length > 120)) throw new Error("Provide 1–5 seeds of at most 120 characters");
   const client = new UnofficialGoogleSuggestClient({ language: language.split("-")[0], timeoutMs: 2500, retryDelayMs: 250 });
@@ -60,6 +67,7 @@ export async function researchExternalSeo(seeds: readonly string[], language = "
   for (const seed of seeds) results[seed] = await client.getSuggestions(seed, { signal: AbortSignal.timeout(5000) });
   return results;
 }
+/** @deprecated Legacy Custom GPT Actions compatibility only. */
 export async function checkExternalSeoKeywords(input: SeoContentInput, keywords: readonly string[], providedCorpus?: SeoConflictCorpus) {
   if (!input.storeId || !/^[a-zA-Z0-9_-]+$/.test(input.storeId)) throw new Error("Valid storeId required");
   if (!keywords.length || keywords.length > 10 || keywords.some(keyword => !keyword.trim() || keyword.length > 120)) throw new Error("Provide 1–10 keywords of at most 120 characters");
@@ -71,7 +79,10 @@ export async function checkExternalSeoKeywords(input: SeoContentInput, keywords:
   const previousKeywords = snapshot.products.filter(product => isSameProduct(product, owner)).flatMap(product => product.keywords.map(keyword => keyword.keyword));
   return { revision: snapshot.revision, previousKeywords, conflicts, semanticMode: "local_with_gpt_review" as const };
 }
-/** No default provider factories are called: every reasoning result comes from the external draft. */
+/**
+ * No default provider factories are called: every reasoning result comes from the external draft.
+ * @deprecated Legacy Custom GPT Actions compatibility only.
+ */
 export async function finalizeExternalSeo(input: SeoContentInput, analysisPayload: unknown, keywordPayload: unknown, submission: unknown, providedCorpus?: SeoConflictCorpus): Promise<SeoContentDetailedOutput> {
   const analysis = validateExternalSeoAnalysis(input, analysisPayload);
   const decision = object(keywordPayload);

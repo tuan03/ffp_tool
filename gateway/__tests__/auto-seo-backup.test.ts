@@ -596,6 +596,26 @@ test("18. default runSeoContent placeholder returns success", async () => {
   assert.ok(res.message);
 });
 
+test("18b. runSeoContent exposes the first item failure for server diagnostics", async () => {
+  const res = await runSeoContent(
+    {
+      workflowId: "wf-item-failure",
+      storeId: "store-1",
+      shopDomain: "test.myshopify.com",
+      products: [createMockProduct({ id: "p1" })],
+    },
+    {
+      runner: async () => {
+        throw new Error("SEO provider is unavailable");
+      },
+    },
+  );
+
+  assert.equal(res.success, false);
+  assert.equal(res.processedCount, 0);
+  assert.match(res.message ?? "", /SEO provider is unavailable/);
+});
+
 test("19. status update failure does not rerun SEO Content & throws error", async () => {
   const db = createTestDb();
   const mockRunner = createMockSeoContentRunner();
