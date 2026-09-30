@@ -11,12 +11,12 @@
 
 ## Trên máy bạn
 
-- Cài token: `setx FFP_SEO_MCP_TOKEN "TOKEN_MOI"`.
+- Cài token Capozen: `setx FFP_SEO_CAPOZEN_MCP_TOKEN "TOKEN_MOI"`.
 - Thêm vào `%USERPROFILE%\.codex\config.toml`:
   ```toml
   [mcp_servers.ffpSeo]
   url = "https://ffp.b6-team.site/mcp/gpt-seo"
-  bearer_token_env_var = "FFP_SEO_MCP_TOKEN"
+  bearer_token_env_var = "FFP_SEO_CAPOZEN_MCP_TOKEN"
   ```
 - Đóng và mở lại Codex/IDE.
 - Yêu cầu Codex: `Dùng MCP ffpSeo xử lý toàn bộ batch đến REVIEW_READY, không publish Shopify.`
