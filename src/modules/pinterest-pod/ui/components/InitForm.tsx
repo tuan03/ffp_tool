@@ -42,17 +42,6 @@ const PRODUCT_OPTIONS: readonly ProductOption[] = [
   },
 ];
 
-const SUGGESTED_CHIPS = [
-  "Leather bag vintage",
-  "Halloween spooky cute",
-  "Vintage distressed rug",
-  "Cottagecore floral blanket",
-  "Gothic celestial tarot",
-  "Retro groovy 70s",
-  "Boho geometric abstract",
-  "Dark academia aesthetic",
-] as const;
-
 export const AVAILABLE_REGIONS = [
   { code: "US", label: "Hoa Kỳ", flag: "🇺🇸", regionGroup: "Bắc Mỹ" },
   { code: "CA", label: "Canada", flag: "🇨🇦", regionGroup: "Bắc Mỹ" },
@@ -353,21 +342,6 @@ export function InitForm({
           )}
         </div>
 
-        {/* Quick Chips */}
-        <div className="flex flex-wrap items-center gap-1.5 pt-1">
-          <span className="text-[11px] font-medium text-slate-400">Gợi ý xu hướng hot:</span>
-          {SUGGESTED_CHIPS.map((chip) => (
-            <button
-              key={chip}
-              type="button"
-              disabled={isBusy}
-              onClick={() => handleNicheChange(chip)}
-              className="rounded-full border border-slate-800 bg-slate-800/60 px-2.5 py-0.5 text-[11px] text-slate-300 transition hover:border-cyan-500 hover:bg-slate-700 hover:text-cyan-300 disabled:opacity-50"
-            >
-              {chip}
-            </button>
-          ))}
-        </div>
       </div>
 
       {/* 2. Số lượng ảnh cào từ Pinterest (Crawl Pool Size) */}

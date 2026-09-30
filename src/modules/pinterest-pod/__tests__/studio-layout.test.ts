@@ -60,3 +60,19 @@ test("step one keeps recent runs outside the configuration column", async () => 
   );
   assert.match(recentRunsSource, /const \[isOpen, setIsOpen\] = useState\(false\)/);
 });
+
+test("step one removes static hot suggestions and consolidates connection controls", async () => {
+  const formSource = await readFile(
+    new URL("../ui/components/InitForm.tsx", import.meta.url),
+    "utf8",
+  );
+  const headerSource = await readFile(
+    new URL("../ui/components/HeaderBar.tsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.doesNotMatch(formSource, /SUGGESTED_CHIPS|Gợi ý xu hướng hot/);
+  assert.match(headerSource, /Pinterest API · Sẵn sàng/);
+  assert.match(headerSource, /Crawler · Online · Đã login/);
+  assert.doesNotMatch(headerSource, /Đã lưu API Token|Agent Online|Agent chưa login|Xác thực Pinterest/);
+});
