@@ -9476,7 +9476,7 @@ describe("Gateway: Architectural & Operational Hardening (P1)", () => {
     });
   });
 
-  describe("Gateway: VPS Nginx Compatibility Routes", () => {
+  describe("Gateway: Route Compatibility Test", () => {
     it("handles /api/pinterest-pod/sync-shopify and /api/seo-review/* with JSON status stub", async () => {
       const { startGatewayServer } = await import("../server");
       const testPort = 3288;
