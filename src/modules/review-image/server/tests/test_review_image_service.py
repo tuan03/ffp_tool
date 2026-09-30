@@ -94,6 +94,29 @@ class ReviewImageServiceTests(unittest.TestCase):
         self.assertNotIn("\\", uploaded)
         self.assertEqual(len(self.service.list_templates()), 2)
 
+    def test_deletes_a_template_without_allowing_path_escape(self) -> None:
+        self.assertEqual(self.service.delete_template("room.png"), "room.png")
+        self.assertEqual(self.service.list_templates(), [])
+        self.assertFalse((self.templates / "room.png").exists())
+        with self.assertRaisesRegex(ValueError, "không tồn tại"):
+            self.service.delete_template("../room.png")
+
+    def test_does_not_delete_a_template_used_by_an_active_job(self) -> None:
+        gate = __import__("threading").Event()
+        service = ReviewImageService(
+            self.templates,
+            self.outputs,
+            lambda _prompt, _images: (gate.wait(2), {"mime_type": "image/png", "data": image_data_url().split(",", 1)[1]})[1],
+        )
+        created = service.submit(image_data_url(), "Prompt", "main", template_name="room.png")
+        try:
+            with self.assertRaisesRegex(ValueError, "đang được dùng"):
+                service.delete_template("room.png")
+            self.assertTrue((self.templates / "room.png").is_file())
+        finally:
+            gate.set()
+        self.assertEqual(self.wait_for_service_job(service, created["job_id"])["status"], "completed")
+
     def test_rejects_prompt_that_exceeds_bridge_limit_after_scope_instruction(self) -> None:
         with self.assertRaisesRegex(ValueError, "quá dài"):
             self.service.submit(image_data_url(), "x" * 9_950, "main")

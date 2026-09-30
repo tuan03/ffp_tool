@@ -33,6 +33,7 @@ export interface ReviewImageClient {
   health(): Promise<{ readonly templates: number }>;
   listTemplates(): Promise<readonly ReviewImageTemplate[]>;
   uploadTemplate(input: UploadReviewTemplateInput): Promise<ReviewImageTemplate>;
+  deleteTemplate(name: string): Promise<void>;
   create(input: CreateReviewImageInput): Promise<ReviewImageJob>;
   job(jobId: string): Promise<ReviewImageJob>;
   approve(jobId: string): Promise<ReviewImageJob>;

@@ -106,6 +106,16 @@ def get_template(name: str, x_bridge_token: str | None = Header(default=None)):
         raise HTTPException(404, str(exc)) from exc
 
 
+@app.delete("/api/review-images/templates/{name}")
+def delete_template(name: str, x_bridge_token: str | None = Header(default=None)):
+    authorize(x_bridge_token)
+    try:
+        deleted_name = review_image_service.delete_template(name)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return {"ok": True, "template": {"name": deleted_name}}
+
+
 @app.post("/api/review-images/jobs", status_code=202)
 def create_job(body: CreateReviewImageRequest, x_bridge_token: str | None = Header(default=None)):
     authorize(x_bridge_token)

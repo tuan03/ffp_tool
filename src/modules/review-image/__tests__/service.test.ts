@@ -47,20 +47,24 @@ test("product upload rejects unsupported or oversized images before submission",
   await assert.rejects(() => encodeProductFile(oversized), /5 MB/);
 });
 
-test("review image client lists templates and uploads an image with gateway authentication", async () => {
+test("review image client lists, uploads and deletes templates with gateway authentication", async () => {
   const calls: Array<{ url: string; method: string; token: string | null; body: unknown }> = [];
   const client = createReviewImageClient(async (input, init) => {
     const url = String(input);
     calls.push({ url, method: init?.method ?? "GET", token: new Headers(init?.headers).get("x-gateway-key"), body: init?.body ? JSON.parse(String(init.body)) : null });
     return Response.json(url.endsWith("/templates") && init?.method === "POST"
       ? { ok: true, template: { name: "scene-123.png" } }
+      : init?.method === "DELETE"
+        ? { ok: true, template: { name: "room.png" } }
       : { ok: true, templates: [{ name: "room.png" }] }, { status: init?.method === "POST" ? 201 : 200 });
   });
   client.setGatewayToken("secret");
   assert.deepEqual(await client.listTemplates(), [{ name: "room.png" }]);
   assert.deepEqual(await client.uploadTemplate({ fileName: "scene.png", imageDataUrl: "data:image/png;base64,AA==" }), { name: "scene-123.png" });
+  await client.deleteTemplate("room.png");
   assert.deepEqual(calls, [
     { url: "/api/review-images/templates", method: "GET", token: "secret", body: null },
     { url: "/api/review-images/templates", method: "POST", token: "secret", body: { fileName: "scene.png", imageDataUrl: "data:image/png;base64,AA==" } },
+    { url: "/api/review-images/templates/room.png", method: "DELETE", token: "secret", body: null },
   ]);
 });

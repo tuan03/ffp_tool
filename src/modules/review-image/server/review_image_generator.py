@@ -111,6 +111,21 @@ class ReviewImageService:
             temporary_path.unlink(missing_ok=True)
         return saved_name
 
+    def delete_template(self, name: str) -> str:
+        with self.lock:
+            path = self.template_path(name)
+            is_in_use = any(
+                job.get("template_name") == path.name and job.get("status") in {"queued", "running"}
+                for job in self.jobs.values()
+            )
+            if is_in_use:
+                raise ValueError("Ảnh template đang được dùng để tạo ảnh; hãy chờ job hoàn tất rồi xóa.")
+            try:
+                path.unlink()
+            except OSError as exc:
+                raise ValueError("Không thể xóa ảnh template.") from exc
+            return path.name
+
     def submit(
         self,
         product_data_url: str,

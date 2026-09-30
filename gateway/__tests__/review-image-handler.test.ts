@@ -74,6 +74,33 @@ test("review image gateway rejects a body above its configured limit", async () 
   }
 });
 
+test("review image gateway forwards template deletion", async () => {
+  let forwardedMethod = "";
+  let forwardedPath = "";
+  const upstream = createServer((request, response) => {
+    forwardedMethod = request.method ?? "";
+    forwardedPath = request.url ?? "";
+    response.setHeader("Content-Type", "application/json");
+    response.end(JSON.stringify({ ok: true, template: { name: "room.png" } }));
+  });
+  const upstreamUrl = await listen(upstream);
+  const gateway = createServer((request, response) => {
+    void handleReviewImageHttpRequest(request, response, {
+      bridgeToken: "bridge-secret", bridgeBaseUrl: upstreamUrl,
+    });
+  });
+  const gatewayUrl = await listen(gateway);
+  try {
+    const response = await fetch(`${gatewayUrl}/api/review-images/templates/room.png`, { method: "DELETE" });
+    assert.equal(response.status, 200);
+    assert.equal(forwardedMethod, "DELETE");
+    assert.equal(forwardedPath, "/api/review-images/templates/room.png");
+  } finally {
+    await close(gateway);
+    await close(upstream);
+  }
+});
+
 test("review image gateway reports an unavailable local bridge", async () => {
   const gateway = createServer((request, response) => {
     void handleReviewImageHttpRequest(request, response, {

@@ -102,6 +102,10 @@ def test_template_gallery_lists_and_uploads_authenticated_images():
                 name = created.json()["template"]["name"]
                 assert client.get("/api/review-images/templates", headers=headers).json()["templates"] == [{"name": name}]
                 assert client.get(f"/api/review-images/templates/{name}", headers=headers).status_code == 200
+                deleted = client.delete(f"/api/review-images/templates/{name}", headers=headers)
+                assert deleted.status_code == 200
+                assert deleted.json()["template"] == {"name": name}
+                assert client.get("/api/review-images/templates", headers=headers).json()["templates"] == []
                 invalid = client.post("/api/review-images/templates", headers=headers, json={
                     "fileName": "bad.png", "imageDataUrl": "data:image/png;base64,Zm9v"
                 })
@@ -111,6 +115,6 @@ def test_template_gallery_lists_and_uploads_authenticated_images():
                     "fileName": "corrupt.png", "imageDataUrl": f"data:image/png;base64,{corrupt_png}"
                 })
                 assert corrupt.status_code == 400
-                assert len(api.review_image_service.list_templates()) == 1
+                assert len(api.review_image_service.list_templates()) == 0
         finally:
             api.review_image_service = original_service

@@ -13,6 +13,7 @@ test("review image page exposes upload, scope, editable prompt and approval cont
   assert.match(html, /Ctrl\+V để dán ảnh sản phẩm/);
   assert.match(html, /Xem thư mục template/);
   assert.match(html, /Tải ảnh template lên/);
+  assert.match(html, /Xóa template đang chọn/);
   assert.match(html, /Chỉ túi chính/);
   assert.match(html, /Cả túi và ví/);
   assert.match(html, /Image 1/);

@@ -73,6 +73,12 @@ export function createReviewImageClient(fetcher: Fetcher = fetch): ReviewImageCl
       }));
       return parseTemplate(payload.template);
     },
+    async deleteTemplate(name) {
+      await parseResponse(await fetcher(`${API_BASE}/templates/${encodeURIComponent(name)}`, {
+        method: "DELETE",
+        headers: headers(),
+      }));
+    },
     async create(input) {
       const payload = await parseResponse(await fetcher(`${API_BASE}/jobs`, {
         method: "POST",

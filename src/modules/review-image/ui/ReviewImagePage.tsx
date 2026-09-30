@@ -22,6 +22,7 @@ export function ReviewImagePage({ client }: { readonly client: ReviewImageClient
   const [selectedTemplatePreview, setSelectedTemplatePreview] = useState("");
   const [templateUploadProgress, setTemplateUploadProgress] = useState<{ readonly completed: number; readonly total: number } | null>(null);
   const [templateUploadSummary, setTemplateUploadSummary] = useState<{ readonly message: string; readonly hasFailures: boolean } | null>(null);
+  const [isDeletingTemplate, setIsDeletingTemplate] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isApproving, setIsApproving] = useState(false);
   const [error, setError] = useState("");
@@ -195,6 +196,25 @@ export function ReviewImagePage({ client }: { readonly client: ReviewImageClient
     }
   }
 
+  async function handleDeleteTemplate(): Promise<void> {
+    if (!selectedTemplateName || !window.confirm(`Xóa vĩnh viễn template "${selectedTemplateName}"?`)) return;
+    const deletedName = selectedTemplateName;
+    setError("");
+    setTemplateUploadSummary(null);
+    setIsDeletingTemplate(true);
+    try {
+      await client.deleteTemplate(deletedName);
+      const remainingTemplates = (templates ?? []).filter((template) => template.name !== deletedName);
+      setTemplates(remainingTemplates);
+      setSelectedTemplateName(remainingTemplates[0]?.name ?? "");
+      setTemplateUploadSummary({ message: `Đã xóa template ${deletedName}.`, hasFailures: false });
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Không thể xóa ảnh template.");
+    } finally {
+      setIsDeletingTemplate(false);
+    }
+  }
+
   async function handleGenerate(mode: GenerateMode): Promise<void> {
     if (!productDataUrl || !prompt.trim()) {
       setError("Hãy chọn ảnh sản phẩm và nhập prompt trước khi tạo.");
@@ -265,7 +285,7 @@ export function ReviewImagePage({ client }: { readonly client: ReviewImageClient
             <div className="mt-3 space-y-3">
               <label className="block font-medium text-slate-300">
                 Tải ảnh template lên
-                <input className={fieldClass} type="file" accept="image/png,image/jpeg,image/webp" multiple disabled={templateUploadProgress !== null} onChange={(event) => {
+                <input className={fieldClass} type="file" accept="image/png,image/jpeg,image/webp" multiple disabled={templateUploadProgress !== null || isDeletingTemplate} onChange={(event) => {
                   const files = Array.from(event.target.files ?? []);
                   event.target.value = "";
                   void handleTemplateUpload(files);
@@ -285,6 +305,9 @@ export function ReviewImagePage({ client }: { readonly client: ReviewImageClient
                   {selectedTemplatePreview ? <img className="max-h-56 w-full object-contain" src={selectedTemplatePreview} alt={`Ảnh template ${selectedTemplateName}`} /> : <figcaption className="text-xs text-slate-500">Chọn template để xem ảnh.</figcaption>}
                 </figure>
               </div>}
+              <button type="button" className={`${buttonClass} border border-rose-700 text-rose-200 hover:bg-rose-950/50`} disabled={!selectedTemplateName || templateUploadProgress !== null || isDeletingTemplate} onClick={() => { void handleDeleteTemplate(); }}>
+                {isDeletingTemplate ? "Đang xóa template…" : "Xóa template đang chọn"}
+              </button>
             </div>
           </details>
 

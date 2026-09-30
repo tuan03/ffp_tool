@@ -28,7 +28,7 @@ export async function handleReviewImageHttpRequest(
     sendError(response, 401, "Unauthorized");
     return;
   }
-  if (request.method !== "GET" && request.method !== "POST") {
+  if (request.method !== "GET" && request.method !== "POST" && request.method !== "DELETE") {
     sendError(response, 405, "Method Not Allowed");
     return;
   }
