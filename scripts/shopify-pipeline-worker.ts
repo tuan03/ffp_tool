@@ -499,11 +499,11 @@ async function processClaim(
     });
     try {
       // Existing loopback Gemini installations do not require a gateway key.
-      // A Custom GPT installation explicitly requires that key for its admin API.
+      // External SEO providers explicitly require that key for their admin API.
       const settings = env.GATEWAY_AUTH_TOKEN
         ? await gptRequest<GptSeoSettings>("settings")
         : { provider: "gemini" as const };
-      if (claim.externalSeo || settings.provider === "custom_gpt") {
+      if (claim.externalSeo || settings.provider === "custom_gpt" || settings.provider === "codex_mcp") {
         if (claim.existingShopify?.productId) await gptRequest("bind-product", { sourceIdentity: claim.sourceKey, productId: claim.existingShopify.productId });
         const externalJob = claim.externalSeo
           ? await gptRequest<GptSeoJob>(`job?jobId=${encodeURIComponent(claim.externalSeo.jobId)}`)

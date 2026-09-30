@@ -58,3 +58,24 @@ test("Custom GPT environment rejects unsafe multi-store action key maps", () => 
     /must differ from GATEWAY_AUTH_TOKEN/,
   );
 });
+
+test("Custom GPT environment parses store-scoped MCP keys", () => {
+  const config = parseCustomGptEnvironment({
+    GPT_SEO_ACTION_KEYS_JSON: JSON.stringify({ capozen: "action-key" }),
+    GPT_SEO_MCP_KEYS_JSON: JSON.stringify({ capozen: "mcp-key", wrydeco: "other-mcp-key" }),
+    GATEWAY_AUTH_TOKEN: "admin-key",
+  });
+
+  assert.deepEqual(config.mcpKeys, { capozen: "mcp-key", wrydeco: "other-mcp-key" });
+});
+
+test("Custom GPT environment rejects MCP keys shared with another credential", () => {
+  assert.throws(() => parseCustomGptEnvironment({
+    GPT_SEO_ACTION_KEYS_JSON: JSON.stringify({ capozen: "shared-key" }),
+    GPT_SEO_MCP_KEYS_JSON: JSON.stringify({ capozen: "shared-key" }),
+  }), /MCP.*differ|differ.*MCP/i);
+  assert.throws(() => parseCustomGptEnvironment({
+    GPT_SEO_MCP_KEYS_JSON: JSON.stringify({ capozen: "admin-key" }),
+    GATEWAY_AUTH_TOKEN: "admin-key",
+  }), /GATEWAY_AUTH_TOKEN/);
+});

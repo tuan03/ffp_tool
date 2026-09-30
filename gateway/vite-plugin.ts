@@ -90,6 +90,10 @@ export function shopifyGatewayDevPlugin(options?: ShopifyGatewayDevPluginOptions
       });
 
       server.middlewares.use(async (req, res, next) => {
+        if (req.url === "/mcp/gpt-seo" || req.url?.startsWith("/mcp/gpt-seo?")) {
+          await getCustomGptRuntime().mcpHandler(req, res);
+          return;
+        }
         if (req.url?.startsWith("/api/v1/gpt-seo/")) {
           if (req.url.startsWith("/api/v1/gpt-seo/admin/") && authToken && isSameOriginRequest(req.headers)) {
             req.headers["x-gateway-key"] = authToken;

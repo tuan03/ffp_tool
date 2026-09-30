@@ -113,5 +113,5 @@ export async function finalizeExternalSeo(input: SeoContentInput, analysisPayloa
   // Preserve previously committed keywords while a replacement is only a review draft.
   // Replaying after a crash is harmless: upsert replaces this same owner's union.
   await corpus.upsertProduct({ identity: { storeId: input.storeId, productId: input.productId, handle: input.handle, url: input.url }, title: input.title, approvedKeywords: [...new Set([...keywords, ...check.previousKeywords])], expectedRevision: check.revision });
-  return { output: finalizePipelineOutput(context), metadata: { engine: "custom_gpt", fieldsApplied: ["title", "description", "seoTitle", "seoDescription", "alt"], fallbackStages: [], warnings: ["Image evidence is supplied by GPT and must be reviewed. Semantic conflict review uses local retrieval, not Vertex embeddings."], approvedKeywords: keywords, corpusRevision: check.revision + 1 } };
+  return { output: finalizePipelineOutput(context), metadata: { engine: "custom_gpt", fieldsApplied: ["title", "description", "seoTitle", "seoDescription", "alt"], fallbackStages: [], warnings: ["Image evidence is supplied by an external reasoning provider and must be reviewed. Semantic conflict review uses local retrieval, not Vertex embeddings."], approvedKeywords: keywords, corpusRevision: check.revision + 1 } };
 }

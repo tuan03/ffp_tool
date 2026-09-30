@@ -27,3 +27,30 @@ test("backup outbox recovers a crash before enqueue and preserves provider snaps
     assert.equal(queue.list("capozen").length, 1);
   } finally { backupDb.close(); queueDb.close(); }
 });
+
+test("backup outbox preserves a Codex MCP provider snapshot", () => {
+  const backupDb = new DatabaseSync(":memory:");
+  const queueDb = new DatabaseSync(":memory:");
+  try {
+    initAutoSeoDbSchema(backupDb);
+    const queue = new CustomGptQueue(queueDb);
+    const settings = queue.configure("capozen", { provider: "codex_mcp", batchSize: 5, language: "en-US" });
+    executeAutoSeoBackup(backupDb, {
+      workflowId: "codex-workflow",
+      storeId: "capozen",
+      shopDomain: "example.myshopify.com",
+      products: [{ id: "gid://shopify/Product/456", title: "Visual decor", handle: "visual-decor", images: [{ id: "front", url: "https://cdn.shopify.com/front.png" }] }],
+    });
+    backupDb.prepare("UPDATE auto_seo_product_backups SET gpt_settings_json=?").run(JSON.stringify(settings));
+    queue.configure("capozen", { provider: "gemini", batchSize: 5 });
+
+    recoverAutoSeoHandoffs(backupDb, queue);
+
+    const queuedJob = queue.list("capozen")[0];
+    assert.equal(queuedJob?.settings.provider, "codex_mcp");
+    assert.equal(queue.claim("capozen", "codex-auto-seo", "codex_mcp").jobs[0]?.id, queuedJob?.id);
+  } finally {
+    backupDb.close();
+    queueDb.close();
+  }
+});

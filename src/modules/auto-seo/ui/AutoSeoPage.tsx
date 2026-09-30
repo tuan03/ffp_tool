@@ -295,6 +295,11 @@ export function AutoSeoPage({
         navigate("/gpt-seo");
         return;
       }
+      if (backupResult.seoProvider === "codex_mcp") {
+        notifyUser({ title: "Đã xếp hàng Codex MCP", message: `${hydratedProducts.length} sản phẩm đang chờ Codex xử lý qua MCP.`, type: "success", url: "/gpt-seo" });
+        navigate("/gpt-seo");
+        return;
+      }
 
       const autoSeoProducts = hydratedProducts.map(mapShopifyProductToAutoSeoCandidate);
       const result = await activeClient.runAutoSeo({

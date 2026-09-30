@@ -20,12 +20,22 @@ export async function runSeoContent(
   if (!runner) {
     const queue = getCustomGptRuntime().queue;
     const settings = options?.providerSettings ?? queue.settings(input.storeId);
-    if (settings.provider === "custom_gpt") {
+    if (settings.provider === "custom_gpt" || settings.provider === "codex_mcp") {
+      const jobIds: string[] = [];
       for (const product of input.products) {
         const seoInput = fromAutoSeoProduct(product);
-        queue.enqueue({ storeId: input.storeId, source: "auto_seo", sourceIdentity: String(seoInput.productId || seoInput.handle), input: { ...seoInput, siteDomain: input.shopDomain }, original: product, settings });
+        const job = queue.enqueue({ storeId: input.storeId, source: "auto_seo", sourceIdentity: String(seoInput.productId || seoInput.handle), input: { ...seoInput, siteDomain: input.shopDomain }, original: product, settings });
+        jobIds.push(job.id);
       }
-      return { success: true, provider: "custom_gpt", processedCount: 0, message: `Queued ${input.products.length} products for Custom GPT`, seoOutputs: [] };
+      return {
+        success: true,
+        provider: settings.provider,
+        processedCount: 0,
+        message: `Queued ${input.products.length} products for ${settings.provider === "codex_mcp" ? "Codex MCP" : "Custom GPT"}`,
+        seoOutputs: [],
+        dispatchStatus: "queued",
+        jobIds,
+      };
     }
   }
 
@@ -39,9 +49,12 @@ export async function runSeoContent(
   const failureDetail = !isSuccess && firstFailure ? `: ${firstFailure}` : "";
 
   return {
+    provider: "gemini",
     success: isSuccess,
     processedCount: result.successful,
     message: `Processed ${result.successful}/${result.total} products with SEO Content Pipeline B1-B6${failureDetail}`,
     seoOutputs: result.seoOutputs,
+    dispatchStatus: isSuccess ? "review_ready" : undefined,
+    jobIds: [],
   };
 }

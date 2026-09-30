@@ -55,6 +55,17 @@ test("production deployment keeps the VPS action-key map authoritative over envi
   );
 });
 
+test("production deployment keeps the VPS MCP-key map authoritative over environment secrets", async () => {
+  const workflow = await readFile(".github/workflows/deploy.yml", "utf8");
+
+  assert.match(workflow, /EXISTING_GPT_SEO_MCP_KEYS_JSON=/);
+  assert.match(workflow, /INCOMING_GPT_SEO_MCP_KEYS_JSON=/);
+  assert.match(
+    workflow,
+    /if \[ -n "\$EXISTING_GPT_SEO_MCP_KEYS_JSON" \]; then[\s\S]*?GPT_SEO_MCP_KEYS_JSON=%s/,
+  );
+});
+
 test("production deployment removes the legacy single-store action key when a key map exists", async () => {
   const workflow = await readFile(".github/workflows/deploy.yml", "utf8");
 

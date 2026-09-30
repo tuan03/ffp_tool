@@ -19,3 +19,13 @@ test("image downloader bounds content size and revalidates redirect targets", as
   t.mock.method(globalThis, "fetch", async () => new Response("large", { headers: { "Content-Type": "image/png", "Content-Length": String(9 * 1024 * 1024) } }));
   await assert.rejects(downloadProductImage("https://cdn.shopify.com/image.png"), /exceeds 8 MB/);
 });
+test("image downloader accepts JPEG, PNG and WebP but rejects unsupported MIME types", async (t) => {
+  for (const [contentType, extension] of [["image/jpeg", "jpg"], ["image/png", "png"], ["image/webp", "webp"]] as const) {
+    t.mock.method(globalThis, "fetch", async () => new Response("image", { headers: { "Content-Type": contentType } }));
+    const image = await downloadProductImage("https://cdn.shopify.com/image");
+    assert.equal(image.contentType, contentType);
+    assert.equal(image.extension, extension);
+  }
+  t.mock.method(globalThis, "fetch", async () => new Response("image", { headers: { "Content-Type": "image/svg+xml" } }));
+  await assert.rejects(downloadProductImage("https://cdn.shopify.com/image.svg"), /unsupported/);
+});
