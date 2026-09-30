@@ -78,7 +78,7 @@ export function HeaderBar({
   }
 
   return (
-    <header className="flex flex-col gap-4 rounded-xl border border-slate-800 bg-slate-900/90 p-4 shadow-lg backdrop-blur-sm sm:flex-row sm:items-center sm:justify-between">
+    <header className="relative z-40 flex flex-col gap-4 rounded-xl border border-slate-800 bg-slate-900/90 p-4 shadow-lg backdrop-blur-sm sm:flex-row sm:items-center sm:justify-between">
       {/* 3 Stage Wizard Tabs */}
       <nav aria-label="Các giai đoạn quy trình" className="flex items-center gap-1.5 overflow-x-auto sm:gap-2">
         {/* Step 1 */}

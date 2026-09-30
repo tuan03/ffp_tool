@@ -76,3 +76,13 @@ test("step one removes static hot suggestions and consolidates connection contro
   assert.match(headerSource, /Crawler · Online · Đã login/);
   assert.doesNotMatch(headerSource, /Đã lưu API Token|Agent Online|Agent chưa login|Xác thực Pinterest/);
 });
+
+test("job selector dropdown stays above the step content", async () => {
+  const headerSource = await readFile(
+    new URL("../ui/components/HeaderBar.tsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(headerSource, /<header className="[^"]*relative z-40[^"]*"/);
+  assert.match(headerSource, /Floating Dropdown Panel[\s\S]*z-50/);
+});
