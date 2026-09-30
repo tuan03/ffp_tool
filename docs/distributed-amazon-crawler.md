@@ -24,14 +24,19 @@ Completed product raw payloads are discarded as soon as Shopify confirms the syn
 
 Each streamed product is processed on the server as `customization-normalizer → SEO B1–B6 (alt-only) → Shopify`. Alt-only mode keeps the original Amazon image URLs and changes only alt text; it does not download, convert, or upload WebP files. SEO configuration is read from root `.env.local`; local development also accepts the ignored `src/modules/seo-content/.env.local`. Root values take precedence. The public result records SEO engine/fallback metadata but never exposes credentials, image buffers, local paths, or proxy credentials.
 
-PostgreSQL is the production database. Copy `deploy/amazon-crawler-coordinator/.env.example` to `.env` in that directory, replace the database password and CORS origin, then run:
+PostgreSQL is the production database. Production must use the root three-container
+topology; the Coordinator does not have a separate production Compose manifest.
+From the repository root, copy the production template, configure its database
+password, public domain and integration credentials, then start the whole system:
 
-```powershell
-docker compose --env-file deploy/amazon-crawler-coordinator/.env `
-  -f deploy/amazon-crawler-coordinator/docker-compose.yml up --build -d
+```bash
+cp .env.example .env
+docker compose up -d --build
 ```
 
-Put an HTTPS reverse proxy in front of `127.0.0.1:8766`. V1 intentionally has no authentication, so the coordinator must not be exposed directly to the public internet; restrict inbound IPs/firewall rules to the application server and known client networks wherever possible.
+The Coordinator port is internal to Docker and is never published on the host. Remote
+agents connect to the public `client` HTTP/HTTPS endpoint, whose Nginx configuration
+proxies Coordinator API and WebSocket traffic to `server:8766`.
 
 For development without Docker:
 

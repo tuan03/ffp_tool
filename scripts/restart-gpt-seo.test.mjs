@@ -2,14 +2,14 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 
-test("GPT SEO restart script validates Compose and waits for a healthy app", async () => {
+test("GPT SEO restart script validates root Compose and waits for a healthy server", async () => {
   const script = await readFile("scripts/restart-gpt-seo.sh", "utf8");
 
   assert.match(script, /set -Eeuo pipefail/);
-  assert.match(script, /docker inspect --format '\{\{\.Config\.Image\}\}' ffp-tool-app/);
-  assert.match(script, /APP_PORT="\$\{APP_PORT:-3010\}"/);
-  assert.match(script, /docker compose -f compose\.prod\.yaml config -q/);
-  assert.match(script, /docker compose -f compose\.prod\.yaml up -d --force-recreate --wait --wait-timeout 120 app/);
+  assert.match(script, /docker compose config -q/);
+  assert.match(script, /docker compose up -d --build --force-recreate --wait --wait-timeout 120 server/);
+  assert.doesNotMatch(script, /compose\.prod\.yaml/);
+  assert.doesNotMatch(script, /ffp-tool-app/);
   assert.match(script, /https:\/\/ffp\.b6-team\.site\/health/);
 });
 
@@ -33,11 +33,14 @@ test("new-store guide documents VPS login and the private key is ignored", async
   assert.match(gitignore, /^\/wrydeco-vps_key\.pem$/m);
 });
 
-test("production deployment writes APP_PORT on a new line", async () => {
+test("production deployment writes CLIENT_PORT on a new line", async () => {
   const workflow = await readFile(".github/workflows/deploy.yml", "utf8");
 
-  assert.match(workflow, /printf '\\nAPP_PORT=%s\\n' "\$APP_PORT" >> \.env/);
-  assert.doesNotMatch(workflow, /echo "APP_PORT=\$APP_PORT" >> \.env/);
+  assert.match(workflow, /printf '\\nCLIENT_PORT=%s\\n' "\$CLIENT_PORT" >> \.env/);
+  assert.match(workflow, /grep -E "\^APP_PORT="/);
+  assert.match(workflow, /sed -i '\/\^\[\[:space:\]\]\*APP_PORT=\/d' \.env/);
+  assert.doesNotMatch(workflow, /docker compose -f compose\.prod\.yaml/);
+  assert.match(workflow, /docker compose up -d --build --remove-orphans/);
 });
 
 test("production deployment keeps the VPS action-key map authoritative over environment secrets", async () => {
@@ -128,15 +131,15 @@ test("Custom GPT instructions and knowledge briefly explain every exposed Action
   }
 });
 
-test("production deployment exports the GPT SEO restart script from the container", async () => {
+test("production deployment installs the GPT SEO restart script from the repository", async () => {
   const workflow = await readFile(".github/workflows/deploy.yml", "utf8");
 
-  assert.match(workflow, /docker cp ffp-tool-app:\/app\/scripts\/restart-gpt-seo\.sh scripts\/restart-gpt-seo\.sh/);
   assert.match(workflow, /chmod 755 scripts\/restart-gpt-seo\.sh/);
+  assert.doesNotMatch(workflow, /docker cp/);
 });
 
 test("production deployment fails when the health endpoint stays unavailable", async () => {
   const workflow = await readFile(".github/workflows/deploy.yml", "utf8");
 
-  assert.match(workflow, /if \[ "\$HEALTHY" = "false" \]; then[\s\S]*?docker compose -f compose\.prod\.yaml logs --tail=50[\s\S]*?exit 1[\s\S]*?fi/);
+  assert.match(workflow, /if \[ "\$HEALTHY" = "false" \]; then[\s\S]*?docker compose logs --tail=50[\s\S]*?exit 1[\s\S]*?fi/);
 });

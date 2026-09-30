@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { access, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -29,6 +29,49 @@ test("docker-compose.yml defines exactly the 3 unified containers: database, ser
   assert.match(compose, /dockerfile:\s*deploy\/client\/Dockerfile/);
   assert.match(compose, /container_name:\s*ffp-client/);
   assert.match(compose, /depends_on:\s*\n\s*server:/);
+});
+
+test("root Compose is the only production topology and publishes only the client", async () => {
+  const compose = await readFile("docker-compose.yml", "utf8");
+  const legacyComposeFiles = [
+    "compose.prod.yaml",
+    "deploy/amazon-crawler-coordinator/docker-compose.yml",
+  ];
+
+  for (const legacyComposeFile of legacyComposeFiles) {
+    await assert.rejects(access(legacyComposeFile));
+  }
+
+  assert.match(compose, /client:[\s\S]*?ports:\s*\n\s*-\s*"\$\{CLIENT_BIND_ADDRESS/);
+  assert.doesNotMatch(compose, /\$\{POSTGRES_PORT/);
+  assert.doesNotMatch(compose, /\$\{GATEWAY_PORT/);
+  assert.doesNotMatch(compose, /\$\{COORDINATOR_PORT/);
+  assert.doesNotMatch(compose, /^\s*-\s*["'][^"'\r\n]*:(?:3001|5432|8766|8768)["']\s*$/m);
+});
+
+test("all production services have bounded resources, rotating logs, and restart policy", async () => {
+  const compose = await readFile("docker-compose.yml", "utf8");
+
+  assert.equal((compose.match(/restart:\s*unless-stopped/g) ?? []).length, 3);
+  assert.equal((compose.match(/driver:\s*"?json-file"?/g) ?? []).length, 3);
+  assert.equal((compose.match(/max-size:\s*"\$\{[A-Z_]+:-10m\}"/g) ?? []).length, 3);
+  assert.equal((compose.match(/max-file:\s*"\$\{[A-Z_]+:-3\}"/g) ?? []).length, 3);
+  assert.equal((compose.match(/cpus:\s*"\$\{[A-Z_]+:-[^}]+\}"/g) ?? []).length, 3);
+  assert.equal((compose.match(/mem_limit:\s*\$\{[A-Z_]+:-[^}]+\}/g) ?? []).length, 3);
+  assert.equal((compose.match(/pids_limit:\s*\$\{[A-Z_]+:-[^}]+\}/g) ?? []).length, 3);
+});
+
+test("production environment template documents the one-command startup without secrets", async () => {
+  const environmentTemplate = await readFile(".env.example", "utf8");
+  const deploymentGuide = await readFile("docs/unified-deployment-and-crawler.md", "utf8");
+
+  assert.match(environmentTemplate, /^NODE_ENV=production$/m);
+  assert.match(environmentTemplate, /^POSTGRES_PASSWORD=$/m);
+  assert.doesNotMatch(environmentTemplate, /ffp_secure_password_change_me/);
+  assert.doesNotMatch(environmentTemplate, /^POSTGRES_PORT=/m);
+  assert.match(deploymentGuide, /cp \.env\.example \.env/);
+  assert.match(deploymentGuide, /docker compose up -d --build/);
+  assert.match(deploymentGuide, /docker-compose\.yml[^\n]*production manifest/i);
 });
 
 test("backup-db scripts perform single-command database backups", async () => {
@@ -173,7 +216,7 @@ test("server and client deployment assets are properly configured", async () => 
   assert.match(compose, /PINTEREST_RUNTIME_ROOT:\s*\/app\/\.runtime\/pinterest-pod/);
   assert.match(compose, /PINTEREST_APP_ID:\s*\$\{PINTEREST_APP_ID:-\}/);
   assert.match(compose, /PINTEREST_APP_SECRET:\s*\$\{PINTEREST_APP_SECRET:-\}/);
-  assert.match(compose, /PINTEREST_REDIRECT_URI:\s*\$\{PINTEREST_REDIRECT_URI:-\}/);
+  assert.match(compose, /PINTEREST_REDIRECT_URI:\s*\$\{PINTEREST_REDIRECT_URI:-[^}]*\}/);
   assert.match(compose, /PINTEREST_OAUTH_STATE_SECRET:\s*\$\{PINTEREST_OAUTH_STATE_SECRET:-\}/);
   assert.doesNotMatch(compose, /^\s*-\s*["'][^"'\r\n]*:8768["']\s*$/m);
   assert.match(coordinator, /@app\.post\("\/api\/v1\/pinterest-jobs"/);

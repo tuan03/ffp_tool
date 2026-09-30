@@ -1,5 +1,19 @@
 # FFP Tool
 
+## Production deployment
+
+The root `docker-compose.yml` is the only supported production manifest. Create `.env`
+from `.env.example`, configure the required secrets, and start the complete
+`database`/`server`/`client` topology with:
+
+```bash
+docker compose up -d --build
+```
+
+Do not start module-specific Compose stacks in production. See
+`docs/unified-deployment-and-crawler.md` for environment, reverse-proxy, persistence,
+resource-limit, and backup instructions.
+
 FFP Tool is a modular single-page application built with React, TypeScript, Vite, Tailwind CSS, and React Router.
 
 It is one repository and one application, not a monorepo. The code is organized so a main UI developer and three module developers can work in parallel with clear ownership and minimal Git conflicts.

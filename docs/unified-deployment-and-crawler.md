@@ -6,7 +6,9 @@ Tài liệu này hướng dẫn chi tiết về cấu trúc triển khai chuẩn
 
 ## PHẦN 1: Kiến trúc Triển khai 3 Container Duy Nhất
 
-Hệ thống được gói gọn trong đúng 3 container phối hợp chặt chẽ qua file gốc [docker-compose.yml](file:///D:/CODE/Code_Clone/ffp_tool/docker-compose.yml):
+Hệ thống được gói gọn trong đúng 3 container phối hợp chặt chẽ qua file gốc
+`docker-compose.yml`. Đây là **production manifest chính thức duy nhất**; không chạy
+Compose riêng cho Gateway, Coordinator, Pinterest hoặc bất kỳ module nào.
 
 ```text
 [ Người dùng / Trình duyệt / Crawler ]
@@ -56,7 +58,34 @@ Hệ thống được gói gọn trong đúng 3 container phối hợp chặt ch
 
 ---
 
-### 1.2. Khởi chạy toàn bộ hệ thống bằng 1 lệnh duy nhất
+### 1.2. Chuẩn bị cấu hình production
+
+Tạo file `.env` từ template an toàn:
+
+```bash
+cp .env.example .env
+```
+
+Trên PowerShell:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+Trước khi khởi động:
+
+1. Điền `POSTGRES_PASSWORD` bằng chuỗi ngẫu nhiên mạnh.
+2. Điền credential của các integration thực sự sử dụng; không commit `.env`.
+3. Thay `your-ffp-domain.example` bằng domain HTTPS thật.
+4. Giữ `CLIENT_BIND_ADDRESS=127.0.0.1` trên VPS có Nginx/Caddy phía host. Chỉ đặt
+   `0.0.0.0` khi cần cho máy khác trong LAN truy cập trực tiếp và firewall đã được cấu hình.
+5. Điều chỉnh giới hạn CPU/RAM trong `.env` theo tài nguyên VPS nếu giá trị mặc định
+   không phù hợp.
+
+Backend và PostgreSQL chỉ nằm trong Docker network. Các port `3001`, `5432`, `8766`
+và `8768` không được publish ra host; toàn bộ lưu lượng bên ngoài phải vào qua `client`.
+
+### 1.3. Khởi chạy toàn bộ hệ thống bằng 1 lệnh duy nhất
 
 Tại thư mục gốc của dự án, chạy lệnh:
 
@@ -70,9 +99,27 @@ Hệ thống sẽ tự động:
 3. Build và khởi động Nginx `client`.
 4. Toàn bộ website truy cập được ngay tại `http://localhost:3010` (hoặc domain cấu hình).
 
+Kiểm tra topology:
+
+```bash
+docker compose config --services
+```
+
+Kết quả bắt buộc, đúng thứ tự:
+
+```text
+database
+server
+client
+```
+
+Mỗi service có restart policy, giới hạn tài nguyên và log rotation. `database` sử dụng
+volume `ffp_postgres_data`; `server` sử dụng `ffp_data` và `ffp_runtime`; `client`
+không có volume dữ liệu vì là service stateless và được dựng lại từ image.
+
 ---
 
-### 1.3. Sao lưu & Khôi phục Database (Backup & Restore)
+### 1.4. Sao lưu & Khôi phục Database (Backup & Restore)
 
 #### A. Sao lưu Database (Backup)
 - **Trên Linux / VPS**:

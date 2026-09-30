@@ -8,56 +8,29 @@ on:
 
 permissions:
   contents: read
-  packages: write
 
 jobs:
-  build-and-push:
-    name: Build & Push Docker Image
+  deploy:
+    name: Deploy root Compose to VPS
     runs-on: ubuntu-latest
-    outputs:
-      image_tag: ${{ steps.meta.outputs.tags }}
-      primary_image: ${{ fromJSON(steps.meta.outputs.json).tags[0] }}
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+      - name: Package tracked deployment source
+        run: git ls-files -z | tar --null -czf ffp-tool-deploy.tar.gz --files-from -
 
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
+      - name: Copy deployment source to VPS
+        uses: appleboy/scp-action@v0.1.7
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          source: ffp-tool-deploy.tar.gz
+          target: /tmp
 
-      - name: Extract Docker metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ghcr.io/${{ github.repository }}
-          tags: |
-            type=raw,value=latest
-            type=sha,format=short
-
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-  deploy:
-    name: Deploy to VPS
-    needs: build-and-push
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Encode Environment Secrets
+      - name: Encode environment secrets
         id: prep
         env:
           RAW_ENV: ${{ secrets.ENV_FILE }}
@@ -68,40 +41,45 @@ jobs:
             echo "env_b64=" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: SSH to VPS and Deploy
+      - name: Deploy the official three-container topology
         uses: appleboy/ssh-action@v1.2.0
         env:
-          DOCKER_IMAGE: ${{ needs.build-and-push.outputs.primary_image }}
-          GHCR_USER: ${{ github.actor }}
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TARGET_DOMAIN: ${{ secrets.DOMAIN || 'ffp.b6-team.site' }}
           ENV_B64: ${{ steps.prep.outputs.env_b64 }}
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
-          envs: DOCKER_IMAGE,GHCR_USER,GHCR_TOKEN,TARGET_DOMAIN,ENV_B64
+          envs: TARGET_DOMAIN,ENV_B64
           script: |
+            set -eu
+
             DEPLOY_DIR="/opt/ffp-tool"
+            ARCHIVE="/tmp/ffp-tool-deploy.tar.gz"
             echo "=== [1/6] Preparing deployment directory at $DEPLOY_DIR ==="
-            sudo mkdir -p "$DEPLOY_DIR/data" "$DEPLOY_DIR/runtime"
-            sudo chown -R $USER:$USER "$DEPLOY_DIR"
+            sudo mkdir -p "$DEPLOY_DIR"
+            sudo chown -R "$USER:$USER" "$DEPLOY_DIR"
+            tar -xzf "$ARCHIVE" -C "$DEPLOY_DIR"
+            rm -f "$ARCHIVE"
             cd "$DEPLOY_DIR"
 
-            echo "=== [2/6] Detecting application port ==="
-            APP_PORT=""
+            # Retire files left by either legacy production topology.
+            rm -f compose.prod.yaml deploy/amazon-crawler-coordinator/docker-compose.yml .env.production.example
+
+            echo "=== [2/6] Detecting client port ==="
+            CLIENT_PORT=""
             if [ -f .env ]; then
-              APP_PORT=$(grep -E "^APP_PORT=" .env 2>/dev/null | cut -d '=' -f2 | tr -d ' "' || true)
+              CLIENT_PORT=$(grep -E "^CLIENT_PORT=" .env 2>/dev/null | cut -d '=' -f2 | tr -d ' "' || true)
+              if [ -z "$CLIENT_PORT" ]; then
+                CLIENT_PORT=$(grep -E "^APP_PORT=" .env 2>/dev/null | cut -d '=' -f2 | tr -d ' "' || true)
+              fi
             fi
-
-            if [ -n "$APP_PORT" ]; then
-              echo "Using existing configured APP_PORT: $APP_PORT"
-            else
-              APP_PORT=$(python3 -c "import socket; print(next(p for p in range(3010, 4000) if socket.socket().connect_ex(('127.0.0.1', p)) != 0))" 2>/dev/null || echo "3010")
-              echo "Auto-detected available port: $APP_PORT"
+            if [ -z "$CLIENT_PORT" ]; then
+              CLIENT_PORT=$(python3 -c "import socket; print(next(p for p in range(3010, 4000) if socket.socket().connect_ex(('127.0.0.1', p)) != 0))" 2>/dev/null || echo "3010")
             fi
+            echo "Using client port: $CLIENT_PORT"
 
-            echo "=== [3/6] Handling .env configuration ==="
+            echo "=== [3/6] Applying production environment ==="
             EXISTING_GPT_SEO_ACTION_KEYS_JSON=""
             EXISTING_FFP_OPERATOR_USERNAME=""
             EXISTING_FFP_OPERATOR_PASSWORD=""
@@ -115,17 +93,13 @@ jobs:
             fi
 
             if [ -n "$ENV_B64" ]; then
-              echo "Applying .env configuration from GitHub Secrets..."
               [ -f .env ] && cp .env .env.bak
               printf '%s' "$ENV_B64" | base64 -d > .env
             elif [ ! -f .env ]; then
-              echo "First-time deployment without secret: Initializing minimal default .env..."
-              printf '%s\n' "NODE_ENV=production" "GATEWAY_HOST=0.0.0.0" "GATEWAY_PORT=3001" "STATIC_DIR=/app/dist" > .env
-            else
-              echo "Existing .env found on VPS. Preserving secrets..."
+              echo "No production .env exists. Copy .env.example to .env and configure required secrets." >&2
+              exit 1
             fi
 
-            # Keep store credentials already registered on the VPS unless ENV_FILE replaces a specific key.
             if [ -s "$EXISTING_STORE_ENV_FILE" ]; then
               printf '\n' >> .env
               while IFS= read -r store_line; do
@@ -136,20 +110,16 @@ jobs:
               done < "$EXISTING_STORE_ENV_FILE"
             fi
 
-            # Keep the VPS multi-store Action keys authoritative so deployments cannot restore stale secrets.
             INCOMING_GPT_SEO_ACTION_KEYS_JSON=$(sed -nE 's/^[[:space:]]*GPT_SEO_ACTION_KEYS_JSON=(.*)$/\1/p' .env | head -n 1 || true)
             if [ -n "$EXISTING_GPT_SEO_ACTION_KEYS_JSON" ]; then
               sed -i '/^[[:space:]]*GPT_SEO_ACTION_KEYS_JSON=/d' .env
               printf '\nGPT_SEO_ACTION_KEYS_JSON=%s\n' "$EXISTING_GPT_SEO_ACTION_KEYS_JSON" >> .env
               INCOMING_GPT_SEO_ACTION_KEYS_JSON="$EXISTING_GPT_SEO_ACTION_KEYS_JSON"
             fi
-
-            # A multi-store map replaces the legacy single-store Action key.
             if [ -n "$INCOMING_GPT_SEO_ACTION_KEYS_JSON" ]; then
               sed -i '/^[[:space:]]*GPT_SEO_ACTION_KEY=/d' .env
             fi
 
-            # Keep the VPS operator login unless ENV_FILE explicitly replaces it.
             INCOMING_FFP_OPERATOR_USERNAME=$(sed -nE 's/^[[:space:]]*FFP_OPERATOR_USERNAME=(.*)$/\1/p' .env | head -n 1 || true)
             INCOMING_FFP_OPERATOR_PASSWORD=$(sed -nE 's/^[[:space:]]*FFP_OPERATOR_PASSWORD=(.*)$/\1/p' .env | head -n 1 || true)
             if [ -z "$INCOMING_FFP_OPERATOR_USERNAME" ] && [ -n "$EXISTING_FFP_OPERATOR_USERNAME" ]; then
@@ -161,71 +131,45 @@ jobs:
               INCOMING_FFP_OPERATOR_PASSWORD="$EXISTING_FFP_OPERATOR_PASSWORD"
             fi
             if { [ -n "$INCOMING_FFP_OPERATOR_USERNAME" ] && [ -z "$INCOMING_FFP_OPERATOR_PASSWORD" ]; } || { [ -z "$INCOMING_FFP_OPERATOR_USERNAME" ] && [ -n "$INCOMING_FFP_OPERATOR_PASSWORD" ]; }; then
-              echo "FFP operator username and password must be configured together."
+              echo "FFP operator username and password must be configured together." >&2
               exit 1
             fi
 
-            # Ensure correct APP_PORT is recorded in .env
+            sed -i '/^[[:space:]]*CLIENT_PORT=/d' .env 2>/dev/null || true
+            sed -i '/^[[:space:]]*CLIENT_BIND_ADDRESS=/d' .env 2>/dev/null || true
             sed -i '/^[[:space:]]*APP_PORT=/d' .env 2>/dev/null || true
-            printf '\nAPP_PORT=%s\n' "$APP_PORT" >> .env
-
-            # Sanitize .env to fix any lines that violate KEY=VALUE or comment syntax (e.g. wrapped lines with parentheses)
-            python3 -c "import re; p=re.compile(r'^\s*(#|$|(export\s+)?[a-zA-Z_][a-zA-Z0-9_]*\s*=)'); lines=open('.env','r',encoding='utf-8',errors='replace').readlines(); open('.env','w',encoding='utf-8').writelines([l if p.match(l) else ('# [sanitized] ' + l) for l in lines])" 2>/dev/null || true
+            printf '\nCLIENT_PORT=%s\n' "$CLIENT_PORT" >> .env
+            printf 'CLIENT_BIND_ADDRESS=127.0.0.1\n' >> .env
+            python3 -c "import re; p=re.compile(r'^\s*(#|$|(export\s+)?[a-zA-Z_][a-zA-Z0-9_]*\s*=)'); lines=open('.env','r',encoding='utf-8',errors='replace').readlines(); open('.env','w',encoding='utf-8').writelines([line if p.match(line) else ('# [sanitized] ' + line) for line in lines])"
             chmod 600 .env
-            echo "File .env sanitized and protected (chmod 600)."
-
-            echo "=== [4/6] Setting up compose.prod.yaml ==="
-            printf '%s\n' \
-              "services:" \
-              "  app:" \
-              "    image: \${DOCKER_IMAGE}" \
-              "    container_name: ffp-tool-app" \
-              "    restart: unless-stopped" \
-              "    ports:" \
-              "      - \"127.0.0.1:\${APP_PORT:-3010}:3001\"" \
-              "    env_file:" \
-              "      - .env" \
-              "    volumes:" \
-              "      - ./data:/app/.local-data" \
-              "      - ./runtime:/app/.runtime" \
-              "    healthcheck:" \
-              "      test: [\"CMD\", \"node\", \"-e\", \"fetch('http://127.0.0.1:3001/health').then(r => r.ok ? process.exit(0) : process.exit(1)).catch(() => process.exit(1))\"]" \
-              "      interval: 15s" \
-              "      timeout: 5s" \
-              "      retries: 3" \
-              "      start_period: 10s" > compose.prod.yaml
-
-            echo "=== [5/6] Pulling and restarting Docker container ==="
-            echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
-            export DOCKER_IMAGE
-            export APP_PORT
-            echo "Validating Docker Compose configuration..."
-            docker compose -f compose.prod.yaml config -q
-            echo "Pulling Docker image: $DOCKER_IMAGE..."
-            docker compose -f compose.prod.yaml pull
-            echo "Starting container..."
-            docker compose -f compose.prod.yaml up -d --remove-orphans
-
-            # Export the operator helper from the deployed image so VPS instructions remain executable.
-            mkdir -p scripts
-            docker cp ffp-tool-app:/app/scripts/restart-gpt-seo.sh scripts/restart-gpt-seo.sh
             chmod 755 scripts/restart-gpt-seo.sh
 
-            echo "=== [6/6] Verifying Nginx and SSL ==="
+            echo "=== [4/6] Validating and starting root Compose ==="
+            SERVICES="$(docker compose config --services)"
+            EXPECTED_SERVICES="$(printf 'database\nserver\nclient')"
+            if [ "$SERVICES" != "$EXPECTED_SERVICES" ]; then
+              echo "Unexpected production services:" >&2
+              printf '%s\n' "$SERVICES" >&2
+              exit 1
+            fi
+            docker compose config -q
+            # Remove only the retired stateless container; its bind-mounted data remains on disk.
+            docker rm -f ffp-tool-app >/dev/null 2>&1 || true
+            docker compose up -d --build --remove-orphans --wait --wait-timeout 180
+
+            echo "=== [5/6] Configuring host HTTPS reverse proxy ==="
             DOMAIN="${TARGET_DOMAIN:-ffp.b6-team.site}"
             NGINX_CONF="/etc/nginx/sites-available/$DOMAIN.conf"
             NGINX_ENABLED="/etc/nginx/sites-enabled/$DOMAIN.conf"
-
             if [ ! -f "$NGINX_CONF" ]; then
-              echo "Setting up new Nginx site configuration for $DOMAIN..."
               sudo bash -c "printf '%s\n' \
                 'server {' \
                 '    listen 80;' \
                 '    listen [::]:80;' \
                 '    server_name $DOMAIN;' \
-                '    client_max_body_size 30M;' \
+                '    client_max_body_size 50M;' \
                 '    location / {' \
-                '        proxy_pass http://127.0.0.1:$APP_PORT;' \
+                '        proxy_pass http://127.0.0.1:$CLIENT_PORT;' \
                 '        proxy_http_version 1.1;' \
                 '        proxy_set_header Upgrade \$http_upgrade;' \
                 '        proxy_set_header Connection \"upgrade\";' \
@@ -233,43 +177,37 @@ jobs:
                 '        proxy_set_header X-Real-IP \$remote_addr;' \
                 '        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;' \
                 '        proxy_set_header X-Forwarded-Proto \$scheme;' \
-                '        proxy_pass_request_headers on;' \
                 '        proxy_connect_timeout 60s;' \
-                '        proxy_send_timeout 60s;' \
-                '        proxy_read_timeout 60s;' \
+                '        proxy_send_timeout 300s;' \
+                '        proxy_read_timeout 300s;' \
                 '    }' \
                 '}' > '$NGINX_CONF'"
               sudo ln -sf "$NGINX_CONF" "$NGINX_ENABLED"
-              sudo nginx -t
-              sudo systemctl reload nginx
+            else
+              sudo sed -i -E "s#proxy_pass http://127\.0\.0\.1:[0-9]+;#proxy_pass http://127.0.0.1:$CLIENT_PORT;#" "$NGINX_CONF"
             fi
-
-            # Check if SSL is already configured; if not, invoke certbot
+            sudo nginx -t
+            sudo systemctl reload nginx
             if ! sudo grep -q "ssl_certificate" "$NGINX_CONF" 2>/dev/null; then
-              echo "Requesting Let's Encrypt SSL certificate for $DOMAIN..."
               sudo certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos --register-unsafely-without-email --redirect || {
-                echo "Notice: Certbot request finished with warnings. Ensure DNS for $DOMAIN is pointed to this server."
+                echo "Certbot reported a warning. Verify DNS for $DOMAIN." >&2
               }
             fi
 
-            echo "Verifying application health..."
+            echo "=== [6/6] Verifying deployment ==="
             HEALTHY=false
             for i in $(seq 1 15); do
-              if curl -s -f "http://127.0.0.1:$APP_PORT/health" > /dev/null 2>&1; then
+              if curl -s -f "http://127.0.0.1:$CLIENT_PORT/health" > /dev/null 2>&1; then
                 HEALTHY=true
-                echo "Application is healthy and responding on port $APP_PORT!"
                 break
               fi
-              echo "Waiting for app container to start (attempt $i/15)..."
+              echo "Waiting for the client endpoint (attempt $i/15)..."
               sleep 2
             done
-
             if [ "$HEALTHY" = "false" ]; then
-              echo "Health endpoint did not respond within 30s. Checking container logs:"
-              docker compose -f compose.prod.yaml logs --tail=50
+              docker compose logs --tail=50
               exit 1
             fi
 
-            echo "=== Deployment Status ==="
-            docker compose -f compose.prod.yaml ps
-            echo "FFP Tool deployment to https://$DOMAIN completed successfully!"
+            docker compose ps
+            echo "FFP Tool deployment to https://$DOMAIN completed successfully."
