@@ -1,5 +1,6 @@
 export {
   computeProductInputHash,
+  computeSeoResultCacheKey,
   computeStageHash,
 } from "./checkpoint-hasher";
 export type { CanonicalProductIdentity } from "./checkpoint-hasher";
@@ -9,6 +10,7 @@ export {
   InMemorySeoCheckpointStore,
 } from "./checkpoint-store";
 export type { FileSeoCheckpointStoreOptions } from "./checkpoint-store";
+export { PostgresSeoCheckpointStore } from "./postgres-checkpoint-store";
 
 export {
   DEFAULT_STAGE_MODELS,

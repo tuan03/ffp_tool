@@ -10,7 +10,7 @@ import {
 import {
   applySeoContentToCustomizationProduct,
   type SeoContentOutput,
-} from "../seo-content";
+} from "../seo-content/browser";
 import {
   fromCustomizationNormalizerProduct,
   syncSingleProduct,

@@ -111,6 +111,19 @@ export interface AutoSeoBackupResponse {
   readonly downstreamStatus: "SENT" | "FAILED";
   readonly downstreamHttpStatus?: number | null;
   readonly downstreamError?: string | null;
+  /** Number of generated SEO outputs durably handed off to SEO Review by the server. */
+  readonly reviewPersistedCount?: number;
+  readonly seoDispatch?:
+    | {
+        readonly provider: "gemini";
+        readonly status: "review_ready";
+        readonly reviewPersistedCount: number;
+      }
+    | {
+        readonly provider: "custom_gpt" | "codex_mcp";
+        readonly status: "queued";
+        readonly jobIds: readonly string[];
+      };
 }
 
 export interface AutoSeoStoreOption {

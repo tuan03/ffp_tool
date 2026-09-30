@@ -51,6 +51,13 @@ export function canonicalizeBulletLabel(rawLabel: string): string {
   return trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
 }
 
+function normalizeGuidanceText(rawGuidance: string): string {
+  return rawGuidance
+    .trim()
+    .replace(/\bwill\s+fluffier\b/gi, "will become fluffier")
+    .replace(/[\s.;,:]+$/g, "");
+}
+
 /**
  * Formats a GeneratedContentDraft into semantic, sanitized HTML rich text for Shopify.
  * Guaranteed to use only semantic tags: <p>, <ul>, <li>, <strong>.
@@ -88,13 +95,13 @@ export function formatProductDescriptionHtml(draft: GeneratedContentDraft): stri
   // 3. Guidance / Care Details (if present)
   if (draft.guidance && draft.guidance.length > 0) {
     const guidanceText = draft.guidance
-      .map((g) => g.trim())
+      .map(normalizeGuidanceText)
       .filter(Boolean)
       .map(escapeHtml)
       .join("; ");
 
     if (guidanceText) {
-      sections.push(`<p><strong>Care & Instructions:</strong> ${guidanceText}</p>`);
+      sections.push(`<p><strong>Care & Instructions:</strong> ${guidanceText}.</p>`);
     }
   }
 

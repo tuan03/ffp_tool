@@ -1,4 +1,4 @@
-import { runAutoSeoPipeline } from "../seo-content";
+import { runAutoSeoPipeline } from "../seo-content/browser";
 import type {
   AutoSeoAdapterOptions,
   AutoSeoBatchResult,

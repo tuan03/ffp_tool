@@ -1,6 +1,6 @@
 import { createSeoContentQueue } from "./queue";
 import type { SeoQueueProgressStats } from "./queue";
-import { runSeoContent } from "./service";
+import { runDefaultSeoContent } from "./default-runner";
 import type {
   SeoContentImageInput,
   SeoContentInput,
@@ -329,7 +329,7 @@ export async function runPinterestPodSeoPipeline(
     };
   }
 
-  const baseRunner = options.runner || runSeoContent;
+  const baseRunner = options.runner || runDefaultSeoContent;
   const rawConcurrency = typeof options.concurrency === "number" && !Number.isNaN(options.concurrency)
     ? options.concurrency
     : 1;
