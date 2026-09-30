@@ -25,7 +25,9 @@ export async function executeConnectionTest(
   payload?: unknown,
 ): Promise<ConnectionTestData> {
   const p = payload && typeof payload === "object" ? (payload as Record<string, unknown>) : undefined;
-  const timeoutMs = typeof p?.timeoutMs === "number" && p.timeoutMs > 0 ? p.timeoutMs : undefined;
+  const rawTimeout = typeof p?.timeoutMs === "number" && p.timeoutMs > 0 ? p.timeoutMs : undefined;
+  // Defensive clamp between 1s (1000ms) and 60s (60000ms) to prevent socket hangs or immediate timeouts
+  const timeoutMs = rawTimeout !== undefined ? Math.min(Math.max(rawTimeout, 1000), 60000) : undefined;
   const data = await client.query<ConnectionTestRawResponse>(
     store,
     CONNECTION_TEST_QUERY,

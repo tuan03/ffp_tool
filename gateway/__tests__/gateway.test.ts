@@ -504,6 +504,42 @@ describe("Gateway: Operations & Dispatcher", () => {
     });
   });
 
+  it("executes connection.test with timeoutMs clamped defensively between 1s and 60s", async () => {
+    let capturedOptions: unknown;
+    const fakeClient = {
+      async query(_store: unknown, _query: string, _vars?: unknown, options?: unknown) {
+        capturedOptions = options;
+        return {
+          shop: {
+            name: "Test Shop",
+            myshopifyDomain: "store-test.myshopify.com",
+            currencyCode: "USD",
+          },
+        };
+      },
+    } as unknown as import("../shopify-graphql-client").ShopifyGraphqlClient;
+
+    const { executeConnectionTest } = await import("../operations/connection-test");
+    const store = {
+      storeId: "s1",
+      shopDomain: "s1.myshopify.com",
+      apiVersion: "2026-07",
+      auth: { type: "static" as const, token: "tok" },
+    };
+
+    // Clamps value below 1000ms to 1000ms
+    await executeConnectionTest(store, fakeClient, { timeoutMs: 50 });
+    assert.deepEqual(capturedOptions, { timeoutMs: 1000 });
+
+    // Clamps value above 60000ms to 60000ms
+    await executeConnectionTest(store, fakeClient, { timeoutMs: 120000 });
+    assert.deepEqual(capturedOptions, { timeoutMs: 60000 });
+
+    // Preserves value within range
+    await executeConnectionTest(store, fakeClient, { timeoutMs: 5000 });
+    assert.deepEqual(capturedOptions, { timeoutMs: 5000 });
+  });
+
   it("executes products.list with cursor pagination and validates limit", async () => {
     const dispatcher = setupGateway({
       data: {
