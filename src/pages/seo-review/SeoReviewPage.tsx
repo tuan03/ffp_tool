@@ -239,67 +239,6 @@ export function SeoReviewPage({
     });
   }, [amazonCrawlerReviews]);
 
-  useEffect(() => {
-    let isCancelled = false;
-
-    async function loadPersistedAutoSeoReviews(): Promise<void> {
-      const response = await fetch(
-        `/api/seo-review/items?storeId=${encodeURIComponent(selectedStoreId)}&limit=100`,
-      );
-      if (!response.ok) {
-        throw new Error(`SEO Review API returned HTTP ${response.status}`);
-      }
-
-      const body: unknown = await response.json();
-      if (!body || typeof body !== "object") {
-        throw new Error("SEO Review API returned an invalid response");
-      }
-
-      const rawItems = (body as { items?: unknown }).items;
-      if (!Array.isArray(rawItems) || isCancelled) {
-        return;
-      }
-
-      const persistedProducts = rawItems
-        .filter((item): item is PersistedSeoReviewItem => {
-          if (!item || typeof item !== "object") return false;
-          const candidate = item as Partial<PersistedSeoReviewItem>;
-          return (
-            typeof candidate.itemId === "string" &&
-            typeof candidate.storeId === "string" &&
-            typeof candidate.productId === "string" &&
-            typeof candidate.handle === "string" &&
-            typeof candidate.title === "string" &&
-            typeof candidate.generatedPayload === "string" &&
-            (candidate.reviewStatus === "pending" ||
-              candidate.reviewStatus === "approved" ||
-              candidate.reviewStatus === "rejected")
-          );
-        })
-        .map(adaptPersistedSeoReviewItemToViewModel);
-
-      setProducts((current) => {
-        const persistedProductIds = new Set(
-          persistedProducts.map((product) => product.productId).filter(Boolean),
-        );
-        const currentWithoutStaleAutoSeo = current.filter(
-          (product) =>
-            product.sourceOrigin !== "auto_seo" ||
-            !persistedProductIds.has(product.productId),
-        );
-        return [...persistedProducts, ...currentWithoutStaleAutoSeo];
-      });
-    }
-
-    void loadPersistedAutoSeoReviews().catch(() => {
-      // Keep session data available when the Gateway is temporarily unavailable.
-    });
-
-    return () => {
-      isCancelled = true;
-    };
-  }, [selectedStoreId]);
-
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(new Set());
   const [activeProduct, setActiveProduct] = useState<SeoProductUiViewModel | null>(null);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
@@ -369,6 +308,67 @@ export function SeoReviewPage({
     }
     return "capozen";
   });
+
+  useEffect(() => {
+    let isCancelled = false;
+
+    async function loadPersistedAutoSeoReviews(): Promise<void> {
+      const response = await fetch(
+        `/api/seo-review/items?storeId=${encodeURIComponent(selectedStoreId)}&limit=100`,
+      );
+      if (!response.ok) {
+        throw new Error(`SEO Review API returned HTTP ${response.status}`);
+      }
+
+      const body: unknown = await response.json();
+      if (!body || typeof body !== "object") {
+        throw new Error("SEO Review API returned an invalid response");
+      }
+
+      const rawItems = (body as { items?: unknown }).items;
+      if (!Array.isArray(rawItems) || isCancelled) {
+        return;
+      }
+
+      const persistedProducts = rawItems
+        .filter((item): item is PersistedSeoReviewItem => {
+          if (!item || typeof item !== "object") return false;
+          const candidate = item as Partial<PersistedSeoReviewItem>;
+          return (
+            typeof candidate.itemId === "string" &&
+            typeof candidate.storeId === "string" &&
+            typeof candidate.productId === "string" &&
+            typeof candidate.handle === "string" &&
+            typeof candidate.title === "string" &&
+            typeof candidate.generatedPayload === "string" &&
+            (candidate.reviewStatus === "pending" ||
+              candidate.reviewStatus === "approved" ||
+              candidate.reviewStatus === "rejected")
+          );
+        })
+        .map(adaptPersistedSeoReviewItemToViewModel);
+
+      setProducts((current) => {
+        const persistedProductIds = new Set(
+          persistedProducts.map((product) => product.productId).filter(Boolean),
+        );
+        const currentWithoutStaleAutoSeo = current.filter(
+          (product) =>
+            product.sourceOrigin !== "auto_seo" ||
+            !persistedProductIds.has(product.productId),
+        );
+        return [...persistedProducts, ...currentWithoutStaleAutoSeo];
+      });
+    }
+
+    void loadPersistedAutoSeoReviews().catch(() => {
+      // Keep session data available when the Gateway is temporarily unavailable.
+    });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [selectedStoreId]);
 
   const gptClient = useMemo(() => getCustomGptClient(environment), []);
   const [gptOffset, setGptOffset] = useState(0);
