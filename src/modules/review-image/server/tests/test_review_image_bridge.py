@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import time
 import threading
@@ -60,6 +61,89 @@ def test_image_edit_sends_two_ordered_images_and_returns_image():
     assert response.status_code == 200
     assert response.json()["image"] == {"mime_type": "image/png", "data": data}
     assert server.jobs[message["job_id"]]["result"] is None
+
+
+def test_image_edit_can_be_cancelled_by_conversation_session():
+    data = base64.b64encode(b"image-bytes").decode()
+    session_id = "jeminise-cancel-1"
+    with TestClient(server.app) as client:
+        with client.websocket_connect(f"/ws/extension?token={server.BRIDGE_TOKEN}") as socket:
+            socket.receive_json()
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                request = pool.submit(
+                    client.post,
+                    "/image-edit",
+                    json={
+                        "prompt": "replace product",
+                        "timeout_seconds": 10,
+                        "conversation_session_id": session_id,
+                        "images": [
+                            {"name": "template", "mime_type": "image/png", "data": data},
+                            {"name": "product", "mime_type": "image/png", "data": data},
+                        ],
+                    },
+                    headers={"X-Bridge-Token": server.BRIDGE_TOKEN},
+                )
+                job_message = socket.receive_json()
+                cancelled = client.post(
+                    "/image-edit/cancel",
+                    json={"conversation_session_id": session_id},
+                    headers={"X-Bridge-Token": server.BRIDGE_TOKEN},
+                )
+                cancel_message = socket.receive_json()
+                socket.send_json({
+                    "type": "job_result",
+                    "job_id": job_message["job_id"],
+                    "image": {"mime_type": "image/png", "data": data},
+                })
+                response = request.result(timeout=3)
+
+    assert cancelled.status_code == 200
+    assert cancelled.json()["cancelled_job_ids"] == [job_message["job_id"]]
+    assert cancel_message == {"type": "cancel", "job_id": job_message["job_id"]}
+    assert response.status_code == 502
+    assert server.jobs[job_message["job_id"]]["status"] == "cancelled"
+
+
+def test_image_edit_cancellation_before_bridge_job_registration(monkeypatch):
+    data = base64.b64encode(b"image-bytes").decode()
+    session_id = "jeminise-cancel-before-registration"
+    monkeypatch.setattr(server, "prompt_execution_lock", asyncio.Lock())
+    with TestClient(server.app) as client:
+        with client.websocket_connect(f"/ws/extension?token={server.BRIDGE_TOKEN}") as socket:
+            socket.receive_json()
+            client.portal.call(server.prompt_execution_lock.acquire)
+            try:
+                with ThreadPoolExecutor(max_workers=1) as pool:
+                    request = pool.submit(
+                        client.post,
+                        "/image-edit",
+                        json={
+                            "prompt": "replace product",
+                            "timeout_seconds": 10,
+                            "conversation_session_id": session_id,
+                            "images": [
+                                {"name": "template", "mime_type": "image/png", "data": data},
+                                {"name": "product", "mime_type": "image/png", "data": data},
+                            ],
+                        },
+                        headers={"X-Bridge-Token": server.BRIDGE_TOKEN},
+                    )
+                    time.sleep(0.05)
+                    cancelled = client.post(
+                        "/image-edit/cancel",
+                        json={"conversation_session_id": session_id},
+                        headers={"X-Bridge-Token": server.BRIDGE_TOKEN},
+                    )
+                    client.portal.call(server.prompt_execution_lock.release)
+                    response = request.result(timeout=3)
+            finally:
+                if server.prompt_execution_lock.locked():
+                    client.portal.call(server.prompt_execution_lock.release)
+
+    assert cancelled.status_code == 200
+    assert cancelled.json()["cancelled_job_ids"] == []
+    assert response.status_code == 409
 
 
 def test_extension_error_keeps_unicode_message_on_windows_console(monkeypatch):

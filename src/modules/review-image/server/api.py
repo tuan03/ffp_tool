@@ -48,6 +48,20 @@ def call_image_bridge(prompt: str, images: list[dict[str, str]], conversation_se
     return payload["image"]
 
 
+def cancel_image_bridge_session(conversation_session_id: str) -> bool:
+    request = urllib.request.Request(
+        f"http://127.0.0.1:{BRIDGE_PORT}/image-edit/cancel",
+        data=json.dumps({"conversation_session_id": conversation_session_id}).encode(),
+        headers={"Content-Type": "application/json", "X-Bridge-Token": BRIDGE_TOKEN},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=5):
+            return True
+    except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError):
+        return False
+
+
 review_image_service = ReviewImageService(
     PROJECT_ROOT / "data" / "review-image-templates",
     PROJECT_ROOT / "exports" / "review-images",
@@ -167,6 +181,17 @@ def get_job(job_id: str, x_bridge_token: str | None = Header(default=None)):
         return {"ok": True, "job": review_image_service.snapshot(job_id)}
     except ValueError as exc:
         raise HTTPException(404, str(exc)) from exc
+
+
+@app.post("/api/review-images/jobs/{job_id}/cancel")
+def cancel_job(job_id: str, x_bridge_token: str | None = Header(default=None)):
+    authorize(x_bridge_token)
+    try:
+        job = review_image_service.cancel(job_id)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    cancel_image_bridge_session(job["conversation_session_id"])
+    return {"ok": True, "job": job}
 
 
 @app.get("/api/review-images/jobs/{job_id}/image")

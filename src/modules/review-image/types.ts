@@ -1,5 +1,5 @@
 export type ReviewImageScope = "main" | "set" | "single";
-export type ReviewImageStatus = "queued" | "running" | "completed" | "failed";
+export type ReviewImageStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
 
 export interface ReviewImageJob {
   readonly job_id: string;
@@ -57,6 +57,7 @@ export interface ReviewImageClient {
   deleteTemplates(storeId: string, names: readonly string[]): Promise<DeleteReviewTemplatesResult>;
   create(input: CreateReviewImageInput): Promise<ReviewImageJob>;
   job(jobId: string): Promise<ReviewImageJob>;
+  cancel(jobId: string): Promise<ReviewImageJob>;
   approve(jobId: string): Promise<ReviewImageJob>;
   template(storeId: string, name: string): Promise<Blob>;
   image(jobId: string): Promise<Blob>;

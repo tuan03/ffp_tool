@@ -13,6 +13,8 @@ test("Review Studio presents the image and Amazon workflows as two steps", () =>
   const imageClient = createReviewImageClient(async () => { throw new Error("No network"); });
   const html = renderToStaticMarkup(<ReviewStudioPage reviewClient={reviewClient} reviewShopify={reviewShopify} imageClient={imageClient} />);
   assert.match(html, /Review Studio/);
-  assert.match(html, /Store lưu ảnh review \(Shopify Files\)/);
+  assert.match(html, /1\. Chọn store và loại sản phẩm/);
+  assert.match(html, /kho ảnh nền và prompt phù hợp/);
+  assert.match(html, /border-cyan-500\/40/);
   assert.match(html, /Store sản phẩm nhận review\/XLSX/);
 });

@@ -23,6 +23,25 @@ test("review image client turns backend errors into a readable message", async (
   await assert.rejects(() => client.approve("abc"), /No extension is connected/);
 });
 
+test("review image client cancels an active generation job", async () => {
+  let requestedUrl = "";
+  let requestedMethod = "";
+  const client = createReviewImageClient(async (input, init) => {
+    requestedUrl = String(input);
+    requestedMethod = init?.method ?? "GET";
+    return Response.json({
+      ok: true,
+      job: { job_id: "job-1", store_id: "jeminise", status: "cancelled", template_name: "room.png", scope: "single", approved: false, error: null, output_name: null, conversation_session_id: "jeminise-batch-1" },
+    });
+  });
+
+  const job = await client.cancel("job-1");
+
+  assert.equal(requestedUrl, "/api/review-images/jobs/job-1/cancel");
+  assert.equal(requestedMethod, "POST");
+  assert.equal(job.status, "cancelled");
+});
+
 test("review image client authenticates binary previews and downloads with an entered gateway token", async () => {
   const calls: Array<{ url: string; token: string | null }> = [];
   const client = createReviewImageClient(async (input, init) => {

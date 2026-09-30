@@ -85,6 +85,47 @@ def test_http_rejects_job_when_bridge_queue_is_full():
             api.review_image_service = original_service
 
 
+def test_http_cancels_active_job_and_forwards_its_conversation_session(monkeypatch):
+    with tempfile.TemporaryDirectory() as workspace:
+        root = Path(workspace)
+        templates = root / "templates"
+        store_templates = templates / "jeminise"
+        store_templates.mkdir(parents=True)
+        (store_templates / "room.png").write_bytes(base64.b64decode(image_data_url().split(",", 1)[1]))
+        gate = threading.Event()
+        cancelled_sessions = []
+        original_service = api.review_image_service
+        api.review_image_service = ReviewImageService(
+            templates,
+            root / "outputs",
+            lambda _prompt, _images, _session: (
+                gate.wait(2),
+                {"mime_type": "image/png", "data": image_data_url().split(",", 1)[1]},
+            )[1],
+        )
+        monkeypatch.setattr(api, "cancel_image_bridge_session", cancelled_sessions.append)
+        headers = {"X-Bridge-Token": api.BRIDGE_TOKEN}
+        try:
+            with TestClient(api.app) as client:
+                created = client.post("/api/review-images/jobs", headers=headers, json={
+                    "storeId": "jeminise",
+                    "productDataUrl": image_data_url(),
+                    "prompt": "Replace bedding",
+                    "scope": "single",
+                    "conversationSessionId": "jeminise-cancel-1",
+                }).json()["job"]
+                cancelled = client.post(
+                    f"/api/review-images/jobs/{created['job_id']}/cancel",
+                    headers=headers,
+                )
+                assert cancelled.status_code == 200
+                assert cancelled.json()["job"]["status"] == "cancelled"
+                assert cancelled_sessions == ["jeminise-cancel-1"]
+        finally:
+            gate.set()
+            api.review_image_service = original_service
+
+
 def test_template_gallery_lists_and_uploads_authenticated_images():
     with tempfile.TemporaryDirectory() as workspace:
         root = Path(workspace)

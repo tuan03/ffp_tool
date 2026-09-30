@@ -2,6 +2,7 @@ import base64
 import io
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -42,7 +43,7 @@ class ReviewImageServiceTests(unittest.TestCase):
     def wait_for_job(self, job_id: str) -> dict:
         for _ in range(100):
             job = self.service.snapshot(job_id)
-            if job["status"] in {"completed", "failed"}:
+            if job["status"] in {"completed", "failed", "cancelled"}:
                 return job
             time.sleep(0.01)
         self.fail("Review image job did not finish")
@@ -165,6 +166,32 @@ class ReviewImageServiceTests(unittest.TestCase):
         self.assertEqual(job["status"], "failed")
         self.assertFalse(self.outputs.exists())
 
+    def test_cancelled_job_discards_a_late_bridge_result(self) -> None:
+        gate = threading.Event()
+        service = ReviewImageService(
+            self.templates,
+            self.outputs,
+            lambda _prompt, _images, _session: (
+                gate.wait(2),
+                {"mime_type": "image/png", "data": image_data_url().split(",", 1)[1]},
+            )[1],
+        )
+        created = service.submit(
+            image_data_url(),
+            "Prompt",
+            "single",
+            store_id="preaureum",
+            conversation_session_id="preaureum-cancel-1",
+        )
+        try:
+            cancelled = service.cancel(created["job_id"])
+            self.assertEqual(cancelled["status"], "cancelled")
+            self.assertIsNone(cancelled["output_name"])
+        finally:
+            gate.set()
+        self.assertEqual(self.wait_for_service_job(service, created["job_id"])["status"], "cancelled")
+        self.assertFalse(self.outputs.exists())
+
     def test_limits_pending_jobs_and_releases_capacity(self) -> None:
         gate = __import__("threading").Event()
         service = ReviewImageService(
@@ -187,7 +214,7 @@ class ReviewImageServiceTests(unittest.TestCase):
     def wait_for_service_job(self, service: ReviewImageService, job_id: str) -> dict:
         for _ in range(200):
             job = service.snapshot(job_id)
-            if job["status"] in {"completed", "failed"}:
+            if job["status"] in {"completed", "failed", "cancelled"} and "finished_at" in job:
                 return job
             time.sleep(0.01)
         self.fail("Review image job did not finish")

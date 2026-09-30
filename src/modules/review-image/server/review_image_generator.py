@@ -242,9 +242,11 @@ class ReviewImageService:
         return self.snapshot(job_id)
 
     def _run(self, job_id: str, prompt: str, template: Path, product_mime: str, product_bytes: bytes, conversation_session_id: str) -> None:
-        with self.lock:
-            self.jobs[job_id]["status"] = "running"
         try:
+            with self.lock:
+                if self.jobs[job_id]["status"] == "cancelled":
+                    return
+                self.jobs[job_id]["status"] = "running"
             template_mime = IMAGE_FORMATS[{".png": "PNG", ".jpg": "JPEG", ".jpeg": "JPEG", ".webp": "WEBP"}[template.suffix.lower()]][0]
             images = [
                 {"name": "template", "mime_type": template_mime, "data": base64.b64encode(template.read_bytes()).decode()},
@@ -257,14 +259,22 @@ class ReviewImageService:
                 raise ValueError("ChatGPT chưa trả về file ảnh; hãy tạo lại.")
             _, image_bytes = decode_image_data_url(f"data:{result_mime};base64,{result_data}")
             extension = next(ext for mime, ext in IMAGE_FORMATS.values() if mime == result_mime)
+            with self.lock:
+                if self.jobs[job_id]["status"] == "cancelled":
+                    return
             self.output_dir.mkdir(parents=True, exist_ok=True)
             output_name = job_id + extension
-            (self.output_dir / output_name).write_bytes(image_bytes)
+            output_path = self.output_dir / output_name
+            output_path.write_bytes(image_bytes)
             with self.lock:
-                self.jobs[job_id].update(status="completed", output_name=output_name)
+                if self.jobs[job_id]["status"] == "cancelled":
+                    output_path.unlink(missing_ok=True)
+                else:
+                    self.jobs[job_id].update(status="completed", output_name=output_name)
         except Exception as exc:
             with self.lock:
-                self.jobs[job_id].update(status="failed", error=str(exc))
+                if self.jobs[job_id]["status"] != "cancelled":
+                    self.jobs[job_id].update(status="failed", error=str(exc))
         finally:
             with self.lock:
                 self.jobs[job_id]["finished_at"] = time.monotonic()
@@ -276,6 +286,23 @@ class ReviewImageService:
             if job_id not in self.jobs:
                 raise ValueError("Job ảnh không tồn tại.")
             return dict(self.jobs[job_id])
+
+    def cancel(self, job_id: str) -> dict:
+        with self.lock:
+            job = self.jobs.get(job_id)
+            if not job:
+                raise ValueError("Job ảnh không tồn tại.")
+            if job["approved"]:
+                raise ValueError("Ảnh đã được duyệt nên không thể hủy.")
+            if job["status"] == "cancelled":
+                return dict(job)
+            if job["status"] == "failed":
+                return dict(job)
+            output_name = job.get("output_name")
+            job.update(status="cancelled", error=None, output_name=None)
+            if output_name:
+                (self.output_dir / output_name).unlink(missing_ok=True)
+            return dict(job)
 
     def approve(self, job_id: str) -> dict:
         with self.lock:

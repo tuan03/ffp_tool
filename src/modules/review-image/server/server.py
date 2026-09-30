@@ -65,6 +65,14 @@ class ImageEditRequest(BaseModel):
         return self
 
 
+class ImageEditCancelRequest(BaseModel):
+    conversation_session_id: str = Field(
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9_-]+$",
+    )
+
+
 class XPathUpdate(BaseModel):
     prompt_input: str
     send_button: str
@@ -77,6 +85,8 @@ extensions: set[WebSocket] = set()
 jobs: dict[str, dict[str, Any]] = {}
 jobs_lock = asyncio.Lock()
 prompt_execution_lock = asyncio.Lock()
+cancelled_image_sessions: dict[str, float] = {}
+CANCEL_INTENT_SECONDS = 1800
 
 
 def require_token(value: str | None) -> None:
@@ -263,10 +273,18 @@ async def create_image_edit(
     job_id = str(uuid.uuid4())
     event = asyncio.Event()
     async with jobs_lock:
+        now = time.monotonic()
+        for session_id, expires_at in list(cancelled_image_sessions.items()):
+            if expires_at <= now:
+                del cancelled_image_sessions[session_id]
+        if cancelled_image_sessions.pop(body.conversation_session_id, None) is not None:
+            release_lock()
+            raise HTTPException(status_code=409, detail="Image generation cancelled")
         jobs[job_id] = {
             "job_id": job_id,
             "kind": "image_edit",
             "status": "queued",
+            "conversation_session_id": body.conversation_session_id,
             "created_at": time.time(),
             "event": event,
             "result": None,
@@ -301,6 +319,32 @@ async def create_image_edit(
         job["result"] = None
         return {"ok": True, "job_id": job_id, "image": image}
     raise HTTPException(status_code=502, detail=job["error"] or "Image generation failed")
+
+
+@app.post("/image-edit/cancel")
+async def cancel_image_edit(
+    body: ImageEditCancelRequest,
+    x_bridge_token: str | None = Header(default=None),
+):
+    require_token(x_bridge_token)
+    cancelled_job_ids: list[str] = []
+    async with jobs_lock:
+        for job in jobs.values():
+            if (
+                job.get("kind") == "image_edit"
+                and job.get("conversation_session_id") == body.conversation_session_id
+                and job.get("status") in {"queued", "running"}
+            ):
+                job["status"] = "cancelled"
+                job["error"] = "Image generation cancelled"
+                job["result"] = None
+                job["event"].set()
+                cancelled_job_ids.append(job["job_id"])
+        if not cancelled_job_ids:
+            cancelled_image_sessions[body.conversation_session_id] = time.monotonic() + CANCEL_INTENT_SECONDS
+    for job_id in cancelled_job_ids:
+        await broadcast({"type": "cancel", "job_id": job_id})
+    return {"ok": True, "cancelled_job_ids": cancelled_job_ids}
 
 
 @app.get("/jobs/{job_id}")
@@ -398,7 +442,7 @@ async def extension_socket(websocket: WebSocket):
                 job_id = message.get("job_id")
                 job = jobs.get(job_id)
 
-                if job:
+                if job and job.get("status") == "queued":
                     job["status"] = "running"
                     print(f"Job started: {job_id}")
 
@@ -412,7 +456,7 @@ async def extension_socket(websocket: WebSocket):
                     print(f"Result for unknown job: {job_id}")
                     continue
 
-                if job.get("status") in {"timeout", "failed"}:
+                if job.get("status") in {"timeout", "failed", "cancelled"}:
                     continue
                 if job.get("kind") == "image_edit":
                     image = message.get("image")
@@ -446,6 +490,9 @@ async def extension_socket(websocket: WebSocket):
                 )
 
                 if not job:
+                    continue
+
+                if job.get("status") == "cancelled":
                     continue
 
                 job["status"] = "failed"

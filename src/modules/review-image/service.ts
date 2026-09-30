@@ -104,6 +104,10 @@ export function createReviewImageClient(fetcher: Fetcher = fetch): ReviewImageCl
       const payload = await parseResponse(await fetcher(`${API_BASE}/jobs/${encodeURIComponent(jobId)}`, { headers: headers() }));
       return parseJob(payload);
     },
+    async cancel(jobId) {
+      const payload = await parseResponse(await fetcher(`${API_BASE}/jobs/${encodeURIComponent(jobId)}/cancel`, { method: "POST", headers: headers() }));
+      return parseJob(payload);
+    },
     async approve(jobId) {
       const payload = await parseResponse(await fetcher(`${API_BASE}/jobs/${encodeURIComponent(jobId)}/approve`, { method: "POST", headers: headers() }));
       return parseJob(payload);
