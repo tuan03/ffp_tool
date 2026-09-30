@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 
 const uploads = [];
+let unclearedUploadCount = 0;
 class FakeElement {}
 let acceptedNames = [];
 const composer = {
@@ -12,11 +13,14 @@ const composer = {
 };
 const input = {
   accept: 'image/*',
+  value: 'previous-selection',
   closest() { return composer; },
   dispatchEvent(event) {
     if (event.type === 'change') {
+      if (this.value !== '') unclearedUploadCount += 1;
       const files = [...this.files];
       uploads.push(files);
+      this.value = files.map(file => file.name).join(',');
       setTimeout(() => acceptedNames.push(...files.map(file => file.name)), 15);
     }
   }
@@ -88,6 +92,23 @@ context.sleep = () => new Promise(resolve => setTimeout(resolve, 5));
     { name: 'template', mime_type: 'image/png', data: 'YQ==' },
     { name: 'product', mime_type: 'image/png', data: 'Yg==' }
   ], composer), /upload failed/i);
+  composer.textContent = '';
+  acceptedNames = [];
+  const repeatedJobUploadStart = uploads.length;
+  await context.attachImageReferences([
+    { name: 'template', mime_type: 'image/png', data: 'YQ==' },
+    { name: 'product', mime_type: 'image/png', data: 'Yg==' }
+  ], composer, 'first-job');
+  await context.attachImageReferences([
+    { name: 'template', mime_type: 'image/png', data: 'YQ==' },
+    { name: 'product', mime_type: 'image/png', data: 'Yg==' }
+  ], composer, 'second-job');
+  assert.notEqual(
+    uploads[repeatedJobUploadStart][0].name,
+    uploads[repeatedJobUploadStart + 2][0].name,
+    'consecutive jobs must not reuse an attachment filename'
+  );
+  assert.equal(unclearedUploadCount, 0, 'file input must be cleared before every upload');
   const generated = new FakeElement();
   generated.complete = true;
   generated.naturalWidth = 1024;

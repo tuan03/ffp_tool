@@ -80,9 +80,15 @@ async function executeJob(job) {
   const previousLastText = previousMessages.at(-1)?.innerText?.trim() || "";
   const previousImageSources = new Set([...document.querySelectorAll('img')].map(img => img.currentSrc || img.src));
 
-  const input = await waitForPromptInput(xpaths.prompt_input, 20_000);
+  let input = await waitForPromptInput(xpaths.prompt_input, 20_000);
   if (job.kind === "image_edit") {
-    await attachImageReferences(job.images || [], input.closest('form') || document.querySelector('form') || document.body);
+    await attachImageReferences(
+      job.images || [],
+      input.closest('form') || document.querySelector('form') || document.body,
+      job.job_id,
+      xpaths.prompt_input
+    );
+    input = await waitForPromptInput(xpaths.prompt_input, 20_000);
   }
   input.focus();
   setPromptValue(input, job.prompt);
@@ -123,42 +129,120 @@ async function executeJob(job) {
   });
 }
 
-async function attachImageReferences(images, composerRoot = document) {
+async function attachImageReferences(images, composerRoot = document, jobId = '', promptInputXPath = '') {
   if (images.length !== 2 || images[0]?.name !== "template" || images[1]?.name !== "product") {
     throw new Error("Image job requires the template first and the product second.");
   }
-  for (const image of images) {
-    let input = composerRoot.querySelector('input[type="file"]') || document.querySelector('input[type="file"]');
-    if (!input) {
-      const attachButton = document.querySelector('[data-testid="composer-plus-btn"]') ||
-        document.querySelector('button[aria-label*="Attach"]') ||
-        document.querySelector('button[aria-label*="Upload"]');
-      attachButton?.click();
-      for (let attempt = 0; attempt < 40 && !input; attempt++) {
-        await sleep(250);
-        input = composerRoot.querySelector('input[type="file"]') || document.querySelector('input[type="file"]');
-      }
-    }
-    if (!input) throw new Error("ChatGPT image attachment input was not found. Reload the pinned tab.");
-    const composer = input.closest('form') || composerRoot;
-    const previousPreviews = composer.querySelectorAll('img').length;
+  for (const [imageIndex, image] of images.entries()) {
     const extension = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp" }[image.mime_type];
     if (!extension) throw new Error("Unsupported image type.");
     const bytes = Uint8Array.from(atob(image.data), character => character.charCodeAt(0));
-    const file = new File([bytes], `${image.name}.${extension}`, { type: image.mime_type });
-    const transfer = new DataTransfer();
-    transfer.items.add(file);
-    input.files = transfer.files;
-    input.dispatchEvent(new Event("change", { bubbles: true }));
-    await waitForImageAttachment(composer, file.name, previousPreviews);
+    const jobSuffix = String(jobId).replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 12);
+    const fileName = jobSuffix
+      ? `${image.name}-${jobSuffix}-${imageIndex + 1}.${extension}`
+      : `${image.name}.${extension}`;
+    let lastError = null;
+
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const activeComposer = resolveComposerRoot(composerRoot, promptInputXPath);
+      const input = await findAttachmentInput(activeComposer);
+      if (!input) throw new Error("ChatGPT image attachment input was not found. Reload the pinned tab.");
+      const composer = input.closest('form') || activeComposer;
+      const previousState = captureAttachmentState(composer);
+      const file = new File([bytes], fileName, { type: image.mime_type });
+      const transfer = new DataTransfer();
+      transfer.items.add(file);
+      try {
+        input.value = '';
+      } catch {
+        // Some browser-managed file inputs reject direct value assignment.
+      }
+      input.files = transfer.files;
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+
+      try {
+        await waitForImageAttachment({
+          composer,
+          filename: file.name,
+          previousState,
+          input,
+          promptInputXPath,
+          timeoutMs: 30_000
+        });
+        lastError = null;
+        break;
+      } catch (error) {
+        lastError = error;
+        if (/rejected|upload failed/i.test(error?.message || '')) throw error;
+        await sleep(500);
+      }
+    }
+
+    if (lastError) throw lastError;
   }
 }
 
-async function waitForImageAttachment(composer, filename, previousPreviews) {
+async function findAttachmentInput(composerRoot) {
+  const findCurrentInput = () => {
+    const scopedInput = composerRoot.querySelector('input[type="file"]');
+    if (scopedInput?.isConnected !== false && !scopedInput?.disabled) return scopedInput;
+    const globalInputs = [
+      document.querySelector('input[type="file"]'),
+      ...document.querySelectorAll('input[type="file"]')
+    ].filter((candidate, index, candidates) =>
+      candidate && candidates.indexOf(candidate) === index && candidate.isConnected !== false && !candidate.disabled
+    );
+    return globalInputs.find(candidate => candidate.closest?.('form') === composerRoot) ||
+      (globalInputs.length === 1 ? globalInputs[0] : null);
+  };
+  let input = findCurrentInput();
+  if (!input) {
+    const attachButton = composerRoot.querySelector?.('[data-testid="composer-plus-btn"]') ||
+      composerRoot.querySelector?.('button[aria-label*="Attach"]') ||
+      composerRoot.querySelector?.('button[aria-label*="Upload"]') ||
+      document.querySelector('[data-testid="composer-plus-btn"]') ||
+      document.querySelector('button[aria-label*="Attach"]') ||
+      document.querySelector('button[aria-label*="Upload"]');
+    attachButton?.click();
+    for (let attempt = 0; attempt < 40 && !input; attempt++) {
+      await sleep(250);
+      input = findCurrentInput();
+    }
+  }
+  return input && input.isConnected !== false && !input.disabled ? input : null;
+}
+
+function resolveComposerRoot(preferredRoot, promptInputXPath) {
+  const promptInput = findPromptInput(promptInputXPath);
+  const activeComposer = promptInput?.closest('form');
+  if (activeComposer && activeComposer.isConnected !== false) return activeComposer;
+  if (preferredRoot && preferredRoot.isConnected !== false) return preferredRoot;
+  return document.querySelector('form') || document.body || document;
+}
+
+function captureAttachmentState(composer) {
+  const markers = [...composer.querySelectorAll('[data-testid*="attachment"], [data-testid*="upload"], img')];
+  return {
+    markerCount: markers.length,
+    imageSources: new Set(
+      markers
+        .filter(node => node.tagName === 'IMG' || node.currentSrc || node.src)
+        .map(node => node.currentSrc || node.src || '')
+        .filter(Boolean)
+    )
+  };
+}
+
+async function waitForImageAttachment({ composer, filename, previousState, input, promptInputXPath, timeoutMs }) {
   const started = Date.now();
-  while (Date.now() - started < 60_000) {
-    const markers = [...composer.querySelectorAll('[data-testid*="attachment"], [aria-label], [title], img')];
-    const evidence = [composer.textContent || '', ...markers.flatMap(node => [
+  let currentComposer = composer;
+  let latestState = previousState;
+  let isUploading = false;
+  while (Date.now() - started < timeoutMs) {
+    currentComposer = resolveComposerRoot(currentComposer, promptInputXPath);
+    const markers = [...currentComposer.querySelectorAll('[data-testid*="attachment"], [data-testid*="upload"], [aria-label], [title], img')];
+    const evidence = [currentComposer.textContent || '', ...markers.flatMap(node => [
       node.textContent || '',
       node.getAttribute?.('aria-label') || '',
       node.getAttribute?.('title') || '',
@@ -167,12 +251,23 @@ async function waitForImageAttachment(composer, filename, previousPreviews) {
     if (/upload failed|failed to upload|could not upload|không thể tải|tải lên thất bại/i.test(evidence)) {
       throw new Error(`ChatGPT rejected ${filename}: upload failed.`);
     }
-    const hasPreview = composer.querySelectorAll('img').length > previousPreviews;
-    const isUploading = Boolean(composer.querySelector('[role="progressbar"], [aria-busy="true"]'));
+    latestState = captureAttachmentState(currentComposer);
+    const hasNewImage = [...latestState.imageSources].some(source => !previousState.imageSources.has(source));
+    const hasPreview = latestState.markerCount > previousState.markerCount || hasNewImage;
+    isUploading = Boolean(currentComposer.querySelector('[role="progressbar"], [aria-busy="true"]'));
     if ((evidence.includes(filename) || hasPreview) && !isUploading) return;
+    if (input?.isConnected === false && Date.now() - started >= 1_000) {
+      throw new Error(`ChatGPT replaced the composer while attaching ${filename}.`);
+    }
     await sleep(250);
   }
-  throw new Error(`ChatGPT did not confirm attachment ${filename} within 60 seconds.`);
+  throw new Error(
+    `ChatGPT did not confirm attachment ${filename} after 2 attempts ` +
+    `(composerConnected=${currentComposer?.isConnected !== false}, ` +
+    `inputConnected=${input?.isConnected !== false}, ` +
+    `markersBefore=${previousState.markerCount}, markersAfter=${latestState.markerCount}, ` +
+    `uploading=${isUploading}).`
+  );
 }
 
 async function waitForGeneratedImage({ assistantMessagesXPath, stopButtonXPath, previousCount, previousImageSources, timeoutMs, jobId }) {
@@ -260,8 +355,19 @@ async function openNewChat(xpaths) {
 }
 
 async function waitForNewChatReady(xpaths) {
-  for (let attempt = 0; attempt < 20; attempt++) {
-    if (window.location.pathname === "/" && xpathAll(xpaths.assistant_messages || "").length === 0) return;
+  let stableChecks = 0;
+  for (let attempt = 0; attempt < 40; attempt++) {
+    const promptInput = findPromptInput(xpaths.prompt_input || '');
+    const composer = promptInput?.closest('form');
+    const hasDraftAttachments = Boolean(
+      composer?.querySelector('[data-testid*="attachment"], [data-testid*="upload"]')
+    );
+    const isReady =
+      window.location.pathname === "/" &&
+      xpathAll(xpaths.assistant_messages || "").length === 0 &&
+      !hasDraftAttachments;
+    stableChecks = isReady ? stableChecks + 1 : 0;
+    if (stableChecks >= 4) return;
     await sleep(250);
   }
   throw new Error("Could not confirm a new ChatGPT conversation. Product images were not uploaded.");
@@ -364,6 +470,24 @@ async function waitForXPath(xpath, timeoutMs) {
 }
 
 async function waitForPromptInput(xpath, timeoutMs) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    const input = findPromptInput(xpath);
+    if (input) return input;
+    await sleep(250);
+  }
+  throw new Error(`ChatGPT prompt input was not found within ${timeoutMs} ms.`);
+}
+
+function findPromptInput(xpath) {
+  let configuredInput = null;
+  try {
+    configuredInput = xpathFirst(xpath);
+  } catch {
+    // A stale or invalid configured XPath should not disable stable ChatGPT selectors.
+  }
+  if (isWritablePromptInput(configuredInput)) return configuredInput;
+
   const fallbackSelectors = [
     '#prompt-textarea',
     '[data-testid="composer-input"]',
@@ -372,27 +496,15 @@ async function waitForPromptInput(xpath, timeoutMs) {
     '[contenteditable="true"][data-lexical-editor="true"]',
     '[contenteditable="true"].ProseMirror'
   ];
-  const startedAt = Date.now();
-  while (Date.now() - startedAt < timeoutMs) {
-    let configuredInput = null;
-    try {
-      configuredInput = xpathFirst(xpath);
-    } catch {
-      // A stale or invalid configured XPath should not disable stable ChatGPT selectors.
-    }
-    if (isWritablePromptInput(configuredInput)) return configuredInput;
-
-    for (const selector of fallbackSelectors) {
-      const candidates = [
-        document.querySelector(selector),
-        ...document.querySelectorAll(selector)
-      ];
-      const input = candidates.find(isWritablePromptInput);
-      if (input) return input;
-    }
-    await sleep(250);
+  for (const selector of fallbackSelectors) {
+    const candidates = [
+      document.querySelector(selector),
+      ...document.querySelectorAll(selector)
+    ];
+    const input = candidates.find(isWritablePromptInput);
+    if (input) return input;
   }
-  throw new Error(`ChatGPT prompt input was not found within ${timeoutMs} ms.`);
+  return null;
 }
 
 function isWritablePromptInput(element) {
