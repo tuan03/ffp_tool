@@ -224,6 +224,7 @@ export function createCustomGptHandler(options: CustomGptHandlerOptions) {
           result = queue.enqueue(input); break;
         }
         case "admin/retry": queue.retry(storeId, jobId); result = { status: "PENDING" }; break;
+        case "admin/cancel": queue.cancelReview(storeId, jobId); result = { cancelled: true }; break;
         case "admin/bind-product": {
           await bindExternalSeoProduct({ storeId, sourceIdentity: required(body.sourceIdentity, "sourceIdentity"), productId: required(body.productId, "productId") });
           result = { bound: true }; break;

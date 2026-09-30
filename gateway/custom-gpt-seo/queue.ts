@@ -205,6 +205,17 @@ export class CustomGptQueue {
       this.db.prepare("UPDATE gpt_jobs SET batch_id=NULL WHERE id=?").run(jobId);
     });
   }
+  cancelReview(storeId: string, jobId: string): void {
+    this.transaction(() => {
+      const job = this.get(storeId, jobId);
+      if (job.status !== "REVIEW_READY") throw new Error("Job is not a ready review");
+      if (this.db.prepare("SELECT 1 FROM gpt_sync WHERE job_id=? AND status IN ('SYNCING','UNKNOWN')").get(jobId)) {
+        throw new Error("A Shopify sync has already started for this review");
+      }
+      this.write({ ...job, status: "CANCELLED" });
+      this.audit(storeId, jobId, "REVIEW_CANCELLED");
+    });
+  }
   pendingFinalization(): readonly GptSeoJob[] {
     return this.transaction(() => {
       const rows = this.db.prepare("SELECT payload FROM gpt_jobs WHERE status='VALIDATING' AND COALESCE(json_extract(payload,'$.nextAttemptAt'),0)<=? AND COALESCE(json_extract(payload,'$.finalizerUntil'),0)<=? ORDER BY created_at LIMIT 1").all(this.now(), this.now());

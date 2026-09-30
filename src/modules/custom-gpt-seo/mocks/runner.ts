@@ -11,6 +11,6 @@ export function createMockCustomGptClient(): CustomGptClient {
     beginSync: async () => ({ token: "mock-sync" }), finishSync: async () => ({}),
     transfer: async () => ({}),
     enqueue: async input => ({ ...structuredClone(mockJobs[0]), ...input }),
-    retry: async () => ({}), release: async () => ({}), reviewState: async () => ({}), saveReviewState: async () => ({}),
+    retry: async () => ({}), cancelReview: async () => ({ cancelled: true }), release: async () => ({}), reviewState: async () => ({}), saveReviewState: async () => ({}),
   };
 }
