@@ -23,7 +23,7 @@ export function RecentRunsAccordion({
   onPreviewThumbnail,
   onReuseNiche,
 }: RecentRunsAccordionProps): React.JSX.Element {
-  const [isOpen, setIsOpen] = useState(true);
+  const [isOpen, setIsOpen] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   async function handleDelete(e: React.MouseEvent, targetId: string): Promise<void> {

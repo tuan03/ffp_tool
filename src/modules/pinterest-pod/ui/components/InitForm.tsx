@@ -146,6 +146,8 @@ export function InitForm({
   isDiscoveringTrends = false,
 }: InitFormProps): React.JSX.Element {
   const [isAdvancedOpen, setIsAdvancedOpen] = useState(false);
+  const [isCrawlSettingsOpen, setIsCrawlSettingsOpen] = useState(false);
+  const [isMockupSettingsOpen, setIsMockupSettingsOpen] = useState(false);
   const [overrideProduct, setOverrideProduct] = useState(false);
 
   const currentRegions = selectedRegions && selectedRegions.length > 0
@@ -369,124 +371,159 @@ export function InitForm({
       </div>
 
       {/* 2. Số lượng ảnh cào từ Pinterest (Crawl Pool Size) */}
-      <div data-testid="step-one-crawl-settings" className="order-3 flex flex-col gap-3 rounded-xl border border-slate-800 bg-slate-950/40 p-4">
-        <div>
-          <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-cyan-400">C · Cấu hình cào ảnh</p>
-          <p className="mt-1 text-xs text-slate-400">Đặt khối lượng ảnh mà Crawler Agent sẽ thu thập sau khi bạn chọn Trend.</p>
-        </div>
-        <div className="flex flex-wrap items-center justify-between gap-1">
-          <label htmlFor="crawl-count-input" className="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
-            <span>Số lượng ảnh cào về từ Pinterest</span>
-            <span className="text-cyan-400 font-bold text-sm">{crawlCount} ảnh</span>
-          </label>
-          <span className="text-[11px] text-slate-400">10 – 500+ ảnh (Tùy chỉnh linh hoạt)</span>
-        </div>
+      <div data-testid="step-one-crawl-settings" className="order-3 overflow-hidden rounded-xl border border-slate-800 bg-slate-950/40">
+        <button
+          type="button"
+          aria-expanded={isCrawlSettingsOpen}
+          aria-controls="crawl-settings-content"
+          onClick={() => setIsCrawlSettingsOpen((current) => !current)}
+          className="flex w-full items-center justify-between gap-4 p-4 text-left transition hover:bg-slate-900/70"
+        >
+          <span>
+            <span className="block text-[10px] font-bold uppercase tracking-[0.16em] text-cyan-400">C · Cấu hình cào ảnh</span>
+            <span className="mt-1 block text-xs text-slate-400">
+              Crawler Agent sẽ thu thập <strong className="text-slate-200">{crawlCount} ảnh</strong> sau khi chọn Trend.
+            </span>
+          </span>
+          <span className="flex shrink-0 items-center gap-2">
+            <span className="rounded-full border border-cyan-900 bg-cyan-950/60 px-2.5 py-1 text-[11px] font-bold text-cyan-300">
+              {crawlCount} ảnh
+            </span>
+            <span className="text-xs font-bold text-slate-500">{isCrawlSettingsOpen ? "▲" : "▼"}</span>
+          </span>
+        </button>
 
-        <div className="flex items-center gap-3 pt-1">
-          <input
-            id="crawl-count-input"
-            type="range"
-            min={10}
-            max={300}
-            step={10}
-            value={Math.min(300, crawlCount)}
-            onChange={(e) => onCrawlCountChange?.(Number(e.target.value))}
-            disabled={isBusy}
-            className="flex-1 accent-cyan-400 h-2 bg-slate-700 rounded-lg cursor-pointer disabled:opacity-50"
-          />
-          <div className="flex items-center gap-1.5 shrink-0">
-            <input
-              type="number"
-              min={10}
-              max={1000}
-              step={10}
-              value={crawlCount}
-              onChange={(e) => {
-                const val = Number(e.target.value);
-                if (!isNaN(val)) {
-                  onCrawlCountChange?.(Math.max(10, Math.min(1000, val)));
-                }
-              }}
-              disabled={isBusy}
-              className="w-16 rounded-lg border border-slate-700 bg-slate-900 px-2 py-1 text-center text-xs font-bold text-cyan-300 focus:border-cyan-400 focus:outline-none disabled:opacity-50"
-            />
-            <span className="text-xs text-slate-400">ảnh</span>
+        {isCrawlSettingsOpen && (
+          <div id="crawl-settings-content" className="flex flex-col gap-3 border-t border-slate-800 p-4">
+            <div className="flex flex-wrap items-center justify-between gap-1">
+              <label htmlFor="crawl-count-input" className="text-xs font-semibold text-slate-200">
+                Số lượng ảnh cào về từ Pinterest
+              </label>
+              <span className="text-[11px] text-slate-400">10 – 500+ ảnh (Tùy chỉnh linh hoạt)</span>
+            </div>
+
+            <div className="flex items-center gap-3 pt-1">
+              <input
+                id="crawl-count-input"
+                type="range"
+                min={10}
+                max={300}
+                step={10}
+                value={Math.min(300, crawlCount)}
+                onChange={(e) => onCrawlCountChange?.(Number(e.target.value))}
+                disabled={isBusy}
+                className="flex-1 accent-cyan-400 h-2 bg-slate-700 rounded-lg cursor-pointer disabled:opacity-50"
+              />
+              <div className="flex items-center gap-1.5 shrink-0">
+                <input
+                  type="number"
+                  min={10}
+                  max={1000}
+                  step={10}
+                  value={crawlCount}
+                  onChange={(e) => {
+                    const value = Number(e.target.value);
+                    if (!Number.isNaN(value)) {
+                      onCrawlCountChange?.(Math.max(10, Math.min(1000, value)));
+                    }
+                  }}
+                  disabled={isBusy}
+                  aria-label="Số lượng ảnh cào"
+                  className="w-16 rounded-lg border border-slate-700 bg-slate-900 px-2 py-1 text-center text-xs font-bold text-cyan-300 focus:border-cyan-400 focus:outline-none disabled:opacity-50"
+                />
+                <span className="text-xs text-slate-400">ảnh</span>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 pt-1">
+              <span className="text-[10px] text-slate-400 font-medium">Chọn nhanh:</span>
+              {[
+                { count: 40, label: "40 ảnh (~30s - Thử nhanh)" },
+                { count: 80, label: "80 ảnh (~1m - Chuẩn đề xuất)", highlight: true },
+                { count: 150, label: "150 ảnh (~2m - Mở rộng)" },
+                { count: 250, label: "250 ảnh (~3m - Quy mô lớn)" },
+                { count: 400, label: "400 ảnh (~5m - Kho cực đại)" },
+              ].map((preset) => (
+                <button
+                  key={preset.count}
+                  type="button"
+                  disabled={isBusy}
+                  onClick={() => onCrawlCountChange?.(preset.count)}
+                  className={`rounded-lg px-2.5 py-1 text-[11px] font-semibold transition cursor-pointer ${
+                    crawlCount === preset.count
+                      ? "bg-cyan-500 text-slate-950 font-bold shadow"
+                      : preset.highlight
+                        ? "border border-cyan-800/80 bg-cyan-950/40 text-cyan-300 hover:bg-cyan-900/60"
+                        : "border border-slate-800 bg-slate-800/60 text-slate-300 hover:bg-slate-700 hover:text-white"
+                  } disabled:opacity-50`}
+                >
+                  {preset.label}
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
-
-        {/* Quick presets */}
-        <div className="flex flex-wrap items-center gap-2 pt-1">
-          <span className="text-[10px] text-slate-400 font-medium">Chọn nhanh:</span>
-          {[
-            { count: 40, label: "40 ảnh (~30s - Thử nhanh)" },
-            { count: 80, label: "80 ảnh (~1m - Chuẩn đề xuất)", highlight: true },
-            { count: 150, label: "150 ảnh (~2m - Mở rộng)" },
-            { count: 250, label: "250 ảnh (~3m - Quy mô lớn)" },
-            { count: 400, label: "400 ảnh (~5m - Kho cực đại)" },
-          ].map((preset) => (
-            <button
-              key={preset.count}
-              type="button"
-              disabled={isBusy}
-              onClick={() => onCrawlCountChange?.(preset.count)}
-              className={`rounded-lg px-2.5 py-1 text-[11px] font-semibold transition cursor-pointer ${
-                crawlCount === preset.count
-                  ? "bg-cyan-500 text-slate-950 font-bold shadow"
-                  : preset.highlight
-                  ? "border border-cyan-800/80 bg-cyan-950/40 text-cyan-300 hover:bg-cyan-900/60"
-                  : "border border-slate-800 bg-slate-800/60 text-slate-300 hover:bg-slate-700 hover:text-white"
-              } disabled:opacity-50`}
-            >
-              {preset.label}
-            </button>
-          ))}
-        </div>
+        )}
       </div>
 
       {/* 3. Ảnh phòng / Bối cảnh mẫu tham chiếu để ghép Mockup AI */}
-      <div data-testid="step-one-mockup-settings" className="order-4 flex flex-col gap-3 rounded-xl border border-slate-800 bg-slate-950/40 p-4">
-        <div>
-          <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-cyan-400">D · Dữ liệu cho mockup</p>
-          <p className="mt-1 text-xs text-slate-400">Có thể chuẩn bị bối cảnh ngay từ đầu hoặc để hệ thống tự tạo ở bước sản xuất.</p>
-        </div>
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <span className="text-base">🛋️</span>
-            <div>
-              <h3 className="text-xs font-bold text-slate-200 flex items-center gap-1.5">
-                <span>Ảnh phòng / Bối cảnh mẫu để ghép Mockup AI</span>
-                <span className="text-[10px] font-normal text-purple-400/80">(Tùy chọn)</span>
-              </h3>
-              <p className="text-[11px] text-slate-400 mt-0.5">
-                Nạp ảnh phòng chụp thực tế của bạn để AI ghép hoa văn cào được vào đúng sản phẩm trong phòng.
-              </p>
+      <div data-testid="step-one-mockup-settings" className="order-4 overflow-hidden rounded-xl border border-slate-800 bg-slate-950/40">
+        <button
+          type="button"
+          aria-expanded={isMockupSettingsOpen}
+          aria-controls="mockup-settings-content"
+          onClick={() => setIsMockupSettingsOpen((current) => !current)}
+          className="flex w-full items-center justify-between gap-4 p-4 text-left transition hover:bg-slate-900/70"
+        >
+          <span>
+            <span className="block text-[10px] font-bold uppercase tracking-[0.16em] text-cyan-400">D · Dữ liệu cho mockup</span>
+            <span className="mt-1 block text-xs text-slate-400">
+              {referenceImages.length > 0
+                ? `Đã tải ${referenceImages.length} ảnh phòng tham chiếu.`
+                : "Chưa tải ảnh riêng · hệ thống sẽ tự tạo bối cảnh."}
+            </span>
+          </span>
+          <span className="flex shrink-0 items-center gap-2">
+            <span className="rounded-full border border-purple-900 bg-purple-950/50 px-2.5 py-1 text-[11px] font-semibold text-purple-200">
+              {referenceImages.length > 0 ? `${referenceImages.length} ảnh` : "Tùy chọn"}
+            </span>
+            <span className="text-xs font-bold text-slate-500">{isMockupSettingsOpen ? "▲" : "▼"}</span>
+          </span>
+        </button>
+
+        {isMockupSettingsOpen && (
+          <div id="mockup-settings-content" className="flex flex-col gap-3 border-t border-slate-800 p-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="text-base">🛋️</span>
+                <div>
+                  <h3 className="text-xs font-bold text-slate-200">Ảnh phòng / Bối cảnh mẫu để ghép Mockup AI</h3>
+                  <p className="text-[11px] text-slate-400 mt-0.5">
+                    AI sẽ ghép hoa văn đã chọn vào sản phẩm trong ảnh phòng của bạn.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <ReferenceDropzone
+              images={referenceImages}
+              onChange={onReferenceImagesChange}
+              disabled={isBusy}
+              maxImages={10}
+            />
+
+            <div className="rounded-lg border border-purple-900/40 bg-purple-950/30 p-2.5 text-[11px] text-purple-200/90 leading-relaxed">
+              {referenceImages.length > 0 ? (
+                <span>
+                  ✓ <strong>Chế độ ghép phòng chỉ định:</strong> AI sẽ giữ nguyên {referenceImages.length} căn phòng trên và ghép hoa văn đã chọn lên sản phẩm.
+                </span>
+              ) : (
+                <span>
+                  ℹ️ <strong>Không bắt buộc:</strong> Nếu để trống, hệ thống sẽ tự tạo bối cảnh. Bạn cũng có thể chọn ảnh làm phòng ở Bước 2.
+                </span>
+              )}
             </div>
           </div>
-          {referenceImages.length > 0 && (
-            <span className="rounded-full bg-purple-500/30 border border-purple-400/40 px-2 py-0.5 text-[10px] font-bold text-purple-200">
-              ✓ Đã nạp {referenceImages.length} phòng mẫu
-            </span>
-          )}
-        </div>
-
-        <ReferenceDropzone
-          images={referenceImages}
-          onChange={onReferenceImagesChange}
-          disabled={isBusy}
-          maxImages={10}
-        />
-
-        <div className="rounded-lg border border-purple-900/40 bg-purple-950/30 p-2.5 text-[11px] text-purple-200/90 leading-relaxed">
-          {referenceImages.length > 0 ? (
-            <span>
-              ✓ <strong>Chế độ ghép phòng chỉ định:</strong> AI sẽ giữ nguyên {referenceImages.length} căn phòng trên và ghép hoa văn đã chọn lên sản phẩm để render Mockup chân thực nhất.
-            </span>
-          ) : (
-            <span>
-              ℹ️ <strong>Chưa nạp ảnh phòng riêng:</strong> Hệ thống sẽ tự động tạo bối cảnh phòng cao cấp ngẫu nhiên. Ngoài ra, tại <strong>Bước 2 (Duyệt mẫu)</strong>, bạn cũng có thể bấm nút <em>&ldquo;Làm phòng&rdquo;</em> trên bất kỳ ảnh Pinterest nào cào về để dùng làm phôi bối cảnh!
-            </span>
-          )}
-        </div>
+        )}
       </div>
 
       {/* Dynamic Multi-Market Matrix Preset & Formula Bar */}

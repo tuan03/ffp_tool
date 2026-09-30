@@ -35,6 +35,10 @@ test("step one groups the one-time configuration and gives official trends the p
   assert.match(source, /Phân tích Pinterest Trends/);
   assert.match(source, /Các phương án khác/);
   assert.doesNotMatch(source, /API CALLS ĐỒNG THỜI/);
+  assert.match(source, /const \[isCrawlSettingsOpen, setIsCrawlSettingsOpen\] = useState\(false\)/);
+  assert.match(source, /const \[isMockupSettingsOpen, setIsMockupSettingsOpen\] = useState\(false\)/);
+  assert.match(source, /aria-controls="crawl-settings-content"/);
+  assert.match(source, /aria-controls="mockup-settings-content"/);
 });
 
 test("step one keeps recent runs outside the configuration column", async () => {
@@ -49,4 +53,10 @@ test("step one keeps recent runs outside the configuration column", async () => 
   assert.ok(queryLayoutPosition >= 0);
   assert.ok(queryLayoutEndPosition > queryLayoutPosition);
   assert.ok(recentRunsPosition > queryLayoutEndPosition);
+
+  const recentRunsSource = await readFile(
+    new URL("../ui/components/RecentRunsAccordion.tsx", import.meta.url),
+    "utf8",
+  );
+  assert.match(recentRunsSource, /const \[isOpen, setIsOpen\] = useState\(false\)/);
 });
