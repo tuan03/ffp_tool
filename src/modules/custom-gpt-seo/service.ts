@@ -4,6 +4,7 @@ export interface GptQueuePage {
   readonly jobs: readonly GptSeoJob[];
   readonly counts: Readonly<Record<string, number>>;
   readonly activeBatch: GptSeoBatch | null;
+  readonly activeBatches: readonly GptSeoBatch[];
   readonly nextOffset: number;
 }
 export function createCustomGptClient(fetcher: typeof fetch = fetch) {

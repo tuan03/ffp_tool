@@ -6,7 +6,7 @@ export function createMockCustomGptClient(): CustomGptClient {
   return {
     settings: async () => structuredClone(settings),
     configure: async (_storeId, next) => { settings = { ...next }; return structuredClone(settings); },
-    list: async () => ({ jobs: structuredClone(mockJobs), counts: { PENDING: 1 }, activeBatch: null, nextOffset: 50 }),
+    list: async () => ({ jobs: structuredClone(mockJobs), counts: { PENDING: 1 }, activeBatch: null, activeBatches: [], nextOffset: 50 }),
     job: async () => structuredClone(mockJobs[0]),
     beginSync: async () => ({ token: "mock-sync" }), finishSync: async () => ({}),
     transfer: async () => ({}),

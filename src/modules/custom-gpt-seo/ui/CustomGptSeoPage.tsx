@@ -8,6 +8,7 @@ import {
   buildQueueSummaries,
   canRetryJob,
   filterQueueJobs,
+  getBatchOwnerLabel,
   getJobProgress,
   getProviderPresentation,
   getStatusPresentation,
@@ -180,11 +181,27 @@ export function CustomGptSeoPage({ client }: { readonly client: CustomGptClient 
         ))}
       </div>
 
-      {queue?.activeBatch && (
-        <div className="flex flex-col gap-3 rounded-xl border border-amber-900/70 bg-amber-950/30 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-start gap-3"><span aria-hidden="true" className="mt-0.5 text-amber-300">⏳</span><div><p className="text-sm font-medium text-amber-100">Đang có một batch được {getProviderPresentation(queue.activeBatch.provider).label} giữ</p><p className="mt-1 text-xs text-amber-300/70">{queue.activeBatch.jobs.length} sản phẩm · hết hạn {new Date(queue.activeBatch.expiresAt).toLocaleString("vi-VN")}</p></div></div>
-          <button type="button" disabled={isBusy} onClick={() => void perform(() => client.release(storeId, queue.activeBatch?.id ?? ""), "Đã thu hồi batch.")} className="rounded-lg border border-amber-700 px-3 py-2 text-sm font-medium text-amber-200 transition hover:bg-amber-900/50 disabled:opacity-50">Thu hồi batch</button>
-        </div>
+      {queue && queue.activeBatches.length > 0 && (
+        <section className="overflow-hidden rounded-xl border border-amber-900/70 bg-amber-950/20" aria-labelledby="active-batches-title">
+          <div className="border-b border-amber-900/50 px-4 py-3">
+            <h2 id="active-batches-title" className="text-sm font-medium text-amber-100">Batch đang được xử lý ({queue.activeBatches.length})</h2>
+          </div>
+          <div className="divide-y divide-amber-900/40">
+            {queue.activeBatches.map(batch => (
+              <div key={batch.id} className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex min-w-0 items-start gap-3">
+                  <span aria-hidden="true" className="mt-0.5 text-amber-300">⏳</span>
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-amber-100">{getBatchOwnerLabel(batch.ownerId)} · {getProviderPresentation(batch.provider).label}</p>
+                    <p className="mt-1 truncate font-mono text-xs text-amber-300/60">{batch.id}</p>
+                    <p className="mt-1 text-xs text-amber-300/70">{batch.jobs.length} sản phẩm · hết hạn {new Date(batch.expiresAt).toLocaleString("vi-VN")}</p>
+                  </div>
+                </div>
+                <button type="button" disabled={isBusy} onClick={() => void perform(() => client.release(storeId, batch.id), `Đã thu hồi batch của ${getBatchOwnerLabel(batch.ownerId)}.`)} className="rounded-lg border border-amber-700 px-3 py-2 text-sm font-medium text-amber-200 transition hover:bg-amber-900/50 disabled:opacity-50">Thu hồi</button>
+              </div>
+            ))}
+          </div>
+        </section>
       )}
 
       <section className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-900/40" aria-labelledby="queue-list-title">

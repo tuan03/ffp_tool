@@ -213,7 +213,11 @@ export function createCustomGptHandler(options: CustomGptHandlerOptions) {
           } else result = queue.settings(storeId);
           break;
         }
-        case "admin/jobs": result = { jobs: queue.list(storeId, url.searchParams.get("status") === "REVIEW_READY" ? "REVIEW_READY" : undefined, offset).map(job => ({ ...job, original: null, checkpoints: {}, result: undefined, settings: { ...job.settings, instructions: "" }, input: { title: job.input.title.slice(0, 300), description: "", handle: job.input.handle, niche: "", productId: job.input.productId, images: [] } })), counts: queue.counts(storeId), activeBatch: queue.activeBatches(storeId)[0] ?? null, nextOffset: offset + 50 }; break;
+        case "admin/jobs": {
+          const activeBatches = queue.activeBatches(storeId);
+          result = { jobs: queue.list(storeId, url.searchParams.get("status") === "REVIEW_READY" ? "REVIEW_READY" : undefined, offset).map(job => ({ ...job, original: null, checkpoints: {}, result: undefined, settings: { ...job.settings, instructions: "" }, input: { title: job.input.title.slice(0, 300), description: "", handle: job.input.handle, niche: "", productId: job.input.productId, images: [] } })), counts: queue.counts(storeId), activeBatch: activeBatches[0] ?? null, activeBatches, nextOffset: offset + 50 };
+          break;
+        }
         case "admin/job": result = queue.get(storeId, jobId); break;
         case "admin/enqueue": {
           const provider = queue.settings(storeId).provider;

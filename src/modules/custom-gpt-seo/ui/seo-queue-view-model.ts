@@ -126,6 +126,13 @@ export function getProviderPresentation(provider: string): ProviderPresentation 
   };
 }
 
+export function getBatchOwnerLabel(ownerId: string): string {
+  if (ownerId === "custom_gpt") return "GPT Custom";
+  if (ownerId === "codex_mcp:default") return "Máy mặc định";
+  if (ownerId.startsWith("codex_mcp:")) return ownerId.slice("codex_mcp:".length);
+  return ownerId.replaceAll("_", " ");
+}
+
 export function getStatusPresentation(status: string): StatusPresentation {
   if (status in STATUS_PRESENTATIONS) return STATUS_PRESENTATIONS[status as GptJobStatus];
   return {

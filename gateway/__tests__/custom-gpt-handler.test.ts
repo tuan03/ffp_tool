@@ -63,6 +63,49 @@ test("Actions reject an Action key that duplicates the administration key", () =
   } finally { db.close(); }
 });
 
+test("administration lists every active batch for the selected store", async () => {
+  const db = new DatabaseSync(":memory:");
+  const queue = new CustomGptQueue(db);
+  const settings = queue.configure("capozen", { provider: "codex_mcp", batchSize: 1 });
+  for (const sourceIdentity of ["office-product", "laptop-product"]) {
+    queue.enqueue({
+      storeId: "capozen",
+      source: "auto_seo",
+      sourceIdentity,
+      input: { title: sourceIdentity, description: "Description", handle: sourceIdentity, niche: "home", images: [] },
+      original: {},
+      settings,
+    });
+  }
+  const officeBatch = queue.claim("capozen", "office-claim", "codex_mcp", "codex_mcp:office-pc");
+  const laptopBatch = queue.claim("capozen", "laptop-claim", "codex_mcp", "codex_mcp:laptop");
+  const handler = createCustomGptHandler({ queue, storeId: "capozen", adminKey: "admin-key" });
+  const server = http.createServer((req, res) => { void handler(req, res); });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${address.port}/api/v1/gpt-seo/admin/jobs?storeId=capozen`, {
+      headers: { Authorization: "Bearer admin-key" },
+    });
+    assert.equal(response.status, 200);
+    const payload = await response.json() as {
+      activeBatch: { readonly id: string } | null;
+      activeBatches: readonly { readonly id: string; readonly ownerId: string }[];
+    };
+    assert.equal(payload.activeBatch?.id, officeBatch.id);
+    assert.deepEqual(payload.activeBatches.map(batch => [batch.id, batch.ownerId]), [
+      [officeBatch.id, "codex_mcp:office-pc"],
+      [laptopBatch.id, "codex_mcp:laptop"],
+    ]);
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    db.close();
+  }
+});
+
 test("waiting-jobs lists read-only identifiers for the authenticated store without claiming work", async () => {
   const db = new DatabaseSync(":memory:");
   let currentTime = 0;
