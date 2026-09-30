@@ -24,6 +24,7 @@ import type {
   ShopifyMetafieldsDeletePayload,
   ShopifyOperation,
   ShopifyProduct,
+  ShopifyProductsCreateInput,
 } from "..";
 import { syncSingleProduct } from "../../shopify-sync";
 
@@ -180,6 +181,7 @@ test("Module API mock runner executes products.create", async () => {
     storeId: "store-101",
     operation: "products.create",
     mode: "apply",
+    requestId: "test-req-id",
     payload: {
       product: {
         title: "New Graphic Hoodie",
@@ -201,6 +203,7 @@ test("Module API mock runner executes products.update", async () => {
     storeId: "store-101",
     operation: "products.update",
     mode: "apply",
+    requestId: "test-req-id",
     payload: {
       id: "gid://shopify/Product/1001",
       product: {
@@ -219,6 +222,7 @@ test("Module API mock runner executes products.create and products.update with i
     storeId: "store-101",
     operation: "products.create",
     mode: "apply",
+    requestId: "test-req-id",
     payload: {
       product: {
         title: "Image Hoodie",
@@ -266,6 +270,7 @@ test("Module API mock runner executes products.create and products.update with i
     storeId: "store-101",
     operation: "products.update",
     mode: "apply",
+    requestId: "test-req-id",
     payload: {
       id: "gid://shopify/Product/1001",
       product: {
@@ -298,6 +303,7 @@ test("Module API mock runner executes products.bulkUpdate", async () => {
     storeId: "store-101",
     operation: "products.bulkUpdate",
     mode: "apply",
+    requestId: "test-req-id",
     payload: {
       products: [
         { id: "gid://shopify/Product/1001", product: { title: "P1 Updated" } },
@@ -319,6 +325,7 @@ test("Module API mock runner executes products.delete", async () => {
     storeId: "store-101",
     operation: "products.delete",
     mode: "apply",
+    requestId: "test-req-id",
     payload: { id: "gid://shopify/Product/1001" },
   });
 
@@ -331,6 +338,7 @@ test("Module API mock runner executes variants.update", async () => {
     storeId: "store-101",
     operation: "variants.update",
     mode: "apply",
+    requestId: "test-req-id",
     payload: {
       id: "gid://shopify/ProductVariant/2001",
       variant: {
@@ -353,6 +361,7 @@ test("Module API mock runner variants.update rejects deprecated title with SHOPI
         storeId: "store-101",
         operation: "variants.update",
         mode: "apply",
+        requestId: "test-req-id",
         payload: {
           id: "gid://shopify/ProductVariant/2001",
           variant: {
@@ -376,6 +385,7 @@ test("Module API mock runner variants.update rejects deprecated inventoryQuantit
         storeId: "store-101",
         operation: "variants.update",
         mode: "apply",
+        requestId: "test-req-id",
         payload: {
           id: "gid://shopify/ProductVariant/2001",
           variant: {
@@ -397,6 +407,7 @@ test("Module API mock runner executes variants.bulkUpdate", async () => {
     storeId: "store-101",
     operation: "variants.bulkUpdate",
     mode: "apply",
+    requestId: "test-req-id",
     payload: {
       variants: [
         { id: "gid://shopify/ProductVariant/2001", variant: { price: "27.50" } },
@@ -447,6 +458,7 @@ test("Module API mock runner executes collections.create, update, delete, and up
     storeId: "store-101",
     operation: "collections.create",
     mode: "apply",
+    requestId: "test-req-id",
     payload: {
       collection: {
         title: "New Arrivals",
@@ -459,6 +471,7 @@ test("Module API mock runner executes collections.create, update, delete, and up
     storeId: "store-101",
     operation: "collections.update",
     mode: "apply",
+    requestId: "test-req-id",
     payload: {
       id: "gid://shopify/Collection/3001",
       collection: {
@@ -472,6 +485,7 @@ test("Module API mock runner executes collections.create, update, delete, and up
     storeId: "store-101",
     operation: "collections.delete",
     mode: "apply",
+    requestId: "test-req-id",
     payload: { id: "gid://shopify/Collection/3001" },
   });
   assert.equal(deleteResponse.data.deletedCollectionId, "gid://shopify/Collection/3001");
@@ -480,6 +494,7 @@ test("Module API mock runner executes collections.create, update, delete, and up
     storeId: "store-101",
     operation: "collections.updateMembership",
     mode: "apply",
+    requestId: "test-req-id",
     payload: {
       collectionId: "gid://shopify/Collection/3002",
       productIdsToAdd: ["gid://shopify/Product/1001"],
@@ -555,6 +570,7 @@ test("Module API mock runner simulates domain errors via storeId hooks", async (
         storeId: "simulate-unknown-state",
         operation: "products.delete",
         mode: "apply",
+        requestId: "test-req-id",
         payload: { id: "gid://shopify/Product/1001" },
       });
     },
@@ -673,6 +689,7 @@ test("Module API mock runner variants.update preserves existing variant attribut
     storeId: "store-101",
     operation: "variants.update",
     mode: "apply",
+    requestId: "test-req-id",
     payload: {
       id: "gid://shopify/ProductVariant/2003",
       variant: { price: "18.50" },
@@ -711,6 +728,7 @@ test("Module API mock runner validates required input fields", async () => {
         storeId: "store-101",
         operation: "products.create",
         mode: "apply",
+        requestId: "test-req-id",
         payload: { product: { title: "" } },
       });
     },
@@ -727,6 +745,7 @@ test("Module API mock runner validates required input fields", async () => {
         storeId: "store-101",
         operation: "collections.updateMembership",
         mode: "apply",
+        requestId: "test-req-id",
         payload: { collectionId: "" },
       });
     },
@@ -2184,6 +2203,7 @@ test("Mock runner supports custom variants in products.create", async () => {
     storeId: "store-101",
     operation: "products.create",
     mode: "apply",
+    requestId: "test-req-id",
     payload: {
       product: {
         title: "Multi-Variant T-Shirt",
@@ -2412,6 +2432,7 @@ test("Mock runner simulates partial write with SHOPIFY_PARTIAL_WRITE and reconci
       await runMockModuleApi({
         storeId: "simulate-partial-write",
         operation: "products.create",
+        requestId: "test-req-id",
         payload: { product: { title: "Simulated Product" } },
       } as unknown as ShopifyApiInput);
     },
@@ -2522,6 +2543,7 @@ test("Mock runner products.update merges altText of existing image by id without
     storeId: "store-test",
     operation: "products.update",
     mode: "apply",
+    requestId: "test-req-id",
     payload: {
       id: "gid://shopify/Product/1001",
       product: {
@@ -2953,6 +2975,7 @@ test("Module API mock runner validates variants.bulkCreate payload", async () =>
       await runMockModuleApi({
         storeId: "store-test",
         operation: "variants.bulkCreate",
+        requestId: "test-req-id",
         payload: { productId: "", variants: [] },
       });
     },
@@ -2971,6 +2994,7 @@ test("Module API mock runner validates files.create payload", async () => {
       await runMockModuleApi({
         storeId: "store-test",
         operation: "files.create",
+        requestId: "test-req-id",
         payload: { originalSource: "" },
       });
     },
@@ -2989,6 +3013,7 @@ test("Module API mock runner validates metafields.set payload", async () => {
       await runMockModuleApi({
         storeId: "store-test",
         operation: "metafields.set",
+        requestId: "test-req-id",
         payload: { metafields: [] },
       });
     },
@@ -3005,6 +3030,7 @@ test("Module API mock runner validates metafields.set payload", async () => {
       await runMockModuleApi({
         storeId: "store-test",
         operation: "metafields.set",
+        requestId: "test-req-id",
         payload: {
           metafields: [{ namespace: "custom", key: "k1", value: "v1" }],
         },
@@ -3021,6 +3047,7 @@ test("Module API mock runner validates metafields.set payload", async () => {
   const res = await runMockModuleApi({
     storeId: "store-test",
     operation: "metafields.set",
+    requestId: "test-req-id",
     payload: {
       ownerId: "gid://shopify/Product/test-prod-1",
       metafields: [
@@ -3064,6 +3091,7 @@ test("Module API mock runner variants.bulkCreate handles empty array and invalid
       await runMockModuleApi({
         storeId: "store-test",
         operation: "variants.bulkCreate",
+        requestId: "test-req-id",
         payload: {
           productId: "gid://shopify/Product/123",
           variants: [null as unknown as { price: string }],
@@ -3081,6 +3109,7 @@ test("Module API mock runner variants.bulkCreate handles empty array and invalid
   const res = await runMockModuleApi({
     storeId: "store-test",
     operation: "variants.bulkCreate",
+    requestId: "test-req-id",
     payload: {
       productId: "gid://shopify/Product/123",
       variants: [],
@@ -4165,4 +4194,51 @@ test("createModuleApiRunner automatically resolves relative gatewayUrl to loopba
   assert.ok(capturedUrl?.startsWith("http://127.0.0.1:"));
   assert.ok(capturedUrl?.endsWith("/api/shopify"));
 });
+
+test("ShopifyWriteExecution enforces requestId at compile-time for apply mode and default write mode", () => {
+  // valid apply mode
+  const validApply: ShopifyProductsCreateInput = {
+    storeId: "store-101",
+    operation: "products.create",
+    mode: "apply",
+    requestId: "req-1",
+    payload: {
+      product: { title: "Test Hoodie" },
+    },
+  };
+  assert.equal(validApply.requestId, "req-1");
+
+  // valid preview mode (requestId optional)
+  const validPreview: ShopifyProductsCreateInput = {
+    storeId: "store-101",
+    operation: "products.create",
+    mode: "preview",
+    payload: {
+      product: { title: "Test Hoodie" },
+    },
+  };
+  assert.equal(validPreview.mode, "preview");
+
+  // @ts-expect-error apply mode requires requestId
+  const _invalidApply: ShopifyProductsCreateInput = {
+    storeId: "store-101",
+    operation: "products.create",
+    mode: "apply",
+    payload: {
+      product: { title: "Test Hoodie" },
+    },
+  };
+
+  // @ts-expect-error default write mode (omitted mode) requires requestId
+  const _invalidDefault: ShopifyProductsCreateInput = {
+    storeId: "store-101",
+    operation: "products.create",
+    payload: {
+      product: { title: "Test Hoodie" },
+    },
+  };
+
+  assert.ok(true);
+});
+
 

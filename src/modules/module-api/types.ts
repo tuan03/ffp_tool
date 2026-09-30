@@ -49,13 +49,19 @@ export interface ShopifyWriteExecutionPreview {
 }
 
 export interface ShopifyWriteExecutionApply {
-  readonly mode?: "apply";
-  readonly requestId?: string;
+  readonly mode: "apply";
+  readonly requestId: string;
+}
+
+export interface ShopifyWriteExecutionDefault {
+  readonly mode?: undefined;
+  readonly requestId: string;
 }
 
 export type ShopifyWriteExecution =
   | ShopifyWriteExecutionPreview
-  | ShopifyWriteExecutionApply;
+  | ShopifyWriteExecutionApply
+  | ShopifyWriteExecutionDefault;
 
 export interface ModuleApiConfig {
   readonly gatewayUrl?: string;
