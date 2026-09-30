@@ -182,7 +182,15 @@ class TrayApplication:
         if self._icon is not None:
             self._icon.stop()
 
-    def _update_agent(self, _icon: Any, _item: Any) -> None:
+    @staticmethod
+    def _defer_menu_action(action: Any, *, name: str) -> None:
+        """Let the native tray menu close before opening a modal Windows dialog."""
+        timer = threading.Timer(0.2, action)
+        timer.name = name
+        timer.daemon = True
+        timer.start()
+
+    def _run_update_agent(self) -> None:
         if not self._confirm("Cập nhật Agent và tự khởi động lại ngay bây giờ?"):
             return
         self._launch_lifecycle_script("update-agent.ps1", [
@@ -190,6 +198,9 @@ class TrayApplication:
             "-InstallDirectory", str(self.agent.project_root),
             "-AgentProcessId", str(os.getpid()),
         ])
+
+    def _update_agent(self, _icon: Any, _item: Any) -> None:
+        self._defer_menu_action(self._run_update_agent, name="ffp-agent-update-confirm")
 
     def _uninstall_agent(self, *, keep_data: bool) -> None:
         message = (
@@ -210,10 +221,16 @@ class TrayApplication:
         self._launch_lifecycle_script("uninstall-agent.ps1", arguments, copy_to_temp=True)
 
     def _uninstall_keep_data(self, _icon: Any, _item: Any) -> None:
-        self._uninstall_agent(keep_data=True)
+        self._defer_menu_action(
+            lambda: self._uninstall_agent(keep_data=True),
+            name="ffp-agent-uninstall-keep-data-confirm",
+        )
 
     def _uninstall_all(self, _icon: Any, _item: Any) -> None:
-        self._uninstall_agent(keep_data=False)
+        self._defer_menu_action(
+            lambda: self._uninstall_agent(keep_data=False),
+            name="ffp-agent-uninstall-all-confirm",
+        )
 
     def _run_pinterest_action(self, action: str) -> None:
         if self._pinterest_action_running:

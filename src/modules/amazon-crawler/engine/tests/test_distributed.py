@@ -14,7 +14,7 @@ import urllib.error
 from datetime import datetime, timedelta
 from io import BytesIO
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import websockets
 from fastapi.testclient import TestClient
@@ -205,6 +205,18 @@ class ClientTrayTests(unittest.TestCase):
 
             self.assertTrue(any("thành công" in message for message in notifications))
             run.assert_called_once()
+
+    def test_lifecycle_confirmation_is_deferred_until_native_menu_closes(self) -> None:
+        action = Mock()
+        timer = Mock()
+        with patch("engine.distributed.client_tray.threading.Timer", return_value=timer) as timer_factory:
+            TrayApplication._defer_menu_action(action, name="ffp-test-confirm")
+
+        timer_factory.assert_called_once_with(0.2, action)
+        self.assertEqual(timer.name, "ffp-test-confirm")
+        self.assertTrue(timer.daemon)
+        timer.start.assert_called_once_with()
+        action.assert_not_called()
 
 
 class PackagedClientTests(unittest.TestCase):

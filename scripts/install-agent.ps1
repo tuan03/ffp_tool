@@ -140,6 +140,7 @@ Write-Host "[4/6] Cai dat thu vien Agent..." -ForegroundColor Green
 & $VenvPython -m pip install --disable-pip-version-check --upgrade pip | Out-Null
 $requirementsPath = Join-Path $AgentRoot "src\modules\amazon-crawler\engine\requirements.txt"
 & $VenvPython -m pip install -r $requirementsPath
+& $VenvPython -m compileall -q -f (Join-Path $AgentRoot "src") (Join-Path $AgentRoot "scripts")
 
 Write-Host "[5/6] Cai dat Playwright Chromium..." -ForegroundColor Green
 & $VenvPython -m playwright install chromium
