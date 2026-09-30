@@ -10,6 +10,7 @@ export interface ReviewImageJob {
   readonly approved: boolean;
   readonly error: string | null;
   readonly output_name: string | null;
+  readonly conversation_session_id: string;
 }
 
 export interface CreateReviewImageInput {
@@ -19,6 +20,7 @@ export interface CreateReviewImageInput {
   readonly scope: ReviewImageScope;
   readonly templateName?: string;
   readonly excludeTemplate?: string;
+  readonly conversationSessionId?: string;
 }
 
 export interface ReviewImageTemplate {

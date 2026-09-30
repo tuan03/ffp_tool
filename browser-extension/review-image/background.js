@@ -278,6 +278,7 @@ async function dispatchJob(job) {
       prompt: job.prompt,
       images: job.images,
       conversation_mode: job.conversation_mode,
+      conversation_session_id: job.conversation_session_id,
       xpaths: job.xpaths || currentConfig,
       visibleMessageLimit: normalizeVisibleMessageLimit(settings.visibleMessageLimit),
       removeUserMessages: Boolean(settings.removeUserMessages)

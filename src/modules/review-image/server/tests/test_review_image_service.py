@@ -33,8 +33,8 @@ class ReviewImageServiceTests(unittest.TestCase):
         (self.templates / "room.png").write_bytes(self.template_bytes)
         self.calls = []
 
-        def fake_bridge(prompt, images):
-            self.calls.append((prompt, images))
+        def fake_bridge(prompt, images, conversation_session_id):
+            self.calls.append((prompt, images, conversation_session_id))
             return {"mime_type": "image/png", "data": image_data_url().split(",", 1)[1]}
 
         self.service = ReviewImageService(self.templates, self.outputs, fake_bridge)
@@ -51,8 +51,10 @@ class ReviewImageServiceTests(unittest.TestCase):
         created = self.service.submit(image_data_url(), "Replace old bag", "main")
         job_id = created["job_id"]
         self.assertEqual(self.wait_for_job(job_id)["status"], "completed")
-        prompt, images = self.calls[0]
+        prompt, images, conversation_session_id = self.calls[0]
         self.assertIn("main handbag only", prompt)
+        self.assertIn("two newest image attachments", prompt)
+        self.assertTrue(conversation_session_id.startswith("single-"))
         self.assertEqual([part["name"] for part in images], ["template", "product"])
         self.assertEqual(base64.b64decode(images[0]["data"]), self.template_bytes)
         with self.assertRaises(ValueError):
@@ -66,6 +68,14 @@ class ReviewImageServiceTests(unittest.TestCase):
         self.assertEqual(created["template_name"], "other.png")
         self.assertEqual(self.wait_for_job(created["job_id"])["status"], "completed")
         self.assertIn("matching wallet", self.calls[0][0])
+
+    def test_forwards_a_shared_conversation_session_for_batch_jobs(self) -> None:
+        first = self.service.submit(image_data_url(), "Prompt", "main", conversation_session_id="preaureum-batch-1")
+        second = self.service.submit(image_data_url(), "Prompt", "main", conversation_session_id="preaureum-batch-1")
+        self.assertEqual(self.wait_for_job(first["job_id"])["status"], "completed")
+        self.assertEqual(self.wait_for_job(second["job_id"])["status"], "completed")
+        self.assertEqual([call[2] for call in self.calls], ["preaureum-batch-1", "preaureum-batch-1"])
+        self.assertEqual(first["conversation_session_id"], "preaureum-batch-1")
 
     def test_rejects_invalid_upload_and_path_escape(self) -> None:
         with self.assertRaises(ValueError):
@@ -115,7 +125,7 @@ class ReviewImageServiceTests(unittest.TestCase):
         service = ReviewImageService(
             self.templates,
             self.outputs,
-            lambda _prompt, _images: (gate.wait(2), {"mime_type": "image/png", "data": image_data_url().split(",", 1)[1]})[1],
+            lambda _prompt, _images, _session: (gate.wait(2), {"mime_type": "image/png", "data": image_data_url().split(",", 1)[1]})[1],
         )
         created = service.submit(image_data_url(), "Prompt", "main", template_name="room.png")
         try:
@@ -129,7 +139,7 @@ class ReviewImageServiceTests(unittest.TestCase):
     def test_bulk_delete_removes_safe_templates_and_reports_active_templates(self) -> None:
         other = self.service.save_template("other.png", image_data_url("green"))
         gate = __import__("threading").Event()
-        self.service.bridge_call = lambda _prompt, _images: (gate.wait(2), {"mime_type": "image/png", "data": image_data_url().split(",", 1)[1]})[1]
+        self.service.bridge_call = lambda _prompt, _images, _session: (gate.wait(2), {"mime_type": "image/png", "data": image_data_url().split(",", 1)[1]})[1]
         created = self.service.submit(image_data_url(), "Prompt", "main", template_name="room.png")
         try:
             outcome = self.service.delete_templates("preaureum", ["room.png", other, "missing.png"])
@@ -141,11 +151,11 @@ class ReviewImageServiceTests(unittest.TestCase):
 
     def test_rejects_prompt_that_exceeds_bridge_limit_after_scope_instruction(self) -> None:
         with self.assertRaisesRegex(ValueError, "quá dài"):
-            self.service.submit(image_data_url(), "x" * 9_950, "main")
+            self.service.submit(image_data_url(), "x" * 10_000, "main")
         self.assertEqual(self.calls, [])
 
     def test_text_only_bridge_result_is_failure(self) -> None:
-        service = ReviewImageService(self.templates, self.outputs, lambda _prompt, _images: {})
+        service = ReviewImageService(self.templates, self.outputs, lambda _prompt, _images, _session: {})
         created = service.submit(image_data_url(), "Prompt", "main")
         for _ in range(100):
             job = service.snapshot(created["job_id"])
@@ -159,7 +169,7 @@ class ReviewImageServiceTests(unittest.TestCase):
         gate = __import__("threading").Event()
         service = ReviewImageService(
             self.templates, self.outputs,
-            lambda _prompt, _images: (gate.wait(2), {"mime_type": "image/png", "data": image_data_url().split(",", 1)[1]})[1],
+            lambda _prompt, _images, _session: (gate.wait(2), {"mime_type": "image/png", "data": image_data_url().split(",", 1)[1]})[1],
             max_pending_jobs=2,
         )
         try:

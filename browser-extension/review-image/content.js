@@ -7,6 +7,10 @@ let removeUserMessages = false;
 let messageLimitObserver = null;
 let messageLimitTimer = null;
 const hiddenTurns = new Map();
+const MAX_IMAGE_JOBS_PER_CONVERSATION = 10;
+let activeImageConversationSessionId = null;
+let activeImageConversationPath = null;
+let activeImageConversationJobCount = 0;
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === "cancel_job") {
@@ -47,7 +51,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   activeJobId = message.job_id;
   activeJobXpaths = message.xpaths || null;
   executeJob(message)
-    .catch((error) => reportError(message.job_id, error.message || String(error)))
+    .catch((error) => {
+      invalidateImageConversation(message.conversation_session_id);
+      reportError(message.job_id, error.message || String(error));
+    })
     .finally(() => {
       busy = false;
       cancelledJobs.delete(message.job_id);
@@ -71,7 +78,9 @@ async function executeJob(job) {
     throw new Error("XPath configuration is missing required fields.");
   }
 
-  if (job.conversation_mode === "new") {
+  if (job.kind === "image_edit" && job.conversation_mode === "session") {
+    await prepareImageConversation(job.conversation_session_id, xpaths);
+  } else if (job.conversation_mode === "new") {
     await openNewChat(xpaths);
   }
 
@@ -109,6 +118,7 @@ async function executeJob(job) {
       timeoutMs: 15 * 60_000,
       jobId: job.job_id
     });
+    markImageConversationCompleted(job.conversation_session_id);
     chrome.runtime.sendMessage({ type: "content_result", job_id: job.job_id, image: generatedImage });
     return;
   }
@@ -467,6 +477,46 @@ async function waitForXPath(xpath, timeoutMs) {
     await sleep(250);
   }
   throw new Error(`XPath not found within ${timeoutMs} ms: ${xpath}`);
+}
+
+async function prepareImageConversation(conversationSessionId, xpaths) {
+  const sessionId = String(conversationSessionId || '').trim();
+  if (!/^[A-Za-z0-9_-]{1,128}$/.test(sessionId)) {
+    throw new Error("Image conversation session is missing or invalid.");
+  }
+  if (!shouldOpenNewImageConversation(sessionId)) return;
+  await openNewChat(xpaths);
+  activeImageConversationSessionId = sessionId;
+  activeImageConversationPath = window.location.pathname;
+  activeImageConversationJobCount = 0;
+}
+
+function shouldOpenNewImageConversation(conversationSessionId) {
+  if (activeImageConversationSessionId !== conversationSessionId) return true;
+  if (activeImageConversationJobCount >= MAX_IMAGE_JOBS_PER_CONVERSATION) return true;
+  const currentPath = window.location.pathname;
+  if (activeImageConversationPath === currentPath) return false;
+  if (activeImageConversationPath === '/' && currentPath !== '/') {
+    activeImageConversationPath = currentPath;
+    return false;
+  }
+  return true;
+}
+
+function markImageConversationCompleted(conversationSessionId) {
+  if (!conversationSessionId || activeImageConversationSessionId !== conversationSessionId) return;
+  const currentPath = window.location.pathname;
+  if (currentPath !== '/' || activeImageConversationPath === '/') {
+    activeImageConversationPath = currentPath;
+  }
+  activeImageConversationJobCount += 1;
+}
+
+function invalidateImageConversation(conversationSessionId) {
+  if (conversationSessionId && activeImageConversationSessionId !== conversationSessionId) return;
+  activeImageConversationSessionId = null;
+  activeImageConversationPath = null;
+  activeImageConversationJobCount = 0;
 }
 
 async function waitForPromptInput(xpath, timeoutMs) {

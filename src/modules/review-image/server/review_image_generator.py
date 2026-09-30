@@ -19,6 +19,11 @@ IMAGE_FORMATS = {"PNG": ("image/png", ".png"), "JPEG": ("image/jpeg", ".jpg"), "
 JOB_RETENTION_SECONDS = 24 * 60 * 60
 DEFAULT_STORE_ID = "preaureum"
 STORE_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
+CONVERSATION_SESSION_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+CONVERSATION_ISOLATION_INSTRUCTION = (
+    "Use only the two newest image attachments in this message. Ignore all templates, products and generated images "
+    "from earlier messages in this conversation."
+)
 
 
 class ReviewImageBusyError(Exception):
@@ -55,7 +60,7 @@ class ReviewImageService:
         self,
         template_dir: Path,
         output_dir: Path,
-        bridge_call: Callable[[str, list[dict[str, str]]], dict[str, str]],
+        bridge_call: Callable[[str, list[dict[str, str]], str], dict[str, str]],
         max_pending_jobs: int = 3,
     ) -> None:
         self.template_dir = Path(template_dir)
@@ -176,6 +181,7 @@ class ReviewImageService:
         store_id: str = DEFAULT_STORE_ID,
         template_name: str | None = None,
         exclude_template: str | None = None,
+        conversation_session_id: str | None = None,
     ) -> dict:
         product_mime, product_bytes = decode_image_data_url(product_data_url)
         prompt = prompt.strip()
@@ -188,8 +194,8 @@ class ReviewImageService:
             "set": "Required product selection: the main handbag and matching wallet; place the wallet beside the bag.",
             "single": "Required product selection: use the exact product shown in Image 2 without inventing matching accessories.",
         }[scope]
-        prompt = scope_instruction + "\n\n" + prompt
-        if len(prompt) > 10_000:
+        prompt = scope_instruction + "\n\n" + CONVERSATION_ISOLATION_INSTRUCTION + "\n\n" + prompt
+        if len(prompt) > 10_200:
             raise ValueError("Prompt quá dài sau khi thêm hướng dẫn chọn sản phẩm; hãy rút ngắn prompt.")
         clean_store_id = store_id.strip().lower()
         templates = self._templates(clean_store_id)
@@ -201,6 +207,9 @@ class ReviewImageService:
             choices = [path for path in templates if path.name != exclude_template] or templates
             template = secrets.choice(choices)
         job_id = uuid.uuid4().hex
+        clean_conversation_session_id = (conversation_session_id or f"single-{job_id}").strip()
+        if not CONVERSATION_SESSION_PATTERN.fullmatch(clean_conversation_session_id):
+            raise ValueError("Conversation session ID không hợp lệ.")
         job = {
             "job_id": job_id,
             "store_id": clean_store_id,
@@ -210,6 +219,7 @@ class ReviewImageService:
             "approved": False,
             "error": None,
             "output_name": None,
+            "conversation_session_id": clean_conversation_session_id,
         }
         with self.lock:
             self._prune_finished_jobs()
@@ -219,7 +229,7 @@ class ReviewImageService:
             self.jobs[job_id] = job
         worker = threading.Thread(
             target=self._run,
-            args=(job_id, prompt, template, product_mime, product_bytes),
+            args=(job_id, prompt, template, product_mime, product_bytes, clean_conversation_session_id),
             daemon=True,
         )
         try:
@@ -231,7 +241,7 @@ class ReviewImageService:
             raise
         return self.snapshot(job_id)
 
-    def _run(self, job_id: str, prompt: str, template: Path, product_mime: str, product_bytes: bytes) -> None:
+    def _run(self, job_id: str, prompt: str, template: Path, product_mime: str, product_bytes: bytes, conversation_session_id: str) -> None:
         with self.lock:
             self.jobs[job_id]["status"] = "running"
         try:
@@ -240,7 +250,7 @@ class ReviewImageService:
                 {"name": "template", "mime_type": template_mime, "data": base64.b64encode(template.read_bytes()).decode()},
                 {"name": "product", "mime_type": product_mime, "data": base64.b64encode(product_bytes).decode()},
             ]
-            response = self.bridge_call(prompt, images)
+            response = self.bridge_call(prompt, images, conversation_session_id)
             result_mime = response.get("mime_type", "")
             result_data = response.get("data", "")
             if not result_mime or not result_data:

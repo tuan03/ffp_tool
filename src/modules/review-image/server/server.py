@@ -42,6 +42,12 @@ class ImageEditRequest(BaseModel):
     prompt: str = Field(min_length=1, max_length=10_200)
     timeout_seconds: int = Field(default=900, ge=1, le=1800)
     images: list[ImagePart]
+    conversation_session_id: str = Field(
+        default_factory=lambda: f"single-{uuid.uuid4().hex}",
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9_-]+$",
+    )
 
     @model_validator(mode="after")
     def validate_images(self):
@@ -272,7 +278,8 @@ async def create_image_edit(
         "job_id": job_id,
         "prompt": body.prompt,
         "images": [image.model_dump() for image in body.images],
-        "conversation_mode": "new",
+        "conversation_mode": "session",
+        "conversation_session_id": body.conversation_session_id,
         "xpaths": load_xpaths(),
     })
     if sent == 0:

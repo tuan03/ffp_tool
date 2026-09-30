@@ -11,9 +11,9 @@ test("review image client sends the product, prompt and selected scope to the sa
     submitted = JSON.parse(String(init?.body));
     return new Response(JSON.stringify({ ok: true, job: { job_id: "abc", status: "queued", template_name: "room.png", scope: "main", approved: false, error: null, output_name: null } }), { status: 202 });
   });
-  const job = await client.create({ storeId: "preaureum", productDataUrl: "data:image/png;base64,AA==", prompt: "Replace bag", scope: "main" });
+  const job = await client.create({ storeId: "preaureum", productDataUrl: "data:image/png;base64,AA==", prompt: "Replace bag", scope: "main", conversationSessionId: "preaureum-batch-1" });
   assert.equal(requestedUrl, "/api/review-images/jobs");
-  assert.deepEqual(submitted, { storeId: "preaureum", productDataUrl: "data:image/png;base64,AA==", prompt: "Replace bag", scope: "main" });
+  assert.deepEqual(submitted, { storeId: "preaureum", productDataUrl: "data:image/png;base64,AA==", prompt: "Replace bag", scope: "main", conversationSessionId: "preaureum-batch-1" });
   assert.equal(job.template_name, "room.png");
   assert.equal(typeof client.template, "function");
 });

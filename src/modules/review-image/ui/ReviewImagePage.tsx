@@ -15,6 +15,7 @@ interface ReviewProductImage {
   readonly resultDataUrl?: string;
   readonly shopifyFile?: ReviewImageShopifyFile;
   readonly error?: string;
+  readonly conversationSessionId?: string;
 }
 
 export interface ReviewImagePageProps {
@@ -212,10 +213,10 @@ export function ReviewImagePage({
     }
   }
 
-  async function runProduct(item: ReviewProductImage, templateName: string): Promise<void> {
-    updateProduct(item.id, { status: "queued", error: undefined, resultDataUrl: undefined, shopifyFile: undefined });
+  async function runProduct(item: ReviewProductImage, templateName: string, conversationSessionId: string): Promise<void> {
+    updateProduct(item.id, { status: "queued", error: undefined, resultDataUrl: undefined, shopifyFile: undefined, conversationSessionId });
     try {
-      const created = await client.create({ storeId, productDataUrl: item.dataUrl, prompt: prompt.trim(), scope, templateName });
+      const created = await client.create({ storeId, productDataUrl: item.dataUrl, prompt: prompt.trim(), scope, templateName, conversationSessionId });
       updateProduct(item.id, { job: created, status: created.status });
       const completed = await waitForJob(created.job_id, item.id);
       if (completed.status === "failed") {
@@ -239,10 +240,11 @@ export function ReviewImagePage({
     setIsBatchRunning(true);
     try {
       const sequence = buildTemplateSequence(templateNames, pending.length);
+      const conversationSessionId = `${storeId}-${makeItemId()}`.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 128);
       for (const [index, item] of pending.entries()) {
         const templateName = sequence[index] ?? templateNames[0];
         if (!templateName) break;
-        await runProduct(item, templateName);
+        await runProduct(item, templateName, conversationSessionId);
       }
     } finally {
       setIsBatchRunning(false);
@@ -255,9 +257,10 @@ export function ReviewImagePage({
     const alternatives = names.filter((name) => name !== item.job?.template_name);
     const alternative = alternatives[Math.floor(Math.random() * alternatives.length)];
     const templateName = useDifferentTemplate && alternative ? alternative : item.job.template_name;
+    const conversationSessionId = item.conversationSessionId ?? `${storeId}-${makeItemId()}`.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 128);
     setIsBatchRunning(true);
     try {
-      await runProduct(item, templateName);
+      await runProduct(item, templateName, conversationSessionId);
     } finally {
       setIsBatchRunning(false);
     }

@@ -24,7 +24,7 @@ def test_http_flow_requires_approval_before_download():
         output = image_data_url().split(",", 1)[1]
         original_service = api.review_image_service
         api.review_image_service = ReviewImageService(
-            templates, root / "outputs", lambda _prompt, _images: {"mime_type": "image/png", "data": output}
+            templates, root / "outputs", lambda _prompt, _images, _session: {"mime_type": "image/png", "data": output}
         )
         headers = {"X-Bridge-Token": api.BRIDGE_TOKEN}
         try:
@@ -64,7 +64,7 @@ def test_http_rejects_job_when_bridge_queue_is_full():
         original_service = api.review_image_service
         api.review_image_service = ReviewImageService(
             templates, root / "outputs",
-            lambda _prompt, _images: (gate.wait(2), {"mime_type": "image/png", "data": image_data_url().split(",", 1)[1]})[1],
+            lambda _prompt, _images, _session: (gate.wait(2), {"mime_type": "image/png", "data": image_data_url().split(",", 1)[1]})[1],
             max_pending_jobs=1,
         )
         headers = {"X-Bridge-Token": api.BRIDGE_TOKEN}
@@ -89,7 +89,7 @@ def test_template_gallery_lists_and_uploads_authenticated_images():
     with tempfile.TemporaryDirectory() as workspace:
         root = Path(workspace)
         original_service = api.review_image_service
-        api.review_image_service = ReviewImageService(root / "templates", root / "outputs", lambda _prompt, _images: {})
+        api.review_image_service = ReviewImageService(root / "templates", root / "outputs", lambda _prompt, _images, _session: {})
         headers = {"X-Bridge-Token": api.BRIDGE_TOKEN}
         try:
             with TestClient(api.app) as client:
@@ -124,7 +124,7 @@ def test_template_gallery_is_store_scoped_and_bulk_delete_reports_partial_succes
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         original_service = api.review_image_service
-        api.review_image_service = ReviewImageService(root / "templates", root / "outputs", lambda _prompt, _images: {})
+        api.review_image_service = ReviewImageService(root / "templates", root / "outputs", lambda _prompt, _images, _session: {})
         try:
             with TestClient(api.app) as client:
                 headers = {"X-Bridge-Token": api.BRIDGE_TOKEN}

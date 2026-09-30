@@ -37,6 +37,7 @@ def test_image_edit_sends_two_ordered_images_and_returns_image():
                     json={
                         "prompt": "replace product",
                         "timeout_seconds": 10,
+                        "conversation_session_id": "preaureum-batch-1",
                         "images": [
                             {"name": "template", "mime_type": "image/png", "data": data},
                             {"name": "product", "mime_type": "image/png", "data": data},
@@ -48,7 +49,8 @@ def test_image_edit_sends_two_ordered_images_and_returns_image():
                 assert message["type"] == "job"
                 assert message["kind"] == "image_edit"
                 assert [image["name"] for image in message["images"]] == ["template", "product"]
-                assert message["conversation_mode"] == "new"
+                assert message["conversation_mode"] == "session"
+                assert message["conversation_session_id"] == "preaureum-batch-1"
                 socket.send_json({
                     "type": "job_result",
                     "job_id": message["job_id"],

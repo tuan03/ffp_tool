@@ -22,10 +22,15 @@ from server import BRIDGE_TOKEN, app, require_token
 BRIDGE_PORT = 8770
 
 
-def call_image_bridge(prompt: str, images: list[dict[str, str]]) -> dict[str, str]:
+def call_image_bridge(prompt: str, images: list[dict[str, str]], conversation_session_id: str) -> dict[str, str]:
     request = urllib.request.Request(
         f"http://127.0.0.1:{BRIDGE_PORT}/image-edit",
-        data=json.dumps({"prompt": prompt, "images": images, "timeout_seconds": 900}).encode(),
+        data=json.dumps({
+            "prompt": prompt,
+            "images": images,
+            "timeout_seconds": 900,
+            "conversation_session_id": conversation_session_id,
+        }).encode(),
         headers={"Content-Type": "application/json", "X-Bridge-Token": BRIDGE_TOKEN},
         method="POST",
     )
@@ -57,6 +62,7 @@ class CreateReviewImageRequest(BaseModel):
     scope: str
     templateName: str | None = None
     excludeTemplate: str | None = None
+    conversationSessionId: str | None = Field(default=None, min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_-]+$")
 
 
 class UploadReviewTemplateRequest(BaseModel):
@@ -145,6 +151,7 @@ def create_job(body: CreateReviewImageRequest, x_bridge_token: str | None = Head
             body.productDataUrl, body.prompt, body.scope,
             store_id=body.storeId,
             template_name=body.templateName, exclude_template=body.excludeTemplate,
+            conversation_session_id=body.conversationSessionId,
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
