@@ -12,13 +12,15 @@ Match the scene's scale, perspective, contact shadows and lighting. Do not dupli
 
 const RUG_PROMPT = `Create one photorealistic customer review photo by editing the two attached images.
 
-Image 1 is the SCENE TEMPLATE. Preserve its room, floor, furniture, camera angle, perspective and natural lighting. Completely remove the original rug and reconstruct the floor it covered.
+Image 1 is the SCENE TEMPLATE and supplies only the environment, floor, furniture, camera angle, perspective and natural lighting. Completely remove every original rug from Image 1. Do not use the removed rug's footprint, dimensions, silhouette or proportions as a target for the replacement product.
 
-Image 2 is the PRODUCT REFERENCE. Place this exact rug into the cleared area. Preserve its outline, aspect ratio, pile texture, colors, artwork and printed pattern.
+Image 2 is the PRODUCT REFERENCE. Image 2 is the only source of the rug's physical geometry and design. Preserve the exact product count, intrinsic dimensions and proportions, length-to-width ratio, outline, corner shape and radius, border width, edge binding, thickness, pile texture, colors, artwork and printed layout shown in Image 2. Treat any visible size or dimensional relationship in Image 2 as authoritative.
+
+GEOMETRY LOCK: Place the Image 2 rug naturally on the floor without forcing it into the area or shape previously occupied by the Image 1 rug. If their shapes or dimensions differ, reconstruct all newly exposed floor and allow the replacement rug to occupy a different footprint. You may rotate and apply realistic floor-plane perspective, but preserve the original length-to-width ratio and uniform scale of the Image 2 product. Do not stretch, compress, widen, shorten, crop or reshape the Image 2 rug to resemble or fit the template rug under any circumstances. Do not rearrange, reflow, duplicate, remove or add design elements to make the artwork fit a different shape.
 
 PERSONALIZATION RULE: Inspect Image 2 for a customer-specific name printed on the rug, including a first name, surname or full name. If one is present, replace every occurrence of that personalized customer name with a different natural name of similar length; never reuse the original name. Use the same replacement name across the entire rug wherever the original name appears. Recreate it in the same position, capitalization, font style, size, color, outline, spacing and floor perspective so it remains part of the original printed design. Preserve all other readable text, numbers, slogans, branding and artwork exactly as shown. If the rug has no personalized customer name, do not add one.
 
-Match the floor plane, scale, perspective, edge contact, shadows and lighting. Do not crop, warp or recolor the design. Do not add people, extra rugs, invented motifs, captions, watermarks or extra text. Return only the finished image.`;
+Match the floor plane, natural placement, edge contact, shadows and lighting without changing the product geometry. Before returning, compare the finished rug against Image 2 and verify that its rectified silhouette, proportions, dimensions, border and artwork layout still match Image 2 rather than the removed rug in Image 1. Do not recolor the design or add people, extra rugs, invented motifs, captions, watermarks or extra text. Return only the finished image.`;
 
 const BEDDING_PROMPT = `Create one photorealistic customer review photo by editing the two attached images.
 

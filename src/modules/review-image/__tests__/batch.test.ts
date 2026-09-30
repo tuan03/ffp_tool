@@ -31,6 +31,11 @@ test("known review stores receive product-specific presets", () => {
   assert.match(capozenPreset.prompt, /same replacement name across the entire rug/i);
   assert.match(capozenPreset.prompt, /preserve all other readable text, numbers, slogans, branding and artwork/i);
   assert.match(capozenPreset.prompt, /If the rug has no personalized customer name, do not add one/i);
+  assert.match(capozenPreset.prompt, /Image 2 is the only source of the rug's physical geometry/i);
+  assert.match(capozenPreset.prompt, /Do not use the removed rug's footprint, dimensions, silhouette or proportions/i);
+  assert.match(capozenPreset.prompt, /do not stretch, compress, widen, shorten, crop or reshape the Image 2 rug/i);
+  assert.match(capozenPreset.prompt, /reconstruct all newly exposed floor/i);
+  assert.match(capozenPreset.prompt, /preserve the original length-to-width ratio/i);
   assert.match(jeminisePreset.prompt, /bedding/i);
   assert.equal(getReviewImageStorePreset("future-store").scope, "single");
 });
