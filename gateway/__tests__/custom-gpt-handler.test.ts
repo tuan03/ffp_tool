@@ -106,6 +106,62 @@ test("administration lists every active batch for the selected store", async () 
   }
 });
 
+test("administration lists complete review records and saves review states in bulk", async () => {
+  const db = new DatabaseSync(":memory:");
+  const queue = new CustomGptQueue(db);
+  queue.configure("jeminise-real", { provider: "custom_gpt", batchSize: 1 });
+  const job = queue.enqueue({
+    storeId: "jeminise-real",
+    source: "auto_seo",
+    sourceIdentity: "review-product",
+    input: { title: "Review product", description: "Description", handle: "review-product", niche: "home", images: [] },
+    original: { id: "review-product" },
+  });
+  const batch = queue.claim("jeminise-real", "review-claim", "custom_gpt", "custom_gpt");
+  queue.checkpoint("jeminise-real", job.id, {
+    batchId: batch.id,
+    leaseToken: batch.leaseToken,
+    requestId: "review-submit",
+    stage: "submission",
+    payload: {},
+  });
+  queue.finish("jeminise-real", job.id, { output: { productTitle: "Optimized product" } });
+
+  const handler = createCustomGptHandler({ queue, storeId: "capozen", adminKey: "admin-key" });
+  const server = http.createServer((req, res) => { void handler(req, res); });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+  const base = `http://127.0.0.1:${address.port}/api/v1/gpt-seo/admin`;
+
+  try {
+    const listResponse = await fetch(`${base}/reviews?storeId=jeminise-real&offset=0`, {
+      headers: { Authorization: "Bearer admin-key" },
+    });
+    assert.equal(listResponse.status, 200);
+    const firstPage = await listResponse.json() as {
+      readonly reviews: readonly { readonly job: { readonly id: string }; readonly state: Readonly<Record<string, unknown>> }[];
+      readonly nextOffset: number | null;
+    };
+    assert.equal(firstPage.reviews[0]?.job.id, job.id);
+    assert.deepEqual(firstPage.reviews[0]?.state, {});
+    assert.equal(firstPage.nextOffset, null);
+
+    const saveResponse = await fetch(`${base}/review-states?storeId=jeminise-real`, {
+      method: "POST",
+      headers: { Authorization: "Bearer admin-key", "Content-Type": "application/json" },
+      body: JSON.stringify({ reviews: [{ jobId: job.id, state: { reviewDecision: "approved" } }] }),
+    });
+    assert.equal(saveResponse.status, 200);
+    assert.deepEqual(await saveResponse.json(), { saved: 1 });
+    assert.deepEqual(queue.reviewState("jeminise-real", job.id), { reviewDecision: "approved" });
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    db.close();
+  }
+});
+
 test("waiting-jobs lists read-only identifiers for the authenticated store without claiming work", async () => {
   const db = new DatabaseSync(":memory:");
   let currentTime = 0;

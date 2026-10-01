@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { normalizeActiveStoreId, persistBrowserActiveStoreId, readActiveStoreId } from "../../../shared/active-store";
 import { AppError } from "../../../shared/errors/app-error";
 import { buildSeoQueueUrl } from "../../../shared/seo-queue-navigation";
 import { notifyUser } from "../../../shared/utils";
@@ -159,12 +160,29 @@ export function AutoSeoPage({
 
         if (isMounted && storeOptions.length > 0) {
           setAvailableStores(storeOptions);
+          const firstStore = storeOptions[0];
+          if (!firstStore) return;
           const currentStoreId = selectedStoreIdRef.current;
-          if (!currentStoreId || !storeOptions.some((s) => s.storeId === currentStoreId)) {
-            const firstStoreId = storeOptions[0].storeId;
-            setAutoSeoSelectedStoreId(firstStoreId);
-            activeClient.setActiveStoreId?.(firstStoreId);
+          const requestedStoreId = typeof window === "undefined"
+            ? ""
+            : normalizeActiveStoreId(new URLSearchParams(window.location.search).get("storeId"))
+              || readActiveStoreId(window.localStorage);
+          const restoredStore = storeOptions.find((option) => option.storeId.toLowerCase() === requestedStoreId);
+          const hasCurrentStore = Boolean(currentStoreId && storeOptions.some((store) => store.storeId === currentStoreId));
+          const nextStoreId = restoredStore?.storeId ?? (hasCurrentStore && currentStoreId ? currentStoreId : firstStore.storeId);
+          if (nextStoreId !== currentStoreId) {
+            setAutoSeoSelectedStoreId(nextStoreId);
+            persistBrowserActiveStoreId(nextStoreId);
+            activeClient.setActiveStoreId?.(nextStoreId);
+            activeClient.clearDetailCache?.();
+            setAutoSeoProducts([]);
+            setAutoSeoSelectedProductIds([]);
+            setTestSelectedProductIds(undefined);
+            setEligibility(null);
+            setAutoSeoOutput(null);
+            setAutoSeoLastHydratedProducts([]);
           } else {
+            persistBrowserActiveStoreId(currentStoreId);
             activeClient.setActiveStoreId?.(currentStoreId);
           }
         }
@@ -204,6 +222,7 @@ export function AutoSeoPage({
     setEligibility(null);
     setIsLoadingEligibility(false);
     setAutoSeoSelectedStoreId(storeId);
+    persistBrowserActiveStoreId(storeId);
     activeClient.setActiveStoreId?.(storeId);
     activeClient.clearDetailCache?.();
     setAutoSeoProducts([]);

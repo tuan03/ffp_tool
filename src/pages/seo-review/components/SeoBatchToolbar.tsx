@@ -18,12 +18,14 @@ export interface SeoBatchToolbarProps {
   readonly isAllExpanded?: boolean;
   readonly isSyncing?: boolean;
   readonly isReverting?: boolean;
+  readonly isApprovingAll?: boolean;
   readonly onFilterChange: (newFilter: Partial<SeoReviewFilterState>) => void;
   readonly onViewModeChange: (mode: SeoReviewViewMode) => void;
   readonly onToggleExpandAll?: () => void;
   readonly onSelectAll: () => void;
   readonly onClearSelection: () => void;
   readonly onApproveSelected: () => void;
+  readonly onApproveAllPending?: () => void;
   readonly onRejectSelected: () => void;
   readonly onSyncAllApproved: () => void;
   readonly onRetryFailedSync?: () => void;
@@ -51,12 +53,14 @@ export function SeoBatchToolbar({
   isAllExpanded = false,
   isSyncing = false,
   isReverting = false,
+  isApprovingAll = false,
   onFilterChange,
   onViewModeChange,
   onToggleExpandAll,
   onSelectAll,
   onClearSelection,
   onApproveSelected,
+  onApproveAllPending,
   onRejectSelected,
   onSyncAllApproved,
   onRetryFailedSync,
@@ -349,6 +353,18 @@ export function SeoBatchToolbar({
 
         {/* Right: Batch Actions */}
         <div className="flex items-center gap-2">
+          {pendingCount > 0 && onApproveAllPending && (
+            <button
+              type="button"
+              onClick={onApproveAllPending}
+              disabled={isApprovingAll || isSyncing || isReverting}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-600 px-3 py-1.5 font-semibold text-white transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:border-slate-700 disabled:bg-slate-800 disabled:text-slate-500"
+              title="Duyệt nhanh toàn bộ sản phẩm đang chờ review của store hiện tại"
+            >
+              <span>{isApprovingAll ? "⏳" : "✓"}</span>
+              <span>{isApprovingAll ? `Đang duyệt (${pendingCount})...` : `Duyệt nhanh tất cả (${pendingCount})`}</span>
+            </button>
+          )}
           {selectedCount > 0 && (
             <>
               <button
@@ -460,7 +476,7 @@ export function SeoBatchToolbar({
             ) : (
               <>
                 <span>🛍️</span>
-                <span>Sync tất cả đã duyệt ({approvedUnsyncedCount})</span>
+                <span>Đồng bộ nhanh lên Shopify ({approvedUnsyncedCount})</span>
               </>
             )}
           </button>

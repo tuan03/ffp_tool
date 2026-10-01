@@ -10,6 +10,8 @@ export function buildSeoQueueUrl(storeId: string): string {
   return `/gpt-seo?storeId=${encodeURIComponent(normalizedStoreId)}`;
 }
 
-export function resolveSeoQueueStoreId(searchParams: URLSearchParams): string {
-  return normalizeStoreId(searchParams.get("storeId") ?? "") || DEFAULT_SEO_QUEUE_STORE_ID;
+export function resolveSeoQueueStoreId(searchParams: URLSearchParams, persistedStoreId?: string): string {
+  return normalizeStoreId(searchParams.get("storeId") ?? "")
+    || normalizeStoreId(persistedStoreId ?? "")
+    || DEFAULT_SEO_QUEUE_STORE_ID;
 }

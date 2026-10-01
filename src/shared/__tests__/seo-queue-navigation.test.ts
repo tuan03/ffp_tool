@@ -9,5 +9,6 @@ test("SEO queue URL carries the selected Auto SEO store", () => {
 
 test("SEO queue resolves its initial store from the URL", () => {
   assert.equal(resolveSeoQueueStoreId(new URLSearchParams("storeId=Wrydeco")), "wrydeco");
+  assert.equal(resolveSeoQueueStoreId(new URLSearchParams(), "Jeminise-Real"), "jeminise-real");
   assert.equal(resolveSeoQueueStoreId(new URLSearchParams()), "capozen");
 });
