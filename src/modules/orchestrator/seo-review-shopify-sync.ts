@@ -416,7 +416,7 @@ export async function pushSeoReviewProductToShopify(
             title: product.productTitle,
             descriptionHtml: product.productDescription,
             handle: product.handle,
-            vendor: effectiveVendor,
+            ...(product.vendor?.trim() ? { vendor: product.vendor.trim() } : {}),
             productType: product.productType,
             tags: product.tags ? [...product.tags] : undefined,
             seo: {

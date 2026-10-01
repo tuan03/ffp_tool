@@ -736,4 +736,44 @@ describe("seo-review-shopify-sync", () => {
       productIdsToAdd: ["gid://shopify/Product/12345678"],
     });
   });
+
+  it("preserves the vendor when an existing product update does not explicitly supply one", async () => {
+    let capturedProduct: Record<string, unknown> | undefined;
+    const runner = createMockRunner(async (input) => {
+      if (input.operation !== "products.update") return undefined;
+      capturedProduct = input.payload.product as unknown as Record<string, unknown>;
+      return {
+        storeId: input.storeId || "jeminise-real",
+        operation: "products.update",
+        success: true,
+        data: {
+          product: {
+            id: input.payload.id,
+            title: input.payload.product.title,
+            handle: input.payload.product.handle,
+          },
+        },
+      } as unknown as ShopifyApiResponse;
+    });
+
+    const item: SeoReviewPushProductItem = {
+      id: "auto-seo-existing-1",
+      productId: "gid://shopify/Product/8900731633863",
+      productTitle: "Personalized Halloween Bedding",
+      productDescription: "<p>Updated SEO description</p>",
+      seoTitle: "Personalized Halloween Bedding",
+      seoDescription: "Shop personalized Halloween bedding.",
+      handle: "personalized-halloween-bedding",
+      images: [],
+    };
+
+    const result = await pushSeoReviewProductToShopify(item, {
+      moduleApiRunner: runner,
+      storeId: "jeminise-real",
+    });
+
+    assert.equal(result.success, true);
+    assert.ok(capturedProduct);
+    assert.equal(Object.hasOwn(capturedProduct, "vendor"), false);
+  });
 });

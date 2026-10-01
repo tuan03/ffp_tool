@@ -87,8 +87,9 @@ function toPushProductItem(vm: SeoProductUiViewModel): SeoReviewPushProductItem 
     || (vm.coordinatorReview?.target?.productType?.trim() ? vm.coordinatorReview.target.productType.trim() : undefined)
     || (vm.sourceCrawlProduct?.productType ? String(vm.sourceCrawlProduct.productType) : undefined);
 
-  const effectiveVendor = vm.sourcePinterestItem?.vendor
-    || (vm.storeId ? (vm.storeId.split("--")[0] || vm.storeId).trim().toUpperCase() : undefined);
+  // Vendor is not an SEO field. Only forward a value supplied by a product
+  // source; deriving it from storeId can overwrite an existing Shopify vendor.
+  const effectiveVendor = vm.sourcePinterestItem?.vendor?.trim() || undefined;
 
   const priceAddition = vm.coordinatorReview?.target?.priceAddition
     ?? vm.sourcePinterestItem?.priceAddition
