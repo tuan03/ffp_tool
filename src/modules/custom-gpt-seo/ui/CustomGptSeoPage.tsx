@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 
-import type { CustomGptClient, GptQueuePage } from "../service";
+import type { CustomGptClient, GptQueuePage, SeoQueueStore } from "../service";
 import type { GptSeoJob, GptSeoSettings, SeoProvider } from "../types";
 
+import { StoreSelector } from "./StoreSelector";
 import {
   buildQueueSummaries,
   canRetryJob,
@@ -24,14 +25,16 @@ const FIELD_CLASS_NAME = "rounded-lg border border-slate-700 bg-slate-950 px-3 p
 const SECONDARY_BUTTON_CLASS_NAME = "inline-flex items-center justify-center rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm font-medium text-slate-200 transition hover:border-slate-600 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50";
 const PRIMARY_BUTTON_CLASS_NAME = "inline-flex items-center justify-center rounded-lg bg-cyan-500 px-3 py-2 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400 disabled:cursor-not-allowed disabled:opacity-50";
 const TRANSFERABLE_STATUSES = ["PENDING", "WAITING_INPUT", "NEEDS_CHANGES", "FAILED"] as const;
+const DEFAULT_STORE_ID = "capozen";
 
 function getSourceLabel(source: GptSeoJob["source"]): string {
   return source === "auto_seo" ? "Auto SEO" : "Amazon";
 }
 
 export function CustomGptSeoPage({ client }: { readonly client: CustomGptClient }): React.JSX.Element {
-  const [storeId, setStoreId] = useState("capozen");
-  const [storeDraft, setStoreDraft] = useState("capozen");
+  const [storeId, setStoreId] = useState(DEFAULT_STORE_ID);
+  const [stores, setStores] = useState<readonly SeoQueueStore[]>([{ storeId: DEFAULT_STORE_ID, shopDomain: "" }]);
+  const [isStoreListLoading, setIsStoreListLoading] = useState(true);
   const [settings, setSettings] = useState<GptSeoSettings | null>(null);
   const [queue, setQueue] = useState<GptQueuePage | null>(null);
   const [offset, setOffset] = useState(0);
@@ -43,6 +46,25 @@ export function CustomGptSeoPage({ client }: { readonly client: CustomGptClient 
   const [statusGroup, setStatusGroup] = useState<QueueStatusGroup>("all");
   const [providerFilter, setProviderFilter] = useState<QueueProviderFilter>("all");
   const refreshGeneration = useRef(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    void client.stores()
+      .then(configuredStores => {
+        if (cancelled) return;
+        if (configuredStores.length === 0) throw new Error("Chưa có cửa hàng nào được cấu hình.");
+        setStores(configuredStores.some(store => store.storeId === DEFAULT_STORE_ID)
+          ? configuredStores
+          : [{ storeId: DEFAULT_STORE_ID, shopDomain: "" }, ...configuredStores]);
+      })
+      .catch(error => {
+        if (!cancelled) setNotice({ kind: "error", text: error instanceof Error ? error.message : "Không tải được danh sách cửa hàng." });
+      })
+      .finally(() => {
+        if (!cancelled) setIsStoreListLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [client]);
 
   const refresh = useCallback(async (): Promise<void> => {
     const generation = ++refreshGeneration.current;
@@ -110,9 +132,7 @@ export function CustomGptSeoPage({ client }: { readonly client: CustomGptClient 
     }
   }
 
-  function handleStoreSubmit(event: React.FormEvent<HTMLFormElement>): void {
-    event.preventDefault();
-    const nextStoreId = storeDraft.trim();
+  function handleStoreChange(nextStoreId: string): void {
     if (!nextStoreId || nextStoreId === storeId) return;
     refreshGeneration.current += 1;
     setStoreId(nextStoreId);
@@ -154,11 +174,7 @@ export function CustomGptSeoPage({ client }: { readonly client: CustomGptClient 
           <p className="mt-2 text-sm leading-6 text-slate-400">Theo dõi sản phẩm được giao cho AI, xử lý lỗi và chuyển kết quả hoàn tất sang bước duyệt.</p>
         </div>
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-          <form onSubmit={handleStoreSubmit} className="flex items-center gap-2">
-            <label htmlFor="seo-store" className="sr-only">Store</label>
-            <input id="seo-store" className={`${FIELD_CLASS_NAME} w-40`} value={storeDraft} onChange={event => setStoreDraft(event.target.value)} placeholder="Store ID" />
-            <button type="submit" className={SECONDARY_BUTTON_CLASS_NAME} disabled={!storeDraft.trim() || storeDraft.trim() === storeId}>Mở store</button>
-          </form>
+          <StoreSelector stores={stores} selectedStoreId={storeId} isLoading={isStoreListLoading} onChange={handleStoreChange} />
           <button type="button" disabled={isBusy} onClick={() => void perform(async () => undefined, "Đã cập nhật hàng đợi.")} className={SECONDARY_BUTTON_CLASS_NAME}>{isBusy ? "Đang tải…" : "↻ Làm mới"}</button>
           <Link className={PRIMARY_BUTTON_CLASS_NAME} to={`/seo-review?storeId=${encodeURIComponent(storeId)}`}>Mở SEO Review →</Link>
         </div>
