@@ -1,6 +1,6 @@
 import { Pool } from "pg";
 
-import { loadLocalEnv } from "./store-config-loader";
+import { getAutoSeoDatabaseUrl } from "./auto-seo-database-url";
 import type { ListSeoReviewItemsOptions, SeoReviewItemRecord, SeoReviewStatus } from "./seo-review-db";
 
 export interface AutoSeoReviewInput extends SeoReviewItemRecord {
@@ -208,8 +208,8 @@ export class AutoSeoPostgresReviewRepository {
 let runtimeRepository: AutoSeoPostgresReviewRepository | undefined;
 export function getAutoSeoReviewRepository(): AutoSeoPostgresReviewRepository {
   if (runtimeRepository) return runtimeRepository;
-  const databaseUrl = process.env.AUTO_SEO_DATABASE_URL ?? loadLocalEnv().AUTO_SEO_DATABASE_URL;
-  if (!databaseUrl) throw new Error("AUTO_SEO_DATABASE_URL is required for Auto SEO reviews");
+  const databaseUrl = getAutoSeoDatabaseUrl();
+  if (!databaseUrl) throw new Error("AUTO_SEO_DATABASE_URL or DATABASE_URL is required for Auto SEO reviews");
   runtimeRepository = new AutoSeoPostgresReviewRepository({ databaseUrl });
   return runtimeRepository;
 }

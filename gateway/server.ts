@@ -40,6 +40,11 @@ export interface GatewayServerOptions {
   readonly maxBodyBytes?: number;
 }
 
+function formatAutoSeoStartupFailure(error: unknown): string {
+  const message = error instanceof Error ? error.message : "Unknown startup error";
+  return message.replace(/postgres(?:ql)?(?:\+[a-z0-9]+)?:\/\/[^\s"']+/gi, "postgresql://[redacted]");
+}
+
 export async function startGatewayServerWhenReady(
   options: GatewayServerOptions,
   startupOptions?: AutoSeoStartupOptions,
@@ -354,8 +359,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
   const host = process.env.GATEWAY_HOST || "127.0.0.1";
   try {
     await startGatewayServerWhenReady({ port, host });
-  } catch {
-    console.error("[Auto SEO] PostgreSQL schema initialization failed; Gateway did not start.");
+  } catch (error) {
+    console.error(`[Auto SEO] PostgreSQL schema initialization failed; Gateway did not start: ${formatAutoSeoStartupFailure(error)}`);
     process.exitCode = 1;
   }
 }
