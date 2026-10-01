@@ -415,6 +415,7 @@ describe("seo-review-shopify-sync", () => {
     };
 
     let didUpdateExisting = false;
+    let capturedExistingProduct: Record<string, unknown> | undefined;
     const runner = createMockRunner(async (input) => {
       if (input.operation === "products.list") {
         return {
@@ -438,6 +439,7 @@ describe("seo-review-shopify-sync", () => {
       if (input.operation === "products.update") {
         if (input.payload.id === existingShopifyProduct.id) {
           didUpdateExisting = true;
+          capturedExistingProduct = input.payload.product as unknown as Record<string, unknown>;
           return {
             storeId: "capozen",
             operation: "products.update",
@@ -481,6 +483,8 @@ describe("seo-review-shopify-sync", () => {
     assert.equal(result.success, true);
     assert.equal(result.productId, "gid://shopify/Product/existing-synced-555");
     assert.equal(didUpdateExisting, true);
+    assert.ok(capturedExistingProduct);
+    assert.equal(Object.hasOwn(capturedExistingProduct, "handle"), false);
   });
 
   it("pushes Pinterest POD product with printMaster metafields and only AI mockups in media", async () => {
@@ -737,7 +741,7 @@ describe("seo-review-shopify-sync", () => {
     });
   });
 
-  it("preserves the vendor when an existing product update does not explicitly supply one", async () => {
+  it("preserves the handle and vendor when updating an existing Auto SEO product", async () => {
     let capturedProduct: Record<string, unknown> | undefined;
     const runner = createMockRunner(async (input) => {
       if (input.operation !== "products.update") return undefined;
@@ -774,6 +778,7 @@ describe("seo-review-shopify-sync", () => {
 
     assert.equal(result.success, true);
     assert.ok(capturedProduct);
+    assert.equal(Object.hasOwn(capturedProduct, "handle"), false);
     assert.equal(Object.hasOwn(capturedProduct, "vendor"), false);
   });
 });
