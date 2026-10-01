@@ -41,6 +41,10 @@ export interface GatewayServerOptions {
   readonly maxBodyBytes?: number;
 }
 
+export function getRuntimeStoreConfigFile(env: Readonly<Record<string, string>>): string {
+  return env.GATEWAY_STORES_FILE?.trim() || ".runtime/stores.local.json";
+}
+
 function formatAutoSeoStartupFailure(error: unknown): string {
   const message = error instanceof Error ? error.message : "Unknown startup error";
   return message.replace(/postgres(?:ql)?(?:\+[a-z0-9]+)?:\/\/[^\s"']+/gi, "postgresql://[redacted]");
@@ -125,7 +129,8 @@ export function startGatewayServer(
     throw new Error("Operator authentication requires GATEWAY_AUTH_TOKEN");
   }
 
-  const stores = loadBootstrappedStores({ env });
+  const storeConfigFile = getRuntimeStoreConfigFile(env);
+  const stores = loadBootstrappedStores({ env, configFile: storeConfigFile });
   if (env.GPT_SEO_ACTION_KEYS_JSON || process.env.GPT_SEO_ACTION_KEYS_JSON || env.GPT_SEO_ACTION_KEY || process.env.GPT_SEO_ACTION_KEY || env.GPT_SEO_MCP_KEYS_JSON || process.env.GPT_SEO_MCP_KEYS_JSON) getCustomGptRuntime();
 
   const storeRegistry = new InMemoryStoreRegistry(stores);
@@ -139,7 +144,7 @@ export function startGatewayServer(
     storeRegistry,
     tokenProvider,
     graphqlClient,
-    persistConfigFile: "stores.local.json",
+    persistConfigFile: storeConfigFile,
   });
 
   const server = http.createServer(async (req, res) => {
@@ -185,7 +190,11 @@ export function startGatewayServer(
 
     if (isShopify || isAutoSeo || isStoreRegister || isStoreUpdate || isStoreDelete || isStoreGet) {
       try {
-        const freshStores = loadBootstrappedStores({ env: loadLocalEnv() });
+        const freshEnv = loadLocalEnv();
+        const freshStores = loadBootstrappedStores({
+          env: freshEnv,
+          configFile: getRuntimeStoreConfigFile(freshEnv),
+        });
         const freshIds = new Set(freshStores.map((s) => s.storeId));
         for (const store of freshStores) {
           if (!storeRegistry.getStore(store.storeId)) {
