@@ -4,6 +4,8 @@ import type {
   AutoSeoBackupRequest,
   AutoSeoBackupResponse,
   AutoSeoClient,
+  AutoSeoEligibilityRequest,
+  AutoSeoEligibilityResponse,
   AutoSeoOutput,
   AutoSeoSelectionInput,
   AutoSeoStoreOption,
@@ -561,6 +563,46 @@ export class AutoSeoModuleApiClient implements AutoSeoClient {
     return runAutoSeo(input);
   }
 
+  public async getProductEligibility(
+    request: AutoSeoEligibilityRequest,
+  ): Promise<AutoSeoEligibilityResponse> {
+    try {
+      const response = await fetch("/api/auto-seo/eligibility", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(request),
+      });
+      const payload: unknown = await response.json().catch(() => null);
+      if (!response.ok || !payload || typeof payload !== "object") {
+        throw new AppError("Failed to load Auto SEO eligibility", "AUTO_SEO_LOAD_FAILED");
+      }
+      const envelope = payload as {
+        readonly success?: unknown;
+        readonly data?: unknown;
+        readonly error?: { readonly code?: unknown; readonly message?: unknown };
+      };
+      if (envelope.success !== true) {
+        throw new AppError(
+          typeof envelope.error?.message === "string"
+            ? envelope.error.message
+            : "Failed to load Auto SEO eligibility",
+          typeof envelope.error?.code === "string" ? envelope.error.code : "AUTO_SEO_LOAD_FAILED",
+        );
+      }
+      if (!isAutoSeoEligibilityResponse(envelope.data)) {
+        throw new AppError("Invalid Auto SEO eligibility response", "AUTO_SEO_LOAD_FAILED");
+      }
+      return envelope.data;
+    } catch (error) {
+      if (error instanceof AppError) throw error;
+      throw new AppError(
+        error instanceof Error ? error.message : "Failed to load Auto SEO eligibility",
+        "AUTO_SEO_LOAD_FAILED",
+        error,
+      );
+    }
+  }
+
   public async runAutoSeoBackup(
     request: AutoSeoBackupRequest,
   ): Promise<AutoSeoBackupResponse> {
@@ -573,14 +615,27 @@ export class AutoSeoModuleApiClient implements AutoSeoClient {
         body: JSON.stringify(request),
       });
 
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok || !data.success) {
-        const errorCode = data?.error?.code || "AUTO_SEO_BACKUP_FAILED";
-        const message = data?.error?.message || "Failed to execute Auto SEO backup";
+      const payload: unknown = await response.json().catch(() => null);
+      const envelope = payload && typeof payload === "object"
+        ? payload as {
+            readonly success?: unknown;
+            readonly data?: unknown;
+            readonly error?: { readonly code?: unknown; readonly message?: unknown };
+          }
+        : undefined;
+      if (!response.ok || envelope?.success !== true) {
+        const errorCode = typeof envelope?.error?.code === "string"
+          ? envelope.error.code
+          : "AUTO_SEO_BACKUP_FAILED";
+        const message = typeof envelope?.error?.message === "string"
+          ? envelope.error.message
+          : "Failed to execute Auto SEO backup";
         throw new AppError(message, errorCode);
       }
-
-      return data.data as AutoSeoBackupResponse;
+      if (!isAutoSeoBackupResponse(envelope.data)) {
+        throw new AppError("Invalid Auto SEO backup response", "AUTO_SEO_BACKUP_FAILED");
+      }
+      return envelope.data;
     } catch (error) {
       if (error instanceof AppError) {
         throw error;
@@ -592,6 +647,65 @@ export class AutoSeoModuleApiClient implements AutoSeoClient {
       );
     }
   }
+}
+
+function isAutoSeoBackupResponse(value: unknown): value is AutoSeoBackupResponse {
+  if (!value || typeof value !== "object") return false;
+  const response = value as Readonly<Record<string, unknown>>;
+  if (
+    typeof response.workflowId !== "string" ||
+    typeof response.backedUpCount !== "number" ||
+    !Array.isArray(response.backupIds) ||
+    !response.backupIds.every(id => typeof id === "string") ||
+    (response.downstreamStatus !== "SENT" && response.downstreamStatus !== "FAILED")
+  ) {
+    return false;
+  }
+  if (response.acceptedCount !== undefined && typeof response.acceptedCount !== "number") {
+    return false;
+  }
+  if (
+    response.acceptedProductIds !== undefined &&
+    (!Array.isArray(response.acceptedProductIds) ||
+      !response.acceptedProductIds.every(id => typeof id === "string"))
+  ) {
+    return false;
+  }
+  if (response.skippedCount !== undefined && typeof response.skippedCount !== "number") {
+    return false;
+  }
+  if (response.skippedProducts !== undefined) {
+    if (!Array.isArray(response.skippedProducts)) return false;
+    for (const skippedProduct of response.skippedProducts) {
+      if (!skippedProduct || typeof skippedProduct !== "object") return false;
+      const skipped = skippedProduct as Readonly<Record<string, unknown>>;
+      if (
+        typeof skipped.productId !== "string" ||
+        (skipped.reason !== "UNCHANGED" && skipped.reason !== "ACTIVE_DUPLICATE")
+      ) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+function isAutoSeoEligibilityResponse(value: unknown): value is AutoSeoEligibilityResponse {
+  if (!value || typeof value !== "object") return false;
+  const response = value as { readonly items?: unknown; readonly counts?: unknown };
+  if (!Array.isArray(response.items) || !response.counts || typeof response.counts !== "object") {
+    return false;
+  }
+  const validStates = new Set(["never_processed", "changed", "current", "active", "retry"]);
+  if (!response.items.every((item) => {
+    if (!item || typeof item !== "object") return false;
+    const entry = item as { readonly productId?: unknown; readonly state?: unknown; readonly reason?: unknown };
+    return typeof entry.productId === "string" &&
+      typeof entry.state === "string" && validStates.has(entry.state) &&
+      typeof entry.reason === "string";
+  })) return false;
+  const counts = response.counts as Readonly<Record<string, unknown>>;
+  return [...validStates].every((state) => typeof counts[state] === "number");
 }
 
 export function createAutoSeoModuleApiClient(

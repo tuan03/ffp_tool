@@ -4,6 +4,8 @@ import type {
   AutoSeoBackupRequest,
   AutoSeoBackupResponse,
   AutoSeoClient,
+  AutoSeoEligibilityRequest,
+  AutoSeoEligibilityResponse,
   AutoSeoOutput,
   AutoSeoProductCandidate,
   AutoSeoSelectionInput,
@@ -50,6 +52,10 @@ export async function runMockAutoSeo(
 
 export class MockAutoSeoClient implements AutoSeoClient {
   private readonly detailCache = new Map<string, ShopifyProductForAutoSeoUi>();
+  private readonly successfulInputs = new Map<string, {
+    readonly fingerprint: string;
+    readonly updatedAt?: string;
+  }>();
   private activeStoreId = "store-chillgen-mock";
 
   public async listStores(): Promise<readonly AutoSeoStoreOption[]> {
@@ -275,18 +281,96 @@ export class MockAutoSeoClient implements AutoSeoClient {
     return runAutoSeo(input);
   }
 
+  public async getProductEligibility(
+    request: AutoSeoEligibilityRequest,
+  ): Promise<AutoSeoEligibilityResponse> {
+    const items = request.products.map((product) => {
+      const successfulInput = this.successfulInputs.get(
+        this.getCacheKey(request.storeId, product.productId),
+      );
+      const isCurrent = Boolean(
+        successfulInput?.updatedAt &&
+        product.updatedAt &&
+        successfulInput.updatedAt === product.updatedAt,
+      );
+      return {
+        productId: product.productId,
+        state: !successfulInput
+          ? "never_processed" as const
+          : isCurrent ? "current" as const : "changed" as const,
+        reason: !successfulInput
+          ? "NO_HISTORY" as const
+          : isCurrent ? "UP_TO_DATE" as const : "SHOPIFY_UPDATED" as const,
+      };
+    });
+    return {
+      items,
+      counts: {
+        never_processed: items.filter(item => item.state === "never_processed").length,
+        changed: items.filter(item => item.state === "changed").length,
+        current: items.filter(item => item.state === "current").length,
+        active: 0,
+        retry: 0,
+      },
+    };
+  }
+
   public async runAutoSeoBackup(
     request: AutoSeoBackupRequest,
   ): Promise<AutoSeoBackupResponse> {
+    const acceptedProducts: ShopifyProductForAutoSeoUi[] = [];
+    const skippedProducts: Array<{
+      readonly productId: string;
+      readonly reason: "UNCHANGED";
+    }> = [];
+    for (const product of request.products) {
+      const cacheKey = this.getCacheKey(request.storeId, product.id);
+      const fingerprint = createMockSeoFingerprint(product);
+      if (this.successfulInputs.get(cacheKey)?.fingerprint === fingerprint) {
+        skippedProducts.push({ productId: product.id, reason: "UNCHANGED" });
+        continue;
+      }
+      acceptedProducts.push(product);
+      this.successfulInputs.set(cacheKey, {
+        fingerprint,
+        ...(product.updatedAt ? { updatedAt: product.updatedAt } : {}),
+      });
+    }
     return {
       workflowId: request.workflowId,
-      backedUpCount: request.products.length,
-      backupIds: request.products.map((_, idx) => `mock_backup_${idx + 1}`),
+      backedUpCount: acceptedProducts.length,
+      backupIds: acceptedProducts.map((_, idx) => `mock_backup_${idx + 1}`),
       downstreamStatus: "SENT",
       downstreamHttpStatus: 200,
       downstreamError: null,
+      acceptedProductIds: acceptedProducts.map(product => product.id),
+      acceptedCount: acceptedProducts.length,
+      skippedProducts,
+      skippedCount: skippedProducts.length,
     };
   }
+}
+
+function createMockSeoFingerprint(product: ShopifyProductForAutoSeoUi): string {
+  return JSON.stringify({
+    id: product.id,
+    title: product.title,
+    handle: product.handle,
+    description: product.description ?? "",
+    descriptionHtml: product.descriptionHtml ?? "",
+    status: product.status ?? "",
+    vendor: product.vendor ?? "",
+    productType: product.productType ?? "",
+    tags: [...(product.tags ?? [])].sort(),
+    onlineStoreUrl: product.onlineStoreUrl ?? "",
+    seo: product.seo ?? null,
+    images: [...(product.images ?? [])]
+      .map(image => ({ ...image }))
+      .sort((left, right) => left.url.localeCompare(right.url)),
+    variants: [...(product.variants ?? [])]
+      .map(variant => ({ ...variant, inventoryQuantity: undefined }))
+      .sort((left, right) => left.id.localeCompare(right.id)),
+  });
 }
 
 export const mockAutoSeoClient = new MockAutoSeoClient();

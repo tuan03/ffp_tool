@@ -16,6 +16,7 @@ import { ProductSelectionTable } from "../ui/components/ProductSelectionTable";
 import type { ProductSelectionTableProps } from "../ui/components/ProductSelectionTable";
 
 import type {
+  AutoSeoEligibilityItem,
   ProductReviewDecision,
   ShopifyProductForAutoSeoUi,
   ShopifyStatusFilter,
@@ -63,6 +64,8 @@ function renderTable(props: {
   filteredProducts?: readonly ShopifyProductForAutoSeoUi[];
   onToggleSelect?: (id: string) => void;
   onOpenDetail?: (product: ShopifyProductForAutoSeoUi) => void;
+  eligibilityItems?: readonly AutoSeoEligibilityItem[];
+  eligibilityFilter?: "needs_seo" | "all";
 }): RenderResult {
   let captured: React.ReactElement<{ children: React.ReactNode[] }> | null = null;
 
@@ -77,6 +80,8 @@ function renderTable(props: {
       filteredProducts: props.filteredProducts,
       onToggleSelect: props.onToggleSelect ?? (() => {}),
       onOpenDetail: props.onOpenDetail ?? (() => {}),
+      eligibilityItems: props.eligibilityItems,
+      eligibilityFilter: props.eligibilityFilter,
     }) as React.ReactElement<{ children: React.ReactNode[] }>;
     return captured;
   }
@@ -164,6 +169,63 @@ test("ProductSelectionTable: single checkbox change triggers onToggleSelect exac
 
   assert.equal(toggleCalls.length, 10, "Each change event must invoke onToggleSelect exactly once");
   assert.ok(toggleCalls.every((id) => id === "gid://shopify/Product/101"));
+});
+
+test("AutoSeoToolbar: renders smart batch sizes, counts, and next-batch action", () => {
+  const html = renderToStaticMarkup(React.createElement(AutoSeoToolbar, {
+    isLoadingProducts: false,
+    isRunningAutoSeo: false,
+    totalProductsCount: 120,
+    selectedCount: 0,
+    visibleProductsCount: 120,
+    onLoadProducts: () => {},
+    onSelectAll: () => {},
+    onClearSelection: () => {},
+    onRunAutoSeo: () => {},
+    batchSize: 50,
+    onBatchSizeChange: () => {},
+    onSelectNextBatch: () => {},
+    eligibilityCounts: {
+      never_processed: 70,
+      changed: 10,
+      retry: 2,
+      current: 30,
+      active: 8,
+    },
+  }));
+
+  for (const size of [10, 20, 50, 100]) {
+    assert.ok(html.includes(`value="${size}"`));
+  }
+  assert.ok(html.includes("Chọn 50 sản phẩm tiếp theo"));
+  assert.ok(html.includes("Cần SEO: 82"));
+  assert.ok(html.includes("Đã cập nhật: 30"));
+  assert.ok(html.includes("Đang xử lý: 8"));
+});
+
+test("ProductSelectionTable: filters needs-SEO products and renders localized eligibility badges", () => {
+  const eligibilityItems: readonly AutoSeoEligibilityItem[] = [
+    { productId: mockProducts[0]!.id, state: "never_processed", reason: "NO_HISTORY" },
+    { productId: mockProducts[1]!.id, state: "current", reason: "UP_TO_DATE" },
+    { productId: mockProducts[2]!.id, state: "retry", reason: "LAST_DISPATCH_FAILED" },
+  ];
+  const filtered = filterAutoSeoProducts(mockProducts, {
+    searchQuery: "",
+    statusFilter: "all",
+    eligibilityFilter: "needs_seo",
+    eligibilityItems,
+  });
+  assert.deepEqual(filtered.map(product => product.id), [mockProducts[0]!.id, mockProducts[2]!.id]);
+
+  const { html } = renderTable({
+    products: mockProducts,
+    selectedProductIds: [],
+    eligibilityItems,
+    eligibilityFilter: "all",
+  });
+  assert.ok(html.includes("Chưa SEO"));
+  assert.ok(html.includes("Đã cập nhật"));
+  assert.ok(html.includes("Thử lại"));
 });
 
 test("ProductSelectionTable: checkbox td.onClick only stops propagation and does NOT call onToggleSelect", () => {

@@ -1,8 +1,10 @@
 import type {
+  AutoSeoEligibilityItem,
   ProductReviewDecision,
   ShopifyProductForAutoSeoUi,
   ShopifyStatusFilter,
 } from "../../types";
+import type { AutoSeoEligibilityFilter } from "../smart-batch";
 
 export type { ShopifyStatusFilter };
 
@@ -12,6 +14,8 @@ export interface AutoSeoFilterCriteria {
   readonly decisionFilter?: string;
   readonly decisions?: Record<string, ProductReviewDecision>;
   readonly selectedProductIds?: readonly string[];
+  readonly eligibilityFilter?: AutoSeoEligibilityFilter;
+  readonly eligibilityItems?: readonly AutoSeoEligibilityItem[];
 }
 
 export function filterAutoSeoProducts(
@@ -22,6 +26,9 @@ export function filterAutoSeoProducts(
   const targetStatus = criteria.statusFilter;
   const decisionFilter = criteria.decisionFilter;
   const selectedIdSet = criteria.selectedProductIds ? new Set(criteria.selectedProductIds) : null;
+  const eligibilityByProductId = new Map(
+    (criteria.eligibilityItems ?? []).map(item => [item.productId, item] as const),
+  );
 
   return products.filter((product) => {
     // 1. Search Query: matches title, handle, id, or tags
@@ -40,6 +47,13 @@ export function filterAutoSeoProducts(
     if (targetStatus !== "all") {
       const productStatus = (product.status ?? "").toUpperCase();
       if (productStatus !== targetStatus) {
+        return false;
+      }
+    }
+
+    if (criteria.eligibilityFilter === "needs_seo") {
+      const state = eligibilityByProductId.get(product.id)?.state;
+      if (state !== "never_processed" && state !== "changed" && state !== "retry") {
         return false;
       }
     }

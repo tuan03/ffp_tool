@@ -1,4 +1,6 @@
 import type { AutoSeoStoreOption } from "../../types";
+import type { AutoSeoEligibilityResponse } from "../../types";
+import type { AutoSeoBatchSize } from "../smart-batch";
 
 export interface AutoSeoToolbarProps {
   isLoadingProducts: boolean;
@@ -14,6 +16,11 @@ export interface AutoSeoToolbarProps {
   selectedStoreId?: string;
   onSelectStore?(storeId: string): void;
   isLoadingStores?: boolean;
+  batchSize?: AutoSeoBatchSize;
+  onBatchSizeChange?(batchSize: AutoSeoBatchSize): void;
+  onSelectNextBatch?(): void;
+  isEligibilityLoading?: boolean;
+  eligibilityCounts?: AutoSeoEligibilityResponse["counts"];
 }
 
 export function AutoSeoToolbar({
@@ -30,7 +37,15 @@ export function AutoSeoToolbar({
   selectedStoreId,
   onSelectStore,
   isLoadingStores = false,
+  batchSize = 50,
+  onBatchSizeChange,
+  onSelectNextBatch,
+  isEligibilityLoading = false,
+  eligibilityCounts,
 }: AutoSeoToolbarProps): React.JSX.Element {
+  const needsSeoCount = eligibilityCounts
+    ? eligibilityCounts.never_processed + eligibilityCounts.changed + eligibilityCounts.retry
+    : 0;
   return (
     <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-5 shadow-lg backdrop-blur-sm space-y-4">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -126,6 +141,34 @@ export function AutoSeoToolbar({
             ☐ Bỏ chọn ({visibleProductsCount})
           </button>
         </div>
+
+        {onSelectNextBatch && (
+          <div className="flex flex-wrap items-center gap-2">
+            <label htmlFor="auto-seo-batch-size" className="text-xs text-slate-400">Mỗi lượt</label>
+            <select
+              id="auto-seo-batch-size"
+              aria-label="Số sản phẩm mỗi batch"
+              value={batchSize}
+              onChange={event => onBatchSizeChange?.(Number(event.target.value) as AutoSeoBatchSize)}
+              className="rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-2 text-xs text-slate-200"
+            >
+              {[10, 20, 50, 100].map(size => <option key={size} value={size}>{size}</option>)}
+            </select>
+            <button
+              type="button"
+              onClick={onSelectNextBatch}
+              disabled={isEligibilityLoading || !eligibilityCounts || needsSeoCount === 0}
+              className="rounded-lg border border-cyan-700 bg-cyan-950/50 px-3 py-2 text-xs font-semibold text-cyan-200 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {isEligibilityLoading ? "Đang kiểm tra..." : `Chọn ${batchSize} sản phẩm tiếp theo`}
+            </button>
+            {eligibilityCounts && (
+              <span className="text-[11px] text-slate-400">
+                Cần SEO: {needsSeoCount} · Đã cập nhật: {eligibilityCounts.current} · Đang xử lý: {eligibilityCounts.active}
+              </span>
+            )}
+          </div>
+        )}
 
         <button
           type="button"

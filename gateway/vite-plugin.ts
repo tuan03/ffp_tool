@@ -1,7 +1,7 @@
 import type { Plugin } from "vite";
 
 import { GatewayDispatcher } from "./dispatcher";
-import { handleAutoSeoHttpRequest } from "./auto-seo-handler";
+import { handleAutoSeoEligibilityHttpRequest, handleAutoSeoHttpRequest } from "./auto-seo-handler";
 import { handleSeoReviewHttpRequest } from "./seo-review-handler";
 import {
   handlePinterestPodDirectShopifySyncHttpRequest,
@@ -102,7 +102,9 @@ export function shopifyGatewayDevPlugin(options?: ShopifyGatewayDevPluginOptions
           return;
         }
         const isShopify = req.url && (req.url === "/api/shopify" || req.url.startsWith("/api/shopify?"));
-        const isAutoSeo = req.url && (req.url === "/api/auto-seo/run" || req.url.startsWith("/api/auto-seo/run?"));
+        const isAutoSeoRun = req.url && (req.url === "/api/auto-seo/run" || req.url.startsWith("/api/auto-seo/run?"));
+        const isAutoSeoEligibility = req.url && (req.url === "/api/auto-seo/eligibility" || req.url.startsWith("/api/auto-seo/eligibility?"));
+        const isAutoSeo = isAutoSeoRun || isAutoSeoEligibility;
         const isPinterestPodHandover = req.url && (req.url === "/api/pinterest-pod/handover-seo" || req.url.startsWith("/api/pinterest-pod/handover-seo?"));
         const isPinterestPodDirectSync = req.url && (req.url === "/api/pinterest-pod/sync-shopify" || req.url.startsWith("/api/pinterest-pod/sync-shopify?"));
         const isStoreRegister = req.url && (req.url === "/api/stores/register" || req.url.startsWith("/api/stores/register?"));
@@ -262,7 +264,11 @@ export function shopifyGatewayDevPlugin(options?: ShopifyGatewayDevPluginOptions
             );
             return;
           }
-          await handleAutoSeoHttpRequest(req, res, { authToken, maxBodyBytes });
+          if (isAutoSeoEligibility) {
+            await handleAutoSeoEligibilityHttpRequest(req, res, { authToken, maxBodyBytes });
+          } else {
+            await handleAutoSeoHttpRequest(req, res, { authToken, maxBodyBytes });
+          }
         } else if (isPinterestPodHandover) {
           await handlePinterestPodSeoHttpRequest(req, res, { authToken, maxBodyBytes });
         } else if (isPinterestPodDirectSync) {

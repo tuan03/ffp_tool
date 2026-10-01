@@ -113,6 +113,10 @@ export interface AutoSeoBackupResponse {
   readonly downstreamError?: string | null;
   /** Number of generated SEO outputs durably handed off to SEO Review by the server. */
   readonly reviewPersistedCount?: number;
+  readonly acceptedProductIds?: readonly string[];
+  readonly acceptedCount?: number;
+  readonly skippedProducts?: readonly AutoSeoSkippedProduct[];
+  readonly skippedCount?: number;
   readonly seoDispatch?:
     | {
         readonly provider: "gemini";
@@ -124,6 +128,52 @@ export interface AutoSeoBackupResponse {
         readonly status: "queued";
         readonly jobIds: readonly string[];
       };
+}
+
+export interface AutoSeoSkippedProduct {
+  readonly productId: string;
+  readonly reason: "UNCHANGED" | "ACTIVE_DUPLICATE";
+}
+
+export type AutoSeoEligibilityState =
+  | "never_processed"
+  | "changed"
+  | "current"
+  | "active"
+  | "retry";
+
+export type AutoSeoEligibilityReason =
+  | "NO_HISTORY"
+  | "LAST_DISPATCH_FAILED"
+  | "SHOPIFY_UPDATED"
+  | "UP_TO_DATE"
+  | "HASH_VERIFICATION_REQUIRED"
+  | "SOURCE_TIMESTAMP_UNKNOWN"
+  | "BASELINE_TIMESTAMP_UNKNOWN"
+  | "ACTIVE_DISPATCH"
+  | "ACTIVE_QUEUE"
+  | "ACTIVE_REVIEW";
+
+export interface AutoSeoEligibilityProductSummary {
+  readonly productId: string;
+  readonly updatedAt?: string;
+}
+
+export interface AutoSeoEligibilityRequest {
+  readonly storeId: string;
+  readonly products: readonly AutoSeoEligibilityProductSummary[];
+}
+
+export interface AutoSeoEligibilityItem {
+  readonly productId: string;
+  readonly state: AutoSeoEligibilityState;
+  readonly reason: AutoSeoEligibilityReason;
+  readonly lastSuccessfulShopifyUpdatedAt?: string;
+}
+
+export interface AutoSeoEligibilityResponse {
+  readonly items: readonly AutoSeoEligibilityItem[];
+  readonly counts: Readonly<Record<AutoSeoEligibilityState, number>>;
 }
 
 export interface AutoSeoStoreOption {
@@ -145,6 +195,7 @@ export interface AutoSeoClient {
   loadProductDetailFresh?(productId: string): Promise<ShopifyProductForAutoSeoUi>;
   loadProductDetailFresh?(storeId: string, productId: string): Promise<ShopifyProductForAutoSeoUi>;
   runAutoSeo(input: AutoSeoSelectionInput): Promise<AutoSeoOutput>;
+  getProductEligibility?(request: AutoSeoEligibilityRequest): Promise<AutoSeoEligibilityResponse>;
   runAutoSeoBackup(request: AutoSeoBackupRequest): Promise<AutoSeoBackupResponse>;
   hydrateSelectedProductsFresh(
     productIds: readonly string[],

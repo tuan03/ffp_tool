@@ -3,9 +3,11 @@ import { useMemo, useState } from "react";
 import { filterAutoSeoProducts } from "./product-filter";
 
 import type {
+  AutoSeoEligibilityItem,
   ShopifyProductForAutoSeoUi,
   ShopifyStatusFilter,
 } from "../../types";
+import type { AutoSeoEligibilityFilter } from "../smart-batch";
 
 export interface ProductSelectionTableProps {
   products: readonly ShopifyProductForAutoSeoUi[];
@@ -18,6 +20,9 @@ export interface ProductSelectionTableProps {
   onToggleSelect(productId: string): void;
   onOpenDetail(product: ShopifyProductForAutoSeoUi): void;
   isLoading?: boolean;
+  eligibilityItems?: readonly AutoSeoEligibilityItem[];
+  eligibilityFilter?: AutoSeoEligibilityFilter;
+  onEligibilityFilterChange?(filter: AutoSeoEligibilityFilter): void;
 }
 
 export function ProductSelectionTable(props: ProductSelectionTableProps): React.JSX.Element {
@@ -34,6 +39,10 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
 
   const searchQuery = props.searchQuery !== undefined ? props.searchQuery : internalSearchQuery;
   const statusFilter = props.statusFilter !== undefined ? props.statusFilter : internalStatusFilter;
+  const eligibilityByProductId = useMemo(
+    () => new Map((props.eligibilityItems ?? []).map(item => [item.productId, item] as const)),
+    [props.eligibilityItems],
+  );
 
   const handleSearchQueryChange = (query: string): void => {
     if (props.onSearchQueryChange) {
@@ -81,12 +90,16 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
     return filterAutoSeoProducts(products, {
       searchQuery,
       statusFilter,
+      eligibilityFilter: props.eligibilityFilter,
+      eligibilityItems: props.eligibilityItems,
     });
   }, [
     props.filteredProducts,
     products,
     searchQuery,
     statusFilter,
+    props.eligibilityFilter,
+    props.eligibilityItems,
   ]);
 
   if (products.length === 0) {
@@ -169,6 +182,24 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
               </button>
             ))}
           </div>
+          {props.eligibilityItems && (
+            <div className="flex items-center gap-1 rounded-lg border border-slate-800 bg-slate-950/60 p-1 text-xs">
+              <button
+                type="button"
+                onClick={() => props.onEligibilityFilterChange?.("needs_seo")}
+                className={`rounded-md px-2.5 py-1 ${props.eligibilityFilter !== "all" ? "bg-cyan-950 text-cyan-300" : "text-slate-400"}`}
+              >
+                Cần SEO
+              </button>
+              <button
+                type="button"
+                onClick={() => props.onEligibilityFilterChange?.("all")}
+                className={`rounded-md px-2.5 py-1 ${props.eligibilityFilter === "all" ? "bg-cyan-950 text-cyan-300" : "text-slate-400"}`}
+              >
+                Tất cả trạng thái
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
@@ -202,6 +233,7 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
               const thumbnailAlt =
                 product.featuredImage?.altText ?? product.images?.[0]?.altText ?? product.title;
               const upperStatus = (product.status ?? "").toUpperCase();
+              const eligibility = eligibilityByProductId.get(product.id);
 
               return (
                 <tr
@@ -256,6 +288,7 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
                     <div className="font-semibold text-slate-200 group-hover:text-cyan-300 transition-colors line-clamp-2">
                       {product.title}
                     </div>
+                    {eligibility && <EligibilityBadge state={eligibility.state} />}
                     {product.tags && product.tags.length > 0 && (
                       <div className="flex flex-wrap gap-1 mt-1">
                         {product.tags.slice(0, 3).map((tag) => (
@@ -316,5 +349,27 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
         <span>Click hàng để xem chi tiết sản phẩm (PDP Drawer)</span>
       </div>
     </div>
+  );
+}
+
+function EligibilityBadge({ state }: { readonly state: AutoSeoEligibilityItem["state"] }): React.JSX.Element {
+  const labels: Readonly<Record<AutoSeoEligibilityItem["state"], string>> = {
+    never_processed: "Chưa SEO",
+    changed: "Có thay đổi",
+    retry: "Thử lại",
+    current: "Đã cập nhật",
+    active: "Đang xử lý",
+  };
+  const colors: Readonly<Record<AutoSeoEligibilityItem["state"], string>> = {
+    never_processed: "border-cyan-800 bg-cyan-950/60 text-cyan-300",
+    changed: "border-amber-800 bg-amber-950/60 text-amber-300",
+    retry: "border-rose-800 bg-rose-950/60 text-rose-300",
+    current: "border-emerald-800 bg-emerald-950/60 text-emerald-300",
+    active: "border-violet-800 bg-violet-950/60 text-violet-300",
+  };
+  return (
+    <span className={`mt-1 inline-flex rounded border px-1.5 py-0.5 text-[10px] font-semibold ${colors[state]}`}>
+      {labels[state]}
+    </span>
   );
 }
