@@ -237,7 +237,7 @@ test("cancelling a ready review preserves its result and checkpoints", () => {
   } finally { db.close(); }
 });
 
-test("AEO backfill resets only unsynced ready reviews and removes stale submissions", () => {
+test("AEO backfill resets only unsynced ready reviews and retains reusable checkpoints", () => {
   const { queue, db } = setup();
   try {
     const settings = queue.configure("jeminise-real", { provider: "codex_mcp", batchSize: 10 });
@@ -259,7 +259,7 @@ test("AEO backfill resets only unsynced ready reviews and removes stale submissi
     assert.deepEqual(reset.checkpoints.analysis, { visual: true });
     assert.deepEqual(reset.checkpoints.research, { suggestions: [] });
     assert.deepEqual(reset.checkpoints.keywords, { keywords: ["cotton rug"] });
-    assert.equal(reset.checkpoints.submission, undefined);
+    assert.deepEqual(reset.checkpoints.submission, { draft: { productTitle: "Old" } });
     assert.equal(reset.result, undefined);
     assert.equal(db.prepare("SELECT 1 FROM gpt_deliveries WHERE job_id=?").get(job.id), undefined);
   } finally { db.close(); }

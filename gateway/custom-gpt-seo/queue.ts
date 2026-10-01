@@ -286,11 +286,13 @@ export class CustomGptQueue {
       }
       for (const row of rows) {
         const job = json(row.payload) as GptSeoJob;
-        const { submission: _submission, ...preservedCheckpoints } = job.checkpoints;
         this.write({
           ...job,
           status: "PENDING",
-          checkpoints: preservedCheckpoints,
+          // Keep the previous submission as read-only source material for the
+          // external worker. A new submission checkpoint replaces it before
+          // validation, while analysis, research and keywords remain reusable.
+          checkpoints: job.checkpoints,
           result: undefined,
           error: undefined,
           finalizeAttempts: 0,
