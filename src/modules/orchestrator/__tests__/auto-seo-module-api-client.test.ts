@@ -1183,3 +1183,66 @@ test("25. hydrateSelectedProducts with storeId: caches by store and loads detail
   assert.equal(cached?.vendor, "GammaStore");
 });
 
+test("26. getProductEligibility posts summaries and validates the response", async () => {
+  const runner = createTestRunner(async () => {
+    throw new Error("Module API runner must not be used for eligibility");
+  });
+  const client = createAutoSeoModuleApiClient(runner);
+  const originalFetch = globalThis.fetch;
+  let capturedUrl = "";
+  let capturedBody = "";
+  globalThis.fetch = async (input, init) => {
+    capturedUrl = String(input);
+    capturedBody = typeof init?.body === "string" ? init.body : "";
+    return new Response(JSON.stringify({
+      success: true,
+      data: {
+        items: [{ productId: "one", state: "never_processed", reason: "NO_HISTORY" }],
+        counts: { never_processed: 1, changed: 0, current: 0, active: 0, retry: 0 },
+      },
+    }), { status: 200, headers: { "Content-Type": "application/json" } });
+  };
+
+  try {
+    const response = await client.getProductEligibility?.({
+      storeId: "capozen",
+      products: [{ productId: "one", updatedAt: "2026-10-01T00:00:00Z" }],
+    });
+    assert.equal(capturedUrl, "/api/auto-seo/eligibility");
+    assert.deepEqual(JSON.parse(capturedBody), {
+      storeId: "capozen",
+      products: [{ productId: "one", updatedAt: "2026-10-01T00:00:00Z" }],
+    });
+    assert.equal(response?.items[0]?.state, "never_processed");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("27. getProductEligibility rejects malformed success payloads", async () => {
+  const runner = createTestRunner(async () => {
+    throw new Error("Module API runner must not be used for eligibility");
+  });
+  const client = createAutoSeoModuleApiClient(runner);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(
+    JSON.stringify({ success: true, data: { items: "invalid", counts: {} } }),
+    { status: 200, headers: { "Content-Type": "application/json" } },
+  );
+
+  try {
+    const getProductEligibility = client.getProductEligibility;
+    assert.ok(getProductEligibility);
+    await assert.rejects(
+      () => getProductEligibility.call(client, { storeId: "capozen", products: [{ productId: "one" }] }),
+      (error: unknown) => {
+        assert.ok(error instanceof Error);
+        assert.equal("code" in error ? error.code : undefined, "AUTO_SEO_LOAD_FAILED");
+        return true;
+      },
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+

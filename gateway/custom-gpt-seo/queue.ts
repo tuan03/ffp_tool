@@ -79,6 +79,21 @@ export class CustomGptQueue {
     if (!row) throw new Error("Job not found");
     return json(row.payload) as GptSeoJob;
   }
+  findLatestSourceJob(storeId: string, source: string, sourceIdentity: string): GptSeoJob | null {
+    const normalizedIdentity = source === "auto_seo"
+      ? sourceIdentity.replace(/^gid:\/\/shopify\/Product\//, "")
+      : sourceIdentity;
+    const row = this.db.prepare(`
+      SELECT payload FROM gpt_jobs
+      WHERE store_id=?
+        AND json_extract(payload,'$.source')=?
+        AND json_extract(payload,'$.sourceIdentity')=?
+        AND status != 'CANCELLED'
+      ORDER BY created_at DESC, id DESC
+      LIMIT 1
+    `).get(storeId, source, normalizedIdentity);
+    return row ? json(row.payload) as GptSeoJob : null;
+  }
   list(storeId: string, status?: GptJobStatus, offset = 0, provider?: ExternalSeoProvider): readonly GptSeoJob[] {
     const rows = provider
       ? status

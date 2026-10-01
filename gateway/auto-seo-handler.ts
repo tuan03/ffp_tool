@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import { getCustomGptRuntime } from "./custom-gpt-seo/runtime";
+import type { CustomGptQueue } from "./custom-gpt-seo/queue";
 import type http from "node:http";
 import type { DatabaseSync } from "node:sqlite";
 
@@ -9,6 +10,11 @@ import {
   INSERT_AUTO_SEO_BACKUP_UPSERT_SQL,
 } from "./auto-seo-db";
 import { calculateSha256, canonicalizeJson } from "./canonical-json";
+import {
+  AutoSeoEligibilityValidationError,
+  getAutoSeoEligibility,
+  validateAutoSeoEligibilityRequest,
+} from "./auto-seo-eligibility";
 import { isGatewayAuthorized, MAX_BODY_BYTES } from "./http-server";
 import { runSeoContent } from "./seo-content";
 import { executeSeoReviewSaveLifecycle } from "./seo-review-lifecycle";
@@ -58,6 +64,7 @@ export interface AutoSeoRunResult {
 
 export interface AutoSeoHandlerOptions {
   readonly db?: DatabaseSync;
+  readonly queue?: CustomGptQueue;
   readonly seoContentRunner?: SeoContentRunner;
   readonly onConflict?: "error" | "update";
 }
@@ -537,5 +544,88 @@ export async function handleAutoSeoHttpRequest(
         },
       }),
     );
+  }
+}
+
+export async function handleAutoSeoEligibilityHttpRequest(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  options?: AutoSeoHttpRequestOptions,
+): Promise<void> {
+  const maxBodyBytes = options?.maxBodyBytes && options.maxBodyBytes > 0
+    ? options.maxBodyBytes
+    : MAX_BODY_BYTES;
+  if (req.method !== "POST") {
+    res.statusCode = 405;
+    res.setHeader("Content-Type", "application/json");
+    res.end(JSON.stringify({
+      success: false,
+      error: { code: "AUTO_SEO_INVALID_INPUT", message: "Method Not Allowed" },
+    }));
+    return;
+  }
+  if (options?.authToken && !isGatewayAuthorized(req.headers, options.authToken)) {
+    res.statusCode = 401;
+    res.setHeader("Content-Type", "application/json");
+    res.end(JSON.stringify({
+      success: false,
+      error: { code: "AUTO_SEO_AUTH_FAILED", message: "Unauthorized: Invalid or missing Gateway authentication token" },
+    }));
+    return;
+  }
+
+  try {
+    const contentLength = req.headers["content-length"];
+    if (contentLength && Number.parseInt(contentLength, 10) > maxBodyBytes) {
+      req.destroy();
+      res.statusCode = 413;
+      res.setHeader("Content-Type", "application/json");
+      res.end(JSON.stringify({
+        success: false,
+        error: { code: "AUTO_SEO_INVALID_INPUT", message: `Payload Too Large: request body exceeds ${maxBodyBytes} bytes limit` },
+      }));
+      return;
+    }
+    const chunks: Buffer[] = [];
+    let totalBytes = 0;
+    for await (const chunk of req) {
+      const buffer = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
+      totalBytes += buffer.length;
+      if (totalBytes > maxBodyBytes) {
+        req.destroy();
+        res.statusCode = 413;
+        res.setHeader("Content-Type", "application/json");
+        res.end(JSON.stringify({
+          success: false,
+          error: { code: "AUTO_SEO_INVALID_INPUT", message: `Payload Too Large: request body exceeds ${maxBodyBytes} bytes limit` },
+        }));
+        return;
+      }
+      chunks.push(buffer);
+    }
+    let body: unknown;
+    try {
+      body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    } catch {
+      throw new AutoSeoEligibilityValidationError("Invalid JSON body");
+    }
+    const request = validateAutoSeoEligibilityRequest(body);
+    const db = options?.db ?? getAutoSeoDb();
+    const queue = options?.queue ?? getCustomGptRuntime().queue;
+    const result = getAutoSeoEligibility(db, request, queue);
+    res.statusCode = 200;
+    res.setHeader("Content-Type", "application/json");
+    res.end(JSON.stringify({ success: true, data: result }));
+  } catch (error: unknown) {
+    const isValidation = error instanceof AutoSeoEligibilityValidationError;
+    res.statusCode = isValidation ? 400 : 500;
+    res.setHeader("Content-Type", "application/json");
+    res.end(JSON.stringify({
+      success: false,
+      error: {
+        code: isValidation ? error.code : "AUTO_SEO_ELIGIBILITY_FAILED",
+        message: error instanceof Error ? error.message : "Failed to load Auto SEO eligibility",
+      },
+    }));
   }
 }

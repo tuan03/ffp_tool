@@ -1,13 +1,21 @@
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
+import { Readable } from "node:stream";
 import test from "node:test";
 
 import { initAutoSeoDbSchema } from "../auto-seo-db";
+import { handleAutoSeoEligibilityHttpRequest } from "../auto-seo-handler";
+import {
+  AutoSeoEligibilityValidationError,
+  getAutoSeoEligibility,
+  validateAutoSeoEligibilityRequest,
+} from "../auto-seo-eligibility";
 import {
   calculateAutoSeoInputHash,
   normalizeAutoSeoHashInput,
 } from "../auto-seo-input-hash";
 import type { AutoSeoProductPayload } from "../seo-content";
+import { CustomGptQueue } from "../custom-gpt-seo/queue";
 
 function createProduct(
   overrides: Partial<AutoSeoProductPayload> = {},
@@ -159,5 +167,279 @@ test("auto SEO schema migrates a legacy backup table without an SEO input hash",
 
   const columns = db.prepare("PRAGMA table_info(auto_seo_product_backups)").all();
   assert.ok(columns.some((column) => column.name === "seo_input_sha256"));
+  db.close();
+});
+
+function insertBackup(
+  db: DatabaseSync,
+  values: {
+    readonly backupId: string;
+    readonly storeId?: string;
+    readonly productId: string;
+    readonly updatedAt?: string | null;
+    readonly inputHash?: string | null;
+    readonly status: "NOT_SENT" | "SENT" | "FAILED";
+    readonly createdAt?: string;
+  },
+): void {
+  db.prepare(`
+    INSERT INTO auto_seo_product_backups (
+      backup_id, workflow_id, store_id, shop_domain, product_id,
+      product_handle, product_title, shopify_updated_at, snapshot_json,
+      snapshot_sha256, seo_input_sha256, downstream_status, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, '{}', 'snapshot', ?, ?, ?)
+  `).run(
+    values.backupId,
+    `workflow-${values.backupId}`,
+    values.storeId ?? "capozen",
+    "capozen.myshopify.com",
+    values.productId,
+    `handle-${values.productId}`,
+    `Product ${values.productId}`,
+    values.updatedAt ?? null,
+    values.inputHash ?? null,
+    values.status,
+    values.createdAt ?? "2026-09-30T00:00:00.000Z",
+  );
+}
+
+test("eligibility validation accepts 5000 summaries and rejects invalid, duplicate, or excessive input", () => {
+  const products = Array.from({ length: 5_000 }, (_, index) => ({
+    productId: `product-${index}`,
+    updatedAt: "2026-10-01T00:00:00Z",
+  }));
+
+  assert.equal(validateAutoSeoEligibilityRequest({ storeId: "capozen", products }).products.length, 5_000);
+  for (const invalid of [
+    { storeId: "", products: [{ productId: "one" }] },
+    { storeId: "capozen", products: [] },
+    { storeId: "capozen", products: [{ productId: "one" }, { productId: "one" }] },
+    { storeId: "capozen", products: [...products, { productId: "overflow" }] },
+  ]) {
+    assert.throws(
+      () => validateAutoSeoEligibilityRequest(invalid),
+      (error: unknown) => error instanceof AutoSeoEligibilityValidationError,
+    );
+  }
+});
+
+test("eligibility classifies never processed, retry, changed, current, and legacy products", () => {
+  const db = new DatabaseSync(":memory:");
+  initAutoSeoDbSchema(db);
+  const queue = new CustomGptQueue(db);
+  insertBackup(db, {
+    backupId: "failed",
+    productId: "retry",
+    status: "FAILED",
+    updatedAt: "2026-09-20T00:00:00Z",
+    inputHash: "retry-hash",
+  });
+  insertBackup(db, {
+    backupId: "changed",
+    productId: "changed",
+    status: "SENT",
+    updatedAt: "2026-09-20T00:00:00Z",
+    inputHash: "changed-hash",
+  });
+  insertBackup(db, {
+    backupId: "current",
+    productId: "current",
+    status: "SENT",
+    updatedAt: "2026-09-30T00:00:00Z",
+    inputHash: "current-hash",
+  });
+  insertBackup(db, {
+    backupId: "legacy",
+    productId: "legacy",
+    status: "SENT",
+    updatedAt: "2026-09-30T00:00:00Z",
+    inputHash: null,
+  });
+
+  const response = getAutoSeoEligibility(db, {
+    storeId: "capozen",
+    products: [
+      { productId: "new", updatedAt: "2026-10-01T00:00:00Z" },
+      { productId: "retry", updatedAt: "2026-10-01T00:00:00Z" },
+      { productId: "changed", updatedAt: "2026-10-01T00:00:00Z" },
+      { productId: "current", updatedAt: "2026-09-30T00:00:00Z" },
+      { productId: "legacy", updatedAt: "2026-09-30T00:00:00Z" },
+    ],
+  }, queue);
+
+  assert.deepEqual(
+    response.items.map((item) => [item.productId, item.state, item.reason]),
+    [
+      ["new", "never_processed", "NO_HISTORY"],
+      ["retry", "retry", "LAST_DISPATCH_FAILED"],
+      ["changed", "changed", "SHOPIFY_UPDATED"],
+      ["current", "current", "UP_TO_DATE"],
+      ["legacy", "changed", "HASH_VERIFICATION_REQUIRED"],
+    ],
+  );
+  assert.deepEqual(response.counts, {
+    never_processed: 1,
+    changed: 2,
+    current: 1,
+    active: 0,
+    retry: 1,
+  });
+  db.close();
+});
+
+test("eligibility treats unknown timestamps conservatively and isolates stores", () => {
+  const db = new DatabaseSync(":memory:");
+  initAutoSeoDbSchema(db);
+  const queue = new CustomGptQueue(db);
+  insertBackup(db, {
+    backupId: "other-store",
+    storeId: "other",
+    productId: "same-product",
+    status: "SENT",
+    updatedAt: "2026-09-30T00:00:00Z",
+    inputHash: "other-hash",
+  });
+  insertBackup(db, {
+    backupId: "known",
+    productId: "known",
+    status: "SENT",
+    updatedAt: "2026-09-30T00:00:00Z",
+    inputHash: "known-hash",
+  });
+
+  const response = getAutoSeoEligibility(db, {
+    storeId: "capozen",
+    products: [
+      { productId: "same-product", updatedAt: "2026-10-01T00:00:00Z" },
+      { productId: "known" },
+      { productId: "known-invalid", updatedAt: "not-a-date" },
+    ],
+  }, queue);
+
+  assert.equal(response.items[0]?.state, "never_processed");
+  assert.equal(response.items[1]?.reason, "SOURCE_TIMESTAMP_UNKNOWN");
+  assert.equal(response.items[2]?.state, "never_processed");
+  db.close();
+});
+
+test("eligibility marks matching queue and pending review revisions active", () => {
+  const db = new DatabaseSync(":memory:");
+  initAutoSeoDbSchema(db);
+  const queue = new CustomGptQueue(db);
+  insertBackup(db, {
+    backupId: "queue-base",
+    productId: "queue-product",
+    status: "SENT",
+    updatedAt: "2026-10-01T00:00:00Z",
+    inputHash: "queue-hash",
+  });
+  queue.enqueue({
+    storeId: "capozen",
+    source: "auto_seo",
+    sourceIdentity: "queue-product",
+    input: {
+      productId: "queue-product",
+      title: "Queued product",
+      description: "Description",
+      handle: "queued-product",
+      niche: "Rug",
+      images: [],
+    },
+    original: { updatedAt: "2026-10-01T00:00:00Z" },
+  });
+  insertBackup(db, {
+    backupId: "review-base",
+    productId: "review-product",
+    status: "SENT",
+    updatedAt: "2026-10-01T00:00:00Z",
+    inputHash: "review-hash",
+  });
+  db.prepare(`
+    INSERT INTO seo_review_items (
+      item_id, store_id, product_id, handle, title, review_status,
+      generated_payload, shopify_updated_at
+    ) VALUES ('review-item', 'capozen', 'review-product', 'review-product',
+      'Review product', 'pending', '{}', '2026-10-01T00:00:00Z')
+  `).run();
+
+  const response = getAutoSeoEligibility(db, {
+    storeId: "capozen",
+    products: [
+      { productId: "queue-product", updatedAt: "2026-10-01T00:00:00Z" },
+      { productId: "review-product", updatedAt: "2026-10-01T00:00:00Z" },
+    ],
+  }, queue);
+
+  assert.deepEqual(response.items.map((item) => item.state), ["active", "active"]);
+  db.close();
+});
+
+interface HttpTestResponse {
+  statusCode: number;
+  readonly headers: Record<string, string>;
+  body: string;
+  setHeader(name: string, value: string): void;
+  end(body?: string): void;
+}
+
+function createHttpResponse(): HttpTestResponse {
+  return {
+    statusCode: 200,
+    headers: {},
+    body: "",
+    setHeader(name, value) {
+      this.headers[name] = value;
+    },
+    end(body = "") {
+      this.body = body;
+    },
+  };
+}
+
+test("eligibility HTTP handler returns success and safe validation, auth, and method errors", async () => {
+  const db = new DatabaseSync(":memory:");
+  initAutoSeoDbSchema(db);
+  const queue = new CustomGptQueue(db);
+
+  const successRequest = Readable.from([
+    JSON.stringify({
+      storeId: "capozen",
+      products: [{ productId: "new", updatedAt: "2026-10-01T00:00:00Z" }],
+    }),
+  ]);
+  Object.assign(successRequest, {
+    method: "POST",
+    headers: { authorization: "Bearer secret" },
+  });
+  const successResponse = createHttpResponse();
+  await handleAutoSeoEligibilityHttpRequest(
+    successRequest as never,
+    successResponse as never,
+    { db, queue, authToken: "secret" },
+  );
+  assert.equal(successResponse.statusCode, 200);
+  assert.equal(JSON.parse(successResponse.body).data.items[0].state, "never_processed");
+
+  for (const scenario of [
+    { method: "GET", headers: {}, body: "", expectedStatus: 405 },
+    { method: "POST", headers: {}, body: "{}", expectedStatus: 401 },
+    {
+      method: "POST",
+      headers: { authorization: "Bearer secret" },
+      body: "{}",
+      expectedStatus: 400,
+    },
+  ]) {
+    const request = Readable.from([scenario.body]);
+    Object.assign(request, { method: scenario.method, headers: scenario.headers });
+    const response = createHttpResponse();
+    await handleAutoSeoEligibilityHttpRequest(
+      request as never,
+      response as never,
+      { db, queue, authToken: "secret" },
+    );
+    assert.equal(response.statusCode, scenario.expectedStatus);
+    assert.equal(JSON.parse(response.body).success, false);
+  }
   db.close();
 });

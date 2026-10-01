@@ -4,6 +4,8 @@ import type {
   AutoSeoBackupRequest,
   AutoSeoBackupResponse,
   AutoSeoClient,
+  AutoSeoEligibilityRequest,
+  AutoSeoEligibilityResponse,
   AutoSeoOutput,
   AutoSeoProductCandidate,
   AutoSeoSelectionInput,
@@ -273,6 +275,26 @@ export class MockAutoSeoClient implements AutoSeoClient {
 
   public async runAutoSeo(input: AutoSeoSelectionInput): Promise<AutoSeoOutput> {
     return runAutoSeo(input);
+  }
+
+  public async getProductEligibility(
+    request: AutoSeoEligibilityRequest,
+  ): Promise<AutoSeoEligibilityResponse> {
+    const items = request.products.map((product) => ({
+      productId: product.productId,
+      state: "never_processed" as const,
+      reason: "NO_HISTORY" as const,
+    }));
+    return {
+      items,
+      counts: {
+        never_processed: items.length,
+        changed: 0,
+        current: 0,
+        active: 0,
+        retry: 0,
+      },
+    };
   }
 
   public async runAutoSeoBackup(

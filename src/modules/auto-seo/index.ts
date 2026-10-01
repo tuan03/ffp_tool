@@ -20,6 +20,12 @@ export {
 export type {
   AutoSeoBackupRequest,
   AutoSeoBackupResponse,
+  AutoSeoEligibilityItem,
+  AutoSeoEligibilityProductSummary,
+  AutoSeoEligibilityReason,
+  AutoSeoEligibilityRequest,
+  AutoSeoEligibilityResponse,
+  AutoSeoEligibilityState,
   AutoSeoClient,
   AutoSeoHandoverHandler,
   AutoSeoOutput,

@@ -6,7 +6,7 @@ import { getCustomGptRuntime } from "./custom-gpt-seo/runtime";
 import { serveStaticFile } from "./static-server";
 
 import { GatewayDispatcher } from "./dispatcher";
-import { handleAutoSeoHttpRequest } from "./auto-seo-handler";
+import { handleAutoSeoEligibilityHttpRequest, handleAutoSeoHttpRequest } from "./auto-seo-handler";
 import { handleSeoReviewHttpRequest } from "./seo-review-handler";
 import {
   handlePinterestPodDirectShopifySyncHttpRequest,
@@ -138,7 +138,9 @@ export function startGatewayServer(
     }
 
     const isShopify = url === "/api/shopify" || url.startsWith("/api/shopify?");
-    const isAutoSeo = url === "/api/auto-seo/run" || url.startsWith("/api/auto-seo/run?");
+    const isAutoSeoRun = url === "/api/auto-seo/run" || url.startsWith("/api/auto-seo/run?");
+    const isAutoSeoEligibility = url === "/api/auto-seo/eligibility" || url.startsWith("/api/auto-seo/eligibility?");
+    const isAutoSeo = isAutoSeoRun || isAutoSeoEligibility;
     const isPinterestPodHandover = url === "/api/pinterest-pod/handover-seo" || url.startsWith("/api/pinterest-pod/handover-seo?");
     const isPinterestPodDirectSync = url === "/api/pinterest-pod/sync-shopify" || url.startsWith("/api/pinterest-pod/sync-shopify?");
     const isStoreRegister = url === "/api/stores/register" || url.startsWith("/api/stores/register?");
@@ -268,8 +270,12 @@ export function startGatewayServer(
       return;
     }
 
-    if (url === "/api/auto-seo/run" || url.startsWith("/api/auto-seo/run?")) {
+    if (isAutoSeoRun) {
       await handleAutoSeoHttpRequest(req, res, { authToken, maxBodyBytes });
+      return;
+    }
+    if (isAutoSeoEligibility) {
+      await handleAutoSeoEligibilityHttpRequest(req, res, { authToken, maxBodyBytes });
       return;
     }
 
