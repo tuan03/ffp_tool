@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 
 import { environment } from "../../config/environment";
 import { getCustomGptClient } from "../../modules/custom-gpt-seo";
-import { adaptCustomGptReview } from "./custom-gpt-review";
+import { adaptCustomGptReview, loadAllCustomGptReviewRecords } from "./custom-gpt-review";
 import { loadAutoSeoReviews, updateAutoSeoReviewPayload, updateAutoSeoReviewStatus } from "./auto-seo-review-client";
 import type { AmazonCrawlerReviewClient } from "../../modules/amazon-crawler";
 import { getModuleApiRunner, type ModuleApiRunner } from "../../modules/module-api";
@@ -14,6 +14,7 @@ import {
   type SeoReviewPushProductItem,
 } from "../../modules/orchestrator";
 import type { ApplyApprovedProductUpdatesResult } from "../../modules/orchestrator";
+import { persistBrowserActiveStoreId, readActiveStoreId } from "../../shared/active-store";
 import { notifyUser } from "../../shared/utils";
 import { ImageZoomModal } from "./components/ImageZoomModal";
 import { ProductCardList } from "./components/ProductCardList";
@@ -45,6 +46,10 @@ import type {
 const SESSION_STORAGE_KEY = "ffp_seo_review_session_v1";
 const VIEW_MODE_STORAGE_KEY = "ffp_seo_review_view_mode";
 const CLEANUP_STUCK_FAILED_KEY = "ffp_seo_review_cleaned_stuck_failed_v1";
+
+function isDurableAutoSeoReview(product: SeoProductUiViewModel): boolean {
+  return product.sourceOrigin === "auto_seo" && !product.gptJobId;
+}
 
 function toPushProductItem(vm: SeoProductUiViewModel): SeoReviewPushProductItem {
   const printMaster = vm.sourcePinterestItem?.printMaster;
@@ -260,6 +265,7 @@ export function SeoReviewPage({
     });
   }, []);
   const [pendingCrawlerSyncIds, setPendingCrawlerSyncIds] = useState<readonly string[]>([]);
+  const [isApprovingAll, setIsApprovingAll] = useState(false);
 
   useEffect(() => {
     if (pendingCrawlerSyncIds.length === 0) return;
@@ -306,7 +312,7 @@ export function SeoReviewPage({
     if (urlStoreId) return urlStoreId;
     if (storeId) return storeId.toLowerCase();
     if (typeof window !== "undefined" && window.localStorage) {
-      const saved = window.localStorage.getItem("ffp_seo_review_selected_store");
+      const saved = readActiveStoreId(window.localStorage);
       if (saved) return saved.toLowerCase();
     }
     return "capozen";
@@ -374,34 +380,32 @@ export function SeoReviewPage({
   }, [selectedStoreId]);
 
   const gptClient = useMemo(() => getCustomGptClient(environment), []);
-  const [gptOffset, setGptOffset] = useState(0);
-  const [hasMoreGptReviews, setHasMoreGptReviews] = useState(false);
+  const [gptReviewLoadState, setGptReviewLoadState] = useState<"loading" | "has_reviews" | "empty">("loading");
   const persistedGptReviews = useRef(new Map<string, string>());
   const gptSaveChain = useRef(Promise.resolve());
   useEffect(() => {
     let cancelled = false;
     async function loadGptReviews(): Promise<void> {
       const loaded: SeoProductUiViewModel[] = [];
-      {
-        const page = await gptClient.list(selectedStoreId, gptOffset, "REVIEW_READY");
-        if (!cancelled) setHasMoreGptReviews(page.jobs.length === 50);
-        for (const summary of page.jobs) {
-          if (summary.source !== "auto_seo" || summary.status !== "REVIEW_READY") continue;
-          const job = await gptClient.job(selectedStoreId, summary.id);
-          const saved = await gptClient.reviewState(selectedStoreId, job.id);
-          const viewModel = adaptCustomGptReview(job, saved);
-          loaded.push(viewModel);
-        }
+      const reviews = await loadAllCustomGptReviewRecords(gptClient, selectedStoreId);
+      for (const review of reviews) {
+        if (review.job.source !== "auto_seo" || review.job.status !== "REVIEW_READY") continue;
+        loaded.push(adaptCustomGptReview(review.job, review.state));
       }
       if (cancelled) return;
       for (const product of loaded) persistedGptReviews.current.set(product.id, JSON.stringify(product));
       setProducts(current => [...current.filter(product => !product.gptJobId || product.storeId !== selectedStoreId), ...loaded]);
+      setGptReviewLoadState(loaded.length > 0 ? "has_reviews" : "empty");
     }
+    setGptReviewLoadState("loading");
     void loadGptReviews().catch(() => {
-      if (!cancelled) notifyUser({ title: "GPT SEO", message: "Không tải được kết quả GPT từ server. Mở GPT SEO để kiểm tra kết nối.", type: "error" });
+      if (!cancelled) {
+        setGptReviewLoadState("empty");
+        notifyUser({ title: "GPT SEO", message: "Không tải được kết quả GPT từ server. Mở GPT SEO để kiểm tra kết nối.", type: "error" });
+      }
     });
     return () => { cancelled = true; };
-  }, [gptClient, selectedStoreId, gptOffset]);
+  }, [gptClient, selectedStoreId]);
 
   useEffect(() => {
     for (const product of products) {
@@ -421,11 +425,7 @@ export function SeoReviewPage({
   useEffect(() => {
     if (urlStoreId && urlStoreId !== selectedStoreId.toLowerCase()) {
       setSelectedStoreId(urlStoreId);
-      try {
-        window.localStorage.setItem("ffp_seo_review_selected_store", urlStoreId);
-      } catch {
-        // ignore
-      }
+      persistBrowserActiveStoreId(urlStoreId);
     }
   }, [urlStoreId, selectedStoreId]);
 
@@ -484,21 +484,22 @@ export function SeoReviewPage({
   }, [urlStoreId, storeId, selectedStoreId, products]);
 
   useEffect(() => {
-    if (environment === "mock") return;
+    if (environment === "mock" || gptReviewLoadState === "loading") return;
     let isCurrent = true;
     void loadAutoSeoReviews(effectiveStoreId).then((loaded) => {
       if (!isCurrent) return;
       setProducts((current) => [
-        ...current.filter((product) => product.sourceOrigin !== "auto_seo" || product.storeId?.toLowerCase() !== effectiveStoreId),
+        ...current.filter((product) => product.gptJobId || product.sourceOrigin !== "auto_seo" || product.storeId?.toLowerCase() !== effectiveStoreId),
         ...loaded,
       ]);
     }).catch((error: unknown) => {
       if (!isCurrent) return;
+      if (gptReviewLoadState === "has_reviews") return;
       const message = error instanceof Error ? error.message : String(error);
       setSyncFeedback({ type: "error", message: `Không thể tải Auto SEO review: ${message}` });
     });
     return () => { isCurrent = false; };
-  }, [effectiveStoreId]);
+  }, [effectiveStoreId, gptReviewLoadState]);
 
   // High-Resolution Image Zoom Modal State
   const [zoomState, setZoomState] = useState<{
@@ -865,7 +866,10 @@ export function SeoReviewPage({
 
   async function triggerBatchPushToShopify(targets: readonly SeoProductUiViewModel[]) {
     if (targets.some(target => target.gptJobId)) {
-      for (const target of targets) await triggerPushToShopify(target);
+      const concurrency = 3;
+      for (let index = 0; index < targets.length; index += concurrency) {
+        await Promise.all(targets.slice(index, index + concurrency).map(target => triggerPushToShopify(target)));
+      }
       return;
     }
     try {
@@ -1085,7 +1089,7 @@ export function SeoReviewPage({
         );
         nextVersion = reviewed.version;
       }
-      if (target.sourceOrigin === "auto_seo") await updateAutoSeoReviewStatus(target, "approved");
+      if (isDurableAutoSeoReview(target)) await updateAutoSeoReviewStatus(target, "approved");
       setProducts((prev) => prev.map((product) =>
         product.id === id
           ? {
@@ -1126,7 +1130,7 @@ export function SeoReviewPage({
         );
         nextVersion = reviewed.version;
       }
-      if (target.sourceOrigin === "auto_seo") await updateAutoSeoReviewStatus(target, "rejected", reason);
+      if (isDurableAutoSeoReview(target)) await updateAutoSeoReviewStatus(target, "rejected", reason);
       setProducts((prev) =>
         prev.map((p) =>
           p.id === id
@@ -1174,10 +1178,7 @@ export function SeoReviewPage({
   }
 
   // Batch Actions
-  async function handleApproveSelected(): Promise<void> {
-    const targets = products.filter(
-      (p) => selectedIds.has(p.id) && !p.isSyncing && !p.isReverting,
-    );
+  async function approveTargets(targets: readonly SeoProductUiViewModel[]): Promise<void> {
     if (targets.length === 0) return;
     try {
       const updatedReviews = await Promise.all(targets.flatMap((target) => {
@@ -1188,27 +1189,56 @@ export function SeoReviewPage({
           "approved",
         )];
       }));
-      await Promise.all(targets.filter((target) => target.sourceOrigin === "auto_seo").map((target) => updateAutoSeoReviewStatus(target, "approved")));
+      await Promise.all(targets.filter(isDurableAutoSeoReview).map((target) => updateAutoSeoReviewStatus(target, "approved")));
       const versions = new Map(updatedReviews.map((review) => [review.id, review.version]));
       const targetIds = new Set(targets.map((target) => target.id));
-      setProducts((prev) => prev.map((product) =>
-        targetIds.has(product.id)
-          ? {
-              ...product,
-              reviewDecision: "approved",
-              rejectionReason: undefined,
-              coordinatorReview: product.coordinatorReview && versions.has(product.coordinatorReview.itemId)
-                ? { ...product.coordinatorReview, version: versions.get(product.coordinatorReview.itemId) ?? product.coordinatorReview.version }
-                : product.coordinatorReview,
-              updatedAt: Date.now(),
-            }
-          : product,
-      ));
-      setSelectedIds(new Set());
+      const approvedTargets = targets.map((product): SeoProductUiViewModel => ({
+        ...product,
+        reviewDecision: "approved",
+        rejectionReason: undefined,
+        coordinatorReview: product.coordinatorReview && versions.has(product.coordinatorReview.itemId)
+          ? { ...product.coordinatorReview, version: versions.get(product.coordinatorReview.itemId) ?? product.coordinatorReview.version }
+          : product.coordinatorReview,
+        updatedAt: Date.now(),
+      }));
+      const gptTargets = approvedTargets.filter((product) => product.gptJobId && product.storeId === effectiveStoreId);
+      if (gptTargets.length > 0) {
+        const chunkSize = 10;
+        for (let index = 0; index < gptTargets.length; index += chunkSize) {
+          const chunk = gptTargets.slice(index, index + chunkSize);
+          await gptClient.saveReviewStates(effectiveStoreId, chunk.map((product) => ({
+            jobId: product.gptJobId ?? "",
+            state: product,
+          })));
+        }
+        for (const product of gptTargets) persistedGptReviews.current.set(product.id, JSON.stringify(product));
+      }
+      const approvedById = new Map(approvedTargets.map((product) => [product.id, product]));
+      setProducts((prev) => prev.map((product) => approvedById.get(product.id) ?? product));
+      setSelectedIds((previous) => new Set([...previous].filter((id) => !targetIds.has(id))));
       setSyncFeedback({ type: "success", message: `✓ Đã duyệt ${targets.length} sản phẩm. Chưa có sản phẩm nào được sync.` });
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
       setSyncFeedback({ type: "error", message: `Không thể duyệt hàng loạt: ${message}` });
+    }
+  }
+
+  async function handleApproveSelected(): Promise<void> {
+    await approveTargets(products.filter(
+      (product) => selectedIds.has(product.id) && !product.isSyncing && !product.isReverting,
+    ));
+  }
+
+  async function handleApproveAllPending(): Promise<void> {
+    const targets = storeScopedProducts.filter(
+      (product) => product.reviewDecision === "pending" && !product.isSyncing && !product.isReverting,
+    );
+    if (targets.length === 0) return;
+    setIsApprovingAll(true);
+    try {
+      await approveTargets(targets);
+    } finally {
+      setIsApprovingAll(false);
     }
   }
 
@@ -1313,7 +1343,7 @@ export function SeoReviewPage({
           reason,
         )];
       }));
-      await Promise.all(targets.filter((target) => target.sourceOrigin === "auto_seo").map((target) => updateAutoSeoReviewStatus(target, "rejected", reason)));
+      await Promise.all(targets.filter(isDurableAutoSeoReview).map((target) => updateAutoSeoReviewStatus(target, "rejected", reason)));
       const versions = new Map(updatedReviews.map((review) => [review.id, review.version]));
       setProducts((prev) =>
         prev.map((p) =>
@@ -1644,7 +1674,7 @@ export function SeoReviewPage({
           nextVersion = approved.version;
         }
       }
-      if (target.sourceOrigin === "auto_seo") {
+      if (isDurableAutoSeoReview(target)) {
         await updateAutoSeoReviewPayload(target, updated);
         if (autoApprove) await updateAutoSeoReviewStatus(target, "approved");
         else if (target.reviewDecision !== "pending") await updateAutoSeoReviewStatus(target, "pending");
@@ -1965,11 +1995,6 @@ export function SeoReviewPage({
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center gap-4 text-sm text-cyan-300">
-        <span>GPT Custom: trang {Math.floor(gptOffset / 50) + 1}</span>
-        <button type="button" disabled={gptOffset === 0} onClick={() => setGptOffset(Math.max(0, gptOffset - 50))}>Trang trước</button>
-        <button type="button" disabled={!hasMoreGptReviews} onClick={() => setGptOffset(gptOffset + 50)}>Trang sau</button>
-      </div>
       {/* Page Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-800 pb-5">
         <div>
@@ -2078,11 +2103,7 @@ export function SeoReviewPage({
                 key={os.storeId}
                 type="button"
                 onClick={() => {
-                  try {
-                    window.localStorage.setItem("ffp_seo_review_selected_store", os.storeId);
-                  } catch {
-                    // ignore
-                  }
+                  persistBrowserActiveStoreId(os.storeId);
                   navigate(`/seo-review?storeId=${encodeURIComponent(os.storeId)}`);
                 }}
                 className="inline-flex items-center gap-1.5 rounded-md border border-slate-700 bg-slate-800/80 px-2.5 py-1 font-mono text-[11px] text-cyan-300 hover:border-cyan-500 hover:bg-slate-700 transition cursor-pointer"
@@ -2118,12 +2139,14 @@ export function SeoReviewPage({
         isAllExpanded={isAllExpanded}
         isSyncing={storeScopedProducts.some((p) => p.isSyncing)}
         isReverting={isRevertingSelected}
+        isApprovingAll={isApprovingAll}
         onFilterChange={(newFilter) => setFilter((prev) => ({ ...prev, ...newFilter }))}
         onViewModeChange={setViewMode}
         onToggleExpandAll={handleToggleExpandAllTable}
         onSelectAll={handleSelectAll}
         onClearSelection={handleClearSelection}
         onApproveSelected={handleApproveSelected}
+        onApproveAllPending={() => void handleApproveAllPending()}
         onRejectSelected={handleRejectSelected}
         onDeleteSelected={handleDeleteSelected}
         onSyncAllApproved={() => void handleSyncAllApproved()}

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 
+import { persistBrowserActiveStoreId, readActiveStoreId } from "../../../shared/active-store";
 import { resolveSeoQueueStoreId } from "../../../shared/seo-queue-navigation";
 
 import type { CustomGptClient, GptQueuePage, SeoQueueStore } from "../service";
@@ -34,7 +35,10 @@ function getSourceLabel(source: GptSeoJob["source"]): string {
 
 export function CustomGptSeoPage({ client }: { readonly client: CustomGptClient }): React.JSX.Element {
   const [searchParams, setSearchParams] = useSearchParams();
-  const initialStoreId = useRef(resolveSeoQueueStoreId(searchParams)).current;
+  const initialStoreId = useRef(resolveSeoQueueStoreId(
+    searchParams,
+    typeof window === "undefined" ? undefined : readActiveStoreId(window.localStorage),
+  )).current;
   const [storeId, setStoreId] = useState(initialStoreId);
   const [stores, setStores] = useState<readonly SeoQueueStore[]>([{ storeId: initialStoreId, shopDomain: "" }]);
   const [isStoreListLoading, setIsStoreListLoading] = useState(true);
@@ -137,6 +141,7 @@ export function CustomGptSeoPage({ client }: { readonly client: CustomGptClient 
 
   function handleStoreChange(nextStoreId: string): void {
     if (!nextStoreId || nextStoreId === storeId) return;
+    persistBrowserActiveStoreId(nextStoreId);
     setSearchParams({ storeId: nextStoreId }, { replace: true });
     refreshGeneration.current += 1;
     setStoreId(nextStoreId);

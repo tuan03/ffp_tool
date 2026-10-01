@@ -120,7 +120,7 @@ export function createCustomGptHandler(options: CustomGptHandlerOptions) {
       const leaseToken = String(body.leaseToken || "");
       const requestId = String(body.requestId || "");
       const offset = Math.max(0, Math.trunc(Number(url.searchParams.get("offset")) || 0));
-      const readRoutes = ["capabilities", "context", "queue", "waiting-jobs", "batch", "job", "images", "public-image", "media", "result", "admin/settings", "admin/jobs", "admin/job", "admin/image", "admin/review-state", "admin/sync-state"];
+      const readRoutes = ["capabilities", "context", "queue", "waiting-jobs", "batch", "job", "images", "public-image", "media", "result", "admin/settings", "admin/jobs", "admin/reviews", "admin/job", "admin/image", "admin/review-state", "admin/sync-state"];
       if (req.method === "GET" && !readRoutes.includes(route)) { send(res, 405, { error: { code: "METHOD_NOT_ALLOWED" } }); return; }
       if (req.method === "POST" && readRoutes.includes(route) && !["admin/settings", "admin/review-state"].includes(route)) { send(res, 405, { error: { code: "METHOD_NOT_ALLOWED" } }); return; }
       let result: unknown;
@@ -218,6 +218,16 @@ export function createCustomGptHandler(options: CustomGptHandlerOptions) {
           result = { jobs: queue.list(storeId, url.searchParams.get("status") === "REVIEW_READY" ? "REVIEW_READY" : undefined, offset).map(job => ({ ...job, original: null, checkpoints: {}, result: undefined, settings: { ...job.settings, instructions: "" }, input: { title: job.input.title.slice(0, 300), description: "", handle: job.input.handle, niche: "", productId: job.input.productId, images: [] } })), counts: queue.counts(storeId), activeBatch: activeBatches[0] ?? null, activeBatches, nextOffset: offset + 50 };
           break;
         }
+        case "admin/reviews": {
+          const jobs = queue.list(storeId, "REVIEW_READY", offset);
+          const total = queue.counts(storeId).REVIEW_READY ?? 0;
+          result = {
+            reviews: jobs.map(job => ({ job, state: queue.reviewState(storeId, job.id) })),
+            counts: queue.counts(storeId),
+            nextOffset: offset + jobs.length < total ? offset + jobs.length : null,
+          };
+          break;
+        }
         case "admin/job": result = queue.get(storeId, jobId); break;
         case "admin/enqueue": {
           const provider = queue.settings(storeId).provider;
@@ -253,6 +263,16 @@ export function createCustomGptHandler(options: CustomGptHandlerOptions) {
         case "admin/review-state": {
           if (req.method === "POST") queue.saveReviewState(storeId, jobId, asObject(body.state));
           result = queue.reviewState(storeId, jobId); break;
+        }
+        case "admin/review-states": {
+          if (req.method !== "POST" || !Array.isArray(body.reviews) || body.reviews.length > 500) throw new Error("Invalid reviews");
+          for (const rawReview of body.reviews) {
+            const review = asObject(rawReview);
+            const reviewJobId = required(review.jobId, "jobId");
+            queue.get(storeId, reviewJobId);
+            queue.saveReviewState(storeId, reviewJobId, asObject(review.state));
+          }
+          result = { saved: body.reviews.length }; break;
         }
         default: send(res, 404, { error: { code: "NOT_FOUND" } }); return;
       }

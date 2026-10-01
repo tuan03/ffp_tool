@@ -2,4 +2,4 @@ export type { SeoProvider, ExternalSeoProvider, GptJobStatus, GptStage, GptSeoIn
 export { createCustomGptClient } from "./service";
 export { getCustomGptClient } from "./runtime";
 export { createCustomGptSeoRoutes } from "./routes";
-export type { CustomGptClient, GptQueuePage, SeoQueueStore } from "./service";
+export type { CustomGptClient, GptQueuePage, GptReviewPage, SeoQueueStore } from "./service";

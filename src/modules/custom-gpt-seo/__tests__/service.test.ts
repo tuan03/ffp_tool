@@ -60,3 +60,32 @@ test("mock Custom GPT client provides stores for the queue selector", async () =
 
   assert.ok(stores.some(store => store.storeId === "capozen"));
 });
+
+test("Custom GPT client loads review pages and saves bulk review states", async () => {
+  const requests: Array<{ url: string; init?: RequestInit }> = [];
+  const client = createCustomGptClient(async (url, init) => {
+    requests.push({ url: String(url), init });
+    return new Response(JSON.stringify(
+      init?.method === "POST"
+        ? { saved: 2 }
+        : { reviews: [], counts: { REVIEW_READY: 100 }, nextOffset: 50 },
+    ), { status: 200 });
+  });
+
+  const page = await client.reviews("jeminise-real", 0);
+  const saved = await client.saveReviewStates("jeminise-real", [
+    { jobId: "job-1", state: { reviewDecision: "approved" } },
+    { jobId: "job-2", state: { reviewDecision: "approved" } },
+  ]);
+
+  assert.equal(page.counts.REVIEW_READY, 100);
+  assert.equal(saved.saved, 2);
+  assert.equal(requests[0]?.url, "/api/v1/gpt-seo/admin/reviews?offset=0&storeId=jeminise-real");
+  assert.equal(requests[1]?.url, "/api/v1/gpt-seo/admin/review-states?storeId=jeminise-real");
+  assert.deepEqual(JSON.parse(String(requests[1]?.init?.body)), {
+    reviews: [
+      { jobId: "job-1", state: { reviewDecision: "approved" } },
+      { jobId: "job-2", state: { reviewDecision: "approved" } },
+    ],
+  });
+});

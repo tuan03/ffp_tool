@@ -8,6 +8,15 @@ export interface GptQueuePage {
   readonly nextOffset: number;
 }
 
+export interface GptReviewPage {
+  readonly reviews: readonly {
+    readonly job: GptSeoJob;
+    readonly state: Readonly<Record<string, unknown>>;
+  }[];
+  readonly counts: Readonly<Record<string, number>>;
+  readonly nextOffset: number | null;
+}
+
 export interface SeoQueueStore {
   readonly storeId: string;
   readonly shopDomain: string;
@@ -55,6 +64,7 @@ export function createCustomGptClient(fetcher: typeof fetch = fetch) {
     settings: (storeId: string) => request<GptSeoSettings>("settings", storeId),
     configure: (storeId: string, settings: GptSeoSettings) => request<GptSeoSettings>("settings", storeId, settings),
     list: (storeId: string, offset = 0, status?: "REVIEW_READY") => request<GptQueuePage>(`jobs?offset=${offset}${status ? `&status=${status}` : ""}`, storeId),
+    reviews: (storeId: string, offset = 0) => request<GptReviewPage>(`reviews?offset=${offset}`, storeId),
     job: (storeId: string, jobId: string) => request<GptSeoJob>(`job?jobId=${encodeURIComponent(jobId)}`, storeId),
     enqueue: (input: GptSeoEnqueue) => request<GptSeoJob>("enqueue", input.storeId, input),
     retry: (storeId: string, jobId: string) => request<unknown>("retry", storeId, { jobId }),
@@ -65,6 +75,8 @@ export function createCustomGptClient(fetcher: typeof fetch = fetch) {
     release: (storeId: string, batchId: string) => request<unknown>("release", storeId, { batchId }),
     reviewState: (storeId: string, jobId: string) => request<Record<string, unknown>>(`review-state?jobId=${encodeURIComponent(jobId)}`, storeId),
     saveReviewState: (storeId: string, jobId: string, state: unknown) => request<unknown>("review-state", storeId, { jobId, state }),
+    saveReviewStates: (storeId: string, reviews: readonly { readonly jobId: string; readonly state: unknown }[]) =>
+      request<{ readonly saved: number }>("review-states", storeId, { reviews }),
   };
 }
 export type CustomGptClient = ReturnType<typeof createCustomGptClient>;
