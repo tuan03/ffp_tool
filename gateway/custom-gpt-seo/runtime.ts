@@ -7,10 +7,33 @@ import { processCustomGptJob } from "./finalizer";
 import { loadLocalEnv } from "../store-config-loader";
 import { createCustomGptHandler } from "./handler";
 import { CustomGptQueue } from "./queue";
-import { getAutoSeoDb } from "../auto-seo-db";
+import { getAutoSeoBackupRepository } from "../auto-seo-postgres-repository";
 import { recoverAutoSeoHandoffs } from "./auto-seo-outbox";
 import { createCodexSeoMcpHandler } from "./mcp-handler";
 import { createExternalSeoWorkflow } from "./workflow";
+
+interface CustomGptTickDependencies {
+  readonly recoverAutoSeoHandoffs: () => Promise<void>;
+  readonly processCustomGptJob: () => Promise<void>;
+  readonly logAutoSeoRecoveryFailure: (error: unknown) => void;
+}
+
+export async function runCustomGptTick(dependencies: CustomGptTickDependencies): Promise<void> {
+  try {
+    await dependencies.recoverAutoSeoHandoffs();
+  } catch (error) {
+    dependencies.logAutoSeoRecoveryFailure(error);
+  }
+  await dependencies.processCustomGptJob();
+}
+
+function logAutoSeoRecoveryFailure(error: unknown): void {
+  const code = typeof error === "object" && error !== null && "code" in error &&
+    typeof error.code === "string" && /^[A-Z0-9_]{1,32}$/.test(error.code)
+    ? error.code
+    : "UNKNOWN";
+  console.error(`[GPT SEO] Auto SEO handoff recovery failed (${code}); Custom GPT queue processing continues.`);
+}
 
 let runtime: ReturnType<typeof createRuntime> | undefined;
 function createRuntime() {
@@ -26,8 +49,11 @@ function createRuntime() {
     if (isRunning) return;
     isRunning = true;
     try {
-      recoverAutoSeoHandoffs(getAutoSeoDb(), queue);
-      await processCustomGptJob(queue);
+      await runCustomGptTick({
+        recoverAutoSeoHandoffs: () => recoverAutoSeoHandoffs(getAutoSeoBackupRepository(), queue),
+        processCustomGptJob: () => processCustomGptJob(queue),
+        logAutoSeoRecoveryFailure,
+      });
     } finally { isRunning = false; }
   }
   const timer = setInterval(() => { void tick().catch(() => { console.error("[GPT SEO] Background storage operation failed; inspect database health before retrying."); }); }, 1000);

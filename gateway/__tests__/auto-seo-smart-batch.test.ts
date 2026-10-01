@@ -11,6 +11,7 @@ import {
 import {
   AutoSeoEligibilityValidationError,
   getAutoSeoEligibility,
+  getAutoSeoEligibilityFromRepositories,
   validateAutoSeoEligibilityRequest,
 } from "../auto-seo-eligibility";
 import {
@@ -444,6 +445,56 @@ test("eligibility HTTP handler returns success and safe validation, auth, and me
     assert.equal(response.statusCode, scenario.expectedStatus);
     assert.equal(JSON.parse(response.body).success, false);
   }
+  db.close();
+});
+
+test("PostgreSQL eligibility repositories preserve active-review and successful revision states", async () => {
+  const db = new DatabaseSync(":memory:");
+  const queue = new CustomGptQueue(db);
+  const request = {
+    storeId: "capozen",
+    products: [
+      { productId: "current", updatedAt: "2026-10-01T00:00:00.000Z" },
+      { productId: "review", updatedAt: "2026-10-01T00:00:00.000Z" },
+    ],
+  };
+  const result = await getAutoSeoEligibilityFromRepositories(
+    {
+      findByStoreAndProductIds: async () => [{
+        id: "1",
+        backupId: "backup-current",
+        workflowId: "workflow-current",
+        storeId: "capozen",
+        shopDomain: "capozen.myshopify.com",
+        productId: "current",
+        productHandle: "current",
+        productTitle: "Current",
+        shopifyUpdatedAt: "2026-10-01T00:00:00.000Z",
+        snapshotJson: "{}",
+        snapshotSha256: "snapshot",
+        seoInputSha256: "input",
+        gptSettingsJson: null,
+        downstreamStatus: "SENT",
+        downstreamHttpStatus: null,
+        downstreamError: null,
+        downstreamSentAt: "2026-10-01T00:00:01.000Z",
+        createdAt: "2026-10-01T00:00:00.000Z",
+      }],
+    },
+    {
+      findPendingByStoreAndProductIds: async () => [{
+        productId: "review",
+        shopifyUpdatedAt: "2026-10-01T00:00:00.000Z",
+      }],
+    },
+    request,
+    queue,
+  );
+
+  assert.deepEqual(result.items.map(item => [item.productId, item.state, item.reason]), [
+    ["current", "current", "UP_TO_DATE"],
+    ["review", "active", "ACTIVE_REVIEW"],
+  ]);
   db.close();
 });
 

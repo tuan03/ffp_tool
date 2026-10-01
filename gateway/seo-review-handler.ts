@@ -2,6 +2,8 @@ import type http from "node:http";
 import type { DatabaseSync } from "node:sqlite";
 
 import { getAutoSeoDb } from "./auto-seo-db";
+import { getAutoSeoReviewRepository } from "./auto-seo-review-postgres";
+import type { AutoSeoPostgresReviewRepository } from "./auto-seo-review-postgres";
 import { isGatewayAuthorized, MAX_BODY_BYTES } from "./http-server";
 import {
   deleteSeoReviewItem,
@@ -14,8 +16,99 @@ import {
 
 export interface SeoReviewHttpRequestOptions {
   readonly db?: DatabaseSync;
+  readonly autoSeoReviewRepository?: Pick<AutoSeoPostgresReviewRepository, "listHydrated" | "findHydrated" | "updateStatus" | "updatePayload"> &
+    Partial<Pick<AutoSeoPostgresReviewRepository, "delete">>;
   readonly authToken?: string;
   readonly maxBodyBytes?: number;
+}
+
+async function handleAutoSeoReviewRequest(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  urlObj: URL,
+  maxBodyBytes: number,
+  options?: SeoReviewHttpRequestOptions,
+): Promise<void> {
+  try {
+    const repository = options?.autoSeoReviewRepository ?? getAutoSeoReviewRepository();
+    const pathname = urlObj.pathname;
+    if (pathname === "/api/seo-review/items") {
+      if (req.method !== "GET") {
+        sendJsonResponse(res, 405, { success: false, error: { code: "SEO_REVIEW_METHOD_NOT_ALLOWED", message: "Method Not Allowed" } });
+        return;
+      }
+      const limit = Number(urlObj.searchParams.get("limit") ?? "50");
+      const offset = Number(urlObj.searchParams.get("offset") ?? "0");
+      if (!Number.isInteger(limit) || limit < 1 || limit > 500 || !Number.isInteger(offset) || offset < 0) {
+        sendJsonResponse(res, 400, { success: false, error: { code: "SEO_REVIEW_INVALID_INPUT", message: "Invalid pagination" } });
+        return;
+      }
+      const result = await repository.listHydrated({ storeId: urlObj.searchParams.get("storeId") ?? undefined, status: urlObj.searchParams.get("status") ?? undefined, limit, offset });
+      sendJsonResponse(res, 200, { success: true, ...result });
+      return;
+    }
+    const rest = pathname.startsWith("/api/seo-review/items/") ? pathname.slice("/api/seo-review/items/".length) : "";
+    const action = rest.endsWith("/status") ? "status" : rest.endsWith("/update") ? "update" : "read";
+    const rawId = action === "read" ? rest : rest.slice(0, -(action.length + 1));
+    let itemId: string;
+    try { itemId = decodeURIComponent(rawId); }
+    catch { itemId = ""; }
+    if (!itemId || rawId.includes("/") || itemId.includes("\\") || itemId.includes("..") || itemId.length > 512) {
+      sendJsonResponse(res, 400, { success: false, error: { code: "SEO_REVIEW_INVALID_INPUT", message: "Invalid review item ID" } });
+      return;
+    }
+    if (action === "read") {
+      if (req.method === "DELETE") {
+        if (!repository.delete) {
+          sendJsonResponse(res, 500, { success: false, error: { code: "SEO_REVIEW_DB_ERROR", message: "Review deletion is unavailable" } });
+          return;
+        }
+        const deleted = await repository.delete(itemId);
+        sendJsonResponse(res, deleted ? 200 : 404, deleted
+          ? { success: true, itemId }
+          : { success: false, error: { code: "SEO_REVIEW_ITEM_NOT_FOUND", message: "Review item not found" } });
+        return;
+      }
+      if (req.method !== "GET") {
+        sendJsonResponse(res, 405, { success: false, error: { code: "SEO_REVIEW_METHOD_NOT_ALLOWED", message: "Method Not Allowed" } });
+        return;
+      }
+      const item = await repository.findHydrated(itemId);
+      sendJsonResponse(res, item ? 200 : 404, item ? { success: true, item } : { success: false, error: { code: "SEO_REVIEW_ITEM_NOT_FOUND", message: "Review item not found" } });
+      return;
+    }
+    if (req.method !== "POST") {
+      sendJsonResponse(res, 405, { success: false, error: { code: "SEO_REVIEW_METHOD_NOT_ALLOWED", message: "Method Not Allowed" } });
+      return;
+    }
+    const parsed = await readJsonBody(req, maxBodyBytes);
+    if (!parsed.ok) {
+      sendJsonResponse(res, parsed.statusCode, { success: false, error: { code: "SEO_REVIEW_INVALID_INPUT", message: parsed.error } });
+      return;
+    }
+    const body = parsed.body && typeof parsed.body === "object" && !Array.isArray(parsed.body) ? parsed.body as Record<string, unknown> : {};
+    if (action === "status") {
+      const status = body.status;
+      if (status !== "pending" && status !== "approved" && status !== "rejected") {
+        sendJsonResponse(res, 400, { success: false, error: { code: "SEO_REVIEW_INVALID_INPUT", message: "Invalid review status" } });
+        return;
+      }
+      const updated = await repository.updateStatus(itemId, status, typeof body.notes === "string" ? body.notes : undefined);
+      sendJsonResponse(res, updated ? 200 : 404, updated ? { success: true, itemId, status } : { success: false, error: { code: "SEO_REVIEW_ITEM_NOT_FOUND", message: "Review item not found" } });
+      return;
+    }
+    const payload = body.payload;
+    if (payload === undefined || payload === null || (typeof payload === "object" && Object.keys(payload).length === 0)) {
+      sendJsonResponse(res, 400, { success: false, error: { code: "SEO_REVIEW_INVALID_INPUT", message: "Payload is required" } });
+      return;
+    }
+    const updated = await repository.updatePayload(itemId, payload);
+    sendJsonResponse(res, updated ? 200 : 404, updated ? { success: true, itemId } : { success: false, error: { code: "SEO_REVIEW_ITEM_NOT_FOUND", message: "Review item not found" } });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    const integrity = message.startsWith("AUTO_SEO_REVIEW_INTEGRITY");
+    sendJsonResponse(res, 500, { success: false, error: { code: integrity ? "AUTO_SEO_REVIEW_INTEGRITY" : "SEO_REVIEW_DB_ERROR", message: integrity ? message : "Auto SEO review database unavailable" } });
+  }
 }
 
 function sendJsonResponse(
@@ -99,8 +192,12 @@ export async function handleSeoReviewHttpRequest(
     return;
   }
 
-  const db = options?.db ?? getAutoSeoDb();
   const urlObj = new URL(req.url || "/", "http://localhost");
+  if (urlObj.searchParams.get("source") === "auto_seo") {
+    await handleAutoSeoReviewRequest(req, res, urlObj, maxBodyBytes, options);
+    return;
+  }
+  const db = options?.db ?? getAutoSeoDb();
   const pathname = urlObj.pathname;
 
   // 1. GET /api/seo-review/items
