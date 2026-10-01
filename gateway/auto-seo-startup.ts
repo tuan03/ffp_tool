@@ -1,8 +1,8 @@
 import { Pool } from "pg";
 
+import { getAutoSeoDatabaseUrl } from "./auto-seo-database-url";
 import { AutoSeoPostgresRepository } from "./auto-seo-postgres-repository";
 import { AutoSeoPostgresReviewRepository } from "./auto-seo-review-postgres";
-import { loadLocalEnv } from "./store-config-loader";
 
 export interface AutoSeoStartupOptions {
   readonly databaseUrl?: string;
@@ -10,8 +10,8 @@ export interface AutoSeoStartupOptions {
 }
 
 export async function bootstrapAutoSeoSchema(options: AutoSeoStartupOptions = {}): Promise<void> {
-  const databaseUrl = options.databaseUrl ?? process.env.AUTO_SEO_DATABASE_URL ?? loadLocalEnv().AUTO_SEO_DATABASE_URL;
-  if (!databaseUrl) throw new Error("AUTO_SEO_DATABASE_URL is required for Auto SEO database initialization");
+  const databaseUrl = options.databaseUrl ?? getAutoSeoDatabaseUrl();
+  if (!databaseUrl) throw new Error("AUTO_SEO_DATABASE_URL or DATABASE_URL is required for Auto SEO database initialization");
 
   const schema = options.schema ?? "public";
   const backupRepository = new AutoSeoPostgresRepository({ databaseUrl, schema });

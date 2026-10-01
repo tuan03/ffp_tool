@@ -1,8 +1,8 @@
 import { Pool } from "pg";
 import type { PoolClient } from "pg";
 
+import { getAutoSeoDatabaseUrl } from "./auto-seo-database-url";
 import { getAutoSeoPostgresSchemaSql } from "./auto-seo-postgres-schema";
-import { loadLocalEnv } from "./store-config-loader";
 import type { AutoSeoBackupRepository } from "./auto-seo-backup-repository";
 
 export interface AutoSeoPostgresBackupInput {
@@ -369,8 +369,8 @@ let runtimeRepository: AutoSeoPostgresRepository | undefined;
 
 export function getAutoSeoBackupRepository(): AutoSeoPostgresRepository {
   if (runtimeRepository) return runtimeRepository;
-  const databaseUrl = process.env.AUTO_SEO_DATABASE_URL ?? loadLocalEnv().AUTO_SEO_DATABASE_URL;
-  if (!databaseUrl) throw new Error("AUTO_SEO_DATABASE_URL is required for Auto SEO backups");
+  const databaseUrl = getAutoSeoDatabaseUrl();
+  if (!databaseUrl) throw new Error("AUTO_SEO_DATABASE_URL or DATABASE_URL is required for Auto SEO backups");
   runtimeRepository = new AutoSeoPostgresRepository({ databaseUrl });
   return runtimeRepository;
 }
