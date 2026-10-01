@@ -44,6 +44,7 @@ export function initAutoSeoDbSchema(db: DatabaseSync): void {
       shopify_updated_at TEXT,
       snapshot_json TEXT NOT NULL,
       snapshot_sha256 TEXT NOT NULL,
+      seo_input_sha256 TEXT,
       downstream_status TEXT NOT NULL CHECK (downstream_status IN ('NOT_SENT', 'SENT', 'FAILED')),
       downstream_http_status INTEGER,
       downstream_error TEXT,
@@ -58,9 +59,17 @@ export function initAutoSeoDbSchema(db: DatabaseSync): void {
     CREATE INDEX IF NOT EXISTS idx_auto_seo_created_at
     ON auto_seo_product_backups(created_at);
   `);
-  if (!db.prepare("PRAGMA table_info(auto_seo_product_backups)").all().some(column => column.name === "gpt_settings_json")) {
+  const columns = db.prepare("PRAGMA table_info(auto_seo_product_backups)").all();
+  if (!columns.some(column => column.name === "seo_input_sha256")) {
+    db.exec("ALTER TABLE auto_seo_product_backups ADD COLUMN seo_input_sha256 TEXT");
+  }
+  if (!columns.some(column => column.name === "gpt_settings_json")) {
     db.exec("ALTER TABLE auto_seo_product_backups ADD COLUMN gpt_settings_json TEXT");
   }
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_auto_seo_store_product_input
+    ON auto_seo_product_backups(store_id, product_id, seo_input_sha256, downstream_status);
+  `);
   initSeoReviewDbSchema(db);
 }
 
@@ -76,8 +85,9 @@ export const INSERT_AUTO_SEO_BACKUP_SQL = `
     shopify_updated_at,
     snapshot_json,
     snapshot_sha256,
+    seo_input_sha256,
     downstream_status
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'NOT_SENT')
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'NOT_SENT')
 `;
 
 export const INSERT_AUTO_SEO_BACKUP_UPSERT_SQL = `
@@ -92,8 +102,9 @@ export const INSERT_AUTO_SEO_BACKUP_UPSERT_SQL = `
     shopify_updated_at,
     snapshot_json,
     snapshot_sha256,
+    seo_input_sha256,
     downstream_status
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'NOT_SENT')
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'NOT_SENT')
   ON CONFLICT(workflow_id, store_id, product_id) DO UPDATE SET
     backup_id = excluded.backup_id,
     shop_domain = excluded.shop_domain,
@@ -102,6 +113,7 @@ export const INSERT_AUTO_SEO_BACKUP_UPSERT_SQL = `
     shopify_updated_at = excluded.shopify_updated_at,
     snapshot_json = excluded.snapshot_json,
     snapshot_sha256 = excluded.snapshot_sha256,
+    seo_input_sha256 = excluded.seo_input_sha256,
     downstream_status = 'NOT_SENT',
     downstream_http_status = NULL,
     downstream_error = NULL,
@@ -120,6 +132,7 @@ export interface AutoSeoProductBackupRecord {
   readonly shopifyUpdatedAt?: string | null;
   readonly snapshotJson: string;
   readonly snapshotSha256: string;
+  readonly seoInputSha256?: string | null;
 }
 
 export function upsertAutoSeoProductBackup(
@@ -138,6 +151,7 @@ export function upsertAutoSeoProductBackup(
     record.shopifyUpdatedAt ?? null,
     record.snapshotJson,
     record.snapshotSha256,
+    record.seoInputSha256 ?? null,
   );
 }
 

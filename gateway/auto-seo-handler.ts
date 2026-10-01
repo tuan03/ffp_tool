@@ -187,6 +187,7 @@ export function executeAutoSeoBackup(
       formattedUpdatedAt,
       canonicalJson,
       sha256,
+      null,
     );
 
     backupIds.push(backupId);
