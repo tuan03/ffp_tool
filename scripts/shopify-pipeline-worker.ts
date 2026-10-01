@@ -1226,26 +1226,18 @@ async function workerLoop(workerIndex: number): Promise<void> {
   const proxyProfile = storeId && proxyStore.storeId.startsWith(`${storeId}--`)
     ? proxyStore.storeId.slice(`${storeId}--`.length)
     : "direct";
-<<<<<<< HEAD
-  const workerId = `${hostname()}-${process.pid}-${workerIndex + 1}`;
-  while (!isShuttingDown) {
-=======
   // Stable across process restarts so a durable review-ready outbox event can
   // finish the Coordinator claim that was created by this worker slot.
   const workerId = `${hostname()}-${workerIndex + 1}`;
-  for (;;) {
->>>>>>> origin/main
+  while (!isShuttingDown) {
     try {
       const cooldownRemaining = (proxyCooldownUntil.get(proxyStore.storeId) ?? 0) - Date.now();
       if (cooldownRemaining > 0) {
         await sleepWithShutdown(Math.min(cooldownRemaining, 5_000));
         continue;
       }
-<<<<<<< HEAD
       if (isShuttingDown) break;
-=======
       await replaySeoReviewOutbox(workerId);
->>>>>>> origin/main
       const claimed = await postJson<ClaimResponse>("/api/v1/internal/product-pipeline/claim", {
         workerId,
         storeId,
@@ -1300,7 +1292,6 @@ async function waitForCoordinator(): Promise<void> {
   throw new Error(`Coordinator did not become ready at ${coordinatorUrl}: ${lastError}`);
 }
 
-<<<<<<< HEAD
 function handleSignal(signal: string): void {
   if (isShuttingDown) {
     console.warn(`[Shopify pipeline] Received second ${signal}. Forcing immediate exit.`);
