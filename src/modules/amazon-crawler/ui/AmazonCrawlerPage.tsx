@@ -21,6 +21,7 @@ import {
   type AmazonCrawlerSyncRetrier,
   type ImageProcessingProfile,
   type ImageProcessingProfileManager,
+  DEFAULT_IMAGE_PROCESSING_PROFILE,
 } from "../types";
 import { createAmazonAsinChecker } from "../service";
 import { CrawlerObservability } from "./components/CrawlerObservability";
@@ -226,8 +227,8 @@ export function AmazonCrawlerPage({
   const [jobControlTone, setJobControlTone] = useState<JobControlTone>("info");
   const [controlledJobId, setControlledJobId] = useState<string | null>(null);
   const [cancellationJobId, setCancellationJobId] = useState<string | null>(null);
-  const [imageProfiles, setImageProfiles] = useState<ImageProcessingProfile[]>([]);
-  const [editingImageProfile, setEditingImageProfile] = useState<ImageProcessingProfile | null>(null);
+  const [imageProfiles, setImageProfiles] = useState<ImageProcessingProfile[]>([DEFAULT_IMAGE_PROCESSING_PROFILE]);
+  const [editingImageProfile, setEditingImageProfile] = useState<ImageProcessingProfile | null>(DEFAULT_IMAGE_PROCESSING_PROFILE);
   const [isImageProfileEditorOpen, setIsImageProfileEditorOpen] = useState(false);
   const [imageProfileMessage, setImageProfileMessage] = useState<string | null>(null);
   const [imageProfilePreview, setImageProfilePreview] = useState<string | null>(null);
@@ -517,25 +518,34 @@ export function AmazonCrawlerPage({
     let isMounted = true;
     void imageProcessingProfiles.list().then((profiles) => {
       if (!isMounted) return;
-      setImageProfiles(profiles);
-      const selected = profiles.find((profile) => profile.slug === settings.imageProfileSlug) ?? profiles[0];
+      const list = profiles.length > 0 ? profiles : [DEFAULT_IMAGE_PROCESSING_PROFILE];
+      setImageProfiles(list);
+      const selected = list.find((profile) => profile.slug === settings.imageProfileSlug) ?? list[0];
       if (selected) {
         updateCrawlerSetting("imageProfileSlug", selected.slug);
         setEditingImageProfile(selected);
       }
     }).catch((caught: unknown) => {
-      if (isMounted) setImageProfileMessage(caught instanceof Error ? caught.message : "Không tải được image profiles.");
+      if (!isMounted) return;
+      setImageProfiles((prev) => (prev.length > 0 ? prev : [DEFAULT_IMAGE_PROCESSING_PROFILE]));
+      setEditingImageProfile((prev) => prev ?? DEFAULT_IMAGE_PROCESSING_PROFILE);
+      setImageProfileMessage(caught instanceof Error ? caught.message : "Không tải được image profiles từ coordinator.");
     });
     return () => { isMounted = false; };
   }, [imageProcessingProfiles]);
 
   async function refreshImageProfiles(selectedSlug?: string): Promise<void> {
     if (!imageProcessingProfiles) return;
-    const profiles = await imageProcessingProfiles.list();
-    setImageProfiles(profiles);
-    const selected = profiles.find((profile) => profile.slug === (selectedSlug ?? settings.imageProfileSlug)) ?? profiles[0] ?? null;
-    setEditingImageProfile(selected);
-    if (selected) updateSetting("imageProfileSlug", selected.slug);
+    try {
+      const fetched = await imageProcessingProfiles.list();
+      const profiles = fetched.length > 0 ? fetched : [DEFAULT_IMAGE_PROCESSING_PROFILE];
+      setImageProfiles(profiles);
+      const selected = profiles.find((profile) => profile.slug === (selectedSlug ?? settings.imageProfileSlug)) ?? profiles[0] ?? DEFAULT_IMAGE_PROCESSING_PROFILE;
+      setEditingImageProfile(selected);
+      if (selected) updateSetting("imageProfileSlug", selected.slug);
+    } catch {
+      // Keep existing profiles on refresh error
+    }
   }
 
   async function handleSaveImageProfile(): Promise<void> {
@@ -550,8 +560,7 @@ export function AmazonCrawlerPage({
   }
 
   async function handleCreateImageProfile(): Promise<void> {
-    const template = imageProfiles.find((profile) => profile.slug === settings.imageProfileSlug) ?? imageProfiles[0];
-    if (!template) return;
+    const template = imageProfiles.find((profile) => profile.slug === settings.imageProfileSlug) ?? imageProfiles[0] ?? DEFAULT_IMAGE_PROCESSING_PROFILE;
     const slug = `image-profile-${Date.now()}`;
     setEditingImageProfile({ ...template, slug, name: "New image profile", revision: "new", hasLogo: false });
     setIsImageProfileEditorOpen(true);
@@ -1733,7 +1742,7 @@ export function AmazonCrawlerPage({
         <label className="grid gap-1 text-sm text-slate-300">
           Xử lý ảnh
           <select
-            className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2"
+            className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 cursor-pointer"
             value={settings.imageProfileSlug}
             onChange={(event) => {
               const slug = event.target.value;
@@ -1741,12 +1750,20 @@ export function AmazonCrawlerPage({
               setEditingImageProfile(imageProfiles.find((profile) => profile.slug === slug) ?? null);
             }}
           >
-            {imageProfiles.map((profile) => <option key={profile.slug} value={profile.slug}>{profile.name}{profile.enabled ? " · bật" : " · tắt"}</option>)}
+            {imageProfiles.length === 0 ? (
+              <option value="default">Mặc định (Default)</option>
+            ) : (
+              imageProfiles.map((profile) => (
+                <option key={profile.slug} value={profile.slug}>
+                  {profile.name}{profile.enabled ? " · bật" : " · tắt"}
+                </option>
+              ))
+            )}
           </select>
         </label>
         <div className="flex items-end gap-2">
-          <button className="rounded-lg border border-cyan-700 px-3 py-2 text-sm text-cyan-200" type="button" onClick={() => setIsImageProfileEditorOpen((open) => !open)}>Cấu hình ảnh</button>
-          <button className="rounded-lg border border-slate-700 px-3 py-2 text-sm" type="button" onClick={() => void handleCreateImageProfile()}>Tạo profile</button>
+          <button className="rounded-lg border border-cyan-700 px-3 py-2 text-sm text-cyan-200 hover:bg-cyan-950/60 transition cursor-pointer" type="button" onClick={() => setIsImageProfileEditorOpen((open) => !open)}>Cấu hình ảnh</button>
+          <button className="rounded-lg border border-slate-700 px-3 py-2 text-sm hover:bg-slate-800 transition cursor-pointer" type="button" onClick={() => void handleCreateImageProfile()}>Tạo profile</button>
         </div>
       </div>
 

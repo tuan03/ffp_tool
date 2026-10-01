@@ -1,7 +1,7 @@
 export { amazonCrawlerRoutes } from "./routes";
 export { getAmazonCrawlerCacheClearer, getAmazonCrawlerClientsLoader, getAmazonCrawlerJobController, getAmazonCrawlerJobLoader, getAmazonCrawlerReviewClient, getAmazonCrawlerRunner, getAmazonCrawlerSyncRetrier, getImageProcessingProfileManager } from "./runtime";
 export { AmazonCrawlerServiceError, createAmazonCrawlerCacheClearer, createAmazonCrawlerClientsLoader, createAmazonCrawlerJobController, createAmazonCrawlerJobLoader, createAmazonCrawlerReviewClient, createAmazonCrawlerRunner, createAmazonCrawlerSyncRetrier, createImageProcessingProfileManager, serializeAmazonCrawlerInput } from "./service";
-export { DEFAULT_AMAZON_CRAWLER_SETTINGS } from "./types";
+export { DEFAULT_AMAZON_CRAWLER_SETTINGS, DEFAULT_IMAGE_PROCESSING_PROFILE } from "./types";
 export type {
   AmazonCrawlerMetrics,
   AmazonCrawlerTraceEvent,

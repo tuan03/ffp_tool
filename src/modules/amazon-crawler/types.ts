@@ -707,6 +707,34 @@ export interface ImageProcessingProfileManager {
   preview(slug: string, profile: ImageProcessingProfile, dataUrl: string): Promise<string>;
 }
 
+export const DEFAULT_IMAGE_PROCESSING_PROFILE: ImageProcessingProfile = {
+  slug: "default",
+  name: "Mặc định (Default)",
+  enabled: true,
+  revision: "1",
+  hasLogo: false,
+  randomPixels: 100,
+  pixelDelta: 3,
+  jpegQuality: 92,
+  output: {
+    width: 1500,
+    height: 1500,
+    fit: "contain",
+    upscale: true,
+    background: "#ffffff",
+  },
+  logo: {
+    enabled: false,
+    width: 50,
+    height: 50,
+    maxPercent: 15,
+    percentBasis: "width",
+    padding: 10,
+    position: "bottom-right",
+    opacity: 1,
+  },
+};
+
 export const DEFAULT_AMAZON_CRAWLER_SETTINGS: AmazonCrawlerSettings = {
   profileSlug: "default",
   imageProfileSlug: "default",

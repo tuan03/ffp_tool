@@ -1312,9 +1312,21 @@ process.on("SIGTERM", () => handleSignal("SIGTERM"));
 async function main(): Promise<void> {
   // Amazon image CDN IPv6 connections can reset on Windows while IPv4 succeeds.
   setDefaultResultOrder("ipv4first");
-  const databaseUrl = env.DATABASE_URL?.trim();
+  let databaseUrl = env.DATABASE_URL?.trim();
   if (!databaseUrl) {
-    throw new Error("DATABASE_URL is required; SEO Content refuses file or memory fallback in the Pipeline Worker");
+    if (process.env.NODE_ENV === "production") {
+      throw new Error("DATABASE_URL is required; SEO Content refuses file or memory fallback in the Pipeline Worker");
+    }
+    console.warn(
+      "[Shopify pipeline] DATABASE_URL is not configured. Pipeline Worker is waiting for DATABASE_URL...",
+    );
+    while (!databaseUrl) {
+      if (isShuttingDown) return;
+      await sleepWithShutdown(5000);
+      if (isShuttingDown) return;
+      const freshEnv = loadLocalEnv();
+      databaseUrl = freshEnv.DATABASE_URL?.trim();
+    }
   }
   seoPersistence = await PostgresSeoContentRuntime.create({ databaseUrl });
   if (!env.SHOPIFY_GATEWAY_URL) {

@@ -100,8 +100,80 @@ function pinterestPodBackendPlugin(): Plugin {
   };
 }
 
+function amazonCoordinatorBackendPlugin(): Plugin {
+  let pyProcess: ChildProcess | null = null;
+
+  return {
+    name: "vite-plugin-amazon-coordinator-backend",
+    apply: "serve",
+    async configureServer(server) {
+      if (server.config.mode === "mock") {
+        return;
+      }
+
+      const port = 8766;
+      const isRunning = await isPortListening(port);
+      if (isRunning) {
+        console.log(`\x1b[36m[amazon-coordinator]\x1b[0m Python coordinator is already running on port ${port}.`);
+        return;
+      }
+
+      console.log(`\x1b[36m[amazon-coordinator]\x1b[0m Auto-starting Python coordinator on port ${port}...`);
+
+      try {
+        const pythonCmd = resolvePythonCommand();
+        const appDir = path.resolve(__dirname, "src/modules/amazon-crawler");
+        pyProcess = spawn(
+          pythonCmd,
+          [
+            "-m",
+            "uvicorn",
+            "engine.distributed.coordinator_server:app",
+            "--app-dir",
+            appDir,
+            "--host",
+            "0.0.0.0",
+            "--port",
+            String(port),
+            "--reload",
+          ],
+          {
+            stdio: "inherit",
+            detached: false,
+          },
+        );
+
+        pyProcess.on("error", (err) => {
+          console.warn(`\x1b[33m[amazon-coordinator] Auto-start backend warning:\x1b[0m ${err.message}`);
+        });
+
+        const cleanup = () => {
+          if (pyProcess && !pyProcess.killed) {
+            try {
+              if (process.platform === "win32" && pyProcess.pid) {
+                spawn("taskkill", ["/pid", pyProcess.pid.toString(), "/f", "/t"]);
+              } else {
+                pyProcess.kill();
+              }
+            } catch {
+              // Ignore cleanup error
+            }
+          }
+        };
+
+        server.httpServer?.on("close", cleanup);
+        process.on("exit", cleanup);
+        process.on("SIGINT", cleanup);
+        process.on("SIGTERM", cleanup);
+      } catch (err: unknown) {
+        console.warn(`\x1b[33m[amazon-coordinator] Could not spawn python coordinator process:\x1b[0m`, err);
+      }
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [react(), tailwindcss(), pinterestPodBackendPlugin(), shopifyGatewayDevPlugin()],
+  plugins: [react(), tailwindcss(), amazonCoordinatorBackendPlugin(), pinterestPodBackendPlugin(), shopifyGatewayDevPlugin()],
   server: {
     proxy: {
       "/api/pinterest-pod/jobs": {
