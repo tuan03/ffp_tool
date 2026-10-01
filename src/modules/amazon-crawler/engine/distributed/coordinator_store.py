@@ -1248,6 +1248,27 @@ class CoordinatorStore(CoordinatorObservability):
                 self._refresh_job(session, job_id)
         return {"deleted": deleted, "skipped": skipped}
 
+    def delete_product_review(self, item_id: str) -> dict[str, Any]:
+        with self.sessions.begin() as session:
+            item = session.scalar(select(CrawlProductItem).where(CrawlProductItem.id == item_id).with_for_update())
+            if item is None or item.status == "deleted":
+                return {"deleted": False, "reason": "not_found"}
+            pipeline_result = dict(item.shopify_result or {})
+            review = dict(pipeline_result.get("review") or {})
+            if not review:
+                return {"deleted": False, "reason": "not_found"}
+            if item.status not in {"waiting_review", "rejected", "completed", "failed"}:
+                return {"deleted": False, "reason": "sync_in_progress"}
+            review["deletedAt"] = utc_iso(utc_now())
+            review["version"] = int(review.get("version") or 1) + 1
+            pipeline_result["review"] = review
+            item.shopify_result = pipeline_result
+            item.status = "deleted"
+            item.completed_at = utc_now()
+            self._event(session, item.job_id, "product_review_deleted", {"productItemId": item.id})
+            self._refresh_job(session, item.job_id)
+            return {"deleted": True}
+
     def review_image_tokens(self) -> set[str]:
         """Return processed image tokens that still belong to unsynced reviews."""
         with self.sessions() as session:

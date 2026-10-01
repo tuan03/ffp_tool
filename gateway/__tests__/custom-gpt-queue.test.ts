@@ -215,6 +215,47 @@ test("changing source revision cancels the older pending job", () => {
     assert.equal(queue.get("capozen", first.id).status, "CANCELLED");
   } finally { db.close(); }
 });
+
+test("cancelling a ready review preserves its result and checkpoints", () => {
+  const { queue, db } = setup();
+  try {
+    queue.configure("capozen", { provider: "custom_gpt", batchSize: 5 });
+    const job = queue.enqueue({ storeId: "capozen", source: "auto_seo", sourceIdentity: "cancel-ready", input: source, original: {} });
+    const batch = queue.claim("capozen", "cancel-ready-claim", "custom_gpt");
+    queue.checkpoint("capozen", job.id, { batchId: batch.id, leaseToken: batch.leaseToken, requestId: "submit-cancel", stage: "submission", payload: { title: "SEO title" } });
+    queue.finish("capozen", job.id, { title: "Final SEO title" });
+
+    queue.cancelReview("capozen", job.id);
+
+    const cancelled = queue.get("capozen", job.id);
+    assert.equal(cancelled.status, "CANCELLED");
+    assert.deepEqual(cancelled.result, { title: "Final SEO title" });
+    assert.deepEqual(cancelled.checkpoints.submission, { title: "SEO title" });
+    assert.equal(queue.list("capozen", "REVIEW_READY").length, 0);
+    assert.equal(queue.counts("capozen").CANCELLED, 1);
+    assert.throws(() => queue.cancelReview("capozen", job.id), /ready review/i);
+  } finally { db.close(); }
+});
+
+test("a synced GPT review can be removed without changing its Shopify sync record", () => {
+  const { queue, db } = setup();
+  try {
+    queue.configure("capozen", { provider: "custom_gpt", batchSize: 5 });
+    const job = queue.enqueue({ storeId: "capozen", source: "auto_seo", sourceIdentity: "synced-review", input: source, original: {} });
+    const batch = queue.claim("capozen", "synced-review-claim", "custom_gpt");
+    queue.checkpoint("capozen", job.id, { batchId: batch.id, leaseToken: batch.leaseToken, requestId: "synced-submit", stage: "submission", payload: {} });
+    queue.finish("capozen", job.id, {});
+    queue.saveReviewState("capozen", job.id, { reviewDecision: "approved" });
+    const token = queue.beginSync("capozen", job.id);
+    assert.throws(() => queue.cancelReview("capozen", job.id), /sync has already started/i);
+    queue.finishSync("capozen", job.id, token, "SYNCED");
+
+    queue.cancelReview("capozen", job.id);
+
+    assert.equal(queue.get("capozen", job.id).status, "CANCELLED");
+    assert.equal(queue.syncState("capozen", job.id)?.status, "SYNCED");
+  } finally { db.close(); }
+});
 test("updating analysis invalidates dependent keyword and research checkpoints", () => {
   const { queue, db } = setup();
   try {

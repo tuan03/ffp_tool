@@ -281,3 +281,49 @@ test("image-content is no longer exposed after image listings return original UR
     db.close();
   }
 });
+
+test("administration can cancel a ready review without deleting its audit data", async () => {
+  const db = new DatabaseSync(":memory:");
+  const queue = new CustomGptQueue(db);
+  queue.configure("capozen", { provider: "custom_gpt", batchSize: 5 });
+  const job = queue.enqueue({
+    storeId: "capozen",
+    source: "auto_seo",
+    sourceIdentity: "cancel-through-api",
+    input: { title: "Product", description: "Description", handle: "product", niche: "home", images: [] },
+    original: {},
+  });
+  const batch = queue.claim("capozen", "cancel-api-claim", "custom_gpt");
+  queue.checkpoint("capozen", job.id, {
+    batchId: batch.id,
+    leaseToken: batch.leaseToken,
+    requestId: "cancel-api-submit",
+    stage: "submission",
+    payload: { title: "SEO title" },
+  });
+  queue.finish("capozen", job.id, { title: "Final title" });
+  const handler = createCustomGptHandler({ queue, actionKey: "action-key", storeId: "capozen", adminKey: "admin-key" });
+  const server = http.createServer((req, res) => { void handler(req, res); });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+
+  try {
+    const response = await fetch(
+      `http://127.0.0.1:${address.port}/api/v1/gpt-seo/admin/cancel?storeId=capozen`,
+      {
+        method: "POST",
+        headers: { Authorization: "Bearer admin-key", "Content-Type": "application/json" },
+        body: JSON.stringify({ jobId: job.id }),
+      },
+    );
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { cancelled: true });
+    assert.equal(queue.get("capozen", job.id).status, "CANCELLED");
+    assert.deepEqual(queue.get("capozen", job.id).result, { title: "Final title" });
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    db.close();
+  }
+});
