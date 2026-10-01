@@ -6,15 +6,18 @@ import { AutoSeoPage } from "./ui/AutoSeoPage";
 function AutoSeoRoutePage({
   client,
   onHandoverToSeo,
+  backendRunsSeo,
 }: {
   readonly client: AutoSeoClient;
   readonly onHandoverToSeo?: AutoSeoHandoverHandler;
+  readonly backendRunsSeo?: boolean;
 }): React.JSX.Element {
   const navigate = useNavigate();
   return (
     <AutoSeoPage
       client={client}
       onHandoverToSeo={onHandoverToSeo}
+      backendRunsSeo={backendRunsSeo}
       navigate={navigate}
     />
   );
@@ -23,6 +26,7 @@ function AutoSeoRoutePage({
 export function createAutoSeoRoutes(
   client: AutoSeoClient,
   onHandoverToSeo?: AutoSeoHandoverHandler,
+  backendRunsSeo = false,
 ): RouteObject[] {
   return [
     {
@@ -31,6 +35,7 @@ export function createAutoSeoRoutes(
         <AutoSeoRoutePage
           client={client}
           onHandoverToSeo={onHandoverToSeo}
+          backendRunsSeo={backendRunsSeo}
         />
       ),
     },

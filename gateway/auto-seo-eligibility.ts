@@ -2,6 +2,8 @@ import type { DatabaseSync } from "node:sqlite";
 
 import type { CustomGptQueue } from "./custom-gpt-seo/queue";
 import type { GptSeoJob } from "../src/modules/custom-gpt-seo";
+import type { AutoSeoBackupRepository } from "./auto-seo-backup-repository";
+import type { AutoSeoPostgresReviewRepository } from "./auto-seo-review-postgres";
 
 const MAX_ELIGIBILITY_PRODUCTS = 5_000;
 const SQLITE_QUERY_CHUNK_SIZE = 400;
@@ -65,6 +67,19 @@ interface BackupRow {
 interface ReviewRow {
   readonly product_id: string;
   readonly shopify_updated_at: string | null;
+}
+
+interface EligibilityBackup {
+  readonly productId: string;
+  readonly shopifyUpdatedAt: string | null;
+  readonly seoInputSha256: string | null;
+  readonly downstreamStatus: "NOT_SENT" | "SENT" | "FAILED";
+  readonly createdAt: string;
+}
+
+interface EligibilityReview {
+  readonly productId: string;
+  readonly shopifyUpdatedAt: string | null;
 }
 
 function asRecord(value: unknown): Readonly<Record<string, unknown>> | null {
@@ -170,18 +185,66 @@ export function getAutoSeoEligibility(
     productIds,
   );
 
-  const backupsByProduct = new Map<string, BackupRow[]>();
-  for (const backup of backups) {
-    const rows = backupsByProduct.get(backup.product_id) ?? [];
+  return buildAutoSeoEligibility(
+    request,
+    queue,
+    backups.map(backup => ({
+      productId: backup.product_id,
+      shopifyUpdatedAt: backup.shopify_updated_at,
+      seoInputSha256: backup.seo_input_sha256,
+      downstreamStatus: backup.downstream_status,
+      createdAt: backup.created_at,
+    })),
+    reviews.map(review => ({
+      productId: review.product_id,
+      shopifyUpdatedAt: review.shopify_updated_at,
+    })),
+  );
+}
+
+export async function getAutoSeoEligibilityFromRepositories(
+  backupRepository: Pick<AutoSeoBackupRepository, "findByStoreAndProductIds">,
+  reviewRepository: Pick<AutoSeoPostgresReviewRepository, "findPendingByStoreAndProductIds">,
+  request: AutoSeoEligibilityRequest,
+  queue: CustomGptQueue,
+): Promise<AutoSeoEligibilityResponse> {
+  const productIds = request.products.map(product => product.productId);
+  const [backups, reviews] = await Promise.all([
+    backupRepository.findByStoreAndProductIds(request.storeId, productIds),
+    reviewRepository.findPendingByStoreAndProductIds(request.storeId, productIds),
+  ]);
+  return buildAutoSeoEligibility(
+    request,
+    queue,
+    backups.map(backup => ({
+      productId: backup.productId,
+      shopifyUpdatedAt: backup.shopifyUpdatedAt,
+      seoInputSha256: backup.seoInputSha256 || null,
+      downstreamStatus: backup.downstreamStatus,
+      createdAt: backup.createdAt,
+    })),
+    reviews,
+  );
+}
+
+function buildAutoSeoEligibility(
+  request: AutoSeoEligibilityRequest,
+  queue: CustomGptQueue,
+  backups: readonly EligibilityBackup[],
+  reviews: readonly EligibilityReview[],
+): AutoSeoEligibilityResponse {
+  const backupsByProduct = new Map<string, EligibilityBackup[]>();
+  for (const backup of [...backups].sort((left, right) => right.createdAt.localeCompare(left.createdAt))) {
+    const rows = backupsByProduct.get(backup.productId) ?? [];
     rows.push(backup);
-    backupsByProduct.set(backup.product_id, rows);
+    backupsByProduct.set(backup.productId, rows);
   }
-  const reviewByProduct = new Map(reviews.map((review) => [review.product_id, review]));
+  const reviewByProduct = new Map(reviews.map(review => [review.productId, review]));
 
   const items = request.products.map((product): AutoSeoEligibilityItem => {
     const productBackups = backupsByProduct.get(product.productId) ?? [];
     const latest = productBackups[0];
-    const latestSuccessful = productBackups.find((backup) => backup.downstream_status === "SENT");
+    const latestSuccessful = productBackups.find((backup) => backup.downstreamStatus === "SENT");
     const queueJob = queue.findLatestSourceJob(
       request.storeId,
       "auto_seo",
@@ -194,23 +257,23 @@ export function getAutoSeoEligibility(
       return { productId: product.productId, state: "active", reason: "ACTIVE_QUEUE" };
     }
     const review = reviewByProduct.get(product.productId);
-    if (review && isSameRevision(product.updatedAt, review.shopify_updated_at)) {
+    if (review && isSameRevision(product.updatedAt, review.shopifyUpdatedAt)) {
       return { productId: product.productId, state: "active", reason: "ACTIVE_REVIEW" };
     }
     if (
-      latest?.downstream_status === "NOT_SENT" &&
-      isSameRevision(product.updatedAt, latest.shopify_updated_at)
+      latest?.downstreamStatus === "NOT_SENT" &&
+      isSameRevision(product.updatedAt, latest.shopifyUpdatedAt)
     ) {
       return { productId: product.productId, state: "active", reason: "ACTIVE_DISPATCH" };
     }
     if (!latestSuccessful) {
-      if (latest?.downstream_status === "FAILED") {
+      if (latest?.downstreamStatus === "FAILED") {
         return { productId: product.productId, state: "retry", reason: "LAST_DISPATCH_FAILED" };
       }
       return { productId: product.productId, state: "never_processed", reason: "NO_HISTORY" };
     }
-    const lastSuccessfulShopifyUpdatedAt = latestSuccessful.shopify_updated_at ?? undefined;
-    if (!latestSuccessful.seo_input_sha256) {
+    const lastSuccessfulShopifyUpdatedAt = latestSuccessful.shopifyUpdatedAt ?? undefined;
+    if (!latestSuccessful.seoInputSha256) {
       return {
         productId: product.productId,
         state: "changed",
@@ -227,7 +290,7 @@ export function getAutoSeoEligibility(
         ...(lastSuccessfulShopifyUpdatedAt ? { lastSuccessfulShopifyUpdatedAt } : {}),
       };
     }
-    const baselineTime = timestamp(latestSuccessful.shopify_updated_at);
+    const baselineTime = timestamp(latestSuccessful.shopifyUpdatedAt);
     if (baselineTime === null) {
       return { productId: product.productId, state: "changed", reason: "BASELINE_TIMESTAMP_UNKNOWN" };
     }
@@ -236,14 +299,14 @@ export function getAutoSeoEligibility(
         productId: product.productId,
         state: "changed",
         reason: "SHOPIFY_UPDATED",
-        lastSuccessfulShopifyUpdatedAt: latestSuccessful.shopify_updated_at ?? undefined,
+        lastSuccessfulShopifyUpdatedAt: latestSuccessful.shopifyUpdatedAt ?? undefined,
       };
     }
     return {
       productId: product.productId,
       state: "current",
       reason: "UP_TO_DATE",
-      lastSuccessfulShopifyUpdatedAt: latestSuccessful.shopify_updated_at ?? undefined,
+      lastSuccessfulShopifyUpdatedAt: latestSuccessful.shopifyUpdatedAt ?? undefined,
     };
   });
 

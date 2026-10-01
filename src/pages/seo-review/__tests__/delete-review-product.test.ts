@@ -40,8 +40,8 @@ test("deleteSeoReviewProduct dispatches crawler, GPT, Auto SEO, and Pinterest re
   assert.deepEqual(calls, [
     "crawler:crawler-1",
     "gpt:capozen:gpt-1",
-    "fetch:/api/seo-review/items/capozen%3Aproduct-1:DELETE",
-    "fetch:/api/seo-review/items/custom-review-key:DELETE",
+    "fetch:/api/seo-review/items/capozen%3Aproduct-1?source=auto_seo:DELETE",
+    "fetch:/api/seo-review/items/custom-review-key?source=auto_seo:DELETE",
   ]);
 });
 

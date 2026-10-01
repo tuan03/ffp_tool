@@ -11,7 +11,7 @@ export interface AutoSeoToolbarProps {
   onLoadProducts(): void;
   onSelectAll(): void;
   onClearSelection(): void;
-  onRunAutoSeo(): void;
+  onRunAutoSeo(): void | Promise<void>;
   stores?: readonly AutoSeoStoreOption[];
   selectedStoreId?: string;
   onSelectStore?(storeId: string): void;

@@ -212,7 +212,7 @@ export function AppRoutes({
       }
     };
 
-    const autoSeoRoutes = createAutoSeoRoutes(autoSeoClient, handleAutoSeoHandover);
+    const autoSeoRoutes = createAutoSeoRoutes(autoSeoClient, handleAutoSeoHandover, environment !== "mock");
     const customizationRoutes = createCustomizationManagerRoutes(moduleApiRunner);
 
     const handleSyncApprovedProducts = async (

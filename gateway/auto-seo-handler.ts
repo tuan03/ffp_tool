@@ -5,20 +5,25 @@ import type http from "node:http";
 import type { DatabaseSync } from "node:sqlite";
 
 import {
-  getAutoSeoDb,
   INSERT_AUTO_SEO_BACKUP_SQL,
   INSERT_AUTO_SEO_BACKUP_UPSERT_SQL,
 } from "./auto-seo-db";
+import { getAutoSeoBackupRepository } from "./auto-seo-postgres-repository";
+import { getAutoSeoReviewRepository } from "./auto-seo-review-postgres";
+import type { AutoSeoPostgresReviewRepository } from "./auto-seo-review-postgres";
+import type { AutoSeoBackupRepository } from "./auto-seo-backup-repository";
+import type { AutoSeoPostgresBackupInput } from "./auto-seo-postgres-repository";
 import { calculateSha256, canonicalizeJson } from "./canonical-json";
 import {
   AutoSeoEligibilityValidationError,
   getAutoSeoEligibility,
+  getAutoSeoEligibilityFromRepositories,
   validateAutoSeoEligibilityRequest,
 } from "./auto-seo-eligibility";
 import { calculateAutoSeoInputHash } from "./auto-seo-input-hash";
 import { isGatewayAuthorized, MAX_BODY_BYTES } from "./http-server";
 import { runSeoContent } from "./seo-content";
-import { executeSeoReviewSaveLifecycle } from "./seo-review-lifecycle";
+import { executeSeoReviewSaveLifecycle, validateGeneratedSeoFields } from "./seo-review-lifecycle";
 import type {
   AutoSeoProductPayload,
   SeoContentInput,
@@ -73,6 +78,11 @@ export interface AutoSeoSkippedProduct {
 }
 
 export interface AutoSeoHandlerOptions {
+  readonly backupRepository?: Pick<AutoSeoBackupRepository, "claimEligibleBatch" | "updateDownstreamStatus">;
+  readonly reviewRepository?: Pick<AutoSeoPostgresReviewRepository, "saveReview">;
+  readonly eligibilityBackupRepository?: Pick<AutoSeoBackupRepository, "findByStoreAndProductIds">;
+  readonly eligibilityReviewRepository?: Pick<AutoSeoPostgresReviewRepository, "findPendingByStoreAndProductIds">;
+  /** Legacy SQLite test adapter; production never supplies this option. */
   readonly db?: DatabaseSync;
   readonly queue?: CustomGptQueue;
   readonly seoContentRunner?: SeoContentRunner;
@@ -257,64 +267,81 @@ export async function handleAutoSeoRun(
   options?: AutoSeoHandlerOptions,
 ): Promise<AutoSeoRunResult> {
   const request = validateAutoSeoRunInput(body);
-  const db = options?.db ?? getAutoSeoDb();
+  const db = options?.db;
+  const repository = options?.backupRepository ?? (db ? undefined : getAutoSeoBackupRepository());
   const runner = options?.seoContentRunner ?? runSeoContent;
   const selectedSettings = options?.seoContentRunner ? undefined : getCustomGptRuntime().queue.settings(request.storeId);
 
   let backupIds: string[] = [];
   const acceptedProducts: AutoSeoProductPayload[] = [];
-  const inputHashes = new Map<string, string>();
   const skippedProducts: AutoSeoSkippedProduct[] = [];
-  db.exec("BEGIN IMMEDIATE");
-  try {
-    const matchingRevisionStatement = db.prepare(`
-      SELECT downstream_status
-      FROM auto_seo_product_backups
-      WHERE store_id = ? AND product_id = ? AND seo_input_sha256 = ?
-      ORDER BY CASE downstream_status
-        WHEN 'NOT_SENT' THEN 0
-        WHEN 'SENT' THEN 1
-        ELSE 2
-      END, id DESC
-      LIMIT 1
-    `);
+  const records: AutoSeoPostgresBackupInput[] = request.products.map(product => {
+    const snapshotJson = canonicalizeJson(product);
+    return {
+      backupId: crypto.randomUUID(), workflowId: request.workflowId, storeId: request.storeId,
+      shopDomain: request.shopDomain, productId: product.id, productHandle: product.handle ?? "",
+      productTitle: product.title ?? "", shopifyUpdatedAt: formatIsoDateTime(product.updatedAt),
+      snapshotJson, snapshotSha256: calculateSha256(snapshotJson),
+      seoInputSha256: calculateAutoSeoInputHash(product),
+    };
+  });
+  let acceptedRecords: readonly AutoSeoPostgresBackupInput[] = [];
 
-    for (const product of request.products) {
-      const inputHash = calculateAutoSeoInputHash(product);
-      const matchingRevision = matchingRevisionStatement.get(
-        request.storeId,
-        product.id,
-        inputHash,
-      ) as { downstream_status: "NOT_SENT" | "SENT" | "FAILED" } | undefined;
-
-      if (matchingRevision?.downstream_status === "NOT_SENT") {
-        skippedProducts.push({ productId: product.id, reason: "ACTIVE_DUPLICATE" });
-        continue;
+  if (db) {
+    const inputHashes = new Map(request.products.map(product => [product.id, calculateAutoSeoInputHash(product)] as const));
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      const matchingRevisionStatement = db.prepare(`
+        SELECT downstream_status
+        FROM auto_seo_product_backups
+        WHERE store_id = ? AND product_id = ? AND seo_input_sha256 = ?
+        ORDER BY CASE downstream_status WHEN 'NOT_SENT' THEN 0 WHEN 'SENT' THEN 1 ELSE 2 END, id DESC
+        LIMIT 1
+      `);
+      for (const product of request.products) {
+        const inputHash = inputHashes.get(product.id);
+        if (!inputHash) throw new Error(`AUTO_SEO_INPUT_HASH_REQUIRED: ${product.id}`);
+        const matchingRevision = matchingRevisionStatement.get(
+          request.storeId,
+          product.id,
+          inputHash,
+        ) as { downstream_status: "NOT_SENT" | "SENT" | "FAILED" } | undefined;
+        if (matchingRevision?.downstream_status === "NOT_SENT") {
+          skippedProducts.push({ productId: product.id, reason: "ACTIVE_DUPLICATE" });
+        } else if (matchingRevision?.downstream_status === "SENT") {
+          skippedProducts.push({ productId: product.id, reason: "UNCHANGED" });
+        } else {
+          acceptedProducts.push(product);
+        }
       }
-      if (matchingRevision?.downstream_status === "SENT") {
-        skippedProducts.push({ productId: product.id, reason: "UNCHANGED" });
-        continue;
+      if (acceptedProducts.length > 0) {
+        const backupResult = executeAutoSeoBackup(db, { ...request, products: acceptedProducts }, {
+          onConflict: options?.onConflict ?? request.onConflict,
+          inputHashes,
+        });
+        backupIds = [...backupResult.backupIds];
+        const acceptedIds = new Set(acceptedProducts.map(product => product.id));
+        acceptedRecords = records.filter(record => acceptedIds.has(record.productId));
       }
-
-      acceptedProducts.push(product);
-      inputHashes.set(product.id, inputHash);
+      if (backupIds.length > 0 && selectedSettings && selectedSettings.provider !== "gemini") {
+        db.prepare("UPDATE auto_seo_product_backups SET gpt_settings_json=? WHERE workflow_id=? AND store_id=?").run(JSON.stringify(selectedSettings), request.workflowId, request.storeId);
+      }
+      db.exec("COMMIT");
+    } catch (dbError) {
+      db.exec("ROLLBACK");
+      throw dbError;
     }
-
-    if (acceptedProducts.length > 0) {
-      const acceptedRequest = { ...request, products: acceptedProducts };
-      const backupResult = executeAutoSeoBackup(db, acceptedRequest, {
-        onConflict: options?.onConflict ?? request.onConflict,
-        inputHashes,
-      });
-      backupIds = [...backupResult.backupIds];
-    }
-    if (backupIds.length > 0 && selectedSettings && selectedSettings.provider !== "gemini") {
-      db.prepare("UPDATE auto_seo_product_backups SET gpt_settings_json=? WHERE workflow_id=? AND store_id=?").run(JSON.stringify(selectedSettings), request.workflowId, request.storeId);
-    }
-    db.exec("COMMIT");
-  } catch (dbError) {
-    db.exec("ROLLBACK");
-    throw dbError;
+  } else {
+    if (!repository) throw new Error("Auto SEO backup repository is unavailable");
+    const claim = await repository.claimEligibleBatch(records, {
+      onConflict: request.onConflict === "update" || options?.onConflict === "update" ? "update" : "error",
+      ...(selectedSettings && selectedSettings.provider !== "gemini" ? { gptSettingsJson: JSON.stringify(selectedSettings) } : {}),
+    });
+    acceptedRecords = claim.acceptedRecords;
+    backupIds = acceptedRecords.map(record => record.backupId);
+    skippedProducts.push(...claim.skippedProducts);
+    const acceptedIds = new Set(acceptedRecords.map(record => record.productId));
+    acceptedProducts.push(...request.products.filter(product => acceptedIds.has(product.id)));
   }
 
   // Only after successful COMMIT may the system hand off the same products to SEO content runner
@@ -396,19 +423,34 @@ export async function handleAutoSeoRun(
           }
 
           if (matchedProduct) {
-            await executeSeoReviewSaveLifecycle(
-              {
+            if (options?.db) {
+              await executeSeoReviewSaveLifecycle(
+                {
+                  storeId: request.storeId,
+                  productId: matchedProduct.id,
+                  handle: matchedProduct.handle,
+                  title: matchedProduct.title,
+                  shopifyUpdatedAt: matchedProduct.updatedAt ?? null,
+                  generatedOutput: output,
+                },
+                { db: options.db },
+              );
+            } else {
+              const validated = validateGeneratedSeoFields(output, matchedProduct.handle);
+              const backup = acceptedRecords.find(record => record.productId === matchedProduct.id);
+              if (!backup) throw new Error(`AUTO_SEO_REVIEW_INTEGRITY: backup missing for ${matchedProduct.id}`);
+              await (options?.reviewRepository ?? getAutoSeoReviewRepository()).saveReview({
+                itemId: `${request.storeId}:${matchedProduct.id}`,
                 storeId: request.storeId,
                 productId: matchedProduct.id,
-                handle: matchedProduct.handle,
-                title: matchedProduct.title,
+                handle: validated.handle,
+                title: validated.title,
+                reviewStatus: "pending",
+                generatedPayload: JSON.stringify(output),
                 shopifyUpdatedAt: matchedProduct.updatedAt ?? null,
-                generatedOutput: output,
-              },
-              {
-                db,
-              },
-            );
+                backupId: backup.backupId,
+              });
+            }
             reviewPersistedCount++;
           }
         }
@@ -447,14 +489,18 @@ export async function handleAutoSeoRun(
 
   // Update backup rows with downstream status (failure does not roll back committed backups)
   try {
-    updateDownstreamStatus(
-      db,
-      request.workflowId,
-      backupIds,
-      downstreamStatus,
-      null,
-      downstreamError,
-    );
+    if (db) {
+      updateDownstreamStatus(db, request.workflowId, backupIds, downstreamStatus, null, downstreamError);
+    } else {
+      if (!repository) throw new Error("Auto SEO backup repository is unavailable");
+      await repository.updateDownstreamStatus(
+        request.workflowId,
+        backupIds,
+        downstreamStatus,
+        null,
+        downstreamError,
+      );
+    }
   } catch (updateErr: unknown) {
     const message = updateErr instanceof Error ? updateErr.message : String(updateErr);
     throw new AutoSeoStatusUpdateError(
@@ -687,9 +733,15 @@ export async function handleAutoSeoEligibilityHttpRequest(
       throw new AutoSeoEligibilityValidationError("Invalid JSON body");
     }
     const request = validateAutoSeoEligibilityRequest(body);
-    const db = options?.db ?? getAutoSeoDb();
     const queue = options?.queue ?? getCustomGptRuntime().queue;
-    const result = getAutoSeoEligibility(db, request, queue);
+    const result = options?.db
+      ? getAutoSeoEligibility(options.db, request, queue)
+      : await getAutoSeoEligibilityFromRepositories(
+          options?.eligibilityBackupRepository ?? getAutoSeoBackupRepository(),
+          options?.eligibilityReviewRepository ?? getAutoSeoReviewRepository(),
+          request,
+          queue,
+        );
     res.statusCode = 200;
     res.setHeader("Content-Type", "application/json");
     res.end(JSON.stringify({ success: true, data: result }));

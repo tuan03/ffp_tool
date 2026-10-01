@@ -47,7 +47,7 @@ export async function deleteSeoReviewProduct(
       : product.id;
     const itemId = product.productId && product.id === product.productId ? defaultItemId : product.id;
     const response = await (dependencies.fetcher ?? fetch)(
-      `/api/seo-review/items/${encodeURIComponent(itemId)}`,
+      `/api/seo-review/items/${encodeURIComponent(itemId)}?source=auto_seo`,
       { method: "DELETE" },
     );
     if (!response.ok) throw new Error(await readDeleteError(response));

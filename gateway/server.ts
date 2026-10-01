@@ -2,11 +2,14 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { getCustomGptRuntime } from "./custom-gpt-seo/runtime";
 import { serveStaticFile } from "./static-server";
 
 import { GatewayDispatcher } from "./dispatcher";
 import { handleAutoSeoEligibilityHttpRequest, handleAutoSeoHttpRequest } from "./auto-seo-handler";
+import { bootstrapAutoSeoSchema } from "./auto-seo-startup";
+import type { AutoSeoStartupOptions } from "./auto-seo-startup";
 import { handleSeoReviewHttpRequest } from "./seo-review-handler";
 import {
   handlePinterestPodDirectShopifySyncHttpRequest,
@@ -35,6 +38,14 @@ export interface GatewayServerOptions {
   readonly operatorUsername?: string;
   readonly operatorPassword?: string;
   readonly maxBodyBytes?: number;
+}
+
+export async function startGatewayServerWhenReady(
+  options: GatewayServerOptions,
+  startupOptions?: AutoSeoStartupOptions,
+): Promise<http.Server> {
+  await bootstrapAutoSeoSchema(startupOptions);
+  return startGatewayServer(options);
 }
 
 function isOperatorAuthorized(
@@ -338,8 +349,13 @@ export function startGatewayServer(
   return server;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   const port = Number(process.env.GATEWAY_PORT) || 3001;
   const host = process.env.GATEWAY_HOST || "127.0.0.1";
-  startGatewayServer({ port, host });
+  try {
+    await startGatewayServerWhenReady({ port, host });
+  } catch {
+    console.error("[Auto SEO] PostgreSQL schema initialization failed; Gateway did not start.");
+    process.exitCode = 1;
+  }
 }
