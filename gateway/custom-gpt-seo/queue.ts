@@ -268,8 +268,44 @@ export class CustomGptQueue {
       if (finalizerToken && job.finalizerToken !== finalizerToken) throw new Error("Stale finalizer lease");
       if (job.status !== "VALIDATING") throw new Error("Job is not validating");
       this.write({ ...job, status: "REVIEW_READY", result, error: undefined });
-      this.db.prepare("INSERT INTO gpt_deliveries(job_id,payload) VALUES (?,?) ON CONFLICT(job_id) DO NOTHING").run(jobId, JSON.stringify(result));
+      this.db.prepare("INSERT INTO gpt_deliveries(job_id,payload,delivered) VALUES (?,?,0) ON CONFLICT(job_id) DO UPDATE SET payload=excluded.payload,delivered=0").run(jobId, JSON.stringify(result));
       this.audit(storeId, jobId, "REVIEW_READY");
+    });
+  }
+  resetReviewReadyForAeoBackfill(storeId: string, provider: ExternalSeoProvider): { readonly resetCount: number; readonly jobIds: readonly string[] } {
+    return this.transaction(() => {
+      const rows = this.db.prepare("SELECT id,payload FROM gpt_jobs WHERE store_id=? AND provider=? AND status='REVIEW_READY' ORDER BY created_at,id").all(storeId, provider);
+      const jobIds = rows.map((row) => String(row.id));
+      for (const jobId of jobIds) {
+        const reviewStateRow = this.db.prepare("SELECT payload FROM gpt_review_state WHERE job_id=?").get(jobId);
+        const reviewState = reviewStateRow ? record(json(reviewStateRow.payload)) : {};
+        const sync = this.db.prepare("SELECT status FROM gpt_sync WHERE job_id=? AND status!='ROLLED_BACK'").get(jobId);
+        if (reviewState.reviewDecision === "approved" || sync) {
+          throw new Error(`Cannot reset approved or synchronized review ${jobId}`);
+        }
+      }
+      for (const row of rows) {
+        const job = json(row.payload) as GptSeoJob;
+        this.write({
+          ...job,
+          status: "PENDING",
+          // Keep the previous submission as read-only source material for the
+          // external worker. A new submission checkpoint replaces it before
+          // validation, while analysis, research and keywords remain reusable.
+          checkpoints: job.checkpoints,
+          result: undefined,
+          error: undefined,
+          finalizeAttempts: 0,
+          nextAttemptAt: undefined,
+          finalizerToken: undefined,
+          finalizerUntil: undefined,
+        });
+        this.db.prepare("UPDATE gpt_jobs SET batch_id=NULL WHERE id=?").run(job.id);
+        this.db.prepare("DELETE FROM gpt_deliveries WHERE job_id=?").run(job.id);
+        this.db.prepare("DELETE FROM gpt_review_state WHERE job_id=?").run(job.id);
+        this.audit(storeId, job.id, "AEO_BACKFILL_RESET");
+      }
+      return { resetCount: jobIds.length, jobIds };
     });
   }
   failValidation(storeId: string, jobId: string, error: string, finalizerToken?: string): void {

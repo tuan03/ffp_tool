@@ -13,6 +13,7 @@ export interface StoreBeddingProfileConfig {
 
 export interface StoreContentProfile {
   readonly storeId: string;
+  readonly storeAliases?: readonly string[];
   readonly storeName: string;
   readonly domainAliases: readonly string[];
   readonly niche: string;

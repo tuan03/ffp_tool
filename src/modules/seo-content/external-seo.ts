@@ -20,6 +20,17 @@ function strings(value: unknown, field: string): readonly string[] {
   if (!Array.isArray(value) || value.length > 20) throw new Error(`Invalid ${field}`);
   return value.map(entry => text(entry, field));
 }
+function wordCount(value: string): number {
+  return value.trim().split(/\s+/).filter(Boolean).length;
+}
+function validateExternalAeo(draft: ReturnType<typeof validateDraft>): void {
+  if (!draft.aeo_quick_summary) throw new Error("Missing or empty 'aeo_quick_summary' in external SEO draft");
+  const summaryWords = wordCount(draft.aeo_quick_summary);
+  if (summaryWords < 40 || summaryWords > 70) throw new Error("'aeo_quick_summary' must contain 40–70 words");
+  if (!draft.aeo_faq || draft.aeo_faq.length < 3 || draft.aeo_faq.length > 5) {
+    throw new Error("'aeo_faq' must contain 3–5 grounded question and answer items");
+  }
+}
 /**
  * Called only by the trusted pipeline after Shopify resolves the product identity.
  * @deprecated Legacy Custom GPT Actions compatibility only. New providers must
@@ -94,6 +105,7 @@ export async function finalizeExternalSeo(input: SeoContentInput, analysisPayloa
   const draft = validateDraft(raw.draft);
   // Arbitrary JSON-LD from an external model must not bypass fact validation.
   if (draft.aeo_json_ld) throw new Error("Submit structured FAQ fields, not arbitrary JSON-LD");
+  validateExternalAeo(draft);
   const alts = object(raw.alts);
   const imageOutputs = input.images.map((image, index) => {
     const id = image.id || `image-${index + 1}`;
@@ -113,5 +125,5 @@ export async function finalizeExternalSeo(input: SeoContentInput, analysisPayloa
   // Preserve previously committed keywords while a replacement is only a review draft.
   // Replaying after a crash is harmless: upsert replaces this same owner's union.
   await corpus.upsertProduct({ identity: { storeId: input.storeId, productId: input.productId, handle: input.handle, url: input.url }, title: input.title, approvedKeywords: [...new Set([...keywords, ...check.previousKeywords])], expectedRevision: check.revision });
-  return { output: finalizePipelineOutput(context), metadata: { engine: "custom_gpt", fieldsApplied: ["title", "description", "seoTitle", "seoDescription", "alt"], fallbackStages: [], warnings: ["Image evidence is supplied by an external reasoning provider and must be reviewed. Semantic conflict review uses local retrieval, not Vertex embeddings."], approvedKeywords: keywords, corpusRevision: check.revision + 1 } };
+  return { output: finalizePipelineOutput(context), metadata: { engine: "custom_gpt", fieldsApplied: ["title", "description", "seoTitle", "seoDescription", "alt", "aeoQuickSummary", "aeoFaq", "aeoJsonLd"], fallbackStages: [], warnings: ["Image evidence is supplied by an external reasoning provider and must be reviewed. Semantic conflict review uses local retrieval, not Vertex embeddings."], approvedKeywords: keywords, corpusRevision: check.revision + 1 } };
 }
