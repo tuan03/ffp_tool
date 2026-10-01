@@ -37,7 +37,7 @@ import type {
 import { createPinterestPodRoutes, getPinterestPodClient } from "../../modules/pinterest-pod";
 import type { PinterestPodDeliverables } from "../../modules/pinterest-pod";
 import { createProductCrawlerRoutes, getProductCrawlerClient } from "../../modules/product-crawler";
-import { getSeoContentRunner } from "../../modules/seo-content";
+import { getBrowserSeoContentRunner } from "../../modules/seo-content/browser";
 import { HomePage } from "../../pages/home/HomePage";
 import { NotFoundPage } from "../../pages/not-found/NotFoundPage";
 import {
@@ -81,7 +81,7 @@ export function AppRoutes({
       environment === "mock"
         ? getAutoSeoClient("mock")
         : createAutoSeoModuleApiClient(moduleApiRunner);
-    const seoRunner = getSeoContentRunner(environment);
+    const seoRunner = getBrowserSeoContentRunner(environment);
 
     const handlePinterestHandover = async (
       payload: PinterestPodDeliverables,
@@ -163,7 +163,7 @@ export function AppRoutes({
       if (environment !== "mock" && effectiveStoreId) {
         const settings = await createCustomGptClient().settings(effectiveStoreId);
         // The backup endpoint already enqueued this snapshot on the server.
-        if (settings.provider === "custom_gpt") return;
+        if (settings.provider === "custom_gpt" || settings.provider === "codex_mcp") return;
       }
 
       const result = await handoverAutoSeoToSeo(

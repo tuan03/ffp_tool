@@ -105,6 +105,11 @@ export interface SeoConflictCorpus {
     identity: SeoProductIdentity,
   ): Promise<void>;
 
+  reassignProduct?(
+    source: SeoProductIdentity,
+    target: SeoProductIdentity,
+  ): Promise<void>;
+
   getSnapshot?(): Promise<SeoConflictCorpusFile>;
 }
 
@@ -223,5 +228,5 @@ export function computeProductKey(identity: SeoProductIdentity): string {
   if (normUrl) {
     return `${storePrefix}url:${normUrl}`;
   }
-  return `${storePrefix}unknown:${Date.now()}`;
+  throw new Error("SEO keyword ownership requires a stable productId, handle, or URL");
 }

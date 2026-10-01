@@ -35,13 +35,25 @@ export interface AutoSeoRunRequest {
 }
 
 export interface AutoSeoRunResult {
-  readonly seoProvider?: "gemini" | "custom_gpt";
+  readonly seoProvider?: "gemini" | "custom_gpt" | "codex_mcp";
   readonly workflowId: string;
   readonly backedUpCount: number;
   readonly backupIds: readonly string[];
   readonly downstreamStatus: "SENT" | "FAILED";
   readonly downstreamHttpStatus?: number | null;
   readonly downstreamError?: string | null;
+  readonly reviewPersistedCount: number;
+  readonly seoDispatch?:
+    | {
+        readonly provider: "gemini";
+        readonly status: "review_ready";
+        readonly reviewPersistedCount: number;
+      }
+    | {
+        readonly provider: "custom_gpt" | "codex_mcp";
+        readonly status: "queued";
+        readonly jobIds: readonly string[];
+      };
 }
 
 export interface AutoSeoHandlerOptions {
@@ -234,7 +246,7 @@ export async function handleAutoSeoRun(
     const backupResult = executeAutoSeoBackup(db, request, {
       onConflict: options?.onConflict ?? request.onConflict,
     });
-    if (selectedSettings?.provider === "custom_gpt") {
+    if (selectedSettings && selectedSettings.provider !== "gemini") {
       db.prepare("UPDATE auto_seo_product_backups SET gpt_settings_json=? WHERE workflow_id=? AND store_id=?").run(JSON.stringify(selectedSettings), request.workflowId, request.storeId);
     }
     db.exec("COMMIT");
@@ -247,7 +259,9 @@ export async function handleAutoSeoRun(
   // Only after successful COMMIT may the system hand off the same products to SEO content runner
   let downstreamStatus: "SENT" | "FAILED" = "FAILED";
   let downstreamError: string | null = null;
-  let seoProvider: "gemini" | "custom_gpt" | undefined;
+  let seoProvider: "gemini" | "custom_gpt" | "codex_mcp" | undefined;
+  let reviewPersistedCount = 0;
+  let seoDispatch: AutoSeoRunResult["seoDispatch"];
 
   try {
     const seoResult = await runner({
@@ -259,7 +273,20 @@ export async function handleAutoSeoRun(
 
     seoProvider = seoResult.provider;
     if (seoResult && seoResult.success === true) {
-      if (Array.isArray(seoResult.seoOutputs) && seoResult.seoOutputs.length > 0) {
+      if (seoProvider === "custom_gpt" || seoProvider === "codex_mcp") {
+        seoDispatch = {
+          provider: seoProvider,
+          status: "queued",
+          jobIds: seoResult.jobIds ?? [],
+        };
+      }
+      const isExternalQueueProvider =
+        seoProvider === "custom_gpt" || seoProvider === "codex_mcp";
+      if (
+        !isExternalQueueProvider &&
+        Array.isArray(seoResult.seoOutputs) &&
+        seoResult.seoOutputs.length > 0
+      ) {
         for (let i = 0; i < seoResult.seoOutputs.length; i++) {
           const output = seoResult.seoOutputs[i];
           if (!output) continue;
@@ -301,8 +328,17 @@ export async function handleAutoSeoRun(
                 db,
               },
             );
+            reviewPersistedCount++;
           }
         }
+      }
+      if (reviewPersistedCount > 0 && (seoProvider === "gemini" || !seoProvider)) {
+        seoProvider = "gemini";
+        seoDispatch = {
+          provider: "gemini",
+          status: "review_ready",
+          reviewPersistedCount,
+        };
       }
       downstreamStatus = "SENT";
     } else {
@@ -353,6 +389,8 @@ export async function handleAutoSeoRun(
     downstreamStatus,
     downstreamHttpStatus: null,
     downstreamError,
+    reviewPersistedCount,
+    ...(seoDispatch ? { seoDispatch } : {}),
   };
 }
 

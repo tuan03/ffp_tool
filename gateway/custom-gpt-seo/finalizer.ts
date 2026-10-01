@@ -15,7 +15,11 @@ export async function processCustomGptJob(queue: CustomGptQueue, finalize = fina
         });
         result = { ...prepared.execution, output: { ...prepared.execution.output, images: prepared.execution.output.images.map((image, index) => ({ ...image, webp: { url: image.sourceUrl, filename: `${job.input.handle || "product"}-${index + 1}.webp` } })) } };
       } else {
-        result = await finalize(input, job.checkpoints.analysis, job.checkpoints.keywords, job.checkpoints.submission);
+        const externalResult = await finalize(input, job.checkpoints.analysis, job.checkpoints.keywords, job.checkpoints.submission);
+        result = {
+          ...externalResult,
+          metadata: { ...externalResult.metadata, engine: job.settings.provider },
+        };
       }
       queue.finish(job.storeId, job.id, result, job.finalizerToken);
     } catch (error) {

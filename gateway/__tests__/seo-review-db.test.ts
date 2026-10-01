@@ -6,6 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 
 import {
+  deleteSeoReviewItem,
   getSeoReviewItem,
   initSeoReviewDbSchema,
   listSeoReviewItems,
@@ -272,4 +273,19 @@ test("14. Review database persists across close and reopen of SQLite file", () =
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
+});
+
+test("15. deleteSeoReviewItem hides an item and a later upsert restores it", () => {
+  const db = createMemoryDb();
+  const item = makeReviewItem({ itemId: "soft-delete-item" });
+  upsertSeoReviewItem(db, item);
+
+  assert.equal(deleteSeoReviewItem(db, item.itemId), true);
+  assert.equal(getSeoReviewItem(db, item.itemId), null);
+  assert.equal(listSeoReviewItems(db).total, 0);
+  assert.equal(deleteSeoReviewItem(db, item.itemId), false);
+
+  upsertSeoReviewItem(db, { ...item, title: "Restored by Auto SEO" });
+  assert.equal(getSeoReviewItem(db, item.itemId)?.title, "Restored by Auto SEO");
+  assert.equal(listSeoReviewItems(db).total, 1);
 });

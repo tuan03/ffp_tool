@@ -28,11 +28,13 @@ export interface SeoContentInput {
 }
 
 export interface SeoContentResult {
-  readonly provider?: "gemini" | "custom_gpt";
+  readonly provider?: "gemini" | "custom_gpt" | "codex_mcp";
   readonly success: boolean;
   readonly processedCount: number;
   readonly message?: string;
   readonly seoOutputs?: readonly unknown[];
+  readonly dispatchStatus?: "queued" | "review_ready";
+  readonly jobIds?: readonly string[];
 }
 
 import type { SeoContentInput as CoreSeoContentInput, SeoContentOutput } from "../../src/modules/seo-content";

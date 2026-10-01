@@ -1,6 +1,6 @@
 # Custom GPT SEO
 
-This module supports Amazon → Customize → SEO and Auto SEO → backup → SEO. Gemini remains the default. Select Custom GPT at `/gpt-seo` to enqueue new products. Batch size is 1–10 (default 5). Results stay on the server until a human reviews them.
+This module supports Amazon → Customize → SEO and Auto SEO → backup → SEO. Gemini remains the default. Select Custom GPT or Codex MCP at `/gpt-seo` to enqueue new products for an external reasoning session. Batch size is 1–10 (default 5). Results stay on the server until a human reviews them. See [Codex MCP setup and operations](codex-mcp.md).
 
 ## Setup
 
@@ -14,12 +14,13 @@ GATEWAY_HOST=127.0.0.1
 GATEWAY_PORT=3001
 GATEWAY_AUTH_TOKEN=<dedicated-internal-admin-secret>
 GPT_SEO_ACTION_KEYS_JSON={"capozen":"<capozen-random-action-secret>","wrydeco":"<wrydeco-random-action-secret>"}
+GPT_SEO_MCP_KEYS_JSON={"capozen":"<capozen-random-mcp-secret>","wrydeco":"<wrydeco-random-mcp-secret>"}
 GPT_SEO_DB_PATH=.local-data/custom-gpt-seo.sqlite3
 GPT_SEO_PUBLIC_URL=https://seo.example.com
 SHOPIFY_GATEWAY_URL=http://127.0.0.1:3001/api/shopify
 ```
 
-Generate an independent random Action secret for every store using your password manager. Never commit them. The Bearer key determines the store; a GPT cannot select another store through request input. Legacy single-store deployments may continue using `GPT_SEO_ACTION_KEY` with `GPT_SEO_STORE_ID`, but `GPT_SEO_ACTION_KEYS_JSON` takes precedence when set. Set `GPT_SEO_PUBLIC_URL` after selecting your domain; omit it for local mock work. Image Actions return the original source URL stored for each job without adding FFP authentication, signatures or proxy URLs. Internal administration uses the gateway key. Changing providers does not convert existing GPT jobs.
+Generate an independent random Action secret for every store using your password manager. Never commit them. The Bearer key determines the store; a GPT cannot select another store through request input. Legacy single-store deployments may continue using `GPT_SEO_ACTION_KEY` with `GPT_SEO_STORE_ID`, but `GPT_SEO_ACTION_KEYS_JSON` takes precedence when set. Set `GPT_SEO_PUBLIC_URL` after selecting your domain; omit it for local mock work. `getSeoJobImages` returns the original source URL stored for each image without adding FFP authentication, signatures or proxy URLs. Internal administration uses the gateway key. Changing providers does not convert existing GPT jobs.
 
 3. Serve HTTPS using the supplied Caddy example. Merge it with the existing deployment routes and environment configuration for image processing, Shopify and the Amazon coordinator; it is not a replacement for the complete application deployment. Protect browser/admin routes with authentication. Never expose the gateway or coordinator ports directly to the internet.
 4. In GPT Builder create a private Custom GPT. Enable available image-understanding capabilities. Paste `gpt-instructions.md` into Instructions.

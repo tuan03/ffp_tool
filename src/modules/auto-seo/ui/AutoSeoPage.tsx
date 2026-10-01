@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppError } from "../../../shared/errors/app-error";
+import { buildSeoQueueUrl } from "../../../shared/seo-queue-navigation";
 import { notifyUser } from "../../../shared/utils";
 import { mapShopifyProductToAutoSeoCandidate } from "../shopify-adapter";
 import type {
@@ -291,8 +292,15 @@ export function AutoSeoPage({
       }
 
       if (backupResult.seoProvider === "custom_gpt") {
-        notifyUser({ title: "Đã xếp hàng GPT SEO", message: `${hydratedProducts.length} sản phẩm đang chờ. Mở Custom GPT để xử lý theo batch.`, type: "success", url: "/gpt-seo" });
-        navigate("/gpt-seo");
+        const queueUrl = buildSeoQueueUrl(storeInfo.storeId);
+        notifyUser({ title: "Đã xếp hàng GPT SEO", message: `${hydratedProducts.length} sản phẩm đang chờ. Mở Custom GPT để xử lý theo batch.`, type: "success", url: queueUrl });
+        navigate(queueUrl);
+        return;
+      }
+      if (backupResult.seoProvider === "codex_mcp") {
+        const queueUrl = buildSeoQueueUrl(storeInfo.storeId);
+        notifyUser({ title: "Đã xếp hàng Codex MCP", message: `${hydratedProducts.length} sản phẩm đang chờ Codex xử lý qua MCP.`, type: "success", url: queueUrl });
+        navigate(queueUrl);
         return;
       }
 
@@ -328,7 +336,9 @@ export function AutoSeoPage({
         url: effectiveStoreId ? `/seo-review?storeId=${encodeURIComponent(effectiveStoreId)}` : "/seo-review",
       });
 
-      if (onHandoverToSeo) {
+      if ((backupResult.reviewPersistedCount ?? 0) > 0) {
+        navigate(effectiveStoreId ? `/seo-review?storeId=${encodeURIComponent(effectiveStoreId)}` : "/seo-review");
+      } else if (onHandoverToSeo) {
         await onHandoverToSeo(productsWithStore, effectiveStoreId);
         navigate(effectiveStoreId ? `/seo-review?storeId=${encodeURIComponent(effectiveStoreId)}` : "/seo-review");
       }

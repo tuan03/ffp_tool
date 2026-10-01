@@ -856,6 +856,15 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
     def delete_all_product_reviews() -> dict[str, int]:
         return store.delete_all_product_reviews()
 
+    @app.delete("/api/v1/product-reviews/{item_id}")
+    def delete_product_review(item_id: str) -> dict[str, bool]:
+        result = store.delete_product_review(item_id)
+        if result.get("reason") == "not_found":
+            raise HTTPException(status_code=404, detail="Review item was not found.")
+        if result.get("reason") == "sync_in_progress":
+            raise HTTPException(status_code=409, detail="Review item cannot be deleted while syncing.")
+        return {"deleted": True}
+
     @app.get("/api/v1/product-reviews/events")
     async def stream_product_reviews(request: Request) -> StreamingResponse:
         async def stream():

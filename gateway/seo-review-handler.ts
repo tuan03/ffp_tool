@@ -4,6 +4,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { getAutoSeoDb } from "./auto-seo-db";
 import { isGatewayAuthorized, MAX_BODY_BYTES } from "./http-server";
 import {
+  deleteSeoReviewItem,
   getSeoReviewItem,
   listSeoReviewItems,
   updateSeoReviewPayload,
@@ -280,6 +281,30 @@ export async function handleSeoReviewHttpRequest(
 
     // 4. GET /api/seo-review/items/:itemId
     const itemId = decodeURIComponent(rest);
+    if (req.method === "DELETE") {
+      try {
+        const deleted = deleteSeoReviewItem(db, itemId);
+        if (!deleted) {
+          sendJsonResponse(res, 404, {
+            success: false,
+            error: {
+              code: "SEO_REVIEW_ITEM_NOT_FOUND",
+              message: `Review item not found: ${itemId}`,
+            },
+          });
+          return;
+        }
+
+        sendJsonResponse(res, 200, { success: true, itemId });
+      } catch {
+        sendJsonResponse(res, 500, {
+          success: false,
+          error: { code: "SEO_REVIEW_DB_ERROR", message: "Unable to delete the review item" },
+        });
+      }
+      return;
+    }
+
     if (req.method !== "GET") {
       sendJsonResponse(res, 405, {
         success: false,

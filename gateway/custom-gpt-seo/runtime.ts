@@ -9,6 +9,8 @@ import { createCustomGptHandler } from "./handler";
 import { CustomGptQueue } from "./queue";
 import { getAutoSeoDb } from "../auto-seo-db";
 import { recoverAutoSeoHandoffs } from "./auto-seo-outbox";
+import { createCodexSeoMcpHandler } from "./mcp-handler";
+import { createExternalSeoWorkflow } from "./workflow";
 
 let runtime: ReturnType<typeof createRuntime> | undefined;
 function createRuntime() {
@@ -17,6 +19,8 @@ function createRuntime() {
   const db = new DatabaseSync(config.databasePath);
   const queue = new CustomGptQueue(db);
   const handler = createCustomGptHandler({ queue, ...config });
+  const workflow = createExternalSeoWorkflow({ queue });
+  const mcpHandler = createCodexSeoMcpHandler({ workflow, mcpCredentials: config.mcpCredentials });
   let isRunning = false;
   async function tick(): Promise<void> {
     if (isRunning) return;
@@ -28,6 +32,6 @@ function createRuntime() {
   }
   const timer = setInterval(() => { void tick().catch(() => { console.error("[GPT SEO] Background storage operation failed; inspect database health before retrying."); }); }, 1000);
   timer.unref();
-  return { queue, handler, tick, close: () => { clearInterval(timer); db.close(); } };
+  return { queue, handler, mcpHandler, tick, close: () => { clearInterval(timer); db.close(); } };
 }
 export function getCustomGptRuntime(): ReturnType<typeof createRuntime> { return runtime ??= createRuntime(); }
