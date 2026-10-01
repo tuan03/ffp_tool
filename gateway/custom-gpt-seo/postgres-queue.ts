@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { PostgresQueueDatabase } from "./postgres-database";
 import type { SeoQueuePostgresOptions } from "./postgres-database";
 import type { SeoQueue } from "./queue-contract";
+import type { QueueListFilters } from "./queue";
 
 import type { ExternalSeoProvider, GptCheckpointMutation, GptJobStatus, GptSeoBatch, GptSeoEnqueue, GptSeoJob, GptSeoSettings, SeoProvider } from "../../src/modules/custom-gpt-seo";
 import { canonicalizeJson } from "../canonical-json";
@@ -83,6 +84,37 @@ export class PostgresCustomGptQueue implements SeoQueue {
         ? (await this.db.prepare("SELECT payload FROM gpt_jobs WHERE store_id=? AND status=? ORDER BY created_at,id LIMIT 50 OFFSET ?").all(storeId, status, offset))
         : (await this.db.prepare("SELECT payload FROM gpt_jobs WHERE store_id=? ORDER BY created_at,id LIMIT 50 OFFSET ?").all(storeId, offset));
     return rows.map(row => json(row.payload) as GptSeoJob);
+  }
+  async listFiltered(storeId: string, filters: QueueListFilters, offset = 0): Promise<readonly GptSeoJob[]> {
+    const statuses = [...new Set(filters.statuses ?? [])];
+    const conditions = ["store_id=?"];
+    const parameters: Array<string | number> = [storeId];
+    if (filters.provider) {
+      conditions.push("provider=?");
+      parameters.push(filters.provider);
+    }
+    if (statuses.length > 0) {
+      conditions.push(`status IN (${statuses.map(() => "?").join(",")})`);
+      parameters.push(...statuses);
+    }
+    parameters.push(offset);
+    const rows = await this.db.prepare(`SELECT payload FROM gpt_jobs WHERE ${conditions.join(" AND ")} ORDER BY created_at,id LIMIT 50 OFFSET ?`).all(...parameters);
+    return rows.map(row => json(row.payload) as GptSeoJob);
+  }
+  async countFiltered(storeId: string, filters: QueueListFilters): Promise<number> {
+    const statuses = [...new Set(filters.statuses ?? [])];
+    const conditions = ["store_id=?"];
+    const parameters: string[] = [storeId];
+    if (filters.provider) {
+      conditions.push("provider=?");
+      parameters.push(filters.provider);
+    }
+    if (statuses.length > 0) {
+      conditions.push(`status IN (${statuses.map(() => "?").join(",")})`);
+      parameters.push(...statuses);
+    }
+    const row = await this.db.prepare(`SELECT COUNT(*) AS count FROM gpt_jobs WHERE ${conditions.join(" AND ")}`).get(...parameters);
+    return Number(row?.count ?? 0);
   }
   async counts(storeId: string, provider?: ExternalSeoProvider): Promise<Readonly<Record<string, number>>> {
     const rows = provider

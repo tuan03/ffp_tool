@@ -89,3 +89,27 @@ test("Custom GPT client loads review pages and saves bulk review states", async 
     ],
   });
 });
+
+test("Custom GPT client sends queue filters before server pagination", async () => {
+  let requestedUrl = "";
+  const client = createCustomGptClient(async (url) => {
+    requestedUrl = String(url);
+    return new Response(JSON.stringify({
+      jobs: [],
+      counts: { PENDING: 50, REVIEW_READY: 200 },
+      activeBatch: null,
+      activeBatches: [],
+      nextOffset: null,
+    }), { status: 200 });
+  });
+
+  await client.list("jeminise-real", 0, {
+    statuses: ["PENDING"],
+    provider: "codex_mcp",
+  });
+
+  assert.equal(
+    requestedUrl,
+    "/api/v1/gpt-seo/admin/jobs?offset=0&statuses=PENDING&provider=codex_mcp&storeId=jeminise-real",
+  );
+});

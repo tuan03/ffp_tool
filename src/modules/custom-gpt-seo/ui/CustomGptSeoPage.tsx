@@ -15,6 +15,7 @@ import {
   getBatchOwnerLabel,
   getJobProgress,
   getProviderPresentation,
+  getStatusesForGroup,
   getStatusPresentation,
 } from "./seo-queue-view-model";
 import type { QueueProviderFilter, QueueStatusGroup } from "./seo-queue-view-model";
@@ -77,12 +78,15 @@ export function CustomGptSeoPage({ client }: { readonly client: CustomGptClient 
     const generation = ++refreshGeneration.current;
     const [nextSettings, nextQueue] = await Promise.all([
       client.settings(storeId),
-      client.list(storeId, offset),
+      client.list(storeId, offset, {
+        statuses: getStatusesForGroup(statusGroup),
+        ...(providerFilter === "all" ? {} : { provider: providerFilter }),
+      }),
     ]);
     if (generation !== refreshGeneration.current) return;
     setSettings(nextSettings);
     setQueue(nextQueue);
-  }, [client, offset, storeId]);
+  }, [client, offset, providerFilter, statusGroup, storeId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -197,7 +201,7 @@ export function CustomGptSeoPage({ client }: { readonly client: CustomGptClient 
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {visibleSummaries.map(summary => (
-          <button key={summary.key} type="button" onClick={() => setStatusGroup(current => current === summary.key ? "all" : summary.key)} className={`rounded-xl border p-4 text-left transition hover:border-slate-600 hover:bg-slate-900/80 ${statusGroup === summary.key ? "border-cyan-600 bg-cyan-950/20 ring-1 ring-cyan-600/30" : "border-slate-800 bg-slate-900/50"}`}>
+          <button key={summary.key} type="button" onClick={() => { setOffset(0); setStatusGroup(current => current === summary.key ? "all" : summary.key); }} className={`rounded-xl border p-4 text-left transition hover:border-slate-600 hover:bg-slate-900/80 ${statusGroup === summary.key ? "border-cyan-600 bg-cyan-950/20 ring-1 ring-cyan-600/30" : "border-slate-800 bg-slate-900/50"}`}>
             <div className="flex items-start justify-between gap-3">
               <div><p className="text-sm font-medium text-slate-300">{summary.label}</p><p className="mt-1 text-xs text-slate-500">{summary.description}</p></div>
               <span className={`text-3xl font-semibold tabular-nums ${summary.accentClassName}`}>{summary.count}</span>
@@ -235,8 +239,8 @@ export function CustomGptSeoPage({ client }: { readonly client: CustomGptClient 
             <div><div className="flex items-center gap-2"><h2 id="queue-list-title" className="font-semibold text-white">Sản phẩm trong hàng đợi</h2><span className="rounded-full bg-slate-800 px-2 py-0.5 text-xs tabular-nums text-slate-300">{totalCount}</span></div><p className="mt-1 text-xs text-slate-500">Store: <span className="font-mono text-slate-400">{storeId}</span></p></div>
             <div className="grid gap-2 sm:grid-cols-[minmax(220px,1fr)_160px_160px]">
               <label className="relative"><span className="sr-only">Tìm sản phẩm</span><span aria-hidden="true" className="pointer-events-none absolute left-3 top-2.5 text-sm text-slate-500">⌕</span><input className={`${FIELD_CLASS_NAME} w-full pl-8`} value={query} onChange={event => setQuery(event.target.value)} placeholder="Tìm tên, handle, job ID…" /></label>
-              <label><span className="sr-only">Lọc trạng thái</span><select className={`${FIELD_CLASS_NAME} w-full`} value={statusGroup} onChange={event => setStatusGroup(event.target.value as QueueStatusGroup)}><option value="all">Mọi trạng thái</option><option value="waiting">Chờ xử lý</option><option value="processing">Đang xử lý</option><option value="attention">Cần xử lý</option><option value="ready">Sẵn sàng duyệt</option><option value="cancelled">Đã hủy</option></select></label>
-              <label><span className="sr-only">Lọc AI xử lý</span><select className={`${FIELD_CLASS_NAME} w-full`} value={providerFilter} onChange={event => setProviderFilter(event.target.value as QueueProviderFilter)}><option value="all">Mọi AI xử lý</option><option value="gemini">Gemini</option><option value="custom_gpt">GPT Custom</option><option value="codex_mcp">Codex MCP</option></select></label>
+              <label><span className="sr-only">Lọc trạng thái</span><select className={`${FIELD_CLASS_NAME} w-full`} value={statusGroup} onChange={event => { setOffset(0); setStatusGroup(event.target.value as QueueStatusGroup); }}><option value="all">Mọi trạng thái</option><option value="waiting">Chờ xử lý</option><option value="processing">Đang xử lý</option><option value="attention">Cần xử lý</option><option value="ready">Sẵn sàng duyệt</option><option value="cancelled">Đã hủy</option></select></label>
+              <label><span className="sr-only">Lọc AI xử lý</span><select className={`${FIELD_CLASS_NAME} w-full`} value={providerFilter} onChange={event => { setOffset(0); setProviderFilter(event.target.value as QueueProviderFilter); }}><option value="all">Mọi AI xử lý</option><option value="gemini">Gemini</option><option value="custom_gpt">GPT Custom</option><option value="codex_mcp">Codex MCP</option></select></label>
             </div>
           </div>
         </div>
@@ -267,11 +271,11 @@ export function CustomGptSeoPage({ client }: { readonly client: CustomGptClient 
             </table>
           </div>
         ) : (
-          <div className="px-5 py-16 text-center"><div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-slate-800 text-xl" aria-hidden="true">⌕</div><h3 className="mt-4 font-medium text-slate-200">{queue.jobs.length === 0 ? "Chưa có sản phẩm trong hàng đợi" : "Không tìm thấy sản phẩm phù hợp"}</h3><p className="mt-1 text-sm text-slate-500">{queue.jobs.length === 0 ? "Sản phẩm từ Auto SEO hoặc nguồn nhập sẽ xuất hiện tại đây." : "Hãy thử xóa từ khóa hoặc thay đổi bộ lọc."}</p>{queue.jobs.length > 0 && <button type="button" className="mt-4 text-sm font-medium text-cyan-300 hover:text-cyan-200" onClick={() => { setQuery(""); setStatusGroup("all"); setProviderFilter("all"); }}>Xóa bộ lọc</button>}</div>
+          <div className="px-5 py-16 text-center"><div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-slate-800 text-xl" aria-hidden="true">⌕</div><h3 className="mt-4 font-medium text-slate-200">{totalCount === 0 ? "Chưa có sản phẩm trong hàng đợi" : "Không tìm thấy sản phẩm phù hợp"}</h3><p className="mt-1 text-sm text-slate-500">{totalCount === 0 ? "Sản phẩm từ Auto SEO hoặc nguồn nhập sẽ xuất hiện tại đây." : "Hãy thử xóa từ khóa hoặc thay đổi bộ lọc."}</p>{totalCount > 0 && <button type="button" className="mt-4 text-sm font-medium text-cyan-300 hover:text-cyan-200" onClick={() => { setOffset(0); setQuery(""); setStatusGroup("all"); setProviderFilter("all"); }}>Xóa bộ lọc</button>}</div>
         )}
 
         {queue && queue.jobs.length > 0 && (
-          <div className="flex items-center justify-between border-t border-slate-800 px-5 py-3 text-xs text-slate-500"><span>Trang {Math.floor(offset / 50) + 1} · hiển thị {filteredJobs.length}/{queue.jobs.length} sản phẩm trên trang</span><div className="flex gap-2"><button type="button" disabled={offset === 0 || isBusy} onClick={() => setOffset(current => Math.max(0, current - 50))} className={SECONDARY_BUTTON_CLASS_NAME}>Trang trước</button><button type="button" disabled={queue.jobs.length < 50 || isBusy} onClick={() => setOffset(current => current + 50)} className={SECONDARY_BUTTON_CLASS_NAME}>Trang sau</button></div></div>
+          <div className="flex items-center justify-between border-t border-slate-800 px-5 py-3 text-xs text-slate-500"><span>Trang {Math.floor(offset / 50) + 1} · hiển thị {filteredJobs.length}/{queue.jobs.length} sản phẩm trên trang</span><div className="flex gap-2"><button type="button" disabled={offset === 0 || isBusy} onClick={() => setOffset(current => Math.max(0, current - 50))} className={SECONDARY_BUTTON_CLASS_NAME}>Trang trước</button><button type="button" disabled={queue.nextOffset === null || isBusy} onClick={() => setOffset(queue.nextOffset ?? offset)} className={SECONDARY_BUTTON_CLASS_NAME}>Trang sau</button></div></div>
         )}
       </section>
 

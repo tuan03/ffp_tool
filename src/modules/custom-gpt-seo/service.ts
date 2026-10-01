@@ -5,7 +5,12 @@ export interface GptQueuePage {
   readonly counts: Readonly<Record<string, number>>;
   readonly activeBatch: GptSeoBatch | null;
   readonly activeBatches: readonly GptSeoBatch[];
-  readonly nextOffset: number;
+  readonly nextOffset: number | null;
+}
+
+export interface GptQueueFilters {
+  readonly statuses?: readonly GptSeoJob["status"][];
+  readonly provider?: SeoProvider;
 }
 
 export interface GptReviewPage {
@@ -63,7 +68,11 @@ export function createCustomGptClient(fetcher: typeof fetch = fetch) {
     stores: listStores,
     settings: (storeId: string) => request<GptSeoSettings>("settings", storeId),
     configure: (storeId: string, settings: GptSeoSettings) => request<GptSeoSettings>("settings", storeId, settings),
-    list: (storeId: string, offset = 0, status?: "REVIEW_READY") => request<GptQueuePage>(`jobs?offset=${offset}${status ? `&status=${status}` : ""}`, storeId),
+    list: (storeId: string, offset = 0, filters: GptQueueFilters = {}) => {
+      const statuses = filters.statuses?.length ? `&statuses=${encodeURIComponent(filters.statuses.join(","))}` : "";
+      const provider = filters.provider ? `&provider=${encodeURIComponent(filters.provider)}` : "";
+      return request<GptQueuePage>(`jobs?offset=${offset}${statuses}${provider}`, storeId);
+    },
     reviews: (storeId: string, offset = 0) => request<GptReviewPage>(`reviews?offset=${offset}`, storeId),
     job: (storeId: string, jobId: string) => request<GptSeoJob>(`job?jobId=${encodeURIComponent(jobId)}`, storeId),
     enqueue: (input: GptSeoEnqueue) => request<GptSeoJob>("enqueue", input.storeId, input),

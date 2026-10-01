@@ -6,6 +6,10 @@ import { canonicalizeJson } from "../canonical-json";
 
 const LEASE_MS = 30 * 60_000;
 const DEFAULT_SETTINGS: GptSeoSettings = { provider: "gemini", batchSize: 5, version: 1, language: "en-US", instructions: "Use only grounded product facts. Never invent certifications, materials or performance claims." };
+export interface QueueListFilters {
+  readonly statuses?: readonly GptJobStatus[];
+  readonly provider?: SeoProvider;
+}
 function hash(value: unknown): string { return createHash("sha256").update(canonicalizeJson(value)).digest("hex"); }
 function record(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid stored record");
@@ -103,6 +107,37 @@ export class CustomGptQueue {
         ? this.db.prepare("SELECT payload FROM gpt_jobs WHERE store_id=? AND status=? ORDER BY created_at,id LIMIT 50 OFFSET ?").all(storeId, status, offset)
         : this.db.prepare("SELECT payload FROM gpt_jobs WHERE store_id=? ORDER BY created_at,id LIMIT 50 OFFSET ?").all(storeId, offset);
     return rows.map(row => json(row.payload) as GptSeoJob);
+  }
+  listFiltered(storeId: string, filters: QueueListFilters, offset = 0): readonly GptSeoJob[] {
+    const statuses = [...new Set(filters.statuses ?? [])];
+    const conditions = ["store_id=?"];
+    const parameters: Array<string | number> = [storeId];
+    if (filters.provider) {
+      conditions.push("provider=?");
+      parameters.push(filters.provider);
+    }
+    if (statuses.length > 0) {
+      conditions.push(`status IN (${statuses.map(() => "?").join(",")})`);
+      parameters.push(...statuses);
+    }
+    parameters.push(offset);
+    const rows = this.db.prepare(`SELECT payload FROM gpt_jobs WHERE ${conditions.join(" AND ")} ORDER BY created_at,id LIMIT 50 OFFSET ?`).all(...parameters);
+    return rows.map(row => json(row.payload) as GptSeoJob);
+  }
+  countFiltered(storeId: string, filters: QueueListFilters): number {
+    const statuses = [...new Set(filters.statuses ?? [])];
+    const conditions = ["store_id=?"];
+    const parameters: string[] = [storeId];
+    if (filters.provider) {
+      conditions.push("provider=?");
+      parameters.push(filters.provider);
+    }
+    if (statuses.length > 0) {
+      conditions.push(`status IN (${statuses.map(() => "?").join(",")})`);
+      parameters.push(...statuses);
+    }
+    const row = this.db.prepare(`SELECT COUNT(*) AS count FROM gpt_jobs WHERE ${conditions.join(" AND ")}`).get(...parameters);
+    return Number(row?.count ?? 0);
   }
   counts(storeId: string, provider?: ExternalSeoProvider): Readonly<Record<string, number>> {
     const rows = provider

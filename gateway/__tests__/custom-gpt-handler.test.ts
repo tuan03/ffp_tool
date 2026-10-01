@@ -106,6 +106,49 @@ test("administration lists every active batch for the selected store", async () 
   }
 });
 
+test("administration filters queue status before pagination", async () => {
+  const db = new DatabaseSync(":memory:");
+  const queue = new CustomGptQueue(db);
+  for (let index = 0; index < 51; index += 1) {
+    const job = queue.enqueue({
+      storeId: "jeminise-real",
+      source: "auto_seo",
+      sourceIdentity: `product-${index}`,
+      input: { title: `Product ${index}`, description: "Description", handle: `product-${index}`, niche: "home", images: [] },
+      original: {},
+      settings: { provider: "codex_mcp", batchSize: 10, version: 1, language: "en-US", instructions: "Grounded facts only." },
+    });
+    if (index < 50) {
+      db.prepare("UPDATE gpt_jobs SET status='REVIEW_READY',payload=json_set(payload,'$.status','REVIEW_READY') WHERE id=?").run(job.id);
+    }
+  }
+
+  const handler = createCustomGptHandler({ queue, storeId: "capozen", adminKey: "admin-key" });
+  const server = http.createServer((req, res) => { void handler(req, res); });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+
+  try {
+    const response = await fetch(
+      `http://127.0.0.1:${address.port}/api/v1/gpt-seo/admin/jobs?storeId=jeminise-real&statuses=PENDING&provider=codex_mcp&offset=0`,
+      { headers: { Authorization: "Bearer admin-key" } },
+    );
+    assert.equal(response.status, 200);
+    const payload = await response.json() as {
+      readonly jobs: readonly { readonly status: string }[];
+      readonly nextOffset: number | null;
+    };
+    assert.equal(payload.jobs.length, 1);
+    assert.equal(payload.jobs[0]?.status, "PENDING");
+    assert.equal(payload.nextOffset, null);
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    db.close();
+  }
+});
+
 test("administration lists complete review records and saves review states in bulk", async () => {
   const db = new DatabaseSync(":memory:");
   const queue = new CustomGptQueue(db);

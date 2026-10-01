@@ -85,6 +85,10 @@ const GROUP_STATUSES: Record<Exclude<QueueStatusGroup, "all">, readonly GptJobSt
   cancelled: ["CANCELLED"],
 };
 
+export function getStatusesForGroup(group: QueueStatusGroup): readonly GptJobStatus[] | undefined {
+  return group === "all" ? undefined : GROUP_STATUSES[group];
+}
+
 const SUMMARY_DEFINITIONS: readonly Omit<QueueSummary, "count">[] = [
   {
     key: "waiting",

@@ -2,7 +2,7 @@ import { timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 import { researchExternalSeo, checkExternalSeoKeywords, bindExternalSeoProduct } from "../../src/modules/seo-content";
-import type { GptSeoEnqueue, GptSeoInput } from "../../src/modules/custom-gpt-seo";
+import type { GptJobStatus, GptSeoEnqueue, GptSeoInput, SeoProvider } from "../../src/modules/custom-gpt-seo";
 import type { SeoQueue } from "./queue-contract";
 import { verifyImageSignature, downloadProductImage } from "./images";
 import { createExternalSeoWorkflow } from "./workflow";
@@ -29,6 +29,21 @@ export function asObject(value: unknown): Record<string, unknown> {
 function required(value: unknown, name: string): string {
   if (typeof value !== "string" || !value.trim() || value.length > 4000) throw new Error(`Invalid ${name}`);
   return value;
+}
+const JOB_STATUSES: readonly GptJobStatus[] = ["PENDING", "IN_PROGRESS", "WAITING_INPUT", "VALIDATING", "NEEDS_CHANGES", "REVIEW_READY", "FAILED", "CANCELLED"];
+const SEO_PROVIDERS: readonly SeoProvider[] = ["gemini", "custom_gpt", "codex_mcp"];
+function parseJobFilters(url: URL): { readonly statuses?: readonly GptJobStatus[]; readonly provider?: SeoProvider } {
+  const rawStatuses = url.searchParams.get("statuses") ?? url.searchParams.get("status");
+  const statuses = rawStatuses
+    ? [...new Set(rawStatuses.split(",").filter((status): status is GptJobStatus => JOB_STATUSES.includes(status as GptJobStatus)))]
+    : undefined;
+  if (rawStatuses && statuses?.length !== rawStatuses.split(",").length) throw new Error("Invalid queue status filter");
+  const rawProvider = url.searchParams.get("provider");
+  if (rawProvider && !SEO_PROVIDERS.includes(rawProvider as SeoProvider)) throw new Error("Invalid queue provider filter");
+  return {
+    ...(statuses && statuses.length > 0 ? { statuses } : {}),
+    ...(rawProvider ? { provider: rawProvider as SeoProvider } : {}),
+  };
 }
 export function parseGptInput(raw: unknown): GptSeoInput {
   const input = asObject(raw);
@@ -215,7 +230,12 @@ export function createCustomGptHandler(options: CustomGptHandlerOptions) {
         }
         case "admin/jobs": {
           const activeBatches = (await queue.activeBatches(storeId));
-          result = { jobs: (await queue.list(storeId, url.searchParams.get("status") === "REVIEW_READY" ? "REVIEW_READY" : undefined, offset)).map(job => ({ ...job, original: null, checkpoints: {}, result: undefined, settings: { ...job.settings, instructions: "" }, input: { title: job.input.title.slice(0, 300), description: "", handle: job.input.handle, niche: "", productId: job.input.productId, images: [] } })), counts: (await queue.counts(storeId)), activeBatch: activeBatches[0] ?? null, activeBatches, nextOffset: offset + 50 };
+          const filters = parseJobFilters(url);
+          const [jobs, filteredCount] = await Promise.all([
+            queue.listFiltered(storeId, filters, offset),
+            queue.countFiltered(storeId, filters),
+          ]);
+          result = { jobs: jobs.map(job => ({ ...job, original: null, checkpoints: {}, result: undefined, settings: { ...job.settings, instructions: "" }, input: { title: job.input.title.slice(0, 300), description: "", handle: job.input.handle, niche: "", productId: job.input.productId, images: [] } })), counts: (await queue.counts(storeId)), activeBatch: activeBatches[0] ?? null, activeBatches, nextOffset: offset + jobs.length < filteredCount ? offset + jobs.length : null };
           break;
         }
         case "admin/reviews": {

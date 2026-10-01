@@ -8,6 +8,7 @@ import {
   getBatchOwnerLabel,
   getJobProgress,
   getProviderPresentation,
+  getStatusesForGroup,
   getStatusPresentation,
 } from "../ui/seo-queue-view-model";
 import type { GptSeoJob, GptJobStatus, SeoProvider } from "../types";
@@ -95,6 +96,14 @@ test("groups each queue job into exactly one summary card", () => {
     ["cancelled", 1],
   ]);
   assert.equal(summaries.reduce((total, summary) => total + summary.count, 0), jobs.length);
+});
+
+test("maps queue summary filters to the statuses sent before pagination", () => {
+  assert.deepEqual(getStatusesForGroup("waiting"), ["PENDING"]);
+  assert.deepEqual(getStatusesForGroup("processing"), ["IN_PROGRESS", "VALIDATING"]);
+  assert.deepEqual(getStatusesForGroup("attention"), ["WAITING_INPUT", "NEEDS_CHANGES", "FAILED"]);
+  assert.deepEqual(getStatusesForGroup("ready"), ["REVIEW_READY"]);
+  assert.equal(getStatusesForGroup("all"), undefined);
 });
 
 test("uses server totals when the current page contains only part of the queue", () => {
