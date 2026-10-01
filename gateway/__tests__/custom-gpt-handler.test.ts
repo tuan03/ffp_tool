@@ -293,7 +293,7 @@ test("administration can cancel a ready review without deleting its audit data",
     input: { title: "Product", description: "Description", handle: "product", niche: "home", images: [] },
     original: {},
   });
-  const batch = queue.claim("capozen", "cancel-api-claim", "custom_gpt");
+  const batch = queue.claim("capozen", "cancel-api-claim", "custom_gpt", "custom_gpt");
   queue.checkpoint("capozen", job.id, {
     batchId: batch.id,
     leaseToken: batch.leaseToken,

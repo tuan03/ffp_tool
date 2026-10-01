@@ -221,7 +221,7 @@ test("cancelling a ready review preserves its result and checkpoints", () => {
   try {
     queue.configure("capozen", { provider: "custom_gpt", batchSize: 5 });
     const job = queue.enqueue({ storeId: "capozen", source: "auto_seo", sourceIdentity: "cancel-ready", input: source, original: {} });
-    const batch = queue.claim("capozen", "cancel-ready-claim", "custom_gpt");
+    const batch = queue.claim("capozen", "cancel-ready-claim", "custom_gpt", "custom_gpt");
     queue.checkpoint("capozen", job.id, { batchId: batch.id, leaseToken: batch.leaseToken, requestId: "submit-cancel", stage: "submission", payload: { title: "SEO title" } });
     queue.finish("capozen", job.id, { title: "Final SEO title" });
 
@@ -242,7 +242,7 @@ test("a synced GPT review can be removed without changing its Shopify sync recor
   try {
     queue.configure("capozen", { provider: "custom_gpt", batchSize: 5 });
     const job = queue.enqueue({ storeId: "capozen", source: "auto_seo", sourceIdentity: "synced-review", input: source, original: {} });
-    const batch = queue.claim("capozen", "synced-review-claim", "custom_gpt");
+    const batch = queue.claim("capozen", "synced-review-claim", "custom_gpt", "custom_gpt");
     queue.checkpoint("capozen", job.id, { batchId: batch.id, leaseToken: batch.leaseToken, requestId: "synced-submit", stage: "submission", payload: {} });
     queue.finish("capozen", job.id, {});
     queue.saveReviewState("capozen", job.id, { reviewDecision: "approved" });
