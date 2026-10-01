@@ -39,6 +39,7 @@ export interface GatewayServerOptions {
   readonly operatorUsername?: string;
   readonly operatorPassword?: string;
   readonly maxBodyBytes?: number;
+  readonly customGptHandler?: (req: http.IncomingMessage, res: http.ServerResponse) => Promise<void>;
 }
 
 export function getRuntimeStoreConfigFile(env: Readonly<Record<string, string>>): string {
@@ -131,7 +132,7 @@ export function startGatewayServer(
 
   const storeConfigFile = getRuntimeStoreConfigFile(env);
   const stores = loadBootstrappedStores({ env, configFile: storeConfigFile });
-  if (env.GPT_SEO_ACTION_KEYS_JSON || process.env.GPT_SEO_ACTION_KEYS_JSON || env.GPT_SEO_ACTION_KEY || process.env.GPT_SEO_ACTION_KEY || env.GPT_SEO_MCP_KEYS_JSON || process.env.GPT_SEO_MCP_KEYS_JSON) getCustomGptRuntime();
+  if (!options.customGptHandler && getAutoSeoDatabaseUrl() && (env.GPT_SEO_ACTION_KEYS_JSON || env.GPT_SEO_ACTION_KEY || env.GPT_SEO_MCP_KEYS_JSON)) getCustomGptRuntime();
 
   const storeRegistry = new InMemoryStoreRegistry(stores);
   const tokenProvider = new CompositeTokenProvider();
@@ -164,6 +165,12 @@ export function startGatewayServer(
       return;
     }
     if (url === "/mcp/gpt-seo" || url.startsWith("/mcp/gpt-seo?")) {
+      if (!getAutoSeoDatabaseUrl()) {
+        res.statusCode = 503;
+        res.setHeader("Content-Type", "application/json");
+        res.end(JSON.stringify({ error: { code: "SEO_QUEUE_DATABASE_URL_REQUIRED", message: "SEO Queue requires PostgreSQL configuration" } }));
+        return;
+      }
       await getCustomGptRuntime().mcpHandler(req, res);
       return;
     }
@@ -172,7 +179,13 @@ export function startGatewayServer(
       return;
     }
     if (url.startsWith("/api/v1/gpt-seo/")) {
-      await getCustomGptRuntime().handler(req, res);
+      if (!options.customGptHandler && !getAutoSeoDatabaseUrl()) {
+        res.statusCode = 503;
+        res.setHeader("Content-Type", "application/json");
+        res.end(JSON.stringify({ error: { code: "SEO_QUEUE_DATABASE_URL_REQUIRED", message: "SEO Queue requires PostgreSQL configuration" } }));
+        return;
+      }
+      await (options.customGptHandler ?? getCustomGptRuntime().handler)(req, res);
       return;
     }
 
@@ -384,9 +397,15 @@ export function startGatewayServer(
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   const port = Number(process.env.GATEWAY_PORT) || 3001;
   const host = process.env.GATEWAY_HOST || "127.0.0.1";
+  let seoRuntime: ReturnType<typeof getCustomGptRuntime> | undefined;
   try {
+    if (getAutoSeoDatabaseUrl()) {
+      seoRuntime = getCustomGptRuntime();
+      await seoRuntime.initialize();
+    }
     await startGatewayServerWithOptionalAutoSeo({ port, host });
   } catch (error) {
+    await seoRuntime?.close();
     console.error(`[Auto SEO] PostgreSQL schema initialization failed; Gateway did not start: ${formatAutoSeoStartupFailure(error)}`);
     process.exitCode = 1;
   }

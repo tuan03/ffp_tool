@@ -118,6 +118,15 @@ export function requireLocalAutoSeoDatabase(databaseUrl: string): void {
   }
 }
 
+/** Production imports require an explicit opt-in and retain database/user checks. */
+export function requireAutoSeoMigrationDatabase(databaseUrl: string, allowProductionTarget = false): void {
+  if (!allowProductionTarget) return requireLocalAutoSeoDatabase(databaseUrl);
+  const url = validateDatabaseUrl(databaseUrl);
+  if (url.pathname !== "/ffp_tool" || decodeURIComponent(url.username) !== "ffp_tool") {
+    throw new Error("Auto SEO migration requires the ffp_tool database and user");
+  }
+}
+
 export class AutoSeoPostgresRepository implements AutoSeoBackupRepository {
   private readonly pool: Pool;
   private readonly schema: string;

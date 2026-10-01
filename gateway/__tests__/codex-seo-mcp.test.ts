@@ -414,7 +414,7 @@ test("keyword conflicts are not saved and fence changed payloads by request ID",
       semanticMode: "local_with_gpt_review" as const,
     }),
   });
-  const batch = workflow.claim("capozen", "codex_mcp", "codex_mcp:default", "conflict-claim");
+  const batch = await workflow.claim("capozen", "codex_mcp", "codex_mcp:default", "conflict-claim");
   const lease = { jobId: job.id, batchId: batch.id, leaseToken: batch.leaseToken };
   const analysis = {
     physicalProductIdentity: "decor product",
@@ -424,7 +424,7 @@ test("keyword conflicts are not saved and fence changed payloads by request ID",
     shoppingContext: { targetAudience: [], suitableOccasions: [], useCases: [], buyerIntentKeywords: [] },
     evidence: [{ imageId: "front", observation: "Geometric detail" }],
   };
-  workflow.saveAnalysis("capozen", "codex_mcp", { ...lease, requestId: "conflict-analysis", analysis });
+  await workflow.saveAnalysis("capozen", "codex_mcp", { ...lease, requestId: "conflict-analysis", analysis });
   await workflow.research("capozen", "codex_mcp", { ...lease, requestId: "conflict-research", seeds: ["decor"] });
 
   try {

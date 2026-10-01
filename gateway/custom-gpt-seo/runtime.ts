@@ -1,12 +1,9 @@
-import fs from "node:fs";
-import path from "node:path";
-import { DatabaseSync } from "node:sqlite";
-
 import { parseCustomGptEnvironment } from "../../src/config/custom-gpt-environment";
 import { processCustomGptJob } from "./finalizer";
 import { loadLocalEnv } from "../store-config-loader";
 import { createCustomGptHandler } from "./handler";
-import { CustomGptQueue } from "./queue";
+import { PostgresCustomGptQueue } from "./postgres-queue";
+import { getAutoSeoDatabaseUrl } from "../auto-seo-database-url";
 import { getAutoSeoBackupRepository } from "../auto-seo-postgres-repository";
 import { recoverAutoSeoHandoffs } from "./auto-seo-outbox";
 import { createCodexSeoMcpHandler } from "./mcp-handler";
@@ -37,10 +34,11 @@ function logAutoSeoRecoveryFailure(error: unknown): void {
 
 let runtime: ReturnType<typeof createRuntime> | undefined;
 function createRuntime() {
-  const config = parseCustomGptEnvironment({ ...loadLocalEnv(), ...process.env });
-  fs.mkdirSync(path.dirname(path.resolve(config.databasePath)), { recursive: true });
-  const db = new DatabaseSync(config.databasePath);
-  const queue = new CustomGptQueue(db);
+  const environment = { ...loadLocalEnv(), ...process.env };
+  const config = parseCustomGptEnvironment(environment);
+  const databaseUrl = getAutoSeoDatabaseUrl(loadLocalEnv());
+  if (!databaseUrl) throw new Error("SEO_QUEUE_DATABASE_URL_REQUIRED: configure AUTO_SEO_DATABASE_URL or DATABASE_URL; SQLite fallback is disabled");
+  const queue = new PostgresCustomGptQueue({ databaseUrl, legacySourcePath: config.databasePath });
   const handler = createCustomGptHandler({ queue, ...config });
   const workflow = createExternalSeoWorkflow({ queue });
   const mcpHandler = createCodexSeoMcpHandler({ workflow, mcpCredentials: config.mcpCredentials });
@@ -49,6 +47,7 @@ function createRuntime() {
     if (isRunning) return;
     isRunning = true;
     try {
+      await queue.initialize();
       await runCustomGptTick({
         recoverAutoSeoHandoffs: () => recoverAutoSeoHandoffs(getAutoSeoBackupRepository(), queue),
         processCustomGptJob: () => processCustomGptJob(queue),
@@ -58,6 +57,6 @@ function createRuntime() {
   }
   const timer = setInterval(() => { void tick().catch(() => { console.error("[GPT SEO] Background storage operation failed; inspect database health before retrying."); }); }, 1000);
   timer.unref();
-  return { queue, handler, mcpHandler, tick, close: () => { clearInterval(timer); db.close(); } };
+  return { queue, handler, mcpHandler, tick, initialize: () => queue.initialize(), close: async () => { clearInterval(timer); await queue.close(); } };
 }
 export function getCustomGptRuntime(): ReturnType<typeof createRuntime> { return runtime ??= createRuntime(); }

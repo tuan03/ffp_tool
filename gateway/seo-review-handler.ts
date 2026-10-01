@@ -1,7 +1,6 @@
 import type http from "node:http";
 import type { DatabaseSync } from "node:sqlite";
 
-import { getAutoSeoDb } from "./auto-seo-db";
 import { getAutoSeoReviewRepository } from "./auto-seo-review-postgres";
 import type { AutoSeoPostgresReviewRepository } from "./auto-seo-review-postgres";
 import { isGatewayAuthorized, MAX_BODY_BYTES } from "./http-server";
@@ -193,11 +192,11 @@ export async function handleSeoReviewHttpRequest(
   }
 
   const urlObj = new URL(req.url || "/", "http://localhost");
-  if (urlObj.searchParams.get("source") === "auto_seo") {
+  if (!options?.db || urlObj.searchParams.get("source") === "auto_seo") {
     await handleAutoSeoReviewRequest(req, res, urlObj, maxBodyBytes, options);
     return;
   }
-  const db = options?.db ?? getAutoSeoDb();
+  const db = options.db;
   const pathname = urlObj.pathname;
 
   // 1. GET /api/seo-review/items

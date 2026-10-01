@@ -4,7 +4,7 @@ import { existsSync, readFileSync } from "node:fs";
 
 import { Pool } from "pg";
 
-import { requireLocalAutoSeoDatabase } from "./auto-seo-postgres-repository";
+import { AutoSeoPostgresRepository, requireAutoSeoMigrationDatabase } from "./auto-seo-postgres-repository";
 
 interface LegacyReviewRow {
   readonly item_id: string;
@@ -36,6 +36,9 @@ export interface AutoSeoReviewMigrationOptions {
   readonly sourcePath: string;
   readonly databaseUrl: string;
   readonly schema?: string;
+  readonly allowProductionTarget?: boolean;
+  /** Only resolve identical snapshots when exactly one predates review creation. */
+  readonly allowEquivalentHistoricalBackup?: boolean;
   /** Simulates an independent SQLite writer immediately before COMMIT in local tests. */
   readonly beforeCommitForTesting?: () => void | Promise<void>;
   /** Simulates an independent SQLite writer after COMMIT in local tests. */
@@ -106,7 +109,7 @@ function verifySourceState(sourcePath: string, baseline: SourceState): void {
 }
 
 export async function migrateAutoSeoReviewsLocal(options: AutoSeoReviewMigrationOptions): Promise<AutoSeoReviewMigrationReport> {
-  requireLocalAutoSeoDatabase(options.databaseUrl);
+  requireAutoSeoMigrationDatabase(options.databaseUrl, options.allowProductionTarget);
   const schema = options.schema ?? "public";
   if (!/^[a-z_][a-z0-9_]*$/.test(schema)) throw new Error("Invalid PostgreSQL schema identifier");
   const baseline = captureSourceState(options.sourcePath);
@@ -119,6 +122,9 @@ export async function migrateAutoSeoReviewsLocal(options: AutoSeoReviewMigration
   if (rows.some(row => row.source_origin && row.source_origin !== "auto_seo")) {
     throw new Error("AUTO_SEO_REVIEW_MIGRATION_MIXED_SOURCE_BLOCKER: shared review table contains other sources");
   }
+  const targetVerifier = new AutoSeoPostgresRepository({ databaseUrl: options.databaseUrl, schema });
+  try { await targetVerifier.verifyLocalTarget(); }
+  finally { await targetVerifier.close(); }
   const pool = new Pool({ connectionString: options.databaseUrl });
   const client = await pool.connect().catch(async error => { await pool.end(); throw error; });
   let inserted = 0;
@@ -128,10 +134,17 @@ export async function migrateAutoSeoReviewsLocal(options: AutoSeoReviewMigration
     await client.query("BEGIN");
     for (const row of rows) {
       const backups = row.backup_id
-        ? await client.query<{ backup_id: string }>(`SELECT backup_id FROM ${schema}.auto_seo_product_backups WHERE backup_id=$1 AND store_id=$2 AND product_id=$3`, [row.backup_id, row.store_id, row.product_id])
-        : await client.query<{ backup_id: string }>(`SELECT backup_id FROM ${schema}.auto_seo_product_backups WHERE store_id=$1 AND product_id=$2`, [row.store_id, row.product_id]);
-      if (backups.rows.length !== 1) throw new Error(`AUTO_SEO_REVIEW_MIGRATION_BACKUP_BLOCKER: ${row.item_id} has ${backups.rows.length} candidate backups`);
-      const backupId = backups.rows[0]?.backup_id;
+        ? await client.query<{ backup_id: string; snapshot_json: string; snapshot_sha256: string; created_at: string }>(`SELECT backup_id,snapshot_json,snapshot_sha256,created_at FROM ${schema}.auto_seo_product_backups WHERE backup_id=$1 AND store_id=$2 AND product_id=$3`, [row.backup_id, row.store_id, row.product_id])
+        : await client.query<{ backup_id: string; snapshot_json: string; snapshot_sha256: string; created_at: string }>(`SELECT backup_id,snapshot_json,snapshot_sha256,created_at FROM ${schema}.auto_seo_product_backups WHERE store_id=$1 AND product_id=$2`, [row.store_id, row.product_id]);
+      let candidates = backups.rows;
+      if (!row.backup_id && candidates.length > 1 && options.allowEquivalentHistoricalBackup) {
+        const first = candidates[0];
+        const isSameSnapshot = first && candidates.every(candidate => candidate.snapshot_json === first.snapshot_json && candidate.snapshot_sha256 === first.snapshot_sha256);
+        const historical = candidates.filter(candidate => Date.parse(candidate.created_at) <= Date.parse(row.created_at));
+        if (isSameSnapshot && historical.length === 1) candidates = historical;
+      }
+      if (candidates.length !== 1) throw new Error(`AUTO_SEO_REVIEW_MIGRATION_BACKUP_BLOCKER: ${row.item_id} has ${candidates.length} candidate backups`);
+      const backupId = candidates[0]?.backup_id;
       const target = await client.query<LegacyReviewRow & { backup_id: string; source_origin: string }>(`SELECT * FROM ${schema}.seo_review_items WHERE item_id=$1 OR (store_id=$2 AND product_id=$3) FOR UPDATE`, [row.item_id, row.store_id, row.product_id]);
       if (target.rows.length > 0) {
         const candidate = target.rows[0];

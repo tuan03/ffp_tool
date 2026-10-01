@@ -92,19 +92,19 @@ export function createCodexSeoMcpServer(options: CodexSeoMcpServerOptions): McpS
     description: "Read Codex MCP queue counts and the resumable or blocking active batch.",
     inputSchema: {},
     annotations: READ_ONLY,
-  }, async () => jsonResult(workflow.getWork(storeId, PROVIDER, ownerId)));
+  }, async () => jsonResult((await workflow.getWork(storeId, PROVIDER, ownerId))));
 
   server.registerTool("claim_seo_batch", {
     description: "Claim pending codex_mcp jobs. Retry a network failure with the same requestId.",
     inputSchema: { requestId: z.string().min(1).max(120) },
     annotations: SAFE_WRITE,
-  }, async ({ requestId }) => jsonResult(workflow.claim(storeId, PROVIDER, ownerId, requestId)));
+  }, async ({ requestId }) => jsonResult((await workflow.claim(storeId, PROVIDER, ownerId, requestId))));
 
   server.registerTool("get_seo_job", {
     description: "Read source facts, checkpoints, and image IDs for one codex_mcp job.",
     inputSchema: { jobId: z.string().min(1) },
     annotations: READ_ONLY,
-  }, async ({ jobId }) => jsonResult(workflow.getJob(storeId, PROVIDER, jobId)));
+  }, async ({ jobId }) => jsonResult((await workflow.getJob(storeId, PROVIDER, jobId))));
 
   server.registerTool("get_seo_job_image", {
     description: "Fetch one approved product image as vision input. Call once for every image ID.",
@@ -121,13 +121,13 @@ export function createCodexSeoMcpServer(options: CodexSeoMcpServerOptions): McpS
     description: "Renew a Codex MCP batch lease before a long operation.",
     inputSchema: leaseSchema,
     annotations: SAFE_WRITE,
-  }, async input => jsonResult(workflow.renew(storeId, PROVIDER, input)));
+  }, async input => jsonResult((await workflow.renew(storeId, PROVIDER, input))));
 
   server.registerTool("release_seo_batch", {
     description: "Release unfinished jobs while retaining saved checkpoints.",
     inputSchema: leaseSchema,
     annotations: SAFE_WRITE,
-  }, async input => jsonResult(workflow.release(storeId, PROVIDER, input)));
+  }, async input => jsonResult((await workflow.release(storeId, PROVIDER, input))));
 
   server.registerTool("save_seo_analysis", {
     description: "Validate and save grounded visual analysis with evidence for every image ID.",
@@ -137,7 +137,7 @@ export function createCodexSeoMcpServer(options: CodexSeoMcpServerOptions): McpS
     },
     annotations: SAFE_WRITE,
   }, async input => {
-    const job = workflow.saveAnalysis(storeId, PROVIDER, input);
+    const job = (await workflow.saveAnalysis(storeId, PROVIDER, input));
     return jsonResult({ jobId: job.id, status: job.status, checkpoints: job.checkpoints });
   });
 
@@ -167,13 +167,13 @@ export function createCodexSeoMcpServer(options: CodexSeoMcpServerOptions): McpS
       submission: externalSubmissionSchema,
     },
     annotations: SAFE_WRITE,
-  }, async input => jsonResult(workflow.submit(storeId, PROVIDER, input)));
+  }, async input => jsonResult((await workflow.submit(storeId, PROVIDER, input))));
 
   server.registerTool("get_seo_result", {
     description: "Read validation status and feedback. REVIEW_READY awaits human approval.",
     inputSchema: { jobId: z.string().min(1) },
     annotations: READ_ONLY,
-  }, async ({ jobId }) => jsonResult(workflow.getResult(storeId, PROVIDER, jobId)));
+  }, async ({ jobId }) => jsonResult((await workflow.getResult(storeId, PROVIDER, jobId))));
 
   server.registerTool("report_seo_issue", {
     description: "Move a job to WAITING_INPUT when evidence or required source data is missing.",
@@ -182,13 +182,13 @@ export function createCodexSeoMcpServer(options: CodexSeoMcpServerOptions): McpS
       message: z.string().min(1).max(1000),
     },
     annotations: SAFE_WRITE,
-  }, async input => jsonResult(workflow.reportIssue(storeId, PROVIDER, input)));
+  }, async input => jsonResult((await workflow.reportIssue(storeId, PROVIDER, input))));
 
   server.registerTool("list_waiting_seo_jobs", {
     description: "List codex_mcp jobs awaiting operator input without claiming or changing them.",
     inputSchema: { offset: z.number().int().min(0).default(0) },
     annotations: READ_ONLY,
-  }, async ({ offset }) => jsonResult(workflow.listWaiting(storeId, PROVIDER, offset)));
+  }, async ({ offset }) => jsonResult((await workflow.listWaiting(storeId, PROVIDER, offset))));
 
   return server;
 }

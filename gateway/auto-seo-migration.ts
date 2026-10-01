@@ -5,7 +5,7 @@ import path from "node:path";
 
 import { Pool } from "pg";
 
-import { AutoSeoPostgresRepository, requireLocalAutoSeoDatabase } from "./auto-seo-postgres-repository";
+import { AutoSeoPostgresRepository, requireAutoSeoMigrationDatabase } from "./auto-seo-postgres-repository";
 
 const TABLE = "auto_seo_product_backups";
 const FIELDS = [
@@ -26,6 +26,7 @@ export interface MigrationOptions {
   readonly databaseUrl: string;
   readonly schema?: string;
   readonly dryRun?: boolean;
+  readonly allowProductionTarget?: boolean;
   /** Simulates a concurrent SQLite writer immediately before COMMIT in integration tests. */
   readonly beforeCommitForTesting?: () => void | Promise<void>;
   /** Injects a post-COMMIT failure in migration integration tests only. */
@@ -158,7 +159,7 @@ function equalBackup(source: Backup, target: Backup): boolean {
 }
 
 export async function migrateAutoSeoBackups(options: MigrationOptions): Promise<MigrationReport> {
-  requireLocalAutoSeoDatabase(options.databaseUrl);
+  requireAutoSeoMigrationDatabase(options.databaseUrl, options.allowProductionTarget);
   const sourceBefore = options.dryRun ? undefined : captureAutoSeoSourceState(options.sourcePath);
   const { preflight, backups } = readSource(options.sourcePath);
   const repository = new AutoSeoPostgresRepository({ databaseUrl: options.databaseUrl, schema: options.schema });
@@ -198,7 +199,7 @@ export async function migrateAutoSeoBackups(options: MigrationOptions): Promise<
           else conflicts++;
         }
         const reportBase = {
-          preflight, targetIdentity: "127.0.0.1:5432/ffp_tool as ffp_tool",
+          preflight, targetIdentity: `${new URL(options.databaseUrl).host}/ffp_tool as ffp_tool`,
           targetCountBefore, plannedInserts, alreadyMigrated, conflicts,
         };
         if (options.dryRun) {

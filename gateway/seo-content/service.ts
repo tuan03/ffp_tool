@@ -19,12 +19,12 @@ export async function runSeoContent(
 
   if (!runner) {
     const queue = getCustomGptRuntime().queue;
-    const settings = options?.providerSettings ?? queue.settings(input.storeId);
+    const settings = options?.providerSettings ?? (await queue.settings(input.storeId));
     if (settings.provider === "custom_gpt" || settings.provider === "codex_mcp") {
       const jobIds: string[] = [];
       for (const product of input.products) {
         const seoInput = fromAutoSeoProduct(product);
-        const job = queue.enqueue({ storeId: input.storeId, source: "auto_seo", sourceIdentity: String(seoInput.productId || seoInput.handle), input: { ...seoInput, siteDomain: input.shopDomain }, original: product, settings });
+        const job = (await queue.enqueue({ storeId: input.storeId, source: "auto_seo", sourceIdentity: String(seoInput.productId || seoInput.handle), input: { ...seoInput, siteDomain: input.shopDomain }, original: product, settings }));
         jobIds.push(job.id);
       }
       return {

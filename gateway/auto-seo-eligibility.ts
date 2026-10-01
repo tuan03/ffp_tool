@@ -1,6 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 
 import type { CustomGptQueue } from "./custom-gpt-seo/queue";
+import type { SeoQueue } from "./custom-gpt-seo/queue-contract";
 import type { GptSeoJob } from "../src/modules/custom-gpt-seo";
 import type { AutoSeoBackupRepository } from "./auto-seo-backup-repository";
 import type { AutoSeoPostgresReviewRepository } from "./auto-seo-review-postgres";
@@ -165,7 +166,7 @@ export function validateAutoSeoEligibilityRequest(body: unknown): AutoSeoEligibi
 export function getAutoSeoEligibility(
   db: DatabaseSync,
   request: AutoSeoEligibilityRequest,
-  queue: CustomGptQueue,
+  queue: Pick<CustomGptQueue, "findLatestSourceJob">,
 ): AutoSeoEligibilityResponse {
   const productIds = request.products.map((product) => product.productId);
   const backups = queryRowsByProductIds<BackupRow>(
@@ -202,11 +203,23 @@ export function getAutoSeoEligibility(
   );
 }
 
+async function preloadQueueJobs(request: AutoSeoEligibilityRequest, queue: SeoQueue): Promise<Pick<CustomGptQueue, "findLatestSourceJob">> {
+  const productIds = request.products.map(product => normalizeProductId(product.productId));
+  const jobs = queue.findLatestSourceJobs
+    ? await queue.findLatestSourceJobs(request.storeId, "auto_seo", productIds)
+    : new Map(await Promise.all(productIds.map(async productId => [productId, await queue.findLatestSourceJob(request.storeId, "auto_seo", productId)] as const)));
+  return { findLatestSourceJob: (_storeId, _source, productId) => jobs.get(normalizeProductId(productId)) ?? null };
+}
+
+export async function getAutoSeoEligibilityFromLegacyDatabase(db: DatabaseSync, request: AutoSeoEligibilityRequest, queue: SeoQueue): Promise<AutoSeoEligibilityResponse> {
+  return getAutoSeoEligibility(db, request, await preloadQueueJobs(request, queue));
+}
+
 export async function getAutoSeoEligibilityFromRepositories(
   backupRepository: Pick<AutoSeoBackupRepository, "findByStoreAndProductIds">,
   reviewRepository: Pick<AutoSeoPostgresReviewRepository, "findPendingByStoreAndProductIds">,
   request: AutoSeoEligibilityRequest,
-  queue: CustomGptQueue,
+  queue: SeoQueue,
 ): Promise<AutoSeoEligibilityResponse> {
   const productIds = request.products.map(product => product.productId);
   const [backups, reviews] = await Promise.all([
@@ -215,7 +228,7 @@ export async function getAutoSeoEligibilityFromRepositories(
   ]);
   return buildAutoSeoEligibility(
     request,
-    queue,
+    await preloadQueueJobs(request, queue),
     backups.map(backup => ({
       productId: backup.productId,
       shopifyUpdatedAt: backup.shopifyUpdatedAt,
@@ -229,7 +242,7 @@ export async function getAutoSeoEligibilityFromRepositories(
 
 function buildAutoSeoEligibility(
   request: AutoSeoEligibilityRequest,
-  queue: CustomGptQueue,
+  queue: Pick<CustomGptQueue, "findLatestSourceJob">,
   backups: readonly EligibilityBackup[],
   reviews: readonly EligibilityReview[],
 ): AutoSeoEligibilityResponse {

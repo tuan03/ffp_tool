@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import { getCustomGptRuntime } from "./custom-gpt-seo/runtime";
-import type { CustomGptQueue } from "./custom-gpt-seo/queue";
+import type { SeoQueue } from "./custom-gpt-seo/queue-contract";
 import type http from "node:http";
 import type { DatabaseSync } from "node:sqlite";
 
@@ -16,7 +16,7 @@ import type { AutoSeoPostgresBackupInput } from "./auto-seo-postgres-repository"
 import { calculateSha256, canonicalizeJson } from "./canonical-json";
 import {
   AutoSeoEligibilityValidationError,
-  getAutoSeoEligibility,
+  getAutoSeoEligibilityFromLegacyDatabase,
   getAutoSeoEligibilityFromRepositories,
   validateAutoSeoEligibilityRequest,
 } from "./auto-seo-eligibility";
@@ -84,7 +84,7 @@ export interface AutoSeoHandlerOptions {
   readonly eligibilityReviewRepository?: Pick<AutoSeoPostgresReviewRepository, "findPendingByStoreAndProductIds">;
   /** Legacy SQLite test adapter; production never supplies this option. */
   readonly db?: DatabaseSync;
-  readonly queue?: CustomGptQueue;
+  readonly queue?: SeoQueue;
   readonly seoContentRunner?: SeoContentRunner;
   readonly onConflict?: "error" | "update";
 }
@@ -270,7 +270,7 @@ export async function handleAutoSeoRun(
   const db = options?.db;
   const repository = options?.backupRepository ?? (db ? undefined : getAutoSeoBackupRepository());
   const runner = options?.seoContentRunner ?? runSeoContent;
-  const selectedSettings = options?.seoContentRunner ? undefined : getCustomGptRuntime().queue.settings(request.storeId);
+  const selectedSettings = options?.seoContentRunner ? undefined : (await getCustomGptRuntime().queue.settings(request.storeId));
 
   let backupIds: string[] = [];
   const acceptedProducts: AutoSeoProductPayload[] = [];
@@ -735,7 +735,7 @@ export async function handleAutoSeoEligibilityHttpRequest(
     const request = validateAutoSeoEligibilityRequest(body);
     const queue = options?.queue ?? getCustomGptRuntime().queue;
     const result = options?.db
-      ? getAutoSeoEligibility(options.db, request, queue)
+      ? await getAutoSeoEligibilityFromLegacyDatabase(options.db, request, queue)
       : await getAutoSeoEligibilityFromRepositories(
           options?.eligibilityBackupRepository ?? getAutoSeoBackupRepository(),
           options?.eligibilityReviewRepository ?? getAutoSeoReviewRepository(),

@@ -25,7 +25,7 @@ Authorization: Bearer <machine-specific-token>
 
 The bearer token selects both the store and worker identity. MCP tools never accept `storeId` or `workerId`, so a client cannot switch stores or impersonate another worker through tool input. Keep `/mcp/gpt-seo` outside the browser Basic Auth handler; the endpoint performs its own bearer authentication.
 
-Two machines may process the same store concurrently when each machine uses its own configured token. Each worker can hold one active batch, and SQLite assigns only still-pending jobs inside an atomic transaction, so active batches do not share products.
+Two machines may process the same store concurrently when each machine uses its own configured token. Each worker can hold one active batch. PostgreSQL assigns only still-pending jobs inside a fenced transaction, so active batches do not share products. Queue, checkpoints, review edits and Shopify sync permits use the same `AUTO_SEO_DATABASE_URL` / `DATABASE_URL` as Auto SEO. `GPT_SEO_DB_PATH` identifies only the archived SQLite source for the offline migration guard; it is not runtime storage.
 
 ## Codex configuration
 
