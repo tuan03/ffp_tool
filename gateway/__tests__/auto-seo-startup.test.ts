@@ -5,7 +5,7 @@ import { test } from "node:test";
 import { Pool } from "pg";
 
 import { bootstrapAutoSeoSchema } from "../auto-seo-startup";
-import { startGatewayServerWhenReady } from "../server";
+import { startGatewayServerWhenReady, startGatewayServerWithOptionalAutoSeo } from "../server";
 
 const databaseUrl = process.env.AUTO_SEO_TEST_DATABASE_URL;
 const integrationTest = databaseUrl ? test : test.skip;
@@ -25,6 +25,12 @@ async function withFreshSchema(run: (pool: Pool, schema: string) => Promise<void
 test("startup rejects missing Auto SEO PostgreSQL configuration", async () => {
   await assert.rejects(bootstrapAutoSeoSchema({ databaseUrl: "" }), /AUTO_SEO_DATABASE_URL/);
   await assert.rejects(startGatewayServerWhenReady({ port: 0 }, { databaseUrl: "" }), /AUTO_SEO_DATABASE_URL/);
+});
+
+test("Gateway remains available when Auto SEO PostgreSQL is not configured", async () => {
+  const server = await startGatewayServerWithOptionalAutoSeo({ port: 0, host: "127.0.0.1" }, { databaseUrl: "" });
+  await new Promise<void>((resolve) => server.once("listening", resolve));
+  await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
 });
 
 integrationTest("startup creates and verifies both tables in a fresh schema and is idempotent", async () => {

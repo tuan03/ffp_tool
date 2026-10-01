@@ -8,6 +8,7 @@ import { serveStaticFile } from "./static-server";
 
 import { GatewayDispatcher } from "./dispatcher";
 import { handleAutoSeoEligibilityHttpRequest, handleAutoSeoHttpRequest } from "./auto-seo-handler";
+import { getAutoSeoDatabaseUrl } from "./auto-seo-database-url";
 import { bootstrapAutoSeoSchema } from "./auto-seo-startup";
 import type { AutoSeoStartupOptions } from "./auto-seo-startup";
 import { handleSeoReviewHttpRequest } from "./seo-review-handler";
@@ -51,6 +52,23 @@ export async function startGatewayServerWhenReady(
 ): Promise<http.Server> {
   await bootstrapAutoSeoSchema(startupOptions);
   return startGatewayServer(options);
+}
+
+/**
+ * Starts core Gateway routes even when Auto SEO persistence has not been
+ * provisioned yet. Auto SEO routes then return their explicit configuration
+ * error; they never fall back to SQLite.
+ */
+export async function startGatewayServerWithOptionalAutoSeo(
+  options: GatewayServerOptions,
+  startupOptions?: AutoSeoStartupOptions,
+): Promise<http.Server> {
+  const databaseUrl = startupOptions?.databaseUrl ?? getAutoSeoDatabaseUrl();
+  if (!databaseUrl) {
+    console.warn("[Auto SEO] PostgreSQL is not configured; Auto SEO routes are unavailable while core Gateway routes remain online.");
+    return startGatewayServer(options);
+  }
+  return startGatewayServerWhenReady(options, { ...startupOptions, databaseUrl });
 }
 
 function isOperatorAuthorized(
@@ -358,7 +376,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
   const port = Number(process.env.GATEWAY_PORT) || 3001;
   const host = process.env.GATEWAY_HOST || "127.0.0.1";
   try {
-    await startGatewayServerWhenReady({ port, host });
+    await startGatewayServerWithOptionalAutoSeo({ port, host });
   } catch (error) {
     console.error(`[Auto SEO] PostgreSQL schema initialization failed; Gateway did not start: ${formatAutoSeoStartupFailure(error)}`);
     process.exitCode = 1;
