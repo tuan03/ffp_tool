@@ -52,7 +52,10 @@ export async function runMockAutoSeo(
 
 export class MockAutoSeoClient implements AutoSeoClient {
   private readonly detailCache = new Map<string, ShopifyProductForAutoSeoUi>();
-  private readonly successfulInputFingerprints = new Map<string, string>();
+  private readonly successfulInputs = new Map<string, {
+    readonly fingerprint: string;
+    readonly updatedAt?: string;
+  }>();
   private activeStoreId = "store-chillgen-mock";
 
   public async listStores(): Promise<readonly AutoSeoStoreOption[]> {
@@ -282,20 +285,29 @@ export class MockAutoSeoClient implements AutoSeoClient {
     request: AutoSeoEligibilityRequest,
   ): Promise<AutoSeoEligibilityResponse> {
     const items = request.products.map((product) => {
-      const hasSuccessfulRevision = this.successfulInputFingerprints.has(
+      const successfulInput = this.successfulInputs.get(
         this.getCacheKey(request.storeId, product.productId),
+      );
+      const isCurrent = Boolean(
+        successfulInput?.updatedAt &&
+        product.updatedAt &&
+        successfulInput.updatedAt === product.updatedAt,
       );
       return {
         productId: product.productId,
-        state: hasSuccessfulRevision ? "current" as const : "never_processed" as const,
-        reason: hasSuccessfulRevision ? "UP_TO_DATE" as const : "NO_HISTORY" as const,
+        state: !successfulInput
+          ? "never_processed" as const
+          : isCurrent ? "current" as const : "changed" as const,
+        reason: !successfulInput
+          ? "NO_HISTORY" as const
+          : isCurrent ? "UP_TO_DATE" as const : "SHOPIFY_UPDATED" as const,
       };
     });
     return {
       items,
       counts: {
         never_processed: items.filter(item => item.state === "never_processed").length,
-        changed: 0,
+        changed: items.filter(item => item.state === "changed").length,
         current: items.filter(item => item.state === "current").length,
         active: 0,
         retry: 0,
@@ -314,12 +326,15 @@ export class MockAutoSeoClient implements AutoSeoClient {
     for (const product of request.products) {
       const cacheKey = this.getCacheKey(request.storeId, product.id);
       const fingerprint = createMockSeoFingerprint(product);
-      if (this.successfulInputFingerprints.get(cacheKey) === fingerprint) {
+      if (this.successfulInputs.get(cacheKey)?.fingerprint === fingerprint) {
         skippedProducts.push({ productId: product.id, reason: "UNCHANGED" });
         continue;
       }
       acceptedProducts.push(product);
-      this.successfulInputFingerprints.set(cacheKey, fingerprint);
+      this.successfulInputs.set(cacheKey, {
+        fingerprint,
+        ...(product.updatedAt ? { updatedAt: product.updatedAt } : {}),
+      });
     }
     return {
       workflowId: request.workflowId,
