@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
+
+import { resolveSeoQueueStoreId } from "../../../shared/seo-queue-navigation";
 
 import type { CustomGptClient, GptQueuePage, SeoQueueStore } from "../service";
 import type { GptSeoJob, GptSeoSettings, SeoProvider } from "../types";
@@ -25,15 +27,16 @@ const FIELD_CLASS_NAME = "rounded-lg border border-slate-700 bg-slate-950 px-3 p
 const SECONDARY_BUTTON_CLASS_NAME = "inline-flex items-center justify-center rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm font-medium text-slate-200 transition hover:border-slate-600 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50";
 const PRIMARY_BUTTON_CLASS_NAME = "inline-flex items-center justify-center rounded-lg bg-cyan-500 px-3 py-2 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400 disabled:cursor-not-allowed disabled:opacity-50";
 const TRANSFERABLE_STATUSES = ["PENDING", "WAITING_INPUT", "NEEDS_CHANGES", "FAILED"] as const;
-const DEFAULT_STORE_ID = "capozen";
 
 function getSourceLabel(source: GptSeoJob["source"]): string {
   return source === "auto_seo" ? "Auto SEO" : "Amazon";
 }
 
 export function CustomGptSeoPage({ client }: { readonly client: CustomGptClient }): React.JSX.Element {
-  const [storeId, setStoreId] = useState(DEFAULT_STORE_ID);
-  const [stores, setStores] = useState<readonly SeoQueueStore[]>([{ storeId: DEFAULT_STORE_ID, shopDomain: "" }]);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const initialStoreId = useRef(resolveSeoQueueStoreId(searchParams)).current;
+  const [storeId, setStoreId] = useState(initialStoreId);
+  const [stores, setStores] = useState<readonly SeoQueueStore[]>([{ storeId: initialStoreId, shopDomain: "" }]);
   const [isStoreListLoading, setIsStoreListLoading] = useState(true);
   const [settings, setSettings] = useState<GptSeoSettings | null>(null);
   const [queue, setQueue] = useState<GptQueuePage | null>(null);
@@ -53,9 +56,9 @@ export function CustomGptSeoPage({ client }: { readonly client: CustomGptClient 
       .then(configuredStores => {
         if (cancelled) return;
         if (configuredStores.length === 0) throw new Error("Chưa có cửa hàng nào được cấu hình.");
-        setStores(configuredStores.some(store => store.storeId === DEFAULT_STORE_ID)
+        setStores(configuredStores.some(store => store.storeId === initialStoreId)
           ? configuredStores
-          : [{ storeId: DEFAULT_STORE_ID, shopDomain: "" }, ...configuredStores]);
+          : [{ storeId: initialStoreId, shopDomain: "" }, ...configuredStores]);
       })
       .catch(error => {
         if (!cancelled) setNotice({ kind: "error", text: error instanceof Error ? error.message : "Không tải được danh sách cửa hàng." });
@@ -134,6 +137,7 @@ export function CustomGptSeoPage({ client }: { readonly client: CustomGptClient 
 
   function handleStoreChange(nextStoreId: string): void {
     if (!nextStoreId || nextStoreId === storeId) return;
+    setSearchParams({ storeId: nextStoreId }, { replace: true });
     refreshGeneration.current += 1;
     setStoreId(nextStoreId);
     setOffset(0);
