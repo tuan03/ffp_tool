@@ -33,6 +33,7 @@ test("production Compose persists PostgreSQL 17 and waits before starting the ex
   assert.match(compose, /\.\/data:\/app\/\.local-data/);
   assert.match(compose, /\.\/runtime:\/app\/\.runtime/);
   const databaseSection = compose.split("  app:")[0];
+  assert.match(databaseSection, /container_name: ffp-database/);
   assert.doesNotMatch(databaseSection, /ports:/);
   assert.doesNotMatch(compose, /^\s*POSTGRES_PASSWORD:.*:-/m);
 });
