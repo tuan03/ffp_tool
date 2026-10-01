@@ -48,7 +48,7 @@ test("backup outbox preserves a Codex MCP provider snapshot", () => {
 
     const queuedJob = queue.list("capozen")[0];
     assert.equal(queuedJob?.settings.provider, "codex_mcp");
-    assert.equal(queue.claim("capozen", "codex-auto-seo", "codex_mcp").jobs[0]?.id, queuedJob?.id);
+    assert.equal(queue.claim("capozen", "codex-auto-seo", "codex_mcp", "codex_mcp:default").jobs[0]?.id, queuedJob?.id);
   } finally {
     backupDb.close();
     queueDb.close();

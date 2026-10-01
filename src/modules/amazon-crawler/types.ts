@@ -605,6 +605,7 @@ export interface AmazonCrawlerReviewClient {
   syncAllApproved(): Promise<{ readonly queued: number; readonly itemIds: readonly string[] }>;
   markSynced(itemId: string, info?: { productId?: string; productHandle?: string; adminUrl?: string }): Promise<AmazonCrawlerReviewItem>;
   markFailed(itemId: string, error?: string): Promise<AmazonCrawlerReviewItem>;
+  delete(itemId: string): Promise<{ readonly deleted: boolean }>;
   deleteAll(): Promise<{ readonly deleted: number; readonly skipped: number }>;
   imageUrl(fileToken: string): string;
 }

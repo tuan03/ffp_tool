@@ -20,7 +20,7 @@ function createRuntime() {
   const queue = new CustomGptQueue(db);
   const handler = createCustomGptHandler({ queue, ...config });
   const workflow = createExternalSeoWorkflow({ queue });
-  const mcpHandler = createCodexSeoMcpHandler({ workflow, mcpKeys: config.mcpKeys });
+  const mcpHandler = createCodexSeoMcpHandler({ workflow, mcpCredentials: config.mcpCredentials });
   let isRunning = false;
   async function tick(): Promise<void> {
     if (isRunning) return;

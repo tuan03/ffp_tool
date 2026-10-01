@@ -77,20 +77,18 @@ export function createExternalSeoWorkflow(options: ExternalSeoWorkflowOptions) {
   };
 
   return {
-    getWork(storeId: string, provider: ExternalSeoProvider) {
-      const activeBatch = queue.activeBatch(storeId);
+    getWork(storeId: string, provider: ExternalSeoProvider, ownerId: string) {
+      const activeBatch = queue.activeBatch(storeId, ownerId);
       return {
         settings: queue.settings(storeId),
         counts: queue.counts(storeId, provider),
-        activeBatch: activeBatch?.provider === provider ? activeBatch : null,
-        blockedBy: activeBatch && activeBatch.provider !== provider
-          ? { batchId: activeBatch.id, provider: activeBatch.provider, expiresAt: activeBatch.expiresAt }
-          : null,
+        activeBatch,
+        blockedBy: null,
       };
     },
 
-    claim(storeId: string, provider: ExternalSeoProvider, requestId: string) {
-      return queue.claim(storeId, requestId, provider);
+    claim(storeId: string, provider: ExternalSeoProvider, ownerId: string, requestId: string) {
+      return queue.claim(storeId, requestId, provider, ownerId);
     },
 
     getBatch(storeId: string, provider: ExternalSeoProvider, batchId: string) {

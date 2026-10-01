@@ -23,6 +23,7 @@ import { ProductSplitView } from "./components/ProductSplitView";
 import { SeoBatchToolbar } from "./components/SeoBatchToolbar";
 import { ShopifySyncErrorModal } from "./components/ShopifySyncErrorModal";
 import { VersionConflictModal } from "./components/VersionConflictModal";
+import { deleteSeoReviewProduct } from "./delete-review-product";
 import { filterSeoProducts, findNextProductInList } from "./review-navigation";
 import { buildProductRawJson } from "./product-raw-json-helper";
 import {
@@ -1814,101 +1815,105 @@ export function SeoReviewPage({
     URL.revokeObjectURL(url);
   }
 
-  const handleDeleteProduct = useCallback((id: string) => {
-    const target = products.find((p) => p.id === id);
-    if (!target) return;
+  const removeProductsFromUi = useCallback((ids: ReadonlySet<string>) => {
     setProducts((prev) => {
-      const nextProducts = prev.filter((p) => p.id !== id);
+      const nextProducts = prev.filter((product) => !ids.has(product.id));
       if (typeof window !== "undefined" && window.sessionStorage) {
         try {
-          const legacy = nextProducts.filter((p) => !p.coordinatorReview);
+          const legacy = nextProducts.filter((product) => !product.coordinatorReview);
           window.sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(legacy));
         } catch {
-          // ignore
+          // Session storage is a best-effort cache; the server remains authoritative.
         }
       }
       return nextProducts;
     });
     setSelectedIds((prev) => {
       const next = new Set(prev);
-      next.delete(id);
+      for (const id of ids) next.delete(id);
       return next;
     });
-    if (activeProduct?.id === id) {
-      setActiveProduct(null);
+    if (activeProduct && ids.has(activeProduct.id)) {
       setIsDrawerOpen(false);
+      setActiveProduct(null);
     }
-    setSyncFeedback({
-      type: "success",
-      message: `✓ Đã xóa sản phẩm "${target.productTitle.value}" khỏi danh sách Review.`,
-    });
-  }, [products, activeProduct, setSyncFeedback]);
+  }, [activeProduct]);
 
-  const handleDeleteSelected = useCallback(() => {
-    if (selectedIds.size === 0) return;
-    const count = selectedIds.size;
-    if (!confirm(`Xóa ${count} sản phẩm đã chọn khỏi danh sách SEO Review?`)) return;
-    setProducts((prev) => {
-      const nextProducts = prev.filter((p) => !selectedIds.has(p.id));
-      if (typeof window !== "undefined" && window.sessionStorage) {
-        try {
-          const legacy = nextProducts.filter((p) => !p.coordinatorReview);
-          window.sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(legacy));
-        } catch {
-          // ignore
+  const isDeletingReviewsRef = useRef(false);
+  const deleteProductsFromReview = useCallback(async (
+    targets: readonly SeoProductUiViewModel[],
+  ): Promise<{ readonly deletedIds: ReadonlySet<string>; readonly errors: readonly string[] } | null> => {
+    if (isDeletingReviewsRef.current) return null;
+    isDeletingReviewsRef.current = true;
+    try {
+      const outcomes = await Promise.allSettled(
+        targets.map(async (target) => {
+          await deleteSeoReviewProduct(target, { crawler: amazonCrawlerReviews, gpt: gptClient });
+          return target.id;
+        }),
+      );
+      const deletedIds = new Set<string>();
+      const errors: string[] = [];
+      outcomes.forEach((outcome, index) => {
+        if (outcome.status === "fulfilled") {
+          deletedIds.add(outcome.value);
+          return;
         }
-      }
-      return nextProducts;
-    });
-    setSelectedIds(new Set());
-    if (activeProduct && selectedIds.has(activeProduct.id)) {
-      setActiveProduct(null);
-      setIsDrawerOpen(false);
+        const title = targets[index]?.productTitle.value ?? "Sản phẩm";
+        const message = outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason);
+        errors.push(`${title}: ${message}`);
+      });
+      if (deletedIds.size > 0) removeProductsFromUi(deletedIds);
+      return { deletedIds, errors };
+    } finally {
+      isDeletingReviewsRef.current = false;
     }
+  }, [amazonCrawlerReviews, gptClient, removeProductsFromUi]);
+
+  const handleDeleteProduct = useCallback(async (id: string) => {
+    const target = products.find((p) => p.id === id);
+    if (!target) return;
+    const outcome = await deleteProductsFromReview([target]);
+    if (!outcome) return;
+    if (outcome.errors.length > 0) {
+      setSyncFeedback({ type: "error", message: `Không thể xóa: ${outcome.errors[0]}` });
+      return;
+    }
+    setSyncFeedback({ type: "success", message: `✓ Đã xóa sản phẩm "${target.productTitle.value}" khỏi danh sách Review.` });
+  }, [products, deleteProductsFromReview, setSyncFeedback]);
+
+  const handleDeleteSelected = useCallback(async () => {
+    if (selectedIds.size === 0) return;
+    const targets = storeScopedProducts.filter((product) => selectedIds.has(product.id));
+    if (targets.length === 0) {
+      setSelectedIds(new Set());
+      return;
+    }
+    const count = targets.length;
+    if (!confirm(`Xóa ${count} sản phẩm đã chọn khỏi danh sách SEO Review?`)) return;
+    const outcome = await deleteProductsFromReview(targets);
+    if (!outcome) return;
+    const failed = outcome.errors.length;
     setSyncFeedback({
-      type: "success",
-      message: `✓ Đã xóa ${count} sản phẩm đã chọn khỏi danh sách Review.`,
+      type: failed === 0 ? "success" : outcome.deletedIds.size === 0 ? "error" : "warning",
+      message: failed === 0
+        ? `✓ Đã xóa ${count} sản phẩm đã chọn khỏi danh sách Review.`
+        : `Đã xóa ${outcome.deletedIds.size}/${count} sản phẩm. ${failed} sản phẩm lỗi vẫn được giữ lại: ${outcome.errors.join("; ")}`,
     });
-  }, [selectedIds, activeProduct, setSyncFeedback]);
+  }, [selectedIds, storeScopedProducts, deleteProductsFromReview, setSyncFeedback]);
 
   async function handleClearAll(): Promise<void> {
     if (storeScopedProducts.length === 0) return;
     if (!confirm(`Xóa ${storeScopedProducts.length} sản phẩm của store ${effectiveStoreId.toUpperCase()} khỏi danh sách SEO Review? Sản phẩm đã sync trên Shopify vẫn được giữ nguyên.`)) return;
     try {
-      const storeScopedIds = new Set(storeScopedProducts.map((p) => p.id));
-      if (storeScopedProducts.length === products.length && amazonCrawlerReviews) {
-        try {
-          await amazonCrawlerReviews.deleteAll();
-        } catch {
-          // Coordinator backend best-effort
-        }
-      }
-      setProducts((prev) => {
-        const nextProducts = prev.filter((p) => !storeScopedIds.has(p.id));
-        if (typeof window !== "undefined" && window.sessionStorage) {
-          try {
-            const legacy = nextProducts.filter((p) => !p.coordinatorReview);
-            window.sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(legacy));
-          } catch {
-            // ignore
-          }
-        }
-        return nextProducts;
-      });
-      setSelectedIds((prev) => {
-        const next = new Set<string>();
-        for (const id of prev) {
-          if (!storeScopedIds.has(id)) next.add(id);
-        }
-        return next;
-      });
-      if (activeProduct && storeScopedIds.has(activeProduct.id)) {
-        setActiveProduct(null);
-        setIsDrawerOpen(false);
-      }
+      const outcome = await deleteProductsFromReview(storeScopedProducts);
+      if (!outcome) return;
+      const failed = outcome.errors.length;
       setSyncFeedback({
-        type: "success",
-        message: `✓ Đã xóa ${storeScopedProducts.length} sản phẩm của store ${effectiveStoreId.toUpperCase()} khỏi danh sách Review.`,
+        type: failed === 0 ? "success" : outcome.deletedIds.size === 0 ? "error" : "warning",
+        message: failed === 0
+          ? `✓ Đã xóa ${storeScopedProducts.length} sản phẩm của store ${effectiveStoreId.toUpperCase()} khỏi danh sách Review.`
+          : `Đã xóa ${outcome.deletedIds.size}/${storeScopedProducts.length} sản phẩm. ${failed} sản phẩm lỗi vẫn được giữ lại: ${outcome.errors.join("; ")}`,
       });
     } catch (error: unknown) {
       setSyncFeedback({ type: "error", message: `Không thể xóa danh sách Review: ${error instanceof Error ? error.message : String(error)}` });

@@ -389,3 +389,41 @@ test("12. returns 405 for unsupported HTTP methods on routes", async () => {
   await handleSeoReviewHttpRequest(req3, res3, { db });
   assert.equal(getRes3().status, 405);
 });
+
+test("13. DELETE /api/seo-review/items/:itemId removes only the review item", async () => {
+  const db = createMemoryDb();
+  upsertSeoReviewItem(db, makeSampleItem({ itemId: "store-1:delete-me", productId: "delete-me" }));
+  upsertSeoReviewItem(db, makeSampleItem({ itemId: "store-1:keep-me", productId: "keep-me" }));
+
+  const { req, res, getResult } = createMockReqRes({
+    method: "DELETE",
+    url: "/api/seo-review/items/store-1%3Adelete-me",
+  });
+  await handleSeoReviewHttpRequest(req, res, { db });
+
+  assert.deepEqual(getResult(), {
+    status: 200,
+    body: { success: true, itemId: "store-1:delete-me" },
+  });
+
+  const remaining = db.prepare("SELECT item_id, deleted_at FROM seo_review_items ORDER BY item_id").all() as Array<{
+    item_id: string;
+    deleted_at: string | null;
+  }>;
+  assert.equal(remaining.length, 2);
+  assert.ok(remaining.find((item) => item.item_id === "store-1:delete-me")?.deleted_at);
+  assert.equal(remaining.find((item) => item.item_id === "store-1:keep-me")?.deleted_at, null);
+});
+
+test("14. DELETE /api/seo-review/items/:itemId returns 404 when the item is absent", async () => {
+  const db = createMemoryDb();
+  const { req, res, getResult } = createMockReqRes({
+    method: "DELETE",
+    url: "/api/seo-review/items/missing-item",
+  });
+
+  await handleSeoReviewHttpRequest(req, res, { db });
+
+  assert.equal(getResult().status, 404);
+  assert.equal((getResult().body.error as { code: string }).code, "SEO_REVIEW_ITEM_NOT_FOUND");
+});

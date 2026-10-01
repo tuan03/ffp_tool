@@ -46,6 +46,7 @@ export interface GptSeoJob extends GptSeoEnqueue {
 export interface GptSeoBatch {
   readonly id: string;
   readonly provider: ExternalSeoProvider;
+  readonly ownerId: string;
   readonly leaseToken: string;
   readonly expiresAt: number;
   readonly jobs: readonly { readonly id: string; readonly title: string; readonly status: GptJobStatus }[];

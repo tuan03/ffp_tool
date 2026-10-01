@@ -3,6 +3,8 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 
+import type { McpCredential } from "../../src/config/custom-gpt-environment";
+
 import { createCodexSeoMcpServer } from "./mcp-server";
 import type { ExternalSeoWorkflow } from "./workflow";
 
@@ -37,11 +39,10 @@ function sendJson(res: ServerResponse, status: number, payload: unknown): void {
 
 export interface CodexSeoMcpHandlerOptions {
   readonly workflow: ExternalSeoWorkflow;
-  readonly mcpKeys: Readonly<Record<string, string>>;
+  readonly mcpCredentials: readonly McpCredential[];
 }
 
 export function createCodexSeoMcpHandler(options: CodexSeoMcpHandlerOptions) {
-  const keyEntries = Object.entries(options.mcpKeys);
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     if (req.method !== "POST") {
       sendJson(res, 405, {
@@ -53,8 +54,8 @@ export function createCodexSeoMcpHandler(options: CodexSeoMcpHandlerOptions) {
     }
 
     const bearer = req.headers.authorization?.replace(/^Bearer\s+/i, "");
-    const storeId = keyEntries.find(([, secret]) => matchesSecret(bearer, secret))?.[0];
-    if (!storeId) {
+    const credential = options.mcpCredentials.find(candidate => matchesSecret(bearer, candidate.secret));
+    if (!credential) {
       res.setHeader("WWW-Authenticate", "Bearer");
       sendJson(res, 401, {
         jsonrpc: "2.0",
@@ -64,7 +65,11 @@ export function createCodexSeoMcpHandler(options: CodexSeoMcpHandlerOptions) {
       return;
     }
 
-    const server = createCodexSeoMcpServer({ workflow: options.workflow, storeId });
+    const server = createCodexSeoMcpServer({
+      workflow: options.workflow,
+      storeId: credential.storeId,
+      ownerId: `codex_mcp:${credential.workerId}`,
+    });
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     try {
       const body = await readJson(req);

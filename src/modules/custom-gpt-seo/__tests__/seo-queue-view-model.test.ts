@@ -5,6 +5,7 @@ import {
   buildQueueSummaries,
   canRetryJob,
   filterQueueJobs,
+  getBatchOwnerLabel,
   getJobProgress,
   getProviderPresentation,
   getStatusPresentation,
@@ -55,6 +56,13 @@ test("presents provider and status values with operator-friendly Vietnamese labe
   assert.equal(getProviderPresentation("custom_gpt").label, "GPT Custom");
   assert.equal(getStatusPresentation("REVIEW_READY").label, "Sẵn sàng duyệt");
   assert.equal(getStatusPresentation("WAITING_INPUT").label, "Cần bổ sung");
+});
+
+test("presents safe batch owner labels without credentials", () => {
+  assert.equal(getBatchOwnerLabel("codex_mcp:office-pc"), "office-pc");
+  assert.equal(getBatchOwnerLabel("codex_mcp:default"), "Máy mặc định");
+  assert.equal(getBatchOwnerLabel("custom_gpt"), "GPT Custom");
+  assert.equal(getBatchOwnerLabel("future_worker"), "future worker");
 });
 
 test("falls back to readable values when the server introduces a new provider or status", () => {

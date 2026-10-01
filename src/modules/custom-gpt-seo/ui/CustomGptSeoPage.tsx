@@ -1,13 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 
-import type { CustomGptClient, GptQueuePage } from "../service";
+import { resolveSeoQueueStoreId } from "../../../shared/seo-queue-navigation";
+
+import type { CustomGptClient, GptQueuePage, SeoQueueStore } from "../service";
 import type { GptSeoJob, GptSeoSettings, SeoProvider } from "../types";
 
+import { StoreSelector } from "./StoreSelector";
 import {
   buildQueueSummaries,
   canRetryJob,
   filterQueueJobs,
+  getBatchOwnerLabel,
   getJobProgress,
   getProviderPresentation,
   getStatusPresentation,
@@ -29,8 +33,11 @@ function getSourceLabel(source: GptSeoJob["source"]): string {
 }
 
 export function CustomGptSeoPage({ client }: { readonly client: CustomGptClient }): React.JSX.Element {
-  const [storeId, setStoreId] = useState("capozen");
-  const [storeDraft, setStoreDraft] = useState("capozen");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const initialStoreId = useRef(resolveSeoQueueStoreId(searchParams)).current;
+  const [storeId, setStoreId] = useState(initialStoreId);
+  const [stores, setStores] = useState<readonly SeoQueueStore[]>([{ storeId: initialStoreId, shopDomain: "" }]);
+  const [isStoreListLoading, setIsStoreListLoading] = useState(true);
   const [settings, setSettings] = useState<GptSeoSettings | null>(null);
   const [queue, setQueue] = useState<GptQueuePage | null>(null);
   const [offset, setOffset] = useState(0);
@@ -42,6 +49,25 @@ export function CustomGptSeoPage({ client }: { readonly client: CustomGptClient 
   const [statusGroup, setStatusGroup] = useState<QueueStatusGroup>("all");
   const [providerFilter, setProviderFilter] = useState<QueueProviderFilter>("all");
   const refreshGeneration = useRef(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    void client.stores()
+      .then(configuredStores => {
+        if (cancelled) return;
+        if (configuredStores.length === 0) throw new Error("Chưa có cửa hàng nào được cấu hình.");
+        setStores(configuredStores.some(store => store.storeId === initialStoreId)
+          ? configuredStores
+          : [{ storeId: initialStoreId, shopDomain: "" }, ...configuredStores]);
+      })
+      .catch(error => {
+        if (!cancelled) setNotice({ kind: "error", text: error instanceof Error ? error.message : "Không tải được danh sách cửa hàng." });
+      })
+      .finally(() => {
+        if (!cancelled) setIsStoreListLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [client]);
 
   const refresh = useCallback(async (): Promise<void> => {
     const generation = ++refreshGeneration.current;
@@ -109,10 +135,9 @@ export function CustomGptSeoPage({ client }: { readonly client: CustomGptClient 
     }
   }
 
-  function handleStoreSubmit(event: React.FormEvent<HTMLFormElement>): void {
-    event.preventDefault();
-    const nextStoreId = storeDraft.trim();
+  function handleStoreChange(nextStoreId: string): void {
     if (!nextStoreId || nextStoreId === storeId) return;
+    setSearchParams({ storeId: nextStoreId }, { replace: true });
     refreshGeneration.current += 1;
     setStoreId(nextStoreId);
     setOffset(0);
@@ -153,11 +178,7 @@ export function CustomGptSeoPage({ client }: { readonly client: CustomGptClient 
           <p className="mt-2 text-sm leading-6 text-slate-400">Theo dõi sản phẩm được giao cho AI, xử lý lỗi và chuyển kết quả hoàn tất sang bước duyệt.</p>
         </div>
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-          <form onSubmit={handleStoreSubmit} className="flex items-center gap-2">
-            <label htmlFor="seo-store" className="sr-only">Store</label>
-            <input id="seo-store" className={`${FIELD_CLASS_NAME} w-40`} value={storeDraft} onChange={event => setStoreDraft(event.target.value)} placeholder="Store ID" />
-            <button type="submit" className={SECONDARY_BUTTON_CLASS_NAME} disabled={!storeDraft.trim() || storeDraft.trim() === storeId}>Mở store</button>
-          </form>
+          <StoreSelector stores={stores} selectedStoreId={storeId} isLoading={isStoreListLoading} onChange={handleStoreChange} />
           <button type="button" disabled={isBusy} onClick={() => void perform(async () => undefined, "Đã cập nhật hàng đợi.")} className={SECONDARY_BUTTON_CLASS_NAME}>{isBusy ? "Đang tải…" : "↻ Làm mới"}</button>
           <Link className={PRIMARY_BUTTON_CLASS_NAME} to={`/seo-review?storeId=${encodeURIComponent(storeId)}`}>Mở SEO Review →</Link>
         </div>
@@ -180,11 +201,27 @@ export function CustomGptSeoPage({ client }: { readonly client: CustomGptClient 
         ))}
       </div>
 
-      {queue?.activeBatch && (
-        <div className="flex flex-col gap-3 rounded-xl border border-amber-900/70 bg-amber-950/30 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-start gap-3"><span aria-hidden="true" className="mt-0.5 text-amber-300">⏳</span><div><p className="text-sm font-medium text-amber-100">Đang có một batch được {getProviderPresentation(queue.activeBatch.provider).label} giữ</p><p className="mt-1 text-xs text-amber-300/70">{queue.activeBatch.jobs.length} sản phẩm · hết hạn {new Date(queue.activeBatch.expiresAt).toLocaleString("vi-VN")}</p></div></div>
-          <button type="button" disabled={isBusy} onClick={() => void perform(() => client.release(storeId, queue.activeBatch?.id ?? ""), "Đã thu hồi batch.")} className="rounded-lg border border-amber-700 px-3 py-2 text-sm font-medium text-amber-200 transition hover:bg-amber-900/50 disabled:opacity-50">Thu hồi batch</button>
-        </div>
+      {queue && queue.activeBatches.length > 0 && (
+        <section className="overflow-hidden rounded-xl border border-amber-900/70 bg-amber-950/20" aria-labelledby="active-batches-title">
+          <div className="border-b border-amber-900/50 px-4 py-3">
+            <h2 id="active-batches-title" className="text-sm font-medium text-amber-100">Batch đang được xử lý ({queue.activeBatches.length})</h2>
+          </div>
+          <div className="divide-y divide-amber-900/40">
+            {queue.activeBatches.map(batch => (
+              <div key={batch.id} className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex min-w-0 items-start gap-3">
+                  <span aria-hidden="true" className="mt-0.5 text-amber-300">⏳</span>
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-amber-100">{getBatchOwnerLabel(batch.ownerId)} · {getProviderPresentation(batch.provider).label}</p>
+                    <p className="mt-1 truncate font-mono text-xs text-amber-300/60">{batch.id}</p>
+                    <p className="mt-1 text-xs text-amber-300/70">{batch.jobs.length} sản phẩm · hết hạn {new Date(batch.expiresAt).toLocaleString("vi-VN")}</p>
+                  </div>
+                </div>
+                <button type="button" disabled={isBusy} onClick={() => void perform(() => client.release(storeId, batch.id), `Đã thu hồi batch của ${getBatchOwnerLabel(batch.ownerId)}.`)} className="rounded-lg border border-amber-700 px-3 py-2 text-sm font-medium text-amber-200 transition hover:bg-amber-900/50 disabled:opacity-50">Thu hồi</button>
+              </div>
+            ))}
+          </div>
+        </section>
       )}
 
       <section className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-900/40" aria-labelledby="queue-list-title">

@@ -53,10 +53,11 @@ Submission creates a review draft only. These tools never publish or write to Sh
 export interface CodexSeoMcpServerOptions {
   readonly workflow: ExternalSeoWorkflow;
   readonly storeId: string;
+  readonly ownerId: string;
 }
 
 export function createCodexSeoMcpServer(options: CodexSeoMcpServerOptions): McpServer {
-  const { workflow, storeId } = options;
+  const { workflow, storeId, ownerId } = options;
   const server = new McpServer(
     { name: "ffp-seo", version: "1.0.0" },
     { instructions: SERVER_INSTRUCTIONS },
@@ -66,13 +67,13 @@ export function createCodexSeoMcpServer(options: CodexSeoMcpServerOptions): McpS
     description: "Read Codex MCP queue counts and the resumable or blocking active batch.",
     inputSchema: {},
     annotations: READ_ONLY,
-  }, async () => jsonResult(workflow.getWork(storeId, PROVIDER)));
+  }, async () => jsonResult(workflow.getWork(storeId, PROVIDER, ownerId)));
 
   server.registerTool("claim_seo_batch", {
     description: "Claim pending codex_mcp jobs. Retry a network failure with the same requestId.",
     inputSchema: { requestId: z.string().min(1).max(120) },
     annotations: SAFE_WRITE,
-  }, async ({ requestId }) => jsonResult(workflow.claim(storeId, PROVIDER, requestId)));
+  }, async ({ requestId }) => jsonResult(workflow.claim(storeId, PROVIDER, ownerId, requestId)));
 
   server.registerTool("get_seo_job", {
     description: "Read source facts, checkpoints, and image IDs for one codex_mcp job.",

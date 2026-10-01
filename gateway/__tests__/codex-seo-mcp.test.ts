@@ -18,7 +18,7 @@ function object(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-function enqueueProduct(queue: CustomGptQueue, provider: "custom_gpt" | "codex_mcp", sourceIdentity: string) {
+function enqueueProduct(queue: CustomGptQueue, provider: "custom_gpt" | "codex_mcp", sourceIdentity: string, batchSize = 5) {
   return queue.enqueue({
     storeId: "capozen",
     source: "auto_seo",
@@ -34,7 +34,7 @@ function enqueueProduct(queue: CustomGptQueue, provider: "custom_gpt" | "codex_m
     original: { sourceIdentity },
     settings: {
       provider,
-      batchSize: 5,
+      batchSize,
       version: 1,
       language: "en-US",
       instructions: "Use grounded facts only.",
@@ -51,7 +51,7 @@ async function connectClient(queue: CustomGptQueue) {
       extension: "png",
     }),
   });
-  const server = createCodexSeoMcpServer({ workflow, storeId: "capozen" });
+  const server = createCodexSeoMcpServer({ workflow, storeId: "capozen", ownerId: "codex_mcp:default" });
   const client = new Client({ name: "codex-seo-test", version: "1.0.0" });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
@@ -156,7 +156,10 @@ test("Streamable HTTP MCP authenticates bearer tokens and isolates their stores"
   const workflow = createExternalSeoWorkflow({ queue });
   const handler = createCodexSeoMcpHandler({
     workflow,
-    mcpKeys: { capozen: "capozen-mcp-key", wrydeco: "wrydeco-mcp-key" },
+    mcpCredentials: [
+      { storeId: "capozen", workerId: "default", secret: "capozen-mcp-key" },
+      { storeId: "wrydeco", workerId: "default", secret: "wrydeco-mcp-key" },
+    ],
   });
   const httpServer = http.createServer((req, res) => { void handler(req, res); });
   await new Promise<void>(resolve => httpServer.listen(0, "127.0.0.1", resolve));
@@ -192,6 +195,58 @@ test("Streamable HTTP MCP authenticates bearer tokens and isolates their stores"
   }
 });
 
+test("two MCP worker credentials claim and resume separate batches for one store", async () => {
+  const db = new DatabaseSync(":memory:");
+  const queue = new CustomGptQueue(db);
+  queue.configure("capozen", { provider: "codex_mcp", batchSize: 2 });
+  const jobs = ["one", "two", "three", "four"].map(sourceIdentity => enqueueProduct(queue, "codex_mcp", sourceIdentity, 2));
+  const workflow = createExternalSeoWorkflow({ queue });
+  const handler = createCodexSeoMcpHandler({
+    workflow,
+    mcpCredentials: [
+      { storeId: "capozen", workerId: "office-pc", secret: "office-token" },
+      { storeId: "capozen", workerId: "laptop", secret: "laptop-token" },
+    ],
+  });
+  const httpServer = http.createServer((req, res) => { void handler(req, res); });
+  await new Promise<void>(resolve => httpServer.listen(0, "127.0.0.1", resolve));
+  const address = httpServer.address();
+  assert.ok(address && typeof address !== "string");
+  const endpoint = new URL(`http://127.0.0.1:${address.port}/mcp/gpt-seo`);
+  const officeClient = new Client({ name: "office-test", version: "1.0.0" });
+  const laptopClient = new Client({ name: "laptop-test", version: "1.0.0" });
+
+  try {
+    await officeClient.connect(new StreamableHTTPClientTransport(endpoint, {
+      requestInit: { headers: { Authorization: "Bearer office-token" } },
+    }));
+    await laptopClient.connect(new StreamableHTTPClientTransport(endpoint, {
+      requestInit: { headers: { Authorization: "Bearer laptop-token" } },
+    }));
+
+    const officeClaim = object((await officeClient.callTool({ name: "claim_seo_batch", arguments: { requestId: "office-claim" } })).structuredContent);
+    const laptopClaim = object((await laptopClient.callTool({ name: "claim_seo_batch", arguments: { requestId: "laptop-claim" } })).structuredContent);
+    const officeJobIds = new Set((officeClaim.jobs as readonly Record<string, unknown>[]).map(job => String(job.id)));
+    const laptopJobIds = new Set((laptopClaim.jobs as readonly Record<string, unknown>[]).map(job => String(job.id)));
+
+    assert.equal([...officeJobIds].some(jobId => laptopJobIds.has(jobId)), false);
+    assert.deepEqual(new Set([...officeJobIds, ...laptopJobIds]), new Set(jobs.map(job => job.id)));
+
+    const officeWork = object((await officeClient.callTool({ name: "get_seo_work", arguments: {} })).structuredContent);
+    const laptopWork = object((await laptopClient.callTool({ name: "get_seo_work", arguments: {} })).structuredContent);
+    assert.equal(object(officeWork.activeBatch).id, officeClaim.id);
+    assert.equal(object(laptopWork.activeBatch).id, laptopClaim.id);
+    assert.doesNotMatch(JSON.stringify(officeWork), new RegExp(String(laptopClaim.leaseToken)));
+    assert.doesNotMatch(JSON.stringify(laptopWork), new RegExp(String(officeClaim.leaseToken)));
+  } finally {
+    await officeClient.close().catch(() => undefined);
+    await laptopClient.close().catch(() => undefined);
+    httpServer.closeAllConnections();
+    await new Promise<void>(resolve => httpServer.close(() => resolve()));
+    db.close();
+  }
+});
+
 test("Codex MCP completes every checkpoint and finalizes a review-ready draft", async () => {
   const db = new DatabaseSync(":memory:");
   const queue = new CustomGptQueue(db);
@@ -206,7 +261,7 @@ test("Codex MCP completes every checkpoint and finalizes a review-ready draft", 
       semanticMode: "local_with_gpt_review" as const,
     }),
   });
-  const server = createCodexSeoMcpServer({ workflow, storeId: "capozen" });
+  const server = createCodexSeoMcpServer({ workflow, storeId: "capozen", ownerId: "codex_mcp:default" });
   const client = new Client({ name: "codex-e2e-test", version: "1.0.0" });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
@@ -312,7 +367,7 @@ test("keyword conflicts are not saved and fence changed payloads by request ID",
       semanticMode: "local_with_gpt_review" as const,
     }),
   });
-  const batch = workflow.claim("capozen", "codex_mcp", "conflict-claim");
+  const batch = workflow.claim("capozen", "codex_mcp", "codex_mcp:default", "conflict-claim");
   const lease = { jobId: job.id, batchId: batch.id, leaseToken: batch.leaseToken };
   const analysis = {
     physicalProductIdentity: "decor product",

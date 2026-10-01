@@ -128,7 +128,7 @@ export function createCustomGptHandler(options: CustomGptHandlerOptions) {
         case "capabilities": result = { version: 1, batchSize: queue.settings(storeId).batchSize, maxBatchSize: 10, leaseMinutes: 30, imageMode: "public_url_or_manual_attachment", stages: ["analysis", "research", "keywords", "submission"], nextAction: "getSeoQueueStatus" }; break;
         case "context": result = { storeId, ...queue.settings(storeId), nextAction: "claimSeoBatch" }; break;
         case "queue": {
-          const work = workflow.getWork(storeId, "custom_gpt");
+          const work = workflow.getWork(storeId, "custom_gpt", "custom_gpt");
           const { counts, activeBatch } = work;
           const nextAction = activeBatch
             ? "getSeoBatch"
@@ -150,7 +150,7 @@ export function createCustomGptHandler(options: CustomGptHandlerOptions) {
           };
           break;
         }
-        case "claim": result = workflow.claim(storeId, "custom_gpt", required(requestId, "requestId")); break;
+        case "claim": result = workflow.claim(storeId, "custom_gpt", "custom_gpt", required(requestId, "requestId")); break;
         case "batch": result = workflow.getBatch(storeId, "custom_gpt", batchId); break;
         case "renew": result = workflow.renew(storeId, "custom_gpt", { batchId, leaseToken }); break;
         case "release": result = workflow.release(storeId, "custom_gpt", { batchId, leaseToken }); break;
@@ -213,7 +213,11 @@ export function createCustomGptHandler(options: CustomGptHandlerOptions) {
           } else result = queue.settings(storeId);
           break;
         }
-        case "admin/jobs": result = { jobs: queue.list(storeId, url.searchParams.get("status") === "REVIEW_READY" ? "REVIEW_READY" : undefined, offset).map(job => ({ ...job, original: null, checkpoints: {}, result: undefined, settings: { ...job.settings, instructions: "" }, input: { title: job.input.title.slice(0, 300), description: "", handle: job.input.handle, niche: "", productId: job.input.productId, images: [] } })), counts: queue.counts(storeId), activeBatch: queue.activeBatch(storeId), nextOffset: offset + 50 }; break;
+        case "admin/jobs": {
+          const activeBatches = queue.activeBatches(storeId);
+          result = { jobs: queue.list(storeId, url.searchParams.get("status") === "REVIEW_READY" ? "REVIEW_READY" : undefined, offset).map(job => ({ ...job, original: null, checkpoints: {}, result: undefined, settings: { ...job.settings, instructions: "" }, input: { title: job.input.title.slice(0, 300), description: "", handle: job.input.handle, niche: "", productId: job.input.productId, images: [] } })), counts: queue.counts(storeId), activeBatch: activeBatches[0] ?? null, activeBatches, nextOffset: offset + 50 };
+          break;
+        }
         case "admin/job": result = queue.get(storeId, jobId); break;
         case "admin/enqueue": {
           const provider = queue.settings(storeId).provider;
@@ -224,6 +228,7 @@ export function createCustomGptHandler(options: CustomGptHandlerOptions) {
           result = queue.enqueue(input); break;
         }
         case "admin/retry": queue.retry(storeId, jobId); result = { status: "PENDING" }; break;
+        case "admin/cancel": queue.cancelReview(storeId, jobId); result = { cancelled: true }; break;
         case "admin/bind-product": {
           await bindExternalSeoProduct({ storeId, sourceIdentity: required(body.sourceIdentity, "sourceIdentity"), productId: required(body.productId, "productId") });
           result = { bound: true }; break;
