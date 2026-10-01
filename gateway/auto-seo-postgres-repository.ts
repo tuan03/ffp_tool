@@ -227,14 +227,15 @@ export class AutoSeoPostgresRepository implements AutoSeoBackupRepository {
       const acceptedRecords: AutoSeoPostgresBackupInput[] = [];
       const skippedProducts: AutoSeoPostgresClaimResult["skippedProducts"][number][] = [];
       const orderedRecords = [...records].sort((left, right) =>
-        `${left.storeId}\0${left.productId}`.localeCompare(`${right.storeId}\0${right.productId}`),
+        JSON.stringify([left.storeId, left.productId]).localeCompare(JSON.stringify([right.storeId, right.productId])),
       );
 
       for (const record of orderedRecords) {
         if (!record.seoInputSha256) {
           throw new Error(`AUTO_SEO_INPUT_HASH_REQUIRED: ${record.productId}`);
         }
-        const lockKey = `${record.storeId}\0${record.productId}`;
+        // PostgreSQL text rejects NUL; a JSON tuple also avoids delimiter collisions.
+        const lockKey = JSON.stringify([record.storeId, record.productId]);
         await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [lockKey]);
         const matching = await client.query<{
           downstream_status: "NOT_SENT" | "SENT" | "FAILED";
