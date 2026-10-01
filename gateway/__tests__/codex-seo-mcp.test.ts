@@ -308,13 +308,53 @@ test("Codex MCP completes every checkpoint and finalizes a review-ready draft", 
       },
     });
     assert.equal(object(keywords.structuredContent).saved, true);
+    const incompleteDraft = await client.callTool({
+      name: "submit_seo_draft",
+      arguments: {
+        ...lease,
+        requestId: "submit-incomplete-e2e",
+        submission: {
+          draft: {
+            productTitle: "Geometric home decor",
+            intro: "A decor product with a visible geometric detail.",
+            bullets: [
+              { label: "Design", text: "Visible geometric detail." },
+              { label: "Use", text: "Designed for home decor." },
+            ],
+            closing: "Choose this geometric product for home decor.",
+            productSeoTitle: "Geometric Home Decor",
+            productSeoDescription: "Explore geometric home decor featuring a visible geometric detail.",
+          },
+          alts: { front: "Geometric home decor product" },
+        },
+      },
+    });
+    assert.equal(incompleteDraft.isError, true);
+    assert.equal(queue.get("capozen", job.id).status, "IN_PROGRESS");
     await client.callTool({
       name: "submit_seo_draft",
       arguments: {
         ...lease,
         requestId: "submit-e2e",
         submission: {
-          draft: { productTitle: "Geometric home decor" },
+          draft: {
+            productTitle: "Geometric home decor",
+            intro: "A decor product with a visible geometric detail.",
+            bullets: [
+              { label: "Design", text: "Visible geometric detail." },
+              { label: "Use", text: "Designed for home decor." },
+            ],
+            guidance: [],
+            closing: "Choose this geometric product for home decor.",
+            productSeoTitle: "Geometric Home Decor",
+            productSeoDescription: "Explore geometric home decor featuring a visible geometric detail for a simple decorative accent.",
+            aeo_quick_summary: "This home decor product features a clearly visible geometric detail presented against a plain background. It is intended for shoppers seeking a simple geometric accent for home decoration, with the description limited to the supplied visual evidence and product facts.",
+            aeo_faq: [
+              { question: "What design is visible?", answer: "A geometric detail is visible on the product." },
+              { question: "Where is it shown?", answer: "The product is shown against a plain background." },
+              { question: "What is its intended use?", answer: "The supplied information identifies home decor as its intended use." },
+            ],
+          },
           alts: { front: "Geometric home decor product" },
         },
       },
@@ -328,6 +368,13 @@ test("Codex MCP completes every checkpoint and finalizes a review-ready draft", 
         productSeoTitle: "Geometric home decor",
         productSeoDescription: "Grounded description",
         productHandle: input.handle,
+        aeo_quick_summary: "Grounded AEO summary",
+        aeo_faq: [
+          { question: "What is visible?", answer: "A geometric detail." },
+          { question: "Where is it shown?", answer: "On a plain background." },
+          { question: "What is the use?", answer: "Home decor." },
+        ],
+        aeo_json_ld: "{\"@context\":\"https://schema.org\"}",
         images: input.images.map(image => ({
           sourceUrl: image.url,
           alt: "Geometric home decor product",

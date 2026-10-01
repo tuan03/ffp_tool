@@ -1101,7 +1101,9 @@
                           "bullets",
                           "closing",
                           "productSeoTitle",
-                          "productSeoDescription"
+                          "productSeoDescription",
+                          "aeo_quick_summary",
+                          "aeo_faq"
                         ],
                         "properties": {
                           "productTitle": {
@@ -1152,6 +1154,8 @@
                           },
                           "aeo_faq": {
                             "type": "array",
+                            "minItems": 3,
+                            "maxItems": 5,
                             "items": {
                               "type": "object",
                               "required": [

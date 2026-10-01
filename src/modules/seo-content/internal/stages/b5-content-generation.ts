@@ -23,6 +23,7 @@ import { GoogleGenAIVertexContentGenerator } from "../product-understanding/gemi
 import { buildBeddingSeoDescription } from "../content-generation/heuristic-content-generator";
 import { extractVisionDesignConcept } from "../content-generation/heuristic-title-builder";
 import { sanitizeBeddingTitle } from "../store-profiles";
+import { buildJsonLdSchema } from "../content-generation/json-ld-builder";
 import type {
   ContentConstraints,
   ContentGenerator,
@@ -215,7 +216,11 @@ export async function executeB5ContentGeneration(
     productHandle,
     aeo_quick_summary: draft.aeo_quick_summary,
     aeo_faq: draft.aeo_faq,
-    aeo_json_ld: draft.aeo_json_ld,
+    aeo_json_ld: buildJsonLdSchema({
+      productTitle,
+      description: productSeoDescription,
+      faq: draft.aeo_faq,
+    }),
   };
 
   // 6. Validate final content

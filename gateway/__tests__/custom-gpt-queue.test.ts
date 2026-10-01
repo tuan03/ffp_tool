@@ -237,6 +237,49 @@ test("cancelling a ready review preserves its result and checkpoints", () => {
   } finally { db.close(); }
 });
 
+test("AEO backfill resets only unsynced ready reviews and removes stale submissions", () => {
+  const { queue, db } = setup();
+  try {
+    const settings = queue.configure("jeminise-real", { provider: "codex_mcp", batchSize: 10 });
+    const job = queue.enqueue({ storeId: "jeminise-real", source: "auto_seo", sourceIdentity: "aeo-backfill", input: source, original: {}, settings });
+    const batch = queue.claim("jeminise-real", "aeo-backfill-claim", "codex_mcp", "codex_mcp:acer-codex");
+    const lease = { batchId: batch.id, leaseToken: batch.leaseToken };
+    queue.checkpoint("jeminise-real", job.id, { ...lease, requestId: "analysis-old", stage: "analysis", payload: { visual: true } });
+    queue.checkpoint("jeminise-real", job.id, { ...lease, requestId: "research-old", stage: "research", payload: { suggestions: [] } });
+    queue.checkpoint("jeminise-real", job.id, { ...lease, requestId: "keywords-old", stage: "keywords", payload: { keywords: ["cotton rug"] } });
+    queue.checkpoint("jeminise-real", job.id, { ...lease, requestId: "submission-old", stage: "submission", payload: { draft: { productTitle: "Old" } } });
+    queue.finish("jeminise-real", job.id, { output: { productTitle: "Old" } });
+    queue.release("jeminise-real", batch.id, batch.leaseToken);
+
+    const result = queue.resetReviewReadyForAeoBackfill("jeminise-real", "codex_mcp");
+    const reset = queue.get("jeminise-real", job.id);
+
+    assert.deepEqual(result, { resetCount: 1, jobIds: [job.id] });
+    assert.equal(reset.status, "PENDING");
+    assert.deepEqual(reset.checkpoints.analysis, { visual: true });
+    assert.deepEqual(reset.checkpoints.research, { suggestions: [] });
+    assert.deepEqual(reset.checkpoints.keywords, { keywords: ["cotton rug"] });
+    assert.equal(reset.checkpoints.submission, undefined);
+    assert.equal(reset.result, undefined);
+    assert.equal(db.prepare("SELECT 1 FROM gpt_deliveries WHERE job_id=?").get(job.id), undefined);
+  } finally { db.close(); }
+});
+
+test("AEO backfill refuses reviews already approved or synchronized", () => {
+  const { queue, db } = setup();
+  try {
+    const settings = queue.configure("jeminise-real", { provider: "codex_mcp", batchSize: 10 });
+    const job = queue.enqueue({ storeId: "jeminise-real", source: "auto_seo", sourceIdentity: "approved-aeo", input: source, original: {}, settings });
+    const batch = queue.claim("jeminise-real", "approved-aeo-claim", "codex_mcp", "codex_mcp:acer-codex");
+    queue.checkpoint("jeminise-real", job.id, { batchId: batch.id, leaseToken: batch.leaseToken, requestId: "approved-submit", stage: "submission", payload: {} });
+    queue.finish("jeminise-real", job.id, {});
+    queue.saveReviewState("jeminise-real", job.id, { reviewDecision: "approved" });
+
+    assert.throws(() => queue.resetReviewReadyForAeoBackfill("jeminise-real", "codex_mcp"), /approved|sync/i);
+    assert.equal(queue.get("jeminise-real", job.id).status, "REVIEW_READY");
+  } finally { db.close(); }
+});
+
 test("a synced GPT review can be removed without changing its Shopify sync record", () => {
   const { queue, db } = setup();
   try {
