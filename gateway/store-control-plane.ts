@@ -5,7 +5,7 @@ import type { TokenProvider } from "./token-provider";
 import type { StoreAuthConfig, StoreConfig, StoreProxyConfig } from "./types";
 import { toStoreSummary, type GatewayStoreSummary } from "./operations/store-management";
 import { evictProxyAgent } from "./proxy-transport";
-import { persistStoreToConfigFile, removeStoreFromConfigFile } from "./store-config-loader";
+import { persistStoreToConfigFile, removeStoreFromConfigFile, removeStoreFromEnvFile } from "./store-config-loader";
 
 export type StoreAuthInput =
   | {
@@ -416,14 +416,21 @@ export class StoreControlPlane {
     const exists = await this.storeRegistry.hasStore(trimmedId);
     if (exists) {
       await this.storeRegistry.removeStore(trimmedId);
-      if (this.persistConfigFile) {
-        try {
-          const file = typeof this.persistConfigFile === "string" ? this.persistConfigFile : "stores.local.json";
-          await removeStoreFromConfigFile(trimmedId, { configFile: file });
-        } catch {
-          // ignore file remove error
-        }
+    }
+
+    if (this.persistConfigFile) {
+      try {
+        const file = typeof this.persistConfigFile === "string" ? this.persistConfigFile : "stores.local.json";
+        await removeStoreFromConfigFile(trimmedId, { configFile: file });
+      } catch {
+        // ignore file remove error
       }
+    }
+
+    try {
+      removeStoreFromEnvFile(trimmedId);
+    } catch {
+      // ignore env remove error
     }
 
     // Invalidate token cache after removal

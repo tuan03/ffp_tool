@@ -301,9 +301,7 @@ export function ShopifyPricingConfigSection({
   disabled = false,
 }: ShopifyPricingConfigSectionProps): React.JSX.Element {
   // Stores state
-  const [availableStores, setAvailableStores] = useState<StoreProfile[]>(() => [
-    ...DEFAULT_POD_STORE_PROFILES,
-  ]);
+  const [availableStores, setAvailableStores] = useState<StoreProfile[]>([]);
   const [customStoreProductTypes, setCustomStoreProductTypes] = useState<Record<string, string[]>>(() => {
     try {
       const raw = localStorage.getItem("ffp_store_product_types");
@@ -401,29 +399,24 @@ export function ShopifyPricingConfigSection({
           body: JSON.stringify({ operation: "stores.list", payload: {} }),
         });
         const result = await response.json();
-        if (isMounted && result.success && Array.isArray(result.data?.stores) && result.data.stores.length > 0) {
-          const fetched: StoreProfile[] = (result.data.stores as Array<{ storeId: string; shopDomain: string }>).map((s) => ({
+        if (isMounted && result.success && Array.isArray(result.data?.stores)) {
+          const fetched: StoreProfile[] = (result.data.stores as Array<{ storeId: string; shopDomain: string; productTypes?: string[]; defaultProductType?: string }>).map((s) => ({
             storeId: s.storeId,
             shopDomain: s.shopDomain,
+            productTypes: s.productTypes,
+            defaultProductType: s.defaultProductType,
           }));
 
-          setAvailableStores((prev) => {
-            const map = new Map<string, StoreProfile>();
-            for (const s of prev) map.set(s.storeId.toLowerCase(), s);
-            for (const s of fetched) {
-              const existing = map.get(s.storeId.toLowerCase());
-              map.set(s.storeId.toLowerCase(), {
-                storeId: s.storeId,
-                shopDomain: s.shopDomain,
-                productTypes: existing?.productTypes,
-                defaultProductType: existing?.defaultProductType,
-              });
+          setAvailableStores(fetched);
+          if (fetched.length > 0) {
+            const current = (settings.storeId || "").trim().toLowerCase();
+            if (!current || !fetched.some((s) => s.storeId.toLowerCase() === current)) {
+              handleStoreChange(fetched[0].storeId);
             }
-            return Array.from(map.values());
-          });
+          }
         }
       } catch {
-        // Keep fallback stores
+        // Keep empty if fetch fails
       }
     }
     void loadStores();
@@ -1335,14 +1328,20 @@ export function ShopifyPricingConfigSection({
           </div>
           <select
             className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-slate-100 outline-none focus:border-slate-500 text-sm cursor-pointer"
-            value={settings.storeId || "chillgen"}
+            value={settings.storeId || availableStores[0]?.storeId || ""}
             onChange={(e) => handleStoreChange(e.target.value)}
           >
-            {availableStores.map((s) => (
-              <option key={s.storeId} value={s.storeId}>
-                {s.storeId} ({s.shopDomain})
+            {availableStores.length === 0 ? (
+              <option value="" disabled>
+                (Chưa có store nào - Bấm &quot;Thêm&quot; để kết nối)
               </option>
-            ))}
+            ) : (
+              availableStores.map((s) => (
+                <option key={s.storeId} value={s.storeId}>
+                  {s.storeId} ({s.shopDomain})
+                </option>
+              ))
+            )}
           </select>
         </div>
 
@@ -2674,8 +2673,10 @@ export function ShopifyPricingConfigSection({
           setAvailableStores((prev) => {
             const remaining = prev.filter((s) => s.storeId.toLowerCase() !== deletedId.toLowerCase());
             if ((settings.storeId || "").toLowerCase() === deletedId.toLowerCase()) {
-              const fallback = remaining[0]?.storeId || "chillgen";
-              handleStoreChange(fallback);
+              const fallback = remaining[0]?.storeId || "";
+              if (fallback) {
+                handleStoreChange(fallback);
+              }
             }
             return remaining;
           });

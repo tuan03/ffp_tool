@@ -632,3 +632,85 @@ export function removeStoreFromConfigFile(
   });
 }
 
+/**
+ * Removes or comments out a store's environment variables from .env.local if present,
+ * and clears them from process.env to prevent automatic re-bootstrapping.
+ */
+export function removeStoreFromEnvFile(
+  storeId: string,
+  options?: { envFile?: string; cwd?: string },
+): boolean {
+  const trimmedId = storeId.trim();
+  if (!trimmedId) return false;
+
+  const cwd = options?.cwd || process.cwd();
+  const envFileName = options?.envFile || ".env.local";
+  const envPath = resolve(cwd, envFileName);
+
+  const cleanId = trimmedId.toUpperCase().replace(/[^A-Z0-9]/g, "_");
+  const prefix = `STORE_${cleanId}_`;
+
+  let modified = false;
+
+  if (existsSync(envPath)) {
+    try {
+      const content = readFileSync(envPath, "utf-8");
+      const lines = content.split("\n");
+      const newLines: string[] = [];
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        let isMatch = false;
+        const eqIdx = trimmed.indexOf("=");
+        if (eqIdx > 0) {
+          let lineKey = trimmed.slice(0, eqIdx).trim();
+          if (lineKey.startsWith("export ")) {
+            lineKey = lineKey.slice(7).trim();
+          }
+          if (lineKey.startsWith(prefix)) {
+            isMatch = true;
+          } else if (
+            (lineKey === "GATEWAY_STORE_ID" || lineKey === "STORE_ID") &&
+            trimmed.slice(eqIdx + 1).trim().replace(/['"]/g, "").toLowerCase() === trimmedId.toLowerCase()
+          ) {
+            isMatch = true;
+          }
+        }
+
+        if (isMatch) {
+          newLines.push(`# [disconnected] ${line}`);
+          modified = true;
+        } else {
+          newLines.push(line);
+        }
+      }
+
+      if (modified) {
+        atomicWriteFileSync(envPath, newLines.join("\n"));
+      }
+    } catch {
+      // Ignore env file write error
+    }
+  }
+
+  // Clear matching keys from process.env as well
+  for (const key of Object.keys(process.env)) {
+    if (key.startsWith(prefix)) {
+      delete process.env[key];
+      modified = true;
+    }
+  }
+
+  if (process.env.GATEWAY_STORE_ID?.trim().toLowerCase() === trimmedId.toLowerCase()) {
+    delete process.env.GATEWAY_STORE_ID;
+    delete process.env.GATEWAY_SHOP_DOMAIN;
+    delete process.env.GATEWAY_CLIENT_ID;
+    delete process.env.GATEWAY_CLIENT_SECRET;
+    delete process.env.GATEWAY_STATIC_TOKEN;
+    delete process.env.GATEWAY_ACCESS_TOKEN;
+    modified = true;
+  }
+
+  return modified;
+}
+

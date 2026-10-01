@@ -280,26 +280,7 @@ export function SeoReviewPage({
   }, [pendingCrawlerSyncIds, products]);
 
   // Shopify Store Selection State (matching Distributed Crawl logic)
-  const [availableStores, setAvailableStores] = useState<Array<StoreProfile>>([
-    {
-      storeId: "chillgen",
-      shopDomain: "bbjttb-n9.myshopify.com",
-      productTypes: ["Rug", "Doormat", "Area Rug"],
-      defaultProductType: "Rug",
-    },
-    {
-      storeId: "capozen",
-      shopDomain: "capozen.myshopify.com",
-      productTypes: ["Rug", "Doormat", "Area Rug"],
-      defaultProductType: "Rug",
-    },
-    {
-      storeId: "jeminise",
-      shopDomain: "b6-theme-test.myshopify.com",
-      productTypes: ["Blanket", "Bedding Set", "Quilt", "Comforter", "Pillow"],
-      defaultProductType: "Blanket",
-    },
-  ]);
+  const [availableStores, setAvailableStores] = useState<Array<StoreProfile>>([]);
   const [selectedStoreId, setSelectedStoreId] = useState<string>(() => {
     if (urlStoreId) return urlStoreId;
     if (storeId) return storeId.toLowerCase();
@@ -446,24 +427,15 @@ export function SeoReviewPage({
           })).filter((s: StoreProfile) => Boolean(s.storeId && s.shopDomain));
 
           if (fetchedStores.length > 0) {
-            setAvailableStores((prev) => {
-              const map = new Map<string, StoreProfile>();
-              for (const s of prev) map.set(s.storeId.toLowerCase(), s);
-              for (const s of fetchedStores) {
-                const existing = map.get(s.storeId.toLowerCase());
-                map.set(s.storeId.toLowerCase(), {
-                  storeId: s.storeId,
-                  shopDomain: s.shopDomain,
-                  productTypes: s.productTypes || existing?.productTypes,
-                  defaultProductType: s.defaultProductType || existing?.defaultProductType,
-                });
-              }
-              return Array.from(map.values());
-            });
+            setAvailableStores(fetchedStores);
+            const current = (selectedStoreId || "").trim().toLowerCase();
+            if (!current || !fetchedStores.some((s) => s.storeId.toLowerCase() === current)) {
+              setSelectedStoreId(fetchedStores[0].storeId);
+            }
           }
         }
       } catch {
-        // Keep default stores if fetch fails
+        // Keep empty if fetch fails
       }
     }
     void fetchStores();

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 
-import { loadBootstrappedStores, loadLocalEnv } from "../store-config-loader";
+import { loadBootstrappedStores, loadLocalEnv, removeStoreFromEnvFile } from "../store-config-loader";
 
 describe("Store Config Loader (Multi-Store Bootstrap)", () => {
   let tempDir: string;
@@ -376,4 +376,46 @@ GATEWAY_PLAIN=simple_token # trailing comment
     assert.equal(loaded.GATEWAY_PORT, "3001");
     assert.equal(loaded.GATEWAY_PLAIN, "simple_token");
   });
+
+  it("removeStoreFromEnvFile comments out store env vars in .env.local and clears process.env", () => {
+    const envFile = join(tempDir, ".env.local");
+    writeFileSync(
+      envFile,
+      `
+GATEWAY_STORE_ID=test-store
+GATEWAY_SHOP_DOMAIN=test-store.myshopify.com
+STORE_TEST_STORE_DOMAIN=test-store.myshopify.com
+STORE_TEST_STORE_CLIENT_ID=client123
+STORE_TEST_STORE_CLIENT_SECRET=secret456
+STORE_OTHER_STORE_DOMAIN=other.myshopify.com
+STORE_OTHER_STORE_CLIENT_ID=other_client
+STORE_OTHER_STORE_CLIENT_SECRET=other_secret
+`,
+      "utf-8",
+    );
+
+    process.env.STORE_TEST_STORE_CLIENT_ID = "client123";
+    process.env.GATEWAY_STORE_ID = "test-store";
+
+    const modified = removeStoreFromEnvFile("test-store", { cwd: tempDir });
+    assert.equal(modified, true);
+
+    const reloaded = loadLocalEnv(tempDir);
+    // Deleted store should not be loaded from .env.local
+    assert.equal(reloaded.STORE_TEST_STORE_CLIENT_ID, undefined);
+    assert.equal(reloaded.GATEWAY_STORE_ID, undefined);
+    // Other store should remain intact
+    assert.equal(reloaded.STORE_OTHER_STORE_CLIENT_ID, "other_client");
+    assert.equal(reloaded.STORE_OTHER_STORE_DOMAIN, "other.myshopify.com");
+
+    // process.env keys should be cleared
+    assert.equal(process.env.STORE_TEST_STORE_CLIENT_ID, undefined);
+    assert.equal(process.env.GATEWAY_STORE_ID, undefined);
+
+    // Bootstrapped stores should only contain other-store
+    const bootstrapped = loadBootstrappedStores({ cwd: tempDir, env: reloaded });
+    assert.equal(bootstrapped.some((s) => s.storeId === "test-store"), false);
+    assert.equal(bootstrapped.some((s) => s.storeId === "other-store"), true);
+  });
 });
+

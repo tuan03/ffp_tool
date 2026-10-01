@@ -231,20 +231,7 @@ export function AmazonCrawlerPage({
   const [isImageProfileEditorOpen, setIsImageProfileEditorOpen] = useState(false);
   const [imageProfileMessage, setImageProfileMessage] = useState<string | null>(null);
   const [imageProfilePreview, setImageProfilePreview] = useState<string | null>(null);
-  const [availableStores, setAvailableStores] = useState<Array<StoreProfile>>([
-    {
-      storeId: "capozen",
-      shopDomain: "capozen.myshopify.com",
-      productTypes: ["Rug", "Doormat", "Area Rug"],
-      defaultProductType: "Rug",
-    },
-    {
-      storeId: "jeminise",
-      shopDomain: "b6-theme-test.myshopify.com",
-      productTypes: ["Blanket", "Bedding Set", "Quilt", "Comforter", "Pillow"],
-      defaultProductType: "Blanket",
-    },
-  ]);
+  const [availableStores, setAvailableStores] = useState<Array<StoreProfile>>([]);
   const [customStoreProductTypes, setCustomStoreProductTypes] = useState<Record<string, string[]>>(() => {
     try {
       const raw = localStorage.getItem("ffp_store_product_types");
@@ -280,25 +267,16 @@ export function AmazonCrawlerPage({
             defaultProductType: typeof s.defaultProductType === "string" ? s.defaultProductType : undefined,
           })).filter((s: StoreProfile) => Boolean(s.storeId && s.shopDomain));
 
+          setAvailableStores(fetchedStores);
           if (fetchedStores.length > 0) {
-            setAvailableStores((prev) => {
-              const map = new Map<string, StoreProfile>();
-              for (const s of prev) map.set(s.storeId.toLowerCase(), s);
-              for (const s of fetchedStores) {
-                const existing = map.get(s.storeId.toLowerCase());
-                map.set(s.storeId.toLowerCase(), {
-                  storeId: s.storeId,
-                  shopDomain: s.shopDomain,
-                  productTypes: s.productTypes || existing?.productTypes,
-                  defaultProductType: s.defaultProductType || existing?.defaultProductType,
-                });
-              }
-              return Array.from(map.values());
-            });
+            const current = (settings.storeId || "").trim().toLowerCase();
+            if (!current || !fetchedStores.some((s) => s.storeId.toLowerCase() === current)) {
+              handleStoreChange(fetchedStores[0].storeId);
+            }
           }
         }
       } catch {
-        // Keep default stores if fetch fails
+        // Keep empty if fetch fails
       }
     }
     void fetchStores();
@@ -1299,16 +1277,22 @@ export function AmazonCrawlerPage({
             </div>
             <select
               className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-slate-100 outline-none focus:border-slate-500 text-sm"
-              value={settings.storeId || "capozen"}
+              value={settings.storeId || availableStores[0]?.storeId || ""}
               onChange={(e) => {
                 handleStoreChange(e.target.value);
               }}
             >
-              {availableStores.map((s) => (
-                <option key={s.storeId} value={s.storeId}>
-                  {s.storeId} ({s.shopDomain})
+              {availableStores.length === 0 ? (
+                <option value="" disabled>
+                  (Chưa có store nào - Bấm &quot;Thêm&quot; để kết nối)
                 </option>
-              ))}
+              ) : (
+                availableStores.map((s) => (
+                  <option key={s.storeId} value={s.storeId}>
+                    {s.storeId} ({s.shopDomain})
+                  </option>
+                ))
+              )}
             </select>
           </div>
 
@@ -2368,8 +2352,10 @@ export function AmazonCrawlerPage({
           setAvailableStores((prev) => {
             const remaining = prev.filter((s) => s.storeId.toLowerCase() !== deletedId.toLowerCase());
             if ((settings.storeId || "").toLowerCase() === deletedId.toLowerCase()) {
-              const fallback = remaining[0]?.storeId || "capozen";
-              handleStoreChange(fallback);
+              const fallback = remaining[0]?.storeId || "";
+              if (fallback) {
+                handleStoreChange(fallback);
+              }
             }
             return remaining;
           });
