@@ -107,6 +107,31 @@ test("mock-isolation: full mock flow (load -> run -> handover) completes in-memo
   }
 });
 
+test("mock-isolation: repeated unchanged products are skipped and reported", async () => {
+  const client = new MockAutoSeoClient();
+  const [product] = await client.loadProducts();
+  assert.ok(product);
+
+  const first = await client.runAutoSeoBackup({
+    workflowId: "mock-first",
+    storeId: "store-chillgen-mock",
+    shopDomain: "chillgen-mock.myshopify.com",
+    products: [product],
+  });
+  const second = await client.runAutoSeoBackup({
+    workflowId: "mock-second",
+    storeId: "store-chillgen-mock",
+    shopDomain: "chillgen-mock.myshopify.com",
+    products: [product],
+  });
+
+  assert.equal(first.acceptedCount, 1);
+  assert.equal(second.acceptedCount, 0);
+  assert.deepEqual(second.skippedProducts, [
+    { productId: product.id, reason: "UNCHANGED" },
+  ]);
+});
+
 test("mock-isolation: AutoSeoModuleApiClient would have invoked /api/auto-seo/run", async () => {
   const dummyRunner = (async () => ({})) as unknown as ModuleApiRunner;
   const apiClient = createAutoSeoModuleApiClient(dummyRunner);

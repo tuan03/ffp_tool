@@ -113,6 +113,10 @@ export interface AutoSeoBackupResponse {
   readonly downstreamError?: string | null;
   /** Number of generated SEO outputs durably handed off to SEO Review by the server. */
   readonly reviewPersistedCount?: number;
+  readonly acceptedProductIds?: readonly string[];
+  readonly acceptedCount?: number;
+  readonly skippedProducts?: readonly AutoSeoSkippedProduct[];
+  readonly skippedCount?: number;
   readonly seoDispatch?:
     | {
         readonly provider: "gemini";
@@ -124,6 +128,11 @@ export interface AutoSeoBackupResponse {
         readonly status: "queued";
         readonly jobIds: readonly string[];
       };
+}
+
+export interface AutoSeoSkippedProduct {
+  readonly productId: string;
+  readonly reason: "UNCHANGED" | "ACTIVE_DUPLICATE";
 }
 
 export type AutoSeoEligibilityState =

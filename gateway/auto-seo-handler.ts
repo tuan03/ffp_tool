@@ -15,6 +15,7 @@ import {
   getAutoSeoEligibility,
   validateAutoSeoEligibilityRequest,
 } from "./auto-seo-eligibility";
+import { calculateAutoSeoInputHash } from "./auto-seo-input-hash";
 import { isGatewayAuthorized, MAX_BODY_BYTES } from "./http-server";
 import { runSeoContent } from "./seo-content";
 import { executeSeoReviewSaveLifecycle } from "./seo-review-lifecycle";
@@ -49,6 +50,10 @@ export interface AutoSeoRunResult {
   readonly downstreamHttpStatus?: number | null;
   readonly downstreamError?: string | null;
   readonly reviewPersistedCount: number;
+  readonly acceptedProductIds: readonly string[];
+  readonly acceptedCount: number;
+  readonly skippedProducts: readonly AutoSeoSkippedProduct[];
+  readonly skippedCount: number;
   readonly seoDispatch?:
     | {
         readonly provider: "gemini";
@@ -60,6 +65,11 @@ export interface AutoSeoRunResult {
         readonly status: "queued";
         readonly jobIds: readonly string[];
       };
+}
+
+export interface AutoSeoSkippedProduct {
+  readonly productId: string;
+  readonly reason: "UNCHANGED" | "ACTIVE_DUPLICATE";
 }
 
 export interface AutoSeoHandlerOptions {
@@ -167,7 +177,10 @@ export function validateAutoSeoRunInput(body: unknown): AutoSeoRunRequest {
 export function executeAutoSeoBackup(
   db: DatabaseSync,
   request: AutoSeoRunRequest,
-  options?: { readonly onConflict?: "error" | "update" },
+  options?: {
+    readonly onConflict?: "error" | "update";
+    readonly inputHashes?: ReadonlyMap<string, string>;
+  },
 ): { readonly backupIds: string[]; readonly productIds: string[] } {
   const backupIds: string[] = [];
   const productIds: string[] = [];
@@ -194,7 +207,7 @@ export function executeAutoSeoBackup(
       formattedUpdatedAt,
       canonicalJson,
       sha256,
-      null,
+      options?.inputHashes?.get(product.id) ?? calculateAutoSeoInputHash(product),
     );
 
     backupIds.push(backupId);
@@ -249,16 +262,56 @@ export async function handleAutoSeoRun(
   const selectedSettings = options?.seoContentRunner ? undefined : getCustomGptRuntime().queue.settings(request.storeId);
 
   let backupIds: string[] = [];
+  const acceptedProducts: AutoSeoProductPayload[] = [];
+  const inputHashes = new Map<string, string>();
+  const skippedProducts: AutoSeoSkippedProduct[] = [];
   db.exec("BEGIN IMMEDIATE");
   try {
-    const backupResult = executeAutoSeoBackup(db, request, {
-      onConflict: options?.onConflict ?? request.onConflict,
-    });
-    if (selectedSettings && selectedSettings.provider !== "gemini") {
+    const matchingRevisionStatement = db.prepare(`
+      SELECT downstream_status
+      FROM auto_seo_product_backups
+      WHERE store_id = ? AND product_id = ? AND seo_input_sha256 = ?
+      ORDER BY CASE downstream_status
+        WHEN 'NOT_SENT' THEN 0
+        WHEN 'SENT' THEN 1
+        ELSE 2
+      END, id DESC
+      LIMIT 1
+    `);
+
+    for (const product of request.products) {
+      const inputHash = calculateAutoSeoInputHash(product);
+      const matchingRevision = matchingRevisionStatement.get(
+        request.storeId,
+        product.id,
+        inputHash,
+      ) as { downstream_status: "NOT_SENT" | "SENT" | "FAILED" } | undefined;
+
+      if (matchingRevision?.downstream_status === "NOT_SENT") {
+        skippedProducts.push({ productId: product.id, reason: "ACTIVE_DUPLICATE" });
+        continue;
+      }
+      if (matchingRevision?.downstream_status === "SENT") {
+        skippedProducts.push({ productId: product.id, reason: "UNCHANGED" });
+        continue;
+      }
+
+      acceptedProducts.push(product);
+      inputHashes.set(product.id, inputHash);
+    }
+
+    if (acceptedProducts.length > 0) {
+      const acceptedRequest = { ...request, products: acceptedProducts };
+      const backupResult = executeAutoSeoBackup(db, acceptedRequest, {
+        onConflict: options?.onConflict ?? request.onConflict,
+        inputHashes,
+      });
+      backupIds = [...backupResult.backupIds];
+    }
+    if (backupIds.length > 0 && selectedSettings && selectedSettings.provider !== "gemini") {
       db.prepare("UPDATE auto_seo_product_backups SET gpt_settings_json=? WHERE workflow_id=? AND store_id=?").run(JSON.stringify(selectedSettings), request.workflowId, request.storeId);
     }
     db.exec("COMMIT");
-    backupIds = [...backupResult.backupIds];
   } catch (dbError) {
     db.exec("ROLLBACK");
     throw dbError;
@@ -271,12 +324,32 @@ export async function handleAutoSeoRun(
   let reviewPersistedCount = 0;
   let seoDispatch: AutoSeoRunResult["seoDispatch"];
 
+  if (acceptedProducts.length === 0) {
+    return {
+      workflowId: request.workflowId,
+      backedUpCount: 0,
+      backupIds: [],
+      downstreamStatus: "SENT",
+      downstreamHttpStatus: null,
+      downstreamError: null,
+      reviewPersistedCount: 0,
+      acceptedProductIds: [],
+      acceptedCount: 0,
+      skippedProducts,
+      skippedCount: skippedProducts.length,
+    };
+  }
+
+  const dispatchedProducts = acceptedProducts.length === request.products.length
+    ? request.products
+    : acceptedProducts;
+
   try {
     const seoResult = await runner({
       workflowId: request.workflowId,
       storeId: request.storeId,
       shopDomain: request.shopDomain,
-      products: request.products,
+      products: dispatchedProducts,
     }, { providerSettings: selectedSettings });
 
     seoProvider = seoResult.provider;
@@ -315,11 +388,11 @@ export async function handleAutoSeoRun(
                 ? outRecord.id
                 : undefined;
 
-          let matchedProduct = request.products.find(
+          let matchedProduct = acceptedProducts.find(
             (p) => (outId && p.id === outId) || (outHandle && p.handle === outHandle),
           );
-          if (!matchedProduct && i < request.products.length) {
-            matchedProduct = request.products[i];
+          if (!matchedProduct && i < acceptedProducts.length) {
+            matchedProduct = acceptedProducts[i];
           }
 
           if (matchedProduct) {
@@ -398,6 +471,10 @@ export async function handleAutoSeoRun(
     downstreamHttpStatus: null,
     downstreamError,
     reviewPersistedCount,
+    acceptedProductIds: acceptedProducts.map(product => product.id),
+    acceptedCount: acceptedProducts.length,
+    skippedProducts,
+    skippedCount: skippedProducts.length,
     ...(seoDispatch ? { seoDispatch } : {}),
   };
 }

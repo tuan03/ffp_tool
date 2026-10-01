@@ -615,14 +615,27 @@ export class AutoSeoModuleApiClient implements AutoSeoClient {
         body: JSON.stringify(request),
       });
 
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok || !data.success) {
-        const errorCode = data?.error?.code || "AUTO_SEO_BACKUP_FAILED";
-        const message = data?.error?.message || "Failed to execute Auto SEO backup";
+      const payload: unknown = await response.json().catch(() => null);
+      const envelope = payload && typeof payload === "object"
+        ? payload as {
+            readonly success?: unknown;
+            readonly data?: unknown;
+            readonly error?: { readonly code?: unknown; readonly message?: unknown };
+          }
+        : undefined;
+      if (!response.ok || envelope?.success !== true) {
+        const errorCode = typeof envelope?.error?.code === "string"
+          ? envelope.error.code
+          : "AUTO_SEO_BACKUP_FAILED";
+        const message = typeof envelope?.error?.message === "string"
+          ? envelope.error.message
+          : "Failed to execute Auto SEO backup";
         throw new AppError(message, errorCode);
       }
-
-      return data.data as AutoSeoBackupResponse;
+      if (!isAutoSeoBackupResponse(envelope.data)) {
+        throw new AppError("Invalid Auto SEO backup response", "AUTO_SEO_BACKUP_FAILED");
+      }
+      return envelope.data;
     } catch (error) {
       if (error instanceof AppError) {
         throw error;
@@ -634,6 +647,47 @@ export class AutoSeoModuleApiClient implements AutoSeoClient {
       );
     }
   }
+}
+
+function isAutoSeoBackupResponse(value: unknown): value is AutoSeoBackupResponse {
+  if (!value || typeof value !== "object") return false;
+  const response = value as Readonly<Record<string, unknown>>;
+  if (
+    typeof response.workflowId !== "string" ||
+    typeof response.backedUpCount !== "number" ||
+    !Array.isArray(response.backupIds) ||
+    !response.backupIds.every(id => typeof id === "string") ||
+    (response.downstreamStatus !== "SENT" && response.downstreamStatus !== "FAILED")
+  ) {
+    return false;
+  }
+  if (response.acceptedCount !== undefined && typeof response.acceptedCount !== "number") {
+    return false;
+  }
+  if (
+    response.acceptedProductIds !== undefined &&
+    (!Array.isArray(response.acceptedProductIds) ||
+      !response.acceptedProductIds.every(id => typeof id === "string"))
+  ) {
+    return false;
+  }
+  if (response.skippedCount !== undefined && typeof response.skippedCount !== "number") {
+    return false;
+  }
+  if (response.skippedProducts !== undefined) {
+    if (!Array.isArray(response.skippedProducts)) return false;
+    for (const skippedProduct of response.skippedProducts) {
+      if (!skippedProduct || typeof skippedProduct !== "object") return false;
+      const skipped = skippedProduct as Readonly<Record<string, unknown>>;
+      if (
+        typeof skipped.productId !== "string" ||
+        (skipped.reason !== "UNCHANGED" && skipped.reason !== "ACTIVE_DUPLICATE")
+      ) {
+        return false;
+      }
+    }
+  }
+  return true;
 }
 
 function isAutoSeoEligibilityResponse(value: unknown): value is AutoSeoEligibilityResponse {

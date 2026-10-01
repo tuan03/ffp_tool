@@ -32,6 +32,7 @@ export type {
   AutoSeoProductCandidate,
   AutoSeoProductImage,
   AutoSeoSelectionInput,
+  AutoSeoSkippedProduct,
   AutoSeoStoreOption,
   ProductReviewDecision,
   SeoContentInputPayload,

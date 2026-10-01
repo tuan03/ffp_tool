@@ -4,7 +4,10 @@ import { Readable } from "node:stream";
 import test from "node:test";
 
 import { initAutoSeoDbSchema } from "../auto-seo-db";
-import { handleAutoSeoEligibilityHttpRequest } from "../auto-seo-handler";
+import {
+  handleAutoSeoEligibilityHttpRequest,
+  handleAutoSeoRun,
+} from "../auto-seo-handler";
 import {
   AutoSeoEligibilityValidationError,
   getAutoSeoEligibility,
@@ -441,5 +444,119 @@ test("eligibility HTTP handler returns success and safe validation, auth, and me
     assert.equal(response.statusCode, scenario.expectedStatus);
     assert.equal(JSON.parse(response.body).success, false);
   }
+  db.close();
+});
+
+test("authoritative run accepts new and changed products and skips unchanged products", async () => {
+  const db = new DatabaseSync(":memory:");
+  initAutoSeoDbSchema(db);
+  const runnerCalls: readonly AutoSeoProductPayload[][] = [];
+  const mutableRunnerCalls = runnerCalls as AutoSeoProductPayload[][];
+  const runner = async (input: { readonly products: readonly AutoSeoProductPayload[] }) => {
+    mutableRunnerCalls.push([...input.products]);
+    return { success: true, processedCount: input.products.length };
+  };
+  const original = createProduct({ id: "same", updatedAt: "2026-09-30T00:00:00Z" });
+  const first = await handleAutoSeoRun({
+    workflowId: "first",
+    storeId: "capozen",
+    shopDomain: "capozen.myshopify.com",
+    products: [original],
+  }, { db, seoContentRunner: runner });
+  assert.deepEqual(first.acceptedProductIds, ["same"]);
+  assert.equal(first.acceptedCount, 1);
+  assert.equal(first.skippedCount, 0);
+
+  const unchanged = await handleAutoSeoRun({
+    workflowId: "unchanged",
+    storeId: "capozen",
+    shopDomain: "capozen.myshopify.com",
+    products: [createProduct({ id: "same", updatedAt: "2026-10-01T00:00:00Z" })],
+  }, { db, seoContentRunner: runner });
+  assert.equal(unchanged.acceptedCount, 0);
+  assert.deepEqual(unchanged.skippedProducts, [{ productId: "same", reason: "UNCHANGED" }]);
+
+  const changed = await handleAutoSeoRun({
+    workflowId: "changed",
+    storeId: "capozen",
+    shopDomain: "capozen.myshopify.com",
+    products: [createProduct({ id: "same", title: "Changed title" })],
+  }, { db, seoContentRunner: runner });
+  assert.deepEqual(changed.acceptedProductIds, ["same"]);
+  assert.equal(mutableRunnerCalls.length, 2, "all-skipped run must not call the runner");
+  db.close();
+});
+
+test("authoritative run retries failed hashes and reports mixed accepted and skipped products", async () => {
+  const db = new DatabaseSync(":memory:");
+  initAutoSeoDbSchema(db);
+  const unchanged = createProduct({ id: "unchanged" });
+  insertBackup(db, {
+    backupId: "sent",
+    productId: "unchanged",
+    status: "SENT",
+    updatedAt: unchanged.updatedAt,
+    inputHash: calculateAutoSeoInputHash(unchanged),
+  });
+  const retry = createProduct({ id: "retry-product" });
+  insertBackup(db, {
+    backupId: "failed-retry",
+    productId: "retry-product",
+    status: "FAILED",
+    updatedAt: retry.updatedAt,
+    inputHash: calculateAutoSeoInputHash(retry),
+  });
+  const received: AutoSeoProductPayload[] = [];
+
+  const result = await handleAutoSeoRun({
+    workflowId: "mixed",
+    storeId: "capozen",
+    shopDomain: "capozen.myshopify.com",
+    products: [unchanged, retry],
+  }, {
+    db,
+    seoContentRunner: async (input) => {
+      received.push(...input.products);
+      return { success: true, processedCount: input.products.length };
+    },
+  });
+
+  assert.deepEqual(result.acceptedProductIds, ["retry-product"]);
+  assert.deepEqual(result.skippedProducts, [{ productId: "unchanged", reason: "UNCHANGED" }]);
+  assert.deepEqual(received.map((product) => product.id), ["retry-product"]);
+  db.close();
+});
+
+test("concurrent identical submissions dispatch once and report an active duplicate", async () => {
+  const db = new DatabaseSync(":memory:");
+  initAutoSeoDbSchema(db);
+  let releaseFirstRun: (() => void) | undefined;
+  const firstRunBlocked = new Promise<void>((resolve) => { releaseFirstRun = resolve; });
+  let runnerCalls = 0;
+  const runner = async (input: { readonly products: readonly AutoSeoProductPayload[] }) => {
+    runnerCalls++;
+    await firstRunBlocked;
+    return { success: true, processedCount: input.products.length };
+  };
+  const product = createProduct({ id: "concurrent" });
+  const firstPromise = handleAutoSeoRun({
+    workflowId: "concurrent-one",
+    storeId: "capozen",
+    shopDomain: "capozen.myshopify.com",
+    products: [product],
+  }, { db, seoContentRunner: runner });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  const second = await handleAutoSeoRun({
+    workflowId: "concurrent-two",
+    storeId: "capozen",
+    shopDomain: "capozen.myshopify.com",
+    products: [product],
+  }, { db, seoContentRunner: runner });
+  releaseFirstRun?.();
+  const first = await firstPromise;
+
+  assert.equal(first.acceptedCount, 1);
+  assert.deepEqual(second.skippedProducts, [{ productId: "concurrent", reason: "ACTIVE_DUPLICATE" }]);
+  assert.equal(runnerCalls, 1);
   db.close();
 });
