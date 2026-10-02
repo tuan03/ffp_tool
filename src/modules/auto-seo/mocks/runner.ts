@@ -4,6 +4,7 @@ import type {
   AutoSeoBackupRequest,
   AutoSeoBackupResponse,
   AutoSeoClient,
+  AutoSeoCollectionOption,
   AutoSeoEligibilityRequest,
   AutoSeoEligibilityResponse,
   AutoSeoOutput,
@@ -60,6 +61,25 @@ export class MockAutoSeoClient implements AutoSeoClient {
 
   public async listStores(): Promise<readonly AutoSeoStoreOption[]> {
     return JSON.parse(JSON.stringify(mockAutoSeoStores)) as AutoSeoStoreOption[];
+  }
+
+  public async listCollections(_storeId?: string): Promise<readonly AutoSeoCollectionOption[]> {
+    return [
+      { id: "gid://shopify/Collection/1", title: "Bedding Set", handle: "bedding-set", productsCount: 382 },
+      { id: "gid://shopify/Collection/2", title: "Blankets Bedding", handle: "blankets-bedding", productsCount: 111 },
+      { id: "gid://shopify/Collection/3", title: "Sports Bedding", handle: "sports-bedding", productsCount: 144 },
+      { id: "gid://shopify/Collection/4", title: "Animals Bedding", handle: "animals-bedding", productsCount: 57 },
+      { id: "gid://shopify/Collection/5", title: "Fantasy Bedding", handle: "fantasy-bedding", productsCount: 35 },
+      { id: "gid://shopify/Collection/6", title: "Faith Bedding", handle: "faith-bedding", productsCount: 35 },
+      { id: "gid://shopify/Collection/7", title: "Nature Bedding", handle: "nature-bedding", productsCount: 53 },
+      { id: "gid://shopify/Collection/8", title: "Culture Bedding", handle: "culture-bedding", productsCount: 42 },
+      { id: "gid://shopify/Collection/9", title: "Hobbies Bedding", handle: "hobbies-bedding", productsCount: 47 },
+      { id: "gid://shopify/Collection/10", title: "Family Bedding", handle: "family-bedding", productsCount: 16 },
+      { id: "gid://shopify/Collection/11", title: "Halloween Bedding", handle: "halloween-bedding", productsCount: 59 },
+      { id: "gid://shopify/Collection/12", title: "Christmas Bedding", handle: "christmas-bedding", productsCount: 29 },
+      { id: "gid://shopify/Collection/13", title: "Best-Selling Custom Bedding", handle: "best-selling-custom-bedding", productsCount: 6 },
+      { id: "gid://shopify/Collection/14", title: "New Arrivals Bedding", handle: "new-arrivals-bedding", productsCount: 6 },
+    ];
   }
 
   public setActiveStoreId(storeId: string): void {

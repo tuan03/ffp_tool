@@ -27,6 +27,7 @@ export type {
   AutoSeoEligibilityResponse,
   AutoSeoEligibilityState,
   AutoSeoClient,
+  AutoSeoCollectionOption,
   AutoSeoHandoverHandler,
   AutoSeoOutput,
   AutoSeoProductCandidate,

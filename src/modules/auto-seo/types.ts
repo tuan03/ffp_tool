@@ -188,8 +188,16 @@ export interface AutoSeoStoreOption {
   readonly shopDomain: string;
 }
 
+export interface AutoSeoCollectionOption {
+  readonly id: string;
+  readonly title: string;
+  readonly handle?: string;
+  readonly productsCount?: number;
+}
+
 export interface AutoSeoClient {
   listStores?(): Promise<readonly AutoSeoStoreOption[]>;
+  listCollections?(storeId?: string): Promise<readonly AutoSeoCollectionOption[]>;
   setActiveStoreId?(storeId: string): void;
   getActiveStoreId?(): string | undefined;
   getStoreInfo(storeId?: string): Promise<{

@@ -4,6 +4,7 @@ import type {
   AutoSeoBackupRequest,
   AutoSeoBackupResponse,
   AutoSeoClient,
+  AutoSeoCollectionOption,
   AutoSeoEligibilityRequest,
   AutoSeoEligibilityResponse,
   AutoSeoOutput,
@@ -15,6 +16,7 @@ import type {
 } from "../auto-seo";
 import type {
   ModuleApiRunner,
+  ShopifyCollectionsListResponse,
   ShopifyProduct,
   ShopifyProductsGetInput,
   ShopifyProductsGetResponse,
@@ -227,6 +229,57 @@ export class AutoSeoModuleApiClient implements AutoSeoClient {
     }
 
     return validStores;
+  }
+
+  public async listCollections(storeId?: string): Promise<readonly AutoSeoCollectionOption[]> {
+    const targetStoreId = (storeId ?? this.activeStoreId)?.trim();
+    if (!targetStoreId) {
+      return [];
+    }
+
+    try {
+      const allCollections: AutoSeoCollectionOption[] = [];
+      let cursor: string | undefined = undefined;
+      let hasNextPage = true;
+      const seenIds = new Set<string>();
+
+      while (hasNextPage) {
+        const res: ShopifyCollectionsListResponse = await this.moduleApiRunner({
+          storeId: targetStoreId,
+          operation: "collections.list",
+          payload: {
+            limit: 250,
+            ...(cursor ? { cursor } : {}),
+          },
+        });
+
+        const collections = res?.data?.collections;
+        if (Array.isArray(collections) && collections.length > 0) {
+          for (const col of collections) {
+            if (col?.id && !seenIds.has(col.id)) {
+              seenIds.add(col.id);
+              allCollections.push({
+                id: col.id,
+                title: col.title,
+                handle: col.handle,
+                productsCount: col.productsCount,
+              });
+            }
+          }
+        }
+
+        const pageInfo = res?.data?.pageInfo;
+        if (pageInfo?.hasNextPage && pageInfo.endCursor && !seenIds.has(pageInfo.endCursor)) {
+          cursor = pageInfo.endCursor;
+        } else {
+          hasNextPage = false;
+        }
+      }
+
+      return allCollections;
+    } catch {
+      return [];
+    }
   }
 
   public async getStoreInfo(storeId?: string): Promise<{ storeId: string; shopDomain: string }> {

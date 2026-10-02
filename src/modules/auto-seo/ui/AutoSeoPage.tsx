@@ -6,6 +6,7 @@ import { notifyUser } from "../../../shared/utils";
 import { mapShopifyProductToAutoSeoCandidate } from "../shopify-adapter";
 import type {
   AutoSeoClient,
+  AutoSeoCollectionOption,
   AutoSeoEligibilityResponse,
   AutoSeoHandoverHandler,
   AutoSeoOutput,
@@ -88,6 +89,7 @@ export function AutoSeoPage({
 
   const [availableStores, setAvailableStores] = useState<readonly AutoSeoStoreOption[]>([]);
   const [isLoadingStores, setIsLoadingStores] = useState(false);
+  const [storeCollections, setStoreCollections] = useState<readonly AutoSeoCollectionOption[]>([]);
   const selectedStoreId = session.selectedStoreId;
 
   const [isLoadingProducts, setIsLoadingProducts] = useState(false);
@@ -212,6 +214,33 @@ export function AutoSeoPage({
     };
   }, [activeClient]);
 
+  useEffect(() => {
+    let isMounted = true;
+    const targetStoreId = selectedStoreId?.trim();
+    if (!targetStoreId || !activeClient.listCollections) {
+      setStoreCollections([]);
+      return;
+    }
+
+    async function loadStoreCollections(): Promise<void> {
+      try {
+        const cols = await activeClient.listCollections!(targetStoreId);
+        if (isMounted) {
+          setStoreCollections(cols);
+        }
+      } catch {
+        if (isMounted) {
+          setStoreCollections([]);
+        }
+      }
+    }
+
+    void loadStoreCollections();
+    return () => {
+      isMounted = false;
+    };
+  }, [activeClient, selectedStoreId]);
+
   const filteredProducts = useMemo(() => {
     return filterAutoSeoProducts(products, {
       searchQuery,
@@ -220,6 +249,7 @@ export function AutoSeoPage({
       eligibilityItems: eligibility?.items,
       typeFilter,
       collectionFilter,
+      collections: storeCollections,
       asinQuery,
       startDate,
       endDate,
@@ -232,6 +262,7 @@ export function AutoSeoPage({
     statusFilter,
     typeFilter,
     collectionFilter,
+    storeCollections,
     asinQuery,
     startDate,
     endDate,
@@ -630,6 +661,7 @@ export function AutoSeoPage({
         onTypeFilterChange={setAutoSeoTypeFilter}
         collectionFilter={collectionFilter}
         onCollectionFilterChange={setAutoSeoCollectionFilter}
+        storeCollections={storeCollections}
         asinQuery={asinQuery}
         onAsinQueryChange={setAutoSeoAsinQuery}
         startDate={startDate}

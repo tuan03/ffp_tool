@@ -17,6 +17,7 @@ import type { ProductSelectionTableProps } from "../ui/components/ProductSelecti
 import type { AutoSeoEligibilityFilter } from "../ui/smart-batch";
 
 import type {
+  AutoSeoCollectionOption,
   AutoSeoEligibilityItem,
   ProductReviewDecision,
   ShopifyProductForAutoSeoUi,
@@ -71,6 +72,7 @@ function renderTable(props: {
   onTypeFilterChange?: (type: string) => void;
   collectionFilter?: string;
   onCollectionFilterChange?: (collection: string) => void;
+  storeCollections?: readonly AutoSeoCollectionOption[];
   asinQuery?: string;
   startDate?: string;
   endDate?: string;
@@ -90,6 +92,7 @@ function renderTable(props: {
       onTypeFilterChange: props.onTypeFilterChange,
       collectionFilter: props.collectionFilter,
       onCollectionFilterChange: props.onCollectionFilterChange,
+      storeCollections: props.storeCollections,
       filteredProducts: props.filteredProducts,
       onToggleSelect: props.onToggleSelect ?? (() => {}),
       onOpenDetail: props.onOpenDetail ?? (() => {}),
@@ -1334,7 +1337,7 @@ test("ProductSelectionTable: renders compact filter bar with separated type and 
   assert.ok(html.includes("Loại SP: Tất cả"), "Must render product type filter option");
   assert.ok(html.includes("Kitchenware"), "Must include productType in type options");
   assert.ok(html.includes("Apparel"), "Must include productType in type options");
-  assert.ok(html.includes("Collection: Tất cả"), "Must render collection filter option");
+  assert.ok(html.includes("Tất cả bộ sưu tập"), "Must render collection filter option");
   assert.ok(html.includes("Home Goods"), "Must include collection in collection options");
   assert.ok(html.includes("Summer Style"), "Must include collection in collection options");
   assert.ok(html.includes("Shopify:"), "Must render Shopify status filter selector");
@@ -1386,5 +1389,62 @@ test("filterAutoSeoProducts: filters products accurately by typeFilter vs collec
   const blanketSummer = filterAutoSeoProducts(products, { typeFilter: "Blanket", collectionFilter: "Summer Sale" });
   assert.equal(blanketSummer.length, 1);
   assert.equal(blanketSummer[0]?.id, "gid://shopify/Product/2");
+});
+
+test("ProductSelectionTable: renders storeCollections matching screenshot with count", () => {
+  const storeCollections: readonly AutoSeoCollectionOption[] = [
+    { id: "c1", title: "Bedding Set", productsCount: 382 },
+    { id: "c2", title: "Blankets Bedding", productsCount: 111 },
+    { id: "c3", title: "Sports Bedding", productsCount: 144 },
+  ];
+
+  const { html } = renderTable({
+    products: mockProducts,
+    selectedProductIds: [],
+    storeCollections,
+  });
+
+  assert.ok(html.includes("-- Tất cả bộ sưu tập (3) --"));
+  assert.ok(html.includes("Bedding Set (382)"));
+  assert.ok(html.includes("Blankets Bedding (111)"));
+  assert.ok(html.includes("Sports Bedding (144)"));
+});
+
+test("filterAutoSeoProducts: filters by storeCollections using smart matching", () => {
+  const storeCollections: readonly AutoSeoCollectionOption[] = [
+    { id: "c1", title: "Bedding Set", handle: "bedding-set", productsCount: 382 },
+    { id: "c2", title: "Blankets Bedding", handle: "blankets-bedding", productsCount: 111 },
+  ];
+
+  const products: readonly ShopifyProductForAutoSeoUi[] = [
+    {
+      id: "p1",
+      title: "Dragon Bedding Set",
+      handle: "dragon-bedding-set",
+      productType: "Bedding",
+      tags: ["fantasy", "Bedding Set"],
+    },
+    {
+      id: "p2",
+      title: "Cozy Blanket",
+      handle: "cozy-blanket",
+      productType: "Blanket",
+      tags: ["blankets-bedding"],
+    },
+  ];
+
+  const beddingResults = filterAutoSeoProducts(products, {
+    collectionFilter: "c1",
+    collections: storeCollections,
+  });
+  assert.equal(beddingResults.length, 1);
+  assert.equal(beddingResults[0]?.id, "p1");
+
+  const blanketResults = filterAutoSeoProducts(products, {
+    collectionFilter: "c2",
+    collections: storeCollections,
+  });
+  assert.equal(blanketResults.length, 1);
+  assert.equal(blanketResults[0]?.id, "p2");
 });
 

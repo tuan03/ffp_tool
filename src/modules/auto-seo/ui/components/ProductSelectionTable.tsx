@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { filterAutoSeoProducts } from "./product-filter";
 
 import type {
+  AutoSeoCollectionOption,
   AutoSeoEligibilityItem,
   ShopifyProductForAutoSeoUi,
   ShopifyStatusFilter,
@@ -29,6 +30,7 @@ export interface ProductSelectionTableProps {
   onTypeFilterChange?(type: string): void;
   collectionFilter?: string;
   onCollectionFilterChange?(collection: string): void;
+  storeCollections?: readonly AutoSeoCollectionOption[];
   asinQuery?: string;
   onAsinQueryChange?(asin: string): void;
   startDate?: string;
@@ -45,6 +47,7 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
     onToggleSelect,
     onOpenDetail,
     isLoading = false,
+    storeCollections,
   } = props;
 
   const [internalSearchQuery, setInternalSearchQuery] = useState("");
@@ -255,13 +258,23 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
   }, [products]);
 
   const availableCollections = useMemo(() => {
-    const counts = new Map<string, number>();
+    if (storeCollections && storeCollections.length > 0) {
+      return storeCollections.map((col) => ({
+        id: col.id,
+        name: col.title,
+        count: col.productsCount,
+      }));
+    }
+
+    const counts = new Map<string, { id: string; count: number }>();
     for (const product of products) {
       if (product.collections) {
         for (const col of product.collections) {
           const title = col.title?.trim();
           if (title) {
-            counts.set(title, (counts.get(title) ?? 0) + 1);
+            const existing = counts.get(title) ?? { id: col.id || title, count: 0 };
+            existing.count += 1;
+            counts.set(title, existing);
           }
         }
       }
@@ -271,16 +284,18 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
           if (lower.startsWith("collection:") || lower.startsWith("col:")) {
             const colName = tag.split(":")[1]?.trim();
             if (colName) {
-              counts.set(colName, (counts.get(colName) ?? 0) + 1);
+              const existing = counts.get(colName) ?? { id: colName, count: 0 };
+              existing.count += 1;
+              counts.set(colName, existing);
             }
           }
         }
       }
     }
     return Array.from(counts.entries())
-      .map(([name, count]) => ({ name, count }))
+      .map(([name, { id, count }]) => ({ id, name, count }))
       .sort((a, b) => b.count - a.count);
-  }, [products]);
+  }, [products, storeCollections]);
 
   const hasActiveAdvancedFilters = Boolean(
     asinQuery || startDate || endDate || (collectionFilter && collectionFilter !== "all"),
@@ -488,16 +503,20 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
                 aria-label="Lọc theo Collection"
                 value={collectionFilter}
                 onChange={(e) => handleCollectionFilterChange(e.target.value)}
-                className={`rounded-lg border px-2.5 py-1.5 text-xs font-medium focus:outline-hidden cursor-pointer max-w-[170px] truncate ${
+                className={`rounded-lg border px-2.5 py-1.5 text-xs font-medium focus:outline-hidden cursor-pointer max-w-[220px] truncate ${
                   collectionFilter !== "all"
                     ? "border-cyan-700 bg-cyan-950/80 text-cyan-200 font-semibold"
                     : "border-slate-700 bg-slate-950 text-slate-300"
                 }`}
               >
-                <option value="all">🏷️ Collection: Tất cả</option>
+                <option value="all" className="bg-slate-950 text-slate-200">
+                  {availableCollections.length > 0
+                    ? `-- Tất cả bộ sưu tập (${availableCollections.length}) --`
+                    : "🏷️ Collection: Tất cả"}
+                </option>
                 {availableCollections.map((col) => (
-                  <option key={col.name} value={col.name}>
-                    {col.name} ({col.count})
+                  <option key={col.id} value={col.id} className="bg-slate-950 text-slate-200">
+                    {col.name} {col.count !== undefined ? `(${col.count})` : ""}
                   </option>
                 ))}
               </select>
@@ -700,7 +719,10 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
 
             {collectionFilter !== "all" && (
               <span className="inline-flex items-center gap-1 rounded-md bg-cyan-950/60 border border-cyan-800 px-2 py-0.5 text-cyan-300">
-                Collection: {collectionFilter}
+                BST:{" "}
+                {availableCollections.find(
+                  (c) => c.id === collectionFilter || c.name === collectionFilter,
+                )?.name ?? collectionFilter}
                 <button
                   type="button"
                   onClick={() => handleCollectionFilterChange("all")}

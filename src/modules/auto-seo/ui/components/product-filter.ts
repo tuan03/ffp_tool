@@ -1,4 +1,5 @@
 import type {
+  AutoSeoCollectionOption,
   AutoSeoEligibilityItem,
   ProductReviewDecision,
   ShopifyProductForAutoSeoUi,
@@ -18,6 +19,7 @@ export interface AutoSeoFilterCriteria {
   readonly eligibilityItems?: readonly AutoSeoEligibilityItem[];
   readonly typeFilter?: string;
   readonly collectionFilter?: string;
+  readonly collections?: readonly AutoSeoCollectionOption[];
   readonly asinQuery?: string;
   readonly startDate?: string;
   readonly endDate?: string;
@@ -96,27 +98,46 @@ export function filterAutoSeoProducts(
 
     // 5. Shopify Collection Filter (Bộ sưu tập)
     if (collectionFilter) {
+      const targetCol = criteria.collections?.find(
+        (c) =>
+          c.id.toLowerCase().trim() === collectionFilter ||
+          c.title.toLowerCase().trim() === collectionFilter ||
+          c.handle?.toLowerCase().trim() === collectionFilter,
+      );
+
+      const colTitleLower = targetCol?.title.toLowerCase().trim() ?? collectionFilter;
+      const colHandleLower = (targetCol?.handle || "").toLowerCase().trim();
+      const colIdLower = (targetCol?.id || "").toLowerCase().trim();
+
       const matchesCollection = product.collections?.some((col) => {
         const titleLower = col.title?.toLowerCase().trim();
         const handleLower = col.handle?.toLowerCase().trim();
         const idLower = col.id?.toLowerCase().trim();
         return (
-          titleLower === collectionFilter ||
-          handleLower === collectionFilter ||
-          idLower === collectionFilter
+          (colIdLower && idLower === colIdLower) ||
+          titleLower === colTitleLower ||
+          (colHandleLower && handleLower === colHandleLower)
         );
       }) ?? false;
 
       const matchesTag = product.tags?.some((tag) => {
         const lower = tag.toLowerCase().trim();
         return (
-          lower === collectionFilter ||
-          lower === `collection:${collectionFilter}` ||
-          lower === `col:${collectionFilter}`
+          lower === colTitleLower ||
+          (colHandleLower && lower === colHandleLower) ||
+          lower === `collection:${colTitleLower}` ||
+          (colHandleLower && lower === `collection:${colHandleLower}`) ||
+          lower === `col:${colTitleLower}` ||
+          (colHandleLower && lower.includes(colHandleLower))
         );
       }) ?? false;
 
-      if (!matchesCollection && !matchesTag) {
+      const inType = Boolean(colTitleLower && product.productType?.toLowerCase().includes(colTitleLower));
+
+      const inTitle = Boolean(colTitleLower && product.title?.toLowerCase().includes(colTitleLower));
+      const inHandle = Boolean(colHandleLower && product.handle?.toLowerCase().includes(colHandleLower));
+
+      if (!matchesCollection && !matchesTag && !inType && !inTitle && !inHandle) {
         return false;
       }
     }
