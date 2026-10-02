@@ -587,6 +587,8 @@ export function AutoSeoPage({
         onSelectNextBatch={handleSelectNextBatch}
         isEligibilityLoading={isLoadingEligibility}
         eligibilityCounts={eligibility?.counts}
+        eligibilityFilter={eligibilityFilter}
+        onEligibilityFilterChange={setAutoSeoEligibilityFilter}
       />
 
       {/* Product Selection Table */}

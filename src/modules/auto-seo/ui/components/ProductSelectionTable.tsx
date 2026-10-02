@@ -86,6 +86,28 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
     };
   }, [products]);
 
+  const eligibilityCounts = useMemo(() => {
+    if (!props.eligibilityItems) return null;
+    let needsSeo = 0;
+    let active = 0;
+    let current = 0;
+    for (const item of props.eligibilityItems) {
+      if (item.state === "never_processed" || item.state === "changed" || item.state === "retry") {
+        needsSeo++;
+      } else if (item.state === "active") {
+        active++;
+      } else if (item.state === "current") {
+        current++;
+      }
+    }
+    return {
+      needs_seo: needsSeo,
+      active,
+      current,
+      all: props.eligibilityItems.length,
+    };
+  }, [props.eligibilityItems]);
+
   const displayProducts = useMemo(() => {
     if (props.filteredProducts !== undefined) {
       return props.filteredProducts;
@@ -228,29 +250,55 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
             ))}
           </div>
           {props.eligibilityItems && (
-            <div className="flex items-center gap-1 rounded-lg border border-slate-800 bg-slate-950/80 p-1 text-xs">
+            <div className="flex flex-wrap items-center gap-1 rounded-lg border border-slate-800 bg-slate-950/80 p-1 text-xs">
               <span className="text-[11px] font-semibold text-slate-400 px-1 hidden sm:inline">Lọc:</span>
               <button
                 type="button"
                 onClick={() => props.onEligibilityFilterChange?.("needs_seo")}
-                className={`rounded-md px-2.5 py-1 font-medium transition ${
-                  props.eligibilityFilter !== "all"
+                className={`rounded-md px-2.5 py-1 font-medium transition cursor-pointer ${
+                  (props.eligibilityFilter ?? "needs_seo") === "needs_seo"
                     ? "bg-cyan-950 border border-cyan-700/80 text-cyan-300 font-semibold shadow-xs"
                     : "text-slate-400 hover:text-slate-200"
                 }`}
+                title="Lọc các sản phẩm chưa có SEO hoặc có thay đổi mới"
               >
-                ⚡ Cần SEO
+                ⚡ Cần SEO {eligibilityCounts ? `(${eligibilityCounts.needs_seo})` : ""}
+              </button>
+              <button
+                type="button"
+                onClick={() => props.onEligibilityFilterChange?.("active")}
+                className={`rounded-md px-2.5 py-1 font-medium transition cursor-pointer ${
+                  props.eligibilityFilter === "active"
+                    ? "bg-violet-950 border border-violet-700/80 text-violet-300 font-semibold shadow-xs"
+                    : "text-slate-400 hover:text-slate-200"
+                }`}
+                title="Lọc các sản phẩm đang trong tiến trình xử lý SEO"
+              >
+                🟣 Đang xử lý {eligibilityCounts ? `(${eligibilityCounts.active})` : ""}
+              </button>
+              <button
+                type="button"
+                onClick={() => props.onEligibilityFilterChange?.("current")}
+                className={`rounded-md px-2.5 py-1 font-medium transition cursor-pointer ${
+                  props.eligibilityFilter === "current"
+                    ? "bg-emerald-950 border border-emerald-700/80 text-emerald-300 font-semibold shadow-xs"
+                    : "text-slate-400 hover:text-slate-200"
+                }`}
+                title="Lọc các sản phẩm đã hoàn thành và cập nhật SEO"
+              >
+                🟢 Đã cập nhật {eligibilityCounts ? `(${eligibilityCounts.current})` : ""}
               </button>
               <button
                 type="button"
                 onClick={() => props.onEligibilityFilterChange?.("all")}
-                className={`rounded-md px-2.5 py-1 font-medium transition ${
+                className={`rounded-md px-2.5 py-1 font-medium transition cursor-pointer ${
                   props.eligibilityFilter === "all"
-                    ? "bg-cyan-950 border border-cyan-700/80 text-cyan-300 font-semibold shadow-xs"
+                    ? "bg-slate-800 border border-slate-600 text-slate-200 font-semibold shadow-xs"
                     : "text-slate-400 hover:text-slate-200"
                 }`}
+                title="Hiển thị tất cả trạng thái SEO"
               >
-                Tất cả trạng thái
+                Tất cả {eligibilityCounts ? `(${eligibilityCounts.all})` : ""}
               </button>
             </div>
           )}

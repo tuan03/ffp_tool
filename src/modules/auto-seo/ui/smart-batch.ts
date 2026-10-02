@@ -4,7 +4,7 @@ import type {
 } from "../types";
 
 export type AutoSeoBatchSize = 10 | 20 | 50 | 100;
-export type AutoSeoEligibilityFilter = "needs_seo" | "all";
+export type AutoSeoEligibilityFilter = "needs_seo" | "active" | "current" | "all";
 
 const ELIGIBLE_PRIORITIES: Readonly<Record<string, number>> = {
   never_processed: 0,

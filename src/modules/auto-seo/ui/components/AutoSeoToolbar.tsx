@@ -1,6 +1,6 @@
 import type { AutoSeoStoreOption } from "../../types";
 import type { AutoSeoEligibilityResponse } from "../../types";
-import type { AutoSeoBatchSize } from "../smart-batch";
+import type { AutoSeoBatchSize, AutoSeoEligibilityFilter } from "../smart-batch";
 
 export interface AutoSeoToolbarProps {
   isLoadingProducts: boolean;
@@ -21,6 +21,8 @@ export interface AutoSeoToolbarProps {
   onSelectNextBatch?(): void;
   isEligibilityLoading?: boolean;
   eligibilityCounts?: AutoSeoEligibilityResponse["counts"];
+  eligibilityFilter?: AutoSeoEligibilityFilter;
+  onEligibilityFilterChange?(filter: AutoSeoEligibilityFilter): void;
 }
 
 export function AutoSeoToolbar({
@@ -40,6 +42,8 @@ export function AutoSeoToolbar({
   onSelectNextBatch,
   isEligibilityLoading = false,
   eligibilityCounts,
+  eligibilityFilter,
+  onEligibilityFilterChange,
 }: AutoSeoToolbarProps): React.JSX.Element {
   const needsSeoCount = eligibilityCounts
     ? eligibilityCounts.never_processed + eligibilityCounts.changed + eligibilityCounts.retry
@@ -181,18 +185,71 @@ export function AutoSeoToolbar({
 
           {eligibilityCounts && (
             <div className="flex flex-wrap items-center gap-1.5 text-[11px] font-medium">
-              <span className="inline-flex items-center gap-1.5 rounded-md bg-cyan-950/50 border border-cyan-800/70 px-2.5 py-1 text-cyan-300">
+              <button
+                type="button"
+                onClick={() =>
+                  onEligibilityFilterChange?.(
+                    eligibilityFilter === "needs_seo" ? "all" : "needs_seo",
+                  )
+                }
+                className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 transition cursor-pointer ${
+                  eligibilityFilter === "needs_seo"
+                    ? "bg-cyan-900/90 border border-cyan-400 text-cyan-100 font-bold shadow-xs shadow-cyan-900/50 ring-1 ring-cyan-400/50"
+                    : "bg-cyan-950/50 border border-cyan-800/70 text-cyan-300 hover:bg-cyan-900/50"
+                }`}
+                title={
+                  eligibilityFilter === "needs_seo"
+                    ? "Đang lọc: Cần SEO (click để bỏ lọc)"
+                    : "Click để lọc các sản phẩm cần làm SEO"
+                }
+              >
                 <span className="h-1.5 w-1.5 rounded-full bg-cyan-400" />
                 Cần SEO: {needsSeoCount}
-              </span>
-              <span className="inline-flex items-center gap-1.5 rounded-md bg-slate-800/60 border border-slate-700 px-2.5 py-1 text-slate-300">
+              </button>
+
+              <button
+                type="button"
+                onClick={() =>
+                  onEligibilityFilterChange?.(
+                    eligibilityFilter === "current" ? "all" : "current",
+                  )
+                }
+                className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 transition cursor-pointer ${
+                  eligibilityFilter === "current"
+                    ? "bg-emerald-900/90 border border-emerald-400 text-emerald-100 font-bold shadow-xs shadow-emerald-900/50 ring-1 ring-emerald-400/50"
+                    : "bg-slate-800/60 border border-slate-700 text-slate-300 hover:bg-slate-800"
+                }`}
+                title={
+                  eligibilityFilter === "current"
+                    ? "Đang lọc: Đã cập nhật (click để bỏ lọc)"
+                    : "Click để lọc các sản phẩm đã cập nhật SEO"
+                }
+              >
                 <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
                 Đã cập nhật: {eligibilityCounts.current}
-              </span>
-              <span className="inline-flex items-center gap-1.5 rounded-md bg-violet-950/50 border border-violet-800/70 px-2.5 py-1 text-violet-300">
+              </button>
+
+              <button
+                type="button"
+                onClick={() =>
+                  onEligibilityFilterChange?.(
+                    eligibilityFilter === "active" ? "all" : "active",
+                  )
+                }
+                className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 transition cursor-pointer ${
+                  eligibilityFilter === "active"
+                    ? "bg-violet-900/90 border border-violet-400 text-violet-100 font-bold shadow-xs shadow-violet-900/50 ring-1 ring-violet-400/50"
+                    : "bg-violet-950/50 border border-violet-800/70 text-violet-300 hover:bg-violet-900/50"
+                }`}
+                title={
+                  eligibilityFilter === "active"
+                    ? "Đang lọc: Đang xử lý (click để bỏ lọc)"
+                    : "Click để lọc các sản phẩm đang xử lý SEO"
+                }
+              >
                 <span className="h-1.5 w-1.5 rounded-full bg-violet-400" />
                 Đang xử lý: {eligibilityCounts.active}
-              </span>
+              </button>
             </div>
           )}
         </div>

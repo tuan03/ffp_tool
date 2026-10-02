@@ -14,6 +14,7 @@ import {
 } from "../ui/components/product-filter";
 import { ProductSelectionTable } from "../ui/components/ProductSelectionTable";
 import type { ProductSelectionTableProps } from "../ui/components/ProductSelectionTable";
+import type { AutoSeoEligibilityFilter } from "../ui/smart-batch";
 
 import type {
   AutoSeoEligibilityItem,
@@ -65,7 +66,7 @@ function renderTable(props: {
   onToggleSelect?: (id: string) => void;
   onOpenDetail?: (product: ShopifyProductForAutoSeoUi) => void;
   eligibilityItems?: readonly AutoSeoEligibilityItem[];
-  eligibilityFilter?: "needs_seo" | "all";
+  eligibilityFilter?: AutoSeoEligibilityFilter;
 }): RenderResult {
   let captured: React.ReactElement<{ children: React.ReactNode[] }> | null = null;
 
@@ -226,6 +227,70 @@ test("ProductSelectionTable: filters needs-SEO products and renders localized el
   assert.ok(html.includes("Chưa SEO"));
   assert.ok(html.includes("Đã cập nhật"));
   assert.ok(html.includes("Thử lại"));
+});
+
+test("ProductSelectionTable & filterAutoSeoProducts: filters by active (Đang xử lý) and current (Đã cập nhật)", () => {
+  const eligibilityItems: readonly AutoSeoEligibilityItem[] = [
+    { productId: mockProducts[0]!.id, state: "never_processed", reason: "NO_HISTORY" },
+    { productId: mockProducts[1]!.id, state: "active", reason: "ACTIVE_DISPATCH" },
+    { productId: mockProducts[2]!.id, state: "current", reason: "UP_TO_DATE" },
+  ];
+
+  // 1. Filter by active
+  const filteredActive = filterAutoSeoProducts(mockProducts, {
+    searchQuery: "",
+    statusFilter: "all",
+    eligibilityFilter: "active",
+    eligibilityItems,
+  });
+  assert.deepEqual(filteredActive.map(p => p.id), [mockProducts[1]!.id]);
+
+  // 2. Filter by current
+  const filteredCurrent = filterAutoSeoProducts(mockProducts, {
+    searchQuery: "",
+    statusFilter: "all",
+    eligibilityFilter: "current",
+    eligibilityItems,
+  });
+  assert.deepEqual(filteredCurrent.map(p => p.id), [mockProducts[2]!.id]);
+
+  // 3. ProductSelectionTable renders all 4 filter tabs with correct live counts
+  const { html } = renderTable({
+    products: mockProducts,
+    selectedProductIds: [],
+    eligibilityItems,
+    eligibilityFilter: "active",
+  });
+  assert.ok(html.includes("⚡ Cần SEO (1)"));
+  assert.ok(html.includes("🟣 Đang xử lý (1)"));
+  assert.ok(html.includes("🟢 Đã cập nhật (1)"));
+  assert.ok(html.includes("Tất cả (3)"));
+});
+
+test("AutoSeoToolbar: renders interactive eligibility badges with correct counts", () => {
+  const toolbar = AutoSeoToolbar({
+    isLoadingProducts: false,
+    isRunningAutoSeo: false,
+    totalProductsCount: 3,
+    selectedCount: 0,
+    onLoadProducts: () => {},
+    onRunAutoSeo: () => {},
+    eligibilityCounts: {
+      never_processed: 10,
+      changed: 5,
+      current: 20,
+      active: 15,
+      retry: 2,
+    },
+    eligibilityFilter: "active",
+    onEligibilityFilterChange: () => {},
+  });
+
+  const html = renderToStaticMarkup(React.createElement(() => toolbar));
+  assert.ok(html.includes("Cần SEO: 17"));
+  assert.ok(html.includes("Đã cập nhật: 20"));
+  assert.ok(html.includes("Đang xử lý: 15"));
+  assert.ok(html.includes("Đang lọc: Đang xử lý"));
 });
 
 test("ProductSelectionTable: checkbox td.onClick only stops propagation and does NOT call onToggleSelect", () => {

@@ -56,6 +56,16 @@ export function filterAutoSeoProducts(
       if (state !== "never_processed" && state !== "changed" && state !== "retry") {
         return false;
       }
+    } else if (criteria.eligibilityFilter === "active") {
+      const state = eligibilityByProductId.get(product.id)?.state;
+      if (state !== "active") {
+        return false;
+      }
+    } else if (criteria.eligibilityFilter === "current") {
+      const state = eligibilityByProductId.get(product.id)?.state;
+      if (state !== "current") {
+        return false;
+      }
     }
 
     // 3. Review Decision Filter (optional)

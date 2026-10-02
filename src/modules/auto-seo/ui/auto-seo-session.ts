@@ -71,9 +71,16 @@ export function parseAutoSeoSessionState(value: unknown): AutoSeoSessionState {
   const batchSize = VALID_BATCH_SIZES.includes(parsed.batchSize as AutoSeoBatchSize)
     ? parsed.batchSize as AutoSeoBatchSize
     : 50;
-  const eligibilityFilter = parsed.eligibilityFilter === "all" || parsed.eligibilityFilter === "needs_seo"
-    ? parsed.eligibilityFilter
-    : "needs_seo";
+  const validEligibilityFilters: readonly AutoSeoEligibilityFilter[] = [
+    "all",
+    "needs_seo",
+    "active",
+    "current",
+  ];
+  const eligibilityFilter =
+    parsed.eligibilityFilter && validEligibilityFilters.includes(parsed.eligibilityFilter as AutoSeoEligibilityFilter)
+      ? (parsed.eligibilityFilter as AutoSeoEligibilityFilter)
+      : "needs_seo";
 
   return {
     ...DEFAULT_AUTO_SEO_SESSION_STATE,
