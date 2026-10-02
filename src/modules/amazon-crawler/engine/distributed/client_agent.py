@@ -1084,7 +1084,14 @@ class DistributedCrawlerAgent:
             run_id = job_data.get("run_id") or job_data.get("runId") or req_body.get("source_run_id") or job_id
             run_dir = pod_bridge.resolve_run_dir(run_id)
             if run_dir and run_dir.is_dir():
-                for subfolder in ("lifestyle_mockups", "product_cutouts_white", "final_png_images", "final_print"):
+                for subfolder in (
+                    "lifestyle_mockups",
+                    "product_cutouts_white",
+                    "rendered_products",
+                    "product_cutouts",
+                    "final_png_images",
+                    "final_print",
+                ):
                     sub_dir = run_dir / subfolder
                     if sub_dir.is_dir():
                         for img_file in sub_dir.glob("*.*"):
