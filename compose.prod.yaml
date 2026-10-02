@@ -1,4 +1,23 @@
+name: ffp-tool
+
 services:
+  database:
+    image: postgres:17-alpine
+    container_name: ffp-database
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-ffp_tool}
+      POSTGRES_USER: ${POSTGRES_USER:-ffp_tool}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - ffp_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
   app:
     image: ${DOCKER_IMAGE}
     container_name: ffp-tool-app
@@ -7,6 +26,11 @@ services:
       - "127.0.0.1:${APP_PORT:-3010}:3001"
     env_file:
       - .env
+    environment:
+      AUTO_SEO_DATABASE_URL: ${AUTO_SEO_DATABASE_URL:-postgresql://${POSTGRES_USER:-ffp_tool}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@database:5432/${POSTGRES_DB:-ffp_tool}}
+    depends_on:
+      database:
+        condition: service_healthy
     volumes:
       - ./data:/app/.local-data
       - ./runtime:/app/.runtime
@@ -16,3 +40,6 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+
+volumes:
+  ffp_postgres_data:

@@ -20,13 +20,30 @@ function strings(value: unknown, field: string): readonly string[] {
   if (!Array.isArray(value) || value.length > 20) throw new Error(`Invalid ${field}`);
   return value.map(entry => text(entry, field));
 }
-/** Called only by the trusted pipeline after Shopify resolves the product identity. */
-export async function bindExternalSeoProduct(binding: { readonly storeId: string; readonly sourceIdentity: string; readonly productId: string }, providedCorpus?: FileSeoConflictCorpus): Promise<void> {
+function wordCount(value: string): number {
+  return value.trim().split(/\s+/).filter(Boolean).length;
+}
+function validateExternalAeo(draft: ReturnType<typeof validateDraft>): void {
+  if (!draft.aeo_quick_summary) throw new Error("Missing or empty 'aeo_quick_summary' in external SEO draft");
+  const summaryWords = wordCount(draft.aeo_quick_summary);
+  if (summaryWords < 40 || summaryWords > 70) throw new Error("'aeo_quick_summary' must contain 40–70 words");
+  if (!draft.aeo_faq || draft.aeo_faq.length < 3 || draft.aeo_faq.length > 5) {
+    throw new Error("'aeo_faq' must contain 3–5 grounded question and answer items");
+  }
+}
+/**
+ * Called only by the trusted pipeline after Shopify resolves the product identity.
+ * @deprecated Legacy Custom GPT Actions compatibility only. New providers must
+ * use the server-side provider contract and the common B1-B6 pipeline.
+ */
+export async function bindExternalSeoProduct(binding: { readonly storeId: string; readonly sourceIdentity: string; readonly productId: string }, providedCorpus?: SeoConflictCorpus): Promise<void> {
   const productId = binding.productId.replace(/^gid:\/\/shopify\/Product\//, "");
   if (!/^[a-zA-Z0-9_-]+$/.test(binding.storeId) || !binding.sourceIdentity || !/^\d+$/.test(productId)) throw new Error("Invalid product identity binding");
   const corpus = providedCorpus ?? new FileSeoConflictCorpus({ storeId: binding.storeId, maxRegisteredKeywordsPerProduct: 1024 });
+  if (!corpus.reassignProduct) throw new Error("SEO conflict corpus does not support identity reassignment");
   await corpus.reassignProduct({ storeId: binding.storeId, productId: `amazon:${binding.sourceIdentity}` }, { storeId: binding.storeId, productId });
 }
+/** @deprecated Legacy Custom GPT Actions compatibility only. */
 export function validateExternalSeoAnalysis(input: SeoContentInput, payload: unknown): { understanding: ProductUnderstanding; shopping: ShoppingContext; evidence: readonly { imageId: string; observation: string }[] } {
   const analysis = object(payload);
   const evidence = Array.isArray(analysis.evidence) ? analysis.evidence.map(entry => {
@@ -53,6 +70,7 @@ export function validateExternalSeoAnalysis(input: SeoContentInput, payload: unk
     },
   };
 }
+/** @deprecated Legacy Custom GPT Actions compatibility only. */
 export async function researchExternalSeo(seeds: readonly string[], language = "en-US"): Promise<Readonly<Record<string, readonly string[]>>> {
   if (!seeds.length || seeds.length > 5 || seeds.some(seed => !seed.trim() || seed.length > 120)) throw new Error("Provide 1–5 seeds of at most 120 characters");
   const client = new UnofficialGoogleSuggestClient({ language: language.split("-")[0], timeoutMs: 2500, retryDelayMs: 250 });
@@ -60,6 +78,7 @@ export async function researchExternalSeo(seeds: readonly string[], language = "
   for (const seed of seeds) results[seed] = await client.getSuggestions(seed, { signal: AbortSignal.timeout(5000) });
   return results;
 }
+/** @deprecated Legacy Custom GPT Actions compatibility only. */
 export async function checkExternalSeoKeywords(input: SeoContentInput, keywords: readonly string[], providedCorpus?: SeoConflictCorpus) {
   if (!input.storeId || !/^[a-zA-Z0-9_-]+$/.test(input.storeId)) throw new Error("Valid storeId required");
   if (!keywords.length || keywords.length > 10 || keywords.some(keyword => !keyword.trim() || keyword.length > 120)) throw new Error("Provide 1–10 keywords of at most 120 characters");
@@ -71,7 +90,10 @@ export async function checkExternalSeoKeywords(input: SeoContentInput, keywords:
   const previousKeywords = snapshot.products.filter(product => isSameProduct(product, owner)).flatMap(product => product.keywords.map(keyword => keyword.keyword));
   return { revision: snapshot.revision, previousKeywords, conflicts, semanticMode: "local_with_gpt_review" as const };
 }
-/** No default provider factories are called: every reasoning result comes from the external draft. */
+/**
+ * No default provider factories are called: every reasoning result comes from the external draft.
+ * @deprecated Legacy Custom GPT Actions compatibility only.
+ */
 export async function finalizeExternalSeo(input: SeoContentInput, analysisPayload: unknown, keywordPayload: unknown, submission: unknown, providedCorpus?: SeoConflictCorpus): Promise<SeoContentDetailedOutput> {
   const analysis = validateExternalSeoAnalysis(input, analysisPayload);
   const decision = object(keywordPayload);
@@ -83,6 +105,7 @@ export async function finalizeExternalSeo(input: SeoContentInput, analysisPayloa
   const draft = validateDraft(raw.draft);
   // Arbitrary JSON-LD from an external model must not bypass fact validation.
   if (draft.aeo_json_ld) throw new Error("Submit structured FAQ fields, not arbitrary JSON-LD");
+  validateExternalAeo(draft);
   const alts = object(raw.alts);
   const imageOutputs = input.images.map((image, index) => {
     const id = image.id || `image-${index + 1}`;
@@ -102,5 +125,5 @@ export async function finalizeExternalSeo(input: SeoContentInput, analysisPayloa
   // Preserve previously committed keywords while a replacement is only a review draft.
   // Replaying after a crash is harmless: upsert replaces this same owner's union.
   await corpus.upsertProduct({ identity: { storeId: input.storeId, productId: input.productId, handle: input.handle, url: input.url }, title: input.title, approvedKeywords: [...new Set([...keywords, ...check.previousKeywords])], expectedRevision: check.revision });
-  return { output: finalizePipelineOutput(context), metadata: { engine: "custom_gpt", fieldsApplied: ["title", "description", "seoTitle", "seoDescription", "alt"], fallbackStages: [], warnings: ["Image evidence is supplied by GPT and must be reviewed. Semantic conflict review uses local retrieval, not Vertex embeddings."], approvedKeywords: keywords, corpusRevision: check.revision + 1 } };
+  return { output: finalizePipelineOutput(context), metadata: { engine: "custom_gpt", fieldsApplied: ["title", "description", "seoTitle", "seoDescription", "alt", "aeoQuickSummary", "aeoFaq", "aeoJsonLd"], fallbackStages: [], warnings: ["Image evidence is supplied by an external reasoning provider and must be reviewed. Semantic conflict review uses local retrieval, not Vertex embeddings."], approvedKeywords: keywords, corpusRevision: check.revision + 1 } };
 }

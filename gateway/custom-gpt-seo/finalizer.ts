@@ -1,9 +1,9 @@
 import { finalizeExternalSeo, runSeoContentDetailed, registerSeoContentKeywords, SeoCorpusCommitCoordinator, FileSeoConflictCorpus } from "../../src/modules/seo-content";
 import type { SeoContentDetailedOutput } from "../../src/modules/seo-content";
-import type { CustomGptQueue } from "./queue";
+import type { SeoQueue } from "./queue-contract";
 
-export async function processCustomGptJob(queue: CustomGptQueue, finalize = finalizeExternalSeo): Promise<void> {
-  for (const job of queue.pendingFinalization()) {
+export async function processCustomGptJob(queue: SeoQueue, finalize = finalizeExternalSeo): Promise<void> {
+  for (const job of (await queue.pendingFinalization())) {
     try {
       const input = { ...job.input, storeId: job.storeId };
       let result: SeoContentDetailedOutput;
@@ -15,14 +15,18 @@ export async function processCustomGptJob(queue: CustomGptQueue, finalize = fina
         });
         result = { ...prepared.execution, output: { ...prepared.execution.output, images: prepared.execution.output.images.map((image, index) => ({ ...image, webp: { url: image.sourceUrl, filename: `${job.input.handle || "product"}-${index + 1}.webp` } })) } };
       } else {
-        result = await finalize(input, job.checkpoints.analysis, job.checkpoints.keywords, job.checkpoints.submission);
+        const externalResult = await finalize(input, job.checkpoints.analysis, job.checkpoints.keywords, job.checkpoints.submission);
+        result = {
+          ...externalResult,
+          metadata: { ...externalResult.metadata, engine: job.settings.provider },
+        };
       }
-      queue.finish(job.storeId, job.id, result, job.finalizerToken);
+      (await queue.finish(job.storeId, job.id, result, job.finalizerToken));
     } catch (error) {
       const message = error instanceof Error ? error.message : "Finalization failed";
       const name = error instanceof Error ? error.name : "";
-      if (/RevisionConflict|LockTimeout/.test(name) || /SQLITE_BUSY|EBUSY|EMFILE/.test(message)) queue.retryFinalization(job.storeId, job.id, "Temporary storage contention; automatic retry scheduled", job.finalizerToken);
-      else queue.failValidation(job.storeId, job.id, message, job.finalizerToken);
+      if (/RevisionConflict|LockTimeout/.test(name) || /SEO_QUEUE_STORAGE_UNAVAILABLE|SQLITE_BUSY|EBUSY|EMFILE/.test(message)) (await queue.retryFinalization(job.storeId, job.id, "Temporary storage contention; automatic retry scheduled", job.finalizerToken));
+      else (await queue.failValidation(job.storeId, job.id, message, job.finalizerToken));
     }
   }
 }

@@ -240,6 +240,7 @@ export interface SetMetafieldOutput {
 export interface ShopifyGateway {
   readonly createProduct: (input: CreateProductInput) => Promise<CreateProductOutput>;
   readonly updateProduct?: (input: UpdateProductInput) => Promise<UpdateProductOutput>;
+  readonly deleteProduct?: (productId: string) => Promise<{ success: boolean }>;
   readonly createVariants: (
     productId: string,
     variants: readonly CreateVariantItem[],
@@ -248,6 +249,23 @@ export interface ShopifyGateway {
   readonly uploadFilesBatch?: (
     inputs: readonly UploadFileInput[],
   ) => Promise<readonly UploadFileOutput[]>;
+  readonly deleteFiles?: (input: { fileIds: readonly string[] }) => Promise<{ deletedFileIds: readonly string[] }>;
   readonly setProductMetafield: (input: SetMetafieldInput) => Promise<SetMetafieldOutput>;
+}
+
+export interface RollbackSyncInput {
+  readonly productId: string;
+  readonly managedResources?: ShopifyManagedResources;
+  readonly reason?: string;
+  readonly archiveOnly?: boolean;
+}
+
+export interface RollbackSyncResult {
+  readonly productId: string;
+  readonly rolledBack: boolean;
+  readonly actionTaken: "deleted" | "archived" | "cleaned_resources" | "none";
+  readonly deletedFileIds?: readonly string[];
+  readonly warnings?: readonly string[];
+  readonly error?: string;
 }
 

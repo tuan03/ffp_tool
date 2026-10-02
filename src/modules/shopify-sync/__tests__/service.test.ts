@@ -8,6 +8,7 @@ import {
   fromCustomizationNormalizerProduct,
   getShopifySyncRunner,
   replaceUrlsInObject,
+  rollbackProductSync,
   runMockShopifySync,
   runShopifySync,
   shopifySyncMockData,
@@ -683,6 +684,148 @@ test("compactCustomizerConfigForMetafield safely compacts large customizer confi
   const firstOpt = (compacted.optionGroups as any[])[0].options[0];
   assertStrict.equal(firstOpt.overlayImage.url, "https://m.media-amazon.com/images/overlay-0-0.png");
   assertStrict.equal(firstOpt.thumbnailImage.url, "https://m.media-amazon.com/images/thumb-0-0.png");
+});
+
+test("rollbackProductSync deletes product when deleteProduct is supported and cleans managed media files", async () => {
+  const deletedProductIds: string[] = [];
+  const deletedFileIds: string[] = [];
+
+  const fakeGateway: ShopifyGateway = {
+    async createProduct() {
+      throw new Error("unused");
+    },
+    async createVariants() {
+      return { createdCount: 0 };
+    },
+    async uploadFile() {
+      throw new Error("unused");
+    },
+    async setProductMetafield() {
+      return { success: true };
+    },
+    async deleteProduct(id: string) {
+      deletedProductIds.push(id);
+      return { success: true };
+    },
+    async deleteFiles(input: { fileIds: readonly string[] }) {
+      deletedFileIds.push(...input.fileIds);
+      return { deletedFileIds: input.fileIds };
+    },
+  };
+
+  const result = await rollbackProductSync(fakeGateway, {
+    productId: "gid://shopify/Product/fail-999",
+    managedResources: {
+      mediaIds: ["gid://shopify/MediaImage/101", "gid://shopify/MediaImage/102"],
+      tags: ["ffp-source:asin123"],
+    },
+    reason: "Partial write failure during variant creation",
+  });
+
+  assertStrict.equal(result.productId, "gid://shopify/Product/fail-999");
+  assertStrict.equal(result.rolledBack, true);
+  assertStrict.equal(result.actionTaken, "deleted");
+  assertStrict.deepEqual(deletedProductIds, ["gid://shopify/Product/fail-999"]);
+  assertStrict.deepEqual(deletedFileIds, ["gid://shopify/MediaImage/101", "gid://shopify/MediaImage/102"]);
+});
+
+test("rollbackProductSync falls back to archiving as DRAFT when deleteProduct is not supported", async () => {
+  let updatedProductPayload: any = null;
+
+  const fakeGateway: ShopifyGateway = {
+    async createProduct() {
+      throw new Error("unused");
+    },
+    async createVariants() {
+      return { createdCount: 0 };
+    },
+    async uploadFile() {
+      throw new Error("unused");
+    },
+    async setProductMetafield() {
+      return { success: true };
+    },
+    async updateProduct(input) {
+      updatedProductPayload = input;
+      return {
+        productId: input.productId,
+        productHandle: "draft-handle",
+      };
+    },
+  };
+
+  const result = await rollbackProductSync(fakeGateway, {
+    productId: "gid://shopify/Product/fail-888",
+    reason: "Network timeout during metafield write",
+  });
+
+  assertStrict.equal(result.productId, "gid://shopify/Product/fail-888");
+  assertStrict.equal(result.rolledBack, true);
+  assertStrict.equal(result.actionTaken, "archived");
+  assertStrict.equal(updatedProductPayload?.status, "DRAFT");
+  assertStrict.equal(updatedProductPayload?.title, "[Rollback Draft]");
+});
+
+test("rollbackProductSync respects archiveOnly flag even if deleteProduct is available", async () => {
+  let deleteCalled = false;
+  let updateCalled = false;
+
+  const fakeGateway: ShopifyGateway = {
+    async createProduct() {
+      throw new Error("unused");
+    },
+    async createVariants() {
+      return { createdCount: 0 };
+    },
+    async uploadFile() {
+      throw new Error("unused");
+    },
+    async setProductMetafield() {
+      return { success: true };
+    },
+    async deleteProduct() {
+      deleteCalled = true;
+      return { success: true };
+    },
+    async updateProduct(input) {
+      updateCalled = true;
+      return { productId: input.productId, productHandle: "handle" };
+    },
+  };
+
+  const result = await rollbackProductSync(fakeGateway, {
+    productId: "gid://shopify/Product/safe-archive",
+    archiveOnly: true,
+  });
+
+  assertStrict.equal(deleteCalled, false);
+  assertStrict.equal(updateCalled, true);
+  assertStrict.equal(result.actionTaken, "archived");
+});
+
+test("rollbackProductSync rejects missing productId", async () => {
+  const fakeGateway: ShopifyGateway = {
+    async createProduct() {
+      throw new Error("unused");
+    },
+    async createVariants() {
+      return { createdCount: 0 };
+    },
+    async uploadFile() {
+      throw new Error("unused");
+    },
+    async setProductMetafield() {
+      return { success: true };
+    },
+  };
+
+  const result = await rollbackProductSync(fakeGateway, {
+    productId: "",
+  });
+
+  assertStrict.equal(result.rolledBack, false);
+  assertStrict.equal(result.actionTaken, "none");
+  assertStrict.ok(result.error?.includes("productId is required"));
 });
 
 

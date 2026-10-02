@@ -17,6 +17,8 @@ import type {
   UpdateProductInput,
   UpdateProductOutput,
   ShopifyVersionConflictDetails,
+  RollbackSyncInput,
+  RollbackSyncResult,
 } from "./types";
 
 const AMAZON_ASIN_PATTERN = /^[A-Z0-9]{10}$/;
@@ -664,5 +666,89 @@ export async function runShopifySync(
     failedProducts,
     totalAssetsUploaded,
     results,
+  };
+}
+
+export async function rollbackProductSync(
+  gateway: ShopifyGateway,
+  input: RollbackSyncInput,
+): Promise<RollbackSyncResult> {
+  const warnings: string[] = [];
+  const deletedFileIds: string[] = [];
+
+  if (!input.productId) {
+    return {
+      productId: "",
+      rolledBack: false,
+      actionTaken: "none",
+      error: "productId is required to execute rollback.",
+    };
+  }
+
+  // 1. Clean up managed media files if present
+  if (input.managedResources?.mediaIds && input.managedResources.mediaIds.length > 0 && gateway.deleteFiles) {
+    try {
+      const delFilesRes = await gateway.deleteFiles({ fileIds: input.managedResources.mediaIds });
+      deletedFileIds.push(...delFilesRes.deletedFileIds);
+    } catch (err) {
+      warnings.push(
+        `Failed to clean up media files during rollback: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
+  // 2. Rollback product: delete if supported and not archive-only; otherwise archive
+  if (!input.archiveOnly && gateway.deleteProduct) {
+    try {
+      const delRes = await gateway.deleteProduct(input.productId);
+      return {
+        productId: input.productId,
+        rolledBack: delRes.success,
+        actionTaken: "deleted",
+        deletedFileIds,
+        warnings,
+      };
+    } catch (err) {
+      warnings.push(
+        `deleteProduct failed during rollback (${err instanceof Error ? err.message : String(err)}); falling back to archive`,
+      );
+    }
+  }
+
+  // Fallback: archive the product to prevent it from appearing active on the storefront
+  if (gateway.updateProduct) {
+    try {
+      await gateway.updateProduct({
+        productId: input.productId,
+        title: "[Rollback Draft]",
+        descriptionHtml: "<p>Sync aborted due to partial failure</p>",
+        status: "DRAFT",
+        tags: ["ffp-rollback-draft"],
+      });
+      return {
+        productId: input.productId,
+        rolledBack: true,
+        actionTaken: "archived",
+        deletedFileIds,
+        warnings,
+      };
+    } catch (err) {
+      return {
+        productId: input.productId,
+        rolledBack: false,
+        actionTaken: "none",
+        deletedFileIds,
+        warnings,
+        error: `Failed to archive product during rollback: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+  }
+
+  return {
+    productId: input.productId,
+    rolledBack: deletedFileIds.length > 0,
+    actionTaken: deletedFileIds.length > 0 ? "cleaned_resources" : "none",
+    deletedFileIds,
+    warnings,
   };
 }

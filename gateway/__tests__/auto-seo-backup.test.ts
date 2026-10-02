@@ -584,16 +584,37 @@ test("17. no fetch/HTTP SEO Content call exists", async () => {
   }
 });
 
-test("18. default runSeoContent placeholder returns success", async () => {
+test("18. explicitly configured mock runner returns success without runtime storage", async () => {
+  const { runMockSeoContent } = await import("../../src/modules/seo-content");
   const res = await runSeoContent({
     workflowId: "wf-default",
     storeId: "store-1",
     shopDomain: "test.myshopify.com",
     products: [createMockProduct({ id: "p1" })],
-  });
+  }, { runner: runMockSeoContent });
   assert.equal(res.success, true);
   assert.equal(res.processedCount, 1);
   assert.ok(res.message);
+});
+
+test("18b. runSeoContent exposes the first item failure for server diagnostics", async () => {
+  const res = await runSeoContent(
+    {
+      workflowId: "wf-item-failure",
+      storeId: "store-1",
+      shopDomain: "test.myshopify.com",
+      products: [createMockProduct({ id: "p1" })],
+    },
+    {
+      runner: async () => {
+        throw new Error("SEO provider is unavailable");
+      },
+    },
+  );
+
+  assert.equal(res.success, false);
+  assert.equal(res.processedCount, 0);
+  assert.match(res.message ?? "", /SEO provider is unavailable/);
 });
 
 test("19. status update failure does not rerun SEO Content & throws error", async () => {

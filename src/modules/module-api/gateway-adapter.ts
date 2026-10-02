@@ -469,7 +469,7 @@ export function createShopifyGatewayAdapter(
           force: input.force,
           product: {
             title: input.title,
-            handle: input.handle,
+            ...(input.handle !== undefined ? { handle: input.handle } : {}),
             seo: input.seo,
             descriptionHtml: input.descriptionHtml,
             vendor: input.vendor,
@@ -782,6 +782,7 @@ export function createCustomizationGatewayAdapter(
           id: f.id,
           url: f.url,
           altText: f.altText,
+          tags: f.tags,
           fileStatus: f.fileStatus,
         })),
       };

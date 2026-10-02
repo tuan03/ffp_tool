@@ -299,6 +299,7 @@ export async function pushSeoReviewProductToShopify(
 
       let syncInput: ShopifySyncProductInput = {
         ...baseInput,
+        ...(validExistingProductId ? { handle: undefined } : {}),
         vendor: effectiveVendor,
         collectionsToJoin: product.collectionsToJoin,
         ...(product.productType ? { productType: product.productType } : {}),
@@ -415,8 +416,7 @@ export async function pushSeoReviewProductToShopify(
           product: {
             title: product.productTitle,
             descriptionHtml: product.productDescription,
-            handle: product.handle,
-            vendor: effectiveVendor,
+            ...(product.vendor?.trim() ? { vendor: product.vendor.trim() } : {}),
             productType: product.productType,
             tags: product.tags ? [...product.tags] : undefined,
             seo: {

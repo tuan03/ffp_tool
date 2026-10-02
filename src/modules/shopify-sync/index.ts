@@ -14,6 +14,7 @@ export {
   compactCustomizerConfigForMetafield,
   createDryRunGateway,
   replaceUrlsInObject,
+  rollbackProductSync,
   runShopifySync,
   syncSingleProduct,
 } from "./service";
@@ -52,4 +53,6 @@ export type {
   UpdateProductInput,
   UpdateProductOutput,
   ShopifyVersionConflictDetails,
+  RollbackSyncInput,
+  RollbackSyncResult,
 } from "./types";

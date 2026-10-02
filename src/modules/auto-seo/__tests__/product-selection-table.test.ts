@@ -14,8 +14,11 @@ import {
 } from "../ui/components/product-filter";
 import { ProductSelectionTable } from "../ui/components/ProductSelectionTable";
 import type { ProductSelectionTableProps } from "../ui/components/ProductSelectionTable";
+import type { AutoSeoEligibilityFilter } from "../ui/smart-batch";
 
 import type {
+  AutoSeoCollectionOption,
+  AutoSeoEligibilityItem,
   ProductReviewDecision,
   ShopifyProductForAutoSeoUi,
   ShopifyStatusFilter,
@@ -63,6 +66,17 @@ function renderTable(props: {
   filteredProducts?: readonly ShopifyProductForAutoSeoUi[];
   onToggleSelect?: (id: string) => void;
   onOpenDetail?: (product: ShopifyProductForAutoSeoUi) => void;
+  eligibilityItems?: readonly AutoSeoEligibilityItem[];
+  eligibilityFilter?: AutoSeoEligibilityFilter;
+  typeFilter?: string;
+  onTypeFilterChange?: (type: string) => void;
+  collectionFilter?: string;
+  onCollectionFilterChange?: (collection: string) => void;
+  storeCollections?: readonly AutoSeoCollectionOption[];
+  asinQuery?: string;
+  startDate?: string;
+  endDate?: string;
+  onResetAllFilters?: () => void;
 }): RenderResult {
   let captured: React.ReactElement<{ children: React.ReactNode[] }> | null = null;
 
@@ -74,9 +88,20 @@ function renderTable(props: {
       onSearchQueryChange: props.onSearchQueryChange,
       statusFilter: props.statusFilter,
       onStatusFilterChange: props.onStatusFilterChange,
+      typeFilter: props.typeFilter,
+      onTypeFilterChange: props.onTypeFilterChange,
+      collectionFilter: props.collectionFilter,
+      onCollectionFilterChange: props.onCollectionFilterChange,
+      storeCollections: props.storeCollections,
       filteredProducts: props.filteredProducts,
       onToggleSelect: props.onToggleSelect ?? (() => {}),
       onOpenDetail: props.onOpenDetail ?? (() => {}),
+      eligibilityItems: props.eligibilityItems,
+      eligibilityFilter: props.eligibilityFilter,
+      asinQuery: props.asinQuery,
+      startDate: props.startDate,
+      endDate: props.endDate,
+      onResetAllFilters: props.onResetAllFilters,
     }) as React.ReactElement<{ children: React.ReactNode[] }>;
     return captured;
   }
@@ -164,6 +189,127 @@ test("ProductSelectionTable: single checkbox change triggers onToggleSelect exac
 
   assert.equal(toggleCalls.length, 10, "Each change event must invoke onToggleSelect exactly once");
   assert.ok(toggleCalls.every((id) => id === "gid://shopify/Product/101"));
+});
+
+test("AutoSeoToolbar: renders smart batch sizes, counts, and next-batch action", () => {
+  const html = renderToStaticMarkup(React.createElement(AutoSeoToolbar, {
+    isLoadingProducts: false,
+    isRunningAutoSeo: false,
+    totalProductsCount: 120,
+    selectedCount: 0,
+    visibleProductsCount: 120,
+    onLoadProducts: () => {},
+    onSelectAll: () => {},
+    onClearSelection: () => {},
+    onRunAutoSeo: () => {},
+    batchSize: 50,
+    onBatchSizeChange: () => {},
+    onSelectNextBatch: () => {},
+    eligibilityCounts: {
+      never_processed: 70,
+      changed: 10,
+      retry: 2,
+      current: 30,
+      active: 8,
+    },
+  }));
+
+  for (const size of [10, 20, 50, 100]) {
+    assert.ok(html.includes(`value="${size}"`));
+  }
+  assert.ok(html.includes("Chọn 50 sản phẩm tiếp theo"));
+  assert.ok(html.includes("Cần SEO: 82"));
+  assert.ok(html.includes("Đã cập nhật: 30"));
+  assert.ok(html.includes("Đang xử lý: 8"));
+});
+
+test("ProductSelectionTable: filters needs-SEO products and renders localized eligibility badges", () => {
+  const eligibilityItems: readonly AutoSeoEligibilityItem[] = [
+    { productId: mockProducts[0]!.id, state: "never_processed", reason: "NO_HISTORY" },
+    { productId: mockProducts[1]!.id, state: "current", reason: "UP_TO_DATE" },
+    { productId: mockProducts[2]!.id, state: "retry", reason: "LAST_DISPATCH_FAILED" },
+  ];
+  const filtered = filterAutoSeoProducts(mockProducts, {
+    searchQuery: "",
+    statusFilter: "all",
+    eligibilityFilter: "needs_seo",
+    eligibilityItems,
+  });
+  assert.deepEqual(filtered.map(product => product.id), [mockProducts[0]!.id, mockProducts[2]!.id]);
+
+  const { html } = renderTable({
+    products: mockProducts,
+    selectedProductIds: [],
+    eligibilityItems,
+    eligibilityFilter: "all",
+  });
+  assert.ok(html.includes("Chưa SEO"));
+  assert.ok(html.includes("Đã cập nhật"));
+  assert.ok(html.includes("Thử lại"));
+});
+
+test("ProductSelectionTable & filterAutoSeoProducts: filters by active (Đang xử lý) and current (Đã cập nhật)", () => {
+  const eligibilityItems: readonly AutoSeoEligibilityItem[] = [
+    { productId: mockProducts[0]!.id, state: "never_processed", reason: "NO_HISTORY" },
+    { productId: mockProducts[1]!.id, state: "active", reason: "ACTIVE_DISPATCH" },
+    { productId: mockProducts[2]!.id, state: "current", reason: "UP_TO_DATE" },
+  ];
+
+  // 1. Filter by active
+  const filteredActive = filterAutoSeoProducts(mockProducts, {
+    searchQuery: "",
+    statusFilter: "all",
+    eligibilityFilter: "active",
+    eligibilityItems,
+  });
+  assert.deepEqual(filteredActive.map(p => p.id), [mockProducts[1]!.id]);
+
+  // 2. Filter by current
+  const filteredCurrent = filterAutoSeoProducts(mockProducts, {
+    searchQuery: "",
+    statusFilter: "all",
+    eligibilityFilter: "current",
+    eligibilityItems,
+  });
+  assert.deepEqual(filteredCurrent.map(p => p.id), [mockProducts[2]!.id]);
+
+  // 3. ProductSelectionTable renders all 4 filter tabs with correct live counts
+  const { html } = renderTable({
+    products: mockProducts,
+    selectedProductIds: [],
+    eligibilityItems,
+    eligibilityFilter: "active",
+  });
+  assert.ok(html.includes("⚡ Cần SEO (1)"));
+  assert.ok(html.includes("🟣 Đang xử lý (1)"));
+  assert.ok(html.includes("🟢 Đã cập nhật (1)"));
+  assert.ok(html.includes("Tất cả (3)"));
+});
+
+test("AutoSeoToolbar: renders interactive eligibility badges with correct counts", () => {
+  const toolbar = AutoSeoToolbar({
+    isLoadingProducts: false,
+    isRunningAutoSeo: false,
+    totalProductsCount: 3,
+    selectedCount: 0,
+    onLoadProducts: () => {},
+    onRunAutoSeo: () => {},
+    eligibilityCounts: {
+      never_processed: 10,
+      changed: 5,
+      current: 20,
+      active: 15,
+      retry: 2,
+    },
+    eligibilityFilter: "active",
+    onEligibilityFilterChange: () => {},
+  });
+
+  const html = renderToStaticMarkup(React.createElement(() => toolbar));
+  assert.ok(html.includes("Cần SEO: 17"));
+  assert.ok(html.includes("Đã cập nhật: 20"));
+  assert.ok(html.includes("Đang xử lý: 15"));
+  assert.ok(html.includes("Đang lọc: Đang xử lý"));
 });
 
 test("ProductSelectionTable: checkbox td.onClick only stops propagation and does NOT call onToggleSelect", () => {
@@ -728,7 +874,7 @@ test("ProductSelectionTable & Toolbar: visible product count is correct", () => 
   // 2 active out of 4 total products
   assert.ok(tableHtml.includes("Hiển thị 2 / 4 sản phẩm"));
 
-  // AutoSeoToolbar rendering visible count
+  // AutoSeoToolbar rendering count badges
   const toolbarHtml = renderToStaticMarkup(
     React.createElement(AutoSeoToolbar, {
       isLoadingProducts: false,
@@ -742,8 +888,9 @@ test("ProductSelectionTable & Toolbar: visible product count is correct", () => 
       onRunAutoSeo: () => {},
     }),
   );
-  assert.ok(toolbarHtml.includes("Chọn tất cả (2)"));
-  assert.ok(toolbarHtml.includes("Bỏ chọn (2)"));
+  assert.ok(toolbarHtml.includes("Đã chọn:"));
+  assert.ok(toolbarHtml.includes("Bỏ chọn"));
+  assert.ok(toolbarHtml.includes("Run Auto SEO (2)"));
 });
 
 test("ProductSelectionTable: status filter counts reflect total loaded products before filter", () => {
@@ -771,53 +918,43 @@ test("ProductSelectionTable: status filter counts reflect total loaded products 
   assert.ok(html.includes("Archived (1)"));
 });
 
-test("AutoSeoToolbar: disables both batch buttons when visibleProductsCount is 0 and enables when positive", () => {
+test("AutoSeoToolbar: enables Run Auto SEO and clear action only when items are selected", () => {
+  // Case 1: 0 items selected -> Run Auto SEO is disabled, '✕ Bỏ chọn' is omitted
   const toolbarZero = AutoSeoToolbar({
     isLoadingProducts: false,
     isRunningAutoSeo: false,
     totalProductsCount: 4,
-    selectedCount: 2,
+    selectedCount: 0,
     visibleProductsCount: 0,
     onLoadProducts: () => {},
-    onSelectAll: () => {},
     onClearSelection: () => {},
     onRunAutoSeo: () => {},
   });
 
-  const zeroChildren = React.Children.toArray(toolbarZero.props.children);
-  const zeroActionsRow = zeroChildren[1] as React.ReactElement<{ children: React.ReactNode[] }>;
-  const zeroButtonGroup = React.Children.toArray(zeroActionsRow.props.children)[0] as React.ReactElement<{ children: React.ReactNode[] }>;
-  const zeroButtons = React.Children.toArray(zeroButtonGroup.props.children) as React.ReactElement<{ title?: string; disabled?: boolean }>[];
+  const zeroHtml = renderToStaticMarkup(React.createElement(() => toolbarZero));
+  assert.ok(zeroHtml.includes("Đã chọn:"));
+  assert.ok(!zeroHtml.includes("✕ Bỏ chọn"));
+  assert.ok(zeroHtml.includes("disabled"));
 
-  const selectAllZero = zeroButtons[1];
-  const clearZero = zeroButtons[2];
-  assert.equal(selectAllZero.props.disabled, true, "Select All must be disabled when visibleProductsCount is 0");
-  assert.equal(clearZero.props.disabled, true, "Clear Selection must be disabled when visibleProductsCount is 0");
-
+  // Case 2: 2 items selected -> Run Auto SEO is enabled and displays count, '✕ Bỏ chọn' is rendered
+  let cleared = false;
   const toolbarPositive = AutoSeoToolbar({
     isLoadingProducts: false,
     isRunningAutoSeo: false,
     totalProductsCount: 4,
-    selectedCount: 0,
+    selectedCount: 2,
     visibleProductsCount: 3,
     onLoadProducts: () => {},
-    onSelectAll: () => {},
-    onClearSelection: () => {},
+    onClearSelection: () => {
+      cleared = true;
+    },
     onRunAutoSeo: () => {},
   });
 
-  const posChildren = React.Children.toArray(toolbarPositive.props.children);
-  const posActionsRow = posChildren[1] as React.ReactElement<{ children: React.ReactNode[] }>;
-  const posButtonGroup = React.Children.toArray(posActionsRow.props.children)[0] as React.ReactElement<{ children: React.ReactNode[] }>;
-  const posButtons = React.Children.toArray(posButtonGroup.props.children) as React.ReactElement<{ title?: string; disabled?: boolean }>[];
-
-  const selectAllPos = posButtons[1];
-  assert.equal(selectAllPos.props.disabled, false, "Select All must be enabled when visibleProductsCount > 0");
-
-  // Also verify HTML markup has the exact labels
-  const toolbarZeroHtml = renderToStaticMarkup(React.createElement(() => toolbarZero));
-  assert.ok(toolbarZeroHtml.includes("Chọn tất cả (0)"));
-  assert.ok(toolbarZeroHtml.includes("Bỏ chọn (0)"));
+  const posHtml = renderToStaticMarkup(React.createElement(() => toolbarPositive));
+  assert.ok(posHtml.includes("Run Auto SEO (2)"));
+  assert.ok(posHtml.includes("✕ Bỏ chọn"));
+  assert.ok(posHtml.includes("Đã chọn:"));
 });
 
 test("filterAutoSeoProducts: matches status case-insensitively ('active' matches 'ACTIVE')", () => {
@@ -963,3 +1100,351 @@ test("AutoSeoPage: defaults to empty selection when initialSelectedProductIds is
   assert.ok(tableElement, "ProductSelectionTable must be rendered");
   assert.deepEqual(tableElement.props.selectedProductIds, [], "Selected product IDs array must be empty");
 });
+
+test("ProductSelectionTable: master checkbox reflects selection state and triggers select all / clear callbacks", () => {
+  let selectAllCalled = false;
+  let clearSelectionCalled = false;
+
+  // 1. None selected: master checkbox is unchecked, change triggers onSelectAllVisible
+  const { captured: unselectedCaptured, html: unselectedHtml } = renderTable({
+    products: mockProducts,
+    selectedProductIds: [],
+  });
+  assert.ok(unselectedHtml.includes("aria-label=\"Chọn hoặc bỏ chọn tất cả sản phẩm đang hiển thị\""));
+
+  // Check master input element in thead
+  const rootDivChildren = React.Children.toArray(unselectedCaptured.props.children);
+  const tableContainer = assertElement<{ children: React.ReactNode }>(rootDivChildren[1]);
+  const table = assertElement<{ children: React.ReactNode[] }>(tableContainer.props.children);
+  const tableChildren = React.Children.toArray(table.props.children);
+  const thead = assertElement<{ children: React.ReactNode[] }>(tableChildren[0]);
+  const theadRow = assertElement<{ children: React.ReactNode[] }>(React.Children.toArray(thead.props.children)[0]);
+  const theadCells = React.Children.toArray(theadRow.props.children);
+  const masterTh = assertElement<{ children: React.ReactNode }>(theadCells[0]);
+  const masterLabel = assertElement<{ children: React.ReactNode }>(masterTh.props.children);
+  const masterInput = assertElement<InputProps>(masterLabel.props.children);
+
+  assert.equal(masterInput.props.checked, false, "Master checkbox should be unchecked when 0 items selected");
+
+  // Harness with custom callbacks to verify toggle
+  let capturedCallbackTree: React.ReactElement<{ children: React.ReactNode[] }> | null = null;
+  function CallbackHarness(props: { selectedIds: readonly string[] }): React.JSX.Element {
+    const el = ProductSelectionTable({
+      products: mockProducts,
+      selectedProductIds: props.selectedIds,
+      onToggleSelect: () => {},
+      onOpenDetail: () => {},
+      onSelectAllVisible: () => {
+        selectAllCalled = true;
+      },
+      onClearVisibleSelection: () => {
+        clearSelectionCalled = true;
+      },
+    }) as React.ReactElement<{ children: React.ReactNode[] }>;
+    capturedCallbackTree = el;
+    return el;
+  }
+
+  // Test triggering select all
+  renderToStaticMarkup(React.createElement(CallbackHarness, { selectedIds: [] }));
+  const root1 = React.Children.toArray(capturedCallbackTree!.props.children);
+  const tc1 = assertElement<{ children: React.ReactNode }>(root1[1]);
+  const t1 = assertElement<{ children: React.ReactNode[] }>(tc1.props.children);
+  const thead1 = assertElement<{ children: React.ReactNode[] }>(React.Children.toArray(t1.props.children)[0]);
+  const tr1 = assertElement<{ children: React.ReactNode[] }>(React.Children.toArray(thead1.props.children)[0]);
+  const th1 = assertElement<{ children: React.ReactNode }>(React.Children.toArray(tr1.props.children)[0]);
+  const lbl1 = assertElement<{ children: React.ReactNode }>(th1.props.children);
+  const input1 = assertElement<InputProps>(lbl1.props.children);
+
+  input1.props.onChange?.();
+  assert.equal(selectAllCalled, true, "Clicking master checkbox when unselected should trigger onSelectAllVisible");
+
+  // Test triggering clear selection when all are selected
+  renderToStaticMarkup(React.createElement(CallbackHarness, { selectedIds: mockProducts.map(p => p.id) }));
+  const root2 = React.Children.toArray(capturedCallbackTree!.props.children);
+  const tc2 = assertElement<{ children: React.ReactNode }>(root2[1]);
+  const t2 = assertElement<{ children: React.ReactNode[] }>(tc2.props.children);
+  const thead2 = assertElement<{ children: React.ReactNode[] }>(React.Children.toArray(t2.props.children)[0]);
+  const tr2 = assertElement<{ children: React.ReactNode[] }>(React.Children.toArray(thead2.props.children)[0]);
+  const th2 = assertElement<{ children: React.ReactNode }>(React.Children.toArray(tr2.props.children)[0]);
+  const lbl2 = assertElement<{ children: React.ReactNode }>(th2.props.children);
+  const input2 = assertElement<InputProps>(lbl2.props.children);
+
+  assert.equal(input2.props.checked, true, "Master checkbox should be checked when all items are selected");
+  input2.props.onChange?.();
+  assert.equal(clearSelectionCalled, true, "Clicking master checkbox when selected should trigger onClearVisibleSelection");
+});
+
+test("filterAutoSeoProducts: filters by typeFilter for productType and collectionFilter for collections/tags", () => {
+  const products: readonly ShopifyProductForAutoSeoUi[] = [
+    {
+      id: "gid://shopify/Product/1",
+      title: "Ceramic Mug",
+      handle: "ceramic-mug",
+      productType: "Kitchenware",
+      collections: [{ id: "c1", title: "Dining", handle: "dining" }],
+      tags: ["eco"],
+    },
+    {
+      id: "gid://shopify/Product/2",
+      title: "Silk Scarf",
+      handle: "silk-scarf",
+      productType: "Apparel",
+      tags: ["fashion", "collection:Accessories"],
+    },
+    {
+      id: "gid://shopify/Product/3",
+      title: "Wooden Spoon",
+      handle: "wooden-spoon",
+      productType: "Kitchenware",
+      tags: ["wood"],
+    },
+  ];
+
+  // Filter by productType "Kitchenware" via typeFilter
+  const kitchenware = filterAutoSeoProducts(products, {
+    typeFilter: "Kitchenware",
+  });
+  assert.equal(kitchenware.length, 2);
+  assert.deepEqual(kitchenware.map(p => p.id), ["gid://shopify/Product/1", "gid://shopify/Product/3"]);
+
+  // Filter by real Shopify collection "Dining" via collectionFilter
+  const dining = filterAutoSeoProducts(products, {
+    collectionFilter: "Dining",
+  });
+  assert.equal(dining.length, 1);
+  assert.equal(dining[0]?.id, "gid://shopify/Product/1");
+
+  // Filter by tag collection "Accessories" via collectionFilter
+  const accessories = filterAutoSeoProducts(products, {
+    collectionFilter: "Accessories",
+  });
+  assert.equal(accessories.length, 1);
+  assert.equal(accessories[0]?.id, "gid://shopify/Product/2");
+});
+
+test("filterAutoSeoProducts: filters by Amazon ASIN across tags, variants SKU, barcode, and handle", () => {
+  const products: readonly ShopifyProductForAutoSeoUi[] = [
+    {
+      id: "gid://shopify/Product/1",
+      title: "Stainless Water Bottle",
+      handle: "water-bottle-b08xyz1234",
+      tags: ["outdoor"],
+    },
+    {
+      id: "gid://shopify/Product/2",
+      title: "Yoga Mat",
+      handle: "yoga-mat",
+      tags: ["asin:B07ABC9999", "fitness"],
+    },
+    {
+      id: "gid://shopify/Product/3",
+      title: "Resistance Bands",
+      handle: "resistance-bands",
+      variants: [
+        { id: "var-1", title: "Heavy", sku: "B09ZZZ8888-HVY" },
+      ],
+    },
+  ];
+
+  // Match ASIN in handle
+  const asin1 = filterAutoSeoProducts(products, { asinQuery: "B08XYZ1234" });
+  assert.equal(asin1.length, 1);
+  assert.equal(asin1[0]?.id, "gid://shopify/Product/1");
+
+  // Match ASIN in tags with prefix asin:
+  const asin2 = filterAutoSeoProducts(products, { asinQuery: "B07ABC9999" });
+  assert.equal(asin2.length, 1);
+  assert.equal(asin2[0]?.id, "gid://shopify/Product/2");
+
+  // Match ASIN in variant SKU (case-insensitive)
+  const asin3 = filterAutoSeoProducts(products, { asinQuery: "b09zzz8888" });
+  assert.equal(asin3.length, 1);
+  assert.equal(asin3[0]?.id, "gid://shopify/Product/3");
+});
+
+test("filterAutoSeoProducts: filters by upload date range using createdAt", () => {
+  const products: readonly ShopifyProductForAutoSeoUi[] = [
+    {
+      id: "gid://shopify/Product/1",
+      title: "Old Product",
+      handle: "old-product",
+      createdAt: "2026-01-15T10:00:00Z",
+    },
+    {
+      id: "gid://shopify/Product/2",
+      title: "Mid Product",
+      handle: "mid-product",
+      createdAt: "2026-05-20T14:30:00Z",
+    },
+    {
+      id: "gid://shopify/Product/3",
+      title: "New Product",
+      handle: "new-product",
+      createdAt: "2026-09-01T08:00:00Z",
+    },
+  ];
+
+  // Filter startDate only
+  const afterMay = filterAutoSeoProducts(products, { startDate: "2026-05-01" });
+  assert.equal(afterMay.length, 2);
+  assert.deepEqual(afterMay.map(p => p.id), ["gid://shopify/Product/2", "gid://shopify/Product/3"]);
+
+  // Filter endDate only
+  const beforeMay = filterAutoSeoProducts(products, { endDate: "2026-05-01" });
+  assert.equal(beforeMay.length, 1);
+  assert.equal(beforeMay[0]?.id, "gid://shopify/Product/1");
+
+  // Filter both startDate and endDate
+  const midOnly = filterAutoSeoProducts(products, { startDate: "2026-05-01", endDate: "2026-05-31" });
+  assert.equal(midOnly.length, 1);
+  assert.equal(midOnly[0]?.id, "gid://shopify/Product/2");
+});
+
+test("ProductSelectionTable: renders compact filter bar with separated type and collection dropdowns and advanced filter toggle", () => {
+  const productsWithDetails: readonly ShopifyProductForAutoSeoUi[] = [
+    {
+      id: "gid://shopify/Product/1",
+      title: "Eco Mug",
+      handle: "eco-mug",
+      status: "ACTIVE",
+      productType: "Kitchenware",
+      collections: [{ id: "c1", title: "Home Goods", handle: "home-goods" }],
+      createdAt: "2026-08-01T00:00:00Z",
+    },
+    {
+      id: "gid://shopify/Product/2",
+      title: "Linen Shirt",
+      handle: "linen-shirt",
+      status: "DRAFT",
+      productType: "Apparel",
+      collections: [{ id: "c2", title: "Summer Style", handle: "summer-style" }],
+      createdAt: "2026-08-15T00:00:00Z",
+    },
+  ];
+
+  const { html } = renderTable({
+    products: productsWithDetails,
+    selectedProductIds: [],
+    asinQuery: "B08",
+    eligibilityItems: [
+      { productId: "gid://shopify/Product/1", state: "never_processed", reason: "NO_HISTORY" },
+    ],
+  });
+
+  // Verify compact dropdowns and controls exist in markup
+  assert.ok(html.includes("Bộ lọc nâng cao"), "Must render 'Bộ lọc nâng cao' toggle");
+  assert.ok(html.includes("Loại SP: Tất cả"), "Must render product type filter option");
+  assert.ok(html.includes("Kitchenware"), "Must include productType in type options");
+  assert.ok(html.includes("Apparel"), "Must include productType in type options");
+  assert.ok(html.includes("Tất cả bộ sưu tập"), "Must render collection filter option");
+  assert.ok(html.includes("Home Goods"), "Must include collection in collection options");
+  assert.ok(html.includes("Summer Style"), "Must include collection in collection options");
+  assert.ok(html.includes("Shopify:"), "Must render Shopify status filter selector");
+  assert.ok(html.includes("SEO:"), "Must render SEO status filter selector");
+  assert.ok(html.includes("Nhập ASIN"), "Must render ASIN filter input placeholder");
+  assert.ok(html.includes("Từ ngày"), "Must render start date filter label");
+  assert.ok(html.includes("Đến ngày"), "Must render end date filter label");
+});
+
+test("filterAutoSeoProducts: filters products accurately by typeFilter vs collectionFilter", () => {
+  const products: readonly ShopifyProductForAutoSeoUi[] = [
+    {
+      id: "gid://shopify/Product/1",
+      title: "Bedding Set",
+      handle: "bedding-set",
+      productType: "Bedding",
+      collections: [{ id: "c1", title: "Summer Sale", handle: "summer-sale" }],
+    },
+    {
+      id: "gid://shopify/Product/2",
+      title: "Fleece Blanket",
+      handle: "fleece-blanket",
+      productType: "Blanket",
+      collections: [{ id: "c1", title: "Summer Sale", handle: "summer-sale" }],
+    },
+    {
+      id: "gid://shopify/Product/3",
+      title: "Silk Blanket",
+      handle: "silk-blanket",
+      productType: "Blanket",
+      collections: [{ id: "c2", title: "Luxury Line", handle: "luxury-line" }],
+    },
+  ];
+
+  // Filter by typeFilter only
+  const beddingOnly = filterAutoSeoProducts(products, { typeFilter: "Bedding" });
+  assert.equal(beddingOnly.length, 1);
+  assert.equal(beddingOnly[0]?.id, "gid://shopify/Product/1");
+
+  const blanketOnly = filterAutoSeoProducts(products, { typeFilter: "Blanket" });
+  assert.equal(blanketOnly.length, 2);
+
+  // Filter by collectionFilter only
+  const summerSale = filterAutoSeoProducts(products, { collectionFilter: "Summer Sale" });
+  assert.equal(summerSale.length, 2);
+  assert.deepEqual(summerSale.map(p => p.id), ["gid://shopify/Product/1", "gid://shopify/Product/2"]);
+
+  // Filter by both typeFilter and collectionFilter
+  const blanketSummer = filterAutoSeoProducts(products, { typeFilter: "Blanket", collectionFilter: "Summer Sale" });
+  assert.equal(blanketSummer.length, 1);
+  assert.equal(blanketSummer[0]?.id, "gid://shopify/Product/2");
+});
+
+test("ProductSelectionTable: renders storeCollections matching screenshot with count", () => {
+  const storeCollections: readonly AutoSeoCollectionOption[] = [
+    { id: "c1", title: "Bedding Set", productsCount: 382 },
+    { id: "c2", title: "Blankets Bedding", productsCount: 111 },
+    { id: "c3", title: "Sports Bedding", productsCount: 144 },
+  ];
+
+  const { html } = renderTable({
+    products: mockProducts,
+    selectedProductIds: [],
+    storeCollections,
+  });
+
+  assert.ok(html.includes("-- Tất cả bộ sưu tập (3) --"));
+  assert.ok(html.includes("Bedding Set (382)"));
+  assert.ok(html.includes("Blankets Bedding (111)"));
+  assert.ok(html.includes("Sports Bedding (144)"));
+});
+
+test("filterAutoSeoProducts: filters by storeCollections using smart matching", () => {
+  const storeCollections: readonly AutoSeoCollectionOption[] = [
+    { id: "c1", title: "Bedding Set", handle: "bedding-set", productsCount: 382 },
+    { id: "c2", title: "Blankets Bedding", handle: "blankets-bedding", productsCount: 111 },
+  ];
+
+  const products: readonly ShopifyProductForAutoSeoUi[] = [
+    {
+      id: "p1",
+      title: "Dragon Bedding Set",
+      handle: "dragon-bedding-set",
+      productType: "Bedding",
+      tags: ["fantasy", "Bedding Set"],
+    },
+    {
+      id: "p2",
+      title: "Cozy Blanket",
+      handle: "cozy-blanket",
+      productType: "Blanket",
+      tags: ["blankets-bedding"],
+    },
+  ];
+
+  const beddingResults = filterAutoSeoProducts(products, {
+    collectionFilter: "c1",
+    collections: storeCollections,
+  });
+  assert.equal(beddingResults.length, 1);
+  assert.equal(beddingResults[0]?.id, "p1");
+
+  const blanketResults = filterAutoSeoProducts(products, {
+    collectionFilter: "c2",
+    collections: storeCollections,
+  });
+  assert.equal(blanketResults.length, 1);
+  assert.equal(blanketResults[0]?.id, "p2");
+});
+

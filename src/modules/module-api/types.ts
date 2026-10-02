@@ -126,6 +126,12 @@ export interface ShopifyImageInput {
   readonly height?: number;
 }
 
+export interface ShopifyProductCollectionSummary {
+  readonly id: string;
+  readonly title: string;
+  readonly handle?: string;
+}
+
 export interface ShopifyProduct {
   readonly id: string;
   readonly title: string;
@@ -136,6 +142,7 @@ export interface ShopifyProduct {
   readonly vendor?: string;
   readonly productType?: string;
   readonly tags: readonly string[];
+  readonly collections?: readonly ShopifyProductCollectionSummary[];
   readonly onlineStoreUrl?: string;
   readonly featuredImage?: ShopifyImage;
   readonly images?: readonly ShopifyImage[];
@@ -691,6 +698,7 @@ export interface ShopifyFileSummary {
   readonly id: string;
   readonly url: string;
   readonly altText?: string;
+  readonly tags?: readonly string[];
   readonly fileStatus: string;
   readonly createdAt: string;
   readonly updatedAt?: string;

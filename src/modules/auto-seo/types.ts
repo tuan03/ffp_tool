@@ -17,6 +17,12 @@ export interface ShopifyProductVariant {
   readonly inventoryQuantity?: number;
 }
 
+export interface ShopifyProductCollectionSummary {
+  readonly id: string;
+  readonly title: string;
+  readonly handle?: string;
+}
+
 export interface ShopifyProductForAutoSeoUi {
   readonly id: string;
   readonly storeId?: string;
@@ -28,6 +34,7 @@ export interface ShopifyProductForAutoSeoUi {
   readonly vendor?: string;
   readonly productType?: string;
   readonly tags?: readonly string[];
+  readonly collections?: readonly ShopifyProductCollectionSummary[];
   readonly onlineStoreUrl?: string;
   readonly featuredImage?: ShopifyProductImage;
   readonly images?: readonly ShopifyProductImage[];
@@ -104,13 +111,76 @@ export interface AutoSeoBackupRequest {
 }
 
 export interface AutoSeoBackupResponse {
-  readonly seoProvider?: "gemini" | "custom_gpt";
+  readonly seoProvider?: "gemini" | "custom_gpt" | "codex_mcp";
   readonly workflowId: string;
   readonly backedUpCount: number;
   readonly backupIds: readonly string[];
   readonly downstreamStatus: "SENT" | "FAILED";
   readonly downstreamHttpStatus?: number | null;
   readonly downstreamError?: string | null;
+  /** Number of generated SEO outputs durably handed off to SEO Review by the server. */
+  readonly reviewPersistedCount?: number;
+  readonly acceptedProductIds?: readonly string[];
+  readonly acceptedCount?: number;
+  readonly skippedProducts?: readonly AutoSeoSkippedProduct[];
+  readonly skippedCount?: number;
+  readonly seoDispatch?:
+    | {
+        readonly provider: "gemini";
+        readonly status: "review_ready";
+        readonly reviewPersistedCount: number;
+      }
+    | {
+        readonly provider: "custom_gpt" | "codex_mcp";
+        readonly status: "queued";
+        readonly jobIds: readonly string[];
+      };
+}
+
+export interface AutoSeoSkippedProduct {
+  readonly productId: string;
+  readonly reason: "UNCHANGED" | "ACTIVE_DUPLICATE";
+}
+
+export type AutoSeoEligibilityState =
+  | "never_processed"
+  | "changed"
+  | "current"
+  | "active"
+  | "retry";
+
+export type AutoSeoEligibilityReason =
+  | "NO_HISTORY"
+  | "LAST_DISPATCH_FAILED"
+  | "SHOPIFY_UPDATED"
+  | "UP_TO_DATE"
+  | "HASH_VERIFICATION_REQUIRED"
+  | "SOURCE_TIMESTAMP_UNKNOWN"
+  | "BASELINE_TIMESTAMP_UNKNOWN"
+  | "ACTIVE_DISPATCH"
+  | "ACTIVE_QUEUE"
+  | "ACTIVE_REVIEW";
+
+export interface AutoSeoEligibilityProductSummary {
+  readonly productId: string;
+  readonly updatedAt?: string;
+}
+
+export interface AutoSeoEligibilityRequest {
+  readonly storeId: string;
+  readonly products: readonly AutoSeoEligibilityProductSummary[];
+}
+
+export interface AutoSeoEligibilityItem {
+  readonly productId: string;
+  readonly state: AutoSeoEligibilityState;
+  readonly reason: AutoSeoEligibilityReason;
+  readonly lastSuccessfulShopifyUpdatedAt?: string;
+}
+
+export interface AutoSeoEligibilityResponse {
+  readonly items: readonly AutoSeoEligibilityItem[];
+  readonly counts: Readonly<Record<AutoSeoEligibilityState, number>>;
 }
 
 export interface AutoSeoStoreOption {
@@ -118,8 +188,16 @@ export interface AutoSeoStoreOption {
   readonly shopDomain: string;
 }
 
+export interface AutoSeoCollectionOption {
+  readonly id: string;
+  readonly title: string;
+  readonly handle?: string;
+  readonly productsCount?: number;
+}
+
 export interface AutoSeoClient {
   listStores?(): Promise<readonly AutoSeoStoreOption[]>;
+  listCollections?(storeId?: string): Promise<readonly AutoSeoCollectionOption[]>;
   setActiveStoreId?(storeId: string): void;
   getActiveStoreId?(): string | undefined;
   getStoreInfo(storeId?: string): Promise<{
@@ -132,6 +210,7 @@ export interface AutoSeoClient {
   loadProductDetailFresh?(productId: string): Promise<ShopifyProductForAutoSeoUi>;
   loadProductDetailFresh?(storeId: string, productId: string): Promise<ShopifyProductForAutoSeoUi>;
   runAutoSeo(input: AutoSeoSelectionInput): Promise<AutoSeoOutput>;
+  getProductEligibility?(request: AutoSeoEligibilityRequest): Promise<AutoSeoEligibilityResponse>;
   runAutoSeoBackup(request: AutoSeoBackupRequest): Promise<AutoSeoBackupResponse>;
   hydrateSelectedProductsFresh(
     productIds: readonly string[],

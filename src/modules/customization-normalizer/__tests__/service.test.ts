@@ -2,13 +2,18 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  computeNormalizedProductChecksum,
   customizationNormalizerMockData,
+  fromPinterestPodItem,
+  fromShopifyProduct,
   generateFriendlyFileName,
   getCustomizationNormalizerRunner,
   hasCustomization,
+  isSafeHttpUrl,
   runCustomizationNormalizer,
   runMockCustomizationNormalizer,
   slugify,
+  validateProductPayload,
 } from "..";
 import type { CrawlProduct, CustomizationNormalizerInput } from "..";
 
@@ -197,4 +202,159 @@ test("getCustomizationNormalizerRunner returns mock runner in mock environment a
 
   const prodRunner = getCustomizationNormalizerRunner("production");
   assert.equal(prodRunner, runCustomizationNormalizer);
+});
+
+test("isSafeHttpUrl allows standard HTTPS URLs and blocks dangerous schemes or internal hosts", () => {
+  assert.equal(isSafeHttpUrl("https://m.media-amazon.com/images/I/valid.jpg"), true);
+  assert.equal(isSafeHttpUrl("http://cdn.shopify.com/s/files/img.png"), true);
+
+  // Dangerous protocols
+  assert.equal(isSafeHttpUrl("file:///etc/passwd"), false);
+  assert.equal(isSafeHttpUrl("javascript:alert(1)"), false);
+  assert.equal(isSafeHttpUrl("data:image/png;base64,iVBORw0KGgoAAAANS"), false);
+
+  // SSRF internal hosts
+  assert.equal(isSafeHttpUrl("http://localhost:3001/api/secret"), false);
+  assert.equal(isSafeHttpUrl("http://127.0.0.1:3001/api"), false);
+  assert.equal(isSafeHttpUrl("http://169.254.169.254/latest/meta-data"), false);
+  assert.equal(isSafeHttpUrl("http://internal.service.local/data"), false);
+});
+
+test("validateProductPayload detects missing required fields and dangerous payload items", () => {
+  // Valid product
+  const validProduct = {
+    title: "Personalized Ceramic Mug",
+    asin: "B0GQ33XWW7",
+    media: [{ url: "https://example.com/mug.jpg" }],
+  };
+  const validRes = validateProductPayload(validProduct);
+  assert.equal(validRes.isValid, true);
+  assert.equal(validRes.errors.length, 0);
+
+  // Invalid payload: non-object
+  assert.equal(validateProductPayload(null).isValid, false);
+  assert.equal(validateProductPayload("string").isValid, false);
+
+  // Missing title
+  const missingTitle = { asin: "B0GQ33XWW7" };
+  const resMissing = validateProductPayload(missingTitle);
+  assert.equal(resMissing.isValid, false);
+  assert.ok(resMissing.errors.some((e) => e.includes("title")));
+
+  // Invalid ASIN format
+  const badAsin = { title: "Item", asin: "INVALID_ASIN_TOO_LONG" };
+  const resBadAsin = validateProductPayload(badAsin);
+  assert.equal(resBadAsin.isValid, false);
+  assert.ok(resBadAsin.errors.some((e) => e.includes("Invalid ASIN format")));
+
+  // Unsafe SSRF URL in media
+  const ssrfProduct = {
+    title: "Exploit Test",
+    media: [{ url: "http://169.254.169.254/secret" }],
+  };
+  const resSsrf = validateProductPayload(ssrfProduct);
+  assert.equal(resSsrf.isValid, false);
+  assert.ok(resSsrf.errors.some((e) => e.includes("unsafe or invalid URL")));
+});
+
+test("fromPinterestPodItem adapts Pinterest POD deliverable into unified CrawlProduct", () => {
+  const deliverable = {
+    designId: "pin_design_888",
+    originalPinTitle: "Minimalist Botanical Wall Rug",
+    productType: "rug",
+    trendKeywords: ["botanical", "minimalist", "nordic rug"],
+    vendor: "Jeminise",
+    cutoutProduct: {
+      transparentUrl: "https://cdn.pod.example.com/cutout-transparent.png",
+      whiteBgUrl: "https://cdn.pod.example.com/cutout-white.png",
+    },
+    composedMockups: [
+      {
+        mockupUrl: "https://cdn.pod.example.com/mockup-living-room.jpg",
+        detectedSceneType: "Living Room",
+      },
+    ],
+    variants: [
+      {
+        title: "Large (4x6 ft)",
+        price: "89.99",
+        sku: "RUG-BOT-LG",
+      },
+    ],
+  };
+
+  const adapted = fromPinterestPodItem(deliverable);
+
+  assert.equal(adapted.sourcePlatform, "pinterest");
+  assert.equal(adapted.sourceProductId, "pin_design_888");
+  assert.equal(adapted.title, "Minimalist Botanical Wall Rug");
+  assert.equal(adapted.handle, "minimalist-botanical-wall-rug");
+  assert.equal(adapted.media?.length, 3);
+  assert.equal(adapted.media?.[0]?.url, "https://cdn.pod.example.com/cutout-transparent.png");
+  assert.equal(adapted.media?.[2]?.alt, "Minimalist Botanical Wall Rug - Living Room");
+  assert.ok(adapted.tags?.includes("source:pinterest-pod"));
+  assert.ok(adapted.tags?.includes("botanical"));
+});
+
+test("fromShopifyProduct adapts Shopify Product input into unified CrawlProduct", () => {
+  const shopifyProd = {
+    id: "gid://shopify/Product/9999",
+    title: "Embroidered Denim Jacket",
+    handle: "embroidered-denim-jacket",
+    vendor: "Capozen",
+    tags: ["denim", "custom"],
+    images: [
+      { id: "img-1", url: "https://cdn.shopify.com/s/files/jacket.jpg", altText: "Jacket" },
+    ],
+    metafields: [
+      {
+        namespace: "custom",
+        key: "amazon_customizer",
+        value: JSON.stringify({
+          hasCustomization: true,
+          surfaces: [{ name: "Back", surfaceId: "surf_back" }],
+        }),
+      },
+    ],
+  };
+
+  const adapted = fromShopifyProduct(shopifyProd);
+
+  assert.equal(adapted.sourcePlatform, "shopify");
+  assert.equal(adapted.sourceProductId, "gid://shopify/Product/9999");
+  assert.equal(adapted.title, "Embroidered Denim Jacket");
+  assert.equal(adapted.media?.length, 1);
+  assert.equal(adapted.customization?.hasCustomization, true);
+});
+
+test("computeNormalizedProductChecksum produces deterministic hash regardless of object key order", () => {
+  const prod1: CrawlProduct = {
+    title: "Custom Mug",
+    handle: "custom-mug",
+    asin: "B0GQ33XWW7",
+    description: "Ceramic",
+    media: [{ url: "https://example.com/img1.jpg" }],
+  };
+
+  // Same content, different key order
+  const prod2: CrawlProduct = {
+    description: "Ceramic",
+    asin: "B0GQ33XWW7",
+    media: [{ url: "https://example.com/img1.jpg" }],
+    handle: "custom-mug",
+    title: "Custom Mug",
+  };
+
+  const hash1 = computeNormalizedProductChecksum(prod1);
+  const hash2 = computeNormalizedProductChecksum(prod2);
+
+  assert.equal(hash1, hash2);
+  assert.match(hash1, /^[a-f0-9]{16}$/);
+
+  // Different product yields different checksum
+  const prodDiff: CrawlProduct = {
+    ...prod1,
+    title: "Custom Mug Modified",
+  };
+  assert.notEqual(computeNormalizedProductChecksum(prodDiff), hash1);
 });

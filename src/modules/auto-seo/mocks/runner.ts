@@ -4,6 +4,9 @@ import type {
   AutoSeoBackupRequest,
   AutoSeoBackupResponse,
   AutoSeoClient,
+  AutoSeoCollectionOption,
+  AutoSeoEligibilityRequest,
+  AutoSeoEligibilityResponse,
   AutoSeoOutput,
   AutoSeoProductCandidate,
   AutoSeoSelectionInput,
@@ -50,10 +53,33 @@ export async function runMockAutoSeo(
 
 export class MockAutoSeoClient implements AutoSeoClient {
   private readonly detailCache = new Map<string, ShopifyProductForAutoSeoUi>();
+  private readonly successfulInputs = new Map<string, {
+    readonly fingerprint: string;
+    readonly updatedAt?: string;
+  }>();
   private activeStoreId = "store-chillgen-mock";
 
   public async listStores(): Promise<readonly AutoSeoStoreOption[]> {
     return JSON.parse(JSON.stringify(mockAutoSeoStores)) as AutoSeoStoreOption[];
+  }
+
+  public async listCollections(_storeId?: string): Promise<readonly AutoSeoCollectionOption[]> {
+    return [
+      { id: "gid://shopify/Collection/1", title: "Bedding Set", handle: "bedding-set", productsCount: 382 },
+      { id: "gid://shopify/Collection/2", title: "Blankets Bedding", handle: "blankets-bedding", productsCount: 111 },
+      { id: "gid://shopify/Collection/3", title: "Sports Bedding", handle: "sports-bedding", productsCount: 144 },
+      { id: "gid://shopify/Collection/4", title: "Animals Bedding", handle: "animals-bedding", productsCount: 57 },
+      { id: "gid://shopify/Collection/5", title: "Fantasy Bedding", handle: "fantasy-bedding", productsCount: 35 },
+      { id: "gid://shopify/Collection/6", title: "Faith Bedding", handle: "faith-bedding", productsCount: 35 },
+      { id: "gid://shopify/Collection/7", title: "Nature Bedding", handle: "nature-bedding", productsCount: 53 },
+      { id: "gid://shopify/Collection/8", title: "Culture Bedding", handle: "culture-bedding", productsCount: 42 },
+      { id: "gid://shopify/Collection/9", title: "Hobbies Bedding", handle: "hobbies-bedding", productsCount: 47 },
+      { id: "gid://shopify/Collection/10", title: "Family Bedding", handle: "family-bedding", productsCount: 16 },
+      { id: "gid://shopify/Collection/11", title: "Halloween Bedding", handle: "halloween-bedding", productsCount: 59 },
+      { id: "gid://shopify/Collection/12", title: "Christmas Bedding", handle: "christmas-bedding", productsCount: 29 },
+      { id: "gid://shopify/Collection/13", title: "Best-Selling Custom Bedding", handle: "best-selling-custom-bedding", productsCount: 6 },
+      { id: "gid://shopify/Collection/14", title: "New Arrivals Bedding", handle: "new-arrivals-bedding", productsCount: 6 },
+    ];
   }
 
   public setActiveStoreId(storeId: string): void {
@@ -275,18 +301,96 @@ export class MockAutoSeoClient implements AutoSeoClient {
     return runAutoSeo(input);
   }
 
+  public async getProductEligibility(
+    request: AutoSeoEligibilityRequest,
+  ): Promise<AutoSeoEligibilityResponse> {
+    const items = request.products.map((product) => {
+      const successfulInput = this.successfulInputs.get(
+        this.getCacheKey(request.storeId, product.productId),
+      );
+      const isCurrent = Boolean(
+        successfulInput?.updatedAt &&
+        product.updatedAt &&
+        successfulInput.updatedAt === product.updatedAt,
+      );
+      return {
+        productId: product.productId,
+        state: !successfulInput
+          ? "never_processed" as const
+          : isCurrent ? "current" as const : "changed" as const,
+        reason: !successfulInput
+          ? "NO_HISTORY" as const
+          : isCurrent ? "UP_TO_DATE" as const : "SHOPIFY_UPDATED" as const,
+      };
+    });
+    return {
+      items,
+      counts: {
+        never_processed: items.filter(item => item.state === "never_processed").length,
+        changed: items.filter(item => item.state === "changed").length,
+        current: items.filter(item => item.state === "current").length,
+        active: 0,
+        retry: 0,
+      },
+    };
+  }
+
   public async runAutoSeoBackup(
     request: AutoSeoBackupRequest,
   ): Promise<AutoSeoBackupResponse> {
+    const acceptedProducts: ShopifyProductForAutoSeoUi[] = [];
+    const skippedProducts: Array<{
+      readonly productId: string;
+      readonly reason: "UNCHANGED";
+    }> = [];
+    for (const product of request.products) {
+      const cacheKey = this.getCacheKey(request.storeId, product.id);
+      const fingerprint = createMockSeoFingerprint(product);
+      if (this.successfulInputs.get(cacheKey)?.fingerprint === fingerprint) {
+        skippedProducts.push({ productId: product.id, reason: "UNCHANGED" });
+        continue;
+      }
+      acceptedProducts.push(product);
+      this.successfulInputs.set(cacheKey, {
+        fingerprint,
+        ...(product.updatedAt ? { updatedAt: product.updatedAt } : {}),
+      });
+    }
     return {
       workflowId: request.workflowId,
-      backedUpCount: request.products.length,
-      backupIds: request.products.map((_, idx) => `mock_backup_${idx + 1}`),
+      backedUpCount: acceptedProducts.length,
+      backupIds: acceptedProducts.map((_, idx) => `mock_backup_${idx + 1}`),
       downstreamStatus: "SENT",
       downstreamHttpStatus: 200,
       downstreamError: null,
+      acceptedProductIds: acceptedProducts.map(product => product.id),
+      acceptedCount: acceptedProducts.length,
+      skippedProducts,
+      skippedCount: skippedProducts.length,
     };
   }
+}
+
+function createMockSeoFingerprint(product: ShopifyProductForAutoSeoUi): string {
+  return JSON.stringify({
+    id: product.id,
+    title: product.title,
+    handle: product.handle,
+    description: product.description ?? "",
+    descriptionHtml: product.descriptionHtml ?? "",
+    status: product.status ?? "",
+    vendor: product.vendor ?? "",
+    productType: product.productType ?? "",
+    tags: [...(product.tags ?? [])].sort(),
+    onlineStoreUrl: product.onlineStoreUrl ?? "",
+    seo: product.seo ?? null,
+    images: [...(product.images ?? [])]
+      .map(image => ({ ...image }))
+      .sort((left, right) => left.url.localeCompare(right.url)),
+    variants: [...(product.variants ?? [])]
+      .map(variant => ({ ...variant, inventoryQuantity: undefined }))
+      .sort((left, right) => left.id.localeCompare(right.id)),
+  });
 }
 
 export const mockAutoSeoClient = new MockAutoSeoClient();

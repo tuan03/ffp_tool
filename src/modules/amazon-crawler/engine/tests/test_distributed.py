@@ -1331,6 +1331,26 @@ class CoordinatorStoreTests(unittest.TestCase):
         self.assertEqual([item["id"] for item in self.store.list_product_reviews()], ["delete-item-1"])
         self.assertEqual(self.store.queue_product_review_sync("delete-item-0"), {"deleted": True})
 
+    def test_delete_review_hides_only_the_requested_ready_item(self) -> None:
+        job = self.store.create_job({"urls": ["B0REVIEW01", "B0REVIEW02"]})
+        with self.sessions.begin() as session:
+            tasks = session.scalars(select(CrawlTask).where(CrawlTask.job_id == job["id"])).all()
+            for index, task in enumerate(tasks):
+                task.status = "completed"
+                session.add(CrawlProductItem(
+                    id=f"single-delete-{index}", job_id=job["id"], task_id=task.id,
+                    source_key=f"single-source-{index}", product_id=f"single-product-{index}",
+                    client_id="client-a", lease_id="lease-a", checksum=f"single-checksum-{index}",
+                    raw_payload={}, normalized_payload={"media": []}, status="waiting_review",
+                    shopify_result={"review": {"decision": "pending", "syncStatus": "idle"}},
+                ))
+            session.flush()
+            self.store._refresh_job(session, str(job["id"]))
+
+        self.assertEqual(self.store.delete_product_review("single-delete-0"), {"deleted": True})
+        self.assertEqual([item["id"] for item in self.store.list_product_reviews()], ["single-delete-1"])
+        self.assertEqual(self.store.delete_product_review("single-delete-0"), {"deleted": False, "reason": "not_found"})
+
     def test_failed_review_stays_visible_and_can_retry_bulk_sync(self) -> None:
         job = self.store.create_job({"urls": ["B0REVIEW01"]})
         with self.sessions.begin() as session:

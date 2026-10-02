@@ -415,6 +415,7 @@ describe("seo-review-shopify-sync", () => {
     };
 
     let didUpdateExisting = false;
+    let capturedExistingProduct: Record<string, unknown> | undefined;
     const runner = createMockRunner(async (input) => {
       if (input.operation === "products.list") {
         return {
@@ -438,6 +439,7 @@ describe("seo-review-shopify-sync", () => {
       if (input.operation === "products.update") {
         if (input.payload.id === existingShopifyProduct.id) {
           didUpdateExisting = true;
+          capturedExistingProduct = input.payload.product as unknown as Record<string, unknown>;
           return {
             storeId: "capozen",
             operation: "products.update",
@@ -481,6 +483,8 @@ describe("seo-review-shopify-sync", () => {
     assert.equal(result.success, true);
     assert.equal(result.productId, "gid://shopify/Product/existing-synced-555");
     assert.equal(didUpdateExisting, true);
+    assert.ok(capturedExistingProduct);
+    assert.equal(Object.hasOwn(capturedExistingProduct, "handle"), false);
   });
 
   it("pushes Pinterest POD product with printMaster metafields and only AI mockups in media", async () => {
@@ -735,5 +739,46 @@ describe("seo-review-shopify-sync", () => {
       collectionId: "gid://shopify/Collection/rugs-999",
       productIdsToAdd: ["gid://shopify/Product/12345678"],
     });
+  });
+
+  it("preserves the handle and vendor when updating an existing Auto SEO product", async () => {
+    let capturedProduct: Record<string, unknown> | undefined;
+    const runner = createMockRunner(async (input) => {
+      if (input.operation !== "products.update") return undefined;
+      capturedProduct = input.payload.product as unknown as Record<string, unknown>;
+      return {
+        storeId: input.storeId || "jeminise-real",
+        operation: "products.update",
+        success: true,
+        data: {
+          product: {
+            id: input.payload.id,
+            title: input.payload.product.title,
+            handle: input.payload.product.handle,
+          },
+        },
+      } as unknown as ShopifyApiResponse;
+    });
+
+    const item: SeoReviewPushProductItem = {
+      id: "auto-seo-existing-1",
+      productId: "gid://shopify/Product/8900731633863",
+      productTitle: "Personalized Halloween Bedding",
+      productDescription: "<p>Updated SEO description</p>",
+      seoTitle: "Personalized Halloween Bedding",
+      seoDescription: "Shop personalized Halloween bedding.",
+      handle: "personalized-halloween-bedding",
+      images: [],
+    };
+
+    const result = await pushSeoReviewProductToShopify(item, {
+      moduleApiRunner: runner,
+      storeId: "jeminise-real",
+    });
+
+    assert.equal(result.success, true);
+    assert.ok(capturedProduct);
+    assert.equal(Object.hasOwn(capturedProduct, "handle"), false);
+    assert.equal(Object.hasOwn(capturedProduct, "vendor"), false);
   });
 });

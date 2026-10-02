@@ -2,14 +2,20 @@ export { customizationNormalizerMockData } from "./mocks/data";
 export { runMockCustomizationNormalizer } from "./mocks/runner";
 export { getCustomizationNormalizerRunner } from "./runtime";
 export {
+  canonicalJsonStringify,
   cleanImageUrl,
+  computeNormalizedProductChecksum,
   computeShortHash,
   extractFileExtension,
+  fromPinterestPodItem,
+  fromShopifyProduct,
   generateFriendlyFileName,
   hasCustomization,
+  isSafeHttpUrl,
   normalizeCustomizationProduct,
   runCustomizationNormalizer,
   slugify,
+  validateProductPayload,
 } from "./service";
 export type {
   CrawlJobSettings,
@@ -26,6 +32,9 @@ export type {
   ImageDimension,
   ImageResource,
   NormalizationSummary,
+  PayloadValidationResult,
+  PinterestPodDeliverableItemInput,
   ProductCustomization,
   ProductMediaItem,
+  ShopifyProductInputForNormalization,
 } from "./types";
