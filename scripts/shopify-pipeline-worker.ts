@@ -119,8 +119,10 @@ if (env.GATEWAY_AUTH_TOKEN) {
 let storeId = env.GATEWAY_STORE_ID?.trim();
 process.env.SEO_CONFLICT_CORPUS_PATH = process.env.SEO_CONFLICT_CORPUS_PATH
   || (storeId ? `.runtime/seo-conflict-corpus-${storeId}.json` : ".runtime/seo-conflict-corpus.json");
-env.SHOPIFY_PROXY_CONFIG = env.SHOPIFY_PROXY_CONFIG || env.AMAZON_CRAWLER_PROXY_CONFIG || "config/amazon-crawler-profiles.json";
-process.env.SHOPIFY_PROXY_CONFIG = env.SHOPIFY_PROXY_CONFIG;
+if (env.SHOPIFY_PROXY_CONFIG || env.AMAZON_CRAWLER_PROXY_CONFIG) {
+  env.SHOPIFY_PROXY_CONFIG = env.SHOPIFY_PROXY_CONFIG || env.AMAZON_CRAWLER_PROXY_CONFIG;
+  process.env.SHOPIFY_PROXY_CONFIG = env.SHOPIFY_PROXY_CONFIG;
+}
 const coordinatorUrl = (env.SHOPIFY_PIPELINE_COORDINATOR_URL || "http://127.0.0.1:8766").replace(/\/+$/, "");
 const pipelineToken = env.SHOPIFY_PIPELINE_TOKEN?.trim();
 const workerCount = Math.max(1, Math.min(16, Number(env.SHOPIFY_PIPELINE_WORKERS || 8)));

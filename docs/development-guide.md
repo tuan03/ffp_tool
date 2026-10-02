@@ -56,6 +56,27 @@ Run the UI against mock data:
 npm run dev:mock
 ```
 
+### Shared crawler profiles
+
+Versioned image presets and their PNG logos live in `config/image-processing-profiles/`.
+Coordinator startup installs missing presets into its runtime store (PostgreSQL in Docker)
+and copies logo bytes into the durable runtime volume. Existing operator profiles are
+not overwritten. The former local `default` preset is named `jeminise-logo` in the shared
+catalog so it does not replace an existing default. Select it explicitly when appropriate.
+Missing presets are restored on startup; edit the versioned catalog to retire a shared preset.
+Changes made through the UI remain runtime data, not automatic Git edits.
+
+`config/amazon-crawler-profiles.shared.json` contains four shared proxy definitions.
+Both the Python crawler and Shopify Gateway resolve `serverEnv`, `usernameEnv`, and
+`passwordEnv` using server/agent environment variables. Supply `FFP_PROXY_1_SERVER`,
+`FFP_PROXY_1_USERNAME`, `FFP_PROXY_1_PASSWORD` (and indices 2–4) privately on each machine
+that actually uses those proxies. Incomplete profiles are skipped; direct-first crawler
+behavior remains unchanged. The ignored `config/amazon-crawler-profiles.json` takes
+priority when present; explicit config paths still take priority and are not silently replaced.
+Proxy credentials are never bundled into Git, Docker images or browser JavaScript.
+Packaged agents need these environment variables or their own private proxy config;
+this change does not rebuild or redistribute the Windows installer.
+
 ## 2. Folder ownership
 
 ```text

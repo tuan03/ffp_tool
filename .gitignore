@@ -50,6 +50,8 @@ client-data/
 *.sqlite3-wal
 installer-output/
 config/amazon-crawler-profiles.json
+# Shared presets in config/amazon-crawler-profiles.shared.json and
+# config/image-processing-profiles/ are intentionally tracked; only private overrides are ignored.
 config/amazon-crawler-agent.json
 
 #=== [start] - module SEO Content - Lth Loi ===

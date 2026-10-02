@@ -124,6 +124,27 @@ class ImageProfileStore:
     def _profile_path(self, slug: str) -> Path:
         return self.profile_root / f"{_slug(slug)}.json"
 
+    def seed_shared(self, directory: Path) -> None:
+        """Install versioned defaults without overwriting operator-owned profiles."""
+        with self._lock:
+            for source in sorted(directory.glob("*.json")):
+                profile = normalize_profile(json.loads(source.read_text(encoding="utf-8")), source.stem)
+                slug = profile["slug"]
+                exists = self.repository.read(slug) is not None if self.repository else self._profile_path(slug).exists()
+                if exists:
+                    continue
+                logo = directory / "logos" / f"{slug}.png"
+                if logo.exists():
+                    content = logo.read_bytes()
+                    with Image.open(BytesIO(content)) as image:
+                        image.verify()
+                    target = self.logo_root / slug
+                    target.mkdir(parents=True, exist_ok=True)
+                    temporary = target / ".shared-logo.part"
+                    temporary.write_bytes(content)
+                    temporary.replace(target / "logo.png")
+                self.save(profile, slug)
+
     def _logo_path(self, slug: str) -> Path | None:
         directory = self.logo_root / _slug(slug)
         if not directory.exists():

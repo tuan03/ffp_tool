@@ -288,6 +288,7 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
     async def lifespan(_app: FastAPI):
         if create_schema:
             migrate_coordinator(engine)
+        await asyncio.to_thread(image_service.profiles.seed_shared, project_root / "config" / "image-processing-profiles")
         stop = asyncio.Event()
 
         async def reap_loop() -> None:
