@@ -790,7 +790,7 @@ test("ProductSelectionTable & Toolbar: visible product count is correct", () => 
   // 2 active out of 4 total products
   assert.ok(tableHtml.includes("Hiển thị 2 / 4 sản phẩm"));
 
-  // AutoSeoToolbar rendering visible count
+  // AutoSeoToolbar rendering count badges
   const toolbarHtml = renderToStaticMarkup(
     React.createElement(AutoSeoToolbar, {
       isLoadingProducts: false,
@@ -804,8 +804,9 @@ test("ProductSelectionTable & Toolbar: visible product count is correct", () => 
       onRunAutoSeo: () => {},
     }),
   );
-  assert.ok(toolbarHtml.includes("Chọn tất cả (2)"));
-  assert.ok(toolbarHtml.includes("Bỏ chọn (2)"));
+  assert.ok(toolbarHtml.includes("Đã chọn:"));
+  assert.ok(toolbarHtml.includes("Bỏ chọn"));
+  assert.ok(toolbarHtml.includes("Run Auto SEO (2)"));
 });
 
 test("ProductSelectionTable: status filter counts reflect total loaded products before filter", () => {
@@ -833,53 +834,43 @@ test("ProductSelectionTable: status filter counts reflect total loaded products 
   assert.ok(html.includes("Archived (1)"));
 });
 
-test("AutoSeoToolbar: disables both batch buttons when visibleProductsCount is 0 and enables when positive", () => {
+test("AutoSeoToolbar: enables Run Auto SEO and clear action only when items are selected", () => {
+  // Case 1: 0 items selected -> Run Auto SEO is disabled, '✕ Bỏ chọn' is omitted
   const toolbarZero = AutoSeoToolbar({
     isLoadingProducts: false,
     isRunningAutoSeo: false,
     totalProductsCount: 4,
-    selectedCount: 2,
+    selectedCount: 0,
     visibleProductsCount: 0,
     onLoadProducts: () => {},
-    onSelectAll: () => {},
     onClearSelection: () => {},
     onRunAutoSeo: () => {},
   });
 
-  const zeroChildren = React.Children.toArray(toolbarZero.props.children);
-  const zeroActionsRow = zeroChildren[1] as React.ReactElement<{ children: React.ReactNode[] }>;
-  const zeroButtonGroup = React.Children.toArray(zeroActionsRow.props.children)[0] as React.ReactElement<{ children: React.ReactNode[] }>;
-  const zeroButtons = React.Children.toArray(zeroButtonGroup.props.children) as React.ReactElement<{ title?: string; disabled?: boolean }>[];
+  const zeroHtml = renderToStaticMarkup(React.createElement(() => toolbarZero));
+  assert.ok(zeroHtml.includes("Đã chọn:"));
+  assert.ok(!zeroHtml.includes("✕ Bỏ chọn"));
+  assert.ok(zeroHtml.includes("disabled"));
 
-  const selectAllZero = zeroButtons[1];
-  const clearZero = zeroButtons[2];
-  assert.equal(selectAllZero.props.disabled, true, "Select All must be disabled when visibleProductsCount is 0");
-  assert.equal(clearZero.props.disabled, true, "Clear Selection must be disabled when visibleProductsCount is 0");
-
+  // Case 2: 2 items selected -> Run Auto SEO is enabled and displays count, '✕ Bỏ chọn' is rendered
+  let cleared = false;
   const toolbarPositive = AutoSeoToolbar({
     isLoadingProducts: false,
     isRunningAutoSeo: false,
     totalProductsCount: 4,
-    selectedCount: 0,
+    selectedCount: 2,
     visibleProductsCount: 3,
     onLoadProducts: () => {},
-    onSelectAll: () => {},
-    onClearSelection: () => {},
+    onClearSelection: () => {
+      cleared = true;
+    },
     onRunAutoSeo: () => {},
   });
 
-  const posChildren = React.Children.toArray(toolbarPositive.props.children);
-  const posActionsRow = posChildren[1] as React.ReactElement<{ children: React.ReactNode[] }>;
-  const posButtonGroup = React.Children.toArray(posActionsRow.props.children)[0] as React.ReactElement<{ children: React.ReactNode[] }>;
-  const posButtons = React.Children.toArray(posButtonGroup.props.children) as React.ReactElement<{ title?: string; disabled?: boolean }>[];
-
-  const selectAllPos = posButtons[1];
-  assert.equal(selectAllPos.props.disabled, false, "Select All must be enabled when visibleProductsCount > 0");
-
-  // Also verify HTML markup has the exact labels
-  const toolbarZeroHtml = renderToStaticMarkup(React.createElement(() => toolbarZero));
-  assert.ok(toolbarZeroHtml.includes("Chọn tất cả (0)"));
-  assert.ok(toolbarZeroHtml.includes("Bỏ chọn (0)"));
+  const posHtml = renderToStaticMarkup(React.createElement(() => toolbarPositive));
+  assert.ok(posHtml.includes("Run Auto SEO (2)"));
+  assert.ok(posHtml.includes("✕ Bỏ chọn"));
+  assert.ok(posHtml.includes("Đã chọn:"));
 });
 
 test("filterAutoSeoProducts: matches status case-insensitively ('active' matches 'ACTIVE')", () => {
