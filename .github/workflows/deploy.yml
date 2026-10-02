@@ -72,6 +72,7 @@ jobs:
           fi
           echo "compose_b64=$(base64 -w 0 compose.prod.yaml)" >> "$GITHUB_OUTPUT"
           echo "postgres_env_b64=$(base64 -w 0 scripts/prepare-production-postgres.py)" >> "$GITHUB_OUTPUT"
+          echo "search_console_env_b64=$(base64 -w 0 scripts/prepare-production-search-console.py)" >> "$GITHUB_OUTPUT"
 
       - name: SSH to VPS and Deploy
         uses: appleboy/ssh-action@v1.2.0
@@ -83,11 +84,12 @@ jobs:
           ENV_B64: ${{ steps.prep.outputs.env_b64 }}
           COMPOSE_B64: ${{ steps.prep.outputs.compose_b64 }}
           POSTGRES_ENV_B64: ${{ steps.prep.outputs.postgres_env_b64 }}
+          SEARCH_CONSOLE_ENV_B64: ${{ steps.prep.outputs.search_console_env_b64 }}
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
-          envs: DOCKER_IMAGE,GHCR_USER,GHCR_TOKEN,TARGET_DOMAIN,ENV_B64,COMPOSE_B64,POSTGRES_ENV_B64
+          envs: DOCKER_IMAGE,GHCR_USER,GHCR_TOKEN,TARGET_DOMAIN,ENV_B64,COMPOSE_B64,POSTGRES_ENV_B64,SEARCH_CONSOLE_ENV_B64
           script: |
             set -Eeuo pipefail
             umask 077
@@ -117,7 +119,8 @@ jobs:
             EXISTING_FFP_OPERATOR_PASSWORD=""
             EXISTING_STORE_ENV_FILE="$(mktemp)"
             EXISTING_DATABASE_ENV_FILE="$(mktemp)"
-            trap 'rm -f "$EXISTING_STORE_ENV_FILE" "$EXISTING_DATABASE_ENV_FILE"' EXIT
+            EXISTING_SEARCH_CONSOLE_ENV_FILE="$(mktemp)"
+            trap 'rm -f "$EXISTING_STORE_ENV_FILE" "$EXISTING_DATABASE_ENV_FILE" "$EXISTING_SEARCH_CONSOLE_ENV_FILE"' EXIT
             if [ -f .env ]; then
               EXISTING_GPT_SEO_ACTION_KEYS_JSON=$(sed -nE 's/^[[:space:]]*GPT_SEO_ACTION_KEYS_JSON=(.*)$/\1/p' .env | head -n 1 || true)
               EXISTING_GPT_SEO_MCP_KEYS_JSON=$(sed -nE 's/^[[:space:]]*GPT_SEO_MCP_KEYS_JSON=(.*)$/\1/p' .env | head -n 1 || true)
@@ -125,6 +128,7 @@ jobs:
               EXISTING_FFP_OPERATOR_PASSWORD=$(sed -nE 's/^[[:space:]]*FFP_OPERATOR_PASSWORD=(.*)$/\1/p' .env | head -n 1 || true)
               grep -E '^STORE_[A-Z0-9_]+=' .env > "$EXISTING_STORE_ENV_FILE" || true
               grep -E '^[[:space:]]*(export[[:space:]]+)?(POSTGRES_DB|POSTGRES_USER|POSTGRES_PASSWORD|AUTO_SEO_DATABASE_URL|DATABASE_URL)[[:space:]]*=' .env > "$EXISTING_DATABASE_ENV_FILE" || true
+              grep -E '^[[:space:]]*(export[[:space:]]+)?(SEO_PERFORMANCE_ENABLED|GSC_CLIENT_ID|GSC_CLIENT_SECRET|GSC_REDIRECT_URI|GSC_TOKEN_ENCRYPTION_KEY)[[:space:]]*=' .env > "$EXISTING_SEARCH_CONSOLE_ENV_FILE" || true
             fi
 
             if [ -n "$ENV_B64" ]; then
@@ -207,6 +211,8 @@ jobs:
               POSTGRES_SETUP_ARGS+=(--has-existing-volume)
             fi
             python3 scripts/prepare-production-postgres.py --env-file .env --previous-env-file "$EXISTING_DATABASE_ENV_FILE" "${POSTGRES_SETUP_ARGS[@]}"
+            printf '%s' "$SEARCH_CONSOLE_ENV_B64" | base64 -d > scripts/prepare-production-search-console.py
+            python3 scripts/prepare-production-search-console.py --env-file .env --previous-env-file "$EXISTING_SEARCH_CONSOLE_ENV_FILE" --redirect-uri "https://${TARGET_DOMAIN:-ffp.b6-team.site}/api/seo-performance/oauth/callback"
 
             echo "=== [5/6] Pulling and restarting Docker container ==="
             echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin

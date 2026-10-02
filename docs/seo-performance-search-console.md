@@ -24,6 +24,8 @@ In development, run the standalone Gateway and use `SEO_PERFORMANCE_GATEWAY_URL`
 
 ## Synchronization and reporting
 
+Deployment preserves the VPS `GSC_*` values and `SEO_PERFORMANCE_ENABLED` even when GitHub `ENV_FILE` is stale. The preparation helper generates an encryption key only when absent, defaults the feature off, and writes `.env` atomically with mode 600. Change OAuth credentials deliberately on the VPS; do not expect `ENV_FILE` to rotate an existing key. Back up `.env` securely before changes. Initial preparation does not connect Google or migrate application data.
+
 - Initial import: 90 days; subsequent daily sync: overlapping last 7 days. Use finalized data with a conservative 3-day lag, and report dates in `America/Los_Angeles`.
 - Property, page and page-query datasets are stored separately. Never derive property totals by summing query rows. CTR is clicks/impressions; position is impression-weighted. A period missing completed daily imports has unknown totals, not zero.
 - API pages use 25,000 rows and at most 50,000 rows/day/dataset; capped days record truncation. Google's internal/anonymized query limitations apply even below that cap.
