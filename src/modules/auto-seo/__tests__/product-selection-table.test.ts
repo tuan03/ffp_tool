@@ -67,6 +67,10 @@ function renderTable(props: {
   onOpenDetail?: (product: ShopifyProductForAutoSeoUi) => void;
   eligibilityItems?: readonly AutoSeoEligibilityItem[];
   eligibilityFilter?: AutoSeoEligibilityFilter;
+  collectionFilter?: string;
+  asinQuery?: string;
+  startDate?: string;
+  endDate?: string;
 }): RenderResult {
   let captured: React.ReactElement<{ children: React.ReactNode[] }> | null = null;
 
@@ -83,6 +87,10 @@ function renderTable(props: {
       onOpenDetail: props.onOpenDetail ?? (() => {}),
       eligibilityItems: props.eligibilityItems,
       eligibilityFilter: props.eligibilityFilter,
+      collectionFilter: props.collectionFilter,
+      asinQuery: props.asinQuery,
+      startDate: props.startDate,
+      endDate: props.endDate,
     }) as React.ReactElement<{ children: React.ReactNode[] }>;
     return captured;
   }
@@ -1154,5 +1162,164 @@ test("ProductSelectionTable: master checkbox reflects selection state and trigge
   assert.equal(input2.props.checked, true, "Master checkbox should be checked when all items are selected");
   input2.props.onChange?.();
   assert.equal(clearSelectionCalled, true, "Clicking master checkbox when selected should trigger onClearVisibleSelection");
+});
+
+test("filterAutoSeoProducts: filters by collection matching productType or collection tags", () => {
+  const products: readonly ShopifyProductForAutoSeoUi[] = [
+    {
+      id: "gid://shopify/Product/1",
+      title: "Ceramic Mug",
+      handle: "ceramic-mug",
+      productType: "Kitchenware",
+      tags: ["eco"],
+    },
+    {
+      id: "gid://shopify/Product/2",
+      title: "Silk Scarf",
+      handle: "silk-scarf",
+      productType: "Apparel",
+      tags: ["fashion", "collection:Accessories"],
+    },
+    {
+      id: "gid://shopify/Product/3",
+      title: "Wooden Spoon",
+      handle: "wooden-spoon",
+      productType: "Kitchenware",
+      tags: ["wood"],
+    },
+  ];
+
+  // Filter by productType "Kitchenware"
+  const kitchenware = filterAutoSeoProducts(products, {
+    collectionFilter: "Kitchenware",
+  });
+  assert.equal(kitchenware.length, 2);
+  assert.deepEqual(kitchenware.map(p => p.id), ["gid://shopify/Product/1", "gid://shopify/Product/3"]);
+
+  // Filter by tag collection "Accessories"
+  const accessories = filterAutoSeoProducts(products, {
+    collectionFilter: "Accessories",
+  });
+  assert.equal(accessories.length, 1);
+  assert.equal(accessories[0]?.id, "gid://shopify/Product/2");
+});
+
+test("filterAutoSeoProducts: filters by Amazon ASIN across tags, variants SKU, barcode, and handle", () => {
+  const products: readonly ShopifyProductForAutoSeoUi[] = [
+    {
+      id: "gid://shopify/Product/1",
+      title: "Stainless Water Bottle",
+      handle: "water-bottle-b08xyz1234",
+      tags: ["outdoor"],
+    },
+    {
+      id: "gid://shopify/Product/2",
+      title: "Yoga Mat",
+      handle: "yoga-mat",
+      tags: ["asin:B07ABC9999", "fitness"],
+    },
+    {
+      id: "gid://shopify/Product/3",
+      title: "Resistance Bands",
+      handle: "resistance-bands",
+      variants: [
+        { id: "var-1", title: "Heavy", sku: "B09ZZZ8888-HVY" },
+      ],
+    },
+  ];
+
+  // Match ASIN in handle
+  const asin1 = filterAutoSeoProducts(products, { asinQuery: "B08XYZ1234" });
+  assert.equal(asin1.length, 1);
+  assert.equal(asin1[0]?.id, "gid://shopify/Product/1");
+
+  // Match ASIN in tags with prefix asin:
+  const asin2 = filterAutoSeoProducts(products, { asinQuery: "B07ABC9999" });
+  assert.equal(asin2.length, 1);
+  assert.equal(asin2[0]?.id, "gid://shopify/Product/2");
+
+  // Match ASIN in variant SKU (case-insensitive)
+  const asin3 = filterAutoSeoProducts(products, { asinQuery: "b09zzz8888" });
+  assert.equal(asin3.length, 1);
+  assert.equal(asin3[0]?.id, "gid://shopify/Product/3");
+});
+
+test("filterAutoSeoProducts: filters by upload date range using createdAt", () => {
+  const products: readonly ShopifyProductForAutoSeoUi[] = [
+    {
+      id: "gid://shopify/Product/1",
+      title: "Old Product",
+      handle: "old-product",
+      createdAt: "2026-01-15T10:00:00Z",
+    },
+    {
+      id: "gid://shopify/Product/2",
+      title: "Mid Product",
+      handle: "mid-product",
+      createdAt: "2026-05-20T14:30:00Z",
+    },
+    {
+      id: "gid://shopify/Product/3",
+      title: "New Product",
+      handle: "new-product",
+      createdAt: "2026-09-01T08:00:00Z",
+    },
+  ];
+
+  // Filter startDate only
+  const afterMay = filterAutoSeoProducts(products, { startDate: "2026-05-01" });
+  assert.equal(afterMay.length, 2);
+  assert.deepEqual(afterMay.map(p => p.id), ["gid://shopify/Product/2", "gid://shopify/Product/3"]);
+
+  // Filter endDate only
+  const beforeMay = filterAutoSeoProducts(products, { endDate: "2026-05-01" });
+  assert.equal(beforeMay.length, 1);
+  assert.equal(beforeMay[0]?.id, "gid://shopify/Product/1");
+
+  // Filter both startDate and endDate
+  const midOnly = filterAutoSeoProducts(products, { startDate: "2026-05-01", endDate: "2026-05-31" });
+  assert.equal(midOnly.length, 1);
+  assert.equal(midOnly[0]?.id, "gid://shopify/Product/2");
+});
+
+test("ProductSelectionTable: renders compact filter bar with collection dropdown and advanced filter toggle", () => {
+  const productsWithDetails: readonly ShopifyProductForAutoSeoUi[] = [
+    {
+      id: "gid://shopify/Product/1",
+      title: "Eco Mug",
+      handle: "eco-mug",
+      status: "ACTIVE",
+      productType: "Kitchenware",
+      createdAt: "2026-08-01T00:00:00Z",
+    },
+    {
+      id: "gid://shopify/Product/2",
+      title: "Linen Shirt",
+      handle: "linen-shirt",
+      status: "DRAFT",
+      productType: "Apparel",
+      createdAt: "2026-08-15T00:00:00Z",
+    },
+  ];
+
+  const { html } = renderTable({
+    products: productsWithDetails,
+    selectedProductIds: [],
+    asinQuery: "B08",
+    eligibilityItems: [
+      { productId: "gid://shopify/Product/1", state: "never_processed", reason: "NO_HISTORY" },
+    ],
+  });
+
+  // Verify compact dropdowns and controls exist in markup
+  assert.ok(html.includes("Bộ lọc nâng cao"), "Must render 'Bộ lọc nâng cao' toggle");
+  assert.ok(html.includes("Tất cả bộ sưu tập"), "Must render collection filter option");
+  assert.ok(html.includes("Kitchenware"), "Must include productType in collection options");
+  assert.ok(html.includes("Apparel"), "Must include productType in collection options");
+  assert.ok(html.includes("Shopify:"), "Must render Shopify status filter selector");
+  assert.ok(html.includes("SEO:"), "Must render SEO status filter selector");
+  assert.ok(html.includes("Nhập ASIN"), "Must render ASIN filter input placeholder");
+  assert.ok(html.includes("Từ ngày"), "Must render start date filter label");
+  assert.ok(html.includes("Đến ngày"), "Must render end date filter label");
 });
 

@@ -23,6 +23,11 @@ import {
   setAutoSeoSelectedProductIds,
   setAutoSeoSelectedStoreId,
   setAutoSeoStatusFilter,
+  setAutoSeoCollectionFilter,
+  setAutoSeoAsinQuery,
+  setAutoSeoStartDate,
+  setAutoSeoEndDate,
+  resetAutoSeoFilters,
   useAutoSeoSession,
 } from "./auto-seo-session";
 import { selectNextAutoSeoBatch } from "./smart-batch";
@@ -72,6 +77,10 @@ export function AutoSeoPage({
   const statusFilter = session.statusFilter;
   const batchSize = session.batchSize;
   const eligibilityFilter = session.eligibilityFilter;
+  const collectionFilter = session.collectionFilter ?? "all";
+  const asinQuery = session.asinQuery ?? "";
+  const startDate = session.startDate ?? "";
+  const endDate = session.endDate ?? "";
   const output = session.output;
   const lastHydratedProducts = session.lastHydratedProducts;
 
@@ -207,8 +216,22 @@ export function AutoSeoPage({
       statusFilter,
       eligibilityFilter: eligibility ? eligibilityFilter : "all",
       eligibilityItems: eligibility?.items,
+      collectionFilter,
+      asinQuery,
+      startDate,
+      endDate,
     });
-  }, [eligibility, eligibilityFilter, products, searchQuery, statusFilter]);
+  }, [
+    eligibility,
+    eligibilityFilter,
+    products,
+    searchQuery,
+    statusFilter,
+    collectionFilter,
+    asinQuery,
+    startDate,
+    endDate,
+  ]);
 
   const handleSelectStore = useCallback((storeId: string): void => {
     if (storeId === selectedStoreId) {
@@ -599,6 +622,15 @@ export function AutoSeoPage({
         onSearchQueryChange={setAutoSeoSearchQuery}
         statusFilter={statusFilter}
         onStatusFilterChange={setAutoSeoStatusFilter}
+        collectionFilter={collectionFilter}
+        onCollectionFilterChange={setAutoSeoCollectionFilter}
+        asinQuery={asinQuery}
+        onAsinQueryChange={setAutoSeoAsinQuery}
+        startDate={startDate}
+        onStartDateChange={setAutoSeoStartDate}
+        endDate={endDate}
+        onEndDateChange={setAutoSeoEndDate}
+        onResetAllFilters={resetAutoSeoFilters}
         filteredProducts={filteredProducts}
         onToggleSelect={handleToggleSelect}
         onOpenDetail={handleOpenDetail}

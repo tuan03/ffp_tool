@@ -25,6 +25,15 @@ export interface ProductSelectionTableProps {
   onEligibilityFilterChange?(filter: AutoSeoEligibilityFilter): void;
   onSelectAllVisible?(): void;
   onClearVisibleSelection?(): void;
+  collectionFilter?: string;
+  onCollectionFilterChange?(collection: string): void;
+  asinQuery?: string;
+  onAsinQueryChange?(asin: string): void;
+  startDate?: string;
+  onStartDateChange?(date: string): void;
+  endDate?: string;
+  onEndDateChange?(date: string): void;
+  onResetAllFilters?(): void;
 }
 
 export function ProductSelectionTable(props: ProductSelectionTableProps): React.JSX.Element {
@@ -38,10 +47,23 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
 
   const [internalSearchQuery, setInternalSearchQuery] = useState("");
   const [internalStatusFilter, setInternalStatusFilter] = useState<ShopifyStatusFilter>("all");
+  const [internalCollectionFilter, setInternalCollectionFilter] = useState("all");
+  const [internalAsinQuery, setInternalAsinQuery] = useState("");
+  const [internalStartDate, setInternalStartDate] = useState("");
+  const [internalEndDate, setInternalEndDate] = useState("");
+  const [isAdvancedOpen, setIsAdvancedOpen] = useState(
+    Boolean(props.asinQuery || props.startDate || props.endDate),
+  );
+
   const masterCheckboxRef = useRef<HTMLInputElement | null>(null);
 
   const searchQuery = props.searchQuery !== undefined ? props.searchQuery : internalSearchQuery;
   const statusFilter = props.statusFilter !== undefined ? props.statusFilter : internalStatusFilter;
+  const collectionFilter = props.collectionFilter !== undefined ? props.collectionFilter : internalCollectionFilter;
+  const asinQuery = props.asinQuery !== undefined ? props.asinQuery : internalAsinQuery;
+  const startDate = props.startDate !== undefined ? props.startDate : internalStartDate;
+  const endDate = props.endDate !== undefined ? props.endDate : internalEndDate;
+
   const eligibilityByProductId = useMemo(
     () => new Map((props.eligibilityItems ?? []).map(item => [item.productId, item] as const)),
     [props.eligibilityItems],
@@ -60,6 +82,75 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
       props.onStatusFilterChange(status);
     } else {
       setInternalStatusFilter(status);
+    }
+  };
+
+  const handleCollectionFilterChange = (collection: string): void => {
+    if (props.onCollectionFilterChange) {
+      props.onCollectionFilterChange(collection);
+    } else {
+      setInternalCollectionFilter(collection);
+    }
+  };
+
+  const handleAsinQueryChange = (asin: string): void => {
+    if (props.onAsinQueryChange) {
+      props.onAsinQueryChange(asin);
+    } else {
+      setInternalAsinQuery(asin);
+    }
+  };
+
+  const handleStartDateChange = (date: string): void => {
+    if (props.onStartDateChange) {
+      props.onStartDateChange(date);
+    } else {
+      setInternalStartDate(date);
+    }
+  };
+
+  const handleEndDateChange = (date: string): void => {
+    if (props.onEndDateChange) {
+      props.onEndDateChange(date);
+    } else {
+      setInternalEndDate(date);
+    }
+  };
+
+  const handleResetAllFilters = (): void => {
+    if (props.onResetAllFilters) {
+      props.onResetAllFilters();
+    } else {
+      handleSearchQueryChange("");
+      handleStatusFilterChange("all");
+      props.onEligibilityFilterChange?.("needs_seo");
+      handleCollectionFilterChange("all");
+      handleAsinQueryChange("");
+      handleStartDateChange("");
+      handleEndDateChange("");
+    }
+  };
+
+  const applyDatePreset = (preset: "today" | "7days" | "30days" | "all"): void => {
+    if (preset === "all") {
+      handleStartDateChange("");
+      handleEndDateChange("");
+      return;
+    }
+    const now = new Date();
+    const formatDate = (d: Date) => d.toISOString().slice(0, 10);
+    const todayStr = formatDate(now);
+    if (preset === "today") {
+      handleStartDateChange(todayStr);
+      handleEndDateChange(todayStr);
+    } else if (preset === "7days") {
+      const past = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+      handleStartDateChange(formatDate(past));
+      handleEndDateChange(todayStr);
+    } else if (preset === "30days") {
+      const past = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+      handleStartDateChange(formatDate(past));
+      handleEndDateChange(todayStr);
     }
   };
 
@@ -117,6 +208,10 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
       statusFilter,
       eligibilityFilter: props.eligibilityFilter,
       eligibilityItems: props.eligibilityItems,
+      collectionFilter,
+      asinQuery,
+      startDate,
+      endDate,
     });
   }, [
     props.filteredProducts,
@@ -125,7 +220,54 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
     statusFilter,
     props.eligibilityFilter,
     props.eligibilityItems,
+    collectionFilter,
+    asinQuery,
+    startDate,
+    endDate,
   ]);
+
+  const availableCollections = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const product of products) {
+      const type = product.productType?.trim();
+      if (type) {
+        counts.set(type, (counts.get(type) ?? 0) + 1);
+      }
+      if (product.tags) {
+        for (const tag of product.tags) {
+          const lower = tag.toLowerCase();
+          if (lower.startsWith("collection:") || lower.startsWith("col:")) {
+            const colName = tag.split(":")[1]?.trim();
+            if (colName) {
+              counts.set(colName, (counts.get(colName) ?? 0) + 1);
+            }
+          }
+        }
+      }
+    }
+    return Array.from(counts.entries())
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => b.count - a.count);
+  }, [products]);
+
+  const hasActiveAdvancedFilters = Boolean(
+    asinQuery || startDate || endDate || (collectionFilter && collectionFilter !== "all"),
+  );
+  const activeAdvancedFilterCount = [
+    Boolean(asinQuery),
+    Boolean(startDate || endDate),
+    Boolean(collectionFilter && collectionFilter !== "all"),
+  ].filter(Boolean).length;
+
+  const isAnyFilterActive = Boolean(
+    searchQuery ||
+    statusFilter !== "all" ||
+    (props.eligibilityFilter && props.eligibilityFilter !== "all") ||
+    collectionFilter !== "all" ||
+    asinQuery ||
+    startDate ||
+    endDate,
+  );
 
   const selectedVisibleCount = useMemo(() => {
     const idSet = new Set(selectedProductIds);
@@ -207,102 +349,329 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
   return (
     <div className="rounded-xl border border-slate-800 bg-slate-900/60 shadow-xl overflow-hidden backdrop-blur-sm">
       {/* Table Filter Header */}
-      <div className="border-b border-slate-800 p-4 bg-slate-900/90">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
-          {/* Search Input */}
-          <div className="relative flex-1 max-w-sm">
+      <div className="border-b border-slate-800 p-3 sm:p-4 space-y-3 bg-slate-900/90">
+        {/* Row 1: Compact, Responsive Filter Bar */}
+        <div className="flex flex-wrap items-center justify-between gap-2.5 text-xs">
+          {/* Left: Search input */}
+          <div className="relative flex-1 min-w-[200px] max-w-md">
             <input
               type="text"
               value={searchQuery}
               onChange={(e) => handleSearchQueryChange(e.target.value)}
-              placeholder="Tìm theo tiêu đề, handle, ID..."
-              className="w-full rounded-lg border border-slate-700 bg-slate-950/80 px-3 py-1.5 text-xs text-slate-100 placeholder-slate-500 focus:border-cyan-500 focus:outline-hidden"
+              placeholder="🔍 Tìm theo tiêu đề, handle, ID, SKU..."
+              className="w-full rounded-lg border border-slate-700 bg-slate-950/90 pl-3 pr-7 py-1.5 text-xs text-slate-100 placeholder-slate-500 focus:border-cyan-500 focus:outline-hidden"
             />
             {searchQuery && (
               <button
                 type="button"
                 onClick={() => handleSearchQueryChange("")}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-slate-500 hover:text-slate-300"
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-slate-500 hover:text-slate-300 cursor-pointer"
+                title="Xóa tìm kiếm"
               >
                 ✕
               </button>
             )}
           </div>
 
-          {/* Shopify Status Filter Group */}
-          <div className="flex flex-wrap items-center gap-1.5 text-xs">
-            <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 mr-1">
-              Status:
-            </span>
-            {statusTabs.map((tab) => (
-              <button
-                key={tab.id}
-                type="button"
-                onClick={() => handleStatusFilterChange(tab.id)}
-                className={`rounded-md px-2.5 py-1 transition ${
-                  statusFilter === tab.id
-                    ? "bg-cyan-950 border border-cyan-700 text-cyan-300 font-semibold"
-                    : "bg-slate-800/60 border border-slate-800 text-slate-400 hover:bg-slate-800 hover:text-slate-200"
-                }`}
+          {/* Right: Compact Dropdowns & Actions */}
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Shopify Status Select */}
+            <div className="relative flex items-center gap-1.5">
+              <span className="text-[11px] text-slate-400 font-medium whitespace-nowrap">Shopify:</span>
+              <select
+                aria-label="Lọc theo trạng thái Shopify"
+                value={statusFilter}
+                onChange={(e) => handleStatusFilterChange(e.target.value as ShopifyStatusFilter)}
+                className="rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs font-medium text-slate-200 focus:border-cyan-500 focus:outline-hidden cursor-pointer"
               >
-                {tab.label}
-              </button>
-            ))}
-          </div>
-          {props.eligibilityItems && (
-            <div className="flex flex-wrap items-center gap-1 rounded-lg border border-slate-800 bg-slate-950/80 p-1 text-xs">
-              <span className="text-[11px] font-semibold text-slate-400 px-1 hidden sm:inline">Lọc:</span>
-              <button
-                type="button"
-                onClick={() => props.onEligibilityFilterChange?.("needs_seo")}
-                className={`rounded-md px-2.5 py-1 font-medium transition cursor-pointer ${
-                  (props.eligibilityFilter ?? "needs_seo") === "needs_seo"
-                    ? "bg-cyan-950 border border-cyan-700/80 text-cyan-300 font-semibold shadow-xs"
-                    : "text-slate-400 hover:text-slate-200"
-                }`}
-                title="Lọc các sản phẩm chưa có SEO hoặc có thay đổi mới"
-              >
-                ⚡ Cần SEO {eligibilityCounts ? `(${eligibilityCounts.needs_seo})` : ""}
-              </button>
-              <button
-                type="button"
-                onClick={() => props.onEligibilityFilterChange?.("active")}
-                className={`rounded-md px-2.5 py-1 font-medium transition cursor-pointer ${
-                  props.eligibilityFilter === "active"
-                    ? "bg-violet-950 border border-violet-700/80 text-violet-300 font-semibold shadow-xs"
-                    : "text-slate-400 hover:text-slate-200"
-                }`}
-                title="Lọc các sản phẩm đang trong tiến trình xử lý SEO"
-              >
-                🟣 Đang xử lý {eligibilityCounts ? `(${eligibilityCounts.active})` : ""}
-              </button>
-              <button
-                type="button"
-                onClick={() => props.onEligibilityFilterChange?.("current")}
-                className={`rounded-md px-2.5 py-1 font-medium transition cursor-pointer ${
-                  props.eligibilityFilter === "current"
-                    ? "bg-emerald-950 border border-emerald-700/80 text-emerald-300 font-semibold shadow-xs"
-                    : "text-slate-400 hover:text-slate-200"
-                }`}
-                title="Lọc các sản phẩm đã hoàn thành và cập nhật SEO"
-              >
-                🟢 Đã cập nhật {eligibilityCounts ? `(${eligibilityCounts.current})` : ""}
-              </button>
-              <button
-                type="button"
-                onClick={() => props.onEligibilityFilterChange?.("all")}
-                className={`rounded-md px-2.5 py-1 font-medium transition cursor-pointer ${
-                  props.eligibilityFilter === "all"
-                    ? "bg-slate-800 border border-slate-600 text-slate-200 font-semibold shadow-xs"
-                    : "text-slate-400 hover:text-slate-200"
-                }`}
-                title="Hiển thị tất cả trạng thái SEO"
-              >
-                Tất cả {eligibilityCounts ? `(${eligibilityCounts.all})` : ""}
-              </button>
+                {statusTabs.map((tab) => (
+                  <option key={tab.id} value={tab.id}>
+                    {tab.label}
+                  </option>
+                ))}
+              </select>
             </div>
-          )}
+
+            {/* SEO Eligibility Select */}
+            {props.eligibilityItems && (
+              <div className="relative flex items-center gap-1.5">
+                <span className="text-[11px] text-slate-400 font-medium whitespace-nowrap">SEO:</span>
+                <select
+                  aria-label="Lọc theo trạng thái SEO"
+                  value={props.eligibilityFilter ?? "needs_seo"}
+                  onChange={(e) => props.onEligibilityFilterChange?.(e.target.value as AutoSeoEligibilityFilter)}
+                  className={`rounded-lg border px-2.5 py-1.5 text-xs font-semibold focus:outline-hidden cursor-pointer ${
+                    (props.eligibilityFilter ?? "needs_seo") === "needs_seo"
+                      ? "border-cyan-700 bg-cyan-950/80 text-cyan-200"
+                      : props.eligibilityFilter === "active"
+                        ? "border-violet-700 bg-violet-950/80 text-violet-200"
+                        : props.eligibilityFilter === "current"
+                          ? "border-emerald-700 bg-emerald-950/80 text-emerald-200"
+                          : "border-slate-700 bg-slate-950 text-slate-200"
+                  }`}
+                >
+                  <option value="needs_seo">
+                    ⚡ Cần SEO {eligibilityCounts ? `(${eligibilityCounts.needs_seo})` : ""}
+                  </option>
+                  <option value="active">
+                    🟣 Đang xử lý {eligibilityCounts ? `(${eligibilityCounts.active})` : ""}
+                  </option>
+                  <option value="current">
+                    🟢 Đã cập nhật {eligibilityCounts ? `(${eligibilityCounts.current})` : ""}
+                  </option>
+                  <option value="all">
+                    Tất cả {eligibilityCounts ? `(${eligibilityCounts.all})` : ""}
+                  </option>
+                </select>
+              </div>
+            )}
+
+            {/* Collection Filter Select */}
+            <div className="relative">
+              <select
+                aria-label="Lọc theo Collection"
+                value={collectionFilter}
+                onChange={(e) => handleCollectionFilterChange(e.target.value)}
+                className={`rounded-lg border px-2.5 py-1.5 text-xs font-medium focus:outline-hidden cursor-pointer max-w-[170px] truncate ${
+                  collectionFilter !== "all"
+                    ? "border-cyan-700 bg-cyan-950/80 text-cyan-200 font-semibold"
+                    : "border-slate-700 bg-slate-950 text-slate-300"
+                }`}
+              >
+                <option value="all">🏷️ Tất cả bộ sưu tập</option>
+                {availableCollections.map((col) => (
+                  <option key={col.name} value={col.name}>
+                    {col.name} ({col.count})
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Advanced Filters Button (ASIN + Date Range) */}
+            <button
+              type="button"
+              onClick={() => setIsAdvancedOpen(!isAdvancedOpen)}
+              className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition cursor-pointer ${
+                isAdvancedOpen || hasActiveAdvancedFilters
+                  ? "bg-cyan-950 border-cyan-600 text-cyan-200 font-semibold shadow-xs"
+                  : "bg-slate-950 border-slate-700 text-slate-300 hover:bg-slate-800"
+              }`}
+            >
+              <span>⚙️</span> Bộ lọc nâng cao
+              {activeAdvancedFilterCount > 0 && (
+                <span className="rounded-full bg-cyan-500 text-slate-950 text-[10px] font-bold px-1.5 py-0.2">
+                  {activeAdvancedFilterCount}
+                </span>
+              )}
+              <span className="text-[10px]">{isAdvancedOpen ? "▲" : "▼"}</span>
+            </button>
+
+            {/* Reset All Filters Button */}
+            {isAnyFilterActive && (
+              <button
+                type="button"
+                onClick={handleResetAllFilters}
+                className="text-xs text-rose-400 hover:text-rose-300 hover:underline px-1 py-1 transition cursor-pointer whitespace-nowrap"
+                title="Xóa tất cả các bộ lọc đang chọn"
+              >
+                ✕ Xóa lọc
+              </button>
+            )}
+          </div>
         </div>
+
+        {/* Row 2: Advanced Filter Drawer (ASIN & Date Range) */}
+        {(isAdvancedOpen || Boolean(asinQuery || startDate || endDate)) && (
+          <div className="pt-3 border-t border-slate-800/80 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 bg-slate-950/70 p-3 rounded-lg border border-slate-800">
+            {/* 1. Amazon ASIN Filter */}
+            <div className="space-y-1">
+              <label htmlFor="filter-asin-input" className="text-[11px] font-semibold text-slate-300 flex items-center gap-1">
+                <span>📦</span> Lọc theo Amazon ASIN:
+              </label>
+              <div className="relative">
+                <input
+                  id="filter-asin-input"
+                  type="text"
+                  value={asinQuery}
+                  onChange={(e) => handleAsinQueryChange(e.target.value)}
+                  placeholder="Nhập ASIN (vd: B08N5WRWNW, B0...)"
+                  className="w-full rounded-md border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs text-slate-100 placeholder-slate-500 focus:border-cyan-500 focus:outline-hidden font-mono uppercase"
+                />
+                {asinQuery && (
+                  <button
+                    type="button"
+                    onClick={() => handleAsinQueryChange("")}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-slate-400 hover:text-slate-200 cursor-pointer"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* 2. Date Range Picker (Từ ngày -> Đến ngày) */}
+            <div className="space-y-1">
+              <label className="text-[11px] font-semibold text-slate-300 flex items-center gap-1">
+                <span>📅</span> Ngày up sản phẩm:
+              </label>
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="date"
+                  aria-label="Từ ngày"
+                  value={startDate}
+                  onChange={(e) => handleStartDateChange(e.target.value)}
+                  className="rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-200 focus:border-cyan-500 focus:outline-hidden flex-1"
+                />
+                <span className="text-slate-500 text-xs">→</span>
+                <input
+                  type="date"
+                  aria-label="Đến ngày"
+                  value={endDate}
+                  onChange={(e) => handleEndDateChange(e.target.value)}
+                  className="rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-200 focus:border-cyan-500 focus:outline-hidden flex-1"
+                />
+                {(startDate || endDate) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      handleStartDateChange("");
+                      handleEndDateChange("");
+                    }}
+                    className="text-xs text-slate-400 hover:text-rose-400 px-1 cursor-pointer"
+                    title="Xóa khoảng ngày"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* 3. Quick Date Presets */}
+            <div className="space-y-1">
+              <label className="text-[11px] font-semibold text-slate-400">
+                Chọn nhanh khoảng ngày:
+              </label>
+              <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                <button
+                  type="button"
+                  onClick={() => applyDatePreset("today")}
+                  className="rounded-md bg-slate-800 hover:bg-slate-700 border border-slate-700 px-2.5 py-1 text-[11px] text-slate-300 transition cursor-pointer"
+                >
+                  Hôm nay
+                </button>
+                <button
+                  type="button"
+                  onClick={() => applyDatePreset("7days")}
+                  className="rounded-md bg-slate-800 hover:bg-slate-700 border border-slate-700 px-2.5 py-1 text-[11px] text-slate-300 transition cursor-pointer"
+                >
+                  7 ngày qua
+                </button>
+                <button
+                  type="button"
+                  onClick={() => applyDatePreset("30days")}
+                  className="rounded-md bg-slate-800 hover:bg-slate-700 border border-slate-700 px-2.5 py-1 text-[11px] text-slate-300 transition cursor-pointer"
+                >
+                  30 ngày qua
+                </button>
+                <button
+                  type="button"
+                  onClick={() => applyDatePreset("all")}
+                  className="rounded-md bg-slate-800 hover:bg-slate-700 border border-slate-700 px-2.5 py-1 text-[11px] text-slate-400 transition cursor-pointer"
+                >
+                  Tất cả ngày
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Row 3: Active Filter Chips */}
+        {isAnyFilterActive && (
+          <div className="flex flex-wrap items-center gap-1.5 pt-1 text-[11px]">
+            <span className="text-slate-500 font-medium">Đang lọc:</span>
+
+            {searchQuery && (
+              <span className="inline-flex items-center gap-1 rounded-md bg-slate-800 border border-slate-700 px-2 py-0.5 text-slate-300">
+                Từ khóa: &ldquo;{searchQuery}&rdquo;
+                <button
+                  type="button"
+                  onClick={() => handleSearchQueryChange("")}
+                  className="hover:text-rose-400 cursor-pointer ml-0.5"
+                >
+                  ✕
+                </button>
+              </span>
+            )}
+
+            {statusFilter !== "all" && (
+              <span className="inline-flex items-center gap-1 rounded-md bg-slate-800 border border-slate-700 px-2 py-0.5 text-slate-300">
+                Shopify: {statusFilter}
+                <button
+                  type="button"
+                  onClick={() => handleStatusFilterChange("all")}
+                  className="hover:text-rose-400 cursor-pointer ml-0.5"
+                >
+                  ✕
+                </button>
+              </span>
+            )}
+
+            {props.eligibilityFilter && props.eligibilityFilter !== "all" && (
+              <span className="inline-flex items-center gap-1 rounded-md bg-slate-800 border border-slate-700 px-2 py-0.5 text-slate-300">
+                SEO: {props.eligibilityFilter === "needs_seo" ? "Cần SEO" : props.eligibilityFilter === "active" ? "Đang xử lý" : "Đã cập nhật"}
+                <button
+                  type="button"
+                  onClick={() => props.onEligibilityFilterChange?.("all")}
+                  className="hover:text-rose-400 cursor-pointer ml-0.5"
+                >
+                  ✕
+                </button>
+              </span>
+            )}
+
+            {collectionFilter !== "all" && (
+              <span className="inline-flex items-center gap-1 rounded-md bg-cyan-950/60 border border-cyan-800 px-2 py-0.5 text-cyan-300">
+                Collection: {collectionFilter}
+                <button
+                  type="button"
+                  onClick={() => handleCollectionFilterChange("all")}
+                  className="hover:text-rose-400 cursor-pointer ml-0.5"
+                >
+                  ✕
+                </button>
+              </span>
+            )}
+
+            {asinQuery && (
+              <span className="inline-flex items-center gap-1 rounded-md bg-indigo-950/60 border border-indigo-800 px-2 py-0.5 text-indigo-300 font-mono">
+                ASIN: {asinQuery}
+                <button
+                  type="button"
+                  onClick={() => handleAsinQueryChange("")}
+                  className="hover:text-rose-400 cursor-pointer ml-0.5"
+                >
+                  ✕
+                </button>
+              </span>
+            )}
+
+            {(startDate || endDate) && (
+              <span className="inline-flex items-center gap-1 rounded-md bg-amber-950/60 border border-amber-800 px-2 py-0.5 text-amber-300">
+                Ngày: {startDate || "..."} → {endDate || "..."}
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleStartDateChange("");
+                    handleEndDateChange("");
+                  }}
+                  className="hover:text-rose-400 cursor-pointer ml-0.5"
+                >
+                  ✕
+                </button>
+              </span>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Table Data */}

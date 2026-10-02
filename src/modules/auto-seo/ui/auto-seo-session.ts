@@ -17,6 +17,10 @@ export interface AutoSeoSessionState {
   hasLoadedInitially: boolean;
   batchSize: AutoSeoBatchSize;
   eligibilityFilter: AutoSeoEligibilityFilter;
+  collectionFilter: string;
+  asinQuery: string;
+  startDate: string;
+  endDate: string;
 }
 
 interface PersistedAutoSeoSession {
@@ -29,6 +33,10 @@ interface PersistedAutoSeoSession {
   hasLoadedInitially: boolean;
   batchSize?: AutoSeoBatchSize;
   eligibilityFilter?: AutoSeoEligibilityFilter;
+  collectionFilter?: string;
+  asinQuery?: string;
+  startDate?: string;
+  endDate?: string;
 }
 
 const STORAGE_KEY = "ffp_auto_seo_session_v1";
@@ -44,6 +52,10 @@ export const DEFAULT_AUTO_SEO_SESSION_STATE: AutoSeoSessionState = {
   hasLoadedInitially: false,
   batchSize: 50,
   eligibilityFilter: "needs_seo",
+  collectionFilter: "all",
+  asinQuery: "",
+  startDate: "",
+  endDate: "",
 };
 
 const VALID_BATCH_SIZES: readonly AutoSeoBatchSize[] = [10, 20, 50, 100];
@@ -82,6 +94,12 @@ export function parseAutoSeoSessionState(value: unknown): AutoSeoSessionState {
       ? (parsed.eligibilityFilter as AutoSeoEligibilityFilter)
       : "needs_seo";
 
+  const collectionFilter =
+    typeof parsed.collectionFilter === "string" ? parsed.collectionFilter : "all";
+  const asinQuery = typeof parsed.asinQuery === "string" ? parsed.asinQuery : "";
+  const startDate = typeof parsed.startDate === "string" ? parsed.startDate : "";
+  const endDate = typeof parsed.endDate === "string" ? parsed.endDate : "";
+
   return {
     ...DEFAULT_AUTO_SEO_SESSION_STATE,
     selectedStoreId,
@@ -93,6 +111,10 @@ export function parseAutoSeoSessionState(value: unknown): AutoSeoSessionState {
     hasLoadedInitially,
     batchSize,
     eligibilityFilter,
+    collectionFilter,
+    asinQuery,
+    startDate,
+    endDate,
   };
 }
 
@@ -207,6 +229,34 @@ export function setAutoSeoLastHydratedProducts(
   lastHydratedProducts: readonly ShopifyProductForAutoSeoUi[],
 ): void {
   updateAutoSeoSession({ lastHydratedProducts });
+}
+
+export function setAutoSeoCollectionFilter(collectionFilter: string): void {
+  updateAutoSeoSession({ collectionFilter });
+}
+
+export function setAutoSeoAsinQuery(asinQuery: string): void {
+  updateAutoSeoSession({ asinQuery });
+}
+
+export function setAutoSeoStartDate(startDate: string): void {
+  updateAutoSeoSession({ startDate });
+}
+
+export function setAutoSeoEndDate(endDate: string): void {
+  updateAutoSeoSession({ endDate });
+}
+
+export function resetAutoSeoFilters(): void {
+  updateAutoSeoSession({
+    searchQuery: "",
+    statusFilter: "all",
+    eligibilityFilter: "needs_seo",
+    collectionFilter: "all",
+    asinQuery: "",
+    startDate: "",
+    endDate: "",
+  });
 }
 
 export function clearAutoSeoSession(): void {
