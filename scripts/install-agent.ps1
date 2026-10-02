@@ -160,6 +160,28 @@ if (-not (Test-Path -LiteralPath $configFile)) {
     Write-Host "  Giu nguyen cau hinh san co: $configFile" -ForegroundColor Gray
 }
 
+$podServerDir = Join-Path $AgentRoot "src\modules\pinterest-pod\server"
+$agentPodEnv = Join-Path $podServerDir ".env"
+$agentPodEnvExample = Join-Path $podServerDir ".env.example"
+if (-not (Test-Path -LiteralPath $agentPodEnv)) {
+    if (Test-Path -LiteralPath $agentPodEnvExample) {
+        Copy-Item -LiteralPath $agentPodEnvExample -Destination $agentPodEnv
+    } else {
+        @'
+AI_PROVIDER=gemini_vertex
+GOOGLE_CLOUD_PROJECT=gemini-image-benchmark
+GOOGLE_CLOUD_LOCATION=us-central1
+GOOGLE_GENAI_USE_ENTERPRISE=True
+GEMINI_VISION_MODEL=gemini-2.5-flash
+GEMINI_ANALYSIS_MODEL=gemini-2.5-pro
+GEMINI_MODEL=gemini-2.5-pro
+IMAGEN_MODEL=gemini-2.5-flash-image
+GEMINI_IMAGE_MODEL=gemini-2.5-flash-image
+AI_MAX_OUTPUT_TOKENS=8192
+'@ | Set-Content -LiteralPath $agentPodEnv -Encoding UTF8
+    }
+}
+
 $launcher = @'
 @echo off
 title FFP Crawler Agent

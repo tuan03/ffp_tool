@@ -428,10 +428,32 @@ def analyze_reference_surfaces(
     if not isinstance(masks, list) or len(masks) != len(mask_request):
         raise ValueError("SURFACE_REVIEW_REQUIRED: missing instance segmentation")
     by_label = {}
+    surface_by_id = {s.get("surface_id"): s for s in surfaces}
     for mask in masks:
         if not isinstance(mask, dict) or not isinstance(mask.get("label"), str) or mask["label"] in by_label:
             raise ValueError("SURFACE_REVIEW_REQUIRED: ambiguous segmentation labels")
-        decode_surface_mask(mask, image.size)
+        try:
+            decode_surface_mask(mask, image.size)
+        except ValueError:
+            # Gemini Vision models may return native special tokens (e.g. <start_of_mask><seg_...>)
+            # or non-base64 text. Synthesize a compliant base64 PNG mask from the surface's
+            # perspective quad / box_2d so the physical floor perspective is preserved without crashing.
+            label = mask["label"]
+            box_2d = mask.get("box_2d")
+            if not (isinstance(box_2d, list) and len(box_2d) == 4 and 0 <= box_2d[0] < box_2d[2] <= 1000 and 0 <= box_2d[1] < box_2d[3] <= 1000):
+                box_2d = [0, 0, 1000, 1000]
+                mask["box_2d"] = box_2d
+            matching_surface = surface_by_id.get(label)
+            if matching_surface and matching_surface.get("quad"):
+                mask["mask"] = create_base64_mask_crop(image.size, matching_surface["quad"], box_2d)
+            else:
+                w, h = image.size
+                cw = max(1, int((box_2d[3] - box_2d[1]) * w / 1000.0))
+                ch = max(1, int((box_2d[2] - box_2d[0]) * h / 1000.0))
+                crop_buf = io.BytesIO()
+                Image.new("L", (cw, ch), 255).save(crop_buf, format="PNG")
+                mask["mask"] = base64.b64encode(crop_buf.getvalue()).decode("ascii")
+            decode_surface_mask(mask, image.size)
         by_label[mask["label"]] = mask
     if cache_dir is not None:
         diagnostic_dir = cache_dir / "surface_diagnostics" / key

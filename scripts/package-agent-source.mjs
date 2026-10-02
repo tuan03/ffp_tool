@@ -31,6 +31,7 @@ const sourceEntries = [
   "scripts/uninstall-agent.ps1",
   "scripts/update-agent.ps1",
   "src/modules/amazon-crawler/engine",
+  "src/modules/pinterest-pod/server/.env.example",
   "src/modules/pinterest-pod/server/desktop_notifier.py",
   "src/modules/pinterest-pod/server/job_repository.py",
   "src/modules/pinterest-pod/server/pinterest",
