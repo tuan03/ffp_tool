@@ -24,6 +24,30 @@ test("B5 HTML formatter escapes unsafe markup and removes promotional labels", (
   assert.equal(canonicalizeBulletLabel("BEST VALUE DEAL"), "Details");
 });
 
+test("B5 HTML formatter normalizes guidance punctuation and common grammar artifacts", () => {
+  const draft: GeneratedContentDraft = {
+    productTitle: "Viking Quilt",
+    intro: "A comfortable Viking quilt.",
+    bullets: [],
+    guidance: [
+      "Machine wash separately in cold water.;",
+      "Air dry without heat.",
+      "Microfiber will fluffier after washing.;",
+    ],
+    closing: "Designed for everyday use.",
+    productSeoTitle: "Viking Quilt",
+    productSeoDescription: "A comfortable Viking quilt for Norse mythology fans.",
+  };
+
+  const html = formatProductDescriptionHtml(draft);
+
+  assert.match(
+    html,
+    /Machine wash separately in cold water; Air dry without heat; Microfiber will become fluffier after washing\.<\/p>/,
+  );
+  assert.doesNotMatch(html, /\.\s*;/);
+});
+
 test("B5 fitters respect SEO and product title bounds", () => {
   assert.ok(fitSeoTitle("Vintage Black Cat Halloween T-Shirt | Spooky Retro Aesthetic Graphic Tee for Cat Lovers - Best Sale", "vintage black cat halloween t-shirt", 70).length <= 70);
   assert.ok(fitSeoDescription("Celebrate spooky season in effortless style with this vintage black cat Halloween t-shirt. Specially designed with vibrant retro artwork and durable materials, this shirt is sure to impress everyone at the party while providing day-long comfort. Explore our collection today!", 160).length <= 160);

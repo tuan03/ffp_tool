@@ -4707,10 +4707,15 @@ describe("Gateway: Level 2 Hardening (Auth, Timeouts, Auto-Recovery, Idempotency
     process.env.GPT_SEO_DB_PATH = ":memory:";
 
     const { startGatewayServer } = await import("../server");
+    const { DatabaseSync } = await import("node:sqlite");
+    const { CustomGptQueue } = await import("../custom-gpt-seo/queue");
+    const { createCustomGptHandler } = await import("../custom-gpt-seo/handler");
+    const queueDb = new DatabaseSync(":memory:");
     const server = startGatewayServer({
       port: 0,
       operatorUsername: "test-operator",
       operatorPassword: "test-operator-password",
+      customGptHandler: createCustomGptHandler({ queue: new CustomGptQueue(queueDb), storeId: "capozen", actionKeys: { capozen: "test-capozen-action-key" }, adminKey: "test-gateway-admin-key" }),
     });
     await new Promise<void>((resolve) => server.once("listening", resolve));
     const address = server.address() as import("node:net").AddressInfo;
@@ -4742,6 +4747,7 @@ describe("Gateway: Level 2 Hardening (Auth, Timeouts, Auto-Recovery, Idempotency
       assert.equal(actionResponse.status, 200);
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
+      queueDb.close();
       for (const [name, value] of Object.entries(previousEnvironment)) {
         if (value === undefined) delete process.env[name];
         else process.env[name] = value;

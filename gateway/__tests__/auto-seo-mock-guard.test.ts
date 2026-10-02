@@ -59,6 +59,37 @@ test("gateway mock guard: /api/auto-seo/run is rejected with 403 when Vite runs 
   assert.equal(parsed.error.code, "AUTO_SEO_MOCK_MODE_RESTRICTION");
 });
 
+test("gateway mock guard: /api/auto-seo/eligibility is rejected with 403 in mock mode", async () => {
+  let middleware: ((req: any, res: any, next: () => void) => Promise<void>) | undefined;
+  const plugin = shopifyGatewayDevPlugin({ authToken: "test-token-123" });
+  invokeConfigureServer(plugin, {
+    config: { server: { host: "localhost" }, mode: "mock" },
+    middlewares: { use: (fn: any) => { middleware = fn; } },
+  });
+  assert.ok(middleware);
+  const response = {
+    statusCode: 200,
+    body: "",
+    setHeader: () => {},
+    end(content: string) { this.body = content; },
+  };
+  let nextCalled = false;
+
+  await middleware(
+    {
+      url: "/api/auto-seo/eligibility",
+      method: "POST",
+      headers: { host: "localhost:5173", "sec-fetch-site": "same-origin" },
+    },
+    response,
+    () => { nextCalled = true; },
+  );
+
+  assert.equal(nextCalled, false);
+  assert.equal(response.statusCode, 403);
+  assert.equal(JSON.parse(response.body).error.code, "AUTO_SEO_MOCK_MODE_RESTRICTION");
+});
+
 test("gateway mock guard: /api/auto-seo/run is not blocked by mock guard in development mode", async () => {
   let middleware: ((req: any, res: any, next: () => void) => Promise<void>) | undefined;
   const plugin = shopifyGatewayDevPlugin({ authToken: "test-token-123" });

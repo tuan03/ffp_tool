@@ -28,3 +28,14 @@ export class CorpusLockTimeoutError extends Error {
     this.name = "CorpusLockTimeoutError";
   }
 }
+
+export class KeywordClaimConflictError extends Error {
+  public constructor(
+    public readonly storeId: string,
+    public readonly normalizedKeyword: string,
+    public readonly ownerProductKey: string,
+  ) {
+    super(`Keyword "${normalizedKeyword}" is already claimed by ${ownerProductKey} in store ${storeId}.`);
+    this.name = "KeywordClaimConflictError";
+  }
+}

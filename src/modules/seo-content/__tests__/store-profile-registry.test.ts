@@ -6,6 +6,8 @@ import {
   normalizeDomain,
   resolveStoreProfile,
 } from "../internal/store-profiles";
+import { buildContentFactSheet } from "../internal/content-generation/content-fact-sheet";
+import { createInitialContext } from "../internal/pipeline-context";
 
 test("normalizeDomain strips protocols, www, paths, queries, and ports", () => {
   assert.equal(normalizeDomain("https://jeminise.com"), "jeminise.com");
@@ -37,6 +39,50 @@ test("resolveStoreProfile finds Jeminise Bedding Profile by domain alias", () =>
   const profile = resolveStoreProfile({ siteDomain: "b6-theme-test.myshopify.com" });
   assert.ok(profile);
   assert.equal(profile.storeId, "jeminise");
+});
+
+test("resolveStoreProfile recognizes the production Jeminise store aliases", () => {
+  assert.equal(resolveStoreProfile({ storeId: "jeminise-real" })?.storeId, "jeminise");
+  assert.equal(resolveStoreProfile({ siteDomain: "f4hgwc-hu.myshopify.com" })?.storeId, "jeminise");
+});
+
+test("Jeminise fleece blankets do not inherit three-style bedding claims", () => {
+  const facts = buildContentFactSheet(createInitialContext({
+    storeId: "jeminise-real",
+    siteDomain: "f4hgwc-hu.myshopify.com",
+    title: "Personalized Reading Blanket",
+    description: "Polyester blanket available in Fleece or Sherpa.",
+    niche: "Blanket",
+    handle: "personalized-reading-blanket",
+    images: [],
+    variants: [
+      { title: "Fleece / 50 x 40", options: { Material: "Fleece", Size: "50 x 40" } },
+      { title: "Sherpa / 60 x 50", options: { Material: "Sherpa", Size: "60 x 50" } },
+    ],
+  }));
+
+  assert.equal(facts.storeProfile?.storeId, "jeminise");
+  assert.equal(facts.storeProfile?.bedding, undefined);
+  assert.equal(facts.storeProfile?.seoDescriptionGuidelines, undefined);
+});
+
+test("Jeminise products retain the bedding profile only with all three verified styles", () => {
+  const facts = buildContentFactSheet(createInitialContext({
+    storeId: "jeminise-real",
+    siteDomain: "f4hgwc-hu.myshopify.com",
+    title: "Viking Bedding Set",
+    description: "Choose a Comforter, Quilt, or Duvet Cover.",
+    niche: "Bedding",
+    handle: "viking-bedding-set",
+    images: [],
+    variants: [
+      { title: "Comforter", options: { Style: "Comforter" } },
+      { title: "Quilt", options: { Style: "Quilt" } },
+      { title: "Duvet Cover", options: { Style: "Duvet Cover" } },
+    ],
+  }));
+
+  assert.equal(facts.storeProfile?.bedding?.options.length, 3);
 });
 
 test("resolveStoreProfile finds Jeminise Bedding Profile by storeId", () => {

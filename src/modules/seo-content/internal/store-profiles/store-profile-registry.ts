@@ -46,7 +46,13 @@ export function resolveStoreProfile(
   const normalizedDomain = normalizeDomain(query.siteDomain || query.url);
 
   for (const profile of registry) {
-    if (storeId && profile.storeId.toLowerCase() === storeId) {
+    if (
+      storeId &&
+      (
+        profile.storeId.toLowerCase() === storeId ||
+        profile.storeAliases?.some((alias) => alias.toLowerCase() === storeId)
+      )
+    ) {
       return profile;
     }
 

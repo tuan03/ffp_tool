@@ -12,6 +12,8 @@ import {
   clearAutoSeoSession,
   getAutoSeoSessionState,
   setAutoSeoLastHydratedProducts,
+  setAutoSeoBatchSize,
+  setAutoSeoEligibilityFilter,
   setAutoSeoOutput,
   setAutoSeoProducts,
   setAutoSeoSearchQuery,
@@ -20,6 +22,7 @@ import {
   setAutoSeoStatusFilter,
   subscribeAutoSeoSession,
   updateAutoSeoSession,
+  parseAutoSeoSessionState,
 } from "../ui/auto-seo-session";
 
 const sampleProduct: ShopifyProductForAutoSeoUi = {
@@ -106,6 +109,37 @@ test("auto-seo session: clearAutoSeoSession resets all state to defaults", () =>
   assert.equal(state.selectedProductIds.length, 0);
   assert.equal(state.searchQuery, "");
   assert.equal(state.hasLoadedInitially, false);
+  assert.equal(state.batchSize, 50);
+  assert.equal(state.eligibilityFilter, "needs_seo");
+});
+
+test("auto-seo session: persists valid smart batch preferences", () => {
+  clearAutoSeoSession();
+  setAutoSeoBatchSize(100);
+  setAutoSeoEligibilityFilter("all");
+
+  assert.equal(getAutoSeoSessionState().batchSize, 100);
+  assert.equal(getAutoSeoSessionState().eligibilityFilter, "all");
+});
+
+test("auto-seo session: restores v1 records and rejects invalid smart batch preferences", () => {
+  const restoredV1 = parseAutoSeoSessionState({
+    products: [],
+    selectedProductIds: [],
+    searchQuery: "",
+    statusFilter: "all",
+    output: null,
+    hasLoadedInitially: false,
+  });
+  const invalid = parseAutoSeoSessionState({
+    batchSize: 999,
+    eligibilityFilter: "current_only",
+  });
+
+  assert.equal(restoredV1.batchSize, 50);
+  assert.equal(restoredV1.eligibilityFilter, "needs_seo");
+  assert.equal(invalid.batchSize, 50);
+  assert.equal(invalid.eligibilityFilter, "needs_seo");
 });
 
 test("auto-seo session: AutoSeoPage remount preserves session products and does not re-fetch", () => {

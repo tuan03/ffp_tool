@@ -52,6 +52,10 @@ export function buildContentFactSheet(
 ): ContentFactSheet {
   const { source, productUnderstanding, shoppingContext } = context;
 
+  const variantSummary =
+    source.variantSummary ??
+    (source.variants && source.variants.length > 0 ? summarizeVariants(source.variants) : undefined);
+
   let storeProfile =
     context.storeProfile ??
     resolveStoreProfile({
@@ -59,11 +63,18 @@ export function buildContentFactSheet(
       siteDomain: source.siteDomain ?? source.url,
     });
 
-  const combinedEvidence = `${source.title} ${source.niche || ""} ${source.description || ""}`.toLowerCase();
-  const isBedding = /\b(bedding|quilt|comforter|duvet|blanket|pillow|bedspread|coverlet)\b/i.test(combinedEvidence);
+  const variantEvidence = variantSummary?.sampleVariants.flatMap((variant) => [
+    variant.title,
+    ...Object.entries(variant.options ?? {}).flatMap(([name, value]) => [name, value]),
+  ]).join(" ") ?? "";
+  const beddingStyleEvidence = `${source.title} ${source.description} ${source.variantLabel ?? ""} ${variantEvidence}`;
+  const hasCompleteBeddingStyleEvidence = ["Comforter", "Quilt", "Duvet Cover"].every((style) =>
+    new RegExp(`\\b${style.replace(" ", "\\s+")}s?\\b`, "i").test(beddingStyleEvidence),
+  );
 
-  if (storeProfile?.bedding && !isBedding) {
-    // Strip bedding-specific rules when the crawled product is not a bedding product (e.g. Handbag, Rug, Doormat)
+  if (storeProfile?.bedding && !hasCompleteBeddingStyleEvidence) {
+    // Store identity alone is not product evidence. Fleece/Sherpa blankets and
+    // unrelated products must never inherit the three-style bedding contract.
     const { bedding, descriptionGuidelines, seoDescriptionGuidelines, ...generalProfile } = storeProfile;
     storeProfile = generalProfile;
   }
@@ -73,16 +84,12 @@ export function buildContentFactSheet(
     productUnderstanding,
   );
 
-  const effectiveNiche = context.effectiveNiche ?? (isBedding ? storeProfile?.niche : undefined) ?? source.niche;
+  const effectiveNiche = context.effectiveNiche ?? (storeProfile?.bedding ? storeProfile.niche : undefined) ?? source.niche;
   const sanitizedNiche = sanitizeFactText(effectiveNiche);
   const sanitizedProductIdentity =
     sanitizeFactText(productUnderstanding?.physicalProductIdentity) ||
     sanitizedNiche ||
     "product";
-
-  const variantSummary =
-    source.variantSummary ??
-    (source.variants && source.variants.length > 0 ? summarizeVariants(source.variants) : undefined);
 
   return {
     originalTitle: source.title.trim(),

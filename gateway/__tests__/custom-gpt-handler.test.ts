@@ -63,9 +63,251 @@ test("Actions reject an Action key that duplicates the administration key", () =
   } finally { db.close(); }
 });
 
-test("signed image URLs remain scoped to the authenticated store", async () => {
+test("administration lists every active batch for the selected store", async () => {
   const db = new DatabaseSync(":memory:");
   const queue = new CustomGptQueue(db);
+  const settings = queue.configure("capozen", { provider: "codex_mcp", batchSize: 1 });
+  for (const sourceIdentity of ["office-product", "laptop-product"]) {
+    queue.enqueue({
+      storeId: "capozen",
+      source: "auto_seo",
+      sourceIdentity,
+      input: { title: sourceIdentity, description: "Description", handle: sourceIdentity, niche: "home", images: [] },
+      original: {},
+      settings,
+    });
+  }
+  const officeBatch = queue.claim("capozen", "office-claim", "codex_mcp", "codex_mcp:office-pc");
+  const laptopBatch = queue.claim("capozen", "laptop-claim", "codex_mcp", "codex_mcp:laptop");
+  const handler = createCustomGptHandler({ queue, storeId: "capozen", adminKey: "admin-key" });
+  const server = http.createServer((req, res) => { void handler(req, res); });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${address.port}/api/v1/gpt-seo/admin/jobs?storeId=capozen`, {
+      headers: { Authorization: "Bearer admin-key" },
+    });
+    assert.equal(response.status, 200);
+    const payload = await response.json() as {
+      activeBatch: { readonly id: string } | null;
+      activeBatches: readonly { readonly id: string; readonly ownerId: string }[];
+    };
+    assert.equal(payload.activeBatch?.id, officeBatch.id);
+    assert.deepEqual(payload.activeBatches.map(batch => [batch.id, batch.ownerId]), [
+      [officeBatch.id, "codex_mcp:office-pc"],
+      [laptopBatch.id, "codex_mcp:laptop"],
+    ]);
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    db.close();
+  }
+});
+
+test("administration filters queue status before pagination", async () => {
+  const db = new DatabaseSync(":memory:");
+  const queue = new CustomGptQueue(db);
+  for (let index = 0; index < 51; index += 1) {
+    const job = queue.enqueue({
+      storeId: "jeminise-real",
+      source: "auto_seo",
+      sourceIdentity: `product-${index}`,
+      input: { title: `Product ${index}`, description: "Description", handle: `product-${index}`, niche: "home", images: [] },
+      original: {},
+      settings: { provider: "codex_mcp", batchSize: 10, version: 1, language: "en-US", instructions: "Grounded facts only." },
+    });
+    if (index < 50) {
+      db.prepare("UPDATE gpt_jobs SET status='REVIEW_READY',payload=json_set(payload,'$.status','REVIEW_READY') WHERE id=?").run(job.id);
+    }
+  }
+
+  const handler = createCustomGptHandler({ queue, storeId: "capozen", adminKey: "admin-key" });
+  const server = http.createServer((req, res) => { void handler(req, res); });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+
+  try {
+    const response = await fetch(
+      `http://127.0.0.1:${address.port}/api/v1/gpt-seo/admin/jobs?storeId=jeminise-real&statuses=PENDING&provider=codex_mcp&offset=0`,
+      { headers: { Authorization: "Bearer admin-key" } },
+    );
+    assert.equal(response.status, 200);
+    const payload = await response.json() as {
+      readonly jobs: readonly { readonly status: string }[];
+      readonly nextOffset: number | null;
+    };
+    assert.equal(payload.jobs.length, 1);
+    assert.equal(payload.jobs[0]?.status, "PENDING");
+    assert.equal(payload.nextOffset, null);
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    db.close();
+  }
+});
+
+test("administration lists complete review records and saves review states in bulk", async () => {
+  const db = new DatabaseSync(":memory:");
+  const queue = new CustomGptQueue(db);
+  queue.configure("jeminise-real", { provider: "custom_gpt", batchSize: 1 });
+  const job = queue.enqueue({
+    storeId: "jeminise-real",
+    source: "auto_seo",
+    sourceIdentity: "review-product",
+    input: { title: "Review product", description: "Description", handle: "review-product", niche: "home", images: [] },
+    original: { id: "review-product" },
+  });
+  const batch = queue.claim("jeminise-real", "review-claim", "custom_gpt", "custom_gpt");
+  queue.checkpoint("jeminise-real", job.id, {
+    batchId: batch.id,
+    leaseToken: batch.leaseToken,
+    requestId: "review-submit",
+    stage: "submission",
+    payload: {},
+  });
+  queue.finish("jeminise-real", job.id, { output: { productTitle: "Optimized product" } });
+
+  const handler = createCustomGptHandler({ queue, storeId: "capozen", adminKey: "admin-key" });
+  const server = http.createServer((req, res) => { void handler(req, res); });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+  const base = `http://127.0.0.1:${address.port}/api/v1/gpt-seo/admin`;
+
+  try {
+    const listResponse = await fetch(`${base}/reviews?storeId=jeminise-real&offset=0`, {
+      headers: { Authorization: "Bearer admin-key" },
+    });
+    assert.equal(listResponse.status, 200);
+    const firstPage = await listResponse.json() as {
+      readonly reviews: readonly { readonly job: { readonly id: string }; readonly state: Readonly<Record<string, unknown>> }[];
+      readonly nextOffset: number | null;
+    };
+    assert.equal(firstPage.reviews[0]?.job.id, job.id);
+    assert.deepEqual(firstPage.reviews[0]?.state, {});
+    assert.equal(firstPage.nextOffset, null);
+
+    const saveResponse = await fetch(`${base}/review-states?storeId=jeminise-real`, {
+      method: "POST",
+      headers: { Authorization: "Bearer admin-key", "Content-Type": "application/json" },
+      body: JSON.stringify({ reviews: [{ jobId: job.id, state: { reviewDecision: "approved" } }] }),
+    });
+    assert.equal(saveResponse.status, 200);
+    assert.deepEqual(await saveResponse.json(), { saved: 1 });
+    assert.deepEqual(queue.reviewState("jeminise-real", job.id), { reviewDecision: "approved" });
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    db.close();
+  }
+});
+
+test("waiting-jobs lists read-only identifiers for the authenticated store without claiming work", async () => {
+  const db = new DatabaseSync(":memory:");
+  let currentTime = 0;
+  const queue = new CustomGptQueue(db, () => ++currentTime);
+  queue.configure("capozen", { provider: "custom_gpt", batchSize: 2 });
+  const firstJob = queue.enqueue({
+    storeId: "capozen",
+    source: "auto_seo",
+    sourceIdentity: "waiting-product-1",
+    input: {
+      productId: "101",
+      title: "First waiting product",
+      description: "Description",
+      handle: "first-waiting-product",
+      niche: "home",
+      images: [
+        { id: "front", url: "https://cdn.shopify.com/front.jpg" },
+        { id: "detail", url: "https://cdn.shopify.com/detail.jpg" },
+      ],
+    },
+    original: {},
+  });
+  const secondJob = queue.enqueue({
+    storeId: "capozen",
+    source: "amazon",
+    sourceIdentity: "WAITINGPRODUCT2",
+    input: {
+      title: "Second waiting product",
+      description: "Description",
+      handle: "second-waiting-product",
+      niche: "home",
+      images: [{ id: "front", url: "https://cdn.shopify.com/second.jpg" }],
+    },
+    original: {},
+  });
+  const batch = queue.claim("capozen", "claim-waiting-products", "custom_gpt", "custom_gpt");
+  queue.issue("capozen", firstJob.id, batch.id, batch.leaseToken, "Attach clearer product images");
+  queue.issue("capozen", secondJob.id, batch.id, batch.leaseToken, "Confirm visible product text");
+  queue.release("capozen", batch.id, batch.leaseToken);
+
+  const handler = createCustomGptHandler({
+    queue,
+    actionKeys: { capozen: "capozen-key", wrydeco: "wrydeco-key" },
+    storeId: "capozen",
+    adminKey: "admin-key",
+  });
+  const server = http.createServer((req, res) => { void handler(req, res); });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+  const endpoint = `http://127.0.0.1:${address.port}/api/v1/gpt-seo/waiting-jobs`;
+
+  try {
+    assert.equal((await fetch(endpoint)).status, 401);
+    const queueResponse = await fetch(`http://127.0.0.1:${address.port}/api/v1/gpt-seo/queue`, { headers: { Authorization: "Bearer capozen-key" } });
+    assert.equal((await queueResponse.json() as { nextAction: string }).nextAction, "listSeoWaitingJobs");
+    const response = await fetch(endpoint, { headers: { Authorization: "Bearer capozen-key" } });
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+      jobs: [
+        {
+          jobId: firstJob.id,
+          source: "auto_seo",
+          productId: "101",
+          title: "First waiting product",
+          handle: "first-waiting-product",
+          status: "WAITING_INPUT",
+          imageCount: 2,
+          issue: "Attach clearer product images",
+        },
+        {
+          jobId: secondJob.id,
+          source: "amazon",
+          title: "Second waiting product",
+          handle: "second-waiting-product",
+          status: "WAITING_INPUT",
+          imageCount: 1,
+          issue: "Confirm visible product text",
+        },
+      ],
+      nextOffset: null,
+      instructions: "Use jobId with getSeoJob and getSeoJobImages. This read-only action does not claim jobs or change their status.",
+    });
+    assert.equal(queue.activeBatch("capozen", "custom_gpt"), null);
+    assert.equal(queue.get("capozen", firstJob.id).status, "WAITING_INPUT");
+    assert.equal(queue.get("capozen", secondJob.id).status, "WAITING_INPUT");
+    const otherStoreResponse = await fetch(endpoint, { headers: { Authorization: "Bearer wrydeco-key" } });
+    assert.deepEqual(await otherStoreResponse.json(), {
+      jobs: [],
+      nextOffset: null,
+      instructions: "Use jobId with getSeoJob and getSeoJobImages. This read-only action does not claim jobs or change their status.",
+    });
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    db.close();
+  }
+});
+
+test("image listings return the original public image URL without signing it", async () => {
+  const db = new DatabaseSync(":memory:");
+  const queue = new CustomGptQueue(db);
+  queue.configure("capozen", { provider: "custom_gpt", batchSize: 5 });
   const handler = createCustomGptHandler({
     queue,
     actionKeys: { capozen: "capozen-key", wrydeco: "wrydeco-key" },
@@ -95,17 +337,13 @@ test("signed image URLs remain scoped to the authenticated store", async () => {
   try {
     const response = await fetch(`${base}/api/v1/gpt-seo/images?jobId=${job.id}`, { headers: { Authorization: "Bearer capozen-key" } });
     assert.equal(response.status, 200);
-    const payload = await response.json() as { images: readonly { url: string }[] };
-    const signedUrl = new URL(payload.images[0].url);
-    assert.equal(signedUrl.searchParams.get("storeId"), "capozen");
-    signedUrl.searchParams.set("storeId", "wrydeco");
-    signedUrl.host = `127.0.0.1:${address.port}`;
-    signedUrl.protocol = "http:";
-    assert.equal((await fetch(signedUrl)).status, 401);
+    const payload = await response.json() as { images: readonly { id: string; url: string }[] };
+    assert.deepEqual(payload.images, [{ id: "front", url: "https://cdn.shopify.com/front.png" }]);
+    assert.equal((await fetch(`${base}/api/v1/gpt-seo/images?jobId=${job.id}`, { headers: { Authorization: "Bearer wrydeco-key" } })).status, 404);
   } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); db.close(); }
 });
 
-test("image-content Action returns the public HTTPS product image URL for the owning store", async () => {
+test("image-content is no longer exposed after image listings return original URLs", async () => {
   const db = new DatabaseSync(":memory:");
   const queue = new CustomGptQueue(db);
   const handler = createCustomGptHandler({
@@ -113,8 +351,8 @@ test("image-content Action returns the public HTTPS product image URL for the ow
     actionKeys: { capozen: "capozen-key", wrydeco: "wrydeco-key" },
     storeId: "capozen",
     adminKey: "admin-key",
+    publicUrl: "https://ffp.example.test",
   });
-  const imageUrl = "https://chillgen.com/cdn/shop/files/product.jpg?v=1784524386&width=480";
   const job = queue.enqueue({
     storeId: "capozen",
     source: "auto_seo",
@@ -124,7 +362,7 @@ test("image-content Action returns the public HTTPS product image URL for the ow
       description: "Description",
       handle: "product",
       niche: "home",
-      images: [{ id: "front", url: imageUrl }],
+      images: [{ id: "front", url: "https://cdn.shopify.com/s/files/1/2/files/product.jpg?v=1784524386" }],
     },
     original: {},
   });
@@ -133,18 +371,9 @@ test("image-content Action returns the public HTTPS product image URL for the ow
   const address = server.address();
   assert.ok(address && typeof address !== "string");
   const endpoint = `http://127.0.0.1:${address.port}/api/v1/gpt-seo/image-content?jobId=${job.id}&imageId=front`;
-
   try {
-    assert.equal((await fetch(endpoint)).status, 401);
-    assert.equal((await fetch(endpoint, { headers: { Authorization: "Bearer wrydeco-key" } })).status, 404);
     const response = await fetch(endpoint, { headers: { Authorization: "Bearer capozen-key" } });
-    assert.equal(response.status, 200);
-    assert.match(response.headers.get("content-type") || "", /^application\/json/);
-    assert.deepEqual(await response.json(), {
-      imageId: "front",
-      imageUrl,
-      instructions: "Use imageUrl as the public image URL. Do not use imageId as a URL.",
-    });
+    assert.equal(response.status, 405);
   } finally {
     server.closeAllConnections();
     await new Promise<void>(resolve => server.close(() => resolve()));
@@ -152,38 +381,45 @@ test("image-content Action returns the public HTTPS product image URL for the ow
   }
 });
 
-test("image-content Action rejects a non-HTTPS source URL", async () => {
+test("administration can cancel a ready review without deleting its audit data", async () => {
   const db = new DatabaseSync(":memory:");
   const queue = new CustomGptQueue(db);
-  const handler = createCustomGptHandler({
-    queue,
-    actionKeys: { capozen: "capozen-key" },
-    storeId: "capozen",
-    adminKey: "admin-key",
-  });
+  queue.configure("capozen", { provider: "custom_gpt", batchSize: 5 });
   const job = queue.enqueue({
     storeId: "capozen",
     source: "auto_seo",
-    sourceIdentity: "product-http-image",
-    input: {
-      title: "Product",
-      description: "Description",
-      handle: "product",
-      niche: "home",
-      images: [{ id: "front", url: "http://cdn.example.org/front.jpg" }],
-    },
+    sourceIdentity: "cancel-through-api",
+    input: { title: "Product", description: "Description", handle: "product", niche: "home", images: [] },
     original: {},
   });
+  const batch = queue.claim("capozen", "cancel-api-claim", "custom_gpt", "custom_gpt");
+  queue.checkpoint("capozen", job.id, {
+    batchId: batch.id,
+    leaseToken: batch.leaseToken,
+    requestId: "cancel-api-submit",
+    stage: "submission",
+    payload: { title: "SEO title" },
+  });
+  queue.finish("capozen", job.id, { title: "Final title" });
+  const handler = createCustomGptHandler({ queue, actionKey: "action-key", storeId: "capozen", adminKey: "admin-key" });
   const server = http.createServer((req, res) => { void handler(req, res); });
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
   assert.ok(address && typeof address !== "string");
 
   try {
-    const response = await fetch(`http://127.0.0.1:${address.port}/api/v1/gpt-seo/image-content?jobId=${job.id}&imageId=front`, {
-      headers: { Authorization: "Bearer capozen-key" },
-    });
-    assert.equal(response.status, 400);
+    const response = await fetch(
+      `http://127.0.0.1:${address.port}/api/v1/gpt-seo/admin/cancel?storeId=capozen`,
+      {
+        method: "POST",
+        headers: { Authorization: "Bearer admin-key", "Content-Type": "application/json" },
+        body: JSON.stringify({ jobId: job.id }),
+      },
+    );
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { cancelled: true });
+    assert.equal(queue.get("capozen", job.id).status, "CANCELLED");
+    assert.deepEqual(queue.get("capozen", job.id).result, { title: "Final title" });
   } finally {
     server.closeAllConnections();
     await new Promise<void>(resolve => server.close(() => resolve()));

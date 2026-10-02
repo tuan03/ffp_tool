@@ -134,6 +134,12 @@ export interface ProductImageSummary {
   readonly height?: number;
 }
 
+export interface ProductCollectionSummary {
+  readonly id: string;
+  readonly title: string;
+  readonly handle?: string;
+}
+
 export interface ProductSummary {
   readonly id: string;
   readonly title: string;
@@ -144,6 +150,7 @@ export interface ProductSummary {
   readonly vendor?: string;
   readonly productType?: string;
   readonly tags: readonly string[];
+  readonly collections?: readonly ProductCollectionSummary[];
   readonly onlineStoreUrl?: string;
   readonly featuredImage?: ProductImageSummary;
   readonly images?: readonly ProductImageSummary[];

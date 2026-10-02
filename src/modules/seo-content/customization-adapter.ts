@@ -530,15 +530,17 @@ function composeVariantSeoDescription(baseSeoDesc: string, variantLabel: string,
   if (baseSeoDesc.toLowerCase().includes(variantLabel.toLowerCase())) {
     return baseSeoDesc.length <= maxLen ? baseSeoDesc : baseSeoDesc.slice(0, maxLen);
   }
-  const tag = ` - ${variantLabel}`;
-  if (baseSeoDesc.length + tag.length <= maxLen) {
+  const cleanBase = baseSeoDesc.trim().replace(/\.*$/, "");
+  const hasAvailableInConnector = /\bavailable\s+in$/i.test(cleanBase);
+  const tag = hasAvailableInConnector ? ` ${variantLabel}` : ` - ${variantLabel}`;
+  if (cleanBase.length + tag.length + 1 <= maxLen) {
     if (/(\.\s*(Shop now!?|Order now!?|Buy now!?))$/i.test(baseSeoDesc)) {
       return baseSeoDesc.replace(/(\.\s*(Shop now!?|Order now!?|Buy now!?))$/i, `${tag}.$1`);
     }
-    return `${baseSeoDesc.replace(/\.*$/, "")}${tag}.`;
+    return `${cleanBase}${tag}.`;
   }
   const available = Math.max(30, maxLen - tag.length - 1);
-  const words = baseSeoDesc.split(/\s+/);
+  const words = cleanBase.split(/\s+/);
   const selected: string[] = [];
   let currentLen = 0;
   for (const word of words) {
@@ -552,6 +554,29 @@ function composeVariantSeoDescription(baseSeoDesc: string, variantLabel: string,
   }
   const cleanPrefix = selected.length > 0 ? selected.join(" ") : baseSeoDesc.slice(0, available);
   return `${cleanPrefix.replace(/\.*$/, "")}${tag}.`;
+}
+
+function composeVariantImageAlt(
+  baseAlt: string,
+  productTitle: string,
+  variantLabel: string,
+  imageIndex: number,
+  maxLen = 125,
+): string {
+  const viewSuffix = imageIndex > 0 ? `, view ${imageIndex + 1}` : "";
+  const candidate = baseAlt.toLowerCase().includes(variantLabel.toLowerCase())
+    ? `${baseAlt.replace(/,?\s+view\s+\d+$/i, "")}${viewSuffix}`
+    : `${productTitle}${viewSuffix}`;
+
+  if (candidate.length <= maxLen) return candidate;
+
+  const available = Math.max(1, maxLen - viewSuffix.length);
+  const prefix = candidate.slice(0, available + 1);
+  const lastSpace = prefix.lastIndexOf(" ");
+  const cleanPrefix = (lastSpace > Math.floor(available * 0.6)
+    ? prefix.slice(0, lastSpace)
+    : prefix.slice(0, available)).trim().replace(/[\s,.;:-]+$/g, "");
+  return `${cleanPrefix}${viewSuffix}`;
 }
 
 function composeVariantDescriptionHtml(baseHtml: string, variantLabel: string, variantAttribute?: string): string {
@@ -602,10 +627,13 @@ export function applySeoContentToCustomizationProduct(
       ...(seoOutput.aeo_faq !== undefined ? { aeo_faq: seoOutput.aeo_faq } : {}),
       ...(seoOutput.aeo_json_ld !== undefined ? { aeo_json_ld: seoOutput.aeo_json_ld } : {}),
     },
-    media: product.media?.map((media) => {
+    media: product.media?.map((media, imageIndex) => {
       if (String(media.kind ?? "image").toLowerCase() === "video") return { ...media };
       const alt = altBySourceUrl.get(media.url.trim());
-      return alt ? { ...media, alt } : { ...media };
+      const finalAlt = alt && variantLabel
+        ? composeVariantImageAlt(alt, finalTitle, variantLabel, imageIndex)
+        : alt;
+      return finalAlt ? { ...media, alt: finalAlt } : { ...media };
     }),
   };
 }
@@ -683,6 +711,15 @@ export async function runCustomizationSeoPipeline(
             productSeoDescription: composeVariantSeoDescription(rawSeoOutput.productSeoDescription, variantLabel),
             productDescription: composeVariantDescriptionHtml(rawSeoOutput.productDescription, variantLabel, variantAttribute),
             productHandle: resolveProductHandle(product, rawSeoOutput.productHandle, { ensureUniqueHandle: true }),
+            images: rawSeoOutput.images.map((image, imageIndex) => ({
+              ...image,
+              alt: composeVariantImageAlt(
+                image.alt,
+                composeVariantTitle(rawSeoOutput.productTitle, variantLabel),
+                variantLabel,
+                imageIndex,
+              ),
+            })),
           }
         : rawSeoOutput;
 

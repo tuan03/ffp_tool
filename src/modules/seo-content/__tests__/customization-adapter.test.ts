@@ -370,6 +370,26 @@ test("applySeoContentToCustomizationProduct: two variants of same parent ASIN pr
   assert.ok((enriched2.seo?.description?.length ?? 0) <= 160);
 });
 
+test("applySeoContentToCustomizationProduct: avoids dangling separator after 'Available in'", () => {
+  const splitProduct: CrawlProduct = {
+    ...sampleProductA,
+    splitContext: { attribute: "Color", value: "Viking-01" },
+  };
+  const seoOutput: SeoContentOutput = {
+    productTitle: "Celtic Tree of Life Quilt Bed Set",
+    productDescription: "<p>Celtic bedding.</p>",
+    productSeoTitle: "Celtic Tree of Life Quilt Bed Set",
+    productSeoDescription: "Celtic bedding with intricate knotwork. Available in.",
+    productHandle: "celtic-tree-of-life-quilt",
+    images: [],
+  };
+
+  const enriched = applySeoContentToCustomizationProduct(splitProduct, seoOutput);
+
+  assert.match(enriched.seo?.description ?? "", /Available in Viking-01\.$/);
+  assert.doesNotMatch(enriched.seo?.description ?? "", /Available in\s+-/);
+});
+
 test("applySeoContentToCustomizationProduct: clamps title to 100 characters even if variant label is already present", () => {
   const splitProduct: CrawlProduct = {
     ...sampleProductA,
@@ -437,7 +457,11 @@ test("runCustomizationSeoPipeline: enriches variant products with distinct title
     productSeoTitle: "Christian Handbag Set - Women Handbag",
     productSeoDescription: "Discover this premium Christian Handbag Set for daily use. Shop now!",
     productHandle: "christian-handbag-set",
-    images: [],
+    images: [{
+      sourceUrl: "https://example.com/img1.jpg",
+      alt: "Generic Christian handbag product image",
+      webp: { filename: "handbag.webp", url: "https://example.com/img1.jpg" },
+    }],
   });
 
   const result = await runCustomizationSeoPipeline([variant1, variant2], { runner: staticRunner });
@@ -471,6 +495,13 @@ test("runCustomizationSeoPipeline: enriches variant products with distinct title
   assert.notEqual(out1.productSeoDescription, out2.productSeoDescription);
   assert.match(out1.productSeoDescription, /Pink Faith/);
   assert.match(out2.productSeoDescription, /Be Still and Know/);
+
+  // Variant-specific alt text must not be reused across the whole family.
+  assert.notEqual(out1.images[0]?.alt, out2.images[0]?.alt);
+  assert.match(out1.images[0]?.alt ?? "", /Pink Faith/);
+  assert.match(out2.images[0]?.alt ?? "", /Be Still and Know/);
+  assert.ok((out1.images[0]?.alt.length ?? 0) <= 125);
+  assert.ok((out2.images[0]?.alt.length ?? 0) <= 125);
 });
 
 test("fromCustomizationProduct: always places variant representative image into images[0]", () => {

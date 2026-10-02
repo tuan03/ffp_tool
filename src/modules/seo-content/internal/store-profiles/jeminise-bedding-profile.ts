@@ -2,8 +2,13 @@ import type { StoreContentProfile } from "./types";
 
 export const JEMINISE_BEDDING_PROFILE: StoreContentProfile = Object.freeze({
   storeId: "jeminise",
+  storeAliases: Object.freeze(["jeminise-real"]),
   storeName: "Jeminise",
-  domainAliases: Object.freeze(["jeminise.com", "b6-theme-test.myshopify.com"]),
+  domainAliases: Object.freeze([
+    "jeminise.com",
+    "b6-theme-test.myshopify.com",
+    "f4hgwc-hu.myshopify.com",
+  ]),
   niche: "Bedding & Home Decor",
   bedding: Object.freeze({
     options: Object.freeze([

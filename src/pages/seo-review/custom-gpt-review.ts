@@ -3,6 +3,30 @@ import type { AutoSeoSourceProduct, SeoContentDetailedOutput } from "../../modul
 import { adaptAutoSeoItemToViewModel } from "./seo-content-ui-adapter";
 import type { SeoProductUiViewModel } from "./types";
 
+interface ReviewPage<TReview> {
+  readonly reviews: readonly TReview[];
+  readonly nextOffset: number | null;
+}
+
+interface ReviewPageClient<TReview> {
+  reviews(storeId: string, offset: number): Promise<ReviewPage<TReview>>;
+}
+
+export async function loadAllCustomGptReviewRecords<TReview>(
+  client: ReviewPageClient<TReview>,
+  storeId: string,
+): Promise<readonly TReview[]> {
+  const reviews: TReview[] = [];
+  let offset = 0;
+
+  while (true) {
+    const page = await client.reviews(storeId, offset);
+    reviews.push(...page.reviews);
+    if (page.nextOffset === null) return reviews;
+    offset = page.nextOffset;
+  }
+}
+
 export function adaptCustomGptReview(job: GptSeoJob, saved: Record<string, unknown> = {}): SeoProductUiViewModel {
   if (job.source !== "auto_seo" || job.status !== "REVIEW_READY") throw new Error("Only completed Auto SEO jobs use this review adapter");
   const result = job.result as SeoContentDetailedOutput;

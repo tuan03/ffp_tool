@@ -183,7 +183,7 @@ export function AppRoutes({
       if (environment !== "mock" && effectiveStoreId) {
         const settings = await createCustomGptClient().settings(effectiveStoreId);
         // The backup endpoint already enqueued this snapshot on the server.
-        if (settings.provider === "custom_gpt") return;
+        if (settings.provider === "custom_gpt" || settings.provider === "codex_mcp") return;
       }
 
       const result = await handoverAutoSeoToSeo(
@@ -232,7 +232,7 @@ export function AppRoutes({
       }
     };
 
-    const autoSeoRoutes = createAutoSeoRoutes(autoSeoClient, handleAutoSeoHandover);
+    const autoSeoRoutes = createAutoSeoRoutes(autoSeoClient, handleAutoSeoHandover, environment !== "mock");
     const customizationRoutes = createCustomizationManagerRoutes(moduleApiRunner);
 
     const handleSyncApprovedProducts = async (

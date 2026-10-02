@@ -1,4 +1,5 @@
-export type SeoProvider = "gemini" | "custom_gpt";
+export type SeoProvider = "gemini" | "custom_gpt" | "codex_mcp";
+export type ExternalSeoProvider = Exclude<SeoProvider, "gemini">;
 export type GptJobStatus = "PENDING" | "IN_PROGRESS" | "WAITING_INPUT" | "VALIDATING" | "NEEDS_CHANGES" | "REVIEW_READY" | "FAILED" | "CANCELLED";
 export type GptStage = "analysis" | "research" | "keywords" | "submission";
 export interface GptSeoInput {
@@ -44,6 +45,8 @@ export interface GptSeoJob extends GptSeoEnqueue {
 }
 export interface GptSeoBatch {
   readonly id: string;
+  readonly provider: ExternalSeoProvider;
+  readonly ownerId: string;
   readonly leaseToken: string;
   readonly expiresAt: number;
   readonly jobs: readonly { readonly id: string; readonly title: string; readonly status: GptJobStatus }[];

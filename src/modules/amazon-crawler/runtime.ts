@@ -63,6 +63,7 @@ export function getAmazonCrawlerReviewClient(environment: AppEnvironment, engine
     syncAllApproved: async () => ({ queued: 0, itemIds: [] }),
     markSynced: async () => { throw new Error("Mock review item was not found."); },
     markFailed: async () => { throw new Error("Mock review item was not found."); },
+    delete: async () => ({ deleted: true }),
     deleteAll: async () => ({ deleted: 0, skipped: 0 }),
     imageUrl: (fileToken) => fileToken,
   };

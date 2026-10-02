@@ -118,6 +118,7 @@ export interface CrawlProduct {
   readonly sourceKey?: string;
   readonly bulletPoints?: readonly string[];
   readonly categories?: readonly string[];
+  readonly tags?: readonly string[];
   readonly productDetails?: Record<string, unknown>;
   media?: ProductMediaItem[];
   readonly sourceVariants?: readonly unknown[];
@@ -171,4 +172,71 @@ export interface NormalizationSummary {
 export interface CustomizationNormalizerOutput extends CustomizationNormalizerInput {
   readonly products: CrawlProduct[];
   readonly normalizationSummary: NormalizationSummary;
+}
+
+export interface PayloadValidationResult {
+  readonly isValid: boolean;
+  readonly errors: readonly string[];
+  readonly warnings: readonly string[];
+}
+
+export interface PinterestPodDeliverableItemInput {
+  readonly designId: string;
+  readonly sourceCandidateId?: string;
+  readonly productType?: string;
+  readonly originalPinTitle: string;
+  readonly trendKeywords?: readonly string[];
+  readonly printMaster?: {
+    readonly url?: string;
+    readonly dimensions?: { readonly width?: number; readonly height?: number };
+  };
+  readonly cutoutProduct?: {
+    readonly transparentUrl?: string;
+    readonly whiteBgUrl?: string;
+  };
+  readonly composedMockups?: readonly {
+    readonly mockupUrl: string;
+    readonly detectedSceneType?: string;
+  }[];
+  readonly storeId?: string;
+  readonly vendor?: string;
+  readonly collectionIds?: readonly string[];
+  readonly priceAddition?: number;
+  readonly discountPercent?: number;
+  readonly variants?: readonly {
+    readonly title?: string;
+    readonly price: string;
+    readonly compareAtPrice?: string;
+    readonly sku?: string;
+    readonly optionValues?: readonly { readonly optionName: string; readonly name: string }[];
+  }[];
+  readonly [key: string]: unknown;
+}
+
+export interface ShopifyProductInputForNormalization {
+  readonly id: string;
+  readonly title: string;
+  readonly handle?: string;
+  readonly descriptionHtml?: string;
+  readonly vendor?: string;
+  readonly productType?: string;
+  readonly tags?: readonly string[];
+  readonly images?: readonly {
+    readonly id?: string;
+    readonly url: string;
+    readonly altText?: string;
+  }[];
+  readonly variants?: readonly {
+    readonly id?: string;
+    readonly title?: string;
+    readonly price: string;
+    readonly sku?: string;
+    readonly selectedOptions?: readonly { readonly name: string; readonly value: string }[];
+  }[];
+  readonly metafields?: readonly {
+    readonly namespace: string;
+    readonly key: string;
+    readonly value: string;
+  }[];
+  readonly [key: string]: unknown;
 }

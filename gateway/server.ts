@@ -2,12 +2,16 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { getCustomGptRuntime } from "./custom-gpt-seo/runtime";
 import { serveStaticFile } from "./static-server";
 
 import { GatewayDispatcher } from "./dispatcher";
-import { handleAutoSeoHttpRequest } from "./auto-seo-handler";
+import { handleAutoSeoEligibilityHttpRequest, handleAutoSeoHttpRequest } from "./auto-seo-handler";
 import { handleAmazonReviewsHttpRequest } from "./amazon-reviews-handler";
+import { getAutoSeoDatabaseUrl } from "./auto-seo-database-url";
+import { bootstrapAutoSeoSchema } from "./auto-seo-startup";
+import type { AutoSeoStartupOptions } from "./auto-seo-startup";
 import { handleSeoReviewHttpRequest } from "./seo-review-handler";
 import { handleReviewImageHttpRequest } from "./review-image-handler";
 import {
@@ -38,6 +42,41 @@ export interface GatewayServerOptions {
   readonly operatorPassword?: string;
   readonly maxBodyBytes?: number;
   readonly reviewImageBridgeBaseUrl?: string;
+  readonly customGptHandler?: (req: http.IncomingMessage, res: http.ServerResponse) => Promise<void>;
+}
+
+export function getRuntimeStoreConfigFile(env: Readonly<Record<string, string>>): string {
+  return env.GATEWAY_STORES_FILE?.trim() || ".runtime/stores.local.json";
+}
+
+function formatAutoSeoStartupFailure(error: unknown): string {
+  const message = error instanceof Error ? error.message : "Unknown startup error";
+  return message.replace(/postgres(?:ql)?(?:\+[a-z0-9]+)?:\/\/[^\s"']+/gi, "postgresql://[redacted]");
+}
+
+export async function startGatewayServerWhenReady(
+  options: GatewayServerOptions,
+  startupOptions?: AutoSeoStartupOptions,
+): Promise<http.Server> {
+  await bootstrapAutoSeoSchema(startupOptions);
+  return startGatewayServer(options);
+}
+
+/**
+ * Starts core Gateway routes even when Auto SEO persistence has not been
+ * provisioned yet. Auto SEO routes then return their explicit configuration
+ * error; they never fall back to SQLite.
+ */
+export async function startGatewayServerWithOptionalAutoSeo(
+  options: GatewayServerOptions,
+  startupOptions?: AutoSeoStartupOptions,
+): Promise<http.Server> {
+  const databaseUrl = startupOptions?.databaseUrl ?? getAutoSeoDatabaseUrl();
+  if (!databaseUrl) {
+    console.warn("[Auto SEO] PostgreSQL is not configured; Auto SEO routes are unavailable while core Gateway routes remain online.");
+    return startGatewayServer(options);
+  }
+  return startGatewayServerWhenReady(options, { ...startupOptions, databaseUrl });
 }
 
 function isOperatorAuthorized(
@@ -94,8 +133,9 @@ export function startGatewayServer(
     throw new Error("Operator authentication requires GATEWAY_AUTH_TOKEN");
   }
 
-  const stores = loadBootstrappedStores({ env });
-  if (env.GPT_SEO_ACTION_KEYS_JSON || process.env.GPT_SEO_ACTION_KEYS_JSON || env.GPT_SEO_ACTION_KEY || process.env.GPT_SEO_ACTION_KEY) getCustomGptRuntime();
+  const storeConfigFile = getRuntimeStoreConfigFile(env);
+  const stores = loadBootstrappedStores({ env, configFile: storeConfigFile });
+  if (!options.customGptHandler && getAutoSeoDatabaseUrl() && (env.GPT_SEO_ACTION_KEYS_JSON || env.GPT_SEO_ACTION_KEY || env.GPT_SEO_MCP_KEYS_JSON)) getCustomGptRuntime();
 
   const storeRegistry = new InMemoryStoreRegistry(stores);
   const tokenProvider = new CompositeTokenProvider();
@@ -108,7 +148,7 @@ export function startGatewayServer(
     storeRegistry,
     tokenProvider,
     graphqlClient,
-    persistConfigFile: "stores.local.json",
+    persistConfigFile: storeConfigFile,
   });
 
   const server = http.createServer(async (req, res) => {
@@ -127,6 +167,16 @@ export function startGatewayServer(
       res.end(JSON.stringify({ status: "ok", timestamp: new Date().toISOString() }));
       return;
     }
+    if (url === "/mcp/gpt-seo" || url.startsWith("/mcp/gpt-seo?")) {
+      if (!getAutoSeoDatabaseUrl()) {
+        res.statusCode = 503;
+        res.setHeader("Content-Type", "application/json");
+        res.end(JSON.stringify({ error: { code: "SEO_QUEUE_DATABASE_URL_REQUIRED", message: "SEO Queue requires PostgreSQL configuration" } }));
+        return;
+      }
+      await getCustomGptRuntime().mcpHandler(req, res);
+      return;
+    }
     if (hasOperatorAuthentication && !url.startsWith("/api/") && !isAuthenticatedOperator) {
       requestOperatorAuthentication(res);
       return;
@@ -140,12 +190,20 @@ export function startGatewayServer(
       return;
     }
     if (url.startsWith("/api/v1/gpt-seo/")) {
-      await getCustomGptRuntime().handler(req, res);
+      if (!options.customGptHandler && !getAutoSeoDatabaseUrl()) {
+        res.statusCode = 503;
+        res.setHeader("Content-Type", "application/json");
+        res.end(JSON.stringify({ error: { code: "SEO_QUEUE_DATABASE_URL_REQUIRED", message: "SEO Queue requires PostgreSQL configuration" } }));
+        return;
+      }
+      await (options.customGptHandler ?? getCustomGptRuntime().handler)(req, res);
       return;
     }
 
     const isShopify = url === "/api/shopify" || url.startsWith("/api/shopify?");
-    const isAutoSeo = url === "/api/auto-seo/run" || url.startsWith("/api/auto-seo/run?");
+    const isAutoSeoRun = url === "/api/auto-seo/run" || url.startsWith("/api/auto-seo/run?");
+    const isAutoSeoEligibility = url === "/api/auto-seo/eligibility" || url.startsWith("/api/auto-seo/eligibility?");
+    const isAutoSeo = isAutoSeoRun || isAutoSeoEligibility;
     const isPinterestPodHandover = url === "/api/pinterest-pod/handover-seo" || url.startsWith("/api/pinterest-pod/handover-seo?");
     const isPinterestPodDirectSync = url === "/api/pinterest-pod/sync-shopify" || url.startsWith("/api/pinterest-pod/sync-shopify?");
     const isStoreRegister = url === "/api/stores/register" || url.startsWith("/api/stores/register?");
@@ -156,7 +214,11 @@ export function startGatewayServer(
 
     if (isShopify || isAutoSeo || isStoreRegister || isStoreUpdate || isStoreDelete || isStoreGet) {
       try {
-        const freshStores = loadBootstrappedStores({ env: loadLocalEnv() });
+        const freshEnv = loadLocalEnv();
+        const freshStores = loadBootstrappedStores({
+          env: freshEnv,
+          configFile: getRuntimeStoreConfigFile(freshEnv),
+        });
         const freshIds = new Set(freshStores.map((s) => s.storeId));
         for (const store of freshStores) {
           if (!storeRegistry.getStore(store.storeId)) {
@@ -275,8 +337,12 @@ export function startGatewayServer(
       return;
     }
 
-    if (url === "/api/auto-seo/run" || url.startsWith("/api/auto-seo/run?")) {
+    if (isAutoSeoRun) {
       await handleAutoSeoHttpRequest(req, res, { authToken, maxBodyBytes });
+      return;
+    }
+    if (isAutoSeoEligibility) {
+      await handleAutoSeoEligibilityHttpRequest(req, res, { authToken, maxBodyBytes });
       return;
     }
 
@@ -344,8 +410,19 @@ export function startGatewayServer(
   return server;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   const port = Number(process.env.GATEWAY_PORT) || 3001;
   const host = process.env.GATEWAY_HOST || "127.0.0.1";
-  startGatewayServer({ port, host });
+  let seoRuntime: ReturnType<typeof getCustomGptRuntime> | undefined;
+  try {
+    if (getAutoSeoDatabaseUrl()) {
+      seoRuntime = getCustomGptRuntime();
+      await seoRuntime.initialize();
+    }
+    await startGatewayServerWithOptionalAutoSeo({ port, host });
+  } catch (error) {
+    await seoRuntime?.close();
+    console.error(`[Auto SEO] PostgreSQL schema initialization failed; Gateway did not start: ${formatAutoSeoStartupFailure(error)}`);
+    process.exitCode = 1;
+  }
 }

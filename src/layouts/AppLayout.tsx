@@ -1,10 +1,51 @@
-import { NavLink, Outlet } from "react-router-dom";
+import { useEffect, useMemo, useState } from "react";
+import { NavLink, Outlet, useLocation } from "react-router-dom";
 
 import { environment } from "../config/environment";
+import {
+  ACTIVE_STORE_CHANGED_EVENT,
+  buildStoreAwarePath,
+  normalizeActiveStoreId,
+  persistActiveStoreId,
+  readActiveStoreId,
+} from "../shared/active-store";
 import { NotificationPermissionBadge } from "./components/NotificationPermissionBadge";
 import { NotificationToastContainer } from "./components/NotificationToastContainer";
 
 export function AppLayout(): React.JSX.Element {
+  const location = useLocation();
+  const queryStoreId = useMemo(
+    () => normalizeActiveStoreId(new URLSearchParams(location.search).get("storeId")),
+    [location.search],
+  );
+  const [activeStoreId, setActiveStoreId] = useState(() => {
+    if (queryStoreId) return queryStoreId;
+    return typeof window === "undefined" ? "" : readActiveStoreId(window.localStorage);
+  });
+
+  useEffect(() => {
+    if (!queryStoreId) return;
+    setActiveStoreId(queryStoreId);
+    try {
+      persistActiveStoreId(queryStoreId, window.localStorage);
+    } catch {
+      // Navigation still carries the selected store when storage is unavailable.
+    }
+  }, [queryStoreId]);
+
+  useEffect(() => {
+    function handleStoreChange(event: Event): void {
+      if (!(event instanceof CustomEvent) || typeof event.detail !== "string") return;
+      setActiveStoreId(normalizeActiveStoreId(event.detail));
+    }
+    window.addEventListener(ACTIVE_STORE_CHANGED_EVENT, handleStoreChange);
+    return () => window.removeEventListener(ACTIVE_STORE_CHANGED_EVENT, handleStoreChange);
+  }, []);
+
+  const queuePath = buildStoreAwarePath("/gpt-seo", activeStoreId);
+  const autoSeoPath = buildStoreAwarePath("/auto-seo", activeStoreId);
+  const reviewPath = buildStoreAwarePath("/seo-review", activeStoreId);
+
   return (
     <div className="min-h-screen bg-slate-950 text-slate-50 flex flex-col">
       {/* Top Application Navbar */}
@@ -21,7 +62,18 @@ export function AppLayout(): React.JSX.Element {
             </NavLink>
 
             <nav className="flex items-center gap-2 text-xs font-medium">
-              <NavLink to="/gpt-seo" className="rounded-lg px-3 py-1.5 text-cyan-300">GPT SEO</NavLink>
+              <NavLink
+                to={queuePath}
+                className={({ isActive }) =>
+                  `rounded-lg px-3 py-1.5 transition ${
+                    isActive
+                      ? "bg-slate-800 font-semibold text-cyan-300"
+                      : "text-slate-400 hover:bg-slate-800/60 hover:text-slate-200"
+                  }`
+                }
+              >
+                ✦ SEO Queue
+              </NavLink>
               <NavLink
                 to="/amazon-crawler"
                 className={({ isActive }) =>
@@ -58,7 +110,7 @@ export function AppLayout(): React.JSX.Element {
               </NavLink>
 
               <NavLink
-                to="/auto-seo"
+                to={autoSeoPath}
                 className={({ isActive }) =>
                   `rounded-lg px-3 py-1.5 transition ${
                     isActive
@@ -71,7 +123,7 @@ export function AppLayout(): React.JSX.Element {
               </NavLink>
 
               <NavLink
-                to="/seo-review"
+                to={reviewPath}
                 className={({ isActive }) =>
                   `rounded-lg px-3 py-1.5 transition ${
                     isActive

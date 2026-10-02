@@ -872,6 +872,13 @@ export function createAmazonCrawlerReviewClient({
     async markFailed(itemId: string, error?: string) {
       return readReviewItem(await sendJson(`${reviewUrl}/${encodeURIComponent(itemId)}/failed`, "POST", { error }));
     },
+    async delete(itemId: string) {
+      const value = await sendJson(`${reviewUrl}/${encodeURIComponent(itemId)}`, "DELETE");
+      if (!isRecord(value) || value.deleted !== true) {
+        throw new AmazonCrawlerServiceError("Coordinator returned an invalid review delete response.", "INVALID_ENGINE_RESPONSE");
+      }
+      return { deleted: true };
+    },
     async deleteAll() {
       const value = await sendJson(reviewUrl, "DELETE");
       if (!isRecord(value) || typeof value.deleted !== "number" || typeof value.skipped !== "number") {

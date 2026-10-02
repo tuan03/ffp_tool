@@ -13,6 +13,7 @@ export * from "./empty-seo-conflict-corpus";
 export * from "./corpus-errors";
 export * from "./corpus-file-lock";
 export * from "./file-seo-conflict-corpus";
+export * from "./postgres-seo-conflict-corpus";
 export * from "./brand-conflict-policy";
 export * from "./contextual-conflict-evaluator";
 export * from "./keyword-conflict-analyzer";

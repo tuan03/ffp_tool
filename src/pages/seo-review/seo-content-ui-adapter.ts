@@ -71,7 +71,50 @@ export interface AdaptSeoOutputOptions {
   readonly shopifySyncStatus?: ShopifySyncStatus;
   readonly shopifyAdminUrl?: string;
   readonly originalBackup?: SeoProductBackup;
+  readonly sourceShopifyUpdatedAt?: string;
   readonly sourceOrigin?: "distributed_crawler" | "pinterest_pod" | "auto_seo";
+}
+
+export interface PersistedSeoReviewItem {
+  readonly itemId: string;
+  readonly storeId: string;
+  readonly productId: string;
+  readonly handle: string;
+  readonly title: string;
+  readonly reviewStatus: "pending" | "approved" | "rejected";
+  readonly generatedPayload: string;
+  readonly shopifyUpdatedAt?: string | null;
+  readonly createdAt?: string;
+  readonly updatedAt?: string;
+}
+
+export function adaptPersistedSeoReviewItemToViewModel(
+  item: PersistedSeoReviewItem,
+): SeoProductUiViewModel {
+  let output: Partial<SeoContentOutput> = {};
+  try {
+    const parsed: unknown = JSON.parse(item.generatedPayload);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      output = parsed as Partial<SeoContentOutput>;
+    }
+  } catch {
+    // The server validates generated payloads before persisting them. An invalid
+    // legacy row remains visible as failed instead of crashing the whole review UI.
+  }
+
+  const updatedAt = Date.parse(item.updatedAt || item.createdAt || "");
+  const hasGeneratedOutput = typeof output.productTitle === "string" && output.productTitle.trim().length > 0;
+
+  return adaptSeoOutputToViewModel(hasGeneratedOutput ? output : undefined, {
+    id: item.itemId,
+    storeId: item.storeId,
+    productId: item.productId,
+    defaultStatus: hasGeneratedOutput ? "completed" : "failed",
+    initialDecision: item.reviewStatus,
+    isStatusReal: true,
+    sourceShopifyUpdatedAt: item.shopifyUpdatedAt || undefined,
+    sourceOrigin: "auto_seo",
+  }, Number.isFinite(updatedAt) ? updatedAt : Date.now());
 }
 
 /**
@@ -122,6 +165,7 @@ export function adaptImageToViewModel(
 export function adaptSeoOutputToViewModel(
   output: Partial<SeoContentOutput> | null | undefined,
   options: AdaptSeoOutputOptions = {},
+  updatedAt = Date.now(),
 ): SeoProductUiViewModel {
   const safeId = options.id || options.productId || `prod-seo-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
   const fallbackHandle = (output?.productHandle || options.asin || "custom-product")
@@ -217,11 +261,12 @@ export function adaptSeoOutputToViewModel(
     aeoJsonLd: aeoJsonLdField,
     seoStatus: seoStatusField,
     reviewDecision: options.initialDecision || "pending",
-    updatedAt: Date.now(),
+    updatedAt,
     sourceOrigin: options.sourceOrigin,
     sourceCrawlProduct: options.sourceCrawlProduct,
     shopifySyncStatus: options.shopifySyncStatus || "idle",
     shopifyAdminUrl: options.shopifyAdminUrl,
+    sourceShopifyUpdatedAt: options.sourceShopifyUpdatedAt,
     originalBackup: options.originalBackup,
   };
 }

@@ -4,6 +4,7 @@ import type {
   ShopifyProductForAutoSeoUi,
   ShopifyStatusFilter,
 } from "../types";
+import type { AutoSeoBatchSize, AutoSeoEligibilityFilter } from "./smart-batch";
 
 export interface AutoSeoSessionState {
   selectedStoreId?: string;
@@ -14,6 +15,13 @@ export interface AutoSeoSessionState {
   output: AutoSeoOutput | null;
   lastHydratedProducts: readonly ShopifyProductForAutoSeoUi[];
   hasLoadedInitially: boolean;
+  batchSize: AutoSeoBatchSize;
+  eligibilityFilter: AutoSeoEligibilityFilter;
+  typeFilter: string;
+  collectionFilter: string;
+  asinQuery: string;
+  startDate: string;
+  endDate: string;
 }
 
 interface PersistedAutoSeoSession {
@@ -24,6 +32,13 @@ interface PersistedAutoSeoSession {
   statusFilter: ShopifyStatusFilter;
   output: AutoSeoOutput | null;
   hasLoadedInitially: boolean;
+  batchSize?: AutoSeoBatchSize;
+  eligibilityFilter?: AutoSeoEligibilityFilter;
+  typeFilter?: string;
+  collectionFilter?: string;
+  asinQuery?: string;
+  startDate?: string;
+  endDate?: string;
 }
 
 const STORAGE_KEY = "ffp_auto_seo_session_v1";
@@ -37,7 +52,77 @@ export const DEFAULT_AUTO_SEO_SESSION_STATE: AutoSeoSessionState = {
   output: null,
   lastHydratedProducts: [],
   hasLoadedInitially: false,
+  batchSize: 50,
+  eligibilityFilter: "needs_seo",
+  typeFilter: "all",
+  collectionFilter: "all",
+  asinQuery: "",
+  startDate: "",
+  endDate: "",
 };
+
+const VALID_BATCH_SIZES: readonly AutoSeoBatchSize[] = [10, 20, 50, 100];
+
+export function parseAutoSeoSessionState(value: unknown): AutoSeoSessionState {
+  if (!value || typeof value !== "object") {
+    return { ...DEFAULT_AUTO_SEO_SESSION_STATE };
+  }
+  const parsed = value as Partial<PersistedAutoSeoSession>;
+  const selectedStoreId =
+    typeof parsed.selectedStoreId === "string" && parsed.selectedStoreId.trim() !== ""
+      ? parsed.selectedStoreId.trim()
+      : undefined;
+  const products = Array.isArray(parsed.products) ? parsed.products : [];
+  const selectedProductIds = Array.isArray(parsed.selectedProductIds)
+    ? parsed.selectedProductIds.filter((id): id is string => typeof id === "string")
+    : [];
+  const searchQuery = typeof parsed.searchQuery === "string" ? parsed.searchQuery : "";
+  const validFilters: readonly ShopifyStatusFilter[] = ["all", "ACTIVE", "DRAFT", "ARCHIVED"];
+  const statusFilter = parsed.statusFilter && validFilters.includes(parsed.statusFilter)
+    ? parsed.statusFilter
+    : "all";
+  const output = parsed.output && typeof parsed.output === "object" ? parsed.output : null;
+  const hasLoadedInitially = Boolean(parsed.hasLoadedInitially && products.length > 0);
+  const batchSize = VALID_BATCH_SIZES.includes(parsed.batchSize as AutoSeoBatchSize)
+    ? parsed.batchSize as AutoSeoBatchSize
+    : 50;
+  const validEligibilityFilters: readonly AutoSeoEligibilityFilter[] = [
+    "all",
+    "needs_seo",
+    "active",
+    "current",
+  ];
+  const eligibilityFilter =
+    parsed.eligibilityFilter && validEligibilityFilters.includes(parsed.eligibilityFilter as AutoSeoEligibilityFilter)
+      ? (parsed.eligibilityFilter as AutoSeoEligibilityFilter)
+      : "needs_seo";
+
+  const typeFilter =
+    typeof parsed.typeFilter === "string" ? parsed.typeFilter : "all";
+  const collectionFilter =
+    typeof parsed.collectionFilter === "string" ? parsed.collectionFilter : "all";
+  const asinQuery = typeof parsed.asinQuery === "string" ? parsed.asinQuery : "";
+  const startDate = typeof parsed.startDate === "string" ? parsed.startDate : "";
+  const endDate = typeof parsed.endDate === "string" ? parsed.endDate : "";
+
+  return {
+    ...DEFAULT_AUTO_SEO_SESSION_STATE,
+    selectedStoreId,
+    products,
+    selectedProductIds,
+    searchQuery,
+    statusFilter,
+    output,
+    hasLoadedInitially,
+    batchSize,
+    eligibilityFilter,
+    typeFilter,
+    collectionFilter,
+    asinQuery,
+    startDate,
+    endDate,
+  };
+}
 
 function readPersistedSession(): AutoSeoSessionState {
   if (typeof window === "undefined" || !window.sessionStorage) {
@@ -48,35 +133,7 @@ function readPersistedSession(): AutoSeoSessionState {
     const raw = window.sessionStorage.getItem(STORAGE_KEY);
     if (!raw) return { ...DEFAULT_AUTO_SEO_SESSION_STATE };
 
-    const parsed = JSON.parse(raw) as Partial<PersistedAutoSeoSession>;
-    if (!parsed || typeof parsed !== "object") return { ...DEFAULT_AUTO_SEO_SESSION_STATE };
-
-    const selectedStoreId =
-      typeof parsed.selectedStoreId === "string" && parsed.selectedStoreId.trim() !== ""
-        ? parsed.selectedStoreId.trim()
-        : undefined;
-    const products = Array.isArray(parsed.products) ? parsed.products : [];
-    const selectedProductIds = Array.isArray(parsed.selectedProductIds)
-      ? (parsed.selectedProductIds.filter((id) => typeof id === "string") as string[])
-      : [];
-    const searchQuery = typeof parsed.searchQuery === "string" ? parsed.searchQuery : "";
-    const validFilters: readonly ShopifyStatusFilter[] = ["all", "ACTIVE", "DRAFT", "ARCHIVED"];
-    const statusFilter = parsed.statusFilter && validFilters.includes(parsed.statusFilter)
-      ? parsed.statusFilter
-      : "all";
-    const output = parsed.output && typeof parsed.output === "object" ? parsed.output : null;
-    const hasLoadedInitially = Boolean(parsed.hasLoadedInitially && products.length > 0);
-
-    return {
-      ...DEFAULT_AUTO_SEO_SESSION_STATE,
-      selectedStoreId,
-      products,
-      selectedProductIds,
-      searchQuery,
-      statusFilter,
-      output,
-      hasLoadedInitially,
-    };
+    return parseAutoSeoSessionState(JSON.parse(raw));
   } catch {
     return { ...DEFAULT_AUTO_SEO_SESSION_STATE };
   }
@@ -94,6 +151,8 @@ function persistSession(state: AutoSeoSessionState): void {
       statusFilter: state.statusFilter,
       output: state.output,
       hasLoadedInitially: state.hasLoadedInitially,
+      batchSize: state.batchSize,
+      eligibilityFilter: state.eligibilityFilter,
     };
     window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify(dataToSave));
   } catch {
@@ -160,6 +219,14 @@ export function setAutoSeoStatusFilter(statusFilter: ShopifyStatusFilter): void 
   updateAutoSeoSession({ statusFilter });
 }
 
+export function setAutoSeoBatchSize(batchSize: AutoSeoBatchSize): void {
+  updateAutoSeoSession({ batchSize });
+}
+
+export function setAutoSeoEligibilityFilter(eligibilityFilter: AutoSeoEligibilityFilter): void {
+  updateAutoSeoSession({ eligibilityFilter });
+}
+
 export function setAutoSeoOutput(output: AutoSeoOutput | null): void {
   updateAutoSeoSession({ output });
 }
@@ -168,6 +235,39 @@ export function setAutoSeoLastHydratedProducts(
   lastHydratedProducts: readonly ShopifyProductForAutoSeoUi[],
 ): void {
   updateAutoSeoSession({ lastHydratedProducts });
+}
+
+export function setAutoSeoTypeFilter(typeFilter: string): void {
+  updateAutoSeoSession({ typeFilter });
+}
+
+export function setAutoSeoCollectionFilter(collectionFilter: string): void {
+  updateAutoSeoSession({ collectionFilter });
+}
+
+export function setAutoSeoAsinQuery(asinQuery: string): void {
+  updateAutoSeoSession({ asinQuery });
+}
+
+export function setAutoSeoStartDate(startDate: string): void {
+  updateAutoSeoSession({ startDate });
+}
+
+export function setAutoSeoEndDate(endDate: string): void {
+  updateAutoSeoSession({ endDate });
+}
+
+export function resetAutoSeoFilters(): void {
+  updateAutoSeoSession({
+    searchQuery: "",
+    statusFilter: "all",
+    eligibilityFilter: "needs_seo",
+    typeFilter: "all",
+    collectionFilter: "all",
+    asinQuery: "",
+    startDate: "",
+    endDate: "",
+  });
 }
 
 export function clearAutoSeoSession(): void {

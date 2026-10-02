@@ -1,7 +1,8 @@
 import type { Plugin } from "vite";
 
 import { GatewayDispatcher } from "./dispatcher";
-import { handleAutoSeoHttpRequest } from "./auto-seo-handler";
+import { getCustomGptRuntime } from "./custom-gpt-seo/runtime";
+import { handleAutoSeoEligibilityHttpRequest, handleAutoSeoHttpRequest } from "./auto-seo-handler";
 import { handleAmazonReviewsHttpRequest } from "./amazon-reviews-handler";
 import { handleSeoReviewHttpRequest } from "./seo-review-handler";
 import { handleReviewImageHttpRequest } from "./review-image-handler";
@@ -102,6 +103,10 @@ export function shopifyGatewayDevPlugin(options?: ShopifyGatewayDevPluginOptions
           });
           return;
         }
+        if (req.url === "/mcp/gpt-seo" || req.url?.startsWith("/mcp/gpt-seo?")) {
+          await getCustomGptRuntime().mcpHandler(req, res);
+          return;
+        }
         if (req.url?.startsWith("/api/v1/gpt-seo/")) {
           if (req.url.startsWith("/api/v1/gpt-seo/admin/") && authToken && isSameOriginRequest(req.headers)) {
             req.headers["x-gateway-key"] = authToken;
@@ -110,8 +115,10 @@ export function shopifyGatewayDevPlugin(options?: ShopifyGatewayDevPluginOptions
           return;
         }
         const isShopify = req.url && (req.url === "/api/shopify" || req.url.startsWith("/api/shopify?"));
-        const isAutoSeo = req.url && (req.url === "/api/auto-seo/run" || req.url.startsWith("/api/auto-seo/run?"));
+        const isAutoSeoRun = req.url && (req.url === "/api/auto-seo/run" || req.url.startsWith("/api/auto-seo/run?"));
         const isAmazonReviews = req.url === "/api/amazon-reviews/samples";
+        const isAutoSeoEligibility = req.url && (req.url === "/api/auto-seo/eligibility" || req.url.startsWith("/api/auto-seo/eligibility?"));
+        const isAutoSeo = isAutoSeoRun || isAutoSeoEligibility;
         const isPinterestPodHandover = req.url && (req.url === "/api/pinterest-pod/handover-seo" || req.url.startsWith("/api/pinterest-pod/handover-seo?"));
         const isPinterestPodDirectSync = req.url && (req.url === "/api/pinterest-pod/sync-shopify" || req.url.startsWith("/api/pinterest-pod/sync-shopify?"));
         const isStoreRegister = req.url && (req.url === "/api/stores/register" || req.url.startsWith("/api/stores/register?"));
@@ -276,7 +283,11 @@ export function shopifyGatewayDevPlugin(options?: ShopifyGatewayDevPluginOptions
             );
             return;
           }
-          await handleAutoSeoHttpRequest(req, res, { authToken, maxBodyBytes });
+          if (isAutoSeoEligibility) {
+            await handleAutoSeoEligibilityHttpRequest(req, res, { authToken, maxBodyBytes });
+          } else {
+            await handleAutoSeoHttpRequest(req, res, { authToken, maxBodyBytes });
+          }
         } else if (isPinterestPodHandover) {
           await handlePinterestPodSeoHttpRequest(req, res, { authToken, maxBodyBytes });
         } else if (isPinterestPodDirectSync) {
@@ -293,4 +304,3 @@ export function shopifyGatewayDevPlugin(options?: ShopifyGatewayDevPluginOptions
     },
   };
 }
-import { getCustomGptRuntime } from "./custom-gpt-seo/runtime";

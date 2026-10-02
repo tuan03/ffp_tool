@@ -34,6 +34,7 @@ export function initSeoReviewDbSchema(db: DatabaseSync): void {
       review_status TEXT NOT NULL DEFAULT 'pending' CHECK (review_status IN ('pending', 'approved', 'rejected')),
       generated_payload TEXT NOT NULL,
       shopify_updated_at TEXT,
+      deleted_at TEXT,
       created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
       updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
       CONSTRAINT uq_seo_review_store_product UNIQUE (store_id, product_id)
@@ -44,6 +45,9 @@ export function initSeoReviewDbSchema(db: DatabaseSync): void {
   const cols = db.prepare("PRAGMA table_info(seo_review_items)").all() as Array<{ name: string }>;
   if (!cols.some((c) => c.name === "notes")) {
     db.exec("ALTER TABLE seo_review_items ADD COLUMN notes TEXT");
+  }
+  if (!cols.some((c) => c.name === "deleted_at")) {
+    db.exec("ALTER TABLE seo_review_items ADD COLUMN deleted_at TEXT");
   }
 }
 
@@ -68,6 +72,7 @@ export function upsertSeoReviewItem(db: DatabaseSync, item: SeoReviewItemRecord)
           generated_payload = ?,
           shopify_updated_at = ?,
           notes = ?,
+          deleted_at = NULL,
           updated_at = ?
       WHERE item_id = ?
     `);
@@ -148,7 +153,7 @@ function mapRowToRecord(row: RawSeoReviewItemRow): SeoReviewItemRecord {
 
 export function getSeoReviewItem(db: DatabaseSync, itemId: string): SeoReviewItemRecord | null {
   const row = db
-    .prepare("SELECT * FROM seo_review_items WHERE item_id = ?")
+    .prepare("SELECT * FROM seo_review_items WHERE item_id = ? AND deleted_at IS NULL")
     .get(itemId) as RawSeoReviewItemRow | undefined;
 
   return row ? mapRowToRecord(row) : null;
@@ -158,7 +163,7 @@ export function listSeoReviewItems(
   db: DatabaseSync,
   options?: ListSeoReviewItemsOptions,
 ): { items: SeoReviewItemRecord[]; total: number } {
-  const conditions: string[] = [];
+  const conditions: string[] = ["deleted_at IS NULL"];
   const params: Array<string | number | null> = [];
 
   if (options?.storeId && options.storeId.trim()) {
@@ -217,6 +222,16 @@ export function updateSeoReviewStatus(
     "UPDATE seo_review_items SET review_status = ?, updated_at = ? WHERE item_id = ?",
   );
   const result = stmt.run(status, now, itemId);
+  return Number(result.changes) > 0;
+}
+
+export function deleteSeoReviewItem(db: DatabaseSync, itemId: string): boolean {
+  const result = db
+    .prepare(
+      "UPDATE seo_review_items SET deleted_at = ?, updated_at = ? WHERE item_id = ? AND deleted_at IS NULL",
+    )
+    .run(new Date().toISOString(), new Date().toISOString(), itemId);
+
   return Number(result.changes) > 0;
 }
 

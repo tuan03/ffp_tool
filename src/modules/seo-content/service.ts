@@ -7,18 +7,25 @@ import { FileSeoCheckpointStore, SeoCheckpointManager as DefaultSeoCheckpointMan
 import type { SeoPipelineResume } from "./internal/pipeline";
 import { createSeoPipeline, DEFAULT_SEO_PIPELINE_STAGES } from "./internal/pipeline";
 import { registerProductKeywords } from "./internal/stages/b4-conflict-control";
-import { createB1ProductUnderstandingStage, createDefaultProductImageAnalyzer } from "./internal/stages/b1-product-understanding";
-import { heuristicProductImageAnalyzer } from "./internal/product-understanding/heuristic-product-image-analyzer";
-import { createB2ShoppingContextStage, createDefaultShoppingContextAnalyzer } from "./internal/stages/b2-shopping-context";
+import { createB1ProductUnderstandingStage } from "./internal/stages/b1-product-understanding";
+import { createB2ShoppingContextStage } from "./internal/stages/b2-shopping-context";
 import {
   createB3SearchSuggestionsStage,
   createDefaultSearchSuggestionsCollector,
 } from "./internal/stages/b3-search-suggestions";
 import { createB4ConflictControlStage } from "./internal/stages/b4-conflict-control";
-import { createB5ContentGenerationStage, createDefaultB5Generator } from "./internal/stages/b5-content-generation";
+import { createB5ContentGenerationStage } from "./internal/stages/b5-content-generation";
 import { createB6ImageProcessingStage } from "./internal/stages/b6-image-processing";
 import { getDefaultSiteNicheResolver } from "./internal/site-niche/site-niche-runtime";
+import type { SiteNicheResolver } from "./internal/site-niche/site-niche-resolver";
 import { resolveStoreProfile } from "./internal/store-profiles";
+import { computeProductInputHash, computeSeoResultCacheKey } from "./internal/checkpoint/checkpoint-hasher";
+import {
+  getDefaultSeoProviderRegistry,
+  prepareSeoProviderInput,
+  protectSeoProviderRuntime,
+} from "./internal/providers";
+import type { SeoProviderCircuitBreaker, SeoProviderRegistry } from "./internal/providers";
 import type {
   SeoContentAltOnlyDetailedOutput,
   SeoContentDetailedOutput,
@@ -30,23 +37,17 @@ import type {
   SeoContentRunOptions,
 } from "./types";
 import type { SeoConflictCorpus } from "./internal/conflict-control/seo-conflict-corpus";
+import type { SeoResultCacheRecord } from "./internal/persistence/repositories";
 
-let defaultPipeline: ReturnType<typeof createSeoPipeline> | undefined;
+interface SeoResultCache {
+  get(cacheKey: string): Promise<unknown | undefined>;
+  set(record: SeoResultCacheRecord): Promise<void>;
+}
 
-function getDefaultPipeline(): ReturnType<typeof createSeoPipeline> {
-  if (!defaultPipeline) {
-    if (typeof window === "undefined") {
-      try {
-        loadServerEnvironment();
-      } catch {
-        // Ignore in environments where .env files aren't readable
-      }
-    }
-    defaultPipeline = createSeoPipeline({
-      siteNicheResolver: getDefaultSiteNicheResolver(),
-    });
-  }
-  return defaultPipeline;
+function isDetailedResult(value: unknown): value is SeoContentDetailedResult {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as { output?: unknown; metadata?: unknown };
+  return Boolean(candidate.output && typeof candidate.output === "object" && candidate.metadata && typeof candidate.metadata === "object");
 }
 
 /**
@@ -59,7 +60,8 @@ export async function runSeoContent(
   input: SeoContentInput,
   options?: SeoContentRunOptions | { readonly signal?: AbortSignal },
 ): Promise<SeoContentOutput> {
-  return getDefaultPipeline().execute(input, options);
+  const result = await createSeoContentSession(input, { ...options, imageMode: "full" }).run();
+  return result.output as SeoContentOutput;
 }
 
 
@@ -94,8 +96,11 @@ export function createSeoContentSession(input: SeoContentInput, options: SeoCont
 export function createSeoContentSession(input: SeoContentInput, options?: SeoContentRunOptions): { run(): Promise<SeoContentDetailedResult> };
 export function createSeoContentSession(input: SeoContentInput, options: SeoContentRunOptions = {}): { run(): Promise<SeoContentDetailedResult> } {
   loadServerEnvironment();
+  const providerInput = prepareSeoProviderInput(input);
   let resume: SeoPipelineResume | undefined;
   let running = false;
+  let cacheChecked = false;
+  let didReturnCachedResult = false;
   const stageDurationsMs: Record<string, number> = {};
   const providerMetrics = { providerQueueMs: 0, providerRequestMs: 0, retryWaitMs: 0, requestCount: 0, retryCount: 0, cacheHits: 0 };
   const requestOptions = { signal: options.signal, onMetric: (metric: import("./internal/provider-runtime").ProviderMetric) => {
@@ -112,20 +117,28 @@ export function createSeoContentSession(input: SeoContentInput, options: SeoCont
     warnings.push(error instanceof Error ? error.message : String(error));
     observedFallbacks.set(stage, warnings);
   };
+  const providerRegistry = (options.dependencies?.providerRegistry as SeoProviderRegistry | undefined)
+    ?? getDefaultSeoProviderRegistry();
+  const resultCache = options.dependencies?.resultCache as SeoResultCache | undefined;
+  const conflictCorpus = options.dependencies?.conflictCorpus as SeoConflictCorpus | undefined
+    ?? (input.storeId ? new FileSeoConflictCorpus({ storeId: input.storeId }) : undefined);
+  const createdProviderRuntime = providerRegistry.create(providerInput.providerId ?? "gemini", {
+    imageMode: options.imageMode ?? "full",
+    requestOptions,
+    onFallback: observeFallback,
+    conflictCorpus,
+  });
+  const providerCircuitBreaker = options.dependencies?.providerCircuitBreaker as SeoProviderCircuitBreaker | undefined;
+  const providerRuntime = providerCircuitBreaker
+    ? protectSeoProviderRuntime(createdProviderRuntime, providerCircuitBreaker)
+    : createdProviderRuntime;
   const runtimeStages = [
     createB1ProductUnderstandingStage({
-      imageAnalyzer: createDefaultProductImageAnalyzer({
-        ...requestOptions,
-        onFallback: (error) => observeFallback("b1", error),
-        maxImages: options.imageMode === "alt_only" ? 1 : undefined,
-      }),
+      imageAnalyzer: providerRuntime.imageAnalyzer,
       maxImages: options.imageMode === "alt_only" ? 1 : undefined,
     }),
     createB2ShoppingContextStage({
-      analyzer: createDefaultShoppingContextAnalyzer({
-        ...requestOptions,
-        onFallback: (error) => observeFallback("b2", error),
-      }),
+      analyzer: providerRuntime.shoppingContextAnalyzer,
     }),
     createB3SearchSuggestionsStage({
       collector: createDefaultSearchSuggestionsCollector({
@@ -137,14 +150,11 @@ export function createSeoContentSession(input: SeoContentInput, options: SeoCont
     }),
     createB4ConflictControlStage({
       requestOptions,
-      conflictCorpus: options.dependencies?.conflictCorpus as SeoConflictCorpus | undefined
-        ?? (input.storeId ? new FileSeoConflictCorpus({ storeId: input.storeId }) : undefined),
+      conflictCorpus,
+      analyzer: providerRuntime.keywordConflictAnalyzer,
     }),
     createB5ContentGenerationStage({
-      generator: createDefaultB5Generator({
-        ...requestOptions,
-        onFallback: (reason, error) => observeFallback("b5", error ?? reason),
-      }),
+      generator: providerRuntime.contentGenerator,
     }),
     options.imageMode === "alt_only"
       ? createB6ImageProcessingStage({ imageProcessor: new AltOnlyImageProcessor() })
@@ -159,14 +169,44 @@ export function createSeoContentSession(input: SeoContentInput, options: SeoCont
       name: stage.name,
       execute(context) { observedFallbacks.delete(stage.name); return stage.execute(context); },
     })),
-    siteNicheResolver: getDefaultSiteNicheResolver(),
+    siteNicheResolver: (options.dependencies?.siteNicheResolver as SiteNicheResolver | undefined)
+      ?? getDefaultSiteNicheResolver(),
     checkpointManager,
+    stageModels: {
+      b1: providerRuntime.model,
+      b2: providerRuntime.model,
+      b5: providerRuntime.model,
+    },
   });
   async function run(): Promise<SeoContentDetailedResult> {
     if (running) throw new Error("A SEO session cannot run concurrently with itself.");
     running = true;
     try {
-      const execution = await pipeline.executeDetailed(input, {
+      const inputHash = computeProductInputHash(providerInput);
+      if (didReturnCachedResult) {
+        await checkpointStore.delete(inputHash);
+        didReturnCachedResult = false;
+      }
+      const corpusRevision = conflictCorpus?.getSnapshot
+        ? (await conflictCorpus.getSnapshot()).revision
+        : 0;
+      const promptVersion = ["b1", "b2", "b3", "b4", "b5", "b6"]
+        .map(stage => `${stage}:${checkpointManager.getDefaultPromptVersion(stage)}`)
+        .join("|");
+      const resultCacheKey = computeSeoResultCacheKey({
+        inputHash,
+        corpusRevision,
+        promptVersion,
+        model: providerRuntime.model,
+        pipelineVersion: providerInput.pipelineVersion ?? "seo-b1-b6-v1",
+      });
+      const cachedResult = resultCache && !cacheChecked ? await resultCache.get(resultCacheKey) : undefined;
+      cacheChecked = true;
+      if (isDetailedResult(cachedResult)) {
+        didReturnCachedResult = true;
+        return cachedResult;
+      }
+      const execution = await pipeline.executeDetailed(providerInput, {
         signal: options.signal,
         resume,
         stageTimeouts: options.stageTimeouts,
@@ -197,7 +237,7 @@ export function createSeoContentSession(input: SeoContentInput, options: SeoCont
         : generator === "gemini" && fallbackStages.length === 0 && options.imageMode !== "alt_only"
           ? "gemini"
           : "mixed";
-      return {
+      const detailedResult: SeoContentDetailedResult = {
         output: options.imageMode === "alt_only"
           ? {
               ...execution.output,
@@ -215,9 +255,32 @@ export function createSeoContentSession(input: SeoContentInput, options: SeoCont
           approvedKeywords: execution.context.conflictResult?.approvedKeywords ?? [],
           approvedEmbeddings: execution.context.conflictResult?.approvedEmbeddings,
           corpusRevision: execution.context.conflictResult?.corpusRevision,
+          inputHash,
+          sourceVersion: providerInput.sourceVersion,
+          shopifyUpdatedAt: providerInput.shopifyUpdatedAt,
+          providerId: providerRuntime.providerId,
+          pipelineVersion: providerInput.pipelineVersion,
           performance: { stageDurationsMs: { ...stageDurationsMs }, ...providerMetrics },
         },
       };
+      if (resultCache) {
+        await resultCache.set({
+          cacheKey: resultCacheKey,
+          storeId: providerInput.storeId,
+          productId: providerInput.productId,
+          inputHash,
+          sourceVersion: providerInput.sourceVersion,
+          imageFingerprint: computeProductInputHash({ ...providerInput, title: "", description: "", existingKeywords: [] }),
+          variantSummaryHash: computeProductInputHash({ ...providerInput, images: [], title: "", description: "", existingKeywords: [] }),
+          providerId: providerRuntime.providerId,
+          model: providerRuntime.model,
+          promptVersion,
+          pipelineVersion: providerInput.pipelineVersion ?? "seo-b1-b6-v1",
+          result: detailedResult,
+          expiresAt: Date.now() + 7 * 24 * 60 * 60 * 1000,
+        });
+      }
+      return detailedResult;
     } finally { running = false; }
   }
   return { run };
@@ -226,8 +289,9 @@ export function createSeoContentSession(input: SeoContentInput, options: SeoCont
 export async function registerSeoContentKeywords(
   input: SeoContentInput,
   detailed: SeoContentDetailedResult,
+  conflictCorpus?: SeoConflictCorpus,
 ): Promise<{ readonly revision: number }> {
-  const corpus = new FileSeoConflictCorpus({ storeId: input.storeId });
+  const corpus = conflictCorpus ?? new FileSeoConflictCorpus({ storeId: input.storeId });
   return registerProductKeywords(
     corpus,
     {
@@ -247,8 +311,10 @@ export async function registerSeoContentKeywords(
 export async function unregisterSeoContentKeywords(
   input: SeoContentInput,
   detailed: SeoContentDetailedResult,
+  conflictCorpus?: SeoConflictCorpus,
 ): Promise<void> {
-  const corpus = new FileSeoConflictCorpus({ storeId: input.storeId });
+  const corpus = conflictCorpus ?? new FileSeoConflictCorpus({ storeId: input.storeId });
+  if (!corpus.removeProduct) throw new Error("SEO conflict corpus does not support reservation removal");
   await corpus.removeProduct({
     storeId: input.storeId,
     productId: input.productId,

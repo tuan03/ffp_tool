@@ -57,6 +57,9 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Checkout deployment configuration
+        uses: actions/checkout@v4
+
       - name: Encode Environment Secrets
         id: prep
         env:
@@ -67,6 +70,8 @@ jobs:
           else
             echo "env_b64=" >> "$GITHUB_OUTPUT"
           fi
+          echo "compose_b64=$(base64 -w 0 compose.prod.yaml)" >> "$GITHUB_OUTPUT"
+          echo "postgres_env_b64=$(base64 -w 0 scripts/prepare-production-postgres.py)" >> "$GITHUB_OUTPUT"
 
       - name: SSH to VPS and Deploy
         uses: appleboy/ssh-action@v1.2.0
@@ -76,12 +81,16 @@ jobs:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TARGET_DOMAIN: ${{ secrets.DOMAIN || 'ffp.b6-team.site' }}
           ENV_B64: ${{ steps.prep.outputs.env_b64 }}
+          COMPOSE_B64: ${{ steps.prep.outputs.compose_b64 }}
+          POSTGRES_ENV_B64: ${{ steps.prep.outputs.postgres_env_b64 }}
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
-          envs: DOCKER_IMAGE,GHCR_USER,GHCR_TOKEN,TARGET_DOMAIN,ENV_B64
+          envs: DOCKER_IMAGE,GHCR_USER,GHCR_TOKEN,TARGET_DOMAIN,ENV_B64,COMPOSE_B64,POSTGRES_ENV_B64
           script: |
+            set -Eeuo pipefail
+            umask 077
             DEPLOY_DIR="/opt/ffp-tool"
             echo "=== [1/6] Preparing deployment directory at $DEPLOY_DIR ==="
             sudo mkdir -p "$DEPLOY_DIR/data" "$DEPLOY_DIR/runtime"
@@ -103,15 +112,19 @@ jobs:
 
             echo "=== [3/6] Handling .env configuration ==="
             EXISTING_GPT_SEO_ACTION_KEYS_JSON=""
+            EXISTING_GPT_SEO_MCP_KEYS_JSON=""
             EXISTING_FFP_OPERATOR_USERNAME=""
             EXISTING_FFP_OPERATOR_PASSWORD=""
             EXISTING_STORE_ENV_FILE="$(mktemp)"
-            trap 'rm -f "$EXISTING_STORE_ENV_FILE"' EXIT
+            EXISTING_DATABASE_ENV_FILE="$(mktemp)"
+            trap 'rm -f "$EXISTING_STORE_ENV_FILE" "$EXISTING_DATABASE_ENV_FILE"' EXIT
             if [ -f .env ]; then
               EXISTING_GPT_SEO_ACTION_KEYS_JSON=$(sed -nE 's/^[[:space:]]*GPT_SEO_ACTION_KEYS_JSON=(.*)$/\1/p' .env | head -n 1 || true)
+              EXISTING_GPT_SEO_MCP_KEYS_JSON=$(sed -nE 's/^[[:space:]]*GPT_SEO_MCP_KEYS_JSON=(.*)$/\1/p' .env | head -n 1 || true)
               EXISTING_FFP_OPERATOR_USERNAME=$(sed -nE 's/^[[:space:]]*FFP_OPERATOR_USERNAME=(.*)$/\1/p' .env | head -n 1 || true)
               EXISTING_FFP_OPERATOR_PASSWORD=$(sed -nE 's/^[[:space:]]*FFP_OPERATOR_PASSWORD=(.*)$/\1/p' .env | head -n 1 || true)
               grep -E '^STORE_[A-Z0-9_]+=' .env > "$EXISTING_STORE_ENV_FILE" || true
+              grep -E '^[[:space:]]*(export[[:space:]]+)?(POSTGRES_DB|POSTGRES_USER|POSTGRES_PASSWORD|AUTO_SEO_DATABASE_URL|DATABASE_URL)[[:space:]]*=' .env > "$EXISTING_DATABASE_ENV_FILE" || true
             fi
 
             if [ -n "$ENV_B64" ]; then
@@ -142,6 +155,14 @@ jobs:
               sed -i '/^[[:space:]]*GPT_SEO_ACTION_KEYS_JSON=/d' .env
               printf '\nGPT_SEO_ACTION_KEYS_JSON=%s\n' "$EXISTING_GPT_SEO_ACTION_KEYS_JSON" >> .env
               INCOMING_GPT_SEO_ACTION_KEYS_JSON="$EXISTING_GPT_SEO_ACTION_KEYS_JSON"
+            fi
+
+            # Keep the VPS multi-store MCP keys authoritative for the same reason.
+            INCOMING_GPT_SEO_MCP_KEYS_JSON=$(sed -nE 's/^[[:space:]]*GPT_SEO_MCP_KEYS_JSON=(.*)$/\1/p' .env | head -n 1 || true)
+            if [ -n "$EXISTING_GPT_SEO_MCP_KEYS_JSON" ]; then
+              sed -i '/^[[:space:]]*GPT_SEO_MCP_KEYS_JSON=/d' .env
+              printf '\nGPT_SEO_MCP_KEYS_JSON=%s\n' "$EXISTING_GPT_SEO_MCP_KEYS_JSON" >> .env
+              INCOMING_GPT_SEO_MCP_KEYS_JSON="$EXISTING_GPT_SEO_MCP_KEYS_JSON"
             fi
 
             # A multi-store map replaces the legacy single-store Action key.
@@ -175,25 +196,17 @@ jobs:
             echo "File .env sanitized and protected (chmod 600)."
 
             echo "=== [4/6] Setting up compose.prod.yaml ==="
-            printf '%s\n' \
-              "services:" \
-              "  app:" \
-              "    image: \${DOCKER_IMAGE}" \
-              "    container_name: ffp-tool-app" \
-              "    restart: unless-stopped" \
-              "    ports:" \
-              "      - \"127.0.0.1:\${APP_PORT:-3010}:3001\"" \
-              "    env_file:" \
-              "      - .env" \
-              "    volumes:" \
-              "      - ./data:/app/.local-data" \
-              "      - ./runtime:/app/.runtime" \
-              "    healthcheck:" \
-              "      test: [\"CMD\", \"node\", \"-e\", \"fetch('http://127.0.0.1:3001/health').then(r => r.ok ? process.exit(0) : process.exit(1)).catch(() => process.exit(1))\"]" \
-              "      interval: 15s" \
-              "      timeout: 5s" \
-              "      retries: 3" \
-              "      start_period: 10s" > compose.prod.yaml
+            if [ -f compose.prod.yaml ]; then
+              cp compose.prod.yaml compose.prod.yaml.bak
+            fi
+            printf '%s' "$COMPOSE_B64" | base64 -d > compose.prod.yaml
+            mkdir -p scripts
+            printf '%s' "$POSTGRES_ENV_B64" | base64 -d > scripts/prepare-production-postgres.py
+            POSTGRES_SETUP_ARGS=()
+            if docker volume inspect ffp-tool_ffp_postgres_data > /dev/null 2>&1; then
+              POSTGRES_SETUP_ARGS+=(--has-existing-volume)
+            fi
+            python3 scripts/prepare-production-postgres.py --env-file .env --previous-env-file "$EXISTING_DATABASE_ENV_FILE" "${POSTGRES_SETUP_ARGS[@]}"
 
             echo "=== [5/6] Pulling and restarting Docker container ==="
             echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
