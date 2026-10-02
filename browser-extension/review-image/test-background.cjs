@@ -23,9 +23,19 @@ const chrome = {
   action: { setBadgeText() {}, setBadgeBackgroundColor() {} },
 };
 
-vm.runInNewContext(fs.readFileSync('browser-extension/review-image/background.js', 'utf8'), {
+let testSocket;
+class FakeSocket {
+  static OPEN = 1;
+  static CONNECTING = 0;
+  constructor(url) { this.url = url; this.readyState = 1; this.sent = []; testSocket = this; }
+  send(message) { this.sent.push(JSON.parse(message)); }
+  close() { this.readyState = 3; }
+}
+const context = vm.createContext({
+  WebSocket: FakeSocket, console,
   chrome, URL, setTimeout(callback, delay) { scheduledTimers.push({ callback, delay }); return scheduledTimers.length; }, clearTimeout, setInterval, clearInterval,
 });
+vm.runInContext(fs.readFileSync('browser-extension/review-image/background.js', 'utf8'), context);
 
 (async () => {
   await onInstalled();
@@ -44,5 +54,12 @@ vm.runInNewContext(fs.readFileSync('browser-extension/review-image/background.js
   onMessage({ type: 'wait_for_image_poll', delay_ms: 60_000 }, {}, response => { pollResponse = response; });
   assert.equal(pollResponse.ok, false);
   assert.equal(scheduledTimers.length, timerCount, 'unbounded worker timers must be rejected');
+  Object.assign(stored, { enabled: true, serverUrl: 'wss://example.com/api/review-images/extension', token: 'extension-fixture' });
+  await vm.runInContext('connectIfEnabled()', context);
+  assert.equal(testSocket.url, stored.serverUrl, 'credentials must not be placed in remote URLs');
+  testSocket.onopen();
+  assert.equal(testSocket.sent[0].type, 'authenticate');
+  assert.equal(testSocket.sent[0].token, 'extension-fixture');
+  vm.runInContext('closeSocket()', context);
   console.log('extension settings preserved on update');
 })().catch(error => { console.error(error); process.exitCode = 1; });

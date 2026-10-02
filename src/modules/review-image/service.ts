@@ -43,7 +43,7 @@ function readStringArray(value: unknown): readonly string[] {
   return Array.isArray(value) && value.every((item) => typeof item === "string") ? value : [];
 }
 
-export function createReviewImageClient(fetcher: Fetcher = fetch): ReviewImageClient {
+export function createReviewImageClient(fetcher: Fetcher = fetch, wait: (ms: number) => Promise<void> = ms => new Promise(resolve => setTimeout(resolve, ms))): ReviewImageClient {
   let gatewayToken = "";
   const headers = (extra?: HeadersInit): Headers => {
     const result = new Headers(extra);
@@ -62,7 +62,8 @@ export function createReviewImageClient(fetcher: Fetcher = fetch): ReviewImageCl
     setGatewayToken(token) { gatewayToken = token.trim(); },
     async health() {
       const payload = await parseResponse(await fetcher(`${API_BASE}/health`, { headers: headers() }));
-      return { templates: typeof payload.templates === "number" ? payload.templates : 0 };
+      return { templates: typeof payload.templates === "number" ? payload.templates : 0,
+        ...(typeof payload.extensionConnected === "boolean" ? { extensionConnected: payload.extensionConnected } : {}) };
     },
     async listTemplates(storeId) {
       const payload = await parseResponse(await fetcher(`${API_BASE}/templates?storeId=${encodeURIComponent(storeId)}`, { headers: headers() }));
@@ -116,11 +117,19 @@ export function createReviewImageClient(fetcher: Fetcher = fetch): ReviewImageCl
     image(jobId) { return binary(`${API_BASE}/jobs/${encodeURIComponent(jobId)}/image`); },
     download(jobId) { return binary(`${API_BASE}/jobs/${encodeURIComponent(jobId)}/download`); },
     async uploadToShopify(jobId, storeId) {
-      const payload = await parseResponse(await fetcher(`${API_BASE}/jobs/${encodeURIComponent(jobId)}/shopify`, {
+      const url = `${API_BASE}/jobs/${encodeURIComponent(jobId)}/shopify`;
+      let response = await fetcher(url, {
         method: "POST",
         headers: headers({ "Content-Type": "application/json" }),
         body: JSON.stringify({ storeId }),
-      }));
+      });
+      let payload = await parseResponse(response);
+      for (let attempt = 0; response.status === 202 && attempt < 90; attempt++) {
+        await wait(2_000);
+        response = await fetcher(url, { headers: headers() });
+        payload = await parseResponse(response);
+      }
+      if (response.status === 202) throw new Error("Upload vẫn đang chờ Worker. Thử kiểm tra lại; không tạo job ảnh mới.");
       if (typeof payload.fileId !== "string" || typeof payload.shopifyCdnUrl !== "string" || typeof payload.fileStatus !== "string") {
         throw new Error("Gateway không trả về Shopify file hợp lệ.");
       }

@@ -1,8 +1,10 @@
 {
   "manifest_version": 3,
   "name": "FFP Review Image Bridge",
-  "version": "1.3.0",
-  "description": "Receives prompts from a local server and executes them in a pinned ChatGPT tab.",
+  "version": "1.4.0",
+  "minimum_chrome_version": "116",
+  "description": "Connects to FFP Review Studio and executes image tasks in your pinned ChatGPT tab.",
+  "optional_host_permissions": ["https://*/*"],
   "permissions": [
     "storage",
     "tabs"

@@ -185,7 +185,9 @@ export function startGatewayServer(
       await handleReviewImageHttpRequest(req, res, {
         authToken,
         bridgeToken: env.REVIEW_IMAGE_BRIDGE_TOKEN || process.env.REVIEW_IMAGE_BRIDGE_TOKEN || "change-this-token",
-        bridgeBaseUrl: options.reviewImageBridgeBaseUrl,
+        bridgeBaseUrl: options.reviewImageBridgeBaseUrl ?? env.REVIEW_IMAGE_BRIDGE_URL,
+        durableUploads: env.REVIEW_IMAGE_DURABLE_UPLOADS === "true",
+        reviewImageOutputDir: env.REVIEW_IMAGE_OUTPUT_DIR,
         dispatcher,
       });
       return;

@@ -1,7 +1,7 @@
 const DEFAULT_SETTINGS = {
   enabled: true,
-  serverUrl: "ws://127.0.0.1:8770/ws/extension",
-  token: "change-this-token",
+  serverUrl: "ws://127.0.0.1:3011/api/review-images/extension",
+  token: "",
   visibleMessageLimit: 0,
   removeUserMessages: false
 };
@@ -40,6 +40,16 @@ saveButton.addEventListener("click", async () => {
 
   try {
     const parsedUrl = new URL(serverUrl);
+    const isLocal = ["localhost", "127.0.0.1", "[::1]"].includes(parsedUrl.hostname);
+    if (parsedUrl.username || parsedUrl.password || parsedUrl.search || parsedUrl.hash) {
+      throw new Error("Không đặt token hoặc thông tin đăng nhập trong URL.");
+    }
+    if (!isLocal && (parsedUrl.protocol !== "wss:" || parsedUrl.pathname !== "/api/review-images/extension")) {
+      throw new Error("Domain cần wss://<domain>/api/review-images/extension");
+    }
+    if (!isLocal && !(await chrome.permissions.request({ origins: [`https://${parsedUrl.hostname}/*`] }))) {
+      throw new Error("Cần cho phép extension kết nối domain FFP đã chọn.");
+    }
 
     if (
       parsedUrl.protocol !== "ws:" &&

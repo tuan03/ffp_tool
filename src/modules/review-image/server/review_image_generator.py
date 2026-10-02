@@ -84,19 +84,38 @@ class ReviewImageService:
         output_dir: Path,
         bridge_call: Callable[[str, list[dict[str, str]], str], dict[str, str]],
         max_pending_jobs: int = 3,
+        repository=None,
     ) -> None:
         self.template_dir = Path(template_dir)
         self.output_dir = Path(output_dir)
         self.template_dir.mkdir(parents=True, exist_ok=True)
-        self._migrate_legacy_templates()
+        self.repository = repository
+        if repository is None:
+            self._migrate_legacy_templates()
         self.bridge_call = bridge_call
         self.jobs: dict[str, dict] = {}
         self.lock = threading.RLock()
         self.max_pending_jobs = max_pending_jobs
         self.pending_jobs = 0
+        self.workers = set()
+
+    def shutdown(self):
+        for worker in list(self.workers):
+            worker.join(timeout=10)
+
+    def _persist(self, job_id):
+        if self.repository is not None:
+            self.repository.put("job", job_id, self.jobs[job_id])
+
+    def _find_job(self, job_id):
+        if job_id not in self.jobs and self.repository is not None:
+            stored = self.repository.get("job", job_id)
+            if stored:
+                self.jobs[job_id] = stored
+        return self.jobs.get(job_id)
 
     def _prune_finished_jobs(self) -> None:
-        cutoff = time.monotonic() - JOB_RETENTION_SECONDS
+        cutoff = time.time() - JOB_RETENTION_SECONDS
         for job_id, job in list(self.jobs.items()):
             if job.get("finished_at", float("inf")) < cutoff:
                 del self.jobs[job_id]
@@ -131,7 +150,12 @@ class ReviewImageService:
             return []
         candidates = []
         root = store_dir.resolve()
+        known_names = None if self.repository is None else {
+            entry["name"] for entry in self.repository.all("template") if entry["storeId"] == store_id
+        }
         for path in sorted(store_dir.iterdir()):
+            if known_names is not None and path.name not in known_names:
+                continue
             if not path.is_file() or not path.resolve().is_relative_to(root) or path.suffix.lower() not in {".png", ".jpg", ".jpeg", ".webp"}:
                 continue
             try:
@@ -164,6 +188,8 @@ class ReviewImageService:
         try:
             temporary_path.write_bytes(image_bytes)
             temporary_path.replace(store_dir / saved_name)
+            if self.repository is not None:
+                self.repository.put("template", f"{store_id}/{saved_name}", {"storeId": store_id, "name": saved_name})
         finally:
             temporary_path.unlink(missing_ok=True)
         return saved_name
@@ -180,6 +206,8 @@ class ReviewImageService:
                 raise ValueError("Ảnh template đang được dùng để tạo ảnh; hãy chờ job hoàn tất rồi xóa.")
             try:
                 path.unlink()
+                if self.repository is not None:
+                    self.repository.remove("template", f"{clean_store_id}/{path.name}")
             except OSError as exc:
                 raise ValueError("Không thể xóa ảnh template.") from exc
             return path.name
@@ -258,17 +286,26 @@ class ReviewImageService:
                 raise ReviewImageBusyError("Bridge đang bận. Hãy chờ job hiện tại xong rồi thử lại.")
             self.pending_jobs += 1
             self.jobs[job_id] = job
+            try:
+                self._persist(job_id)
+            except Exception:
+                self.pending_jobs -= 1
+                self.jobs.pop(job_id, None)
+                raise
         worker = threading.Thread(
             target=self._run,
             args=(job_id, prompt, template, product_mime, product_bytes, clean_conversation_session_id),
             daemon=True,
         )
         try:
+            self.workers.add(worker)
             worker.start()
         except Exception:
             with self.lock:
                 self.pending_jobs -= 1
-                del self.jobs[job_id]
+                self.workers.discard(worker)
+                self.jobs[job_id].update(status="failed", error="Could not start image worker", finished_at=time.time())
+                self._persist(job_id)
             raise
         return self.snapshot(job_id)
 
@@ -278,6 +315,7 @@ class ReviewImageService:
                 if self.jobs[job_id]["status"] == "cancelled":
                     return
                 self.jobs[job_id]["status"] = "running"
+                self._persist(job_id)
             template_mime = IMAGE_FORMATS[{".png": "PNG", ".jpg": "JPEG", ".jpeg": "JPEG", ".webp": "WEBP"}[template.suffix.lower()]][0]
             images = [
                 {"name": "template", "mime_type": template_mime, "data": base64.b64encode(template.read_bytes()).decode()},
@@ -296,7 +334,9 @@ class ReviewImageService:
             self.output_dir.mkdir(parents=True, exist_ok=True)
             output_name = job_id + extension
             output_path = self.output_dir / output_name
-            output_path.write_bytes(image_bytes)
+            temporary_path = output_path.with_suffix(".part")
+            temporary_path.write_bytes(image_bytes)
+            temporary_path.replace(output_path)
             with self.lock:
                 if self.jobs[job_id]["status"] == "cancelled":
                     output_path.unlink(missing_ok=True)
@@ -305,22 +345,31 @@ class ReviewImageService:
         except Exception as exc:
             with self.lock:
                 if self.jobs[job_id]["status"] != "cancelled":
-                    self.jobs[job_id].update(status="failed", error=str(exc))
+                    self.jobs[job_id].update(status="failed", error=str(exc) if isinstance(exc, (ValueError, RuntimeError)) else "Image generation failed; inspect server logs before retrying.")
         finally:
             with self.lock:
-                self.jobs[job_id]["finished_at"] = time.monotonic()
-                self.pending_jobs -= 1
+                self.jobs[job_id]["finished_at"] = time.time()
+                try:
+                    self._persist(job_id)
+                finally:
+                    self.pending_jobs -= 1
+                    self.workers.discard(threading.current_thread())
 
     def snapshot(self, job_id: str) -> dict:
         with self.lock:
+            if self.repository is not None:
+                stored = self.repository.get("job", job_id)
+                if stored is None:
+                    raise ValueError("Job ảnh không tồn tại.")
+                return stored
             self._prune_finished_jobs()
-            if job_id not in self.jobs:
+            if not self._find_job(job_id):
                 raise ValueError("Job ảnh không tồn tại.")
             return dict(self.jobs[job_id])
 
     def cancel(self, job_id: str) -> dict:
         with self.lock:
-            job = self.jobs.get(job_id)
+            job = self._find_job(job_id)
             if not job:
                 raise ValueError("Job ảnh không tồn tại.")
             if job["approved"]:
@@ -331,16 +380,18 @@ class ReviewImageService:
                 return dict(job)
             output_name = job.get("output_name")
             job.update(status="cancelled", error=None, output_name=None)
+            self._persist(job_id)
             if output_name:
                 (self.output_dir / output_name).unlink(missing_ok=True)
             return dict(job)
 
     def approve(self, job_id: str) -> dict:
         with self.lock:
-            job = self.jobs.get(job_id)
+            job = self._find_job(job_id)
             if not job or job["status"] != "completed":
                 raise ValueError("Ảnh chưa tạo xong nên chưa thể duyệt.")
             job["approved"] = True
+            self._persist(job_id)
             return dict(job)
 
     def image_path(self, job_id: str, *, approved_only: bool = False) -> Path:

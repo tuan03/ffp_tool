@@ -85,12 +85,28 @@ export function ReviewImagePage({
   const [isStopRequested, setIsStopRequested] = useState(false);
   const [isBulkUploading, setIsBulkUploading] = useState(false);
   const [error, setError] = useState("");
+  const [extensionConnected, setExtensionConnected] = useState<boolean | undefined>(undefined);
   const [gatewayToken, setGatewayToken] = useState("");
   const stopRequestedRef = useRef(false);
   const activeJobRef = useRef<{ readonly jobId: string; readonly itemId: string } | null>(null);
   const isBusy = isBatchRunning || isBulkUploading || templateBusy;
 
   useEffect(() => { onBusyChange?.(isBusy); }, [isBusy, onBusyChange]);
+
+  useEffect(() => {
+    let active = true;
+    const refresh = async (): Promise<void> => {
+      try {
+        const health = await client.health();
+        if (active) setExtensionConnected(health.extensionConnected);
+      } catch {
+        if (active) setExtensionConnected(false);
+      }
+    };
+    void refresh();
+    const timer = setInterval(() => { void refresh(); }, 10_000);
+    return () => { active = false; clearInterval(timer); };
+  }, [client]);
 
   const updateProduct = (id: string, patch: Partial<ReviewProductImage>): void => {
     setProducts((current) => current.map((item) => item.id === id ? { ...item, ...patch } : item));
@@ -377,6 +393,7 @@ export function ReviewImagePage({
   const buttonClass = "rounded-xl px-4 py-2 font-medium transition disabled:cursor-not-allowed disabled:opacity-40";
 
   return <section className="space-y-6 text-slate-100">
+    {extensionConnected === false ? <p role="status" className="rounded border border-amber-700 bg-amber-950/30 p-3 text-amber-200">Chưa kết nối được extension tạo ảnh. Hãy mở tab ChatGPT, ghim tab trong extension và kết nối đến FFP; nếu vẫn lỗi, kiểm tra Gateway token.</p> : null}
     {!embedded ? <header><h1 className="text-3xl font-bold">Tạo ảnh review</h1><p className="mt-1 text-sm text-slate-400">Tạo ảnh theo template, duyệt và đưa vào Shopify Files.</p></header> : null}
     <div className="grid gap-6 lg:grid-cols-2">
       <section className="space-y-5 rounded-2xl border border-slate-800 bg-slate-900/70 p-5">

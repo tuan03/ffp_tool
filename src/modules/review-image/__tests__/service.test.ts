@@ -3,6 +3,17 @@ import test from "node:test";
 
 import { createReviewImageClient, encodeProductFile } from "../service";
 
+test("durable upload polls status without resubmitting the write", async () => {
+  const methods: string[] = [];
+  const client = createReviewImageClient(async (_input, init) => {
+    methods.push(init?.method || "GET");
+    return methods.length === 1 ? Response.json({ status: "queued" }, { status: 202 })
+      : Response.json({ fileId: "file-1", shopifyCdnUrl: "https://cdn.shopify.com/a.png", fileStatus: "READY" });
+  }, async () => {});
+  assert.equal((await client.uploadToShopify("job1", "capozen")).fileId, "file-1");
+  assert.deepEqual(methods, ["POST", "GET"]);
+});
+
 test("review image client sends the product, prompt and selected scope to the same-origin API", async () => {
   let requestedUrl = "";
   let submitted: unknown;

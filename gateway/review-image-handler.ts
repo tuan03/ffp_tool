@@ -14,6 +14,7 @@ export interface ReviewImageHandlerOptions {
   readonly maxBodyBytes?: number;
   readonly dispatcher?: { dispatch(request: GatewayRequest): Promise<GatewayResponse> };
   readonly reviewImageOutputDir?: string;
+  readonly durableUploads?: boolean;
 }
 
 function sendError(response: ServerResponse, status: number, message: string): void {
@@ -77,7 +78,7 @@ export async function handleReviewImageHttpRequest(
 
   const requestBody = Buffer.concat(chunks);
   const shopifyUploadMatch = /^\/api\/review-images\/jobs\/([a-f0-9]{32})\/shopify$/.exec(route.pathname);
-  if (request.method === "POST" && shopifyUploadMatch) {
+  if (request.method === "POST" && shopifyUploadMatch && !options.durableUploads) {
     if (!options.dispatcher) {
       sendError(response, 503, "Shopify gateway chưa sẵn sàng.");
       return;

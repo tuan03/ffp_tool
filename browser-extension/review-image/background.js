@@ -1,7 +1,7 @@
 const DEFAULT_SETTINGS = {
   enabled: true,
-  serverUrl: "ws://127.0.0.1:8770/ws/extension",
-  token: "change-this-token",
+  serverUrl: "ws://127.0.0.1:3011/api/review-images/extension",
+  token: "",
   chatgptTabId: null,
   visibleMessageLimit: 0,
   removeUserMessages: false
@@ -188,7 +188,14 @@ async function connectIfEnabled() {
 
   try {
     url = new URL(settings.serverUrl);
-    url.searchParams.set("token", settings.token);
+    const isLocal = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
+    if (url.protocol !== "wss:" && !(url.protocol === "ws:" && isLocal)) throw new Error("Remote connections require WSS");
+    if (url.pathname === "/ws/extension" && isLocal) {
+      // Legacy localhost development bridge only; never send remote secrets in URLs.
+      url.searchParams.set("token", settings.token);
+    } else {
+      url.search = "";
+    }
   } catch (error) {
     console.error("WebSocket URL không hợp lệ:", error);
     updateBadge(false);
@@ -206,9 +213,12 @@ async function connectIfEnabled() {
   }
 
   socket.onopen = () => {
+    if (url.pathname !== "/ws/extension") {
+      socket.send(JSON.stringify({ type: "authenticate", token: settings.token }));
+    }
     console.log("Đã kết nối ChatGPT Bridge Server");
 
-    updateBadge(true);
+    updateBadge(url.pathname === "/ws/extension");
     clearTimeout(reconnectTimer);
     clearInterval(keepAliveTimer);
 
@@ -231,6 +241,7 @@ async function connectIfEnabled() {
     }
 
     if (message.type === "hello" || message.type === "config") {
+      updateBadge(true);
       currentConfig = message.xpaths || currentConfig;
       return;
     }

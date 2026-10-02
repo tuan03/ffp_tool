@@ -238,6 +238,7 @@ export function getAllowedUploadRoots(): string[] {
   const roots: string[] = [
     path.resolve(process.cwd(), "src/modules/pinterest-pod/server/data/pinterest_pod/output"),
     path.resolve(process.cwd(), "exports/review-images"),
+    path.resolve(process.cwd(), ".runtime/review-image/outputs"),
     path.resolve(process.cwd(), ".local-data"),
   ];
 

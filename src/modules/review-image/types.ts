@@ -51,7 +51,7 @@ export interface ReviewImageShopifyFile {
 
 export interface ReviewImageClient {
   setGatewayToken(token: string): void;
-  health(): Promise<{ readonly templates: number }>;
+  health(): Promise<{ readonly templates: number; readonly extensionConnected?: boolean }>;
   listTemplates(storeId: string): Promise<readonly ReviewImageTemplate[]>;
   uploadTemplate(input: UploadReviewTemplateInput): Promise<ReviewImageTemplate>;
   deleteTemplates(storeId: string, names: readonly string[]): Promise<DeleteReviewTemplatesResult>;
