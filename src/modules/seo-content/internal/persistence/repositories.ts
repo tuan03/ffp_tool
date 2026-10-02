@@ -222,14 +222,14 @@ export class PostgresSeoProviderCircuitRepository {
     }>(this.pool,
       `INSERT INTO seo_provider_circuits(provider_id,model,state,failure_count,opened_at,retry_after,last_error,updated_at)
        VALUES($1,$2,CASE WHEN $5 <= 1 THEN 'open' ELSE 'closed' END,1,
-         CASE WHEN $5 <= 1 THEN $3 ELSE NULL END,
-         CASE WHEN $5 <= 1 THEN $4 ELSE NULL END,$6::jsonb,$3)
+         CASE WHEN $5 <= 1 THEN $3::timestamptz ELSE NULL END,
+         CASE WHEN $5 <= 1 THEN $4::timestamptz ELSE NULL END,$6::jsonb,$3::timestamptz)
        ON CONFLICT(provider_id,model) DO UPDATE SET
          failure_count=seo_provider_circuits.failure_count+1,
          state=CASE WHEN seo_provider_circuits.failure_count+1 >= $5 THEN 'open' ELSE 'closed' END,
-         opened_at=CASE WHEN seo_provider_circuits.failure_count+1 >= $5 THEN $3 ELSE NULL END,
-         retry_after=CASE WHEN seo_provider_circuits.failure_count+1 >= $5 THEN $4 ELSE NULL END,
-         last_error=$6::jsonb,updated_at=$3
+         opened_at=CASE WHEN seo_provider_circuits.failure_count+1 >= $5 THEN $3::timestamptz ELSE NULL END,
+         retry_after=CASE WHEN seo_provider_circuits.failure_count+1 >= $5 THEN $4::timestamptz ELSE NULL END,
+         last_error=$6::jsonb,updated_at=$3::timestamptz
        RETURNING state,failure_count,opened_at,retry_after,last_error`,
       [providerId, model, new Date(now), new Date(now + retryAfterMs), safeThreshold, JSON.stringify(error)]);
     if (!row) throw new Error("Failed to persist provider circuit failure");
