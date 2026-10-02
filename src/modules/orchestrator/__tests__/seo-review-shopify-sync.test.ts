@@ -208,6 +208,18 @@ describe("seo-review-shopify-sync", () => {
       assert.equal(updateCall.payload.product.title, "Approved Ceramic Mug");
       assert.equal(updateCall.payload.product.seo?.title, "Best Ceramic Mug | Custom Print");
       assert.equal(updateCall.payload.product.images?.[0]?.altText, "Ceramic Mug Front View");
+      const vMeta = updateCall.payload.product.metafields?.find((m) => m.key === "seo_version");
+      assert.equal(vMeta?.value, "1");
+    }
+
+    const metaCall = executedInputs.find((i) => i.operation === "metafields.set");
+    assert.ok(metaCall);
+    if (metaCall && metaCall.operation === "metafields.set") {
+      const v = (metaCall.payload as any).metafields?.find((m: any) => m.key === "seo_version");
+      assert.equal(v?.value, "1");
+      const dt = (metaCall.payload as any).metafields?.find((m: any) => m.key === "seo_last_synced_at");
+      assert.ok(dt?.value);
+      assert.equal(dt?.type, "date_time");
     }
   });
 

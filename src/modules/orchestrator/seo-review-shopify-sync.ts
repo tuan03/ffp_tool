@@ -390,6 +390,26 @@ export async function pushSeoReviewProductToShopify(
       const finalProductId = syncResult.productId || validExistingProductId || (isCrossStore ? undefined : normalizeShopifyProductGid(product.productId));
       const finalHandle = syncResult.productHandle || product.handle;
 
+      if (finalMetafields && finalMetafields.length > 0 && finalProductId) {
+        try {
+          await moduleApiRunner({
+            storeId: targetStoreId,
+            operation: "metafields.set",
+            mode,
+            requestId: `seo-review-metafields-${product.id}-${Date.now()}`,
+            payload: {
+              ownerId: finalProductId,
+              metafields: finalMetafields.map((m) => ({
+                ...m,
+                ownerId: finalProductId,
+              })),
+            },
+          });
+        } catch {
+          // Gracefully continue so product sync remains successful
+        }
+      }
+
       if (finalProductId && product.collectionsToJoin && product.collectionsToJoin.length > 0) {
         for (const colId of product.collectionsToJoin) {
           try {
@@ -469,6 +489,7 @@ export async function pushSeoReviewProductToShopify(
               src: img.previewUrl,
               altText: img.alt,
             })),
+            metafields: finalMetafields,
           },
         },
       })) as ShopifyProductsUpdateResponse;
