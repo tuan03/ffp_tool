@@ -8,6 +8,7 @@ import { getAutoSeoBackupRepository } from "../auto-seo-postgres-repository";
 import { recoverAutoSeoHandoffs } from "./auto-seo-outbox";
 import { createCodexSeoMcpHandler } from "./mcp-handler";
 import { createExternalSeoWorkflow } from "./workflow";
+import { getPerformanceService } from "../seo-performance/runtime";
 
 interface CustomGptTickDependencies {
   readonly recoverAutoSeoHandoffs: () => Promise<void>;
@@ -41,7 +42,7 @@ function createRuntime() {
   const queue = new PostgresCustomGptQueue({ databaseUrl, legacySourcePath: config.databasePath });
   const handler = createCustomGptHandler({ queue, ...config });
   const workflow = createExternalSeoWorkflow({ queue });
-  const mcpHandler = createCodexSeoMcpHandler({ workflow, mcpCredentials: config.mcpCredentials });
+  const mcpHandler = createCodexSeoMcpHandler({ workflow, mcpCredentials: config.mcpCredentials, performance: getPerformanceService });
   let isRunning = false;
   async function tick(): Promise<void> {
     if (isRunning) return;

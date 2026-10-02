@@ -544,6 +544,7 @@ export function adaptAutoSeoItemToViewModel(
     originalBackup,
     sourceOrigin: "auto_seo",
     seoVersion,
+    sourceShopifyUpdatedAt: typeof sourceProduct.updatedAt === "string" ? sourceProduct.updatedAt : undefined,
   };
 
   if (!item.success) {

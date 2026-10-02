@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { createBrowserRouter, Navigate, RouterProvider } from "react-router-dom";
 
 import { environment } from "../../config/environment";
+import { createSeoPerformanceRoutes, getSeoPerformanceClient } from "../../modules/seo-performance";
 import { createCustomGptClient, createCustomGptSeoRoutes, getCustomGptClient } from "../../modules/custom-gpt-seo";
 import { AppLayout } from "../../layouts/AppLayout";
 import { amazonCrawlerRoutes } from "../../modules/amazon-crawler";
@@ -527,6 +528,7 @@ export function AppRoutes({
           ...autoSeoRoutes,
           ...createCustomGptSeoRoutes(getCustomGptClient(environment)),
           ...customizationRoutes,
+          ...createSeoPerformanceRoutes(getSeoPerformanceClient(environment)),
           {
             path: "seo-review",
             element: (

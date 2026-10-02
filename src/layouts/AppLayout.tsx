@@ -45,6 +45,7 @@ export function AppLayout(): React.JSX.Element {
   const queuePath = buildStoreAwarePath("/gpt-seo", activeStoreId);
   const autoSeoPath = buildStoreAwarePath("/auto-seo", activeStoreId);
   const reviewPath = buildStoreAwarePath("/seo-review", activeStoreId);
+  const performancePath = buildStoreAwarePath("/seo-performance", activeStoreId);
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-50 flex flex-col">
@@ -62,6 +63,7 @@ export function AppLayout(): React.JSX.Element {
             </NavLink>
 
             <nav className="flex items-center gap-2 text-xs font-medium">
+              <NavLink to={performancePath} className={({ isActive }) => `rounded-lg px-3 py-1.5 ${isActive ? "bg-slate-800 text-cyan-300" : "text-slate-400 hover:text-slate-200"}`}>SEO Performance</NavLink>
               <NavLink
                 to={queuePath}
                 className={({ isActive }) =>

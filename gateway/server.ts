@@ -4,6 +4,8 @@ import http from "node:http";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { getCustomGptRuntime } from "./custom-gpt-seo/runtime";
+import { configurePerformanceRuntime, getPerformanceService, closePerformanceRuntime } from "./seo-performance/runtime";
+import { handlePerformanceHttp } from "./seo-performance/http-handler";
 import { serveStaticFile } from "./static-server";
 
 import { GatewayDispatcher } from "./dispatcher";
@@ -140,6 +142,7 @@ export function startGatewayServer(
   const graphqlClient = new ShopifyGraphqlClient({ tokenProvider, throttleManager });
   const idempotencyStore = new InMemoryIdempotencyStore();
   const dispatcher = new GatewayDispatcher({ storeRegistry, graphqlClient, idempotencyStore });
+  configurePerformanceRuntime(dispatcher, () => getCustomGptRuntime().queue);
   const httpHandler = createGatewayHttpHandler(dispatcher, { authToken, maxBodyBytes });
   const storeControlPlane = new StoreControlPlane({
     storeRegistry,
@@ -176,6 +179,10 @@ export function startGatewayServer(
     }
     if (hasOperatorAuthentication && !url.startsWith("/api/") && !isAuthenticatedOperator) {
       requestOperatorAuthentication(res);
+      return;
+    }
+    if (url.startsWith("/api/seo-performance/")) {
+      await handlePerformanceHttp(req, res, { service: getPerformanceService(), authToken, hasStore: storeId => storeRegistry.hasStore(storeId) });
       return;
     }
     if (url.startsWith("/api/v1/gpt-seo/")) {
@@ -387,6 +394,7 @@ export function startGatewayServer(
     res.end(JSON.stringify({ error: "Not Found" }));
   });
 
+  server.on("close", () => { void closePerformanceRuntime().catch(() => { console.error("[SEO Performance] Shutdown failed."); }); });
   server.listen(port, host, () => {
     console.log(`[Shopify Gateway] Standalone server running on http://${host}:${port}/api/shopify`);
   });

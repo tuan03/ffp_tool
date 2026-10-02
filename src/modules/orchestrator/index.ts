@@ -53,3 +53,5 @@ export type {
   SeoReviewPushProductItem,
 } from "./seo-review-shopify-sync";
 export type { WorkflowDependencies, WorkflowInput, WorkflowOutput } from "./types";
+export { createPerformanceRevision } from "./seo-performance-revision";
+export type { PerformanceRevisionRequest } from "./seo-performance-revision";

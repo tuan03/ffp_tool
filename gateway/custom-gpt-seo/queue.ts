@@ -71,7 +71,11 @@ export class CustomGptQueue {
       const existing = this.db.prepare("SELECT payload FROM gpt_jobs WHERE store_id=? AND dedup=?").get(input.storeId, dedup);
       if (existing) return json(existing.payload) as GptSeoJob;
       const olderJobs = this.db.prepare("SELECT payload FROM gpt_jobs WHERE store_id=? AND json_extract(payload,'$.source')=? AND json_extract(payload,'$.sourceIdentity')=? AND status != 'CANCELLED' AND NOT EXISTS (SELECT 1 FROM gpt_sync WHERE gpt_sync.job_id=gpt_jobs.id AND gpt_sync.status != 'ROLLED_BACK')").all(input.storeId, input.source, input.sourceIdentity);
-      for (const row of olderJobs) this.write({ ...json(row.payload) as GptSeoJob, status: "CANCELLED", error: "Superseded by a newer source revision" });
+      for (const row of olderJobs) {
+        const olderJob = json(row.payload) as GptSeoJob;
+        if (input.performanceRecommendationId && olderJob.status === "REVIEW_READY") continue;
+        this.write({ ...olderJob, status: "CANCELLED", error: "Superseded by a newer source revision" });
+      }
       const job: GptSeoJob = { ...input, id: randomUUID(), inputHash, settings: input.settings ?? this.settings(input.storeId), status: "PENDING", checkpoints: {}, createdAt: this.now(), updatedAt: this.now() };
       this.db.prepare("INSERT INTO gpt_jobs(id,store_id,dedup,status,payload,created_at,provider) VALUES (?,?,?,?,?,?,?)").run(job.id, job.storeId, dedup, job.status, JSON.stringify(job), job.createdAt, job.settings.provider);
       this.audit(job.storeId, job.id, "ENQUEUED");

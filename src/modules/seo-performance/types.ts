@@ -1,0 +1,57 @@
+export type PageKind = "product" | "collection" | "blog" | "page" | "home" | "other";
+export interface SearchMetrics { readonly clicks: number; readonly impressions: number; readonly ctr: number; readonly position: number }
+export interface PerformanceMapping { readonly storeId: string; readonly property: string; readonly origin: string; readonly lastSync: string | null }
+export interface AuditFinding { readonly code: string; readonly status: "needs_changes" | "unknown"; readonly message: string }
+export interface PageAudit {
+  readonly url: string; readonly status: number; readonly title: string; readonly description: string;
+  readonly h1: readonly string[]; readonly canonical: string | null; readonly noindex: boolean;
+  readonly missingAltCount: number; readonly internalLinks: readonly string[]; readonly text: string;
+  readonly jsonLd: readonly unknown[]; readonly aeoVisibility: "observed" | "not_observed" | "unknown";
+  readonly rendering: "static_only"; readonly findings: readonly AuditFinding[];
+}
+export interface PerformancePage {
+  readonly url: string; readonly kind: PageKind; readonly productId: string | null;
+  readonly snapshotId: string | null; readonly checkedAt: string | null;
+  readonly audit: PageAudit | null; readonly current: SearchMetrics | null; readonly previous: SearchMetrics | null;
+  readonly opportunities: readonly string[];
+}
+export interface RecommendationInput {
+  readonly requestId: string; readonly url: string; readonly snapshotId: string; readonly rulesVersion: string;
+  readonly issue: string; readonly evidence: readonly string[]; readonly proposed: string; readonly rationale: string;
+  readonly risk: string; readonly priority: "high" | "medium" | "low";
+  readonly confidence: "high" | "medium" | "low"; readonly startDate: string; readonly endDate: string;
+}
+export interface SeoRecommendation extends RecommendationInput {
+  readonly id: string; readonly actor: string; readonly createdAt: string;
+  readonly status: "proposed" | "queued" | "dismissed" | "applied";
+  readonly jobId: string | null;
+}
+export interface PerformanceJob {
+  readonly id: string; readonly kind: "sync" | "crawl" | "inspection";
+  readonly status: "pending" | "running" | "done" | "failed";
+  readonly progress: number; readonly error: string | null; readonly updatedAt: string;
+}
+export interface PerformanceOverview {
+  readonly enabled: boolean; readonly configured: boolean; readonly connected: boolean; readonly reconnectRequired: boolean;
+  readonly mapping: PerformanceMapping | null; readonly current: SearchMetrics | null; readonly previous: SearchMetrics | null;
+  readonly startDate: string; readonly endDate: string; readonly jobs: readonly PerformanceJob[];
+  readonly notice: string;
+}
+export interface PerformanceFilters { readonly offset?: number; readonly kind?: PageKind; readonly search?: string; readonly startDate?: string; readonly endDate?: string }
+export interface PerformanceList<T> { readonly items: readonly T[]; readonly total: number; readonly nextOffset: number | null }
+export interface PerformanceEvent { readonly id: string; readonly event: string; readonly createdAt: string; readonly details: Readonly<Record<string, unknown>> }
+export interface SeoPerformanceClient {
+  stores(): Promise<readonly { readonly storeId: string; readonly shopDomain: string }[]>;
+  overview(storeId: string, filters?: PerformanceFilters): Promise<PerformanceOverview>;
+  properties(): Promise<readonly { readonly siteUrl: string; readonly permissionLevel: string }[]>;
+  connect(): Promise<{ readonly url: string }>;
+  disconnect(): Promise<void>;
+  map(storeId: string, property: string, origin: string): Promise<void>;
+  start(storeId: string, kind: "sync" | "crawl"): Promise<{ readonly jobId: string }>;
+  pages(storeId: string, filters?: PerformanceFilters): Promise<PerformanceList<PerformancePage>>;
+  queries(storeId: string, url: string, filters?: PerformanceFilters): Promise<PerformanceList<{ readonly query: string; readonly metrics: SearchMetrics }>>;
+  recommendations(storeId: string, offset?: number): Promise<PerformanceList<SeoRecommendation>>;
+  history(storeId: string, offset?: number): Promise<PerformanceList<PerformanceEvent>>;
+  revise(storeId: string, recommendationId: string): Promise<{ readonly jobId: string }>;
+  dismiss(storeId: string, recommendationId: string): Promise<void>;
+}

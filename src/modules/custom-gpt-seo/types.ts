@@ -24,6 +24,7 @@ export interface GptSeoEnqueue {
   readonly source: "amazon" | "auto_seo";
   readonly sourceIdentity: string;
   readonly sourceRevision?: string;
+  readonly performanceRecommendationId?: string;
   readonly input: GptSeoInput;
   readonly original: unknown;
   readonly settings?: GptSeoSettings;

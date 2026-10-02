@@ -1,5 +1,7 @@
 # Codex MCP SEO
 
+SEO Performance adds six store-scoped audit/proposal tools when deployed. See [SEO Performance setup and operating procedure](../seo-performance-search-console.md). These tools read cached Search Console and storefront evidence and save proposals only; they cannot approve, publish, or create SEO revisions without the separate operator action.
+
 Codex MCP is an external SEO provider alongside Gemini and Custom GPT. Codex performs the reasoning in the active CLI or IDE session. The gateway MCP server only authenticates the store, exposes pending jobs and images, validates checkpoints, and submits drafts into the existing human review flow. It does not call the OpenAI Responses API and it has no Shopify write tool.
 
 ## Server configuration

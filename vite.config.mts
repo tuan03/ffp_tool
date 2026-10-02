@@ -104,6 +104,10 @@ export default defineConfig({
   plugins: [react(), tailwindcss(), pinterestPodBackendPlugin(), shopifyGatewayDevPlugin()],
   server: {
     proxy: {
+      "/api/seo-performance": {
+        target: process.env.SEO_PERFORMANCE_GATEWAY_URL || "http://127.0.0.1:3001",
+        changeOrigin: true,
+      },
       "/api/pinterest-pod/jobs": {
         target: process.env.VITE_API_URL || process.env.VITE_AMAZON_COORDINATOR_URL || "http://127.0.0.1:8766",
         changeOrigin: true,

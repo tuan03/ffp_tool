@@ -7,6 +7,7 @@ import type { McpCredential } from "../../src/config/custom-gpt-environment";
 
 import { createCodexSeoMcpServer } from "./mcp-server";
 import type { ExternalSeoWorkflow } from "./workflow";
+import type { PerformanceService } from "../seo-performance/service";
 
 const MAX_MCP_REQUEST_BYTES = 1_000_000;
 
@@ -40,6 +41,7 @@ function sendJson(res: ServerResponse, status: number, payload: unknown): void {
 export interface CodexSeoMcpHandlerOptions {
   readonly workflow: ExternalSeoWorkflow;
   readonly mcpCredentials: readonly McpCredential[];
+  readonly performance?: () => PerformanceService | undefined;
 }
 
 export function createCodexSeoMcpHandler(options: CodexSeoMcpHandlerOptions) {
@@ -69,6 +71,7 @@ export function createCodexSeoMcpHandler(options: CodexSeoMcpHandlerOptions) {
       workflow: options.workflow,
       storeId: credential.storeId,
       ownerId: `codex_mcp:${credential.workerId}`,
+      performance: options.performance,
     });
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     try {
