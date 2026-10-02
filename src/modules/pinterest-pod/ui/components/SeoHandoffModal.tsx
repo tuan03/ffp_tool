@@ -486,11 +486,19 @@ export function SeoHandoffModal({
                             }
                           >
                             <img
-                              src={prod.previewUrl || prod.rgbUrl || prod.cmykUrl}
+                              src={prod.rgbUrl || prod.cmykUrl || prod.previewUrl}
                               alt={prod.title}
                               loading="lazy"
                               decoding="async"
                               className="h-full w-full object-cover transition duration-200 group-hover:scale-105"
+                              onError={(e) => {
+                                const target = e.currentTarget;
+                                if (prod.cmykUrl && target.src !== prod.cmykUrl) {
+                                  target.src = prod.cmykUrl;
+                                } else if (prod.previewUrl && target.src !== prod.previewUrl) {
+                                  target.src = prod.previewUrl;
+                                }
+                              }}
                             />
                             <div className="absolute bottom-1.5 left-1.5 rounded bg-black/80 px-1.5 py-0.5 text-[9px] text-cyan-300">
                               🔍 Soi bản in

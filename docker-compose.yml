@@ -30,8 +30,14 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
-    ports:
-      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    cpus: "${DATABASE_CPUS:-1.0}"
+    mem_limit: ${DATABASE_MEMORY_LIMIT:-1g}
+    pids_limit: ${DATABASE_PIDS_LIMIT:-200}
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "${DATABASE_LOG_MAX_SIZE:-10m}"
+        max-file: "${DATABASE_LOG_MAX_FILES:-3}"
 
   # ----------------------------------------------------------------------------
   # 2. SERVER CONTAINER (Unified Backend for All Modules)
@@ -49,23 +55,40 @@ services:
       - .env
     environment:
       NODE_ENV: production
-      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-ffp_tool}:${POSTGRES_PASSWORD}@database:5432/${POSTGRES_DB:-ffp_tool}
+      DATABASE_URL: ${DATABASE_URL:-postgresql://${POSTGRES_USER:-ffp_tool}:${POSTGRES_PASSWORD}@database:5432/${POSTGRES_DB:-ffp_tool}}
+      AUTO_SEO_DATABASE_URL: ${AUTO_SEO_DATABASE_URL:-postgresql://${POSTGRES_USER:-ffp_tool}:${POSTGRES_PASSWORD}@database:5432/${POSTGRES_DB:-ffp_tool}}
       AMAZON_COORDINATOR_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-ffp_tool}:${POSTGRES_PASSWORD}@database:5432/${POSTGRES_DB:-ffp_tool}
       GATEWAY_HOST: 0.0.0.0
       GATEWAY_PORT: 3001
       COORDINATOR_PORT: 8766
+      PINTEREST_POD_HOST: 0.0.0.0
+      PINTEREST_POD_PORT: 8768
+      PINTEREST_COORDINATOR_URL: http://127.0.0.1:8766
+      PINTEREST_RUNTIME_ROOT: /app/.runtime/pinterest-pod
+      TREND_PRODUCT_OUTPUT: /app/.runtime/pinterest-pod/output
+      PINTEREST_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-ffp_tool}:${POSTGRES_PASSWORD}@database:5432/${POSTGRES_DB:-ffp_tool}
+      PINTEREST_APP_ID: ${PINTEREST_APP_ID:-}
+      PINTEREST_APP_SECRET: ${PINTEREST_APP_SECRET:-}
+      PINTEREST_REDIRECT_URI: ${PINTEREST_REDIRECT_URI:-http://localhost:3010/api/pinterest-pod/oauth/callback}
+      PINTEREST_OAUTH_STATE_SECRET: ${PINTEREST_OAUTH_STATE_SECRET:-}
+      PINTEREST_SCOPES: ${PINTEREST_SCOPES:-user_accounts:read,boards:read,pins:read,ads:read}
     volumes:
       - ffp_data:/app/.local-data
       - ffp_runtime:/app/.runtime
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://127.0.0.1:3001/health"]
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:3001/health >/dev/null && curl -fsS http://127.0.0.1:8766/api/v1/health >/dev/null && curl -fsS http://127.0.0.1:8768/ready >/dev/null"]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 15s
-    ports:
-      - "127.0.0.1:${GATEWAY_PORT:-3001}:3001"
-      - "127.0.0.1:${COORDINATOR_PORT:-8766}:8766"
+    cpus: "${SERVER_CPUS:-2.0}"
+    mem_limit: ${SERVER_MEMORY_LIMIT:-3g}
+    pids_limit: ${SERVER_PIDS_LIMIT:-512}
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "${SERVER_LOG_MAX_SIZE:-10m}"
+        max-file: "${SERVER_LOG_MAX_FILES:-3}"
 
   # ----------------------------------------------------------------------------
   # 3. CLIENT CONTAINER (Frontend Web Client & Nginx Proxy)
@@ -74,18 +97,28 @@ services:
     build:
       context: .
       dockerfile: deploy/client/Dockerfile
+      args:
+        VITE_AGENT_INSTALL_URL: ${VITE_AGENT_INSTALL_URL:-https://ffp.b6-team.site}
     container_name: ffp-client
     restart: unless-stopped
     depends_on:
       server:
         condition: service_healthy
     ports:
-      - "${CLIENT_PORT:-3010}:80"
+      - "${CLIENT_BIND_ADDRESS:-0.0.0.0}:${CLIENT_PORT:-3010}:80"
     healthcheck:
       test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1/ || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 3
+    cpus: "${CLIENT_CPUS:-0.5}"
+    mem_limit: ${CLIENT_MEMORY_LIMIT:-256m}
+    pids_limit: ${CLIENT_PIDS_LIMIT:-100}
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "${CLIENT_LOG_MAX_SIZE:-10m}"
+        max-file: "${CLIENT_LOG_MAX_FILES:-3}"
 
 volumes:
   ffp_postgres_data:

@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 from threading import Lock
 from typing import Any
 
-from sqlalchemy import delete, func, select, text
+from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.dialects.postgresql import insert as postgres_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import selectinload
@@ -627,12 +627,26 @@ class CoordinatorStore(CoordinatorObservability):
             _as_utc(job.created_at) + timedelta(seconds=float(job.settings.get("jobTimeoutSeconds", 21600))),
         )
 
+    def _task_lease_duration(self, session, task: CrawlTask) -> int:
+        job = session.get(CrawlJob, task.job_id) if task.job_id else None
+        if job and (job.settings or {}).get("channel") == "pinterest":
+            return max(LEASE_SECONDS, 300)
+        return LEASE_SECONDS
+
     def _renew_lease(self, session, task: CrawlTask, now: datetime) -> datetime:
         deadline = self._task_deadline(session, task)
-        renewed = now + timedelta(seconds=LEASE_SECONDS)
+        lease_seconds = self._task_lease_duration(session, task)
+        renewed = now + timedelta(seconds=lease_seconds)
         return min(renewed, deadline) if deadline else renewed
 
-    def heartbeat(self, client_id: str, running: list[dict[str, Any]], status: str = "online", telemetry: Any = None) -> list[str]:
+    def heartbeat(
+        self,
+        client_id: str,
+        running: list[dict[str, Any]],
+        status: str = "online",
+        telemetry: Any = None,
+        capabilities: Any = None,
+    ) -> list[str]:
         now = utc_now()
         cancelled_job_ids: set[str] = set()
         active_leases = {
@@ -648,6 +662,13 @@ class CoordinatorStore(CoordinatorObservability):
             client.last_seen_at = now
             if telemetry is not None:
                 client.capabilities = {**client.capabilities, "observability": bounded_agent_telemetry(telemetry)}
+            if isinstance(capabilities, dict):
+                live_capabilities = {
+                    key: bool(capabilities.get(key))
+                    for key in ("amazon", "pinterest", "pinterestBrowserLoggedIn")
+                    if key in capabilities
+                }
+                client.capabilities = {**client.capabilities, **live_capabilities}
             for active in running:
                 task_id = str(active.get("taskId") or "")
                 lease_id = str(active.get("leaseId") or "")
@@ -753,7 +774,9 @@ class CoordinatorStore(CoordinatorObservability):
                 .outerjoin(CrawlJobControl, CrawlJobControl.job_id == CrawlJob.id)
                 .where(CrawlTask.status == "queued", CrawlJob.status.in_(["queued", "running"]))
                 .order_by(func.coalesce(CrawlJobControl.priority, 0).desc(), CrawlJob.created_at, CrawlTask.ordinal)
-                .with_for_update(skip_locked=True)
+                # PostgreSQL rejects FOR UPDATE across the nullable side of the
+                # priority LEFT JOIN. Only CrawlTask rows are lease-owned.
+                .with_for_update(of=CrawlTask, skip_locked=True)
             ).all()
             for task in tasks:
                 job = session.get(CrawlJob, task.job_id)
@@ -796,7 +819,8 @@ class CoordinatorStore(CoordinatorObservability):
                 task.lease_id = lease_id
                 job_deadline = _as_utc(job.created_at) + timedelta(seconds=float(job.settings.get("jobTimeoutSeconds", 21600)))
                 asin_deadline = now + timedelta(seconds=float(job.settings.get("asinTimeoutSeconds", 1800)))
-                task.lease_expires_at = min(now + timedelta(seconds=LEASE_SECONDS), job_deadline, asin_deadline)
+                lease_seconds = self._task_lease_duration(session, task)
+                task.lease_expires_at = min(now + timedelta(seconds=lease_seconds), job_deadline, asin_deadline)
                 task.started_at = task.started_at or now
                 ordinal = int(session.scalar(select(func.count(TaskAttempt.id)).where(TaskAttempt.task_id == task.id)) or 0) + 1
                 attempt = TaskAttempt(
@@ -967,7 +991,13 @@ class CoordinatorStore(CoordinatorObservability):
             task.lease_expires_at = None
             attempt.status = "completed"
             attempt.finished_at = utc_now()
-            self._event(session, task.job_id, "task_completed", {"taskId": task.id, "clientId": client_id})
+            completion_event: dict[str, Any] = {"taskId": task.id, "clientId": client_id}
+            if str((job.settings if job else {}).get("channel") or "").lower() == "pinterest":
+                candidate_count = len(payload.get("candidates")) if isinstance(payload.get("candidates"), list) else 0
+                completion_event["message"] = (
+                    f"Agent đã gửi thành công {candidate_count} candidate về server."
+                )
+            self._event(session, task.job_id, "task_completed", completion_event)
             self._refresh_job(session, task.job_id)
             return {"status": "accepted", "taskId": task.id}
 
@@ -2449,11 +2479,15 @@ class CoordinatorStore(CoordinatorObservability):
                     continue
                 if (
                     task.job_id == job_id
-                    and task.assigned_client_id == client_id
-                    and task.lease_id == lease_id
-                    and task.status in {"leased", "running"}
+                    and (
+                        (task.assigned_client_id == client_id and task.lease_id == lease_id and task.status in {"leased", "running"})
+                        or (task.status == "queued" and (task.assigned_client_id is None or task.assigned_client_id == client_id))
+                    )
                 ):
-                    task.lease_expires_at = now + timedelta(seconds=LEASE_SECONDS)
+                    task.assigned_client_id = client_id
+                    task.lease_id = lease_id
+                    task.status = "running"
+                    task.lease_expires_at = self._renew_lease(session, task, now)
                     resume.append(task_id)
                     continue
                 discard.append(task_id)
@@ -2709,6 +2743,29 @@ class CoordinatorStore(CoordinatorObservability):
                 .group_by(CrawlTask.assigned_client_id)
             ).all())
             return [self._client_snapshot(client, active_tasks=int(active_counts.get(client.id, 0))) for client in clients]
+
+    def forget_client(self, client_id: str) -> str:
+        """Remove an offline Agent registration while preserving historical task records."""
+        with self.sessions() as session:
+            client = session.get(ClientRecord, client_id)
+            if client is None:
+                return "not_found"
+            active_task_count = session.scalar(
+                select(func.count(CrawlTask.id)).where(
+                    CrawlTask.assigned_client_id == client_id,
+                    CrawlTask.status.not_in(TERMINAL_TASK_STATUSES),
+                )
+            ) or 0
+            if active_task_count > 0:
+                return "active_tasks"
+            session.execute(
+                update(CrawlTask)
+                .where(CrawlTask.assigned_client_id == client_id)
+                .values(assigned_client_id=None)
+            )
+            session.delete(client)
+            session.commit()
+            return "forgotten"
 
     @staticmethod
     def _product_pipeline_snapshot(item: CrawlProductItem) -> dict[str, Any]:
@@ -3177,6 +3234,12 @@ class CoordinatorStore(CoordinatorObservability):
             deliverables: dict[str, Any] = {}
             summary_metrics: dict[str, Any] = {}
             logs: list[str] = []
+            task_error = next((
+                str(task.last_error.get("message") or "").strip()
+                for task in tasks
+                if task.status == "failed" and isinstance(task.last_error, dict)
+                and str(task.last_error.get("message") or "").strip()
+            ), "")
             for task in tasks:
                 if task.result and isinstance(task.result.payload, dict):
                     res_cands = task.result.payload.get("candidates")
@@ -3217,6 +3280,7 @@ class CoordinatorStore(CoordinatorObservability):
                 "summaryMetrics": summary_metrics,
                 "summary_metrics": summary_metrics,
                 "logs": logs,
+                "error": task_error or None,
             })
             if job.status == "queued":
                 snapshot["stepper"] = {"current_step": 1, "percent": 10, "current_message": "Đang xếp hàng chờ Agent kết nối..."}
@@ -3228,5 +3292,9 @@ class CoordinatorStore(CoordinatorObservability):
             elif job.status == "completed":
                 snapshot["stepper"] = {"current_step": 4, "percent": 100, "current_message": "Hoàn thành! Đã tạo đầy đủ mockup AI & file in CMYK xưởng."}
             elif job.status == "failed":
-                snapshot["stepper"] = {"current_step": 1, "percent": 0, "current_message": "Tác vụ thất bại."}
+                snapshot["stepper"] = {
+                    "current_step": 1,
+                    "percent": 0,
+                    "current_message": task_error or "Tác vụ thất bại.",
+                }
         return snapshot

@@ -593,27 +593,36 @@ class PlaywrightPool:
         route_indices = self.direct_profile_indices if route == "direct" else self.proxy_profile_indices
         if not route_indices:
             raise RuntimeError(f"No {route} browser profiles are configured.")
-        if route == "direct":
-            self._queued_direct += 1
-        else:
-            self._queued_proxy += 1
-        self._emit_activity(url)
+        queued = False
         index: int | None = None
         try:
             slot_count = len(route_indices) * self.tabs_per_profile
             for _ in range(slot_count):
-                candidate = await await_stage(queue.get(), "browser_slot", self.navigation_timeout)
+                try:
+                    candidate = queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    if not queued:
+                        if route == "direct":
+                            self._queued_direct += 1
+                        else:
+                            self._queued_proxy += 1
+                        queued = True
+                        self._emit_activity(url)
+                    candidate = await await_stage(queue.get(), "browser_slot", self.navigation_timeout)
                 if self._blocked_until.get(candidate, 0) <= time.monotonic():
                     index = candidate
                     break
                 queue.put_nowait(candidate)
             if index is None:
                 raise RuntimeError(f"All {route} browser profiles are temporarily cooling down.")
+            if queued:
+                if route == "direct":
+                    self._queued_direct -= 1
+                else:
+                    self._queued_proxy -= 1
             if route == "direct":
-                self._queued_direct -= 1
                 self._active_direct += 1
             else:
-                self._queued_proxy -= 1
                 self._active_proxy += 1
             self._emit_activity(url, index)
             with transport_context(profile=self.proxy_assignments[index].name, route=route), observe_attempt(
@@ -629,10 +638,11 @@ class PlaywrightPool:
             raise
         finally:
             if index is None:
-                if route == "direct":
-                    self._queued_direct = max(0, self._queued_direct - 1)
-                else:
-                    self._queued_proxy = max(0, self._queued_proxy - 1)
+                if queued:
+                    if route == "direct":
+                        self._queued_direct = max(0, self._queued_direct - 1)
+                    else:
+                        self._queued_proxy = max(0, self._queued_proxy - 1)
             else:
                 if route == "direct":
                     self._active_direct = max(0, self._active_direct - 1)

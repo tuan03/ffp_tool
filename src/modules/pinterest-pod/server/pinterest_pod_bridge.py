@@ -1,6 +1,6 @@
 """Pinterest POD Studio - Bridge & Shopify Integration Module.
 
-Self-contained, in-process local pipeline for Pinterest POD creation,
+Provides the control-plane bridge and the local execution helpers used by distributed agents,
 tracks generation jobs, caches deliverables (lifestyle mockups & 300DPI CMYK print files),
 and transforms outputs into complete Shopify-ready products (Rug & Blanket)
 with size variants, pricing, and print CMYK metafields.
@@ -12,6 +12,8 @@ import base64
 import concurrent.futures
 import copy
 import dataclasses
+import hashlib
+import hmac
 import json
 import mimetypes
 import os
@@ -29,7 +31,18 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable
 
+from job_repository import get_job_repository
+
 logger = logging.getLogger("pinterest_pod_bridge")
+
+
+class PinterestTrendDiscoveryError(RuntimeError):
+    """A safe, structured failure from official Pinterest Trends discovery."""
+
+    def __init__(self, message: str, code: str, status_code: int):
+        super().__init__(message)
+        self.code = code
+        self.status_code = status_code
 
 # Paths
 ROOT = Path(__file__).resolve().parent
@@ -39,15 +52,29 @@ try:
 except ImportError:
     pass
 
-TEMP_DIR = ROOT / "temp" / "pinterest_pod"
+_runtime_root_value = os.getenv("PINTEREST_RUNTIME_ROOT")
+RUNTIME_ROOT = Path(_runtime_root_value).resolve() if _runtime_root_value else (ROOT / "temp" / "pinterest_pod").resolve()
+TEMP_DIR = RUNTIME_ROOT / "jobs"
 _env_out = os.getenv("TREND_PRODUCT_OUTPUT")
 if _env_out:
     _p = Path(_env_out)
     LOCAL_OUTPUT_DIR = (_p if _p.is_absolute() else (ROOT / _p)).resolve()
 else:
-    LOCAL_OUTPUT_DIR = (ROOT / "data" / "pinterest_pod" / "output").resolve()
+    LOCAL_OUTPUT_DIR = (RUNTIME_ROOT / "output").resolve()
 LOCAL_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-STANDALONE_OUTPUT_DIR = (ROOT / "output").resolve()
+STANDALONE_OUTPUT_DIR = LOCAL_OUTPUT_DIR
+TOKEN_DIR = RUNTIME_ROOT / "auth"
+PRIMARY_TOKEN_FILE = TOKEN_DIR / "pinterest_oauth_tokens.json"
+
+
+def _resolve_oauth_token_file() -> Path:
+    """Return the durable token file, with legacy source paths as read-only fallbacks."""
+    candidates = (
+        PRIMARY_TOKEN_FILE,
+        ROOT / "pinterest" / ".pinterest_oauth_tokens.json",
+        ROOT / ".pinterest_oauth_tokens.json",
+    )
+    return next((candidate for candidate in candidates if candidate.is_file()), PRIMARY_TOKEN_FILE).resolve()
 
 
 def resolve_run_dir(run_id: str) -> Path | None:
@@ -78,6 +105,46 @@ def resolve_run_dir(run_id: str) -> Path | None:
             for child in r.iterdir():
                 if child.is_dir() and (child.name == safe_id or safe_id in child.name):
                     return child
+        except Exception:
+            pass
+    return None
+
+
+def find_run_dir_for_candidate_ids(candidate_ids: set[str]) -> Path | None:
+    """Find a past run directory containing candidate_review.json or image files matching candidate_ids."""
+    if not candidate_ids:
+        return None
+    candidate_roots = [
+        LOCAL_OUTPUT_DIR,
+        STANDALONE_OUTPUT_DIR,
+        ROOT / "output",
+        TEMP_DIR,
+    ]
+    for root_dir in candidate_roots:
+        if not root_dir or not root_dir.exists():
+            continue
+        try:
+            run_dirs = [p for p in root_dir.iterdir() if p.is_dir() and p.name.startswith("run_")]
+            run_dirs.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+            for r_dir in run_dirs[:20]:
+                cr_file = r_dir / "candidate_review.json"
+                if cr_file.exists():
+                    try:
+                        cr_cands = json.loads(cr_file.read_text(encoding="utf-8")).get("candidates", [])
+                        for c in cr_cands:
+                            if isinstance(c, dict):
+                                for k in ("image_id", "id", "candidate_id"):
+                                    v = c.get(k)
+                                    if v and str(v).strip() in candidate_ids:
+                                        return r_dir
+                    except Exception:
+                        pass
+                dl_dir = r_dir / "task5_crawl" / "downloaded_images"
+                if dl_dir.is_dir():
+                    for cid in candidate_ids:
+                        for ext in (".jpg", ".png", ".jpeg", ".webp"):
+                            if (dl_dir / f"{cid}{ext}").is_file():
+                                return r_dir
         except Exception:
             pass
     return None
@@ -410,11 +477,16 @@ def manifest_path_for_job(job_id: str) -> Path:
 
 
 def load_job_manifest(job_id: str) -> dict[str, Any] | None:
+    persisted = get_job_repository().load(job_id)
+    if persisted is not None:
+        return persisted
     path = manifest_path_for_job(job_id)
     if not path.exists():
         return None
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8"))
+        get_job_repository().save(job_id, data)
+        return data
     except Exception:
         return None
 
@@ -422,14 +494,17 @@ def load_job_manifest(job_id: str) -> dict[str, Any] | None:
 def save_job_manifest(job_id: str, data: dict[str, Any]) -> None:
     path = manifest_path_for_job(job_id)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    temporary_path = path.with_suffix(".tmp")
+    temporary_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    temporary_path.replace(path)
+    get_job_repository().save(job_id, data)
 
 
 # ---------------------------------------------------------------------------
 # Standalone Service HTTP Helpers
 # ---------------------------------------------------------------------------
 
-def http_get_json(url: str, timeout: float = 10.0) -> dict[str, Any]:
+def http_get_json(url: str, timeout: float = 10.0) -> Any:
     req = urllib.request.Request(url, headers={"Accept": "application/json", "User-Agent": "ShopifyToolBridge/1.0"})
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         body = resp.read().decode("utf-8")
@@ -447,7 +522,7 @@ def http_post_json(url: str, data: dict[str, Any], timeout: float = 30.0) -> tup
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             body = resp.read().decode("utf-8")
-            return resp.status, json.loads(body)
+            return resp.status, json.loads(body) if body else {}
     except urllib.error.HTTPError as exc:
         body = exc.read().decode("utf-8") if exc.fp else "{}"
         try:
@@ -466,7 +541,7 @@ def http_delete_json(url: str, timeout: float = 10.0) -> tuple[int, dict[str, An
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             body = resp.read().decode("utf-8")
-            return resp.status, json.loads(body)
+            return resp.status, json.loads(body) if body else {}
     except urllib.error.HTTPError as exc:
         body = exc.read().decode("utf-8") if exc.fp else "{}"
         try:
@@ -474,6 +549,51 @@ def http_delete_json(url: str, timeout: float = 10.0) -> tuple[int, dict[str, An
         except Exception:
             parsed = {"error": body}
         return exc.code, parsed
+
+
+def pinterest_coordinator_url() -> str:
+    return str(os.getenv("PINTEREST_COORDINATOR_URL") or "http://127.0.0.1:8766").rstrip("/")
+
+
+def check_pinterest_coordinator_ready() -> bool:
+    try:
+        response = http_get_json(f"{pinterest_coordinator_url()}/api/v1/health", timeout=2.0)
+    except Exception:
+        return False
+    return isinstance(response, dict) and response.get("status") == "ok"
+
+
+def submit_distributed_pinterest_job(payload: dict[str, Any]) -> dict[str, Any]:
+    status, response = http_post_json(
+        f"{pinterest_coordinator_url()}/api/v1/pinterest-jobs",
+        payload,
+        timeout=30.0,
+    )
+    if status not in {200, 201, 202}:
+        message = response.get("detail") or response.get("message") or response.get("error") or "Coordinator rejected Pinterest job."
+        raise RuntimeError(str(message))
+    return response
+
+
+def load_distributed_pinterest_job(job_id: str) -> dict[str, Any] | None:
+    safe_id = re.sub(r"[^a-zA-Z0-9_-]", "", str(job_id or "").strip())
+    if not safe_id:
+        return None
+    try:
+        response = http_get_json(
+            f"{pinterest_coordinator_url()}/api/v1/crawl-jobs/{safe_id}",
+            timeout=10.0,
+        )
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            return None
+        raise
+    if not isinstance(response, dict):
+        raise RuntimeError("Coordinator returned an invalid Pinterest job response.")
+    settings = response.get("settings")
+    if not isinstance(settings, dict) or settings.get("channel") != "pinterest":
+        return None
+    return response
 
 
 # ---------------------------------------------------------------------------
@@ -484,12 +604,12 @@ _LOGIN_PROCESS: Any = None
 
 
 def check_service_health(api_url: str = "") -> dict[str, Any]:
-    """Check POD Studio local engine status (self-contained in-process pipeline)."""
+    """Check the Pinterest POD control plane and distributed execution target."""
     return {
         "online": True,
-        "mode": "local",
-        "engine": "POD Studio: Sẵn sàng (Local Engine)",
-        "url": api_url or "local",
+        "mode": "distributed",
+        "engine": "POD Studio: Sẵn sàng phân phối tới Crawler Agent",
+        "url": api_url or pinterest_coordinator_url(),
         "error": None,
     }
 
@@ -606,15 +726,8 @@ def check_oauth_token_valid(token_file: Path | None = None) -> tuple[bool, dict[
     if token_file is not None:
         t_file = token_file if (token_file.exists() and token_file.is_file()) else None
     else:
-        candidates = [
-            ROOT / "pinterest" / ".pinterest_oauth_tokens.json",
-            ROOT / ".pinterest_oauth_tokens.json",
-        ]
-        t_file = None
-        for cand in candidates:
-            if cand.exists() and cand.is_file():
-                t_file = cand
-                break
+        resolved_token_file = _resolve_oauth_token_file()
+        t_file = resolved_token_file if resolved_token_file.is_file() else None
 
     # If no file exists, check fallback environment variable
     env_token = str(os.getenv("PINTEREST_ACCESS_TOKEN") or "").strip()
@@ -649,16 +762,26 @@ def check_oauth_token_valid(token_file: Path | None = None) -> tuple[bool, dict[
 
 def generate_pinterest_oauth_url(redirect_uri: str | None = None) -> dict[str, Any]:
     """Generate official Pinterest OAuth authorization URL."""
-    app_id = str(os.getenv("PINTEREST_APP_ID") or "1595071").strip()
+    app_id = str(os.getenv("PINTEREST_APP_ID") or "").strip()
     r_uri = str(redirect_uri or os.getenv("PINTEREST_REDIRECT_URI") or "http://localhost:8768/api/pinterest-pod/oauth/callback").strip()
     scopes = str(os.getenv("PINTEREST_SCOPES") or "user_accounts:read,boards:read,pins:read,ads:read").strip()
+
+    issued_at = int(time.time())
+    state_payload = f"ffp_pod_{issued_at}"
+    if not app_id:
+        raise ValueError("PINTEREST_APP_ID chưa được cấu hình.")
+    state_secret = str(os.getenv("PINTEREST_OAUTH_STATE_SECRET") or os.getenv("PINTEREST_APP_SECRET") or "").strip()
+    if not state_secret:
+        raise ValueError("PINTEREST_OAUTH_STATE_SECRET hoặc PINTEREST_APP_SECRET chưa được cấu hình.")
+    state_signature = hmac.new(state_secret.encode("utf-8"), state_payload.encode("utf-8"), hashlib.sha256).hexdigest()
+    state = f"{state_payload}.{state_signature}"
 
     query = urllib.parse.urlencode({
         "consumer_id": app_id,
         "redirect_uri": r_uri,
         "response_type": "code",
         "scope": scopes,
-        "state": f"ffp_pod_{int(time.time())}",
+        "state": state,
     })
     auth_url = f"https://www.pinterest.com/oauth/?{query}"
     return {
@@ -668,6 +791,27 @@ def generate_pinterest_oauth_url(redirect_uri: str | None = None) -> dict[str, A
         "redirect_uri": r_uri,
         "scopes": scopes,
     }
+
+
+def validate_pinterest_oauth_state(state: str, maximum_age_seconds: int = 600) -> bool:
+    """Validate the signed, short-lived OAuth state returned by Pinterest."""
+    try:
+        payload, supplied_signature = str(state or "").rsplit(".", 1)
+        prefix, timestamp_value = payload.rsplit("_", 1)
+        if prefix != "ffp_pod":
+            return False
+        issued_at = int(timestamp_value)
+        if issued_at > int(time.time()) + 30 or int(time.time()) - issued_at > maximum_age_seconds:
+            return False
+        state_secret = str(os.getenv("PINTEREST_OAUTH_STATE_SECRET") or os.getenv("PINTEREST_APP_SECRET") or "").strip()
+        if not state_secret:
+            return False
+        expected_signature = hmac.new(
+            state_secret.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256
+        ).hexdigest()
+        return hmac.compare_digest(supplied_signature, expected_signature)
+    except (TypeError, ValueError):
+        return False
 
 
 def extract_oauth_code_from_string(value: str) -> str:
@@ -694,7 +838,7 @@ def exchange_pinterest_oauth_code(code_or_url: str, redirect_uri: str | None = N
     if not code:
         raise ValueError("Mã code authorization không hợp lệ hoặc bị trống.")
 
-    app_id = str(os.getenv("PINTEREST_APP_ID") or "1595071").strip()
+    app_id = str(os.getenv("PINTEREST_APP_ID") or "").strip()
     app_secret = str(os.getenv("PINTEREST_APP_SECRET") or "").strip()
     r_uri = str(redirect_uri or os.getenv("PINTEREST_REDIRECT_URI") or "http://localhost:8768/api/pinterest-pod/oauth/callback").strip()
 
@@ -745,15 +889,9 @@ def exchange_pinterest_oauth_code(code_or_url: str, redirect_uri: str | None = N
         payload["refresh_token_expires_at"] = now + float(payload["refresh_token_expires_in"])
 
     # Save to primary token file
-    target_file = (ROOT / "pinterest" / ".pinterest_oauth_tokens.json").resolve()
+    target_file = PRIMARY_TOKEN_FILE
     target_file.parent.mkdir(parents=True, exist_ok=True)
     target_file.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-
-    # Also save to root token file for maximum compatibility
-    try:
-        (ROOT / ".pinterest_oauth_tokens.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    except Exception:
-        pass
 
     logger.info("Đã lưu Pinterest OAuth token vào: %s", target_file)
     return {
@@ -803,14 +941,9 @@ def save_manual_pinterest_token(access_token: str, refresh_token: str = "", scop
     if refresh_token.strip():
         payload["refresh_token"] = refresh_token.strip()
 
-    target_file = (ROOT / "pinterest" / ".pinterest_oauth_tokens.json").resolve()
+    target_file = PRIMARY_TOKEN_FILE
     target_file.parent.mkdir(parents=True, exist_ok=True)
     target_file.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-
-    try:
-        (ROOT / ".pinterest_oauth_tokens.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    except Exception:
-        pass
 
     logger.info("Đã lưu token thủ công cho tài khoản @%s", username)
     return {
@@ -850,23 +983,26 @@ def is_browser_login_process_running() -> bool:
 def get_pinterest_auth_status() -> dict[str, Any]:
     """Inspect browser profile and OAuth token status for Pinterest POD Studio."""
     profile_dir = resolve_browser_profile_dir()
-    token_file = (ROOT / "pinterest" / ".pinterest_oauth_tokens.json").resolve()
-    root_token_file = (ROOT / ".pinterest_oauth_tokens.json").resolve()
 
     browser_logged_in = check_browser_profile_logged_in(profile_dir)
-    oauth_valid, token_data = check_oauth_token_valid(token_file)
+    oauth_valid, token_data = check_oauth_token_valid()
     is_fully_logged_in = bool(browser_logged_in and oauth_valid)
 
     if is_fully_logged_in:
-        status_text = "Pinterest: Đã kết nối đầy đủ (API & Crawler)"
+        status_text = "Pinterest: Đã lưu API token và phiên crawler"
     elif oauth_valid:
-        status_text = "Pinterest: API OK (Chưa đăng nhập trình duyệt cào)"
+        status_text = "Pinterest: Đã lưu API token (quyền Trends được kiểm tra khi quét)"
     elif browser_logged_in:
         status_text = "Pinterest: Cần kết nối API Token để quét Trend"
     else:
         status_text = "Pinterest: Chưa kết nối"
 
-    oauth_info = generate_pinterest_oauth_url()
+    oauth_info: dict[str, Any] = {}
+    oauth_config_error: str | None = None
+    try:
+        oauth_info = generate_pinterest_oauth_url()
+    except ValueError as exc:
+        oauth_config_error = str(exc)
 
     return {
         "ok": True,
@@ -877,10 +1013,12 @@ def get_pinterest_auth_status() -> dict[str, Any]:
         "status_text": status_text,
         "profile_dir": str(profile_dir),
         "profile_exists": profile_dir.exists(),
-        "oauth_file_exists": token_file.exists() or root_token_file.exists() or bool(os.getenv("PINTEREST_ACCESS_TOKEN")),
+        "oauth_file_exists": PRIMARY_TOKEN_FILE.exists() or bool(os.getenv("PINTEREST_ACCESS_TOKEN")),
         "auth_url": oauth_info.get("auth_url"),
         "redirect_uri": oauth_info.get("redirect_uri"),
         "app_id_configured": bool(os.getenv("PINTEREST_APP_ID")),
+        "oauth_configured": oauth_config_error is None,
+        "oauth_config_error": oauth_config_error,
         "token_info": {
             "has_access_token": bool(token_data.get("access_token")),
             "has_refresh_token": bool(token_data.get("refresh_token")),
@@ -1475,6 +1613,16 @@ def get_cached_asset_file(job_id: str, filename: str) -> tuple[Path, str]:
                 if found_source:
                     break
 
+        # If not found yet, also check other job/run subdirectories in TEMP_DIR
+        if not found_source and TEMP_DIR.exists():
+            for other_dir in sorted(TEMP_DIR.iterdir(), key=lambda p: p.stat().st_mtime if p.is_dir() else 0, reverse=True)[:30]:
+                if not other_dir.is_dir() or other_dir == job_dir:
+                    continue
+                cand = (other_dir / safe_filename).resolve()
+                if cand.exists() and cand.is_file():
+                    found_source = cand
+                    break
+
         if found_source:
             job_dir.mkdir(parents=True, exist_ok=True)
             shutil.copy2(found_source, file_path)
@@ -1676,6 +1824,9 @@ def _run_local_pipeline_worker(
     except (ValueError, TypeError):
         task5_max_images_per_query = max(20, task5_max_downloads // 6)
     custom_queries = tuple(str(q).strip() for q in (req_body.get("custom_queries") or []) if str(q).strip())
+    query_source = str(req_body.get("query_source") or "manual").strip().lower()
+    if query_source not in {"pinterest_api", "internal_suggestions", "manual"}:
+        query_source = "manual"
     default_max_trends = max(15, len(custom_queries)) if custom_queries else 15
     task5_max_crawl_trends = max(5, min(100, int(req_body.get("max_trends") or default_max_trends)))
 
@@ -1735,9 +1886,26 @@ def _run_local_pipeline_worker(
             except Exception:
                 pass
 
-    vision_status_note = "ĐÃ TẮT AI LỌC - hiển thị 100% ảnh thô cào về" if is_vision_disabled else "Bật AI lọc"
+    vision_status_note = (
+        "ĐÃ TẮT AI LỌC - hiển thị toàn bộ ảnh đọc được, chỉ gắn cảnh báo kỹ thuật"
+        if is_vision_disabled
+        else "Bật AI lọc"
+    )
+    with JOB_CACHE_LOCK:
+        job = ACTIVE_JOBS.setdefault(job_id, {})
+        job.setdefault("job_id", job_id)
+        job.setdefault("jobId", job_id)
+        job["status"] = "running"
+        job.setdefault("created_at", time.time())
+        job["request"] = req_body
+        job.setdefault("logs", []).append(
+            f"Bắt đầu pipeline trực tiếp (Stage: {stage}, Product: {product}, Niche: '{niche}', Vision: {vision_status_note})..."
+        )
+        save_job_manifest(job_id, job)
     log_progress(f"Bắt đầu pipeline trực tiếp (Stage: {stage}, Product: {product}, Niche: '{niche}', Vision: {vision_status_note})...")
+    log_progress(f"Nguồn truy vấn: {query_source}.")
 
+    target_run_dir: Path | None = None
     try:
         if cancel_event is not None and cancel_event.is_set():
             raise getattr(tt_pipe, "PipelineCancelled", RuntimeError)("Job đã được dừng bởi người dùng.")
@@ -1789,31 +1957,82 @@ def _run_local_pipeline_worker(
             src_run_id = req_body.get("source_run_id") or req_body.get("jobId") or req_body.get("job_id")
             src_dir = resolve_run_dir(src_run_id) if src_run_id else None
 
-            # Resolve candidate dictionaries from source run's candidate_review.json if strings/IDs were passed
-            if selected and src_dir and any(isinstance(c, str) for c in selected):
-                cr_file = src_dir / "candidate_review.json"
-                if cr_file.exists():
+            # Collect candidate IDs to help recover source run if src_dir is unresolved
+            candidate_ids: set[str] = set()
+            for c in selected:
+                if isinstance(c, str) and c.strip():
+                    candidate_ids.add(c.strip())
+                elif isinstance(c, dict):
+                    for k in ("image_id", "id", "candidate_id"):
+                        v = c.get(k)
+                        if v and str(v).strip():
+                            candidate_ids.add(str(v).strip())
+
+            if (not src_dir or not src_dir.exists()) and candidate_ids:
+                src_dir = find_run_dir_for_candidate_ids(candidate_ids)
+                if src_dir:
+                    log_progress(f"Tự động phục hồi thư mục quét gốc: {src_dir.name}")
+
+            # Resolve full candidate dictionaries from candidate_review.json or recent runs
+            needs_resolution = any(
+                isinstance(c, str)
+                or (isinstance(c, dict) and not (c.get("local_path") and Path(str(c.get("local_path"))).exists()))
+                for c in selected
+            )
+            if selected and (src_dir or candidate_ids) and needs_resolution:
+                c_map: dict[str, dict[str, Any]] = {}
+                if src_dir and (src_dir / "candidate_review.json").exists():
                     try:
-                        cr_cands = json.loads(cr_file.read_text(encoding="utf-8")).get("candidates", [])
-                        c_map: dict[str, dict[str, Any]] = {}
+                        cr_cands = json.loads((src_dir / "candidate_review.json").read_text(encoding="utf-8")).get("candidates", [])
                         for c in cr_cands:
                             if isinstance(c, dict):
                                 for k in ("image_id", "id", "candidate_id"):
                                     v = c.get(k)
                                     if v:
                                         c_map[str(v)] = c
-                        resolved_list: list[Any] = []
-                        for item in selected:
-                            if isinstance(item, str) and item.strip() in c_map:
-                                resolved_list.append(c_map[item.strip()])
-                            else:
-                                resolved_list.append(item)
-                        selected = resolved_list
                     except Exception:
                         pass
+                missing_ids = candidate_ids - set(c_map.keys())
+                if missing_ids:
+                    for root_dir in (output_root, LOCAL_OUTPUT_DIR, STANDALONE_OUTPUT_DIR, ROOT / "output"):
+                        if not root_dir or not root_dir.exists():
+                            continue
+                        try:
+                            for r_dir in sorted(root_dir.glob("run_*"), key=lambda p: p.stat().st_mtime, reverse=True)[:10]:
+                                cr_path = r_dir / "candidate_review.json"
+                                if cr_path.exists():
+                                    try:
+                                        for c in json.loads(cr_path.read_text(encoding="utf-8")).get("candidates", []):
+                                            if isinstance(c, dict):
+                                                for k in ("image_id", "id", "candidate_id"):
+                                                    v = c.get(k)
+                                                    if v and str(v) in missing_ids and str(v) not in c_map:
+                                                        c_map[str(v)] = c
+                                    except Exception:
+                                        pass
+                        except Exception:
+                            pass
+
+                resolved_list: list[Any] = []
+                for item in selected:
+                    if isinstance(item, str):
+                        cid = item.strip()
+                        resolved_item = copy.deepcopy(c_map.get(cid, {}))
+                        if not resolved_item:
+                            resolved_item = {"image_id": cid, "id": cid, "query": req_body.get("niche") or "rug"}
+                        resolved_list.append(resolved_item)
+                    elif isinstance(item, dict):
+                        item_copy = copy.deepcopy(item)
+                        cid = str(item_copy.get("image_id") or item_copy.get("id") or item_copy.get("candidate_id") or "").strip()
+                        if cid and cid in c_map:
+                            for k, v in c_map[cid].items():
+                                item_copy.setdefault(k, v)
+                        resolved_list.append(item_copy)
+                    else:
+                        resolved_list.append(item)
+                selected = resolved_list
 
             # Fork selected candidates to a dedicated, isolated run directory
-            target_run_dir = None
             if src_dir and hasattr(tt_pipe, "fork_selected_candidates_to_new_run"):
                 try:
                     forked_cands, target_run_dir = tt_pipe.fork_selected_candidates_to_new_run(
@@ -1828,7 +2047,14 @@ def _run_local_pipeline_worker(
                     log_progress(f"Cảnh báo: không thể fork thư mục riêng ({fork_err}), tiếp tục chạy trong {src_dir.name}")
                     target_run_dir = src_dir
             else:
-                target_run_dir = src_dir or output_root
+                target_run_dir = src_dir if (src_dir and src_dir.is_dir() and src_dir.name.startswith("run_")) else None
+
+            if target_run_dir:
+                with JOB_CACHE_LOCK:
+                    job = ACTIVE_JOBS.setdefault(job_id, {})
+                    job["run_id"] = target_run_dir.name
+                    job["runId"] = target_run_dir.name
+                    save_job_manifest(job_id, job)
 
             # Setup room template images
             raw_refs = req_body.get("reference_images") or []
@@ -1914,25 +2140,61 @@ def _run_local_pipeline_worker(
             or type(exc).__name__ in {"PipelineCancelled", "Task5ProcessCancelled"}
             or (cancel_event is not None and cancel_event.is_set())
         )
+        has_deliverables = False
+        loaded = None
         with JOB_CACHE_LOCK:
-            if job_id in ACTIVE_JOBS:
+            job = ACTIVE_JOBS.setdefault(job_id, {})
+            run_to_check = (target_run_dir.name if target_run_dir else None) or job.get("run_id") or job.get("runId") or src_run_id
+            if run_to_check:
+                loaded = load_standalone_run(run_to_check, base_url)
+            has_deliverables = bool(
+                loaded and (
+                    loaded.get("marketing_images")
+                    or loaded.get("lifestyle_mockups")
+                    or loaded.get("print_cmyk_images")
+                    or loaded.get("final_png_images")
+                )
+            )
+            if has_deliverables and loaded:
+                loaded["job_id"] = job_id
+                loaded["jobId"] = job_id
+                loaded["run_id"] = run_to_check
+                loaded["runId"] = run_to_check
+                loaded["source_run_id"] = src_run_id
+                loaded["sourceRunId"] = src_run_id
+                loaded["request"] = req_body
+                loaded["status"] = "completed"
+                loaded.setdefault("logs", []).extend(job.get("logs", []))
                 if is_cancelled:
-                    ACTIVE_JOBS[job_id]["status"] = "cancelled"
-                    ACTIVE_JOBS[job_id]["error"] = "Tiến trình đã được dừng bởi người dùng."
-                    ACTIVE_JOBS[job_id].setdefault("logs", []).append("Tiến trình đã dừng an toàn theo yêu cầu của người dùng.")
-                    save_job_manifest(job_id, ACTIVE_JOBS[job_id])
+                    loaded.setdefault("logs", []).append("Tiến trình dừng nhưng các thành phẩm mockup và file in đã tạo vẫn được bảo lưu đầy đủ.")
                 else:
-                    import traceback
-                    tb = traceback.format_exc()
-                    ACTIVE_JOBS[job_id]["status"] = "failed"
-                    ACTIVE_JOBS[job_id]["error"] = str(exc)
-                    ACTIVE_JOBS[job_id].setdefault("logs", []).append(f"LỖI: {exc}\n{tb}")
-                    save_job_manifest(job_id, ACTIVE_JOBS[job_id])
-                    if req_body.get("notify_enabled", True):
-                        send_windows_desktop_notification(
-                            "Pinterest POD Studio - Gặp lỗi",
-                            f"Job '{req_body.get('niche', 'POD')}' thất bại: {exc}"
-                        )
+                    loaded.setdefault("logs", []).append(f"Đã bảo lưu thành phẩm hoàn tất (Cảnh báo: {exc}).")
+                ACTIVE_JOBS[job_id] = loaded
+                save_job_manifest(job_id, loaded)
+                if req_body.get("notify_enabled", True):
+                    send_windows_desktop_notification(
+                        "Pinterest POD Studio - Hoàn tất",
+                        f"Đã bảo lưu thành phẩm hoàn tất: File in & Mockup AI cho '{req_body.get('niche', 'POD')}'. Mời bạn kiểm tra!"
+                    )
+            elif is_cancelled:
+                job["status"] = "cancelled"
+                job["error"] = "Tiến trình đã được dừng bởi người dùng."
+                job.setdefault("logs", []).append("Tiến trình đã dừng an toàn theo yêu cầu của người dùng.")
+                save_job_manifest(job_id, job)
+            else:
+                import traceback
+                tb = traceback.format_exc()
+                job["status"] = "failed"
+                job["error"] = str(exc)
+                job.setdefault("logs", []).append(f"LỖI: {exc}\n{tb}")
+                save_job_manifest(job_id, job)
+                if req_body.get("notify_enabled", True):
+                    send_windows_desktop_notification(
+                        "Pinterest POD Studio - Gặp lỗi",
+                        f"Job '{req_body.get('niche', 'POD')}' thất bại: {exc}"
+                    )
+        if not (has_deliverables and loaded):
+            raise
     finally:
         with JOB_CACHE_LOCK:
             JOB_CANCEL_EVENTS.pop(job_id, None)
@@ -1950,7 +2212,7 @@ def produce_pod_job(payload: dict[str, Any], base_url: str, api_url: str = DEFAU
     if not selected_candidates:
         raise ValueError("Vui lòng chọn ít nhất một ảnh ứng viên để sản xuất.")
 
-    status_info = ACTIVE_JOBS.get(source_job_id) or load_job_manifest(source_job_id) or {}
+    status_info = load_distributed_pinterest_job(source_job_id) or ACTIVE_JOBS.get(source_job_id) or load_job_manifest(source_job_id) or {}
     real_run_id = (
         payload.get("source_run_id")
         or status_info.get("run_id")
@@ -1959,6 +2221,22 @@ def produce_pod_job(payload: dict[str, Any], base_url: str, api_url: str = DEFAU
         or source_job_id
     )
     src_dir = resolve_run_dir(real_run_id) if real_run_id else None
+
+    # Collect candidate IDs to help recover source run if src_dir is unresolved
+    cand_ids: set[str] = set()
+    for c in selected_candidates:
+        if isinstance(c, str) and c.strip():
+            cand_ids.add(c.strip())
+        elif isinstance(c, dict):
+            for k in ("image_id", "id", "candidate_id"):
+                v = c.get(k)
+                if v and str(v).strip():
+                    cand_ids.add(str(v).strip())
+
+    if (not src_dir or not src_dir.exists()) and cand_ids:
+        src_dir = find_run_dir_for_candidate_ids(cand_ids)
+        if src_dir:
+            real_run_id = src_dir.name
 
     # Build candidate lookup dictionary from manifest and run folder
     cand_lookup: dict[str, dict[str, Any]] = {}
@@ -1987,6 +2265,28 @@ def produce_pod_job(payload: dict[str, Any], base_url: str, api_url: str = DEFAU
         except Exception:
             pass
 
+    # If some candidates are still not in cand_lookup, check recent runs
+    missing_ids = cand_ids - set(cand_lookup.keys())
+    if missing_ids:
+        for root_dir in (LOCAL_OUTPUT_DIR, STANDALONE_OUTPUT_DIR, ROOT / "output"):
+            if not root_dir.exists():
+                continue
+            try:
+                for r_dir in sorted(root_dir.glob("run_*"), key=lambda p: p.stat().st_mtime, reverse=True)[:10]:
+                    cr_f = r_dir / "candidate_review.json"
+                    if cr_f.exists():
+                        try:
+                            for c in json.loads(cr_f.read_text(encoding="utf-8")).get("candidates", []):
+                                if isinstance(c, dict):
+                                    for k in ("image_id", "id", "candidate_id"):
+                                        v = c.get(k)
+                                        if v and str(v) in missing_ids and str(v) not in cand_lookup:
+                                            cand_lookup[str(v)] = c
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+
     resolved_candidates: list[dict[str, Any]] = []
     for cand in selected_candidates:
         cand_dict: dict[str, Any] | None = None
@@ -2010,15 +2310,40 @@ def produce_pod_job(payload: dict[str, Any], base_url: str, api_url: str = DEFAU
                     cand_dict.setdefault(k, v)
 
         if cand_dict:
+            cid = str(cand_dict.get("image_id") or cand_dict.get("id") or cand_dict.get("candidate_id") or "").strip()
             # Ensure local_path exists on disk
             lp = cand_dict.get("local_path") or cand_dict.get("path") or cand_dict.get("image_path")
-            if (not lp or not Path(lp).exists()) and src_dir:
-                fname = Path(lp).name if lp else f"{cand_dict.get('image_id', '')}.jpg"
-                for sub in ("task5_crawl/downloaded_images", "dedupe/kept", "task5_crawl", ""):
-                    test_p = src_dir / sub / fname if sub else src_dir / fname
-                    if test_p.exists():
-                        cand_dict["local_path"] = str(test_p.resolve())
-                        break
+            if not lp or not Path(str(lp)).exists():
+                found_lp: str | None = None
+                fname = Path(str(lp)).name if lp else (f"{cid}.jpg" if cid else "")
+                # 1. Search in src_dir
+                if src_dir and fname:
+                    for sub in ("task5_crawl/downloaded_images", "dedupe/kept", "task5_crawl", ""):
+                        test_p = src_dir / sub / fname if sub else src_dir / fname
+                        if test_p.exists() and test_p.is_file():
+                            found_lp = str(test_p.resolve())
+                            break
+                # 2. Search in recent runs if not found in src_dir
+                if not found_lp and cid:
+                    for root_dir in (LOCAL_OUTPUT_DIR, STANDALONE_OUTPUT_DIR, ROOT / "output"):
+                        if not root_dir.exists():
+                            continue
+                        try:
+                            for r_dir in sorted(root_dir.glob("run_*"), key=lambda p: p.stat().st_mtime, reverse=True)[:10]:
+                                for sub in ("task5_crawl/downloaded_images", "dedupe/kept", "task5_crawl", ""):
+                                    for ext in (".jpg", ".png", ".jpeg", ".webp"):
+                                        test_p = r_dir / sub / f"{cid}{ext}" if sub else r_dir / f"{cid}{ext}"
+                                        if test_p.exists() and test_p.is_file():
+                                            found_lp = str(test_p.resolve())
+                                            break
+                                    if found_lp:
+                                        break
+                                if found_lp:
+                                    break
+                        except Exception:
+                            pass
+                if found_lp:
+                    cand_dict["local_path"] = found_lp
             resolved_candidates.append(cand_dict)
 
     selected_candidates = resolved_candidates
@@ -2079,43 +2404,9 @@ def produce_pod_job(payload: dict[str, Any], base_url: str, api_url: str = DEFAU
         req_body["width_px"] = print_spec["width_px"]
         req_body["height_px"] = print_spec["height_px"]
 
-    # Directly execute in-process local pipeline worker
-    target_job_id = str(payload.get("target_job_id") or payload.get("job_id") or "").strip()
-    local_job_id = target_job_id if target_job_id else f"job_prod_{uuid.uuid4().hex[:10]}"
-    cancel_event = threading.Event()
-    initial_state = {
-        "job_id": local_job_id,
-        "status": "running",
-        "created_at": time.time(),
-        "logs": [f"Bắt đầu sản xuất cho {len(selected_candidates)} mẫu ứng viên đã chọn..."],
-        "request": req_body,
-        "niche": niche or "Trend Design",
-        "product": product,
-    }
-    with JOB_CACHE_LOCK:
-        JOB_CANCEL_EVENTS[local_job_id] = cancel_event
-        ACTIVE_JOBS[local_job_id] = initial_state
-    save_job_manifest(local_job_id, initial_state)
-
-    worker = threading.Thread(
-        target=_run_local_pipeline_worker,
-        args=(local_job_id, req_body, base_url, cancel_event),
-        name=f"pod-local-prod-{local_job_id[:8]}",
-        daemon=True,
-    )
-    with JOB_CACHE_LOCK:
-        LOCAL_WORKER_THREADS[local_job_id] = worker
-    worker.start()
-
-    stepper = calculate_stepper_state(initial_state)
-    return {
-        "ok": True,
-        "jobId": local_job_id,
-        "job_id": local_job_id,
-        "status": "running",
-        "stepper": stepper,
-        "job": initial_state,
-    }
+    req_body["stage"] = "produce"
+    req_body["action"] = "produce"
+    return submit_distributed_pinterest_job(req_body)
 
 
 def create_pod_job(payload: dict[str, Any], base_url: str, api_url: str = DEFAULT_API_URL) -> dict[str, Any]:
@@ -2128,14 +2419,6 @@ def create_pod_job(payload: dict[str, Any], base_url: str, api_url: str = DEFAUL
     niche = str(payload.get("niche") or "").strip()
     if not niche:
         raise ValueError("Vui lòng nhập Pinterest niche hoặc từ khóa xu hướng.")
-
-    # Validate Pinterest API OAuth token before launching pipeline
-    oauth_valid, _ = check_oauth_token_valid()
-    if not oauth_valid and not os.getenv("MOCK_PINTEREST") and not os.getenv("CI"):
-        raise ValueError(
-            "Chưa kết nối tài khoản Pinterest API hoặc Access Token đã hết hạn. "
-            "Vui lòng bấm nút 'Kết nối Pinterest' trên thanh tiêu đề để xác thực hoặc dán token hợp lệ trước khi quét."
-        )
 
     raw_product = str(payload.get("product") or "").lower().strip()
     if raw_product in {"rug", "blanket", "bag", "custom"}:
@@ -2208,53 +2491,16 @@ def create_pod_job(payload: dict[str, Any], base_url: str, api_url: str = DEFAUL
         "task5_max_images_per_query": max(12, crawl_count // 4),
         "selected_clusters": payload.get("selected_clusters") or payload.get("selectedClusters") or [],
         "custom_queries": payload.get("custom_queries") or payload.get("customQueries") or [],
+        "query_source": payload.get("query_source") or payload.get("querySource") or "manual",
         "interest": payload.get("interest") or payload.get("interests") or "",
     }
     if product == "custom":
         req_body["width_px"] = print_spec["width_px"]
         req_body["height_px"] = print_spec["height_px"]
 
-    # Directly execute in-process local pipeline worker
-    local_job_id = f"job_{uuid.uuid4().hex[:10]}"
-    cancel_event = threading.Event()
-    initial_logs = [f"Khởi tạo job POD ({workflow_stage}): {niche} ({product})..."]
-    ref_count = len(req_body["reference_images"])
-    if ref_count > 0:
-        initial_logs.append(f"Đã nhận {ref_count} ảnh phòng tham chiếu cho khâu mockup.")
-    initial_state = {
-        "job_id": local_job_id,
-        "status": "running",
-        "created_at": time.time(),
-        "logs": initial_logs,
-        "request": req_body,
-        "niche": niche,
-        "product": product,
-    }
-    with JOB_CACHE_LOCK:
-        JOB_CANCEL_EVENTS[local_job_id] = cancel_event
-        ACTIVE_JOBS[local_job_id] = initial_state
-    save_job_manifest(local_job_id, initial_state)
-
-    worker = threading.Thread(
-        target=_run_local_pipeline_worker,
-        args=(local_job_id, req_body, base_url, cancel_event),
-        name=f"pod-local-{local_job_id[:8]}",
-        daemon=True,
-    )
-    with JOB_CACHE_LOCK:
-        LOCAL_WORKER_THREADS[local_job_id] = worker
-    worker.start()
-
-    stepper = calculate_stepper_state(initial_state)
-    return {
-        "ok": True,
-        "jobId": local_job_id,
-        "job_id": local_job_id,
-        "status": "running",
-        "stepper": stepper,
-        "logs": initial_logs,
-        "job": initial_state,
-    }
+    req_body["stage"] = "crawl_and_review"
+    req_body["action"] = "crawl_and_review"
+    return submit_distributed_pinterest_job(req_body)
 
 
 def load_standalone_run(run_id: str, base_url: str) -> dict[str, Any] | None:
@@ -2726,6 +2972,10 @@ def load_standalone_run(run_id: str, base_url: str) -> dict[str, Any] | None:
 
 def get_pod_job_status(job_id: str, base_url: str, api_url: str = DEFAULT_API_URL) -> dict[str, Any]:
     api_url = (api_url or DEFAULT_API_URL).rstrip("/")
+    distributed_job = load_distributed_pinterest_job(job_id)
+    if distributed_job is not None:
+        return distributed_job
+
     manifest = None
     with JOB_CACHE_LOCK:
         cached_job = copy.deepcopy(ACTIVE_JOBS.get(job_id))
@@ -3209,6 +3459,17 @@ def cancel_pod_job(job_id: str, api_url: str = DEFAULT_API_URL) -> dict[str, Any
     if not safe_id:
         return {"ok": False, "message": "Invalid job ID"}
 
+    status, response = http_post_json(
+        f"{pinterest_coordinator_url()}/api/v1/crawl-jobs/{safe_id}/cancel",
+        {},
+        timeout=10.0,
+    )
+    if status in {200, 202}:
+        return response
+    if status != 404:
+        message = response.get("detail") or response.get("message") or response.get("error") or "Coordinator could not cancel Pinterest job."
+        raise RuntimeError(str(message))
+
     with JOB_CACHE_LOCK:
         cancel_evt = JOB_CANCEL_EVENTS.get(safe_id)
         if cancel_evt:
@@ -3241,12 +3502,25 @@ def delete_pod_job(job_id: str) -> dict[str, Any]:
     if not safe_id:
         raise ValueError("Invalid job ID.")
 
+    coordinator_deleted = False
+    status, response = http_delete_json(
+        f"{pinterest_coordinator_url()}/api/v1/crawl-jobs/{safe_id}",
+        timeout=10.0,
+    )
+    if status == 204:
+        coordinator_deleted = True
+    elif status != 404:
+        message = response.get("detail") or response.get("message") or response.get("error") or "Coordinator could not delete Pinterest job."
+        raise RuntimeError(str(message))
+
     with JOB_CACHE_LOCK:
         cancel_evt = JOB_CANCEL_EVENTS.pop(safe_id, None)
         if cancel_evt:
             cancel_evt.set()
         job_data = ACTIVE_JOBS.pop(safe_id, None) or {}
         LOCAL_WORKER_THREADS.pop(safe_id, None)
+
+    get_job_repository().delete(safe_id)
 
     deleted_paths: list[str] = []
 
@@ -3289,13 +3563,55 @@ def delete_pod_job(job_id: str) -> dict[str, Any]:
             except Exception as err:
                 print(f"[Pinterest POD Bridge] Error removing run dir {r_dir}: {err}")
 
-    return {"ok": True, "jobId": safe_id, "deleted": len(deleted_paths) > 0, "deletedPaths": deleted_paths}
+    return {
+        "ok": True,
+        "jobId": safe_id,
+        "deleted": coordinator_deleted or len(deleted_paths) > 0,
+        "deletedPaths": deleted_paths,
+    }
 
 
 def list_recent_jobs_and_runs() -> list[dict[str, Any]]:
     """Lists completed runs and cached jobs for UI quick import."""
     items = []
     seen_ids = set()
+
+    try:
+        distributed_jobs = http_get_json(f"{pinterest_coordinator_url()}/api/v1/crawl-jobs?limit=25", timeout=5.0)
+        if isinstance(distributed_jobs, list):
+            for job in distributed_jobs:
+                if not isinstance(job, dict):
+                    continue
+                settings = job.get("settings")
+                if not isinstance(settings, dict) or settings.get("channel") != "pinterest":
+                    continue
+                job_id = str(job.get("jobId") or job.get("id") or "").strip()
+                if not job_id:
+                    continue
+                seen_ids.add(job_id)
+                candidates = job.get("candidates") if isinstance(job.get("candidates"), list) else []
+                items.append({
+                    "type": "distributed_job",
+                    "id": job_id,
+                    "jobId": job_id,
+                    "job_id": job_id,
+                    "status": job.get("status") or "queued",
+                    "createdAt": job.get("createdAt"),
+                    "title": settings.get("niche") or job_id,
+                    "niche": settings.get("niche") or "",
+                    "product": settings.get("product") or "rug",
+                    "productType": settings.get("product") or "rug",
+                    "candidateCount": len(candidates),
+                    "cmykCount": 0,
+                    "mockupCount": 0,
+                    "thumbnails": [
+                        str(candidate.get("image_url"))
+                        for candidate in candidates[:4]
+                        if isinstance(candidate, dict) and candidate.get("image_url")
+                    ],
+                })
+    except Exception as exc:
+        logger.warning("Could not list distributed Pinterest jobs: %s", exc)
 
     # 1. Cached local jobs
     if TEMP_DIR.exists():
@@ -4012,6 +4328,19 @@ def discover_pinterest_trends(payload: dict[str, Any]) -> dict[str, Any]:
     if not niche:
         raise ValueError("Vui lòng nhập Pinterest niche hoặc từ khóa xu hướng.")
 
+    source = str(payload.get("_source") or "pinterest_api").strip().lower()
+    is_internal_suggestion = source == "internal_suggestions"
+    if source not in {"pinterest_api", "internal_suggestions"}:
+        raise ValueError("Nguồn khám phá xu hướng không hợp lệ.")
+
+    oauth_valid, token_data = check_oauth_token_valid()
+    if not is_internal_suggestion and not oauth_valid:
+        raise PinterestTrendDiscoveryError(
+            "Cần kết nối Pinterest OAuth trước khi quét Trends chính thức.",
+            "PINTEREST_OAUTH_REQUIRED",
+            401,
+        )
+
     raw_trend_type = str(payload.get("trend_type") or "growing").strip().lower()
     raw_region = str(payload.get("region") or "US").strip().upper()
     interest = str(payload.get("interest") or "").strip()
@@ -4082,14 +4411,13 @@ def discover_pinterest_trends(payload: dict[str, Any]) -> dict[str, Any]:
 
     # 1. Try Pinterest API if authenticated (Dynamic Multi-Query Matrix via ThreadPoolExecutor)
     api_keywords_by_name: dict[str, dict[str, Any]] = {}
-    oauth_valid, token_data = check_oauth_token_valid()
-    if oauth_valid and token_data and not os.getenv("MOCK_PINTEREST"):
+    api_error_statuses: list[int] = []
+    if not is_internal_suggestion and oauth_valid and token_data and not os.getenv("MOCK_PINTEREST"):
         try:
             from pinterest.trend_finder.pinterest_client import PinterestClient
-            token_file = (ROOT / "pinterest" / ".pinterest_oauth_tokens.json").resolve()
-            client = PinterestClient(token_path=token_file if token_file.exists() else None)
+            client = PinterestClient(token_path=_resolve_oauth_token_file())
 
-            def fetch_single_matrix_cell(reg: str, t_type: str, it_filter: str) -> tuple[str, str, str, list[dict[str, Any]], bool, str]:
+            def fetch_single_matrix_cell(reg: str, t_type: str, it_filter: str) -> tuple[str, str, str, list[dict[str, Any]], bool, str, int | None]:
                 endpoint = f"/trends/keywords/{reg}/top/{t_type}"
                 params: dict[str, Any] = {"limit": 50}
                 if it_filter:
@@ -4101,15 +4429,15 @@ def discover_pinterest_trends(payload: dict[str, Any]) -> dict[str, Any]:
                         raw_items = resp.get("trends") or resp.get("keywords") or resp.get("items") or []
                     elif isinstance(resp, list):
                         raw_items = resp
-                    return (reg, t_type, it_filter, raw_items, True, "")
+                    return (reg, t_type, it_filter, raw_items, True, "", None)
                 except Exception as exc:
-                    return (reg, t_type, it_filter, [], False, str(exc))
+                    return (reg, t_type, it_filter, [], False, str(exc), getattr(exc, "status_code", None))
 
             max_workers = min(max(total_planned_queries, 1), 10)
             with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
                 futures = [executor.submit(fetch_single_matrix_cell, r, t, it) for r, t, it in query_matrix_pairs]
                 for future in concurrent.futures.as_completed(futures):
-                    reg, t_type, it_filter, raw_items, is_ok, err_msg = future.result()
+                    reg, t_type, it_filter, raw_items, is_ok, err_msg, error_status = future.result()
                     if is_ok:
                         query_stats["successful_queries"] += 1
                         query_stats["raw_keywords_count"] += len(raw_items)
@@ -4154,9 +4482,15 @@ def discover_pinterest_trends(payload: dict[str, Any]) -> dict[str, Any]:
                                 entry["rank"] = min(entry["rank"], idx)
                     else:
                         query_stats["failed_queries"] += 1
+                        if error_status is not None:
+                            api_error_statuses.append(error_status)
                         logger.warning("Pinterest Trends API matrix query failed for (%s, %s, %s): %s", reg, t_type, it_filter, err_msg)
         except Exception as exc:
-            logger.warning("Pinterest Trends multi-query matrix warning: %s; using dynamic semantic generator.", exc)
+            error_status = getattr(exc, "status_code", None)
+            if error_status is not None:
+                api_error_statuses.append(error_status)
+            query_stats["failed_queries"] = total_planned_queries
+            logger.warning("Pinterest Trends multi-query matrix failed: %s", exc)
 
     if api_keywords_by_name:
         query_stats["unique_keywords_count"] = len(api_keywords_by_name)
@@ -4169,7 +4503,45 @@ def discover_pinterest_trends(payload: dict[str, Any]) -> dict[str, Any]:
     else:
         api_keywords = []
 
-    # 2. Dynamic generation if API returned empty or offline
+    if not is_internal_suggestion and not api_keywords:
+        if 403 in api_error_statuses:
+            raise PinterestTrendDiscoveryError(
+                "Pinterest đã từ chối quyền truy cập Trends API. Hãy kiểm tra quyền của app và token.",
+                "PINTEREST_TRENDS_FORBIDDEN",
+                403,
+            )
+        if 401 in api_error_statuses:
+            raise PinterestTrendDiscoveryError(
+                "Pinterest OAuth token không hợp lệ hoặc đã hết hạn.",
+                "PINTEREST_TOKEN_INVALID",
+                401,
+            )
+        if query_stats["failed_queries"]:
+            raise PinterestTrendDiscoveryError(
+                "Không thể lấy dữ liệu Pinterest Trends chính thức. Không sử dụng dữ liệu giả thay thế.",
+                "PINTEREST_TRENDS_UNAVAILABLE",
+                502,
+            )
+
+        return {
+            "ok": True,
+            "source": "pinterest_api",
+            "isOfficialTrendData": True,
+            "niche": niche,
+            "product": product,
+            "trend_type": raw_trend_type,
+            "region": raw_region,
+            "query_matrix_stats": query_stats,
+            "clusters": [],
+            "all_keywords": [],
+            "accepted_keywords": [],
+            "rejected_keywords": [],
+            "total_keywords": 0,
+            "accepted_count": 0,
+            "rejected_count": 0,
+        }
+
+    # 2. Internal POD suggestions. These are not official Pinterest trend data.
     clean_niche = niche.lower()
     product_label = product if product != "custom" else "product"
     base_pool: list[dict[str, Any]] = list(api_keywords)
@@ -4232,26 +4604,12 @@ def discover_pinterest_trends(payload: dict[str, Any]) -> dict[str, Any]:
                 ("patio backyard pergola deck porch staging", 18, 175.0, 80.0, 135.0),
                 ("daily positive workout fitness routines", 19, 60.0, 15.0, 35.0),
             ]
-        for idx, (kw, rk, mom, wow, yoy) in enumerate(dynamic_specs, start=1):
-            m_list = [target_regions[idx % len(target_regions)]]
-            if len(target_regions) > 1:
-                m_list.append(target_regions[(idx + 1) % len(target_regions)])
-            t_list = [target_trend_types[idx % len(target_trend_types)]]
-            if idx % 2 == 0 and len(target_trend_types) > 1:
-                t_list.append(target_trend_types[(idx + 1) % len(target_trend_types)])
+        for kw, rk, _mom, _wow, _yoy in dynamic_specs:
             base_pool.append({
                 "keyword": kw,
                 "rank": rk,
-                "pct_growth_mom": mom,
-                "pct_growth_wow": wow,
-                "pct_growth_yoy": yoy,
-                "monthly_searches": int(rk * 1200 + 4500),
-                "markets": m_list,
-                "trend_types": t_list,
-                "occurrences": len(m_list) * len(t_list),
             })
-        query_stats["successful_queries"] = total_planned_queries
-        query_stats["raw_keywords_count"] = len(base_pool) * (len(target_regions) if len(target_regions) > 1 else 1)
+        query_stats["raw_keywords_count"] = len(base_pool)
         query_stats["unique_keywords_count"] = len(base_pool)
 
     # 3. Filter through Graphic Printability Gate
@@ -4465,7 +4823,7 @@ def discover_pinterest_trends(payload: dict[str, Any]) -> dict[str, Any]:
     clusters.sort(key=lambda c: (c.get("keyword_count", 0), c.get("growth_mom_avg", 0.0)), reverse=True)
 
     # If fewer than 3 clusters had matches, add back top themes with synthesized keywords to guarantee choices
-    if len(clusters) < 3:
+    if is_internal_suggestion and len(clusters) < 3:
         for t_def in theme_definitions:
             if not any(c["cluster_id"] == t_def["cluster_id"] for c in clusters):
                 rep_core = art_theme_prefix or next(iter(t_def["match_words"]), "pattern")
@@ -4473,9 +4831,6 @@ def discover_pinterest_trends(payload: dict[str, Any]) -> dict[str, Any]:
                 fallback_kws = [{
                     "keyword": rep_kw,
                     "rank": len(clusters) + 1,
-                    "pct_growth_mom": 80.0,
-                    "pct_growth_wow": 28.0,
-                    "pct_growth_yoy": 60.0,
                     "is_accepted": True,
                     "suggested_fused_query": f"{rep_kw} seamless pattern vector",
                 }]
@@ -4489,7 +4844,7 @@ def discover_pinterest_trends(payload: dict[str, Any]) -> dict[str, Any]:
                     "sample_motifs": t_def["sample_motifs"],
                     "keywords": fallback_kws,
                     "fused_queries": t_def["fused_templates"],
-                    "growth_mom_avg": 80.0,
+                    "growth_mom_avg": 0.0,
                     "keyword_count": len(fallback_kws),
                 })
                 if len(clusters) >= 5:
@@ -4497,11 +4852,13 @@ def discover_pinterest_trends(payload: dict[str, Any]) -> dict[str, Any]:
 
     return {
         "ok": True,
+        "source": "internal_suggestions" if is_internal_suggestion else "pinterest_api",
+        "isOfficialTrendData": not is_internal_suggestion,
         "niche": niche,
         "product": product,
         "trend_type": raw_trend_type,
         "region": raw_region,
-        "query_matrix_stats": query_stats,
+        "query_matrix_stats": None if is_internal_suggestion else query_stats,
         "clusters": clusters,
         "all_keywords": all_keywords,
         "accepted_keywords": accepted_keywords,
@@ -4510,6 +4867,13 @@ def discover_pinterest_trends(payload: dict[str, Any]) -> dict[str, Any]:
         "accepted_count": len(accepted_keywords),
         "rejected_count": len(rejected_keywords),
     }
+
+
+def suggest_pinterest_themes(payload: dict[str, Any]) -> dict[str, Any]:
+    """Return clearly-labelled internal POD theme suggestions without fake trend metrics."""
+    suggestion_payload = dict(payload)
+    suggestion_payload["_source"] = "internal_suggestions"
+    return discover_pinterest_trends(suggestion_payload)
 
 
 def rescue_pod_candidate(job_id: str, candidate_id: str, base_url: str = "") -> dict[str, Any]:

@@ -8,7 +8,6 @@ Tool_crawer_New_update/
 .env.*
 !.env.example
 !.env.mock
-!.env.production.example
 .env.shopify
 /wrydeco-vps_key.pem
 *.tsbuildinfo

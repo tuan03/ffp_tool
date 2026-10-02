@@ -262,10 +262,37 @@ export class MockPinterestPodClient implements PinterestPodClient {
   public async discoverTrends(input: TrendDiscoveryInput): Promise<TrendDiscoveryResult> {
     return {
       ok: true,
+      source: "pinterest_api",
+      isOfficialTrendData: true,
       niche: input.niche || mockTrendDiscoveryResult.niche,
       clusters: mockThemeClusters.map((c) => ({ ...c })),
       rejected_keywords: mockRejectedKeywords.map((k) => ({ ...k })),
       total_keywords: mockTrendDiscoveryResult.total_keywords,
+    };
+  }
+
+  public async suggestThemes(input: TrendDiscoveryInput): Promise<TrendDiscoveryResult> {
+    return {
+      ok: true,
+      source: "internal_suggestions",
+      isOfficialTrendData: false,
+      niche: input.niche || mockTrendDiscoveryResult.niche,
+      clusters: mockThemeClusters.map((cluster) => ({
+        ...cluster,
+        growth_mom_avg: undefined,
+        keywords: cluster.keywords?.map((keyword) => ({
+          ...keyword,
+          pct_growth_mom: undefined,
+          pct_growth_wow: undefined,
+          pct_growth_yoy: undefined,
+          monthly_searches: undefined,
+        })),
+      })),
+      accepted_keywords: [],
+      rejected_keywords: [],
+      total_keywords: 0,
+      accepted_count: 0,
+      rejected_count: 0,
     };
   }
 
@@ -647,15 +674,36 @@ export class MockPinterestPodClient implements PinterestPodClient {
         id: "client_mock_agent_1",
         displayName: "Mock Local Agent (Windows)",
         isConnected: true,
-        status: "idle",
-        activeTasks: 0,
-        availableSlots: 2,
+        status: "busy",
+        agentVersion: "mock-1.0.0",
+        lastSeenAt: new Date().toISOString(),
+        activeTasks: 1,
+        availableSlots: 1,
         capabilities: {
           pinterest: true,
           amazon: true,
+          pinterestBrowserLoggedIn: true,
         },
+        currentTasks: [
+          {
+            taskId: "task_mock_pinterest_1",
+            jobId: "job_mock_agent_activity",
+            channel: "pinterest",
+            stage: "crawl_and_review",
+            niche: "leather bag",
+            product: "bag",
+            queryCount: 24,
+            message: "Search: [cluster_query_001] vintage floral vector print",
+            percent: 50,
+            updatedAt: new Date().toISOString(),
+          },
+        ],
       },
     ];
+  }
+
+  public async forgetCrawlerClient(_clientId: string): Promise<void> {
+    return Promise.resolve();
   }
 }
 

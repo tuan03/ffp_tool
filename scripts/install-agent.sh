@@ -1,79 +1,126 @@
 #!/usr/bin/env bash
-# ==============================================================================
-# FFP Tool - 1-Command Crawler Agent Installer (Linux / macOS)
-# Usage:
-#   curl -sSL https://ffp.b6-team.site/install-agent.sh | bash
-# ==============================================================================
-set -e
+# FFP Tool - Remote Crawler Agent Installer (Linux / macOS)
+set -euo pipefail
 
-SERVER_URL="${1:-https://ffp.b6-team.site}"
+SERVER_URL="${1:-${FFP_SERVER_URL:-https://ffp.b6-team.site}}"
 DISPLAY_NAME="${2:-$(hostname)}"
+AGENT_ROOT="${FFP_AGENT_HOME:-$HOME/.local/share/ffp-crawler-agent}"
+SERVER_URL="${SERVER_URL%/}"
 
-echo ""
+case "$SERVER_URL" in
+  http://*|https://*) ;;
+  *) echo "Server URL must start with http:// or https://" >&2; exit 1 ;;
+esac
+
 echo "=========================================================="
-echo "       FFP CRAWLER AGENT - CAI DAT 1 LENH DUY NHAT        "
+echo "       FFP CRAWLER AGENT - REMOTE INSTALLER"
 echo "=========================================================="
-echo ""
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-AGENT_ROOT="$SCRIPT_DIR"
-if [ -d "$SCRIPT_DIR/../src/modules/amazon-crawler" ]; then
-    AGENT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-fi
-cd "$AGENT_ROOT"
-
 echo "-> Thu muc cai dat: $AGENT_ROOT"
+echo "-> May chu: $SERVER_URL"
 
-# 1. Kiem tra Python
 PYTHON_CMD=""
-if command -v python3 &>/dev/null; then
-    PYTHON_CMD="python3"
-elif command -v python &>/dev/null; then
-    PYTHON_CMD="python"
-fi
-
+for candidate in python3 python; do
+  if command -v "$candidate" >/dev/null 2>&1 && "$candidate" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)' 2>/dev/null; then
+    PYTHON_CMD="$candidate"
+    break
+  fi
+done
 if [ -z "$PYTHON_CMD" ]; then
-    echo "LOI: Khong tim thay Python! Vui long cai dat Python >= 3.10."
-    exit 1
+  echo "Khong tim thay Python >= 3.10. Hay cai Python truoc khi chay bo cai." >&2
+  exit 1
+fi
+if ! command -v curl >/dev/null 2>&1; then
+  echo "Khong tim thay curl." >&2
+  exit 1
 fi
 
-# 2. Tao venv
+mkdir -p "$AGENT_ROOT"
+TEMP_ROOT="$(mktemp -d)"
+trap 'rm -rf -- "$TEMP_ROOT"' EXIT
+ARCHIVE="$TEMP_ROOT/ffp-crawler-agent.tar.gz"
+STAGING="$TEMP_ROOT/source"
+mkdir -p "$STAGING"
+
+echo "[1/5] Tai va xac minh ma nguon Agent..."
+curl --fail --silent --show-error --location "$SERVER_URL/ffp-crawler-agent.tar.gz" --output "$ARCHIVE"
+EXPECTED_HASH="$(curl --fail --silent --show-error --location "$SERVER_URL/ffp-crawler-agent.tar.gz.sha256" | awk '{print tolower($1)}')"
+ACTUAL_HASH="$($PYTHON_CMD -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' "$ARCHIVE")"
+if [ -z "$EXPECTED_HASH" ] || [ "$EXPECTED_HASH" != "$ACTUAL_HASH" ]; then
+  echo "Agent package checksum verification failed." >&2
+  exit 1
+fi
+
+"$PYTHON_CMD" - "$ARCHIVE" "$STAGING" <<'PY'
+import pathlib
+import sys
+import tarfile
+
+archive = pathlib.Path(sys.argv[1]).resolve()
+destination = pathlib.Path(sys.argv[2]).resolve()
+with tarfile.open(archive, "r:gz") as package:
+    for member in package.getmembers():
+        if member.issym() or member.islnk():
+            raise RuntimeError("Agent package may not contain links")
+        target = (destination / member.name).resolve()
+        try:
+            target.relative_to(destination)
+        except ValueError as error:
+            raise RuntimeError("Agent package contains an unsafe path") from error
+    package.extractall(destination)
+PY
+
+test -f "$STAGING/scripts/amazon-crawler-agent.py"
+test -f "$STAGING/src/modules/amazon-crawler/engine/requirements.txt"
+cp -R "$STAGING"/. "$AGENT_ROOT"/
+
+echo "[2/5] Tao virtual environment..."
 VENV_DIR="$AGENT_ROOT/.venv"
-if [ ! -f "$VENV_DIR/bin/python" ]; then
-    echo "[1/4] Tao virtual environment..."
-    $PYTHON_CMD -m venv "$VENV_DIR"
+if [ ! -x "$VENV_DIR/bin/python" ]; then
+  "$PYTHON_CMD" -m venv "$VENV_DIR"
 fi
 
-# 3. Cai dat thu vien
-echo "[2/4] Cai dat thu vien..."
-"$VENV_DIR/bin/pip" install --upgrade pip
-if [ -f "$AGENT_ROOT/src/modules/amazon-crawler/engine/requirements.txt" ]; then
-    "$VENV_DIR/bin/pip" install -r "$AGENT_ROOT/src/modules/amazon-crawler/engine/requirements.txt"
-else
-    "$VENV_DIR/bin/pip" install "playwright>=1.50,<2" "fastapi==0.116.1" "uvicorn[standard]==0.35.0" "beautifulsoup4>=4.12,<5" "python-dotenv>=1,<2" "websockets>=15,<16" "pillow>=11,<12" "httpx>=0.27.0" "numpy>=1.26,<3" "requests>=2.31,<3"
-fi
+echo "[3/5] Cai dat thu vien Agent..."
+"$VENV_DIR/bin/python" -m pip install --disable-pip-version-check --upgrade pip >/dev/null
+"$VENV_DIR/bin/python" -m pip install -r "$AGENT_ROOT/src/modules/amazon-crawler/engine/requirements.txt"
 
-# 4. Cai dat Chromium
-echo "[3/4] Cai dat Playwright Chromium..."
-"$VENV_DIR/bin/playwright" install chromium
+echo "[4/5] Cai dat Playwright Chromium..."
+"$VENV_DIR/bin/python" -m playwright install chromium
 
-# 5. Cau hinh
-echo "[4/4] Khoi tao cau hinh..."
+echo "[5/5] Tao cau hinh va launcher..."
 mkdir -p "$AGENT_ROOT/config"
 CONFIG_FILE="$AGENT_ROOT/config/amazon-crawler-agent.json"
 if [ ! -f "$CONFIG_FILE" ]; then
-    cat <<EOF > "$CONFIG_FILE"
-{
-  "serverUrl": "$SERVER_URL",
-  "displayName": "$DISPLAY_NAME",
-  "dataDirectory": ".runtime/agent-data",
-  "heartbeatIntervalSeconds": 10
+  "$PYTHON_CMD" - "$CONFIG_FILE" "$SERVER_URL" "$DISPLAY_NAME" <<'PY'
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+payload = {
+    "serverUrl": sys.argv[2],
+    "displayName": sys.argv[3],
+    "dataDirectory": ".runtime/agent-data",
+    "heartbeatIntervalSeconds": 10,
 }
-EOF
+path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+PY
 fi
 
-echo ""
+cat > "$AGENT_ROOT/chay-agent.sh" <<'SH'
+#!/usr/bin/env bash
+set -e
+cd "$(dirname "$0")"
+exec .venv/bin/python scripts/amazon-crawler-agent.py --project-root .
+SH
+chmod +x "$AGENT_ROOT/chay-agent.sh" "$AGENT_ROOT/scripts/login-pinterest.sh"
+
 echo "=========================================================="
-echo " CAI DAT HOAN TAT THANH CONG!"
-echo " Khoi chay bang lenh: .venv/bin/python scripts/amazon-crawler-agent.py --project-root ."
+echo " CAI DAT HOAN TAT"
+echo " Chay lai bang: $AGENT_ROOT/chay-agent.sh"
+echo " Dang nhap Pinterest: $AGENT_ROOT/scripts/login-pinterest.sh"
 echo "=========================================================="
+
+if [ "${FFP_AGENT_NO_START:-0}" != "1" ]; then
+  cd "$AGENT_ROOT"
+  exec "$VENV_DIR/bin/python" scripts/amazon-crawler-agent.py --project-root .
+fi

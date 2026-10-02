@@ -22,7 +22,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
 from ..image_processing import ImageProcessingService, normalize_profile, process_image_bytes
 from ..review_export import build_review_workbook
-from . import PROTOCOL_VERSION, SUPPORTED_PROTOCOL_VERSIONS
+from . import AGENT_VERSION, PROTOCOL_VERSION, SUPPORTED_PROTOCOL_VERSIONS
 from .coordinator_models import Base, create_database_engine, create_session_factory
 from .coordinator_store import ActiveJobExistsError, CoordinatorStore
 from .protocol import HEARTBEAT_INTERVAL_SECONDS, LEASE_SECONDS, payload_checksum, require_message, utc_iso
@@ -73,7 +73,7 @@ async def read_request_body_limited(request: Request, *, maximum_bytes: int) -> 
 class ConnectionManager:
     def __init__(self) -> None:
         self.connections: dict[str, WebSocket] = {}
-        self.runtime: dict[str, dict[str, int]] = {}
+        self.runtime: dict[str, dict[str, Any]] = {}
         self.lock = asyncio.Lock()
         self.cache_requests: dict[str, dict[str, Any]] = {}
 
@@ -92,18 +92,71 @@ class ConnectionManager:
                 return True
             return False
 
-    async def update_runtime(self, client_id: str, *, active_tasks: int, available_slots: int) -> None:
+    async def update_runtime(
+        self,
+        client_id: str,
+        *,
+        active_tasks: int,
+        available_slots: int,
+        current_tasks: Any = None,
+        capabilities: Any = None,
+    ) -> None:
         async with self.lock:
             if client_id not in self.connections:
                 return
-            self.runtime[client_id] = {
+            previous = self.runtime.get(client_id, {})
+            runtime = {
                 "activeTasks": max(0, int(active_tasks)),
                 "availableSlots": max(0, int(available_slots)),
+                "currentTasks": self._bounded_current_tasks(current_tasks) if current_tasks is not None else list(previous.get("currentTasks") or []),
+                "capabilities": self._bounded_capabilities(capabilities) if capabilities is not None else dict(previous.get("capabilities") or {}),
+            }
+            self.runtime[client_id] = runtime
+
+    async def runtime_snapshot(self) -> dict[str, dict[str, Any]]:
+        async with self.lock:
+            return {
+                client_id: {
+                    **status,
+                    "currentTasks": [dict(task) for task in status.get("currentTasks") or []],
+                    "capabilities": dict(status.get("capabilities") or {}),
+                }
+                for client_id, status in self.runtime.items()
             }
 
-    async def runtime_snapshot(self) -> dict[str, dict[str, int]]:
-        async with self.lock:
-            return {client_id: dict(status) for client_id, status in self.runtime.items()}
+    @staticmethod
+    def _bounded_capabilities(value: Any) -> dict[str, bool]:
+        source = value if isinstance(value, dict) else {}
+        return {
+            key: bool(source.get(key))
+            for key in ("amazon", "pinterest", "pinterestBrowserLoggedIn")
+            if key in source
+        }
+
+    @staticmethod
+    def _bounded_current_tasks(value: Any) -> list[dict[str, Any]]:
+        if not isinstance(value, list):
+            return []
+        allowed_fields = (
+            "taskId", "jobId", "leaseId", "channel", "stage", "source", "niche",
+            "product", "queryCount", "message", "percent", "updatedAt",
+        )
+        tasks: list[dict[str, Any]] = []
+        for raw_task in value[:32]:
+            if not isinstance(raw_task, dict):
+                continue
+            task = {key: raw_task.get(key) for key in allowed_fields if key in raw_task}
+            for key in ("taskId", "jobId", "leaseId", "channel", "stage", "source", "niche", "product", "message", "updatedAt"):
+                if key in task:
+                    task[key] = str(task[key] or "")[:500]
+            for key in ("queryCount", "percent"):
+                if key in task:
+                    try:
+                        task[key] = max(0, int(task[key] or 0))
+                    except (TypeError, ValueError):
+                        task[key] = 0
+            tasks.append(task)
+        return tasks
 
     async def reserve_tasks(self, client_id: str, count: int) -> None:
         async with self.lock:
@@ -212,6 +265,10 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
     image_processing_root = Path(
         os.environ.get("IMAGE_PROCESSING_CACHE_DIR", str(project_root / ".runtime" / "image-processing"))
     ).resolve()
+    pinterest_runtime_root = Path(
+        os.environ.get("PINTEREST_RUNTIME_ROOT", str(project_root / ".runtime" / "pinterest-pod"))
+    ).resolve()
+    pinterest_job_root = pinterest_runtime_root / "jobs"
     image_service = ImageProcessingService(
         image_processing_root,
         workers=positive_environment_integer("IMAGE_PROCESSING_WORKERS", 4),
@@ -321,6 +378,39 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
             ) from error
         except ValueError as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
+
+    @app.post("/api/v1/pinterest-jobs", status_code=202)
+    async def create_pinterest_job(payload: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return await asyncio.to_thread(store.create_pinterest_job, payload)
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
+    @app.post("/api/v1/pinterest-assets/{job_id}/{filename}")
+    @app.put("/api/v1/pinterest-assets/{job_id}/{filename}")
+    async def upload_pinterest_asset(job_id: str, filename: str, request: Request) -> dict[str, Any]:
+        safe_job_id = "".join(character for character in job_id if character.isalnum() or character in ("-", "_"))
+        safe_filename = Path(filename).name
+        if not safe_job_id or not safe_filename:
+            raise HTTPException(status_code=400, detail="Invalid Pinterest asset identifier.")
+        try:
+            body = await read_request_body_limited(request, maximum_bytes=10 * 1024 * 1024)
+        except ResultPayloadTooLarge as error:
+            raise HTTPException(status_code=413, detail=str(error)) from error
+        job_dir = (pinterest_job_root / safe_job_id).resolve()
+        if not job_dir.is_relative_to(pinterest_job_root.resolve()):
+            raise HTTPException(status_code=400, detail="Invalid Pinterest job id.")
+        job_dir.mkdir(parents=True, exist_ok=True)
+        target_path = (job_dir / safe_filename).resolve()
+        if target_path.parent != job_dir:
+            raise HTTPException(status_code=400, detail="Invalid Pinterest asset filename.")
+        temporary_path = target_path.with_suffix(f"{target_path.suffix}.tmp")
+        temporary_path.write_bytes(body)
+        temporary_path.replace(target_path)
+        return {
+            "ok": True,
+            "url": f"/api/pinterest-pod/assets/{safe_job_id}/{safe_filename}",
+        }
 
     @app.get("/api/v1/crawl-jobs")
     def list_jobs(limit: int = 100) -> list[dict[str, Any]]:
@@ -552,12 +642,30 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
             {
                 **client,
                 "isConnected": client["id"] in connected_ids,
+                "latestAgentVersion": AGENT_VERSION,
                 "leasedTasks": client["activeTasks"],
                 "activeTasks": runtime.get(client["id"], {}).get("activeTasks", 0),
                 "availableSlots": runtime.get(client["id"], {}).get("availableSlots", 0),
+                "currentTasks": [
+                    {key: value for key, value in task.items() if key != "leaseId"}
+                    for task in runtime.get(client["id"], {}).get("currentTasks", [])
+                ],
+                "capabilities": {
+                    **(client.get("capabilities") or {}),
+                    **runtime.get(client["id"], {}).get("capabilities", {}),
+                },
             }
             for client in clients
         ]
+
+    @app.get("/api/v1/agent-release")
+    async def agent_release() -> dict[str, str]:
+        return {
+            "version": AGENT_VERSION,
+            "installerUrl": "/install-agent.ps1",
+            "packageUrl": "/ffp-crawler-agent.tar.gz",
+            "checksumUrl": "/ffp-crawler-agent.tar.gz.sha256",
+        }
 
     @app.delete("/api/v1/clients/cache")
     async def clear_client_caches() -> dict[str, Any]:
@@ -606,6 +714,17 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
                 "validJobIds": sorted(valid_job_ids), "generation": generation,
             })
 
+    @app.delete("/api/v1/clients/{client_id}")
+    async def forget_client(client_id: str) -> dict[str, bool]:
+        if client_id in await manager.connected_client_ids():
+            raise HTTPException(status_code=409, detail="Agent is online. Exit or uninstall it before forgetting this machine.")
+        outcome = await asyncio.to_thread(store.forget_client, client_id)
+        if outcome == "not_found":
+            raise HTTPException(status_code=404, detail="Crawler Agent was not found.")
+        if outcome == "active_tasks":
+            raise HTTPException(status_code=409, detail="Agent still owns active tasks and cannot be forgotten.")
+        return {"ok": True}
+
     @app.get("/api/v1/crawl-jobs/{job_id}/events")
     async def job_events(job_id: str, request: Request, after: int = 0) -> StreamingResponse:
         if store.get_job(job_id) is None:
@@ -623,207 +742,6 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
                 await asyncio.sleep(1)
 
         return StreamingResponse(stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"})
-
-    # --------------------------------------------------------------------------
-    # Pinterest POD Studio Distributed Endpoints
-    # --------------------------------------------------------------------------
-    env_pinterest_root = os.environ.get("PINTEREST_ASSET_ROOT")
-    if env_pinterest_root:
-        PINTEREST_ASSET_ROOT = Path(env_pinterest_root).resolve()
-    elif (project_root / "src" / "modules" / "pinterest-pod").is_dir():
-        PINTEREST_ASSET_ROOT = (project_root / "src" / "modules" / "pinterest-pod" / "server" / "temp" / "pinterest_pod").resolve()
-    else:
-        PINTEREST_ASSET_ROOT = (project_root / ".runtime" / "pinterest_pod").resolve()
-
-    @app.post("/api/pinterest-pod/jobs", status_code=201)
-    def create_pinterest_pod_job(payload: dict[str, Any]) -> dict[str, Any]:
-        try:
-            job = store.create_pinterest_job(payload)
-            return {
-                "ok": True,
-                "jobId": job["id"],
-                "job_id": job["id"],
-                "status": job["status"],
-                "logs": job.get("logs") or ["Job cào Pinterest đã được khởi tạo trong hàng đợi phân tán."],
-            }
-        except ValueError as err:
-            raise HTTPException(status_code=400, detail=str(err)) from err
-
-    @app.post("/api/pinterest-pod/produce", status_code=201)
-    @app.post("/api/pinterest-pod/jobs/produce", status_code=201)
-    def produce_pinterest_pod_job(payload: dict[str, Any]) -> dict[str, Any]:
-        try:
-            prod_payload = dict(payload)
-            prod_payload["stage"] = "produce"
-            prod_payload["action"] = "produce"
-            if "source_run_id" not in prod_payload:
-                resolved_src = payload.get("jobId") or payload.get("job_id")
-                if resolved_src:
-                    prod_payload["source_run_id"] = str(resolved_src)
-            job = store.create_pinterest_job(prod_payload)
-            return {
-                "ok": True,
-                "jobId": job["id"],
-                "job_id": job["id"],
-                "status": job["status"],
-                "logs": job.get("logs") or ["Job sản xuất POD đã được khởi tạo trong hàng đợi phân tán."],
-            }
-        except ValueError as err:
-            raise HTTPException(status_code=400, detail=str(err)) from err
-
-    @app.get("/api/pinterest-pod/jobs/{job_id}")
-    def get_pinterest_pod_job(job_id: str) -> dict[str, Any]:
-        snapshot = store.get_job(job_id)
-        if snapshot is not None:
-            return snapshot
-
-        safe_job_id = "".join(c for c in job_id if c.isalnum() or c in ("-", "_"))
-        manifest_file = (PINTEREST_ASSET_ROOT / safe_job_id / "manifest.json").resolve()
-        if manifest_file.is_file() and manifest_file.is_relative_to(PINTEREST_ASSET_ROOT.resolve()):
-            try:
-                data = json.loads(manifest_file.read_text(encoding="utf-8"))
-                if isinstance(data, dict):
-                    return data
-            except Exception:
-                pass
-
-        try:
-            import urllib.request
-            req = urllib.request.Request(f"http://127.0.0.1:8768/api/pinterest-pod/jobs/{safe_job_id}")
-            with urllib.request.urlopen(req, timeout=1.5) as resp:
-                if resp.status == 200:
-                    return json.loads(resp.read().decode("utf-8"))
-        except Exception:
-            pass
-
-        raise HTTPException(status_code=404, detail="Pinterest POD job was not found.")
-
-    @app.get("/api/pinterest-pod/jobs/{job_id}/logs")
-    def get_pinterest_pod_job_logs(job_id: str) -> dict[str, Any]:
-        snapshot = store.get_job(job_id)
-        if snapshot is not None:
-            return {
-                "ok": True,
-                "jobId": job_id,
-                "status": snapshot.get("status", "unknown"),
-                "logs": snapshot.get("logs", []),
-            }
-
-        safe_job_id = "".join(c for c in job_id if c.isalnum() or c in ("-", "_"))
-        try:
-            import urllib.request
-            req = urllib.request.Request(f"http://127.0.0.1:8768/api/pinterest-pod/jobs/{safe_job_id}/logs")
-            with urllib.request.urlopen(req, timeout=1.5) as resp:
-                if resp.status == 200:
-                    return json.loads(resp.read().decode("utf-8"))
-        except Exception:
-            pass
-
-        manifest_file = (PINTEREST_ASSET_ROOT / safe_job_id / "manifest.json").resolve()
-        if manifest_file.is_file() and manifest_file.is_relative_to(PINTEREST_ASSET_ROOT.resolve()):
-            try:
-                data = json.loads(manifest_file.read_text(encoding="utf-8"))
-                if isinstance(data, dict):
-                    return {
-                        "ok": True,
-                        "jobId": job_id,
-                        "status": data.get("status", "unknown"),
-                        "logs": data.get("logs", []),
-                    }
-            except Exception:
-                pass
-
-        raise HTTPException(status_code=404, detail="Pinterest POD job was not found.")
-
-    @app.post("/api/pinterest-pod/jobs/{job_id}/cancel")
-    async def cancel_pinterest_pod_job(job_id: str) -> dict[str, Any]:
-        snapshot = store.cancel_job(job_id)
-        return {"ok": True, "jobId": job_id, "status": "cancelled", "snapshot": snapshot}
-
-    @app.post("/api/pinterest-pod/jobs/{job_id}/delete")
-    def delete_pinterest_pod_job(job_id: str) -> dict[str, Any]:
-        safe_job_id = "".join(c for c in job_id if c.isalnum() or c in ("-", "_"))
-        job_dir = (PINTEREST_ASSET_ROOT / safe_job_id).resolve()
-        if job_dir.is_dir() and job_dir.is_relative_to(PINTEREST_ASSET_ROOT.resolve()):
-            shutil.rmtree(job_dir, ignore_errors=True)
-        ok = store.delete_job(job_id)
-        return {"ok": ok, "jobId": job_id, "message": "Deleted" if ok else "Job not found"}
-
-    @app.post("/api/pinterest-pod/jobs/{job_id}/cleanup")
-    def cleanup_pinterest_pod_job(job_id: str) -> dict[str, Any]:
-        safe_job_id = "".join(c for c in job_id if c.isalnum() or c in ("-", "_"))
-        job_dir = (PINTEREST_ASSET_ROOT / safe_job_id).resolve()
-        removed = False
-        if job_dir.is_dir() and job_dir.is_relative_to(PINTEREST_ASSET_ROOT.resolve()):
-            shutil.rmtree(job_dir, ignore_errors=True)
-            removed = True
-        return {"ok": True, "jobId": job_id, "cleaned": removed}
-
-    @app.post("/api/pinterest-pod/assets/{job_id}/{filename}")
-    @app.put("/api/pinterest-pod/assets/{job_id}/{filename}")
-    async def upload_pinterest_pod_asset(job_id: str, filename: str, request: Request) -> dict[str, Any]:
-        body = await request.body()
-        safe_job_id = "".join(c for c in job_id if c.isalnum() or c in ("-", "_"))
-        safe_filename = Path(filename).name
-        job_dir = (PINTEREST_ASSET_ROOT / safe_job_id).resolve()
-        if not job_dir.is_relative_to(PINTEREST_ASSET_ROOT.resolve()):
-            raise HTTPException(status_code=400, detail="Invalid job id")
-        job_dir.mkdir(parents=True, exist_ok=True)
-        target_path = (job_dir / safe_filename).resolve()
-        if not target_path.is_relative_to(job_dir):
-            raise HTTPException(status_code=400, detail="Invalid filename")
-        target_path.write_bytes(body)
-        return {"ok": True, "url": f"/api/pinterest-pod/assets/{safe_job_id}/{safe_filename}"}
-
-    @app.get("/api/pinterest-pod/assets/{job_id}/{filename}")
-    def get_pinterest_pod_asset(job_id: str, filename: str) -> FileResponse:
-        safe_job_id = "".join(c for c in job_id if c.isalnum() or c in ("-", "_"))
-        safe_filename = Path(filename).name
-        job_dir = (PINTEREST_ASSET_ROOT / safe_job_id).resolve()
-        if not job_dir.is_relative_to(PINTEREST_ASSET_ROOT.resolve()):
-            raise HTTPException(status_code=400, detail="Invalid job id")
-        target_path = (job_dir / safe_filename).resolve()
-        if not target_path.is_relative_to(job_dir):
-            raise HTTPException(status_code=400, detail="Invalid filename")
-        if not target_path.exists() or not target_path.is_file():
-            for sub in ("lifestyle_mockups", "product_cutouts_white", "final_print", "mockups"):
-                sub_path = (job_dir / sub / safe_filename).resolve()
-                if sub_path.is_relative_to(job_dir) and sub_path.exists() and sub_path.is_file():
-                    target_path = sub_path
-                    break
-        if not target_path.exists() or not target_path.is_file():
-            raise HTTPException(status_code=404, detail="Asset not found")
-        return FileResponse(target_path)
-
-    @app.get("/api/pinterest-pod/jobs/{job_id}/download-zip")
-    def download_pinterest_pod_zip(job_id: str) -> Response:
-        safe_job_id = "".join(c for c in job_id if c.isalnum() or c in ("-", "_"))
-        job_dir = (PINTEREST_ASSET_ROOT / safe_job_id).resolve()
-        if not job_dir.is_relative_to(PINTEREST_ASSET_ROOT.resolve()):
-            raise HTTPException(status_code=400, detail="Invalid job id")
-        snapshot = store.get_job(safe_job_id) or {}
-        zip_buf = io.BytesIO()
-        with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
-            if job_dir.is_dir():
-                for file_path in job_dir.rglob("*"):
-                    if file_path.is_file():
-                        arcname = file_path.relative_to(job_dir)
-                        zf.write(file_path, arcname)
-            manifest = {
-                "package": "pinterest_pod_deliverables",
-                "jobId": safe_job_id,
-                "status": snapshot.get("status", "unknown"),
-                "candidates": snapshot.get("candidates", []),
-                "deliverables": snapshot.get("deliverables", {}),
-                "summaryMetrics": snapshot.get("summaryMetrics", {}),
-            }
-            zf.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
-        zip_buf.seek(0)
-        return StreamingResponse(
-            zip_buf,
-            media_type="application/zip",
-            headers={"Content-Disposition": f'attachment; filename="pod_deliverables_{safe_job_id}.zip"'},
-        )
 
     @app.put("/api/v1/worker/tasks/{task_id}/result")
     async def upload_result(
@@ -1435,6 +1353,7 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
                 client_id,
                 active_tasks=max(0, maximum_slots - available_slots),
                 available_slots=available_slots,
+                capabilities=hello.get("capabilities"),
             )
             await websocket.send_json({
                 "type": "hello_ack", "protocolVersion": PROTOCOL_VERSION,
@@ -1473,6 +1392,8 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
                         client_id,
                         active_tasks=len(running),
                         available_slots=int(message.get("availableSlots") or 0),
+                        current_tasks=running,
+                        capabilities=message.get("capabilities"),
                     )
                     cancelled_job_ids = await asyncio.to_thread(
                         store.heartbeat,
@@ -1480,6 +1401,7 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
                         running,
                         str(message.get("status") or "online"),
                         message.get("observability"),
+                        message.get("capabilities"),
                     )
                     for cancelled_job_id in cancelled_job_ids:
                         await websocket.send_json({

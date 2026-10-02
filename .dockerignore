@@ -5,6 +5,9 @@ dist
 .runtime
 .local-data
 .env
+.env.*
+**/.env
+**/.env.*
 .env.local
 .env.*.local
 artifacts
@@ -14,3 +17,10 @@ temp
 venv
 __pycache__
 *.pyc
+**/__pycache__
+**/*.pyc
+**/.pinterest_oauth_tokens.json
+src/modules/pinterest-pod/server/data
+src/modules/pinterest-pod/server/temp
+src/modules/pinterest-pod/server/output
+src/modules/pinterest-pod/server/pinterest/.pinterest_browser_profile

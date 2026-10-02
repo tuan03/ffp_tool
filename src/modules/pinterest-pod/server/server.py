@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 """Standalone Pinterest POD Studio Backend Server.
 
-Dedicated lightweight HTTP service on port 8768 providing:
+Dedicated lightweight control-plane HTTP service on port 8768 providing:
 - Pinterest Trends discovery & AI scoring
-- CMYK 300 DPI high-resolution rendering
-- AI lifestyle mockup placement
+- Distributed crawl and production job coordination
 - Pinterest persistent profile OAuth/login
-- Asset serving & local disk caching
+- Asset serving from durable runtime storage
 """
 
 from __future__ import annotations
@@ -15,7 +14,9 @@ import json
 import logging
 import os
 import re
+import signal
 import sys
+import threading
 import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -31,7 +32,7 @@ if str(SERVER_ROOT) not in sys.path:
 PROJECT_ROOT = SERVER_ROOT.parents[3]
 _venv_dir = PROJECT_ROOT / ".venv"
 _venv_python = _venv_dir / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
-if _venv_python.exists() and Path(sys.prefix).resolve() != _venv_dir.resolve():
+if __name__ == "__main__" and _venv_python.exists() and Path(sys.prefix).resolve() != _venv_dir.resolve():
     try:
         os.execv(str(_venv_python), [str(_venv_python)] + sys.argv)
     except Exception:
@@ -52,7 +53,9 @@ except ImportError:
 
 from pinterest_pod_bridge import (
     POD_SIZE_PRESETS,
+    PinterestTrendDiscoveryError,
     cancel_pod_job,
+    check_pinterest_coordinator_ready,
     check_service_health,
     create_pod_job,
     delete_pod_job,
@@ -68,7 +71,10 @@ from pinterest_pod_bridge import (
     rescue_pod_candidate,
     save_manual_pinterest_token,
     send_windows_desktop_notification,
+    suggest_pinterest_themes,
+    validate_pinterest_oauth_state,
 )
+from job_repository import get_job_repository
 
 logging.basicConfig(
     level=logging.INFO,
@@ -77,7 +83,7 @@ logging.basicConfig(
 logger = logging.getLogger("pinterest_pod_server")
 
 PORT = int(os.getenv("PINTEREST_POD_PORT", "8768"))
-HOST = os.getenv("HOST", "127.0.0.1")
+HOST = os.getenv("PINTEREST_POD_HOST", os.getenv("HOST", "127.0.0.1"))
 
 
 class PinterestPodHandler(BaseHTTPRequestHandler):
@@ -90,6 +96,11 @@ class PinterestPodHandler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization, Accept")
+
+    def _base_url(self) -> str:
+        host = self.headers.get("X-Forwarded-Host") or self.headers.get("Host") or f"{HOST}:{PORT}"
+        protocol = self.headers.get("X-Forwarded-Proto") or "http"
+        return f"{protocol}://{host}"
 
     def do_OPTIONS(self) -> None:
         self.send_response(204)
@@ -125,6 +136,30 @@ class PinterestPodHandler(BaseHTTPRequestHandler):
             self.send_json({"ok": True, "service": "pinterest-pod", "port": PORT, "status": "running"})
             return
 
+        if path in {"/ready", "/api/pinterest-pod/ready"}:
+            is_database_ready = get_job_repository().is_ready()
+            is_coordinator_ready = check_pinterest_coordinator_ready()
+            try:
+                runtime_root = Path(os.getenv("PINTEREST_RUNTIME_ROOT") or SERVER_ROOT / "temp" / "pinterest_pod")
+                runtime_root.mkdir(parents=True, exist_ok=True)
+                probe = runtime_root / ".readiness-probe"
+                probe.write_text("ready", encoding="utf-8")
+                probe.unlink()
+                is_runtime_ready = True
+            except OSError:
+                is_runtime_ready = False
+            is_ready = is_database_ready and is_runtime_ready and is_coordinator_ready
+            self.send_json(
+                {
+                    "ok": is_ready,
+                    "database": is_database_ready,
+                    "runtime": is_runtime_ready,
+                    "coordinator": is_coordinator_ready,
+                },
+                200 if is_ready else 503,
+            )
+            return
+
         # OAuth Authorize URL: GET /api/pinterest-pod/oauth/authorize-url
         if path in {"/api/pinterest-pod/oauth/authorize-url", "/api/pinterest-pod/oauth/url"}:
             try:
@@ -139,6 +174,7 @@ class PinterestPodHandler(BaseHTTPRequestHandler):
         if path in {"/api/pinterest-pod/oauth/callback", "/api/v1/oauth/pinterest/callback"}:
             query_params = urllib.parse.parse_qs(url_parts.query)
             code = (query_params.get("code") or [""])[0].strip()
+            state = (query_params.get("state") or [""])[0].strip()
             error = (query_params.get("error") or query_params.get("error_description") or [""])[0].strip()
             if error:
                 html_err = f"""<!DOCTYPE html>
@@ -169,9 +205,14 @@ class PinterestPodHandler(BaseHTTPRequestHandler):
                 self.send_html(html_nocode, 400)
                 return
 
+            if not validate_pinterest_oauth_state(state):
+                self.send_html("<!DOCTYPE html><html><body><h2>OAuth state không hợp lệ hoặc đã hết hạn.</h2></body></html>", 400)
+                return
+
             try:
-                host = self.headers.get("Host") or f"{HOST}:{PORT}"
-                current_callback_url = f"http://{host}{path}"
+                host = self.headers.get("X-Forwarded-Host") or self.headers.get("Host") or f"{HOST}:{PORT}"
+                protocol = self.headers.get("X-Forwarded-Proto") or "http"
+                current_callback_url = os.getenv("PINTEREST_REDIRECT_URI") or f"{protocol}://{host}{path}"
                 res = exchange_pinterest_oauth_code(code, redirect_uri=current_callback_url)
                 html_ok = """<!DOCTYPE html>
 <html>
@@ -274,6 +315,8 @@ class PinterestPodHandler(BaseHTTPRequestHandler):
                     "product": product,
                 })
                 self.send_json(res)
+            except PinterestTrendDiscoveryError as exc:
+                self.send_json({"ok": False, "code": exc.code, "message": str(exc)}, exc.status_code)
             except ValueError as exc:
                 self.send_json({"ok": False, "message": str(exc)}, 400)
             except Exception as exc:
@@ -286,8 +329,7 @@ class PinterestPodHandler(BaseHTTPRequestHandler):
         if pod_job_logs_match:
             try:
                 job_id = pod_job_logs_match.group(1)
-                host = self.headers.get("Host") or f"{HOST}:{PORT}"
-                base_url = f"http://{host}"
+                base_url = self._base_url()
                 status_res = get_pod_job_status(job_id, base_url)
                 self.send_json({
                     "ok": True,
@@ -307,8 +349,7 @@ class PinterestPodHandler(BaseHTTPRequestHandler):
         if pod_job_match:
             try:
                 job_id = pod_job_match.group(1)
-                host = self.headers.get("Host") or f"{HOST}:{PORT}"
-                base_url = f"http://{host}"
+                base_url = self._base_url()
                 status_res = get_pod_job_status(job_id, base_url)
                 self.send_json(status_res)
             except LookupError as exc:
@@ -348,18 +389,30 @@ class PinterestPodHandler(BaseHTTPRequestHandler):
                 self.send_json({"ok": False, "message": "JSON body payload không hợp lệ."}, 400)
                 return
 
-        host = self.headers.get("Host") or f"{HOST}:{PORT}"
-        base_url = f"http://{host}"
+        base_url = self._base_url()
 
         # Trend Discovery: POST /api/pinterest-pod/trends/discover
         if path == "/api/pinterest-pod/trends/discover":
             try:
                 res = discover_pinterest_trends(payload)
                 self.send_json(res)
+            except PinterestTrendDiscoveryError as exc:
+                self.send_json({"ok": False, "code": exc.code, "message": str(exc)}, exc.status_code)
             except ValueError as exc:
                 self.send_json({"ok": False, "message": str(exc)}, 400)
             except Exception as exc:
                 logger.exception("Error discovering trends in POST")
+                self.send_json({"ok": False, "message": str(exc)}, 500)
+            return
+
+        # Internal POD theme suggestions. Never presented as official Pinterest Trends data.
+        if path == "/api/pinterest-pod/trends/suggestions":
+            try:
+                self.send_json(suggest_pinterest_themes(payload))
+            except ValueError as exc:
+                self.send_json({"ok": False, "message": str(exc)}, 400)
+            except Exception as exc:
+                logger.exception("Error generating internal Pinterest POD suggestions")
                 self.send_json({"ok": False, "message": str(exc)}, 500)
             return
 
@@ -430,6 +483,9 @@ class PinterestPodHandler(BaseHTTPRequestHandler):
         # Launch Login: POST /api/pinterest-pod/launch-login
         if path == "/api/pinterest-pod/launch-login":
             try:
+                if os.getenv("NODE_ENV", "development").lower() == "production":
+                    self.send_json({"ok": False, "message": "Production dùng OAuth qua trình duyệt người dùng; không mở browser trên VPS."}, 409)
+                    return
                 timeout = int(payload.get("timeout") or 600)
                 res = launch_pinterest_login(timeout=timeout)
                 self.send_json(res)
@@ -476,56 +532,24 @@ class PinterestPodHandler(BaseHTTPRequestHandler):
                 self.send_json({"ok": False, "message": str(exc)}, 500)
             return
 
-        # Handover to SEO Module: POST /api/pinterest-pod/handover-seo or POST /api/seo/receive-deliverables
-        if path in {"/api/pinterest-pod/handover-seo", "/api/seo/receive-deliverables"}:
-            try:
-                workflow_id = payload.get("workflowId") or payload.get("jobId") or "latest"
-                handoff_dir = SERVER_ROOT / "data" / "pinterest_pod" / "output" / workflow_id
-                handoff_dir.mkdir(parents=True, exist_ok=True)
-                handoff_file = handoff_dir / "seo_handoff_payload.json"
-                with open(handoff_file, "w", encoding="utf-8") as f:
-                    json.dump(payload, f, ensure_ascii=False, indent=2)
-
-                # Also write a copy to seo_handoffs directory inside data
-                seo_inbox_dir = SERVER_ROOT / "data" / "seo_handoffs"
-                try:
-                    seo_inbox_dir.mkdir(parents=True, exist_ok=True)
-                    with open(seo_inbox_dir / f"{workflow_id}_seo_payload.json", "w", encoding="utf-8") as f:
-                        json.dump(payload, f, ensure_ascii=False, indent=2)
-                except Exception:
-                    pass
-
-                items = payload.get("items") or []
-                print_master_count = sum(1 for item in items if item.get("printMaster"))
-                approved_mockups_count = sum(len(item.get("composedMockups") or []) for item in items)
-
-                logger.info(
-                    "Handover to SEO received for workflow %s: %d print masters, %d approved mockups",
-                    workflow_id,
-                    print_master_count,
-                    approved_mockups_count,
-                )
-
-                self.send_json({
-                    "ok": True,
-                    "success": True,
-                    "message": f"Bàn giao sang SEO thành công: {print_master_count} file in xưởng (CMYK 300 DPI) và {approved_mockups_count} mockup AI đã duyệt.",
-                    "receivedAt": int(time.time() * 1000),
-                    "printMasterCount": print_master_count,
-                    "approvedMockupCount": approved_mockups_count,
-                    "savedPath": str(handoff_file),
-                })
-            except Exception as exc:
-                logger.exception("Error during SEO handover")
-                self.send_json({"ok": False, "success": False, "message": str(exc)}, 500)
-            return
-
         self.send_json({"ok": False, "error": f"Endpoint not found: {path}"}, 404)
 
 
 def run_server() -> None:
+    repository = get_job_repository()
+    recovered_jobs = repository.recover_interrupted()
+    if recovered_jobs:
+        logger.warning("Recovered %d interrupted Pinterest POD jobs", recovered_jobs)
     server_address = (HOST, PORT)
     httpd = ThreadingHTTPServer(server_address, PinterestPodHandler)
+    httpd.daemon_threads = True
+
+    def handle_shutdown(signum: int, _frame: Any) -> None:
+        logger.info("Received signal %s; stopping Pinterest POD service", signum)
+        threading.Thread(target=httpd.shutdown, daemon=True).start()
+
+    signal.signal(signal.SIGTERM, handle_shutdown)
+    signal.signal(signal.SIGINT, handle_shutdown)
     logger.info("Pinterest POD Studio Backend listening on http://%s:%d", HOST, PORT)
     try:
         httpd.serve_forever()

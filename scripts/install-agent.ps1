@@ -1,140 +1,238 @@
 # ==============================================================================
-# FFP Tool - 1-Command Crawler Agent Installer (Windows PowerShell)
-# Usage:
-#   powershell -ExecutionPolicy Bypass -File scripts\install-agent.ps1
-#   Or remote one-liner:
+# FFP Tool - Remote Crawler Agent Installer (Windows PowerShell)
+#
+# Internet:
 #   irm https://ffp.b6-team.site/install-agent.ps1 | iex
+# Local network:
+#   $env:FFP_SERVER_URL="http://192.168.1.10:3010"; irm "$env:FFP_SERVER_URL/install-agent.ps1" | iex
 # ==============================================================================
 
 param(
-    [string]$ServerUrl = "https://ffp.b6-team.site",
+    [string]$ServerUrl = $(if ($env:FFP_SERVER_URL) { $env:FFP_SERVER_URL } else { "https://ffp.b6-team.site" }),
     [string]$DisplayName = $env:COMPUTERNAME,
+    [string]$InstallDirectory = "",
     [switch]$NoStart
 )
 
 $ErrorActionPreference = "Stop"
+$ServerUrl = $ServerUrl.Trim().TrimEnd("/")
+$serverUri = [Uri]$ServerUrl
+if (-not $serverUri.IsAbsoluteUri -or $serverUri.Scheme -notin @("http", "https")) {
+    throw "ServerUrl must be an absolute HTTP(S) URL."
+}
+if (-not [string]::IsNullOrEmpty($serverUri.UserInfo) -or -not [string]::IsNullOrEmpty($serverUri.Query) -or -not [string]::IsNullOrEmpty($serverUri.Fragment)) {
+    throw "ServerUrl must not contain credentials, query parameters, or fragments."
+}
 
 Write-Host ""
 Write-Host "==========================================================" -ForegroundColor Cyan
-Write-Host "       FFP CRAWLER AGENT - CAI DAT 1 LENH DUY NHAT        " -ForegroundColor Yellow
+Write-Host "       FFP CRAWLER AGENT - REMOTE INSTALLER              " -ForegroundColor Yellow
 Write-Host "==========================================================" -ForegroundColor Cyan
 Write-Host ""
 
-$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-if (-not $ScriptDir -or $ScriptDir -eq "") {
-    $ScriptDir = (Get-Location).Path
+$invocationPath = $MyInvocation.MyCommand.Path
+$scriptDirectory = if ($invocationPath) { Split-Path -Parent $invocationPath } else { "" }
+$repositoryRoot = if ($scriptDirectory -and (Test-Path -LiteralPath (Join-Path $scriptDirectory "..\src\modules\amazon-crawler\engine"))) {
+    (Resolve-Path -LiteralPath (Join-Path $scriptDirectory "..")).Path
+} else {
+    ""
 }
 
-# Resolve project / agent root directory
-$AgentRoot = $ScriptDir
-if (Test-Path (Join-Path $ScriptDir "..\src\modules\amazon-crawler")) {
-    $AgentRoot = (Resolve-Path (Join-Path $ScriptDir "..")).Path
+if ($InstallDirectory.Trim()) {
+    $AgentRoot = [IO.Path]::GetFullPath($InstallDirectory)
+} elseif ($repositoryRoot) {
+    $AgentRoot = $repositoryRoot
+} else {
+    $localBase = if ($env:LOCALAPPDATA) { $env:LOCALAPPDATA } else { $HOME }
+    $AgentRoot = Join-Path $localBase "FFP\CrawlerAgent"
 }
-Set-Location $AgentRoot
+New-Item -ItemType Directory -Force -Path $AgentRoot | Out-Null
 Write-Host "-> Thu muc cai dat: $AgentRoot" -ForegroundColor Gray
+Write-Host "-> May chu: $ServerUrl" -ForegroundColor Gray
 
-# 1. Kiem tra Python
-Write-Host "[1/5] Kiem tra moi truong Python..." -ForegroundColor Green
+Write-Host "[1/6] Kiem tra Python >= 3.10..." -ForegroundColor Green
 $PythonCmd = $null
-if (Get-Command "python" -ErrorAction SilentlyContinue) {
-    $ver = python -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>$null
-    if ($ver -and [version]$ver -ge [version]"3.10") {
-        $PythonCmd = "python"
-        Write-Host "  Found Python $ver (OK)" -ForegroundColor Gray
-    }
-}
-
-if (-not $PythonCmd -and (Get-Command "python3" -ErrorAction SilentlyContinue)) {
-    $ver = python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>$null
-    if ($ver -and [version]$ver -ge [version]"3.10") {
-        $PythonCmd = "python3"
-        Write-Host "  Found Python3 $ver (OK)" -ForegroundColor Gray
+foreach ($candidate in @("python", "python3")) {
+    if (Get-Command $candidate -ErrorAction SilentlyContinue) {
+        $version = & $candidate -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>$null
+        if ($version -and [version]$version -ge [version]"3.10") {
+            $PythonCmd = $candidate
+            Write-Host "  Found Python $version (OK)" -ForegroundColor Gray
+            break
+        }
     }
 }
 
 if (-not $PythonCmd) {
-    Write-Host "  Khong tim thay Python >= 3.10! Dang thu cai dat tu dong qua winget..." -ForegroundColor Yellow
-    if (Get-Command "winget" -ErrorAction SilentlyContinue) {
-        Write-Host "  Dang chay winget install Python.Python.3.11..." -ForegroundColor Gray
-        winget install -e --id Python.Python.3.11 --silent --accept-package-agreements --accept-source-agreements
-        $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
-        $PythonCmd = "python"
+    if (-not (Get-Command "winget" -ErrorAction SilentlyContinue)) {
+        throw "Khong tim thay Python >= 3.10 va winget. Hay cai Python 3.11 tu https://www.python.org/downloads/."
+    }
+    Write-Host "  Dang cai dat Python 3.11 bang winget..." -ForegroundColor Yellow
+    winget install -e --id Python.Python.3.11 --silent --accept-package-agreements --accept-source-agreements
+    $env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [Environment]::GetEnvironmentVariable("Path", "User")
+    $python311 = Join-Path $env:LOCALAPPDATA "Programs\Python\Python311\python.exe"
+    $PythonCmd = if (Test-Path -LiteralPath $python311) { $python311 } else { "python" }
+    & $PythonCmd -c "import sys; assert sys.version_info >= (3, 10)"
+}
+
+if (-not $repositoryRoot) {
+    Write-Host "[2/6] Tai day du ma nguon Agent..." -ForegroundColor Green
+    $temporaryRoot = Join-Path ([IO.Path]::GetTempPath()) ("ffp-agent-" + [Guid]::NewGuid().ToString("N"))
+    $archivePath = Join-Path $temporaryRoot "ffp-crawler-agent.tar.gz"
+    $checksumPath = "$archivePath.sha256"
+    $stagingRoot = Join-Path $temporaryRoot "source"
+    New-Item -ItemType Directory -Force -Path $stagingRoot | Out-Null
+    try {
+        Invoke-WebRequest -UseBasicParsing -Uri "$ServerUrl/ffp-crawler-agent.tar.gz" -OutFile $archivePath
+        Invoke-WebRequest -UseBasicParsing -Uri "$ServerUrl/ffp-crawler-agent.tar.gz.sha256" -OutFile $checksumPath
+        $expectedHash = ((Get-Content -LiteralPath $checksumPath -Raw).Trim() -split "\s+")[0].ToLowerInvariant()
+        $actualHash = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($expectedHash -notmatch "^[a-f0-9]{64}$" -or $actualHash -ne $expectedHash) {
+            throw "Agent package checksum verification failed."
+        }
+
+        $extractScript = @'
+import pathlib
+import sys
+import tarfile
+
+archive = pathlib.Path(sys.argv[1]).resolve()
+destination = pathlib.Path(sys.argv[2]).resolve()
+with tarfile.open(archive, "r:gz") as package:
+    for member in package.getmembers():
+        if member.issym() or member.islnk():
+            raise RuntimeError("Agent package may not contain links")
+        target = (destination / member.name).resolve()
+        try:
+            target.relative_to(destination)
+        except ValueError as error:
+            raise RuntimeError("Agent package contains an unsafe path") from error
+    package.extractall(destination)
+'@
+        $extractScriptPath = Join-Path $temporaryRoot "extract-agent-package.py"
+        Set-Content -LiteralPath $extractScriptPath -Value $extractScript -Encoding UTF8
+        & $PythonCmd $extractScriptPath $archivePath $stagingRoot
+        $requiredEntrypoint = Join-Path $stagingRoot "scripts\amazon-crawler-agent.py"
+        $requiredRequirements = Join-Path $stagingRoot "src\modules\amazon-crawler\engine\requirements.txt"
+        if (-not (Test-Path -LiteralPath $requiredEntrypoint) -or -not (Test-Path -LiteralPath $requiredRequirements)) {
+            throw "Downloaded Agent package is incomplete."
+        }
+        Copy-Item -Path (Join-Path $stagingRoot "*") -Destination $AgentRoot -Recurse -Force
+    }
+    finally {
+        if (Test-Path -LiteralPath $temporaryRoot) {
+            Remove-Item -LiteralPath $temporaryRoot -Recurse -Force
+        }
+    }
+} else {
+    Write-Host "[2/6] Dang chay trong source tree; su dung ma Agent hien co." -ForegroundColor Gray
+}
+
+$VenvDirectory = Join-Path $AgentRoot ".venv"
+$VenvPython = Join-Path $VenvDirectory "Scripts\python.exe"
+$VenvPythonWindow = Join-Path $VenvDirectory "Scripts\pythonw.exe"
+Write-Host "[3/6] Thiet lap virtual environment..." -ForegroundColor Green
+if (-not (Test-Path -LiteralPath $VenvPython)) {
+    & $PythonCmd -m venv $VenvDirectory
+}
+
+Write-Host "[4/6] Cai dat thu vien Agent..." -ForegroundColor Green
+& $VenvPython -m pip install --disable-pip-version-check --upgrade pip | Out-Null
+$requirementsPath = Join-Path $AgentRoot "src\modules\amazon-crawler\engine\requirements.txt"
+& $VenvPython -m pip install -r $requirementsPath
+& $VenvPython -m compileall -q -f (Join-Path $AgentRoot "src") (Join-Path $AgentRoot "scripts")
+
+Write-Host "[5/6] Cai dat Playwright Chromium..." -ForegroundColor Green
+& $VenvPython -m playwright install chromium
+
+Write-Host "[6/6] Tao cau hinh va launcher..." -ForegroundColor Green
+$configDirectory = Join-Path $AgentRoot "config"
+$configFile = Join-Path $configDirectory "amazon-crawler-agent.json"
+New-Item -ItemType Directory -Force -Path $configDirectory | Out-Null
+if (-not (Test-Path -LiteralPath $configFile)) {
+    @{
+        serverUrl = $ServerUrl
+        displayName = $DisplayName
+        dataDirectory = ".runtime/agent-data"
+        heartbeatIntervalSeconds = 10
+    } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $configFile -Encoding UTF8
+} else {
+    Write-Host "  Giu nguyen cau hinh san co: $configFile" -ForegroundColor Gray
+}
+
+$podServerDir = Join-Path $AgentRoot "src\modules\pinterest-pod\server"
+$agentPodEnv = Join-Path $podServerDir ".env"
+$agentPodEnvExample = Join-Path $podServerDir ".env.example"
+if (-not (Test-Path -LiteralPath $agentPodEnv)) {
+    if (Test-Path -LiteralPath $agentPodEnvExample) {
+        Copy-Item -LiteralPath $agentPodEnvExample -Destination $agentPodEnv
     } else {
-        Write-Host "  LOI: Vui long cai dat Python 3.10 hoac 3.11 tu https://www.python.org/downloads/ va tick chon 'Add Python to PATH'." -ForegroundColor Red
-        exit 1
+        @'
+AI_PROVIDER=gemini_vertex
+GOOGLE_CLOUD_PROJECT=gemini-image-benchmark
+GOOGLE_CLOUD_LOCATION=us-central1
+GOOGLE_GENAI_USE_ENTERPRISE=True
+GEMINI_VISION_MODEL=gemini-2.5-flash
+GEMINI_ANALYSIS_MODEL=gemini-2.5-pro
+GEMINI_MODEL=gemini-2.5-pro
+IMAGEN_MODEL=gemini-2.5-flash-image
+GEMINI_IMAGE_MODEL=gemini-2.5-flash-image
+AI_MAX_OUTPUT_TOKENS=8192
+'@ | Set-Content -LiteralPath $agentPodEnv -Encoding UTF8
     }
 }
 
-# 2. Tao Virtual Environment
-$VenvDir = Join-Path $AgentRoot ".venv"
-$VenvPython = Join-Path $VenvDir "Scripts\python.exe"
-Write-Host "[2/5] Thiet lap moi truong ao (.venv)..." -ForegroundColor Green
-if (-not (Test-Path $VenvPython)) {
-    Write-Host "  Dang tao .venv moi..." -ForegroundColor Gray
-    & $PythonCmd -m venv $VenvDir
-} else {
-    Write-Host "  .venv da ton tai, su dung san co." -ForegroundColor Gray
-}
-
-# 3. Cai dat dependencies
-Write-Host "[3/5] Dang cai dat thu vien phan mem can thiet..." -ForegroundColor Green
-& $VenvPython -m pip install --disable-pip-version-check --upgrade pip | Out-Null
-
-$ReqPath = Join-Path $AgentRoot "src\modules\amazon-crawler\engine\requirements.txt"
-if (Test-Path $ReqPath) {
-    & $VenvPython -m pip install -r $ReqPath
-} else {
-    & $VenvPython -m pip install "playwright>=1.50,<2" "fastapi==0.116.1" "uvicorn[standard]==0.35.0" "beautifulsoup4>=4.12,<5" "python-dotenv>=1,<2" "websockets>=15,<16" "pillow>=11,<12" "pystray>=0.19,<1" "httpx>=0.27.0" "numpy>=1.26,<3" "requests>=2.31,<3"
-}
-
-# 4. Cai dat Playwright Browser (Chromium)
-Write-Host "[4/5] Cai dat trinh duyet Chromium cho crawler..." -ForegroundColor Green
-& $VenvPython -m playwright install chromium
-
-# 5. Cau hinh Agent
-Write-Host "[5/5] Khoi tao cau hinh agent.json..." -ForegroundColor Green
-$ConfigDir = Join-Path $AgentRoot "config"
-New-Item -ItemType Directory -Force -Path $ConfigDir | Out-Null
-$ConfigFile = Join-Path $ConfigDir "amazon-crawler-agent.json"
-
-if (-not (Test-Path $ConfigFile)) {
-    $DefaultConfig = @{
-        serverUrl = $ServerUrl
-        displayName = "$DisplayName"
-        dataDirectory = ".runtime/agent-data"
-        heartbeatIntervalSeconds = 10
-    } | ConvertTo-Json -Depth 4
-    Set-Content -Path $ConfigFile -Value $DefaultConfig -Encoding UTF8
-    Write-Host "  Tao file cau hinh: $ConfigFile" -ForegroundColor Gray
-} else {
-    Write-Host "  File cau hinh da ton tai, giu nguyen: $ConfigFile" -ForegroundColor Gray
-}
-
-# Tao launcher chay nhanh
-$BatLauncher = Join-Path $AgentRoot "chay-agent.bat"
-$BatContent = @"
+$launcher = @'
 @echo off
 title FFP Crawler Agent
 cd /d "%~dp0"
-echo ===================================================
-echo     DANG KHOI CHAY FFP CRAWLER AGENT
-echo ===================================================
-call .venv\Scripts\activate.bat
-python scripts\amazon-crawler-agent.py --project-root .
-pause
-"@
-Set-Content -Path $BatLauncher -Value $BatContent -Encoding ASCII
-Write-Host "  Tao file chay nhanh: chay-agent.bat" -ForegroundColor Gray
+start "FFP Crawler Agent" ".venv\Scripts\pythonw.exe" scripts\amazon-crawler-agent.py --project-root .
+'@
+$agentLauncher = Join-Path $AgentRoot "chay-agent.bat"
+Set-Content -LiteralPath $agentLauncher -Value $launcher -Encoding ASCII
+
+$loginLauncher = Join-Path $AgentRoot "dang-nhap-pinterest.bat"
+$shortcutShell = New-Object -ComObject WScript.Shell
+if (Test-Path -LiteralPath $loginLauncher) {
+    $shortcutTargets = @(
+        (Join-Path ([Environment]::GetFolderPath("Desktop")) "Dang nhap Pinterest FFP.lnk"),
+        (Join-Path ([Environment]::GetFolderPath("Programs")) "Dang nhap Pinterest FFP.lnk")
+    )
+    foreach ($shortcutPath in $shortcutTargets) {
+        $shortcut = $shortcutShell.CreateShortcut($shortcutPath)
+        $shortcut.TargetPath = $loginLauncher
+        $shortcut.WorkingDirectory = $AgentRoot
+        $shortcut.Description = "Dang nhap Pinterest cho FFP Crawler Agent"
+        $shortcut.Save()
+    }
+}
+
+$agentShortcutTargets = @(
+    (Join-Path ([Environment]::GetFolderPath("Desktop")) "FFP Crawler Agent.lnk"),
+    (Join-Path ([Environment]::GetFolderPath("Startup")) "FFP Crawler Agent.lnk")
+)
+foreach ($shortcutPath in $agentShortcutTargets) {
+    $shortcut = $shortcutShell.CreateShortcut($shortcutPath)
+    $shortcut.TargetPath = $VenvPythonWindow
+    $shortcut.Arguments = 'scripts\amazon-crawler-agent.py --project-root .'
+    $shortcut.WorkingDirectory = $AgentRoot
+    $shortcut.Description = "Khoi dong FFP Crawler Agent"
+    $shortcut.WindowStyle = 7
+    $shortcut.Save()
+}
 
 Write-Host ""
 Write-Host "==========================================================" -ForegroundColor Green
-Write-Host " CAI DAT HOAN TAT THANH CONG!                             " -ForegroundColor Green
-Write-Host " Server: $ServerUrl                                       " -ForegroundColor Cyan
-Write-Host " Chay lai bat cu luc nao bang: chay-agent.bat             " -ForegroundColor Yellow
+Write-Host " CAI DAT HOAN TAT" -ForegroundColor Green
+Write-Host " Thu muc: $AgentRoot" -ForegroundColor Cyan
+Write-Host " Chay lai bang: $AgentRoot\chay-agent.bat" -ForegroundColor Yellow
+Write-Host " Dang nhap Pinterest: $AgentRoot\dang-nhap-pinterest.bat" -ForegroundColor Yellow
 Write-Host "==========================================================" -ForegroundColor Green
-Write-Host ""
 
 if (-not $NoStart) {
-    Write-Host "Dang khoi chay Crawler Agent..." -ForegroundColor Cyan
-    & $VenvPython (Join-Path $AgentRoot "scripts\amazon-crawler-agent.py") --project-root $AgentRoot
+    Start-Process -FilePath $VenvPythonWindow -ArgumentList @(
+        ('"{0}"' -f (Join-Path $AgentRoot "scripts\amazon-crawler-agent.py")),
+        "--project-root",
+        ('"{0}"' -f $AgentRoot)
+    ) -WorkingDirectory $AgentRoot -WindowStyle Hidden
 }

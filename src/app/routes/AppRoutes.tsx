@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { createBrowserRouter, Navigate, RouterProvider } from "react-router-dom";
 
 import { amazonCrawlerCoordinatorUrl, environment } from "../../config/environment";
+import { agentInstallServerUrl } from "../../config/agent-install-url";
 import { createCustomGptClient, createCustomGptSeoRoutes, getCustomGptClient } from "../../modules/custom-gpt-seo";
 import { AppLayout } from "../../layouts/AppLayout";
 import { amazonCrawlerRoutes } from "../../modules/amazon-crawler";
@@ -172,7 +173,7 @@ export function AppRoutes({
       }
     };
 
-    const podRoutes = createPinterestPodRoutes(podClient, handlePinterestHandover);
+    const podRoutes = createPinterestPodRoutes(podClient, handlePinterestHandover, agentInstallServerUrl);
 
     const handleAutoSeoHandover = async (
       shopifyProducts: readonly ShopifyProductForAutoSeoUi[],

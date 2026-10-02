@@ -174,8 +174,12 @@ def main() -> int:
                         except Exception:
                             pass
                         return 0
-                    print("Browser window closed by user.", flush=True)
-                    break
+                    print("ERROR: Browser window was closed before Pinterest login completed.", flush=True)
+                    try:
+                        context.close()
+                    except Exception:
+                        pass
+                    return 2
 
                 if has_login_cookie(context) and page_looks_logged_in(page):
                     print("Pinterest login detected. Saved browser profile.", flush=True)
@@ -193,17 +197,25 @@ def main() -> int:
                         except Exception:
                             pass
                         return 0
-                    break
+                    print("ERROR: Browser session closed before Pinterest login completed.", flush=True)
+                    return 2
                 time.sleep(1)
                 continue
             time.sleep(2)
 
-        print("Login wait timed out. If you finished login, the profile may still be saved.", flush=True)
+        if has_login_cookie(context):
+            print("Pinterest login cookie detected at timeout. Saved browser profile.", flush=True)
+            try:
+                context.close()
+            except Exception:
+                pass
+            return 0
+        print("ERROR: Pinterest login wait timed out before a valid session was detected.", flush=True)
         try:
             context.close()
         except Exception:
             pass
-    return 0
+    return 3
 
 
 if __name__ == "__main__":

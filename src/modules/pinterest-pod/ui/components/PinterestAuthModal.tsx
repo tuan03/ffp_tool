@@ -14,6 +14,9 @@ export interface PinterestAuthModalProps {
   readonly client?: PinterestPodClient;
   readonly isLoggingIn: boolean;
   readonly onLaunchBrowserLogin: () => void;
+  readonly isAgentConnected?: boolean;
+  readonly agentName?: string;
+  readonly isAgentBrowserLoggedIn?: boolean;
 }
 
 export function PinterestAuthModal({
@@ -24,6 +27,9 @@ export function PinterestAuthModal({
   client,
   isLoggingIn,
   onLaunchBrowserLogin,
+  isAgentConnected = false,
+  agentName,
+  isAgentBrowserLoggedIn = false,
 }: PinterestAuthModalProps): React.JSX.Element | null {
   const [activeTab, setActiveTab] = useState<"oauth" | "manual" | "browser">("oauth");
   const [callbackUrlOrCode, setCallbackUrlOrCode] = useState("");
@@ -82,8 +88,9 @@ export function PinterestAuthModal({
   if (!isOpen) return null;
 
   const isOAuthValid = authStatus?.oauth_valid ?? false;
-  const isBrowserLoggedIn = authStatus?.browser_logged_in ?? false;
+  const isBrowserLoggedIn = isAgentBrowserLoggedIn;
   const authUrl = authStatus?.auth_url;
+  const agentLoginCommand = '& "$env:LOCALAPPDATA\\FFP\\CrawlerAgent\\.venv\\Scripts\\python.exe" "$env:LOCALAPPDATA\\FFP\\CrawlerAgent\\src\\modules\\pinterest-pod\\server\\pinterest\\pinterest_browser_login.py"';
 
   function handleOpenOAuthPopup(): void {
     setFeedback(null);
@@ -228,6 +235,12 @@ export function PinterestAuthModal({
           </button>
         </div>
 
+        {authStatus?.oauth_config_error && (
+          <div className="mb-4 rounded-xl border border-rose-700/70 bg-rose-950/60 p-3 text-xs font-semibold text-rose-200">
+            Cấu hình OAuth chưa hoàn chỉnh: {authStatus.oauth_config_error}
+          </div>
+        )}
+
         {/* Status Indicators Overview */}
         <div className="my-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
           {/* API Token Box */}
@@ -245,7 +258,7 @@ export function PinterestAuthModal({
             <div className="mt-1.5 text-[11px]">
               {isOAuthValid ? (
                 <div className="space-y-0.5 text-slate-300">
-                  <p className="text-emerald-400 font-semibold">✓ Đã kết nối token hợp lệ</p>
+                  <p className="text-emerald-400 font-semibold">✓ Đã lưu token; quyền Trends sẽ được kiểm tra khi quét</p>
                   {authStatus?.token_info?.username && (
                     <p className="text-slate-400">Tài khoản: @{authStatus.token_info.username}</p>
                   )}
@@ -268,16 +281,16 @@ export function PinterestAuthModal({
             }`}
           >
             <div className="flex items-center justify-between font-bold">
-              <span>2. Phiên duyệt Crawler (Cào ảnh)</span>
+              <span>2. Phiên duyệt trên Crawler Agent</span>
               <span className={`inline-flex h-2 w-2 rounded-full ${isBrowserLoggedIn ? "bg-emerald-400" : "bg-amber-400"}`} />
             </div>
             <div className="mt-1.5 text-[11px]">
               {isBrowserLoggedIn ? (
-                <p className="text-emerald-400 font-semibold">✓ Đã lưu session Playwright</p>
+                <p className="text-emerald-400 font-semibold">✓ {agentName ?? "Crawler agent"} đã lưu session</p>
               ) : (
-                <p className="text-amber-400 font-semibold">! Chưa mở phiên đăng nhập</p>
+                <p className="text-amber-400 font-semibold">{isAgentConnected ? "! Agent chưa đăng nhập Pinterest" : "! Chưa có crawler agent online"}</p>
               )}
-              <p className="text-slate-400 text-[10px] mt-0.5">Dùng để cào ảnh nét mà không bị chặn bot.</p>
+              <p className="text-slate-400 text-[10px] mt-0.5">Trạng thái được báo từ máy agent, không phải trình duyệt trong VPS.</p>
             </div>
           </div>
         </div>
@@ -437,10 +450,22 @@ export function PinterestAuthModal({
         {activeTab === "browser" && (
           <div className="mt-4 flex flex-col gap-4 text-xs">
             <div className="rounded-xl bg-slate-950/60 p-4 border border-slate-800/80">
-              <h3 className="font-bold text-slate-200 text-sm">Đăng nhập tài khoản trình duyệt (Playwright)</h3>
+              <h3 className="font-bold text-slate-200 text-sm">Phiên Pinterest trên máy Crawler Agent</h3>
               <p className="mt-1 text-slate-400 leading-relaxed">
-                Hệ thống sẽ mở một cửa sổ trình duyệt Chromium riêng biệt. Bạn chỉ cần đăng nhập tài khoản Pinterest của mình vào đó. Trình duyệt sẽ tự động đóng và lưu trữ cookie phiên làm việc để phục vụ crawler ảnh.
+                Phiên trình duyệt phải được tạo trên chính máy đang chạy Crawler Agent. Nhấp chuột phải biểu tượng FFP cạnh đồng hồ Windows, sau đó chọn <strong>Đăng nhập Pinterest</strong>.
               </p>
+              <div className="mt-3 rounded-lg border border-slate-700 bg-slate-950 p-3">
+                <p className="mb-2 font-semibold text-slate-300">Lệnh dự phòng nếu máy chưa có menu khay hệ thống:</p>
+                <code className="block overflow-x-auto whitespace-nowrap text-[11px] text-cyan-300">{agentLoginCommand}</code>
+                <button
+                  type="button"
+                  onClick={() => void navigator.clipboard.writeText(agentLoginCommand)}
+                  className="mt-3 rounded-lg border border-cyan-700 bg-cyan-950/60 px-3 py-1.5 font-semibold text-cyan-300 hover:bg-cyan-900"
+                >
+                  Sao chép lệnh đăng nhập Agent
+                </button>
+                <p className="mt-2 text-[10px] text-slate-500">Agent phiên bản mới tự cập nhật trạng thái lên Coordinator trong khoảng 10 giây, không cần restart.</p>
+              </div>
 
               {(isBrowserActive || authStatus?.browser_process_active) && (
                 <div className="mt-3 rounded-xl border border-indigo-500/40 bg-indigo-950/50 p-3.5 text-indigo-200 animate-in fade-in duration-200">
@@ -464,7 +489,7 @@ export function PinterestAuthModal({
               <div className="mt-4 flex items-center gap-3">
                 <button
                   type="button"
-                  disabled={isLoggingIn || isBrowserActive || (authStatus?.browser_process_active ?? false)}
+                  disabled={true}
                   onClick={() => {
                     setIsBrowserActive(true);
                     setFeedback(null);
@@ -483,7 +508,7 @@ export function PinterestAuthModal({
                       ? "Cửa sổ đang mở • Chờ đăng nhập..."
                       : isLoggingIn
                       ? "Đang mở Chromium..."
-                      : "Mở Trình Duyệt Đăng Nhập"}
+                      : "Đăng nhập trực tiếp trên máy Agent"}
                   </span>
                 </button>
                 <button

@@ -3,8 +3,12 @@
 
 import os
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
+
+from PIL import Image
 
 # Ensure server root is in sys.path
 SERVER_ROOT = Path(__file__).resolve().parents[2]
@@ -15,16 +19,21 @@ if str(SERVER_ROOT) not in sys.path:
 os.environ["MOCK_PINTEREST"] = "1"
 os.environ["CI"] = "1"
 
+import pinterest_pod_bridge as bridge
 from pinterest_pod_bridge import (
     ACTIVE_JOBS,
     JOB_CACHE_LOCK,
+    PinterestTrendDiscoveryError,
     _classify_reject_reason,
     create_pod_job,
     discover_pinterest_trends,
     infer_product_type_from_niche,
     rescue_pod_candidate,
+    suggest_pinterest_themes,
 )
 from trend_tool.config import PipelineConfig, ProductTarget
+from trend_tool.crawler import CandidateImage
+from trend_tool.pipeline import prepare_review_candidates
 
 
 class TestPinterestTrendDiscoveryAndRescue(unittest.TestCase):
@@ -63,14 +72,17 @@ class TestPinterestTrendDiscoveryAndRescue(unittest.TestCase):
         reason, code = _classify_reject_reason("patio backyard pergola deck porch staging")
         self.assertEqual(code, "NON_PRINTABLE_3D_SPACE")
 
-    def test_discover_pinterest_trends_success(self):
-        res = discover_pinterest_trends({
+    def test_internal_theme_suggestions_are_labelled_and_have_no_fake_metrics(self):
+        res = suggest_pinterest_themes({
             "niche": "leather bag vintage",
             "trend_type": "growing",
             "region": "US",
             "interest": "womens_fashion",
         })
         self.assertTrue(res["ok"])
+        self.assertEqual(res["source"], "internal_suggestions")
+        self.assertFalse(res["isOfficialTrendData"])
+        self.assertIsNone(res["query_matrix_stats"])
         self.assertEqual(res["niche"], "leather bag vintage")
         self.assertEqual(res["product"], "bag")
         self.assertEqual(res["trend_type"], "growing")
@@ -90,7 +102,10 @@ class TestPinterestTrendDiscoveryAndRescue(unittest.TestCase):
             self.assertGreater(len(cluster["fused_queries"]), 0)
             # Ensure queries are fused with 2D seamless pattern vectors
             self.assertTrue(any("seamless pattern vector" in q or "print design flat" in q for q in cluster["fused_queries"]))
-            self.assertIn("growth_mom_avg", cluster)
+            for keyword in cluster.get("keywords", []):
+                self.assertNotIn("pct_growth_mom", keyword)
+                self.assertNotIn("pct_growth_wow", keyword)
+                self.assertNotIn("pct_growth_yoy", keyword)
 
         # Graphic Printability Gate
         self.assertGreater(len(res["accepted_keywords"]), 0)
@@ -100,8 +115,8 @@ class TestPinterestTrendDiscoveryAndRescue(unittest.TestCase):
             self.assertTrue(bool(rk.get("reject_reason")))
             self.assertTrue(bool(rk.get("reject_reason_code")))
 
-    def test_discover_pinterest_trends_multi_query_matrix(self):
-        res = discover_pinterest_trends({
+    def test_internal_suggestions_do_not_claim_successful_api_queries(self):
+        res = suggest_pinterest_themes({
             "niche": "halloween spooky cute blanket",
             "trend_type": "ALL",
             "region": "ALL",
@@ -109,22 +124,87 @@ class TestPinterestTrendDiscoveryAndRescue(unittest.TestCase):
         self.assertTrue(res["ok"])
         self.assertEqual(res["trend_type"], "all")
         self.assertEqual(res["region"], "ALL")
-        self.assertIn("query_matrix_stats", res)
-        stats = res["query_matrix_stats"]
-        self.assertEqual(stats["total_queries"], 18)
-        self.assertGreaterEqual(stats["successful_queries"], 1)
-        self.assertEqual(len(stats["markets"]), 6)
-        self.assertEqual(len(stats["trend_types"]), 3)
-        self.assertGreater(stats["raw_keywords_count"], 0)
-        self.assertGreater(stats["unique_keywords_count"], 0)
+        self.assertIsNone(res["query_matrix_stats"])
 
-        # Keywords must contain market and trend_type metadata
+        # Internal suggestions must not invent market or trend-type provenance.
         for kw in res["accepted_keywords"]:
-            self.assertIn("markets", kw)
-            self.assertIn("trend_types", kw)
-            self.assertIn("occurrences", kw)
-            self.assertGreaterEqual(len(kw["markets"]), 1)
-            self.assertGreaterEqual(len(kw["trend_types"]), 1)
+            self.assertNotIn("markets", kw)
+            self.assertNotIn("trend_types", kw)
+            self.assertNotIn("occurrences", kw)
+
+    def test_raw_review_keeps_low_information_images_and_only_rejects_unreadable_files(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            first_flat = root / "flat-1.png"
+            second_flat = root / "flat-2.png"
+            unreadable = root / "broken.png"
+            Image.new("RGB", (64, 64), "white").save(first_flat)
+            Image.new("RGB", (64, 64), "white").save(second_flat)
+            unreadable.write_text("not an image", encoding="utf-8")
+            candidates = [
+                CandidateImage(first_flat, "pinterest", "flat one"),
+                CandidateImage(second_flat, "pinterest", "flat two"),
+                CandidateImage(unreadable, "pinterest", "broken"),
+            ]
+
+            kept, decisions = prepare_review_candidates(candidates, dedupe_threshold=5, preserve_raw=True)
+
+            self.assertEqual([candidate.path for candidate in kept], [first_flat, second_flat])
+            self.assertTrue(all("low_information" in (candidate.metadata or {}).get("quality_warnings", []) for candidate in kept))
+            self.assertTrue(any(not decision.kept and decision.reason.startswith("unreadable:") for decision in decisions))
+
+    def test_official_trends_require_oauth_and_never_fall_back(self):
+        with patch("pinterest_pod_bridge.check_oauth_token_valid", return_value=(False, {})):
+            with self.assertRaises(PinterestTrendDiscoveryError) as context:
+                discover_pinterest_trends({"niche": "leather bag", "region": "US"})
+        self.assertEqual(context.exception.code, "PINTEREST_OAUTH_REQUIRED")
+        self.assertEqual(context.exception.status_code, 401)
+
+    def test_official_empty_response_is_labelled_without_internal_suggestions(self):
+        with patch("pinterest_pod_bridge.check_oauth_token_valid", return_value=(True, {"access_token": "test"})):
+            res = discover_pinterest_trends({"niche": "leather bag", "region": "US"})
+        self.assertEqual(res["source"], "pinterest_api")
+        self.assertTrue(res["isOfficialTrendData"])
+        self.assertEqual(res["clusters"], [])
+        self.assertEqual(res["total_keywords"], 0)
+
+    def test_official_trends_preserve_real_metrics_and_do_not_synthesize_clusters(self):
+        api_payload = {
+            "trends": [{
+                "keyword": "unexpected niche keyword",
+                "pct_growth_mom": 37,
+                "pct_growth_wow": 12,
+                "pct_growth_yoy": 55,
+            }]
+        }
+        with (
+            patch.dict(os.environ, {"MOCK_PINTEREST": ""}, clear=False),
+            patch("pinterest_pod_bridge.check_oauth_token_valid", return_value=(True, {"access_token": "test"})),
+            patch("pinterest.trend_finder.pinterest_client.PinterestClient") as client_class,
+        ):
+            client_class.return_value.get.return_value = api_payload
+            res = discover_pinterest_trends({"niche": "custom artwork", "region": "US"})
+
+        self.assertEqual(res["source"], "pinterest_api")
+        self.assertTrue(res["isOfficialTrendData"])
+        self.assertEqual(res["accepted_keywords"][0]["pct_growth_mom"], 37)
+        self.assertEqual(res["clusters"], [])
+
+    def test_official_trends_use_token_from_durable_runtime_path(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            token_file = Path(temporary_directory) / "pinterest_oauth_tokens.json"
+            token_file.write_text('{"access_token":"runtime-token"}', encoding="utf-8")
+            with (
+                patch.dict(os.environ, {"MOCK_PINTEREST": ""}, clear=False),
+                patch.object(bridge, "PRIMARY_TOKEN_FILE", token_file),
+                patch("pinterest.trend_finder.pinterest_client.PinterestClient") as client_class,
+            ):
+                client_class.return_value.get.return_value = {
+                    "trends": [{"keyword": "vintage floral vector", "pct_growth_mom": 25}],
+                }
+                discover_pinterest_trends({"niche": "leather bag", "region": "US"})
+
+            self.assertEqual(client_class.call_args.kwargs["token_path"], token_file.resolve())
 
     def test_discover_pinterest_trends_empty_niche(self):
         with self.assertRaises(ValueError):

@@ -7,6 +7,7 @@ import gzip
 import json
 import random
 import sqlite3
+import sys
 import threading
 import time
 import urllib.error
@@ -114,6 +115,8 @@ class DistributedCrawlerAgent:
         self._debug_log_path = config.data_directory / "agent-debug.jsonl"
         self._resources: dict[str, Any] = {}
         self._telemetry_losses = 0
+        self._task_activity: dict[str, dict[str, Any]] = {}
+        self._task_activity_lock = threading.Lock()
 
     def _debug_event(self, event: str, **details: Any) -> None:
         payload = {"timestamp": utc_iso(), "event": event, "clientId": self.client_id, **details}
@@ -167,6 +170,8 @@ class DistributedCrawlerAgent:
             "captchaDetected": bool(dashboard.get("hasUnattributedCaptcha")),
             "dashboardUnavailable": self._dashboard_unavailable,
             "isPaused": self._paused,
+            "capabilities": self._agent_capabilities(),
+            "currentTasks": self._current_tasks_snapshot(),
             "cache": self.cache.metrics_snapshot(),
             "observability": self._telemetry_snapshot(),
         }
@@ -302,7 +307,7 @@ class DistributedCrawlerAgent:
         discarded_job_ids = {
             str(self.active[task_id].get("jobId") or "")
             for task_id in discard_ids
-            if task_id in self.active
+            if task_id in self.active and task_id not in self.executing_task_ids
         }
         for job_id in discarded_job_ids:
             with self._cancel_events_lock:
@@ -316,7 +321,7 @@ class DistributedCrawlerAgent:
                 self._dashboard_update("delivery", task_id, str(assignment["leaseId"]), "cancelled")
             if task_id not in self.executing_task_ids:
                 self.active.pop(task_id, None)
-            self.store.discard_task(task_id)
+                self.store.discard_task(task_id)
         for task_id in resume_ids:
             assignment = self.active.get(task_id) or self.store.assignment(task_id)
             if assignment is not None and task_id in executable_ids and task_id not in self.executing_task_ids:
@@ -371,6 +376,7 @@ class DistributedCrawlerAgent:
                         cache_generation=self.store.cache_generation(),
                         product_invalidation_generation=self.store.product_invalidation_generation(),
                         temporary_cleanup_generation=self.store.temporary_cleanup_generation(),
+                        pinterest_browser_logged_in=self.pinterest_browser_logged_in(),
                     )))
                     acknowledgement = json.loads(await asyncio.wait_for(websocket.recv(), timeout=15))
                     if acknowledgement.get("type") != "hello_ack":
@@ -640,10 +646,7 @@ class DistributedCrawlerAgent:
             await asyncio.to_thread(self.cache.maintain)
             self._resources = await asyncio.to_thread(self._sample_resources)
             self._publish_status()
-            running = [
-                {"taskId": task_id, "leaseId": assignment["leaseId"]}
-                for task_id, assignment in self.active.items()
-            ]
+            running = self._current_tasks_snapshot()
             await self.outbound_queue.put({
                 "type": "heartbeat",
                 "status": "paused" if self._paused else (
@@ -651,6 +654,7 @@ class DistributedCrawlerAgent:
                 ),
                 "availableSlots": self._available_slots(),
                 "running": running,
+                "capabilities": self._agent_capabilities(),
                 "observability": self._telemetry_snapshot(),
             })
             await asyncio.sleep(HEARTBEAT_INTERVAL_SECONDS)
@@ -962,7 +966,7 @@ class DistributedCrawlerAgent:
         safe_job_id = "".join(c for c in job_id if c.isalnum() or c in ("-", "_"))
         safe_filename = Path(filename).name
         request = urllib.request.Request(
-            f"{self.config.server_url}/api/pinterest-pod/assets/{safe_job_id}/{safe_filename}",
+            f"{self.config.server_url}/api/v1/pinterest-assets/{safe_job_id}/{safe_filename}",
             data=data,
             method="POST",
             headers={"Content-Type": "application/octet-stream"},
@@ -973,8 +977,61 @@ class DistributedCrawlerAgent:
         except Exception:
             pass
 
+    def pinterest_browser_logged_in(self) -> bool:
+        pod_server_dir = self.project_root / "src" / "modules" / "pinterest-pod" / "server"
+        if pod_server_dir.is_dir() and str(pod_server_dir) not in sys.path:
+            sys.path.insert(0, str(pod_server_dir))
+        try:
+            import pinterest_pod_bridge as pod_bridge
+
+            profile_dir = pod_server_dir / "pinterest" / ".pinterest_browser_profile"
+            return bool(pod_bridge.check_browser_profile_logged_in(profile_dir))
+        except Exception:
+            return False
+
+    def _agent_capabilities(self) -> dict[str, Any]:
+        return {
+            "amazon": True,
+            "pinterest": True,
+            "pinterestBrowserLoggedIn": self.pinterest_browser_logged_in(),
+        }
+
+    def _current_tasks_snapshot(self) -> list[dict[str, Any]]:
+        active_task_ids = set(self.active)
+        with self._task_activity_lock:
+            for stale_task_id in set(self._task_activity) - active_task_ids:
+                self._task_activity.pop(stale_task_id, None)
+            activities = {task_id: dict(activity) for task_id, activity in self._task_activity.items()}
+        snapshots: list[dict[str, Any]] = []
+        for task_id, assignment in list(self.active.items()):
+            settings = assignment.get("settings") if isinstance(assignment.get("settings"), dict) else {}
+            activity = activities.get(task_id, {})
+            queries = settings.get("custom_queries") if isinstance(settings.get("custom_queries"), list) else []
+            snapshots.append({
+                "taskId": task_id,
+                "jobId": str(assignment.get("jobId") or ""),
+                "leaseId": str(assignment.get("leaseId") or ""),
+                "channel": str(assignment.get("channel") or settings.get("channel") or "amazon"),
+                "stage": str(assignment.get("action") or settings.get("stage") or "crawl"),
+                "source": str(assignment.get("source") or ""),
+                "niche": str(settings.get("niche") or assignment.get("source") or ""),
+                "product": str(settings.get("product") or ""),
+                "queryCount": len(queries),
+                "message": str(activity.get("message") or "Đang chuẩn bị tác vụ trên Agent."),
+                "percent": max(0, min(100, int(activity.get("percent") or 0))),
+                "updatedAt": activity.get("updatedAt"),
+            })
+        return snapshots
+
+    def _update_task_activity(self, task_id: str, message: str, percent: int) -> None:
+        with self._task_activity_lock:
+            self._task_activity[task_id] = {
+                "message": message[:500],
+                "percent": max(0, min(100, int(percent))),
+                "updatedAt": utc_iso(),
+            }
+
     def _run_pinterest_batch(self, batch: list[dict[str, Any]], cancel_event: threading.Event, loop: asyncio.AbstractEventLoop) -> None:
-        import sys
         pod_server_dir = self.project_root / "src" / "modules" / "pinterest-pod" / "server"
         if pod_server_dir.is_dir() and str(pod_server_dir) not in sys.path:
             sys.path.insert(0, str(pod_server_dir))
@@ -996,6 +1053,7 @@ class DistributedCrawlerAgent:
         def enqueue_progress(msg: str, percent: int = 50) -> None:
             if cancel_event.is_set():
                 return
+            self._update_task_activity(task_id, msg, percent)
             progress_payload = {
                 "phase": "pinterest",
                 "message": msg,
@@ -1072,15 +1130,40 @@ class DistributedCrawlerAgent:
                 job_id, req_body, self.config.server_url, cancel_event, progress_callback=on_pod_progress
             )
         except Exception as exc:
-            if cancel_event.is_set():
+            stage_check = str(settings.get("stage") or settings.get("action") or "crawl").lower()
+            if stage_check == "production":
+                job_data = pod_bridge.ACTIVE_JOBS.get(job_id) or pod_bridge.load_job_manifest(job_id) or {}
+                run_id = job_data.get("run_id") or job_data.get("runId") or req_body.get("source_run_id") or job_id
+                recovered = pod_bridge.load_standalone_run(str(run_id), self.config.server_url) if run_id else None
+                if recovered and (recovered.get("deliverables") or {}).get("lifestyle_mockups"):
+                    pod_bridge.ACTIVE_JOBS[job_id] = recovered
+                elif cancel_event.is_set():
+                    enqueue_cancelled()
+                    return
+                else:
+                    enqueue_failed(f"Pinterest POD execution error: {exc}")
+                    return
+            elif cancel_event.is_set():
                 enqueue_cancelled()
                 return
-            enqueue_failed(f"Pinterest POD execution error: {exc}")
-            return
+            else:
+                enqueue_failed(f"Pinterest POD execution error: {exc}")
+                return
 
         if cancel_event.is_set():
-            enqueue_cancelled()
-            return
+            stage_check = str(settings.get("stage") or settings.get("action") or "crawl").lower()
+            if stage_check == "production":
+                job_data = pod_bridge.ACTIVE_JOBS.get(job_id) or pod_bridge.load_job_manifest(job_id) or {}
+                run_id = job_data.get("run_id") or job_data.get("runId") or req_body.get("source_run_id") or job_id
+                recovered = pod_bridge.load_standalone_run(str(run_id), self.config.server_url) if run_id else None
+                if recovered and (recovered.get("deliverables") or {}).get("lifestyle_mockups"):
+                    pod_bridge.ACTIVE_JOBS[job_id] = recovered
+                else:
+                    enqueue_cancelled()
+                    return
+            else:
+                enqueue_cancelled()
+                return
 
         job_data = pod_bridge.ACTIVE_JOBS.get(job_id) or pod_bridge.load_job_manifest(job_id) or {}
         if str(job_data.get("status") or "").lower() == "failed":
@@ -1109,18 +1192,42 @@ class DistributedCrawlerAgent:
             metrics = job_data.get("summaryMetrics") or job_data.get("summary_metrics") or {}
             logs = job_data.get("logs") or []
 
+            has_mockups = bool(
+                deliverables.get("lifestyle_mockups")
+                or deliverables.get("print_cmyk_images")
+                or deliverables.get("final_png_images")
+            )
+            if str(job_data.get("status") or "").lower() != "completed" and not has_mockups:
+                err_msg = job_data.get("error") or "Không tạo được ảnh thành phẩm cho tác vụ này (deliverables trống)."
+                enqueue_failed(str(err_msg))
+                return
+
             run_id = job_data.get("run_id") or job_data.get("runId") or req_body.get("source_run_id") or job_id
             run_dir = pod_bridge.resolve_run_dir(run_id)
             if run_dir and run_dir.is_dir():
-                for subfolder in ("lifestyle_mockups", "product_cutouts_white", "final_png_images"):
+                for subfolder in (
+                    "lifestyle_mockups",
+                    "product_cutouts_white",
+                    "rendered_products",
+                    "product_cutouts",
+                    "final_png_images",
+                    "final_print",
+                ):
                     sub_dir = run_dir / subfolder
                     if sub_dir.is_dir():
                         for img_file in sub_dir.glob("*.*"):
                             if img_file.is_file() and img_file.stat().st_size <= 10 * 1024 * 1024:
-                                try:
-                                    self._upload_asset(job_id, img_file.name, img_file.read_bytes())
-                                except Exception:
-                                    pass
+                                file_bytes = img_file.read_bytes()
+                                if run_id:
+                                    try:
+                                        self._upload_asset(str(run_id), img_file.name, file_bytes)
+                                    except Exception:
+                                        pass
+                                if job_id and str(job_id) != str(run_id):
+                                    try:
+                                        self._upload_asset(str(job_id), img_file.name, file_bytes)
+                                    except Exception:
+                                        pass
 
             enqueue_completed({
                 "deliverables": deliverables,

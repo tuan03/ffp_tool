@@ -235,6 +235,20 @@ class DashboardAgentTests(unittest.TestCase):
         self.assertTrue(arguments.start_minimized)
         self.assertTrue(arguments.check_config)
 
+    def test_lifecycle_launch_closes_dashboard_through_ui_queue(self) -> None:
+        tray = TrayApplication(self.agent, Path(self.directory.name))
+        tray._window = Mock()
+        tray._icon = Mock()
+        tray._lifecycle_is_safe = Mock(return_value=True)
+        tray._stop_agent = Mock()
+        with patch.object(Path, "is_file", return_value=True), patch("engine.distributed.client_tray.subprocess.Popen"):
+            tray._launch_lifecycle_script("update-agent.ps1", [])
+        tray._window.close.assert_not_called()
+        self.assertEqual(tray._actions.get_nowait(), "exit")
+        tray._dispatch_action("exit")
+        tray._window.close.assert_called_once()
+        self.assertTrue(tray._is_exiting)
+
     def test_tray_clicks_queue_window_work_and_never_call_tk_from_callback(self) -> None:
         tray = TrayApplication(self.agent, Path(self.directory.name))
         window = Mock()
