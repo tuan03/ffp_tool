@@ -17,6 +17,7 @@ export interface AutoSeoSessionState {
   hasLoadedInitially: boolean;
   batchSize: AutoSeoBatchSize;
   eligibilityFilter: AutoSeoEligibilityFilter;
+  typeFilter: string;
   collectionFilter: string;
   asinQuery: string;
   startDate: string;
@@ -33,6 +34,7 @@ interface PersistedAutoSeoSession {
   hasLoadedInitially: boolean;
   batchSize?: AutoSeoBatchSize;
   eligibilityFilter?: AutoSeoEligibilityFilter;
+  typeFilter?: string;
   collectionFilter?: string;
   asinQuery?: string;
   startDate?: string;
@@ -52,6 +54,7 @@ export const DEFAULT_AUTO_SEO_SESSION_STATE: AutoSeoSessionState = {
   hasLoadedInitially: false,
   batchSize: 50,
   eligibilityFilter: "needs_seo",
+  typeFilter: "all",
   collectionFilter: "all",
   asinQuery: "",
   startDate: "",
@@ -94,6 +97,8 @@ export function parseAutoSeoSessionState(value: unknown): AutoSeoSessionState {
       ? (parsed.eligibilityFilter as AutoSeoEligibilityFilter)
       : "needs_seo";
 
+  const typeFilter =
+    typeof parsed.typeFilter === "string" ? parsed.typeFilter : "all";
   const collectionFilter =
     typeof parsed.collectionFilter === "string" ? parsed.collectionFilter : "all";
   const asinQuery = typeof parsed.asinQuery === "string" ? parsed.asinQuery : "";
@@ -111,6 +116,7 @@ export function parseAutoSeoSessionState(value: unknown): AutoSeoSessionState {
     hasLoadedInitially,
     batchSize,
     eligibilityFilter,
+    typeFilter,
     collectionFilter,
     asinQuery,
     startDate,
@@ -231,6 +237,10 @@ export function setAutoSeoLastHydratedProducts(
   updateAutoSeoSession({ lastHydratedProducts });
 }
 
+export function setAutoSeoTypeFilter(typeFilter: string): void {
+  updateAutoSeoSession({ typeFilter });
+}
+
 export function setAutoSeoCollectionFilter(collectionFilter: string): void {
   updateAutoSeoSession({ collectionFilter });
 }
@@ -252,6 +262,7 @@ export function resetAutoSeoFilters(): void {
     searchQuery: "",
     statusFilter: "all",
     eligibilityFilter: "needs_seo",
+    typeFilter: "all",
     collectionFilter: "all",
     asinQuery: "",
     startDate: "",

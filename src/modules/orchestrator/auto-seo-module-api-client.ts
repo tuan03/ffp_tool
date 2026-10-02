@@ -40,6 +40,13 @@ function mapShopifyProductToUi(
     vendor: product.vendor,
     productType: product.productType,
     tags: product.tags ? [...product.tags] : [],
+    collections: product.collections
+      ? product.collections.map((c) => ({
+          id: c.id,
+          title: c.title,
+          handle: c.handle,
+        }))
+      : undefined,
     onlineStoreUrl: product.onlineStoreUrl,
     featuredImage: product.featuredImage
       ? {

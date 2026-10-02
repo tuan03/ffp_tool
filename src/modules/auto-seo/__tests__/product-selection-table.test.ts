@@ -67,10 +67,14 @@ function renderTable(props: {
   onOpenDetail?: (product: ShopifyProductForAutoSeoUi) => void;
   eligibilityItems?: readonly AutoSeoEligibilityItem[];
   eligibilityFilter?: AutoSeoEligibilityFilter;
+  typeFilter?: string;
+  onTypeFilterChange?: (type: string) => void;
   collectionFilter?: string;
+  onCollectionFilterChange?: (collection: string) => void;
   asinQuery?: string;
   startDate?: string;
   endDate?: string;
+  onResetAllFilters?: () => void;
 }): RenderResult {
   let captured: React.ReactElement<{ children: React.ReactNode[] }> | null = null;
 
@@ -82,15 +86,19 @@ function renderTable(props: {
       onSearchQueryChange: props.onSearchQueryChange,
       statusFilter: props.statusFilter,
       onStatusFilterChange: props.onStatusFilterChange,
+      typeFilter: props.typeFilter,
+      onTypeFilterChange: props.onTypeFilterChange,
+      collectionFilter: props.collectionFilter,
+      onCollectionFilterChange: props.onCollectionFilterChange,
       filteredProducts: props.filteredProducts,
       onToggleSelect: props.onToggleSelect ?? (() => {}),
       onOpenDetail: props.onOpenDetail ?? (() => {}),
       eligibilityItems: props.eligibilityItems,
       eligibilityFilter: props.eligibilityFilter,
-      collectionFilter: props.collectionFilter,
       asinQuery: props.asinQuery,
       startDate: props.startDate,
       endDate: props.endDate,
+      onResetAllFilters: props.onResetAllFilters,
     }) as React.ReactElement<{ children: React.ReactNode[] }>;
     return captured;
   }
@@ -1164,13 +1172,14 @@ test("ProductSelectionTable: master checkbox reflects selection state and trigge
   assert.equal(clearSelectionCalled, true, "Clicking master checkbox when selected should trigger onClearVisibleSelection");
 });
 
-test("filterAutoSeoProducts: filters by collection matching productType or collection tags", () => {
+test("filterAutoSeoProducts: filters by typeFilter for productType and collectionFilter for collections/tags", () => {
   const products: readonly ShopifyProductForAutoSeoUi[] = [
     {
       id: "gid://shopify/Product/1",
       title: "Ceramic Mug",
       handle: "ceramic-mug",
       productType: "Kitchenware",
+      collections: [{ id: "c1", title: "Dining", handle: "dining" }],
       tags: ["eco"],
     },
     {
@@ -1189,14 +1198,21 @@ test("filterAutoSeoProducts: filters by collection matching productType or colle
     },
   ];
 
-  // Filter by productType "Kitchenware"
+  // Filter by productType "Kitchenware" via typeFilter
   const kitchenware = filterAutoSeoProducts(products, {
-    collectionFilter: "Kitchenware",
+    typeFilter: "Kitchenware",
   });
   assert.equal(kitchenware.length, 2);
   assert.deepEqual(kitchenware.map(p => p.id), ["gid://shopify/Product/1", "gid://shopify/Product/3"]);
 
-  // Filter by tag collection "Accessories"
+  // Filter by real Shopify collection "Dining" via collectionFilter
+  const dining = filterAutoSeoProducts(products, {
+    collectionFilter: "Dining",
+  });
+  assert.equal(dining.length, 1);
+  assert.equal(dining[0]?.id, "gid://shopify/Product/1");
+
+  // Filter by tag collection "Accessories" via collectionFilter
   const accessories = filterAutoSeoProducts(products, {
     collectionFilter: "Accessories",
   });
@@ -1282,7 +1298,7 @@ test("filterAutoSeoProducts: filters by upload date range using createdAt", () =
   assert.equal(midOnly[0]?.id, "gid://shopify/Product/2");
 });
 
-test("ProductSelectionTable: renders compact filter bar with collection dropdown and advanced filter toggle", () => {
+test("ProductSelectionTable: renders compact filter bar with separated type and collection dropdowns and advanced filter toggle", () => {
   const productsWithDetails: readonly ShopifyProductForAutoSeoUi[] = [
     {
       id: "gid://shopify/Product/1",
@@ -1290,6 +1306,7 @@ test("ProductSelectionTable: renders compact filter bar with collection dropdown
       handle: "eco-mug",
       status: "ACTIVE",
       productType: "Kitchenware",
+      collections: [{ id: "c1", title: "Home Goods", handle: "home-goods" }],
       createdAt: "2026-08-01T00:00:00Z",
     },
     {
@@ -1298,6 +1315,7 @@ test("ProductSelectionTable: renders compact filter bar with collection dropdown
       handle: "linen-shirt",
       status: "DRAFT",
       productType: "Apparel",
+      collections: [{ id: "c2", title: "Summer Style", handle: "summer-style" }],
       createdAt: "2026-08-15T00:00:00Z",
     },
   ];
@@ -1313,13 +1331,60 @@ test("ProductSelectionTable: renders compact filter bar with collection dropdown
 
   // Verify compact dropdowns and controls exist in markup
   assert.ok(html.includes("Bộ lọc nâng cao"), "Must render 'Bộ lọc nâng cao' toggle");
-  assert.ok(html.includes("Tất cả bộ sưu tập"), "Must render collection filter option");
-  assert.ok(html.includes("Kitchenware"), "Must include productType in collection options");
-  assert.ok(html.includes("Apparel"), "Must include productType in collection options");
+  assert.ok(html.includes("Loại SP: Tất cả"), "Must render product type filter option");
+  assert.ok(html.includes("Kitchenware"), "Must include productType in type options");
+  assert.ok(html.includes("Apparel"), "Must include productType in type options");
+  assert.ok(html.includes("Collection: Tất cả"), "Must render collection filter option");
+  assert.ok(html.includes("Home Goods"), "Must include collection in collection options");
+  assert.ok(html.includes("Summer Style"), "Must include collection in collection options");
   assert.ok(html.includes("Shopify:"), "Must render Shopify status filter selector");
   assert.ok(html.includes("SEO:"), "Must render SEO status filter selector");
   assert.ok(html.includes("Nhập ASIN"), "Must render ASIN filter input placeholder");
   assert.ok(html.includes("Từ ngày"), "Must render start date filter label");
   assert.ok(html.includes("Đến ngày"), "Must render end date filter label");
+});
+
+test("filterAutoSeoProducts: filters products accurately by typeFilter vs collectionFilter", () => {
+  const products: readonly ShopifyProductForAutoSeoUi[] = [
+    {
+      id: "gid://shopify/Product/1",
+      title: "Bedding Set",
+      handle: "bedding-set",
+      productType: "Bedding",
+      collections: [{ id: "c1", title: "Summer Sale", handle: "summer-sale" }],
+    },
+    {
+      id: "gid://shopify/Product/2",
+      title: "Fleece Blanket",
+      handle: "fleece-blanket",
+      productType: "Blanket",
+      collections: [{ id: "c1", title: "Summer Sale", handle: "summer-sale" }],
+    },
+    {
+      id: "gid://shopify/Product/3",
+      title: "Silk Blanket",
+      handle: "silk-blanket",
+      productType: "Blanket",
+      collections: [{ id: "c2", title: "Luxury Line", handle: "luxury-line" }],
+    },
+  ];
+
+  // Filter by typeFilter only
+  const beddingOnly = filterAutoSeoProducts(products, { typeFilter: "Bedding" });
+  assert.equal(beddingOnly.length, 1);
+  assert.equal(beddingOnly[0]?.id, "gid://shopify/Product/1");
+
+  const blanketOnly = filterAutoSeoProducts(products, { typeFilter: "Blanket" });
+  assert.equal(blanketOnly.length, 2);
+
+  // Filter by collectionFilter only
+  const summerSale = filterAutoSeoProducts(products, { collectionFilter: "Summer Sale" });
+  assert.equal(summerSale.length, 2);
+  assert.deepEqual(summerSale.map(p => p.id), ["gid://shopify/Product/1", "gid://shopify/Product/2"]);
+
+  // Filter by both typeFilter and collectionFilter
+  const blanketSummer = filterAutoSeoProducts(products, { typeFilter: "Blanket", collectionFilter: "Summer Sale" });
+  assert.equal(blanketSummer.length, 1);
+  assert.equal(blanketSummer[0]?.id, "gid://shopify/Product/2");
 });
 

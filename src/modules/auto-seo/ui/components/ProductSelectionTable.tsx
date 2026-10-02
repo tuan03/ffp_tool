@@ -25,6 +25,8 @@ export interface ProductSelectionTableProps {
   onEligibilityFilterChange?(filter: AutoSeoEligibilityFilter): void;
   onSelectAllVisible?(): void;
   onClearVisibleSelection?(): void;
+  typeFilter?: string;
+  onTypeFilterChange?(type: string): void;
   collectionFilter?: string;
   onCollectionFilterChange?(collection: string): void;
   asinQuery?: string;
@@ -47,6 +49,7 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
 
   const [internalSearchQuery, setInternalSearchQuery] = useState("");
   const [internalStatusFilter, setInternalStatusFilter] = useState<ShopifyStatusFilter>("all");
+  const [internalTypeFilter, setInternalTypeFilter] = useState("all");
   const [internalCollectionFilter, setInternalCollectionFilter] = useState("all");
   const [internalAsinQuery, setInternalAsinQuery] = useState("");
   const [internalStartDate, setInternalStartDate] = useState("");
@@ -59,6 +62,7 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
 
   const searchQuery = props.searchQuery !== undefined ? props.searchQuery : internalSearchQuery;
   const statusFilter = props.statusFilter !== undefined ? props.statusFilter : internalStatusFilter;
+  const typeFilter = props.typeFilter !== undefined ? props.typeFilter : internalTypeFilter;
   const collectionFilter = props.collectionFilter !== undefined ? props.collectionFilter : internalCollectionFilter;
   const asinQuery = props.asinQuery !== undefined ? props.asinQuery : internalAsinQuery;
   const startDate = props.startDate !== undefined ? props.startDate : internalStartDate;
@@ -82,6 +86,14 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
       props.onStatusFilterChange(status);
     } else {
       setInternalStatusFilter(status);
+    }
+  };
+
+  const handleTypeFilterChange = (type: string): void => {
+    if (props.onTypeFilterChange) {
+      props.onTypeFilterChange(type);
+    } else {
+      setInternalTypeFilter(type);
     }
   };
 
@@ -124,6 +136,7 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
       handleSearchQueryChange("");
       handleStatusFilterChange("all");
       props.onEligibilityFilterChange?.("needs_seo");
+      handleTypeFilterChange("all");
       handleCollectionFilterChange("all");
       handleAsinQueryChange("");
       handleStartDateChange("");
@@ -208,6 +221,7 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
       statusFilter,
       eligibilityFilter: props.eligibilityFilter,
       eligibilityItems: props.eligibilityItems,
+      typeFilter,
       collectionFilter,
       asinQuery,
       startDate,
@@ -220,18 +234,36 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
     statusFilter,
     props.eligibilityFilter,
     props.eligibilityItems,
+    typeFilter,
     collectionFilter,
     asinQuery,
     startDate,
     endDate,
   ]);
 
-  const availableCollections = useMemo(() => {
+  const availableTypes = useMemo(() => {
     const counts = new Map<string, number>();
     for (const product of products) {
       const type = product.productType?.trim();
       if (type) {
         counts.set(type, (counts.get(type) ?? 0) + 1);
+      }
+    }
+    return Array.from(counts.entries())
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => b.count - a.count);
+  }, [products]);
+
+  const availableCollections = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const product of products) {
+      if (product.collections) {
+        for (const col of product.collections) {
+          const title = col.title?.trim();
+          if (title) {
+            counts.set(title, (counts.get(title) ?? 0) + 1);
+          }
+        }
       }
       if (product.tags) {
         for (const tag of product.tags) {
@@ -263,6 +295,7 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
     searchQuery ||
     statusFilter !== "all" ||
     (props.eligibilityFilter && props.eligibilityFilter !== "all") ||
+    typeFilter !== "all" ||
     collectionFilter !== "all" ||
     asinQuery ||
     startDate ||
@@ -426,6 +459,29 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
               </div>
             )}
 
+            {/* Product Type Filter Select */}
+            {availableTypes.length > 0 && (
+              <div className="relative">
+                <select
+                  aria-label="Lọc theo loại sản phẩm"
+                  value={typeFilter}
+                  onChange={(e) => handleTypeFilterChange(e.target.value)}
+                  className={`rounded-lg border px-2.5 py-1.5 text-xs font-medium focus:outline-hidden cursor-pointer max-w-[170px] truncate ${
+                    typeFilter !== "all"
+                      ? "border-cyan-700 bg-cyan-950/80 text-cyan-200 font-semibold"
+                      : "border-slate-700 bg-slate-950 text-slate-300"
+                  }`}
+                >
+                  <option value="all">📦 Loại SP: Tất cả</option>
+                  {availableTypes.map((t) => (
+                    <option key={t.name} value={t.name}>
+                      {t.name} ({t.count})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
             {/* Collection Filter Select */}
             <div className="relative">
               <select
@@ -438,7 +494,7 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
                     : "border-slate-700 bg-slate-950 text-slate-300"
                 }`}
               >
-                <option value="all">🏷️ Tất cả bộ sưu tập</option>
+                <option value="all">🏷️ Collection: Tất cả</option>
                 {availableCollections.map((col) => (
                   <option key={col.name} value={col.name}>
                     {col.name} ({col.count})
@@ -622,6 +678,19 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
                 <button
                   type="button"
                   onClick={() => props.onEligibilityFilterChange?.("all")}
+                  className="hover:text-rose-400 cursor-pointer ml-0.5"
+                >
+                  ✕
+                </button>
+              </span>
+            )}
+
+            {typeFilter !== "all" && (
+              <span className="inline-flex items-center gap-1 rounded-md bg-teal-950/60 border border-teal-800 px-2 py-0.5 text-teal-300">
+                Loại SP: {typeFilter}
+                <button
+                  type="button"
+                  onClick={() => handleTypeFilterChange("all")}
                   className="hover:text-rose-400 cursor-pointer ml-0.5"
                 >
                   ✕

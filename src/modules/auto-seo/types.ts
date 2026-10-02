@@ -17,6 +17,12 @@ export interface ShopifyProductVariant {
   readonly inventoryQuantity?: number;
 }
 
+export interface ShopifyProductCollectionSummary {
+  readonly id: string;
+  readonly title: string;
+  readonly handle?: string;
+}
+
 export interface ShopifyProductForAutoSeoUi {
   readonly id: string;
   readonly storeId?: string;
@@ -28,6 +34,7 @@ export interface ShopifyProductForAutoSeoUi {
   readonly vendor?: string;
   readonly productType?: string;
   readonly tags?: readonly string[];
+  readonly collections?: readonly ShopifyProductCollectionSummary[];
   readonly onlineStoreUrl?: string;
   readonly featuredImage?: ShopifyProductImage;
   readonly images?: readonly ShopifyProductImage[];

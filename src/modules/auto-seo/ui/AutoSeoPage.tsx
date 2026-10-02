@@ -23,6 +23,7 @@ import {
   setAutoSeoSelectedProductIds,
   setAutoSeoSelectedStoreId,
   setAutoSeoStatusFilter,
+  setAutoSeoTypeFilter,
   setAutoSeoCollectionFilter,
   setAutoSeoAsinQuery,
   setAutoSeoStartDate,
@@ -77,6 +78,7 @@ export function AutoSeoPage({
   const statusFilter = session.statusFilter;
   const batchSize = session.batchSize;
   const eligibilityFilter = session.eligibilityFilter;
+  const typeFilter = session.typeFilter ?? "all";
   const collectionFilter = session.collectionFilter ?? "all";
   const asinQuery = session.asinQuery ?? "";
   const startDate = session.startDate ?? "";
@@ -216,6 +218,7 @@ export function AutoSeoPage({
       statusFilter,
       eligibilityFilter: eligibility ? eligibilityFilter : "all",
       eligibilityItems: eligibility?.items,
+      typeFilter,
       collectionFilter,
       asinQuery,
       startDate,
@@ -227,6 +230,7 @@ export function AutoSeoPage({
     products,
     searchQuery,
     statusFilter,
+    typeFilter,
     collectionFilter,
     asinQuery,
     startDate,
@@ -622,6 +626,8 @@ export function AutoSeoPage({
         onSearchQueryChange={setAutoSeoSearchQuery}
         statusFilter={statusFilter}
         onStatusFilterChange={setAutoSeoStatusFilter}
+        typeFilter={typeFilter}
+        onTypeFilterChange={setAutoSeoTypeFilter}
         collectionFilter={collectionFilter}
         onCollectionFilterChange={setAutoSeoCollectionFilter}
         asinQuery={asinQuery}

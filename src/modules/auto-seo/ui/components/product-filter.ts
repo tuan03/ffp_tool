@@ -16,6 +16,7 @@ export interface AutoSeoFilterCriteria {
   readonly selectedProductIds?: readonly string[];
   readonly eligibilityFilter?: AutoSeoEligibilityFilter;
   readonly eligibilityItems?: readonly AutoSeoEligibilityItem[];
+  readonly typeFilter?: string;
   readonly collectionFilter?: string;
   readonly asinQuery?: string;
   readonly startDate?: string;
@@ -34,6 +35,10 @@ export function filterAutoSeoProducts(
     (criteria.eligibilityItems ?? []).map(item => [item.productId, item] as const),
   );
   const asinQuery = criteria.asinQuery ? criteria.asinQuery.toUpperCase().trim() : "";
+  const typeFilter =
+    criteria.typeFilter && criteria.typeFilter !== "all"
+      ? criteria.typeFilter.toLowerCase().trim()
+      : "";
   const collectionFilter =
     criteria.collectionFilter && criteria.collectionFilter !== "all"
       ? criteria.collectionFilter.toLowerCase().trim()
@@ -81,10 +86,27 @@ export function filterAutoSeoProducts(
       }
     }
 
-    // 4. Collection / Product Type Filter
+    // 4. Product Type Filter (Loại sản phẩm)
+    if (typeFilter) {
+      const matchesType = product.productType?.toLowerCase().trim() === typeFilter;
+      if (!matchesType) {
+        return false;
+      }
+    }
+
+    // 5. Shopify Collection Filter (Bộ sưu tập)
     if (collectionFilter) {
-      const matchesType = product.productType?.toLowerCase().trim() === collectionFilter;
-      const matchesVendor = product.vendor?.toLowerCase().trim() === collectionFilter;
+      const matchesCollection = product.collections?.some((col) => {
+        const titleLower = col.title?.toLowerCase().trim();
+        const handleLower = col.handle?.toLowerCase().trim();
+        const idLower = col.id?.toLowerCase().trim();
+        return (
+          titleLower === collectionFilter ||
+          handleLower === collectionFilter ||
+          idLower === collectionFilter
+        );
+      }) ?? false;
+
       const matchesTag = product.tags?.some((tag) => {
         const lower = tag.toLowerCase().trim();
         return (
@@ -94,7 +116,7 @@ export function filterAutoSeoProducts(
         );
       }) ?? false;
 
-      if (!matchesType && !matchesVendor && !matchesTag) {
+      if (!matchesCollection && !matchesTag) {
         return false;
       }
     }

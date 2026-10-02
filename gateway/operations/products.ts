@@ -30,6 +30,13 @@ const PRODUCTS_LIST_QUERY = `
           productType
           tags
           onlineStoreUrl
+          collections(first: 10) {
+            nodes {
+              id
+              title
+              handle
+            }
+          }
           featuredImage {
             id
             url
@@ -86,6 +93,13 @@ const PRODUCTS_GET_QUERY = `
       productType
       tags
       onlineStoreUrl
+      collections(first: 50) {
+        nodes {
+          id
+          title
+          handle
+        }
+      }
       featuredImage {
         id
         url
@@ -185,6 +199,13 @@ export interface RawProductNode {
   readonly productType?: string | null;
   readonly tags?: readonly string[] | null;
   readonly onlineStoreUrl?: string | null;
+  readonly collections?: {
+    readonly nodes?: readonly {
+      readonly id: string;
+      readonly title: string;
+      readonly handle?: string | null;
+    }[] | null;
+  } | null;
   readonly featuredImage?: RawImageNode | null;
   readonly media?: {
     readonly pageInfo?: { readonly hasNextPage?: boolean | null; readonly endCursor?: string | null } | null;
@@ -286,6 +307,15 @@ export function mapProductNode(node: RawProductNode): ProductSummary {
     vendor: node.vendor ?? undefined,
     productType: node.productType ?? undefined,
     tags: node.tags ?? [],
+    collections: node.collections?.nodes
+      ? node.collections.nodes
+          .filter((c): c is { id: string; title: string; handle?: string | null } => Boolean(c && c.id && c.title))
+          .map((c) => ({
+            id: c.id,
+            title: c.title,
+            handle: c.handle ?? undefined,
+          }))
+      : undefined,
     onlineStoreUrl: node.onlineStoreUrl ?? undefined,
     featuredImage,
     images,
