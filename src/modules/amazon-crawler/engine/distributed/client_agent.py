@@ -251,7 +251,7 @@ class DistributedCrawlerAgent:
         discarded_job_ids = {
             str(self.active[task_id].get("jobId") or "")
             for task_id in discard_ids
-            if task_id in self.active
+            if task_id in self.active and task_id not in self.executing_task_ids
         }
         for job_id in discarded_job_ids:
             with self._cancel_events_lock:
@@ -261,7 +261,7 @@ class DistributedCrawlerAgent:
         for task_id in discard_ids:
             if task_id not in self.executing_task_ids:
                 self.active.pop(task_id, None)
-            self.store.discard_task(task_id)
+                self.store.discard_task(task_id)
         for task_id in resume_ids:
             assignment = self.active.get(task_id) or self.store.assignment(task_id)
             if assignment is not None and task_id in executable_ids and task_id not in self.executing_task_ids:
@@ -1009,15 +1009,40 @@ class DistributedCrawlerAgent:
                 job_id, req_body, self.config.server_url, cancel_event, progress_callback=on_pod_progress
             )
         except Exception as exc:
-            if cancel_event.is_set():
+            stage_check = str(settings.get("stage") or settings.get("action") or "crawl").lower()
+            if stage_check == "production":
+                job_data = pod_bridge.ACTIVE_JOBS.get(job_id) or pod_bridge.load_job_manifest(job_id) or {}
+                run_id = job_data.get("run_id") or job_data.get("runId") or req_body.get("source_run_id") or job_id
+                recovered = pod_bridge.load_standalone_run(str(run_id), self.config.server_url) if run_id else None
+                if recovered and (recovered.get("deliverables") or {}).get("lifestyle_mockups"):
+                    pod_bridge.ACTIVE_JOBS[job_id] = recovered
+                elif cancel_event.is_set():
+                    enqueue_cancelled()
+                    return
+                else:
+                    enqueue_failed(f"Pinterest POD execution error: {exc}")
+                    return
+            elif cancel_event.is_set():
                 enqueue_cancelled()
                 return
-            enqueue_failed(f"Pinterest POD execution error: {exc}")
-            return
+            else:
+                enqueue_failed(f"Pinterest POD execution error: {exc}")
+                return
 
         if cancel_event.is_set():
-            enqueue_cancelled()
-            return
+            stage_check = str(settings.get("stage") or settings.get("action") or "crawl").lower()
+            if stage_check == "production":
+                job_data = pod_bridge.ACTIVE_JOBS.get(job_id) or pod_bridge.load_job_manifest(job_id) or {}
+                run_id = job_data.get("run_id") or job_data.get("runId") or req_body.get("source_run_id") or job_id
+                recovered = pod_bridge.load_standalone_run(str(run_id), self.config.server_url) if run_id else None
+                if recovered and (recovered.get("deliverables") or {}).get("lifestyle_mockups"):
+                    pod_bridge.ACTIVE_JOBS[job_id] = recovered
+                else:
+                    enqueue_cancelled()
+                    return
+            else:
+                enqueue_cancelled()
+                return
 
         job_data = pod_bridge.ACTIVE_JOBS.get(job_id) or pod_bridge.load_job_manifest(job_id) or {}
         if str(job_data.get("status") or "").lower() == "failed":
@@ -1059,7 +1084,7 @@ class DistributedCrawlerAgent:
             run_id = job_data.get("run_id") or job_data.get("runId") or req_body.get("source_run_id") or job_id
             run_dir = pod_bridge.resolve_run_dir(run_id)
             if run_dir and run_dir.is_dir():
-                for subfolder in ("lifestyle_mockups", "product_cutouts_white", "final_png_images"):
+                for subfolder in ("lifestyle_mockups", "product_cutouts_white", "final_png_images", "final_print"):
                     sub_dir = run_dir / subfolder
                     if sub_dir.is_dir():
                         for img_file in sub_dir.glob("*.*"):

@@ -120,13 +120,18 @@ class CacheStorage:
         try:
             self._initialize()
         except sqlite3.DatabaseError as error:
-            if getattr(error, "sqlite_errorcode", None) not in {sqlite3.SQLITE_CORRUPT, sqlite3.SQLITE_NOTADB}:
+            corrupt_codes = {getattr(sqlite3, "SQLITE_CORRUPT", 11), getattr(sqlite3, "SQLITE_NOTADB", 26)}
+            err_msg = str(error).lower()
+            is_corrupt = getattr(error, "sqlite_errorcode", None) in corrupt_codes or "not a database" in err_msg or "malformed" in err_msg
+            if not is_corrupt:
                 raise
             with self.budget_lock():
                 try:
                     self._initialize()
                 except sqlite3.DatabaseError as current:
-                    if getattr(current, "sqlite_errorcode", None) not in {sqlite3.SQLITE_CORRUPT, sqlite3.SQLITE_NOTADB}:
+                    curr_msg = str(current).lower()
+                    curr_is_corrupt = getattr(current, "sqlite_errorcode", None) in corrupt_codes or "not a database" in curr_msg or "malformed" in curr_msg
+                    if not curr_is_corrupt:
                         raise
                 else:
                     return  # Another process already rebuilt the metadata database.

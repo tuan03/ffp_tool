@@ -563,9 +563,16 @@ class CoordinatorStore(CoordinatorObservability):
             _as_utc(job.created_at) + timedelta(seconds=float(job.settings.get("jobTimeoutSeconds", 21600))),
         )
 
+    def _task_lease_duration(self, session, task: CrawlTask) -> int:
+        job = session.get(CrawlJob, task.job_id) if task.job_id else None
+        if job and (job.settings or {}).get("channel") == "pinterest":
+            return max(LEASE_SECONDS, 300)
+        return LEASE_SECONDS
+
     def _renew_lease(self, session, task: CrawlTask, now: datetime) -> datetime:
         deadline = self._task_deadline(session, task)
-        renewed = now + timedelta(seconds=LEASE_SECONDS)
+        lease_seconds = self._task_lease_duration(session, task)
+        renewed = now + timedelta(seconds=lease_seconds)
         return min(renewed, deadline) if deadline else renewed
 
     def heartbeat(
@@ -745,7 +752,8 @@ class CoordinatorStore(CoordinatorObservability):
                 task.lease_id = lease_id
                 job_deadline = _as_utc(job.created_at) + timedelta(seconds=float(job.settings.get("jobTimeoutSeconds", 21600)))
                 asin_deadline = now + timedelta(seconds=float(job.settings.get("asinTimeoutSeconds", 1800)))
-                task.lease_expires_at = min(now + timedelta(seconds=LEASE_SECONDS), job_deadline, asin_deadline)
+                lease_seconds = self._task_lease_duration(session, task)
+                task.lease_expires_at = min(now + timedelta(seconds=lease_seconds), job_deadline, asin_deadline)
                 task.started_at = task.started_at or now
                 ordinal = int(session.scalar(select(func.count(TaskAttempt.id)).where(TaskAttempt.task_id == task.id)) or 0) + 1
                 attempt = TaskAttempt(
@@ -2383,11 +2391,15 @@ class CoordinatorStore(CoordinatorObservability):
                     continue
                 if (
                     task.job_id == job_id
-                    and task.assigned_client_id == client_id
-                    and task.lease_id == lease_id
-                    and task.status in {"leased", "running"}
+                    and (
+                        (task.assigned_client_id == client_id and task.lease_id == lease_id and task.status in {"leased", "running"})
+                        or (task.status == "queued" and (task.assigned_client_id is None or task.assigned_client_id == client_id))
+                    )
                 ):
-                    task.lease_expires_at = now + timedelta(seconds=LEASE_SECONDS)
+                    task.assigned_client_id = client_id
+                    task.lease_id = lease_id
+                    task.status = "running"
+                    task.lease_expires_at = self._renew_lease(session, task, now)
                     resume.append(task_id)
                     continue
                 discard.append(task_id)

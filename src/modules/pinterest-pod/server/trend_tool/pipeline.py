@@ -1163,6 +1163,144 @@ def run_production_from_candidates(
     ai_background_final_records: list[dict[str, object]] = []
     expected_mockup_count = 0
 
+    def _save_current_manifest(is_interim: bool = False):
+        nonlocal expected_mockup_count
+        merged_design = list(design_records)
+        merged_enhancement = list(enhancement_records)
+        merged_render = list(product_render_records)
+        merged_asset = list(product_asset_records)
+        merged_cutout = list(product_cutout_records)
+        merged_artwork = list(artwork_generation_records)
+        merged_rug_shape = list(rug_shape_records)
+        merged_ai_bg = list(ai_background_final_records)
+        merged_template_mock = list(template_mockup_records)
+        merged_quality = list(mockup_quality_records)
+
+        if existing_manifest and isinstance(existing_manifest, dict):
+            def _extract_prod_key(rec: dict | object) -> str:
+                if isinstance(rec, dict):
+                    for k in ("output_path", "product_path", "asset_path", "lifestyle_path", "mockup_path", "print_path"):
+                        val = str(rec.get(k) or "")
+                        m = re.search(rf"({re.escape(config.target.name)}_\d{{3}})", val)
+                        if m:
+                            return m.group(1)
+                    src = str(rec.get("source_path") or "")
+                    if src:
+                        return Path(src).stem
+                return ""
+
+            def _merge_records(existing_recs: list, new_recs: list, record_id_fn=None) -> list:
+                if not existing_recs:
+                    return new_recs
+                new_keys = set()
+                for r in new_recs:
+                    k = record_id_fn(r) if record_id_fn else _extract_prod_key(r)
+                    if k:
+                        new_keys.add(k)
+                merged = []
+                for r in existing_recs:
+                    k = record_id_fn(r) if record_id_fn else _extract_prod_key(r)
+                    if not k or k not in new_keys:
+                        merged.append(r)
+                merged.extend(new_recs)
+                return merged
+
+            def _lifestyle_key(rec: dict) -> str:
+                p = str(rec.get("lifestyle_path") or rec.get("mockup_path") or "")
+                return Path(p).name if p else ""
+
+            def _template_mock_key(rec: dict) -> str:
+                if rec.get("print_path"):
+                    return f"{Path(str(rec['print_path'])).name}:{rec.get('variant', 1)}"
+                p = str(rec.get("mockup_path") or rec.get("output_path") or "")
+                return Path(p).name if p else ""
+
+            merged_design = _merge_records(existing_manifest.get("design_records") or [], design_records)
+            merged_enhancement = _merge_records(existing_manifest.get("enhancement_records") or [], enhancement_records)
+            merged_render_dict = _merge_records(
+                existing_manifest.get("product_render_records") or [],
+                [r.to_dict() if hasattr(r, "to_dict") else dict(r) for r in product_render_records],
+            )
+            merged_asset = _merge_records(existing_manifest.get("product_asset_records") or [], product_asset_records)
+            merged_cutout = _merge_records(existing_manifest.get("product_cutout_records") or [], product_cutout_records)
+            merged_artwork = _merge_records(existing_manifest.get("artwork_generation_records") or [], artwork_generation_records)
+            merged_rug_shape = _merge_records(existing_manifest.get("rug_shape_records") or [], rug_shape_records)
+            merged_ai_bg = _merge_records(
+                existing_manifest.get("ai_background_final_records") or [],
+                ai_background_final_records,
+                record_id_fn=_lifestyle_key,
+            )
+            merged_template_mock = _merge_records(
+                existing_manifest.get("template_mockup_records") or [],
+                template_mockup_records,
+                record_id_fn=_template_mock_key,
+            )
+            merged_quality = _merge_records(existing_manifest.get("mockup_quality_records") or [], mockup_quality_records)
+        else:
+            merged_render_dict = [r.to_dict() if hasattr(r, "to_dict") else dict(r) for r in product_render_records]
+
+        all_final_images = sorted(
+            [p for p in final_dir.iterdir() if p.is_file() and p.suffix.lower() in {".png", ".jpg", ".jpeg"}],
+            key=lambda x: x.name,
+        )
+        all_mockup_images = sorted(
+            [p for p in lifestyle_dir.iterdir() if p.is_file() and p.suffix.lower() in {".png", ".jpg", ".jpeg"}]
+            + [p for p in mockup_dir.iterdir() if p.is_file() and p.suffix.lower() in {".png", ".jpg", ".jpeg"}],
+            key=lambda x: x.name,
+        )
+
+        approved_mockups = sum(1 for record in merged_template_mock if record.get("status") == "ok")
+        if merged_template_mock:
+            approved_slots = {
+                (Path(str(record.get("print_path"))).name, int(record.get("variant", 1)))
+                for record in merged_template_mock if record.get("status") == "ok"
+            }
+            def approved_lifestyle(record: dict) -> bool:
+                filename = Path(str(record.get("lifestyle_path") or "")).name
+                matched = re.search(r"_lifestyle_(\d+)\.", filename)
+                variant = int(record.get("variant") or (matched.group(1) if matched else 1))
+                return (Path(str(record.get("print_path"))).name, variant) in approved_slots
+            merged_ai_bg = [record for record in merged_ai_bg if approved_lifestyle(record)]
+            approved_names = {Path(str(record.get("mockup_path"))).name for record in merged_template_mock if record.get("status") == "ok" and record.get("mockup_path")}
+            approved_names.update(Path(str(record.get("lifestyle_path"))).name for record in merged_ai_bg if record.get("lifestyle_path"))
+            if approved_names:
+                all_mockup_images = [path for path in all_mockup_images if path.name in approved_names]
+
+        cur_exp_count = max(expected_mockup_count, len(merged_template_mock))
+        failed_mockups = max(0, cur_exp_count - approved_mockups) if not is_interim else 0
+        status_str = "in_progress" if is_interim else ("failed" if failed_mockups else "completed")
+
+        manifest = {
+            "status": status_str,
+            "message": f"Có {failed_mockups} ảnh mockup chưa đạt kiểm định; cần kiểm tra vùng in/artwork trước khi xuất bản." if failed_mockups else "",
+            "quality_summary": {"expected": cur_exp_count, "approved": approved_mockups, "failed": failed_mockups},
+            "approved_mockup_files": [path.name for path in all_mockup_images],
+            "master_artworks": [
+                {"path": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+                for path in all_final_images if path.suffix.lower() == ".png"
+            ],
+            "workflow_mode": "trend_to_product",
+            "design_mode": config.design_mode,
+            "selected_candidates_count": len(merged_design),
+            "final_images_count": len(all_final_images),
+            "mockups_count": len(all_mockup_images),
+            "design_records": merged_design,
+            "enhancement_records": merged_enhancement,
+            "product_render_records": merged_render_dict,
+            "product_asset_records": merged_asset,
+            "product_cutout_records": merged_cutout,
+            "artwork_generation_records": merged_artwork,
+            "rug_shape_records": merged_rug_shape,
+            "ai_background_final_records": merged_ai_bg,
+            "template_mockup_records": merged_template_mock,
+            "mockup_quality_records": merged_quality,
+        }
+        write_json(run_dir / "stage_manifest.json", manifest)
+        return manifest, all_final_images, all_mockup_images, failed_mockups
+
+    # Save initial interim manifest right after print files and product renders are created
+    _save_current_manifest(is_interim=True)
+
     if final_pngs:
         # Only render default synthetic canvas mockups if no custom room templates are provided and AI mockups aren't configured
         if not room_template_files and config.task4_mockup_engine not in {"direct_ai", "template_ai", "blender_3d"}:
@@ -1196,6 +1334,37 @@ def run_production_from_candidates(
                         log(progress, f"[{p_idx}/{len(source_prints)}] Tạo mockup AI kết hợp Ảnh tham chiếu {var_idx}/{variants_per_product} ({chosen_room.name}).")
                     else:
                         log(progress, f"[{p_idx}/{len(source_prints)}] Tạo mockup AI biến thể {var_idx}/{variants_per_product} ({pose_label}).")
+
+                    m = re.match(rf"^({re.escape(cur_target.name)}_\d+)", print_file.name)
+                    prod_prefix = m.group(1) if m else f"{cur_target.name}_{p_idx:03d}"
+                    lifestyle_copy = lifestyle_dir / f"{prod_prefix}_lifestyle_{var_idx}.png"
+
+                    # Optimization: If deliverable mockup already exists and is valid on disk, reuse it
+                    if lifestyle_copy.exists() and lifestyle_copy.stat().st_size > 1000:
+                        log(progress, f"[{p_idx}/{len(source_prints)}] Mockup biến thể {var_idx} ({chosen_room.name if chosen_room else pose_label}): Đã có sẵn trên đĩa -> Kế thừa bản render.")
+                        if lifestyle_copy not in mockups:
+                            mockups.append(lifestyle_copy)
+                        template_mockup_records.append({
+                            "print_path": str(print_file),
+                            "variant": var_idx,
+                            "status": "ok",
+                            "mockup_path": str(lifestyle_copy),
+                            "notes": "reused_from_existing_disk_artifact",
+                        })
+                        ai_background_final_records.append({
+                            "source_path": lifestyle_copy,
+                            "lifestyle_path": lifestyle_copy,
+                            "print_path": print_file,
+                            "mockup_path": lifestyle_copy,
+                            "final_rgb_path": lifestyle_copy,
+                            "asset_type": "lifestyle_mockup",
+                            "variant": var_idx,
+                            "status": "ok",
+                            "notes": "reused_from_existing_disk_artifact",
+                        })
+                        _save_current_manifest(is_interim=True)
+                        continue
+
                     try:
                         if blender_render and chosen_room is None:
                             rec = build_blender_mockup(print_file, run_dir, cur_target, pose=pose, variant=var_idx, progress=progress)
@@ -1239,9 +1408,6 @@ def run_production_from_candidates(
                         template_mockup_records.append(rec.to_dict())
                         if rec.status == "ok" and rec.mockup_path and rec.mockup_path.exists():
                             mockups.append(rec.mockup_path)
-                            m = re.match(rf"^({re.escape(cur_target.name)}_\d+)", print_file.name)
-                            prod_prefix = m.group(1) if m else f"{cur_target.name}_{p_idx:03d}"
-                            lifestyle_copy = lifestyle_dir / f"{prod_prefix}_lifestyle_{var_idx}.png"
                             lifestyle_copy.write_bytes(rec.mockup_path.read_bytes())
                             ai_background_final_records.append({
                                 "source_path": rec.mockup_path,
@@ -1253,14 +1419,12 @@ def run_production_from_candidates(
                                 "variant": var_idx,
                                 "status": "ok",
                             })
+                            log(progress, f"[{p_idx}/{len(source_prints)}] Mockup biến thể {var_idx} ({chosen_room.name if chosen_room else pose_label}): Đã hoàn tất thành công.")
+                            _save_current_manifest(is_interim=True)
                         elif chosen_room and chosen_room.exists():
                             # Production Output Guard: Ensure a deliverable is never omitted for a user-provided template.
                             # If direct AI was too strictly scored by QA, find the best rendered candidate
                             # so the user receives all 5/5 mockups.
-                            m = re.match(rf"^({re.escape(cur_target.name)}_\d+)", print_file.name)
-                            prod_prefix = m.group(1) if m else f"{cur_target.name}_{p_idx:03d}"
-                            lifestyle_copy = lifestyle_dir / f"{prod_prefix}_lifestyle_{var_idx}.png"
-                            
                             c_stem = print_file.stem.replace("_rgb", "")
                             suffix = f"_v{max(1, var_idx):02d}"
                             candidates_dir = run_dir / "direct_ai_candidates"
@@ -1295,6 +1459,7 @@ def run_production_from_candidates(
                                     "notes": "guaranteed_deliverable_via_output_guard",
                                 })
                                 log(progress, f"[{p_idx}/{len(source_prints)}] Mockup biến thể {var_idx} ({chosen_room.name}): Đã bảo lưu bản render tối ưu đạt chuẩn đầu ra.")
+                                _save_current_manifest(is_interim=True)
                     except Exception as mock_exc:
                         log(progress, f"Mockup view {var_idx} skipped: {mock_exc}")
                         template_mockup_records.append({
@@ -1306,123 +1471,7 @@ def run_production_from_candidates(
         # Explicit garbage collection after each candidate to keep memory usage minimal on low-RAM VPS
         gc.collect()
 
-    # Merge newly produced records into existing stage_manifest if present
-    if existing_manifest and isinstance(existing_manifest, dict):
-        def _extract_prod_key(rec: dict | object) -> str:
-            if isinstance(rec, dict):
-                for k in ("output_path", "product_path", "asset_path", "lifestyle_path", "mockup_path", "print_path"):
-                    val = str(rec.get(k) or "")
-                    m = re.search(rf"({re.escape(config.target.name)}_\d{{3}})", val)
-                    if m:
-                        return m.group(1)
-                src = str(rec.get("source_path") or "")
-                if src:
-                    return Path(src).stem
-            return ""
-
-        def _merge_records(existing_recs: list, new_recs: list, record_id_fn=None) -> list:
-            if not existing_recs:
-                return new_recs
-            new_keys = set()
-            for r in new_recs:
-                k = record_id_fn(r) if record_id_fn else _extract_prod_key(r)
-                if k:
-                    new_keys.add(k)
-            merged = []
-            for r in existing_recs:
-                k = record_id_fn(r) if record_id_fn else _extract_prod_key(r)
-                if not k or k not in new_keys:
-                    merged.append(r)
-            merged.extend(new_recs)
-            return merged
-
-        def _lifestyle_key(rec: dict) -> str:
-            p = str(rec.get("lifestyle_path") or rec.get("mockup_path") or "")
-            return Path(p).name if p else ""
-
-        def _template_mock_key(rec: dict) -> str:
-            if rec.get("print_path"):
-                return f"{Path(str(rec['print_path'])).name}:{rec.get('variant', 1)}"
-            p = str(rec.get("mockup_path") or rec.get("output_path") or "")
-            return Path(p).name if p else ""
-
-        design_records = _merge_records(existing_manifest.get("design_records") or [], design_records)
-        enhancement_records = _merge_records(existing_manifest.get("enhancement_records") or [], enhancement_records)
-        product_render_records_dict = _merge_records(
-            existing_manifest.get("product_render_records") or [],
-            [r.to_dict() if hasattr(r, "to_dict") else dict(r) for r in product_render_records],
-        )
-        product_asset_records = _merge_records(existing_manifest.get("product_asset_records") or [], product_asset_records)
-        product_cutout_records = _merge_records(existing_manifest.get("product_cutout_records") or [], product_cutout_records)
-        artwork_generation_records = _merge_records(existing_manifest.get("artwork_generation_records") or [], artwork_generation_records)
-        rug_shape_records = _merge_records(existing_manifest.get("rug_shape_records") or [], rug_shape_records)
-        ai_background_final_records = _merge_records(
-            existing_manifest.get("ai_background_final_records") or [],
-            ai_background_final_records,
-            record_id_fn=_lifestyle_key,
-        )
-        template_mockup_records = _merge_records(
-            existing_manifest.get("template_mockup_records") or [],
-            template_mockup_records,
-            record_id_fn=_template_mock_key,
-        )
-        mockup_quality_records = _merge_records(existing_manifest.get("mockup_quality_records") or [], mockup_quality_records)
-    else:
-        product_render_records_dict = [r.to_dict() if hasattr(r, "to_dict") else dict(r) for r in product_render_records]
-
-    all_final_images = sorted(
-        [p for p in final_dir.iterdir() if p.is_file() and p.suffix.lower() in {".png", ".jpg", ".jpeg"}],
-        key=lambda x: x.name,
-    )
-    all_mockup_images = sorted(
-        [p for p in lifestyle_dir.iterdir() if p.is_file() and p.suffix.lower() in {".png", ".jpg", ".jpeg"}]
-        + [p for p in mockup_dir.iterdir() if p.is_file() and p.suffix.lower() in {".png", ".jpg", ".jpeg"}],
-        key=lambda x: x.name,
-    )
-
-    approved_mockups = sum(1 for record in template_mockup_records if record.get("status") == "ok")
-    if template_mockup_records:
-        approved_slots = {
-            (Path(str(record.get("print_path"))).name, int(record.get("variant", 1)))
-            for record in template_mockup_records if record.get("status") == "ok"
-        }
-        def approved_lifestyle(record: dict) -> bool:
-            filename = Path(str(record.get("lifestyle_path") or "")).name
-            matched = re.search(r"_lifestyle_(\d+)\.", filename)
-            variant = int(record.get("variant") or (matched.group(1) if matched else 1))
-            return (Path(str(record.get("print_path"))).name, variant) in approved_slots
-        ai_background_final_records = [record for record in ai_background_final_records if approved_lifestyle(record)]
-        approved_paths = {str(record.get("mockup_path")) for record in template_mockup_records if record.get("status") == "ok"}
-        approved_paths.update(str(record.get("lifestyle_path")) for record in ai_background_final_records)
-        all_mockup_images = [path for path in all_mockup_images if str(path) in approved_paths]
-    expected_mockup_count = max(expected_mockup_count, len(template_mockup_records))
-    failed_mockups = expected_mockup_count - approved_mockups
-    stage_manifest = {
-        "status": "failed" if failed_mockups else "completed",
-        "message": f"Có {failed_mockups} ảnh mockup chưa đạt kiểm định; cần kiểm tra vùng in/artwork trước khi xuất bản." if failed_mockups else "",
-        "quality_summary": {"expected": expected_mockup_count, "approved": approved_mockups, "failed": failed_mockups},
-        "approved_mockup_files": [path.name for path in all_mockup_images],
-        "master_artworks": [
-            {"path": path, "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
-            for path in all_final_images if path.suffix.lower() == ".png"
-        ],
-        "workflow_mode": "trend_to_product",
-        "design_mode": config.design_mode,
-        "selected_candidates_count": len(design_records),
-        "final_images_count": len(all_final_images),
-        "mockups_count": len(all_mockup_images),
-        "design_records": design_records,
-        "enhancement_records": enhancement_records,
-        "product_render_records": product_render_records_dict,
-        "product_asset_records": product_asset_records,
-        "product_cutout_records": product_cutout_records,
-        "artwork_generation_records": artwork_generation_records,
-        "rug_shape_records": rug_shape_records,
-        "ai_background_final_records": ai_background_final_records,
-        "template_mockup_records": template_mockup_records,
-        "mockup_quality_records": mockup_quality_records,
-    }
-    write_json(run_dir / "stage_manifest.json", stage_manifest)
+    stage_manifest, all_final_images, all_mockup_images, failed_mockups = _save_current_manifest(is_interim=False)
     decisions = [
         DedupeDecision(CandidateImage(path=p, source="user_review", keyword=kw), True, "selected_for_production")
         for p, kw, _ in resolved_sources

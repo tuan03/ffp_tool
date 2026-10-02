@@ -1895,6 +1895,7 @@ def _run_local_pipeline_worker(
     log_progress(f"Bắt đầu pipeline trực tiếp (Stage: {stage}, Product: {product}, Niche: '{niche}', Vision: {vision_status_note})...")
     log_progress(f"Nguồn truy vấn: {query_source}.")
 
+    target_run_dir: Path | None = None
     try:
         if cancel_event is not None and cancel_event.is_set():
             raise getattr(tt_pipe, "PipelineCancelled", RuntimeError)("Job đã được dừng bởi người dùng.")
@@ -2022,7 +2023,6 @@ def _run_local_pipeline_worker(
                 selected = resolved_list
 
             # Fork selected candidates to a dedicated, isolated run directory
-            target_run_dir = None
             if src_dir and hasattr(tt_pipe, "fork_selected_candidates_to_new_run"):
                 try:
                     forked_cands, target_run_dir = tt_pipe.fork_selected_candidates_to_new_run(
@@ -2038,6 +2038,13 @@ def _run_local_pipeline_worker(
                     target_run_dir = src_dir
             else:
                 target_run_dir = src_dir if (src_dir and src_dir.is_dir() and src_dir.name.startswith("run_")) else None
+
+            if target_run_dir:
+                with JOB_CACHE_LOCK:
+                    job = ACTIVE_JOBS.setdefault(job_id, {})
+                    job["run_id"] = target_run_dir.name
+                    job["runId"] = target_run_dir.name
+                    save_job_manifest(job_id, job)
 
             # Setup room template images
             raw_refs = req_body.get("reference_images") or []
@@ -2123,9 +2130,43 @@ def _run_local_pipeline_worker(
             or type(exc).__name__ in {"PipelineCancelled", "Task5ProcessCancelled"}
             or (cancel_event is not None and cancel_event.is_set())
         )
+        has_deliverables = False
+        loaded = None
         with JOB_CACHE_LOCK:
             job = ACTIVE_JOBS.setdefault(job_id, {})
-            if is_cancelled:
+            run_to_check = (target_run_dir.name if target_run_dir else None) or job.get("run_id") or job.get("runId") or src_run_id
+            if run_to_check:
+                loaded = load_standalone_run(run_to_check, base_url)
+            has_deliverables = bool(
+                loaded and (
+                    loaded.get("marketing_images")
+                    or loaded.get("lifestyle_mockups")
+                    or loaded.get("print_cmyk_images")
+                    or loaded.get("final_png_images")
+                )
+            )
+            if has_deliverables and loaded:
+                loaded["job_id"] = job_id
+                loaded["jobId"] = job_id
+                loaded["run_id"] = run_to_check
+                loaded["runId"] = run_to_check
+                loaded["source_run_id"] = src_run_id
+                loaded["sourceRunId"] = src_run_id
+                loaded["request"] = req_body
+                loaded["status"] = "completed"
+                loaded.setdefault("logs", []).extend(job.get("logs", []))
+                if is_cancelled:
+                    loaded.setdefault("logs", []).append("Tiến trình dừng nhưng các thành phẩm mockup và file in đã tạo vẫn được bảo lưu đầy đủ.")
+                else:
+                    loaded.setdefault("logs", []).append(f"Đã bảo lưu thành phẩm hoàn tất (Cảnh báo: {exc}).")
+                ACTIVE_JOBS[job_id] = loaded
+                save_job_manifest(job_id, loaded)
+                if req_body.get("notify_enabled", True):
+                    send_windows_desktop_notification(
+                        "Pinterest POD Studio - Hoàn tất",
+                        f"Đã bảo lưu thành phẩm hoàn tất: File in & Mockup AI cho '{req_body.get('niche', 'POD')}'. Mời bạn kiểm tra!"
+                    )
+            elif is_cancelled:
                 job["status"] = "cancelled"
                 job["error"] = "Tiến trình đã được dừng bởi người dùng."
                 job.setdefault("logs", []).append("Tiến trình đã dừng an toàn theo yêu cầu của người dùng.")
@@ -2142,7 +2183,8 @@ def _run_local_pipeline_worker(
                         "Pinterest POD Studio - Gặp lỗi",
                         f"Job '{req_body.get('niche', 'POD')}' thất bại: {exc}"
                     )
-        raise
+        if not (has_deliverables and loaded):
+            raise
     finally:
         with JOB_CACHE_LOCK:
             JOB_CANCEL_EVENTS.pop(job_id, None)

@@ -221,11 +221,16 @@ test("Full SEO pipeline run with siteDomain: 'jeminise.com' satisfies all Beddin
   const result = await runSeoContentDetailed({
     siteDomain: "jeminise.com",
     title: "Viking Quilt Bedding Set",
-    description: "Authentic Norse design quilt bedding set.",
+    description: "Authentic Norse design quilt bedding set. Available as Comforter, Quilt, or Duvet Cover.",
     handle: "viking-quilt-bedding-set",
     niche: "Bedding Sets",
     images: [{ url: "https://jeminise.com/cdn/viking-quilt.jpg" }],
     variantLabel: "Queen Size",
+    variants: [
+      { title: "Comforter", options: { Style: "Comforter" } },
+      { title: "Quilt", options: { Style: "Quilt" } },
+      { title: "Duvet Cover", options: { Style: "Duvet Cover" } },
+    ],
   }, { imageMode: "alt_only" });
 
   const output = result.output;
@@ -271,10 +276,15 @@ test("Full SEO pipeline with domain alias 'b6-theme-test.myshopify.com' resolves
   const result = await runSeoContentDetailed({
     siteDomain: "b6-theme-test.myshopify.com",
     title: "Celtic Tree of Life Bedding Set",
-    description: "Celtic Tree of Life patterned quilt and comforter set.",
+    description: "Celtic Tree of Life patterned quilt, comforter, and duvet cover set.",
     handle: "celtic-tree-of-life-bedding-set",
     niche: "Bedding Sets",
     images: [{ url: "https://b6-theme-test.myshopify.com/cdn/celtic.jpg" }],
+    variants: [
+      { title: "Comforter", options: { Style: "Comforter" } },
+      { title: "Quilt", options: { Style: "Quilt" } },
+      { title: "Duvet Cover", options: { Style: "Duvet Cover" } },
+    ],
   }, { imageMode: "alt_only" });
 
   const output = result.output;
@@ -292,10 +302,15 @@ test("Full SEO pipeline with storeId 'jeminise' resolves Jeminise Bedding Profil
   const result = await runSeoContentDetailed({
     storeId: "jeminise",
     title: "Raven Shield Bedding Set",
-    description: "Raven shield bedding decor.",
+    description: "Raven shield bedding decor available in Comforter, Quilt, and Duvet Cover styles.",
     handle: "raven-shield-bedding-set",
     niche: "Bedding Sets",
     images: [{ url: "https://cdn.shopify.com/raven.jpg" }],
+    variants: [
+      { title: "Comforter", options: { Style: "Comforter" } },
+      { title: "Quilt", options: { Style: "Quilt" } },
+      { title: "Duvet Cover", options: { Style: "Duvet Cover" } },
+    ],
   }, { imageMode: "alt_only" });
 
   const output = result.output;
