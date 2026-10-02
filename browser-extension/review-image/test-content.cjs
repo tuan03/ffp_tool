@@ -66,6 +66,37 @@ context.sleep = () => new Promise(resolve => setTimeout(resolve, 5));
   assert.equal(uploads[0][0].type, 'image/png');
   assert.equal(uploads[1][0].type, 'image/jpeg');
   assert.deepEqual(acceptedNames, ['template.png', 'product.jpg']);
+  const imageJob = {
+    job_id: 'role-binding-test',
+    prompt: 'Edit Image 1. Remove its rugs. Insert the rug from Image 2. Keep Image 2 geometry.',
+    images: [
+      { name: 'template', mime_type: 'image/png', data: 'YQ==' },
+      { name: 'product', mime_type: 'image/jpeg', data: 'Yg==' }
+    ]
+  };
+  const boundPrompt = context.bindImageReferencePrompt(imageJob);
+  assert.match(boundPrompt, /SCENE_BACKGROUND = attachment "template-role-binding-1.png"/);
+  assert.match(boundPrompt, /REPLACEMENT_PRODUCT = attachment "product-role-binding-2.jpg"/);
+  assert.match(boundPrompt, /Edit SCENE_BACKGROUND/);
+  assert.match(boundPrompt, /Insert the rug from REPLACEMENT_PRODUCT/);
+  assert.doesNotMatch(boundPrompt, /\bImage\s*[12]\b/i);
+  assert.match(boundPrompt, /regardless of the order/i);
+  // ChatGPT may display the most recently uploaded attachment first.
+  acceptedNames = [];
+  const originalDispatchEvent = input.dispatchEvent;
+  input.dispatchEvent = function(event) {
+    if (event.type === 'change') {
+      uploads.push([...this.files]);
+      acceptedNames.unshift(...this.files.map(file => file.name));
+    }
+  };
+  await context.attachImageReferences(imageJob.images, composer, imageJob.job_id);
+  assert.deepEqual(acceptedNames, ['product-role-binding-2.jpg', 'template-role-binding-1.png']);
+  assert.equal(context.bindImageReferencePrompt(imageJob), boundPrompt);
+  assert.equal(uploads.at(-2)[0].parts[0][0], 97, 'scene file must contain template bytes');
+  assert.equal(uploads.at(-1)[0].parts[0][0], 98, 'replacement file must contain pasted product bytes');
+  input.dispatchEvent = originalDispatchEvent;
+  uploads.splice(2);
   let revealed = false;
   acceptedNames = [];
   context.document.querySelector = selector => {
@@ -134,6 +165,16 @@ context.sleep = () => new Promise(resolve => setTimeout(resolve, 5));
       ? [preview]
       : [];
   assert.equal(context.findGeneratedImage([], 0, new Set()), preview);
+  preview.getBoundingClientRect = () => ({ width: 0, height: 0 });
+  context.document.visibilityState = 'hidden';
+  assert.equal(context.findGeneratedImage([], 0, new Set()), preview, 'completed images must be detected without foreground layout');
+  preview.loading = 'lazy';
+  preview.complete = false;
+  assert.equal(context.findGeneratedImage([], 0, new Set()), null);
+  assert.equal(preview.loading, 'eager', 'result previews must load even outside the viewport');
+  preview.complete = true;
+  assert.equal(context.findGeneratedImage([], 0, new Set()), preview);
+  assert.equal(context.findGeneratedImage([], 0, new Set([preview.currentSrc])), null, 'hidden old images are not new results');
   let clicked = false;
   context.xpathFirst = () => ({ click() { clicked = true; } });
   context.xpathAll = () => [];
@@ -186,5 +227,68 @@ context.sleep = () => new Promise(resolve => setTimeout(resolve, 5));
   vm.runInContext("removeUserMessages = false", context);
   context.applyVisibleMessageLimit();
   assert.equal(userTurn.style.display, "");
+  let pollClock = 0;
+  const backgroundStopButton = new FakeElement();
+  backgroundStopButton.getBoundingClientRect = () => ({ width: 0, height: 0 });
+  assert.equal(context.isGenerationControlPresent(backgroundStopButton), true, 'a background generation control need not have viewport layout');
+  const normalComputedStyle = context.getComputedStyle;
+  context.getComputedStyle = () => ({ display: 'none', visibility: 'visible', opacity: '1' });
+  assert.equal(context.isGenerationControlPresent(backgroundStopButton), false, 'a CSS-hidden progress control must not block completed images');
+  context.getComputedStyle = normalComputedStyle;
+  backgroundStopButton.isConnected = false;
+  assert.equal(context.isGenerationControlPresent(backgroundStopButton), false);
+  backgroundStopButton.isConnected = true;
+  const realDate = Date;
+  context.Date = class extends Date { static now() { return pollClock; } };
+  context.document.querySelectorAll = selector => selector.includes('generated-image-preview') ? [preview] : [];
+  context.xpathAll = xpath => xpath === '//stop' && pollClock < 4000 ? [backgroundStopButton] : [];
+  context.sleep = async () => { throw new Error('image completion must not use a throttled page timer'); };
+  const pollMessages = [];
+  context.chrome.runtime.sendMessage = async message => {
+    pollMessages.push(message);
+    pollClock += message.delay_ms;
+    return { ok: true };
+  };
+  context.fetchGeneratedImage = async () => ({ mime_type: 'image/png', data: 'Yw==' });
+  const hiddenResult = await context.waitForGeneratedImage({
+    assistantMessagesXPath: '//assistant', stopButtonXPath: '//stop', previousCount: 0,
+    previousImageSources: new Set(), timeoutMs: 10_000, jobId: 'hidden-image-job'
+  });
+  assert.equal(hiddenResult.data, 'Yw==');
+  assert.ok(pollClock >= 4000, 'do not return a preview while the background generation control is present');
+  assert.ok(pollMessages.length > 0);
+  assert.ok(pollMessages.every(message => message.type === 'wait_for_image_poll'));
+  const completedPollCount = pollMessages.length;
+  vm.runInContext("cancelledJobs.add('cancelled-hidden-image-job')", context);
+  await assert.rejects(() => context.waitForGeneratedImage({
+    assistantMessagesXPath: '//assistant', stopButtonXPath: '//stop', previousCount: 0,
+    previousImageSources: new Set(), timeoutMs: 10_000, jobId: 'cancelled-hidden-image-job'
+  }), /cancelled/);
+  assert.equal(pollMessages.length, completedPollCount, 'cancellation must stop background polling');
+  context.Date = realDate;
+  context.sleep = async () => {};
+  let sentPrompt = '';
+  let promptWasSent = false;
+  context.prepareImageConversation = async () => {};
+  context.document.querySelectorAll = () => [];
+  context.xpathAll = () => [];
+  context.waitForPromptInput = async () => ({ focus() {}, closest() { return composer; } });
+  context.attachImageReferences = async (images, _composer, jobId) => {
+    assert.equal(images, imageJob.images);
+    assert.equal(jobId, imageJob.job_id);
+  };
+  context.setPromptValue = (_input, prompt) => { sentPrompt = prompt; };
+  context.waitForEnabledXPath = async () => ({ click() { promptWasSent = true; } });
+  context.waitForGeneratedImage = async () => ({ mime_type: 'image/png', data: 'Yw==' });
+  context.chrome.runtime.sendMessage = () => {};
+  await context.executeJob({
+    ...imageJob,
+    kind: 'image_edit',
+    conversation_mode: 'session',
+    conversation_session_id: 'binding-session',
+    xpaths: { prompt_input: '//input', send_button: '//send', assistant_messages: '//assistant' }
+  });
+  assert.equal(promptWasSent, true);
+  assert.equal(sentPrompt, boundPrompt, 'the submitted ChatGPT prompt must bind to the actual attachment filenames');
   console.log('image attachment order passed');
 })().catch(error => { console.error(error); process.exitCode = 1; });

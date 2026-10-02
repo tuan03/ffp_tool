@@ -24,6 +24,28 @@ CONVERSATION_ISOLATION_INSTRUCTION = (
     "Use only the two newest image attachments in this message. Ignore all templates, products and generated images "
     "from earlier messages in this conversation."
 )
+RUG_REFERENCE_INSTRUCTION = (
+    "Identify the two current attachments by filename, regardless of their display order: "
+    "SCENE_BACKGROUND is the file whose filename begins with template-; "
+    "REPLACEMENT_PRODUCT is the file whose filename begins with product-. "
+    "Required rug replacement: Image 1 (template attachment) is the only scene source. "
+    "Keep its framing, camera, floor, furniture and lighting; remove all its original rugs and restore the covered floor. "
+    "Image 2 (product attachment) is the only product source: isolate its actual rugs and ignore its background as a scene source. "
+    "Insert those rugs into Image 1, preserving their count, shapes, proportions, relative sizes and artwork, "
+    "except customer names that must be replaced as instructed. Do not just repaint the template rug, "
+    "fit the new product to its shape, or recreate the scene from Image 2. "
+    "PHYSICAL SCALE: Do not shrink the product to fit the cleared template footprint, visible free floor, "
+    "or old rug dimensions. A large area rug or play mat must remain a large floor covering, not a small doormat. "
+    "Use supplied or clearly visible length and width measurements first; otherwise use recognizable objects "
+    "in Image 2 as physical scale cues only, without copying them into the scene. "
+    "Pixel size and camera magnification are not real-world measurements. "
+    "Do not invent exact centimeter or inch measurements if none are supplied; retain a plausible full-size product for its category. "
+    "Keep Image 1's framing and floor perspective; if the full-size product cannot be fully visible, "
+    "allow the rug to extend beyond the frame or naturally beneath furniture instead of miniaturizing it. "
+    "Frame-edge clipping may hide part of the rug, but do not truncate its physical shape or redesign its artwork. "
+    "Physical scale takes priority over any instruction below to show every edge or fit within the old rug area. "
+    "The following instructions must respect these image roles."
+)
 
 
 class ReviewImageBusyError(Exception):
@@ -189,15 +211,24 @@ class ReviewImageService:
             raise ValueError("Prompt phải có từ 1 đến 10.000 ký tự.")
         if scope not in {"main", "set", "single"}:
             raise ValueError("Chế độ sản phẩm không hợp lệ.")
+        clean_store_id = store_id.strip().lower()
         scope_instruction = {
             "main": "Required product selection: the main handbag only; ignore any wallet or accessory in Image 2.",
             "set": "Required product selection: the main handbag and matching wallet; place the wallet beside the bag.",
             "single": "Required product selection: use the exact product shown in Image 2 without inventing matching accessories.",
         }[scope]
         prompt = scope_instruction + "\n\n" + CONVERSATION_ISOLATION_INSTRUCTION + "\n\n" + prompt
+        if clean_store_id == "capozen":
+            # Bind older UI drafts to filenames instead of ambiguous attachment positions.
+            prompt = RUG_REFERENCE_INSTRUCTION + "\n\n" + prompt
+            prompt = re.sub(
+                r"\bImage\s*([12])\b",
+                lambda match: "SCENE_BACKGROUND" if match.group(1) == "1" else "REPLACEMENT_PRODUCT",
+                prompt,
+                flags=re.IGNORECASE,
+            )
         if len(prompt) > 10_200:
             raise ValueError("Prompt quá dài sau khi thêm hướng dẫn chọn sản phẩm; hãy rút ngắn prompt.")
-        clean_store_id = store_id.strip().lower()
         templates = self._templates(clean_store_id)
         if not templates:
             raise ValueError("Thư mục template chưa có ảnh PNG, JPEG hoặc WebP hợp lệ.")

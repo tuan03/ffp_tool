@@ -70,6 +70,32 @@ class ReviewImageServiceTests(unittest.TestCase):
         self.assertEqual(self.wait_for_job(created["job_id"])["status"], "completed")
         self.assertIn("matching wallet", self.calls[0][0])
 
+    def test_rug_jobs_enforce_reference_roles_even_with_a_custom_prompt(self) -> None:
+        template_name = self.service.save_template("rug-scene.png", image_data_url("red"), store_id="capozen")
+        product_data_url = image_data_url("green")
+        created = self.service.submit(
+            product_data_url, "Edit Image 1 and insert the product from Image 2. Keep the product geometry", "single",
+            store_id="capozen", template_name=template_name,
+        )
+        self.assertEqual(self.wait_for_job(created["job_id"])["status"], "completed")
+        prompt, images, _session_id = self.calls[0]
+        self.assertIn("SCENE_BACKGROUND (template attachment) is the only scene source", prompt)
+        self.assertIn("REPLACEMENT_PRODUCT (product attachment) is the only product source", prompt)
+        self.assertIn("filename begins with template-", prompt)
+        self.assertIn("filename begins with product-", prompt)
+        self.assertIn("Edit SCENE_BACKGROUND and insert the product from REPLACEMENT_PRODUCT", prompt)
+        self.assertNotRegex(prompt, r"(?i)\bImage\s*[12]\b")
+        self.assertIn("ignore its background", prompt)
+        self.assertIn("Do not just repaint the template rug", prompt)
+        self.assertIn("Do not shrink the product to fit the cleared template footprint", prompt)
+        self.assertIn("physical scale cues only", prompt)
+        self.assertIn("allow the rug to extend beyond the frame", prompt)
+        self.assertIn("Do not invent exact centimeter or inch measurements", prompt)
+        self.assertIn("Keep the product geometry", prompt)
+        self.assertEqual([part["name"] for part in images], ["template", "product"])
+        self.assertEqual(base64.b64decode(images[0]["data"]), self.template_bytes)
+        self.assertEqual(base64.b64decode(images[1]["data"]), base64.b64decode(product_data_url.split(",", 1)[1]))
+
     def test_forwards_a_shared_conversation_session_for_batch_jobs(self) -> None:
         first = self.service.submit(image_data_url(), "Prompt", "main", conversation_session_id="preaureum-batch-1")
         second = self.service.submit(image_data_url(), "Prompt", "main", conversation_session_id="preaureum-batch-1")

@@ -74,6 +74,17 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
 
 chrome.runtime.onMessage.addListener(
   (message, sender, sendResponse) => {
+    if (message?.type === "wait_for_image_poll") {
+      const delay = message.delay_ms;
+      if (!Number.isFinite(delay) || delay < 100 || delay > 1000) {
+        sendResponse({ ok: false, error: "Invalid image polling interval." });
+        return false;
+      }
+      // Extension worker timers are independent of the hidden page's timer budget.
+      setTimeout(() => sendResponse({ ok: true }), delay);
+      return true;
+    }
+
     if (message?.type === "content_result") {
       sendToServer({
         type: "job_result",

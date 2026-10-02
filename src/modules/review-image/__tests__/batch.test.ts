@@ -39,3 +39,24 @@ test("known review stores receive product-specific presets", () => {
   assert.match(jeminisePreset.prompt, /bedding/i);
   assert.equal(getReviewImageStorePreset("future-store").scope, "single");
 });
+
+test("rug preset replaces the template product while keeping only its scene", () => {
+  const { prompt } = getReviewImageStorePreset("capozen");
+  assert.match(prompt, /Image 1 is the only source of scene composition/i);
+  assert.match(prompt, /Keep its exact aspect ratio, crop, camera position/i);
+  assert.match(prompt, /Do not zoom out or invent a wider room/i);
+  assert.match(prompt, /Ignore the surroundings in Image 2 completely/i);
+  assert.match(prompt, /Do not copy or reuse any room, floor, furniture, background, camera angle, crop or staging from Image 2/i);
+  assert.match(prompt, /Do not merely repaint or transfer the Image 2 artwork onto the Image 1 rug/i);
+  assert.match(prompt, /The number of rugs must come only from Image 2/i);
+});
+
+test("rug preset keeps physical scale independent of the template rug footprint", () => {
+  const { prompt } = getReviewImageStorePreset("capozen");
+  assert.match(prompt, /Do not shrink the product to fit the cleared template footprint/i);
+  assert.match(prompt, /large area rug or play mat must remain a large floor covering/i);
+  assert.match(prompt, /physical scale cues only/i);
+  assert.match(prompt, /pixel dimensions or percentage of image occupied/i);
+  assert.match(prompt, /allow the rug to extend beyond the frame/i);
+  assert.match(prompt, /Do not invent exact centimeter or inch measurements/i);
+});

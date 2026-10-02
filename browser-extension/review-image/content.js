@@ -100,7 +100,7 @@ async function executeJob(job) {
     input = await waitForPromptInput(xpaths.prompt_input, 20_000);
   }
   input.focus();
-  setPromptValue(input, job.prompt);
+  setPromptValue(input, job.kind === "image_edit" ? bindImageReferencePrompt(job) : job.prompt);
 
   await sleep(150);
 
@@ -139,18 +139,39 @@ async function executeJob(job) {
   });
 }
 
+function getImageAttachmentFileName(image, imageIndex, jobId) {
+  const extension = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp" }[image.mime_type];
+  if (!extension) throw new Error("Unsupported image type.");
+  const jobSuffix = String(jobId || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 12);
+  return jobSuffix ? `${image.name}-${jobSuffix}-${imageIndex + 1}.${extension}` : `${image.name}.${extension}`;
+}
+
+function bindImageReferencePrompt(job) {
+  const images = job.images || [];
+  if (images.length !== 2 || images[0]?.name !== "template" || images[1]?.name !== "product") {
+    throw new Error("Image job requires the template first and the product second.");
+  }
+  const templateFileName = getImageAttachmentFileName(images[0], 0, job.job_id);
+  const productFileName = getImageAttachmentFileName(images[1], 1, job.job_id);
+  // Bind to the actual uploaded filenames; the composer can display uploads in reverse order.
+  const prompt = job.prompt.replace(/\bImage\s*([12])\b/gi, (_match, imageNumber) =>
+    imageNumber === '1' ? 'SCENE_BACKGROUND' : 'REPLACEMENT_PRODUCT'
+  );
+  return `REFERENCE FILE IDENTITIES FOR THIS MESSAGE (use filenames, regardless of the order of attachment previews):
+SCENE_BACKGROUND = attachment "${templateFileName}". Use only its background, environment, framing and lighting. Remove its original product.
+REPLACEMENT_PRODUCT = attachment "${productFileName}". Use it only as the source of the replacement product and design; follow the product-specific placement instructions below. Discard its background.
+Edit SCENE_BACKGROUND by inserting REPLACEMENT_PRODUCT. Never place the template's product into the product photo's background. Use only these two files, ignoring previous attachments and generated images.
+
+${prompt}`;
+}
+
 async function attachImageReferences(images, composerRoot = document, jobId = '', promptInputXPath = '') {
   if (images.length !== 2 || images[0]?.name !== "template" || images[1]?.name !== "product") {
     throw new Error("Image job requires the template first and the product second.");
   }
   for (const [imageIndex, image] of images.entries()) {
-    const extension = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp" }[image.mime_type];
-    if (!extension) throw new Error("Unsupported image type.");
     const bytes = Uint8Array.from(atob(image.data), character => character.charCodeAt(0));
-    const jobSuffix = String(jobId).replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 12);
-    const fileName = jobSuffix
-      ? `${image.name}-${jobSuffix}-${imageIndex + 1}.${extension}`
-      : `${image.name}.${extension}`;
+    const fileName = getImageAttachmentFileName(image, imageIndex, jobId);
     let lastError = null;
 
     for (let attempt = 0; attempt < 2; attempt++) {
@@ -196,7 +217,7 @@ async function attachImageReferences(images, composerRoot = document, jobId = ''
 async function findAttachmentInput(composerRoot) {
   const findCurrentInput = () => {
     const scopedInput = composerRoot.querySelector('input[type="file"]');
-    if (scopedInput?.isConnected !== false && !scopedInput?.disabled) return scopedInput;
+    if (scopedInput && scopedInput.isConnected !== false && !scopedInput.disabled) return scopedInput;
     const globalInputs = [
       document.querySelector('input[type="file"]'),
       ...document.querySelectorAll('input[type="file"]')
@@ -294,14 +315,15 @@ async function waitForGeneratedImage({ assistantMessagesXPath, stopButtonXPath, 
         candidateSource = source;
         stableSince = Date.now();
       }
-      const generating = stopButtonXPath && xpathAll(stopButtonXPath).some(isVisible);
+      const generating = stopButtonXPath && xpathAll(stopButtonXPath).some(isGenerationControlPresent);
       const turn = conversationTurnFor(messages.at(-1));
-      const imageBusy = Boolean(turn?.querySelector('[aria-busy="true"], [role="progressbar"]'));
+      const imageBusy = Boolean(turn && [...turn.querySelectorAll('[aria-busy="true"], [role="progressbar"]')].some(isGenerationControlPresent));
       if (!generating && !imageBusy && Date.now() - stableSince >= 3000) {
         return fetchGeneratedImage(source);
       }
     }
-    await sleep(400);
+    const poll = await chrome.runtime.sendMessage({ type: "wait_for_image_poll", delay_ms: 400 });
+    if (!poll?.ok) throw new Error("Reload the FFP Review Image Bridge extension and the ChatGPT tab to enable background image detection.");
   }
   throw new Error("ChatGPT did not return a generated image before timeout.");
 }
@@ -310,8 +332,7 @@ function findGeneratedImage(messages, previousCount, previousImageSources) {
   const previews = [...document.querySelectorAll('[data-testid="generated-image-preview"] img, img[data-testid="generated-image-preview"]')];
   const newPreview = previews.filter(node => {
     const source = node.currentSrc || node.src || '';
-    return node.complete && node.naturalWidth >= 256 && node.naturalHeight >= 256 &&
-      isVisible(node) && Boolean(source) && !previousImageSources.has(source);
+    return isLoadedGeneratedImage(node) && Boolean(source) && !previousImageSources.has(source);
   }).at(-1);
   if (newPreview) return newPreview;
 
@@ -321,9 +342,23 @@ function findGeneratedImage(messages, previousCount, previousImageSources) {
   const images = [...turn.querySelectorAll('img')];
   return images.filter(node => {
     const source = node.currentSrc || node.src || '';
-    return node.complete && node.naturalWidth >= 256 && node.naturalHeight >= 256 &&
-      isVisible(node) && Boolean(source) && (messages.length > previousCount || !previousImageSources.has(source));
+    return isLoadedGeneratedImage(node) && Boolean(source) && !previousImageSources.has(source);
   }).at(-1) || null;
+}
+
+function isLoadedGeneratedImage(image) {
+  // Lazy previews may never load while ChatGPT is backgrounded or scrolled away.
+  if (!image.complete && image.loading !== 'eager') image.loading = 'eager';
+  return image.complete && image.naturalWidth >= 256 && image.naturalHeight >= 256;
+}
+
+function isGenerationControlPresent(element) {
+  if (!(element instanceof Element) || element.isConnected === false) return false;
+  for (let node = element; node instanceof Element; node = node.parentElement) {
+    const style = getComputedStyle(node);
+    if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0) return false;
+  }
+  return true;
 }
 
 async function fetchGeneratedImage(source) {
