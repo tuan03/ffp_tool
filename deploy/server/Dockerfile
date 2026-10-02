@@ -52,7 +52,8 @@ COPY deploy/server/entrypoint.sh /app/entrypoint.sh
 COPY deploy/server/supervisord.conf /app/deploy/server/supervisord.conf
 COPY deploy/server/run-pipeline-worker.sh /app/deploy/server/run-pipeline-worker.sh
 
-RUN chmod +x /app/entrypoint.sh /app/deploy/server/run-pipeline-worker.sh && \
+RUN sed -i 's/\r$//' /app/entrypoint.sh /app/deploy/server/run-pipeline-worker.sh && \
+    chmod +x /app/entrypoint.sh /app/deploy/server/run-pipeline-worker.sh && \
     mkdir -p /app/.local-data /app/.runtime
 
 # Gateway (3001), Coordinator (8766) & internal Pinterest POD (8768)
