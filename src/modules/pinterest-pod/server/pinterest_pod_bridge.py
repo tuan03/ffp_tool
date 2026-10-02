@@ -1613,6 +1613,16 @@ def get_cached_asset_file(job_id: str, filename: str) -> tuple[Path, str]:
                 if found_source:
                     break
 
+        # If not found yet, also check other job/run subdirectories in TEMP_DIR
+        if not found_source and TEMP_DIR.exists():
+            for other_dir in sorted(TEMP_DIR.iterdir(), key=lambda p: p.stat().st_mtime if p.is_dir() else 0, reverse=True)[:30]:
+                if not other_dir.is_dir() or other_dir == job_dir:
+                    continue
+                cand = (other_dir / safe_filename).resolve()
+                if cand.exists() and cand.is_file():
+                    found_source = cand
+                    break
+
         if found_source:
             job_dir.mkdir(parents=True, exist_ok=True)
             shutil.copy2(found_source, file_path)

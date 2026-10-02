@@ -1089,10 +1089,17 @@ class DistributedCrawlerAgent:
                     if sub_dir.is_dir():
                         for img_file in sub_dir.glob("*.*"):
                             if img_file.is_file() and img_file.stat().st_size <= 10 * 1024 * 1024:
-                                try:
-                                    self._upload_asset(job_id, img_file.name, img_file.read_bytes())
-                                except Exception:
-                                    pass
+                                file_bytes = img_file.read_bytes()
+                                if run_id:
+                                    try:
+                                        self._upload_asset(str(run_id), img_file.name, file_bytes)
+                                    except Exception:
+                                        pass
+                                if job_id and str(job_id) != str(run_id):
+                                    try:
+                                        self._upload_asset(str(job_id), img_file.name, file_bytes)
+                                    except Exception:
+                                        pass
 
             enqueue_completed({
                 "deliverables": deliverables,
