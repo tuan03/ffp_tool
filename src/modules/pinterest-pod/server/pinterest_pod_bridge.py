@@ -110,6 +110,46 @@ def resolve_run_dir(run_id: str) -> Path | None:
     return None
 
 
+def find_run_dir_for_candidate_ids(candidate_ids: set[str]) -> Path | None:
+    """Find a past run directory containing candidate_review.json or image files matching candidate_ids."""
+    if not candidate_ids:
+        return None
+    candidate_roots = [
+        LOCAL_OUTPUT_DIR,
+        STANDALONE_OUTPUT_DIR,
+        ROOT / "output",
+        TEMP_DIR,
+    ]
+    for root_dir in candidate_roots:
+        if not root_dir or not root_dir.exists():
+            continue
+        try:
+            run_dirs = [p for p in root_dir.iterdir() if p.is_dir() and p.name.startswith("run_")]
+            run_dirs.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+            for r_dir in run_dirs[:20]:
+                cr_file = r_dir / "candidate_review.json"
+                if cr_file.exists():
+                    try:
+                        cr_cands = json.loads(cr_file.read_text(encoding="utf-8")).get("candidates", [])
+                        for c in cr_cands:
+                            if isinstance(c, dict):
+                                for k in ("image_id", "id", "candidate_id"):
+                                    v = c.get(k)
+                                    if v and str(v).strip() in candidate_ids:
+                                        return r_dir
+                    except Exception:
+                        pass
+                dl_dir = r_dir / "task5_crawl" / "downloaded_images"
+                if dl_dir.is_dir():
+                    for cid in candidate_ids:
+                        for ext in (".jpg", ".png", ".jpeg", ".webp"):
+                            if (dl_dir / f"{cid}{ext}").is_file():
+                                return r_dir
+        except Exception:
+            pass
+    return None
+
+
 def natural_sort_key(s: Any) -> list[int | str]:
     """Sort strings naturally by human/numerical order (e.g. rug_001, rug_002, rug_010)."""
     name = s.name if isinstance(s, Path) else str(s or "")
@@ -1841,6 +1881,17 @@ def _run_local_pipeline_worker(
         if is_vision_disabled
         else "Bật AI lọc"
     )
+    with JOB_CACHE_LOCK:
+        job = ACTIVE_JOBS.setdefault(job_id, {})
+        job.setdefault("job_id", job_id)
+        job.setdefault("jobId", job_id)
+        job["status"] = "running"
+        job.setdefault("created_at", time.time())
+        job["request"] = req_body
+        job.setdefault("logs", []).append(
+            f"Bắt đầu pipeline trực tiếp (Stage: {stage}, Product: {product}, Niche: '{niche}', Vision: {vision_status_note})..."
+        )
+        save_job_manifest(job_id, job)
     log_progress(f"Bắt đầu pipeline trực tiếp (Stage: {stage}, Product: {product}, Niche: '{niche}', Vision: {vision_status_note})...")
     log_progress(f"Nguồn truy vấn: {query_source}.")
 
@@ -1895,28 +1946,80 @@ def _run_local_pipeline_worker(
             src_run_id = req_body.get("source_run_id") or req_body.get("jobId") or req_body.get("job_id")
             src_dir = resolve_run_dir(src_run_id) if src_run_id else None
 
-            # Resolve candidate dictionaries from source run's candidate_review.json if strings/IDs were passed
-            if selected and src_dir and any(isinstance(c, str) for c in selected):
-                cr_file = src_dir / "candidate_review.json"
-                if cr_file.exists():
+            # Collect candidate IDs to help recover source run if src_dir is unresolved
+            candidate_ids: set[str] = set()
+            for c in selected:
+                if isinstance(c, str) and c.strip():
+                    candidate_ids.add(c.strip())
+                elif isinstance(c, dict):
+                    for k in ("image_id", "id", "candidate_id"):
+                        v = c.get(k)
+                        if v and str(v).strip():
+                            candidate_ids.add(str(v).strip())
+
+            if (not src_dir or not src_dir.exists()) and candidate_ids:
+                src_dir = find_run_dir_for_candidate_ids(candidate_ids)
+                if src_dir:
+                    log_progress(f"Tự động phục hồi thư mục quét gốc: {src_dir.name}")
+
+            # Resolve full candidate dictionaries from candidate_review.json or recent runs
+            needs_resolution = any(
+                isinstance(c, str)
+                or (isinstance(c, dict) and not (c.get("local_path") and Path(str(c.get("local_path"))).exists()))
+                for c in selected
+            )
+            if selected and (src_dir or candidate_ids) and needs_resolution:
+                c_map: dict[str, dict[str, Any]] = {}
+                if src_dir and (src_dir / "candidate_review.json").exists():
                     try:
-                        cr_cands = json.loads(cr_file.read_text(encoding="utf-8")).get("candidates", [])
-                        c_map: dict[str, dict[str, Any]] = {}
+                        cr_cands = json.loads((src_dir / "candidate_review.json").read_text(encoding="utf-8")).get("candidates", [])
                         for c in cr_cands:
                             if isinstance(c, dict):
                                 for k in ("image_id", "id", "candidate_id"):
                                     v = c.get(k)
                                     if v:
                                         c_map[str(v)] = c
-                        resolved_list: list[Any] = []
-                        for item in selected:
-                            if isinstance(item, str) and item.strip() in c_map:
-                                resolved_list.append(c_map[item.strip()])
-                            else:
-                                resolved_list.append(item)
-                        selected = resolved_list
                     except Exception:
                         pass
+                missing_ids = candidate_ids - set(c_map.keys())
+                if missing_ids:
+                    for root_dir in (output_root, LOCAL_OUTPUT_DIR, STANDALONE_OUTPUT_DIR, ROOT / "output"):
+                        if not root_dir or not root_dir.exists():
+                            continue
+                        try:
+                            for r_dir in sorted(root_dir.glob("run_*"), key=lambda p: p.stat().st_mtime, reverse=True)[:10]:
+                                cr_path = r_dir / "candidate_review.json"
+                                if cr_path.exists():
+                                    try:
+                                        for c in json.loads(cr_path.read_text(encoding="utf-8")).get("candidates", []):
+                                            if isinstance(c, dict):
+                                                for k in ("image_id", "id", "candidate_id"):
+                                                    v = c.get(k)
+                                                    if v and str(v) in missing_ids and str(v) not in c_map:
+                                                        c_map[str(v)] = c
+                                    except Exception:
+                                        pass
+                        except Exception:
+                            pass
+
+                resolved_list: list[Any] = []
+                for item in selected:
+                    if isinstance(item, str):
+                        cid = item.strip()
+                        resolved_item = copy.deepcopy(c_map.get(cid, {}))
+                        if not resolved_item:
+                            resolved_item = {"image_id": cid, "id": cid, "query": req_body.get("niche") or "rug"}
+                        resolved_list.append(resolved_item)
+                    elif isinstance(item, dict):
+                        item_copy = copy.deepcopy(item)
+                        cid = str(item_copy.get("image_id") or item_copy.get("id") or item_copy.get("candidate_id") or "").strip()
+                        if cid and cid in c_map:
+                            for k, v in c_map[cid].items():
+                                item_copy.setdefault(k, v)
+                        resolved_list.append(item_copy)
+                    else:
+                        resolved_list.append(item)
+                selected = resolved_list
 
             # Fork selected candidates to a dedicated, isolated run directory
             target_run_dir = None
@@ -1934,7 +2037,7 @@ def _run_local_pipeline_worker(
                     log_progress(f"Cảnh báo: không thể fork thư mục riêng ({fork_err}), tiếp tục chạy trong {src_dir.name}")
                     target_run_dir = src_dir
             else:
-                target_run_dir = src_dir or output_root
+                target_run_dir = src_dir if (src_dir and src_dir.is_dir() and src_dir.name.startswith("run_")) else None
 
             # Setup room template images
             raw_refs = req_body.get("reference_images") or []
@@ -2021,24 +2124,25 @@ def _run_local_pipeline_worker(
             or (cancel_event is not None and cancel_event.is_set())
         )
         with JOB_CACHE_LOCK:
-            if job_id in ACTIVE_JOBS:
-                if is_cancelled:
-                    ACTIVE_JOBS[job_id]["status"] = "cancelled"
-                    ACTIVE_JOBS[job_id]["error"] = "Tiến trình đã được dừng bởi người dùng."
-                    ACTIVE_JOBS[job_id].setdefault("logs", []).append("Tiến trình đã dừng an toàn theo yêu cầu của người dùng.")
-                    save_job_manifest(job_id, ACTIVE_JOBS[job_id])
-                else:
-                    import traceback
-                    tb = traceback.format_exc()
-                    ACTIVE_JOBS[job_id]["status"] = "failed"
-                    ACTIVE_JOBS[job_id]["error"] = str(exc)
-                    ACTIVE_JOBS[job_id].setdefault("logs", []).append(f"LỖI: {exc}\n{tb}")
-                    save_job_manifest(job_id, ACTIVE_JOBS[job_id])
-                    if req_body.get("notify_enabled", True):
-                        send_windows_desktop_notification(
-                            "Pinterest POD Studio - Gặp lỗi",
-                            f"Job '{req_body.get('niche', 'POD')}' thất bại: {exc}"
-                        )
+            job = ACTIVE_JOBS.setdefault(job_id, {})
+            if is_cancelled:
+                job["status"] = "cancelled"
+                job["error"] = "Tiến trình đã được dừng bởi người dùng."
+                job.setdefault("logs", []).append("Tiến trình đã dừng an toàn theo yêu cầu của người dùng.")
+                save_job_manifest(job_id, job)
+            else:
+                import traceback
+                tb = traceback.format_exc()
+                job["status"] = "failed"
+                job["error"] = str(exc)
+                job.setdefault("logs", []).append(f"LỖI: {exc}\n{tb}")
+                save_job_manifest(job_id, job)
+                if req_body.get("notify_enabled", True):
+                    send_windows_desktop_notification(
+                        "Pinterest POD Studio - Gặp lỗi",
+                        f"Job '{req_body.get('niche', 'POD')}' thất bại: {exc}"
+                    )
+        raise
     finally:
         with JOB_CACHE_LOCK:
             JOB_CANCEL_EVENTS.pop(job_id, None)
@@ -2065,6 +2169,22 @@ def produce_pod_job(payload: dict[str, Any], base_url: str, api_url: str = DEFAU
         or source_job_id
     )
     src_dir = resolve_run_dir(real_run_id) if real_run_id else None
+
+    # Collect candidate IDs to help recover source run if src_dir is unresolved
+    cand_ids: set[str] = set()
+    for c in selected_candidates:
+        if isinstance(c, str) and c.strip():
+            cand_ids.add(c.strip())
+        elif isinstance(c, dict):
+            for k in ("image_id", "id", "candidate_id"):
+                v = c.get(k)
+                if v and str(v).strip():
+                    cand_ids.add(str(v).strip())
+
+    if (not src_dir or not src_dir.exists()) and cand_ids:
+        src_dir = find_run_dir_for_candidate_ids(cand_ids)
+        if src_dir:
+            real_run_id = src_dir.name
 
     # Build candidate lookup dictionary from manifest and run folder
     cand_lookup: dict[str, dict[str, Any]] = {}
@@ -2093,6 +2213,28 @@ def produce_pod_job(payload: dict[str, Any], base_url: str, api_url: str = DEFAU
         except Exception:
             pass
 
+    # If some candidates are still not in cand_lookup, check recent runs
+    missing_ids = cand_ids - set(cand_lookup.keys())
+    if missing_ids:
+        for root_dir in (LOCAL_OUTPUT_DIR, STANDALONE_OUTPUT_DIR, ROOT / "output"):
+            if not root_dir.exists():
+                continue
+            try:
+                for r_dir in sorted(root_dir.glob("run_*"), key=lambda p: p.stat().st_mtime, reverse=True)[:10]:
+                    cr_f = r_dir / "candidate_review.json"
+                    if cr_f.exists():
+                        try:
+                            for c in json.loads(cr_f.read_text(encoding="utf-8")).get("candidates", []):
+                                if isinstance(c, dict):
+                                    for k in ("image_id", "id", "candidate_id"):
+                                        v = c.get(k)
+                                        if v and str(v) in missing_ids and str(v) not in cand_lookup:
+                                            cand_lookup[str(v)] = c
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+
     resolved_candidates: list[dict[str, Any]] = []
     for cand in selected_candidates:
         cand_dict: dict[str, Any] | None = None
@@ -2116,15 +2258,40 @@ def produce_pod_job(payload: dict[str, Any], base_url: str, api_url: str = DEFAU
                     cand_dict.setdefault(k, v)
 
         if cand_dict:
+            cid = str(cand_dict.get("image_id") or cand_dict.get("id") or cand_dict.get("candidate_id") or "").strip()
             # Ensure local_path exists on disk
             lp = cand_dict.get("local_path") or cand_dict.get("path") or cand_dict.get("image_path")
-            if (not lp or not Path(lp).exists()) and src_dir:
-                fname = Path(lp).name if lp else f"{cand_dict.get('image_id', '')}.jpg"
-                for sub in ("task5_crawl/downloaded_images", "dedupe/kept", "task5_crawl", ""):
-                    test_p = src_dir / sub / fname if sub else src_dir / fname
-                    if test_p.exists():
-                        cand_dict["local_path"] = str(test_p.resolve())
-                        break
+            if not lp or not Path(str(lp)).exists():
+                found_lp: str | None = None
+                fname = Path(str(lp)).name if lp else (f"{cid}.jpg" if cid else "")
+                # 1. Search in src_dir
+                if src_dir and fname:
+                    for sub in ("task5_crawl/downloaded_images", "dedupe/kept", "task5_crawl", ""):
+                        test_p = src_dir / sub / fname if sub else src_dir / fname
+                        if test_p.exists() and test_p.is_file():
+                            found_lp = str(test_p.resolve())
+                            break
+                # 2. Search in recent runs if not found in src_dir
+                if not found_lp and cid:
+                    for root_dir in (LOCAL_OUTPUT_DIR, STANDALONE_OUTPUT_DIR, ROOT / "output"):
+                        if not root_dir.exists():
+                            continue
+                        try:
+                            for r_dir in sorted(root_dir.glob("run_*"), key=lambda p: p.stat().st_mtime, reverse=True)[:10]:
+                                for sub in ("task5_crawl/downloaded_images", "dedupe/kept", "task5_crawl", ""):
+                                    for ext in (".jpg", ".png", ".jpeg", ".webp"):
+                                        test_p = r_dir / sub / f"{cid}{ext}" if sub else r_dir / f"{cid}{ext}"
+                                        if test_p.exists() and test_p.is_file():
+                                            found_lp = str(test_p.resolve())
+                                            break
+                                    if found_lp:
+                                        break
+                                if found_lp:
+                                    break
+                        except Exception:
+                            pass
+                if found_lp:
+                    cand_dict["local_path"] = found_lp
             resolved_candidates.append(cand_dict)
 
     selected_candidates = resolved_candidates

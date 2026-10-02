@@ -12,6 +12,7 @@ import shutil
 from threading import Event
 import time
 from typing import Callable
+import urllib.request
 
 from PIL import Image, ImageDraw
 
@@ -641,17 +642,53 @@ def fork_selected_candidates_to_new_run(
         src_path = Path(raw_src) if raw_src else None
         if src_path and not src_path.is_absolute() and source_run_dir:
             src_path = source_run_dir / src_path
+        cand_id = str(item_dict.get("image_id") or item_dict.get("id") or "").strip()
         if (not src_path or not src_path.exists()) and source_run_dir:
-            cand_fn = src_path.name if src_path else f"{item_dict.get('image_id')}.jpg"
+            cand_fn = src_path.name if src_path else f"{cand_id}.jpg"
             for sub in ("task5_crawl/downloaded_images", "dedupe/kept", "task5_crawl", ""):
                 test_p = source_run_dir / sub / cand_fn
                 if test_p.exists() and test_p.is_file():
                     src_path = test_p
                     break
+
+        # Search across other recent run directories in output_root if still not found
+        if (not src_path or not src_path.exists() or not src_path.is_file()) and output_root and output_root.exists():
+            cand_fn = src_path.name if (src_path and src_path.name) else f"{cand_id}.jpg"
+            for recent_run in sorted(output_root.glob("run_*"), key=lambda p: p.stat().st_mtime, reverse=True)[:10]:
+                if recent_run == source_run_dir or recent_run == new_run_dir:
+                    continue
+                for sub in ("task5_crawl/downloaded_images", "dedupe/kept", "task5_crawl", ""):
+                    for test_fn in (cand_fn, f"{cand_id}.jpg", f"{cand_id}.png", f"{cand_id}.webp"):
+                        if not test_fn or test_fn == ".jpg":
+                            continue
+                        test_p = recent_run / sub / test_fn if sub else recent_run / test_fn
+                        if test_p.exists() and test_p.is_file():
+                            src_path = test_p
+                            break
+                    if src_path and src_path.exists() and src_path.is_file():
+                        break
+                if src_path and src_path.exists() and src_path.is_file():
+                    break
+
+        # Fallback: Download from image_url if still missing
+        if (not src_path or not src_path.exists() or not src_path.is_file()):
+            img_url = str(item_dict.get("image_url") or "").strip()
+            if img_url.startswith(("http://", "https://")):
+                cand_dest = crawl_img_dir / f"{cand_id or f'cand_{new_idx}'}.jpg"
+                try:
+                    req = urllib.request.Request(img_url, headers={"User-Agent": "Mozilla/5.0"})
+                    with urllib.request.urlopen(req, timeout=15) as resp:
+                        cand_dest.write_bytes(resp.read())
+                    if cand_dest.exists() and cand_dest.stat().st_size > 0:
+                        src_path = cand_dest
+                except Exception:
+                    pass
+
         new_local_path = ""
         if src_path and src_path.exists() and src_path.is_file():
             dest_img = crawl_img_dir / src_path.name
-            shutil.copy2(src_path, dest_img)
+            if src_path.resolve() != dest_img.resolve():
+                shutil.copy2(src_path, dest_img)
             new_local_path = str(dest_img.resolve())
         else:
             new_local_path = raw_src
@@ -766,10 +803,13 @@ def run_production_from_candidates(
         else:
             continue
 
+        cand_id = str(meta.get("image_id") or meta.get("id") or (path.stem if path.name else "")).strip()
         if (not path.exists() or not path.is_file()) and run_dir:
             # Try finding by filename in task5_crawl or run_dir
             for sub in ("task5_crawl/downloaded_images", "dedupe/kept", "task5_crawl", ""):
-                for cand_name in (path.name, f"{str(path.name)}.jpg", f"{str(path.name)}.png"):
+                for cand_name in (path.name, f"{cand_id}.jpg", f"{cand_id}.png", f"{cand_id}.webp"):
+                    if not cand_name:
+                        continue
                     test_p = run_dir / sub / cand_name if sub else run_dir / cand_name
                     if test_p.exists() and test_p.is_file():
                         path = test_p
@@ -777,6 +817,50 @@ def run_production_from_candidates(
                         break
                 if path.exists() and path.is_file():
                     break
+
+        if (not path.exists() or not path.is_file()) and config.output_root and config.output_root.exists():
+            # Search other recent run_* directories under output_root
+            for recent_run in sorted(config.output_root.glob("run_*"), key=lambda p: p.stat().st_mtime, reverse=True)[:10]:
+                if recent_run == run_dir:
+                    continue
+                for sub in ("task5_crawl/downloaded_images", "dedupe/kept", "task5_crawl", ""):
+                    for cand_name in (path.name, f"{cand_id}.jpg", f"{cand_id}.png", f"{cand_id}.webp"):
+                        if not cand_name or cand_name == ".jpg":
+                            continue
+                        test_p = recent_run / sub / cand_name if sub else recent_run / cand_name
+                        if test_p.exists() and test_p.is_file():
+                            target_sub = run_dir / "task5_crawl" / "downloaded_images" if run_dir else None
+                            if target_sub:
+                                target_sub.mkdir(parents=True, exist_ok=True)
+                                dest_file = target_sub / test_p.name
+                                if test_p.resolve() != dest_file.resolve():
+                                    shutil.copy2(test_p, dest_file)
+                                path = dest_file
+                            else:
+                                path = test_p
+                            meta["local_path"] = str(path)
+                            break
+                    if path.exists() and path.is_file():
+                        break
+                if path.exists() and path.is_file():
+                    break
+
+        if (not path.exists() or not path.is_file()) and run_dir:
+            # Fallback: Download from image_url if present
+            img_url = str(meta.get("image_url") or "").strip()
+            if img_url.startswith(("http://", "https://")):
+                target_sub = run_dir / "task5_crawl" / "downloaded_images"
+                target_sub.mkdir(parents=True, exist_ok=True)
+                cand_dest = target_sub / f"{cand_id or 'cand'}.jpg"
+                try:
+                    req = urllib.request.Request(img_url, headers={"User-Agent": "Mozilla/5.0"})
+                    with urllib.request.urlopen(req, timeout=15) as resp:
+                        cand_dest.write_bytes(resp.read())
+                    if cand_dest.exists() and cand_dest.stat().st_size > 0:
+                        path = cand_dest
+                        meta["local_path"] = str(path)
+                except Exception:
+                    pass
 
         if path.exists() and path.is_file():
             resolved_sources.append((path, keyword, meta))

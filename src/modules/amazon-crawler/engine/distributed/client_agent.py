@@ -1046,6 +1046,16 @@ class DistributedCrawlerAgent:
             metrics = job_data.get("summaryMetrics") or job_data.get("summary_metrics") or {}
             logs = job_data.get("logs") or []
 
+            has_mockups = bool(
+                deliverables.get("lifestyle_mockups")
+                or deliverables.get("print_cmyk_images")
+                or deliverables.get("final_png_images")
+            )
+            if str(job_data.get("status") or "").lower() != "completed" and not has_mockups:
+                err_msg = job_data.get("error") or "Không tạo được ảnh thành phẩm cho tác vụ này (deliverables trống)."
+                enqueue_failed(str(err_msg))
+                return
+
             run_id = job_data.get("run_id") or job_data.get("runId") or req_body.get("source_run_id") or job_id
             run_dir = pod_bridge.resolve_run_dir(run_id)
             if run_dir and run_dir.is_dir():

@@ -380,6 +380,44 @@ export function ProductionStep({
         />
       )}
 
+      {/* Missing deliverables alert when job finished or completed without items */}
+      {!hasDeliverables && !isProductionActive && jobStatus !== "cancelled" && jobStatus !== "failed" && (
+        <div className="flex flex-col gap-4 rounded-xl border border-amber-800/80 bg-amber-950/40 p-6 shadow-xl text-xs text-amber-200">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <span className="text-3xl">⚠️</span>
+              <div>
+                <h3 className="text-sm font-bold text-amber-100">Chưa có ảnh thành phẩm cho tác vụ này</h3>
+                <p className="text-amber-300/90 mt-0.5">
+                  Hệ thống chưa tạo được bộ mockup hoặc file in cho các mẫu đã chọn (có thể do đường dẫn ảnh gốc bị gián đoạn hoặc chưa nạp được ảnh hợp lệ).
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => void onRerun()}
+                className="flex items-center gap-1.5 rounded-lg border border-amber-600 bg-amber-800/80 px-3.5 py-1.5 font-semibold text-white hover:bg-amber-700 transition shadow-xs cursor-pointer"
+              >
+                <span>🔄</span>
+                <span>Thử lại sản xuất</span>
+              </button>
+              {hasStage2 && (
+                <button
+                  type="button"
+                  onClick={() => onSelectStage(2)}
+                  className="flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 font-semibold text-slate-200 hover:bg-slate-700 hover:text-white transition shadow-xs cursor-pointer"
+                >
+                  <span>←</span>
+                  <span>Quay lại duyệt mẫu</span>
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Cấu hình Shopify & Định giá trước khi bàn giao SEO */}
       <ShopifyPricingConfigSection
         settings={shopifySettings}
