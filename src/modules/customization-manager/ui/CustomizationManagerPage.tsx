@@ -63,7 +63,7 @@ export function CustomizationManagerPage({
   const [collections, setCollections] = useState<readonly ShopifyCollection[]>([]);
   const [isLoadingProducts, setIsLoadingProducts] = useState(false);
   const [configuredProductIds, setConfiguredProductIds] = useState<Set<string>>(
-    new Set(["gid://shopify/Product/1001", "1001"]),
+    new Set<string>(),
   );
 
   // Catalog Filter State (scoped navigation in editor)

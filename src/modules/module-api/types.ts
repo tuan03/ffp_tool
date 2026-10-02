@@ -698,6 +698,7 @@ export interface ShopifyFileSummary {
   readonly id: string;
   readonly url: string;
   readonly altText?: string;
+  readonly tags?: readonly string[];
   readonly fileStatus: string;
   readonly createdAt: string;
   readonly updatedAt?: string;

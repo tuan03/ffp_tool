@@ -782,6 +782,7 @@ export function createCustomizationGatewayAdapter(
           id: f.id,
           url: f.url,
           altText: f.altText,
+          tags: f.tags,
           fileStatus: f.fileStatus,
         })),
       };
