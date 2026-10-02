@@ -73,6 +73,20 @@ export interface AdaptSeoOutputOptions {
   readonly originalBackup?: SeoProductBackup;
   readonly sourceShopifyUpdatedAt?: string;
   readonly sourceOrigin?: "distributed_crawler" | "pinterest_pod" | "auto_seo";
+  readonly seoVersion?: number;
+}
+
+export function extractProductSeoVersion(tags?: readonly string[] | string | null): number | undefined {
+  if (!tags) return undefined;
+  const tagList = Array.isArray(tags) ? tags : typeof tags === "string" ? tags.split(",").map((t) => t.trim()) : [];
+  for (const tag of tagList) {
+    const match = /^seo-v(\d+)$/i.exec(tag.trim());
+    if (match) {
+      const v = parseInt(match[1], 10);
+      if (!Number.isNaN(v)) return v;
+    }
+  }
+  return undefined;
 }
 
 export interface PersistedSeoReviewItem {
@@ -268,6 +282,7 @@ export function adaptSeoOutputToViewModel(
     shopifyAdminUrl: options.shopifyAdminUrl,
     sourceShopifyUpdatedAt: options.sourceShopifyUpdatedAt,
     originalBackup: options.originalBackup,
+    seoVersion: options.seoVersion,
   };
 }
 
@@ -515,6 +530,10 @@ export function adaptAutoSeoItemToViewModel(
     backedUpAt: Date.now(),
   };
 
+  const rawTags = (sourceProduct as { tags?: readonly string[] | string })?.tags;
+  const directVersion = (sourceProduct as { seoVersion?: number })?.seoVersion;
+  const seoVersion = directVersion ?? extractProductSeoVersion(rawTags);
+
   const options: AdaptSeoOutputOptions = {
     id: item.productId || `item-${Date.now()}`,
     storeId,
@@ -524,6 +543,7 @@ export function adaptAutoSeoItemToViewModel(
     isStatusReal: true,
     originalBackup,
     sourceOrigin: "auto_seo",
+    seoVersion,
   };
 
   if (!item.success) {

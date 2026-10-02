@@ -17,6 +17,7 @@ export interface ProductDetailDrawerProps {
   readonly onApprove: (id: string) => void;
   readonly onReject: (id: string) => void;
   readonly onDelete?: (id: string) => void;
+  readonly onRequeue?: (id: string) => void;
   readonly onRetrySync?: (id: string) => void;
   readonly onRollback?: (id: string) => void;
   readonly onZoomImage?: (images: readonly ZoomImageItem[], initialIndex?: number) => void;
@@ -45,6 +46,7 @@ export function ProductDetailDrawer({
   onApprove,
   onReject,
   onDelete,
+  onRequeue,
   onRetrySync,
   onRollback,
   onZoomImage,
@@ -206,6 +208,11 @@ export function ProductDetailDrawer({
             <div className="flex flex-wrap items-center justify-between rounded-xl border border-slate-800 bg-slate-950/60 p-4 gap-3">
               <div className="flex items-center gap-3 flex-wrap">
                 <SourceOriginBadge product={product} showStore targetStoreId={currentStoreId} />
+                {product.seoVersion !== undefined && product.seoVersion > 0 && (
+                  <span className="px-2.5 py-1 rounded text-xs font-bold bg-emerald-950/80 text-emerald-300 border border-emerald-700/60">
+                    v{product.seoVersion}
+                  </span>
+                )}
                 <span className="text-xs font-semibold uppercase text-slate-400">| Trạng thái:</span>
                 {product.reviewDecision === "approved" ? (
                   <span className="px-2.5 py-1 rounded text-xs font-bold bg-emerald-950 text-emerald-300 border border-emerald-700">
@@ -1050,6 +1057,19 @@ export function ProductDetailDrawer({
                 >
                   <span>🗑️</span>
                   <span>Xóa khỏi Review</span>
+                </button>
+              )}
+
+              {onRequeue && (
+                <button
+                  type="button"
+                  onClick={() => onRequeue(product.id)}
+                  disabled={product.isSyncing || product.isReverting}
+                  className="px-3.5 py-2 rounded-lg text-sm font-semibold transition bg-amber-950/40 text-amber-300 hover:bg-amber-900/70 border border-amber-700/60 cursor-pointer flex items-center gap-1.5 shadow-sm shadow-amber-950/40"
+                  title="Đưa sản phẩm quay lại Queue để SEO lại với AI hoặc prompt mới"
+                >
+                  <span>🔄</span>
+                  <span>SEO lại</span>
                 </button>
               )}
 

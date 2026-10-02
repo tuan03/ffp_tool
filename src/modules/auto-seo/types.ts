@@ -47,6 +47,7 @@ export interface ShopifyProductForAutoSeoUi {
   readonly hasMoreImages?: boolean;
   readonly createdAt?: string;
   readonly updatedAt?: string;
+  readonly seoVersion?: number;
 }
 
 export type ProductReviewDecision =
@@ -61,6 +62,27 @@ export type ShopifyStatusFilter =
   | "ACTIVE"
   | "DRAFT"
   | "ARCHIVED";
+
+export type SeoVersionFilter =
+  | "all"
+  | "v0"
+  | "v1"
+  | "v2"
+  | "v3_plus"
+  | "v_any";
+
+export function extractProductSeoVersion(tags?: readonly string[] | string | null): number | undefined {
+  if (!tags) return undefined;
+  const tagList = Array.isArray(tags) ? tags : typeof tags === "string" ? tags.split(",").map((t) => t.trim()) : [];
+  for (const tag of tagList) {
+    const match = /^seo-v(\d+)$/i.exec(tag.trim());
+    if (match) {
+      const v = parseInt(match[1], 10);
+      if (!Number.isNaN(v)) return v;
+    }
+  }
+  return undefined;
+}
 
 export interface AutoSeoProductImage {
   readonly url?: string;

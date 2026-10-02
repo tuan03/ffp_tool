@@ -62,6 +62,7 @@ export interface SeoReviewPushProductItem {
   }[];
   readonly sourceShopifyUpdatedAt?: string;
   readonly force?: boolean;
+  readonly currentSeoVersion?: number;
 }
 
 export interface PushSeoReviewProductResult {
@@ -73,6 +74,7 @@ export interface PushSeoReviewProductResult {
   readonly error?: string;
   readonly details?: unknown;
   readonly conflictDetails?: ShopifyVersionConflictDetails;
+  readonly seoVersion?: number;
 }
 
 export interface PushSeoReviewProductsOptions {
@@ -203,11 +205,48 @@ export async function pushSeoReviewProductToShopify(
               }
             }
           }
-        } catch (uploadError) {
-          console.warn("[Shopify Sync] Could not upload print file to Shopify Files, using original source:", uploadError);
+        } catch {
+          // If upload fails, retain original print file URL
         }
       }
     }
+
+    // Calculate and assign SEO Version:
+    const baseTags = product.tags ? [...product.tags] : [];
+    let currentVersion = typeof product.currentSeoVersion === "number" && product.currentSeoVersion > 0
+      ? product.currentSeoVersion
+      : 0;
+    if (currentVersion === 0) {
+      for (const t of baseTags) {
+        const m = /^seo-v(\d+)$/i.exec(t.trim());
+        if (m && m[1]) {
+          const v = parseInt(m[1], 10);
+          if (v > currentVersion) currentVersion = v;
+        }
+      }
+    }
+    const nextVersion = currentVersion + 1;
+    const effectiveTags = [
+      ...baseTags.filter((t) => !/^seo-v\d+$/i.test(t.trim())),
+      `seo-v${nextVersion}`,
+    ];
+
+    if (!finalMetafields) finalMetafields = [];
+    finalMetafields = [
+      ...finalMetafields.filter((m) => !(m.namespace === "custom" && (m.key === "seo_version" || m.key === "seo_last_synced_at"))),
+      {
+        namespace: "custom",
+        key: "seo_version",
+        value: String(nextVersion),
+        type: "number_integer",
+      },
+      {
+        namespace: "custom",
+        key: "seo_last_synced_at",
+        value: new Date().toISOString(),
+        type: "date_time",
+      },
+    ];
 
     // Case 1: Product has full crawled product data from Amazon Crawler
     if (product.sourceCrawlProduct) {
@@ -299,6 +338,7 @@ export async function pushSeoReviewProductToShopify(
 
       let syncInput: ShopifySyncProductInput = {
         ...baseInput,
+        tags: effectiveTags,
         ...(validExistingProductId ? { handle: undefined } : {}),
         vendor: effectiveVendor,
         collectionsToJoin: product.collectionsToJoin,
@@ -376,6 +416,7 @@ export async function pushSeoReviewProductToShopify(
         productId: finalProductId,
         productHandle: finalHandle,
         adminUrl: buildShopifyAdminUrl(shopAdminHandle, finalProductId),
+        seoVersion: nextVersion,
       };
     }
 
@@ -418,7 +459,7 @@ export async function pushSeoReviewProductToShopify(
             descriptionHtml: product.productDescription,
             ...(product.vendor?.trim() ? { vendor: product.vendor.trim() } : {}),
             productType: product.productType,
-            tags: product.tags ? [...product.tags] : undefined,
+            tags: effectiveTags,
             seo: {
               title: product.seoTitle,
               description: product.seoDescription,
@@ -490,6 +531,7 @@ export async function pushSeoReviewProductToShopify(
         productId: finalProductId,
         productHandle: finalHandle,
         adminUrl: buildShopifyAdminUrl(shopAdminHandle, finalProductId),
+        seoVersion: nextVersion,
       };
     }
 
@@ -508,7 +550,7 @@ export async function pushSeoReviewProductToShopify(
         title: product.seoTitle,
         description: product.seoDescription,
       },
-      tags: product.tags ? [...product.tags] : undefined,
+      tags: effectiveTags,
       vendor: effectiveVendor,
       productType: product.productType,
       collectionsToJoin: product.collectionsToJoin,
@@ -556,6 +598,7 @@ export async function pushSeoReviewProductToShopify(
       productId: finalProductId,
       productHandle: finalHandle,
       adminUrl: buildShopifyAdminUrl(shopAdminHandle, finalProductId),
+      seoVersion: nextVersion,
     };
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);

@@ -17,6 +17,10 @@ export {
   mapShopifyProductToAutoSeoCandidate,
 } from "./shopify-adapter";
 
+export {
+  extractProductSeoVersion,
+} from "./types";
+
 export type {
   AutoSeoBackupRequest,
   AutoSeoBackupResponse,
@@ -37,6 +41,7 @@ export type {
   AutoSeoStoreOption,
   ProductReviewDecision,
   SeoContentInputPayload,
+  SeoVersionFilter,
   ShopifyProductForAutoSeoUi,
   ShopifyProductImage,
   ShopifyProductVariant,

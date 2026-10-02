@@ -265,6 +265,37 @@ export class CustomGptQueue {
       this.db.prepare("UPDATE gpt_jobs SET batch_id=NULL WHERE id=?").run(jobId);
     });
   }
+  requeue(storeId: string, jobId: string, options?: { provider?: SeoProvider; instructions?: string }): GptSeoJob {
+    return this.transaction(() => {
+      const job = this.get(storeId, jobId);
+      if (this.db.prepare("SELECT 1 FROM gpt_sync WHERE job_id=? AND status='SYNCING'").get(jobId)) {
+        throw new Error("A Shopify sync is currently active for this review");
+      }
+      this.db.prepare("DELETE FROM gpt_sync WHERE job_id=? AND status IN ('UNKNOWN','SYNCING')").run(jobId);
+      const nextSettings = {
+        ...job.settings,
+        ...(options?.provider ? { provider: options.provider } : {}),
+        ...(options?.instructions !== undefined && options.instructions.trim() !== ""
+          ? { instructions: options.instructions.trim() }
+          : {}),
+      };
+      const updatedJob: GptSeoJob = {
+        ...job,
+        status: "PENDING",
+        settings: nextSettings,
+        error: undefined,
+        finalizeAttempts: 0,
+        nextAttemptAt: undefined,
+        checkpoints: {},
+        result: undefined,
+        updatedAt: this.now(),
+      };
+      this.write(updatedJob);
+      this.db.prepare("UPDATE gpt_jobs SET batch_id=NULL WHERE id=?").run(jobId);
+      this.audit(storeId, jobId, "JOB_REQUEUED");
+      return updatedJob;
+    });
+  }
   cancelReview(storeId: string, jobId: string): void {
     this.transaction(() => {
       const job = this.get(storeId, jobId);

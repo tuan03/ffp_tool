@@ -565,9 +565,10 @@ describe("seo-review-shopify-sync", () => {
     assert.equal(capturedMedia?.length, 2);
     assert.ok(!capturedMedia?.some((m) => JSON.stringify(m).includes("cmyk_300dpi")));
 
-    // 2. Verify metafields are properly included for print master storage and uploaded to Shopify CDN (only print_file_url and print_specs)
+    // 2. Verify metafields are properly included for print master storage and uploaded to Shopify CDN (plus seo_version and seo_last_synced_at)
     assert.ok(Array.isArray(capturedMetafields));
-    assert.equal(capturedMetafields?.length, 2);
+    assert.equal(capturedMetafields?.length, 4);
+    assert.equal(result.seoVersion, 1);
     const printFileMeta = capturedMetafields?.find((m: any) => m.key === "print_file_url") as any;
     assert.ok(printFileMeta);
     assert.ok(printFileMeta.value.includes("cdn.shopify.com"));
@@ -577,6 +578,10 @@ describe("seo-review-shopify-sync", () => {
     assert.ok(printSpecsMeta);
     assert.ok(printSpecsMeta.value.includes("4000"));
     assert.ok(printSpecsMeta.value.includes("cdn.shopify.com"));
+
+    const seoVersionMeta = capturedMetafields?.find((m: any) => m.key === "seo_version") as any;
+    assert.ok(seoVersionMeta);
+    assert.equal(seoVersionMeta.value, "1");
 
     const printFileRef = capturedMetafields?.find((m: any) => m.key === "print_file");
     assert.equal(printFileRef, undefined);

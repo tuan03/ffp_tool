@@ -14,6 +14,7 @@ export interface ProductCardListProps {
   readonly onRetrySync?: (id: string) => void;
   readonly onViewSyncError?: (product: SeoProductUiViewModel) => void;
   readonly onRollbackProduct?: (id: string) => void;
+  readonly onRequeueProduct?: (id: string) => void;
   readonly onDeleteProduct?: (id: string) => void;
 }
 
@@ -29,6 +30,7 @@ export function ProductCardList({
   onRetrySync,
   onViewSyncError,
   onRollbackProduct,
+  onRequeueProduct,
   onDeleteProduct,
 }: ProductCardListProps): React.JSX.Element {
   function renderSeoStatusBadge(status: SeoProcessingStatus, isMock: boolean) {
@@ -244,6 +246,11 @@ export function ProductCardList({
                       </span>
                       <SourceBadge source={product.productTitle.source} />
                       {product.gptJobId && <span className="rounded bg-cyan-950 px-2 py-1 text-xs text-cyan-300">GPT queue</span>}
+                      {product.seoVersion !== undefined && product.seoVersion > 0 && (
+                        <span className="rounded bg-emerald-950/80 border border-emerald-700/50 px-2 py-0.5 text-xs font-semibold text-emerald-300">
+                          v{product.seoVersion}
+                        </span>
+                      )}
                       <SourceOriginBadge product={product} showStore targetStoreId={currentStoreId} />
                     </div>
 
@@ -445,6 +452,23 @@ export function ProductCardList({
                         )}
                       </button>
                     )}
+
+                  {onRequeueProduct && (
+                    <button
+                      type="button"
+                      title="Đưa sản phẩm quay lại Queue để SEO lại với AI hoặc prompt mới"
+                      onClick={() => onRequeueProduct(product.id)}
+                      disabled={product.isSyncing || product.isReverting}
+                      className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition ${
+                        product.isSyncing || product.isReverting
+                          ? "bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed"
+                          : "bg-amber-950/60 text-amber-300 hover:bg-amber-900/80 border border-amber-700/60 cursor-pointer"
+                      }`}
+                    >
+                      <span>🔄</span>
+                      <span>SEO lại</span>
+                    </button>
+                  )}
 
                   <button
                     type="button"

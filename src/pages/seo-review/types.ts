@@ -108,6 +108,9 @@ export interface SeoProductUiViewModel {
   readonly revertError?: string;
   readonly lastRevertedAt?: number;
   readonly originalBackup?: SeoProductBackup;
+
+  // SEO Version tracking (incremented upon sync to Shopify)
+  readonly seoVersion?: number;
 }
 
 export interface SeoReviewFilterState {

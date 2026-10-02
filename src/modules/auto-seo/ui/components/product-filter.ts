@@ -1,9 +1,11 @@
-import type {
-  AutoSeoCollectionOption,
-  AutoSeoEligibilityItem,
-  ProductReviewDecision,
-  ShopifyProductForAutoSeoUi,
-  ShopifyStatusFilter,
+import {
+  extractProductSeoVersion,
+  type AutoSeoCollectionOption,
+  type AutoSeoEligibilityItem,
+  type ProductReviewDecision,
+  type SeoVersionFilter,
+  type ShopifyProductForAutoSeoUi,
+  type ShopifyStatusFilter,
 } from "../../types";
 import type { AutoSeoEligibilityFilter } from "../smart-batch";
 
@@ -20,6 +22,7 @@ export interface AutoSeoFilterCriteria {
   readonly typeFilter?: string;
   readonly collectionFilter?: string;
   readonly collections?: readonly AutoSeoCollectionOption[];
+  readonly seoVersionFilter?: SeoVersionFilter;
   readonly asinQuery?: string;
   readonly startDate?: string;
   readonly endDate?: string;
@@ -186,6 +189,22 @@ export function filterAutoSeoProducts(
             }
           }
         }
+      }
+    }
+
+    // 7. SEO Version Filter (Phiên bản SEO: v0, v1, v2, v3+, v_any)
+    if (criteria.seoVersionFilter && criteria.seoVersionFilter !== "all") {
+      const version = product.seoVersion ?? extractProductSeoVersion(product.tags) ?? 0;
+      if (criteria.seoVersionFilter === "v0") {
+        if (version !== 0) return false;
+      } else if (criteria.seoVersionFilter === "v1") {
+        if (version !== 1) return false;
+      } else if (criteria.seoVersionFilter === "v2") {
+        if (version !== 2) return false;
+      } else if (criteria.seoVersionFilter === "v3_plus") {
+        if (version < 3) return false;
+      } else if (criteria.seoVersionFilter === "v_any") {
+        if (version < 1) return false;
       }
     }
 

@@ -77,6 +77,8 @@ export function createCustomGptClient(fetcher: typeof fetch = fetch) {
     job: (storeId: string, jobId: string) => request<GptSeoJob>(`job?jobId=${encodeURIComponent(jobId)}`, storeId),
     enqueue: (input: GptSeoEnqueue) => request<GptSeoJob>("enqueue", input.storeId, input),
     retry: (storeId: string, jobId: string) => request<unknown>("retry", storeId, { jobId }),
+    requeue: (storeId: string, jobIds: readonly string[], options?: { provider?: SeoProvider; instructions?: string }) =>
+      request<{ readonly requeued: number }>("requeue", storeId, { jobIds, ...options }),
     cancelReview: (storeId: string, jobId: string) => request<{ readonly cancelled: boolean }>("cancel", storeId, { jobId }),
     transfer: (storeId: string, jobId: string, provider: SeoProvider) => request<unknown>("transfer", storeId, { jobId, provider }),
     beginSync: (storeId: string, jobId: string) => request<{ token: string }>("begin-sync", storeId, { jobId }),

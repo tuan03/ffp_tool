@@ -16,12 +16,13 @@ import { ProductSelectionTable } from "../ui/components/ProductSelectionTable";
 import type { ProductSelectionTableProps } from "../ui/components/ProductSelectionTable";
 import type { AutoSeoEligibilityFilter } from "../ui/smart-batch";
 
-import type {
-  AutoSeoCollectionOption,
-  AutoSeoEligibilityItem,
-  ProductReviewDecision,
-  ShopifyProductForAutoSeoUi,
-  ShopifyStatusFilter,
+import {
+  extractProductSeoVersion,
+  type AutoSeoCollectionOption,
+  type AutoSeoEligibilityItem,
+  type ProductReviewDecision,
+  type ShopifyProductForAutoSeoUi,
+  type ShopifyStatusFilter,
 } from "../types";
 
 const mockProducts: readonly ShopifyProductForAutoSeoUi[] = [
@@ -1446,5 +1447,53 @@ test("filterAutoSeoProducts: filters by storeCollections using smart matching", 
   });
   assert.equal(blanketResults.length, 1);
   assert.equal(blanketResults[0]?.id, "p2");
+});
+
+test("extractProductSeoVersion extracts SEO version from tags or returns undefined", () => {
+  assert.equal(extractProductSeoVersion(undefined), undefined);
+  assert.equal(extractProductSeoVersion([]), undefined);
+  assert.equal(extractProductSeoVersion(["rug", "living-room"]), undefined);
+  assert.equal(extractProductSeoVersion(["rug", "seo-v1"]), 1);
+  assert.equal(extractProductSeoVersion(["SEO-V2", "home"]), 2);
+  assert.equal(extractProductSeoVersion(["seo-v15"]), 15);
+  assert.equal(extractProductSeoVersion("seo-v3, rug"), 3);
+});
+
+test("filterAutoSeoProducts filters correctly by seoVersionFilter", () => {
+  const products: ShopifyProductForAutoSeoUi[] = [
+    { id: "p0", title: "New Product", handle: "new-product", tags: ["rug"] },
+    { id: "p1", title: "Product V1", handle: "prod-v1", tags: ["rug", "seo-v1"] },
+    { id: "p2", title: "Product V2", handle: "prod-v2", tags: ["rug", "seo-v2"] },
+    { id: "p3", title: "Product V3", handle: "prod-v3", tags: ["rug", "seo-v3"] },
+    { id: "p4", title: "Product V4 (direct property)", handle: "prod-v4", seoVersion: 4 },
+  ];
+
+  // All
+  assert.equal(filterAutoSeoProducts(products, { seoVersionFilter: "all" }).length, 5);
+
+  // v0 (un-SEOed)
+  const v0Results = filterAutoSeoProducts(products, { seoVersionFilter: "v0" });
+  assert.equal(v0Results.length, 1);
+  assert.equal(v0Results[0]?.id, "p0");
+
+  // v1
+  const v1Results = filterAutoSeoProducts(products, { seoVersionFilter: "v1" });
+  assert.equal(v1Results.length, 1);
+  assert.equal(v1Results[0]?.id, "p1");
+
+  // v2
+  const v2Results = filterAutoSeoProducts(products, { seoVersionFilter: "v2" });
+  assert.equal(v2Results.length, 1);
+  assert.equal(v2Results[0]?.id, "p2");
+
+  // v3_plus (v3 and v4)
+  const v3Results = filterAutoSeoProducts(products, { seoVersionFilter: "v3_plus" });
+  assert.equal(v3Results.length, 2);
+  assert.deepEqual(v3Results.map(p => p.id), ["p3", "p4"]);
+
+  // v_any (v1, v2, v3, v4)
+  const vAnyResults = filterAutoSeoProducts(products, { seoVersionFilter: "v_any" });
+  assert.equal(vAnyResults.length, 4);
+  assert.deepEqual(vAnyResults.map(p => p.id), ["p1", "p2", "p3", "p4"]);
 });
 

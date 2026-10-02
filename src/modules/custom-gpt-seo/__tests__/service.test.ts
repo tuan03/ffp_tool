@@ -113,3 +113,33 @@ test("Custom GPT client sends queue filters before server pagination", async () 
     "/api/v1/gpt-seo/admin/jobs?offset=0&statuses=PENDING&provider=codex_mcp&storeId=jeminise-real",
   );
 });
+
+test("Custom GPT client requeues review jobs through admin/requeue route", async () => {
+  let requestedUrl = "";
+  let requestedInit: RequestInit | undefined;
+  const client = createCustomGptClient(async (url, init) => {
+    requestedUrl = String(url);
+    requestedInit = init;
+    return new Response(JSON.stringify({ requeued: 2 }), { status: 200 });
+  });
+
+  const res = await client.requeue("capozen", ["job-1", "job-2"], {
+    provider: "gemini",
+    instructions: "Viết lại mô tả theo phong cách sang trọng",
+  });
+
+  assert.equal(res.requeued, 2);
+  assert.equal(requestedUrl, "/api/v1/gpt-seo/admin/requeue?storeId=capozen");
+  assert.equal(requestedInit?.method, "POST");
+  assert.deepEqual(JSON.parse(String(requestedInit?.body)), {
+    jobIds: ["job-1", "job-2"],
+    provider: "gemini",
+    instructions: "Viết lại mô tả theo phong cách sang trọng",
+  });
+});
+
+test("Mock Custom GPT client handles requeue correctly", async () => {
+  const mockClient = createMockCustomGptClient();
+  const res = await mockClient.requeue("capozen", ["job-mock-1"], { provider: "gemini" });
+  assert.equal(res.requeued, 1);
+});

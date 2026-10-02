@@ -30,6 +30,7 @@ export interface SeoBatchToolbarProps {
   readonly onSyncAllApproved: () => void;
   readonly onRetryFailedSync?: () => void;
   readonly onRollbackSelected?: () => void;
+  readonly onOpenRequeueModal?: () => void;
   readonly onDeleteSelected?: () => void;
   readonly onExportApprovedJson: () => void;
   readonly onClearAll: () => void;
@@ -65,6 +66,7 @@ export function SeoBatchToolbar({
   onSyncAllApproved,
   onRetryFailedSync,
   onRollbackSelected,
+  onOpenRequeueModal,
   onDeleteSelected,
   onExportApprovedJson,
   onClearAll,
@@ -391,6 +393,23 @@ export function SeoBatchToolbar({
                   </>
                 )}
               </button>
+
+              {onOpenRequeueModal && (
+                <button
+                  type="button"
+                  onClick={onOpenRequeueModal}
+                  disabled={isSyncing || isReverting}
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold transition ${
+                    isSyncing || isReverting
+                      ? "bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed"
+                      : "bg-cyan-600/20 text-cyan-300 hover:bg-cyan-600/30 border border-cyan-500/30 cursor-pointer shadow-sm shadow-cyan-950/40"
+                  }`}
+                  title="Đưa các sản phẩm đã chọn trở lại SEO Queue để AI xử lý lại từ đầu"
+                >
+                  <span>🔄</span>
+                  <span>SEO lại ({selectedCount})</span>
+                </button>
+              )}
 
               {/* Nút Hoàn tác hàng loạt */}
               {canRollbackCount > 0 && onRollbackSelected && (

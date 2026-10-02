@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from "react";
 import type {
   AutoSeoOutput,
+  SeoVersionFilter,
   ShopifyProductForAutoSeoUi,
   ShopifyStatusFilter,
 } from "../types";
@@ -19,6 +20,7 @@ export interface AutoSeoSessionState {
   eligibilityFilter: AutoSeoEligibilityFilter;
   typeFilter: string;
   collectionFilter: string;
+  seoVersionFilter: SeoVersionFilter;
   asinQuery: string;
   startDate: string;
   endDate: string;
@@ -36,6 +38,7 @@ interface PersistedAutoSeoSession {
   eligibilityFilter?: AutoSeoEligibilityFilter;
   typeFilter?: string;
   collectionFilter?: string;
+  seoVersionFilter?: SeoVersionFilter;
   asinQuery?: string;
   startDate?: string;
   endDate?: string;
@@ -56,6 +59,7 @@ export const DEFAULT_AUTO_SEO_SESSION_STATE: AutoSeoSessionState = {
   eligibilityFilter: "needs_seo",
   typeFilter: "all",
   collectionFilter: "all",
+  seoVersionFilter: "all",
   asinQuery: "",
   startDate: "",
   endDate: "",
@@ -101,6 +105,18 @@ export function parseAutoSeoSessionState(value: unknown): AutoSeoSessionState {
     typeof parsed.typeFilter === "string" ? parsed.typeFilter : "all";
   const collectionFilter =
     typeof parsed.collectionFilter === "string" ? parsed.collectionFilter : "all";
+  const validSeoVersionFilters: readonly SeoVersionFilter[] = [
+    "all",
+    "v0",
+    "v1",
+    "v2",
+    "v3_plus",
+    "v_any",
+  ];
+  const seoVersionFilter =
+    parsed.seoVersionFilter && validSeoVersionFilters.includes(parsed.seoVersionFilter)
+      ? parsed.seoVersionFilter
+      : "all";
   const asinQuery = typeof parsed.asinQuery === "string" ? parsed.asinQuery : "";
   const startDate = typeof parsed.startDate === "string" ? parsed.startDate : "";
   const endDate = typeof parsed.endDate === "string" ? parsed.endDate : "";
@@ -118,6 +134,7 @@ export function parseAutoSeoSessionState(value: unknown): AutoSeoSessionState {
     eligibilityFilter,
     typeFilter,
     collectionFilter,
+    seoVersionFilter,
     asinQuery,
     startDate,
     endDate,
@@ -153,6 +170,9 @@ function persistSession(state: AutoSeoSessionState): void {
       hasLoadedInitially: state.hasLoadedInitially,
       batchSize: state.batchSize,
       eligibilityFilter: state.eligibilityFilter,
+      typeFilter: state.typeFilter,
+      collectionFilter: state.collectionFilter,
+      seoVersionFilter: state.seoVersionFilter,
     };
     window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify(dataToSave));
   } catch {
@@ -245,6 +265,10 @@ export function setAutoSeoCollectionFilter(collectionFilter: string): void {
   updateAutoSeoSession({ collectionFilter });
 }
 
+export function setAutoSeoVersionFilter(seoVersionFilter: SeoVersionFilter): void {
+  updateAutoSeoSession({ seoVersionFilter });
+}
+
 export function setAutoSeoAsinQuery(asinQuery: string): void {
   updateAutoSeoSession({ asinQuery });
 }
@@ -264,6 +288,7 @@ export function resetAutoSeoFilters(): void {
     eligibilityFilter: "needs_seo",
     typeFilter: "all",
     collectionFilter: "all",
+    seoVersionFilter: "all",
     asinQuery: "",
     startDate: "",
     endDate: "",

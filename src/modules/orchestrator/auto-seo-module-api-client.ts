@@ -1,5 +1,5 @@
 import { AppError } from "../../shared/errors/app-error";
-import { runAutoSeo } from "../auto-seo";
+import { extractProductSeoVersion, runAutoSeo } from "../auto-seo";
 import type {
   AutoSeoBackupRequest,
   AutoSeoBackupResponse,
@@ -90,6 +90,7 @@ function mapShopifyProductToUi(
     hasMoreImages: product.hasMoreImages,
     createdAt: product.createdAt,
     updatedAt: product.updatedAt,
+    seoVersion: extractProductSeoVersion(product.tags),
   };
 }
 

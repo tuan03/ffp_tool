@@ -22,6 +22,7 @@ import { ProductDetailDrawer } from "./components/ProductDetailDrawer";
 import { ProductEditModal } from "./components/ProductEditModal";
 import { ProductListTable } from "./components/ProductListTable";
 import { ProductSplitView } from "./components/ProductSplitView";
+import { RequeueModal } from "./components/RequeueModal";
 import { SeoBatchToolbar } from "./components/SeoBatchToolbar";
 import { ShopifySyncErrorModal } from "./components/ShopifySyncErrorModal";
 import { VersionConflictModal } from "./components/VersionConflictModal";
@@ -126,6 +127,7 @@ function toPushProductItem(vm: SeoProductUiViewModel): SeoReviewPushProductItem 
     metafields,
     variants: vm.sourcePinterestItem?.variants,
     sourceShopifyUpdatedAt: vm.sourceShopifyUpdatedAt,
+    currentSeoVersion: vm.seoVersion,
   };
 }
 
@@ -249,6 +251,7 @@ export function SeoReviewPage({
   }, [amazonCrawlerReviews]);
 
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(new Set());
+  const [requeueTargetIds, setRequeueTargetIds] = useState<readonly string[] | null>(null);
   const [activeProduct, setActiveProduct] = useState<SeoProductUiViewModel | null>(null);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<SeoProductUiViewModel | null>(null);
@@ -824,6 +827,7 @@ export function SeoReviewPage({
               shopifySyncError: undefined,
               syncError: undefined,
               updatedAt: Date.now(),
+              seoVersion: result.seoVersion ?? ((p.seoVersion ?? 0) + 1),
             };
           } else {
             return {
@@ -919,6 +923,7 @@ export function SeoReviewPage({
                   shopifySyncError: undefined,
                   syncError: undefined,
                   updatedAt: Date.now(),
+                  seoVersion: res.seoVersion ?? ((p.seoVersion ?? 0) + 1),
                 };
               } else {
                 return {
@@ -1759,6 +1764,7 @@ export function SeoReviewPage({
             shopifySyncedAt: Date.now(),
             shopifySyncError: undefined,
             updatedAt: Date.now(),
+            seoVersion: pushResult.seoVersion ?? ((target.seoVersion ?? 0) + 1),
           };
 
           setProducts((prev) => prev.map((p) => (p.id === id ? syncedProduct : p)));
@@ -1897,6 +1903,62 @@ export function SeoReviewPage({
       setActiveProduct(null);
     }
   }, [activeProduct]);
+
+  const handleRequeueConfirm = useCallback(async (options: {
+    provider?: "gemini" | "custom_gpt" | "codex_mcp";
+    instructions?: string;
+  }) => {
+    if (!requeueTargetIds || requeueTargetIds.length === 0) return;
+    const targetIdSet = new Set(requeueTargetIds);
+    const targets = products.filter((p) => targetIdSet.has(p.id));
+    if (targets.length === 0) {
+      setRequeueTargetIds(null);
+      return;
+    }
+
+    try {
+      const gptTargets = targets.filter((t) => Boolean(t.gptJobId));
+      const durableTargets = targets.filter((t) => isDurableAutoSeoReview(t));
+
+      if (gptTargets.length > 0) {
+        const jobIds = gptTargets.map((t) => t.gptJobId as string);
+        await gptClient.requeue(effectiveStoreId, jobIds, options);
+      }
+
+      if (durableTargets.length > 0) {
+        await Promise.allSettled(
+          durableTargets.map((t) =>
+            fetch(`/api/seo-review/items?storeId=${encodeURIComponent(t.storeId || effectiveStoreId)}&productId=${encodeURIComponent(t.productId || "")}`, {
+              method: "DELETE",
+            }),
+          ),
+        );
+      }
+
+      removeProductsFromUi(targetIdSet);
+
+      const count = targets.length;
+      setSyncFeedback({
+        type: "success",
+        message: `✓ Đã đưa ${count} sản phẩm quay lại SEO Queue thành công!`,
+      });
+      notifyUser({
+        title: "🔄 Đã đưa vào SEO Queue",
+        message: `${count} sản phẩm đã được reset và xếp lại vào Queue để SEO lại.`,
+        type: "success",
+        sound: "chime",
+        url: `/seo-queue?storeId=${encodeURIComponent(effectiveStoreId)}`,
+      });
+    } catch (err: unknown) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      setSyncFeedback({
+        type: "error",
+        message: `✕ Lỗi khi đưa sản phẩm về Queue: ${errorMsg}`,
+      });
+    } finally {
+      setRequeueTargetIds(null);
+    }
+  }, [requeueTargetIds, products, effectiveStoreId, gptClient, removeProductsFromUi, setSyncFeedback]);
 
   const isDeletingReviewsRef = useRef(false);
   const deleteProductsFromReview = useCallback(async (
@@ -2155,6 +2217,7 @@ export function SeoReviewPage({
         onRollbackSelected={handleRollbackSelected}
         onExportApprovedJson={handleExportApprovedJson}
         onClearAll={handleClearAll}
+        onOpenRequeueModal={() => setRequeueTargetIds(Array.from(selectedIds))}
       />
 
       {/* Review Content View based on active viewMode */}
@@ -2207,6 +2270,7 @@ export function SeoReviewPage({
               onEditProduct={handleEditProduct}
               onApproveProduct={handleApproveProduct}
               onRejectProduct={handleRejectProduct}
+              onRequeueProduct={(id) => setRequeueTargetIds([id])}
               onRollbackProduct={handleRollbackProduct}
               onDeleteProduct={handleDeleteProduct}
               onRetrySync={handleRetrySync}
@@ -2274,6 +2338,10 @@ export function SeoReviewPage({
           setIsDrawerOpen(false);
         }}
         onDelete={handleDeleteProduct}
+        onRequeue={(id) => {
+          setRequeueTargetIds([id]);
+          setIsDrawerOpen(false);
+        }}
         onRollback={(id) => {
           void handleRollbackProduct(id);
         }}
@@ -2317,6 +2385,13 @@ export function SeoReviewPage({
         onClose={handleCloseZoomImage}
       />
 
+      {/* Re-queue Modal */}
+      <RequeueModal
+        isOpen={requeueTargetIds !== null && requeueTargetIds.length > 0}
+        count={requeueTargetIds?.length ?? 0}
+        onClose={() => setRequeueTargetIds(null)}
+        onConfirm={handleRequeueConfirm}
+      />
     </div>
   );
 }

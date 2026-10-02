@@ -258,6 +258,21 @@ export function createCustomGptHandler(options: CustomGptHandlerOptions) {
           result = (await queue.enqueue(input)); break;
         }
         case "admin/retry": (await queue.retry(storeId, jobId)); result = { status: "PENDING" }; break;
+        case "admin/requeue": {
+          const ids: string[] = Array.isArray(body.jobIds)
+            ? (body.jobIds as unknown[]).map(String)
+            : (typeof body.jobId === "string" ? [body.jobId] : (jobId ? [jobId] : []));
+          if (ids.length === 0) throw new Error("jobId or jobIds is required");
+          const provider = typeof body.provider === "string" && SEO_PROVIDERS.includes(body.provider as SeoProvider)
+            ? (body.provider as SeoProvider)
+            : undefined;
+          const instructions = typeof body.instructions === "string" ? body.instructions : undefined;
+          for (const id of ids) {
+            await queue.requeue(storeId, id, { provider, instructions });
+          }
+          result = { requeued: ids.length };
+          break;
+        }
         case "admin/cancel": (await queue.cancelReview(storeId, jobId)); result = { cancelled: true }; break;
         case "admin/bind-product": {
           await bindExternalSeoProduct({ storeId, sourceIdentity: required(body.sourceIdentity, "sourceIdentity"), productId: required(body.productId, "productId") });

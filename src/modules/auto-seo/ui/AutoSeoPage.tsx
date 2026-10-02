@@ -29,6 +29,7 @@ import {
   setAutoSeoAsinQuery,
   setAutoSeoStartDate,
   setAutoSeoEndDate,
+  setAutoSeoVersionFilter,
   resetAutoSeoFilters,
   useAutoSeoSession,
 } from "./auto-seo-session";
@@ -84,6 +85,7 @@ export function AutoSeoPage({
   const asinQuery = session.asinQuery ?? "";
   const startDate = session.startDate ?? "";
   const endDate = session.endDate ?? "";
+  const seoVersionFilter = session.seoVersionFilter ?? "all";
   const output = session.output;
   const lastHydratedProducts = session.lastHydratedProducts;
 
@@ -250,6 +252,7 @@ export function AutoSeoPage({
       typeFilter,
       collectionFilter,
       collections: storeCollections,
+      seoVersionFilter,
       asinQuery,
       startDate,
       endDate,
@@ -263,6 +266,7 @@ export function AutoSeoPage({
     typeFilter,
     collectionFilter,
     storeCollections,
+    seoVersionFilter,
     asinQuery,
     startDate,
     endDate,
@@ -668,6 +672,8 @@ export function AutoSeoPage({
         onStartDateChange={setAutoSeoStartDate}
         endDate={endDate}
         onEndDateChange={setAutoSeoEndDate}
+        seoVersionFilter={seoVersionFilter}
+        onSeoVersionFilterChange={setAutoSeoVersionFilter}
         onResetAllFilters={resetAutoSeoFilters}
         filteredProducts={filteredProducts}
         onToggleSelect={handleToggleSelect}

@@ -2,11 +2,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { filterAutoSeoProducts } from "./product-filter";
 
-import type {
-  AutoSeoCollectionOption,
-  AutoSeoEligibilityItem,
-  ShopifyProductForAutoSeoUi,
-  ShopifyStatusFilter,
+import {
+  extractProductSeoVersion,
+  type AutoSeoCollectionOption,
+  type AutoSeoEligibilityItem,
+  type SeoVersionFilter,
+  type ShopifyProductForAutoSeoUi,
+  type ShopifyStatusFilter,
 } from "../../types";
 import type { AutoSeoEligibilityFilter } from "../smart-batch";
 
@@ -37,6 +39,8 @@ export interface ProductSelectionTableProps {
   onStartDateChange?(date: string): void;
   endDate?: string;
   onEndDateChange?(date: string): void;
+  seoVersionFilter?: SeoVersionFilter;
+  onSeoVersionFilterChange?(version: SeoVersionFilter): void;
   onResetAllFilters?(): void;
 }
 
@@ -57,6 +61,7 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
   const [internalAsinQuery, setInternalAsinQuery] = useState("");
   const [internalStartDate, setInternalStartDate] = useState("");
   const [internalEndDate, setInternalEndDate] = useState("");
+  const [internalSeoVersionFilter, setInternalSeoVersionFilter] = useState<SeoVersionFilter>("all");
   const [isAdvancedOpen, setIsAdvancedOpen] = useState(
     Boolean(props.asinQuery || props.startDate || props.endDate),
   );
@@ -70,6 +75,7 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
   const asinQuery = props.asinQuery !== undefined ? props.asinQuery : internalAsinQuery;
   const startDate = props.startDate !== undefined ? props.startDate : internalStartDate;
   const endDate = props.endDate !== undefined ? props.endDate : internalEndDate;
+  const seoVersionFilter = props.seoVersionFilter !== undefined ? props.seoVersionFilter : internalSeoVersionFilter;
 
   const eligibilityByProductId = useMemo(
     () => new Map((props.eligibilityItems ?? []).map(item => [item.productId, item] as const)),
@@ -132,6 +138,14 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
     }
   };
 
+  const handleSeoVersionFilterChange = (version: SeoVersionFilter): void => {
+    if (props.onSeoVersionFilterChange) {
+      props.onSeoVersionFilterChange(version);
+    } else {
+      setInternalSeoVersionFilter(version);
+    }
+  };
+
   const handleResetAllFilters = (): void => {
     if (props.onResetAllFilters) {
       props.onResetAllFilters();
@@ -141,6 +155,7 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
       props.onEligibilityFilterChange?.("needs_seo");
       handleTypeFilterChange("all");
       handleCollectionFilterChange("all");
+      handleSeoVersionFilterChange("all");
       handleAsinQueryChange("");
       handleStartDateChange("");
       handleEndDateChange("");
@@ -226,6 +241,7 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
       eligibilityItems: props.eligibilityItems,
       typeFilter,
       collectionFilter,
+      seoVersionFilter,
       asinQuery,
       startDate,
       endDate,
@@ -239,6 +255,7 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
     props.eligibilityItems,
     typeFilter,
     collectionFilter,
+    seoVersionFilter,
     asinQuery,
     startDate,
     endDate,
@@ -312,6 +329,7 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
     (props.eligibilityFilter && props.eligibilityFilter !== "all") ||
     typeFilter !== "all" ||
     collectionFilter !== "all" ||
+    seoVersionFilter !== "all" ||
     asinQuery ||
     startDate ||
     endDate,
@@ -519,6 +537,28 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
                     {col.name} {col.count !== undefined ? `(${col.count})` : ""}
                   </option>
                 ))}
+              </select>
+            </div>
+
+            {/* SEO Version Filter Select */}
+            <div className="relative flex items-center gap-1.5">
+              <span className="text-[11px] text-slate-400 font-medium whitespace-nowrap">Version:</span>
+              <select
+                aria-label="Lọc theo phiên bản SEO"
+                value={seoVersionFilter}
+                onChange={(e) => handleSeoVersionFilterChange(e.target.value as SeoVersionFilter)}
+                className={`rounded-lg border px-2.5 py-1.5 text-xs font-semibold focus:outline-hidden cursor-pointer ${
+                  seoVersionFilter !== "all"
+                    ? "border-emerald-600 bg-emerald-950/80 text-emerald-200 ring-1 ring-emerald-500/50"
+                    : "border-slate-700 bg-slate-950 text-slate-300"
+                }`}
+              >
+                <option value="all">Tất cả phiên bản</option>
+                <option value="v0">Chưa SEO (v0)</option>
+                <option value="v1">Phiên bản v1</option>
+                <option value="v2">Phiên bản v2</option>
+                <option value="v3_plus">Phiên bản v3+</option>
+                <option value="v_any">Đã qua SEO (v1+)</option>
               </select>
             </div>
 
@@ -733,6 +773,29 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
               </span>
             )}
 
+            {seoVersionFilter !== "all" && (
+              <span className="inline-flex items-center gap-1 rounded-md bg-emerald-950/60 border border-emerald-800 px-2 py-0.5 text-emerald-300">
+                Phiên bản: {
+                  seoVersionFilter === "v0"
+                    ? "Chưa SEO (v0)"
+                    : seoVersionFilter === "v1"
+                      ? "v1"
+                      : seoVersionFilter === "v2"
+                        ? "v2"
+                        : seoVersionFilter === "v3_plus"
+                          ? "v3+"
+                          : "v1+"
+                }
+                <button
+                  type="button"
+                  onClick={() => handleSeoVersionFilterChange("all")}
+                  className="hover:text-rose-400 cursor-pointer ml-0.5"
+                >
+                  ✕
+                </button>
+              </span>
+            )}
+
             {asinQuery && (
               <span className="inline-flex items-center gap-1 rounded-md bg-indigo-950/60 border border-indigo-800 px-2 py-0.5 text-indigo-300 font-mono">
                 ASIN: {asinQuery}
@@ -813,6 +876,7 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
                 product.featuredImage?.altText ?? product.images?.[0]?.altText ?? product.title;
               const upperStatus = (product.status ?? "").toUpperCase();
               const eligibility = eligibilityByProductId.get(product.id);
+              const productVersion = product.seoVersion ?? extractProductSeoVersion(product.tags) ?? 0;
 
               return (
                 <tr
@@ -864,8 +928,19 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
 
                   {/* Title & tags */}
                   <td className="py-3.5 px-3 max-w-xs sm:max-w-sm">
-                    <div className="font-semibold text-slate-200 group-hover:text-cyan-300 transition-colors line-clamp-2">
-                      {product.title}
+                    <div className="flex items-start gap-2">
+                      <div className="font-semibold text-slate-200 group-hover:text-cyan-300 transition-colors line-clamp-2 flex-1">
+                        {product.title}
+                      </div>
+                      {productVersion > 0 ? (
+                        <span className="shrink-0 rounded bg-emerald-950 border border-emerald-700/60 px-1.5 py-0.5 text-[10px] font-bold text-emerald-300">
+                          v{productVersion}
+                        </span>
+                      ) : (
+                        <span className="shrink-0 rounded bg-slate-800 border border-slate-700/60 px-1.5 py-0.5 text-[10px] font-medium text-slate-400">
+                          v0
+                        </span>
+                      )}
                     </div>
                     {eligibility && <EligibilityBadge state={eligibility.state} />}
                     {product.tags && product.tags.length > 0 && (
