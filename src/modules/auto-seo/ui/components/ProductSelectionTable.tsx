@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { filterAutoSeoProducts } from "./product-filter";
 
@@ -23,6 +23,8 @@ export interface ProductSelectionTableProps {
   eligibilityItems?: readonly AutoSeoEligibilityItem[];
   eligibilityFilter?: AutoSeoEligibilityFilter;
   onEligibilityFilterChange?(filter: AutoSeoEligibilityFilter): void;
+  onSelectAllVisible?(): void;
+  onClearVisibleSelection?(): void;
 }
 
 export function ProductSelectionTable(props: ProductSelectionTableProps): React.JSX.Element {
@@ -36,6 +38,7 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
 
   const [internalSearchQuery, setInternalSearchQuery] = useState("");
   const [internalStatusFilter, setInternalStatusFilter] = useState<ShopifyStatusFilter>("all");
+  const masterCheckboxRef = useRef<HTMLInputElement | null>(null);
 
   const searchQuery = props.searchQuery !== undefined ? props.searchQuery : internalSearchQuery;
   const statusFilter = props.statusFilter !== undefined ? props.statusFilter : internalStatusFilter;
@@ -101,6 +104,48 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
     props.eligibilityFilter,
     props.eligibilityItems,
   ]);
+
+  const selectedVisibleCount = useMemo(() => {
+    const idSet = new Set(selectedProductIds);
+    return displayProducts.filter((p) => idSet.has(p.id)).length;
+  }, [displayProducts, selectedProductIds]);
+
+  const isAllVisibleSelected =
+    displayProducts.length > 0 && selectedVisibleCount === displayProducts.length;
+  const isPartiallySelected =
+    selectedVisibleCount > 0 && selectedVisibleCount < displayProducts.length;
+
+  useEffect(() => {
+    if (masterCheckboxRef.current) {
+      masterCheckboxRef.current.indeterminate = isPartiallySelected;
+    }
+  }, [isPartiallySelected]);
+
+  const handleMasterCheckboxChange = (): void => {
+    if (isAllVisibleSelected || isPartiallySelected) {
+      if (props.onClearVisibleSelection) {
+        props.onClearVisibleSelection();
+      } else {
+        const visibleIdSet = new Set(displayProducts.map((p) => p.id));
+        for (const id of selectedProductIds) {
+          if (visibleIdSet.has(id)) {
+            onToggleSelect(id);
+          }
+        }
+      }
+    } else {
+      if (props.onSelectAllVisible) {
+        props.onSelectAllVisible();
+      } else {
+        const selectedSet = new Set(selectedProductIds);
+        for (const p of displayProducts) {
+          if (!selectedSet.has(p.id)) {
+            onToggleSelect(p.id);
+          }
+        }
+      }
+    }
+  };
 
   if (products.length === 0) {
     if (isLoading) {
@@ -218,7 +263,24 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
           <thead className="border-b border-slate-800 bg-slate-950/70 text-[11px] uppercase tracking-wider text-slate-400">
             <tr>
               <th scope="col" className="p-3.5 text-center w-10">
-                <span className="sr-only">Chọn</span>
+                <label className="inline-flex cursor-pointer items-center justify-center">
+                  <input
+                    ref={masterCheckboxRef}
+                    type="checkbox"
+                    checked={isAllVisibleSelected}
+                    onChange={handleMasterCheckboxChange}
+                    disabled={displayProducts.length === 0}
+                    title={
+                      isAllVisibleSelected
+                        ? "Bỏ chọn tất cả sản phẩm đang hiển thị"
+                        : isPartiallySelected
+                          ? `Đang chọn ${selectedVisibleCount}/${displayProducts.length} sản phẩm (click để bỏ chọn)`
+                          : `Chọn tất cả ${displayProducts.length} sản phẩm đang hiển thị`
+                    }
+                    aria-label="Chọn hoặc bỏ chọn tất cả sản phẩm đang hiển thị"
+                    className="h-4 w-4 rounded-sm border-slate-700 bg-slate-900 text-cyan-500 focus:ring-cyan-500 focus:ring-offset-slate-950 cursor-pointer disabled:opacity-40"
+                  />
+                </label>
               </th>
               <th scope="col" className="py-3.5 px-3 text-center w-12 font-medium">STT</th>
               <th scope="col" className="py-3.5 px-3 w-16 font-medium">Ảnh</th>

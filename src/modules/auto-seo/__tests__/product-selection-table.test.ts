@@ -1025,3 +1025,78 @@ test("AutoSeoPage: defaults to empty selection when initialSelectedProductIds is
   assert.ok(tableElement, "ProductSelectionTable must be rendered");
   assert.deepEqual(tableElement.props.selectedProductIds, [], "Selected product IDs array must be empty");
 });
+
+test("ProductSelectionTable: master checkbox reflects selection state and triggers select all / clear callbacks", () => {
+  let selectAllCalled = false;
+  let clearSelectionCalled = false;
+
+  // 1. None selected: master checkbox is unchecked, change triggers onSelectAllVisible
+  const { captured: unselectedCaptured, html: unselectedHtml } = renderTable({
+    products: mockProducts,
+    selectedProductIds: [],
+  });
+  assert.ok(unselectedHtml.includes("aria-label=\"Chọn hoặc bỏ chọn tất cả sản phẩm đang hiển thị\""));
+
+  // Check master input element in thead
+  const rootDivChildren = React.Children.toArray(unselectedCaptured.props.children);
+  const tableContainer = assertElement<{ children: React.ReactNode }>(rootDivChildren[1]);
+  const table = assertElement<{ children: React.ReactNode[] }>(tableContainer.props.children);
+  const tableChildren = React.Children.toArray(table.props.children);
+  const thead = assertElement<{ children: React.ReactNode[] }>(tableChildren[0]);
+  const theadRow = assertElement<{ children: React.ReactNode[] }>(React.Children.toArray(thead.props.children)[0]);
+  const theadCells = React.Children.toArray(theadRow.props.children);
+  const masterTh = assertElement<{ children: React.ReactNode }>(theadCells[0]);
+  const masterLabel = assertElement<{ children: React.ReactNode }>(masterTh.props.children);
+  const masterInput = assertElement<InputProps>(masterLabel.props.children);
+
+  assert.equal(masterInput.props.checked, false, "Master checkbox should be unchecked when 0 items selected");
+
+  // Harness with custom callbacks to verify toggle
+  let capturedCallbackTree: React.ReactElement<{ children: React.ReactNode[] }> | null = null;
+  function CallbackHarness(props: { selectedIds: readonly string[] }): React.JSX.Element {
+    const el = ProductSelectionTable({
+      products: mockProducts,
+      selectedProductIds: props.selectedIds,
+      onToggleSelect: () => {},
+      onOpenDetail: () => {},
+      onSelectAllVisible: () => {
+        selectAllCalled = true;
+      },
+      onClearVisibleSelection: () => {
+        clearSelectionCalled = true;
+      },
+    }) as React.ReactElement<{ children: React.ReactNode[] }>;
+    capturedCallbackTree = el;
+    return el;
+  }
+
+  // Test triggering select all
+  renderToStaticMarkup(React.createElement(CallbackHarness, { selectedIds: [] }));
+  const root1 = React.Children.toArray(capturedCallbackTree!.props.children);
+  const tc1 = assertElement<{ children: React.ReactNode }>(root1[1]);
+  const t1 = assertElement<{ children: React.ReactNode[] }>(tc1.props.children);
+  const thead1 = assertElement<{ children: React.ReactNode[] }>(React.Children.toArray(t1.props.children)[0]);
+  const tr1 = assertElement<{ children: React.ReactNode[] }>(React.Children.toArray(thead1.props.children)[0]);
+  const th1 = assertElement<{ children: React.ReactNode }>(React.Children.toArray(tr1.props.children)[0]);
+  const lbl1 = assertElement<{ children: React.ReactNode }>(th1.props.children);
+  const input1 = assertElement<InputProps>(lbl1.props.children);
+
+  input1.props.onChange?.();
+  assert.equal(selectAllCalled, true, "Clicking master checkbox when unselected should trigger onSelectAllVisible");
+
+  // Test triggering clear selection when all are selected
+  renderToStaticMarkup(React.createElement(CallbackHarness, { selectedIds: mockProducts.map(p => p.id) }));
+  const root2 = React.Children.toArray(capturedCallbackTree!.props.children);
+  const tc2 = assertElement<{ children: React.ReactNode }>(root2[1]);
+  const t2 = assertElement<{ children: React.ReactNode[] }>(tc2.props.children);
+  const thead2 = assertElement<{ children: React.ReactNode[] }>(React.Children.toArray(t2.props.children)[0]);
+  const tr2 = assertElement<{ children: React.ReactNode[] }>(React.Children.toArray(thead2.props.children)[0]);
+  const th2 = assertElement<{ children: React.ReactNode }>(React.Children.toArray(tr2.props.children)[0]);
+  const lbl2 = assertElement<{ children: React.ReactNode }>(th2.props.children);
+  const input2 = assertElement<InputProps>(lbl2.props.children);
+
+  assert.equal(input2.props.checked, true, "Master checkbox should be checked when all items are selected");
+  input2.props.onChange?.();
+  assert.equal(clearSelectionCalled, true, "Clicking master checkbox when selected should trigger onClearVisibleSelection");
+});
+

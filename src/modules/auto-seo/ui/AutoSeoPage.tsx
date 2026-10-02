@@ -604,6 +604,8 @@ export function AutoSeoPage({
         eligibilityItems={eligibility?.items}
         eligibilityFilter={eligibilityFilter}
         onEligibilityFilterChange={setAutoSeoEligibilityFilter}
+        onSelectAllVisible={handleSelectAll}
+        onClearVisibleSelection={handleClearSelection}
       />
 
       {/* PDP Detail Drawer */}
