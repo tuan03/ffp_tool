@@ -183,18 +183,27 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
             ))}
           </div>
           {props.eligibilityItems && (
-            <div className="flex items-center gap-1 rounded-lg border border-slate-800 bg-slate-950/60 p-1 text-xs">
+            <div className="flex items-center gap-1 rounded-lg border border-slate-800 bg-slate-950/80 p-1 text-xs">
+              <span className="text-[11px] font-semibold text-slate-400 px-1 hidden sm:inline">Lọc:</span>
               <button
                 type="button"
                 onClick={() => props.onEligibilityFilterChange?.("needs_seo")}
-                className={`rounded-md px-2.5 py-1 ${props.eligibilityFilter !== "all" ? "bg-cyan-950 text-cyan-300" : "text-slate-400"}`}
+                className={`rounded-md px-2.5 py-1 font-medium transition ${
+                  props.eligibilityFilter !== "all"
+                    ? "bg-cyan-950 border border-cyan-700/80 text-cyan-300 font-semibold shadow-xs"
+                    : "text-slate-400 hover:text-slate-200"
+                }`}
               >
-                Cần SEO
+                ⚡ Cần SEO
               </button>
               <button
                 type="button"
                 onClick={() => props.onEligibilityFilterChange?.("all")}
-                className={`rounded-md px-2.5 py-1 ${props.eligibilityFilter === "all" ? "bg-cyan-950 text-cyan-300" : "text-slate-400"}`}
+                className={`rounded-md px-2.5 py-1 font-medium transition ${
+                  props.eligibilityFilter === "all"
+                    ? "bg-cyan-950 border border-cyan-700/80 text-cyan-300 font-semibold shadow-xs"
+                    : "text-slate-400 hover:text-slate-200"
+                }`}
               >
                 Tất cả trạng thái
               </button>
