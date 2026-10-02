@@ -61,6 +61,9 @@ services:
       GATEWAY_HOST: 0.0.0.0
       GATEWAY_PORT: 3001
       COORDINATOR_PORT: 8766
+      START_PIPELINE_WORKER: ${START_PIPELINE_WORKER:-true}
+      SHOPIFY_GATEWAY_URL: http://127.0.0.1:3001/api/shopify
+      SHOPIFY_PIPELINE_COORDINATOR_URL: http://127.0.0.1:8766
       PINTEREST_POD_HOST: 0.0.0.0
       PINTEREST_POD_PORT: 8768
       PINTEREST_COORDINATOR_URL: http://127.0.0.1:8766
@@ -76,7 +79,7 @@ services:
       - ffp_data:/app/.local-data
       - ffp_runtime:/app/.runtime
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:3001/health >/dev/null && curl -fsS http://127.0.0.1:8766/api/v1/health >/dev/null && curl -fsS http://127.0.0.1:8768/ready >/dev/null"]
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:3001/health >/dev/null && curl -fsS http://127.0.0.1:8766/api/v1/ready >/dev/null && curl -fsS http://127.0.0.1:8768/ready >/dev/null"]
       interval: 10s
       timeout: 5s
       retries: 5

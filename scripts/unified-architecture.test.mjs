@@ -108,7 +108,7 @@ test("restore-db scripts perform single-command database restore", async () => {
 test("agent crawler 1-command installer scripts configure dependencies and chromium", async () => {
   const [batInstaller, ps1Installer, shInstaller] = await Promise.all([
     readFile("cai-agent.bat", "utf8"),
-    readFile("scripts/install-agent.ps1", "utf8"),
+    readFile("scripts/install-agent-source.ps1", "utf8"),
     readFile("scripts/install-agent.sh", "utf8"),
   ]);
 

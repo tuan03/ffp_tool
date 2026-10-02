@@ -66,24 +66,26 @@ jobs:
         shell: pwsh
         run: ./scripts/build-amazon-crawler-client.ps1
 
-      - name: Generate SHA-256 checksum
+      # Provision an approved Authenticode signer before this gate. An unsigned
+      # local build is useful for testing but must never become a public release.
+      - name: Verify trusted signature and generate release manifest
         shell: pwsh
+        env:
+          AGENT_TRUSTED_SIGNERS: ${{ vars.AGENT_TRUSTED_SIGNERS }}
         run: |
-          $installer = "installer-output/FFP-Amazon-Crawler-Setup.exe"
-          if (-not (Test-Path -LiteralPath $installer)) {
-            throw "Installer was not created at $installer."
-          }
-          $hash = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant()
-          "$hash  FFP-Amazon-Crawler-Setup.exe" | Set-Content -LiteralPath "$installer.sha256" -Encoding ascii
+          $agentVersion = "${{ github.ref_name }}" -replace '^agent-v', ''
+          ./scripts/create-agent-release.ps1 -Version $agentVersion -TrustedSignerThumbprints ($env:AGENT_TRUSTED_SIGNERS -split ',')
 
       - name: Publish GitHub Release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          $agentVersion = "${{ github.ref_name }}" -replace '^agent-v', ''
           gh release create "${{ github.ref_name }}" `
-            "installer-output/FFP-Amazon-Crawler-Setup.exe" `
-            "installer-output/FFP-Amazon-Crawler-Setup.exe.sha256" `
+            "installer-output/FFP-Amazon-Crawler-Setup-$agentVersion.exe" `
+            "installer-output/FFP-Amazon-Crawler-Setup-$agentVersion.exe.sha256" `
+            "installer-output/latest.json" `
             --title "FFP Amazon Crawler ${{ github.ref_name }}" `
             --generate-notes `
             --verify-tag

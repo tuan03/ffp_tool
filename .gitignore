@@ -10,6 +10,11 @@ Tool_crawer_New_update/
 !.env.mock
 .env.shopify
 /wrydeco-vps_key.pem
+# Never commit code-signing/private-key material.
+*.pfx
+*.p12
+*.key
+*.pem
 *.tsbuildinfo
 .DS_Store
 stores.local.json

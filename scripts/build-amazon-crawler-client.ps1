@@ -34,16 +34,20 @@ $portableOutput = Join-Path $repositoryRoot "artifacts/windows"
 New-Item -ItemType Directory -Force -Path $buildRoot | Out-Null
 if (-not (Test-Path -LiteralPath $pythonExecutable)) {
     python -m venv $virtualEnvironment
+    if ($LASTEXITCODE -ne 0) { throw "Could not create the isolated agent build environment." }
 }
 
 & $pythonExecutable -m pip install --disable-pip-version-check --upgrade pip
+if ($LASTEXITCODE -ne 0) { throw "Could not prepare pip." }
 & $pythonExecutable -m pip install -r (Join-Path $amazonRoot "engine/requirements.txt") "pyinstaller>=6.10,<7"
+if ($LASTEXITCODE -ne 0) { throw "Could not install agent build dependencies." }
 & $pythonExecutable -c "import tkinter; print('Tk/Tcl runtime:', tkinter.TkVersion)"
 if ($LASTEXITCODE -ne 0) {
     throw "Python Tk/Tcl is required to package the Windows agent dashboard. Install Python with Tcl/Tk support."
 }
 $env:PLAYWRIGHT_BROWSERS_PATH = $browserDirectory
 & $pythonExecutable -m playwright install chromium
+if ($LASTEXITCODE -ne 0) { throw "Could not download bundled Chromium." }
 
 Push-Location $repositoryRoot
 try {
@@ -57,13 +61,8 @@ finally {
 }
 
 $portableDirectory = Join-Path $portableOutput "FFPAmazonCrawlerAgent"
-$localConfig = Join-Path $repositoryRoot "config/amazon-crawler-agent.json"
-$configSource = if (Test-Path -LiteralPath $localConfig) { $localConfig } else { $exampleConfig }
-Copy-Item -LiteralPath $configSource -Destination (Join-Path $portableDirectory "agent.json") -Force
-$proxyConfig = Join-Path $repositoryRoot "config/amazon-crawler-profiles.json"
-if (Test-Path -LiteralPath $proxyConfig) {
-    Copy-Item -LiteralPath $proxyConfig -Destination (Join-Path $portableDirectory "amazon-crawler-profiles.json") -Force
-}
+# Release artifacts must never inherit the build machine's store/proxy configuration.
+Copy-Item -LiteralPath $exampleConfig -Destination (Join-Path $portableDirectory "agent.json") -Force
 
 if (-not $SkipInstaller) {
     $compiler = Get-Command "ISCC.exe" -ErrorAction SilentlyContinue
@@ -72,4 +71,5 @@ if (-not $SkipInstaller) {
     }
     $env:FFP_AGENT_VERSION = $agentVersion
     & $compiler.Source (Join-Path $repositoryRoot "packaging/windows/ffp-amazon-crawler.iss")
+    if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed to build the installer." }
 }

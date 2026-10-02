@@ -507,3 +507,109 @@ Kiến trúc chỉ hoàn thành khi thỏa mãn tất cả điều kiện sau:
 - Backup/restore đã vượt qua round-trip test thực tế.
 - Crawler agent cài trên máy sạch bằng một lệnh và kết nối an toàn.
 - Không còn production manifest khác mâu thuẫn với topology ba container chính thức.
+
+## 8. Crawler implementation checkpoint — 2026-10-02
+
+This is a partial implementation checkpoint, not production acceptance. The original
+checklists above remain unchanged. Work stays on `cua_pro` by explicit user direction
+(exception to the handbook's per-task branch convention). Nothing was pushed or deployed to a VPS.
+
+### Approved scope and exceptions
+
+- Scope: Amazon Crawler (3.2), retire the duplicate Product Crawler UI entry (3.3),
+  and Windows agent packaging/release preparation (4.6). App routing/configuration,
+  Compose, Nginx, ignore rules and release tooling are coordinated changes required by this scope.
+- Product Crawler now redirects `/product-crawler` to `/amazon-crawler`. Its legacy
+  source remains for compatibility; there is no new process or container.
+- The user explicitly chose public-domain agents without authentication/enrollment.
+  **CRAWLER-04 and INFRA-AGENT-05 are NOT complete.** Untrusted Internet clients can
+  impersonate agents. HTTPS and CORS do not authenticate agents. Operator/internal
+  pipeline authentication was not removed; Nginx blocks `/api/v1/internal/`.
+- Windows release destination: `https://github.com/tuan03/ffp_tool/releases`.
+- No clean Windows machine/VM is available. No trusted signing service/certificate
+  has been specified. Production release remains blocked, not implicitly approved unsigned.
+- Linux/macOS source installers remain development/experimental, not accepted production platforms.
+
+### Implemented behavior
+
+- Production browser crawler URLs use the client origin (including non-default ports).
+- Nginx routes crawler readiness/metrics/release/profile APIs and WebSocket to the
+  existing Coordinator, rejects internal API ingress and returns JSON for unknown APIs.
+- Coordinator requires PostgreSQL in production, disables development LAN CORS matching,
+  rejects wildcard production origins, and exposes database/background-task readiness.
+- Image profile metadata/revisions use PostgreSQL; binaries remain in the runtime volume.
+  Schema initialization is versioned and refuses databases requiring a newer server.
+- Pipeline Worker is enabled by default and explicitly uses the existing internal Gateway.
+- SQLite import supports snapshots, transaction rollback, idempotent equivalent rows,
+  conflict rejection, a manifest and optional normalized profile-file import.
+- Windows portable builds no longer copy local agent/proxy credentials. Frozen entry
+  points no longer replace the configured server with the development localhost URL.
+- Installer filenames include the version; Inno configuration accepts `/SERVERURL=`
+  and `/DISPLAYNAME=` and validates silent-install input before changing files.
+- The release bootstrap downloads the GitHub manifest/installer over HTTPS, checks
+  size/hash and an independently configured signer pin, checks server compatibility,
+  runs packaged config validation and polls the exact agent identity for online state.
+  Trust pins are supplied through `FFP_AGENT_TRUSTED_SIGNERS`, never learned solely
+  from the downloaded manifest. The source installer is now `install-agent-source.ps1`.
+- Publication generates `latest.json` only for a valid allowlisted signed installer.
+  CI has a verification gate but signing-provider integration is still pending.
+- Secrets, signing keys and generated build/runtime artifacts are excluded from Git/Docker context.
+
+### Migration notes
+
+Do not run this against live writers. Preserve the old database and assets, configure
+`AMAZON_COORDINATOR_DATABASE_URL` privately, and select a **new** backup directory each time:
+
+```text
+python -m engine.distributed.migrate_local --source <coordinator.sqlite3> --backup-directory <new-backup-directory> --profiles-root <image-runtime-root> --confirm-writers-stopped
+```
+
+The default rolls back imported rows; it still installs the versioned target schema
+and creates source snapshots. Add `--apply` only after reviewing the dry-run. The
+profile root must contain normalized `profiles/`, `revisions/` and `logos/`; older
+flat/embedded-asset formats need separate conversion and validation. Copy the same
+binary paths into the target durable volume before use. This is not a substitute for
+the lead's full deployment/database/asset backup-and-restore workflow.
+
+### Verification performed locally
+
+- `npm test`, `npm run typecheck`, `npm run build`, `npm run build:mock`: passed
+  (existing skipped integration tests and bundle-size warnings remain).
+- Focused readiness/schema/profile/import tests passed. Four importer tests also ran
+  against real PostgreSQL in a newly created isolated schema; only that test schema
+  was removed afterward.
+- Isolated `ffp-crawler-staging` Compose deployment started three healthy containers.
+  Process inspection showed all four backend child processes inside `server`.
+  Only client loopback port 3011 was published; the unrelated local-development
+  PostgreSQL container was not part of this deployment and was left untouched.
+- `python scripts/test-crawler-compose.py`: real Nginx JSON routing, private API
+  rejection, WebSocket connection/reconnection and PostgreSQL profile persistence
+  across a real server-container restart passed. The script refuses non-staging containers.
+- `node scripts/test-crawler-ui.mjs`: a real Edge browser followed the legacy-route
+  redirect and fetched crawler APIs through client port 3011, without direct backend ports.
+- Windows portable PyInstaller build and its `--check-config` passed on the current
+  developer machine. This is not clean-machine, signed-installer or full agent-job acceptance.
+- Negative bootstrap/publication tests reject HTTP, missing pins and invalid signer configuration.
+
+### Remaining work — do not mark complete
+
+- Supply the approved Authenticode signing provider/certificate details and configure
+  `AGENT_TRUSTED_SIGNERS` in release CI. Never send private keys/passwords in chat.
+- Inno Setup is not installed on this machine: the changed `.iss` has not been compiled
+  or exercised. No signed installer or `latest.json` was published.
+- Positive bootstrap/online acceptance with a signed artifact is unverified.
+  Existing installations are deliberately rejected by the new bootstrap: packaged
+  upgrade/rollback and tray lifecycle integration remain to be implemented/tested.
+- Validate bundled Pinterest dependencies, desktop-user autostart/ProgramData permissions,
+  uninstall/data preservation and full Windows clean-machine install/reconnect workflow.
+- Complete real job/lease/cancellation/crash-recovery tests through Nginx with PostgreSQL;
+  the current container test proves transport/profile restart persistence, not a full crawl.
+- No external TLS/domain/port scan, clean no-cache VPS build, production migration,
+  real Amazon job or paid/real Shopify write was performed.
+- This checkpoint does not certify other modules, aggregate worker heartbeat readiness,
+  disaster recovery or the overall Definition of Done.
+
+Signature behavior follows Microsoft's `Get-AuthenticodeSignature` contract:
+https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.security/get-authenticodesignature
+Installer flags follow Inno Setup documentation:
+https://jrsoftware.org/ishelp/topic_setupcmdline.htm

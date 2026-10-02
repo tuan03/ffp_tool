@@ -40,6 +40,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no-tray", action="store_true", help="Run in the foreground without a tray icon.")
     parser.add_argument("--start-minimized", action="store_true", help="Start in the tray without opening the dashboard.")
     parser.add_argument("--check-config", action="store_true", help="Validate configuration and exit.")
+    parser.add_argument("--installation-report", type=Path, help="Write the stable client identity during --check-config for installer verification.")
     return parser
 
 
@@ -55,6 +56,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         config = AgentConfig.load(_resolve_config_path(arguments.config))
         project_root = (arguments.project_root or config.data_directory).resolve()
         if arguments.check_config:
+            if arguments.installation_report:
+                from .client_store import ClientStore
+                identity = ClientStore(config.data_directory / "agent.sqlite3").client_id()
+                arguments.installation_report.write_text(json.dumps({
+                    "clientId": identity, "serverUrl": config.server_url,
+                }), encoding="utf-8")
             print(json.dumps({
                 "status": "ok",
                 "serverUrl": config.server_url,

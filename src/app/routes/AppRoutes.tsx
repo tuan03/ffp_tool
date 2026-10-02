@@ -40,7 +40,6 @@ import type {
 } from "../../modules/orchestrator";
 import { createPinterestPodRoutes, getPinterestPodClient } from "../../modules/pinterest-pod";
 import type { PinterestPodDeliverables } from "../../modules/pinterest-pod";
-import { createProductCrawlerRoutes, getProductCrawlerClient } from "../../modules/product-crawler";
 import { createReviewImageClient } from "../../modules/review-image";
 import { getBrowserSeoContentRunner } from "../../modules/seo-content/browser";
 import { HomePage } from "../../pages/home/HomePage";
@@ -82,8 +81,6 @@ export function AppRoutes({
 }: AppRoutesProps): React.JSX.Element {
   const router = useMemo(() => {
     const podClient = getPinterestPodClient(environment);
-    const crawlerClient = getProductCrawlerClient(environment);
-    const crawlerRoutes = createProductCrawlerRoutes(crawlerClient);
     const moduleApiRunner = getModuleApiRunner(environment);
     const reviewShopify: ReviewShopifyAccess = {
       async listStores() {
@@ -545,7 +542,7 @@ export function AppRoutes({
             index: true,
             element: <Navigate to="/amazon-crawler" replace />,
           },
-          ...crawlerRoutes,
+          { path: "product-crawler", element: <Navigate to="/amazon-crawler" replace /> },
           ...distributedCrawlerRoutes,
           ...podRoutes,
           ...autoSeoRoutes,

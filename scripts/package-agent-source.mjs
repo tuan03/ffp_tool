@@ -27,6 +27,7 @@ const sourceEntries = [
   "dang-nhap-pinterest.bat",
   "scripts/amazon-crawler-agent.py",
   "scripts/install-agent.ps1",
+  "scripts/install-agent-source.ps1",
   "scripts/login-pinterest.sh",
   "scripts/uninstall-agent.ps1",
   "scripts/update-agent.ps1",

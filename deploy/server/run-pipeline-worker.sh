@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-if [ "${START_PIPELINE_WORKER:-false}" = "true" ]; then
+if [ "${START_PIPELINE_WORKER:-true}" = "true" ]; then
   exec node --import tsx scripts/shopify-pipeline-worker.ts
 fi
 

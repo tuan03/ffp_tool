@@ -38,6 +38,7 @@ COPY deploy/client/nginx.conf /etc/nginx/conf.d/default.conf
 # Copy 1-command installer scripts so they can be downloaded directly from the web client
 RUN mkdir -p /usr/share/nginx/html/scripts
 COPY scripts/install-agent.ps1 /usr/share/nginx/html/scripts/install-agent.ps1
+COPY scripts/install-agent-source.ps1 /usr/share/nginx/html/scripts/install-agent-source.ps1
 COPY scripts/install-agent.sh /usr/share/nginx/html/scripts/install-agent.sh
 COPY scripts/update-agent.ps1 /usr/share/nginx/html/scripts/update-agent.ps1
 COPY scripts/uninstall-agent.ps1 /usr/share/nginx/html/scripts/uninstall-agent.ps1

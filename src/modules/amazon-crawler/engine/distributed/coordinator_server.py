@@ -19,12 +19,15 @@ from typing import Any
 from fastapi import FastAPI, Header, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from sqlalchemy import text
 
 from ..image_processing import ImageProcessingService, normalize_profile, process_image_bytes
 from ..review_export import build_review_workbook
 from . import AGENT_VERSION, PROTOCOL_VERSION, SUPPORTED_PROTOCOL_VERSIONS
 from .coordinator_models import Base, create_database_engine, create_session_factory
 from .coordinator_store import ActiveJobExistsError, CoordinatorStore
+from .image_profile_repository import ImageProfileRepository
+from .coordinator_migrations import migrate_coordinator
 from .protocol import HEARTBEAT_INTERVAL_SECONDS, LEASE_SECONDS, payload_checksum, require_message, utc_iso
 from ..observability import safe_fields, write_log
 
@@ -274,6 +277,7 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
         workers=positive_environment_integer("IMAGE_PROCESSING_WORKERS", 4),
         cache_ttl_minutes=positive_environment_integer("IMAGE_PROCESSING_CACHE_TTL_MINUTES", 60),
         legacy_profile_root=project_root / "Tool_crawer_New_update" / "config_file" / "image_processing_profiles",
+        profile_repository=ImageProfileRepository(sessions) if engine.dialect.name == "postgresql" else None,
     )
     history_retention_minutes = positive_environment_integer(
         "AMAZON_COORDINATOR_JOB_RETENTION_MINUTES",
@@ -283,7 +287,7 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         if create_schema:
-            Base.metadata.create_all(engine)
+            migrate_coordinator(engine)
         stop = asyncio.Event()
 
         async def reap_loop() -> None:
@@ -307,9 +311,12 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
                     pass
 
         task = asyncio.create_task(reap_loop())
+        app.state.maintenance_task = task
+        app.state.is_ready = True
         try:
             yield
         finally:
+            app.state.is_ready = False
             stop.set()
             await task
             image_service.close()
@@ -319,10 +326,13 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
     app.state.store = store
     app.state.connection_manager = manager
     app.state.image_processing_service = image_service
+    app.state.is_ready = False
     origins = [value.strip() for value in os.environ.get(
         "AMAZON_COORDINATOR_CORS_ORIGINS",
-        "http://localhost:5173,http://127.0.0.1:5173",
+        "" if os.environ.get("NODE_ENV") == "production" else "http://localhost:5173,http://127.0.0.1:5173",
     ).split(",") if value.strip()]
+    if os.environ.get("NODE_ENV") == "production" and "*" in origins:
+        raise ValueError("Production Coordinator CORS requires explicit origins, not wildcard.")
     lan_origin_pattern = (
         r"^https?://(?:localhost|127\.0\.0\.1|10(?:\.\d{1,3}){3}|"
         r"192\.168(?:\.\d{1,3}){2}|172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2})(?::\d+)?$"
@@ -330,7 +340,7 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
     app.add_middleware(
         CORSMiddleware,
         allow_origins=origins,
-        allow_origin_regex=lan_origin_pattern,
+        allow_origin_regex=None if os.environ.get("NODE_ENV") == "production" else lan_origin_pattern,
         allow_credentials=False,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -343,7 +353,20 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
             "apiVersion": "v1",
             "protocolVersion": PROTOCOL_VERSION,
             "workerProtocolVersion": PROTOCOL_VERSION,
+            "serverVersion": AGENT_VERSION,
         }
+
+    @app.get("/api/v1/ready")
+    def ready() -> dict[str, str]:
+        task = getattr(app.state, "maintenance_task", None)
+        if not app.state.is_ready or task is None or task.done():
+            raise HTTPException(status_code=503, detail="Coordinator is not ready.")
+        try:
+            with engine.connect() as connection:
+                connection.execute(text("SELECT 1 FROM coordinator_state LIMIT 1"))
+        except Exception:
+            raise HTTPException(status_code=503, detail="Coordinator database is unavailable.") from None
+        return {"status": "ready"}
 
     @app.get("/api/v1/crawler-metrics")
     def get_crawler_metrics(job_id: str | None = Query(default=None, alias="jobId", max_length=40)) -> dict[str, Any]:

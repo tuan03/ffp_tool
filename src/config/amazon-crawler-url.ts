@@ -2,15 +2,21 @@ interface AmazonCoordinatorUrlInput {
   configuredUrl: string | undefined;
   browserHostname: string;
   browserProtocol: string;
+  browserOrigin?: string;
+  isProduction?: boolean;
 }
 
 export function resolveAmazonCoordinatorUrl({
   configuredUrl,
   browserHostname,
   browserProtocol,
+  browserOrigin,
+  isProduction = false,
 }: AmazonCoordinatorUrlInput): string {
   const protocol = browserProtocol === "https:" ? "https:" : "http:";
-  const candidate = configuredUrl?.trim() || `${protocol}//${browserHostname}:8766`;
+  const candidate = isProduction
+    ? browserOrigin || `${protocol}//${browserHostname}`
+    : configuredUrl?.trim() || `${protocol}//${browserHostname}:8766`;
   try {
     const url = new URL(candidate);
     if (url.protocol !== "http:" && url.protocol !== "https:") {

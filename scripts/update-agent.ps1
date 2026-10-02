@@ -38,7 +38,7 @@ try {
         }
     }
     Copy-Item -LiteralPath $manifestPath -Destination (Join-Path $backupRoot "agent-package-manifest.json") -Force
-    Invoke-WebRequest -UseBasicParsing -Uri "$ServerUrl/install-agent.ps1" -OutFile $installerPath
+    Invoke-WebRequest -UseBasicParsing -Uri "$ServerUrl/scripts/install-agent-source.ps1" -OutFile $installerPath
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installerPath `
         -ServerUrl $ServerUrl -InstallDirectory $AgentRoot -NoStart
     if ($LASTEXITCODE -ne 0) {

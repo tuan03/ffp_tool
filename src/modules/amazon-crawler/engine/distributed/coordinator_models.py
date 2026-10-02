@@ -287,6 +287,8 @@ def database_url() -> str:
 
 def create_database_engine(url: str | None = None):
     selected = url or database_url()
+    if os.environ.get("NODE_ENV") == "production" and not selected.startswith(("postgresql:", "postgresql+")):
+        raise ValueError("Production Coordinator requires PostgreSQL.")
     connect_args = {"check_same_thread": False} if selected.startswith("sqlite") else {}
     engine_options: dict[str, Any] = {"pool_pre_ping": True, "connect_args": connect_args}
     if selected.startswith("sqlite"):

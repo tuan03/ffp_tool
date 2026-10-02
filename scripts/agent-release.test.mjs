@@ -1,11 +1,41 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { spawnSync } from "node:child_process";
 
 const versionModuleUrl = new URL("../src/modules/amazon-crawler/engine/distributed/__init__.py", import.meta.url);
 const installerUrl = new URL("../packaging/windows/ffp-amazon-crawler.iss", import.meta.url);
 const buildScriptUrl = new URL("./build-amazon-crawler-client.ps1", import.meta.url);
 const workflowUrl = new URL("../.github/workflows/release-agent.yml", import.meta.url);
+
+test("release bootstrap rejects HTTP and missing trust pins before download", { skip: process.platform !== "win32" }, () => {
+  for (const [serverUrl, expected] of [
+    ["http://crawler.invalid", /HTTPS URL/],
+    ["https://crawler.invalid", /FFP_AGENT_TRUSTED_SIGNERS/],
+  ]) {
+    const processResult = spawnSync("powershell.exe", [
+      "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "scripts/install-agent.ps1", "-ServerUrl", serverUrl,
+    ], { encoding: "utf8", env: { ...process.env, FFP_AGENT_TRUSTED_SIGNERS: "" } });
+    assert.notEqual(processResult.status, 0);
+    assert.match(processResult.stderr + processResult.stdout, expected);
+  }
+});
+
+test("publication rejects invalid signer configuration", { skip: process.platform !== "win32" }, () => {
+  const processResult = spawnSync("powershell.exe", [
+    "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "scripts/create-agent-release.ps1",
+    "-Version", "5.2.2", "-TrustedSignerThumbprints", "unconfigured",
+  ], { encoding: "utf8" });
+  assert.notEqual(processResult.status, 0);
+  assert.match(processResult.stderr + processResult.stdout, /trusted code-signing/);
+});
+
+test("Windows package never copies developer agent or proxy configuration", async () => {
+  const buildScript = await readFile(buildScriptUrl, "utf8");
+  assert.doesNotMatch(buildScript, /config\/amazon-crawler-agent\.json/);
+  assert.doesNotMatch(buildScript, /config\/amazon-crawler-profiles\.json/);
+  assert.match(buildScript, /Copy-Item -LiteralPath \$exampleConfig/);
+});
 
 test("agent release pipeline uses one version and stable asset names", async () => {
   const [versionModule, installer, buildScript, workflow] = await Promise.all([
@@ -21,5 +51,8 @@ test("agent release pipeline uses one version and stable asset names", async () 
   assert.match(installer, /AppVersion=\{#AppVersion\}/);
   assert.match(buildScript, /\$env:FFP_AGENT_VERSION = \$agentVersion/);
   assert.match(workflow, /tags:\s*\n\s*- "agent-v\*\.\*\.\*"/);
-  assert.match(workflow, /FFP-Amazon-Crawler-Setup\.exe\.sha256/);
+  assert.match(installer, /OutputBaseFilename=FFP-Amazon-Crawler-Setup-\{#AppVersion\}/);
+  assert.match(workflow, /FFP-Amazon-Crawler-Setup-\$agentVersion\.exe\.sha256/);
+  assert.match(workflow, /create-agent-release\.ps1/);
+  assert.match(workflow, /installer-output\/latest\.json/);
 });

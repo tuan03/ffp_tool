@@ -34,6 +34,8 @@ function getAmazonCrawlerCoordinatorUrl(): string {
     configuredUrl,
     browserHostname: browserLocation?.hostname || "127.0.0.1",
     browserProtocol: browserLocation?.protocol || "http:",
+    browserOrigin: browserLocation?.origin,
+    isProduction: import.meta.env.PROD && environment !== "mock",
   });
 }
 
