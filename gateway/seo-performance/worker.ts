@@ -8,6 +8,7 @@ import { inspectHtml } from "./page-audit";
 import { crawlDelay, fetchPublicDocument, isCrawlAllowed, loadRobots } from "./public-fetch";
 import type { JobRecord, PerformanceRepository } from "./repository";
 import { normalizePageUrl } from "./url-policy";
+import { runReportStep } from "./report";
 
 export interface PerformanceSourceReader {
   readonly products: (storeId: string, cursor?: string) => Promise<{ products: Record<string, unknown>[]; cursor: string | null }>;
@@ -35,7 +36,7 @@ export class PerformanceWorker {
         await lock.query("UPDATE sp_jobs SET status='running',updated_at=now() WHERE id=$1", [job.id]);
         try {
           const mapping = await repository.requireMapping(job.store_id);
-          const outcome = job.kind === "sync" ? await this.sync(job, mapping) : job.kind === "crawl" ? await this.crawl(job, mapping) : await this.inspection(job, mapping);
+          const outcome = job.kind === "report" ? await runReportStep(repository, this.google, job, mapping.property) : job.kind === "sync" ? await this.sync(job, mapping) : job.kind === "crawl" ? await this.crawl(job, mapping) : await this.inspection(job, mapping);
           await lock.query("UPDATE sp_jobs SET status=$2,payload=$3,progress=$4,attempts=0,error=NULL,next_at=now()+($5 * interval '1 second'),updated_at=now() WHERE id=$1", [job.id, outcome.done ? "done" : "running", JSON.stringify(outcome.payload), outcome.progress, outcome.delay ?? 1]);
           if (outcome.done) await repository.event(job.store_id, `${job.kind.toUpperCase()}_COMPLETED`, { jobId: job.id, ...outcome.payload });
         } catch (error) {

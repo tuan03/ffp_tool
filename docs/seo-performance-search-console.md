@@ -24,6 +24,79 @@ In development, run the standalone Gateway and use `SEO_PERFORMANCE_GATEWAY_URL`
 
 ## Synchronization and reporting
 
+### Interactive Search Console dashboard
+
+The dashboard report uses `POST /api/seo-performance/report` with `{ filters, view }`.
+Filters: required `startDate`/`endDate`, optional three-letter `country`, `device`
+(`DESKTOP`, `MOBILE`, `TABLET`), and case-insensitive `query`/`page` substring filters.
+All filters are sent to Google for **each** dataset, not applied after a local top-N query.
+The selected store resolves its immutable property mapping on the server. No client-supplied property is accepted.
+View: `dimension` (`date`, `query`, `page`, `country`, `device`), `order`
+(`top`, `growing`, `declining`), `metric` (`clicks`, `impressions`, `ctr`, `position`),
+and `offset`. Date rows align the previous period by day offset. Other tables retain
+new/lost keys; missing positions and CTR are unknown, not zero. Positive/negative
+ranking reflects the selected metric, with lower position considered improvement.
+
+Separate total requests preserve property aggregation; page grouping/filtering uses
+Google's `auto` aggregation. The report does not sum query or page tables into KPIs.
+Each period has equal length, 1–90 days. The newest permitted end date is Pacific
+today minus three days. Charts expose daily values and previous-period values;
+the Date table provides an accessible numeric alternative.
+
+Report jobs persist in `sp_jobs`; additive `sp_report_rows` stores their results.
+A normalized filter/property/Google-connection fingerprint caches completed reports
+for 24 hours. Changing table dimension/order/page does not call Google again.
+At most three active report jobs per store are allowed. Workers reuse the existing
+advisory lock and exponential retry/backoff. Each Google page is upserted and
+checkpointed; a crash/retry cannot add duplicate metrics. A failed job may be retried
+with the status refresh button after a one-minute cooldown. Failed or unfinished
+reports never expose partial rows as completed KPI data. Revoked connection tokens
+block cached reads; known daily-sync errors mark completed report data stale.
+Cache timestamps describe when the request completed, not a guarantee of current
+property access between checks. Existing audit/opportunity filters remain separate,
+and are explicitly labelled as such below the Search Console dashboard.
+
+Pagination uses 25,000 rows per Google request, continuing until a short/empty page.
+FFP imposes a 100,000-row safety ceiling per dimension/period and displays a warning
+if reached. These period queries still have Google's top-row/internal limitations;
+they are **not a complete export of all searches**. Google documents up to 50,000
+rows/day/search type and privacy/anonymization restrictions. Missing query rows are
+not evidence of zero demand; apparent gain/loss describes returned rows only.
+For exhaustive large-property extraction, use a separately scoped daily export or
+Google bulk export; no claim of lossless API retrieval is made here.
+
+### Real-data demo and reconciliation
+
+Run inside the application container, using its existing encrypted OAuth grant:
+
+```sh
+docker exec -e GSC_DEMO_ALLOW_LIVE=true ffp-tool-app node --import tsx scripts/gsc-report-demo.ts jeminise-real 2026-09-02 2026-09-29
+```
+
+This opt-in command makes six read-only Google requests, prints only aggregate
+metrics and row counts, compares both periods with the existing daily PostgreSQL
+totals, and exits nonzero on measurable disagreement. It does not enqueue work,
+publish content or print credentials/query text. Keep any saved output outside Git.
+
+For UI reconciliation, open the **same** property in Search Console, select Search
+results → Web, the exact inclusive dates and identical country/device/query/page
+filters; enable equal previous-period comparison. Compare four KPI cards and export
+query/page tables. Allow display rounding (position 0.01, CTR 0.01 percentage point),
+but investigate click/impression differences, freshness and aggregation. API/cache
+reconciliation does not substitute for an operator's actual GSC UI export.
+
+New stores: follow Operator setup above, grant the connected Google account access
+to that store's property, select the store, load properties and confirm storefront
+mapping. No new OAuth secret is needed per store when the account is shared.
+
+Authoritative limitations and semantics:
+- https://developers.google.com/webmaster-tools/v1/searchanalytics/query
+- https://developers.google.com/webmaster-tools/v1/how-tos/all-your-data
+- https://developers.google.com/webmaster-tools/limits
+
+Unavailable: anonymized query identities, every long-tail row, live rankings,
+competitor traffic, revenue/GA4, and causal proof that an SEO edit changed traffic.
+
 Deployment preserves the VPS `GSC_*` values and `SEO_PERFORMANCE_ENABLED` even when GitHub `ENV_FILE` is stale. The preparation helper generates an encryption key only when absent, defaults the feature off, and writes `.env` atomically with mode 600. Change OAuth credentials deliberately on the VPS; do not expect `ENV_FILE` to rotate an existing key. Back up `.env` securely before changes. Initial preparation does not connect Google or migrate application data.
 
 - Initial import: 90 days; subsequent daily sync: overlapping last 7 days. Use finalized data with a conservative 3-day lag, and report dates in `America/Los_Angeles`.

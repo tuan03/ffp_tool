@@ -2,3 +2,4 @@ export type { PageKind, SearchMetrics, PerformanceMapping, PageAudit, AuditFindi
 export { createSeoPerformanceClient } from "./service";
 export { getSeoPerformanceClient } from "./runtime";
 export { createSeoPerformanceRoutes } from "./routes";
+export type { SearchReport, SearchReportFilters, SearchReportView, SearchReportRow, SearchReportDimension } from "./types";

@@ -5,6 +5,7 @@ import { z } from "zod";
 import { isGatewayAuthorized } from "../http-server";
 import type { PerformanceService } from "./service";
 import { filtersSchema } from "./service";
+import { loadSearchReport, reportFiltersSchema, reportViewSchema } from "./report";
 
 function send(res: ServerResponse, status: number, value: unknown): void {
   res.statusCode = status; res.setHeader("Content-Type", "application/json; charset=utf-8"); res.setHeader("Cache-Control", "no-store"); res.end(JSON.stringify(value));
@@ -54,6 +55,7 @@ export async function handlePerformanceHttp(req: IncomingMessage, res: ServerRes
     } else {
       const payload = await body(req);
       switch (route) {
+        case "report": { const input = z.object({ filters: reportFiltersSchema, view: reportViewSchema }).strict().parse(payload); send(res, 200, await loadSearchReport(service.repository, storeId, input.filters, input.view)); return; }
         case "mapping": { const input = z.object({ property: z.string().min(1).max(2000), origin: z.string().url(), confirmed: z.literal(true) }).strict().parse(payload); await service.map(storeId, input.property, input.origin); send(res, 200, { ok: true }); return; }
         case "jobs": { const input = z.object({ kind: z.enum(["sync", "crawl"]) }).strict().parse(payload); send(res, 202, await service.start(storeId, input.kind)); return; }
         case "inspection": { const input = z.object({ url: z.string().url() }).strict().parse(payload); send(res, 202, await service.inspect(storeId, input.url)); return; }
@@ -64,6 +66,13 @@ export async function handlePerformanceHttp(req: IncomingMessage, res: ServerRes
     send(res, 404, { error: { code: "NOT_FOUND" } });
   } catch (error) {
     const code = error instanceof z.ZodError || error instanceof SyntaxError ? "INVALID_REQUEST" : error instanceof Error && /^[A-Z_]{3,80}$/.test(error.message) ? error.message : "SEO_PERFORMANCE_UNAVAILABLE";
-    send(res, code === "SEO_PERFORMANCE_UNAVAILABLE" ? 503 : 400, { error: { code, message: `Không thể hoàn thành thao tác (${code}). Kiểm tra cấu hình hoặc làm mới dữ liệu trước khi thử lại.` } });
+    const messages: Readonly<Record<string, string>> = {
+      INVALID_DATE_RANGE: "Chọn khoảng 1–90 ngày, ngày bắt đầu không sau ngày kết thúc. Báo cáo GSC chỉ lấy tới hôm nay trừ 3 ngày theo giờ Google.",
+      GSC_RECONNECT_REQUIRED: "Kết nối Google đã hết hiệu lực. Bấm Kết nối lại Google để cấp lại quyền.",
+      GSC_PERMISSION_OR_QUOTA: "Google từ chối truy cập: kiểm tra quyền property và quota trong Google Cloud.",
+      GSC_QUOTA_EXCEEDED: "Đã chạm quota Google. Tác vụ sẽ thử lại với thời gian chờ tăng dần.",
+      REPORT_QUEUE_FULL: "Store đang có 3 báo cáo chạy. Đợi hoàn tất rồi áp dụng bộ lọc mới.",
+    };
+    send(res, code === "SEO_PERFORMANCE_UNAVAILABLE" ? 503 : 400, { error: { code, message: messages[code] ?? `Không thể hoàn thành thao tác (${code}). Kiểm tra cấu hình hoặc làm mới dữ liệu trước khi thử lại.` } });
   }
 }

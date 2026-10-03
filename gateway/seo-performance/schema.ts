@@ -13,5 +13,6 @@ CREATE TABLE IF NOT EXISTS sp_inspection_quota (property TEXT NOT NULL, day DATE
 CREATE TABLE IF NOT EXISTS sp_recommendations (id TEXT PRIMARY KEY, store_id TEXT NOT NULL, request_id TEXT NOT NULL, digest TEXT NOT NULL, url TEXT NOT NULL, snapshot_id TEXT NOT NULL, payload JSONB NOT NULL, actor TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'proposed', job_id TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), UNIQUE(store_id,actor,request_id));
 CREATE TABLE IF NOT EXISTS sp_events (id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, store_id TEXT NOT NULL, event TEXT NOT NULL, details JSONB NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now());
 CREATE INDEX IF NOT EXISTS sp_events_store ON sp_events(store_id,id DESC);
+CREATE TABLE IF NOT EXISTS sp_report_rows (job_id TEXT NOT NULL REFERENCES sp_jobs(id) ON DELETE CASCADE, period TEXT NOT NULL, dimension TEXT NOT NULL, row_key TEXT NOT NULL, key_hash TEXT GENERATED ALWAYS AS (md5(row_key)) STORED, clicks FLOAT8 NOT NULL, impressions FLOAT8 NOT NULL, position FLOAT8 NOT NULL, PRIMARY KEY(job_id,period,dimension,key_hash));
 CREATE UNIQUE INDEX IF NOT EXISTS sp_events_key ON sp_events(store_id,event,(details->>'key')) WHERE details ? 'key';
 `;

@@ -27,7 +27,7 @@ export interface SeoRecommendation extends RecommendationInput {
   readonly jobId: string | null;
 }
 export interface PerformanceJob {
-  readonly id: string; readonly kind: "sync" | "crawl" | "inspection";
+  readonly id: string; readonly kind: "sync" | "crawl" | "inspection" | "report";
   readonly status: "pending" | "running" | "done" | "failed";
   readonly progress: number; readonly error: string | null; readonly updatedAt: string;
 }
@@ -41,6 +41,7 @@ export interface PerformanceFilters { readonly offset?: number; readonly kind?: 
 export interface PerformanceList<T> { readonly items: readonly T[]; readonly total: number; readonly nextOffset: number | null }
 export interface PerformanceEvent { readonly id: string; readonly event: string; readonly createdAt: string; readonly details: Readonly<Record<string, unknown>> }
 export interface SeoPerformanceClient {
+  report(storeId: string, input: SearchReportFilters, view?: SearchReportView): Promise<SearchReport>;
   stores(): Promise<readonly { readonly storeId: string; readonly shopDomain: string }[]>;
   overview(storeId: string, filters?: PerformanceFilters): Promise<PerformanceOverview>;
   properties(): Promise<readonly { readonly siteUrl: string; readonly permissionLevel: string }[]>;
@@ -54,4 +55,29 @@ export interface SeoPerformanceClient {
   history(storeId: string, offset?: number): Promise<PerformanceList<PerformanceEvent>>;
   revise(storeId: string, recommendationId: string): Promise<{ readonly jobId: string }>;
   dismiss(storeId: string, recommendationId: string): Promise<void>;
+}
+
+export type SearchReportDimension = "total" | "date" | "query" | "page" | "country" | "device";
+export interface SearchReportFilters {
+  readonly startDate: string; readonly endDate: string;
+  readonly country?: string; readonly device?: "DESKTOP" | "MOBILE" | "TABLET";
+  readonly query?: string; readonly page?: string;
+}
+export interface SearchReportView {
+  readonly dimension?: Exclude<SearchReportDimension, "total">;
+  readonly order?: "top" | "growing" | "declining";
+  readonly metric?: keyof SearchMetrics; readonly offset?: number;
+}
+export interface SearchReportRow {
+  readonly key: string; readonly current: SearchMetrics | null; readonly previous: SearchMetrics | null;
+  readonly delta: { readonly [K in keyof SearchMetrics]: number | null };
+}
+export interface SearchReport {
+  readonly jobId: string; readonly status: PerformanceJob["status"]; readonly progress: number;
+  readonly error: string | null; readonly fetchedAt: string | null; readonly stale: boolean;
+  readonly property: string; readonly filters: SearchReportFilters;
+  readonly previousStart: string; readonly previousEnd: string;
+  readonly current: SearchMetrics | null; readonly previous: SearchMetrics | null;
+  readonly timeline: readonly SearchReportRow[];
+  readonly rows: PerformanceList<SearchReportRow>; readonly limited: boolean;
 }

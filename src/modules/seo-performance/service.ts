@@ -16,6 +16,7 @@ export function createSeoPerformanceClient(fetcher: typeof fetch = fetch): SeoPe
     return payload as T;
   }
   return {
+    report: (storeId, filters, view = {}) => request("report", storeId, { filters, view }),
     stores: async () => {
       const response = await fetcher("/api/shopify", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ operation: "stores.list", payload: {} }) });
       const payload: unknown = await response.json();

@@ -27,3 +27,20 @@ test("Performance client handles HTML proxy responses without a JSON syntax erro
   const client = createSeoPerformanceClient(async () => new Response("<html>Login</html>", { headers: { "Content-Type": "text/html" } }));
   await assert.rejects(client.overview("demo"), /Gateway/);
 });
+
+test("dashboard sends all filters in a store-scoped POST and keeps mock results independent", async () => {
+  const filters = { startDate: "2025-12-05", endDate: "2026-01-01", country: "usa", device: "MOBILE" as const, query: "blanket", page: "/products/" };
+  let request: RequestInit | undefined;
+  let requestedUrl = "";
+  const client = createSeoPerformanceClient(async (url, options) => { request = options; requestedUrl = String(url); return Response.json({ status: "pending" }); });
+  await client.report("demo", filters, { dimension: "country", offset: 50 });
+  assert.match(requestedUrl, /report\?storeId=demo/);
+  assert.equal(request?.method, "POST");
+  assert.deepEqual(JSON.parse(String(request?.body)), { filters, view: { dimension: "country", offset: 50 } });
+  const mock = getSeoPerformanceClient("mock");
+  const first = await mock.report("demo", filters);
+  const second = await mock.report("demo", filters);
+  assert.notEqual(first.rows.items[0], second.rows.items[0]);
+  assert.equal(first.previousEnd, "2025-12-04");
+  assert.equal((await mock.report("demo", { ...filters, country: "vnm" })).current, null);
+});

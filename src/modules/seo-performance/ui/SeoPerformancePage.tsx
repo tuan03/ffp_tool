@@ -3,6 +3,7 @@ import { Link, useSearchParams } from "react-router-dom";
 
 import { persistBrowserActiveStoreId, readActiveStoreId } from "../../../shared/active-store";
 import type { PageKind, PerformanceList, PerformancePage, PerformanceOverview, SeoPerformanceClient, SeoRecommendation, PerformanceEvent, SearchMetrics } from "../types";
+import { SearchDashboard } from "./SearchDashboard";
 
 const control = "rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm disabled:opacity-40";
 const button = `${control} text-cyan-300 hover:border-cyan-600`;
@@ -65,7 +66,7 @@ export function SeoPerformancePage({ client }: { readonly client: SeoPerformance
         if (tab === "pages") { const result = await client.pages(storeId, filters); if (live) setPages(result); }
         if (tab === "recommendations") { const result = await client.recommendations(storeId, offset); if (live) setRecommendations(result); }
         if (tab === "history") { const result = await client.history(storeId, offset); if (live) setHistory(result); }
-      } catch (failure) { if (live) setError(failure instanceof Error ? failure.message : "Không thể tải dữ liệu."); }
+      } catch (failure) { if (live) { setOverview(null); setPages(empty()); setError(failure instanceof Error ? failure.message : "Không thể tải dữ liệu."); } }
       finally { if (live) setLoading(false); }
     })();
     return () => { live = false; };
@@ -111,6 +112,8 @@ export function SeoPerformancePage({ client }: { readonly client: SeoPerformance
         <button type="button" className={button} disabled={busy || !confirmed || !property || !origin} onClick={() => void action(() => client.map(storeId, property, origin), "Đã lưu mapping và bắt đầu đồng bộ.")}>Lưu mapping</button>
       </div>}
     </section>
+    {overview?.mapping && overview.connected && !overview.reconnectRequired && <SearchDashboard key={storeId} client={client} storeId={storeId} startDate={overview.startDate} endDate={overview.endDate} />}
+    <h2 className="font-semibold">Dữ liệu kiểm tra website và đánh giá SEO (bộ lọc riêng)</h2>
     <section className="flex flex-wrap items-end gap-3">
       <label>Từ ngày <input type="date" className={control} value={startDate} onChange={event => { setOffset(0); setStartDate(event.target.value); }} /></label>
       <label>Đến ngày <input type="date" className={control} value={endDate} onChange={event => { setOffset(0); setEndDate(event.target.value); }} /></label>
@@ -119,7 +122,6 @@ export function SeoPerformancePage({ client }: { readonly client: SeoPerformance
       <button type="button" className={button} disabled={busy} onClick={() => setRefresh(value => value + 1)}>Làm mới</button>
     </section>
     <p className="text-sm text-slate-400">{overview?.startDate} → {overview?.endDate} · So sánh kỳ trước cùng độ dài · Đồng bộ: {overview?.mapping?.lastSync ?? "chưa có"}</p>
-    <section className="grid grid-cols-2 gap-4 md:grid-cols-4">{([['Clicks', 'clicks'], ['Impressions', 'impressions'], ['CTR', 'ctr'], ['Vị trí TB', 'position']] as const).map(([label, key]) => <div key={key} className="rounded-xl border border-slate-800 bg-slate-900 p-4"><p className="text-slate-400">{label}</p><p className="text-2xl font-semibold text-cyan-300">{formatMetric(overview?.current, key)}</p><p className="text-sm text-slate-500">Kỳ trước: {formatMetric(overview?.previous, key)}</p></div>)}</section>
     <p className="text-sm text-amber-200/80">{overview?.notice}</p>
     {overview?.jobs.map(job => <p key={job.id} className="text-sm text-slate-400">{job.kind}: {job.status} · {job.progress}% {job.error ? `· ${job.error}` : ""}</p>)}
     <nav className="flex gap-3">{([['pages', 'Trang & tình trạng SEO'], ['recommendations', 'Đề xuất Codex'], ['history', 'Lịch sử thay đổi']] as const).map(([value, label]) => <button type="button" className={`${button} ${tab === value ? "border-cyan-500" : ""}`} key={value} onClick={() => { setTab(value); setOffset(0); }}>{label}</button>)}</nav>
