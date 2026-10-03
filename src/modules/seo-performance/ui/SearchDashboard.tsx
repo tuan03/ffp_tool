@@ -1,21 +1,31 @@
 import { useEffect, useState } from "react";
 
 import type { SearchMetrics, SearchReport, SearchReportFilters, SearchReportView, SeoPerformanceClient } from "../types";
+import { displayDate, formatMetric as format, JOB_LABELS, METRIC_LABELS, metricChange, presetPeriod } from "./presentation";
 
-const control = "rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 disabled:opacity-40";
+const control = "min-w-0 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm focus:border-cyan-400 focus:outline-none focus:ring-1 focus:ring-cyan-400 disabled:opacity-40";
 const metrics = ["clicks", "impressions", "ctr", "position"] as const;
-function format(value: number | null | undefined, metric: keyof SearchMetrics): string {
-  return value == null ? "—" : metric === "ctr" ? `${(value * 100).toFixed(2)}%` : metric === "position" ? value.toFixed(2) : value.toLocaleString();
-}
-export function SearchDashboard({ client, storeId, startDate, endDate }: { readonly client: SeoPerformanceClient; readonly storeId: string; readonly startDate: string; readonly endDate: string }): React.JSX.Element {
+const dimensions = [["query", "Từ khóa"], ["page", "Trang"], ["country", "Quốc gia"], ["device", "Thiết bị"], ["date", "Theo ngày"]] as const;
+const tones = { positive: "text-emerald-300", negative: "text-rose-300", neutral: "text-slate-400" };
+
+export function SearchDashboard({ client, storeId, startDate, endDate }: {
+  readonly client: SeoPerformanceClient; readonly storeId: string;
+  readonly startDate: string; readonly endDate: string;
+}): React.JSX.Element {
   const [draft, setDraft] = useState<SearchReportFilters>({ startDate, endDate });
+  const [referenceEnd] = useState(endDate);
   const [filters, setFilters] = useState<SearchReportFilters>({ startDate, endDate });
   const [view, setView] = useState<SearchReportView>({ dimension: "query", order: "top", metric: "clicks", offset: 0 });
   const [report, setReport] = useState<SearchReport | null>(null);
   const [error, setError] = useState("");
   const [refresh, setRefresh] = useState(0);
+  const [hasComparison, setHasComparison] = useState(false);
+  const [hasAdvancedFilters, setHasAdvancedFilters] = useState(false);
+  const appliedCount = [filters.country, filters.device, filters.query, filters.page].filter(Boolean).length;
+
   useEffect(() => {
-    let live = true; let timer: ReturnType<typeof setTimeout> | undefined;
+    let live = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     setReport(null); setError("");
     async function load(): Promise<void> {
       try {
@@ -23,57 +33,122 @@ export function SearchDashboard({ client, storeId, startDate, endDate }: { reado
         if (!live) return;
         setReport(value);
         if (value.status === "pending" || value.status === "running") timer = setTimeout(() => void load(), 4000);
-      } catch (failure) { if (live) { setReport(null); setError(failure instanceof Error ? failure.message : "Không thể tải báo cáo."); } }
+      } catch (failure) {
+        if (live) { setReport(null); setError(failure instanceof Error ? failure.message : "Không thể tải báo cáo."); }
+      }
     }
     void load();
     return () => { live = false; if (timer) clearTimeout(timer); };
   }, [client, storeId, filters, view, refresh]);
-  return <section className="space-y-5 rounded-xl border border-cyan-900 p-5" aria-label="Dashboard Search Console">
-    <h2 className="text-xl font-semibold text-cyan-300">Dashboard Google Search Console</h2>
-    <form className="flex flex-wrap items-end gap-3" onSubmit={event => {
-      event.preventDefault();
-      const days = (Date.parse(draft.endDate) - Date.parse(draft.startDate)) / 86400000 + 1;
-      if (!(days >= 1 && days <= 90)) { setError("Chọn kỳ từ 1–90 ngày, ngày bắt đầu không sau ngày kết thúc."); return; }
-      setFilters({ ...draft }); setView(previous => ({ ...previous, offset: 0 }));
-    }}>
-      <label className="grid gap-1">Từ ngày<input required type="date" className={control} value={draft.startDate} max={draft.endDate} onChange={event => setDraft({ ...draft, startDate: event.target.value })} /></label>
-      <label className="grid gap-1">Đến ngày<input required type="date" className={control} value={draft.endDate} min={draft.startDate} onChange={event => setDraft({ ...draft, endDate: event.target.value })} /></label>
-      <label className="grid gap-1">Country<input className={control} placeholder="usa, vnm…" pattern="[a-zA-Z]{3}" maxLength={3} value={draft.country ?? ""} onChange={event => setDraft({ ...draft, country: event.target.value || undefined })} /></label>
-      <label className="grid gap-1">Device<select className={control} value={draft.device ?? ""} onChange={event => setDraft({ ...draft, device: event.target.value as SearchReportFilters["device"] || undefined })}><option value="">Tất cả</option>{["DESKTOP", "MOBILE", "TABLET"].map(value => <option key={value}>{value}</option>)}</select></label>
-      <label className="grid gap-1">Query chứa<input className={control} maxLength={1000} value={draft.query ?? ""} onChange={event => setDraft({ ...draft, query: event.target.value })} /></label>
-      <label className="grid gap-1">Page chứa<input className={control} maxLength={1000} value={draft.page ?? ""} onChange={event => setDraft({ ...draft, page: event.target.value })} /></label>
-      <button type="submit" className={control}>Áp dụng bộ lọc</button>
-      <button type="button" className={control} onClick={() => setRefresh(value => value + 1)}>Làm mới trạng thái</button>
+
+  function applyFilters(next: SearchReportFilters): void {
+    const days = (Date.parse(next.endDate) - Date.parse(next.startDate)) / 86400000 + 1;
+    if (!(days >= 1 && days <= 90)) { setError("Chọn khoảng 1–90 ngày, ngày bắt đầu không sau ngày kết thúc."); return; }
+    setFilters({ ...next }); setView(previous => ({ ...previous, offset: 0 }));
+  }
+  function choosePreset(days: number): void {
+    const next = { ...filters, ...presetPeriod(referenceEnd, days) };
+    setDraft(next); applyFilters(next);
+  }
+
+  return <section className="min-w-0 space-y-6" aria-label="Dashboard Search Console">
+    <form className="space-y-4 rounded-xl border border-slate-800 bg-slate-900/40 p-4" onSubmit={event => { event.preventDefault(); applyFilters(draft); }}>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap gap-2">
+          {[28, 90].map(days => <button key={days} type="button" className={`${control} ${filters.startDate === presetPeriod(referenceEnd, days).startDate && filters.endDate === referenceEnd ? "border-cyan-400 bg-cyan-950 text-cyan-300" : "text-slate-300"}`} onClick={() => choosePreset(days)}>{days} ngày</button>)}
+          <span className="self-center text-xs text-slate-500">hoặc chọn ngày bên dưới</span>
+        </div>
+        <label className="flex items-center gap-2 text-sm text-slate-300">
+          <input type="checkbox" className="accent-cyan-400" checked={hasComparison} onChange={event => setHasComparison(event.target.checked)} />
+          So sánh với kỳ trước
+        </label>
+      </div>
+      <div className="flex flex-wrap items-end gap-3">
+        <label className="grid gap-1 text-xs text-slate-400">Từ ngày<input aria-label="Từ ngày báo cáo" required type="date" className={`${control} text-slate-100`} value={draft.startDate} max={draft.endDate} onChange={event => setDraft({ ...draft, startDate: event.target.value })} /></label>
+        <label className="grid gap-1 text-xs text-slate-400">Đến ngày<input aria-label="Đến ngày báo cáo" required type="date" className={`${control} text-slate-100`} value={draft.endDate} min={draft.startDate} onChange={event => setDraft({ ...draft, endDate: event.target.value })} /></label>
+        <button type="submit" className="rounded-lg bg-cyan-400 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-cyan-300">Áp dụng</button>
+        <button type="button" className={control} aria-expanded={hasAdvancedFilters} aria-controls="search-advanced-filters" onClick={() => setHasAdvancedFilters(value => !value)}>Bộ lọc nâng cao{appliedCount ? ` (${appliedCount})` : ""}</button>
+        <button type="button" className={`${control} ml-auto text-cyan-300`} onClick={() => setRefresh(value => value + 1)}>↻ Làm mới trạng thái</button>
+      </div>
+      <div id="search-advanced-filters" hidden={!hasAdvancedFilters}>
+        <div className="grid gap-3 border-t border-slate-800 pt-4 sm:grid-cols-2 lg:grid-cols-4">
+          <label className="grid gap-1 text-xs text-slate-400">Quốc gia (mã 3 chữ)<input aria-label="Quốc gia" className={control} placeholder="usa, vnm…" pattern="[a-zA-Z]{3}" maxLength={3} value={draft.country ?? ""} onChange={event => setDraft({ ...draft, country: event.target.value || undefined })} /></label>
+          <label className="grid gap-1 text-xs text-slate-400">Thiết bị<select aria-label="Thiết bị lọc" className={control} value={draft.device ?? ""} onChange={event => setDraft({ ...draft, device: event.target.value as SearchReportFilters["device"] || undefined })}><option value="">Tất cả thiết bị</option><option value="DESKTOP">Máy tính</option><option value="MOBILE">Điện thoại</option><option value="TABLET">Máy tính bảng</option></select></label>
+          <label className="grid gap-1 text-xs text-slate-400">Từ khóa chứa<input aria-label="Từ khóa chứa" className={control} placeholder="Ví dụ: blanket" maxLength={1000} value={draft.query ?? ""} onChange={event => setDraft({ ...draft, query: event.target.value })} /></label>
+          <label className="grid gap-1 text-xs text-slate-400">Đường dẫn chứa<input aria-label="Đường dẫn chứa" className={control} placeholder="Ví dụ: /products/" maxLength={1000} value={draft.page ?? ""} onChange={event => setDraft({ ...draft, page: event.target.value })} /></label>
+        </div>
+        <p className="mt-2 text-xs text-slate-500">Sau khi chọn bộ lọc, bấm Áp dụng để cập nhật toàn bộ báo cáo.</p>
+      </div>
+      <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400">
+        <span>Đang xem: {displayDate(filters.startDate)} – {displayDate(filters.endDate)}</span>
+        {appliedCount > 0 && <><span className="break-all rounded-md bg-cyan-950 px-2 py-1 text-cyan-200">{[filters.country?.toUpperCase(), filters.device, filters.query && `Từ khóa: ${filters.query}`, filters.page && `URL: ${filters.page}`].filter(Boolean).join(" · ")}</span><button type="button" className="text-cyan-300 underline" onClick={() => { const next = { startDate: filters.startDate, endDate: filters.endDate }; setDraft(next); applyFilters(next); }}>Xóa bộ lọc nâng cao</button></>}
+      </div>
     </form>
-    <p className="text-sm text-slate-400">Bộ lọc áp dụng cho toàn bộ KPI, biểu đồ và bảng bên dưới. Store/property theo lựa chọn phía trên. Kỳ hiện tại: {filters.startDate} → {filters.endDate}. Kỳ tối đa 90 ngày; ngày kết thúc tối đa hôm nay trừ 3 ngày theo giờ Google.</p>
-    {error && <p role="alert" className="text-rose-300">{error}</p>}
-    {!error && !report && <p role="status">Đang tải báo cáo…</p>}
+
+    {error && <p role="alert" className="rounded-xl border border-rose-900 bg-rose-950/30 p-4 text-sm text-rose-300">{error}</p>}
+    {!error && !report && <div role="status" className="rounded-xl border border-slate-800 p-8 text-center text-slate-400">Đang tải báo cáo Google…</div>}
     {report && <>
-      <p className="text-sm text-slate-400">{report.property} · Kỳ trước: {report.previousStart} → {report.previousEnd} · Cache: {report.fetchedAt ?? "chưa có"}</p>
-      {report.status !== "done" && <p role="status" className={report.error ? "text-rose-300" : "text-cyan-300"}>Báo cáo: {report.status} · {report.progress}% {report.error ? `· ${report.error}. Chưa có báo cáo hoàn chỉnh.` : "· Dữ liệu sẽ hiện khi hoàn thành."}</p>}
-      {report.stale && <p className="text-amber-300">Dữ liệu chưa được xác minh mới; xem trạng thái kết nối/đồng bộ. {report.error}</p>}
+      <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-400">
+        <span className="break-all">{report.property} · Google Web Search</span>
+        <span>Dữ liệu lấy lúc: {report.fetchedAt ? new Date(report.fetchedAt).toLocaleString("vi-VN") : "chưa hoàn tất"}</span>
+      </div>
+      {report.status !== "done" && <div role="status" className="space-y-2 rounded-xl border border-slate-800 p-5"><p>{JOB_LABELS[report.status]} · {report.progress}%</p><progress aria-label="Tiến độ báo cáo" className="w-full accent-cyan-400" value={report.progress} max={100} /><p className="text-sm text-slate-400">{report.error ? `Có lỗi khi lấy dữ liệu: ${report.error}. Bấm Làm mới trạng thái để kiểm tra lại.` : "Bạn có thể chuyển tab. Báo cáo sẽ hiện khi xử lý hoàn tất."}</p></div>}
+      {report.stale && <p className="rounded-lg bg-amber-950/30 p-3 text-sm text-amber-300">Dữ liệu chưa được xác minh mới. {report.error}</p>}
       {report.status === "done" && <>
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">{metrics.map(metric => <article key={metric} className="rounded-xl bg-slate-900 p-4"><h3>{metric}</h3><p className="text-2xl text-cyan-300">{format(report.current?.[metric], metric)}</p><p className="text-sm text-slate-400">Kỳ trước: {format(report.previous?.[metric], metric)}</p><p className="text-sm">Δ {report.current && report.previous ? format(report.current[metric] - report.previous[metric], metric) : "—"}{metric === "ctr" ? " (điểm %)" : metric === "position" ? " (âm = tốt hơn)" : ""}</p></article>)}</div>
-        {!report.current && <p>Google không trả dòng tổng cho kỳ/bộ lọc này; không thay bằng số liệu kỳ trước.</p>}
-        <Timeline report={report} />
-        <div className="flex flex-wrap gap-3"><label>Chiều dữ liệu <select className={control} value={view.dimension} onChange={event => setView({ ...view, dimension: event.target.value as SearchReportView["dimension"], offset: 0 })}>{[["query", "Top Queries"], ["page", "Top Pages"], ["country", "Country"], ["device", "Device"], ["date", "Date"]].map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label><label>Xếp hạng <select className={control} value={view.order} onChange={event => setView({ ...view, order: event.target.value as SearchReportView["order"], offset: 0 })}><option value="top">Top</option><option value="growing">Tăng / cải thiện</option><option value="declining">Giảm / suy giảm</option></select></label><label>Chỉ số <select className={control} value={view.metric} onChange={event => setView({ ...view, metric: event.target.value as keyof SearchMetrics, offset: 0 })}>{metrics.map(metric => <option key={metric}>{metric}</option>)}</select></label></div>
-        <div className="overflow-x-auto"><table className="w-full text-left text-sm"><caption className="py-2 text-left text-slate-400">{report.rows.total} dòng API trả về · Hiện tại / kỳ trước / thay đổi</caption><thead><tr><th scope="col">{view.dimension}</th>{metrics.map(metric => <th className="p-2" scope="col" key={metric}>{metric}</th>)}</tr></thead><tbody>{report.rows.items.map(row => <tr key={row.key} className="border-t border-slate-800"><th scope="row" className="max-w-80 break-words py-3 font-normal">{row.key}</th>{metrics.map(metric => <td className="whitespace-nowrap p-2" key={metric}>{format(row.current?.[metric], metric)} / {format(row.previous?.[metric], metric)}<br /><span className="text-slate-400">Δ {format(row.delta[metric], metric)}</span></td>)}</tr>)}</tbody></table>{!report.rows.total && <p>Không có dòng dữ liệu cho bộ lọc này.</p>}</div>
-        <div className="flex gap-3"><button type="button" className={control} disabled={!view.offset} onClick={() => setView({ ...view, offset: Math.max(0, (view.offset ?? 0) - 50) })}>Trang trước</button><button type="button" className={control} disabled={report.rows.nextOffset === null} onClick={() => setView({ ...view, offset: report.rows.nextOffset ?? 0 })}>Trang sau</button></div>
+        {hasComparison && <p className="text-sm text-slate-400">So với {displayDate(report.previousStart)} – {displayDate(report.previousEnd)} · Hai kỳ có cùng số ngày.</p>}
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">{metrics.map(metric => {
+          const change = metricChange(metric, report.current?.[metric], report.previous?.[metric]);
+          return <article key={metric} className="rounded-xl border border-slate-800 bg-slate-900/70 p-5">
+            <h3 className="text-sm text-slate-400">{METRIC_LABELS[metric]}</h3>
+            <p className="my-2 text-3xl font-semibold tabular-nums text-white">{format(report.current?.[metric], metric)}</p>
+            {hasComparison ? <><p className={`text-sm ${tones[change.tone]}`}>{change.text}</p><p className="mt-1 text-xs text-slate-500">Kỳ trước: {format(report.previous?.[metric], metric)}</p></> : <p className="text-xs text-slate-500">{metric === "position" ? "Số nhỏ hơn là tốt hơn" : metric === "ctr" ? "Lượt nhấp / lượt hiển thị" : "Trong khoảng ngày đã chọn"}</p>}
+          </article>;
+        })}</div>
+        {!report.current && <p className="text-sm text-slate-400">Google không trả dữ liệu tổng cho kỳ/bộ lọc này. Dấu — không được hiểu là 0 lượt tìm kiếm.</p>}
+        <Timeline report={report} hasComparison={hasComparison} />
+        <section className="min-w-0 overflow-hidden rounded-xl border border-slate-800" aria-label="Chi tiết hiệu suất">
+          <div className="flex flex-wrap gap-1 border-b border-slate-800 bg-slate-900/60 p-3">{dimensions.map(([dimension, label]) => <button type="button" aria-pressed={view.dimension === dimension} key={dimension} className={`rounded-lg px-4 py-2 text-sm ${view.dimension === dimension ? "bg-cyan-950 text-cyan-300" : "text-slate-400 hover:text-white"}`} onClick={() => setView({ ...view, dimension, offset: 0 })}>{label}</button>)}</div>
+          <div className="flex flex-wrap items-center justify-between gap-3 p-4">
+            <p className="text-sm text-slate-400">{report.rows.total.toLocaleString("vi-VN")} kết quả · {view.dimension === "date" ? "Sắp xếp theo ngày" : "Xếp hạng theo chỉ số"}</p>
+            {view.dimension !== "date" && <div className="flex flex-wrap gap-2">
+              <select aria-label="Xếp hạng" className={control} value={view.order} onChange={event => { const order = event.target.value as SearchReportView["order"]; setView({ ...view, order, offset: 0 }); if (order !== "top") setHasComparison(true); }}><option value="top">Nổi bật nhất</option><option value="growing">Tăng / cải thiện</option><option value="declining">Giảm / suy giảm</option></select>
+              <select aria-label="Chỉ số xếp hạng" className={control} value={view.metric} onChange={event => setView({ ...view, metric: event.target.value as keyof SearchMetrics, offset: 0 })}>{metrics.map(metric => <option key={metric} value={metric}>{METRIC_LABELS[metric]}</option>)}</select>
+            </div>}
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <caption className="sr-only">Chi tiết hiệu suất Google{hasComparison ? " và so sánh kỳ trước" : ""}</caption>
+              <thead className="bg-slate-900/60 text-xs text-slate-400"><tr><th scope="col" className="min-w-52 p-4">{dimensions.find(([dimension]) => dimension === view.dimension)?.[1]}</th>{metrics.map(metric => <th scope="col" className="whitespace-nowrap p-4 text-right font-medium" key={metric}>{METRIC_LABELS[metric]}</th>)}</tr></thead>
+              <tbody>{report.rows.items.map(row => <tr key={row.key} className="border-t border-slate-800/70 hover:bg-slate-900/40">
+                <th scope="row" className="max-w-80 break-words p-4 font-normal text-slate-200">{view.dimension === "date" ? displayDate(row.key) : row.key}</th>
+                {metrics.map(metric => {
+                  const change = metricChange(metric, row.current?.[metric], row.previous?.[metric]);
+                  return <td key={metric} className="whitespace-nowrap p-4 text-right tabular-nums"><span>{format(row.current?.[metric], metric)}</span>{hasComparison && <><div className="mt-1 text-xs text-slate-500">Trước: {format(row.previous?.[metric], metric)}</div><div className={`mt-1 text-xs ${tones[change.tone]}`}>{change.text}</div></>}</td>;
+                })}
+              </tr>)}</tbody>
+            </table>
+            {!report.rows.total && <p className="p-8 text-center text-slate-400">Không có kết quả phù hợp. Thử đổi khoảng ngày hoặc xóa bộ lọc.</p>}
+          </div>
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-800 p-4">
+            <p className="text-xs text-slate-400">{report.rows.total ? `${(view.offset ?? 0) + 1}–${(view.offset ?? 0) + report.rows.items.length} / ${report.rows.total}` : "0 kết quả"}</p>
+            <div className="flex gap-2"><button type="button" className={control} disabled={!view.offset} onClick={() => setView({ ...view, offset: Math.max(0, (view.offset ?? 0) - 50) })}>← Trước</button><button type="button" className={control} disabled={report.rows.nextOffset === null} onClick={() => setView({ ...view, offset: report.rows.nextOffset ?? 0 })}>Sau →</button></div>
+          </div>
+        </section>
       </>}
-      {report.limited && <p role="alert" className="text-amber-300">Đã chạm giới hạn 100.000 dòng/chiều/kỳ của FFP. Bảng không đầy đủ; hãy thu hẹp kỳ hoặc bộ lọc.</p>}
+      {report.limited && <p role="alert" className="text-sm text-amber-300">Đã chạm giới hạn 100.000 dòng/chiều/kỳ. Bảng không đầy đủ; hãy thu hẹp kỳ hoặc bộ lọc.</p>}
     </>}
-    <p className="text-sm text-amber-300">Web Search · finalized · America/Los_Angeles. Google chỉ trả các dòng hàng đầu, có thể ẩn truy vấn vì riêng tư; phân trang không khôi phục dữ liệu Google không cung cấp. Tăng/giảm chỉ phản ánh các dòng trả về, không chứng minh truy vấn vắng mặt không có traffic. Tổng KPI lấy riêng, không cộng bảng keyword/page. Cache tối đa 24 giờ.</p>
+    <details className="text-xs leading-relaxed text-slate-500"><summary className="cursor-pointer py-2">Cách đọc số liệu và giới hạn dữ liệu Google</summary><p>Web Search · dữ liệu đã chốt · múi giờ America/Los_Angeles. Kỳ tối đa 90 ngày, ngày kết thúc tối đa hôm nay trừ 3 ngày theo giờ Google. Báo cáo được lưu tối đa 24 giờ trước khi lấy lại.</p><p className="mt-2">Google có thể ẩn truy vấn hoặc chỉ trả các dòng hàng đầu. Truy vấn vắng mặt không có nghĩa là không có traffic. Tổng KPI lấy riêng, không cộng bảng từ khóa/trang. Vị trí giảm là cải thiện; thay đổi CTR tính bằng điểm phần trăm. So sánh thể hiện biến động, không chứng minh nguyên nhân.</p></details>
   </section>;
 }
-function Timeline({ report }: { readonly report: SearchReport }): React.JSX.Element {
+function Timeline({ report, hasComparison }: { readonly report: SearchReport; readonly hasComparison: boolean }): React.JSX.Element {
   const points = report.timeline;
   return <div className="grid gap-4 md:grid-cols-2">{(["clicks", "impressions"] as const).map(metric => {
-    const max = Math.max(1, ...points.flatMap(row => [row.current?.[metric] ?? 0, row.previous?.[metric] ?? 0]));
+    const max = Math.max(1, ...points.flatMap(row => [row.current?.[metric] ?? 0, hasComparison ? row.previous?.[metric] ?? 0 : 0]));
     const days = Math.max(1, (Date.parse(report.filters.endDate) - Date.parse(report.filters.startDate)) / 86400000);
-    return <figure key={metric} className="rounded-lg bg-slate-900 p-3"><figcaption>{metric} theo ngày · xanh: hiện tại · tím: kỳ trước</figcaption><svg viewBox="0 0 600 180" role="img" aria-label={`${metric} theo ngày; bảng Date cung cấp số liệu`}><text x="0" y="15" fill="#94a3b8" fontSize="12">{max}</text>{points.map((row, index) => {
+    return <figure key={metric} className="rounded-lg bg-slate-900 p-3"><figcaption>{METRIC_LABELS[metric]} theo ngày · xanh: hiện tại{hasComparison ? " · tím: kỳ trước" : ""}</figcaption><svg viewBox="0 0 600 180" role="img" aria-label={`${metric} theo ngày; bảng Date cung cấp số liệu`}><text x="0" y="15" fill="#94a3b8" fontSize="12">{max}</text>{points.map((row, index) => {
       const x = 30 + (Date.parse(row.key) - Date.parse(report.filters.startDate)) / 86400000 / days * 550;
       const previous = points[index - 1];
-      return <g key={row.key}>{(["current", "previous"] as const).map(period => {
+      return <g key={row.key}>{(["current", ...(hasComparison ? ["previous"] as const : [])] as const).map(period => {
         const value = row[period]; const previousValue = previous?.[period];
         const color = period === "current" ? "#22d3ee" : "#c084fc";
         if (!value) return null;

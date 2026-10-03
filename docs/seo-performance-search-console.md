@@ -26,6 +26,22 @@ In development, run the standalone Gateway and use `SEO_PERFORMANCE_GATEWAY_URL`
 
 ### Interactive Search Console dashboard
 
+The UI is organized into three areas: **Hiệu suất Google** (reports),
+**Kiểm tra website** (audits), and **Đề xuất cải thiện** (recommendations/history).
+Connection management is collapsed once connected. The report opens in a compact
+current-period view; enable **So sánh với kỳ trước** to show comparison values in
+KPI cards, charts and tables. Choosing a gain/loss ranking enables comparison.
+Quick presets are inclusive 28/90-day periods ending at the dashboard's initial
+report end date. Advanced filters are applied explicitly with **Áp dụng**; an
+applied-filter summary remains visible when the controls are collapsed. Filters,
+table selection and comparison survive switching between the three areas for the
+same store. Audit filters are confined to the audit area, not the Google report.
+
+Optional UI regression (start `npm run dev:mock` first):
+`SEO_PERFORMANCE_UI_URL=http://localhost:5173 node --import tsx --test src/modules/seo-performance/__tests__/presentation-browser.test.ts`.
+It checks navigation, date presets, comparisons, filter reset and mobile overflow
+against safe mock data. It is skipped by default in the headless unit test suite.
+
 The dashboard report uses `POST /api/seo-performance/report` with `{ filters, view }`.
 Filters: required `startDate`/`endDate`, optional three-letter `country`, `device`
 (`DESKTOP`, `MOBILE`, `TABLET`), and case-insensitive `query`/`page` substring filters.

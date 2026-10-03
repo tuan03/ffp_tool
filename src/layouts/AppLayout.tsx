@@ -51,9 +51,9 @@ export function AppLayout(): React.JSX.Element {
     <div className="min-h-screen bg-slate-950 text-slate-50 flex flex-col">
       {/* Top Application Navbar */}
       <header className="sticky top-0 z-40 border-b border-slate-800 bg-slate-900/90 backdrop-blur-md">
-        <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-3 sm:px-6 lg:px-8">
-          <div className="flex items-center gap-6">
-            <NavLink to="/amazon-crawler" className="flex items-center gap-2.5">
+        <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-6 lg:px-8">
+          <div className="flex w-full min-w-0 items-center gap-3 lg:w-auto lg:flex-1 lg:gap-6">
+            <NavLink to="/amazon-crawler" className="flex shrink-0 items-center gap-2.5">
               <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-tr from-cyan-500 to-blue-600 text-xs font-bold text-slate-950 shadow-md shadow-cyan-500/20">
                 FP
               </span>
@@ -62,7 +62,7 @@ export function AppLayout(): React.JSX.Element {
               </span>
             </NavLink>
 
-            <nav className="flex items-center gap-2 text-xs font-medium">
+            <nav aria-label="Điều hướng ứng dụng" className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto whitespace-nowrap text-xs font-medium lg:whitespace-normal [&>a]:shrink-0 lg:[&>a]:shrink">
               <NavLink to={performancePath} className={({ isActive }) => `rounded-lg px-3 py-1.5 ${isActive ? "bg-slate-800 text-cyan-300" : "text-slate-400 hover:text-slate-200"}`}>SEO Performance</NavLink>
               <NavLink
                 to={queuePath}
@@ -143,7 +143,7 @@ export function AppLayout(): React.JSX.Element {
             </nav>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex shrink-0 items-center gap-3">
             <NotificationPermissionBadge />
 
             <div className="flex items-center gap-1.5 border-l border-slate-800 pl-3">
