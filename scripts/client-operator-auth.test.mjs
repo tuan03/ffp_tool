@@ -28,7 +28,10 @@ test("production client challenges operators before serving the SPA and protecte
 });
 
 test("production client keeps health checks public and separate from protected APIs", async () => {
-  const nginxConfig = await readFile("deploy/client/nginx.conf", "utf8");
+  const [nginxConfig, compose] = await Promise.all([
+    readFile("deploy/client/nginx.conf", "utf8"),
+    readFile("docker-compose.yml", "utf8"),
+  ]);
 
   assert.match(
     nginxConfig,
@@ -43,6 +46,8 @@ test("production client keeps health checks public and separate from protected A
     nginxConfig,
     /location = \/mcp\/gpt-seo \{\s+proxy_pass http:\/\/server:3001;/s,
   );
+  assert.match(compose, /wget -q --spider http:\/\/127\.0\.0\.1\/health/);
+  assert.doesNotMatch(compose, /wget -q --spider http:\/\/127\.0\.0\.1\/ \|\| exit 1/);
 });
 
 test("client container creates its password file from operator credentials without receiving the gateway token", async () => {
