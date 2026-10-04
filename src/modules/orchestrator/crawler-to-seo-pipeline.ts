@@ -11,11 +11,13 @@ import type {
   CustomizationSeoOptions,
   SeoContentInput,
   SeoContentOutput,
+  SeoStoreProfile,
 } from "../seo-content";
 
 export interface HandoverCrawlerToSeoInput {
   readonly jobId?: string;
   readonly products: readonly CrawlProduct[];
+  readonly storeProfile: SeoStoreProfile;
   readonly defaultNiche?: string;
   readonly concurrency?: number;
 }
@@ -69,6 +71,7 @@ export async function handoverCrawlerToSeo(
   // 2. Execute SEO pipeline over normalized products
   const seoOptions: CustomizationSeoOptions = {
     runner: dependencies.seoRunner,
+    storeProfile: input.storeProfile,
     defaultNiche: input.defaultNiche || "custom product",
     concurrency: input.concurrency || 3,
   };

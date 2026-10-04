@@ -7,6 +7,8 @@ import { SeoWorkerMetrics } from "../seo-worker/metrics";
 import { SeoWorkerRepository } from "../seo-worker/repository";
 import { handleSeoAgentHttp } from "../seo-worker/admin-handler";
 
+import { createTestEnqueue } from "./seo-v2-fixtures";
+
 test("worker metrics isolate stores, bound windows and distinguish missing denominators", async () => {
   const pg = await PGlite.create();
   let now = Date.UTC(2030, 0, 2);
@@ -36,7 +38,10 @@ test("worker metrics isolate stores, bound windows and distinguish missing denom
     assert.equal(report.staleLeaseRejections, 1);
     assert.equal((await metrics.report("other", 24)).staleLeaseRejections, 1);
     assert.equal((await metrics.report("demo", 168)).staleLeaseRejections, 2);
-    for (const id of ["1", "2"]) await pg.query("INSERT INTO gpt_jobs(id,store_id,dedup,status,payload,created_at,provider) VALUES($1,'demo',$1,'PENDING',$2,$3,'codex_mcp')", [id, JSON.stringify({ id, storeId: "demo", status: "PENDING", source: "auto_seo", sourceIdentity: id, input: { productId: id, images: [] }, settings: { provider: "codex_mcp" }, checkpoints: {} }), now]);
+    for (const id of ["1", "2"]) {
+      const enqueue = createTestEnqueue({ storeId: "demo", productId: id });
+      await pg.query("INSERT INTO gpt_jobs(id,store_id,dedup,status,payload,created_at,provider) VALUES($1,'demo',$1,'PENDING',$2,$3,'codex_mcp')", [id, JSON.stringify({ id, storeId: "demo", status: "PENDING", source: "auto_seo", sourceIdentity: id, input: enqueue.input, execution: enqueue.execution, original: enqueue.execution.originalSnapshot, settings: { provider: "codex_mcp" }, checkpoints: {} }), now]);
+    }
     await repository.enableStore("demo");
     const issued = await repository.issueToken({ storeId: "demo", workerId: "test", createdBy: "test" });
     const { sessionId } = await repository.register(issued.token, "register");

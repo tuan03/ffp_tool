@@ -14,6 +14,8 @@ import { createWorkerWorkflow } from "../seo-worker/workflow";
 import { handleWorkerMcp } from "../seo-worker/mcp-handler";
 import { handleSeoAgentHttp } from "../seo-worker/admin-handler";
 
+import { createTestEnqueue } from "./seo-v2-fixtures";
+
 test("operator token issuance grants registry stores only and retains authentication/CSRF checks", async () => {
   const pg = await PGlite.create();
   await pg.exec(getQueueSchemaSql("public"));
@@ -68,20 +70,26 @@ test("worker MCP exposes no publish/admin capabilities and rechecks token on eve
     const status = await client.callTool({ name: "worker_status", arguments: {} });
     assert.notEqual(status.isError, true);
     assert.match(JSON.stringify(status), /demo/);
-    const job = { id: "context-job", storeId: "demo", source: "auto_seo", sourceIdentity: "123", status: "PENDING", input: { productId: "123", images: [] }, original: {}, settings: { provider: "codex_mcp" }, checkpoints: {} };
+    const enqueue = createTestEnqueue({ storeId: "demo", productId: "123", input: { images: [{ id: "front", url: "https://cdn.shopify.com/front.png" }], niche: "blankets" } });
+    const job = { id: "context-job", storeId: "demo", source: "auto_seo", sourceIdentity: "123", status: "PENDING", input: enqueue.input, execution: enqueue.execution, original: enqueue.execution.originalSnapshot, settings: { provider: "codex_mcp" }, checkpoints: {} };
     await pg.query("INSERT INTO gpt_jobs(id,store_id,dedup,status,payload,created_at,provider) VALUES ('context-job','demo','context','PENDING',$1,1,'codex_mcp')", [JSON.stringify(job)]);
     await repository.enableStore("demo");
     const { sessionId } = await repository.register(issued.token, "register-context");
     const run = await repository.startRun(issued.token, sessionId, 1, "context-run");
     const claim = await repository.claim(issued.token, sessionId, run.id, "context-claim");
     assert.ok(claim.lease);
-    assert.deepEqual((await workflow.context(issued.token, claim.lease)).gsc, { status: "disabled" });
-    const optional = createWorkerWorkflow(repository, { checkSource: async () => undefined, performanceEvidence: async source => {
-      assert.equal(source.storeId, "demo"); assert.equal(source.input.productId, "123");
+    const groundedContext = await workflow.context(issued.token, claim.lease);
+    assert.deepEqual(Object.keys(groundedContext.input).sort(), ["images", "niche", "storeProfile"]);
+    assert.deepEqual(groundedContext.input.images, [{ id: "front" }]);
+    assert.equal(Object.hasOwn(groundedContext, "gsc"), false);
+    let didReadPerformanceEvidence = false;
+    const optional = createWorkerWorkflow(repository, { checkSource: async () => undefined, performanceEvidence: async () => {
+      didReadPerformanceEvidence = true;
       throw new Error("synthetic private database error");
     } });
     const context = await optional.context(issued.token, claim.lease);
-    assert.match(JSON.stringify(context.gsc), /unavailable/);
+    assert.equal(didReadPerformanceEvidence, false);
+    assert.equal(Object.hasOwn(context, "gsc"), false);
     assert.doesNotMatch(JSON.stringify(context), /private database/);
     await repository.revoke("demo", issued.tokenId);
     const revoked = await client.callTool({ name: "worker_status", arguments: {} });

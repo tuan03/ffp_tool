@@ -1,3 +1,8 @@
+import type {
+  SeoContentGenerationInput,
+  SeoExecutionEnvelope,
+} from "../../shared/seo-content-contract";
+
 export type SeoProvider = "gemini" | "custom_gpt" | "codex_mcp";
 export interface WorkerMetrics {
   readonly generatedAt: number; readonly start: number; readonly end: number; readonly eventCoverageSince: number;
@@ -69,16 +74,7 @@ export interface AgentRunPage {
 export type ExternalSeoProvider = Exclude<SeoProvider, "gemini">;
 export type GptJobStatus = "PENDING" | "IN_PROGRESS" | "WAITING_INPUT" | "VALIDATING" | "NEEDS_CHANGES" | "REVIEW_READY" | "FAILED" | "CANCELLED";
 export type GptStage = "analysis" | "research" | "keywords" | "submission";
-export interface GptSeoInput {
-  readonly title: string;
-  readonly description: string;
-  readonly handle: string;
-  readonly niche: string;
-  readonly productId?: string;
-  readonly siteDomain?: string;
-  readonly url?: string;
-  readonly images: readonly { readonly id?: string; readonly url: string; readonly alt?: string }[];
-}
+export type GptSeoInput = SeoContentGenerationInput;
 export interface GptSeoSettings {
   readonly provider: SeoProvider;
   readonly batchSize: number;
@@ -87,17 +83,19 @@ export interface GptSeoSettings {
   readonly instructions: string;
 }
 export interface GptSeoEnqueue {
-  readonly storeId: string;
-  readonly source: "amazon" | "auto_seo";
-  readonly sourceIdentity: string;
-  readonly sourceRevision?: string;
   readonly performanceRecommendationId?: string;
   readonly input: GptSeoInput;
-  readonly original: unknown;
+  readonly execution: SeoExecutionEnvelope;
   readonly settings?: GptSeoSettings;
 }
 export interface GptSeoJob extends GptSeoEnqueue {
   readonly id: string;
+  /** Persisted operational columns retained for queue/query compatibility. */
+  readonly storeId: string;
+  readonly source: "amazon" | "auto_seo";
+  readonly sourceIdentity: string;
+  readonly sourceRevision?: string;
+  readonly original: unknown;
   readonly inputHash: string;
   readonly settings: GptSeoSettings;
   readonly status: GptJobStatus;

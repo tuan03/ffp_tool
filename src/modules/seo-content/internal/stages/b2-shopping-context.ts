@@ -71,9 +71,8 @@ export function createDefaultShoppingContextAnalyzer(options?: ProviderRequestOp
     onFallback: (error, input) => {
       options?.onFallback?.(error);
       const errMsg = error instanceof Error ? error.message : String(error);
-      const title = input.source.title || "untitled";
       console.warn(
-        `[SEO B2 Fallback] Gemini shopping context analysis failed for product '${title}'. Falling back to heuristic analyzer. Cause: ${errMsg}`,
+        `[SEO B2 Fallback] Gemini shopping context analysis failed. Falling back to heuristic analyzer. Cause: ${errMsg}`,
       );
     },
   });
@@ -92,13 +91,16 @@ export function createB2ShoppingContextStage(
     async execute(context: SeoPipelineContext): Promise<SeoPipelineContext> {
       const source = context.source;
       const niche = context.effectiveNiche ?? source.niche;
+      const understanding = context.productUnderstanding;
+      const groundedIdentity = understanding?.physicalProductIdentity ?? "";
+      const groundedDesign = understanding?.visualEntities ?? "";
 
       const groundedShoppingContext = await analyzer.analyze({
         source: {
           niche,
-          title: source.title ?? "",
-          description: source.description ?? "",
-          handle: source.handle ?? "",
+          title: groundedIdentity,
+          description: groundedDesign,
+          handle: "",
         },
         productUnderstanding: context.productUnderstanding,
       });
@@ -106,8 +108,8 @@ export function createB2ShoppingContextStage(
       const shoppingContext = {
         ...removeSceneOnlyGroundedContext(groundedShoppingContext, {
           niche,
-          title: source.title ?? "",
-          description: source.description ?? "",
+          title: groundedIdentity,
+          description: groundedDesign,
         }, context.productUnderstanding),
         ...deriveSceneDiscoveryHints(context.productUnderstanding),
       };

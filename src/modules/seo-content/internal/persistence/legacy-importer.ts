@@ -118,10 +118,17 @@ export async function importSeoContentLegacyData(
       const content = await fs.readFile(checkpointPath, "utf8");
       const hash = fingerprint(content);
       if (await isImported(pool, "checkpoint-json", checkpointPath, hash)) { skippedSources++; continue; }
-      const checkpoint = JSON.parse(content) as SeoCheckpoint;
-      if (checkpoint.schemaVersion !== 1 || !checkpoint.inputHash || !checkpoint.stages) {
+      const parsed = JSON.parse(content) as { readonly schemaVersion?: unknown; readonly inputHash?: unknown; readonly stages?: unknown };
+      if (parsed.schemaVersion === 1) {
+        // V1 includes legacy semantic fields and is intentionally not resumable.
+        await markImported(pool, "checkpoint-json-v1-skipped", checkpointPath, hash);
+        skippedSources++;
+        continue;
+      }
+      if (parsed.schemaVersion !== 2 || typeof parsed.inputHash !== "string" || !parsed.stages) {
         throw new Error(`Invalid legacy checkpoint: ${checkpointPath}`);
       }
+      const checkpoint = parsed as SeoCheckpoint;
       await store.set(checkpoint);
       await markImported(pool, "checkpoint-json", checkpointPath, hash);
       checkpoints++;

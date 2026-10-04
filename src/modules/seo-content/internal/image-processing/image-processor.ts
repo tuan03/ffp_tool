@@ -79,8 +79,7 @@ export class DefaultImageProcessor implements ImageProcessor {
 
       // 2. Generate alt text
       const alt = generateAltText({
-        sourceAlt: sourceImage.alt,
-        sourceTitle: input.sourceTitle,
+        sourceTitle: input.productTitle,
         productTitle: input.productTitle,
         primaryKeyword: input.primaryKeyword,
         secondaryKeywords: input.secondaryKeywords,
@@ -95,7 +94,7 @@ export class DefaultImageProcessor implements ImageProcessor {
 
       // 3. Convert image to WebP
       let webpData: Buffer | undefined;
-      let localFilePath: string | undefined = sourceImage.localFilePath;
+      let localFilePath: string | undefined;
       let url: string | undefined = sourceImage.url;
 
       try {
@@ -168,8 +167,7 @@ export class AltOnlyImageProcessor implements ImageProcessor {
     const previousAlts: string[] = [];
     const processedImages = input.images.map((sourceImage, index) => {
       const alt = generateAltText({
-        sourceAlt: sourceImage.alt,
-        sourceTitle: input.sourceTitle,
+        sourceTitle: input.productTitle,
         productTitle: input.productTitle,
         primaryKeyword: input.primaryKeyword,
         secondaryKeywords: input.secondaryKeywords,

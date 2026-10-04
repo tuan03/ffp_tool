@@ -6,6 +6,7 @@ import type {
   PinterestPodSeoOptions,
   SeoContentInput,
   SeoContentOutput,
+  SeoStoreProfile,
 } from "../seo-content";
 
 export type { PinterestPodDeliverables, PodDeliverableItem };
@@ -13,6 +14,7 @@ export type { PinterestPodDeliverables, PodDeliverableItem };
 export interface HandoverPinterestToSeoInput {
   readonly workflowId?: string;
   readonly deliverables: PinterestPodDeliverables | readonly PodDeliverableItem[];
+  readonly storeProfile: SeoStoreProfile;
   readonly defaultNiche?: string;
   readonly concurrency?: number;
 }
@@ -60,6 +62,7 @@ export async function handoverPinterestToSeo(
 
   const seoOptions: PinterestPodSeoOptions = {
     runner: dependencies.seoRunner,
+    storeProfile: input.storeProfile,
     defaultNiche: input.defaultNiche || "home decor",
     concurrency: input.concurrency || 3,
   };

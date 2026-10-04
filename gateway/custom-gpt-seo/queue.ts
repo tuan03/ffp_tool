@@ -3,6 +3,7 @@ import type { DatabaseSync } from "node:sqlite";
 
 import type { ExternalSeoProvider, GptCheckpointMutation, GptJobStatus, GptSeoBatch, GptSeoEnqueue, GptSeoJob, GptSeoSettings, SeoProvider } from "../../src/modules/custom-gpt-seo";
 import { canonicalizeJson } from "../canonical-json";
+import { normalizeSeoEnqueue } from "./input-contract";
 
 const LEASE_MS = 30 * 60_000;
 const DEFAULT_SETTINGS: GptSeoSettings = { provider: "gemini", batchSize: 5, version: 1, language: "en-US", instructions: "Use only grounded product facts. Never invent certifications, materials or performance claims." };
@@ -63,20 +64,22 @@ export class CustomGptQueue {
     });
   }
   enqueue(rawInput: GptSeoEnqueue): GptSeoJob {
-    const input: GptSeoEnqueue = { ...rawInput, sourceIdentity: rawInput.source === "auto_seo" ? rawInput.sourceIdentity.replace(/^gid:\/\/shopify\/Product\//, "") : rawInput.sourceIdentity, input: { ...rawInput.input, productId: rawInput.input.productId?.replace(/^gid:\/\/shopify\/Product\//, "") } };
-    if (!input.storeId || !input.sourceIdentity || !input.input.title) throw new Error("Missing source identity or title");
-    const inputHash = hash({ input: input.input, original: input.original, revision: input.sourceRevision });
-    const dedup = hash({ source: input.source, identity: input.sourceIdentity, inputHash });
+    const input = normalizeSeoEnqueue(rawInput);
+    const { execution } = input;
+    const inputHash = hash(input.input);
+    const dedup = hash({ source: execution.source, identity: execution.sourceIdentity, revision: execution.sourceRevision, inputHash });
     return this.transaction(() => {
-      const existing = this.db.prepare("SELECT payload FROM gpt_jobs WHERE store_id=? AND dedup=?").get(input.storeId, dedup);
+      const existing = this.db.prepare("SELECT payload FROM gpt_jobs WHERE store_id=? AND dedup=?").get(execution.storeId, dedup);
       if (existing) return json(existing.payload) as GptSeoJob;
-      const olderJobs = this.db.prepare("SELECT payload FROM gpt_jobs WHERE store_id=? AND json_extract(payload,'$.source')=? AND json_extract(payload,'$.sourceIdentity')=? AND status != 'CANCELLED' AND NOT EXISTS (SELECT 1 FROM gpt_sync WHERE gpt_sync.job_id=gpt_jobs.id AND gpt_sync.status != 'ROLLED_BACK')").all(input.storeId, input.source, input.sourceIdentity);
+      const olderJobs = this.db.prepare("SELECT payload FROM gpt_jobs WHERE store_id=? AND json_extract(payload,'$.source')=? AND json_extract(payload,'$.sourceIdentity')=? AND status != 'CANCELLED' AND NOT EXISTS (SELECT 1 FROM gpt_sync WHERE gpt_sync.job_id=gpt_jobs.id AND gpt_sync.status != 'ROLLED_BACK')").all(execution.storeId, execution.source, execution.sourceIdentity);
       for (const row of olderJobs) {
         const olderJob = json(row.payload) as GptSeoJob;
         if (input.performanceRecommendationId && olderJob.status === "REVIEW_READY") continue;
         this.write({ ...olderJob, status: "CANCELLED", error: "Superseded by a newer source revision" });
       }
-      const job: GptSeoJob = { ...input, id: randomUUID(), inputHash, settings: input.settings ?? this.settings(input.storeId), status: "PENDING", checkpoints: {}, createdAt: this.now(), updatedAt: this.now() };
+      const job: GptSeoJob = { ...input, id: randomUUID(), storeId: execution.storeId, source: execution.source,
+        sourceIdentity: execution.sourceIdentity, sourceRevision: execution.sourceRevision, original: execution.originalSnapshot,
+        inputHash, settings: input.settings ?? this.settings(execution.storeId), status: "PENDING", checkpoints: {}, createdAt: this.now(), updatedAt: this.now() };
       this.db.prepare("INSERT INTO gpt_jobs(id,store_id,dedup,status,payload,created_at,provider) VALUES (?,?,?,?,?,?,?)").run(job.id, job.storeId, dedup, job.status, JSON.stringify(job), job.createdAt, job.settings.provider);
       this.audit(job.storeId, job.id, "ENQUEUED");
       return job;
@@ -169,7 +172,7 @@ export class CustomGptQueue {
   batch(storeId: string, batchId: string): GptSeoBatch {
     const row = this.db.prepare("SELECT * FROM gpt_batches WHERE store_id=? AND id=?").get(storeId, batchId);
     if (!row) throw new Error("Batch not found");
-    return { id: batchId, provider: String(row.provider) as ExternalSeoProvider, ownerId: String(row.owner_id), leaseToken: String(row.token), expiresAt: Number(row.expires_at), jobs: this.db.prepare("SELECT payload FROM gpt_jobs WHERE batch_id=? ORDER BY created_at,id").all(batchId).map(entry => { const job = json(entry.payload) as GptSeoJob; return { id: job.id, title: job.input.title, status: job.status }; }) };
+    return { id: batchId, provider: String(row.provider) as ExternalSeoProvider, ownerId: String(row.owner_id), leaseToken: String(row.token), expiresAt: Number(row.expires_at), jobs: this.db.prepare("SELECT payload FROM gpt_jobs WHERE batch_id=? ORDER BY created_at,id").all(batchId).map(entry => { const job = json(entry.payload) as GptSeoJob; return { id: job.id, title: `SEO job ${job.id}`, status: job.status }; }) };
   }
   activeBatch(storeId: string, ownerId: string): GptSeoBatch | null {
     const row = this.db.prepare("SELECT id FROM gpt_batches WHERE store_id=? AND owner_id=? AND active=1 AND expires_at>? ORDER BY rowid LIMIT 1").get(storeId, ownerId, this.now());

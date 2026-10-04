@@ -314,15 +314,16 @@ export function adaptCustomizationItemToViewModel(
     crawlShopify?.storeId ||
     fallbackStoreId;
 
-  const rawTitle = (item.sourceProduct.title || item.sourceProduct.sourceTitle || item.seoInput?.title || "").trim();
+  const rawTitle = (item.sourceProduct.title || item.sourceProduct.sourceTitle || "").trim();
   const rawDesc = (
     sourceProduct.sourceDescriptionHtml ||
     sourceProduct.descriptionHtml ||
     item.sourceProduct.description ||
-    item.seoInput?.description ||
     ""
   ).trim();
-  const rawHandle = (typeof item.sourceProduct.handle === "string" ? item.sourceProduct.handle.trim() : undefined) || item.seoInput?.handle || undefined;
+  const rawHandle = typeof item.sourceProduct.handle === "string"
+    ? item.sourceProduct.handle.trim() || undefined
+    : undefined;
 
   const originalSeo = sourceProduct.seo;
   const directSeoTitle = sourceProduct.seoTitle;
@@ -482,7 +483,7 @@ export function adaptAutoSeoItemToViewModel(
     ? sourceProduct.sourceTitle
     : typeof sourceProduct.title === "string" && sourceProduct.title.trim().length > 0
       ? sourceProduct.title
-      : item.seoInput?.title || "";
+      : "";
 
   let rawDesc = "";
   if (typeof sourceProduct.sourceDescriptionHtml === "string" && sourceProduct.sourceDescriptionHtml.trim().length > 0) {
@@ -491,13 +492,11 @@ export function adaptAutoSeoItemToViewModel(
     rawDesc = sourceProduct.descriptionHtml.trim();
   } else if (typeof sourceProduct.description === "string" && sourceProduct.description.trim().length > 0) {
     rawDesc = sourceProduct.description.trim();
-  } else if (typeof item.seoInput?.description === "string") {
-    rawDesc = item.seoInput.description.trim();
   }
 
   const rawHandle = typeof sourceProduct.handle === "string" && sourceProduct.handle.trim().length > 0
     ? sourceProduct.handle.trim()
-    : item.handle || item.seoInput?.handle || undefined;
+    : item.handle || undefined;
 
   const originalSeo = (sourceProduct as { seo?: { title?: string; description?: string } })?.seo;
   const directSeoTitle = (sourceProduct as { seoTitle?: string })?.seoTitle;
@@ -743,11 +742,6 @@ export function adaptViewModelToApprovedUpdate(
   const descriptionHtml = viewModel.productDescription?.value?.trim();
   if (descriptionHtml) {
     (patch as Record<string, unknown>).descriptionHtml = descriptionHtml;
-  }
-
-  const handle = viewModel.handle?.value?.trim();
-  if (handle) {
-    (patch as Record<string, unknown>).handle = handle;
   }
 
   const seoTitle = viewModel.seoTitle?.value?.trim();

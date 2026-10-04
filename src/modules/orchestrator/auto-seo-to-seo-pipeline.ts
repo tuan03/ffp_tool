@@ -6,6 +6,7 @@ import type {
   AutoSeoSourceProduct,
   SeoContentInput,
   SeoContentOutput,
+  SeoStoreProfile,
 } from "../seo-content";
 
 export type { AutoSeoSourceProduct };
@@ -14,6 +15,7 @@ export interface HandoverAutoSeoToSeoInput {
   readonly workflowId?: string;
   readonly storeId?: string;
   readonly products: readonly AutoSeoSourceProduct[];
+  readonly storeProfile: SeoStoreProfile;
   readonly defaultNiche?: string;
   readonly concurrency?: number;
 }
@@ -62,6 +64,7 @@ export async function handoverAutoSeoToSeo(
 
   const seoOptions: AutoSeoAdapterOptions = {
     runner: dependencies.seoRunner,
+    storeProfile: input.storeProfile,
     defaultNiche: input.defaultNiche || "Shopify Product",
     concurrency: input.concurrency || 3,
   };

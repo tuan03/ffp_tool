@@ -116,7 +116,7 @@ export function createCustomGptClient(fetcher: typeof fetch = fetch) {
     },
     reviews: (storeId: string, offset = 0) => request<GptReviewPage>(`reviews?offset=${offset}`, storeId),
     job: (storeId: string, jobId: string) => request<GptSeoJob>(`job?jobId=${encodeURIComponent(jobId)}`, storeId),
-    enqueue: (input: GptSeoEnqueue) => request<GptSeoJob>("enqueue", input.storeId, input),
+    enqueue: (input: GptSeoEnqueue) => request<GptSeoJob>("enqueue", input.execution.storeId, input),
     retry: (storeId: string, jobId: string) => request<unknown>("retry", storeId, { jobId }),
     requeue: (storeId: string, jobIds: readonly string[], options?: { provider?: SeoProvider; instructions?: string }) =>
       request<{ readonly requeued: number }>("requeue", storeId, { jobIds, ...options }),

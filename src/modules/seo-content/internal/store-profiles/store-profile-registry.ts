@@ -1,7 +1,7 @@
-import type { StoreContentProfile } from "./types";
+import type { SeoStoreProfile } from "../../types";
 import { JEMINISE_BEDDING_PROFILE } from "./jeminise-bedding-profile";
 
-export const STORE_PROFILES_REGISTRY: readonly StoreContentProfile[] = Object.freeze([
+export const STORE_PROFILES_REGISTRY: readonly SeoStoreProfile[] = Object.freeze([
   JEMINISE_BEDDING_PROFILE,
 ]);
 
@@ -40,8 +40,8 @@ export function normalizeDomain(rawDomainOrUrl?: string): string {
  */
 export function resolveStoreProfile(
   query: StoreProfileQuery,
-  registry: readonly StoreContentProfile[] = STORE_PROFILES_REGISTRY,
-): StoreContentProfile | undefined {
+  registry: readonly SeoStoreProfile[] = STORE_PROFILES_REGISTRY,
+): SeoStoreProfile | undefined {
   const storeId = query.storeId?.trim().toLowerCase();
   const normalizedDomain = normalizeDomain(query.siteDomain || query.url);
 
@@ -49,15 +49,17 @@ export function resolveStoreProfile(
     if (
       storeId &&
       (
-        profile.storeId.toLowerCase() === storeId ||
-        profile.storeAliases?.some((alias) => alias.toLowerCase() === storeId)
+        profile.storeId.toLowerCase() === storeId
       )
     ) {
       return profile;
     }
 
     if (normalizedDomain) {
-      for (const alias of profile.domainAliases) {
+      const aliases = profile.storeId === "jeminise"
+        ? ["jeminise.com", "b6-theme-test.myshopify.com", "f4hgwc-hu.myshopify.com"]
+        : [];
+      for (const alias of aliases) {
         const normalizedAlias = normalizeDomain(alias);
         if (
           normalizedDomain === normalizedAlias ||

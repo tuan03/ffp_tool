@@ -63,7 +63,10 @@ Retry a mutation with the exact same requestId and payload, not a new requestId.
 Transport retries are limited to three attempts for replayable requests. HTTP 401
 is not retried. Retry-After above 120 seconds stops safely for a later resume.
 Read `ffp://seo-worker/contracts` for current schemas/rules; `resources/` contains
-the matching build-time copies. Current job context supplies store-specific rules.
+the matching build-time copies. V2 job context exposes only image IDs, niche and a
+versioned store profile. Fetch every image with `job_get_image`; source titles,
+descriptions, handles, variants, URLs, old alt text and performance facts are not
+generation inputs.
 
 Use `status` to check the token and `logout` to remove its local vault entry.
 Logout does not revoke other copies: use Agent Access → Revoke for that.

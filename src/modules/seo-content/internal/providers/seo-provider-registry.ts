@@ -9,10 +9,9 @@ import { createDefaultProductImageAnalyzer } from "../stages/b1-product-understa
 import { createDefaultShoppingContextAnalyzer } from "../stages/b2-shopping-context";
 import { createDefaultB5Generator } from "../stages/b5-content-generation";
 import { createDefaultKeywordConflictAnalyzer } from "../stages/b4-conflict-control";
-import { summarizeVariants } from "../variant-summarizer";
 
 export const DEFAULT_SEO_PROVIDER_ID = "gemini";
-export const DEFAULT_SEO_PIPELINE_VERSION = "seo-b1-b6-v1";
+export const DEFAULT_SEO_PIPELINE_VERSION = "seo-b1-b6-v2";
 
 export interface SeoProviderRuntime {
   readonly providerId: string;
@@ -72,14 +71,12 @@ export function normalizeProviderId(providerId: string | undefined): string {
   return (providerId ?? DEFAULT_SEO_PROVIDER_ID).trim().toLowerCase();
 }
 
-/** Removes raw variants before the immutable pipeline/provider context is built. */
+/** Freezes the exact three-field semantic contract before provider execution. */
 export function prepareSeoProviderInput(input: SeoContentInput): SeoContentInput {
-  const { variants, ...providerSafeInput } = input;
   return Object.freeze({
-    ...providerSafeInput,
-    providerId: normalizeProviderId(input.providerId),
-    pipelineVersion: input.pipelineVersion?.trim() || DEFAULT_SEO_PIPELINE_VERSION,
-    variantSummary: input.variantSummary ?? summarizeVariants(variants),
+    images: Object.freeze(input.images.map((image) => Object.freeze({ ...image }))),
+    niche: input.niche,
+    storeProfile: Object.freeze({ ...input.storeProfile }),
   });
 }
 
@@ -99,7 +96,6 @@ export function createGeminiSeoProviderFactory(): SeoProviderFactory {
         model,
         imageAnalyzer: createDefaultProductImageAnalyzer({
           ...options.requestOptions,
-          maxImages: options.imageMode === "alt_only" ? 1 : undefined,
           onFallback: (error) => observePrimaryFailure("b1", error),
         }),
         shoppingContextAnalyzer: createDefaultShoppingContextAnalyzer({

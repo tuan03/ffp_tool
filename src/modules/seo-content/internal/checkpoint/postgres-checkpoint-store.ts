@@ -40,13 +40,13 @@ export class PostgresSeoCheckpointStore implements SeoCheckpointStore {
         metadata,created_at,updated_at,expires_at
        FROM seo_pipeline_runs WHERE input_hash=$1`, [inputHash]);
     if (!header) return null;
+    if (header.metadata.checkpointSchemaVersion !== 2) return null;
     const rows = await queryRows<StageRow>(this.pool,
       "SELECT stage,checkpoint FROM seo_stage_checkpoints WHERE input_hash=$1 ORDER BY stage", [inputHash]);
     const stages: Record<string, SeoStageCheckpoint> = {};
     for (const row of rows) stages[row.stage] = row.checkpoint;
-    const schemaVersion = header.metadata.checkpointSchemaVersion === 1 ? 1 : 1;
     return {
-      schemaVersion,
+      schemaVersion: 2,
       inputHash: header.input_hash,
       storeId: header.store_id ?? undefined,
       productId: header.product_id ?? undefined,

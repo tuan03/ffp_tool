@@ -5,21 +5,26 @@ export const seoContentMockInput: SeoContentInput = {
     {
       id: "img-mock-1",
       url: "https://example.com/assets/halloween-cat-rug-main.jpg",
-      alt: "Vintage distressed black cat Halloween rug styled in living room",
-      localFilePath: "/temp/assets/halloween-cat-rug-main.jpg",
     },
     {
       id: "img-mock-2",
       url: "https://example.com/assets/halloween-cat-rug-detail.jpg",
-      alt: "Close-up detail of textured fabric and stitching on black cat rug",
-      localFilePath: "/temp/assets/halloween-cat-rug-detail.jpg",
     },
   ],
   niche: "vintage distressed rug",
-  title: "Black Cat Halloween Rug - Spooky Vintage Living Room Area Mat",
-  description:
-    "<p>Elevate your seasonal decor with this vintage distressed Halloween rug featuring an eerie black cat and autumn botanicals. Crafted with low-pile washable fabric, it brings cozy gothic charm to living rooms, entryways, or covered porches.</p>",
-  handle: "vintage-black-cat-halloween-rug",
+  storeProfile: {
+    profileId: "mock-home-decor",
+    profileVersion: "2.0.0",
+    storeId: "mock-store",
+    storeName: "Mock Store",
+    locale: "en-US",
+    language: "English",
+    niche: "Home Decor",
+    brandVoice: ["clear"],
+    contentRules: ["Use visible image evidence only."],
+    prohibitedClaims: ["Do not infer hidden materials."],
+    seoConstraints: { maxTitleCharacters: 70, maxDescriptionCharacters: 160, maxAltCharacters: 125 },
+  },
 };
 
 export const seoContentMockData: SeoContentOutput = {
@@ -60,7 +65,6 @@ export const seoContentMockData: SeoContentOutput = {
       },
     },
   ],
-  productHandle: "vintage-black-cat-halloween-rug",
   aeo_quick_summary:
     "The Vintage Black Cat Halloween Rug is a low-pile polyester area rug designed for vintage and gothic decor enthusiasts. Featuring an eerie black cat and autumn botanicals with non-slip TPR backing, it provides durable, machine-washable seasonal charm for living rooms and entryways.",
   aeo_faq: [

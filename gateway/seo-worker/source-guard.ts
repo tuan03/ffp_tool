@@ -8,11 +8,11 @@ import { SeoWorkerError } from "./protocol";
 /** No network request is made while holding a repository transaction. */
 export function createWorkerSourceGuard(dispatcher: Pick<GatewayDispatcher, "dispatch">): (job: GptSeoJob) => Promise<void> {
   return async job => {
-    if (!job.input.productId && job.source !== "auto_seo") return;
-    const source = z.object({ updatedAt: z.string().min(1) }).safeParse(job.original);
+    if (!job.execution.productId && job.execution.source !== "auto_seo") return;
+    const source = z.object({ updatedAt: z.string().min(1) }).safeParse(job.execution.originalSnapshot);
     if (!source.success) throw new SeoWorkerError("SOURCE_VERSION_REQUIRED");
-    const id = job.input.productId ?? job.sourceIdentity;
-    const response = await dispatcher.dispatch({ storeId: job.storeId, operation: "products.get", payload: {
+    const id = job.execution.productId ?? job.execution.sourceIdentity;
+    const response = await dispatcher.dispatch({ storeId: job.execution.storeId, operation: "products.get", payload: {
       id: id.startsWith("gid://shopify/Product/") ? id : `gid://shopify/Product/${id}`,
     } });
     if (!response.success) throw new SeoWorkerError("SOURCE_UNAVAILABLE");

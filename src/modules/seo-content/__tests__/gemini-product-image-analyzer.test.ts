@@ -9,16 +9,20 @@ const response = JSON.stringify({
   visualEntities: "Media player interface with a cloud-head portrait.",
   sceneContext: "Home studio with guitars and monitor speakers.",
   physicalProductIdentity: "area rug",
+  identityCandidates: ["area rug"],
+  excludedSceneEntities: ["guitars", "monitor speakers"],
+  confidence: 0.96,
+  reviewRequired: false,
 });
 
 test("Gemini B1 batches readable images and preserves their supplied order", async () => {
   const generator = new FakeGeminiContentGenerator(response);
   const analyzer = new GeminiProductImageAnalyzer({ generator });
   const result = await analyzer.analyze({
-    title: "Music rug", description: "", niche: "personalized rug",
+    niche: "personalized rug",
     images: [
-      { url: "data:image/webp;base64,UklGRg4AAABXRUJQVlA4IAIAAAACAA==" },
-      { url: "data:image/webp;base64,UklGRg4AAABXRUJQVlA4IAIAAAACAA==" },
+      { id: "one", url: "data:image/webp;base64,UklGRg4AAABXRUJQVlA4IAIAAAACAA==" },
+      { id: "two", url: "data:image/webp;base64,UklGRg4AAABXRUJQVlA4IAIAAAACAA==" },
     ],
   });
   assert.equal(generator.calls.length, 1);
@@ -27,54 +31,53 @@ test("Gemini B1 batches readable images and preserves their supplied order", asy
   assert.equal(result.physicalProductIdentity, "area rug");
 });
 
-test("Gemini B1 omits unreadable images without abandoning remaining pixel evidence", async () => {
+test("Gemini B1 fails closed when any supplied image is unreadable", async () => {
+  const generator = new FakeGeminiContentGenerator(response);
+  const analyzer = new GeminiProductImageAnalyzer({ generator });
+  await assert.rejects(analyzer.analyze({
+    niche: "personalized rug",
+    images: [
+      { id: "broken", url: "https://127.0.0.1/not-available.webp" },
+      { id: "readable", url: "data:image/webp;base64,UklGRg4AAABXRUJQVlA4IAIAAAACAA==" },
+    ],
+  }), /Every supplied image must be readable/);
+  assert.equal(generator.calls.length, 0);
+});
+
+test("Gemini B1 ignores maxImages and covers the complete evidence batch", async () => {
   const generator = new FakeGeminiContentGenerator(response);
   const analyzer = new GeminiProductImageAnalyzer({ generator });
   await analyzer.analyze({
-    title: "Music rug", description: "", niche: "personalized rug",
+    niche: "personalized rug",
     images: [
-      { url: "https://127.0.0.1/not-available.webp" },
-      { url: "data:image/webp;base64,UklGRg4AAABXRUJQVlA4IAIAAAACAA==" },
-    ],
-  });
-  assert.equal(generator.calls[0].imagePayloads.length, 1);
-});
-
-test("Gemini B1 limits analysis to maxImages when specified", async () => {
-  const generator = new FakeGeminiContentGenerator(response);
-  const analyzer = new GeminiProductImageAnalyzer({ generator, maxImages: 1 });
-  await analyzer.analyze({
-    title: "Music rug", description: "", niche: "personalized rug",
-    images: [
-      { url: "data:image/webp;base64,UklGRg4AAABXRUJQVlA4IAIAAAACAA==" },
-      { url: "data:image/webp;base64,UklGRg4AAABXRUJQVlA4IAIAAAACAA==" },
+      { id: "one", url: "data:image/webp;base64,UklGRg4AAABXRUJQVlA4IAIAAAACAA==" },
+      { id: "two", url: "data:image/webp;base64,UklGRg4AAABXRUJQVlA4IAIAAAACAA==" },
     ],
   });
   assert.equal(generator.calls.length, 1);
-  assert.equal(generator.calls[0].imagePayloads.length, 1);
-  assert.match(generator.calls[0].prompt, /batch \(1 readable image in supplied order\)/);
+  assert.equal(generator.calls[0].imagePayloads.length, 2);
+  assert.match(generator.calls[0].prompt, /batch \(2 readable images in supplied order\)/);
 });
 
-test("Gemini B1 tries the next image when the preferred image cannot be read", async () => {
+test("Gemini B1 rejects a batch instead of skipping an unreadable preferred image", async () => {
   const generator = new FakeGeminiContentGenerator(response);
-  const analyzer = new GeminiProductImageAnalyzer({ generator, maxImages: 1 });
-  await analyzer.analyze({
-    title: "Music rug", description: "", niche: "rug",
+  const analyzer = new GeminiProductImageAnalyzer({ generator });
+  await assert.rejects(analyzer.analyze({
+    niche: "rug",
     images: [
-      { url: "invalid://preferred.jpg" },
-      { url: "data:image/webp;base64,UklGRg4AAABXRUJQVlA4IAIAAAACAA==" },
+      { id: "preferred", url: "invalid://preferred.jpg" },
+      { id: "fallback", url: "data:image/webp;base64,UklGRg4AAABXRUJQVlA4IAIAAAACAA==" },
     ],
-  });
-  assert.equal(generator.calls.length, 1);
-  assert.equal(generator.calls[0].imagePayloads.length, 1);
+  }), /Every supplied image must be readable/);
+  assert.equal(generator.calls.length, 0);
 });
 
 test("Gemini B1 reports image read failures without exposing image URLs", async () => {
-  const analyzer = new GeminiProductImageAnalyzer({ generator: new FakeGeminiContentGenerator(), maxImages: 1 });
+  const analyzer = new GeminiProductImageAnalyzer({ generator: new FakeGeminiContentGenerator() });
   await assert.rejects(
     analyzer.analyze({
-      title: "Music rug", description: "", niche: "rug",
-      images: [{ url: "invalid://private-first.jpg" }, { url: "invalid://private-second.jpg" }],
+      niche: "rug",
+      images: [{ id: "one", url: "invalid://private-first.jpg" }, { id: "two", url: "invalid://private-second.jpg" }],
     }),
     (error: unknown) => error instanceof Error && /tried 2 images/.test(error.message)
       && !error.message.includes("private-first") && !error.message.includes("private-second"),
@@ -99,8 +102,8 @@ test("GeminiProductImageAnalyzer limits concurrent analysis calls via semaphore"
   const analyzer = new GeminiProductImageAnalyzer({ generator, semaphore });
 
   const input = {
-    title: "Music rug", description: "", niche: "personalized rug",
-    images: [{ url: "data:image/webp;base64,UklGRg4AAABXRUJQVlA4IAIAAAACAA==" }],
+    niche: "personalized rug",
+    images: [{ id: "hero", url: "data:image/webp;base64,UklGRg4AAABXRUJQVlA4IAIAAAACAA==" }],
   };
 
   await Promise.all([
@@ -139,8 +142,8 @@ test("GeminiProductImageAnalyzer retries on 429 using exponential backoff retry"
   });
 
   const result = await analyzer.analyze({
-    title: "Music rug", description: "", niche: "personalized rug",
-    images: [{ url: "data:image/webp;base64,UklGRg4AAABXRUJQVlA4IAIAAAACAA==" }],
+    niche: "personalized rug",
+    images: [{ id: "hero", url: "data:image/webp;base64,UklGRg4AAABXRUJQVlA4IAIAAAACAA==" }],
   });
 
   assert.equal(attempts, 2);
@@ -188,10 +191,8 @@ test("GeminiProductImageAnalyzer forwards retryOptions to GoogleGenAIVertexConte
   await assert.rejects(
     async () => {
       await analyzer.analyze({
-        title: "Music rug",
-        description: "",
         niche: "personalized rug",
-        images: [{ url: "data:image/webp;base64,UklGRg4AAABXRUJQVlA4IAIAAAACAA==" }],
+        images: [{ id: "hero", url: "data:image/webp;base64,UklGRg4AAABXRUJQVlA4IAIAAAACAA==" }],
       });
     },
     /429 RESOURCE_EXHAUSTED/,

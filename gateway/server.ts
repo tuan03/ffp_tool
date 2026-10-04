@@ -193,7 +193,10 @@ export function startGatewayServer(
         const runtime = getCustomGptRuntime(); await runtime.initialize();
         await handleWorkerMcp(req, res, runtime.queue.workers, createWorkerWorkflow(runtime.queue.workers, {
           checkSource: createWorkerSourceGuard(dispatcher),
-          performanceEvidence: async job => getPerformanceService()?.workerProductEvidence(job.storeId, job.input.productId ?? job.sourceIdentity) ?? { status: "disabled" },
+          performanceEvidence: async job => getPerformanceService()?.workerProductEvidence(
+            job.execution.storeId,
+            job.execution.productId ?? job.execution.sourceIdentity,
+          ) ?? { status: "disabled" },
         }), getPerformanceService);
       } catch { if (!res.headersSent) { res.writeHead(503, { "Content-Type": "application/json" }); res.end(JSON.stringify({ error: { code: "WORKER_UNAVAILABLE" } })); } }
       return;

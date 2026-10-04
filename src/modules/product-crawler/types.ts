@@ -267,7 +267,8 @@ export interface ParsedInputRow {
   error?: string;
 }
 
-export interface SeoContentInput {
+/** Operational crawler snapshot; it is not the SEO Content generation contract. */
+export interface CrawlerSeoHandoffSource {
   productId: string;
   title: string;
   description?: string;

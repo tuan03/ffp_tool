@@ -6,12 +6,29 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { CustomGptQueue } from "../custom-gpt-seo/queue";
+import { createTestEnqueue } from "./seo-v2-fixtures";
 
 const source = { title: "Cotton rug", description: "A cotton rug", handle: "cotton-rug", niche: "rugs", images: [{ id: "front", url: "https://example.com/rug.jpg" }] };
+type LegacyEnqueue = { readonly storeId: string; readonly source: "amazon" | "auto_seo"; readonly sourceIdentity: string;
+  readonly sourceRevision?: string; readonly input: typeof source & Record<string, unknown>; readonly original: unknown;
+  readonly settings?: Parameters<CustomGptQueue["configure"]>[1] & { readonly version?: number };
+  readonly performanceRecommendationId?: string };
+type TestQueue = Omit<CustomGptQueue, "enqueue"> & { enqueue(input: LegacyEnqueue): ReturnType<CustomGptQueue["enqueue"]> };
+function testQueue(queue: CustomGptQueue): TestQueue {
+  const enqueue = queue.enqueue.bind(queue);
+  return new Proxy(queue, { get(target, property) {
+    if (property === "enqueue") return (legacy: LegacyEnqueue) => enqueue(createTestEnqueue({ storeId: legacy.storeId,
+      source: legacy.source, sourceIdentity: legacy.sourceIdentity, sourceRevision: legacy.sourceRevision,
+      original: legacy.original, input: { images: legacy.input.images, niche: legacy.input.niche },
+      settings: legacy.settings as Parameters<typeof enqueue>[0]["settings"], performanceRecommendationId: legacy.performanceRecommendationId }));
+    const value: unknown = Reflect.get(target, property, target);
+    return typeof value === "function" ? value.bind(target) : value;
+  } }) as unknown as TestQueue;
+}
 function setup() {
   let now = 1_000;
   const db = new DatabaseSync(":memory:");
-  const queue = new CustomGptQueue(db, () => now);
+  const queue = testQueue(new CustomGptQueue(db, () => now));
   return { db, queue, advance: () => { now += 31 * 60_000; } };
 }
 test("Custom GPT queue deduplicates source revisions and isolates stores", () => {
@@ -135,8 +152,8 @@ test("separate queue connections claim disjoint jobs for separate owners", () =>
   const firstDb = new DatabaseSync(filename);
   const secondDb = new DatabaseSync(filename);
   try {
-    const firstQueue = new CustomGptQueue(firstDb);
-    const secondQueue = new CustomGptQueue(secondDb);
+    const firstQueue = testQueue(new CustomGptQueue(firstDb));
+    const secondQueue = testQueue(new CustomGptQueue(secondDb));
     const settings = firstQueue.configure("capozen", { provider: "codex_mcp", batchSize: 2 });
     for (const sourceIdentity of ["one", "two", "three", "four"]) {
       firstQueue.enqueue({ storeId: "capozen", source: "auto_seo", sourceIdentity, input: { ...source, title: sourceIdentity }, original: {}, settings });
@@ -166,7 +183,7 @@ test("queue migrates version two batch owners by provider", () => {
       PRAGMA user_version=2;
     `);
 
-    const queue = new CustomGptQueue(db, () => 1_000);
+    const queue = testQueue(new CustomGptQueue(db, () => 1_000));
 
     assert.equal(queue.activeBatch("capozen", "codex_mcp:default")?.id, "codex-batch");
     assert.equal(queue.activeBatch("capozen", "custom_gpt")?.id, "custom-batch");
@@ -185,7 +202,7 @@ test("queue migrates legacy jobs and batches to the Custom GPT provider", () => 
     const legacyJob = { storeId: "capozen", source: "amazon", sourceIdentity: "LEGACY", inputHash: "hash", input: source, original: {}, settings: { provider: "custom_gpt", batchSize: 5, version: 1, language: "en-US", instructions: "facts" }, id: "legacy-job", status: "PENDING", checkpoints: {}, createdAt: 1, updatedAt: 1 };
     db.prepare("INSERT INTO gpt_jobs VALUES (?,?,?,?,?,?,?)").run("legacy-job", "capozen", "legacy-dedup", "PENDING", null, JSON.stringify(legacyJob), 1);
 
-    const queue = new CustomGptQueue(db);
+    const queue = testQueue(new CustomGptQueue(db));
 
     assert.equal(db.prepare("SELECT provider FROM gpt_jobs WHERE id=?").get("legacy-job")?.provider, "custom_gpt");
     assert.equal(queue.claim("capozen", "legacy-claim", "custom_gpt", "custom_gpt").jobs[0]?.id, "legacy-job");
@@ -211,7 +228,7 @@ test("changing source revision cancels the older pending job", () => {
   const { queue, db } = setup();
   try {
     const first = queue.enqueue({ storeId: "capozen", source: "amazon", sourceIdentity: "ASIN", input: source, original: {} });
-    queue.enqueue({ storeId: "capozen", source: "amazon", sourceIdentity: "ASIN", input: { ...source, title: "Updated rug" }, original: {} });
+    queue.enqueue({ storeId: "capozen", source: "amazon", sourceIdentity: "ASIN", sourceRevision: "v2", input: source, original: {} });
     assert.equal(queue.get("capozen", first.id).status, "CANCELLED");
   } finally { db.close(); }
 });
@@ -318,10 +335,10 @@ test("1000 jobs drain in bounded batches and survive database reopen", () => {
   const filename = join(folder, "queue.sqlite3");
   let db = new DatabaseSync(filename);
   try {
-    let queue = new CustomGptQueue(db);
+    let queue = testQueue(new CustomGptQueue(db));
     queue.configure("capozen", { provider: "custom_gpt", batchSize: 10 });
     for (let index = 0; index < 1000; index++) queue.enqueue({ storeId: "capozen", source: "auto_seo", sourceIdentity: String(index), input: source, original: {} });
-    db.close(); db = new DatabaseSync(filename); queue = new CustomGptQueue(db);
+    db.close(); db = new DatabaseSync(filename); queue = testQueue(new CustomGptQueue(db));
     assert.equal(queue.counts("capozen").PENDING, 1000);
     const completed = new Set<string>();
     for (let index = 0; index < 100; index++) {
@@ -351,7 +368,7 @@ test("human sync claims fence duplicate browser writes and retain uncertain outc
     queue.saveReviewState("capozen", job.id, { reviewDecision: "approved" });
     const token = queue.beginSync("capozen", job.id);
     assert.throws(() => queue.beginSync("capozen", job.id), /sync/i);
-    queue.enqueue({ storeId: "capozen", source: "auto_seo", sourceIdentity: "1", input: { ...source, title: "Newer source" }, original: {} });
+    queue.enqueue({ storeId: "capozen", source: "auto_seo", sourceIdentity: "1", sourceRevision: "v2", input: source, original: {} });
     assert.equal(queue.get("capozen", job.id).status, "REVIEW_READY", "An in-flight write cannot be superseded");
     queue.finishSync("capozen", job.id, token, "UNKNOWN");
     assert.throws(() => queue.beginSync("capozen", job.id), /sync/i);
@@ -388,7 +405,7 @@ test("late validation failures and issue reports cannot resurrect superseded job
     const job = queue.enqueue({ storeId: "capozen", source: "amazon", sourceIdentity: "ASIN", input: source, original: {} });
     const batch = queue.claim("capozen", "claim", "custom_gpt", "custom_gpt");
     queue.checkpoint("capozen", job.id, { batchId: batch.id, leaseToken: batch.leaseToken, requestId: "submit", stage: "submission", payload: {} });
-    queue.enqueue({ storeId: "capozen", source: "amazon", sourceIdentity: "ASIN", input: { ...source, title: "New rug" }, original: {} });
+    queue.enqueue({ storeId: "capozen", source: "amazon", sourceIdentity: "ASIN", sourceRevision: "v2", input: source, original: {} });
     queue.failValidation("capozen", job.id, "late failure");
     assert.equal(queue.get("capozen", job.id).status, "CANCELLED");
     assert.throws(() => queue.issue("capozen", job.id, batch.id, batch.leaseToken, "missing"), /state/i);

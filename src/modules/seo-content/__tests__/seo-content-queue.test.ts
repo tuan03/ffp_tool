@@ -2,34 +2,33 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import { createSeoContentQueue, SeoContentQueue } from "../queue";
+import { JEMINISE_BEDDING_PROFILE } from "../service";
 import type {
   SeoQueueItem,
   SeoQueueProgressStats,
 } from "../queue";
 import type { SeoContentInput, SeoContentOutput } from "../types";
 
-function createSampleSeoInput(id: string, title: string): SeoContentInput {
+function createSampleSeoInput(id: string, _label: string): SeoContentInput {
   return {
-    productId: id,
-    title,
-    description: `Sample description for ${title}`,
-    handle: `sample-${id}`,
     niche: "Home Decor",
-    images: [{ url: `https://example.com/img-${id}.jpg`, alt: title }],
+    images: [{ id, url: `https://example.com/img-${id}.jpg` }],
+    storeProfile: JEMINISE_BEDDING_PROFILE,
   };
 }
 
 function createSampleSeoOutput(input: SeoContentInput): SeoContentOutput {
+  const id = input.images[0]?.id ?? "product";
   return {
-    productTitle: `${input.title} - Optimized`,
-    productSeoTitle: `${input.title} | Brand`,
-    productSeoDescription: `Optimized description for ${input.title}.`,
-    productDescription: `<p>Optimized description for ${input.title}.</p>`,
-    productHandle: input.handle || "optimized-product",
+    productTitle: `Product ${id} - Optimized`,
+    productSeoTitle: `Product ${id} | Brand`,
+    productSeoDescription: `Optimized product description for ${id}.`,
+    productDescription: `<p>Optimized product description for ${id}.</p>`,
+    productHandle: `product-${id}`,
     images: input.images.map((img) => ({
       sourceUrl: img.url,
-      alt: `${input.title} - High Quality`,
-      webp: { filename: `${input.handle || "product"}.webp` },
+      alt: `Product ${id} - High Quality`,
+      webp: { filename: `product-${id}.webp` },
     })),
   };
 }
@@ -42,9 +41,9 @@ describe("SeoContentQueue - Universal FIFO Queue Engine", () => {
     const queue = createSeoContentQueue({
       concurrency: 1,
       runner: async (input) => {
-        startOrder.push(input.productId || "");
+        startOrder.push(input.images[0]?.id ?? "");
         await new Promise((resolve) => setTimeout(resolve, 30));
-        finishOrder.push(input.productId || "");
+        finishOrder.push(input.images[0]?.id ?? "");
         return createSampleSeoOutput(input);
       },
     });
@@ -107,17 +106,17 @@ describe("SeoContentQueue - Universal FIFO Queue Engine", () => {
     const queue = createSeoContentQueue({
       concurrency: 1,
       runner: async (input) => {
-        if (input.productId === "error-prod") {
+        if (input.images[0]?.id === "error-prod") {
           throw new Error("Gemini AI 429: Resource has been exhausted");
         }
         await new Promise((resolve) => setTimeout(resolve, 10));
         return createSampleSeoOutput(input);
       },
       onItemCompleted: (item) => {
-        completedIds.push(item.seoInput.productId || "");
+        completedIds.push(item.seoInput.images[0]?.id ?? "");
       },
       onItemFailed: (item, error) => {
-        failedEvents.push({ id: item.seoInput.productId || "", error });
+        failedEvents.push({ id: item.seoInput.images[0]?.id ?? "", error });
       },
     });
 
@@ -160,13 +159,13 @@ describe("SeoContentQueue - Universal FIFO Queue Engine", () => {
         return createSampleSeoOutput(input);
       },
       onItemEnqueued: (item) => {
-        enqueued.push(item.seoInput.productId || "");
+        enqueued.push(item.seoInput.images[0]?.id ?? "");
       },
       onItemStarted: (item) => {
-        started.push(item.seoInput.productId || "");
+        started.push(item.seoInput.images[0]?.id ?? "");
       },
       onItemCompleted: (item, output) => {
-        completed.push(item.seoInput.productId || "");
+        completed.push(item.seoInput.images[0]?.id ?? "");
         assert.ok(output.productTitle.includes("Optimized"));
         assert.equal(item.source?.customMeta, "meta-val");
       },

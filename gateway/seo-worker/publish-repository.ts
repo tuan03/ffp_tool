@@ -91,11 +91,11 @@ export class SeoPublishRepository {
       const review = reviewSchema.safeParse(JSON.parse(String(row.review)));
       if (!review.success) throw new SeoWorkerError("APPROVED_REVIEW_REQUIRED");
       if (review.data.updatedAt !== input.reviewUpdatedAt) throw new SeoWorkerError("VERSION_CONFLICT");
-      const job = z.object({ input: z.object({ productId: z.string().regex(/^(gid:\/\/shopify\/Product\/)?\d+$/) }),
-        original: z.object({ updatedAt: z.string().min(1), seoVersion: z.number().int().nonnegative().optional() }) }).safeParse(JSON.parse(String(row.payload)));
+      const job = z.object({ execution: z.object({ productId: z.string().regex(/^(gid:\/\/shopify\/Product\/)?\d+$/),
+        originalSnapshot: z.object({ updatedAt: z.string().min(1), seoVersion: z.number().int().nonnegative().optional() }) }) }).safeParse(JSON.parse(String(row.payload)));
       if (!job.success) throw new SeoWorkerError("SOURCE_VERSION_REQUIRED");
       if ((await sql.query("SELECT job_id FROM gpt_sync WHERE job_id=$1", [input.jobId])).rows.length) throw new SeoWorkerError("SYNC_ALREADY_STARTED");
-      const productId = job.data.input.productId.replace(/^gid:\/\/shopify\/Product\//, "");
+      const productId = job.data.execution.productId.replace(/^gid:\/\/shopify\/Product\//, "");
       const active = (await sql.query("SELECT id FROM seo_publish_operations WHERE store_id=$1 AND product_id=$2 AND state!='SUCCEEDED' AND superseded_by IS NULL", [input.storeId, productId])).rows[0];
       if (active) throw new SeoWorkerError("PRODUCT_PUBLISH_ACTIVE");
       const fields: PublishFields = { title: review.data.productTitle.value, descriptionHtml: review.data.productDescription.value,
@@ -109,7 +109,7 @@ export class SeoPublishRepository {
       const id = randomUUID();
       const created = (await sql.query(`INSERT INTO seo_publish_operations(id,job_id,store_id,product_id,request_id,review_revision,operator,fields,source_version,baseline_version,state,created_at,updated_at,review_fingerprint)
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,'QUEUED',$11,$11,$12) RETURNING *`,
-      [id, input.jobId, input.storeId, productId, input.requestId, input.reviewUpdatedAt, input.operator, JSON.stringify(fields), job.data.original.updatedAt, job.data.original.seoVersion ?? 0, this.now(), reviewFingerprint(review.data)])).rows[0];
+      [id, input.jobId, input.storeId, productId, input.requestId, input.reviewUpdatedAt, input.operator, JSON.stringify(fields), job.data.execution.originalSnapshot.updatedAt, job.data.execution.originalSnapshot.seoVersion ?? 0, this.now(), reviewFingerprint(review.data)])).rows[0];
       await sql.query("INSERT INTO gpt_sync(job_id,token,status) VALUES ($1,$2,'SYNCING')", [input.jobId, id]);
       return operation(created);
     });
