@@ -4,10 +4,11 @@
 > Nguồn yêu cầu: `D:\Shopify_Workspace\distributed_crawler_agent_server_task_spec.md`, các mục 1–58.
 > Trạng thái: **đề xuất để duyệt, chưa phải tính năng đã triển khai hoặc kết quả nghiệm thu**.
 > Phạm vi lần làm này: đọc đặc tả, đối chiếu source/test, viết kế hoạch. Không đổi code, database, container, agent hoặc VPS.
+> Cập nhật cách thực hiện: dùng [checklist từng task](distributed-crawler-agent-audit-checklist.md) làm sổ tiến độ chính. Tài liệu này giữ vai trò giải thích kiến trúc và kỹ thuật. Chưa task triển khai nào được bắt đầu; chờ người dùng đọc và duyệt docs.
 
 ## 1. Kết luận trước: nên làm gì và chưa nên làm gì?
 
-Không nên giao 58 mục thành 58 task độc lập, cũng không nên viết lại crawler từ đầu. Hệ thống hiện tại đã có nhiều phần reliability: Coordinator, lease, heartbeat, SQLite spool, reconnect, retry, hủy job, lịch sử attempt và giao diện giám sát.
+Không nên coi 58 mục là 58 thay đổi triển khai độc lập, cũng không nên viết lại crawler từ đầu. Hệ thống hiện tại đã có nhiều phần reliability: Coordinator dùng PostgreSQL cho dữ liệu server; agent trên máy crawler dùng SQLite làm vùng đệm cục bộ khi mất mạng. Lease, heartbeat, reconnect, retry, hủy job, lịch sử attempt và giao diện giám sát đều đã có nền.
 
 Nâng cấp này thực chất gồm ba lớp:
 
@@ -27,7 +28,7 @@ Thứ tự đề xuất:
 | E5 | Config version, drain, self-test, update/rollback có kiểm chứng | Chỉ cập nhật từ xa khi đã biết dừng và bảo toàn dữ liệu |
 | E6 | Groups, scheduler, fleet circuit breaker, thử tải | Tối ưu sau khi correctness và khả năng phục hồi đã ổn |
 
-**Đề nghị giao trước E0, sau đó E1.1–E1.3; chưa giao auto-update hoặc dashboard tổng hợp lớn.** Có thể thiết kế auth E2 trong lúc review E1, nhưng không đưa những thay đổi phụ thuộc vào production trước khi E1 qua cổng kiểm chứng.
+**Bắt đầu bằng Task 01 trong checklist: kiểm chứng hành vi lease hiện tại, chưa sửa runtime.** Sau mỗi task: assistant test → người dùng test/xem bằng chứng → người dùng xác nhận đạt và cho chuyển task tiếp theo. Không tự làm song song task khác trong lúc chờ duyệt. Các nhóm E0–E6 là cổng nghiệm thu, không phải yêu cầu làm cả nhóm trong một lần.
 
 Đây là kế hoạch theo rủi ro, không phải lịch cam kết theo ngày. Chốt thời lượng sau E0 dựa trên số người, baseline test và máy nghiệm thu thực tế.
 
@@ -63,6 +64,8 @@ control loop + execution workers + SQLite outbox + watchdog
 - Lưu ảnh/ZIP/binary trong durable volume; PostgreSQL lưu metadata và đường dẫn.
 
 ### Các phần ngoài phạm vi nâng cấp mặc định
+
+**Làm rõ PostgreSQL/SQLite:** kiểm tra read-only Docker local ngày 04/10/2026 xác nhận Coordinator kết nối PostgreSQL và có các bảng crawl/task/attempt/result; entrypoint `scripts/coordinator_app.py` bắt buộc PostgreSQL và truyền cùng kết nối cho Review Studio. SQLite `agent.sqlite3` thuộc máy agent, đúng yêu cầu local queue ở mục 16–17 của spec. Không có task chuyển agent sang PostgreSQL hoặc migrate lại server chỉ vì source còn nhắc SQLite. Kiểm tra này không chứng minh toàn bộ dữ liệu lịch sử trên VPS đã được migrate.
 
 - Không viết lại parser Amazon, đổi Shopify Sync/SEO hoặc đổi cách tạo ảnh Review Studio.
 - Không thay extension + tab ChatGPT bằng API tạo ảnh.
@@ -205,7 +208,7 @@ Mạng bị cắt thì không thể hứa agent dừng tức thì. Server ngừn
 
 Viết transition table cho task/job/agent/command, response error/disposition, rule timeout, map tên trạng thái cũ sang mới. Không đổi hàng loạt string trong DB trước khi có adapter/migration.
 
-Chốt D1–D8; định nghĩa minimum protocol/capabilities và cách xử lý agent cũ. Version mới phải do implementation quyết định, không tự giả định tăng từ 5 thành một số cụ thể là đủ tương thích.
+Chốt quyết định liên quan trước từng task: D2 trước sửa lease, D3 trước đổi outbox/purge, D1/D5/D6 trước auth, D7/D8 trước remote stop. Không bắt trả lời toàn bộ D1–D8 để chạy bài kiểm chứng hiện trạng Task 01. Định nghĩa minimum protocol/capabilities và cách xử lý agent cũ trước thay contract tương ứng; không tự giả định tăng từ 5 thành một số cụ thể là đủ tương thích.
 
 ### E0.3. Rà soát updater đang làm
 
@@ -436,7 +439,7 @@ Mỗi hàng là một lát cắt có thể review/demo. Nếu diff lớn, chia t
 | E5.3 | Signed update/rollback integration | E0.3, E5.2 | Clean-machine release rehearsal |
 | E6 | Groups/scheduler/breaker/load | G4; phần rollout cần G5 | Measured scale report |
 
-E1.1 và E1.2 có thể được thiết kế song song nhưng phải integration-test chung trước rollout. E3.3 cần task-level worker cancel; nếu executor hiện chưa hỗ trợ, kéo E4.2 lên trước E3.3. Không cho thứ tự số ticket che khuất dependency này.
+Các hàng trên là nhóm kỹ thuật; thứ tự thực thi nhỏ nằm trong checklist đi kèm. Không thực hiện song song khi người dùng yêu cầu duyệt từng task. E3.3 cần task-level worker cancel; checklist đưa kiểm tra/isolation worker trước hard stop và cancel task. Nếu phát hiện phụ thuộc mới, trình điều chỉnh thứ tự trước, không tự mở rộng task đang làm.
 
 ### Mẫu giao một task cụ thể
 
@@ -666,4 +669,4 @@ Không đánh dấu hoàn thành chỉ vì có endpoint, UI có nút, test regex
 10. Muốn giữ result quarantine/audit trong bao lâu, dung lượng dự kiến, ai có quyền xóa?
 11. Những task sếp/team đã làm ở nhánh khác là gì? Cần commit/PR để đối chiếu, tránh implement lại.
 
-**Bước tiếp theo đề nghị duyệt:** thực hiện E0.1–E0.3 trước, trình lại state/compatibility contract; sau đó làm E1 theo từng ticket. Chưa triển khai toàn bộ E1–E6 chỉ từ việc duyệt tài liệu tổng thể.
+**Bước tiếp theo:** người dùng đọc tài liệu này và checklist, xác nhận phạm vi Task 01 rồi mới bắt đầu. Duyệt docs không tự động cho phép chạy Task 01 hoặc triển khai toàn bộ E0–E6. Các câu hỏi được hỏi đúng lúc task cần quyết định, không dồn tất cả thành điều kiện bắt đầu bài kiểm chứng.
