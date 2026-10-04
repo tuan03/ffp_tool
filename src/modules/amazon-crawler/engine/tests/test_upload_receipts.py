@@ -9,9 +9,10 @@ from threading import Barrier
 
 from sqlalchemy import select, inspect, delete
 
-from engine.distributed.coordinator_models import Base, CrawlTask, CrawlProductItem, TaskResult, UploadReceipt, create_database_engine, create_session_factory
+from engine.distributed.coordinator_models import CrawlTask, CrawlProductItem, TaskResult, UploadReceipt, create_database_engine, create_session_factory
 from engine.distributed.coordinator_store import CoordinatorStore
 from engine.distributed.protocol import payload_checksum, utc_now
+from engine.tests.coordinator_test_support import create_coordinator_test_schema
 
 
 class UploadReceiptTests(unittest.TestCase):
@@ -21,7 +22,7 @@ class UploadReceiptTests(unittest.TestCase):
         self.initialize_fixture()
 
     def initialize_fixture(self):
-        Base.metadata.create_all(self.engine)
+        create_coordinator_test_schema(self.engine)
         self.sessions = create_session_factory(self.engine)
         self.store = CoordinatorStore(self.sessions)
         self.job = self.store.create_job({"urls": ["B0FR4MSS2H"]})

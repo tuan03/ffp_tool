@@ -40,6 +40,7 @@ from .coordinator_models import (
 )
 from .protocol import CLIENT_OFFLINE_SECONDS, LEASE_SECONDS, MAX_CRAWL_FAILURES, payload_checksum, settings_fingerprint, utc_iso, utc_now
 from .protocol import product_source_key as _source_key
+from .global_admission_gate import GlobalAdmissionGate, GlobalAdmissionGateEvent, GLOBAL_ADMISSION_GATE_ID
 from .coordinator_observability import CoordinatorObservability, bounded_agent_telemetry
 from ..observability import ERROR_LOG_FIELDS, redact, safe_fields
 
@@ -739,6 +740,72 @@ class CoordinatorStore(CoordinatorObservability):
             for job_id in job_ids:
                 self._refresh_job(session, job_id)
 
+    @staticmethod
+    def _admission_gate_payload(gate: GlobalAdmissionGate) -> dict[str, Any]:
+        return {
+            "state": gate.state,
+            "scope": gate.scope,
+            "revision": gate.revision,
+            "actor": gate.actor,
+            "reason": gate.reason,
+            "requestId": gate.request_id,
+            "updatedAt": utc_iso(gate.updated_at),
+        }
+
+    def get_global_admission_gate(self) -> dict[str, Any]:
+        with self.sessions() as session:
+            gate = session.get(GlobalAdmissionGate, GLOBAL_ADMISSION_GATE_ID)
+            if gate is None:
+                raise RuntimeError("Global crawler admission gate is not initialized.")
+            return self._admission_gate_payload(gate)
+
+    def set_global_admission_gate(
+        self, state: str, *, request_id: str, actor: str, reason: str,
+    ) -> dict[str, Any]:
+        if state not in {"OPEN", "STOPPED"}:
+            raise ValueError("Global admission state must be OPEN or STOPPED.")
+        if not request_id or len(request_id) > 32 or not actor.strip() or not reason.strip():
+            raise ValueError("request_id, actor and reason are required.")
+        with self.sessions.begin() as session:
+            gate = session.scalar(select(GlobalAdmissionGate)
+                .where(GlobalAdmissionGate.id == GLOBAL_ADMISSION_GATE_ID).with_for_update())
+            if gate is None:
+                raise RuntimeError("Global crawler admission gate is not initialized.")
+            prior_event = session.get(GlobalAdmissionGateEvent, request_id)
+            if prior_event is not None:
+                if (prior_event.state != state or prior_event.actor != actor
+                        or prior_event.reason != reason.strip()):
+                    raise ValueError("request_id was already used for a different admission-gate change.")
+                return {
+                    "state": prior_event.state,
+                    "scope": prior_event.scope,
+                    "revision": prior_event.revision,
+                    "actor": prior_event.actor,
+                    "reason": prior_event.reason,
+                    "requestId": prior_event.request_id,
+                    "updatedAt": utc_iso(prior_event.created_at),
+                    "replayed": True,
+                }
+            previous_state = gate.state
+            gate.state = state
+            gate.scope = "crawler"
+            gate.revision += 1
+            gate.actor = actor.strip()
+            gate.reason = reason.strip()
+            gate.request_id = request_id
+            gate.updated_at = utc_now()
+            session.add(GlobalAdmissionGateEvent(
+                request_id=request_id,
+                from_state=previous_state,
+                state=state,
+                scope="crawler",
+                revision=gate.revision,
+                actor=actor.strip(),
+                reason=reason.strip(),
+                created_at=gate.updated_at,
+            ))
+            return {**self._admission_gate_payload(gate), "replayed": False}
+
     def lease_tasks(self, client_id: str, available_slots: int) -> list[dict[str, Any]]:
         count = max(0, min(32, int(available_slots)))
         if count == 0:
@@ -746,6 +813,11 @@ class CoordinatorStore(CoordinatorObservability):
         now = utc_now()
         leases: list[dict[str, Any]] = []
         with self.sessions.begin() as session:
+            admission_gate = session.scalar(select(GlobalAdmissionGate)
+                .where(GlobalAdmissionGate.id == GLOBAL_ADMISSION_GATE_ID)
+                .with_for_update(read=True))
+            if admission_gate is None or admission_gate.state != "OPEN":
+                return []
             client = session.get(ClientRecord, client_id)
             if client is None or client.status == "paused":
                 return []

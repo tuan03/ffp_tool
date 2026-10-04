@@ -210,11 +210,12 @@ class AgentOutboxDeliveryTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_lost_ack_retries_durable_result_without_recrawling(self):
         from sqlalchemy import select
-        from engine.distributed.coordinator_models import Base, TaskResult, UploadReceipt, create_database_engine, create_session_factory
+        from engine.distributed.coordinator_models import TaskResult, UploadReceipt, create_database_engine, create_session_factory
         from engine.distributed.coordinator_store import CoordinatorStore
+        from engine.tests.coordinator_test_support import create_coordinator_test_schema
         engine = create_database_engine(f"sqlite:///{Path(self.directory.name).as_posix()}/coordinator.sqlite3")
         try:
-            Base.metadata.create_all(engine)
+            create_coordinator_test_schema(engine)
             sessions = create_session_factory(engine)
             coordinator = CoordinatorStore(sessions)
             job = coordinator.create_job({"urls": ["B0FR4MSS2H"]})

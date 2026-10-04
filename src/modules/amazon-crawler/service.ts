@@ -9,6 +9,8 @@ import type {
   AmazonCrawlerClientSummary,
   AmazonCrawlerClientsLoader,
   AmazonCrawlerCommandController,
+  AmazonCrawlerAdmissionGate,
+  AmazonCrawlerAdmissionGateController,
   AmazonCrawlerHydratedJob,
   AmazonCrawlerJobLoader,
   AmazonCrawlerJobSnapshot,
@@ -62,7 +64,7 @@ export function createCrawlerOperatorFetch(options: {
   return async (input, init) => {
     const target = new URL(input instanceof Request ? input.url : String(input), base);
     if (target.origin !== base.origin || target.username || target.password
-      || !/^\/api\/v1\/(clients|crawl-jobs|crawler-metrics|review-jobs|product-reviews|image-profiles)(\/|$)/.test(target.pathname)) {
+      || !/^\/api\/v1\/(clients|crawl-jobs|crawler-metrics|review-jobs|product-reviews|image-profiles|admission-gate)(\/|$)/.test(target.pathname)) {
       throw new Error("Operator credential destination rejected.");
     }
     options.sessionSignal?.throwIfAborted();
@@ -443,6 +445,42 @@ export function createAmazonCrawlerCommandController({
           detail: isRecord(event.detail) ? event.detail : {},
         })) : [],
       })).filter((entry) => entry.commandId.length > 0);
+    },
+  };
+}
+
+function readAdmissionGate(value: unknown): AmazonCrawlerAdmissionGate {
+  if (!isRecord(value) || (value.state !== "OPEN" && value.state !== "STOPPED")
+    || value.scope !== "crawler" || typeof value.revision !== "number") {
+    throw new AmazonCrawlerServiceError("Coordinator returned an invalid admission-gate response.", "INVALID_ENGINE_RESPONSE");
+  }
+  return {
+    state: value.state,
+    scope: "crawler",
+    revision: value.revision,
+    actor: typeof value.actor === "string" ? value.actor : null,
+    reason: typeof value.reason === "string" ? value.reason : null,
+    updatedAt: typeof value.updatedAt === "string" ? value.updatedAt : null,
+  };
+}
+
+export function createAmazonCrawlerAdmissionGateController({
+  engineUrl,
+  fetchImplementation = fetch,
+}: AmazonCrawlerClientOptions): AmazonCrawlerAdmissionGateController {
+  const baseUrl = normalizeEngineUrl(engineUrl);
+  return {
+    async load() {
+      const response = await fetchImplementation(`${baseUrl}/api/v1/admission-gate`, { cache: "no-store" });
+      return readAdmissionGate(await readJson(response));
+    },
+    async setState(state, reason) {
+      const response = await fetchImplementation(`${baseUrl}/api/v1/admission-gate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ requestId: crypto.randomUUID().replaceAll("-", ""), state, reason }),
+      });
+      return readAdmissionGate(await readJson(response));
     },
   };
 }

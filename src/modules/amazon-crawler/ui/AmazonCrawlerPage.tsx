@@ -12,6 +12,8 @@ import {
   type AmazonCrawlerClientSummary,
   type AmazonCrawlerClientsLoader,
   type AmazonCrawlerCommandController,
+  type AmazonCrawlerAdmissionGate,
+  type AmazonCrawlerAdmissionGateController,
   type AmazonCrawlerAgentCommandSummary,
   type AmazonCrawlerHandoverHandler,
   type AmazonCrawlerJobController,
@@ -73,6 +75,7 @@ export interface AmazonCrawlerPageProps {
   retryAmazonCrawlerSyncs?: AmazonCrawlerSyncRetrier;
   imageProcessingProfiles?: ImageProcessingProfileManager;
   amazonCrawlerCommands?: AmazonCrawlerCommandController;
+  amazonCrawlerAdmissionGate?: AmazonCrawlerAdmissionGateController;
 }
 
 const COMMON_PRODUCT_TYPES = [
@@ -195,6 +198,7 @@ export function AmazonCrawlerPage({
   loadAmazonCrawlerAgentRelease,
   loadAmazonCrawlerClients,
   amazonCrawlerCommands,
+  amazonCrawlerAdmissionGate,
   loadAmazonCrawlerJob,
   onHandoverToSeo,
   retryAmazonCrawlerSyncs,
@@ -238,6 +242,10 @@ export function AmazonCrawlerPage({
   const [commandHistories, setCommandHistories] = useState<Record<string, readonly AmazonCrawlerAgentCommandSummary[]>>({});
   const [commandBusyClientId, setCommandBusyClientId] = useState<string | null>(null);
   const [commandError, setCommandError] = useState<string | null>(null);
+  const [admissionGate, setAdmissionGate] = useState<AmazonCrawlerAdmissionGate | null>(null);
+  const [admissionGateReason, setAdmissionGateReason] = useState("");
+  const [admissionGateError, setAdmissionGateError] = useState<string | null>(null);
+  const [isChangingAdmissionGate, setIsChangingAdmissionGate] = useState(false);
   const [clientError, setClientError] = useState<string | null>(null);
   const [isLoadingClients, setIsLoadingClients] = useState(true);
   const [agentRelease, setAgentRelease] = useState<AmazonCrawlerAgentRelease | null>(null);
@@ -373,6 +381,17 @@ export function AmazonCrawlerPage({
   useEffect(() => {
     let isMounted = true;
     async function refreshClients(): Promise<void> {
+      if (amazonCrawlerAdmissionGate) {
+        try {
+          const gate = await amazonCrawlerAdmissionGate.load();
+          if (isMounted) {
+            setAdmissionGate(gate);
+            setAdmissionGateError(null);
+          }
+        } catch (caught: unknown) {
+          if (isMounted) setAdmissionGateError(caught instanceof Error ? caught.message : "Không tải được global crawler gate.");
+        }
+      }
       try {
         const nextClients = await loadAmazonCrawlerClients();
         if (!isMounted) return;
@@ -399,7 +418,30 @@ export function AmazonCrawlerPage({
       isMounted = false;
       window.clearInterval(intervalId);
     };
-  }, [loadAmazonCrawlerClients, amazonCrawlerCommands]);
+  }, [loadAmazonCrawlerClients, amazonCrawlerCommands, amazonCrawlerAdmissionGate]);
+
+  async function handleAdmissionGateChange(): Promise<void> {
+    if (!amazonCrawlerAdmissionGate || !admissionGate || isChangingAdmissionGate) return;
+    const nextState = admissionGate.state === "STOPPED" ? "OPEN" : "STOPPED";
+    const reason = admissionGateReason.trim();
+    if (reason.length < 3) {
+      setAdmissionGateError("Nhập lý do ít nhất 3 ký tự để ghi audit.");
+      return;
+    }
+    if (nextState === "STOPPED" && !window.confirm(
+      "Dừng cấp lease mới cho toàn bộ crawler? Task đang chạy sẽ tiếp tục; SEO/Shopify không bị dừng.",
+    )) return;
+    setIsChangingAdmissionGate(true);
+    setAdmissionGateError(null);
+    try {
+      setAdmissionGate(await amazonCrawlerAdmissionGate.setState(nextState, reason));
+      setAdmissionGateReason("");
+    } catch (caught: unknown) {
+      setAdmissionGateError(caught instanceof Error ? caught.message : "Không cập nhật được global crawler gate.");
+    } finally {
+      setIsChangingAdmissionGate(false);
+    }
+  }
 
   async function handleAgentExecutionCommand(client: AmazonCrawlerClientSummary): Promise<void> {
     if (!amazonCrawlerCommands || commandBusyClientId) return;
@@ -1271,6 +1313,30 @@ export function AmazonCrawlerPage({
         ) : null}
         {isLoadingClients ? <p className="mt-3 text-sm text-slate-400">Đang kiểm tra client...</p> : null}
         {clientError ? <p className="mt-3 text-sm text-rose-300">{clientError}</p> : null}
+        {amazonCrawlerAdmissionGate ? (
+          <div className={`mt-4 rounded-lg border p-3 ${admissionGate?.state === "STOPPED" ? "border-rose-700 bg-rose-950/40" : "border-slate-700 bg-slate-900/70"}`}>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-slate-100">
+                  Global crawler admission: {admissionGate?.state === "STOPPED" ? "STOPPED" : admissionGate ? "OPEN" : "đang tải…"}
+                </p>
+                <p className="mt-1 text-xs text-slate-400">Chỉ chặn cấp lease mới. Task đã nhận vẫn chạy; không hủy job và không dừng SEO/Shopify.</p>
+                {admissionGate?.actor ? <p className="mt-1 text-xs text-slate-500">Cập nhật bởi {admissionGate.actor} · {admissionGate.reason}</p> : null}
+              </div>
+              <button type="button" disabled={!admissionGate || isChangingAdmissionGate || admissionGateReason.trim().length < 3}
+                onClick={() => void handleAdmissionGateChange()}
+                className={`rounded-lg px-3 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50 ${admissionGate?.state === "STOPPED" ? "border border-emerald-700 text-emerald-200" : "border border-rose-700 text-rose-200"}`}>
+                {isChangingAdmissionGate ? "Đang lưu…" : admissionGate?.state === "STOPPED" ? "Mở lại nhận task" : "Dừng nhận task mới"}
+              </button>
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <input aria-label="Lý do đổi admission gate" className="min-w-64 flex-1 rounded border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100"
+                maxLength={500} placeholder="Lý do (bắt buộc, tối thiểu 3 ký tự)" value={admissionGateReason}
+                onChange={(event) => setAdmissionGateReason(event.target.value)} />
+            </div>
+            {admissionGateError ? <p className="mt-2 text-sm text-rose-300" role="alert">{admissionGateError}</p> : null}
+          </div>
+        ) : null}
         {commandError ? <p className="mt-3 text-sm text-rose-300" role="alert">{commandError}</p> : null}
         {!isLoadingClients && !clientError && clients.length === 0 ? <p className="mt-3 text-sm text-amber-300">Chưa có crawler agent đã đăng ký. Hãy mở FFP Amazon Crawler Agent.</p> : null}
         {clients.length > 0 ? (

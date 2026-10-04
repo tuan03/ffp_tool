@@ -15,11 +15,12 @@ from engine.playwright_pool import PlaywrightPool
 from engine.timeouts import CrawlTimeout, check_deadline, remaining_seconds, timeout_scope, transport_context
 from engine.cache import RawFamilyCache
 from engine.process_crawler import ProcessCrawler
-from engine.distributed.coordinator_models import Base, CrawlTask, create_database_engine, create_session_factory
+from engine.distributed.coordinator_models import CrawlTask, create_database_engine, create_session_factory
 from engine.distributed.coordinator_store import CoordinatorStore
 from engine.distributed.protocol import utc_now
 from engine.bounded_http import BoundedHTTPConnection
 from engine.tests.test_core import FakeBrowser, ParentFamilyCrawler, PRODUCT_HTML
+from engine.tests.coordinator_test_support import create_coordinator_test_schema
 
 
 class HungCheckpointCrawler:
@@ -238,7 +239,7 @@ class TimeoutTests(unittest.TestCase):
     def test_heartbeat_cannot_extend_asin_deadline_and_timeout_has_retry_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             engine = create_database_engine("sqlite:///" + (Path(directory) / "coordinator.sqlite3").as_posix())
-            Base.metadata.create_all(engine)
+            create_coordinator_test_schema(engine)
             sessions = create_session_factory(engine)
             store = CoordinatorStore(sessions)
             now = utc_now()
@@ -293,7 +294,7 @@ class CoordinatorTimeoutTests(unittest.TestCase):
     def test_job_deadline_survives_store_restart_and_does_not_retry(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             engine = create_database_engine("sqlite:///" + (Path(directory) / "coordinator.sqlite3").as_posix())
-            Base.metadata.create_all(engine)
+            create_coordinator_test_schema(engine)
             sessions = create_session_factory(engine)
             store = CoordinatorStore(sessions)
             now = utc_now()

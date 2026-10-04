@@ -1,6 +1,6 @@
 export { amazonCrawlerRoutes } from "./routes";
 export { getAmazonCrawlerAgentReleaseLoader, getAmazonCrawlerCacheClearer, getAmazonCrawlerClientsLoader, getAmazonCrawlerJobController, getAmazonCrawlerJobLoader, getAmazonCrawlerReviewClient, getAmazonCrawlerRunner, getAmazonCrawlerSyncRetrier, getImageProcessingProfileManager } from "./runtime";
-export { AmazonCrawlerServiceError, createAmazonCrawlerAgentReleaseLoader, createAmazonCrawlerCacheClearer, createAmazonCrawlerClientsLoader, createAmazonCrawlerCommandController, createAmazonCrawlerJobController, createAmazonCrawlerJobLoader, createAmazonCrawlerReviewClient, createAmazonCrawlerRunner, createAmazonCrawlerSyncRetrier, createImageProcessingProfileManager, serializeAmazonCrawlerInput } from "./service";
+export { AmazonCrawlerServiceError, createAmazonCrawlerAdmissionGateController, createAmazonCrawlerAgentReleaseLoader, createAmazonCrawlerCacheClearer, createAmazonCrawlerClientsLoader, createAmazonCrawlerCommandController, createAmazonCrawlerJobController, createAmazonCrawlerJobLoader, createAmazonCrawlerReviewClient, createAmazonCrawlerRunner, createAmazonCrawlerSyncRetrier, createImageProcessingProfileManager, serializeAmazonCrawlerInput } from "./service";
 export { DEFAULT_AMAZON_CRAWLER_SETTINGS } from "./types";
 export type {
   AmazonCrawlerMetrics,

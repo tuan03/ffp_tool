@@ -33,6 +33,7 @@ from .agent_keys import install_agent_key_routes
 from .agent_identity import AgentSecurity, install_enrollment_routes
 from .agent_key_lifecycle import install_key_lifecycle_routes
 from .agent_command_ledger import AgentCommandLedger, AgentCommandRequest
+from .global_admission_gate import GlobalAdmissionGateRequest
 from .protocol import HEARTBEAT_INTERVAL_SECONDS, LEASE_SECONDS, payload_checksum, require_message, utc_iso
 from ..observability import safe_fields, write_log
 
@@ -697,6 +698,37 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
         if snapshot is None:
             raise HTTPException(status_code=404, detail="Crawl job was not found.")
         return snapshot
+
+    @app.get("/api/v1/admission-gate")
+    def get_global_admission_gate(request: Request) -> dict[str, Any]:
+        if operator_credentials is None:
+            raise HTTPException(status_code=503, detail="Crawler operator authorization is unavailable.")
+        if not operator_credentials.accepts(request.headers.get("authorization", "")):
+            raise HTTPException(status_code=401, detail="Operator authorization is required.")
+        try:
+            return store.get_global_admission_gate()
+        except RuntimeError:
+            raise HTTPException(status_code=503, detail="Global crawler admission gate is unavailable.") from None
+
+    @app.post("/api/v1/admission-gate")
+    def update_global_admission_gate(
+        payload: GlobalAdmissionGateRequest, request: Request,
+    ) -> dict[str, Any]:
+        if operator_credentials is None:
+            raise HTTPException(status_code=503, detail="Crawler operator authorization is unavailable.")
+        if not operator_credentials.accepts(request.headers.get("authorization", "")):
+            raise HTTPException(status_code=401, detail="Operator authorization is required.")
+        try:
+            return store.set_global_admission_gate(
+                payload.state,
+                request_id=payload.requestId.lower(),
+                actor=operator_credentials.username,
+                reason=payload.reason,
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        except RuntimeError:
+            raise HTTPException(status_code=503, detail="Global crawler admission gate is unavailable.") from None
 
     @app.get("/api/v1/clients")
     async def list_clients() -> list[dict[str, Any]]:

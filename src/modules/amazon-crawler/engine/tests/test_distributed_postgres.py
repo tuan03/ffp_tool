@@ -7,8 +7,9 @@ import uuid
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import make_url
 
-from engine.distributed.coordinator_models import Base, create_database_engine, create_session_factory
+from engine.distributed.coordinator_models import create_database_engine, create_session_factory
 from engine.distributed.coordinator_store import CoordinatorStore
+from engine.tests.coordinator_test_support import create_coordinator_test_schema
 
 
 POSTGRES_TEST_URL = os.environ.get("TEST_AMAZON_COORDINATOR_DATABASE_URL", "").strip()
@@ -25,7 +26,7 @@ class PostgreSqlCoordinatorIntegrationTests(unittest.TestCase):
         test_url = make_url(POSTGRES_TEST_URL).update_query_dict({"options": f"-csearch_path={schema}"})
         engine = create_database_engine(test_url.render_as_string(hide_password=False))
         try:
-            Base.metadata.create_all(engine)
+            create_coordinator_test_schema(engine)
             store = CoordinatorStore(create_session_factory(engine))
             job = store.create_job({"urls": ["B0FR4MSS2H"]})
             store.register_client({

@@ -3,6 +3,7 @@ import unittest
 from sqlalchemy import create_engine, inspect, select
 
 from engine.distributed.coordinator_migrations import MIGRATIONS, MIGRATION_VERSION, migrate_coordinator
+from engine.distributed.global_admission_gate import GlobalAdmissionGate, GLOBAL_ADMISSION_GATE_ID
 
 
 class CoordinatorMigrationTests(unittest.TestCase):
@@ -15,6 +16,11 @@ class CoordinatorMigrationTests(unittest.TestCase):
             with engine.connect() as connection:
                 self.assertEqual(sorted(connection.scalars(select(MIGRATIONS.c.version))), list(range(1, MIGRATION_VERSION + 1)))
             self.assertIn("crawler_upload_receipts", inspect(engine).get_table_names())
+            with engine.connect() as connection:
+                state = connection.execute(
+                    select(GlobalAdmissionGate.state).where(GlobalAdmissionGate.id == GLOBAL_ADMISSION_GATE_ID)
+                ).scalar_one()
+            self.assertEqual(state, "OPEN")
         finally:
             engine.dispose()
 

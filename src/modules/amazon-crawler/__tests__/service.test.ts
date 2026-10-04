@@ -7,6 +7,7 @@ import {
   createAmazonCrawlerCacheClearer,
   createAmazonCrawlerClientsLoader,
   createAmazonCrawlerCommandController,
+  createAmazonCrawlerAdmissionGateController,
   createAmazonCrawlerJobController,
   createAmazonCrawlerJobLoader,
   createAmazonCrawlerReviewClient,
@@ -304,6 +305,26 @@ test("operator command controller submits idempotency ID and reads ordered timel
   assert.equal(requests[0]?.method, "POST");
   assert.match(requests[0]?.body ?? "", /"requestId":"[0-9a-f-]{36}"/);
   assert.equal(history[0]?.events[0]?.status, "ACKED");
+});
+
+test("global admission controller loads and changes only the crawler gate", async () => {
+  const requests: Array<{ url: string; method: string; body: string }> = [];
+  const controller = createAmazonCrawlerAdmissionGateController({
+    engineUrl: "https://coordinator.test",
+    fetchImplementation: async (input, init) => {
+      requests.push({ url: String(input), method: init?.method ?? "GET", body: String(init?.body ?? "") });
+      return jsonResponse({ state: init?.method === "POST" ? "STOPPED" : "OPEN", scope: "crawler", revision: 3,
+        actor: "operator", reason: "planned maintenance", updatedAt: "2026-10-05T00:00:00Z" });
+    },
+  });
+  assert.equal((await controller.load()).state, "OPEN");
+  const stopped = await controller.setState("STOPPED", "planned maintenance");
+  assert.equal(stopped.scope, "crawler");
+  assert.equal(stopped.state, "STOPPED");
+  assert.equal(requests[0]?.url, "https://coordinator.test/api/v1/admission-gate");
+  assert.equal(requests[1]?.method, "POST");
+  assert.match(requests[1]?.body ?? "", /"state":"STOPPED"/);
+  assert.match(requests[1]?.body ?? "", /"reason":"planned maintenance"/);
 });
 
 test("runner reports an offline coordinator with a stable error code", async () => {

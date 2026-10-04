@@ -48,6 +48,7 @@ from engine.distributed.coordinator_store import ActiveJobExistsError, Coordinat
 from engine.distributed.protocol import AgentLimits, hello_message, payload_checksum, settings_fingerprint, utc_iso, utc_now
 from engine.proxy_profiles import resolve_proxy_assignments
 from engine.tests.test_core import cache_family, cache_partial
+from engine.tests.coordinator_test_support import create_coordinator_test_schema
 
 
 def client_hello(client_id: str = "client-a", slots: int = 2) -> dict[str, object]:
@@ -1410,7 +1411,7 @@ class CoordinatorStoreTests(unittest.TestCase):
         self.temporary_directory = tempfile.TemporaryDirectory()
         database_path = Path(self.temporary_directory.name) / "coordinator.sqlite3"
         self.engine = create_database_engine(f"sqlite:///{database_path.as_posix()}")
-        Base.metadata.create_all(self.engine)
+        create_coordinator_test_schema(self.engine)
         self.sessions = create_session_factory(self.engine)
         self.store = CoordinatorStore(self.sessions)
 
@@ -3707,7 +3708,7 @@ class CoordinatorPinterestDistributedTests(unittest.TestCase):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.db_path = Path(self.temp_dir.name) / "test_coordinator.sqlite"
         engine = create_database_engine(f"sqlite:///{self.db_path.as_posix()}")
-        Base.metadata.create_all(engine)
+        create_coordinator_test_schema(engine)
         self.sessions = create_session_factory(engine)
         self.store = CoordinatorStore(self.sessions)
 

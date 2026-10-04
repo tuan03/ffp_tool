@@ -9,11 +9,12 @@ from pathlib import Path
 from sqlalchemy import select
 
 from engine.distributed.coordinator_models import (
-    Base, CrawlTask, DeletedCrawlJob, JobEvent, TaskAttempt,
+    CrawlTask, DeletedCrawlJob, JobEvent, TaskAttempt,
     create_database_engine, create_session_factory,
 )
 from engine.distributed.coordinator_store import CoordinatorStore
 from engine.distributed.protocol import utc_now
+from engine.tests.coordinator_test_support import create_coordinator_test_schema
 
 
 class LeaseMutationTests(unittest.TestCase):
@@ -23,7 +24,7 @@ class LeaseMutationTests(unittest.TestCase):
         self.initialize_fixture()
 
     def initialize_fixture(self):
-        Base.metadata.create_all(self.engine)
+        create_coordinator_test_schema(self.engine)
         self.sessions = create_session_factory(self.engine)
         self.store = CoordinatorStore(self.sessions)
         self.job = self.store.create_job({"urls": ["B0FR4MSS2H"]})

@@ -5,7 +5,8 @@ from pathlib import Path
 
 from engine.distributed.coordinator_server import create_coordinator_app
 from engine.tests.test_distributed import client_hello
-from engine.distributed.coordinator_models import Base, CrawlProductItem
+from engine.distributed.coordinator_models import CrawlProductItem
+from engine.tests.coordinator_test_support import create_coordinator_test_schema
 
 
 class CustomGptHandoffTests(unittest.TestCase):
@@ -14,7 +15,7 @@ class CustomGptHandoffTests(unittest.TestCase):
             app = create_coordinator_app(database_url=f"sqlite:///{(Path(directory) / 'queue.sqlite3').as_posix()}")
             store = app.state.store
             with store.sessions() as session:
-                Base.metadata.create_all(session.get_bind())
+                create_coordinator_test_schema(session.get_bind())
             job = store.create_job({"urls": ["B0REVIEW04"], "storeId": "capozen"})
             store.register_client(client_hello(slots=1))
             lease = store.lease_tasks("client-a", 1)[0]

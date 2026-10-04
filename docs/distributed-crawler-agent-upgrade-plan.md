@@ -129,8 +129,8 @@ Các khác biệt này là thay đổi chính sách so với hành vi cũ, khôn
 | D4 | Giữ outbound WSS hay bắt buộc HTTP pull? | Giữ WSS trước; request lease/ready phải do agent chủ động, server vẫn quyết định | Tránh đổi transport và nghiệp vụ cùng lúc; HTTP có thể là adapter sau |
 | D5 | Agent được tự hủy toàn bộ job như cancel intent hiện tại không? | Mặc định không; agent chỉ trả/cancel lease của chính nó, admin mới hủy job | Phải cập nhật tray/local stop và quyền server |
 | D6 | Một key cho một máy hay chia sẻ nhiều máy? | Một key bind một identity; rotate/rebind có audit | Tránh máy copy config giả danh cùng agent |
-| D7 | Global stop là chỉ crawler hay cả SEO/Shopify downstream? | Ban đầu chỉ admissions/execution crawler; downstream là scope riêng rõ ràng | Không hứa hủy được Shopify write đã gửi |
-| D8 | Job STOPPED có resume hay CANCELLED là vĩnh viễn? | PAUSED resume; CANCELLED terminal; STOPPED chỉ có nghĩa riêng nếu product cần | Tránh dùng nhiều tên cho cùng một trạng thái |
+| D7 | Global stop là chỉ crawler hay cả SEO/Shopify downstream? | **Đã duyệt 2026-10-05:** chỉ đóng admissions/execution của crawler; không tự dừng SEO/Shopify downstream | Không hứa hủy được Shopify write đã gửi |
+| D8 | Job STOPPED có resume hay CANCELLED là vĩnh viễn? | **Đã duyệt 2026-10-05:** PAUSED có thể resume; CANCELLED terminal; không thêm Job STOPPED riêng hiện tại | Tránh dùng nhiều tên cho cùng một trạng thái |
 | D9 | Bao lâu giữ quarantined results, audit và attempts? | Đặt retention/quota rõ trước launch; không auto xóa kết quả chưa ACK | Cần dung lượng đĩa và quy trình xử lý đầy đĩa |
 | D10 | Windows là platform chính; có máy sạch, chứng thư ký và người phụ trách updater? | Windows trước, không tuyên bố Linux/macOS production | Chặn nghiệm thu installer/update thật |
 

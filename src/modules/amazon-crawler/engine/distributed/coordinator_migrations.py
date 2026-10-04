@@ -8,9 +8,10 @@ from .agent_keys import AgentKey
 from .agent_identity import AgentEnrollment
 from .agent_assets import AgentAssetNamespace
 from .agent_command_ledger import AgentCommand, AgentCommandEvent
+from .global_admission_gate import GlobalAdmissionGate, GlobalAdmissionGateEvent, GLOBAL_ADMISSION_GATE_ID
 from . import image_profile_repository  # Register profile tables before creating metadata.
 
-MIGRATION_VERSION = 7
+MIGRATION_VERSION = 8
 MIGRATIONS = Table("crawler_schema_migrations", MetaData(), Column("version", Integer, primary_key=True))
 
 
@@ -54,3 +55,15 @@ def migrate_coordinator(engine) -> None:
             AgentCommand.__table__.create(connection, checkfirst=True)
             AgentCommandEvent.__table__.create(connection, checkfirst=True)
             connection.execute(MIGRATIONS.insert().values(version=7))
+            versions.add(7)
+        if 8 not in versions:
+            GlobalAdmissionGate.__table__.create(connection, checkfirst=True)
+            GlobalAdmissionGateEvent.__table__.create(connection, checkfirst=True)
+            gate_exists = connection.scalar(
+                select(GlobalAdmissionGate.id).where(GlobalAdmissionGate.id == GLOBAL_ADMISSION_GATE_ID)
+            )
+            if gate_exists is None:
+                connection.execute(GlobalAdmissionGate.__table__.insert().values(
+                    id=GLOBAL_ADMISSION_GATE_ID, state="OPEN", scope="crawler", revision=0,
+                ))
+            connection.execute(MIGRATIONS.insert().values(version=8))

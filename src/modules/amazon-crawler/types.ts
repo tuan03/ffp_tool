@@ -663,6 +663,20 @@ export interface AmazonCrawlerCommandController {
   history(agentId: string): Promise<readonly AmazonCrawlerAgentCommandSummary[]>;
 }
 
+export interface AmazonCrawlerAdmissionGate {
+  state: "OPEN" | "STOPPED";
+  scope: "crawler";
+  revision: number;
+  actor: string | null;
+  reason: string | null;
+  updatedAt: string | null;
+}
+
+export interface AmazonCrawlerAdmissionGateController {
+  load(): Promise<AmazonCrawlerAdmissionGate>;
+  setState(state: "OPEN" | "STOPPED", reason: string): Promise<AmazonCrawlerAdmissionGate>;
+}
+
 export interface AmazonCrawlerClientsLoader {
   (): Promise<AmazonCrawlerClientSummary[]>;
 }
